@@ -353,6 +353,227 @@ export const questionTypes = [
   }
 ];
 
+export const aiGeneratedQuestions = [
+  {
+    type: 'likert-scale',
+    title: 'I feel comfortable expressing my authentic self at work',
+    description: 'This question measures psychological safety and authenticity in the workplace',
+    scale: {
+      min: 1,
+      max: 5,
+      minLabel: 'Strongly Disagree',
+      maxLabel: 'Strongly Agree',
+      midLabel: 'Neutral'
+    },
+    category: 'Belonging & Authenticity'
+  },
+  {
+    type: 'multiple-choice',
+    title: 'Which of the following best describes your experience with career advancement opportunities?',
+    description: 'Assesses equity in career development and advancement',
+    options: [
+      'I have clear pathways and support for advancement',
+      'Opportunities exist but are not clearly communicated',
+      'I face barriers that others do not seem to experience',
+      'I am unsure about advancement opportunities',
+      'I do not see advancement as relevant to my role'
+    ],
+    allowMultiple: false,
+    allowOther: true,
+    category: 'Equity & Advancement'
+  },
+  {
+    type: 'ranking',
+    title: 'Rank these factors by their importance for creating an inclusive workplace (1 = most important)',
+    description: 'Identifies organizational priorities for inclusion initiatives',
+    rankingItems: [
+      'Leadership commitment and modeling',
+      'Clear policies against discrimination',
+      'Employee resource groups and networks',
+      'Inclusive hiring and promotion practices',
+      'Regular training and education',
+      'Open dialogue and feedback mechanisms'
+    ],
+    maxRankings: 6,
+    category: 'Inclusion Priorities'
+  },
+  {
+    type: 'matrix',
+    title: 'Rate your experience with the following aspects of our organization',
+    description: 'Comprehensive assessment across multiple inclusion dimensions',
+    matrixRows: [
+      'Feeling valued for my contributions',
+      'Having my voice heard in decisions',
+      'Receiving fair treatment from supervisors',
+      'Access to development opportunities',
+      'Feeling safe to share concerns'
+    ],
+    matrixColumns: ['Poor', 'Fair', 'Good', 'Very Good', 'Excellent'],
+    matrixType: 'single',
+    category: 'Multi-Dimensional Assessment'
+  },
+  {
+    type: 'open-ended',
+    title: 'Describe a time when you felt most included and valued at work. What made that experience meaningful?',
+    description: 'Captures positive inclusion experiences to identify best practices',
+    validation: {
+      minLength: 50,
+      maxLength: 500
+    },
+    category: 'Positive Experiences'
+  },
+  {
+    type: 'demographics',
+    title: 'Which of the following best describes your racial/ethnic identity?',
+    description: 'Census-aligned demographic data for intersectional analysis',
+    options: [
+      'American Indian or Alaska Native',
+      'Asian',
+      'Black or African American',
+      'Hispanic or Latino',
+      'Native Hawaiian or Other Pacific Islander',
+      'White',
+      'Two or more races',
+      'Prefer not to answer'
+    ],
+    allowMultiple: true,
+    allowOther: true,
+    category: 'Demographics'
+  },
+  {
+    type: 'demographics',
+    title: 'What is your gender identity?',
+    description: 'Inclusive gender identity options for comprehensive analysis',
+    options: [
+      'Woman',
+      'Man',
+      'Non-binary',
+      'Transgender woman',
+      'Transgender man',
+      'Genderfluid',
+      'Agender',
+      'Prefer to self-describe',
+      'Prefer not to answer'
+    ],
+    allowMultiple: false,
+    allowOther: true,
+    category: 'Demographics'
+  },
+  {
+    type: 'multiple-choice',
+    title: 'Do you identify as a person with a disability?',
+    description: 'Disability status for accessibility and accommodation analysis',
+    options: [
+      'Yes, I have a visible disability',
+      'Yes, I have a non-visible disability',
+      'No, I do not have a disability',
+      'Prefer not to answer'
+    ],
+    allowMultiple: false,
+    allowOther: false,
+    category: 'Demographics'
+  },
+  {
+    type: 'likert-scale',
+    title: 'My manager actively supports diversity and inclusion in our team',
+    description: 'Measures leadership commitment to DEI at the direct supervisor level',
+    scale: {
+      min: 1,
+      max: 7,
+      minLabel: 'Strongly Disagree',
+      maxLabel: 'Strongly Agree',
+      midLabel: 'Neutral'
+    },
+    category: 'Leadership & Management'
+  },
+  {
+    type: 'multiple-choice',
+    title: 'In the past year, have you experienced or witnessed any of the following? (Select all that apply)',
+    description: 'Identifies specific incidents and patterns of exclusion or bias',
+    options: [
+      'Microaggressions or subtle bias',
+      'Exclusion from informal networks or conversations',
+      'Unequal access to opportunities or resources',
+      'Discrimination based on identity',
+      'Retaliation for speaking up about concerns',
+      'None of the above',
+      'Prefer not to answer'
+    ],
+    allowMultiple: true,
+    allowOther: true,
+    category: 'Experiences & Incidents'
+  }
+];
+
+export const censusDemographicOptions = {
+  race: [
+    'American Indian or Alaska Native',
+    'Asian',
+    'Black or African American',
+    'Hispanic or Latino',
+    'Native Hawaiian or Other Pacific Islander',
+    'White',
+    'Two or more races',
+    'Prefer not to answer'
+  ],
+  gender: [
+    'Woman',
+    'Man',
+    'Non-binary',
+    'Transgender woman',
+    'Transgender man',
+    'Genderfluid',
+    'Agender',
+    'Prefer to self-describe',
+    'Prefer not to answer'
+  ],
+  age: [
+    'Under 18',
+    '18-24',
+    '25-34',
+    '35-44',
+    '45-54',
+    '55-64',
+    '65 or older',
+    'Prefer not to answer'
+  ],
+  education: [
+    'Less than high school',
+    'High school diploma or equivalent',
+    'Some college, no degree',
+    'Associate degree',
+    'Bachelor\'s degree',
+    'Master\'s degree',
+    'Professional degree',
+    'Doctoral degree',
+    'Prefer not to answer'
+  ],
+  disability: [
+    'Yes, I have a visible disability',
+    'Yes, I have a non-visible disability',
+    'No, I do not have a disability',
+    'Prefer not to answer'
+  ],
+  veteranStatus: [
+    'Veteran',
+    'Active military',
+    'Military spouse/family',
+    'Not applicable',
+    'Prefer not to answer'
+  ],
+  sexualOrientation: [
+    'Heterosexual/Straight',
+    'Gay',
+    'Lesbian',
+    'Bisexual',
+    'Pansexual',
+    'Asexual',
+    'Queer',
+    'Prefer to self-describe',
+    'Prefer not to answer'
+  ]
+};
+
 export const defaultBranding: SurveyBranding = {
   primaryColor: '#FF8895', // Sunrise Orange
   secondaryColor: '#D72638', // Deep Red
