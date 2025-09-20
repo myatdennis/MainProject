@@ -33,6 +33,9 @@ import AdminCertificates from './pages/Admin/AdminCertificates';
 import AdminIntegrations from './pages/Admin/AdminIntegrations';
 import AdminCourseBuilder from './pages/Admin/AdminCourseBuilder';
 import AdminCourseDetail from './pages/Admin/AdminCourseDetail';
+import AdminSurveys from './pages/Admin/AdminSurveys';
+import AdminSurveyBuilder from './pages/Admin/AdminSurveyBuilder';
+import AdminSurveyAnalytics from './pages/Admin/AdminSurveyAnalytics';
 import AIBot from './components/AIBot/AIBot';
 
 function App() {
@@ -84,6 +87,11 @@ function App() {
                     <Route path="analytics" element={<AdminAnalytics />} />
                     <Route path="certificates" element={<AdminCertificates />} />
                     <Route path="integrations" element={<AdminIntegrations />} />
+                    <Route path="surveys" element={<AdminSurveys />} />
+                    <Route path="surveys/builder" element={<AdminSurveyBuilder />} />
+                    <Route path="surveys/builder/:surveyId" element={<AdminSurveyBuilder />} />
+                    <Route path="surveys/:surveyId/analytics" element={<AdminSurveyAnalytics />} />
+                    <Route path="surveys/:surveyId/preview" element={<AdminSurveyBuilder />} />
                     <Route path="course-builder/:courseId" element={<AdminCourseBuilder />} />
                     <Route path="courses/:courseId/details" element={<AdminCourseDetail />} />
                     <Route path="settings" element={<AdminSettings />} />

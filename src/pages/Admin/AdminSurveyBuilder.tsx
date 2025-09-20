@@ -1,0 +1,1021 @@
+import React, { useState, useEffect } from 'react';
+import { useParams, useSearchParams, Link, useNavigate } from 'react-router-dom';
+import { 
+  ArrowLeft,
+  Save,
+  Eye,
+  Play,
+  Settings,
+  Plus,
+  Trash2,
+  GripVertical,
+  Copy,
+  ChevronDown,
+  ChevronUp,
+  CheckCircle,
+  BarChart3,
+  MessageSquare,
+  Users,
+  Grid3X3,
+  ArrowUpDown,
+  Palette,
+  Target,
+  Zap,
+  Brain
+} from 'lucide-react';
+import { surveyTemplates, questionTypes, defaultBranding } from '../../data/surveyTemplates';
+import type { Survey, SurveyQuestion, SurveySection } from '../../types/survey';
+
+const AdminSurveyBuilder = () => {
+  const { surveyId } = useParams();
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const templateId = searchParams.get('template');
+  
+  const [survey, setSurvey] = useState<Survey | null>(null);
+  const [activeSection, setActiveSection] = useState<string>('');
+  const [draggedQuestion, setDraggedQuestion] = useState<string | null>(null);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showBranding, setShowBranding] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    if (surveyId && surveyId !== 'new') {
+      // Load existing survey
+      loadSurvey(surveyId);
+    } else if (templateId) {
+      // Create from template
+      createFromTemplate(templateId);
+    } else {
+      // Create blank survey
+      createBlankSurvey();
+    }
+  }, [surveyId, templateId]);
+
+  const loadSurvey = (id: string) => {
+    // In a real app, this would load from database
+    // For now, create a sample survey
+    const sampleSurvey: Survey = {
+      id,
+      title: 'Q1 2025 Climate Assessment',
+      description: 'Quarterly organizational climate and culture assessment',
+      type: 'climate-assessment',
+      status: 'draft',
+      createdBy: 'Mya Dennis',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      sections: [],
+      branding: defaultBranding,
+      settings: {
+        allowAnonymous: true,
+        allowSaveAndContinue: true,
+        showProgressBar: true,
+        randomizeQuestions: false,
+        randomizeOptions: false,
+        requireCompletion: false,
+        accessControl: {
+          requireLogin: false
+        },
+        notifications: {
+          sendReminders: true,
+          reminderSchedule: [3, 7, 14],
+          completionNotification: true
+        }
+      },
+      assignedTo: {
+        organizationIds: [],
+        userIds: [],
+        cohortIds: []
+      },
+      totalInvites: 0,
+      totalResponses: 0,
+      completionRate: 0,
+      avgCompletionTime: 0,
+      reflectionPrompts: [
+        "What's one change that would make you feel a stronger sense of belonging?",
+        "How can leadership better support inclusion in your daily work?",
+        "What would you like to see more of in our organization's culture?"
+      ],
+      generateHuddleReport: true,
+      actionStepsEnabled: true,
+      benchmarkingEnabled: true
+    };
+    setSurvey(sampleSurvey);
+    if (sampleSurvey.sections.length > 0) {
+      setActiveSection(sampleSurvey.sections[0].id);
+    }
+  };
+
+  const createFromTemplate = (templateId: string) => {
+    const template = surveyTemplates.find(t => t.id === templateId);
+    if (!template) {
+      createBlankSurvey();
+      return;
+    }
+
+    const newSurvey: Survey = {
+      id: `survey-${Date.now()}`,
+      title: template.name,
+      description: template.description,
+      type: template.id as any,
+      status: 'draft',
+      createdBy: 'Mya Dennis',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      sections: template.sections.map((section, index) => ({
+        ...section,
+        id: `section-${Date.now()}-${index}`,
+        questions: section.questions.map((question, qIndex) => ({
+          ...question,
+          id: `question-${Date.now()}-${index}-${qIndex}`
+        }))
+      })),
+      branding: defaultBranding,
+      settings: {
+        ...template.defaultSettings,
+        accessControl: {
+          requireLogin: false,
+          ...template.defaultSettings?.accessControl
+        },
+        notifications: {
+          sendReminders: true,
+          reminderSchedule: [3, 7, 14],
+          completionNotification: true,
+          ...template.defaultSettings?.notifications
+        }
+      } as any,
+      assignedTo: {
+        organizationIds: [],
+        userIds: [],
+        cohortIds: []
+      },
+      totalInvites: 0,
+      totalResponses: 0,
+      completionRate: 0,
+      avgCompletionTime: 0,
+      reflectionPrompts: [
+        "What's one change that would make you feel a stronger sense of belonging?",
+        "How can leadership better support inclusion in your daily work?",
+        "What would you like to see more of in our organization's culture?"
+      ],
+      generateHuddleReport: true,
+      actionStepsEnabled: true,
+      benchmarkingEnabled: true
+    };
+
+    setSurvey(newSurvey);
+    if (newSurvey.sections.length > 0) {
+      setActiveSection(newSurvey.sections[0].id);
+    }
+  };
+
+  const createBlankSurvey = () => {
+    const newSurvey: Survey = {
+      id: `survey-${Date.now()}`,
+      title: 'New Survey',
+      description: 'Survey description',
+      type: 'custom',
+      status: 'draft',
+      createdBy: 'Mya Dennis',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      sections: [],
+      branding: defaultBranding,
+      settings: {
+        allowAnonymous: true,
+        allowSaveAndContinue: true,
+        showProgressBar: true,
+        randomizeQuestions: false,
+        randomizeOptions: false,
+        requireCompletion: false,
+        accessControl: {
+          requireLogin: false
+        },
+        notifications: {
+          sendReminders: true,
+          reminderSchedule: [3, 7, 14],
+          completionNotification: true
+        }
+      },
+      assignedTo: {
+        organizationIds: [],
+        userIds: [],
+        cohortIds: []
+      },
+      totalInvites: 0,
+      totalResponses: 0,
+      completionRate: 0,
+      avgCompletionTime: 0,
+      reflectionPrompts: [
+        "What's one change that would make you feel a stronger sense of belonging?"
+      ],
+      generateHuddleReport: true,
+      actionStepsEnabled: true,
+      benchmarkingEnabled: true
+    };
+    setSurvey(newSurvey);
+  };
+
+  const addSection = () => {
+    if (!survey) return;
+    
+    const newSection: SurveySection = {
+      id: `section-${Date.now()}`,
+      title: 'New Section',
+      description: '',
+      order: survey.sections.length + 1,
+      questions: []
+    };
+    
+    setSurvey(prev => prev ? {
+      ...prev,
+      sections: [...prev.sections, newSection],
+      updatedAt: new Date().toISOString()
+    } : null);
+    
+    setActiveSection(newSection.id);
+  };
+
+  const addQuestion = (sectionId: string, questionType: string) => {
+    if (!survey) return;
+    
+    const section = survey.sections.find(s => s.id === sectionId);
+    if (!section) return;
+
+    const newQuestion: SurveyQuestion = {
+      id: `question-${Date.now()}`,
+      type: questionType as any,
+      title: 'New Question',
+      required: false,
+      order: section.questions.length + 1,
+      ...(questionType === 'multiple-choice' && {
+        options: ['Option 1', 'Option 2', 'Option 3'],
+        allowMultiple: false,
+        allowOther: false
+      }),
+      ...(questionType === 'likert-scale' && {
+        scale: {
+          min: 1,
+          max: 5,
+          minLabel: 'Strongly Disagree',
+          maxLabel: 'Strongly Agree',
+          midLabel: 'Neutral'
+        }
+      }),
+      ...(questionType === 'ranking' && {
+        rankingItems: ['Item 1', 'Item 2', 'Item 3'],
+        maxRankings: 3
+      }),
+      ...(questionType === 'matrix' && {
+        matrixRows: ['Row 1', 'Row 2', 'Row 3'],
+        matrixColumns: ['Column 1', 'Column 2', 'Column 3'],
+        matrixType: 'single'
+      }),
+      ...(questionType === 'demographics' && {
+        options: ['Option 1', 'Option 2', 'Option 3']
+      })
+    };
+
+    setSurvey(prev => prev ? {
+      ...prev,
+      sections: prev.sections.map(s => 
+        s.id === sectionId 
+          ? { ...s, questions: [...s.questions, newQuestion] }
+          : s
+      ),
+      updatedAt: new Date().toISOString()
+    } : null);
+  };
+
+  const updateQuestion = (sectionId: string, questionId: string, updates: Partial<SurveyQuestion>) => {
+    if (!survey) return;
+    
+    setSurvey(prev => prev ? {
+      ...prev,
+      sections: prev.sections.map(s => 
+        s.id === sectionId 
+          ? {
+              ...s,
+              questions: s.questions.map(q => 
+                q.id === questionId ? { ...q, ...updates } : q
+              )
+            }
+          : s
+      ),
+      updatedAt: new Date().toISOString()
+    } : null);
+  };
+
+  const deleteQuestion = (sectionId: string, questionId: string) => {
+    if (!survey) return;
+    
+    setSurvey(prev => prev ? {
+      ...prev,
+      sections: prev.sections.map(s => 
+        s.id === sectionId 
+          ? { ...s, questions: s.questions.filter(q => q.id !== questionId) }
+          : s
+      ),
+      updatedAt: new Date().toISOString()
+    } : null);
+  };
+
+  const saveSurvey = async () => {
+    if (!survey) return;
+    
+    setIsSaving(true);
+    // Simulate save
+    setTimeout(() => {
+      setIsSaving(false);
+      // Show success message
+    }, 1000);
+  };
+
+  const getQuestionIcon = (type: string) => {
+    switch (type) {
+      case 'multiple-choice':
+        return <CheckCircle className="h-5 w-5" />;
+      case 'likert-scale':
+        return <BarChart3 className="h-5 w-5" />;
+      case 'ranking':
+        return <ArrowUpDown className="h-5 w-5" />;
+      case 'open-ended':
+        return <MessageSquare className="h-5 w-5" />;
+      case 'matrix':
+        return <Grid3X3 className="h-5 w-5" />;
+      case 'demographics':
+        return <Users className="h-5 w-5" />;
+      default:
+        return <CheckCircle className="h-5 w-5" />;
+    }
+  };
+
+  const renderQuestionEditor = (question: SurveyQuestion, sectionId: string) => {
+    return (
+      <div className="bg-white border border-gray-200 rounded-lg p-6 mb-4">
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center space-x-3">
+            <div className="bg-gray-100 p-2 rounded-lg">
+              {getQuestionIcon(question.type)}
+            </div>
+            <div>
+              <input
+                type="text"
+                value={question.title}
+                onChange={(e) => updateQuestion(sectionId, question.id, { title: e.target.value })}
+                className="font-medium text-gray-900 bg-transparent border-none outline-none focus:ring-2 focus:ring-orange-500 rounded px-2 py-1"
+                placeholder="Question title"
+              />
+              <div className="text-sm text-gray-500 capitalize">{question.type.replace('-', ' ')}</div>
+            </div>
+          </div>
+          <div className="flex items-center space-x-2">
+            <label className="flex items-center space-x-2">
+              <input
+                type="checkbox"
+                checked={question.required}
+                onChange={(e) => updateQuestion(sectionId, question.id, { required: e.target.checked })}
+                className="h-4 w-4 text-orange-500 focus:ring-orange-500 border-gray-300 rounded"
+              />
+              <span className="text-sm text-gray-600">Required</span>
+            </label>
+            <button
+              onClick={() => deleteQuestion(sectionId, question.id)}
+              className="p-2 text-red-600 hover:text-red-800 hover:bg-red-50 rounded-lg"
+            >
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+
+        <div className="mb-4">
+          <textarea
+            value={question.description || ''}
+            onChange={(e) => updateQuestion(sectionId, question.id, { description: e.target.value })}
+            placeholder="Question description (optional)"
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent text-sm"
+            rows={2}
+          />
+        </div>
+
+        {/* Question Type Specific Editors */}
+        {question.type === 'multiple-choice' && (
+          <div className="space-y-3">
+            <div className="flex items-center space-x-4 mb-3">
+              <label className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  checked={question.allowMultiple || false}
+                  onChange={(e) => updateQuestion(sectionId, question.id, { allowMultiple: e.target.checked })}
+                  className="h-4 w-4 text-orange-500 focus:ring-orange-500 border-gray-300 rounded"
+                />
+                <span className="text-sm text-gray-600">Allow multiple selections</span>
+              </label>
+              <label className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  checked={question.allowOther || false}
+                  onChange={(e) => updateQuestion(sectionId, question.id, { allowOther: e.target.checked })}
+                  className="h-4 w-4 text-orange-500 focus:ring-orange-500 border-gray-300 rounded"
+                />
+                <span className="text-sm text-gray-600">Allow "Other" option</span>
+              </label>
+            </div>
+            {question.options?.map((option, index) => (
+              <div key={index} className="flex items-center space-x-2">
+                <input
+                  type="text"
+                  value={option}
+                  onChange={(e) => {
+                    const newOptions = [...(question.options || [])];
+                    newOptions[index] = e.target.value;
+                    updateQuestion(sectionId, question.id, { options: newOptions });
+                  }}
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent text-sm"
+                  placeholder={`Option ${index + 1}`}
+                />
+                <button
+                  onClick={() => {
+                    const newOptions = question.options?.filter((_, i) => i !== index);
+                    updateQuestion(sectionId, question.id, { options: newOptions });
+                  }}
+                  className="p-2 text-red-600 hover:text-red-800"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+            ))}
+            <button
+              onClick={() => {
+                const newOptions = [...(question.options || []), `Option ${(question.options?.length || 0) + 1}`];
+                updateQuestion(sectionId, question.id, { options: newOptions });
+              }}
+              className="text-orange-500 hover:text-orange-600 text-sm font-medium"
+            >
+              + Add Option
+            </button>
+          </div>
+        )}
+
+        {question.type === 'likert-scale' && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Scale Range</label>
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="number"
+                    value={question.scale?.min || 1}
+                    onChange={(e) => updateQuestion(sectionId, question.id, {
+                      scale: { ...question.scale!, min: parseInt(e.target.value) }
+                    })}
+                    className="w-16 px-2 py-1 border border-gray-300 rounded text-sm"
+                    min="1"
+                  />
+                  <span className="text-gray-500">to</span>
+                  <input
+                    type="number"
+                    value={question.scale?.max || 5}
+                    onChange={(e) => updateQuestion(sectionId, question.id, {
+                      scale: { ...question.scale!, max: parseInt(e.target.value) }
+                    })}
+                    className="w-16 px-2 py-1 border border-gray-300 rounded text-sm"
+                    min="2"
+                    max="10"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Min Label</label>
+                <input
+                  type="text"
+                  value={question.scale?.minLabel || ''}
+                  onChange={(e) => updateQuestion(sectionId, question.id, {
+                    scale: { ...question.scale!, minLabel: e.target.value }
+                  })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent text-sm"
+                  placeholder="e.g., Strongly Disagree"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Max Label</label>
+                <input
+                  type="text"
+                  value={question.scale?.maxLabel || ''}
+                  onChange={(e) => updateQuestion(sectionId, question.id, {
+                    scale: { ...question.scale!, maxLabel: e.target.value }
+                  })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent text-sm"
+                  placeholder="e.g., Strongly Agree"
+                />
+              </div>
+            </div>
+          </div>
+        )}
+
+        {question.type === 'ranking' && (
+          <div className="space-y-3">
+            <div className="mb-3">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Maximum Rankings</label>
+              <input
+                type="number"
+                value={question.maxRankings || question.rankingItems?.length || 3}
+                onChange={(e) => updateQuestion(sectionId, question.id, { maxRankings: parseInt(e.target.value) })}
+                className="w-24 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent text-sm"
+                min="1"
+                max={question.rankingItems?.length || 10}
+              />
+            </div>
+            {question.rankingItems?.map((item, index) => (
+              <div key={index} className="flex items-center space-x-2">
+                <span className="text-sm text-gray-500 w-6">{index + 1}.</span>
+                <input
+                  type="text"
+                  value={item}
+                  onChange={(e) => {
+                    const newItems = [...(question.rankingItems || [])];
+                    newItems[index] = e.target.value;
+                    updateQuestion(sectionId, question.id, { rankingItems: newItems });
+                  }}
+                  className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent text-sm"
+                  placeholder={`Ranking item ${index + 1}`}
+                />
+                <button
+                  onClick={() => {
+                    const newItems = question.rankingItems?.filter((_, i) => i !== index);
+                    updateQuestion(sectionId, question.id, { rankingItems: newItems });
+                  }}
+                  className="p-2 text-red-600 hover:text-red-800"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+            ))}
+            <button
+              onClick={() => {
+                const newItems = [...(question.rankingItems || []), `Item ${(question.rankingItems?.length || 0) + 1}`];
+                updateQuestion(sectionId, question.id, { rankingItems: newItems });
+              }}
+              className="text-orange-500 hover:text-orange-600 text-sm font-medium"
+            >
+              + Add Ranking Item
+            </button>
+          </div>
+        )}
+
+        {question.type === 'open-ended' && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Min Length</label>
+                <input
+                  type="number"
+                  value={question.validation?.minLength || ''}
+                  onChange={(e) => updateQuestion(sectionId, question.id, {
+                    validation: { ...question.validation, minLength: parseInt(e.target.value) || undefined }
+                  })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent text-sm"
+                  placeholder="Minimum characters"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Max Length</label>
+                <input
+                  type="number"
+                  value={question.validation?.maxLength || ''}
+                  onChange={(e) => updateQuestion(sectionId, question.id, {
+                    validation: { ...question.validation, maxLength: parseInt(e.target.value) || undefined }
+                  })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent text-sm"
+                  placeholder="Maximum characters"
+                />
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  if (!survey) {
+    return (
+      <div className="p-6 max-w-4xl mx-auto text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-500 mx-auto mb-4"></div>
+        <h2 className="text-xl font-semibold text-gray-900">Loading survey builder...</h2>
+      </div>
+    );
+  }
+
+  return (
+    <div className="p-6 max-w-7xl mx-auto">
+      {/* Header */}
+      <div className="mb-8">
+        <Link 
+          to="/admin/surveys" 
+          className="inline-flex items-center text-orange-500 hover:text-orange-600 mb-4 font-medium"
+        >
+          <ArrowLeft className="h-4 w-4 mr-2" />
+          Back to Surveys
+        </Link>
+        
+        <div className="flex items-start justify-between">
+          <div className="flex-1">
+            <input
+              type="text"
+              value={survey.title}
+              onChange={(e) => setSurvey(prev => prev ? { ...prev, title: e.target.value, updatedAt: new Date().toISOString() } : null)}
+              className="text-3xl font-bold text-gray-900 bg-transparent border-none outline-none focus:ring-2 focus:ring-orange-500 rounded px-2 py-1 mb-2"
+              placeholder="Survey Title"
+            />
+            <textarea
+              value={survey.description}
+              onChange={(e) => setSurvey(prev => prev ? { ...prev, description: e.target.value, updatedAt: new Date().toISOString() } : null)}
+              className="text-gray-600 bg-transparent border-none outline-none focus:ring-2 focus:ring-orange-500 rounded px-2 py-1 resize-none"
+              placeholder="Survey description"
+              rows={2}
+            />
+          </div>
+          
+          <div className="flex items-center space-x-3">
+            <button
+              onClick={() => setShowBranding(!showBranding)}
+              className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2"
+            >
+              <Palette className="h-4 w-4" />
+              <span>Branding</span>
+            </button>
+            <button
+              onClick={() => setShowSettings(!showSettings)}
+              className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2"
+            >
+              <Settings className="h-4 w-4" />
+              <span>Settings</span>
+            </button>
+            <Link
+              to={`/admin/surveys/${survey.id}/preview`}
+              className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2"
+            >
+              <Eye className="h-4 w-4" />
+              <span>Preview</span>
+            </Link>
+            <button
+              onClick={saveSurvey}
+              disabled={isSaving}
+              className="bg-orange-500 text-white px-6 py-2 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-2 disabled:opacity-50"
+            >
+              <Save className="h-4 w-4" />
+              <span>{isSaving ? 'Saving...' : 'Save'}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+        {/* Question Types Palette */}
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <h3 className="text-lg font-bold text-gray-900 mb-4">Question Types</h3>
+          <div className="space-y-3">
+            {questionTypes.map((type) => (
+              <button
+                key={type.id}
+                onClick={() => {
+                  if (activeSection) {
+                    addQuestion(activeSection, type.id);
+                  }
+                }}
+                disabled={!activeSection}
+                className="w-full text-left p-3 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <div className="flex items-center space-x-3">
+                  <div className="bg-gray-100 p-2 rounded-lg">
+                    {getQuestionIcon(type.id)}
+                  </div>
+                  <div>
+                    <div className="font-medium text-gray-900 text-sm">{type.name}</div>
+                    <div className="text-xs text-gray-600">{type.description}</div>
+                  </div>
+                </div>
+              </button>
+            ))}
+          </div>
+
+          <div className="mt-6 pt-6 border-t border-gray-200">
+            <h4 className="font-medium text-gray-900 mb-3">AI Suggestions</h4>
+            <div className="space-y-2">
+              <button className="w-full text-left p-2 bg-purple-50 border border-purple-200 rounded-lg hover:bg-purple-100 transition-colors duration-200">
+                <div className="flex items-center space-x-2">
+                  <Brain className="h-4 w-4 text-purple-500" />
+                  <span className="text-sm text-purple-800">Generate DEI Questions</span>
+                </div>
+              </button>
+              <button className="w-full text-left p-2 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors duration-200">
+                <div className="flex items-center space-x-2">
+                  <Zap className="h-4 w-4 text-blue-500" />
+                  <span className="text-sm text-blue-800">Suggest Logic Flows</span>
+                </div>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Main Builder Area */}
+        <div className="lg:col-span-3 space-y-6">
+          {/* Sections */}
+          <div className="space-y-4">
+            {survey.sections.map((section) => (
+              <div key={section.id} className="bg-gray-50 rounded-xl p-6">
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex-1">
+                    <input
+                      type="text"
+                      value={section.title}
+                      onChange={(e) => setSurvey(prev => prev ? {
+                        ...prev,
+                        sections: prev.sections.map(s => 
+                          s.id === section.id ? { ...s, title: e.target.value } : s
+                        ),
+                        updatedAt: new Date().toISOString()
+                      } : null)}
+                      className="text-xl font-bold text-gray-900 bg-transparent border-none outline-none focus:ring-2 focus:ring-orange-500 rounded px-2 py-1"
+                      placeholder="Section title"
+                    />
+                    <textarea
+                      value={section.description || ''}
+                      onChange={(e) => setSurvey(prev => prev ? {
+                        ...prev,
+                        sections: prev.sections.map(s => 
+                          s.id === section.id ? { ...s, description: e.target.value } : s
+                        ),
+                        updatedAt: new Date().toISOString()
+                      } : null)}
+                      className="text-gray-600 bg-transparent border-none outline-none focus:ring-2 focus:ring-orange-500 rounded px-2 py-1 resize-none w-full"
+                      placeholder="Section description"
+                      rows={1}
+                    />
+                  </div>
+                  <div className="flex items-center space-x-2">
+                    <button
+                      onClick={() => setActiveSection(activeSection === section.id ? '' : section.id)}
+                      className="p-2 text-gray-600 hover:text-gray-800"
+                    >
+                      {activeSection === section.id ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
+                    </button>
+                    <button className="p-2 text-red-600 hover:text-red-800">
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+
+                {activeSection === section.id && (
+                  <div className="space-y-4">
+                    {section.questions.map((question) => renderQuestionEditor(question, section.id))}
+                    
+                    {section.questions.length === 0 && (
+                      <div className="text-center py-8 border-2 border-dashed border-gray-300 rounded-lg">
+                        <MessageSquare className="h-8 w-8 text-gray-400 mx-auto mb-2" />
+                        <p className="text-gray-500">No questions yet. Select a question type from the left to get started.</p>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ))}
+
+            <button
+              onClick={addSection}
+              className="w-full border-2 border-dashed border-gray-300 rounded-xl p-6 text-center hover:border-orange-500 hover:bg-orange-50 transition-colors duration-200"
+            >
+              <Plus className="h-6 w-6 text-gray-400 mx-auto mb-2" />
+              <span className="text-gray-600 font-medium">Add Section</span>
+            </button>
+          </div>
+
+          {/* Reflection Prompts */}
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+            <h3 className="text-lg font-bold text-gray-900 mb-4">Reflection Prompts</h3>
+            <p className="text-gray-600 text-sm mb-4">
+              These prompts will appear after survey completion to encourage deeper thinking and self-reflection.
+            </p>
+            <div className="space-y-3">
+              {survey.reflectionPrompts.map((prompt, index) => (
+                <div key={index} className="flex items-center space-x-2">
+                  <input
+                    type="text"
+                    value={prompt}
+                    onChange={(e) => {
+                      const newPrompts = [...survey.reflectionPrompts];
+                      newPrompts[index] = e.target.value;
+                      setSurvey(prev => prev ? { ...prev, reflectionPrompts: newPrompts, updatedAt: new Date().toISOString() } : null);
+                    }}
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent text-sm"
+                    placeholder="Reflection prompt"
+                  />
+                  <button
+                    onClick={() => {
+                      const newPrompts = survey.reflectionPrompts.filter((_, i) => i !== index);
+                      setSurvey(prev => prev ? { ...prev, reflectionPrompts: newPrompts, updatedAt: new Date().toISOString() } : null);
+                    }}
+                    className="p-2 text-red-600 hover:text-red-800"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+              <button
+                onClick={() => {
+                  const newPrompts = [...survey.reflectionPrompts, 'New reflection prompt'];
+                  setSurvey(prev => prev ? { ...prev, reflectionPrompts: newPrompts, updatedAt: new Date().toISOString() } : null);
+                }}
+                className="text-orange-500 hover:text-orange-600 text-sm font-medium"
+              >
+                + Add Reflection Prompt
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Settings Panel */}
+      {showSettings && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-gray-200">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl font-bold text-gray-900">Survey Settings</h2>
+                <button
+                  onClick={() => setShowSettings(false)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+            <div className="p-6 space-y-6">
+              {/* Access Control */}
+              <div>
+                <h3 className="font-semibold text-gray-900 mb-4">Access & Privacy</h3>
+                <div className="space-y-4">
+                  <label className="flex items-center space-x-3">
+                    <input
+                      type="checkbox"
+                      checked={survey.settings.allowAnonymous}
+                      onChange={(e) => setSurvey(prev => prev ? {
+                        ...prev,
+                        settings: { ...prev.settings, allowAnonymous: e.target.checked },
+                        updatedAt: new Date().toISOString()
+                      } : null)}
+                      className="h-4 w-4 text-orange-500 focus:ring-orange-500 border-gray-300 rounded"
+                    />
+                    <div>
+                      <span className="font-medium text-gray-900">Allow anonymous responses</span>
+                      <p className="text-sm text-gray-600">Participants can respond without logging in</p>
+                    </div>
+                  </label>
+                  <label className="flex items-center space-x-3">
+                    <input
+                      type="checkbox"
+                      checked={survey.settings.allowSaveAndContinue}
+                      onChange={(e) => setSurvey(prev => prev ? {
+                        ...prev,
+                        settings: { ...prev.settings, allowSaveAndContinue: e.target.checked },
+                        updatedAt: new Date().toISOString()
+                      } : null)}
+                      className="h-4 w-4 text-orange-500 focus:ring-orange-500 border-gray-300 rounded"
+                    />
+                    <div>
+                      <span className="font-medium text-gray-900">Save & continue later</span>
+                      <p className="text-sm text-gray-600">Allow participants to save progress and return</p>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              {/* Display Options */}
+              <div>
+                <h3 className="font-semibold text-gray-900 mb-4">Display Options</h3>
+                <div className="space-y-4">
+                  <label className="flex items-center space-x-3">
+                    <input
+                      type="checkbox"
+                      checked={survey.settings.showProgressBar}
+                      onChange={(e) => setSurvey(prev => prev ? {
+                        ...prev,
+                        settings: { ...prev.settings, showProgressBar: e.target.checked },
+                        updatedAt: new Date().toISOString()
+                      } : null)}
+                      className="h-4 w-4 text-orange-500 focus:ring-orange-500 border-gray-300 rounded"
+                    />
+                    <span className="font-medium text-gray-900">Show progress bar</span>
+                  </label>
+                  <label className="flex items-center space-x-3">
+                    <input
+                      type="checkbox"
+                      checked={survey.settings.randomizeQuestions}
+                      onChange={(e) => setSurvey(prev => prev ? {
+                        ...prev,
+                        settings: { ...prev.settings, randomizeQuestions: e.target.checked },
+                        updatedAt: new Date().toISOString()
+                      } : null)}
+                      className="h-4 w-4 text-orange-500 focus:ring-orange-500 border-gray-300 rounded"
+                    />
+                    <span className="font-medium text-gray-900">Randomize question order</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Huddle Co. Features */}
+              <div>
+                <h3 className="font-semibold text-gray-900 mb-4">Huddle Co. Features</h3>
+                <div className="space-y-4">
+                  <label className="flex items-center space-x-3">
+                    <input
+                      type="checkbox"
+                      checked={survey.generateHuddleReport}
+                      onChange={(e) => setSurvey(prev => prev ? {
+                        ...prev,
+                        generateHuddleReport: e.target.checked,
+                        updatedAt: new Date().toISOString()
+                      } : null)}
+                      className="h-4 w-4 text-orange-500 focus:ring-orange-500 border-gray-300 rounded"
+                    />
+                    <div>
+                      <span className="font-medium text-gray-900">Generate Huddle Report</span>
+                      <p className="text-sm text-gray-600">Auto-generate team discussion summaries</p>
+                    </div>
+                  </label>
+                  <label className="flex items-center space-x-3">
+                    <input
+                      type="checkbox"
+                      checked={survey.actionStepsEnabled}
+                      onChange={(e) => setSurvey(prev => prev ? {
+                        ...prev,
+                        actionStepsEnabled: e.target.checked,
+                        updatedAt: new Date().toISOString()
+                      } : null)}
+                      className="h-4 w-4 text-orange-500 focus:ring-orange-500 border-gray-300 rounded"
+                    />
+                    <div>
+                      <span className="font-medium text-gray-900">Leadership action steps</span>
+                      <p className="text-sm text-gray-600">Generate actionable recommendations</p>
+                    </div>
+                  </label>
+                  <label className="flex items-center space-x-3">
+                    <input
+                      type="checkbox"
+                      checked={survey.benchmarkingEnabled}
+                      onChange={(e) => setSurvey(prev => prev ? {
+                        ...prev,
+                        benchmarkingEnabled: e.target.checked,
+                        updatedAt: new Date().toISOString()
+                      } : null)}
+                      className="h-4 w-4 text-orange-500 focus:ring-orange-500 border-gray-300 rounded"
+                    />
+                    <div>
+                      <span className="font-medium text-gray-900">Enable benchmarking</span>
+                      <p className="text-sm text-gray-600">Compare results with industry standards</p>
+                    </div>
+                  </label>
+                </div>
+              </div>
+            </div>
+            <div className="p-6 border-t border-gray-200 flex justify-end space-x-3">
+              <button
+                onClick={() => setShowSettings(false)}
+                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors duration-200"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  saveSurvey();
+                  setShowSettings(false);
+                }}
+                className="bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors duration-200"
+              >
+                Save Settings
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Section Button */}
+      {survey.sections.length === 0 && (
+        <div className="text-center py-12">
+          <Target className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-900 mb-2">Start Building Your Survey</h3>
+          <p className="text-gray-600 mb-6">Add your first section to begin creating questions.</p>
+          <button
+            onClick={addSection}
+            className="bg-orange-500 text-white px-6 py-3 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center mx-auto space-x-2"
+          >
+            <Plus className="h-5 w-5" />
+            <span>Add First Section</span>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default AdminSurveyBuilder;
