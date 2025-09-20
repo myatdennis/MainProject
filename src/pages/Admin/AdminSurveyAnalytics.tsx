@@ -692,7 +692,7 @@ const AdminSurveyAnalytics = () => {
       </div>
 
       {/* Benchmarking & Comparison */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
         <h2 className="text-xl font-bold text-gray-900 mb-6">Benchmarking & Comparison</h2>
         
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -750,7 +750,6 @@ const AdminSurveyAnalytics = () => {
               </div>
             </div>
           </div>
-        </div>
         </div>
       </div>
 
