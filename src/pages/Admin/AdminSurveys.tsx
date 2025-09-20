@@ -21,7 +21,8 @@ import {
   AlertTriangle,
   Target,
   TrendingUp,
-  MessageSquare
+  MessageSquare,
+  Brain
 } from 'lucide-react';
 
 const AdminSurveys = () => {
@@ -360,7 +361,13 @@ const AdminSurveys = () => {
                       className="bg-gradient-to-r from-orange-400 to-red-500 h-2 rounded-full"
                       style={{ width: `${survey.completionRate}%` }}
                     ></div>
-                      <span className="text-xs text-red-500 italic">Not assigned</span>
+                  </div>
+                </div>
+              )}
+
+              {survey.assignedOrgs.length === 0 && (
+                <div className="mb-4">
+                  <span className="text-xs text-red-500 italic">Not assigned</span>
                 </div>
               )}
 
@@ -388,13 +395,13 @@ const AdminSurveys = () => {
                 <div className="text-sm text-gray-600">
                   {survey.status === 'draft' ? 'Created' : 'Last activity'}: {new Date(survey.lastActivity).toLocaleDateString()}
                 </div>
-                    <button 
-                      className="p-2 text-purple-600 hover:text-purple-800 hover:bg-purple-50 rounded-lg" 
-                      title="AI Insights"
-                    >
-                      <Brain className="h-4 w-4" />
-                    </button>
                 <div className="flex items-center space-x-2">
+                  <button 
+                    className="p-2 text-purple-600 hover:text-purple-800 hover:bg-purple-50 rounded-lg" 
+                    title="AI Insights"
+                  >
+                    <Brain className="h-4 w-4" />
+                  </button>
                   <Link 
                     to={`/admin/surveys/${survey.id}/analytics`}
                     className="p-2 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-lg" 
