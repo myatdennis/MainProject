@@ -21,9 +21,13 @@ import {
   Palette,
   Target,
   Zap,
-  Brain
+  Brain,
+  Send,
+  Building2,
+  UserCheck,
+  X
 } from 'lucide-react';
-import { surveyTemplates, questionTypes, defaultBranding } from '../../data/surveyTemplates';
+import { surveyTemplates, questionTypes, defaultBranding, aiGeneratedQuestions, censusDemographicOptions } from '../../data/surveyTemplates';
 import type { Survey, SurveyQuestion, SurveySection } from '../../types/survey';
 
 const AdminSurveyBuilder = () => {
@@ -37,7 +41,19 @@ const AdminSurveyBuilder = () => {
   const [draggedQuestion, setDraggedQuestion] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [showBranding, setShowBranding] = useState(false);
+  const [showAssignModal, setShowAssignModal] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+
+  // Organizations data (in a real app, this would come from an API)
+  const organizations = [
+    { id: '1', name: 'Pacific Coast University', type: 'University', learners: 45 },
+    { id: '2', name: 'Mountain View High School', type: 'K-12 Education', learners: 23 },
+    { id: '3', name: 'Community Impact Network', type: 'Nonprofit', learners: 28 },
+    { id: '4', name: 'Regional Fire Department', type: 'Government', learners: 67 },
+    { id: '5', name: 'TechForward Solutions', type: 'Corporate', learners: 34 },
+    { id: '6', name: 'Regional Medical Center', type: 'Healthcare', learners: 89 },
+    { id: '7', name: 'Unity Community Church', type: 'Religious', learners: 15 }
+  ];
 
   useEffect(() => {
     if (surveyId && surveyId !== 'new') {
@@ -320,6 +336,43 @@ const AdminSurveyBuilder = () => {
     } : null);
   };
 
+  const addAIQuestions = () => {
+    if (!survey || !activeSection) return;
+    
+    // Add a selection of AI-generated questions to the active section
+    const selectedQuestions = aiGeneratedQuestions.slice(0, 3).map((template, index) => ({
+      ...template,
+      id: `ai-question-${Date.now()}-${index}`,
+      required: true,
+      order: survey.sections.find(s => s.id === activeSection)!.questions.length + index + 1
+    }));
+
+    setSurvey(prev => prev ? {
+      ...prev,
+      sections: prev.sections.map(s => 
+        s.id === activeSection 
+          ? { ...s, questions: [...s.questions, ...selectedQuestions] }
+          : s
+      ),
+      updatedAt: new Date().toISOString()
+    } : null);
+  };
+
+  const assignSurvey = (organizationIds: string[]) => {
+    if (!survey) return;
+    
+    setSurvey(prev => prev ? {
+      ...prev,
+      assignedTo: {
+        ...prev.assignedTo,
+        organizationIds
+      },
+      updatedAt: new Date().toISOString()
+    } : null);
+    
+    setShowAssignModal(false);
+  };
+
   const saveSurvey = async () => {
     if (!survey) return;
     
@@ -459,7 +512,7 @@ const AdminSurveyBuilder = () => {
 
         {question.type === 'likert-scale' && (
           <div className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Scale Range</label>
                 <div className="flex items-center space-x-2">
@@ -507,6 +560,18 @@ const AdminSurveyBuilder = () => {
                   })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent text-sm"
                   placeholder="e.g., Strongly Agree"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Mid Label (Optional)</label>
+                <input
+                  type="text"
+                  value={question.scale?.midLabel || ''}
+                  onChange={(e) => updateQuestion(sectionId, question.id, {
+                    scale: { ...question.scale!, midLabel: e.target.value }
+                  })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent text-sm"
+                  placeholder="e.g., Neutral"
                 />
               </div>
             </div>
@@ -593,6 +658,194 @@ const AdminSurveyBuilder = () => {
             </div>
           </div>
         )}
+
+        {question.type === 'matrix' && (
+          <div className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Matrix Rows</label>
+                <div className="space-y-2">
+                  {question.matrixRows?.map((row, index) => (
+                    <div key={index} className="flex items-center space-x-2">
+                      <input
+                        type="text"
+                        value={row}
+                        onChange={(e) => {
+                          const newRows = [...(question.matrixRows || [])];
+                          newRows[index] = e.target.value;
+                          updateQuestion(sectionId, question.id, { matrixRows: newRows });
+                        }}
+                        className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent text-sm"
+                        placeholder={`Row ${index + 1}`}
+                      />
+                      <button
+                        onClick={() => {
+                          const newRows = question.matrixRows?.filter((_, i) => i !== index);
+                          updateQuestion(sectionId, question.id, { matrixRows: newRows });
+                        }}
+                        className="p-2 text-red-600 hover:text-red-800"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    onClick={() => {
+                      const newRows = [...(question.matrixRows || []), `Row ${(question.matrixRows?.length || 0) + 1}`];
+                      updateQuestion(sectionId, question.id, { matrixRows: newRows });
+                    }}
+                    className="text-orange-500 hover:text-orange-600 text-sm font-medium"
+                  >
+                    + Add Row
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Matrix Columns</label>
+                <div className="space-y-2">
+                  {question.matrixColumns?.map((column, index) => (
+                    <div key={index} className="flex items-center space-x-2">
+                      <input
+                        type="text"
+                        value={column}
+                        onChange={(e) => {
+                          const newColumns = [...(question.matrixColumns || [])];
+                          newColumns[index] = e.target.value;
+                          updateQuestion(sectionId, question.id, { matrixColumns: newColumns });
+                        }}
+                        className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent text-sm"
+                        placeholder={`Column ${index + 1}`}
+                      />
+                      <button
+                        onClick={() => {
+                          const newColumns = question.matrixColumns?.filter((_, i) => i !== index);
+                          updateQuestion(sectionId, question.id, { matrixColumns: newColumns });
+                        }}
+                        className="p-2 text-red-600 hover:text-red-800"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    onClick={() => {
+                      const newColumns = [...(question.matrixColumns || []), `Column ${(question.matrixColumns?.length || 0) + 1}`];
+                      updateQuestion(sectionId, question.id, { matrixColumns: newColumns });
+                    }}
+                    className="text-orange-500 hover:text-orange-600 text-sm font-medium"
+                  >
+                    + Add Column
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Response Type</label>
+              <select
+                value={question.matrixType || 'single'}
+                onChange={(e) => updateQuestion(sectionId, question.id, { matrixType: e.target.value as 'single' | 'multiple' | 'rating' })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent text-sm"
+              >
+                <option value="single">Single selection per row</option>
+                <option value="multiple">Multiple selections per row</option>
+                <option value="rating">Rating scale per row</option>
+              </select>
+            </div>
+          </div>
+        )}
+
+        {question.type === 'demographics' && (
+          <div className="space-y-4">
+            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-4">
+              <h4 className="font-medium text-blue-900 mb-2">Census-Aligned Demographics</h4>
+              <p className="text-sm text-blue-800">
+                Use standardized demographic categories for consistent analysis and benchmarking.
+              </p>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">Demographic Category</label>
+                <select
+                  onChange={(e) => {
+                    const category = e.target.value;
+                    if (category && censusDemographicOptions[category as keyof typeof censusDemographicOptions]) {
+                      updateQuestion(sectionId, question.id, {
+                        options: censusDemographicOptions[category as keyof typeof censusDemographicOptions],
+                        title: `What is your ${category}?`
+                      });
+                    }
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent text-sm"
+                >
+                  <option value="">Select a category</option>
+                  <option value="race">Race/Ethnicity</option>
+                  <option value="gender">Gender Identity</option>
+                  <option value="age">Age Range</option>
+                  <option value="education">Education Level</option>
+                  <option value="disability">Disability Status</option>
+                  <option value="veteranStatus">Veteran Status</option>
+                  <option value="sexualOrientation">Sexual Orientation</option>
+                </select>
+              </div>
+              <div className="flex items-center space-x-4">
+                <label className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    checked={question.allowMultiple || false}
+                    onChange={(e) => updateQuestion(sectionId, question.id, { allowMultiple: e.target.checked })}
+                    className="h-4 w-4 text-orange-500 focus:ring-orange-500 border-gray-300 rounded"
+                  />
+                  <span className="text-sm text-gray-700">Allow multiple selections</span>
+                </label>
+                <label className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    checked={question.allowOther || false}
+                    onChange={(e) => updateQuestion(sectionId, question.id, { allowOther: e.target.checked })}
+                    className="h-4 w-4 text-orange-500 focus:ring-orange-500 border-gray-300 rounded"
+                  />
+                  <span className="text-sm text-gray-700">Allow "Other" option</span>
+                </label>
+              </div>
+            </div>
+            <div className="space-y-3">
+              <label className="block text-sm font-medium text-gray-700">Custom Options</label>
+              {question.options?.map((option, index) => (
+                <div key={index} className="flex items-center space-x-2">
+                  <input
+                    type="text"
+                    value={option}
+                    onChange={(e) => {
+                      const newOptions = [...(question.options || [])];
+                      newOptions[index] = e.target.value;
+                      updateQuestion(sectionId, question.id, { options: newOptions });
+                    }}
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent text-sm"
+                    placeholder={`Option ${index + 1}`}
+                  />
+                  <button
+                    onClick={() => {
+                      const newOptions = question.options?.filter((_, i) => i !== index);
+                      updateQuestion(sectionId, question.id, { options: newOptions });
+                    }}
+                    className="p-2 text-red-600 hover:text-red-800"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              ))}
+              <button
+                onClick={() => {
+                  const newOptions = [...(question.options || []), `Option ${(question.options?.length || 0) + 1}`];
+                  updateQuestion(sectionId, question.id, { options: newOptions });
+                }}
+                className="text-orange-500 hover:text-orange-600 text-sm font-medium"
+              >
+                + Add Custom Option
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     );
   };
@@ -643,6 +896,13 @@ const AdminSurveyBuilder = () => {
             >
               <Palette className="h-4 w-4" />
               <span>Branding</span>
+            </button>
+            <button
+              onClick={() => setShowAssignModal(true)}
+              className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2"
+            >
+              <Building2 className="h-4 w-4" />
+              <span>Assign Survey</span>
             </button>
             <button
               onClick={() => setShowSettings(!showSettings)}
@@ -702,7 +962,10 @@ const AdminSurveyBuilder = () => {
           <div className="mt-6 pt-6 border-t border-gray-200">
             <h4 className="font-medium text-gray-900 mb-3">AI Suggestions</h4>
             <div className="space-y-2">
-              <button className="w-full text-left p-2 bg-purple-50 border border-purple-200 rounded-lg hover:bg-purple-100 transition-colors duration-200">
+              <button 
+                onClick={addAIQuestions}
+                disabled={!activeSection}
+                className="w-full text-left p-2 bg-purple-50 border border-purple-200 rounded-lg hover:bg-purple-100 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed">
                 <div className="flex items-center space-x-2">
                   <Brain className="h-4 w-4 text-purple-500" />
                   <span className="text-sm text-purple-800">Generate DEI Questions</span>
@@ -993,6 +1256,101 @@ const AdminSurveyBuilder = () => {
                 className="bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors duration-200"
               >
                 Save Settings
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Assignment Modal */}
+      {showAssignModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-gray-200">
+              <div className="flex items-center justify-between">
+                <h2 className="text-xl font-bold text-gray-900">Assign Survey to Organizations</h2>
+                <button
+                  onClick={() => setShowAssignModal(false)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  <X className="h-6 w-6" />
+                </button>
+              </div>
+            </div>
+            <div className="p-6">
+              <div className="mb-6">
+                <h3 className="font-semibold text-gray-900 mb-2">Select Organizations</h3>
+                <p className="text-gray-600 text-sm">Choose which organizations should receive this survey. Participants will be notified via email.</p>
+              </div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                {organizations.map((org) => (
+                  <label key={org.id} className="flex items-center space-x-3 p-4 border border-gray-200 rounded-lg hover:bg-gray-50 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={survey?.assignedTo.organizationIds.includes(org.id) || false}
+                      onChange={(e) => {
+                        if (!survey) return;
+                        const currentIds = survey.assignedTo.organizationIds;
+                        const newIds = e.target.checked
+                          ? [...currentIds, org.id]
+                          : currentIds.filter(id => id !== org.id);
+                        setSurvey(prev => prev ? {
+                          ...prev,
+                          assignedTo: { ...prev.assignedTo, organizationIds: newIds },
+                          updatedAt: new Date().toISOString()
+                        } : null);
+                      }}
+                      className="h-4 w-4 text-orange-500 focus:ring-orange-500 border-gray-300 rounded"
+                    />
+                    <div className="flex items-center space-x-3 flex-1">
+                      <div className="bg-blue-100 p-2 rounded-lg">
+                        <Building2 className="h-5 w-5 text-blue-600" />
+                      </div>
+                      <div>
+                        <div className="font-medium text-gray-900">{org.name}</div>
+                        <div className="text-sm text-gray-600">{org.type} • {org.learners} learners</div>
+                      </div>
+                    </div>
+                  </label>
+                ))}
+              </div>
+
+              <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 mb-6">
+                <h4 className="font-medium text-orange-900 mb-2">Survey Distribution</h4>
+                <div className="text-sm text-orange-800">
+                  <p className="mb-2">
+                    <strong>Selected Organizations:</strong> {survey?.assignedTo.organizationIds.length || 0}
+                  </p>
+                  <p className="mb-2">
+                    <strong>Total Potential Participants:</strong> {
+                      organizations
+                        .filter(org => survey?.assignedTo.organizationIds.includes(org.id))
+                        .reduce((acc, org) => acc + org.learners, 0)
+                    }
+                  </p>
+                  <p>
+                    Participants will receive email invitations with secure survey links. Anonymous responses are {survey?.settings.allowAnonymous ? 'enabled' : 'disabled'}.
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="p-6 border-t border-gray-200 flex justify-end space-x-3">
+              <button
+                onClick={() => setShowAssignModal(false)}
+                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors duration-200"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  saveSurvey();
+                  setShowAssignModal(false);
+                }}
+                className="bg-orange-500 text-white px-6 py-2 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-2"
+              >
+                <Send className="h-4 w-4" />
+                <span>Assign & Notify</span>
               </button>
             </div>
           </div>

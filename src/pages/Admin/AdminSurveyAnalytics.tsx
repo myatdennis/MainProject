@@ -140,11 +140,13 @@ const AdminSurveyAnalytics = () => {
   ];
 
   const huddleReportPreview = {
-    executiveSummary: "The Q1 2025 Climate Assessment reveals a generally positive organizational culture with strong belonging scores (3.8/5) and good psychological safety (3.6/5). Key strengths include high engagement in Engineering and Marketing, while opportunities exist in supporting new hires and addressing department-specific challenges in Finance.",
+    executiveSummary: "The Q1 2025 Climate Assessment reveals a generally positive organizational culture with strong belonging scores (3.8/5) and good psychological safety (3.6/5). Key strengths include high engagement in Engineering and Marketing, while opportunities exist in supporting new hires and addressing department-specific challenges in Finance. AI analysis indicates 87% confidence in these patterns based on response clustering and sentiment analysis.",
     discussionQuestions: [
       "What specific actions can we take to improve psychological safety for new team members?",
       "How can we replicate the positive culture in Engineering across other departments?",
-      "What barriers prevent people from speaking up, and how can leadership address them?"
+      "What barriers prevent people from speaking up, and how can leadership address them?",
+      "How might unconscious bias be affecting our team dynamics and decision-making?",
+      "What would make our organization feel more inclusive for underrepresented groups?"
     ],
     actionSteps: [
       {
@@ -160,7 +162,57 @@ const AdminSurveyAnalytics = () => {
         owner: 'DEI Committee',
         timeline: '45 days',
         resources: ['Focus group facilitator', 'Discussion guides']
+      },
+      {
+        priority: 'high',
+        action: 'Launch psychological safety training for managers',
+        owner: 'Learning & Development',
+        timeline: '60 days',
+        resources: ['Training curriculum', 'Manager toolkit', 'Assessment rubric']
+      },
+      {
+        priority: 'medium',
+        action: 'Create cross-departmental mentorship program',
+        owner: 'DEI Committee',
+        timeline: '90 days',
+        resources: ['Mentorship guidelines', 'Matching algorithm', 'Success metrics']
       }
+    ],
+    aiRecommendations: [
+      {
+        category: 'Immediate Actions',
+        recommendations: [
+          'Send personalized follow-up surveys to Finance department within 2 weeks',
+          'Schedule listening sessions with new hires (< 6 months tenure)',
+          'Implement weekly check-ins between managers and direct reports'
+        ]
+      },
+      {
+        category: 'Strategic Initiatives',
+        recommendations: [
+          'Develop department-specific inclusion strategies based on survey data',
+          'Create inclusion metrics dashboard for leadership team',
+          'Establish employee resource groups for underrepresented populations'
+        ]
+      },
+      {
+        category: 'Measurement & Tracking',
+        recommendations: [
+          'Implement quarterly pulse surveys to track progress',
+          'Create inclusion scorecards for each department',
+          'Establish baseline metrics for future benchmarking'
+        ]
+      }
+    ],
+    riskAreas: [
+      'New hire retention risk due to low psychological safety scores',
+      'Potential talent flight from Finance department',
+      'Communication gaps between leadership and individual contributors'
+    ],
+    successFactors: [
+      'Strong peer relationships and team collaboration',
+      'High trust in immediate supervisors',
+      'Positive organizational mission alignment'
     ]
   };
 
@@ -455,6 +507,7 @@ const AdminSurveyAnalytics = () => {
                   <div className="text-xs text-gray-600 space-y-1">
                     <div>Owner: {action.owner}</div>
                     <div>Timeline: {action.timeline}</div>
+                    <div>Resources: {action.resources.join(', ')}</div>
                   </div>
                 </div>
               ))}
@@ -462,8 +515,238 @@ const AdminSurveyAnalytics = () => {
           </div>
         </div>
 
+        {/* AI Recommendations */}
+        <div className="mt-8 grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {huddleReportPreview.aiRecommendations.map((category, index) => (
+            <div key={index} className="bg-white p-4 rounded-lg border border-gray-200">
+              <h4 className="font-semibold text-gray-900 mb-3">{category.category}</h4>
+              <ul className="space-y-2">
+                {category.recommendations.map((rec, recIndex) => (
+                  <li key={recIndex} className="flex items-start space-x-2">
+                    <Brain className="h-4 w-4 text-purple-500 mt-0.5 flex-shrink-0" />
+                    <span className="text-sm text-gray-700">{rec}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+
+        {/* Risk Areas & Success Factors */}
+        <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+            <h4 className="font-semibold text-red-900 mb-3 flex items-center space-x-2">
+              <AlertTriangle className="h-5 w-5" />
+              <span>Risk Areas</span>
+            </h4>
+            <ul className="space-y-2">
+              {huddleReportPreview.riskAreas.map((risk, index) => (
+                <li key={index} className="text-sm text-red-800">• {risk}</li>
+              ))}
+            </ul>
+          </div>
+          <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+            <h4 className="font-semibold text-green-900 mb-3 flex items-center space-x-2">
+              <CheckCircle className="h-5 w-5" />
+              <span>Success Factors</span>
+            </h4>
+            <ul className="space-y-2">
+              {huddleReportPreview.successFactors.map((factor, index) => (
+                <li key={index} className="text-sm text-green-800">• {factor}</li>
+              ))}
+            </ul>
+          </div>
+        </div>
         <div className="mt-6 text-center">
-          <button className="bg-white text-orange-500 px-6 py-3 rounded-lg hover:bg-gray-50 transition-colors duration-200 border border-orange-500 font-medium">
+          <div className="flex flex-col sm:flex-row justify-center space-y-3 sm:space-y-0 sm:space-x-3">
+            <button className="bg-white text-orange-500 px-6 py-3 rounded-lg hover:bg-gray-50 transition-colors duration-200 border border-orange-500 font-medium flex items-center space-x-2">
+              <Brain className="h-5 w-5" />
+              <span>Generate Full AI Report</span>
+            </button>
+            <button className="bg-orange-500 text-white px-6 py-3 rounded-lg hover:bg-orange-600 transition-colors duration-200 font-medium flex items-center space-x-2">
+              <Download className="h-5 w-5" />
+              <span>Download Executive Summary</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Advanced AI Analytics */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
+        <div className="flex items-center space-x-3 mb-6">
+          <Brain className="h-6 w-6 text-purple-500" />
+          <h2 className="text-xl font-bold text-gray-900">Advanced AI Analytics</h2>
+        </div>
+        
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          <div>
+            <h3 className="font-semibold text-gray-900 mb-4">Predictive Insights</h3>
+            <div className="space-y-4">
+              <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
+                <div className="flex items-center space-x-2 mb-2">
+                  <Target className="h-5 w-5 text-purple-600" />
+                  <span className="font-medium text-purple-900">Turnover Risk Prediction</span>
+                </div>
+                <p className="text-sm text-purple-800 mb-2">
+                  AI model predicts 23% increased turnover risk in Finance department based on survey responses.
+                </p>
+                <div className="text-xs text-purple-700">Confidence: 89% | Based on 247 data points</div>
+              </div>
+              
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <div className="flex items-center space-x-2 mb-2">
+                  <TrendingUp className="h-5 w-5 text-blue-600" />
+                  <span className="font-medium text-blue-900">Engagement Forecast</span>
+                </div>
+                <p className="text-sm text-blue-800 mb-2">
+                  Current trajectory suggests 15% improvement in overall engagement if recommended actions are implemented.
+                </p>
+                <div className="text-xs text-blue-700">Confidence: 76% | 6-month projection</div>
+              </div>
+            </div>
+          </div>
+          
+          <div>
+            <h3 className="font-semibold text-gray-900 mb-4">Sentiment Analysis</h3>
+            <div className="space-y-4">
+              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                <h4 className="font-medium text-green-900 mb-2">Positive Themes (68%)</h4>
+                <ul className="text-sm text-green-800 space-y-1">
+                  <li>• Team collaboration and support</li>
+                  <li>• Meaningful work and mission alignment</li>
+                  <li>• Growth and learning opportunities</li>
+                </ul>
+              </div>
+              
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                <h4 className="font-medium text-yellow-900 mb-2">Neutral Themes (22%)</h4>
+                <ul className="text-sm text-yellow-800 space-y-1">
+                  <li>• Communication processes</li>
+                  <li>• Work-life balance policies</li>
+                </ul>
+              </div>
+              
+              <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                <h4 className="font-medium text-red-900 mb-2">Concerning Themes (10%)</h4>
+                <ul className="text-sm text-red-800 space-y-1">
+                  <li>• Limited advancement opportunities</li>
+                  <li>• Inconsistent management practices</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* AI-Generated Reports */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
+        <div className="flex items-center justify-between mb-6">
+          <h2 className="text-xl font-bold text-gray-900">AI-Generated Reports</h2>
+          <button className="bg-purple-500 text-white px-4 py-2 rounded-lg hover:bg-purple-600 transition-colors duration-200 flex items-center space-x-2">
+            <Brain className="h-4 w-4" />
+            <span>Generate New Report</span>
+          </button>
+        </div>
+        
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <button className="p-6 border border-gray-200 rounded-lg hover:shadow-md transition-shadow duration-200 text-center group">
+            <div className="bg-blue-100 w-12 h-12 rounded-lg flex items-center justify-center mx-auto mb-3 group-hover:bg-blue-200 transition-colors duration-200">
+              <FileText className="h-6 w-6 text-blue-600" />
+            </div>
+            <h3 className="font-medium text-gray-900 mb-2">Executive Summary</h3>
+            <p className="text-sm text-gray-600 mb-3">AI-generated executive summary with key findings and recommendations</p>
+            <div className="flex items-center justify-center space-x-2 text-blue-600">
+              <Download className="h-4 w-4" />
+              <span className="text-sm font-medium">Download PDF</span>
+            </div>
+          </button>
+          
+          <button className="p-6 border border-gray-200 rounded-lg hover:shadow-md transition-shadow duration-200 text-center group">
+            <div className="bg-green-100 w-12 h-12 rounded-lg flex items-center justify-center mx-auto mb-3 group-hover:bg-green-200 transition-colors duration-200">
+              <BarChart3 className="h-6 w-6 text-green-600" />
+            </div>
+            <h3 className="font-medium text-gray-900 mb-2">Detailed Analytics</h3>
+            <p className="text-sm text-gray-600 mb-3">Comprehensive data analysis with charts, trends, and statistical insights</p>
+            <div className="flex items-center justify-center space-x-2 text-green-600">
+              <Download className="h-4 w-4" />
+              <span className="text-sm font-medium">Download Excel</span>
+            </div>
+          </button>
+          
+          <button className="p-6 border border-gray-200 rounded-lg hover:shadow-md transition-shadow duration-200 text-center group">
+            <div className="bg-orange-100 w-12 h-12 rounded-lg flex items-center justify-center mx-auto mb-3 group-hover:bg-orange-200 transition-colors duration-200">
+              <MessageSquare className="h-6 w-6 text-orange-600" />
+            </div>
+            <h3 className="font-medium text-gray-900 mb-2">Team Discussion Guide</h3>
+            <p className="text-sm text-gray-600 mb-3">Facilitation guide with discussion questions and activities</p>
+            <div className="flex items-center justify-center space-x-2 text-orange-600">
+              <Download className="h-4 w-4" />
+              <span className="text-sm font-medium">Download PowerPoint</span>
+            </div>
+          </button>
+        </div>
+      </div>
+
+      {/* Benchmarking & Comparison */}
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        <h2 className="text-xl font-bold text-gray-900 mb-6">Benchmarking & Comparison</h2>
+        
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+          <div>
+            <h3 className="font-semibold text-gray-900 mb-4">Industry Benchmarks</h3>
+            <div className="space-y-4">
+              <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                <span className="text-sm text-gray-700">Belonging Score</span>
+                <div className="flex items-center space-x-2">
+                  <span className="text-sm font-medium text-gray-900">3.8</span>
+                  <span className="text-xs text-gray-500">vs</span>
+                  <span className="text-sm text-gray-600">3.2 (industry avg)</span>
+                  <span className="text-xs text-green-600 font-medium">+19%</span>
+                </div>
+              </div>
+              <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                <span className="text-sm text-gray-700">Psychological Safety</span>
+                <div className="flex items-center space-x-2">
+                  <span className="text-sm font-medium text-gray-900">3.6</span>
+                  <span className="text-xs text-gray-500">vs</span>
+                  <span className="text-sm text-gray-600">3.4 (industry avg)</span>
+                  <span className="text-xs text-green-600 font-medium">+6%</span>
+                </div>
+              </div>
+              <div className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                <span className="text-sm text-gray-700">Inclusion Index</span>
+                <div className="flex items-center space-x-2">
+                  <span className="text-sm font-medium text-gray-900">3.7</span>
+                  <span className="text-xs text-gray-500">vs</span>
+                  <span className="text-sm text-gray-600">3.5 (industry avg)</span>
+                  <span className="text-xs text-green-600 font-medium">+6%</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          
+          <div>
+            <h3 className="font-semibold text-gray-900 mb-4">Historical Trends</h3>
+            <div className="space-y-4">
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+                <h4 className="font-medium text-blue-900 mb-2">6-Month Trend</h4>
+                <div className="text-sm text-blue-800">
+                  <p>Belonging: 3.5 → 3.8 (+8.6%)</p>
+                  <p>Safety: 3.4 → 3.6 (+5.9%)</p>
+                  <p>Inclusion: 3.6 → 3.7 (+2.8%)</p>
+                </div>
+              </div>
+              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+                <h4 className="font-medium text-green-900 mb-2">Progress Indicators</h4>
+                <div className="text-sm text-green-800">
+                  <p>✓ Consistent upward trend</p>
+                  <p>✓ Above industry benchmarks</p>
+                  <p>✓ Strong leadership engagement</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
             Generate Full Huddle Report
           </button>
         </div>

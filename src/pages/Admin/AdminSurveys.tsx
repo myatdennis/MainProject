@@ -45,6 +45,7 @@ const AdminSurveys = () => {
       completionRate: 77,
       avgCompletionTime: 12,
       assignedOrgs: ['Pacific Coast University', 'Regional Fire Department', 'TechForward Solutions'],
+      assignedOrgIds: ['1', '4', '5'],
       lastActivity: '2025-03-11'
     },
     {
@@ -61,6 +62,7 @@ const AdminSurveys = () => {
       completionRate: 0,
       avgCompletionTime: 0,
       assignedOrgs: [],
+      assignedOrgIds: [],
       lastActivity: '2025-03-10'
     },
     {
@@ -77,6 +79,7 @@ const AdminSurveys = () => {
       completionRate: 91,
       avgCompletionTime: 15,
       assignedOrgs: ['Community Impact Network', 'Mountain View High School'],
+      assignedOrgIds: ['3', '2'],
       lastActivity: '2025-02-20'
     },
     {
@@ -93,6 +96,7 @@ const AdminSurveys = () => {
       completionRate: 38,
       avgCompletionTime: 18,
       assignedOrgs: ['Pacific Coast University'],
+      assignedOrgIds: ['1'],
       lastActivity: '2025-03-08'
     }
   ];
@@ -284,6 +288,10 @@ const AdminSurveys = () => {
                 </button>
               </div>
             )}
+            <button className="bg-purple-500 text-white px-4 py-2 rounded-lg hover:bg-purple-600 transition-colors duration-200 flex items-center space-x-2">
+              <Brain className="h-4 w-4" />
+              <span>AI Survey Creator</span>
+            </button>
             <Link
               to="/admin/surveys/builder"
               className="bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-2"
@@ -352,7 +360,7 @@ const AdminSurveys = () => {
                       className="bg-gradient-to-r from-orange-400 to-red-500 h-2 rounded-full"
                       style={{ width: `${survey.completionRate}%` }}
                     ></div>
-                  </div>
+                      <span className="text-xs text-red-500 italic">Not assigned</span>
                 </div>
               )}
 
@@ -380,6 +388,12 @@ const AdminSurveys = () => {
                 <div className="text-sm text-gray-600">
                   {survey.status === 'draft' ? 'Created' : 'Last activity'}: {new Date(survey.lastActivity).toLocaleDateString()}
                 </div>
+                    <button 
+                      className="p-2 text-purple-600 hover:text-purple-800 hover:bg-purple-50 rounded-lg" 
+                      title="AI Insights"
+                    >
+                      <Brain className="h-4 w-4" />
+                    </button>
                 <div className="flex items-center space-x-2">
                   <Link 
                     to={`/admin/surveys/${survey.id}/analytics`}
