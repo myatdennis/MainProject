@@ -563,6 +563,10 @@ const AdminSurveyAnalytics = () => {
               <Brain className="h-5 w-5" />
               <span>Generate Full AI Report</span>
             </button>
+            <button className="bg-purple-500 text-white px-6 py-3 rounded-lg hover:bg-purple-600 transition-colors duration-200 font-medium flex items-center space-x-2">
+              <Brain className="h-5 w-5" />
+              <span>Generate Full Huddle Report</span>
+            </button>
             <button className="bg-orange-500 text-white px-6 py-3 rounded-lg hover:bg-orange-600 transition-colors duration-200 font-medium flex items-center space-x-2">
               <Download className="h-5 w-5" />
               <span>Download Executive Summary</span>
@@ -747,8 +751,6 @@ const AdminSurveyAnalytics = () => {
             </div>
           </div>
         </div>
-            Generate Full Huddle Report
-          </button>
         </div>
       </div>
 
