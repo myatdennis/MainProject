@@ -1,0 +1,103 @@
+import React from 'react';
+import { useEffect } from 'react';
+import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { AuthProvider } from './context/AuthContext';
+import { courseStore } from './store/courseStore';
+import Header from './components/Header';
+import Footer from './components/Footer';
+import HomePage from './pages/HomePage';
+import AboutPage from './pages/AboutPage';
+import ServicesPage from './pages/ServicesPage';
+import ResourcePage from './pages/ResourcePage';
+import TestimonialsPage from './pages/TestimonialsPage';
+import ContactPage from './pages/ContactPage';
+import ClientPortalPage from './pages/ClientPortalPage';
+import LMSDashboard from './pages/LMS/LMSDashboard';
+import LMSCourses from './pages/LMS/LMSCourses';
+import LMSModule from './pages/LMS/LMSModule';
+import LMSDownloads from './pages/LMS/LMSDownloads';
+import LMSFeedback from './pages/LMS/LMSFeedback';
+import LMSContact from './pages/LMS/LMSContact';
+import LMSLogin from './pages/LMS/LMSLogin';
+import LMSLayout from './components/LMS/LMSLayout';
+import AdminLogin from './pages/Admin/AdminLogin';
+import AdminDashboard from './pages/Admin/AdminDashboard';
+import AdminUsers from './pages/Admin/AdminUsers';
+import AdminOrganizations from './pages/Admin/AdminOrganizations';
+import AdminCourses from './pages/Admin/AdminCourses';
+import AdminReports from './pages/Admin/AdminReports';
+import AdminSettings from './pages/Admin/AdminSettings';
+import AdminLayout from './components/Admin/AdminLayout';
+import AdminAnalytics from './pages/Admin/AdminAnalytics';
+import AdminCertificates from './pages/Admin/AdminCertificates';
+import AdminIntegrations from './pages/Admin/AdminIntegrations';
+import AdminCourseBuilder from './pages/Admin/AdminCourseBuilder';
+import AdminCourseDetail from './pages/Admin/AdminCourseDetail';
+import AIBot from './components/AIBot/AIBot';
+
+function App() {
+  useEffect(() => {
+    // Initialize course store and sync default courses to database
+    courseStore.init().catch(error => {
+      console.error('Failed to initialize course store:', error);
+    });
+  }, []);
+
+  return (
+    <AuthProvider>
+      <Router>
+        <div className="min-h-screen flex flex-col bg-white">
+          <Header />
+          <main className="flex-grow">
+            <Routes>
+              <Route path="/" element={<HomePage />} />
+              <Route path="/about" element={<AboutPage />} />
+              <Route path="/services" element={<ServicesPage />} />
+              <Route path="/resources" element={<ResourcePage />} />
+              <Route path="/testimonials" element={<TestimonialsPage />} />
+              <Route path="/contact" element={<ContactPage />} />
+              <Route path="/client-portal" element={<ClientPortalPage />} />
+              <Route path="/lms/login" element={<LMSLogin />} />
+              <Route path="/lms" element={<Navigate to="/lms/dashboard" replace />} />
+              <Route path="/lms/*" element={
+                <LMSLayout>
+                  <Routes>
+                    <Route path="dashboard" element={<LMSDashboard />} />
+                    <Route path="courses" element={<LMSCourses />} />
+                    <Route path="module/:moduleId" element={<LMSModule />} />
+                    <Route path="downloads" element={<LMSDownloads />} />
+                    <Route path="feedback" element={<LMSFeedback />} />
+                    <Route path="contact" element={<LMSContact />} />
+                  </Routes>
+                </LMSLayout>
+              } />
+              <Route path="/admin/login" element={<AdminLogin />} />
+              <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
+              <Route path="/admin/*" element={
+                <AdminLayout>
+                  <Routes>
+                    <Route path="dashboard" element={<AdminDashboard />} />
+                    <Route path="users" element={<AdminUsers />} />
+                    <Route path="organizations" element={<AdminOrganizations />} />
+                    <Route path="courses" element={<AdminCourses />} />
+                    <Route path="reports" element={<AdminReports />} />
+                    <Route path="analytics" element={<AdminAnalytics />} />
+                    <Route path="certificates" element={<AdminCertificates />} />
+                    <Route path="integrations" element={<AdminIntegrations />} />
+                    <Route path="course-builder/:courseId" element={<AdminCourseBuilder />} />
+                    <Route path="courses/:courseId/details" element={<AdminCourseDetail />} />
+                    <Route path="settings" element={<AdminSettings />} />
+                  </Routes>
+                </AdminLayout>
+              } />
+            </Routes>
+          </main>
+          <Footer />
+          <AIBot />
+        </div>
+      </Router>
+    </AuthProvider>
+  );
+}
+
+export default App;
