@@ -4,6 +4,12 @@ import type { Course, Module, Lesson } from '../lib/supabase';
 export class CourseService {
   // Sync course data from localStorage to Supabase
   static async syncCourseToDatabase(course: any) {
+    // Check if Supabase is properly configured
+    if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
+      console.warn('Supabase not configured - skipping database sync for course:', course.title);
+      return null;
+    }
+
     try {
       console.log('Syncing course to database:', course.id, course.title);
       
@@ -84,6 +90,12 @@ export class CourseService {
 
   // Load course data from Supabase
   static async loadCourseFromDatabase(courseId: string) {
+    // Check if Supabase is properly configured
+    if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
+      console.warn('Supabase not configured - cannot load course from database');
+      throw new Error('Supabase not configured');
+    }
+
     try {
       const { data: course, error: courseError } = await supabase
         .from('courses')
@@ -151,6 +163,12 @@ export class CourseService {
 
   // Get all published courses
   static async getPublishedCourses() {
+    // Check if Supabase is properly configured
+    if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
+      console.warn('Supabase not configured - cannot load published courses from database');
+      return [];
+    }
+
     try {
       const { data: courses, error } = await supabase
         .from('courses')
@@ -213,6 +231,12 @@ export class CourseService {
 
   // Get all courses from database
   static async getAllCoursesFromDatabase() {
+    // Check if Supabase is properly configured
+    if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
+      console.warn('Supabase not configured - cannot load courses from database');
+      return [];
+    }
+
     try {
       const { data: courses, error } = await supabase
         .from('courses')

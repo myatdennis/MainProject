@@ -1048,31 +1048,46 @@ let courses: { [key: string]: Course } = _loadCoursesFromLocalStorage();
 export const courseStore = {
   init: async (): Promise<void> => {
     try {
-      // Try to load courses from database first
-      const dbCourses = await CourseService.getAllCoursesFromDatabase();
-      
-      if (dbCourses.length > 0) {
-        // Load courses from database (including drafts)
-        console.log(`Loading ${dbCourses.length} courses from database...`);
-        courses = {};
-        dbCourses.forEach(course => {
-          courses[course.id] = course;
-        });
-        _saveCoursesToLocalStorage(courses);
-        console.log('Courses loaded from database successfully');
-      } else {
-        // No courses in database, sync default courses
-        console.log('No courses found in database, syncing default courses...');
-        const defaultCourses = getDefaultCourses();
-        courses = defaultCourses;
+      // Check if Supabase is configured
+      if (import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY) {
+        // Try to load courses from database first
+        const dbCourses = await CourseService.getAllCoursesFromDatabase();
         
-        for (const course of Object.values(defaultCourses)) {
-          await CourseService.syncCourseToDatabase(course);
-          console.log(`Synced course: ${course.title}`);
+        if (dbCourses.length > 0) {
+          // Load courses from database (including drafts)
+          console.log(`Loading ${dbCourses.length} courses from database...`);
+          courses = {};
+          dbCourses.forEach(course => {
+            courses[course.id] = course;
+          });
+          _saveCoursesToLocalStorage(courses);
+          console.log('Courses loaded from database successfully');
+        } else {
+          // No courses in database, sync default courses
+          console.log('No courses found in database, syncing default courses...');
+          const defaultCourses = getDefaultCourses();
+          courses = defaultCourses;
+          
+          for (const course of Object.values(defaultCourses)) {
+            await CourseService.syncCourseToDatabase(course);
+            console.log(`Synced course: ${course.title}`);
+          }
+          
+          _saveCoursesToLocalStorage(courses);
+          console.log('Default courses synced to database successfully');
         }
-        
-        _saveCoursesToLocalStorage(courses);
-        console.log('Default courses synced to database successfully');
+      } else {
+        // Supabase not configured, use local storage only
+        console.warn('Supabase not configured - using local storage for courses');
+        const localCourses = _loadCoursesFromLocalStorage();
+        if (Object.keys(localCourses).length === 0) {
+          courses = getDefaultCourses();
+          _saveCoursesToLocalStorage(courses);
+          console.log('Initialized with default courses (local storage only)');
+        } else {
+          courses = localCourses;
+          console.log('Loaded courses from local storage');
+        }
       }
     } catch (error) {
       console.error('Error initializing course store:', error);
@@ -1096,10 +1111,12 @@ export const courseStore = {
     courses[course.id] = { ...course };
     _saveCoursesToLocalStorage(courses);
     
-    // Always sync to Supabase in background (including drafts and published courses)
-    CourseService.syncCourseToDatabase(course).catch(error => {
-      console.warn(`Failed to sync course "${course.title}" to database:`, error.message || error);
-    });
+    // Only sync to Supabase if configured
+    if (import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY) {
+      CourseService.syncCourseToDatabase(course).catch(error => {
+        console.warn(`Failed to sync course "${course.title}" to database:`, error.message || error);
+      });
+    }
   },
 
   getAllCourses: (): Course[] => {
