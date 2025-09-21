@@ -3,11 +3,13 @@ import { createClient } from '@supabase/supabase-js';
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
+let supabase: any;
+
 if (!supabaseUrl || !supabaseAnonKey) {
   console.warn('Supabase environment variables not found. Please click "Connect to Supabase" in the top right to set up your database connection.');
   
   // Create a mock client that won't break the app
-  export const supabase = {
+  supabase = {
     auth: {
       getSession: () => Promise.resolve({ data: { session: null }, error: null }),
       getUser: () => Promise.resolve({ data: { user: null }, error: null }),
@@ -23,10 +25,12 @@ if (!supabaseUrl || !supabaseAnonKey) {
       upsert: () => ({ data: null, error: { message: 'Supabase not configured' } }),
       delete: () => ({ data: null, error: { message: 'Supabase not configured' } })
     })
-  } as any;
+  };
 } else {
-  export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+  supabase = createClient(supabaseUrl, supabaseAnonKey);
 }
+
+export { supabase };
 
 // Database types
 export interface UserProfile {
