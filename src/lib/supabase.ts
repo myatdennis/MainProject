@@ -9,6 +9,18 @@ if (!supabaseUrl || !supabaseAnonKey) {
   console.warn('Supabase environment variables not found. Please click "Connect to Supabase" in the top right to set up your database connection.');
   
   // Create a mock client that won't break the app
+  const createMockQuery = () => ({
+    select: () => createMockQuery(),
+    insert: () => createMockQuery(),
+    update: () => createMockQuery(),
+    upsert: () => createMockQuery(),
+    delete: () => createMockQuery(),
+    eq: () => createMockQuery(),
+    order: () => createMockQuery(),
+    single: () => Promise.resolve({ data: null, error: { message: 'Supabase not configured' } }),
+    then: (resolve: any) => resolve({ data: [], error: null })
+  });
+
   supabase = {
     auth: {
       getSession: () => Promise.resolve({ data: { session: null }, error: null }),
@@ -18,13 +30,7 @@ if (!supabaseUrl || !supabaseAnonKey) {
       signOut: () => Promise.resolve({ error: null }),
       onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } })
     },
-    from: () => ({
-      select: () => ({ data: [], error: null }),
-      insert: () => ({ data: null, error: { message: 'Supabase not configured' } }),
-      update: () => ({ data: null, error: { message: 'Supabase not configured' } }),
-      upsert: () => ({ data: null, error: { message: 'Supabase not configured' } }),
-      delete: () => ({ data: null, error: { message: 'Supabase not configured' } })
-    })
+    from: () => createMockQuery()
   };
 } else {
   supabase = createClient(supabaseUrl, supabaseAnonKey);
