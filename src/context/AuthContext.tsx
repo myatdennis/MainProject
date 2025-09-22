@@ -9,8 +9,8 @@ interface AuthState {
 
 interface AuthContextType {
   isAuthenticated: AuthState;
-  login: (type: 'lms' | 'admin') => void;
-  logout: (type: 'lms' | 'admin') => void;
+  login: (type: 'lms' | 'admin') => Promise<boolean>;
+  logout: (type: 'lms' | 'admin') => Promise<void>;
   user: {
     name: string;
     email: string;
@@ -97,13 +97,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         
         if (signInError) {
           console.error('Authentication error:', signInError);
-          return;
+          return false;
         }
         
         currentUser = signInData?.user;
       } else if (signUpError) {
         console.error('Authentication error:', signUpError);
-        return;
+        return false;
       }
 
       if (currentUser) {
@@ -146,8 +146,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
             role: userData.role
           });
       }
+      return true;
     } catch (error) {
       console.error('Login error:', error);
+      return false;
     }
   };
 

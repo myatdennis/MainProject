@@ -9,11 +9,9 @@ import {
   Minimize2,
   Maximize2,
   RotateCcw,
-  Lightbulb,
-  BarChart3,
-  Users,
-  BookOpen
+  Lightbulb
 } from 'lucide-react';
+import { getAnalytics } from '../../services/surveyService';
 
 const AIBot = () => {
   const [isOpen, setIsOpen] = useState(false);
@@ -121,6 +119,35 @@ const AIBot = () => {
     const lowerMessage = userMessage.toLowerCase();
 
     if (isAdminRoute) {
+      // If user requested survey-specific analytics, fetch structured analytics via surveyService
+      if (lowerMessage.includes('survey') || lowerMessage.includes('climate') || lowerMessage.includes('inclusion') || lowerMessage.includes('equity')) {
+        setTimeout(async () => {
+          try {
+            const keyword = userMessage.match(/([a-z0-9\-]+-?\d{0,4})/i)?.[0] || 'climate-2025-q1';
+            const analytics = await getAnalytics(keyword);
+            const summary = `Survey ${analytics.surveyId} — ${analytics.title}\nResponses: ${analytics.totalResponses}, Completion Rate: ${analytics.completionRate}%, Avg Time: ${analytics.avgCompletionTime} min. Key insights: ${analytics.insights.join('; ')}`;
+            setMessages(prev => [...prev, {
+              id: (Date.now() + 5).toString(),
+              type: 'bot',
+              content: summary,
+              timestamp: new Date(),
+              suggestions: ['Export report', 'Create huddle report', 'Drill into question analytics']
+            }]);
+          } catch (err) {
+            setMessages(prev => [...prev, {
+              id: (Date.now() + 6).toString(),
+              type: 'bot',
+              content: 'Error retrieving survey analytics. Supabase may not be configured or an error occurred.',
+              timestamp: new Date()
+            }]);
+          }
+        }, 500);
+
+        return {
+          message: "I'm fetching the latest survey analytics — I'll post a summary here in a moment.",
+          suggestions: ["Show executive summary", "Export report", "Compare organizations"]
+        };
+      }
       // Admin-specific responses
       if (lowerMessage.includes('completion rate') || lowerMessage.includes('progress')) {
         return {

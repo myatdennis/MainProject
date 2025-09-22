@@ -24,17 +24,21 @@ const AdminLogin = () => {
     setIsLoading(true);
     setError('');
     
-    // Simulate admin authentication
-    setTimeout(() => {
-      if (email === 'mya@thehuddleco.com' && password === 'admin123') {
-        login('admin');
+    // Simulate admin authentication flow with AuthContext
+    setTimeout(async () => {
+      if (email === 'admin@thehuddleco.com' && password === 'admin123') {
+        const ok = await login('admin');
         setIsLoading(false);
-        navigate('/admin/dashboard');
+        if (ok) {
+          navigate('/admin/dashboard');
+        } else {
+          setError('Authentication failed (supabase).');
+        }
       } else {
         setError('Invalid credentials. Admin access only.');
         setIsLoading(false);
       }
-    }, 1500);
+    }, 800);
   };
 
   return (

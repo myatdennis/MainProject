@@ -53,8 +53,8 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
 
   const isActive = (href: string) => location.pathname === href;
 
-  const handleLogout = () => {
-    logout('admin');
+  const handleLogout = async () => {
+    await logout('admin');
     navigate('/admin/login');
   };
 

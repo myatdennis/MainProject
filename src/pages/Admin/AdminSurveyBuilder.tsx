@@ -28,6 +28,7 @@ import {
   X
 } from 'lucide-react';
 import { surveyTemplates, questionTypes, defaultBranding, aiGeneratedQuestions, censusDemographicOptions } from '../../data/surveyTemplates';
+import { getAssignments, saveAssignments } from '../../services/surveyService';
 import type { Survey, SurveyQuestion, SurveySection } from '../../types/survey';
 
 const AdminSurveyBuilder = () => {
@@ -120,6 +121,14 @@ const AdminSurveyBuilder = () => {
     if (sampleSurvey.sections.length > 0) {
       setActiveSection(sampleSurvey.sections[0].id);
     }
+
+    // Load assignments from backend if available
+    (async () => {
+      const assignment = await getAssignments(id);
+      if (assignment && assignment.organization_ids) {
+        setSurvey(prev => prev ? { ...prev, assignedTo: { ...prev.assignedTo, organizationIds: assignment.organization_ids } } : prev);
+      }
+    })();
   };
 
   const createFromTemplate = (templateId: string) => {
@@ -345,7 +354,7 @@ const AdminSurveyBuilder = () => {
       id: `ai-question-${Date.now()}-${index}`,
       required: true,
       order: survey.sections.find(s => s.id === activeSection)!.questions.length + index + 1
-    }));
+    }) as SurveyQuestion);
 
     setSurvey(prev => prev ? {
       ...prev,
@@ -371,17 +380,38 @@ const AdminSurveyBuilder = () => {
     } : null);
     
     setShowAssignModal(false);
+    // Persist assignments
+    (async () => {
+      try {
+        await saveAssignments(survey!.id, organizationIds);
+      } catch (err) {
+        console.warn('Failed to persist assignments', err);
+      }
+    })();
   };
 
   const saveSurvey = async () => {
     if (!survey) return;
-    
+
     setIsSaving(true);
-    // Simulate save
-    setTimeout(() => {
+    try {
+      // Persist assignments if present
+      if (survey.assignedTo?.organizationIds && survey.assignedTo.organizationIds.length > 0) {
+        try {
+          await saveAssignments(survey.id, survey.assignedTo.organizationIds);
+        } catch (err) {
+          console.warn('Failed to save assignments during survey save', err);
+        }
+      }
+
+      // Simulate saving other survey data (replace with real save API)
+      await new Promise((res) => setTimeout(res, 800));
+
+      // You could show a toast here to confirm save
+      // console.log('Survey saved', survey.id);
+    } finally {
       setIsSaving(false);
-      // Show success message
-    }, 1000);
+    }
   };
 
   const getQuestionIcon = (type: string) => {
@@ -1343,8 +1373,8 @@ const AdminSurveyBuilder = () => {
                 Cancel
               </button>
               <button
-                onClick={() => {
-                  saveSurvey();
+                onClick={async () => {
+                  await saveSurvey();
                   setShowAssignModal(false);
                 }}
                 className="bg-orange-500 text-white px-6 py-2 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-2"

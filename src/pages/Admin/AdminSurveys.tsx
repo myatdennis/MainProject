@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
+import { supabase } from '../../lib/supabase';
 import { Link } from 'react-router-dom';
 import { 
   Plus, 
@@ -6,19 +7,16 @@ import {
   Filter,
   BarChart3,
   Users,
-  Calendar,
   Eye,
   Edit,
   Copy,
-  Trash2,
   Play,
   Pause,
   Archive,
-  Download,
   Upload,
   CheckCircle,
   Clock,
-  AlertTriangle,
+  
   Target,
   TrendingUp,
   MessageSquare,
@@ -31,7 +29,7 @@ const AdminSurveys = () => {
   const [filterType, setFilterType] = useState('all');
   const [selectedSurveys, setSelectedSurveys] = useState<string[]>([]);
 
-  const surveys = [
+  const [surveys, setSurveys] = useState<any[]>([
     {
       id: 'climate-2025-q1',
       title: 'Q1 2025 Climate Assessment',
@@ -100,7 +98,71 @@ const AdminSurveys = () => {
       assignedOrgIds: ['1'],
       lastActivity: '2025-03-08'
     }
+  ]);
+
+  // Organizations (same sample set used across admin pages)
+  const organizations = [
+    { id: '1', name: 'Pacific Coast University' },
+    { id: '2', name: 'Mountain View High School' },
+    { id: '3', name: 'Community Impact Network' },
+    { id: '4', name: 'Regional Fire Department' },
+    { id: '5', name: 'TechForward Solutions' },
+    { id: '6', name: 'Regional Medical Center' },
+    { id: '7', name: 'Unity Community Church' }
   ];
+
+  const [showAssignModal, setShowAssignModal] = useState(false);
+  const [assignTargetSurveyId, setAssignTargetSurveyId] = useState<string | null>(null);
+  const [selectedOrgIds, setSelectedOrgIds] = useState<string[]>([]);
+
+  const openAssignModal = (surveyId: string) => {
+    const survey = surveys.find(s => s.id === surveyId);
+    setAssignTargetSurveyId(surveyId);
+    setSelectedOrgIds(survey?.assignedOrgIds ?? []);
+    setShowAssignModal(true);
+  };
+
+  const closeAssignModal = () => {
+    setShowAssignModal(false);
+    setAssignTargetSurveyId(null);
+    setSelectedOrgIds([]);
+  };
+
+  const toggleSelectOrg = (orgId: string) => {
+    setSelectedOrgIds(prev => prev.includes(orgId) ? prev.filter(id => id !== orgId) : [...prev, orgId]);
+  };
+
+  const saveAssignment = () => {
+    if (!assignTargetSurveyId) return;
+    // Optimistic update locally
+    setSurveys(prev => prev.map(s => s.id === assignTargetSurveyId ? {
+      ...s,
+      assignedOrgIds: selectedOrgIds,
+      assignedOrgs: organizations.filter(o => selectedOrgIds.includes(o.id)).map(o => o.name)
+    } : s));
+
+    // Persist to Supabase (table: survey_assignments)
+    (async () => {
+      try {
+        const payload = {
+          survey_id: assignTargetSurveyId,
+          organization_ids: selectedOrgIds,
+          updated_at: new Date().toISOString()
+        };
+
+        const { data, error } = await supabase.from('survey_assignments').upsert(payload).select();
+        if (error) {
+          console.warn('Failed to save assignment to Supabase:', error.message || error);
+        } else {
+          console.log('Saved survey assignment to Supabase:', data);
+        }
+      } catch (err) {
+        console.warn('Supabase error saving assignment:', err);
+      }
+    })();
+
+    closeAssignModal();
+  };
 
   const filteredSurveys = surveys.filter(survey => {
     const matchesSearch = survey.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -167,13 +229,7 @@ const AdminSurveys = () => {
     );
   };
 
-  const handleSelectAll = () => {
-    if (selectedSurveys.length === filteredSurveys.length) {
-      setSelectedSurveys([]);
-    } else {
-      setSelectedSurveys(filteredSurveys.map(survey => survey.id));
-    }
-  };
+  // removed handleSelectAll (not used)
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
@@ -323,7 +379,7 @@ const AdminSurveys = () => {
                   </div>
                   <p className="text-gray-600 text-sm mb-3">{survey.description}</p>
                   <span className={`px-2 py-1 rounded-full text-xs font-medium ${getTypeColor(survey.type)}`}>
-                    {survey.type.replace('-', ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                    {survey.type.replace('-', ' ').replace(/\b\w/g, (l: string) => l.toUpperCase())}
                   </span>
                 </div>
                 <div className="flex items-center space-x-2">
@@ -375,7 +431,7 @@ const AdminSurveys = () => {
                 <div className="text-sm text-gray-600 mb-2">Assigned Organizations:</div>
                 <div className="flex flex-wrap gap-1">
                   {survey.assignedOrgs.length > 0 ? (
-                    survey.assignedOrgs.slice(0, 2).map((org, index) => (
+                    survey.assignedOrgs.slice(0, 2).map((org: string, index: number) => (
                       <span key={index} className="bg-gray-100 text-gray-700 px-2 py-1 rounded-full text-xs">
                         {org}
                       </span>
@@ -409,6 +465,13 @@ const AdminSurveys = () => {
                   >
                     <BarChart3 className="h-4 w-4" />
                   </Link>
+                  <button
+                    onClick={() => openAssignModal(survey.id)}
+                    className="p-2 text-green-600 hover:text-green-800 hover:bg-green-50 rounded-lg"
+                    title="Assign to Organizations"
+                  >
+                    <Users className="h-4 w-4" />
+                  </button>
                   <Link
                     to={`/admin/surveys/${survey.id}/preview`}
                     className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-50 rounded-lg"
@@ -501,8 +564,39 @@ const AdminSurveys = () => {
           </div>
         </div>
       </div>
+      {/* Assign-to-Organization Modal */}
+      {showAssignModal && (
+        <div className="fixed inset-0 flex items-center justify-center z-50">
+          <div className="absolute inset-0 bg-black opacity-30" onClick={closeAssignModal}></div>
+          <div className="bg-white rounded-xl shadow-2xl z-50 w-full max-w-2xl p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold">Assign Survey to Organizations</h3>
+              <button onClick={closeAssignModal} className="text-gray-500 hover:text-gray-800">Close</button>
+            </div>
+            <p className="text-sm text-gray-600 mb-4">Select which organizations should receive this survey. Assignments can be changed later.</p>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4 max-h-64 overflow-y-auto">
+              {organizations.map(org => (
+                <label key={org.id} className={`flex items-center space-x-3 p-3 rounded-lg border ${selectedOrgIds.includes(org.id) ? 'border-orange-400 bg-orange-50' : 'border-gray-100 bg-white'}`}>
+                  <input type="checkbox" checked={selectedOrgIds.includes(org.id)} onChange={() => toggleSelectOrg(org.id)} className="h-4 w-4 text-orange-500" />
+                  <div>
+                    <div className="font-medium text-gray-900">{org.name}</div>
+                  </div>
+                </label>
+              ))}
+            </div>
+
+            <div className="flex items-center justify-end space-x-3">
+              <button onClick={closeAssignModal} className="border border-gray-300 px-4 py-2 rounded-lg">Cancel</button>
+              <button onClick={saveAssignment} className="bg-orange-500 text-white px-4 py-2 rounded-lg">Save Assignment</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
 
 export default AdminSurveys;
+
+// Assign Modal (rendered via state inside the component)

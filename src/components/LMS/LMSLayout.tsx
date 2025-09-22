@@ -11,7 +11,7 @@ import {
   Menu, 
   X,
   Users,
-  ChevronRight
+  
 } from 'lucide-react';
 
 interface LMSLayoutProps {
@@ -41,8 +41,8 @@ const LMSLayout: React.FC<LMSLayoutProps> = ({ children }) => {
 
   const isActive = (href: string) => location.pathname === href;
 
-  const handleLogout = () => {
-    logout('lms');
+  const handleLogout = async () => {
+    await logout('lms');
     navigate('/lms/login');
   };
 
