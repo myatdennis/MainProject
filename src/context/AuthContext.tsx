@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { supabase } from '../lib/supabase';
-import type { User } from '@supabase/supabase-js';
+import type { User, Session } from '@supabase/supabase-js';
 
 interface AuthState {
   lms: boolean;
@@ -9,8 +9,9 @@ interface AuthState {
 
 interface AuthContextType {
   isAuthenticated: AuthState;
-  login: (type: 'lms' | 'admin') => Promise<boolean>;
+  login: (email: string, password: string, type: 'lms' | 'admin') => Promise<boolean>;
   logout: (type: 'lms' | 'admin') => Promise<void>;
+  forgotPassword: (email: string) => Promise<boolean>;
   user: {
     name: string;
     email: string;
@@ -37,7 +38,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   // Check for existing authentication on mount
   useEffect(() => {
     // Check for existing Supabase session
-    supabase.auth.getSession().then(({ data: { session } }) => {
+    supabase.auth.getSession().then((res: { data: { session: Session | null } }) => {
+      const session: Session | null = res.data.session;
       if (session?.user) {
         setSupabaseUser(session.user);
         const lmsAuth = localStorage.getItem('huddle_lms_auth') === 'true';
@@ -61,8 +63,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     });
 
     // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
+    const { data } = supabase.auth.onAuthStateChange(
+      async (_event: string, session: Session | null) => {
         if (session?.user) {
           setSupabaseUser(session.user);
         } else {
@@ -76,79 +78,78 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       }
     );
 
-    return () => subscription.unsubscribe();
+    return () => data.subscription.unsubscribe();
   }, []);
 
-  const login = async (type: 'lms' | 'admin') => {
+  const login = async (email: string, password: string, type: 'lms' | 'admin') => {
     try {
-      // Use demo credentials for authentication
-      const credentials = type === 'admin' 
-        ? { email: 'admin@thehuddleco.com', password: 'admin123' }
-        : { email: 'user@pacificcoast.edu', password: 'user123' };
+      const credentials = { email, password };
 
-      // First try to sign up the user (in case they don't exist)
-      const { data: signUpData, error: signUpError } = await supabase.auth.signUp(credentials);
-      
-      let currentUser = signUpData?.user;
-      
-      // If sign up fails because user already exists, try to sign in
-      if (signUpError && signUpError.message.includes('already registered')) {
-        const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword(credentials);
-        
-        if (signInError) {
-          console.error('Authentication error:', signInError);
+      // Try sign in first
+      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword(credentials);
+      let currentUser = signInData?.user;
+
+      if (signInError || !currentUser) {
+        // Try sign up (dev/demo) and then sign in again
+        const { error: signUpError } = await supabase.auth.signUp(credentials);
+        if (signUpError) {
+          console.warn('Sign-up attempt failed (may require confirmation):', signUpError.message || signUpError);
+        }
+
+        const { data: signInData2, error: signInError2 } = await supabase.auth.signInWithPassword(credentials);
+        if (signInError2 || !signInData2?.user) {
+          console.error('Authentication error during sign-in:', signInError2 || 'no user returned');
           return false;
         }
-        
-        currentUser = signInData?.user;
-      } else if (signUpError) {
-        console.error('Authentication error:', signUpError);
-        return false;
+        currentUser = signInData2.user;
       }
 
       if (currentUser) {
         setSupabaseUser(currentUser);
       }
 
+      // persist a local auth flag for quick front-end checks
       localStorage.setItem(`huddle_${type}_auth`, 'true');
-      
-      // Set user data based on login type
-      const userData = type === 'admin' 
-        ? { 
-            name: 'Mya Dennis', 
-            email: 'admin@thehuddleco.com', 
-            role: 'admin',
-            id: currentUser?.id || ''
-          }
-        : { 
-            name: 'Sarah Chen', 
-            email: 'user@pacificcoast.edu', 
-            role: 'user',
-            id: currentUser?.id || ''
-          };
-      
+
+      const userData = {
+        name: type === 'admin' ? 'Mya Dennis' : 'Sarah Chen',
+        email,
+        role: type === 'admin' ? 'admin' : 'user',
+        id: currentUser?.id || ''
+      };
+
       localStorage.setItem('huddle_user', JSON.stringify(userData));
-      
-      setIsAuthenticated(prev => ({
-        ...prev,
-        [type]: true
-      }));
+
+      setIsAuthenticated(prev => ({ ...prev, [type]: true }));
       setUser(userData);
 
-      // Create user profile if it doesn't exist
+      // Create or update user profile in Supabase
       if (currentUser) {
-        await supabase
-          .from('user_profiles')
-          .upsert({
-            user_id: currentUser.id,
-            name: userData.name,
-            email: userData.email,
-            role: userData.role
-          });
+        await supabase.from('user_profiles').upsert({
+          user_id: currentUser.id,
+          name: userData.name,
+          email: userData.email,
+          role: userData.role
+        });
       }
+
       return true;
     } catch (error) {
       console.error('Login error:', error);
+      return false;
+    }
+  };
+
+  const forgotPassword = async (email: string) => {
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin });
+      if (error) {
+        console.error('Forgot password error:', error);
+        return false;
+      }
+      return true;
+    } catch (err) {
+      console.error('Forgot password exception:', err);
       return false;
     }
   };
@@ -176,6 +177,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       isAuthenticated,
       login,
       logout,
+      forgotPassword,
       user,
       supabaseUser
     }}>
