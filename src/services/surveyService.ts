@@ -1,4 +1,5 @@
 import { supabase } from '../lib/supabase';
+import type { Survey } from '../types/survey';
 
 export interface SurveyAssignment {
   id?: string;
@@ -60,4 +61,33 @@ export const getAnalytics = async (surveyId: string) => {
       'New hires report lower psychological safety'
     ]
   };
+};
+
+// Local persistence helpers for development when Supabase is not configured
+export const saveSurvey = async (survey: Survey) => {
+  try {
+    const key = 'local_surveys';
+    const raw = localStorage.getItem(key);
+    const items: Survey[] = raw ? JSON.parse(raw) : [];
+    const idx = items.findIndex(s => s.id === survey.id);
+    if (idx >= 0) items[idx] = survey;
+    else items.push(survey);
+    localStorage.setItem(key, JSON.stringify(items));
+    return survey;
+  } catch (err) {
+    console.warn('saveSurvey error:', err);
+    return null;
+  }
+};
+
+export const getSurveyById = async (id: string) => {
+  try {
+    const key = 'local_surveys';
+    const raw = localStorage.getItem(key);
+    const items: Survey[] = raw ? JSON.parse(raw) : [];
+    return items.find(s => s.id === id) || null;
+  } catch (err) {
+    console.warn('getSurveyById error:', err);
+    return null;
+  }
 };

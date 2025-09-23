@@ -1,4 +1,3 @@
-import React from 'react';
 import { useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { AuthProvider } from './context/AuthContext';
@@ -37,6 +36,10 @@ import AdminSurveys from './pages/Admin/AdminSurveys';
 import AdminSurveyBuilder from './pages/Admin/AdminSurveyBuilder';
 import AdminSurveyAnalytics from './pages/Admin/AdminSurveyAnalytics';
 import AIBot from './components/AIBot/AIBot';
+import OrgWorkspaceLayout from './components/OrgWorkspace/OrgWorkspaceLayout';
+import StrategicPlansPage from './components/OrgWorkspace/StrategicPlansPage';
+import SessionNotesPage from './components/OrgWorkspace/SessionNotesPage';
+import ActionTrackerPage from './components/OrgWorkspace/ActionTrackerPage';
 
 function App() {
   useEffect(() => {
@@ -60,6 +63,14 @@ function App() {
               <Route path="/testimonials" element={<TestimonialsPage />} />
               <Route path="/contact" element={<ContactPage />} />
               <Route path="/client-portal" element={<ClientPortalPage />} />
+              <Route path="/client-portal/org/:orgId/*" element={
+                <OrgWorkspaceLayout />
+              }>
+                <Route path="strategic-plans" element={<StrategicPlansPage />} />
+                <Route path="session-notes" element={<SessionNotesPage />} />
+                <Route path="action-tracker" element={<ActionTrackerPage />} />
+                <Route path="" element={<StrategicPlansPage />} />
+              </Route>
               <Route path="/lms/login" element={<LMSLogin />} />
               <Route path="/lms" element={<Navigate to="/lms/dashboard" replace />} />
               <Route path="/lms/*" element={

@@ -1,15 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useSearchParams, Link, useNavigate } from 'react-router-dom';
-import { 
+import { useParams, useSearchParams, Link } from 'react-router-dom';
+import {
   ArrowLeft,
   Save,
   Eye,
-  Play,
   Settings,
   Plus,
   Trash2,
-  GripVertical,
-  Copy,
   ChevronDown,
   ChevronUp,
   CheckCircle,
@@ -24,17 +21,15 @@ import {
   Brain,
   Send,
   Building2,
-  UserCheck,
   X
 } from 'lucide-react';
 import { surveyTemplates, questionTypes, defaultBranding, aiGeneratedQuestions, censusDemographicOptions } from '../../data/surveyTemplates';
-import { getAssignments, saveAssignments } from '../../services/surveyService';
+import { getAssignments, saveAssignments, saveSurvey as saveSurveyService, getSurveyById } from '../../services/surveyService';
 import type { Survey, SurveyQuestion, SurveySection } from '../../types/survey';
 
 const AdminSurveyBuilder = () => {
   const { surveyId } = useParams();
   const [searchParams] = useSearchParams();
-  const navigate = useNavigate();
   const templateId = searchParams.get('template');
   
   const [survey, setSurvey] = useState<Survey | null>(null);
@@ -70,8 +65,20 @@ const AdminSurveyBuilder = () => {
   }, [surveyId, templateId]);
 
   const loadSurvey = (id: string) => {
-    // In a real app, this would load from database
-    // For now, create a sample survey
+    // Try local storage first
+    (async () => {
+      const local = await getSurveyById(id);
+      if (local) {
+        setSurvey(local);
+        if (local.sections.length > 0) setActiveSection(local.sections[0].id);
+        return;
+      }
+
+      // In a real app, this would load from database
+      // For now, create a sample survey
+    })();
+    
+    // Sample fallback (if no local)
     const sampleSurvey: Survey = {
       id,
       title: 'Q1 2025 Climate Assessment',
@@ -312,6 +319,44 @@ const AdminSurveyBuilder = () => {
     } : null);
   };
 
+  // Drag and drop handlers for questions
+  const onDragStart = (e: React.DragEvent, questionId: string) => {
+    setDraggedQuestion(questionId);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const onDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const onDrop = (e: React.DragEvent, sectionId: string, targetQuestionId?: string) => {
+    e.preventDefault();
+    if (!survey || !draggedQuestion) return;
+
+    setSurvey(prev => {
+      if (!prev) return prev;
+      const sections = prev.sections.map(s => {
+        if (s.id !== sectionId) return s;
+        const questions = [...s.questions];
+        const draggedIndex = questions.findIndex(q => q.id === draggedQuestion);
+        if (draggedIndex === -1) return s;
+        const [dq] = questions.splice(draggedIndex, 1);
+        if (!targetQuestionId) {
+          questions.push(dq);
+        } else {
+          const targetIndex = questions.findIndex(q => q.id === targetQuestionId);
+          questions.splice(targetIndex === -1 ? questions.length : targetIndex, 0, dq);
+        }
+        // reassign orders
+        const reordered = questions.map((q, i) => ({ ...q, order: i + 1 }));
+        return { ...s, questions: reordered };
+      });
+      return { ...prev, sections, updatedAt: new Date().toISOString() };
+    });
+    setDraggedQuestion(null);
+  };
+
   const updateQuestion = (sectionId: string, questionId: string, updates: Partial<SurveyQuestion>) => {
     if (!survey) return;
     
@@ -367,28 +412,6 @@ const AdminSurveyBuilder = () => {
     } : null);
   };
 
-  const assignSurvey = (organizationIds: string[]) => {
-    if (!survey) return;
-    
-    setSurvey(prev => prev ? {
-      ...prev,
-      assignedTo: {
-        ...prev.assignedTo,
-        organizationIds
-      },
-      updatedAt: new Date().toISOString()
-    } : null);
-    
-    setShowAssignModal(false);
-    // Persist assignments
-    (async () => {
-      try {
-        await saveAssignments(survey!.id, organizationIds);
-      } catch (err) {
-        console.warn('Failed to persist assignments', err);
-      }
-    })();
-  };
 
   const saveSurvey = async () => {
     if (!survey) return;
@@ -405,7 +428,12 @@ const AdminSurveyBuilder = () => {
       }
 
       // Simulate saving other survey data (replace with real save API)
-      await new Promise((res) => setTimeout(res, 800));
+      // persist locally for now
+      try {
+        await saveSurveyService(survey);
+      } catch (err) {
+        console.warn('Local save failed', err);
+      }
 
       // You could show a toast here to confirm save
       // console.log('Survey saved', survey.id);
@@ -435,7 +463,13 @@ const AdminSurveyBuilder = () => {
 
   const renderQuestionEditor = (question: SurveyQuestion, sectionId: string) => {
     return (
-      <div className="bg-white border border-gray-200 rounded-lg p-6 mb-4">
+      <div
+        draggable
+        onDragStart={(e) => onDragStart(e, question.id)}
+        onDragOver={onDragOver}
+        onDrop={(e) => onDrop(e, sectionId, question.id)}
+        className="bg-white border border-gray-200 rounded-lg p-6 mb-4"
+      >
         <div className="flex items-center justify-between mb-4">
           <div className="flex items-center space-x-3">
             <div className="bg-gray-100 p-2 rounded-lg">
@@ -876,6 +910,45 @@ const AdminSurveyBuilder = () => {
             </div>
           </div>
         )}
+
+        {/* Conditional Logic Editor */}
+        <div className="mt-4 border-t pt-4">
+          <h4 className="text-sm font-medium text-gray-900 mb-2">Conditional Logic (optional)</h4>
+          <p className="text-xs text-gray-500 mb-2">Show this question only when previous answers match the rule.</p>
+          <div className="space-y-2">
+            {(question.conditionalLogic?.showIf || []).map((rule, idx) => (
+              <div key={idx} className="flex items-center space-x-2">
+                <input className="w-48 px-2 py-1 border rounded" value={rule.questionId} onChange={(e) => {
+                  const newRules = [...(question.conditionalLogic?.showIf || [])];
+                  newRules[idx] = { ...newRules[idx], questionId: e.target.value };
+                  updateQuestion(sectionId, question.id, { conditionalLogic: { ...(question.conditionalLogic || {}), showIf: newRules, logic: question.conditionalLogic?.logic || 'and' }, });
+                }} placeholder="Question ID" />
+                <select className="px-2 py-1 border rounded" value={rule.operator} onChange={(e) => {
+                  const newRules = [...(question.conditionalLogic?.showIf || [])];
+                  newRules[idx] = { ...newRules[idx], operator: e.target.value as 'equals' | 'not-equals' | 'contains' | 'greater-than' | 'less-than' };
+                  updateQuestion(sectionId, question.id, { conditionalLogic: { ...(question.conditionalLogic || {}), showIf: newRules, logic: question.conditionalLogic?.logic || 'and' }, });
+                }}>
+                  <option value="equals">equals</option>
+                  <option value="not-equals">not-equals</option>
+                  <option value="contains">contains</option>
+                </select>
+                <input className="px-2 py-1 border rounded" value={String(rule.value || '')} onChange={(e) => {
+                  const newRules = [...(question.conditionalLogic?.showIf || [])];
+                  newRules[idx] = { ...newRules[idx], value: e.target.value };
+                  updateQuestion(sectionId, question.id, { conditionalLogic: { ...(question.conditionalLogic || {}), showIf: newRules, logic: question.conditionalLogic?.logic || 'and' }, });
+                }} placeholder="Value" />
+                <button className="px-2 py-1 text-red-600" onClick={() => {
+                  const newRules = (question.conditionalLogic?.showIf || []).filter((_, i) => i !== idx);
+                  updateQuestion(sectionId, question.id, { conditionalLogic: { ...(question.conditionalLogic || {}), showIf: newRules, logic: question.conditionalLogic?.logic || 'and' }, });
+                }}>Remove</button>
+              </div>
+            ))}
+            <button className="text-sm text-orange-500" onClick={() => {
+              const newRules = [...(question.conditionalLogic?.showIf || []), { questionId: '', operator: 'equals' as const, value: '' }];
+              updateQuestion(sectionId, question.id, { conditionalLogic: { ...(question.conditionalLogic || {}), showIf: newRules, logic: question.conditionalLogic?.logic || 'and' } });
+            }}>+ Add condition</button>
+          </div>
+        </div>
       </div>
     );
   };
