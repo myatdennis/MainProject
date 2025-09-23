@@ -35,11 +35,13 @@ import AdminCourseDetail from './pages/Admin/AdminCourseDetail';
 import AdminSurveys from './pages/Admin/AdminSurveys';
 import AdminSurveyBuilder from './pages/Admin/AdminSurveyBuilder';
 import AdminSurveyAnalytics from './pages/Admin/AdminSurveyAnalytics';
+import AdminDocuments from './pages/Admin/AdminDocuments';
 import AIBot from './components/AIBot/AIBot';
 import OrgWorkspaceLayout from './components/OrgWorkspace/OrgWorkspaceLayout';
 import StrategicPlansPage from './components/OrgWorkspace/StrategicPlansPage';
 import SessionNotesPage from './components/OrgWorkspace/SessionNotesPage';
 import ActionTrackerPage from './components/OrgWorkspace/ActionTrackerPage';
+import DocumentsPage from './pages/Client/DocumentsPage';
 
 function App() {
   useEffect(() => {
@@ -69,6 +71,7 @@ function App() {
                 <Route path="strategic-plans" element={<StrategicPlansPage />} />
                 <Route path="session-notes" element={<SessionNotesPage />} />
                 <Route path="action-tracker" element={<ActionTrackerPage />} />
+                <Route path="documents" element={<DocumentsPage />} />
                 <Route path="" element={<StrategicPlansPage />} />
               </Route>
               <Route path="/lms/login" element={<LMSLogin />} />
@@ -105,6 +108,7 @@ function App() {
                     <Route path="surveys/:surveyId/preview" element={<AdminSurveyBuilder />} />
                     <Route path="course-builder/:courseId" element={<AdminCourseBuilder />} />
                     <Route path="courses/:courseId/details" element={<AdminCourseDetail />} />
+                    <Route path="documents" element={<AdminDocuments />} />
                     <Route path="settings" element={<AdminSettings />} />
                   </Routes>
                 </AdminLayout>
