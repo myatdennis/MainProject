@@ -1,5 +1,5 @@
 import React from 'react';
-import { Users, MessageSquare, Target, Clock, CheckCircle, ArrowRight, Calendar } from 'lucide-react';
+import { Users, MessageSquare, Target, Clock, CheckCircle, ArrowRight, Calendar, BookOpen } from 'lucide-react';
 
 const ServicesPage = () => {
   const services = [
@@ -48,6 +48,21 @@ const ServicesPage = () => {
         "Quarterly strategy sessions"
       ],
       ideal: ["C-suite executives", "Board members", "DEI committees", "Organizational leaders"]
+    },
+    {
+      icon: <BookOpen className="h-12 w-12 text-purple-500" />,
+      title: "Online Training Courses",
+      duration: "Flexible, self-paced",
+      price: "Starting at $99 per course",
+      description: "Self-paced video modules, interactive quizzes and assessments, downloadable resources, certificates of completion, accessible on desktop and mobile",
+      features: [
+        "Self-paced video modules",
+        "Interactive quizzes and assessments",
+        "Downloadable resources",
+        "Certificates of completion",
+        "Accessible on desktop and mobile"
+      ],
+      ideal: ["All employees", "Remote learners", "Managers", "HR teams"]
     }
   ];
 
