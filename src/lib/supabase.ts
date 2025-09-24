@@ -28,6 +28,7 @@ if (!supabaseUrl || !supabaseAnonKey) {
       signUp: () => Promise.resolve({ data: { user: null }, error: { message: 'Supabase not configured' } }),
       signInWithPassword: () => Promise.resolve({ data: { user: null }, error: { message: 'Supabase not configured' } }),
       signOut: () => Promise.resolve({ error: null }),
+      resetPasswordForEmail: () => Promise.resolve({ error: { message: 'Password reset not available in demo mode' } }),
       onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } })
     },
     from: () => createMockQuery()
