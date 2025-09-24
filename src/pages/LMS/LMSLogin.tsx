@@ -20,10 +20,16 @@ const LMSLogin: React.FC = () => {
     e.preventDefault();
     setIsLoading(true);
     setMessage('');
-    const ok = await login(email, password, 'lms');
+    
+    const result = await login(email, password, 'lms');
     setIsLoading(false);
-    if (ok) navigate('/lms/dashboard');
-    else setMessage('Sign-in failed.');
+    
+    if (result.success) {
+      navigate('/lms/dashboard');
+    } else {
+      // Show specific error message from the login function
+      setMessage(result.error || 'Sign-in failed. Please check your credentials and try again.');
+    }
   };
 
   const handleForgot = async () => {
@@ -50,8 +56,18 @@ const LMSLogin: React.FC = () => {
         </div>
 
         <div className="bg-white rounded-2xl shadow-xl p-8">
-          <div className="mb-4 bg-blue-50 border border-blue-100 rounded-lg p-3 text-sm text-blue-700">Demo credentials: Email: user@pacificcoast.edu • Password: user123</div>
-          {message && <div className="mb-3 text-sm text-center text-orange-600">{message}</div>}
+          <div className="mb-4 bg-blue-50 border border-blue-100 rounded-lg p-3 text-sm text-blue-700">
+            Demo credentials: Email: user@pacificcoast.edu • Password: user123
+          </div>
+          {message && (
+            <div className={`mb-3 text-sm text-center rounded-lg p-3 ${
+              message.includes('Demo mode') || message.includes('Demo credentials') 
+                ? 'text-blue-700 bg-blue-50 border border-blue-100' 
+                : 'text-red-700 bg-red-50 border border-red-100'
+            }`}>
+              {message}
+            </div>
+          )}
           <form onSubmit={handleSubmit} className="space-y-6">
             <div>
               <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">Email Address</label>

@@ -6,9 +6,9 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 let supabase: any;
 
 if (!supabaseUrl || !supabaseAnonKey) {
-  console.warn('Supabase environment variables not found. Please click "Connect to Supabase" in the top right to set up your database connection.');
+  console.warn('Supabase not configured: Missing environment variables. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to your .env.local file for database authentication.');
   
-  // Create a mock client that won't break the app
+  // Create a mock client that returns clear error messages
   const createMockQuery = () => ({
     select: () => createMockQuery(),
     insert: () => createMockQuery(),
@@ -17,7 +17,7 @@ if (!supabaseUrl || !supabaseAnonKey) {
     delete: () => createMockQuery(),
     eq: () => createMockQuery(),
     order: () => createMockQuery(),
-    single: () => Promise.resolve({ data: null, error: { message: 'Supabase not configured' } }),
+    single: () => Promise.resolve({ data: null, error: { message: 'Supabase not configured. Please set up your .env.local file with database credentials.' } }),
     then: (resolve: any) => resolve({ data: [], error: null })
   });
 
@@ -25,8 +25,9 @@ if (!supabaseUrl || !supabaseAnonKey) {
     auth: {
       getSession: () => Promise.resolve({ data: { session: null }, error: null }),
       getUser: () => Promise.resolve({ data: { user: null }, error: null }),
-      signUp: () => Promise.resolve({ data: { user: null }, error: { message: 'Supabase not configured' } }),
-      signInWithPassword: () => Promise.resolve({ data: { user: null }, error: { message: 'Supabase not configured' } }),
+      signUp: () => Promise.resolve({ data: { user: null }, error: { message: 'Supabase not configured. Please set up your .env.local file with database credentials.' } }),
+      signInWithPassword: () => Promise.resolve({ data: { user: null }, error: { message: 'Supabase not configured. Please set up your .env.local file with database credentials.' } }),
+      resetPasswordForEmail: () => Promise.resolve({ data: null, error: { message: 'Supabase not configured. Please set up your .env.local file with database credentials.' } }),
       signOut: () => Promise.resolve({ error: null }),
       onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } })
     },
