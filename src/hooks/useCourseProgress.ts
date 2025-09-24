@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
+import { courseStore } from '../store/courseStore';
 import type { UserLessonProgress, UserCourseEnrollment, UserReflection } from '../lib/supabase';
 
 export const useCourseProgress = (courseId: string) => {
@@ -17,6 +18,53 @@ export const useCourseProgress = (courseId: string) => {
     try {
       setLoading(true);
       setError(null);
+      
+      // Check if Supabase is configured
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      
+      if (!supabaseUrl || !supabaseAnonKey) {
+        // Demo mode - use local storage for progress tracking
+        console.log('Running course progress in demo mode');
+        
+        const demoUserId = 'demo-user';
+        const enrollmentKey = `huddle_enrollment_${courseId}`;
+        const progressKey = `huddle_lesson_progress_${courseId}`;
+        const reflectionsKey = `huddle_reflections_${courseId}`;
+        
+        // Load enrollment data from localStorage
+        const savedEnrollment = localStorage.getItem(enrollmentKey);
+        if (savedEnrollment) {
+          setEnrollmentData(JSON.parse(savedEnrollment));
+        } else {
+          // Auto-enroll in demo mode
+          const demoEnrollment = {
+            user_id: demoUserId,
+            course_id: courseId,
+            enrolled_at: new Date().toISOString(),
+            progress_percentage: 0,
+            last_accessed_at: new Date().toISOString()
+          };
+          localStorage.setItem(enrollmentKey, JSON.stringify(demoEnrollment));
+          setEnrollmentData(demoEnrollment);
+        }
+        
+        // Load lesson progress from localStorage
+        const savedProgress = localStorage.getItem(progressKey);
+        if (savedProgress) {
+          setLessonProgress(JSON.parse(savedProgress));
+        }
+        
+        // Load reflections from localStorage
+        const savedReflections = localStorage.getItem(reflectionsKey);
+        if (savedReflections) {
+          setReflections(JSON.parse(savedReflections));
+        }
+        
+        setLoading(false);
+        return;
+      }
+      
       const { data: { user } } = await supabase.auth.getUser();
       
       if (!user) {
@@ -83,6 +131,26 @@ export const useCourseProgress = (courseId: string) => {
 
   const enrollInCourse = async () => {
     try {
+      // Check if Supabase is configured
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      
+      if (!supabaseUrl || !supabaseAnonKey) {
+        // Demo mode - use local storage
+        const demoUserId = 'demo-user';
+        const enrollmentKey = `huddle_enrollment_${courseId}`;
+        const enrollmentData = {
+          user_id: demoUserId,
+          course_id: courseId,
+          enrolled_at: new Date().toISOString(),
+          progress_percentage: 0,
+          last_accessed_at: new Date().toISOString()
+        };
+        localStorage.setItem(enrollmentKey, JSON.stringify(enrollmentData));
+        setEnrollmentData(enrollmentData);
+        return enrollmentData;
+      }
+      
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('User not authenticated');
 
@@ -116,6 +184,39 @@ export const useCourseProgress = (courseId: string) => {
     }
   ) => {
     try {
+      // Check if Supabase is configured
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      
+      if (!supabaseUrl || !supabaseAnonKey) {
+        // Demo mode - use local storage
+        const progressKey = `huddle_lesson_progress_${courseId}`;
+        const currentProgress = JSON.parse(localStorage.getItem(progressKey) || '{}');
+        
+        const updateData = {
+          user_id: 'demo-user',
+          lesson_id: lessonId,
+          completed: progressData.completed || false,
+          progress_percentage: progressData.progressPercentage || 0,
+          time_spent: progressData.timeSpent || 0,
+          last_accessed_at: new Date().toISOString(),
+          ...(progressData.completed && { completed_at: new Date().toISOString() })
+        };
+        
+        currentProgress[lessonId] = updateData;
+        localStorage.setItem(progressKey, JSON.stringify(currentProgress));
+        
+        setLessonProgress(prev => ({
+          ...prev,
+          [lessonId]: updateData
+        }));
+        
+        // Update course progress in demo mode
+        await updateCourseProgress();
+        
+        return updateData;
+      }
+      
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('User not authenticated');
 
@@ -154,6 +255,35 @@ export const useCourseProgress = (courseId: string) => {
 
   const updateCourseProgress = async () => {
     try {
+      // Check if Supabase is configured
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      
+      if (!supabaseUrl || !supabaseAnonKey) {
+        // Demo mode - calculate progress from course store
+        const course = courseStore.getCourse(courseId);
+        if (!course) return;
+        
+        // Calculate progress from course modules/lessons
+        const totalLessons = course.modules.reduce((acc, module) => acc + module.lessons.length, 0);
+        const completedLessons = Object.values(lessonProgress).filter(p => p.completed).length;
+        const progressPercentage = totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0;
+        
+        // Update enrollment progress in localStorage
+        const enrollmentKey = `huddle_enrollment_${courseId}`;
+        const currentEnrollment = JSON.parse(localStorage.getItem(enrollmentKey) || '{}');
+        const updatedEnrollment = {
+          ...currentEnrollment,
+          progress_percentage: progressPercentage,
+          last_accessed_at: new Date().toISOString(),
+          ...(progressPercentage === 100 && { completed_at: new Date().toISOString() })
+        };
+        
+        localStorage.setItem(enrollmentKey, JSON.stringify(updatedEnrollment));
+        setEnrollmentData(updatedEnrollment);
+        return;
+      }
+      
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
@@ -200,6 +330,33 @@ export const useCourseProgress = (courseId: string) => {
 
   const saveReflection = async (lessonId: string, content: string) => {
     try {
+      // Check if Supabase is configured
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      
+      if (!supabaseUrl || !supabaseAnonKey) {
+        // Demo mode - use local storage
+        const reflectionsKey = `huddle_reflections_${courseId}`;
+        const currentReflections = JSON.parse(localStorage.getItem(reflectionsKey) || '{}');
+        
+        const reflectionData = {
+          user_id: 'demo-user',
+          lesson_id: lessonId,
+          content,
+          updated_at: new Date().toISOString()
+        };
+        
+        currentReflections[lessonId] = reflectionData;
+        localStorage.setItem(reflectionsKey, JSON.stringify(currentReflections));
+        
+        setReflections(prev => ({
+          ...prev,
+          [lessonId]: reflectionData
+        }));
+        
+        return reflectionData;
+      }
+      
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('User not authenticated');
 

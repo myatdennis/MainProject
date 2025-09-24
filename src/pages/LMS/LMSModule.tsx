@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { courseStore } from '../../store/courseStore';
 import { useCourseProgress } from '../../hooks/useCourseProgress';
+import { getVideoEmbedUrl } from '../../utils/videoUtils';
 import { 
   Play, 
   Pause, 
