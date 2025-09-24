@@ -1,6 +1,8 @@
 // Local-first document service for dev. Stores documents in localStorage.
 export type Visibility = 'global' | 'org' | 'user';
 
+import { supabase } from '../lib/supabase';
+
 export type DocumentMeta = {
   id: string;
   name: string;
@@ -42,9 +44,40 @@ export const getDocument = async (id: string) => {
   return docs.find(d => d.id === id) || null;
 };
 
-export const addDocument = async (meta: Omit<DocumentMeta,'id'|'createdAt'>) => {
+export const addDocument = async (meta: Omit<DocumentMeta,'id'|'createdAt'>, file?: File | null) => {
   const docs = readAll();
-  const doc: DocumentMeta = { id: `doc-${Date.now()}`, createdAt: new Date().toISOString(), ...meta } as DocumentMeta;
+  const docId = `doc-${Date.now()}`;
+  let url = meta.url;
+
+  // If a File is provided and supabase storage is available, upload it to 'documents' bucket
+  if (file && (supabase as any)?.storage) {
+    try {
+      const path = `${docId}/${file.name}`;
+      // @ts-ignore
+      const { error: uploadError } = await supabase.storage.from('documents').upload(path, file, { upsert: true });
+      if (uploadError) {
+        console.warn('Storage upload failed, falling back to data URL:', uploadError.message || uploadError);
+      } else {
+        // @ts-ignore
+        const { data } = supabase.storage.from('documents').getPublicUrl(path);
+        url = data?.publicUrl || url;
+      }
+    } catch (err) {
+      console.error('Upload exception:', err);
+    }
+  }
+
+  // If no storage upload happened but a File was provided, read as data URL
+  if (!url && file) {
+    url = await new Promise<string>((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(String(r.result));
+      r.onerror = rej;
+      r.readAsDataURL(file);
+    });
+  }
+
+  const doc: DocumentMeta = { id: docId, createdAt: new Date().toISOString(), ...meta, url } as DocumentMeta;
   docs.push(doc);
   writeAll(docs);
   return doc;

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { FilePlus, UploadCloud, Trash } from 'lucide-react';
 import documentService, { DocumentMeta, Visibility } from '../../services/documentService';
+import notificationService from '../../services/notificationService';
 
 const AdminDocuments: React.FC = () => {
   const [docs, setDocs] = useState<DocumentMeta[]>([]);
@@ -37,7 +38,7 @@ const AdminDocuments: React.FC = () => {
       });
     }
 
-    await documentService.addDocument({
+    const doc = await documentService.addDocument({
       name: name || file!.name,
       filename: file?.name,
       url,
@@ -49,7 +50,15 @@ const AdminDocuments: React.FC = () => {
       orgId: visibility === 'org' ? orgId : undefined,
       userId: visibility === 'user' ? userId : undefined,
       createdBy: 'Admin'
-    });
+    }, file);
+
+    // send a local notification to assigned org or user
+    if (visibility === 'org' && orgId) {
+      await notificationService.addNotification({ title: 'New Document Shared', body: `A document "${doc.name}" was shared with your organization.`, orgId });
+    }
+    if (visibility === 'user' && userId) {
+      await notificationService.addNotification({ title: 'New Document Shared', body: `A document "${doc.name}" was shared with you.`, userId });
+    }
 
     setName(''); setFile(null); setTags(''); setOrgId(''); setUserId('');
     load();

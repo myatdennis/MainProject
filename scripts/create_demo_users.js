@@ -58,6 +58,27 @@ async function createUser(u) {
 
   const data = await res.json();
   console.log('Created or returned user:', data.id || data.user?.id || data.email || u.email);
+  // Try to create a user profile row (if your Supabase project has a 'user_profiles' table)
+  try {
+    const profileRes = await fetch(`${SUPABASE_URL.replace(/\/+$/,'')}/rest/v1/user_profiles`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+        Prefer: 'resolution=merge-duplicates'
+      },
+      body: JSON.stringify({ user_id: data.id || data.user?.id || null, name: u.name, email: u.email, role: u.role })
+    });
+    if (!profileRes.ok) {
+      const txt = await profileRes.text();
+      console.warn('Profile insert failed:', profileRes.status, txt);
+    } else {
+      console.log('Profile upserted for', u.email);
+    }
+  } catch (err) {
+    console.warn('Profile insert exception:', err);
+  }
+
   return true;
 }
 

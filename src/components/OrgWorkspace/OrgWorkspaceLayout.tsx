@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link, Outlet, useParams } from 'react-router-dom';
+import notificationService from '../../services/notificationService';
 import { useAuth } from '../../context/AuthContext';
 
 const OrgWorkspaceLayout: React.FC = () => {
@@ -7,6 +8,7 @@ const OrgWorkspaceLayout: React.FC = () => {
   const { isAuthenticated } = useAuth();
   const [orgName] = useState<string>(`Organization ${orgId}`);
   const [allowed, setAllowed] = useState<boolean>(false);
+  const [notifications, setNotifications] = useState<any[]>([]);
 
   // Basic guard: this would be replaced with a real permission check
   useEffect(() => {
@@ -14,6 +16,13 @@ const OrgWorkspaceLayout: React.FC = () => {
     const memberFlag = orgId ? localStorage.getItem(`huddle_org_${orgId}_member`) === 'true' : false;
     const admin = isAuthenticated.admin;
     setAllowed(memberFlag || admin);
+    const loadNotes = async () => {
+      if (orgId) {
+        const notes = await notificationService.listNotifications({ orgId });
+        setNotifications(notes.slice(0,5));
+      }
+    };
+    loadNotes();
   }, [orgId]);
 
   return (
@@ -46,9 +55,20 @@ const OrgWorkspaceLayout: React.FC = () => {
             <li><Link to="strategic-plans" className="block p-2 rounded hover:bg-gray-50">Strategic Plan Drafts</Link></li>
             <li><Link to="session-notes" className="block p-2 rounded hover:bg-gray-50">Session Notes & Follow-Ups</Link></li>
             <li><Link to="action-tracker" className="block p-2 rounded hover:bg-gray-50">Shared Action Tracker</Link></li>
+            <li><Link to="documents" className="block p-2 rounded hover:bg-gray-50">Shared Documents</Link></li>
           </ul>
         </nav>
         <div className="md:col-span-3">
+          {notifications.length > 0 && (
+            <div className="mb-4 bg-yellow-50 border border-yellow-100 rounded-lg p-3">
+              <h4 className="font-semibold">Recent Workspace Notifications</h4>
+              <ul className="text-sm mt-2 space-y-1">
+                {notifications.map(n => (
+                  <li key={n.id}>{n.title} — <span className="text-gray-600">{new Date(n.createdAt).toLocaleString()}</span></li>
+                ))}
+              </ul>
+            </div>
+          )}
           <Outlet />
         </div>
       </div>
