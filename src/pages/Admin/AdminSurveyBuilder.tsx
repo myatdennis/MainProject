@@ -23,7 +23,7 @@ import {
   Building2,
   X
 } from 'lucide-react';
-import { surveyTemplates, questionTypes, defaultBranding, aiGeneratedQuestions, censusDemographicOptions } from '../../data/surveyTemplates';
+import { surveyTemplates, questionTypes, defaultBranding, aiGeneratedQuestions, aiGeneratedQuestionsLegacy, censusDemographicOptions } from '../../data/surveyTemplates';
 import { getAssignments, saveAssignments, saveSurvey as saveSurveyService, getSurveyById } from '../../services/surveyService';
 import type { Survey, SurveyQuestion, SurveySection } from '../../types/survey';
 
@@ -38,6 +38,8 @@ const AdminSurveyBuilder = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [showBranding, setShowBranding] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
+  const [showAIModal, setShowAIModal] = useState(false);
+  const [aiSuggestions, setAISuggestions] = useState<any[]>([]);
   const [isSaving, setIsSaving] = useState(false);
 
   // Organizations data (in a real app, this would come from an API)
@@ -390,26 +392,84 @@ const AdminSurveyBuilder = () => {
     } : null);
   };
 
-  const addAIQuestions = () => {
+  const generateAIQuestions = () => {
     if (!survey || !activeSection) return;
     
-    // Add a selection of AI-generated questions to the active section
-    const selectedQuestions = aiGeneratedQuestions.slice(0, 3).map((template, index) => ({
-      ...template,
-      id: `ai-question-${Date.now()}-${index}`,
-      required: true,
-      order: survey.sections.find(s => s.id === activeSection)!.questions.length + index + 1
-    }) as SurveyQuestion);
+    // Get the active section to understand context
+    const currentSection = survey.sections.find(s => s.id === activeSection);
+    if (!currentSection) return;
+
+    // Determine the best AI questions based on survey type and section context
+    let selectedQuestions: any[] = [];
+    const sectionTitle = currentSection.title.toLowerCase();
+    const surveyType = survey.type;
+    
+    // Smart context-aware question selection
+    if (sectionTitle.includes('demographic') || sectionTitle.includes('background')) {
+      selectedQuestions = aiGeneratedQuestions.demographics.slice(0, 3);
+    } else if (sectionTitle.includes('microaggression') || sectionTitle.includes('bias')) {
+      selectedQuestions = aiGeneratedQuestions.microaggressions.slice(0, 3);
+    } else if (sectionTitle.includes('leadership') || sectionTitle.includes('management')) {
+      selectedQuestions = aiGeneratedQuestions.leadership.slice(0, 3);
+    } else if (sectionTitle.includes('equity') || sectionTitle.includes('fairness')) {
+      selectedQuestions = aiGeneratedQuestions.equity.slice(0, 3);
+    } else if (sectionTitle.includes('belonging') || sectionTitle.includes('inclusion')) {
+      selectedQuestions = aiGeneratedQuestions.belonging.concat(aiGeneratedQuestions.inclusion).slice(0, 3);
+    } else {
+      // Default: select based on survey type
+      switch (surveyType) {
+        case 'climate-assessment':
+          selectedQuestions = aiGeneratedQuestions.belonging.concat(aiGeneratedQuestions.inclusion).slice(0, 4);
+          break;
+        case 'inclusion-index':
+          selectedQuestions = aiGeneratedQuestions.inclusion.slice(0, 4);
+          break;
+        case 'equity-lens':
+          selectedQuestions = aiGeneratedQuestions.equity.slice(0, 4);
+          break;
+        default:
+          // Mix of different categories for custom surveys
+          selectedQuestions = [
+            ...aiGeneratedQuestions.belonging.slice(0, 1),
+            ...aiGeneratedQuestions.equity.slice(0, 1),
+            ...aiGeneratedQuestions.inclusion.slice(0, 2)
+          ];
+      }
+    }
+
+    setAISuggestions(selectedQuestions);
+    setShowAIModal(true);
+  };
+
+  const addSelectedAIQuestions = (selectedIndices: number[]) => {
+    if (!survey || !activeSection) return;
+    
+    const currentSection = survey.sections.find(s => s.id === activeSection);
+    if (!currentSection) return;
+
+    // Convert selected suggestions to survey questions with proper IDs and order
+    const questionsToAdd = selectedIndices.map((index, i) => {
+      const template = aiSuggestions[index];
+      return {
+        ...template,
+        id: `ai-question-${Date.now()}-${i}`,
+        required: template.required ?? true,
+        order: currentSection.questions.length + i + 1
+      } as SurveyQuestion;
+    });
 
     setSurvey(prev => prev ? {
       ...prev,
       sections: prev.sections.map(s => 
         s.id === activeSection 
-          ? { ...s, questions: [...s.questions, ...selectedQuestions] }
+          ? { ...s, questions: [...s.questions, ...questionsToAdd] }
           : s
       ),
       updatedAt: new Date().toISOString()
     } : null);
+
+    setShowAIModal(false);
+    setAISuggestions([]);
   };
 
 
@@ -1066,7 +1126,7 @@ const AdminSurveyBuilder = () => {
             <h4 className="font-medium text-gray-900 mb-3">AI Suggestions</h4>
             <div className="space-y-2">
               <button 
-                onClick={addAIQuestions}
+                onClick={generateAIQuestions}
                 disabled={!activeSection}
                 className="w-full text-left p-2 bg-purple-50 border border-purple-200 rounded-lg hover:bg-purple-100 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed">
                 <div className="flex items-center space-x-2">
@@ -1454,6 +1514,114 @@ const AdminSurveyBuilder = () => {
               >
                 <Send className="h-4 w-4" />
                 <span>Assign & Notify</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* AI Suggestions Modal */}
+      {showAIModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+            <div className="p-6 border-b border-gray-200">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="bg-purple-100 p-2 rounded-lg">
+                    <Brain className="h-6 w-6 text-purple-600" />
+                  </div>
+                  <div>
+                    <h2 className="text-xl font-bold text-gray-900">AI-Generated Question Suggestions</h2>
+                    <p className="text-sm text-gray-600">Select questions to add to your survey section</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setShowAIModal(false)}
+                  className="text-gray-400 hover:text-gray-600"
+                >
+                  <X className="h-6 w-6" />
+                </button>
+              </div>
+            </div>
+            <div className="p-6">
+              <div className="mb-4">
+                <p className="text-sm text-gray-700 mb-4">
+                  These questions were intelligently selected based on your survey type and section content. 
+                  Choose the ones that best fit your assessment goals.
+                </p>
+              </div>
+              <div className="space-y-4">
+                {aiSuggestions.map((suggestion, index) => (
+                  <div key={index} className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50">
+                    <div className="flex items-start space-x-3">
+                      <input
+                        type="checkbox"
+                        id={`ai-question-${index}`}
+                        className="mt-1 h-4 w-4 text-purple-600 focus:ring-purple-500 border-gray-300 rounded"
+                        defaultChecked={true}
+                      />
+                      <div className="flex-1">
+                        <label htmlFor={`ai-question-${index}`} className="cursor-pointer">
+                          <div className="flex items-center space-x-2 mb-2">
+                            <span className="font-medium text-gray-900">{suggestion.title}</span>
+                            <span className="px-2 py-1 bg-purple-100 text-purple-800 text-xs rounded-full">
+                              {suggestion.type.replace('-', ' ')}
+                            </span>
+                            {suggestion.category && (
+                              <span className="px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full">
+                                {suggestion.category}
+                              </span>
+                            )}
+                          </div>
+                          {suggestion.description && (
+                            <p className="text-sm text-gray-600 mb-2">{suggestion.description}</p>
+                          )}
+                          <div className="text-xs text-gray-500">
+                            {suggestion.type === 'likert-scale' && suggestion.scale && (
+                              <span>Scale: {suggestion.scale.min} ({suggestion.scale.minLabel}) to {suggestion.scale.max} ({suggestion.scale.maxLabel})</span>
+                            )}
+                            {suggestion.type === 'multiple-choice' && suggestion.options && (
+                              <span>{suggestion.options.length} options • {suggestion.allowMultiple ? 'Multiple' : 'Single'} choice</span>
+                            )}
+                            {suggestion.type === 'ranking' && suggestion.rankingItems && (
+                              <span>{suggestion.rankingItems.length} items to rank</span>
+                            )}
+                            {suggestion.type === 'matrix' && suggestion.matrixRows && (
+                              <span>{suggestion.matrixRows.length}×{suggestion.matrixColumns?.length || 0} matrix</span>
+                            )}
+                            {suggestion.type === 'open-ended' && suggestion.validation && (
+                              <span>
+                                {suggestion.validation.minLength && `Min: ${suggestion.validation.minLength} chars`}
+                                {suggestion.validation.maxLength && ` Max: ${suggestion.validation.maxLength} chars`}
+                              </span>
+                            )}
+                          </div>
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="p-6 border-t border-gray-200 bg-gray-50 flex justify-between">
+              <button
+                onClick={() => setShowAIModal(false)}
+                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors duration-200"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  // Get selected checkboxes
+                  const checkboxes = document.querySelectorAll<HTMLInputElement>('input[id^="ai-question-"]:checked');
+                  const selectedIndices = Array.from(checkboxes).map(cb => 
+                    parseInt(cb.id.split('-').pop() || '0')
+                  );
+                  addSelectedAIQuestions(selectedIndices);
+                }}
+                className="bg-purple-500 text-white px-6 py-2 rounded-lg hover:bg-purple-600 transition-colors duration-200"
+              >
+                Add Selected Questions
               </button>
             </div>
           </div>
