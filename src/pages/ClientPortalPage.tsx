@@ -1,4 +1,5 @@
 import React from 'react';
+import { Link } from 'react-router-dom';
 import { Lock, Users, BookOpen, BarChart3, Download, Video, Calendar, MessageSquare, Settings, ArrowRight } from 'lucide-react';
 
 const ClientPortalPage = () => {
@@ -81,16 +82,19 @@ const ClientPortalPage = () => {
                 <span className="text-2xl font-bold text-gray-900">Client Portal</span>
               </div>
               <h1 className="text-4xl md:text-5xl font-bold text-gray-900 mb-6">
-                Your Secure Learning Space is Coming Soon
+                Your Client Portal is Now Available
               </h1>
               <p className="text-xl text-gray-600 mb-8">
-                We're building a comprehensive learning management system where your team can access 
-                custom training materials, track progress, and continue your DEI journey beyond our workshops.
+                Access your personalized learning dashboard, complete assigned surveys, track course progress,
+                and download resources shared specifically for your organization.
               </p>
               <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4">
-                <button className="bg-gradient-to-r from-blue-400 to-purple-500 text-white px-8 py-4 rounded-full font-semibold text-lg hover:from-blue-500 hover:to-purple-600 transition-all duration-200 transform hover:scale-105">
-                  Get Early Access
-                </button>
+                <Link 
+                  to="/client/dashboard"
+                  className="bg-gradient-to-r from-blue-400 to-purple-500 text-white px-8 py-4 rounded-full font-semibold text-lg hover:from-blue-500 hover:to-purple-600 transition-all duration-200 transform hover:scale-105"
+                >
+                  Access Portal Dashboard
+                </Link>
                 <button className="border-2 border-blue-500 text-blue-500 px-8 py-4 rounded-full font-semibold text-lg hover:bg-blue-500 hover:text-white transition-all duration-200">
                   Learn More
                 </button>

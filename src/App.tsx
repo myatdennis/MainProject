@@ -11,6 +11,11 @@ import ResourcePage from './pages/ResourcePage';
 import TestimonialsPage from './pages/TestimonialsPage';
 import ContactPage from './pages/ContactPage';
 import ClientPortalPage from './pages/ClientPortalPage';
+import ClientPortalDashboard from './pages/Client/ClientPortalDashboard';
+import ClientSurveysPage from './pages/Client/ClientSurveysPage';
+import ClientSurveyTaker from './pages/Client/ClientSurveyTaker';
+import ClientSurveyCompletion from './pages/Client/ClientSurveyCompletion';
+import ClientFilesPage from './pages/Client/ClientFilesPage';
 import LMSDashboard from './pages/LMS/LMSDashboard';
 import LMSCourses from './pages/LMS/LMSCourses';
 import LMSModule from './pages/LMS/LMSModule';
@@ -69,6 +74,11 @@ function App() {
               <Route path="/testimonials" element={<TestimonialsPage />} />
               <Route path="/contact" element={<ContactPage />} />
               <Route path="/client-portal" element={<ClientPortalPage />} />
+              <Route path="/client/dashboard" element={<ClientPortalDashboard />} />
+              <Route path="/client/surveys" element={<ClientSurveysPage />} />
+              <Route path="/client/surveys/:surveyId" element={<ClientSurveyTaker />} />
+              <Route path="/client/surveys/:surveyId/completed" element={<ClientSurveyCompletion />} />
+              <Route path="/client/files" element={<ClientFilesPage />} />
               <Route path="/client-portal/org/:orgId/*" element={
                 <OrgWorkspaceLayout />
               }>
