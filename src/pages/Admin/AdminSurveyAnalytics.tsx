@@ -19,6 +19,7 @@ import {
   Share,
   RefreshCw
 } from 'lucide-react';
+import SurveyDistributionDashboard from '../../components/Survey/SurveyDistributionDashboard';
 
 const AdminSurveyAnalytics = () => {
   const { surveyId } = useParams();
@@ -256,9 +257,9 @@ const AdminSurveyAnalytics = () => {
         </div>
       </div>
 
-      {/* Filters */}
+      {/* Filters and Tab Navigation */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
+        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0 mb-6">
           <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4">
             <div className="flex items-center space-x-2">
               <Calendar className="h-5 w-5 text-gray-400" />
@@ -288,32 +289,66 @@ const AdminSurveyAnalytics = () => {
             </div>
           </div>
         </div>
+
+        {/* Analytics Navigation Tabs */}
+        <div className="flex space-x-1 bg-gray-100 p-1 rounded-lg w-fit">
+          <button
+            onClick={() => setSelectedMetric('overview')}
+            className={`py-2 px-4 text-sm font-medium rounded-md transition-colors duration-200 ${
+              selectedMetric === 'overview' 
+                ? 'bg-white text-orange-600 shadow-sm' 
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            Overview & Analytics
+          </button>
+          <button
+            onClick={() => setSelectedMetric('distribution')}
+            className={`py-2 px-4 text-sm font-medium rounded-md transition-colors duration-200 ${
+              selectedMetric === 'distribution' 
+                ? 'bg-white text-orange-600 shadow-sm' 
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            Distribution Tracking
+          </button>
+        </div>
       </div>
 
-      {/* Key Metrics */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        {keyMetrics.map((metric, index) => (
-          <div key={index} className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium text-gray-600">{metric.label}</p>
-                <p className="text-2xl font-bold text-gray-900 mt-1">{metric.value}</p>
-                <div className="flex items-center mt-2">
-                  <span className={`text-sm font-medium ${
-                    metric.changeType === 'positive' ? 'text-green-600' : 'text-red-600'
-                  }`}>
-                    {metric.change}
-                  </span>
-                  <span className="text-sm text-gray-500 ml-1">vs last survey</span>
+      {/* Tab Content */}
+      {selectedMetric === 'distribution' && surveyId && (
+        <SurveyDistributionDashboard 
+          surveyId={surveyId} 
+          surveyTitle={surveyData.title}
+        />
+      )}
+
+      {selectedMetric === 'overview' && (
+        <>
+          {/* Key Metrics */}
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            {keyMetrics.map((metric, index) => (
+              <div key={index} className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-gray-600">{metric.label}</p>
+                    <p className="text-2xl font-bold text-gray-900 mt-1">{metric.value}</p>
+                    <div className="flex items-center mt-2">
+                      <span className={`text-sm font-medium ${
+                        metric.changeType === 'positive' ? 'text-green-600' : 'text-red-600'
+                      }`}>
+                        {metric.change}
+                      </span>
+                      <span className="text-sm text-gray-500 ml-1">vs last survey</span>
+                    </div>
+                  </div>
+                  <div className="p-3 rounded-lg bg-orange-50">
+                    <TrendingUp className="h-6 w-6 text-orange-500" />
+                  </div>
                 </div>
               </div>
-              <div className="p-3 rounded-lg bg-orange-50">
-                <TrendingUp className="h-6 w-6 text-orange-500" />
-              </div>
-            </div>
+            ))}
           </div>
-        ))}
-      </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
         {/* Response Demographics */}
@@ -782,6 +817,8 @@ const AdminSurveyAnalytics = () => {
           </button>
         </div>
       </div>
+        </>
+      )}
     </div>
   );
 };

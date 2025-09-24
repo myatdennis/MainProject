@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { supabase } from '../../lib/supabase';
+import { saveAssignments } from '../../services/surveyService';
 import { Link } from 'react-router-dom';
 import { 
   Plus, 
@@ -16,7 +17,7 @@ import {
   Upload,
   CheckCircle,
   Clock,
-  
+  X,
   Target,
   TrendingUp,
   MessageSquare,
@@ -111,14 +112,40 @@ const AdminSurveys = () => {
     { id: '7', name: 'Unity Community Church' }
   ];
 
+  // Sample users for assignment
+  const users = [
+    { id: '1', name: 'Sarah Johnson', email: 'sarah@pacificcostuni.edu', role: 'Administrator', organization: 'Pacific Coast University' },
+    { id: '2', name: 'Mark Rodriguez', email: 'mark.rodriguez@mountainview.edu', role: 'Teacher', organization: 'Mountain View High School' },
+    { id: '3', name: 'Lisa Chen', email: 'lisa.chen@communityimpact.org', role: 'Director', organization: 'Community Impact Network' },
+    { id: '4', name: 'James Wilson', email: 'j.wilson@regionalfire.gov', role: 'Chief', organization: 'Regional Fire Department' },
+    { id: '5', name: 'Amanda Taylor', email: 'amanda@techforward.com', role: 'HR Manager', organization: 'TechForward Solutions' },
+    { id: '6', name: 'Dr. Michael Brown', email: 'dr.brown@regionalmcd.com', role: 'Department Head', organization: 'Regional Medical Center' }
+  ];
+
+  // Sample departments for assignment
+  const departments = [
+    { id: '1', name: 'Human Resources', organization: 'Multiple Organizations', userCount: 24 },
+    { id: '2', name: 'Engineering', organization: 'TechForward Solutions', userCount: 45 },
+    { id: '3', name: 'Academic Affairs', organization: 'Pacific Coast University', userCount: 67 },
+    { id: '4', name: 'Emergency Services', organization: 'Regional Fire Department', userCount: 89 },
+    { id: '5', name: 'Community Outreach', organization: 'Community Impact Network', userCount: 23 },
+    { id: '6', name: 'Medical Staff', organization: 'Regional Medical Center', userCount: 156 }
+  ];
+
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [assignTargetSurveyId, setAssignTargetSurveyId] = useState<string | null>(null);
   const [selectedOrgIds, setSelectedOrgIds] = useState<string[]>([]);
+  const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
+  const [selectedDepartmentIds, setSelectedDepartmentIds] = useState<string[]>([]);
+  const [assignmentTab, setAssignmentTab] = useState<'organizations' | 'users' | 'departments'>('organizations');
 
   const openAssignModal = (surveyId: string) => {
     const survey = surveys.find(s => s.id === surveyId);
     setAssignTargetSurveyId(surveyId);
     setSelectedOrgIds(survey?.assignedOrgIds ?? []);
+    setSelectedUserIds([]);
+    setSelectedDepartmentIds([]);
+    setAssignmentTab('organizations');
     setShowAssignModal(true);
   };
 
@@ -126,40 +153,51 @@ const AdminSurveys = () => {
     setShowAssignModal(false);
     setAssignTargetSurveyId(null);
     setSelectedOrgIds([]);
+    setSelectedUserIds([]);
+    setSelectedDepartmentIds([]);
+    setAssignmentTab('organizations');
   };
 
   const toggleSelectOrg = (orgId: string) => {
     setSelectedOrgIds(prev => prev.includes(orgId) ? prev.filter(id => id !== orgId) : [...prev, orgId]);
   };
 
-  const saveAssignment = () => {
+  const toggleSelectUser = (userId: string) => {
+    setSelectedUserIds(prev => prev.includes(userId) ? prev.filter(id => id !== userId) : [...prev, userId]);
+  };
+
+  const toggleSelectDepartment = (deptId: string) => {
+    setSelectedDepartmentIds(prev => prev.includes(deptId) ? prev.filter(id => id !== deptId) : [...prev, deptId]);
+  };
+
+  const saveAssignment = async () => {
     if (!assignTargetSurveyId) return;
+
+    // Calculate total assignments for display
+    const totalAssigned = selectedOrgIds.length + selectedUserIds.length + selectedDepartmentIds.length;
+    
     // Optimistic update locally
     setSurveys(prev => prev.map(s => s.id === assignTargetSurveyId ? {
       ...s,
       assignedOrgIds: selectedOrgIds,
-      assignedOrgs: organizations.filter(o => selectedOrgIds.includes(o.id)).map(o => o.name)
+      assignedOrgs: organizations.filter(o => selectedOrgIds.includes(o.id)).map(o => o.name),
+      // Add assigned user and department counts for display
+      totalAssigned: totalAssigned,
+      assignedUsers: selectedUserIds.length,
+      assignedDepartments: selectedDepartmentIds.length
     } : s));
 
-    // Persist to Supabase (table: survey_assignments)
-    (async () => {
-      try {
-        const payload = {
-          survey_id: assignTargetSurveyId,
-          organization_ids: selectedOrgIds,
-          updated_at: new Date().toISOString()
-        };
-
-        const { data, error } = await supabase.from('survey_assignments').upsert(payload).select();
-        if (error) {
-          console.warn('Failed to save assignment to Supabase:', error.message || error);
-        } else {
-          console.log('Saved survey assignment to Supabase:', data);
-        }
-      } catch (err) {
-        console.warn('Supabase error saving assignment:', err);
-      }
-    })();
+    // Persist to database using enhanced service function
+    try {
+      await saveAssignments(assignTargetSurveyId, {
+        organizationIds: selectedOrgIds,
+        userIds: selectedUserIds,
+        departmentIds: selectedDepartmentIds
+      });
+      console.log('Successfully saved enhanced survey assignments');
+    } catch (err) {
+      console.warn('Failed to save enhanced assignments:', err);
+    }
 
     closeAssignModal();
   };
@@ -564,31 +602,172 @@ const AdminSurveys = () => {
           </div>
         </div>
       </div>
-      {/* Assign-to-Organization Modal */}
+      {/* Enhanced Assignment Modal */}
       {showAssignModal && (
         <div className="fixed inset-0 flex items-center justify-center z-50">
           <div className="absolute inset-0 bg-black opacity-30" onClick={closeAssignModal}></div>
-          <div className="bg-white rounded-xl shadow-2xl z-50 w-full max-w-2xl p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold">Assign Survey to Organizations</h3>
-              <button onClick={closeAssignModal} className="text-gray-500 hover:text-gray-800">Close</button>
+          <div className="bg-white rounded-xl shadow-2xl z-50 w-full max-w-4xl p-6 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-xl font-bold text-gray-900">Assign Survey</h3>
+              <button onClick={closeAssignModal} className="text-gray-500 hover:text-gray-800">
+                <X className="h-6 w-6" />
+              </button>
             </div>
-            <p className="text-sm text-gray-600 mb-4">Select which organizations should receive this survey. Assignments can be changed later.</p>
+            
+            <p className="text-sm text-gray-600 mb-6">
+              Assign this survey to organizations, individual users, or specific departments. 
+              Recipients will receive email invitations with secure survey links.
+            </p>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4 max-h-64 overflow-y-auto">
-              {organizations.map(org => (
-                <label key={org.id} className={`flex items-center space-x-3 p-3 rounded-lg border ${selectedOrgIds.includes(org.id) ? 'border-orange-400 bg-orange-50' : 'border-gray-100 bg-white'}`}>
-                  <input type="checkbox" checked={selectedOrgIds.includes(org.id)} onChange={() => toggleSelectOrg(org.id)} className="h-4 w-4 text-orange-500" />
-                  <div>
-                    <div className="font-medium text-gray-900">{org.name}</div>
-                  </div>
-                </label>
-              ))}
+            {/* Assignment Type Tabs */}
+            <div className="flex space-x-1 mb-6 bg-gray-100 p-1 rounded-lg">
+              <button
+                onClick={() => setAssignmentTab('organizations')}
+                className={`flex-1 py-2 px-4 text-sm font-medium rounded-md transition-colors duration-200 ${
+                  assignmentTab === 'organizations' 
+                    ? 'bg-white text-orange-600 shadow-sm' 
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                Organizations ({selectedOrgIds.length})
+              </button>
+              <button
+                onClick={() => setAssignmentTab('users')}
+                className={`flex-1 py-2 px-4 text-sm font-medium rounded-md transition-colors duration-200 ${
+                  assignmentTab === 'users' 
+                    ? 'bg-white text-orange-600 shadow-sm' 
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                Individual Users ({selectedUserIds.length})
+              </button>
+              <button
+                onClick={() => setAssignmentTab('departments')}
+                className={`flex-1 py-2 px-4 text-sm font-medium rounded-md transition-colors duration-200 ${
+                  assignmentTab === 'departments' 
+                    ? 'bg-white text-orange-600 shadow-sm' 
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                Departments ({selectedDepartmentIds.length})
+              </button>
             </div>
 
-            <div className="flex items-center justify-end space-x-3">
-              <button onClick={closeAssignModal} className="border border-gray-300 px-4 py-2 rounded-lg">Cancel</button>
-              <button onClick={saveAssignment} className="bg-orange-500 text-white px-4 py-2 rounded-lg">Save Assignment</button>
+            {/* Organizations Tab */}
+            {assignmentTab === 'organizations' && (
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-64 overflow-y-auto">
+                  {organizations.map(org => (
+                    <label 
+                      key={org.id} 
+                      className={`flex items-center space-x-3 p-3 rounded-lg border cursor-pointer transition-colors duration-200 ${
+                        selectedOrgIds.includes(org.id) 
+                          ? 'border-orange-400 bg-orange-50' 
+                          : 'border-gray-200 bg-white hover:border-gray-300'
+                      }`}
+                    >
+                      <input 
+                        type="checkbox" 
+                        checked={selectedOrgIds.includes(org.id)} 
+                        onChange={() => toggleSelectOrg(org.id)} 
+                        className="h-4 w-4 text-orange-500 rounded border-gray-300" 
+                      />
+                      <div>
+                        <div className="font-medium text-gray-900">{org.name}</div>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Users Tab */}
+            {assignmentTab === 'users' && (
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 gap-3 max-h-64 overflow-y-auto">
+                  {users.map(user => (
+                    <label 
+                      key={user.id} 
+                      className={`flex items-center space-x-3 p-3 rounded-lg border cursor-pointer transition-colors duration-200 ${
+                        selectedUserIds.includes(user.id) 
+                          ? 'border-orange-400 bg-orange-50' 
+                          : 'border-gray-200 bg-white hover:border-gray-300'
+                      }`}
+                    >
+                      <input 
+                        type="checkbox" 
+                        checked={selectedUserIds.includes(user.id)} 
+                        onChange={() => toggleSelectUser(user.id)} 
+                        className="h-4 w-4 text-orange-500 rounded border-gray-300" 
+                      />
+                      <div className="flex-1">
+                        <div className="font-medium text-gray-900">{user.name}</div>
+                        <div className="text-sm text-gray-600">{user.email}</div>
+                        <div className="text-xs text-gray-500">{user.role} at {user.organization}</div>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Departments Tab */}
+            {assignmentTab === 'departments' && (
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3 max-h-64 overflow-y-auto">
+                  {departments.map(dept => (
+                    <label 
+                      key={dept.id} 
+                      className={`flex items-center space-x-3 p-3 rounded-lg border cursor-pointer transition-colors duration-200 ${
+                        selectedDepartmentIds.includes(dept.id) 
+                          ? 'border-orange-400 bg-orange-50' 
+                          : 'border-gray-200 bg-white hover:border-gray-300'
+                      }`}
+                    >
+                      <input 
+                        type="checkbox" 
+                        checked={selectedDepartmentIds.includes(dept.id)} 
+                        onChange={() => toggleSelectDepartment(dept.id)} 
+                        className="h-4 w-4 text-orange-500 rounded border-gray-300" 
+                      />
+                      <div className="flex-1">
+                        <div className="font-medium text-gray-900">{dept.name}</div>
+                        <div className="text-sm text-gray-600">{dept.organization}</div>
+                        <div className="text-xs text-gray-500">{dept.userCount} users</div>
+                      </div>
+                    </label>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Assignment Summary */}
+            <div className="mt-6 p-4 bg-gray-50 rounded-lg">
+              <h4 className="font-medium text-gray-900 mb-2">Assignment Summary</h4>
+              <div className="text-sm text-gray-600 space-y-1">
+                <div>Organizations: {selectedOrgIds.length} selected</div>
+                <div>Individual Users: {selectedUserIds.length} selected</div>
+                <div>Departments: {selectedDepartmentIds.length} selected</div>
+                <div className="font-medium mt-2">
+                  Total Recipients: {selectedOrgIds.length + selectedUserIds.length + selectedDepartmentIds.length}
+                </div>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end space-x-3 mt-6 pt-4 border-t border-gray-200">
+              <button 
+                onClick={closeAssignModal} 
+                className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={saveAssignment}
+                disabled={selectedOrgIds.length + selectedUserIds.length + selectedDepartmentIds.length === 0}
+                className="bg-orange-500 text-white px-6 py-2 rounded-lg hover:bg-orange-600 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors duration-200"
+              >
+                Save Assignments
+              </button>
             </div>
           </div>
         </div>

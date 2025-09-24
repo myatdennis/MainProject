@@ -52,6 +52,7 @@ const OrgWorkspaceLayout: React.FC = () => {
         )}
         <nav className="md:col-span-1 bg-white rounded-lg p-4 border">
           <ul className="space-y-2">
+            <li><Link to="surveys" className="block p-2 rounded hover:bg-gray-50">Survey Dashboard</Link></li>
             <li><Link to="strategic-plans" className="block p-2 rounded hover:bg-gray-50">Strategic Plan Drafts</Link></li>
             <li><Link to="session-notes" className="block p-2 rounded hover:bg-gray-50">Session Notes & Follow-Ups</Link></li>
             <li><Link to="action-tracker" className="block p-2 rounded hover:bg-gray-50">Shared Action Tracker</Link></li>

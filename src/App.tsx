@@ -45,6 +45,7 @@ import OrgWorkspaceLayout from './components/OrgWorkspace/OrgWorkspaceLayout';
 import StrategicPlansPage from './components/OrgWorkspace/StrategicPlansPage';
 import SessionNotesPage from './components/OrgWorkspace/SessionNotesPage';
 import ActionTrackerPage from './components/OrgWorkspace/ActionTrackerPage';
+import SurveysPage from './components/OrgWorkspace/SurveysPage';
 import DocumentsPage from './pages/Client/DocumentsPage';
 
 function App() {
@@ -72,11 +73,12 @@ function App() {
               <Route path="/client-portal/org/:orgId/*" element={
                 <OrgWorkspaceLayout />
               }>
+                <Route path="surveys" element={<SurveysPage />} />
                 <Route path="strategic-plans" element={<StrategicPlansPage />} />
                 <Route path="session-notes" element={<SessionNotesPage />} />
                 <Route path="action-tracker" element={<ActionTrackerPage />} />
                 <Route path="documents" element={<DocumentsPage />} />
-                <Route path="" element={<StrategicPlansPage />} />
+                <Route path="" element={<SurveysPage />} />
               </Route>
               <Route path="/lms/login" element={<LMSLogin />} />
               <Route path="/lms" element={<Navigate to="/lms/dashboard" replace />} />
