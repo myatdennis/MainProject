@@ -93,7 +93,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         // Demo/development authentication bypass
         const validCredentials = [
           { email: 'admin@thehuddleco.com', password: 'admin123', type: 'admin' },
-          { email: 'demo@thehuddleco.com', password: 'demo123', type: 'lms' }
+          { email: 'demo@thehuddleco.com', password: 'demo123', type: 'lms' },
+          { email: 'user@pacificcoast.edu', password: 'user123', type: 'lms' }
         ];
         
         const isValid = validCredentials.some(cred => 

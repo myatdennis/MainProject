@@ -17,6 +17,43 @@ export const useCourseProgress = (courseId: string) => {
     try {
       setLoading(true);
       setError(null);
+
+      // Check if Supabase is configured
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+      if (!supabaseUrl || !supabaseAnonKey) {
+        // Demo mode - create mock progress data
+        console.log('Demo mode: Using mock course progress data');
+        setEnrollmentData({
+          id: `demo-enrollment-${courseId}`,
+          user_id: 'demo-user',
+          course_id: courseId,
+          enrolled_at: new Date().toISOString(),
+          progress_percentage: 50,
+          last_accessed_at: new Date().toISOString(),
+          completed: false,
+          completion_date: null
+        });
+        
+        // Set some mock lesson progress
+        setLessonProgress({
+          'lesson-1': {
+            id: 'progress-1',
+            user_id: 'demo-user',
+            lesson_id: 'lesson-1',
+            completed: true,
+            progress_percentage: 100,
+            time_spent: 1800,
+            last_accessed_at: new Date().toISOString(),
+            completion_date: new Date().toISOString()
+          }
+        });
+        
+        setLoading(false);
+        return;
+      }
+
       const { data: { user } } = await supabase.auth.getUser();
       
       if (!user) {
@@ -83,6 +120,27 @@ export const useCourseProgress = (courseId: string) => {
 
   const enrollInCourse = async () => {
     try {
+      // Check if Supabase is configured
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+      if (!supabaseUrl || !supabaseAnonKey) {
+        // Demo mode - create mock enrollment
+        console.log('Demo mode: Creating mock enrollment for course:', courseId);
+        const mockEnrollment = {
+          id: `demo-enrollment-${courseId}`,
+          user_id: 'demo-user',
+          course_id: courseId,
+          enrolled_at: new Date().toISOString(),
+          progress_percentage: 0,
+          last_accessed_at: new Date().toISOString(),
+          completed: false,
+          completion_date: null
+        };
+        setEnrollmentData(mockEnrollment);
+        return mockEnrollment;
+      }
+
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('User not authenticated');
 
@@ -116,6 +174,30 @@ export const useCourseProgress = (courseId: string) => {
     }
   ) => {
     try {
+      // Check if Supabase is configured
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+      if (!supabaseUrl || !supabaseAnonKey) {
+        // Demo mode - update local state
+        console.log('Demo mode: Updating lesson progress for lesson:', lessonId);
+        const mockProgress = {
+          id: `demo-progress-${lessonId}`,
+          user_id: 'demo-user',
+          lesson_id: lessonId,
+          completed: progressData.completed || false,
+          progress_percentage: progressData.progressPercentage || 0,
+          time_spent: progressData.timeSpent || 0,
+          last_accessed_at: new Date().toISOString(),
+          completion_date: progressData.completed ? new Date().toISOString() : null
+        };
+        setLessonProgress(prev => ({
+          ...prev,
+          [lessonId]: mockProgress
+        }));
+        return mockProgress;
+      }
+
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('User not authenticated');
 
@@ -200,6 +282,27 @@ export const useCourseProgress = (courseId: string) => {
 
   const saveReflection = async (lessonId: string, content: string) => {
     try {
+      // Check if Supabase is configured
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+      if (!supabaseUrl || !supabaseAnonKey) {
+        // Demo mode - update local state
+        console.log('Demo mode: Saving reflection for lesson:', lessonId);
+        const mockReflection = {
+          id: `demo-reflection-${lessonId}`,
+          user_id: 'demo-user',
+          lesson_id: lessonId,
+          content,
+          updated_at: new Date().toISOString()
+        };
+        setReflections(prev => ({
+          ...prev,
+          [lessonId]: mockReflection
+        }));
+        return mockReflection;
+      }
+
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('User not authenticated');
 
@@ -235,6 +338,29 @@ export const useCourseProgress = (courseId: string) => {
     maxScore: number
   ) => {
     try {
+      // Check if Supabase is configured
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+      if (!supabaseUrl || !supabaseAnonKey) {
+        // Demo mode - return mock quiz result
+        console.log('Demo mode: Submitting quiz attempt for lesson:', lessonId);
+        const percentage = maxScore > 0 ? Math.round((score / maxScore) * 100) : 0;
+        const passed = percentage >= 80;
+        return {
+          id: `demo-quiz-${lessonId}`,
+          user_id: 'demo-user',
+          lesson_id: lessonId,
+          attempt_number: 1,
+          score,
+          max_score: maxScore,
+          percentage,
+          answers,
+          completed_at: new Date().toISOString(),
+          passed
+        };
+      }
+
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error('User not authenticated');
 
