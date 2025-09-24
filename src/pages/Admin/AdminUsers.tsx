@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { 
   Search, 
   Filter, 
@@ -363,9 +364,13 @@ const AdminUsers = () => {
                   </td>
                   <td className="py-4 px-6 text-center">
                     <div className="flex items-center justify-center space-x-2">
-                      <button className="p-1 text-blue-600 hover:text-blue-800" title="View Details">
+                      <Link 
+                        to={`/admin/users/user-${user.id}`}
+                        className="p-1 text-blue-600 hover:text-blue-800" 
+                        title="View Profile"
+                      >
                         <Eye className="h-4 w-4" />
-                      </button>
+                      </Link>
                       <button className="p-1 text-gray-600 hover:text-gray-800" title="Edit User">
                         <Edit className="h-4 w-4" />
                       </button>

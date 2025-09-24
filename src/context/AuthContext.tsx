@@ -85,6 +85,40 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     try {
       const credentials = { email, password };
 
+      // For demo purposes, allow admin login with specific credentials when Supabase isn't configured
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+      
+      if (!supabaseUrl || !supabaseAnonKey) {
+        // Demo/development authentication bypass
+        const validCredentials = [
+          { email: 'admin@thehuddleco.com', password: 'admin123', type: 'admin' },
+          { email: 'demo@thehuddleco.com', password: 'demo123', type: 'lms' }
+        ];
+        
+        const isValid = validCredentials.some(cred => 
+          cred.email === email && cred.password === password && cred.type === type
+        );
+        
+        if (!isValid) {
+          console.error('Invalid demo credentials');
+          return false;
+        }
+        
+        // Set up demo user
+        localStorage.setItem(`huddle_${type}_auth`, 'true');
+        const userData = {
+          name: type === 'admin' ? 'Mya Dennis' : 'Sarah Chen',
+          email,
+          role: type === 'admin' ? 'admin' : 'user',
+          id: `demo-${type}-${Date.now()}`
+        };
+        localStorage.setItem('huddle_user', JSON.stringify(userData));
+        setIsAuthenticated(prev => ({ ...prev, [type]: true }));
+        setUser(userData);
+        return true;
+      }
+
       // Try sign in first
       const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword(credentials);
       let currentUser = signInData?.user;

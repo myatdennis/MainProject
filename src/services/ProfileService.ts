@@ -88,57 +88,109 @@ const seedUserProfiles = (): UserProfile[] => [
   }
 ];
 
-// Seed data for organization profiles
-const seedOrgProfiles = (): OrganizationProfile[] => [
-  {
-    id: 'org-profile-1',
-    orgId: '1',
-    name: 'Pacific Coast University',
-    type: 'University',
-    contactPerson: 'Dr. Sarah Chen',
-    contactEmail: 'sarah.chen@pacificcoast.edu',
-    description: 'Leading public university committed to inclusive excellence and student success.',
-    website: 'https://pacificcoast.edu',
-    logo: 'https://via.placeholder.com/120x120?text=PCU',
-    address: {
-      street: '123 University Ave',
-      city: 'San Francisco',
-      state: 'CA',
-      zip: '94122',
-      country: 'USA'
-    },
-    enrollmentDate: '2025-01-15',
-    status: 'active',
-    subscription: 'Premium',
-    lastActivity: '2025-03-11',
-    metrics: {
-      totalLearners: 45,
-      activeLearners: 42,
-      completionRate: 94,
-      totalDownloads: 127
-    },
-    cohorts: ['Spring 2025 Leadership', 'Faculty Development 2025'],
-    modules: { foundations: 98, bias: 91, empathy: 87, conversations: 82, planning: 76 },
-    notes: 'Excellent engagement. Requested additional modules for faculty.',
-    resources: [
-      {
-        id: 'org-res-1',
-        type: 'document',
-        title: 'University Leadership Framework',
-        description: 'Customized leadership framework for university settings',
-        documentId: 'doc-456',
-        createdAt: '2025-02-15T09:00:00Z',
-        createdBy: 'Admin',
-        tags: ['university', 'framework', 'leadership'],
-        category: 'Framework',
-        priority: 'high',
-        status: 'unread'
-      }
-    ],
-    createdAt: '2025-01-15T08:00:00Z',
-    updatedAt: '2025-03-11T12:00:00Z'
+// Seed data for organization profiles - sync with existing org data
+const seedOrgProfiles = (): OrganizationProfile[] => {
+  try {
+    // Try to get existing orgs from orgService to create profiles
+    const existingOrgs = localStorage.getItem('huddle_orgs_v1');
+    if (existingOrgs) {
+      const orgs = JSON.parse(existingOrgs);
+      return orgs.map((org: any) => ({
+        id: `org-profile-${org.id}`,
+        orgId: org.id,
+        name: org.name,
+        type: org.type,
+        contactPerson: org.contactPerson,
+        contactEmail: org.contactEmail,
+        description: `${org.type} organization committed to inclusive leadership development.`,
+        enrollmentDate: org.enrollmentDate,
+        status: org.status as 'active' | 'inactive' | 'pending',
+        subscription: org.subscription,
+        lastActivity: org.lastActivity,
+        metrics: {
+          totalLearners: org.totalLearners,
+          activeLearners: org.activeLearners,
+          completionRate: org.completionRate,
+          totalDownloads: Math.floor(Math.random() * 200) + 50 // Mock download count
+        },
+        cohorts: org.cohorts || [],
+        modules: org.modules || {},
+        notes: org.notes,
+        resources: org.id === '1' ? [
+          {
+            id: 'org-res-1',
+            type: 'document',
+            title: 'University Leadership Framework',
+            description: 'Customized leadership framework for university settings',
+            documentId: 'doc-456',
+            createdAt: '2025-02-15T09:00:00Z',
+            createdBy: 'Admin',
+            tags: ['university', 'framework', 'leadership'],
+            category: 'Framework',
+            priority: 'high' as const,
+            status: 'unread' as const
+          }
+        ] : [],
+        createdAt: org.enrollmentDate || '2025-01-01T08:00:00Z',
+        updatedAt: org.lastActivity || new Date().toISOString()
+      }));
+    }
+  } catch (error) {
+    console.error('Failed to sync org profiles with existing orgs:', error);
   }
-];
+
+  // Fallback to hardcoded seed data
+  return [
+    {
+      id: 'org-profile-1',
+      orgId: '1',
+      name: 'Pacific Coast University',
+      type: 'University',
+      contactPerson: 'Dr. Sarah Chen',
+      contactEmail: 'sarah.chen@pacificcoast.edu',
+      description: 'Leading public university committed to inclusive excellence and student success.',
+      website: 'https://pacificcoast.edu',
+      logo: 'https://via.placeholder.com/120x120?text=PCU',
+      address: {
+        street: '123 University Ave',
+        city: 'San Francisco',
+        state: 'CA',
+        zip: '94122',
+        country: 'USA'
+      },
+      enrollmentDate: '2025-01-15',
+      status: 'active',
+      subscription: 'Premium',
+      lastActivity: '2025-03-11',
+      metrics: {
+        totalLearners: 45,
+        activeLearners: 42,
+        completionRate: 94,
+        totalDownloads: 127
+      },
+      cohorts: ['Spring 2025 Leadership', 'Faculty Development 2025'],
+      modules: { foundations: 98, bias: 91, empathy: 87, conversations: 82, planning: 76 },
+      notes: 'Excellent engagement. Requested additional modules for faculty.',
+      resources: [
+        {
+          id: 'org-res-1',
+          type: 'document',
+          title: 'University Leadership Framework',
+          description: 'Customized leadership framework for university settings',
+          documentId: 'doc-456',
+          createdAt: '2025-02-15T09:00:00Z',
+          createdBy: 'Admin',
+          tags: ['university', 'framework', 'leadership'],
+          category: 'Framework',
+          priority: 'high',
+          status: 'unread'
+        }
+      ],
+      createdAt: '2025-01-15T08:00:00Z',
+      updatedAt: '2025-03-11T12:00:00Z'
+    }
+  ];
+};
 
 // Storage helpers
 const readUserProfiles = (): UserProfile[] => {

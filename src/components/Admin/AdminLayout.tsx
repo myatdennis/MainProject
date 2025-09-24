@@ -18,7 +18,8 @@ import {
   Award,
   Zap,
   Brain,
-  Plus
+  Plus,
+  Send
 } from 'lucide-react';
 
 interface AdminLayoutProps {
@@ -42,6 +43,7 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
     { name: 'Dashboard', href: '/admin/dashboard', icon: LayoutDashboard },
     { name: 'Users & Progress', href: '/admin/users', icon: Users },
     { name: 'Organizations', href: '/admin/organizations', icon: Building2 },
+    { name: 'Send Resource', href: '/admin/send-resource', icon: Send },
     { name: 'Course Management', href: '/admin/courses', icon: BookOpen },
     { name: 'DEI Surveys', href: '/admin/surveys', icon: BarChart3 },
     { name: 'Reports & Analytics', href: '/admin/reports', icon: TrendingUp },

@@ -37,6 +37,9 @@ import AdminSurveys from './pages/Admin/AdminSurveys';
 import AdminSurveyBuilder from './pages/Admin/AdminSurveyBuilder';
 import AdminSurveyAnalytics from './pages/Admin/AdminSurveyAnalytics';
 import AdminDocuments from './pages/Admin/AdminDocuments';
+import AdminUserProfile from './pages/Admin/AdminUserProfile';
+import AdminOrgProfile from './pages/Admin/AdminOrgProfile';
+import AdminResourceSender from './pages/Admin/AdminResourceSender';
 import AIBot from './components/AIBot/AIBot';
 import OrgWorkspaceLayout from './components/OrgWorkspace/OrgWorkspaceLayout';
 import StrategicPlansPage from './components/OrgWorkspace/StrategicPlansPage';
@@ -96,8 +99,11 @@ function App() {
                   <Routes>
                     <Route path="dashboard" element={<AdminDashboard />} />
                     <Route path="users" element={<AdminUsers />} />
+                    <Route path="users/:userId" element={<AdminUserProfile />} />
                     <Route path="organizations" element={<AdminOrganizations />} />
                     <Route path="organizations/:orgId" element={<AdminOrganizationProfile />} />
+                    <Route path="org-profiles/:orgProfileId" element={<AdminOrgProfile />} />
+                    <Route path="send-resource" element={<AdminResourceSender />} />
                     <Route path="courses" element={<AdminCourses />} />
                     <Route path="reports" element={<AdminReports />} />
                     <Route path="analytics" element={<AdminAnalytics />} />
