@@ -20,8 +20,11 @@ import {
   Target,
   TrendingUp,
   MessageSquare,
-  Brain
+  Brain,
+  Shield,
+  Award
 } from 'lucide-react';
+import { surveyTemplates } from '../../data/surveyTemplates';
 
 const AdminSurveys = () => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -520,48 +523,88 @@ const AdminSurveys = () => {
           </p>
         </div>
         
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="bg-white p-6 rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200">
-            <div className="bg-blue-100 w-12 h-12 rounded-lg flex items-center justify-center mb-4">
-              <BarChart3 className="h-6 w-6 text-blue-600" />
-            </div>
-            <h3 className="font-bold text-gray-900 mb-2">Climate Assessment</h3>
-            <p className="text-gray-600 text-sm mb-4">Comprehensive workplace culture and belonging assessment</p>
-            <Link
-              to="/admin/surveys/builder?template=climate-assessment"
-              className="text-blue-600 hover:text-blue-700 font-medium text-sm"
-            >
-              Use Template →
-            </Link>
-          </div>
-          
-          <div className="bg-white p-6 rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200">
-            <div className="bg-green-100 w-12 h-12 rounded-lg flex items-center justify-center mb-4">
-              <Target className="h-6 w-6 text-green-600" />
-            </div>
-            <h3 className="font-bold text-gray-900 mb-2">Inclusion Index</h3>
-            <p className="text-gray-600 text-sm mb-4">Measure inclusion across key dimensions with benchmarking</p>
-            <Link
-              to="/admin/surveys/builder?template=inclusion-index"
-              className="text-green-600 hover:text-green-700 font-medium text-sm"
-            >
-              Use Template →
-            </Link>
-          </div>
-          
-          <div className="bg-white p-6 rounded-lg shadow-sm hover:shadow-md transition-shadow duration-200">
-            <div className="bg-orange-100 w-12 h-12 rounded-lg flex items-center justify-center mb-4">
-              <CheckCircle className="h-6 w-6 text-orange-600" />
-            </div>
-            <h3 className="font-bold text-gray-900 mb-2">Equity Lens</h3>
-            <p className="text-gray-600 text-sm mb-4">Evaluate organizational practices through an equity framework</p>
-            <Link
-              to="/admin/surveys/builder?template=equity-lens"
-              className="text-orange-600 hover:text-orange-700 font-medium text-sm"
-            >
-              Use Template →
-            </Link>
-          </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6">
+          {surveyTemplates.map((template) => {
+            // Define icon and styling based on template category
+            const getTemplateConfig = (category: string) => {
+              switch (category) {
+                case 'climate': 
+                  return {
+                    icon: <BarChart3 className="h-6 w-6 text-blue-600" />,
+                    bgColor: 'bg-blue-100',
+                    textColor: 'text-blue-600',
+                    hoverColor: 'hover:text-blue-700',
+                    badgeColor: 'bg-blue-100 text-blue-800'
+                  };
+                case 'inclusion': 
+                  return {
+                    icon: <Target className="h-6 w-6 text-green-600" />,
+                    bgColor: 'bg-green-100',
+                    textColor: 'text-green-600',
+                    hoverColor: 'hover:text-green-700',
+                    badgeColor: 'bg-green-100 text-green-800'
+                  };
+                case 'equity': 
+                  return {
+                    icon: <CheckCircle className="h-6 w-6 text-orange-600" />,
+                    bgColor: 'bg-orange-100',
+                    textColor: 'text-orange-600',
+                    hoverColor: 'hover:text-orange-700',
+                    badgeColor: 'bg-orange-100 text-orange-800'
+                  };
+                case 'belonging': 
+                  return {
+                    icon: <Shield className="h-6 w-6 text-purple-600" />,
+                    bgColor: 'bg-purple-100',
+                    textColor: 'text-purple-600',
+                    hoverColor: 'hover:text-purple-700',
+                    badgeColor: 'bg-purple-100 text-purple-800'
+                  };
+                case 'leadership': 
+                  return {
+                    icon: <Award className="h-6 w-6 text-indigo-600" />,
+                    bgColor: 'bg-indigo-100',
+                    textColor: 'text-indigo-600',
+                    hoverColor: 'hover:text-indigo-700',
+                    badgeColor: 'bg-indigo-100 text-indigo-800'
+                  };
+                default: 
+                  return {
+                    icon: <BarChart3 className="h-6 w-6 text-gray-600" />,
+                    bgColor: 'bg-gray-100',
+                    textColor: 'text-gray-600',
+                    hoverColor: 'hover:text-gray-700',
+                    badgeColor: 'bg-gray-100 text-gray-800'
+                  };
+              }
+            };
+            
+            const config = getTemplateConfig(template.category);
+            
+            return (
+              <div key={template.id} className="bg-white p-6 rounded-lg shadow-sm hover:shadow-md transition-all duration-200 hover:scale-105">
+                <div className={`${config.bgColor} w-12 h-12 rounded-lg flex items-center justify-center mb-4`}>
+                  {config.icon}
+                </div>
+                <h3 className="font-bold text-gray-900 mb-2">{template.name}</h3>
+                <p className="text-gray-600 text-sm mb-4 line-clamp-2">{template.description}</p>
+                <div className="flex items-center space-x-2 mb-4">
+                  <span className={`px-2 py-1 text-xs rounded-full ${config.badgeColor}`}>
+                    {template.category}
+                  </span>
+                  <span className="text-xs text-gray-500">
+                    {template.sections.length} sections
+                  </span>
+                </div>
+                <Link
+                  to={`/admin/surveys/builder?template=${template.id}`}
+                  className={`${config.textColor} ${config.hoverColor} font-medium text-sm`}
+                >
+                  Use Template →
+                </Link>
+              </div>
+            );
+          })}
         </div>
       </div>
       {/* Assign-to-Organization Modal */}
