@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { Building2, Plus, Search, MoreVertical, Edit, Eye, Settings, Download, Upload, CheckCircle, Clock, AlertTriangle } from 'lucide-react';
 import orgService from '../../services/orgService';
 
@@ -269,14 +270,14 @@ const AdminOrganizations = () => {
                   </td>
                   <td className="py-4 px-6 text-center">
                     <div className="flex items-center justify-center space-x-2">
-                      <a href={`/admin/organizations/${org.id}`} className="p-1 text-blue-600 hover:text-blue-800" title="View Details">
+                      <Link to={`/admin/organizations/${org.id}`} className="p-1 text-blue-600 hover:text-blue-800" title="View Details">
                         <Eye className="h-4 w-4" />
-                      </a>
+                      </Link>
+                      <Link to={`/admin/org-profiles/org-profile-${org.id}`} className="p-1 text-green-600 hover:text-green-800" title="View Profile">
+                        <Settings className="h-4 w-4" />
+                      </Link>
                       <button className="p-1 text-gray-600 hover:text-gray-800" title="Edit">
                         <Edit className="h-4 w-4" />
-                      </button>
-                      <button className="p-1 text-gray-600 hover:text-gray-800" title="Settings">
-                        <Settings className="h-4 w-4" />
                       </button>
                     </div>
                   </td>
