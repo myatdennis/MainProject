@@ -17,16 +17,30 @@ import {
   Zap,
   FileText,
   Share,
-  RefreshCw
+  RefreshCw,
+  Building2,
+  GitCompare
 } from 'lucide-react';
+import { BarChart, LikertHeatmap, WordCloud, TrendLine } from '../../components/Charts';
+import { 
+  generateBrandedPDF, 
+  generateExcelReport, 
+  generatePowerPointPresentation,
+  convertAnalyticsToPDFContent,
+  huddleBranding,
+  type PDFExportOptions 
+} from '../../services/pdfExportService';
 
 const AdminSurveyAnalytics = () => {
   const { surveyId } = useParams();
   const [dateRange, setDateRange] = useState('all-time');
   const [filterDemographic, setFilterDemographic] = useState('all');
   const [selectedMetric, setSelectedMetric] = useState('overview');
+  const [comparisonOrg, setComparisonOrg] = useState('none');
+  const [comparisonTime, setComparisonTime] = useState('none');
+  const [isExporting, setIsExporting] = useState(false);
 
-  // Sample survey data
+  // Enhanced sample data with more examples
   const surveyData = {
     id: surveyId,
     title: 'Q1 2025 Climate Assessment',
@@ -39,6 +53,21 @@ const AdminSurveyAnalytics = () => {
     launchedAt: '2025-03-05',
     lastResponse: '2025-03-11'
   };
+
+  // Available organizations for comparison
+  const availableOrganizations = [
+    { id: 'org-1', name: 'TechCorp Solutions' },
+    { id: 'org-2', name: 'Green Valley Medical' },
+    { id: 'org-3', name: 'Urban Design Group' },
+    { id: 'org-4', name: 'Pacific University' }
+  ];
+
+  // Historical data for trend analysis
+  const trendData = [
+    { date: '2024-09-01', value: 3.2, label: 'Q3 2024' },
+    { date: '2024-12-01', value: 3.5, label: 'Q4 2024' },
+    { date: '2025-03-01', value: 3.8, label: 'Q1 2025' }
+  ];
 
   const keyMetrics = [
     { label: 'Response Rate', value: '77%', change: '+5%', changeType: 'positive' },
@@ -108,6 +137,78 @@ const AdminSurveyAnalytics = () => {
       sentimentBreakdown: { positive: 68, neutral: 22, negative: 10 }
     }
   ];
+
+  // Chart data for enhanced visualizations
+  const barChartData = responsesByDemographic[0].data.map(item => ({
+    label: item.label,
+    value: item.responses,
+    percentage: item.percentage,
+    color: 'bg-gradient-to-r from-orange-400 to-red-500'
+  }));
+
+  const likertHeatmapData = questionAnalytics
+    .filter(q => q.type === 'likert-scale')
+    .map(q => ({
+      questionId: q.id,
+      question: q.title,
+      distribution: q.distribution || [0, 0, 0, 0, 0],
+      avgScore: q.avgScore || 0
+    }));
+
+  const wordCloudData = questionAnalytics
+    .find(q => q.type === 'open-ended')?.themes?.map(theme => ({
+      text: theme.theme,
+      frequency: theme.mentions,
+      sentiment: theme.sentiment as 'positive' | 'neutral' | 'negative'
+    })) || [];
+
+  // Export handlers
+  const handleExportPDF = async () => {
+    setIsExporting(true);
+    try {
+      const analytics = {
+        surveyId: surveyId || '',
+        totalResponses: surveyData.totalResponses,
+        completionRate: surveyData.completionRate,
+        avgCompletionTime: surveyData.avgCompletionTime,
+        responsesByDemographic: {},
+        responsesByDepartment: {},
+        responsesByDate: {},
+        questionAnalytics: {},
+        keyInsights: aiInsights.map(i => i.description),
+        recommendations: huddleReportPreview.aiRecommendations.flatMap(cat => cat.recommendations),
+        riskAreas: huddleReportPreview.riskAreas,
+        strengths: huddleReportPreview.successFactors
+      };
+
+      const pdfContent = convertAnalyticsToPDFContent(analytics, huddleReportPreview, surveyData.title);
+      
+      const options: PDFExportOptions = {
+        includeExecutiveSummary: true,
+        includeVisualData: true,
+        includeKeyInsights: true,
+        includeRecommendations: true,
+        includeRawData: false,
+        format: 'pdf',
+        branding: huddleBranding
+      };
+
+      const result = await generateBrandedPDF(pdfContent, options);
+      
+      if (result.success && result.downloadUrl) {
+        // In a real app, trigger download
+        console.log('PDF generated successfully', result.downloadUrl);
+        alert('PDF report generated successfully!');
+      } else {
+        throw new Error(result.error || 'Failed to generate PDF');
+      }
+    } catch (error) {
+      console.error('Export error:', error);
+      alert('Failed to export report. Please try again.');
+    } finally {
+      setIsExporting(false);
+    }
+  };
 
   const aiInsights = [
     {
@@ -248,43 +349,85 @@ const AdminSurveyAnalytics = () => {
               <Share className="h-4 w-4" />
               <span>Share</span>
             </button>
-            <button className="bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-2">
+            <button 
+              onClick={handleExportPDF}
+              disabled={isExporting}
+              className="bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
               <Download className="h-4 w-4" />
-              <span>Export Report</span>
+              <span>{isExporting ? 'Generating...' : 'Export Report'}</span>
             </button>
           </div>
         </div>
       </div>
 
-      {/* Filters */}
+      {/* Enhanced Filters with Comparison */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
-          <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4">
-            <div className="flex items-center space-x-2">
-              <Calendar className="h-5 w-5 text-gray-400" />
-              <select
-                value={dateRange}
-                onChange={(e) => setDateRange(e.target.value)}
-                className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-              >
-                <option value="all-time">All Time</option>
-                <option value="last-7-days">Last 7 Days</option>
-                <option value="last-30-days">Last 30 Days</option>
-                <option value="last-90-days">Last 90 Days</option>
-              </select>
+        <div className="flex flex-col space-y-4">
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
+            <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4">
+              <div className="flex items-center space-x-2">
+                <Calendar className="h-5 w-5 text-gray-400" />
+                <select
+                  value={dateRange}
+                  onChange={(e) => setDateRange(e.target.value)}
+                  className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                >
+                  <option value="all-time">All Time</option>
+                  <option value="last-7-days">Last 7 Days</option>
+                  <option value="last-30-days">Last 30 Days</option>
+                  <option value="last-90-days">Last 90 Days</option>
+                </select>
+              </div>
+              <div className="flex items-center space-x-2">
+                <Filter className="h-5 w-5 text-gray-400" />
+                <select
+                  value={filterDemographic}
+                  onChange={(e) => setFilterDemographic(e.target.value)}
+                  className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                >
+                  <option value="all">All Participants</option>
+                  <option value="department">By Department</option>
+                  <option value="tenure">By Tenure</option>
+                  <option value="role-level">By Role Level</option>
+                </select>
+              </div>
             </div>
-            <div className="flex items-center space-x-2">
-              <Filter className="h-5 w-5 text-gray-400" />
-              <select
-                value={filterDemographic}
-                onChange={(e) => setFilterDemographic(e.target.value)}
-                className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-              >
-                <option value="all">All Participants</option>
-                <option value="department">By Department</option>
-                <option value="tenure">By Tenure</option>
-                <option value="role-level">By Role Level</option>
-              </select>
+          </div>
+          
+          {/* Comparison Tools */}
+          <div className="border-t border-gray-200 pt-4">
+            <h4 className="text-sm font-medium text-gray-900 mb-3 flex items-center space-x-2">
+              <GitCompare className="h-4 w-4" />
+              <span>Comparison Tools</span>
+            </h4>
+            <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4">
+              <div className="flex items-center space-x-2">
+                <Building2 className="h-4 w-4 text-gray-400" />
+                <select
+                  value={comparisonOrg}
+                  onChange={(e) => setComparisonOrg(e.target.value)}
+                  className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                >
+                  <option value="none">No Organization Comparison</option>
+                  {availableOrganizations.map(org => (
+                    <option key={org.id} value={org.id}>Compare vs {org.name}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="flex items-center space-x-2">
+                <Calendar className="h-4 w-4 text-gray-400" />
+                <select
+                  value={comparisonTime}
+                  onChange={(e) => setComparisonTime(e.target.value)}
+                  className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                >
+                  <option value="none">No Time Comparison</option>
+                  <option value="previous-quarter">vs Previous Quarter</option>
+                  <option value="same-quarter-last-year">vs Same Quarter Last Year</option>
+                  <option value="baseline">vs Baseline Survey</option>
+                </select>
+              </div>
             </div>
           </div>
         </div>
@@ -313,6 +456,47 @@ const AdminSurveyAnalytics = () => {
             </div>
           </div>
         ))}
+      </div>
+
+      {/* Enhanced Visualizations Dashboard */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+        {/* Multiple Choice Bar Chart */}
+        <div className="col-span-1">
+          <BarChart 
+            data={barChartData}
+            title="Response Distribution by Department"
+            horizontal={true}
+            height={300}
+          />
+        </div>
+        
+        {/* Trend Line */}
+        <div className="col-span-1">
+          <TrendLine 
+            data={trendData}
+            title="Belonging Score Over Time"
+            yAxisLabel="Average Score"
+            height={300}
+          />
+        </div>
+      </div>
+
+      {/* Likert Scale Heatmap */}
+      <div className="mb-8">
+        <LikertHeatmap 
+          data={likertHeatmapData}
+          title="Likert Scale Response Heatmap"
+          scaleLabels={["Strongly Disagree", "Disagree", "Neutral", "Agree", "Strongly Agree"]}
+        />
+      </div>
+
+      {/* Word Cloud for Open Text */}
+      <div className="mb-8">
+        <WordCloud 
+          words={wordCloudData}
+          title="Key Themes from Open Text Responses"
+          maxWords={15}
+        />
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
