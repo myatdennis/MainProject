@@ -144,7 +144,8 @@ const AdminDocuments: React.FC = () => {
                 <div className="text-xs text-gray-500">{d.visibility}{d.orgId ? ` • org:${d.orgId}` : ''}{d.userId ? ` • user:${d.userId}` : ''}</div>
               </div>
               <div className="flex items-center space-x-3">
-                {d.url && <a href={d.url} target="_blank" rel="noreferrer" className="text-sm text-blue-600">Open</a>}
+                {d.url && <a onClick={() => documentService.recordDownload(d.id)} href={d.url} target="_blank" rel="noreferrer" className="text-sm text-blue-600">Open</a>}
+                <div className="text-xs text-gray-500">{d.downloadCount || 0} downloads</div>
                 <button onClick={() => handleDelete(d.id)} className="text-red-500"><Trash className="h-4 w-4" /></button>
               </div>
             </div>

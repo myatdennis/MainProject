@@ -23,6 +23,7 @@ import AdminLogin from './pages/Admin/AdminLogin';
 import AdminDashboard from './pages/Admin/AdminDashboard';
 import AdminUsers from './pages/Admin/AdminUsers';
 import AdminOrganizations from './pages/Admin/AdminOrganizations';
+import AdminOrganizationProfile from './pages/Admin/AdminOrganizationProfile';
 import AdminCourses from './pages/Admin/AdminCourses';
 import AdminReports from './pages/Admin/AdminReports';
 import AdminSettings from './pages/Admin/AdminSettings';
@@ -96,6 +97,7 @@ function App() {
                     <Route path="dashboard" element={<AdminDashboard />} />
                     <Route path="users" element={<AdminUsers />} />
                     <Route path="organizations" element={<AdminOrganizations />} />
+                    <Route path="organizations/:orgId" element={<AdminOrganizationProfile />} />
                     <Route path="courses" element={<AdminCourses />} />
                     <Route path="reports" element={<AdminReports />} />
                     <Route path="analytics" element={<AdminAnalytics />} />

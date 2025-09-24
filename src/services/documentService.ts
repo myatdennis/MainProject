@@ -17,6 +17,7 @@ export type DocumentMeta = {
   userId?: string; // if visibility === 'user'
   createdAt: string;
   createdBy?: string;
+  downloadCount?: number;
 };
 
 const STORAGE_KEY = 'huddle_documents_v1';
@@ -78,9 +79,19 @@ export const addDocument = async (meta: Omit<DocumentMeta,'id'|'createdAt'>, fil
   }
 
   const doc: DocumentMeta = { id: docId, createdAt: new Date().toISOString(), ...meta, url } as DocumentMeta;
+  doc.downloadCount = doc.downloadCount || 0;
   docs.push(doc);
   writeAll(docs);
   return doc;
+};
+
+export const recordDownload = async (id: string) => {
+  const docs = readAll();
+  const idx = docs.findIndex(d => d.id === id);
+  if (idx === -1) return;
+  docs[idx].downloadCount = (docs[idx].downloadCount || 0) + 1;
+  writeAll(docs);
+  return docs[idx];
 };
 
 export const updateDocument = async (id: string, patch: Partial<DocumentMeta>) => {
@@ -109,4 +120,5 @@ export default {
   deleteDocument,
   assignToOrg,
   assignToUser
+  , recordDownload
 };

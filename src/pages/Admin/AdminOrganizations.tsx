@@ -1,143 +1,14 @@
-import React, { useState } from 'react';
-import { 
-  Building2, 
-  Users, 
-  TrendingUp, 
-  Calendar,
-  Plus,
-  Search,
-  MoreVertical,
-  Edit,
-  Eye,
-  Settings,
-  Download,
-  Upload,
-  CheckCircle,
-  Clock,
-  AlertTriangle
-} from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Building2, Plus, Search, MoreVertical, Edit, Eye, Settings, Download, Upload, CheckCircle, Clock, AlertTriangle } from 'lucide-react';
+import orgService from '../../services/orgService';
 
 const AdminOrganizations = () => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedOrg, setSelectedOrg] = useState<string | null>(null);
+  const [organizations, setOrganizations] = useState<any[]>([]);
 
-  const organizations = [
-    {
-      id: '1',
-      name: 'Pacific Coast University',
-      type: 'University',
-      contactPerson: 'Dr. Sarah Chen',
-      contactEmail: 'sarah.chen@pacificcoast.edu',
-      enrollmentDate: '2025-01-15',
-      status: 'active',
-      totalLearners: 45,
-      activeLearners: 42,
-      completionRate: 94,
-      cohorts: ['Spring 2025 Leadership', 'Faculty Development 2025'],
-      subscription: 'Premium',
-      lastActivity: '2025-03-11',
-      modules: {
-        foundations: 98,
-        bias: 91,
-        empathy: 87,
-        conversations: 82,
-        planning: 76
-      },
-      notes: 'Excellent engagement. Requested additional modules for faculty.'
-    },
-    {
-      id: '2',
-      name: 'Mountain View High School',
-      type: 'K-12 Education',
-      contactPerson: 'Marcus Rodriguez',
-      contactEmail: 'mrodriguez@mvhs.edu',
-      enrollmentDate: '2025-01-20',
-      status: 'active',
-      totalLearners: 23,
-      activeLearners: 20,
-      completionRate: 87,
-      cohorts: ['Spring 2025 Leadership'],
-      subscription: 'Standard',
-      lastActivity: '2025-03-10',
-      modules: {
-        foundations: 95,
-        bias: 89,
-        empathy: 85,
-        conversations: 78,
-        planning: 65
-      },
-      notes: 'Focus on athletic department leadership development.'
-    },
-    {
-      id: '3',
-      name: 'Community Impact Network',
-      type: 'Nonprofit',
-      contactPerson: 'Jennifer Walsh',
-      contactEmail: 'jwalsh@communityimpact.org',
-      enrollmentDate: '2025-01-10',
-      status: 'inactive',
-      totalLearners: 28,
-      activeLearners: 15,
-      completionRate: 61,
-      cohorts: ['Spring 2025 Leadership'],
-      subscription: 'Standard',
-      lastActivity: '2025-02-28',
-      modules: {
-        foundations: 85,
-        bias: 68,
-        empathy: 54,
-        conversations: 42,
-        planning: 28
-      },
-      notes: 'Low engagement recently. Follow up needed.'
-    },
-    {
-      id: '4',
-      name: 'Regional Fire Department',
-      type: 'Government',
-      contactPerson: 'Captain David Thompson',
-      contactEmail: 'dthompson@regionalfire.gov',
-      enrollmentDate: '2024-12-01',
-      status: 'active',
-      totalLearners: 67,
-      activeLearners: 63,
-      completionRate: 89,
-      cohorts: ['Winter 2025 Leadership', 'Command Staff Development'],
-      subscription: 'Premium',
-      lastActivity: '2025-03-11',
-      modules: {
-        foundations: 92,
-        bias: 88,
-        empathy: 91,
-        conversations: 85,
-        planning: 79
-      },
-      notes: 'Strong leadership commitment. Excellent results.'
-    },
-    {
-      id: '5',
-      name: 'TechForward Solutions',
-      type: 'Corporate',
-      contactPerson: 'Lisa Park',
-      contactEmail: 'lpark@techforward.com',
-      enrollmentDate: '2025-02-01',
-      status: 'active',
-      totalLearners: 34,
-      activeLearners: 32,
-      completionRate: 96,
-      cohorts: ['Spring 2025 Leadership'],
-      subscription: 'Premium',
-      lastActivity: '2025-03-11',
-      modules: {
-        foundations: 100,
-        bias: 97,
-        empathy: 94,
-        conversations: 91,
-        planning: 88
-      },
-      notes: 'Outstanding engagement. Interested in advanced modules.'
-    }
-  ];
+  useEffect(() => {
+    orgService.listOrgs().then(setOrganizations).catch(() => setOrganizations([]));
+  }, []);
 
   const filteredOrgs = organizations.filter(org =>
     org.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -217,7 +88,7 @@ const AdminOrganizations = () => {
         {filteredOrgs.map((org) => (
           <div key={org.id} className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow duration-200">
             <div className="flex items-start justify-between mb-4">
-              <div className="flex items-center space-x-3">
+                <div className="flex items-center space-x-3">
                 <div className="bg-blue-100 p-2 rounded-lg">
                   <Building2 className="h-6 w-6 text-blue-600" />
                 </div>
@@ -226,8 +97,9 @@ const AdminOrganizations = () => {
                   <p className="text-sm text-gray-600">{org.type}</p>
                 </div>
               </div>
-              <div className="flex items-center space-x-2">
+                <div className="flex items-center space-x-2">
                 {getStatusIcon(org.status)}
+                <a href={`/admin/organizations/${org.id}`} className="text-sm text-blue-600 hover:underline">View</a>
                 <button className="p-1 text-gray-400 hover:text-gray-600">
                   <MoreVertical className="h-4 w-4" />
                 </button>
@@ -273,16 +145,19 @@ const AdminOrganizations = () => {
             <div className="mb-4">
               <h4 className="text-sm font-medium text-gray-700 mb-2">Module Progress</h4>
               <div className="grid grid-cols-5 gap-1">
-                {Object.entries(org.modules).map(([key, value]) => (
-                  <div key={key} className="text-center">
-                    <div className={`w-full h-2 rounded-full ${
-                      value >= 90 ? 'bg-green-500' :
-                      value >= 70 ? 'bg-yellow-500' :
-                      value >= 50 ? 'bg-orange-500' : 'bg-red-500'
-                    }`}></div>
-                    <div className="text-xs text-gray-600 mt-1">{value}%</div>
-                  </div>
-                ))}
+                {Object.entries(org.modules).map(([key, value]) => {
+                  const v = Number(value || 0);
+                  return (
+                    <div key={key} className="text-center">
+                      <div className={`w-full h-2 rounded-full ${
+                        v >= 90 ? 'bg-green-500' :
+                        v >= 70 ? 'bg-yellow-500' :
+                        v >= 50 ? 'bg-orange-500' : 'bg-red-500'
+                      }`}></div>
+                      <div className="text-xs text-gray-600 mt-1">{v}%</div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
@@ -359,7 +234,7 @@ const AdminOrganizations = () => {
                     <div>
                       <div className="font-medium text-gray-900">{org.name}</div>
                       <div className="text-sm text-gray-600">{org.type}</div>
-                      <div className="text-xs text-gray-500">{org.cohorts.join(', ')}</div>
+                      <div className="text-xs text-gray-500">{org.cohorts?.join(', ')}</div>
                     </div>
                   </td>
                   <td className="py-4 px-6 text-center">
@@ -394,9 +269,9 @@ const AdminOrganizations = () => {
                   </td>
                   <td className="py-4 px-6 text-center">
                     <div className="flex items-center justify-center space-x-2">
-                      <button className="p-1 text-blue-600 hover:text-blue-800" title="View Details">
+                      <a href={`/admin/organizations/${org.id}`} className="p-1 text-blue-600 hover:text-blue-800" title="View Details">
                         <Eye className="h-4 w-4" />
-                      </button>
+                      </a>
                       <button className="p-1 text-gray-600 hover:text-gray-800" title="Edit">
                         <Edit className="h-4 w-4" />
                       </button>

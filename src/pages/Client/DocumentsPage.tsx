@@ -24,8 +24,13 @@ const DocumentsPage: React.FC = () => {
               <div className="font-medium">{d.name}</div>
               <div className="text-sm text-gray-600">{d.category} • {d.tags.join(', ')}</div>
             </div>
-            <div>
-              {d.url ? <a href={d.url} target="_blank" rel="noreferrer" className="text-blue-600">Open</a> : <span className="text-gray-500">No file</span>}
+            <div className="flex items-center space-x-4">
+              <div className="text-xs text-gray-500">Downloads: {d.downloadCount || 0}</div>
+              <div>
+                {d.url ? (
+                  <a onClick={() => documentService.recordDownload(d.id)} href={d.url} target="_blank" rel="noreferrer" className="text-blue-600">Open</a>
+                ) : <span className="text-gray-500">No file</span>}
+              </div>
             </div>
           </div>
         ))}
