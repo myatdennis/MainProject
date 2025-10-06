@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Mail, Phone, MapPin, Clock, Send, CheckCircle, Linkedin, Twitter, Instagram, Calendar } from 'lucide-react';
 
 const ContactPage = () => {
@@ -78,6 +79,8 @@ const ContactPage = () => {
     }
   ];
 
+  const navigate = useNavigate();
+
   if (isSubmitted) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-green-50 to-blue-50 py-20">
@@ -102,7 +105,7 @@ const ContactPage = () => {
                 <li>• We'll provide you with relevant resources and case studies</li>
               </ul>
             </div>
-            <button className="bg-gradient-to-r from-orange-400 to-red-500 text-white px-8 py-4 rounded-full font-semibold text-lg hover:from-orange-500 hover:to-red-600 transition-all duration-200">
+            <button onClick={() => navigate('/')} className="bg-gradient-to-r from-orange-400 to-red-500 text-white px-8 py-4 rounded-full font-semibold text-lg hover:from-orange-500 hover:to-red-600 transition-all duration-200">
               Return to Homepage
             </button>
           </div>

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { 
   Plus, 
   Search, 
@@ -120,6 +120,33 @@ const AdminSurveys = () => {
     setAssignTargetSurveyId(surveyId);
     setSelectedOrgIds(survey?.assignedOrgIds ?? []);
     setShowAssignModal(true);
+  };
+
+  const navigate = useNavigate();
+
+  const handleBulkActions = () => {
+    if (selectedSurveys.length === 0) {
+      alert('Select at least one survey to perform bulk actions');
+      return;
+    }
+    navigate(`/admin/surveys/bulk?ids=${selectedSurveys.join(',')}`);
+  };
+
+  const handleAICreator = () => {
+    navigate('/admin/surveys/builder?ai=1');
+  };
+
+  const handleImport = () => {
+    navigate('/admin/surveys/import');
+  };
+
+  const duplicateSurvey = (surveyId: string) => {
+    const s = surveys.find(s => s.id === surveyId);
+    if (!s) return;
+    const copy = { ...s, id: `${s.id}-copy-${Date.now()}`, title: `Copy of ${s.title}`, createdAt: new Date().toISOString(), lastActivity: new Date().toISOString() };
+    setSurveys(prev => [copy, ...prev]);
+    // Navigate to builder for the new copy
+    navigate(`/admin/surveys/builder/${copy.id}`);
   };
 
   const closeAssignModal = () => {
@@ -340,12 +367,12 @@ const AdminSurveys = () => {
           <div className="flex items-center space-x-4">
             {selectedSurveys.length > 0 && (
               <div className="flex items-center space-x-2">
-                <button className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors duration-200">
+                <button onClick={handleBulkActions} className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors duration-200">
                   Bulk Actions ({selectedSurveys.length})
                 </button>
               </div>
             )}
-            <button className="bg-purple-500 text-white px-4 py-2 rounded-lg hover:bg-purple-600 transition-colors duration-200 flex items-center space-x-2">
+            <button onClick={handleAICreator} className="bg-purple-500 text-white px-4 py-2 rounded-lg hover:bg-purple-600 transition-colors duration-200 flex items-center space-x-2">
               <Brain className="h-4 w-4" />
               <span>AI Survey Creator</span>
             </button>
@@ -356,7 +383,7 @@ const AdminSurveys = () => {
               <Plus className="h-4 w-4" />
               <span>Create Survey</span>
             </Link>
-            <button className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2">
+            <button onClick={handleImport} className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2">
               <Upload className="h-4 w-4" />
               <span>Import</span>
             </button>
@@ -486,7 +513,7 @@ const AdminSurveys = () => {
                   >
                     <Edit className="h-4 w-4" />
                   </Link>
-                  <button className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-50 rounded-lg" title="Duplicate">
+                  <button onClick={() => duplicateSurvey(survey.id)} className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-50 rounded-lg" title="Duplicate">
                     <Copy className="h-4 w-4" />
                   </button>
                 </div>

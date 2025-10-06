@@ -1,27 +1,6 @@
 import React, { useState } from 'react';
-import { 
-  Zap, 
-  CheckCircle, 
-  AlertTriangle, 
-  Settings, 
-  Plus,
-  Eye,
-  EyeOff,
-  RefreshCw,
-  Download,
-  Upload,
-  Link as LinkIcon,
-  Database,
-  Mail,
-  Calendar,
-  CreditCard,
-  Users,
-  BarChart3,
-  MessageSquare,
-  Globe,
-  Shield,
-  Key
-} from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Zap, CheckCircle, AlertTriangle, Settings, Plus, Eye, EyeOff, RefreshCw, Database, Mail, CreditCard, Users, BarChart3, MessageSquare, Globe, Shield, Key } from 'lucide-react';
 
 const AdminIntegrations = () => {
   const [showApiKeys, setShowApiKeys] = useState<{[key: string]: boolean}>({});
@@ -206,6 +185,24 @@ const AdminIntegrations = () => {
     }));
   };
 
+  const navigate = useNavigate();
+
+  const handleConfigure = (id: string) => {
+    navigate(`/admin/integrations/${id}`);
+  };
+
+  const handleTest = (name: string) => {
+    alert(`Testing integration: ${name} (demo)`);
+  };
+
+  const handleRegenerate = (keyName: string) => {
+    alert(`Regenerated ${keyName} (demo)`);
+  };
+
+  const handleAddWebhook = () => {
+    alert('Open webhook creation modal (demo)');
+  };
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'connected':
@@ -338,14 +335,14 @@ const AdminIntegrations = () => {
                       </div>
 
                       <div className="flex items-center justify-between">
-                        <button className="text-sm text-blue-600 hover:text-blue-700 font-medium">
+                        <button onClick={() => handleConfigure(integration.id)} className="text-sm text-blue-600 hover:text-blue-700 font-medium">
                           Configure
                         </button>
                         <div className="flex items-center space-x-2">
-                          <button className="p-1 text-gray-400 hover:text-gray-600" title="View Details">
+                          <button onClick={() => handleTest(integration.name)} className="p-1 text-gray-400 hover:text-gray-600" title="Test">
                             <Eye className="h-4 w-4" />
                           </button>
-                          <button className="p-1 text-gray-400 hover:text-gray-600" title="Settings">
+                          <button onClick={() => handleConfigure(integration.id)} className="p-1 text-gray-400 hover:text-gray-600" title="Settings">
                             <Settings className="h-4 w-4" />
                           </button>
                         </div>
@@ -359,9 +356,9 @@ const AdminIntegrations = () => {
 
           {activeTab === 'webhooks' && (
             <div>
-              <div className="flex items-center justify-between mb-6">
+                <div className="flex items-center justify-between mb-6">
                 <h2 className="text-xl font-bold text-gray-900">Webhook Management</h2>
-                <button className="bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-2">
+                <button onClick={handleAddWebhook} className="bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-2">
                   <Plus className="h-4 w-4" />
                   <span>Add Webhook</span>
                 </button>
@@ -399,10 +396,10 @@ const AdminIntegrations = () => {
                         <span className="text-gray-600">Success Rate:</span>
                         <div className="font-medium text-gray-900">{webhook.successRate}%</div>
                       </div>
-                      <div className="flex items-center space-x-2">
-                        <button className="text-blue-600 hover:text-blue-700">Test</button>
-                        <button className="text-gray-600 hover:text-gray-700">Edit</button>
-                        <button className="text-red-600 hover:text-red-700">Delete</button>
+                        <div className="flex items-center space-x-2">
+                        <button onClick={() => handleTest(webhook.name)} className="text-blue-600 hover:text-blue-700">Test</button>
+                        <button onClick={() => alert('Edit webhook (demo)')} className="text-gray-600 hover:text-gray-700">Edit</button>
+                        <button onClick={() => { if(confirm('Delete webhook?')) alert('Deleted (demo)'); }} className="text-red-600 hover:text-red-700">Delete</button>
                       </div>
                     </div>
                   </div>
@@ -435,7 +432,7 @@ const AdminIntegrations = () => {
                           readOnly
                           className="flex-1 px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg text-sm font-mono"
                         />
-                        <button className="bg-orange-500 text-white px-3 py-2 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-1">
+                        <button onClick={() => handleRegenerate('production')} className="bg-orange-500 text-white px-3 py-2 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-1">
                           <RefreshCw className="h-4 w-4" />
                           <span>Regenerate</span>
                         </button>
@@ -460,7 +457,7 @@ const AdminIntegrations = () => {
                           readOnly
                           className="flex-1 px-3 py-2 bg-gray-50 border border-gray-300 rounded-lg text-sm font-mono"
                         />
-                        <button className="bg-gray-500 text-white px-3 py-2 rounded-lg hover:bg-gray-600 transition-colors duration-200 flex items-center space-x-1">
+                        <button onClick={() => handleRegenerate('test')} className="bg-gray-500 text-white px-3 py-2 rounded-lg hover:bg-gray-600 transition-colors duration-200 flex items-center space-x-1">
                           <RefreshCw className="h-4 w-4" />
                           <span>Regenerate</span>
                         </button>

@@ -12,9 +12,9 @@ const AdminOrganizations = () => {
   }, []);
 
   const filteredOrgs = organizations.filter(org =>
-    org.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    org.type.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    org.contactPerson.toLowerCase().includes(searchTerm.toLowerCase())
+    (org.name || '').toString().toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (org.type || '').toString().toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (org.contactPerson || '').toString().toLowerCase().includes(searchTerm.toLowerCase())
   );
 
   const getStatusColor = (status: string) => {
@@ -204,7 +204,7 @@ const AdminOrganizations = () => {
         </div>
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 text-center">
           <div className="text-2xl font-bold text-purple-600">
-            {Math.round(organizations.reduce((acc, org) => acc + org.completionRate, 0) / organizations.length)}%
+            {organizations.length === 0 ? '—' : `${Math.round(organizations.reduce((acc, org) => acc + (org.completionRate || 0), 0) / organizations.length)}%`}
           </div>
           <div className="text-sm text-gray-600">Avg. Completion</div>
         </div>

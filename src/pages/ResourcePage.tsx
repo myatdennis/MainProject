@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Download, CheckCircle, Mail, FileText, Video, Users, Calendar, ArrowRight } from 'lucide-react';
 
 const ResourcePage = () => {
@@ -46,6 +47,8 @@ const ResourcePage = () => {
     "Action planning templates and worksheets"
   ];
 
+  const navigate = useNavigate();
+
   if (isSubmitted) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-green-50 to-blue-50 py-20">
@@ -68,7 +71,7 @@ const ResourcePage = () => {
                 how we can support your organization's inclusive leadership journey.
               </p>
             </div>
-            <button className="bg-gradient-to-r from-orange-400 to-red-500 text-white px-8 py-4 rounded-full font-semibold text-lg hover:from-orange-500 hover:to-red-600 transition-all duration-200 transform hover:scale-105 flex items-center mx-auto space-x-2">
+            <button onClick={() => navigate('/contact')} className="bg-gradient-to-r from-orange-400 to-red-500 text-white px-8 py-4 rounded-full font-semibold text-lg hover:from-orange-500 hover:to-red-600 transition-all duration-200 transform hover:scale-105 flex items-center mx-auto space-x-2">
               <Calendar className="h-5 w-5" />
               <span>Schedule Free Consultation</span>
             </button>
@@ -231,7 +234,11 @@ const ResourcePage = () => {
                 <p className="text-gray-600 mb-6">{resource.description}</p>
                 <div className="flex items-center justify-between">
                   <span className="text-sm text-orange-500 font-medium">{resource.type}</span>
-                  <button className="bg-gray-100 text-gray-700 px-4 py-2 rounded-full font-medium hover:bg-orange-500 hover:text-white transition-colors duration-200 flex items-center space-x-2">
+                  <button onClick={() => {
+                    if (resource.type.includes('Download')) navigate('/resources');
+                    else if (resource.type.includes('Video')) navigate('/lms/courses');
+                    else navigate('/resources');
+                  }} className="bg-gray-100 text-gray-700 px-4 py-2 rounded-full font-medium hover:bg-orange-500 hover:text-white transition-colors duration-200 flex items-center space-x-2">
                     <span>{resource.action}</span>
                     <ArrowRight className="h-4 w-4" />
                   </button>

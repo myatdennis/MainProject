@@ -31,7 +31,16 @@ const AdminLayout: React.FC = () => {
 
   // Check authentication
   useEffect(() => {
-    if (!isAuthenticated.admin) {
+    // Avoid redirect loops or premature navigation while the auth provider
+    // is still initializing. If we're already on the login page, don't
+    // force navigation. Also respect a localStorage demo flag so transient
+    // states don't cause a redirect before AuthProvider finishes.
+    if (location.pathname === '/admin/login') return;
+
+    const adminLocal = typeof window !== 'undefined' && localStorage.getItem('huddle_admin_auth') === 'true';
+    // Only navigate to the login page when we are sure the user is not
+    // authenticated (no local flag and context says unauthenticated).
+    if (!isAuthenticated?.admin && !adminLocal) {
       navigate('/admin/login');
     }
   }, [isAuthenticated.admin, navigate]);

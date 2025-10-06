@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
+import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { courseStore, generateId, calculateCourseDuration, countTotalLessons } from '../../store/courseStore';
 import type { Course, Module, Lesson, Resource, LessonContent } from '../../store/courseStore';
 import { supabase } from '../../lib/supabase';
@@ -16,14 +16,13 @@ import {
   FileText,
   MessageSquare,
   CheckCircle,
-  Play,
+  
   Clock,
   Users,
   BookOpen,
   Target,
-  Tag,
   Settings,
-  AlertTriangle,
+  
   X,
   ChevronUp,
   ChevronDown,
@@ -50,6 +49,35 @@ const AdminCourseBuilder = () => {
   const [uploadingVideos, setUploadingVideos] = useState<{ [key: string]: boolean }>({});
   const [uploadProgress, setUploadProgress] = useState<{ [key: string]: number }>({});
   const [uploadError, setUploadError] = useState<string | null>(null);
+
+  const [searchParams] = useSearchParams();
+  const [highlightLessonId, setHighlightLessonId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const moduleQ = searchParams.get('module');
+    const lessonQ = searchParams.get('lesson');
+    if (!moduleQ || !lessonQ) return;
+
+    // Expand the requested module and open the lesson editor if the lesson exists
+    setExpandedModules(prev => ({ ...prev, [moduleQ]: true }));
+
+    const mod = course.modules.find(m => m.id === moduleQ);
+    const lessonExists = mod?.lessons.some(l => l.id === lessonQ);
+
+    if (lessonExists) {
+      setEditingLesson({ moduleId: moduleQ, lessonId: lessonQ });
+      setHighlightLessonId(lessonQ);
+
+      // remove highlight after a short delay
+      setTimeout(() => setHighlightLessonId(null), 2000);
+
+      // Scroll into view after render
+      setTimeout(() => {
+        const el = document.getElementById(`lesson-${lessonQ}`);
+        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 200);
+    }
+  }, [searchParams, course.modules]);
 
   function createEmptyCourse(): Course {
     return {
@@ -210,7 +238,7 @@ const AdminCourseBuilder = () => {
       const fileName = `${courseId}/${moduleId}/${lessonId}.${fileExt}`;
 
       // Upload to Supabase Storage
-      const { data, error } = await supabase.storage
+      const { error } = await supabase.storage
         .from('course-videos')
         .upload(fileName, file, {
           cacheControl: '3600',
@@ -258,7 +286,7 @@ const AdminCourseBuilder = () => {
       const fileName = `${courseId}/${moduleId}/${lessonId}-resource.${fileExt}`;
 
       // Upload to Supabase Storage
-      const { data, error } = await supabase.storage
+      const { error } = await supabase.storage
         .from('course-resources')
         .upload(fileName, file, {
           cacheControl: '3600',
@@ -336,6 +364,34 @@ const AdminCourseBuilder = () => {
               className="p-1 text-blue-600 hover:text-blue-800"
             >
               <Edit className="h-4 w-4" />
+            </button>
+            <button
+              onClick={() => {
+                try {
+                  const url = `/courses/${course.id}`;
+                  window.open(url, '_blank');
+                } catch (err) {
+                  console.warn('Preview failed', err);
+                }
+              }}
+              className="p-1 text-gray-600 hover:text-gray-800"
+              title="Preview Lesson"
+            >
+              <Eye className="h-4 w-4" />
+            </button>
+            <button
+              onClick={() => {
+                try {
+                  const lessonUrl = `/courses/${course.id}/modules/${moduleId}/lessons/${lesson.id}`;
+                  window.open(lessonUrl, '_blank');
+                } catch (err) {
+                  console.warn('Start preview failed', err);
+                }
+              }}
+              className="px-2 py-1 bg-orange-100 text-orange-700 rounded-md text-sm hover:bg-orange-200"
+              title="Start Lesson"
+            >
+              Start
             </button>
             <button
               onClick={() => deleteLesson(moduleId, lesson.id)}
@@ -437,6 +493,9 @@ const AdminCourseBuilder = () => {
                               style={{ width: `${progress}%` }}
                             ></div>
                           </div>
+                        )}
+                        {uploadError && (
+                          <p className="text-sm text-red-600 mt-2">{uploadError}</p>
                         )}
                       </div>
                     ) : (
@@ -951,6 +1010,63 @@ const AdminCourseBuilder = () => {
               <CheckCircle className="h-4 w-4" />
               <span>Publish Course</span>
             </button>
+            <button
+              onClick={() => window.open(`/courses/${course.id}`, '_blank')}
+              className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2"
+            >
+              <Eye className="h-4 w-4" />
+              <span>Preview</span>
+            </button>
+            <button
+              onClick={() => {
+                try {
+                  const newId = generateId('course');
+                  const cloned = { ...course, id: newId, title: `${course.title} (Copy)`, createdDate: new Date().toISOString(), lastUpdated: new Date().toISOString(), enrollments: 0, completions: 0, completionRate: 0 };
+                  courseStore.saveCourse(cloned);
+                  navigate(`/admin/course-builder/${newId}`);
+                } catch (err) {
+                  console.warn('Failed to duplicate course', err);
+                }
+              }}
+              className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2"
+            >
+              <Copy className="h-4 w-4" />
+              <span>Duplicate</span>
+            </button>
+            <button
+              onClick={() => {
+                try {
+                  const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(course, null, 2));
+                  const dlAnchor = document.createElement('a');
+                  dlAnchor.setAttribute('href', dataStr);
+                  dlAnchor.setAttribute('download', `${course.title.replace(/\s+/g, '_').toLowerCase() || 'course'}.json`);
+                  document.body.appendChild(dlAnchor);
+                  dlAnchor.click();
+                  dlAnchor.remove();
+                } catch (err) {
+                  console.warn('Export failed', err);
+                }
+              }}
+              className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2"
+            >
+              <Download className="h-4 w-4" />
+              <span>Export</span>
+            </button>
+            <button
+              onClick={() => {
+                if (!confirm('Delete this course? This action cannot be undone.')) return;
+                try {
+                  courseStore.deleteCourse(course.id);
+                  navigate('/admin/courses');
+                } catch (err) {
+                  console.warn('Delete failed', err);
+                }
+              }}
+              className="border border-red-200 text-red-600 px-4 py-2 rounded-lg hover:bg-red-50 transition-colors duration-200 flex items-center space-x-2"
+            >
+              <Trash2 className="h-4 w-4" />
+              <span>Delete</span>
+            </button>
           </div>
         </div>
       </div>
@@ -1150,7 +1266,7 @@ const AdminCourseBuilder = () => {
               </div>
 
               <div className="space-y-4">
-                {course.modules.map((module, moduleIndex) => (
+                {course.modules.map((module, _moduleIndex) => (
                   <div key={module.id} className="border border-gray-200 rounded-lg">
                     <div className="p-4 bg-gray-50 border-b border-gray-200">
                       <div className="flex items-center justify-between">
@@ -1198,7 +1314,11 @@ const AdminCourseBuilder = () => {
                       <div className="p-4">
                         <div className="space-y-3 mb-4">
                           {module.lessons.map((lesson) => (
-                            <div key={lesson.id}>
+                            <div
+                              key={lesson.id}
+                              id={`lesson-${lesson.id}`}
+                              className={highlightLessonId === lesson.id ? 'transition-all duration-300 ring-2 ring-orange-300 bg-orange-50 rounded-md p-1' : ''}
+                            >
                               {renderLessonEditor(module.id, lesson)}
                             </div>
                           ))}
@@ -1310,7 +1430,8 @@ const AdminCourseBuilder = () => {
                       onChange={(e) => setCourse(prev => ({
                         ...prev,
                         certification: {
-                          ...prev.certification,
+                          // ensure a full certification object exists so types remain compatible
+                          ...(prev.certification ?? { available: false, name: '', requirements: [], validFor: '1 year', renewalRequired: false }),
                           available: e.target.checked
                         }
                       }))}

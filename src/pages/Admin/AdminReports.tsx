@@ -1,22 +1,51 @@
 import React, { useState } from 'react';
-import { 
-  BarChart3, 
-  TrendingUp, 
-  Download, 
-  Calendar,
-  Users,
-  BookOpen,
-  Award,
-  Clock,
-  Filter,
-  RefreshCw,
-  Eye,
-  Share
-} from 'lucide-react';
+import { BarChart3, TrendingUp, Download, Calendar, Filter, RefreshCw, Eye, Share } from 'lucide-react';
 
 const AdminReports = () => {
   const [dateRange, setDateRange] = useState('last-30-days');
   const [reportType, setReportType] = useState('overview');
+
+  const refreshReports = () => {
+    console.log('Refreshing reports...');
+    alert('Reports refreshed (demo)');
+  };
+
+  const exportReport = () => {
+    const data = { exportedAt: new Date().toISOString(), reportType };
+    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(data, null, 2));
+    const a = document.createElement('a');
+    a.setAttribute('href', dataStr);
+    a.setAttribute('download', `report-${reportType}-${Date.now()}.json`);
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
+
+  const generateNewReport = () => {
+    alert('Generating report (demo)');
+  };
+
+  const viewReport = (name: string) => {
+    window.open(`/admin/report-preview?name=${encodeURIComponent(name)}`, '_blank');
+  };
+
+  const downloadReport = (name: string) => {
+    const text = `Report: ${name}\nGenerated: ${new Date().toLocaleString()}`;
+    const blob = new Blob([text], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${name.replace(/\s+/g, '_').toLowerCase()}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const shareReport = (name: string) => {
+    const link = `${window.location.origin}/admin/reports?shared=${encodeURIComponent(name)}`;
+    navigator.clipboard?.writeText(link).then(() => alert('Report link copied')).catch(() => alert('Copy not supported'));
+  };
 
   const overviewStats = [
     { label: 'Total Learners', value: '247', change: '+12%', changeType: 'positive' },
@@ -145,11 +174,11 @@ const AdminReports = () => {
           </div>
           
           <div className="flex items-center space-x-4">
-            <button className="flex items-center space-x-2 text-gray-600 hover:text-gray-900 font-medium">
+            <button onClick={refreshReports} className="flex items-center space-x-2 text-gray-600 hover:text-gray-900 font-medium">
               <RefreshCw className="h-4 w-4" />
               <span>Refresh</span>
             </button>
-            <button className="bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-2">
+            <button onClick={exportReport} className="bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-2">
               <Download className="h-4 w-4" />
               <span>Export Report</span>
             </button>
@@ -317,7 +346,7 @@ const AdminReports = () => {
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-xl font-bold text-gray-900">Generated Reports</h2>
-          <button className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors duration-200 flex items-center space-x-2">
+          <button onClick={generateNewReport} className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors duration-200 flex items-center space-x-2">
             <BarChart3 className="h-4 w-4" />
             <span>Generate New Report</span>
           </button>
@@ -331,13 +360,13 @@ const AdminReports = () => {
                   <p className="text-sm text-gray-600 mt-1">{report.description}</p>
                 </div>
                 <div className="flex items-center space-x-2">
-                  <button className="p-1 text-blue-600 hover:text-blue-800" title="View">
+                  <button onClick={() => viewReport(report.name)} className="p-1 text-blue-600 hover:text-blue-800" title="View">
                     <Eye className="h-4 w-4" />
                   </button>
-                  <button className="p-1 text-gray-600 hover:text-gray-800" title="Download">
+                  <button onClick={() => downloadReport(report.name)} className="p-1 text-gray-600 hover:text-gray-800" title="Download">
                     <Download className="h-4 w-4" />
                   </button>
-                  <button className="p-1 text-gray-600 hover:text-gray-800" title="Share">
+                  <button onClick={() => shareReport(report.name)} className="p-1 text-gray-600 hover:text-gray-800" title="Share">
                     <Share className="h-4 w-4" />
                   </button>
                 </div>

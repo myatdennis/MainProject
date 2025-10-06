@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { courseStore } from '../../store/courseStore';
 import { 
   BookOpen, 
@@ -26,6 +26,8 @@ const AdminCourses = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [selectedCourses, setSelectedCourses] = useState<string[]>([]);
+
+  const navigate = useNavigate();
 
   // Get courses from store
   const courses = courseStore.getAllCourses();
@@ -97,6 +99,32 @@ const AdminCourses = () => {
     }
   };
 
+  const duplicateCourse = (courseId: string) => {
+    const original = courseStore.getCourse(courseId);
+    if (!original) return;
+
+    // Create a shallow clone with a new id and title
+    const newId = `course-${Date.now()}`;
+    const cloned = {
+      ...original,
+      id: newId,
+      title: `${original.title} (Copy)`,
+      createdDate: new Date().toISOString(),
+      lastUpdated: new Date().toISOString(),
+      enrollments: 0,
+      completions: 0,
+      completionRate: 0,
+    };
+
+    // Save to store and navigate to builder
+    try {
+      courseStore.saveCourse(cloned);
+      navigate(`/admin/course-builder/${newId}`);
+    } catch (err) {
+      console.warn('Failed to duplicate course', err);
+    }
+  };
+
   return (
     <div className="p-6 max-w-7xl mx-auto">
       {/* Header */}
@@ -134,22 +162,22 @@ const AdminCourses = () => {
             </div>
           </div>
           
-          <div className="flex items-center space-x-4">
+            <div className="flex items-center space-x-4">
             {selectedCourses.length > 0 && (
               <div className="flex items-center space-x-2">
-                <button className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors duration-200">
+                <button onClick={() => navigate(`/admin/courses/bulk?ids=${selectedCourses.join(',')}`)} className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors duration-200">
                   Bulk Assign ({selectedCourses.length})
                 </button>
-                <button className="bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 transition-colors duration-200">
+                <button onClick={() => { /* publish selected in-place */ alert('Publish selected: ' + selectedCourses.join(',')); }} className="bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 transition-colors duration-200">
                   Publish Selected
                 </button>
               </div>
             )}
-            <button className="bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-2">
+            <button onClick={() => navigate('/admin/course-builder/new')} className="bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-2">
               <Plus className="h-4 w-4" />
               <span>Create Course</span>
             </button>
-            <button className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2">
+            <button onClick={() => navigate('/admin/courses/import')} className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2">
               <Upload className="h-4 w-4" />
               <span>Import</span>
             </button>
@@ -249,9 +277,11 @@ const AdminCourses = () => {
                   >
                     <Edit className="h-4 w-4" />
                   </Link>
-                  <button className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-50 rounded-lg" title="Duplicate">
+                  <button onClick={() => duplicateCourse(course.id)} className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-50 rounded-lg" title="Duplicate">
                     <Copy className="h-4 w-4" />
                   </button>
+                  
+                  
                   <button className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-50 rounded-lg" title="Analytics">
                     <BarChart3 className="h-4 w-4" />
                   </button>
@@ -374,6 +404,9 @@ const AdminCourses = () => {
                       >
                         <Edit className="h-4 w-4" />
                       </Link>
+                      <button onClick={() => duplicateCourse(course.id)} className="p-1 text-gray-600 hover:text-gray-800" title="Duplicate">
+                        <Copy className="h-4 w-4" />
+                      </button>
                       <button className="p-1 text-gray-600 hover:text-gray-800" title="Settings">
                         <Settings className="h-4 w-4" />
                       </button>

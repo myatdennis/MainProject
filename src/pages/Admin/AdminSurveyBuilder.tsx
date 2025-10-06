@@ -1014,13 +1014,32 @@ const AdminSurveyBuilder = () => {
               <Settings className="h-4 w-4" />
               <span>Settings</span>
             </button>
-            <Link
-              to={`/admin/surveys/${survey.id}/preview`}
+            <button
+              onClick={() => window.open(`/admin/surveys/${survey.id}/preview`, '_blank')}
               className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2"
             >
               <Eye className="h-4 w-4" />
               <span>Preview</span>
-            </Link>
+            </button>
+            <button
+              onClick={() => {
+                try {
+                  const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(survey, null, 2));
+                  const dlAnchor = document.createElement('a');
+                  dlAnchor.setAttribute('href', dataStr);
+                  dlAnchor.setAttribute('download', `${survey.title.replace(/\s+/g, '_').toLowerCase() || 'survey'}.json`);
+                  document.body.appendChild(dlAnchor);
+                  dlAnchor.click();
+                  dlAnchor.remove();
+                } catch (err) {
+                  console.warn('Export failed', err);
+                }
+              }}
+              className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2"
+            >
+              <BarChart3 className="h-4 w-4" />
+              <span>Export</span>
+            </button>
             <button
               onClick={saveSurvey}
               disabled={isSaving}

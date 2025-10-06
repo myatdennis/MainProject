@@ -1,8 +1,9 @@
 import React from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { ArrowRight, CheckCircle, Users, Heart, MessageSquare, Target, Download, Calendar } from 'lucide-react';
 
 const HomePage = () => {
+  const navigate = useNavigate();
   const features = [
     {
       icon: <Users className="h-8 w-8 text-blue-500" />,
@@ -42,7 +43,7 @@ const HomePage = () => {
                 We help organizations lead with empathy, build inclusive cultures, and hold space for courageous conversations.
               </p>
               <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4">
-                <button className="bg-gradient-to-r from-orange-400 to-red-500 text-white px-8 py-4 rounded-full font-semibold text-lg hover:from-orange-500 hover:to-red-600 transition-all duration-200 transform hover:scale-105 flex items-center justify-center space-x-2">
+                <button onClick={() => navigate('/contact')} className="bg-gradient-to-r from-orange-400 to-red-500 text-white px-8 py-4 rounded-full font-semibold text-lg hover:from-orange-500 hover:to-red-600 transition-all duration-200 transform hover:scale-105 flex items-center justify-center space-x-2">
                   <Calendar className="h-5 w-5" />
                   <span>Book a Discovery Call</span>
                 </button>
@@ -147,7 +148,7 @@ const HomePage = () => {
             Join hundreds of leaders who have created more inclusive, empathetic workplaces with our proven methods.
           </p>
           <div className="flex flex-col sm:flex-row justify-center space-y-4 sm:space-y-0 sm:space-x-4">
-            <button className="bg-white text-orange-500 px-8 py-4 rounded-full font-semibold text-lg hover:bg-gray-50 transition-colors duration-200">
+            <button onClick={() => navigate('/contact')} className="bg-white text-orange-500 px-8 py-4 rounded-full font-semibold text-lg hover:bg-gray-50 transition-colors duration-200">
               Schedule Your Discovery Call
             </button>
             <Link to="/resources" className="border-2 border-white text-white px-8 py-4 rounded-full font-semibold text-lg hover:bg-white hover:text-orange-500 transition-colors duration-200">

@@ -22,6 +22,34 @@ const AdminAnalytics = () => {
   const [dateRange, setDateRange] = useState('last-30-days');
   const [selectedMetric, setSelectedMetric] = useState('engagement');
 
+  const refreshAnalytics = () => {
+    console.log('Refreshing analytics...');
+    alert('Analytics refreshed (demo)');
+  };
+
+  const exportInsights = () => {
+    const data = { exportedAt: new Date().toISOString(), metric: selectedMetric };
+    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(data, null, 2));
+    const a = document.createElement('a');
+    a.setAttribute('href', dataStr);
+    a.setAttribute('download', `insights-${selectedMetric}-${Date.now()}.json`);
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  };
+
+  const applySuggestion = (title: string) => {
+    alert(`${title} applied (demo)`);
+  };
+
+  const scheduleNow = (title: string) => {
+    alert(`${title} scheduled (demo)`);
+  };
+
+  const createGroup = (title: string) => {
+    alert(`${title} group created (demo)`);
+  };
+
   const aiInsights = [
     {
       type: 'warning',
@@ -183,12 +211,12 @@ const AdminAnalytics = () => {
             </div>
           </div>
           
-          <div className="flex items-center space-x-4">
-            <button className="flex items-center space-x-2 text-gray-600 hover:text-gray-900 font-medium">
+            <div className="flex items-center space-x-4">
+            <button onClick={refreshAnalytics} className="flex items-center space-x-2 text-gray-600 hover:text-gray-900 font-medium">
               <RefreshCw className="h-4 w-4" />
               <span>Refresh AI Analysis</span>
             </button>
-            <button className="bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-2">
+            <button onClick={exportInsights} className="bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-2">
               <Download className="h-4 w-4" />
               <span>Export Insights</span>
             </button>
@@ -214,7 +242,7 @@ const AdminAnalytics = () => {
                     <p className="text-sm text-gray-600 mb-3">{insight.description}</p>
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-gray-500">Confidence: {insight.confidence}%</span>
-                      <button className={`text-sm font-medium ${insight.color} hover:underline`}>
+                      <button onClick={() => applySuggestion(insight.title)} className={`text-sm font-medium ${insight.color} hover:underline`}>
                         {insight.action} →
                       </button>
                     </div>
@@ -372,20 +400,20 @@ const AdminAnalytics = () => {
           <h2 className="text-xl font-bold text-gray-900">AI Recommendations</h2>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          <div className="bg-white p-4 rounded-lg shadow-sm">
+            <div className="bg-white p-4 rounded-lg shadow-sm">
             <h3 className="font-semibold text-gray-900 mb-2">Optimize Content</h3>
             <p className="text-sm text-gray-600 mb-3">Break down "Conversation Template" into smaller, interactive segments to improve engagement.</p>
-            <button className="text-sm text-purple-600 hover:text-purple-700 font-medium">Apply Suggestion →</button>
+            <button onClick={() => applySuggestion('Optimize Content')} className="text-sm text-purple-600 hover:text-purple-700 font-medium">Apply Suggestion →</button>
           </div>
           <div className="bg-white p-4 rounded-lg shadow-sm">
             <h3 className="font-semibold text-gray-900 mb-2">Schedule Reminders</h3>
             <p className="text-sm text-gray-600 mb-3">Send personalized reminders to 23 at-risk learners on Tuesday mornings for optimal engagement.</p>
-            <button className="text-sm text-purple-600 hover:text-purple-700 font-medium">Schedule Now →</button>
+            <button onClick={() => scheduleNow('Schedule Reminders')} className="text-sm text-purple-600 hover:text-purple-700 font-medium">Schedule Now →</button>
           </div>
           <div className="bg-white p-4 rounded-lg shadow-sm">
             <h3 className="font-semibold text-gray-900 mb-2">Create Cohort</h3>
             <p className="text-sm text-gray-600 mb-3">Group high-performing learners for peer mentoring to boost overall completion rates.</p>
-            <button className="text-sm text-purple-600 hover:text-purple-700 font-medium">Create Group →</button>
+            <button onClick={() => createGroup('Create Cohort')} className="text-sm text-purple-600 hover:text-purple-700 font-medium">Create Group →</button>
           </div>
         </div>
       </div>

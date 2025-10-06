@@ -1,4 +1,5 @@
 import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Users, MessageSquare, Target, Clock, CheckCircle, ArrowRight, Calendar } from 'lucide-react';
 
 const ServicesPage = () => {
@@ -74,6 +75,8 @@ const ServicesPage = () => {
     }
   ];
 
+  const navigate = useNavigate();
+
   return (
     <div>
       {/* Hero Section */}
@@ -85,7 +88,7 @@ const ServicesPage = () => {
           <p className="text-xl text-gray-600 mb-8 max-w-3xl mx-auto">
             Choose from our proven services designed to create inclusive, empathetic leaders and thriving organizational cultures.
           </p>
-          <button className="bg-gradient-to-r from-orange-400 to-red-500 text-white px-8 py-4 rounded-full font-semibold text-lg hover:from-orange-500 hover:to-red-600 transition-all duration-200 transform hover:scale-105 flex items-center mx-auto space-x-2">
+          <button onClick={() => navigate('/contact')} className="bg-gradient-to-r from-orange-400 to-red-500 text-white px-8 py-4 rounded-full font-semibold text-lg hover:from-orange-500 hover:to-red-600 transition-all duration-200 transform hover:scale-105 flex items-center mx-auto space-x-2">
             <Calendar className="h-5 w-5" />
             <span>Start Here - Book Discovery Call</span>
           </button>
@@ -135,7 +138,7 @@ const ServicesPage = () => {
                 </div>
                 
                 <div className="bg-gray-50 p-6">
-                  <button className="w-full bg-gradient-to-r from-orange-400 to-red-500 text-white py-3 rounded-full font-semibold hover:from-orange-500 hover:to-red-600 transition-all duration-200 flex items-center justify-center space-x-2">
+                  <button onClick={() => navigate('/contact')} className="w-full bg-gradient-to-r from-orange-400 to-red-500 text-white py-3 rounded-full font-semibold hover:from-orange-500 hover:to-red-600 transition-all duration-200 flex items-center justify-center space-x-2">
                     <span>Get Started</span>
                     <ArrowRight className="h-4 w-4" />
                   </button>
