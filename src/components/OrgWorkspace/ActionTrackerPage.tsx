@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { addActionItem, listActionItems, updateActionItem } from '../../services/clientWorkspaceService';
 
 const ActionTrackerPage: React.FC = () => {
   const { orgId } = useParams();
@@ -11,13 +10,18 @@ const ActionTrackerPage: React.FC = () => {
 
   useEffect(() => {
     if (!orgId) return;
-    listActionItems(orgId).then(setItems);
+    (async () => {
+      const svc = await import('../../services/clientWorkspaceService');
+      const i = await svc.listActionItems(orgId as string);
+      setItems(i);
+    })();
   }, [orgId]);
 
   const create = async () => {
     if (!orgId || !title) return;
-    await addActionItem(orgId, { title, assignee, dueDate, status: 'Not Started' });
-    const i = await listActionItems(orgId);
+  const svc = await import('../../services/clientWorkspaceService');
+  await svc.addActionItem(orgId, { title, assignee, dueDate, status: 'Not Started' });
+  const i = await svc.listActionItems(orgId as string);
     setItems(i);
     setTitle(''); setAssignee(''); setDueDate('');
   };
@@ -38,10 +42,11 @@ const ActionTrackerPage: React.FC = () => {
   };
 
   const toggleStatus = async (item: any) => {
-    const next = item.status === 'Completed' ? 'Not Started' : item.status === 'Not Started' ? 'In Progress' : 'Completed';
-    const updated = { ...item, status: next };
-    await updateActionItem(orgId!, updated);
-    setItems(await listActionItems(orgId!));
+  const next = item.status === 'Completed' ? 'Not Started' : item.status === 'Not Started' ? 'In Progress' : 'Completed';
+  const updated = { ...item, status: next };
+  const svc = await import('../../services/clientWorkspaceService');
+  await svc.updateActionItem(orgId!, updated);
+  setItems(await svc.listActionItems(orgId!));
   };
 
   return (

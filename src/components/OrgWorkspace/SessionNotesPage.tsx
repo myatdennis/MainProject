@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { addSessionNote, listSessionNotes } from '../../services/clientWorkspaceService';
 
 const SessionNotesPage: React.FC = () => {
   const { orgId } = useParams();
@@ -12,7 +11,11 @@ const SessionNotesPage: React.FC = () => {
 
   useEffect(() => {
     if (!orgId) return;
-    listSessionNotes(orgId).then(setNotes);
+    (async () => {
+      const svc = await import('../../services/clientWorkspaceService');
+      const n = await svc.listSessionNotes(orgId as string);
+      setNotes(n);
+    })();
   }, [orgId]);
 
   // notification visual feedback intentionally omitted for now
@@ -21,8 +24,9 @@ const SessionNotesPage: React.FC = () => {
     if (!orgId) return;
     const attachments = [] as any[];
     // attachments are already added to files state below
-    await addSessionNote(orgId, { title, body, date, tags: tags.split(',').map(t=>t.trim()), attachments });
-    const n = await listSessionNotes(orgId);
+  const svc = await import('../../services/clientWorkspaceService');
+  await svc.addSessionNote(orgId, { title, body, date, tags: tags.split(',').map(t=>t.trim()), attachments });
+  const n = await svc.listSessionNotes(orgId as string);
     setNotes(n);
     setTitle(''); setBody(''); setTags('');
   };

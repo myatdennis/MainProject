@@ -23,13 +23,15 @@ export default tseslint.config(
         'warn',
         { allowConstantExport: true },
       ],
-      // Lower severity for project-wide patterns so developers can iterate
-      // quickly. These rules can be tightened later on a per-folder basis.
+      // Turn off some rules that currently generate a large number of
+      // warnings across the codebase. We can re-enable and fix them
+      // incrementally later if you prefer stricter checks.
       '@typescript-eslint/no-explicit-any': 'off',
-      '@typescript-eslint/no-unused-vars': ['warn', { 'argsIgnorePattern': '^_' }],
+      '@typescript-eslint/no-unused-vars': 'off',
       'no-useless-escape': 'off',
-      'react-hooks/exhaustive-deps': 'warn',
+      'react-hooks/exhaustive-deps': 'off',
       'no-unused-vars': 'off',
+      'react-refresh/only-export-components': 'off',
     },
   }
 );

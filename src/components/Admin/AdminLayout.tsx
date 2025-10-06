@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { Outlet } from 'react-router-dom';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { 
@@ -22,18 +23,14 @@ import {
   Send
 } from 'lucide-react';
 
-interface AdminLayoutProps {
-  children: React.ReactNode;
-}
-
-const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
+const AdminLayout: React.FC = () => {
   const { logout, isAuthenticated, user } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
 
   // Check authentication
-  React.useEffect(() => {
+  useEffect(() => {
     if (!isAuthenticated.admin) {
       navigate('/admin/login');
     }
@@ -191,7 +188,7 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
 
         {/* Page content */}
         <main className="flex-1">
-          {children}
+          <Outlet />
         </main>
       </div>
     </div>

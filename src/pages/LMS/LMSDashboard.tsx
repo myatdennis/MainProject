@@ -250,14 +250,12 @@ const LMSDashboard = () => {
           </div>
 
           {/* Upcoming */}
-          <div className="bg-gradient-to-r from-blue-50 to-green-50 rounded-xl p-6">
+            <div className="bg-gradient-to-r from-blue-50 to-green-50 rounded-xl p-6">
             <h3 className="text-lg font-bold text-gray-900 mb-2">Next Coaching Session</h3>
             <p className="text-sm text-gray-600 mb-4">
               Scheduled for March 15, 2025 at 2:00 PM EST
             </p>
-            <button className="bg-white text-blue-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors duration-200">
-              Join Meeting
-            </button>
+            <a href="/lms/meeting" className="bg-white text-blue-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors duration-200">Join Meeting</a>
           </div>
         </div>
       </div>

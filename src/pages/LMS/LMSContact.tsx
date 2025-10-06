@@ -356,10 +356,10 @@ const LMSContact = () => {
                     </div>
                   </div>
                   {session.status === 'confirmed' && (
-                    <button className="mt-3 w-full bg-blue-500 text-white py-2 rounded-lg text-sm hover:bg-blue-600 transition-colors duration-200 flex items-center justify-center space-x-2">
+                    <a href="/lms/meeting" className="mt-3 w-full bg-blue-500 text-white py-2 rounded-lg text-sm hover:bg-blue-600 transition-colors duration-200 flex items-center justify-center space-x-2">
                       <Video className="h-4 w-4" />
                       <span>Join Meeting</span>
-                    </button>
+                    </a>
                   )}
                 </div>
               ))}

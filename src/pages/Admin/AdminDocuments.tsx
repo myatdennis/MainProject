@@ -27,7 +27,7 @@ const AdminDocuments: React.FC = () => {
   const handleUpload = async () => {
     if (!file && !name) return alert('Provide a name or file');
     let url: string | undefined = undefined;
-    let mime = file?.type;
+    const mime = file?.type;
     if (file) {
       // read as data URL for local dev
       url = await new Promise<string>((res, rej) => {

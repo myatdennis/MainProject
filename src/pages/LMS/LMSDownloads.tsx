@@ -358,10 +358,10 @@ const LMSDownloads = () => {
           <p className="text-gray-600 mb-6 max-w-2xl mx-auto">
             Download our complete resource package containing all course materials, videos, and worksheets in one convenient ZIP file.
           </p>
-          <button className="bg-gradient-to-r from-orange-400 to-red-500 text-white px-8 py-4 rounded-full font-semibold text-lg hover:from-orange-500 hover:to-red-600 transition-all duration-200 transform hover:scale-105 flex items-center mx-auto space-x-2">
+          <a href="/lms/downloads/package" className="bg-gradient-to-r from-orange-400 to-red-500 text-white px-8 py-4 rounded-full font-semibold text-lg hover:from-orange-500 hover:to-red-600 transition-all duration-200 transform hover:scale-105 flex items-center mx-auto space-x-2">
             <Archive className="h-5 w-5" />
             <span>Download Complete Package (128.5 MB)</span>
-          </button>
+          </a>
         </div>
       </div>
     </div>

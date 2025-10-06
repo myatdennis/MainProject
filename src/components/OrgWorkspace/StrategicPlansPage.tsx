@@ -1,6 +1,5 @@
 import React, { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import { addStrategicPlanVersion, listStrategicPlans } from '../../services/clientWorkspaceService';
 
 const StrategicPlansPage: React.FC = () => {
   const { orgId } = useParams();
@@ -9,21 +8,27 @@ const StrategicPlansPage: React.FC = () => {
 
   useEffect(() => {
     if (!orgId) return;
-    listStrategicPlans(orgId).then(setVersions);
+    (async () => {
+      const svc = await import('../../services/clientWorkspaceService');
+      const list = await svc.listStrategicPlans(orgId as string);
+      setVersions(list);
+    })();
   }, [orgId]);
 
   const save = async () => {
     if (!orgId) return;
-    await addStrategicPlanVersion(orgId, editor, 'Huddle Co.');
-    const v = await listStrategicPlans(orgId);
+    const svc = await import('../../services/clientWorkspaceService');
+    await svc.addStrategicPlanVersion(orgId, editor, 'Huddle Co.');
+    const v = await svc.listStrategicPlans(orgId as string);
     setVersions(v);
     setEditor('');
   };
 
   const remove = async (id: string) => {
     if (!orgId) return;
-    await (await import('../../services/clientWorkspaceService')).deleteStrategicPlanVersion(orgId, id);
-    setVersions(await listStrategicPlans(orgId));
+    const svc = await import('../../services/clientWorkspaceService');
+    await svc.deleteStrategicPlanVersion(orgId, id);
+    setVersions(await svc.listStrategicPlans(orgId as string));
   };
 
   const restore = async (id: string) => {
@@ -33,7 +38,8 @@ const StrategicPlansPage: React.FC = () => {
     if (v) {
       // when restoring, we create a new version from the selected content
       await addStrategicPlanVersion(orgId, v.content, 'Restored Version');
-      setVersions(await listStrategicPlans(orgId));
+      const svc = await import('../../services/clientWorkspaceService');
+      setVersions(await svc.listStrategicPlans(orgId as string));
     }
   };
 

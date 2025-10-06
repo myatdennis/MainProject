@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, Link } from 'react-router-dom';
+import { useParams, Link, useNavigate } from 'react-router-dom';
 import { courseStore } from '../../store/courseStore';
 import { useCourseProgress } from '../../hooks/useCourseProgress';
 import { 
@@ -22,7 +22,8 @@ import {
 } from 'lucide-react';
 
 const LMSModule = () => {
-  const { moduleId } = useParams();
+  const { moduleId, lessonId } = useParams();
+  const navigate = useNavigate();
   const [currentModuleIndex, setCurrentModuleIndex] = useState(0);
   const [currentLessonIndex, setCurrentLessonIndex] = useState(0);
   const [reflection, setReflection] = useState('');
@@ -67,6 +68,22 @@ const LMSModule = () => {
       setReflection('');
     }
   }, [currentModuleIndex, currentLessonIndex, reflections, currentLessonData]);
+
+  // Sync URL lessonId -> current module/lesson indices
+  useEffect(() => {
+    if (!course) return;
+    if (!lessonId) return;
+    // find module and lesson indices by lesson id
+    for (let mi = 0; mi < course.modules.length; mi++) {
+      const m = course.modules[mi];
+      const li = m.lessons.findIndex(l => l.id === lessonId);
+      if (li !== -1) {
+        setCurrentModuleIndex(mi);
+        setCurrentLessonIndex(li);
+        return;
+      }
+    }
+  }, [lessonId, course]);
 
   if (!course) {
     return (
@@ -121,10 +138,14 @@ const LMSModule = () => {
     }
 
     if (currentLessonIndex < currentModule.lessons.length - 1) {
-      setCurrentLessonIndex(currentLessonIndex + 1);
+      const nextLessonIndex = currentLessonIndex + 1;
+      setCurrentLessonIndex(nextLessonIndex);
+      navigate(`/lms/module/${moduleId}/lesson/${currentModule.lessons[nextLessonIndex].id}`);
     } else if (currentModuleIndex < course.modules.length - 1) {
-      setCurrentModuleIndex(currentModuleIndex + 1);
+      const nextModuleIndex = currentModuleIndex + 1;
+      setCurrentModuleIndex(nextModuleIndex);
       setCurrentLessonIndex(0);
+      navigate(`/lms/module/${moduleId}/lesson/${course.modules[nextModuleIndex].lessons[0].id}`);
     }
     
     // Reset quiz state for new lesson
@@ -137,11 +158,15 @@ const LMSModule = () => {
 
   const handlePrevLesson = () => {
     if (currentLessonIndex > 0) {
-      setCurrentLessonIndex(currentLessonIndex - 1);
+      const prevLessonIndex = currentLessonIndex - 1;
+      setCurrentLessonIndex(prevLessonIndex);
+      navigate(`/lms/module/${moduleId}/lesson/${currentModule.lessons[prevLessonIndex].id}`);
     } else if (currentModuleIndex > 0) {
-      setCurrentModuleIndex(currentModuleIndex - 1);
-      const prevModule = course.modules[currentModuleIndex - 1];
+      const prevModuleIndex = currentModuleIndex - 1;
+      const prevModule = course.modules[prevModuleIndex];
+      setCurrentModuleIndex(prevModuleIndex);
       setCurrentLessonIndex(prevModule.lessons.length - 1);
+      navigate(`/lms/module/${moduleId}/lesson/${prevModule.lessons[prevModule.lessons.length - 1].id}`);
     }
     
     // Reset quiz state for new lesson
@@ -770,6 +795,7 @@ const LMSModule = () => {
                             setQuizScore(null);
                             setInteractiveAnswers({});
                             setShowInteractiveFeedback(false);
+                            navigate(`/lms/module/${moduleId}/lesson/${lesson.id}`);
                           }}
                           className={`w-full text-left p-2 rounded-lg transition-colors duration-200 ${
                             isCurrentLesson
