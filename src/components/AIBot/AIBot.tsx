@@ -27,6 +27,7 @@ const AIBot = () => {
   const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const location = useLocation();
+  const [showTips, setShowTips] = useState(false);
 
   const isAdminRoute = location.pathname.startsWith('/admin');
   const isLMSRoute = location.pathname.startsWith('/lms');
@@ -275,12 +276,33 @@ const AIBot = () => {
 
   if (!isOpen) {
     return (
-      <button
-        onClick={() => setIsOpen(true)}
-        className="fixed bottom-6 right-6 bg-gradient-to-r from-orange-400 to-red-500 text-white p-4 rounded-full shadow-lg hover:from-orange-500 hover:to-red-600 transition-all duration-200 transform hover:scale-110 z-50"
-      >
-        <MessageSquare className="h-6 w-6" />
-      </button>
+      <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end space-y-2">
+        <button
+          onClick={() => setShowTips(s => !s)}
+          className="bg-yellow-400 text-white p-3 rounded-full shadow-lg"
+          title="Tips & Shortcuts"
+        >
+          <Lightbulb className="h-6 w-6" />
+        </button>
+        <button
+          onClick={() => setIsOpen(true)}
+          className="bg-gradient-to-r from-orange-400 to-red-500 text-white p-4 rounded-full shadow-lg hover:from-orange-500 hover:to-red-600 transition-all duration-200 transform hover:scale-110"
+          title="Open AI Assistant"
+        >
+          <MessageSquare className="h-6 w-6" />
+        </button>
+
+        {showTips && (
+          <div className="mt-2 w-64 bg-white rounded-lg shadow-lg p-3 border border-gray-200 text-sm text-gray-700">
+            <div className="font-semibold mb-1">AI Tips</div>
+            <ul className="list-disc pl-5 space-y-1">
+              <li>Ask for completion rates by org or course.</li>
+              <li>Use "Show me users at risk" to get intervention lists.</li>
+              <li>Say "export report" to prepare summaries.</li>
+            </ul>
+          </div>
+        )}
+      </div>
     );
   }
 

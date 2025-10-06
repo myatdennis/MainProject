@@ -47,7 +47,7 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
     { name: 'Course Management', href: '/admin/courses', icon: BookOpen },
     { name: 'DEI Surveys', href: '/admin/surveys', icon: BarChart3 },
     { name: 'Reports & Analytics', href: '/admin/reports', icon: TrendingUp },
-    { name: 'Advanced Analytics', href: '/admin/analytics', icon: TrendingUp },
+  { name: 'Advanced Analytics', href: '/admin/analytics', icon: Brain },
     { name: 'Certificates', href: '/admin/certificates', icon: Award },
     { name: 'Integrations', href: '/admin/integrations', icon: Zap },
     { name: 'Settings', href: '/admin/settings', icon: Settings },
@@ -165,6 +165,14 @@ const AdminLayout: React.FC<AdminLayoutProps> = ({ children }) => {
                   className="pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent text-sm w-64"
                 />
               </div>
+              {/* Quick create button using Plus icon */}
+              <button
+                title="Create new"
+                onClick={() => navigate('/admin/organizations/new')}
+                className="ml-2 inline-flex items-center px-3 py-2 rounded bg-green-50 text-green-600 hover:bg-green-100"
+              >
+                <Plus className="h-4 w-4" />
+              </button>
               <button className="relative p-2 text-gray-600 hover:text-gray-900">
                 <Bell className="h-5 w-5" />
                 <span className="absolute top-0 right-0 block h-2 w-2 rounded-full bg-red-400"></span>

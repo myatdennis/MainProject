@@ -503,6 +503,16 @@ const ProfileView: React.FC<ProfileViewProps> = ({
                         </button>
                       </div>
                     )}
+                    {/* Quick open / more button */}
+                    <button
+                      onClick={() => {
+                        if (resource.url) window.open(resource.url, '_blank');
+                      }}
+                      title="Open resource"
+                      className="p-1 rounded text-gray-400 hover:text-gray-700"
+                    >
+                      <ChevronRight className="h-4 w-4" />
+                    </button>
                   </div>
                 </div>
               </div>
