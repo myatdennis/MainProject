@@ -54,12 +54,10 @@ export const addDocument = async (meta: Omit<DocumentMeta,'id'|'createdAt'>, fil
   if (file && (supabase as any)?.storage) {
     try {
       const path = `${docId}/${file.name}`;
-      // @ts-ignore
       const { error: uploadError } = await supabase.storage.from('documents').upload(path, file, { upsert: true });
       if (uploadError) {
         console.warn('Storage upload failed, falling back to data URL:', uploadError.message || uploadError);
       } else {
-        // @ts-ignore
         const { data } = supabase.storage.from('documents').getPublicUrl(path);
         url = data?.publicUrl || url;
       }
