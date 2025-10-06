@@ -136,4 +136,29 @@ export const updateOrg = async (id: string, patch: Partial<Org>): Promise<Org> =
   return all[idx];
 };
 
-export default { listOrgs, getOrg, updateOrg };
+export const createOrg = async (payload: Partial<Org>): Promise<Org> => {
+  const all = read();
+  const id = String(Date.now());
+  const newOrg: Org = {
+    id,
+    name: payload.name || 'New Organization',
+    type: payload.type || 'Organization',
+    contactPerson: payload.contactPerson || 'Unknown',
+    contactEmail: payload.contactEmail,
+    enrollmentDate: new Date().toISOString(),
+    status: payload.status || 'active',
+    totalLearners: payload.totalLearners || 0,
+    activeLearners: payload.activeLearners || 0,
+    completionRate: payload.completionRate || 0,
+    cohorts: payload.cohorts || [],
+    subscription: payload.subscription || 'Standard',
+    lastActivity: payload.lastActivity,
+    modules: payload.modules || {},
+    notes: payload.notes || '',
+  };
+  all.push(newOrg);
+  write(all);
+  return newOrg;
+};
+
+export default { listOrgs, getOrg, updateOrg, createOrg };
