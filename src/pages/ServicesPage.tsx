@@ -1,4 +1,4 @@
-import React from 'react';
+// React import not required with the new JSX transform
 import { useNavigate } from 'react-router-dom';
 import { Users, MessageSquare, Target, Clock, CheckCircle, ArrowRight, Calendar } from 'lucide-react';
 

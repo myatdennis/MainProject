@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { courseStore } from '../../store/courseStore';
 import { 
@@ -15,12 +15,12 @@ import {
   Play,
   FileText,
   Video,
-  CheckCircle,
   BarChart3,
   Settings,
   Upload,
   Download
 } from 'lucide-react';
+
 
 const AdminCourses = () => {
   const [searchTerm, setSearchTerm] = useState('');

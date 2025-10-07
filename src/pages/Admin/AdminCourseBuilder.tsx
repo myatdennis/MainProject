@@ -1,7 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { courseStore, generateId, calculateCourseDuration, countTotalLessons } from '../../store/courseStore';
-import type { Course, Module, Lesson, Resource, LessonContent } from '../../store/courseStore';
+import type { Course, Module, Lesson } from '../../store/courseStore';
 import { supabase } from '../../lib/supabase';
 import { 
   ArrowLeft, 

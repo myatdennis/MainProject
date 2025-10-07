@@ -1,6 +1,6 @@
-import React from 'react';
+// React import not required with the new JSX transform
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowRight, CheckCircle, Users, Heart, MessageSquare, Target, Download, Calendar } from 'lucide-react';
+import { ArrowRight, Users, Heart, MessageSquare, Target, Download, Calendar } from 'lucide-react';
 
 const HomePage = () => {
   const navigate = useNavigate();

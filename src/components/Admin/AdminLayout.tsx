@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import type { FC } from 'react';
 import { Outlet } from 'react-router-dom';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
@@ -23,7 +24,7 @@ import {
   Send
 } from 'lucide-react';
 
-const AdminLayout: React.FC = () => {
+const AdminLayout: FC = () => {
   const { logout, isAuthenticated, user } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
@@ -43,7 +44,7 @@ const AdminLayout: React.FC = () => {
     if (!isAuthenticated?.admin && !adminLocal) {
       navigate('/admin/login');
     }
-  }, [isAuthenticated.admin, navigate]);
+  }, [isAuthenticated?.admin, navigate]);
 
   const navigation = [
     { name: 'Dashboard', href: '/admin/dashboard', icon: LayoutDashboard },
@@ -142,8 +143,8 @@ const AdminLayout: React.FC = () => {
         </div>
       </div>
 
-      {/* Main content */}
-      <div className="flex-1 lg:ml-0">
+  {/* Main content */}
+  <div className="flex-1 lg:ml-64">
         {/* Top bar */}
         <div className="bg-white shadow-sm border-b border-gray-200">
           <div className="flex items-center justify-between h-16 px-4 lg:px-6">
