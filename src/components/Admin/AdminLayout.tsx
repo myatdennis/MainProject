@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
 import type { FC } from 'react';
-import { Link, useLocation, useNavigate, useOutlet, useMatches } from 'react-router-dom';
+import { Link, useLocation, useNavigate, Outlet } from 'react-router-dom';
 import ErrorBoundary from '../ErrorBoundary';
-import AdminDashboard from '../../pages/Admin/AdminDashboard';
 import { useAuth } from '../../context/AuthContext';
 import { 
   LayoutDashboard, 
@@ -30,16 +29,6 @@ const AdminLayout: FC = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
-  const [showDirectDashboard, setShowDirectDashboard] = useState(false);
-  const outlet = useOutlet();
-  // useMatches may not be available in older router versions, guard it
-  // with optional chaining to avoid runtime errors.
-  const matches = (useMatches && typeof useMatches === 'function') ? useMatches() : [];
-
-  // Debug logs to help determine if nested routes are being matched
-  // and whether the Outlet receives a child element.
-  // eslint-disable-next-line no-console
-  console.log('AdminLayout debug - location:', location.pathname, 'matches:', matches, 'outletPresent:', !!outlet);
 
   // Check authentication
   useEffect(() => {
@@ -50,17 +39,6 @@ const AdminLayout: FC = () => {
     if (location.pathname === '/admin/login') return;
 
     const adminLocal = typeof window !== 'undefined' && localStorage.getItem('huddle_admin_auth') === 'true';
-    const debugSkipAuth = typeof window !== 'undefined' && localStorage.getItem('huddle_debug_skip_auth') === 'true';
-
-    // Debug logging of auth flags to help diagnose why Outlet may be empty.
-    // eslint-disable-next-line no-console
-    console.log('AdminLayout auth debug - isAuthenticated.admin:', isAuthenticated?.admin, 'adminLocal:', adminLocal, 'debugSkipAuth:', debugSkipAuth);
-
-    // If debugSkipAuth is set, skip redirect so we can inspect routed content
-    // in environments where auth may not be configured. This is temporary and
-    // will be removed after debugging.
-    if (debugSkipAuth) return;
-
     // Only navigate to the login page when we are sure the user is not
     // authenticated (no local flag and context says unauthenticated).
     if (!isAuthenticated?.admin && !adminLocal) {
@@ -218,32 +196,7 @@ const AdminLayout: FC = () => {
           </div>
         </div>
 
-        {/* Debug: auth skip status and toggle */}
-        <div className="p-2 absolute right-6 top-16">
-          <button
-            onClick={() => {
-              const currently = localStorage.getItem('huddle_debug_skip_auth') === 'true';
-              localStorage.setItem('huddle_debug_skip_auth', (!currently).toString());
-              // trigger a reload so the useEffect picks up the flag immediately
-              window.location.reload();
-            }}
-            className="text-xs px-2 py-1 bg-indigo-50 border border-indigo-100 rounded text-indigo-700"
-            title="Toggle debug skip auth"
-          >
-            Toggle Skip Auth
-          </button>
-        </div>
-
-        {/* Debug toggle - visible so we can mount the dashboard directly */}
-        <div className="absolute right-6 top-20">
-          <button
-            onClick={() => setShowDirectDashboard(prev => !prev)}
-            className="text-xs px-2 py-1 bg-yellow-100 border border-yellow-200 rounded text-yellow-800"
-            title="Toggle direct dashboard (debug)"
-          >
-            Toggle Direct Dashboard
-          </button>
-        </div>
+        {/* (Debug helpers removed) */}
 
         {/* Page content */}
         <main className="flex-1">
@@ -251,24 +204,8 @@ const AdminLayout: FC = () => {
             Debug: current path: {location.pathname}
           </div>
           <ErrorBoundary>
-            {outlet ? outlet : (
-              <div className="p-6 bg-red-50 border border-red-200 text-red-700 rounded">
-                <div className="font-medium">Debug: No nested admin route matched (Outlet is empty)</div>
-                <div className="text-sm mt-1">Path: {location.pathname}</div>
-              </div>
-            )}
+            <Outlet />
           </ErrorBoundary>
-
-          {/* Temporary debug: allow mounting the AdminDashboard directly to check
-              if the dashboard component itself renders in environments where
-              the routed Outlet appears blank. Toggle with the button in the
-              top bar. Remove after debugging. */}
-          {showDirectDashboard && (
-            <div className="p-6 mt-4 bg-white border border-red-200 rounded-lg">
-              <div className="mb-2 text-sm text-red-600 font-medium">Debug: Direct-mounted AdminDashboard</div>
-              <AdminDashboard />
-            </div>
-          )}
         </main>
       </div>
     </div>
