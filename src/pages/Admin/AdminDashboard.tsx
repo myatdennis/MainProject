@@ -9,18 +9,12 @@ import {
   Clock,
   Award,
   BarChart3,
-  Calendar,
   MessageSquare,
   Download
 } from 'lucide-react';
 
 const AdminDashboard = () => {
-  // Debug helper - will log when AdminDashboard is rendered
-  // and display a visible banner in the UI so the user can confirm rendering
-  // in the browser while we debug the blank admin portal.
-  // Remove after debugging.
-  // eslint-disable-next-line no-console
-  console.log('AdminDashboard render - debug');
+  // AdminDashboard component
 
   const stats = [
     { 
