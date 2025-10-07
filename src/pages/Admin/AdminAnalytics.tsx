@@ -1,11 +1,6 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { 
-  TrendingUp, 
-  Users, 
-  BookOpen, 
-  Award,
   AlertTriangle,
-  CheckCircle,
   Clock,
   Target,
   Brain,
@@ -14,7 +9,6 @@ import {
   Calendar,
   RefreshCw,
   Eye,
-  MessageSquare,
   Zap
 } from 'lucide-react';
 
