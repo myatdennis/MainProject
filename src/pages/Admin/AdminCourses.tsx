@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { courseStore } from '../../store/courseStore';
 import { 
@@ -26,11 +26,12 @@ const AdminCourses = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [selectedCourses, setSelectedCourses] = useState<string[]>([]);
+  const [version, setVersion] = useState(0); // bump to force re-render when store changes
 
   const navigate = useNavigate();
 
-  // Get courses from store
-  const courses = courseStore.getAllCourses();
+  // Get courses from store (re-read when version changes)
+  const courses = useMemo(() => courseStore.getAllCourses(), [version]);
 
   const filteredCourses = courses.filter(course => {
     const matchesSearch = course.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -119,10 +120,59 @@ const AdminCourses = () => {
     // Save to store and navigate to builder
     try {
       courseStore.saveCourse(cloned);
+      setVersion(v => v + 1);
       navigate(`/admin/course-builder/${newId}`);
     } catch (err) {
       console.warn('Failed to duplicate course', err);
     }
+  };
+
+  const refresh = () => setVersion(v => v + 1);
+
+  const publishSelected = () => {
+    if (selectedCourses.length === 0) return;
+    if (!confirm(`Publish ${selectedCourses.length} selected course(s)?`)) return;
+    selectedCourses.forEach(id => {
+      const c = courseStore.getCourse(id);
+      if (!c) return;
+      const updated = { ...c, status: 'published' as const, publishedDate: new Date().toISOString(), lastUpdated: new Date().toISOString() };
+      courseStore.saveCourse(updated);
+    });
+    setSelectedCourses([]);
+    refresh();
+  };
+
+  const exportCourses = (scope: 'selected' | 'filtered' | 'all' = 'selected') => {
+    let toExport = filteredCourses;
+    if (scope === 'selected' && selectedCourses.length > 0) {
+      toExport = selectedCourses.map(id => courseStore.getCourse(id)).filter(Boolean) as any[];
+    } else if (scope === 'all') {
+      toExport = courseStore.getAllCourses();
+    }
+
+    try {
+      const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(toExport, null, 2));
+      const dlAnchor = document.createElement('a');
+      dlAnchor.setAttribute('href', dataStr);
+      dlAnchor.setAttribute('download', `courses-export-${Date.now()}.json`);
+      document.body.appendChild(dlAnchor);
+      dlAnchor.click();
+      dlAnchor.remove();
+    } catch (err) {
+      console.warn('Export failed', err);
+      alert('Failed to export courses');
+    }
+  };
+
+  const deleteCourseById = (id: string) => {
+    if (!confirm('Delete this course? This action cannot be undone.')) return;
+    const ok = courseStore.deleteCourse(id);
+    if (!ok) {
+      alert('Course not found or failed to delete');
+      return;
+    }
+    setSelectedCourses(prev => prev.filter(x => x !== id));
+    refresh();
   };
 
   return (
@@ -168,7 +218,7 @@ const AdminCourses = () => {
                 <button onClick={() => navigate(`/admin/courses/bulk?ids=${selectedCourses.join(',')}`)} className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors duration-200">
                   Bulk Assign ({selectedCourses.length})
                 </button>
-                <button onClick={() => { /* publish selected in-place */ alert('Publish selected: ' + selectedCourses.join(',')); }} className="bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 transition-colors duration-200">
+                <button onClick={publishSelected} className="bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 transition-colors duration-200">
                   Publish Selected
                 </button>
               </div>
@@ -282,8 +332,11 @@ const AdminCourses = () => {
                   </button>
                   
                   
-                  <button className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-50 rounded-lg" title="Analytics">
+                  <button onClick={() => navigate(`/admin/reports?courseId=${course.id}`)} className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-50 rounded-lg" title="Analytics">
                     <BarChart3 className="h-4 w-4" />
+                  </button>
+                  <button onClick={() => deleteCourseById(course.id)} className="p-2 text-red-600 hover:text-red-800" title="Delete">
+                    <Trash2 className="h-4 w-4" />
                   </button>
                 </div>
               </div>
@@ -303,7 +356,7 @@ const AdminCourses = () => {
             >
               {selectedCourses.length === filteredCourses.length ? 'Deselect All' : 'Select All'}
             </button>
-            <button className="flex items-center space-x-2 text-orange-500 hover:text-orange-600 font-medium">
+            <button onClick={() => exportCourses(selectedCourses.length > 0 ? 'selected' : 'filtered')} className="flex items-center space-x-2 text-orange-500 hover:text-orange-600 font-medium">
               <Download className="h-4 w-4" />
               <span>Export</span>
             </button>
@@ -410,7 +463,7 @@ const AdminCourses = () => {
                       <button className="p-1 text-gray-600 hover:text-gray-800" title="Settings">
                         <Settings className="h-4 w-4" />
                       </button>
-                      <button className="p-1 text-red-600 hover:text-red-800" title="Delete">
+                      <button onClick={() => deleteCourseById(course.id)} className="p-1 text-red-600 hover:text-red-800" title="Delete">
                         <Trash2 className="h-4 w-4" />
                       </button>
                     </div>

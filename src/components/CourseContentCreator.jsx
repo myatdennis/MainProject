@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import { courseStore } from '../store/courseStore';
+// Note: this component is a simple helper; using courseStore.createCourse to persist content
 
 const defaultSlide = { title: '', text: '', image: '', voiceover: '' };
 
@@ -43,7 +45,19 @@ function CourseContentCreator() {
         <button onClick={addSlide}>Add Slide</button>
       </div>
       <div>
-        <button onClick={() => {/* TODO: Save slides via API */}}>Save Course</button>
+        <button onClick={() => {
+          try {
+            const newCourse = courseStore.createCourse({
+              title: slides[0].title || 'New Course',
+              description: slides[0].text || '',
+              modules: [{ id: 'module-1', title: 'Module 1', description: '', duration: '0 min', order: 1, lessons: slides.map((s, idx) => ({ id: `lesson-${idx+1}`, title: s.title || `Lesson ${idx+1}`, type: 'text', duration: '5 min', content: { notes: s.text, image: s.image, voiceover: s.voiceover }, completed: false, order: idx+1 })), resources: [] }]
+            });
+            alert('Course created: ' + newCourse.title);
+          } catch (e) {
+            console.warn('Save failed', e);
+            alert('Failed to save course');
+          }
+        }}>Save Course</button>
       </div>
     </div>
   );

@@ -54,6 +54,13 @@ const AIBot = () => {
     }
   }, [isOpen, isAdminRoute, isLMSRoute]);
 
+  // cap messages to last 50 to avoid memory growth
+  useEffect(() => {
+    if (messages.length > 50) {
+      setMessages(prev => prev.slice(prev.length - 50));
+    }
+  }, [messages]);
+
   const getInitialGreeting = () => {
     if (isAdminRoute) {
       return {
@@ -122,27 +129,24 @@ const AIBot = () => {
     if (isAdminRoute) {
       // If user requested survey-specific analytics, fetch structured analytics via surveyService
       if (lowerMessage.includes('survey') || lowerMessage.includes('climate') || lowerMessage.includes('inclusion') || lowerMessage.includes('equity')) {
-        setTimeout(async () => {
+        // Immediately respond with a placeholder, then fetch analytics async and replace placeholder with result
+        const placeholderId = `fetch-${Date.now()}`;
+        setMessages(prev => [...prev, { id: placeholderId, type: 'bot' as const, content: 'Fetching analytics...', timestamp: new Date() }].slice(-50));
+
+        (async () => {
           try {
             const keyword = userMessage.match(/([a-z0-9\-]+-?\d{0,4})/i)?.[0] || 'climate-2025-q1';
             const analytics = await getAnalytics(keyword);
             const summary = `Survey ${analytics.surveyId} — ${analytics.title}\nResponses: ${analytics.totalResponses}, Completion Rate: ${analytics.completionRate}%, Avg Time: ${analytics.avgCompletionTime} min. Key insights: ${analytics.insights.join('; ')}`;
-            setMessages(prev => [...prev, {
-              id: (Date.now() + 5).toString(),
-              type: 'bot',
-              content: summary,
-              timestamp: new Date(),
-              suggestions: ['Export report', 'Create huddle report', 'Drill into question analytics']
-            }]);
+            // replace placeholder with summary
+            setMessages(prev => {
+              const replaced = prev.map(m => m.id === placeholderId ? { ...m, content: summary, suggestions: ['Export report', 'Create huddle report', 'Drill into question analytics'] } : m);
+              return replaced.slice(-50);
+            });
           } catch (err) {
-            setMessages(prev => [...prev, {
-              id: (Date.now() + 6).toString(),
-              type: 'bot',
-              content: 'Error retrieving survey analytics. Supabase may not be configured or an error occurred.',
-              timestamp: new Date()
-            }]);
+            setMessages(prev => prev.map(m => m.id === placeholderId ? { ...m, content: 'Error retrieving survey analytics. Supabase may not be configured or an error occurred.' } : m));
           }
-        }, 500);
+        })();
 
         return {
           message: "I'm fetching the latest survey analytics — I'll post a summary here in a moment.",

@@ -80,6 +80,114 @@ export const saveSurvey = async (survey: Survey) => {
   }
 };
 
+// Batched save queue: collects surveys and flushes to Supabase periodically when configured.
+const saveQueue: Survey[] = [];
+let flushTimer: number | null = null;
+const FLUSH_INTERVAL = 3000; // ms
+
+const scheduleFlush = () => {
+  if (flushTimer) return;
+  flushTimer = window.setTimeout(async () => {
+    flushTimer = null;
+    await flushQueue();
+  }, FLUSH_INTERVAL) as unknown as number;
+};
+
+const flushQueue = async () => {
+  if (saveQueue.length === 0) return;
+  // take snapshot
+  const itemsToFlush = saveQueue.splice(0, saveQueue.length);
+
+  // ensure localStorage is up-to-date
+  try {
+    const key = 'local_surveys';
+    const raw = localStorage.getItem(key);
+    const existing: Survey[] = raw ? JSON.parse(raw) : [];
+    // merge/replace by id
+    itemsToFlush.forEach(survey => {
+      const idx = existing.findIndex(e => e.id === survey.id);
+      if (idx >= 0) existing[idx] = survey;
+      else existing.push(survey);
+    });
+    localStorage.setItem(key, JSON.stringify(existing));
+  } catch (err) {
+    console.warn('flushQueue local merge failed', err);
+  }
+
+  // If Supabase not configured, nothing more to do
+  if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
+    console.warn('Supabase not configured - flushQueue saved to localStorage only');
+    return;
+  }
+
+  // Attempt to upsert all surveys to Supabase in a single batch where possible
+  try {
+    // Supabase upsert supports array of objects
+    const upsertPayload = itemsToFlush.map(s => ({
+      id: s.id,
+      title: s.title,
+      description: s.description,
+      type: s.type,
+      status: s.status,
+      sections: s.sections,
+      branding: s.branding,
+      settings: s.settings,
+      assigned_to: s.assignedTo,
+      updated_at: new Date().toISOString()
+    }));
+
+    const { error } = await supabase.from('surveys').upsert(upsertPayload);
+    if (error) {
+      console.warn('flushQueue supabase upsert error:', error);
+    } else {
+      console.log(`Flushed ${upsertPayload.length} surveys to Supabase`);
+    }
+    lastFlushAt = new Date().toISOString();
+    surveyQueueEvents.dispatchEvent(new CustomEvent('flush', { detail: { count: upsertPayload.length, at: lastFlushAt } }));
+  } catch (err) {
+    console.warn('flushQueue exception:', err);
+  }
+};
+
+export const queueSaveSurvey = async (survey: Survey) => {
+  try {
+    // Immediately write to localStorage for local-first behavior
+    await saveSurvey(survey);
+
+    // Add to queue (replace if exists)
+    const idx = saveQueue.findIndex(s => s.id === survey.id);
+    if (idx >= 0) saveQueue[idx] = survey;
+    else saveQueue.push(survey);
+
+    scheduleFlush();
+    return survey;
+  } catch (err) {
+    console.warn('queueSaveSurvey error:', err);
+    return null;
+  }
+};
+
+// Queue status helpers & events
+let lastFlushAt: string | null = null;
+export const surveyQueueEvents = new EventTarget();
+
+export const getQueueSnapshot = () => {
+  return [...saveQueue];
+};
+
+export const getQueueLength = () => saveQueue.length;
+
+export const getLastFlushTime = () => lastFlushAt;
+
+export const flushNow = async () => {
+  if (flushTimer) {
+    window.clearTimeout(flushTimer as number);
+    flushTimer = null;
+  }
+  await flushQueue();
+};
+
+
 export const getSurveyById = async (id: string) => {
   try {
     const key = 'local_surveys';

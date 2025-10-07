@@ -24,7 +24,7 @@ import {
   X
 } from 'lucide-react';
 import { surveyTemplates, questionTypes, defaultBranding, aiGeneratedQuestions, censusDemographicOptions } from '../../data/surveyTemplates';
-import { getAssignments, saveAssignments, saveSurvey as saveSurveyService, getSurveyById } from '../../services/surveyService';
+import { getAssignments, saveAssignments, getSurveyById, queueSaveSurvey } from '../../services/surveyService';
 import type { Survey, SurveyQuestion, SurveySection } from '../../types/survey';
 
 const AdminSurveyBuilder = () => {
@@ -39,6 +39,11 @@ const AdminSurveyBuilder = () => {
   const [showBranding, setShowBranding] = useState(false);
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [lastSavedAt, setLastSavedAt] = useState<string>('');
+  const saveDebounceRef = React.useRef<number | null>(null);
+  const initialLoadRef = React.useRef(true);
+  const [queueLength, setQueueLength] = useState<number>(0);
+  const [lastFlush, setLastFlush] = useState<string | null>(null);
 
   // Organizations data (in a real app, this would come from an API)
   const organizations = [
@@ -430,17 +435,66 @@ const AdminSurveyBuilder = () => {
       // Simulate saving other survey data (replace with real save API)
       // persist locally for now
       try {
-        await saveSurveyService(survey);
+        // prefer queued save to batch backend writes
+        await queueSaveSurvey(survey as Survey);
       } catch (err) {
         console.warn('Local save failed', err);
       }
 
       // You could show a toast here to confirm save
-      // console.log('Survey saved', survey.id);
+      setLastSavedAt(new Date().toLocaleTimeString());
     } finally {
       setIsSaving(false);
     }
   };
+
+  // Autosave with debounce when survey changes
+  useEffect(() => {
+    if (initialLoadRef.current) {
+      // Skip autosave on initial load
+      initialLoadRef.current = false;
+      return;
+    }
+
+    if (!survey) return;
+
+    if (saveDebounceRef.current) {
+      window.clearTimeout(saveDebounceRef.current);
+    }
+
+    // debounce 1500ms
+    saveDebounceRef.current = window.setTimeout(() => {
+      // only autosave if not currently saving
+      if (!isSaving) {
+        saveSurvey();
+      }
+    }, 1500);
+
+    return () => {
+      if (saveDebounceRef.current) {
+        window.clearTimeout(saveDebounceRef.current);
+        saveDebounceRef.current = null;
+      }
+    };
+  }, [survey]);
+
+  // Subscribe to queue events
+  useEffect(() => {
+    import('../../services/surveyService').then(mod => {
+      setQueueLength(mod.getQueueLength());
+      setLastFlush(mod.getLastFlushTime());
+      const handler = () => {
+        setQueueLength(mod.getQueueLength());
+        setLastFlush(mod.getLastFlushTime());
+      };
+      mod.surveyQueueEvents.addEventListener('queuechange', handler);
+      mod.surveyQueueEvents.addEventListener('flush', handler);
+      return () => {
+        mod.surveyQueueEvents.removeEventListener('queuechange', handler);
+        mod.surveyQueueEvents.removeEventListener('flush', handler);
+      };
+    });
+  }, []);
 
   const getQuestionIcon = (type: string) => {
     switch (type) {
@@ -1048,6 +1102,11 @@ const AdminSurveyBuilder = () => {
               <Save className="h-4 w-4" />
               <span>{isSaving ? 'Saving...' : 'Save'}</span>
             </button>
+            <div className="text-xs text-gray-500 ml-2">
+              {lastSavedAt ? `Last saved ${lastSavedAt}` : 'Not saved yet'}
+              <div>{queueLength > 0 ? ` • ${queueLength} pending sync` : ' • synced'}</div>
+              {lastFlush && <div className="text-xs text-gray-400">Last flush: {new Date(lastFlush).toLocaleTimeString()}</div>}
+            </div>
           </div>
         </div>
       </div>

@@ -8,6 +8,7 @@
     "create-demo-users": "node scripts/create_demo_users.js",
     "build": "vite build",
     "lint": "eslint .",
+  "test:e2e": "playwright test",
     "preview": "vite preview"
   },
   "dependencies": {
