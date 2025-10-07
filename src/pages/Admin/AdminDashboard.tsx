@@ -151,9 +151,7 @@ const AdminDashboard = () => {
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
-      <div className="mb-4 p-3 rounded bg-green-50 border border-green-200 text-green-800 text-sm font-medium">
-        Debug: AdminDashboard mounted ✔
-      </div>
+      {/* AdminDashboard mounted (debug banner removed) */}
       {/* Header */}
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900 mb-2">Admin Dashboard</h1>

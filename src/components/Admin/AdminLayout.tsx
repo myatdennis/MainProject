@@ -206,9 +206,7 @@ const AdminLayout: FC<Props> = ({ children }) => {
 
         {/* Page content */}
         <main className="flex-1">
-          <div className="p-4 bg-yellow-50 border-b border-yellow-100 text-sm text-yellow-800">
-            Debug: current path: {location.pathname}
-          </div>
+          {/* path banner removed after debugging */}
           <div className="relative z-10 bg-white min-h-[60vh] p-6">
             <ErrorBoundary>
               {children ? children : outlet ? (
@@ -218,8 +216,6 @@ const AdminLayout: FC<Props> = ({ children }) => {
                 // with a try/catch inside render.
                 (() => {
                   try {
-                    // eslint-disable-next-line no-console
-                    console.log('AdminLayout: no nested route matched — rendering AdminDashboard fallback');
                     return <AdminDashboard />;
                   } catch (err) {
                     // eslint-disable-next-line no-console
