@@ -3,6 +3,7 @@ import type { FC } from 'react';
 import { Outlet } from 'react-router-dom';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import ErrorBoundary from '../ErrorBoundary';
+import AdminDashboard from '../../pages/Admin/AdminDashboard';
 import { useAuth } from '../../context/AuthContext';
 import { 
   LayoutDashboard, 
@@ -30,6 +31,7 @@ const AdminLayout: FC = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
+  const [showDirectDashboard, setShowDirectDashboard] = useState(false);
 
   // Check authentication
   useEffect(() => {
@@ -197,6 +199,17 @@ const AdminLayout: FC = () => {
           </div>
         </div>
 
+        {/* Debug toggle - visible so we can mount the dashboard directly */}
+        <div className="absolute right-6 top-20">
+          <button
+            onClick={() => setShowDirectDashboard(prev => !prev)}
+            className="text-xs px-2 py-1 bg-yellow-100 border border-yellow-200 rounded text-yellow-800"
+            title="Toggle direct dashboard (debug)"
+          >
+            Toggle Direct Dashboard
+          </button>
+        </div>
+
         {/* Page content */}
         <main className="flex-1">
           <div className="p-4 bg-yellow-50 border-b border-yellow-100 text-sm text-yellow-800">
@@ -205,6 +218,17 @@ const AdminLayout: FC = () => {
           <ErrorBoundary>
             <Outlet />
           </ErrorBoundary>
+
+          {/* Temporary debug: allow mounting the AdminDashboard directly to check
+              if the dashboard component itself renders in environments where
+              the routed Outlet appears blank. Toggle with the button in the
+              top bar. Remove after debugging. */}
+          {showDirectDashboard && (
+            <div className="p-6 mt-4 bg-white border border-red-200 rounded-lg">
+              <div className="mb-2 text-sm text-red-600 font-medium">Debug: Direct-mounted AdminDashboard</div>
+              <AdminDashboard />
+            </div>
+          )}
         </main>
       </div>
     </div>
