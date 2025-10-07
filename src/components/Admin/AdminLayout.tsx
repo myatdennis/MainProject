@@ -198,6 +198,9 @@ const AdminLayout: FC = () => {
 
         {/* Page content */}
         <main className="flex-1">
+          <div className="p-4 bg-yellow-50 border-b border-yellow-100 text-sm text-yellow-800">
+            Debug: current path: {location.pathname}
+          </div>
           <Outlet />
         </main>
       </div>
