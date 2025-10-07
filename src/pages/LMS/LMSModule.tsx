@@ -20,6 +20,7 @@ import {
   AlertTriangle,
   Send
 } from 'lucide-react';
+import { getVideoEmbedUrl } from '../../utils/videoUtils';
 
 const LMSModule = () => {
   const { moduleId, lessonId } = useParams();
@@ -232,7 +233,7 @@ const LMSModule = () => {
     // Mark as completed if correct answer selected
     const hasCorrectAnswer = Object.entries(interactiveAnswers).some(([index, selected]) => {
       if (!selected) return false;
-      const option = currentLessonData.content.options[parseInt(index)];
+                      const option = currentLessonData.content?.options?.[parseInt(index)];
       return option?.isCorrect;
     });
 
@@ -265,7 +266,7 @@ const LMSModule = () => {
         return (
           <div className="space-y-4">
             {(() => {
-              const embedUrl = getVideoEmbedUrl(currentLessonData.content);
+              const embedUrl = getVideoEmbedUrl(currentLessonData.content || {});
               const isExternalVideo = currentLessonData.content.videoSourceType && 
                                     ['youtube', 'vimeo', 'external'].includes(currentLessonData.content.videoSourceType);
               
@@ -316,7 +317,7 @@ const LMSModule = () => {
                           progressPercentage: 100
                         });
                       }}
-                      onError={(e) => {
+                      onError={() => {
                         console.warn('Video playback error - this may be due to network issues or unsupported format');
                       }}
                       onLoadedMetadata={() => {

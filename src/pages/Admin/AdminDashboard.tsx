@@ -1,4 +1,4 @@
-import React from 'react';
+// React import not required with the new JSX transform
 import { 
   Users, 
   Building2, 
@@ -9,12 +9,13 @@ import {
   Clock,
   Award,
   BarChart3,
-  Calendar,
   MessageSquare,
   Download
 } from 'lucide-react';
 
 const AdminDashboard = () => {
+  // AdminDashboard component
+
   const stats = [
     { 
       label: 'Active Learners', 
@@ -144,6 +145,7 @@ const AdminDashboard = () => {
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
+      {/* AdminDashboard mounted (debug banner removed) */}
       {/* Header */}
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900 mb-2">Admin Dashboard</h1>

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import type { FC } from 'react';
-import { Outlet } from 'react-router-dom';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import type { FC, ReactNode } from 'react';
+import { Link, useLocation, useNavigate, Outlet, useOutlet } from 'react-router-dom';
+import ErrorBoundary from '../ErrorBoundary';
 import { useAuth } from '../../context/AuthContext';
 import { 
   LayoutDashboard, 
@@ -24,11 +24,14 @@ import {
   Send
 } from 'lucide-react';
 
-const AdminLayout: FC = () => {
+type Props = { children?: ReactNode };
+
+const AdminLayout: FC<Props> = ({ children }) => {
   const { logout, isAuthenticated, user } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
+  useOutlet();
 
   // Check authentication
   useEffect(() => {
@@ -144,7 +147,7 @@ const AdminLayout: FC = () => {
       </div>
 
   {/* Main content */}
-  <div className="flex-1 lg:ml-64">
+  <div className="flex-1 lg:ml-64 relative z-0">
         {/* Top bar */}
         <div className="bg-white shadow-sm border-b border-gray-200">
           <div className="flex items-center justify-between h-16 px-4 lg:px-6">
@@ -196,9 +199,16 @@ const AdminLayout: FC = () => {
           </div>
         </div>
 
+        {/* (Debug helpers removed) */}
+
         {/* Page content */}
         <main className="flex-1">
-          <Outlet />
+          {/* path banner removed after debugging */}
+          <div className="relative z-10 bg-white min-h-[60vh] p-6">
+            <ErrorBoundary>
+              {children ? children : <Outlet />}
+            </ErrorBoundary>
+          </div>
         </main>
       </div>
     </div>
