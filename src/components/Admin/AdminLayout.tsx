@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import type { FC } from 'react';
+import type { FC, ReactNode } from 'react';
 import { Link, useLocation, useNavigate, Outlet, useOutlet } from 'react-router-dom';
 import ErrorBoundary from '../ErrorBoundary';
 import AdminDashboard from '../../pages/Admin/AdminDashboard';
@@ -25,7 +25,9 @@ import {
   Send
 } from 'lucide-react';
 
-const AdminLayout: FC = () => {
+type Props = { children?: ReactNode };
+
+const AdminLayout: FC<Props> = ({ children }) => {
   const { logout, isAuthenticated, user } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
@@ -209,9 +211,9 @@ const AdminLayout: FC = () => {
           </div>
           <div className="relative z-10 bg-white min-h-[60vh] p-6">
             <ErrorBoundary>
-              {outlet ? (
-                <Outlet />
-              ) : (
+              {children ? children : outlet ? (
+                <Outlet /> 
+              ) : ( 
                 // Safe render of fallback dashboard; avoid throwing by guarding
                 // with a try/catch inside render.
                 (() => {
