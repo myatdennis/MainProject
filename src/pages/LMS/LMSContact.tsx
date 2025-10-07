@@ -1,10 +1,9 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { 
   Calendar, 
   Mail, 
   Phone, 
   Clock, 
-  User, 
   MessageSquare,
   Video,
   CheckCircle,

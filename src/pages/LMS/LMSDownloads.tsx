@@ -1,16 +1,5 @@
-import React, { useState } from 'react';
-import { 
-  Download, 
-  FileText, 
-  Video, 
-  Image, 
-  Archive,
-  Search,
-  Filter,
-  Calendar,
-  CheckCircle,
-  Folder
-} from 'lucide-react';
+import { useState } from 'react';
+import { Download, FileText, Video, Archive, Search, Filter, Calendar, Folder } from 'lucide-react';
 
 const LMSDownloads = () => {
   const [searchTerm, setSearchTerm] = useState('');
