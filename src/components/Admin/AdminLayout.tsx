@@ -204,7 +204,9 @@ const AdminLayout: FC = () => {
             Debug: current path: {location.pathname}
           </div>
           <ErrorBoundary>
-            <Outlet />
+            <div className="outline-dashed outline-2 outline-indigo-200 p-2">
+              <Outlet />
+            </div>
           </ErrorBoundary>
         </main>
       </div>
