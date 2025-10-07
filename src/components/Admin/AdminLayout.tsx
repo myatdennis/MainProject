@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import type { FC } from 'react';
 import { Outlet } from 'react-router-dom';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import ErrorBoundary from '../ErrorBoundary';
 import { useAuth } from '../../context/AuthContext';
 import { 
   LayoutDashboard, 
@@ -201,7 +202,9 @@ const AdminLayout: FC = () => {
           <div className="p-4 bg-yellow-50 border-b border-yellow-100 text-sm text-yellow-800">
             Debug: current path: {location.pathname}
           </div>
-          <Outlet />
+          <ErrorBoundary>
+            <Outlet />
+          </ErrorBoundary>
         </main>
       </div>
     </div>
