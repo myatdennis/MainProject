@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import type { FC } from 'react';
-import { Link, useLocation, useNavigate, Outlet } from 'react-router-dom';
+import { Link, useLocation, useNavigate, Outlet, useOutlet } from 'react-router-dom';
 import ErrorBoundary from '../ErrorBoundary';
+import AdminDashboard from '../../pages/Admin/AdminDashboard';
 import { useAuth } from '../../context/AuthContext';
 import { 
   LayoutDashboard, 
@@ -29,6 +30,9 @@ const AdminLayout: FC = () => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
+  const outlet = useOutlet();
+  // eslint-disable-next-line no-console
+  console.log('AdminLayout: outletPresent=', !!outlet, 'path=', location.pathname);
 
   // Check authentication
   useEffect(() => {
@@ -144,7 +148,7 @@ const AdminLayout: FC = () => {
       </div>
 
   {/* Main content */}
-  <div className="flex-1 lg:ml-64">
+  <div className="flex-1 lg:ml-64 relative z-0">
         {/* Top bar */}
         <div className="bg-white shadow-sm border-b border-gray-200">
           <div className="flex items-center justify-between h-16 px-4 lg:px-6">
@@ -203,11 +207,32 @@ const AdminLayout: FC = () => {
           <div className="p-4 bg-yellow-50 border-b border-yellow-100 text-sm text-yellow-800">
             Debug: current path: {location.pathname}
           </div>
-          <ErrorBoundary>
-            <div className="outline-dashed outline-2 outline-indigo-200 p-2">
-              <Outlet />
-            </div>
-          </ErrorBoundary>
+          <div className="relative z-10 bg-white min-h-[60vh] p-6">
+            <ErrorBoundary>
+              {outlet ? (
+                <Outlet />
+              ) : (
+                // Safe render of fallback dashboard; avoid throwing by guarding
+                // with a try/catch inside render.
+                (() => {
+                  try {
+                    // eslint-disable-next-line no-console
+                    console.log('AdminLayout: no nested route matched — rendering AdminDashboard fallback');
+                    return <AdminDashboard />;
+                  } catch (err) {
+                    // eslint-disable-next-line no-console
+                    console.error('AdminLayout fallback render error:', err);
+                    return (
+                      <div className="p-6 bg-red-50 border border-red-200 text-red-700 rounded">
+                        <h3 className="font-semibold">Admin fallback failed to render</h3>
+                        <p className="text-sm mt-2">Check console for details.</p>
+                      </div>
+                    );
+                  }
+                })()
+              )}
+            </ErrorBoundary>
+          </div>
         </main>
       </div>
     </div>
