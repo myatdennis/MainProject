@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Send, 
-  Plus, 
   X, 
   FileText, 
   Link as LinkIcon, 
@@ -9,7 +8,6 @@ import {
   StickyNote, 
   ClipboardList,
   Search,
-  Filter,
   User,
   Building2,
   AlertTriangle,

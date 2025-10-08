@@ -1,5 +1,6 @@
 import { Course } from '../store/courseStore';
-import { mockAIGenerateDEIACourse as fallbackMock } from '../utils/aiMocks';
+// Import the TS mock explicitly to avoid resolution ambiguity with .js/.cjs siblings
+import { mockAIGenerateDEIACourse as fallbackMock } from '../utils/aiMocks.ts';
 
 type MediaSuggestion = {
   id: string;
@@ -13,49 +14,50 @@ const OPENAI_KEY = import.meta.env.VITE_OPENAI_API_KEY;
 const PEXELS_KEY = import.meta.env.VITE_PEXELS_API_KEY;
 
 async function generateDEIACourse(options: { title?: string; audience?: string; length?: string; tone?: string }): Promise<Course> {
-  if (!OPENAI_KEY) {
-    // fallback to a local mock generator (keeps dev offline-friendly)
-    return fallbackMock(options as any);
-  }
-
-  // Build a prompt that requests JSON output matching the Course shape.
-  const system = `You are an assistant who generates structured course JSON following a strict schema. Respond ONLY with JSON parsable into a Course object with modules and lessons. Use concise human-friendly language and include suggested image and video URLs where appropriate.`;
-
-  const user = `Generate a DEIA training course for audience: ${options.audience || 'workplace'}, length: ${options.length || 'short'}, tone: ${options.tone || 'Practical'}. Include modules (4-6), lessons (video, interactive, quiz), short transcripts, suggested public-domain or rights-cleared video/image links, and metadata. Output valid JSON.`;
-
+  // 1) Try local backend proxy first (keeps frontend free of API keys in dev)
   try {
-    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+    const proxyRes = await fetch('/api/ai/generate', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${OPENAI_KEY}`
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [
-          { role: 'system', content: system },
-          { role: 'user', content: user }
-        ],
-        temperature: 0.2,
-        max_tokens: 1500
-      })
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(options)
     });
-
-    if (!res.ok) throw new Error(`OpenAI error ${res.status}`);
-
-    const data = await res.json();
-    const text = data?.choices?.[0]?.message?.content;
-    if (!text) throw new Error('No content from OpenAI');
-
-    // Try parse JSON safely; OpenAI may return markdown — attempt to extract JSON block
-    const jsonMatch = text.match(/\{[\s\S]*\}/m);
-    const jsonText = jsonMatch ? jsonMatch[0] : text;
-    const parsed = JSON.parse(jsonText) as Course;
-    return parsed;
+    if (proxyRes.ok) {
+      const json = await proxyRes.json();
+      return json as Course;
+    }
   } catch (err) {
-    console.warn('AI generation failed, falling back to mock:', err);
-    return fallbackMock(options as any);
+    // ignore and fall through to next strategy
+    console.warn('Backend AI proxy not available or failed, falling back:', err);
   }
+
+  // 2) If OPENAI_KEY is present in the frontend env (rare), call OpenAI directly
+  if (OPENAI_KEY) {
+    const system = `You are an assistant who generates structured course JSON following a strict schema. Respond ONLY with JSON parsable into a Course object with modules and lessons.`;
+    const user = `Generate a DEIA training course for audience: ${options.audience || 'workplace'}, length: ${options.length || 'short'}, tone: ${options.tone || 'Practical'}. Include modules (4-6), lessons (video, interactive, quiz), short transcripts, suggested public-domain or rights-cleared video/image links, and metadata. Output valid JSON.`;
+    try {
+      const res = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${OPENAI_KEY}`
+        },
+        body: JSON.stringify({ model: 'gpt-4o-mini', messages: [{ role: 'system', content: system }, { role: 'user', content: user }], temperature: 0.2, max_tokens: 1500 })
+      });
+      if (!res.ok) throw new Error(`OpenAI error ${res.status}`);
+      const data = await res.json();
+      const text = data?.choices?.[0]?.message?.content;
+      if (!text) throw new Error('No content from OpenAI');
+      const jsonMatch = text.match(/\{[\s\S]*\}/m);
+      const jsonText = jsonMatch ? jsonMatch[0] : text;
+      const parsed = JSON.parse(jsonText) as Course;
+      return parsed;
+    } catch (err) {
+      console.warn('Direct OpenAI call failed, falling back to mock:', err);
+    }
+  }
+
+  // 3) Fallback to local mock generator
+  return fallbackMock(options as any);
 }
 
 async function fetchMediaSuggestions(query: string): Promise<MediaSuggestion[]> {

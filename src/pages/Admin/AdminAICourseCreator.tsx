@@ -3,8 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { courseStore } from '../../store/courseStore';
 import type { Course } from '../../store/courseStore';
 import { Save, CheckCircle, Loader } from 'lucide-react';
-import { generateDEIACourse, fetchMediaSuggestions } from '../../services/aiCourseService';
-import mockAIGenerateDEIACourse from '../../utils/aiMocks';
+import { generateDEIACourse } from '../../services/aiCourseService';
 
 const AdminAICourseCreator = () => {
   const navigate = useNavigate();
@@ -14,6 +13,8 @@ const AdminAICourseCreator = () => {
   const [title, setTitle] = useState('');
   const [generating, setGenerating] = useState(false);
   const [generatedCourse, setGeneratedCourse] = useState<Course | null>(null);
+  const [mediaSuggestions, setMediaSuggestions] = useState<Array<{ id: string; type: string; url: string; thumbnail?: string }>>([]);
+  const [selectedMediaId, setSelectedMediaId] = useState<string | null>(null);
 
   const handleGenerate = async () => {
     setGenerating(true);
@@ -24,11 +25,20 @@ const AdminAICourseCreator = () => {
 
       // Preload some media suggestions for the first module/topic
       const firstTopic = course.modules?.[0]?.title || `${audience} DEIA`;
-      const media = await fetchMediaSuggestions(firstTopic);
-      // Attach first media suggestion to thumbnail if present and course has no thumbnail
-      if (media && media.length > 0 && !course.thumbnail) {
-        (course as Course).thumbnail = media[0].url;
-        setGeneratedCourse({ ...course });
+      try {
+        const mediaRes = await fetch(`/api/ai/media?query=${encodeURIComponent(firstTopic)}`);
+        if (mediaRes.ok) {
+          const media = await mediaRes.json();
+          setMediaSuggestions(media || []);
+          // if course has no thumbnail, pick the first suggestion
+          if (media && media.length > 0 && !course.thumbnail) {
+            course.thumbnail = media[0].url;
+            setGeneratedCourse({ ...course });
+            setSelectedMediaId(media[0].id);
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to fetch media suggestions', err);
       }
     } catch (err) {
       console.error('AI generation failed', err);
@@ -36,6 +46,14 @@ const AdminAICourseCreator = () => {
     } finally {
       setGenerating(false);
     }
+  };
+
+  const applySelectedMediaAsThumbnail = () => {
+    if (!generatedCourse || !selectedMediaId) return;
+    const sel = mediaSuggestions.find(m => m.id === selectedMediaId);
+    if (!sel) return;
+    const updated = { ...generatedCourse, thumbnail: sel.url };
+    setGeneratedCourse(updated);
   };
 
   const handleSaveDraft = () => {
@@ -124,6 +142,31 @@ const AdminAICourseCreator = () => {
               </div>
             ))}
           </div>
+
+          {mediaSuggestions.length > 0 && (
+            <div className="mb-4">
+              <h4 className="font-semibold mb-2">Suggested Images & Videos</h4>
+              <div className="grid grid-cols-3 gap-3">
+                {mediaSuggestions.map(m => (
+                  <button
+                    key={m.id}
+                    onClick={() => setSelectedMediaId(m.id)}
+                    className={`border rounded overflow-hidden ${selectedMediaId === m.id ? 'ring-2 ring-orange-400' : ''}`}
+                    title={m.type}
+                  >
+                    {m.thumbnail ? (
+                      <img src={m.thumbnail} alt={m.id} className="w-full h-24 object-cover" />
+                    ) : (
+                      <div className="w-full h-24 bg-gray-100 flex items-center justify-center text-sm text-gray-600">{m.type}</div>
+                    )}
+                  </button>
+                ))}
+              </div>
+              <div className="mt-3">
+                <button onClick={applySelectedMediaAsThumbnail} className="px-3 py-2 bg-blue-500 text-white rounded">Apply Selected as Thumbnail</button>
+              </div>
+            </div>
+          )}
 
           <div className="flex items-center space-x-3">
             <button onClick={handleSaveDraft} className="bg-blue-500 text-white px-4 py-2 rounded flex items-center space-x-2">

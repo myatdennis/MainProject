@@ -2,6 +2,13 @@ import { useState, useEffect } from 'react';
 import type { FC, ReactNode } from 'react';
 import { Link, useLocation, useNavigate, Outlet, useOutlet } from 'react-router-dom';
 import ErrorBoundary from '../ErrorBoundary';
+// Dev-only direct import to aid debugging of admin pages (won't affect prod)
+let DevAdminAICourseCreator: any = null;
+if (import.meta.env.DEV) {
+  // Import synchronously to avoid lazy-loading issues during debugging
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  DevAdminAICourseCreator = require('../../pages/Admin/AdminAICourseCreator').default;
+}
 import { useAuth } from '../../context/AuthContext';
 import { 
   LayoutDashboard, 
@@ -206,7 +213,7 @@ const AdminLayout: FC<Props> = ({ children }) => {
           {/* path banner removed after debugging */}
           <div className="relative z-10 bg-white min-h-[60vh] p-6">
             <ErrorBoundary>
-              {children ? children : <Outlet />}
+                {children ? children : (import.meta.env.DEV && DevAdminAICourseCreator ? <DevAdminAICourseCreator /> : <Outlet />)}
             </ErrorBoundary>
           </div>
         </main>
