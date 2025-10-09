@@ -1,7 +1,9 @@
 import React from 'react';
-import { Star, Quote, Users, TrendingUp, Heart, CheckCircle } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { Star, Quote, CheckCircle, Heart, Users, TrendingUp } from 'lucide-react';
 
 const TestimonialsPage = () => {
+  const navigate = useNavigate();
   const testimonials = [
     {
       name: "Dr. Sarah Chen",
@@ -294,7 +296,10 @@ const TestimonialsPage = () => {
           <p className="text-xl text-blue-100 mb-8 max-w-2xl mx-auto">
             Join the leaders who have transformed their organizations with The Huddle Co. Let's discuss how we can help you achieve similar results.
           </p>
-          <button className="bg-white text-blue-500 px-8 py-4 rounded-full font-semibold text-lg hover:bg-gray-50 transition-colors duration-200">
+          <button 
+            onClick={() => navigate('/contact')}
+            className="bg-white text-blue-500 px-8 py-4 rounded-full font-semibold text-lg hover:bg-gray-50 transition-colors duration-200"
+          >
             Start Your Transformation
           </button>
         </div>

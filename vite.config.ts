@@ -4,10 +4,13 @@ import react from '@vitejs/plugin-react';
 // https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
+  // Pre-bundle commonly used, heavier deps to speed up dev server startup
   optimizeDeps: {
-    exclude: ['lucide-react'],
+    include: ['lucide-react', '@supabase/supabase-js', '@dnd-kit/core', '@dnd-kit/sortable'],
   },
   build: {
+    // target modern browsers for faster ESBuild transforms
+    target: 'es2020',
     rollupOptions: {
       output: {
         manualChunks(id: string) {

@@ -28,6 +28,7 @@ const LMSModule = () => {
   const [currentModuleIndex, setCurrentModuleIndex] = useState(0);
   const [currentLessonIndex, setCurrentLessonIndex] = useState(0);
   const [reflection, setReflection] = useState('');
+  const [moduleRating, setModuleRating] = useState(0);
   const [quizAnswers, setQuizAnswers] = useState<{ [questionId: string]: number }>({});
   const [quizSubmitted, setQuizSubmitted] = useState(false);
   const [quizScore, setQuizScore] = useState<{ score: number; maxScore: number; passed: boolean } | null>(null);
@@ -886,10 +887,19 @@ const LMSModule = () => {
             <p className="text-sm text-gray-600 mb-4">Help us improve the learning experience</p>
             <div className="flex items-center space-x-1 mb-4">
               {[1, 2, 3, 4, 5].map((star) => (
-                <button key={star} className="text-yellow-400 hover:text-yellow-500">
+                <button 
+                  key={star} 
+                  onClick={() => setModuleRating(star)}
+                  className={`hover:text-yellow-500 ${moduleRating >= star ? 'text-yellow-400' : 'text-gray-300'}`}
+                >
                   <Star className="h-6 w-6 fill-current" />
                 </button>
               ))}
+              {moduleRating > 0 && (
+                <span className="ml-2 text-sm text-gray-600">
+                  Thanks for rating! ({moduleRating}/5)
+                </span>
+              )}
             </div>
             <Link
               to="/lms/feedback"

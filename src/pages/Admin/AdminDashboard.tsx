@@ -1,4 +1,5 @@
 // React import not required with the new JSX transform
+import { useNavigate } from 'react-router-dom';
 import { 
   Users, 
   Building2, 
@@ -14,6 +15,58 @@ import {
 } from 'lucide-react';
 
 const AdminDashboard = () => {
+  const navigate = useNavigate();
+  
+  // Action handlers
+  const handleAlertAction = (actionType: string) => {
+    switch(actionType) {
+      case 'Send Reminders':
+        // Navigate to a notification page or show modal
+        alert('Reminder notifications sent to 15 learners!');
+        break;
+      case 'Review Request':
+        navigate('/admin/organizations?filter=pending');
+        break;
+      case 'Download Report':
+        navigate('/admin/reports');
+        break;
+      default:
+        console.log('Action:', actionType);
+    }
+  };
+  
+  const handleQuickAction = (actionType: string) => {
+    switch(actionType) {
+      case 'Manage Users':
+        navigate('/admin/users');
+        break;
+      case 'Course Builder':
+        navigate('/admin/course-builder/new');
+        break;
+      case 'Analytics':
+        navigate('/admin/analytics');
+        break;
+      default:
+        console.log('Quick action:', actionType);
+    }
+  };
+  
+  const handleViewAllActivity = () => {
+    navigate('/admin/reports?tab=activity');
+  };
+  
+  const handleExportReport = () => {
+    // Simple demo export
+    const data = 'Module,Completion Rate,Avg Time\nFoundations of Inclusive Leadership,92%,45 min\nEmpathy in Action,89%,38 min';
+    const blob = new Blob([data], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'module-performance-report.csv';
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+  
   // AdminDashboard component
 
   const stats = [
@@ -193,7 +246,10 @@ const AdminDashboard = () => {
                   <div className="flex-1">
                     <h3 className="font-semibold text-gray-900 text-sm">{alert.title}</h3>
                     <p className="text-sm text-gray-600 mt-1">{alert.description}</p>
-                    <button className={`mt-2 text-sm font-medium ${alert.color} hover:underline`}>
+                    <button 
+                      onClick={() => handleAlertAction(alert.action)}
+                      className={`mt-2 text-sm font-medium ${alert.color} hover:underline`}
+                    >
                       {alert.action} →
                     </button>
                   </div>
@@ -227,7 +283,10 @@ const AdminDashboard = () => {
               );
             })}
           </div>
-          <button className="w-full mt-4 text-center text-sm text-orange-500 hover:text-orange-600 font-medium">
+          <button 
+            onClick={handleViewAllActivity}
+            className="w-full mt-4 text-center text-sm text-orange-500 hover:text-orange-600 font-medium"
+          >
             View All Activity →
           </button>
         </div>
@@ -261,7 +320,10 @@ const AdminDashboard = () => {
       <div className="mt-8 bg-white rounded-xl shadow-sm border border-gray-200 p-6">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-xl font-bold text-gray-900">Module Performance</h2>
-          <button className="flex items-center space-x-2 text-orange-500 hover:text-orange-600 font-medium">
+          <button 
+            onClick={handleExportReport}
+            className="flex items-center space-x-2 text-orange-500 hover:text-orange-600 font-medium"
+          >
             <Download className="h-4 w-4" />
             <span>Export Report</span>
           </button>
@@ -303,17 +365,26 @@ const AdminDashboard = () => {
 
       {/* Quick Actions */}
       <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-6">
-        <button className="bg-gradient-to-r from-blue-500 to-blue-600 text-white p-6 rounded-xl hover:from-blue-600 hover:to-blue-700 transition-all duration-200">
+        <button 
+          onClick={() => handleQuickAction('Manage Users')}
+          className="bg-gradient-to-r from-blue-500 to-blue-600 text-white p-6 rounded-xl hover:from-blue-600 hover:to-blue-700 transition-all duration-200"
+        >
           <Users className="h-8 w-8 mb-3" />
           <h3 className="font-bold text-lg mb-2">Manage Users</h3>
           <p className="text-blue-100 text-sm">Add, edit, or assign courses to learners</p>
         </button>
-        <button className="bg-gradient-to-r from-green-500 to-green-600 text-white p-6 rounded-xl hover:from-green-600 hover:to-green-700 transition-all duration-200">
+        <button 
+          onClick={() => handleQuickAction('Course Builder')}
+          className="bg-gradient-to-r from-green-500 to-green-600 text-white p-6 rounded-xl hover:from-green-600 hover:to-green-700 transition-all duration-200"
+        >
           <BookOpen className="h-8 w-8 mb-3" />
           <h3 className="font-bold text-lg mb-2">Course Builder</h3>
           <p className="text-green-100 text-sm">Create and customize training modules</p>
         </button>
-        <button className="bg-gradient-to-r from-orange-500 to-red-500 text-white p-6 rounded-xl hover:from-orange-600 hover:to-red-600 transition-all duration-200">
+        <button 
+          onClick={() => handleQuickAction('Analytics')}
+          className="bg-gradient-to-r from-orange-500 to-red-500 text-white p-6 rounded-xl hover:from-orange-600 hover:to-red-600 transition-all duration-200"
+        >
           <BarChart3 className="h-8 w-8 mb-3" />
           <h3 className="font-bold text-lg mb-2">Analytics</h3>
           <p className="text-orange-100 text-sm">View detailed reports and insights</p>

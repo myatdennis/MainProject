@@ -40,6 +40,7 @@ import AdminDocuments from './pages/Admin/AdminDocuments';
 import AdminUserProfile from './pages/Admin/AdminUserProfile';
 import AdminOrgProfile from './pages/Admin/AdminOrgProfile';
 import AdminResourceSender from './pages/Admin/AdminResourceSender';
+import AdminCourseSettings from './pages/Admin/AdminCourseSettings';
 import AIBot from './components/AIBot/AIBot';
 import OrgWorkspaceLayout from './components/OrgWorkspace/OrgWorkspaceLayout';
 import StrategicPlansPage from './components/OrgWorkspace/StrategicPlansPage';
@@ -116,6 +117,7 @@ function App() {
                     <Route path="surveys/:surveyId/preview" element={<AdminSurveyBuilder />} />
                     <Route path="course-builder/:courseId" element={<AdminCourseBuilder />} />
                     <Route path="courses/:courseId/details" element={<AdminCourseDetail />} />
+                    <Route path="courses/:courseId/settings" element={<AdminCourseSettings />} />
                     <Route path="documents" element={<AdminDocuments />} />
                     <Route path="settings" element={<AdminSettings />} />
                   </Routes>
