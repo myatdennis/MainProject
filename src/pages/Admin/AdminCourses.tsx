@@ -632,7 +632,11 @@ const AdminCourses = () => {
                       <button onClick={() => duplicateCourse(course.id)} className="p-1 text-gray-600 hover:text-gray-800" title="Duplicate">
                         <Copy className="h-4 w-4" />
                       </button>
-                      <button className="p-1 text-gray-600 hover:text-gray-800" title="Settings">
+                      <button 
+                        onClick={() => navigate(`/admin/courses/${course.id}/settings`)}
+                        className="p-1 text-gray-600 hover:text-gray-800" 
+                        title="Settings"
+                      >
                         <Settings className="h-4 w-4" />
                       </button>
                       <LoadingButton

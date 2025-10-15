@@ -258,7 +258,10 @@ const ResourcePage = () => {
           <p className="text-xl text-blue-100 mb-8 max-w-2xl mx-auto">
             These resources are just the beginning. Let's discuss how we can create a custom DEI strategy for your organization.
           </p>
-          <button className="bg-white text-blue-500 px-8 py-4 rounded-full font-semibold text-lg hover:bg-gray-50 transition-colors duration-200 flex items-center mx-auto space-x-2">
+          <button 
+            onClick={() => navigate('/contact')}
+            className="bg-white text-blue-500 px-8 py-4 rounded-full font-semibold text-lg hover:bg-gray-50 transition-colors duration-200 flex items-center mx-auto space-x-2"
+          >
             <Calendar className="h-5 w-5" />
             <span>Schedule Discovery Call</span>
           </button>

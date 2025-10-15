@@ -20,6 +20,5 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src"],
-  "exclude": ["tests", "tests/e2e", "server/**/*.ts"]
+  "include": ["src"]
 }

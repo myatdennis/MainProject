@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Send, 
+  Plus, 
   X, 
   FileText, 
   Link as LinkIcon, 
@@ -8,6 +9,7 @@ import {
   StickyNote, 
   ClipboardList,
   Search,
+  Filter,
   User,
   Building2,
   AlertTriangle,
@@ -61,16 +63,6 @@ const ResourceSender: React.FC<ResourceSenderProps> = ({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string>('');
   const [success, setSuccess] = useState<string>('');
-  const [uploadPanelOpen, setUploadPanelOpen] = useState(false);
-  const [uploadFile, setUploadFile] = useState<File | null>(null);
-  const [uploadName, setUploadName] = useState('');
-  const [uploadCategory, setUploadCategory] = useState('');
-  const [uploadVisibility, setUploadVisibility] = useState<'global' | 'org' | 'user'>('global');
-  const [uploadOrgId, setUploadOrgId] = useState<string>('');
-  const [uploadUserId, setUploadUserId] = useState<string>('');
-  const [multiRecipientMode, setMultiRecipientMode] = useState(false);
-  const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
-  const [selectedOrgIds, setSelectedOrgIds] = useState<string[]>([]);
 
   useEffect(() => {
     loadProfiles();
@@ -97,49 +89,6 @@ const ResourceSender: React.FC<ResourceSenderProps> = ({
       setDocuments(docs);
     } catch (error) {
       console.error('Failed to load documents:', error);
-    }
-  };
-
-  const handleUploadDocument = async () => {
-    setError('');
-    if (!uploadFile) {
-      setError('Please select a file to upload');
-      return;
-    }
-    if (!uploadName.trim()) {
-      setError('Please provide a name for the document');
-      return;
-    }
-
-    setIsLoading(true);
-    try {
-      const meta: any = {
-        name: uploadName.trim(),
-        filename: uploadFile.name,
-        category: uploadCategory || 'General',
-        tags: [],
-        fileType: uploadFile.type,
-        visibility: uploadVisibility,
-      };
-      if (uploadVisibility === 'org' && uploadOrgId) meta.orgId = uploadOrgId;
-      if (uploadVisibility === 'user' && uploadUserId) meta.userId = uploadUserId;
-
-      const added = await documentService.addDocument(meta, uploadFile);
-      await loadDocuments();
-      setSelectedDocumentId(added.id);
-      setSuccess('Document uploaded and selected');
-      setUploadPanelOpen(false);
-      setUploadFile(null);
-      setUploadName('');
-      setUploadCategory('');
-      setUploadVisibility('global');
-      setUploadOrgId('');
-      setUploadUserId('');
-    } catch (err) {
-      console.error('Upload failed', err);
-      setError('Upload failed. Please try again.');
-    } finally {
-      setIsLoading(false);
     }
   };
 
@@ -195,7 +144,7 @@ const ResourceSender: React.FC<ResourceSenderProps> = ({
     setError('');
 
     try {
-      const resourceBase: Omit<BaseResource, 'id' | 'createdAt' | 'createdBy' | 'status'> = {
+      const resource: Omit<BaseResource, 'id' | 'createdAt' | 'createdBy' | 'status'> = {
         type: resourceType,
         title: title.trim(),
         description: description.trim() || undefined,
@@ -207,64 +156,26 @@ const ResourceSender: React.FC<ResourceSenderProps> = ({
         priority
       };
 
-      const sendToSingle = !multiRecipientMode && selectedProfileId;
+      const request: ResourceSendRequest = {
+        profileType: selectedProfileType,
+        profileId: selectedProfileId,
+        resource,
+        notifyRecipient,
+        message: message.trim() || undefined
+      };
 
-      if (multiRecipientMode) {
-        // Collect recipients
-        const recipients: Array<{ profileType: 'user' | 'organization'; profileId: string }> = [];
-        selectedUserIds.forEach(id => recipients.push({ profileType: 'user', profileId: id }));
-        selectedOrgIds.forEach(id => recipients.push({ profileType: 'organization', profileId: id }));
-
-        if (recipients.length === 0) {
-          setError('Please select at least one recipient');
-          setIsLoading(false);
-          return;
+      const createdResource = await profileService.addResourceToProfile(request);
+      
+      setSuccess('Resource sent successfully!');
+      onResourceSent?.(createdResource, selectedProfileType, selectedProfileId);
+      
+      // Reset form after short delay
+      setTimeout(() => {
+        resetForm();
+        if (isModal && onClose) {
+          onClose();
         }
-
-        const results: any[] = [];
-        for (const r of recipients) {
-          const request: ResourceSendRequest = {
-            profileType: r.profileType,
-            profileId: r.profileId,
-            resource: resourceBase,
-            notifyRecipient,
-            message: message.trim() || undefined
-          };
-          try {
-            const created = await profileService.addResourceToProfile(request);
-            results.push({ created, r });
-            onResourceSent?.(created, r.profileType, r.profileId);
-          } catch (err) {
-            console.warn('Failed to send to', r, err);
-          }
-        }
-
-        setSuccess(`Resource sent to ${results.length} recipient(s)`);
-        setTimeout(() => {
-          resetForm();
-          if (isModal && onClose) onClose?.();
-        }, 1200);
-      } else if (sendToSingle) {
-        const request: ResourceSendRequest = {
-          profileType: selectedProfileType,
-          profileId: selectedProfileId,
-          resource: resourceBase,
-          notifyRecipient,
-          message: message.trim() || undefined
-        };
-
-        const createdResource = await profileService.addResourceToProfile(request);
-        setSuccess('Resource sent successfully!');
-        onResourceSent?.(createdResource, selectedProfileType, selectedProfileId);
-        setTimeout(() => {
-          resetForm();
-          if (isModal && onClose) {
-            onClose();
-          }
-        }, 1500);
-      } else {
-        setError('No recipient selected');
-      }
+      }, 1500);
 
     } catch (error) {
       console.error('Failed to send resource:', error);
@@ -536,66 +447,6 @@ const ResourceSender: React.FC<ResourceSenderProps> = ({
           {/* Document Selection */}
           {resourceType === 'document' && (
             <div>
-              <div className="flex items-center justify-between mb-3">
-                <div className="flex items-center space-x-3">
-                  <button type="button" onClick={() => setUploadPanelOpen(prev => !prev)} className="px-3 py-1 bg-blue-50 text-blue-700 rounded">{uploadPanelOpen ? 'Close Upload' : 'Upload Document'}</button>
-                  <label className="flex items-center space-x-2 text-sm">
-                    <input type="checkbox" checked={multiRecipientMode} onChange={(e) => setMultiRecipientMode(e.target.checked)} />
-                    <span>Send to multiple recipients</span>
-                  </label>
-                </div>
-                {multiRecipientMode && (
-                  <div className="text-sm text-gray-500">Select users and/or organizations below</div>
-                )}
-              </div>
-
-              {uploadPanelOpen && (
-                <div className="mb-4 p-3 border border-dashed rounded-lg bg-gray-50">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-sm text-gray-700 mb-1">File</label>
-                      <input type="file" onChange={(e) => setUploadFile(e.target.files?.[0] ?? null)} />
-                    </div>
-                    <div>
-                      <label className="block text-sm text-gray-700 mb-1">Name</label>
-                      <input type="text" value={uploadName} onChange={(e) => setUploadName(e.target.value)} className="w-full p-2 border rounded" />
-                    </div>
-                    <div>
-                      <label className="block text-sm text-gray-700 mb-1">Category</label>
-                      <input type="text" value={uploadCategory} onChange={(e) => setUploadCategory(e.target.value)} className="w-full p-2 border rounded" />
-                    </div>
-                    <div>
-                      <label className="block text-sm text-gray-700 mb-1">Visibility</label>
-                      <select value={uploadVisibility} onChange={(e) => setUploadVisibility(e.target.value as any)} className="w-full p-2 border rounded">
-                        <option value="global">Global</option>
-                        <option value="org">Organization</option>
-                        <option value="user">User</option>
-                      </select>
-                    </div>
-                  </div>
-                  {uploadVisibility === 'org' && (
-                    <div className="mt-3">
-                      <label className="block text-sm text-gray-700 mb-1">Organization (for org visibility)</label>
-                      <select value={uploadOrgId} onChange={(e) => setUploadOrgId(e.target.value)} className="w-full p-2 border rounded">
-                        <option value="">Select organization</option>
-                        {orgProfiles.map(org => <option key={org.id} value={org.id}>{org.name}</option>)}
-                      </select>
-                    </div>
-                  )}
-                  {uploadVisibility === 'user' && (
-                    <div className="mt-3">
-                      <label className="block text-sm text-gray-700 mb-1">User (for user visibility)</label>
-                      <select value={uploadUserId} onChange={(e) => setUploadUserId(e.target.value)} className="w-full p-2 border rounded">
-                        <option value="">Select user</option>
-                        {userProfiles.map(u => <option key={u.id} value={u.id}>{u.name} • {u.email}</option>)}
-                      </select>
-                    </div>
-                  )}
-                  <div className="mt-3 flex justify-end">
-                    <button type="button" onClick={handleUploadDocument} className="px-4 py-2 bg-green-600 text-white rounded">Upload</button>
-                  </div>
-                </div>
-              )}
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Select Document *
               </label>
@@ -639,40 +490,6 @@ const ResourceSender: React.FC<ResourceSenderProps> = ({
                     ))
                   )}
                 </div>
-
-                {/* Multi-recipient selection lists */}
-                {multiRecipientMode && (
-                  <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div className="border p-2 rounded">
-                      <div className="text-sm font-medium mb-2">Select Users</div>
-                      <div className="max-h-36 overflow-y-auto">
-                        {userProfiles.map(u => (
-                          <label key={u.id} className="flex items-center space-x-2 p-1">
-                            <input type="checkbox" value={u.id} checked={selectedUserIds.includes(u.id)} onChange={(e) => {
-                              const id = e.target.value;
-                              setSelectedUserIds(prev => prev.includes(id) ? prev.filter(x=>x!==id) : [...prev, id]);
-                            }} />
-                            <span className="text-sm">{u.name} • {u.email}</span>
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="border p-2 rounded">
-                      <div className="text-sm font-medium mb-2">Select Organizations</div>
-                      <div className="max-h-36 overflow-y-auto">
-                        {orgProfiles.map(o => (
-                          <label key={o.id} className="flex items-center space-x-2 p-1">
-                            <input type="checkbox" value={o.id} checked={selectedOrgIds.includes(o.id)} onChange={(e) => {
-                              const id = e.target.value;
-                              setSelectedOrgIds(prev => prev.includes(id) ? prev.filter(x=>x!==id) : [...prev, id]);
-                            }} />
-                            <span className="text-sm">{o.name} • {o.type}</span>
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                  </div>
-                )}
               </div>
             </div>
           )}

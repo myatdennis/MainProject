@@ -186,10 +186,22 @@ const ServicesPage = () => {
               executive coaching, train-the-trainer programs, and long-term culture transformation initiatives.
             </p>
             <div className="flex flex-col sm:flex-row justify-center space-y-4 sm:space-y-0 sm:space-x-4">
-              <button className="bg-white text-blue-500 px-8 py-4 rounded-full font-semibold text-lg hover:bg-gray-50 transition-colors duration-200">
+              <button 
+                onClick={() => navigate('/contact')}
+                className="bg-white text-blue-500 px-8 py-4 rounded-full font-semibold text-lg hover:bg-gray-50 transition-colors duration-200"
+              >
                 Discuss Custom Solutions
               </button>
-              <button className="border-2 border-white px-8 py-4 rounded-full font-semibold text-lg hover:bg-white hover:text-blue-500 transition-colors duration-200">
+              <button 
+                onClick={() => {
+                  // Simple demo download
+                  const link = document.createElement('a');
+                  link.href = 'data:text/plain;charset=utf-8,The Huddle Co. Service Overview\n\nOur comprehensive DEI training and consulting services are designed to transform your organization culture.';
+                  link.download = 'huddle-co-services.txt';
+                  link.click();
+                }}
+                className="border-2 border-white px-8 py-4 rounded-full font-semibold text-lg hover:bg-white hover:text-blue-500 transition-colors duration-200"
+              >
                 Download Service Overview
               </button>
             </div>

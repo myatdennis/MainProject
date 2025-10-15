@@ -33,6 +33,7 @@ const AdminSurveyBuilder = () => {
   const { surveyId } = useParams();
   const [searchParams] = useSearchParams();
   const templateId = searchParams.get('template');
+  const isAIMode = searchParams.get('ai') === '1';
   
   const [survey, setSurvey] = useState<Survey | null>(null);
   const [activeSection, setActiveSection] = useState<string>('');
@@ -1030,13 +1031,21 @@ const AdminSurveyBuilder = () => {
         
         <div className="flex items-start justify-between">
           <div className="flex-1">
-            <input
-              type="text"
-              value={survey.title}
-              onChange={(e) => setSurvey(prev => prev ? { ...prev, title: e.target.value, updatedAt: new Date().toISOString() } : null)}
-              className="text-3xl font-bold text-gray-900 bg-transparent border-none outline-none focus:ring-2 focus:ring-orange-500 rounded px-2 py-1 mb-2"
-              placeholder="Survey Title"
-            />
+            <div className="flex items-center space-x-3 mb-2">
+              <input
+                type="text"
+                value={survey.title}
+                onChange={(e) => setSurvey(prev => prev ? { ...prev, title: e.target.value, updatedAt: new Date().toISOString() } : null)}
+                className="text-3xl font-bold text-gray-900 bg-transparent border-none outline-none focus:ring-2 focus:ring-orange-500 rounded px-2 py-1"
+                placeholder="Survey Title"
+              />
+              {isAIMode && (
+                <span className="bg-purple-100 text-purple-700 px-2 py-1 rounded-full text-sm font-medium flex items-center space-x-1">
+                  <Brain className="h-4 w-4" />
+                  <span>AI Mode</span>
+                </span>
+              )}
+            </div>
             <textarea
               value={survey.description}
               onChange={(e) => setSurvey(prev => prev ? { ...prev, description: e.target.value, updatedAt: new Date().toISOString() } : null)}
