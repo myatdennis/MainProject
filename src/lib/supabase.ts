@@ -21,6 +21,17 @@ if (!supabaseUrl || !supabaseAnonKey) {
     then: (resolve: any) => resolve({ data: [], error: null })
   });
 
+  const mockChannel = {
+    on: () => mockChannel,
+    subscribe: (callback: (status: string) => void) => {
+      // Simulate successful subscription in mock mode
+      setTimeout(() => callback('SUBSCRIBED'), 100);
+      return mockChannel;
+    },
+    send: () => Promise.resolve('ok'),
+    unsubscribe: () => Promise.resolve('ok')
+  };
+
   supabase = {
     auth: {
       getSession: () => Promise.resolve({ data: { session: null }, error: null }),
@@ -31,10 +42,18 @@ if (!supabaseUrl || !supabaseAnonKey) {
       resetPasswordForEmail: () => Promise.resolve({ error: { message: 'Password reset not available in demo mode' } }),
       onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } })
     },
-    from: () => createMockQuery()
+    from: () => createMockQuery(),
+    channel: () => mockChannel,
+    removeChannel: () => 'ok'
   };
 } else {
-  supabase = createClient(supabaseUrl, supabaseAnonKey);
+  supabase = createClient(supabaseUrl, supabaseAnonKey, {
+    realtime: {
+      params: {
+        eventsPerSecond: 10
+      }
+    }
+  });
 }
 
 export { supabase };

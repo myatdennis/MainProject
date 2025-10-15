@@ -1,50 +1,76 @@
-import { useEffect } from 'react';
+import { useEffect, Suspense, lazy } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { Toaster } from 'react-hot-toast';
 import { AuthProvider } from './context/AuthContext';
+import { ToastProvider } from './context/ToastContext';
 import { courseStore } from './store/courseStore';
+import { LoadingSpinner } from './components/LoadingComponents';
+import { ErrorBoundary } from './components/ErrorHandling';
 import Header from './components/Header';
 import Footer from './components/Footer';
+import DemoModeBanner from './components/DemoModeBanner';
+import ConnectionDiagnostic from './components/ConnectionDiagnostic';
+import TroubleshootingGuide from './components/TroubleshootingGuide';
+
+// Eager load core pages for better initial experience
 import HomePage from './pages/HomePage';
-import AboutPage from './pages/AboutPage';
-import ServicesPage from './pages/ServicesPage';
-import ResourcePage from './pages/ResourcePage';
-import TestimonialsPage from './pages/TestimonialsPage';
-import ContactPage from './pages/ContactPage';
-import ClientPortalPage from './pages/ClientPortalPage';
-import LMSDashboard from './pages/LMS/LMSDashboard';
-import LMSCourses from './pages/LMS/LMSCourses';
-import LMSModule from './pages/LMS/LMSModule';
-import LMSDownloads from './pages/LMS/LMSDownloads';
-import LMSFeedback from './pages/LMS/LMSFeedback';
-import LMSContact from './pages/LMS/LMSContact';
 import LMSLogin from './pages/LMS/LMSLogin';
-import LMSLayout from './components/LMS/LMSLayout';
 import AdminLogin from './pages/Admin/AdminLogin';
-import AdminDashboard from './pages/Admin/AdminDashboard';
-import AdminUsers from './pages/Admin/AdminUsers';
-import AdminOrganizations from './pages/Admin/AdminOrganizations';
-import AdminOrganizationProfile from './pages/Admin/AdminOrganizationProfile';
-import AdminCourses from './pages/Admin/AdminCourses';
-import AdminReports from './pages/Admin/AdminReports';
-import AdminSettings from './pages/Admin/AdminSettings';
 import AdminLayout from './components/Admin/AdminLayout';
-import AdminAnalytics from './pages/Admin/AdminAnalytics';
-import AdminCertificates from './pages/Admin/AdminCertificates';
-import AdminIntegrations from './pages/Admin/AdminIntegrations';
-import AdminCourseBuilder from './pages/Admin/AdminCourseBuilder';
-import AdminCourseDetail from './pages/Admin/AdminCourseDetail';
-import AdminSurveys from './pages/Admin/AdminSurveys';
-import AdminSurveyBuilder from './pages/Admin/AdminSurveyBuilder';
-import AdminSurveyAnalytics from './pages/Admin/AdminSurveyAnalytics';
-import AdminDocuments from './pages/Admin/AdminDocuments';
-import AdminUserProfile from './pages/Admin/AdminUserProfile';
-import AdminOrgProfile from './pages/Admin/AdminOrgProfile';
-import AdminResourceSender from './pages/Admin/AdminResourceSender';
-import AIBot from './components/AIBot/AIBot';
-import OrgWorkspaceLayout from './components/OrgWorkspace/OrgWorkspaceLayout';
-import StrategicPlansPage from './components/OrgWorkspace/StrategicPlansPage';
-import SessionNotesPage from './components/OrgWorkspace/SessionNotesPage';
-import ActionTrackerPage from './components/OrgWorkspace/ActionTrackerPage';
+
+// Lazy load secondary pages
+const AboutPage = lazy(() => import('./pages/AboutPage'));
+const ServicesPage = lazy(() => import('./pages/ServicesPage'));
+const ResourcePage = lazy(() => import('./pages/ResourcePage'));
+const TestimonialsPage = lazy(() => import('./pages/TestimonialsPage'));
+const ContactPage = lazy(() => import('./pages/ContactPage'));
+const ClientPortalPage = lazy(() => import('./pages/ClientPortalPage'));
+
+// Lazy load LMS components
+const LMSCourses = lazy(() => import('./pages/LMS/LMSCourses'));
+const LMSModule = lazy(() => import('./pages/LMS/LMSModule'));
+const LMSDownloads = lazy(() => import('./pages/LMS/LMSDownloads'));
+const LMSFeedback = lazy(() => import('./pages/LMS/LMSFeedback'));
+const LMSContact = lazy(() => import('./pages/LMS/LMSContact'));
+const LMSSettings = lazy(() => import('./pages/LMS/LMSSettings'));
+const LMSCertificates = lazy(() => import('./pages/LMS/LMSCertificates'));
+const LMSProgress = lazy(() => import('./pages/LMS/LMSProgress'));
+const LMSHelp = lazy(() => import('./pages/LMS/LMSHelp'));
+const LMSLayout = lazy(() => import('./components/LMS/LMSLayout'));
+const LearnerDashboard = lazy(() => import('./pages/LearnerDashboard'));
+const CoursePlayer = lazy(() => import('./components/CoursePlayer/CoursePlayer'));
+const AdvancedCourseBuilder = lazy(() => import('./components/CourseBuilder/AdvancedCourseBuilder'));
+
+// Lazy load Admin components
+const AdminDashboard = lazy(() => import('./pages/Admin/AdminDashboard'));
+const AdminUsers = lazy(() => import('./pages/Admin/AdminUsers'));
+const AdminOrganizations = lazy(() => import('./pages/Admin/AdminOrganizations'));
+const AdminOrganizationNew = lazy(() => import('./pages/Admin/AdminOrganizationNew'));
+const OrganizationDetails = lazy(() => import('./pages/Admin/OrganizationDetails'));
+const AdminCourses = lazy(() => import('./pages/Admin/AdminCourses'));
+const AdminReports = lazy(() => import('./pages/Admin/AdminReports'));
+const AdminSettings = lazy(() => import('./pages/Admin/AdminSettings'));
+// AdminLayout is now eagerly loaded above
+const AdminAnalytics = lazy(() => import('./pages/Admin/AdminAnalytics'));
+const AdminCertificates = lazy(() => import('./pages/Admin/AdminCertificates'));
+const AdminIntegrations = lazy(() => import('./pages/Admin/AdminIntegrations'));
+const AdminIntegrationConfig = lazy(() => import('./pages/Admin/AdminIntegrationConfig'));
+const AdminCourseDetail = lazy(() => import('./pages/Admin/AdminCourseDetail'));
+const AdminSurveys = lazy(() => import('./pages/Admin/AdminSurveys'));
+const AdminSurveyBuilder = lazy(() => import('./pages/Admin/AdminSurveyBuilder'));
+const AdminSurveyAnalytics = lazy(() => import('./pages/Admin/AdminSurveyAnalytics'));
+const AdminDocuments = lazy(() => import('./pages/Admin/AdminDocuments'));
+const AdminUserProfile = lazy(() => import('./pages/Admin/AdminUserProfile'));
+const AdminOrgProfile = lazy(() => import('./pages/Admin/AdminOrgProfile'));
+const AdminResourceSender = lazy(() => import('./pages/Admin/AdminResourceSender'));
+const AdminPerformanceDashboard = lazy(() => import('./pages/Admin/AdminPerformanceDashboard'));
+
+// Lazy load additional components
+const AIBot = lazy(() => import('./components/AIBot/AIBot'));
+const OrgWorkspaceLayout = lazy(() => import('./components/OrgWorkspace/OrgWorkspaceLayout'));
+const StrategicPlansPage = lazy(() => import('./components/OrgWorkspace/StrategicPlansPage'));
+const SessionNotesPage = lazy(() => import('./components/OrgWorkspace/SessionNotesPage'));
+const ActionTrackerPage = lazy(() => import('./components/OrgWorkspace/ActionTrackerPage'));
 import DocumentsPage from './pages/Client/DocumentsPage';
 
 function App() {
@@ -56,12 +82,16 @@ function App() {
   }, []);
 
   return (
-    <AuthProvider>
-      <Router>
-        <div className="min-h-screen flex flex-col bg-white">
-          <Header />
-          <main className="flex-grow">
-            <Routes>
+    <ErrorBoundary>
+      <ToastProvider>
+        <AuthProvider>
+          <Router>
+            <div className="min-h-screen flex flex-col bg-white">
+            <Header />
+            <DemoModeBanner />
+            <main className="flex-grow">
+              <Suspense fallback={<LoadingSpinner size="lg" className="py-20" text="Loading..." />}>
+                <Routes>
               <Route path="/" element={<HomePage />} />
               <Route path="/about" element={<AboutPage />} />
               <Route path="/services" element={<ServicesPage />} />
@@ -83,12 +113,18 @@ function App() {
               <Route path="/lms/*" element={
                 <LMSLayout>
                   <Routes>
-                    <Route path="dashboard" element={<LMSDashboard />} />
+                    <Route path="dashboard" element={<LearnerDashboard />} />
                     <Route path="courses" element={<LMSCourses />} />
+                    <Route path="course/:courseId" element={<CoursePlayer />} />
+                    <Route path="course/:courseId/lesson/:lessonId" element={<CoursePlayer />} />
                     <Route path="module/:moduleId" element={<LMSModule />} />
                     <Route path="downloads" element={<LMSDownloads />} />
                     <Route path="feedback" element={<LMSFeedback />} />
                     <Route path="contact" element={<LMSContact />} />
+                    <Route path="settings" element={<LMSSettings />} />
+                    <Route path="certificates" element={<LMSCertificates />} />
+                    <Route path="progress" element={<LMSProgress />} />
+                    <Route path="help" element={<LMSHelp />} />
                   </Routes>
                 </LMSLayout>
               } />
@@ -101,33 +137,65 @@ function App() {
                     <Route path="users" element={<AdminUsers />} />
                     <Route path="users/:userId" element={<AdminUserProfile />} />
                     <Route path="organizations" element={<AdminOrganizations />} />
-                    <Route path="organizations/:orgId" element={<AdminOrganizationProfile />} />
+                    <Route path="organizations/new" element={<AdminOrganizationNew />} />
+                    <Route path="organizations/:id" element={<OrganizationDetails />} />
                     <Route path="org-profiles/:orgProfileId" element={<AdminOrgProfile />} />
                     <Route path="send-resource" element={<AdminResourceSender />} />
                     <Route path="courses" element={<AdminCourses />} />
                     <Route path="reports" element={<AdminReports />} />
                     <Route path="analytics" element={<AdminAnalytics />} />
+                    <Route path="performance" element={<AdminPerformanceDashboard />} />
                     <Route path="certificates" element={<AdminCertificates />} />
                     <Route path="integrations" element={<AdminIntegrations />} />
+                    <Route path="integrations/:integrationId" element={<AdminIntegrationConfig />} />
                     <Route path="surveys" element={<AdminSurveys />} />
                     <Route path="surveys/builder" element={<AdminSurveyBuilder />} />
                     <Route path="surveys/builder/:surveyId" element={<AdminSurveyBuilder />} />
                     <Route path="surveys/:surveyId/analytics" element={<AdminSurveyAnalytics />} />
                     <Route path="surveys/:surveyId/preview" element={<AdminSurveyBuilder />} />
-                    <Route path="course-builder/:courseId" element={<AdminCourseBuilder />} />
+                    <Route path="course-builder/:courseId" element={<AdvancedCourseBuilder />} />
                     <Route path="courses/:courseId/details" element={<AdminCourseDetail />} />
                     <Route path="documents" element={<AdminDocuments />} />
                     <Route path="settings" element={<AdminSettings />} />
                   </Routes>
                 </AdminLayout>
               } />
-            </Routes>
-          </main>
-          <Footer />
-          <AIBot />
-        </div>
-      </Router>
-    </AuthProvider>
+                </Routes>
+              </Suspense>
+            </main>
+            <Footer />
+            <AIBot />
+            <ConnectionDiagnostic />
+            <TroubleshootingGuide />
+          </div>
+          <Toaster 
+            position="top-right"
+            toastOptions={{
+              duration: 4000,
+              style: {
+                background: '#363636',
+                color: '#fff',
+              },
+              success: {
+                duration: 3000,
+                iconTheme: {
+                  primary: '#10b981',
+                  secondary: '#fff',
+                },
+              },
+              error: {
+                duration: 5000,
+                iconTheme: {
+                  primary: '#ef4444',
+                  secondary: '#fff',
+                },
+              },
+            }}
+          />
+        </Router>
+      </AuthProvider>
+      </ToastProvider>
+    </ErrorBoundary>
   );
 }
 

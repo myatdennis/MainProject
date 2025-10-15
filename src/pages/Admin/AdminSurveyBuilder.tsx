@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, lazy } from 'react';
 import { useParams, useSearchParams, Link } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -19,13 +19,15 @@ import {
   Target,
   Zap,
   Brain,
-  Send,
-  Building2,
-  X
+  Building2
 } from 'lucide-react';
+
+// Lazy load heavy components
+const AssignmentModal = lazy(() => import('../../components/Survey/AssignmentModal'));
+const SurveySettingsModal = lazy(() => import('../../components/Survey/SurveySettingsModal'));
 import { surveyTemplates, questionTypes, defaultBranding, aiGeneratedQuestions, censusDemographicOptions } from '../../data/surveyTemplates';
 import { getAssignments, saveAssignments, getSurveyById, queueSaveSurvey } from '../../services/surveyService';
-import type { Survey, SurveyQuestion, SurveySection } from '../../types/survey';
+import type { Survey, SurveyQuestion, SurveySection, AnonymityMode } from '../../types/survey';
 
 const AdminSurveyBuilder = () => {
   const { surveyId } = useParams();
@@ -88,7 +90,6 @@ const AdminSurveyBuilder = () => {
       id,
       title: 'Q1 2025 Climate Assessment',
       description: 'Quarterly organizational climate and culture assessment',
-      type: 'climate-assessment',
       status: 'draft',
       createdBy: 'Mya Dennis',
       createdAt: new Date().toISOString(),
@@ -96,38 +97,34 @@ const AdminSurveyBuilder = () => {
       sections: [],
       branding: defaultBranding,
       settings: {
+        anonymityMode: 'anonymous' as AnonymityMode,
+        anonymityThreshold: 5,
+        allowMultipleResponses: false,
+        showProgressBar: true,
+        consentRequired: false,
         allowAnonymous: true,
         allowSaveAndContinue: true,
-        showProgressBar: true,
         randomizeQuestions: false,
-        randomizeOptions: false,
-        requireCompletion: false,
-        accessControl: {
-          requireLogin: false
-        },
-        notifications: {
-          sendReminders: true,
-          reminderSchedule: [3, 7, 14],
-          completionNotification: true
-        }
+        randomizeOptions: false
       },
       assignedTo: {
         organizationIds: [],
         userIds: [],
         cohortIds: []
       },
-      totalInvites: 0,
-      totalResponses: 0,
-      completionRate: 0,
-      avgCompletionTime: 0,
+      blocks: [],
+      defaultLanguage: 'en',
+      supportedLanguages: ['en'],
+      completionSettings: {
+        thankYouMessage: 'Thank you for completing our survey!',
+        showResources: true,
+        recommendedCourses: []
+      },
       reflectionPrompts: [
         "What's one change that would make you feel a stronger sense of belonging?",
         "How can leadership better support inclusion in your daily work?",
         "What would you like to see more of in our organization's culture?"
-      ],
-      generateHuddleReport: true,
-      actionStepsEnabled: true,
-      benchmarkingEnabled: true
+      ]
     };
     setSurvey(sampleSurvey);
     if (sampleSurvey.sections.length > 0) {
@@ -138,7 +135,15 @@ const AdminSurveyBuilder = () => {
     (async () => {
       const assignment = await getAssignments(id);
       if (assignment && assignment.organization_ids) {
-        setSurvey(prev => prev ? { ...prev, assignedTo: { ...prev.assignedTo, organizationIds: assignment.organization_ids } } : prev);
+        setSurvey(prev => prev ? { 
+          ...prev, 
+          assignedTo: { 
+            organizationIds: assignment.organization_ids,
+            userIds: prev.assignedTo?.userIds || [],
+            departmentIds: prev.assignedTo?.departmentIds || [],
+            cohortIds: prev.assignedTo?.cohortIds || []
+          } 
+        } : prev);
       }
     })();
   };
@@ -154,7 +159,6 @@ const AdminSurveyBuilder = () => {
       id: `survey-${Date.now()}`,
       title: template.name,
       description: template.description,
-      type: template.id as any,
       status: 'draft',
       createdBy: 'Mya Dennis',
       createdAt: new Date().toISOString(),
@@ -186,18 +190,19 @@ const AdminSurveyBuilder = () => {
         userIds: [],
         cohortIds: []
       },
-      totalInvites: 0,
-      totalResponses: 0,
-      completionRate: 0,
-      avgCompletionTime: 0,
       reflectionPrompts: [
         "What's one change that would make you feel a stronger sense of belonging?",
         "How can leadership better support inclusion in your daily work?",
         "What would you like to see more of in our organization's culture?"
       ],
-      generateHuddleReport: true,
-      actionStepsEnabled: true,
-      benchmarkingEnabled: true
+      blocks: [],
+      defaultLanguage: 'en',
+      supportedLanguages: ['en'],
+      completionSettings: {
+        thankYouMessage: 'Thank you for completing our survey!',
+        showResources: true,
+        recommendedCourses: []
+      }
     };
 
     setSurvey(newSurvey);
@@ -211,44 +216,39 @@ const AdminSurveyBuilder = () => {
       id: `survey-${Date.now()}`,
       title: 'New Survey',
       description: 'Survey description',
-      type: 'custom',
       status: 'draft',
       createdBy: 'Mya Dennis',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       sections: [],
+      blocks: [],
       branding: defaultBranding,
       settings: {
+        anonymityMode: 'anonymous' as AnonymityMode,
+        anonymityThreshold: 5,
+        allowMultipleResponses: false,
+        showProgressBar: true,
+        consentRequired: false,
         allowAnonymous: true,
         allowSaveAndContinue: true,
-        showProgressBar: true,
         randomizeQuestions: false,
-        randomizeOptions: false,
-        requireCompletion: false,
-        accessControl: {
-          requireLogin: false
-        },
-        notifications: {
-          sendReminders: true,
-          reminderSchedule: [3, 7, 14],
-          completionNotification: true
-        }
+        randomizeOptions: false
+      },
+      defaultLanguage: 'en',
+      supportedLanguages: ['en'],
+      completionSettings: {
+        thankYouMessage: 'Thank you for completing our survey!',
+        showResources: true,
+        recommendedCourses: []
       },
       assignedTo: {
         organizationIds: [],
         userIds: [],
         cohortIds: []
       },
-      totalInvites: 0,
-      totalResponses: 0,
-      completionRate: 0,
-      avgCompletionTime: 0,
       reflectionPrompts: [
         "What's one change that would make you feel a stronger sense of belonging?"
-      ],
-      generateHuddleReport: true,
-      actionStepsEnabled: true,
-      benchmarkingEnabled: true
+      ]
     };
     setSurvey(newSurvey);
   };
@@ -1241,13 +1241,13 @@ const AdminSurveyBuilder = () => {
               These prompts will appear after survey completion to encourage deeper thinking and self-reflection.
             </p>
             <div className="space-y-3">
-              {survey.reflectionPrompts.map((prompt, index) => (
+              {survey.reflectionPrompts?.map((prompt, index) => (
                 <div key={index} className="flex items-center space-x-2">
                   <input
                     type="text"
                     value={prompt}
                     onChange={(e) => {
-                      const newPrompts = [...survey.reflectionPrompts];
+                      const newPrompts = [...(survey.reflectionPrompts || [])];
                       newPrompts[index] = e.target.value;
                       setSurvey(prev => prev ? { ...prev, reflectionPrompts: newPrompts, updatedAt: new Date().toISOString() } : null);
                     }}
@@ -1256,7 +1256,7 @@ const AdminSurveyBuilder = () => {
                   />
                   <button
                     onClick={() => {
-                      const newPrompts = survey.reflectionPrompts.filter((_, i) => i !== index);
+                      const newPrompts = (survey.reflectionPrompts || []).filter((_, i) => i !== index);
                       setSurvey(prev => prev ? { ...prev, reflectionPrompts: newPrompts, updatedAt: new Date().toISOString() } : null);
                     }}
                     className="p-2 text-red-600 hover:text-red-800"
@@ -1267,7 +1267,7 @@ const AdminSurveyBuilder = () => {
               ))}
               <button
                 onClick={() => {
-                  const newPrompts = [...survey.reflectionPrompts, 'New reflection prompt'];
+                  const newPrompts = [...(survey.reflectionPrompts || []), 'New reflection prompt'];
                   setSurvey(prev => prev ? { ...prev, reflectionPrompts: newPrompts, updatedAt: new Date().toISOString() } : null);
                 }}
                 className="text-orange-500 hover:text-orange-600 text-sm font-medium"
@@ -1281,261 +1281,80 @@ const AdminSurveyBuilder = () => {
 
       {/* Settings Panel */}
       {showSettings && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b border-gray-200">
-              <div className="flex items-center justify-between">
-                <h2 className="text-xl font-bold text-gray-900">Survey Settings</h2>
-                <button
-                  onClick={() => setShowSettings(false)}
-                  className="text-gray-400 hover:text-gray-600"
-                >
-                  ×
-                </button>
-              </div>
-            </div>
-            <div className="p-6 space-y-6">
-              {/* Access Control */}
-              <div>
-                <h3 className="font-semibold text-gray-900 mb-4">Access & Privacy</h3>
-                <div className="space-y-4">
-                  <label className="flex items-center space-x-3">
-                    <input
-                      type="checkbox"
-                      checked={survey.settings.allowAnonymous}
-                      onChange={(e) => setSurvey(prev => prev ? {
-                        ...prev,
-                        settings: { ...prev.settings, allowAnonymous: e.target.checked },
-                        updatedAt: new Date().toISOString()
-                      } : null)}
-                      className="h-4 w-4 text-orange-500 focus:ring-orange-500 border-gray-300 rounded"
-                    />
-                    <div>
-                      <span className="font-medium text-gray-900">Allow anonymous responses</span>
-                      <p className="text-sm text-gray-600">Participants can respond without logging in</p>
-                    </div>
-                  </label>
-                  <label className="flex items-center space-x-3">
-                    <input
-                      type="checkbox"
-                      checked={survey.settings.allowSaveAndContinue}
-                      onChange={(e) => setSurvey(prev => prev ? {
-                        ...prev,
-                        settings: { ...prev.settings, allowSaveAndContinue: e.target.checked },
-                        updatedAt: new Date().toISOString()
-                      } : null)}
-                      className="h-4 w-4 text-orange-500 focus:ring-orange-500 border-gray-300 rounded"
-                    />
-                    <div>
-                      <span className="font-medium text-gray-900">Save & continue later</span>
-                      <p className="text-sm text-gray-600">Allow participants to save progress and return</p>
-                    </div>
-                  </label>
-                </div>
-              </div>
-
-              {/* Display Options */}
-              <div>
-                <h3 className="font-semibold text-gray-900 mb-4">Display Options</h3>
-                <div className="space-y-4">
-                  <label className="flex items-center space-x-3">
-                    <input
-                      type="checkbox"
-                      checked={survey.settings.showProgressBar}
-                      onChange={(e) => setSurvey(prev => prev ? {
-                        ...prev,
-                        settings: { ...prev.settings, showProgressBar: e.target.checked },
-                        updatedAt: new Date().toISOString()
-                      } : null)}
-                      className="h-4 w-4 text-orange-500 focus:ring-orange-500 border-gray-300 rounded"
-                    />
-                    <span className="font-medium text-gray-900">Show progress bar</span>
-                  </label>
-                  <label className="flex items-center space-x-3">
-                    <input
-                      type="checkbox"
-                      checked={survey.settings.randomizeQuestions}
-                      onChange={(e) => setSurvey(prev => prev ? {
-                        ...prev,
-                        settings: { ...prev.settings, randomizeQuestions: e.target.checked },
-                        updatedAt: new Date().toISOString()
-                      } : null)}
-                      className="h-4 w-4 text-orange-500 focus:ring-orange-500 border-gray-300 rounded"
-                    />
-                    <span className="font-medium text-gray-900">Randomize question order</span>
-                  </label>
-                </div>
-              </div>
-
-              {/* Huddle Co. Features */}
-              <div>
-                <h3 className="font-semibold text-gray-900 mb-4">Huddle Co. Features</h3>
-                <div className="space-y-4">
-                  <label className="flex items-center space-x-3">
-                    <input
-                      type="checkbox"
-                      checked={survey.generateHuddleReport}
-                      onChange={(e) => setSurvey(prev => prev ? {
-                        ...prev,
-                        generateHuddleReport: e.target.checked,
-                        updatedAt: new Date().toISOString()
-                      } : null)}
-                      className="h-4 w-4 text-orange-500 focus:ring-orange-500 border-gray-300 rounded"
-                    />
-                    <div>
-                      <span className="font-medium text-gray-900">Generate Huddle Report</span>
-                      <p className="text-sm text-gray-600">Auto-generate team discussion summaries</p>
-                    </div>
-                  </label>
-                  <label className="flex items-center space-x-3">
-                    <input
-                      type="checkbox"
-                      checked={survey.actionStepsEnabled}
-                      onChange={(e) => setSurvey(prev => prev ? {
-                        ...prev,
-                        actionStepsEnabled: e.target.checked,
-                        updatedAt: new Date().toISOString()
-                      } : null)}
-                      className="h-4 w-4 text-orange-500 focus:ring-orange-500 border-gray-300 rounded"
-                    />
-                    <div>
-                      <span className="font-medium text-gray-900">Leadership action steps</span>
-                      <p className="text-sm text-gray-600">Generate actionable recommendations</p>
-                    </div>
-                  </label>
-                  <label className="flex items-center space-x-3">
-                    <input
-                      type="checkbox"
-                      checked={survey.benchmarkingEnabled}
-                      onChange={(e) => setSurvey(prev => prev ? {
-                        ...prev,
-                        benchmarkingEnabled: e.target.checked,
-                        updatedAt: new Date().toISOString()
-                      } : null)}
-                      className="h-4 w-4 text-orange-500 focus:ring-orange-500 border-gray-300 rounded"
-                    />
-                    <div>
-                      <span className="font-medium text-gray-900">Enable benchmarking</span>
-                      <p className="text-sm text-gray-600">Compare results with industry standards</p>
-                    </div>
-                  </label>
-                </div>
-              </div>
-            </div>
-            <div className="p-6 border-t border-gray-200 flex justify-end space-x-3">
-              <button
-                onClick={() => setShowSettings(false)}
-                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors duration-200"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => {
-                  saveSurvey();
-                  setShowSettings(false);
-                }}
-                className="bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors duration-200"
-              >
-                Save Settings
-              </button>
+        <React.Suspense fallback={
+          <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
+            <div className="bg-white p-8 rounded-xl shadow-xl flex items-center space-x-3">
+              <div className="animate-spin h-6 w-6 border-2 border-gray-600 border-t-transparent rounded-full"></div>
+              <span className="text-gray-700 font-medium">Loading Settings Panel...</span>
             </div>
           </div>
-        </div>
+        }>
+          <SurveySettingsModal
+            isOpen={showSettings}
+            onClose={() => setShowSettings(false)}
+            settings={{
+              accessControl: {
+                requireAuth: !survey.settings.allowAnonymous,
+                allowAnonymous: survey.settings.allowAnonymous,
+                ipRestriction: '',
+                timeLimit: 0
+              },
+              notifications: {
+                sendReminders: true,
+                reminderFrequency: 'weekly',
+                completionNotifications: true
+              },
+              advanced: {
+                allowBack: survey.settings.allowSaveAndContinue,
+                showProgress: survey.settings.showProgressBar,
+                randomizeQuestions: survey.settings.randomizeQuestions,
+                preventMultipleSubmissions: true
+              }
+            }}
+            onSave={(settings: any) => {
+              setSurvey(prev => prev ? {
+                ...prev,
+                settings: {
+                  ...prev.settings,
+                  allowAnonymous: settings.accessControl.allowAnonymous,
+                  allowSaveAndContinue: settings.advanced.allowBack,
+                  showProgressBar: settings.advanced.showProgress,
+                  randomizeQuestions: settings.advanced.randomizeQuestions
+                },
+                updatedAt: new Date().toISOString()
+              } : null);
+              saveSurvey();
+            }}
+          />
+        </React.Suspense>
       )}
 
       {/* Assignment Modal */}
       {showAssignModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-            <div className="p-6 border-b border-gray-200">
-              <div className="flex items-center justify-between">
-                <h2 className="text-xl font-bold text-gray-900">Assign Survey to Organizations</h2>
-                <button
-                  onClick={() => setShowAssignModal(false)}
-                  className="text-gray-400 hover:text-gray-600"
-                >
-                  <X className="h-6 w-6" />
-                </button>
-              </div>
-            </div>
-            <div className="p-6">
-              <div className="mb-6">
-                <h3 className="font-semibold text-gray-900 mb-2">Select Organizations</h3>
-                <p className="text-gray-600 text-sm">Choose which organizations should receive this survey. Participants will be notified via email.</p>
-              </div>
-              
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-                {organizations.map((org) => (
-                  <label key={org.id} className="flex items-center space-x-3 p-4 border border-gray-200 rounded-lg hover:bg-gray-50 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={survey?.assignedTo.organizationIds.includes(org.id) || false}
-                      onChange={(e) => {
-                        if (!survey) return;
-                        const currentIds = survey.assignedTo.organizationIds;
-                        const newIds = e.target.checked
-                          ? [...currentIds, org.id]
-                          : currentIds.filter(id => id !== org.id);
-                        setSurvey(prev => prev ? {
-                          ...prev,
-                          assignedTo: { ...prev.assignedTo, organizationIds: newIds },
-                          updatedAt: new Date().toISOString()
-                        } : null);
-                      }}
-                      className="h-4 w-4 text-orange-500 focus:ring-orange-500 border-gray-300 rounded"
-                    />
-                    <div className="flex items-center space-x-3 flex-1">
-                      <div className="bg-blue-100 p-2 rounded-lg">
-                        <Building2 className="h-5 w-5 text-blue-600" />
-                      </div>
-                      <div>
-                        <div className="font-medium text-gray-900">{org.name}</div>
-                        <div className="text-sm text-gray-600">{org.type} • {org.learners} learners</div>
-                      </div>
-                    </div>
-                  </label>
-                ))}
-              </div>
-
-              <div className="bg-orange-50 border border-orange-200 rounded-lg p-4 mb-6">
-                <h4 className="font-medium text-orange-900 mb-2">Survey Distribution</h4>
-                <div className="text-sm text-orange-800">
-                  <p className="mb-2">
-                    <strong>Selected Organizations:</strong> {survey?.assignedTo.organizationIds.length || 0}
-                  </p>
-                  <p className="mb-2">
-                    <strong>Total Potential Participants:</strong> {
-                      organizations
-                        .filter(org => survey?.assignedTo.organizationIds.includes(org.id))
-                        .reduce((acc, org) => acc + org.learners, 0)
-                    }
-                  </p>
-                  <p>
-                    Participants will receive email invitations with secure survey links. Anonymous responses are {survey?.settings.allowAnonymous ? 'enabled' : 'disabled'}.
-                  </p>
-                </div>
-              </div>
-            </div>
-            <div className="p-6 border-t border-gray-200 flex justify-end space-x-3">
-              <button
-                onClick={() => setShowAssignModal(false)}
-                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors duration-200"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={async () => {
-                  await saveSurvey();
-                  setShowAssignModal(false);
-                }}
-                className="bg-orange-500 text-white px-6 py-2 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-2"
-              >
-                <Send className="h-4 w-4" />
-                <span>Assign & Notify</span>
-              </button>
+        <React.Suspense fallback={
+          <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
+            <div className="bg-white p-8 rounded-xl shadow-xl flex items-center space-x-3">
+              <div className="animate-spin h-6 w-6 border-2 border-blue-600 border-t-transparent rounded-full"></div>
+              <span className="text-gray-700 font-medium">Loading Assignment Modal...</span>
             </div>
           </div>
-        </div>
+        }>
+          <AssignmentModal
+            isOpen={showAssignModal}
+            onClose={() => setShowAssignModal(false)}
+            organizations={organizations}
+            selectedOrganizations={survey?.assignedTo?.organizationIds || []}
+            onSave={async (organizationIds: any) => {
+              if (!survey) return;
+              setSurvey(prev => prev ? {
+                ...prev,
+                assignedTo: { ...prev.assignedTo, organizationIds },
+                updatedAt: new Date().toISOString()
+              } : null);
+              await saveSurvey();
+            }}
+          />
+        </React.Suspense>
       )}
 
       {/* Add Section Button */}

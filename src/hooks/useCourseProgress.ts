@@ -51,7 +51,7 @@ export const useCourseProgress = (courseId: string) => {
       if (progressError) {
         console.error('Error loading lesson progress:', progressError);
       } else if (progress) {
-        const progressMap = progress.reduce((acc, item) => {
+        const progressMap = progress.reduce((acc: { [lessonId: string]: UserLessonProgress }, item: UserLessonProgress) => {
           acc[item.lesson_id] = item;
           return acc;
         }, {} as { [lessonId: string]: UserLessonProgress });
@@ -67,7 +67,7 @@ export const useCourseProgress = (courseId: string) => {
       if (reflectionError) {
         console.error('Error loading reflections:', reflectionError);
       } else if (reflectionData) {
-        const reflectionMap = reflectionData.reduce((acc, item) => {
+        const reflectionMap = reflectionData.reduce((acc: { [lessonId: string]: UserReflection }, item: UserReflection) => {
           acc[item.lesson_id] = item;
           return acc;
         }, {} as { [lessonId: string]: UserReflection });
@@ -172,7 +172,7 @@ export const useCourseProgress = (courseId: string) => {
 
       // Calculate progress percentage
       const totalLessons = courseLessons.length;
-      const completedLessons = courseLessons.filter(lesson => 
+      const completedLessons = courseLessons.filter((lesson: any) => 
         lessonProgress[lesson.id]?.completed
       ).length;
       

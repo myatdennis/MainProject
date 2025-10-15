@@ -11,7 +11,10 @@ import {
   Menu, 
   X,
   Users,
-  
+  TrendingUp,
+  Award,
+  Settings,
+  HelpCircle
 } from 'lucide-react';
 
 interface LMSLayoutProps {
@@ -24,8 +27,33 @@ const LMSLayout: React.FC<LMSLayoutProps> = ({ children }) => {
   const location = useLocation();
   const navigate = useNavigate();
 
-  // Check authentication
+  // Check authentication - but allow demo mode
   React.useEffect(() => {
+    // Check if we're in demo mode (Supabase not configured)
+    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+    const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+    
+    // In demo mode, auto-authenticate as demo user
+    if (!supabaseUrl || !supabaseAnonKey) {
+      console.log('[LMSLayout] Running in demo mode - auto-authenticating demo user');
+      
+      // Set up demo authentication if not already done
+      if (!isAuthenticated.lms) {
+        localStorage.setItem('huddle_lms_auth', 'true');
+        const demoUser = {
+          name: 'Sarah Chen',
+          email: 'demo@thehuddleco.com',
+          role: 'user',
+          id: `demo-lms-${Date.now()}`
+        };
+        localStorage.setItem('huddle_user', JSON.stringify(demoUser));
+        
+        // Refresh the page to pick up the new auth state
+        window.location.reload();
+      }
+      return;
+    }
+    
     if (!isAuthenticated.lms) {
       navigate('/lms/login');
     }
@@ -34,9 +62,13 @@ const LMSLayout: React.FC<LMSLayoutProps> = ({ children }) => {
   const navigation = [
     { name: 'Dashboard', href: '/lms/dashboard', icon: LayoutDashboard },
     { name: 'My Courses', href: '/lms/courses', icon: BookOpen },
+    { name: 'Progress', href: '/lms/progress', icon: TrendingUp },
+    { name: 'Certificates', href: '/lms/certificates', icon: Award },
     { name: 'Downloads', href: '/lms/downloads', icon: Download },
     { name: 'Submit Feedback', href: '/lms/feedback', icon: MessageSquare },
     { name: 'Contact Coach', href: '/lms/contact', icon: Phone },
+    { name: 'Settings', href: '/lms/settings', icon: Settings },
+    { name: 'Help', href: '/lms/help', icon: HelpCircle },
   ];
 
   const isActive = (href: string) => location.pathname === href;

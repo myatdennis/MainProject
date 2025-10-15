@@ -1,4 +1,5 @@
 import { CourseService } from '../services/courseService';
+import { Course, Module } from '../types/courseTypes';
 
 // Course data types
 export interface ScenarioChoice {
@@ -91,117 +92,7 @@ export interface InteractiveElement {
   data: Scenario[] | DragDropExercise | ClickableGraphic | EmbeddedQuiz;
 }
 
-export interface LessonContent {
-  // Video content
-  videoUrl?: string;
-  videoSourceType?: 'internal' | 'youtube' | 'vimeo' | 'external';
-  externalVideoId?: string;
-  videoFile?: File;
-  transcript?: string;
-  notes?: string;
-  fileName?: string;
-  fileSize?: string;
-  
-  // Interactive content
-  elements?: InteractiveElement[]; // New enhanced interactive structure
-  currentScenarioId?: string; // For tracking current position in branching scenarios
-  userChoices?: { [scenarioId: string]: string }; // Track user's path through scenarios
-  completedElements?: string[]; // Track which interactive elements are completed
-  
-  // Legacy interactive content (for backward compatibility)
-  exerciseType?: string;
-  scenarioText?: string;
-  options?: Array<{
-    text: string;
-    feedback: string;
-    isCorrect: boolean;
-  }>;
-  instructions?: string;
-  
-  // Quiz content
-  questions?: Array<{
-    id: string;
-    text: string;
-    options: string[];
-    correctAnswerIndex: number;
-    explanation: string;
-  }>;
-  passingScore?: number;
-  allowRetakes?: boolean;
-  showCorrectAnswers?: boolean;
-  
-  // Download content
-  title?: string;
-  description?: string;
-  fileUrl?: string;
-  downloadFile?: File;
-}
-
-export interface Lesson {
-  id: string;
-  title: string;
-  type: 'video' | 'interactive' | 'quiz' | 'download' | 'text';
-  duration: string;
-  content: LessonContent;
-  completed: boolean;
-  order: number;
-}
-
-export interface Resource {
-  id: string;
-  title: string;
-  type: string;
-  size: string;
-  downloadUrl: string;
-  file?: File;
-}
-
-export interface Module {
-  id: string;
-  title: string;
-  description: string;
-  duration: string;
-  order: number;
-  lessons: Lesson[];
-  resources: Resource[];
-}
-
-export interface Course {
-  id: string;
-  title: string;
-  description: string;
-  status: 'draft' | 'published' | 'archived';
-  thumbnail: string;
-  duration: string;
-  difficulty: 'Beginner' | 'Intermediate' | 'Advanced';
-  enrollments: number;
-  completions: number;
-  completionRate: number;
-  avgRating: number;
-  totalRatings: number;
-  createdBy: string;
-  createdDate: string;
-  lastUpdated: string;
-  publishedDate?: string;
-  dueDate?: string;
-  estimatedTime: string;
-  prerequisites: string[];
-  learningObjectives: string[];
-  certification?: {
-    available: boolean;
-    name: string;
-    requirements: string[];
-    validFor: string;
-    renewalRequired: boolean;
-  };
-  tags: string[];
-  modules: Module[];
-  keyTakeaways: string[];
-  type: string;
-  lessons: number;
-  rating: number;
-  progress: number;
-}
+// Interfaces now imported from courseTypes
 
 // Load courses from localStorage or use defaults
 const _loadCoursesFromLocalStorage = (): { [key: string]: Course } => {
@@ -428,9 +319,10 @@ const getDefaultCourses = (): { [key: string]: Course } => ({
           {
             id: 'resource-1-1',
             title: 'Leadership Self-Assessment',
-            type: 'PDF',
+            type: 'pdf',
             size: '2.3 MB',
-            downloadUrl: 'https://storage.thehuddleco.com/resources/leadership-assessment.pdf'
+            downloadUrl: 'https://storage.thehuddleco.com/resources/leadership-assessment.pdf',
+            downloadable: true
           }
         ]
       },
@@ -459,9 +351,10 @@ const getDefaultCourses = (): { [key: string]: Course } => ({
           {
             id: 'resource-2-1',
             title: 'Psychological Safety Checklist',
-            type: 'PDF',
+            type: 'pdf',
             size: '1.8 MB',
-            downloadUrl: 'https://storage.thehuddleco.com/resources/psych-safety-checklist.pdf'
+            downloadUrl: 'https://storage.thehuddleco.com/resources/psych-safety-checklist.pdf',
+            downloadable: true
           }
         ]
       }
@@ -533,7 +426,43 @@ const getDefaultCourses = (): { [key: string]: Course } => ({
             content: {
               videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',
               transcript: 'There are many types of unconscious bias...',
-              notes: 'Key bias types: confirmation bias, affinity bias, halo effect'
+              notes: 'Key bias types: confirmation bias, affinity bias, halo effect',
+              questions: [
+                {
+                  id: 'bias-q1',
+                  text: 'Which of the following is an example of confirmation bias?',
+                  options: [
+                    'Hiring someone because they went to the same school as you',
+                    'Only seeking information that supports your existing beliefs',
+                    'Assuming someone is qualified based on their appearance',
+                    'Making decisions based on first impressions'
+                  ],
+                  correctAnswerIndex: 1,
+                  explanation: 'Confirmation bias is the tendency to search for, interpret, and recall information that confirms our pre-existing beliefs or hypotheses.'
+                },
+                {
+                  id: 'bias-q2',
+                  text: 'What is affinity bias?',
+                  options: [
+                    'The tendency to favor people who are similar to ourselves',
+                    'The tendency to make quick judgments based on first impressions',
+                    'The tendency to seek information that confirms our beliefs',
+                    'The tendency to be influenced by recent events'
+                  ],
+                  correctAnswerIndex: 0,
+                  explanation: 'Affinity bias is the unconscious tendency to get along with others who are like us, which can lead to favoritism in hiring and promotion decisions.'
+                },
+                {
+                  id: 'bias-q3',
+                  text: 'True or False: Everyone has unconscious biases.',
+                  options: [
+                    'True',
+                    'False'
+                  ],
+                  correctAnswerIndex: 0,
+                  explanation: 'Research shows that everyone has unconscious biases. The key is becoming aware of them and developing strategies to mitigate their impact.'
+                }
+              ]
             },
             completed: true,
             order: 1
@@ -681,9 +610,10 @@ const getDefaultCourses = (): { [key: string]: Course } => ({
           {
             id: 'resource-1-1',
             title: 'Bias Recognition Toolkit',
-            type: 'PDF',
+            type: 'pdf',
             size: '3.1 MB',
-            downloadUrl: 'https://storage.thehuddleco.com/resources/bias-toolkit.pdf'
+            downloadUrl: 'https://storage.thehuddleco.com/resources/bias-toolkit.pdf',
+            downloadable: true
           }
         ]
       }
@@ -1031,9 +961,10 @@ const getDefaultCourses = (): { [key: string]: Course } => ({
           {
             id: 'resource-1-1',
             title: 'Empathy Assessment Tool',
-            type: 'PDF',
+            type: 'pdf',
             size: '1.5 MB',
-            downloadUrl: 'https://storage.thehuddleco.com/resources/empathy-assessment.pdf'
+            downloadUrl: 'https://storage.thehuddleco.com/resources/empathy-assessment.pdf',
+            downloadable: true
           }
         ]
       }
@@ -1057,7 +988,7 @@ export const courseStore = {
           // Load courses from database (including drafts)
           console.log(`Loading ${dbCourses.length} courses from database...`);
           courses = {};
-          dbCourses.forEach(course => {
+          dbCourses.forEach((course: Course) => {
             courses[course.id] = course;
           });
           _saveCoursesToLocalStorage(courses);
@@ -1140,25 +1071,28 @@ export const courseStore = {
       description: courseData.description || '',
       status: 'draft',
       thumbnail: courseData.thumbnail || 'https://images.pexels.com/photos/3184465/pexels-photo-3184465.jpeg?auto=compress&cs=tinysrgb&w=800',
-      duration: '0 min',
+      category: courseData.category || 'General',
       difficulty: 'Beginner',
+      instructorId: courseData.instructorId || 'instructor-1',
+      instructorName: courseData.instructorName || 'Mya Dennis',
+      instructorAvatar: courseData.instructorAvatar || '',
+      estimatedDuration: courseData.estimatedDuration || 0,
+      duration: '0 min',
+      learningObjectives: [],
+      prerequisites: [],
+      tags: [],
+      language: 'en',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      enrollmentCount: 0,
       enrollments: 0,
+      rating: 0,
+      avgRating: 0,
+      reviewCount: 0,
+      totalRatings: 0,
       completions: 0,
       completionRate: 0,
-      avgRating: 0,
-      totalRatings: 0,
-      createdBy: 'Mya Dennis',
-      createdDate: new Date().toISOString(),
-      lastUpdated: new Date().toISOString(),
-      estimatedTime: '0 minutes',
-      prerequisites: [],
-      learningObjectives: [],
-      tags: [],
-      keyTakeaways: [],
-      type: 'Mixed',
-      lessons: 0,
-      rating: 0,
-      progress: 0,
+      chapters: [],
       modules: [],
       ...courseData
     };
@@ -1185,7 +1119,7 @@ export const generateId = (prefix: string = 'item'): string => {
 export const calculateCourseDuration = (modules: Module[]): string => {
   const totalMinutes = modules.reduce((acc, module) => {
     const moduleDuration = module.lessons.reduce((lessonAcc, lesson) => {
-      const minutes = parseInt(lesson.duration.split(' ')[0]) || 0;
+      const minutes = parseInt(lesson.duration?.split(' ')[0] || '0') || 0;
       return lessonAcc + minutes;
     }, 0);
     return acc + moduleDuration;

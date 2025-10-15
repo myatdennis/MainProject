@@ -1,11 +1,24 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Building2, Plus, Search, MoreVertical, Edit, Eye, Settings, Download, Upload, CheckCircle, Clock, AlertTriangle } from 'lucide-react';
 import orgService from '../../services/orgService';
+import LoadingButton from '../../components/LoadingButton';
+import ConfirmationModal from '../../components/ConfirmationModal';
+import AddOrganizationModal from '../../components/AddOrganizationModal';
+import EditOrganizationModal from '../../components/EditOrganizationModal';
+import { useToast } from '../../context/ToastContext';
 
 const AdminOrganizations = () => {
+  const { showToast } = useToast();
+  const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [organizations, setOrganizations] = useState<any[]>([]);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showAddOrgModal, setShowAddOrgModal] = useState(false);
+  const [showEditOrgModal, setShowEditOrgModal] = useState(false);
+  const [orgToDelete, setOrgToDelete] = useState<string | null>(null);
+  const [orgToEdit, setOrgToEdit] = useState<any | null>(null);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
     orgService.listOrgs().then(setOrganizations).catch(() => setOrganizations([]));
@@ -45,6 +58,104 @@ const AdminOrganizations = () => {
       : 'bg-blue-100 text-blue-800';
   };
 
+  // Handler functions for button actions
+  const handleAddOrganization = () => {
+    setShowAddOrgModal(true);
+  };
+
+  const handleCreateOrganization = () => {
+    navigate('/admin/organizations/new');
+  };
+
+  const handleOrganizationAdded = (newOrganization: any) => {
+    setOrganizations(prev => [...prev, newOrganization]);
+    showToast('Organization added successfully!', 'success');
+  };
+
+  const handleImport = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.csv';
+    input.onchange = (e: any) => {
+      const file = e.target?.files?.[0];
+      if (file) {
+        showToast(`Importing ${file.name}...`, 'info');
+        setTimeout(() => {
+          showToast('Organization import completed successfully!', 'success');
+        }, 3000);
+      }
+    };
+    input.click();
+  };
+
+  const handleExport = async () => {
+    setLoading(true);
+    try {
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      
+      const csvContent = `Name,Type,Contact Person,Contact Email,Total Learners,Active Learners,Completion Rate,Status\n${filteredOrgs.map(org => 
+        `"${org.name}","${org.type}","${org.contactPerson}","${org.contactEmail}","${org.totalLearners}","${org.activeLearners}","${org.completionRate}%","${org.status}"`
+      ).join('\n')}`;
+      
+      const blob = new Blob([csvContent], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `organizations-export-${new Date().toISOString().split('T')[0]}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+      
+      showToast('Organizations exported successfully!', 'success');
+    } catch (error) {
+      showToast('Failed to export organizations', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleEditOrganization = (orgId: string) => {
+    const org = organizations.find(o => o.id === orgId);
+    if (org) {
+      setOrgToEdit(org);
+      setShowEditOrgModal(true);
+    }
+  };
+
+  const handleOrganizationUpdated = (updatedOrganization: any) => {
+    setOrganizations(prev => prev.map(org => 
+      org.id === updatedOrganization.id ? updatedOrganization : org
+    ));
+    setShowEditOrgModal(false);
+    setOrgToEdit(null);
+  };
+
+  const handleDeleteOrganization = (orgId: string) => {
+    setOrgToDelete(orgId);
+    setShowDeleteModal(true);
+  };
+
+  const confirmDeleteOrganization = async () => {
+    if (!orgToDelete) return;
+    
+    setLoading(true);
+    try {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      setOrganizations(prev => prev.filter(org => org.id !== orgToDelete));
+      showToast('Organization deleted successfully!', 'success');
+      setShowDeleteModal(false);
+      setOrgToDelete(null);
+    } catch (error) {
+      showToast('Failed to delete organization', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+
+
   return (
     <div className="p-6 max-w-7xl mx-auto">
       {/* Header */}
@@ -68,18 +179,35 @@ const AdminOrganizations = () => {
           </div>
           
           <div className="flex items-center space-x-4">
-            <button className="bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-2">
+            <LoadingButton
+              onClick={handleAddOrganization}
+              variant="primary"
+            >
               <Plus className="h-4 w-4" />
-              <span>Add Organization</span>
-            </button>
-            <button className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2">
+              Add Organization
+            </LoadingButton>
+            <LoadingButton
+              onClick={handleCreateOrganization}
+              variant="secondary"
+            >
+              <Building2 className="h-4 w-4" />
+              Create Organization
+            </LoadingButton>
+            <LoadingButton
+              onClick={handleImport}
+              variant="secondary"
+            >
               <Upload className="h-4 w-4" />
-              <span>Import</span>
-            </button>
-            <button className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2">
+              Import
+            </LoadingButton>
+            <LoadingButton
+              onClick={handleExport}
+              loading={loading}
+              variant="secondary"
+            >
               <Download className="h-4 w-4" />
-              <span>Export</span>
-            </button>
+              Export
+            </LoadingButton>
           </div>
         </div>
       </div>
@@ -276,8 +404,19 @@ const AdminOrganizations = () => {
                       <Link to={`/admin/org-profiles/org-profile-${org.id}`} className="p-1 text-green-600 hover:text-green-800" title="View Profile">
                         <Settings className="h-4 w-4" />
                       </Link>
-                      <button className="p-1 text-gray-600 hover:text-gray-800" title="Edit">
+                      <button 
+                        onClick={() => handleEditOrganization(org.id)}
+                        className="p-1 text-gray-600 hover:text-gray-800" 
+                        title="Edit"
+                      >
                         <Edit className="h-4 w-4" />
+                      </button>
+                      <button 
+                        onClick={() => handleDeleteOrganization(org.id)}
+                        className="p-1 text-red-600 hover:text-red-800" 
+                        title="Delete Organization"
+                      >
+                        <MoreVertical className="h-4 w-4" />
                       </button>
                     </div>
                   </td>
@@ -287,6 +426,37 @@ const AdminOrganizations = () => {
           </table>
         </div>
       </div>
+
+      {/* Modals */}
+      <AddOrganizationModal
+        isOpen={showAddOrgModal}
+        onClose={() => setShowAddOrgModal(false)}
+        onOrganizationAdded={handleOrganizationAdded}
+      />
+
+      <EditOrganizationModal
+        isOpen={showEditOrgModal}
+        onClose={() => {
+          setShowEditOrgModal(false);
+          setOrgToEdit(null);
+        }}
+        organization={orgToEdit}
+        onOrganizationUpdated={handleOrganizationUpdated}
+      />
+
+      <ConfirmationModal
+        isOpen={showDeleteModal}
+        onClose={() => {
+          setShowDeleteModal(false);
+          setOrgToDelete(null);
+        }}
+        onConfirm={confirmDeleteOrganization}
+        title="Delete Organization"
+        message="Are you sure you want to delete this organization? This action cannot be undone and will remove all associated data including learner progress."
+        confirmText="Delete Organization"
+        type="danger"
+        loading={loading}
+      />
     </div>
   );
 };

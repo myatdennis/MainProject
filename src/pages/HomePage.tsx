@@ -1,9 +1,12 @@
 // React import not required with the new JSX transform
+import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowRight, Users, Heart, MessageSquare, Target, Download, Calendar } from 'lucide-react';
+import BookingWidget from '../components/BookingWidget/BookingWidget';
 
 const HomePage = () => {
   const navigate = useNavigate();
+  const [showBookingWidget, setShowBookingWidget] = useState(false);
   const features = [
     {
       icon: <Users className="h-8 w-8 text-blue-500" />,
@@ -43,7 +46,7 @@ const HomePage = () => {
                 We help organizations lead with empathy, build inclusive cultures, and hold space for courageous conversations.
               </p>
               <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4">
-                <button onClick={() => navigate('/contact')} className="bg-gradient-to-r from-orange-400 to-red-500 text-white px-8 py-4 rounded-full font-semibold text-lg hover:from-orange-500 hover:to-red-600 transition-all duration-200 transform hover:scale-105 flex items-center justify-center space-x-2">
+                <button onClick={() => setShowBookingWidget(true)} className="bg-gradient-to-r from-orange-400 to-red-500 text-white px-8 py-4 rounded-full font-semibold text-lg hover:from-orange-500 hover:to-red-600 transition-all duration-200 transform hover:scale-105 flex items-center justify-center space-x-2">
                   <Calendar className="h-5 w-5" />
                   <span>Book a Discovery Call</span>
                 </button>
@@ -157,6 +160,12 @@ const HomePage = () => {
           </div>
         </div>
       </section>
+      
+      {/* Booking Widget */}
+      <BookingWidget 
+        isOpen={showBookingWidget} 
+        onClose={() => setShowBookingWidget(false)} 
+      />
     </div>
   );
 };

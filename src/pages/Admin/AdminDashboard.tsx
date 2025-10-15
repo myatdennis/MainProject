@@ -1,4 +1,5 @@
-// React import not required with the new JSX transform
+import { useNavigate } from 'react-router-dom';
+import SEO from '../../components/SEO/SEO';
 import { 
   Users, 
   Building2, 
@@ -14,7 +15,57 @@ import {
 } from 'lucide-react';
 
 const AdminDashboard = () => {
-  // AdminDashboard component
+  const navigate = useNavigate();
+
+  const handleExportReport = async () => {
+    try {
+      // Create comprehensive report data
+      const reportData = {
+        generatedAt: new Date().toISOString(),
+        summary: {
+          totalLearners: 247,
+          activeOrganizations: 18,
+          courseCompletions: 1234,
+          averageCompletionRate: 87
+        },
+        modulePerformance,
+        recentActivity,
+        alerts
+      };
+
+      // Convert to CSV format
+      const csvContent = [
+        'Module Performance Report',
+        `Generated: ${new Date().toLocaleDateString()}`,
+        '',
+        'Module Name,Completion Rate,Average Time',
+        ...modulePerformance.map(module => 
+          `"${module.name}","${module.completion}%","${module.avgTime}"`
+        ),
+        '',
+        'Summary Statistics',
+        `Total Learners,${reportData.summary.totalLearners}`,
+        `Active Organizations,${reportData.summary.activeOrganizations}`,
+        `Course Completions,${reportData.summary.courseCompletions}`,
+        `Average Completion Rate,${reportData.summary.averageCompletionRate}%`
+      ].join('\n');
+
+      // Create and download file
+      const blob = new Blob([csvContent], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `admin-dashboard-report-${new Date().toISOString().split('T')[0]}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+      
+      console.log('Dashboard report exported successfully');
+    } catch (error) {
+      console.error('Failed to export dashboard report:', error);
+    }
+  };
 
   const stats = [
     { 
@@ -144,23 +195,60 @@ const AdminDashboard = () => {
   ];
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      {/* AdminDashboard mounted (debug banner removed) */}
-      {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">Admin Dashboard</h1>
-        <p className="text-gray-600">Monitor learner progress, manage organizations, and track training effectiveness</p>
-      </div>
+    <>
+      <SEO 
+        title="Admin Dashboard"
+        description="Monitor learner progress, manage organizations, and track inclusive leadership training effectiveness with comprehensive analytics and insights."
+        keywords={['admin dashboard', 'learning analytics', 'progress tracking', 'organizational metrics', 'training management']}
+        structuredData={{
+          '@context': 'https://schema.org',
+          '@type': 'WebPage',
+          'name': 'Admin Dashboard',
+          'description': 'Comprehensive admin dashboard for managing inclusive leadership training programs',
+          'breadcrumb': {
+            '@type': 'BreadcrumbList',
+            'itemListElement': [
+              {
+                '@type': 'ListItem',
+                'position': 1,
+                'name': 'Admin Portal',
+                'item': '/admin'
+              },
+              {
+                '@type': 'ListItem', 
+                'position': 2,
+                'name': 'Dashboard',
+                'item': '/admin/dashboard'
+              }
+            ]
+          }
+        }}
+      />
+      
+      <div className="p-6 max-w-7xl mx-auto">
+        {/* AdminDashboard mounted (debug banner removed) */}
+        {/* Header */}
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">Admin Dashboard</h1>
+          <p className="text-gray-600">Monitor learner progress, manage organizations, and track training effectiveness</p>
+        </div>
 
       {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+      <section aria-labelledby="stats-heading" className="mb-8">
+        <h2 id="stats-heading" className="sr-only">Key Performance Statistics</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
         {stats.map((stat, index) => {
           const Icon = stat.icon;
           return (
-            <div key={index} className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+            <div 
+              key={index} 
+              className="bg-white p-6 rounded-xl shadow-sm border border-gray-200"
+              role="article"
+              aria-labelledby={`stat-${index}-label`}
+            >
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-gray-600">{stat.label}</p>
+                  <p id={`stat-${index}-label`} className="text-sm font-medium text-gray-600">{stat.label}</p>
                   <p className="text-2xl font-bold text-gray-900 mt-1">{stat.value}</p>
                   <div className="flex items-center mt-2">
                     <span className={`text-sm font-medium ${
@@ -171,18 +259,19 @@ const AdminDashboard = () => {
                     <span className="text-sm text-gray-500 ml-1">vs last month</span>
                   </div>
                 </div>
-                <div className={`p-3 rounded-lg ${stat.bgColor}`}>
+                <div className={`p-3 rounded-lg ${stat.bgColor}`} aria-hidden="true">
                   <Icon className={`h-6 w-6 ${stat.color}`} />
                 </div>
               </div>
             </div>
           );
         })}
-      </div>
+        </div>
+      </section>
 
       {/* Alerts */}
-      <div className="mb-8">
-        <h2 className="text-xl font-bold text-gray-900 mb-4">Alerts & Actions</h2>
+      <section aria-labelledby="alerts-heading" className="mb-8">
+        <h2 id="alerts-heading" className="text-xl font-bold text-gray-900 mb-4">Alerts & Actions</h2>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           {alerts.map((alert, index) => {
             const Icon = alert.icon;
@@ -202,7 +291,7 @@ const AdminDashboard = () => {
             );
           })}
         </div>
-      </div>
+      </section>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         {/* Recent Activity */}
@@ -261,7 +350,11 @@ const AdminDashboard = () => {
       <div className="mt-8 bg-white rounded-xl shadow-sm border border-gray-200 p-6">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-xl font-bold text-gray-900">Module Performance</h2>
-          <button className="flex items-center space-x-2 text-orange-500 hover:text-orange-600 font-medium">
+          <button 
+            onClick={handleExportReport}
+            className="flex items-center space-x-2 text-orange-500 hover:text-orange-600 font-medium transition-colors duration-200"
+            title="Export dashboard performance report as CSV"
+          >
             <Download className="h-4 w-4" />
             <span>Export Report</span>
           </button>
@@ -303,23 +396,33 @@ const AdminDashboard = () => {
 
       {/* Quick Actions */}
       <div className="mt-8 grid grid-cols-1 md:grid-cols-3 gap-6">
-        <button className="bg-gradient-to-r from-blue-500 to-blue-600 text-white p-6 rounded-xl hover:from-blue-600 hover:to-blue-700 transition-all duration-200">
+        <button 
+          onClick={() => navigate('/admin/users')}
+          className="bg-gradient-to-r from-blue-500 to-blue-600 text-white p-6 rounded-xl hover:from-blue-600 hover:to-blue-700 transition-all duration-200 transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:ring-offset-2"
+        >
           <Users className="h-8 w-8 mb-3" />
           <h3 className="font-bold text-lg mb-2">Manage Users</h3>
           <p className="text-blue-100 text-sm">Add, edit, or assign courses to learners</p>
         </button>
-        <button className="bg-gradient-to-r from-green-500 to-green-600 text-white p-6 rounded-xl hover:from-green-600 hover:to-green-700 transition-all duration-200">
+        <button 
+          onClick={() => navigate('/admin/course-builder/new')}
+          className="bg-gradient-to-r from-green-500 to-green-600 text-white p-6 rounded-xl hover:from-green-600 hover:to-green-700 transition-all duration-200 transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2"
+        >
           <BookOpen className="h-8 w-8 mb-3" />
           <h3 className="font-bold text-lg mb-2">Course Builder</h3>
           <p className="text-green-100 text-sm">Create and customize training modules</p>
         </button>
-        <button className="bg-gradient-to-r from-orange-500 to-red-500 text-white p-6 rounded-xl hover:from-orange-600 hover:to-red-600 transition-all duration-200">
+        <button 
+          onClick={() => navigate('/admin/analytics')}
+          className="bg-gradient-to-r from-orange-500 to-red-500 text-white p-6 rounded-xl hover:from-orange-600 hover:to-red-600 transition-all duration-200 transform hover:scale-105 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2"
+        >
           <BarChart3 className="h-8 w-8 mb-3" />
           <h3 className="font-bold text-lg mb-2">Analytics</h3>
           <p className="text-orange-100 text-sm">View detailed reports and insights</p>
         </button>
       </div>
-    </div>
+      </div>
+    </>
   );
 };
 

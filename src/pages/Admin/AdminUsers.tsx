@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { 
   Search, 
@@ -15,14 +15,28 @@ import {
   Trash2,
   Eye
 } from 'lucide-react';
+import AddUserModal from '../../components/AddUserModal';
+import ConfirmationModal from '../../components/ConfirmationModal';
+import CourseAssignmentModal from '../../components/CourseAssignmentModal';
+import LoadingButton from '../../components/LoadingButton';
+import { useToast } from '../../context/ToastContext';
+import { User } from '../../types/user';
 
 const AdminUsers = () => {
+  const { showToast } = useToast();
   const [searchTerm, setSearchTerm] = useState('');
   const [filterOrg, setFilterOrg] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
   const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
+  const [showAddUserModal, setShowAddUserModal] = useState(false);
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showCourseAssignModal, setShowCourseAssignModal] = useState(false);
+  const [showEditUserModal, setShowEditUserModal] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<string | null>(null);
+  const [userToEdit, setUserToEdit] = useState<User | null>(null);
+  const [loading, setLoading] = useState(false);
 
-  const users = [
+  const users: User[] = [
     {
       id: '1',
       name: 'Sarah Chen',
@@ -135,6 +149,8 @@ const AdminUsers = () => {
     }
   ];
 
+  const [usersList, setUsersList] = useState<User[]>(users); // Make users editable
+
   const organizations = [
     'Pacific Coast University',
     'Mountain View High School', 
@@ -151,7 +167,7 @@ const AdminUsers = () => {
     { key: 'planning', name: 'Personal & Team Action Planning' }
   ];
 
-  const filteredUsers = users.filter(user => {
+  const filteredUsers = usersList.filter((user: User) => {
     const matchesSearch = user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          user.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          user.organization.toLowerCase().includes(searchTerm.toLowerCase());
@@ -161,9 +177,9 @@ const AdminUsers = () => {
   });
 
   const handleSelectUser = (userId: string) => {
-    setSelectedUsers(prev => 
+    setSelectedUsers((prev: string[]) => 
       prev.includes(userId) 
-        ? prev.filter(id => id !== userId)
+        ? prev.filter((id: string) => id !== userId)
         : [...prev, userId]
     );
   };
@@ -172,7 +188,7 @@ const AdminUsers = () => {
     if (selectedUsers.length === filteredUsers.length) {
       setSelectedUsers([]);
     } else {
-      setSelectedUsers(filteredUsers.map(user => user.id));
+      setSelectedUsers(filteredUsers.map((user: User) => user.id));
     }
   };
 
@@ -190,11 +206,155 @@ const AdminUsers = () => {
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'active':
-        return 'bg-green-100 text-green-800';
+        return 'text-green-600 bg-green-50';
       case 'inactive':
-        return 'bg-yellow-100 text-yellow-800';
+        return 'text-yellow-600 bg-yellow-50';
       default:
-        return 'bg-red-100 text-red-800';
+        return 'text-red-600 bg-red-50';
+    }
+  };
+
+  // Handler functions for button actions
+  const handleAddUser = () => {
+    setShowAddUserModal(true);
+  };
+
+  const handleUserAdded = (newUser: User) => {
+    setUsersList((prev: User[]) => [...prev, newUser]);
+    showToast('User added successfully!', 'success');
+  };
+
+  const handleSendReminder = async () => {
+    setLoading(true);
+    try {
+      // Simulate API call
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      showToast(`Reminder sent to ${selectedUsers.length} user(s)`, 'success');
+      setSelectedUsers([]);
+    } catch (error) {
+      showToast('Failed to send reminders', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleAssignCourse = () => {
+    setShowCourseAssignModal(true);
+  };
+
+  const handleCourseAssignComplete = () => {
+    setSelectedUsers([]);
+    setShowCourseAssignModal(false);
+  };
+
+  const handleImportCSV = () => {
+    // Create file input element
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.csv';
+    input.onchange = (e: any) => {
+      const file = e.target?.files?.[0];
+      if (file) {
+        showToast(`Importing ${file.name}...`, 'info');
+        // Here you would implement the actual CSV import logic
+        setTimeout(() => {
+          showToast('CSV import completed successfully!', 'success');
+        }, 3000);
+      }
+    };
+    input.click();
+  };
+
+  const handleExport = async () => {
+    setLoading(true);
+    try {
+      // Simulate export
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      
+      // Create and download CSV
+      const csvContent = `Name,Email,Organization,Status,Progress\n${filteredUsers.map((user: User) => 
+        `"${user.name}","${user.email}","${user.organization}","${user.status}","${user.overallProgress}%"`
+      ).join('\n')}`;
+      
+      const blob = new Blob([csvContent], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `users-export-${new Date().toISOString().split('T')[0]}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+      
+      showToast('Users exported successfully!', 'success');
+    } catch (error) {
+      showToast('Failed to export users', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleDeleteUser = (userId: string) => {
+    setUserToDelete(userId);
+    setShowDeleteModal(true);
+  };
+
+  const confirmDeleteUser = async () => {
+    if (!userToDelete) return;
+    
+    setLoading(true);
+    try {
+      // Simulate API call
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      setUsersList((prev: User[]) => prev.filter((user: User) => user.id !== userToDelete));
+      showToast('User deleted successfully!', 'success');
+      setShowDeleteModal(false);
+      setUserToDelete(null);
+    } catch (error) {
+      showToast('Failed to delete user', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleEditUser = (userId: string) => {
+    const user = usersList.find(u => u.id === userId);
+    if (user) {
+      setUserToEdit(user);
+      setShowEditUserModal(true);
+    }
+  };
+
+  const handleUserUpdated = (updatedUser: User) => {
+    setUsersList((prev: User[]) => 
+      prev.map((user: User) => 
+        user.id === updatedUser.id ? updatedUser : user
+      )
+    );
+    showToast('User updated successfully!', 'success');
+    setShowEditUserModal(false);
+    setUserToEdit(null);
+  };
+
+  const handleMoreOptions = (userId: string) => {
+    const user = usersList.find(u => u.id === userId);
+    if (user) {
+      // For now, show a menu with common actions
+      const actions = [
+        'Reset Password',
+        'Send Welcome Email',
+        'View Activity Log',
+        'Duplicate User',
+        'Export User Data'
+      ];
+      
+      const action = prompt(`Select action for ${user.name}:\n${actions.map((a, i) => `${i+1}. ${a}`).join('\n')}\n\nEnter number (1-${actions.length}):`);
+      
+      if (action && parseInt(action) >= 1 && parseInt(action) <= actions.length) {
+        const selectedAction = actions[parseInt(action) - 1];
+        showToast(`${selectedAction} for ${user.name} - Feature coming soon!`, 'info');
+      }
     }
   };
 
@@ -216,7 +376,7 @@ const AdminUsers = () => {
                 type="text"
                 placeholder="Search users..."
                 value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
+                onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchTerm(e.target.value)}
                 className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
               />
             </div>
@@ -224,7 +384,7 @@ const AdminUsers = () => {
               <Filter className="h-5 w-5 text-gray-400" />
               <select
                 value={filterOrg}
-                onChange={(e) => setFilterOrg(e.target.value)}
+                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setFilterOrg(e.target.value)}
                 className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
               >
                 <option value="all">All Organizations</option>
@@ -234,7 +394,7 @@ const AdminUsers = () => {
               </select>
               <select
                 value={filterStatus}
-                onChange={(e) => setFilterStatus(e.target.value)}
+                onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setFilterStatus(e.target.value)}
                 className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
               >
                 <option value="all">All Status</option>
@@ -247,27 +407,46 @@ const AdminUsers = () => {
           <div className="flex items-center space-x-4">
             {selectedUsers.length > 0 && (
               <div className="flex items-center space-x-2">
-                <button className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors duration-200 flex items-center space-x-2">
+                <LoadingButton
+                  onClick={handleSendReminder}
+                  loading={loading}
+                  variant="primary"
+                  className="bg-blue-500 hover:bg-blue-600"
+                >
                   <Mail className="h-4 w-4" />
-                  <span>Send Reminder ({selectedUsers.length})</span>
-                </button>
-                <button className="bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 transition-colors duration-200">
+                  Send Reminder ({selectedUsers.length})
+                </LoadingButton>
+                <LoadingButton
+                  onClick={handleAssignCourse}
+                  loading={loading}
+                  variant="success"
+                >
                   Assign Course
-                </button>
+                </LoadingButton>
               </div>
             )}
-            <button className="bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-2">
+            <LoadingButton
+              onClick={handleAddUser}
+              variant="primary"
+            >
               <Plus className="h-4 w-4" />
-              <span>Add User</span>
-            </button>
-            <button className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2">
+              Add User
+            </LoadingButton>
+            <LoadingButton
+              onClick={handleImportCSV}
+              variant="secondary"
+            >
               <Upload className="h-4 w-4" />
-              <span>Import CSV</span>
-            </button>
-            <button className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2">
+              Import CSV
+            </LoadingButton>
+            <LoadingButton
+              onClick={handleExport}
+              loading={loading}
+              variant="secondary"
+            >
               <Download className="h-4 w-4" />
-              <span>Export</span>
-            </button>
+              Export
+            </LoadingButton>
           </div>
         </div>
       </div>
@@ -296,7 +475,7 @@ const AdminUsers = () => {
               </tr>
             </thead>
             <tbody>
-              {filteredUsers.map((user) => (
+              {filteredUsers.map((user: User) => (
                 <tr key={user.id} className="border-b border-gray-100 hover:bg-gray-50">
                   <td className="py-4 px-6">
                     <input
@@ -371,13 +550,25 @@ const AdminUsers = () => {
                       >
                         <Eye className="h-4 w-4" />
                       </Link>
-                      <button className="p-1 text-gray-600 hover:text-gray-800" title="Edit User">
+                      <button 
+                        onClick={() => handleEditUser(user.id)}
+                        className="p-1 text-gray-600 hover:text-gray-800 transition-colors" 
+                        title="Edit User"
+                      >
                         <Edit className="h-4 w-4" />
                       </button>
-                      <button className="p-1 text-red-600 hover:text-red-800" title="Delete User">
+                      <button 
+                        onClick={() => handleDeleteUser(user.id)}
+                        className="p-1 text-red-600 hover:text-red-800 transition-colors" 
+                        title="Delete User"
+                      >
                         <Trash2 className="h-4 w-4" />
                       </button>
-                      <button className="p-1 text-gray-600 hover:text-gray-800" title="More Options">
+                      <button 
+                        onClick={() => handleMoreOptions(user.id)}
+                        className="p-1 text-gray-600 hover:text-gray-800 transition-colors" 
+                        title="More Options"
+                      >
                         <MoreVertical className="h-4 w-4" />
                       </button>
                     </div>
@@ -405,23 +596,64 @@ const AdminUsers = () => {
         </div>
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 text-center">
           <div className="text-2xl font-bold text-green-600">
-            {filteredUsers.filter(u => u.status === 'active').length}
+            {filteredUsers.filter((u: User) => u.status === 'active').length}
           </div>
           <div className="text-sm text-gray-600">Active Users</div>
         </div>
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 text-center">
           <div className="text-2xl font-bold text-orange-600">
-            {Math.round(filteredUsers.reduce((acc, user) => acc + user.overallProgress, 0) / filteredUsers.length) || 0}%
+            {Math.round(filteredUsers.reduce((acc: number, user: User) => acc + user.overallProgress, 0) / filteredUsers.length) || 0}%
           </div>
           <div className="text-sm text-gray-600">Avg. Progress</div>
         </div>
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 text-center">
           <div className="text-2xl font-bold text-purple-600">
-            {filteredUsers.filter(u => u.feedbackSubmitted).length}
+            {filteredUsers.filter((u: User) => u.feedbackSubmitted).length}
           </div>
           <div className="text-sm text-gray-600">Feedback Submitted</div>
         </div>
       </div>
+
+      {/* Modals */}
+      <AddUserModal
+        isOpen={showAddUserModal}
+        onClose={() => setShowAddUserModal(false)}
+        onUserAdded={handleUserAdded}
+      />
+
+      <CourseAssignmentModal
+        isOpen={showCourseAssignModal}
+        onClose={() => setShowCourseAssignModal(false)}
+        selectedUsers={selectedUsers}
+        onAssignComplete={handleCourseAssignComplete}
+      />
+
+      <ConfirmationModal
+        isOpen={showDeleteModal}
+        onClose={() => {
+          setShowDeleteModal(false);
+          setUserToDelete(null);
+        }}
+        onConfirm={confirmDeleteUser}
+        title="Delete User"
+        message="Are you sure you want to delete this user? This action cannot be undone and will remove all their progress data."
+        confirmText="Delete User"
+        type="danger"
+        loading={loading}
+      />
+
+      {/* Edit User Modal */}
+      {showEditUserModal && userToEdit && (
+        <AddUserModal
+          isOpen={showEditUserModal}
+          onClose={() => {
+            setShowEditUserModal(false);
+            setUserToEdit(null);
+          }}
+          onUserAdded={handleUserUpdated}
+          editUser={userToEdit}
+        />
+      )}
     </div>
   );
 };

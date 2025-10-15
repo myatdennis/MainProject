@@ -1,0 +1,76 @@
+{
+  "timestamp": "2025-10-15T18:14:04.775Z",
+  "baseUrl": "http://localhost:5173",
+  "summary": {
+    "totalTests": 6,
+    "passed": 0,
+    "failed": 5,
+    "warnings": 1
+  },
+  "tests": {
+    "Basic Connectivity": {
+      "status": "failed",
+      "message": "Cannot connect to http://localhost:5173: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:5173/\n=========================== logs ===========================\nnavigating to \"http://localhost:5173/\", waiting until \"load\"\n============================================================",
+      "data": null,
+      "timestamp": "2025-10-15T18:14:05.557Z"
+    },
+    "Database Connectivity": {
+      "status": "warning",
+      "message": "Supabase environment variables not found in process.env (may be in .env file)",
+      "data": {
+        "hasUrl": false,
+        "hasKey": false
+      },
+      "timestamp": "2025-10-15T18:14:05.557Z"
+    },
+    "Admin Portal Access": {
+      "status": "failed",
+      "message": "Admin portal test failed: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:5173/admin/login\n=========================== logs ===========================\nnavigating to \"http://localhost:5173/admin/login\", waiting until \"load\"\n============================================================",
+      "data": null,
+      "timestamp": "2025-10-15T18:14:05.731Z"
+    },
+    "LMS Portal Access": {
+      "status": "failed",
+      "message": "LMS portal test failed: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:5173/lms/login\n=========================== logs ===========================\nnavigating to \"http://localhost:5173/lms/login\", waiting until \"load\"\n============================================================",
+      "data": null,
+      "timestamp": "2025-10-15T18:14:05.893Z"
+    },
+    "Course Content Refresh": {
+      "status": "failed",
+      "message": "Course refresh test failed: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:5173/lms/courses\n=========================== logs ===========================\nnavigating to \"http://localhost:5173/lms/courses\", waiting until \"load\"\n============================================================",
+      "data": null,
+      "timestamp": "2025-10-15T18:14:06.053Z"
+    },
+    "Console Errors": {
+      "status": "failed",
+      "message": "Console error test failed: page.goto: net::ERR_CONNECTION_REFUSED at http://localhost:5173/\n=========================== logs ===========================\nnavigating to \"http://localhost:5173/\", waiting until \"load\"\n============================================================",
+      "data": null,
+      "timestamp": "2025-10-15T18:14:06.210Z"
+    }
+  },
+  "recommendations": [
+    {
+      "priority": "critical",
+      "category": "Authentication",
+      "issue": "Admin portal login not working",
+      "solution": "Fix authentication flow and admin layout loading state",
+      "files": [
+        "src/context/AuthContext.tsx",
+        "src/components/Admin/AdminLayout.tsx"
+      ]
+    },
+    {
+      "priority": "medium",
+      "category": "Code Quality",
+      "issue": "Console errors detected",
+      "solution": "Review and fix console errors to improve stability",
+      "action": "Check browser dev tools for detailed error messages"
+    },
+    {
+      "priority": "high",
+      "category": "System Health",
+      "issue": "More tests failing than passing",
+      "solution": "Focus on core functionality fixes before adding new features"
+    }
+  ]
+}

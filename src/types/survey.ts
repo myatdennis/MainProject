@@ -1,8 +1,28 @@
-// Survey Platform Types
+// Enhanced Survey Platform Types - Qualtrics-style
+
+export type QuestionType = 
+  | 'single-select'
+  | 'multi-select' 
+  | 'matrix-likert'
+  | 'ranking'
+  | 'nps'
+  | 'slider'
+  | 'open-ended'
+  | 'file-upload'
+  | 'demographics'
+  | 'other-specify'
+  | 'multiple-choice' 
+  | 'likert-scale' 
+  | 'matrix';
+
+export type LogicType = 'skip' | 'display' | 'piping' | 'randomization' | 'quota';
+export type SurveyStatus = 'draft' | 'published' | 'archived';
+export type ResponseStatus = 'not-started' | 'in-progress' | 'completed';
+export type AnonymityMode = 'anonymous' | 'confidential' | 'identified';
 
 export interface SurveyQuestion {
   id: string;
-  type: 'multiple-choice' | 'likert-scale' | 'ranking' | 'open-ended' | 'matrix' | 'demographics';
+  type: QuestionType;
   title: string;
   description?: string;
   required: boolean;
@@ -92,44 +112,57 @@ export interface SurveySettings {
   };
 }
 
+// Survey Block for organizing questions
+export interface SurveyBlock {
+  id: string;
+  title: string;
+  description?: string;
+  order?: number;
+  questions: SurveyQuestion[];
+}
+
+// Survey and Question Types
 export interface Survey {
   id: string;
   title: string;
-  description: string;
-  type: 'climate-assessment' | 'inclusion-index' | 'equity-lens' | 'custom';
-  status: 'draft' | 'active' | 'paused' | 'completed' | 'archived';
+  description?: string;
+  status: SurveyStatus;
+  version?: number;
   createdBy: string;
-  createdAt: string;
-  updatedAt: string;
-  launchedAt?: string;
-  closedAt?: string;
-  
+  createdAt: Date | string;
+  updatedAt: Date | string;
+  blocks: SurveyBlock[];
   sections: SurveySection[];
-  branding: SurveyBranding;
-  settings: SurveySettings;
-  
-  // Assignment & Distribution
-  assignedTo: {
-    organizationIds: string[];
-    userIds: string[];
-    cohortIds: string[];
-    departments?: string[];
+  settings: {
+    anonymityMode: AnonymityMode;
+    anonymityThreshold: number;
+    allowMultipleResponses: boolean;
+    showProgressBar: boolean;
+    consentRequired: boolean;
+    allowAnonymous: boolean;
+    allowSaveAndContinue: boolean;
+    randomizeQuestions: boolean;
+    randomizeOptions: boolean;
   };
-  
-  // Analytics
-  totalInvites: number;
-  totalResponses: number;
-  completionRate: number;
-  avgCompletionTime: number; // in minutes
-  
-  // Reflection & Follow-up
-  reflectionPrompts: string[];
-  followUpSurveys?: string[]; // IDs of related surveys
-  
-  // Huddle Co. Features
-  generateHuddleReport: boolean;
-  actionStepsEnabled: boolean;
-  benchmarkingEnabled: boolean;
+  branding: {
+    primaryColor: string;
+    secondaryColor: string;
+    logo?: string;
+  };
+  defaultLanguage: string;
+  supportedLanguages: string[];
+  completionSettings: {
+    thankYouMessage: string;
+    showResources: boolean;
+    recommendedCourses: string[];
+  };
+  assignedTo?: {
+    organizationIds?: string[];
+    userIds?: string[];
+    departmentIds?: string[];
+    cohortIds?: string[];
+  };
+  reflectionPrompts?: string[];
 }
 
 export interface SurveyResponse {
@@ -225,4 +258,34 @@ export interface HuddleReport {
   
   nextSteps: string[];
   followUpRecommendations: string[];
+}
+
+// Survey Assignment for distribution
+export interface SurveyAssignment {
+  id: string;
+  surveyId: string;
+  surveyTitle: string;
+  assignedTo: string[];
+  assignedOrganizations: string[];
+  assignedDepartments: string[];
+  startDate?: Date;
+  endDate?: Date;
+  reminderSchedule: {
+    enabled: boolean;
+    frequency: 'daily' | 'weekly' | 'bi-weekly';
+    daysBeforeDeadline: number[];
+  };
+  accessControl: {
+    requireLogin: boolean;
+    allowAnonymous: boolean;
+    oneTimeAccess: boolean;
+  };
+  status: 'draft' | 'scheduled' | 'active' | 'paused' | 'completed';
+  createdAt: Date;
+  updatedAt: Date;
+  responses: {
+    total: number;
+    completed: number;
+    inProgress: number;
+  };
 }
