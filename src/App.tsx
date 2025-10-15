@@ -9,8 +9,7 @@ import { ErrorBoundary } from './components/ErrorHandling';
 import Header from './components/Header';
 import Footer from './components/Footer';
 import DemoModeBanner from './components/DemoModeBanner';
-import ConnectionDiagnostic from './components/ConnectionDiagnostic';
-import TroubleshootingGuide from './components/TroubleshootingGuide';
+import useIdleRender from './hooks/useIdleRender';
 
 // Eager load core pages for better initial experience
 import HomePage from './pages/HomePage';
@@ -67,6 +66,8 @@ const AdminPerformanceDashboard = lazy(() => import('./pages/Admin/AdminPerforma
 
 // Lazy load additional components
 const AIBot = lazy(() => import('./components/AIBot/AIBot'));
+const ConnectionDiagnostic = lazy(() => import('./components/ConnectionDiagnostic'));
+const TroubleshootingGuide = lazy(() => import('./components/TroubleshootingGuide'));
 const OrgWorkspaceLayout = lazy(() => import('./components/OrgWorkspace/OrgWorkspaceLayout'));
 const StrategicPlansPage = lazy(() => import('./components/OrgWorkspace/StrategicPlansPage'));
 const SessionNotesPage = lazy(() => import('./components/OrgWorkspace/SessionNotesPage'));
@@ -80,6 +81,8 @@ function App() {
       console.error('Failed to initialize course store:', error);
     });
   }, []);
+
+  const canRenderDeferredWidgets = useIdleRender({ timeout: 1800, minDelay: 200 });
 
   return (
     <ErrorBoundary>
@@ -164,9 +167,13 @@ function App() {
               </Suspense>
             </main>
             <Footer />
-            <AIBot />
-            <ConnectionDiagnostic />
-            <TroubleshootingGuide />
+            {canRenderDeferredWidgets && (
+              <Suspense fallback={null}>
+                <AIBot />
+                <ConnectionDiagnostic />
+                <TroubleshootingGuide />
+              </Suspense>
+            )}
           </div>
           <Toaster 
             position="top-right"
