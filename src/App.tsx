@@ -47,6 +47,7 @@ const AdminDashboard = lazy(() => import('./pages/Admin/AdminDashboard'));
 const AdminUsers = lazy(() => import('./pages/Admin/AdminUsers'));
 const AdminOrganizations = lazy(() => import('./pages/Admin/AdminOrganizations'));
 const AdminOrganizationNew = lazy(() => import('./pages/Admin/AdminOrganizationNew'));
+const AdminOnboardingWizard = lazy(() => import('./pages/Admin/AdminOnboardingWizard'));
 const OrganizationDetails = lazy(() => import('./pages/Admin/OrganizationDetails'));
 const AdminCourses = lazy(() => import('./pages/Admin/AdminCourses'));
 const AdminReports = lazy(() => import('./pages/Admin/AdminReports'));
@@ -140,6 +141,7 @@ function App() {
                     <Route path="users/:userId" element={<AdminUserProfile />} />
                     <Route path="organizations" element={<AdminOrganizations />} />
                     <Route path="organizations/new" element={<AdminOrganizationNew />} />
+                    <Route path="onboarding/new-org" element={<AdminOnboardingWizard />} />
                     <Route path="organizations/:id" element={<OrganizationDetails />} />
                     <Route path="org-profiles/:orgProfileId" element={<AdminOrgProfile />} />
                     <Route path="send-resource" element={<AdminResourceSender />} />

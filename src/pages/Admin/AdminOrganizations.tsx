@@ -64,7 +64,7 @@ const AdminOrganizations = () => {
   };
 
   const handleCreateOrganization = () => {
-    navigate('/admin/organizations/new');
+    navigate('/admin/onboarding/new-org');
   };
 
   const handleOrganizationAdded = (newOrganization: any) => {
