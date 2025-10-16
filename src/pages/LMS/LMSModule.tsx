@@ -99,6 +99,7 @@ const LMSModule = () => {
   const [lastRefreshTime, setLastRefreshTime] = useState(Date.now());
   const [refreshing, setRefreshing] = useState(false);
   const [showRefreshNotification, setShowRefreshNotification] = useState(false);
+  const [showCompletionModal, setShowCompletionModal] = useState(false);
 
   // Optimized course loading with memoization
   const course = useMemo(() => {
@@ -546,7 +547,7 @@ const LMSModule = () => {
   // Real-time progress prediction
   const predictCompletionTime = useMemo(() => {
     if (!course || engagementMetrics.timeSpent < 60000) return null; // Need at least 1 minute of data
-    
+
     const totalLessons = course.modules?.reduce((acc, module) => acc + module.lessons.length, 0) || 0;
     const completedLessons = Object.values(lessonProgress).filter(p => p.completed).length;
     const avgTimePerLesson = engagementMetrics.timeSpent / Math.max(completedLessons, 1);
@@ -561,6 +562,20 @@ const LMSModule = () => {
       completionPercentage: Math.round((completedLessons / totalLessons) * 100)
     };
   }, [course, lessonProgress, engagementMetrics.timeSpent]);
+
+  const calculateOverallProgress = () => {
+    const totalLessons = (course.modules || []).reduce((acc, module) => acc + module.lessons.length, 0);
+    const completedLessons = Object.values(lessonProgress).filter(progress => progress.completed).length;
+    return totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0;
+  };
+
+  const overallProgress = calculateOverallProgress();
+
+  useEffect(() => {
+    if (overallProgress >= 100) {
+      setShowCompletionModal(true);
+    }
+  }, [overallProgress]);
 
   if (!course) {
     return (
@@ -806,7 +821,7 @@ const LMSModule = () => {
     
     if (hasVideoContent || currentLessonData.type === 'video') {
       // Try to get the video URL
-      let videoUrl = currentLessonData.content?.videoUrl;
+      const videoUrl = currentLessonData.content?.videoUrl;
       
       console.log('🎯 Current Lesson Debug:', {
         lessonId: currentLessonData.id,
@@ -847,6 +862,7 @@ const LMSModule = () => {
       // Use the actual video URL if valid, otherwise use fallback
       const finalVideoUrl = isValidVideoUrl ? videoUrl : fallbackVideoUrl;
       const isUsingFallback = !isValidVideoUrl;
+      const isUploadedVideo = videoUrl?.startsWith('uploaded:');
       
       console.log('🎬 Video URL Decision:', {
         videoUrl,
@@ -918,7 +934,7 @@ const LMSModule = () => {
               </p>
             </div>
           )}
-          
+
           {!isUsingFallback && (
             <div className="bg-green-50 p-4 rounded-lg border border-green-200">
               <p className="text-green-800 text-sm">
@@ -926,13 +942,13 @@ const LMSModule = () => {
               </p>
             </div>
           )}
-          
+
           {isUsingFallback && (
             <div className="bg-yellow-50 p-4 rounded-lg border border-yellow-200">
               <p className="text-yellow-800 text-sm">
-                {false ? (
+                {isUploadedVideo ? (
                   <>
-                    <strong>� Demo Video (File Upload):</strong> You uploaded a video file ({videoUrl?.replace('uploaded:', '')}), 
+                    <strong>🚧 Demo Video (File Upload):</strong> You uploaded a video file ({videoUrl?.replace('uploaded:', '')}),
                     but file uploads require cloud storage setup. Playing demo video for now.
                   </>
                 ) : (
@@ -1386,24 +1402,6 @@ const LMSModule = () => {
         );
     }
   };
-
-  const calculateOverallProgress = () => {
-    const totalLessons = (course.modules || []).reduce((acc, module) => acc + module.lessons.length, 0);
-    const completedLessons = Object.values(lessonProgress).filter(progress => progress.completed).length;
-    return totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0;
-  };
-
-  const overallProgress = calculateOverallProgress();
-
-  // Check if course is completed for CourseCompletion component
-  const [showCompletionModal, setShowCompletionModal] = useState(false);
-  
-  // Show completion modal when course is completed
-  useEffect(() => {
-    if (overallProgress >= 100) {
-      setShowCompletionModal(true);
-    }
-  }, [overallProgress]);
 
   return (
     <div className="p-6 max-w-7xl mx-auto" style={{ minHeight: '100vh' }}>
