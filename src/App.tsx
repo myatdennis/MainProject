@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider } from './context/AuthContext';
 import { ToastProvider } from './context/ToastContext';
+import { NotificationProvider } from './context/NotificationContext';
 import { courseStore } from './store/courseStore';
 import { LoadingSpinner } from './components/LoadingComponents';
 import { ErrorBoundary } from './components/ErrorHandling';
@@ -25,6 +26,7 @@ const ResourcePage = lazy(() => import('./pages/ResourcePage'));
 const TestimonialsPage = lazy(() => import('./pages/TestimonialsPage'));
 const ContactPage = lazy(() => import('./pages/ContactPage'));
 const ClientPortalPage = lazy(() => import('./pages/ClientPortalPage'));
+const NotificationsHubPage = lazy(() => import('./pages/NotificationsHubPage'));
 
 // Lazy load LMS components
 const LMSCourses = lazy(() => import('./pages/LMS/LMSCourses'));
@@ -64,6 +66,7 @@ const AdminUserProfile = lazy(() => import('./pages/Admin/AdminUserProfile'));
 const AdminOrgProfile = lazy(() => import('./pages/Admin/AdminOrgProfile'));
 const AdminResourceSender = lazy(() => import('./pages/Admin/AdminResourceSender'));
 const AdminPerformanceDashboard = lazy(() => import('./pages/Admin/AdminPerformanceDashboard'));
+const AdminBroadcastCenter = lazy(() => import('./pages/Admin/AdminBroadcastCenter'));
 
 // Lazy load additional components
 const AIBot = lazy(() => import('./components/AIBot/AIBot'));
@@ -85,115 +88,119 @@ function App() {
     <ErrorBoundary>
       <ToastProvider>
         <AuthProvider>
-          <Router>
-            <div className="min-h-screen flex flex-col bg-white">
-            <Header />
-            <DemoModeBanner />
-            <main className="flex-grow">
-              <Suspense fallback={<LoadingSpinner size="lg" className="py-20" text="Loading..." />}>
-                <Routes>
-              <Route path="/" element={<HomePage />} />
-              <Route path="/about" element={<AboutPage />} />
-              <Route path="/services" element={<ServicesPage />} />
-              <Route path="/resources" element={<ResourcePage />} />
-              <Route path="/testimonials" element={<TestimonialsPage />} />
-              <Route path="/contact" element={<ContactPage />} />
-              <Route path="/client-portal" element={<ClientPortalPage />} />
-              <Route path="/client-portal/org/:orgId/*" element={
-                <OrgWorkspaceLayout />
-              }>
-                <Route path="strategic-plans" element={<StrategicPlansPage />} />
-                <Route path="session-notes" element={<SessionNotesPage />} />
-                <Route path="action-tracker" element={<ActionTrackerPage />} />
-                <Route path="documents" element={<DocumentsPage />} />
-                <Route path="" element={<StrategicPlansPage />} />
-              </Route>
-              <Route path="/lms/login" element={<LMSLogin />} />
-              <Route path="/lms" element={<Navigate to="/lms/dashboard" replace />} />
-              <Route path="/lms/*" element={
-                <LMSLayout>
-                  <Routes>
-                    <Route path="dashboard" element={<LearnerDashboard />} />
-                    <Route path="courses" element={<LMSCourses />} />
-                    <Route path="course/:courseId" element={<CoursePlayer />} />
-                    <Route path="course/:courseId/lesson/:lessonId" element={<CoursePlayer />} />
-                    <Route path="module/:moduleId" element={<LMSModule />} />
-                    <Route path="downloads" element={<LMSDownloads />} />
-                    <Route path="feedback" element={<LMSFeedback />} />
-                    <Route path="contact" element={<LMSContact />} />
-                    <Route path="settings" element={<LMSSettings />} />
-                    <Route path="certificates" element={<LMSCertificates />} />
-                    <Route path="progress" element={<LMSProgress />} />
-                    <Route path="help" element={<LMSHelp />} />
-                  </Routes>
-                </LMSLayout>
-              } />
-              <Route path="/admin/login" element={<AdminLogin />} />
-              <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
-              <Route path="/admin/*" element={
-                <AdminLayout>
-                  <Routes>
-                    <Route path="dashboard" element={<AdminDashboard />} />
-                    <Route path="users" element={<AdminUsers />} />
-                    <Route path="users/:userId" element={<AdminUserProfile />} />
-                    <Route path="organizations" element={<AdminOrganizations />} />
-                    <Route path="organizations/new" element={<AdminOrganizationNew />} />
-                    <Route path="organizations/:id" element={<OrganizationDetails />} />
-                    <Route path="org-profiles/:orgProfileId" element={<AdminOrgProfile />} />
-                    <Route path="send-resource" element={<AdminResourceSender />} />
-                    <Route path="courses" element={<AdminCourses />} />
-                    <Route path="reports" element={<AdminReports />} />
-                    <Route path="analytics" element={<AdminAnalytics />} />
-                    <Route path="performance" element={<AdminPerformanceDashboard />} />
-                    <Route path="certificates" element={<AdminCertificates />} />
-                    <Route path="integrations" element={<AdminIntegrations />} />
-                    <Route path="integrations/:integrationId" element={<AdminIntegrationConfig />} />
-                    <Route path="surveys" element={<AdminSurveys />} />
-                    <Route path="surveys/builder" element={<AdminSurveyBuilder />} />
-                    <Route path="surveys/builder/:surveyId" element={<AdminSurveyBuilder />} />
-                    <Route path="surveys/:surveyId/analytics" element={<AdminSurveyAnalytics />} />
-                    <Route path="surveys/:surveyId/preview" element={<AdminSurveyBuilder />} />
-                    <Route path="course-builder/:courseId" element={<AdvancedCourseBuilder />} />
-                    <Route path="courses/:courseId/details" element={<AdminCourseDetail />} />
-                    <Route path="documents" element={<AdminDocuments />} />
-                    <Route path="settings" element={<AdminSettings />} />
-                  </Routes>
-                </AdminLayout>
-              } />
-                </Routes>
-              </Suspense>
-            </main>
-            <Footer />
-            <AIBot />
-            <ConnectionDiagnostic />
-            <TroubleshootingGuide />
-          </div>
-          <Toaster 
-            position="top-right"
-            toastOptions={{
-              duration: 4000,
-              style: {
-                background: '#363636',
-                color: '#fff',
-              },
-              success: {
-                duration: 3000,
-                iconTheme: {
-                  primary: '#10b981',
-                  secondary: '#fff',
-                },
-              },
-              error: {
-                duration: 5000,
-                iconTheme: {
-                  primary: '#ef4444',
-                  secondary: '#fff',
-                },
-              },
-            }}
-          />
-        </Router>
-      </AuthProvider>
+          <NotificationProvider>
+            <Router>
+              <div className="min-h-screen flex flex-col bg-white">
+                <Header />
+                <DemoModeBanner />
+                <main className="flex-grow">
+                  <Suspense fallback={<LoadingSpinner size="lg" className="py-20" text="Loading..." />}>
+                    <Routes>
+                      <Route path="/" element={<HomePage />} />
+                      <Route path="/about" element={<AboutPage />} />
+                      <Route path="/services" element={<ServicesPage />} />
+                      <Route path="/resources" element={<ResourcePage />} />
+                      <Route path="/testimonials" element={<TestimonialsPage />} />
+                      <Route path="/contact" element={<ContactPage />} />
+                      <Route path="/client-portal" element={<ClientPortalPage />} />
+                      <Route path="/notifications" element={<NotificationsHubPage />} />
+                      <Route path="/client-portal/org/:orgId/*" element={
+                        <OrgWorkspaceLayout />
+                      }>
+                        <Route path="strategic-plans" element={<StrategicPlansPage />} />
+                        <Route path="session-notes" element={<SessionNotesPage />} />
+                        <Route path="action-tracker" element={<ActionTrackerPage />} />
+                        <Route path="documents" element={<DocumentsPage />} />
+                        <Route path="" element={<StrategicPlansPage />} />
+                      </Route>
+                      <Route path="/lms/login" element={<LMSLogin />} />
+                      <Route path="/lms" element={<Navigate to="/lms/dashboard" replace />} />
+                      <Route path="/lms/*" element={
+                        <LMSLayout>
+                          <Routes>
+                            <Route path="dashboard" element={<LearnerDashboard />} />
+                            <Route path="courses" element={<LMSCourses />} />
+                            <Route path="course/:courseId" element={<CoursePlayer />} />
+                            <Route path="course/:courseId/lesson/:lessonId" element={<CoursePlayer />} />
+                            <Route path="module/:moduleId" element={<LMSModule />} />
+                            <Route path="downloads" element={<LMSDownloads />} />
+                            <Route path="feedback" element={<LMSFeedback />} />
+                            <Route path="contact" element={<LMSContact />} />
+                            <Route path="settings" element={<LMSSettings />} />
+                            <Route path="certificates" element={<LMSCertificates />} />
+                            <Route path="progress" element={<LMSProgress />} />
+                            <Route path="help" element={<LMSHelp />} />
+                          </Routes>
+                        </LMSLayout>
+                      } />
+                      <Route path="/admin/login" element={<AdminLogin />} />
+                      <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
+                      <Route path="/admin/*" element={
+                        <AdminLayout>
+                          <Routes>
+                            <Route path="dashboard" element={<AdminDashboard />} />
+                            <Route path="users" element={<AdminUsers />} />
+                            <Route path="users/:userId" element={<AdminUserProfile />} />
+                            <Route path="organizations" element={<AdminOrganizations />} />
+                            <Route path="organizations/new" element={<AdminOrganizationNew />} />
+                            <Route path="organizations/:id" element={<OrganizationDetails />} />
+                            <Route path="org-profiles/:orgProfileId" element={<AdminOrgProfile />} />
+                            <Route path="send-resource" element={<AdminResourceSender />} />
+                            <Route path="courses" element={<AdminCourses />} />
+                            <Route path="reports" element={<AdminReports />} />
+                            <Route path="analytics" element={<AdminAnalytics />} />
+                            <Route path="performance" element={<AdminPerformanceDashboard />} />
+                            <Route path="certificates" element={<AdminCertificates />} />
+                            <Route path="integrations" element={<AdminIntegrations />} />
+                            <Route path="integrations/:integrationId" element={<AdminIntegrationConfig />} />
+                            <Route path="surveys" element={<AdminSurveys />} />
+                            <Route path="surveys/builder" element={<AdminSurveyBuilder />} />
+                            <Route path="surveys/builder/:surveyId" element={<AdminSurveyBuilder />} />
+                            <Route path="surveys/:surveyId/analytics" element={<AdminSurveyAnalytics />} />
+                            <Route path="surveys/:surveyId/preview" element={<AdminSurveyBuilder />} />
+                            <Route path="course-builder/:courseId" element={<AdvancedCourseBuilder />} />
+                            <Route path="courses/:courseId/details" element={<AdminCourseDetail />} />
+                            <Route path="documents" element={<AdminDocuments />} />
+                            <Route path="settings" element={<AdminSettings />} />
+                            <Route path="notifications" element={<AdminBroadcastCenter />} />
+                          </Routes>
+                        </AdminLayout>
+                      } />
+                    </Routes>
+                  </Suspense>
+                </main>
+                <Footer />
+                <AIBot />
+                <ConnectionDiagnostic />
+                <TroubleshootingGuide />
+              </div>
+              <Toaster
+                position="top-right"
+                toastOptions={{
+                  duration: 4000,
+                  style: {
+                    background: '#363636',
+                    color: '#fff',
+                  },
+                  success: {
+                    duration: 3000,
+                    iconTheme: {
+                      primary: '#10b981',
+                      secondary: '#fff',
+                    },
+                  },
+                  error: {
+                    duration: 5000,
+                    iconTheme: {
+                      primary: '#ef4444',
+                      secondary: '#fff',
+                    },
+                  },
+                }}
+              />
+            </Router>
+          </NotificationProvider>
+        </AuthProvider>
       </ToastProvider>
     </ErrorBoundary>
   );

@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { 
-  LayoutDashboard, 
-  BookOpen, 
+import {
+  LayoutDashboard,
+  BookOpen,
   Download, 
   MessageSquare, 
   Phone, 
@@ -16,6 +16,8 @@ import {
   Settings,
   HelpCircle
 } from 'lucide-react';
+import NotificationBell from '../notifications/NotificationBell';
+import NotificationBannerHost from '../notifications/NotificationBannerHost';
 
 interface LMSLayoutProps {
   children: React.ReactNode;
@@ -164,12 +166,19 @@ const LMSLayout: React.FC<LMSLayoutProps> = ({ children }) => {
               </div>
               <span className="font-bold text-gray-900">The Huddle Co.</span>
             </div>
+            <NotificationBell variant="client" />
           </div>
         </div>
 
         {/* Page content */}
         <main className="flex-1">
-          {children}
+          <div className="hidden items-center justify-end border-b border-gray-200 bg-white px-6 py-4 shadow-sm lg:flex">
+            <NotificationBell variant="client" />
+          </div>
+          <NotificationBannerHost />
+          <div className="px-4 py-4 lg:px-8">
+            {children}
+          </div>
         </main>
       </div>
     </div>

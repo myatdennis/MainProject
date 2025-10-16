@@ -3,7 +3,8 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import ClientErrorBoundary from '../ClientErrorBoundary';
 import ProgressSyncStatus from '../ProgressSyncStatus';
-import RealtimeNotifications from '../RealtimeNotifications';
+import NotificationBell from '../notifications/NotificationBell';
+import NotificationBannerHost from '../notifications/NotificationBannerHost';
 import { useEnhancedCourseProgress } from '../../hooks/useEnhancedCourseProgress';
 import { 
   LayoutDashboard, 
@@ -266,10 +267,7 @@ const EnhancedLMSLayout: React.FC<EnhancedLMSLayoutProps> = ({ children }) => {
                   />
 
                   {/* Real-time Notifications */}
-                  <RealtimeNotifications 
-                    userId={user?.id || 'demo-user'}
-                    enabled={true}
-                  />
+                  <NotificationBell variant="client" />
 
                   {/* User Profile Menu */}
                   <div className="relative">
@@ -296,7 +294,10 @@ const EnhancedLMSLayout: React.FC<EnhancedLMSLayoutProps> = ({ children }) => {
 
           {/* Page Content */}
           <main className="flex-1 overflow-auto">
-            {children}
+            <NotificationBannerHost />
+            <div className="px-6 py-4">
+              {children}
+            </div>
           </main>
         </div>
       </div>
