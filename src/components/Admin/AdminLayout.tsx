@@ -4,18 +4,17 @@ import { Link, useLocation, useNavigate, Outlet } from 'react-router-dom';
 import { ErrorBoundary } from '../ErrorHandling';
 import AdminErrorBoundary from '../ErrorBoundary/AdminErrorBoundary';
 import { useAuth } from '../../context/AuthContext';
-import { 
-  LayoutDashboard, 
-  Users, 
-  Building2, 
-  BookOpen, 
-  BarChart3, 
-  Settings, 
-  LogOut, 
-  Menu, 
+import {
+  LayoutDashboard,
+  Users,
+  Building2,
+  BookOpen,
+  BarChart3,
+  Settings,
+  LogOut,
+  Menu,
   X,
   Shield,
-  Bell,
   Search,
   Plus,
   TrendingUp,
@@ -26,6 +25,8 @@ import {
   Clock,
   Target
 } from 'lucide-react';
+import NotificationBell from '../notifications/NotificationBell';
+import NotificationBannerHost from '../notifications/NotificationBannerHost';
 
 interface AdminLayoutProps {
   children?: ReactNode;
@@ -38,6 +39,7 @@ const navigation = [
   { name: 'Courses', href: '/admin/courses', icon: BookOpen },
   { name: 'Analytics', href: '/admin/analytics', icon: BarChart3 },
   { name: 'Performance', href: '/admin/performance', icon: TrendingUp },
+  { name: 'Notifications', href: '/admin/notifications', icon: Target },
   { name: 'Settings', href: '/admin/settings', icon: Settings },
 ];
 
@@ -366,13 +368,10 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
                 >
                   <Plus className="h-4 w-4" />
                 </button>
-                <button className="relative p-2 text-gray-600 hover:text-gray-900">
-                  <Bell className="h-5 w-5" />
-                  <span className="absolute top-0 right-0 block h-2 w-2 rounded-full bg-red-400"></span>
-                </button>
+                <NotificationBell variant="admin" />
                 <div className="flex items-center space-x-2">
-                  <img 
-                    src="https://images.pexels.com/photos/3184416/pexels-photo-3184416.jpeg?auto=compress&cs=tinysrgb&w=100" 
+                  <img
+                    src="https://images.pexels.com/photos/3184416/pexels-photo-3184416.jpeg?auto=compress&cs=tinysrgb&w=100"
                     alt={user?.name || 'Admin'}
                     className="w-8 h-8 rounded-full object-cover"
                   />
@@ -385,6 +384,7 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
           {/* Page content */}
           <main className="flex-1 bg-gray-50 min-h-0">
             <div className="p-6 h-full">
+              <NotificationBannerHost />
               <AdminErrorBoundary showDetails={true}>
                 <ErrorBoundary>
                   {children ? children : <Outlet />}
