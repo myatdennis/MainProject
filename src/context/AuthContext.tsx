@@ -71,7 +71,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     // Listen for auth changes
     const { data } = supabase.auth.onAuthStateChange(
       async (_event: string, session: Session | null) => {
-        // eslint-disable-next-line no-console
         console.log('AuthContext auth state change, has session:', !!session);
         if (session?.user) {
           setSupabaseUser(session.user);

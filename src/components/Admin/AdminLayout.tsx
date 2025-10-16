@@ -78,19 +78,6 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
     return () => clearTimeout(authCheckTimeout);
   }, [isAuthenticated, navigate, location.pathname]);
 
-  // If still loading auth, show loading screen
-  if (authLoading) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-500 mx-auto mb-4"></div>
-          <h2 className="text-lg font-semibold text-gray-900">Initializing Admin Portal...</h2>
-          <p className="text-gray-600">Checking authentication status</p>
-        </div>
-      </div>
-    );
-  }
-
   // Simulate real-time updates for sidebar widgets
   useEffect(() => {
     const interval = setInterval(() => {
@@ -106,6 +93,19 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
 
     return () => clearInterval(interval);
   }, []);
+
+  // If still loading auth, show loading screen
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-500 mx-auto mb-4"></div>
+          <h2 className="text-lg font-semibold text-gray-900">Initializing Admin Portal...</h2>
+          <p className="text-gray-600">Checking authentication status</p>
+        </div>
+      </div>
+    );
+  }
 
   // Show loading while checking auth
   if (!isAuthenticated?.admin) {

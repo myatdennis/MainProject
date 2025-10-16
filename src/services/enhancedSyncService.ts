@@ -192,10 +192,11 @@ class EnhancedSyncService extends EventEmitter {
     this.metrics.conflictResolutions++;
 
     switch (strategy) {
-      case 'newest_wins':
+      case 'newest_wins': {
         const localTime = new Date(conflict.localData.updated_at || 0).getTime();
         const remoteTime = new Date(conflict.remoteData.updated_at || 0).getTime();
         return remoteTime > localTime ? conflict.remoteData : conflict.localData;
+      }
 
       case 'merge':
         return this.mergeConflictData(conflict.localData, conflict.remoteData);

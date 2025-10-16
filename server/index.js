@@ -20,6 +20,5 @@ app.get('*', (req, res) => {
 });
 
 app.listen(port, () => {
-  // eslint-disable-next-line no-console
   console.log(`Serving production build from ${distPath} at http://localhost:${port}`);
 });
