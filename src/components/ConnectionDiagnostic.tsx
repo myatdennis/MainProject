@@ -89,71 +89,71 @@ const ConnectionDiagnostic: React.FC = () => {
     return (
       <button
         onClick={() => setIsVisible(true)}
-        className="fixed bottom-4 right-4 z-50 bg-gray-800 text-white p-2 rounded-full shadow-lg hover:bg-gray-700 transition-colors"
+        className="fixed bottom-4 right-4 z-50 bg-inverse-surface text-white p-2 rounded-full shadow-card hover:shadow-lg transition-transform duration-brand hover:scale-105"
         title="Connection Status"
       >
         {status.isOnline ? (
-          <Wifi className="h-4 w-4 text-green-400" />
+          <Wifi className="h-4 w-4 text-success" />
         ) : (
-          <WifiOff className="h-4 w-4 text-red-400" />
+          <WifiOff className="h-4 w-4 text-danger" />
         )}
       </button>
     );
   }
 
   return (
-    <div className="fixed bottom-4 right-4 z-50 bg-white border border-gray-200 rounded-lg shadow-lg p-4 w-80">
+    <div className="fixed bottom-4 right-4 z-50 bg-surface-elevated border border-border-subtle rounded-lg shadow-card p-4 w-80">
       <div className="flex items-center justify-between mb-3">
-        <h3 className="font-semibold text-gray-900 flex items-center">
+        <h3 className="font-semibold text-foreground flex items-center">
           <Info className="h-4 w-4 mr-2" />
           Connection Status
         </h3>
         <button
           onClick={() => setIsVisible(false)}
-          className="text-gray-400 hover:text-gray-600"
+          className="text-muted hover:text-foreground focus-visible:shadow-focus rounded"
         >
           ×
         </button>
       </div>
 
-      <div className="space-y-2 text-sm">
+      <div className="space-y-2 text-sm text-foreground">
         <div className="flex items-center justify-between">
           <span>Internet Connection</span>
           {status.isOnline ? (
-            <CheckCircle className="h-4 w-4 text-green-500" />
+            <CheckCircle className="h-4 w-4 text-success" />
           ) : (
-            <AlertTriangle className="h-4 w-4 text-red-500" />
+            <AlertTriangle className="h-4 w-4 text-danger" />
           )}
         </div>
 
         <div className="flex items-center justify-between">
           <span>Server Reachable</span>
           {status.serverReachable ? (
-            <CheckCircle className="h-4 w-4 text-green-500" />
+            <CheckCircle className="h-4 w-4 text-success" />
           ) : (
-            <AlertTriangle className="h-4 w-4 text-orange-500" />
+            <AlertTriangle className="h-4 w-4 text-warning" />
           )}
         </div>
 
         <div className="flex items-center justify-between">
           <span>Demo Mode</span>
-          <Info className="h-4 w-4 text-blue-500" />
+          <Info className="h-4 w-4 text-info" />
         </div>
 
-        <div className="pt-2 border-t border-gray-100">
-          <div className="text-xs text-gray-500">
+        <div className="pt-2 border-t border-border-subtle">
+          <div className="text-xs text-muted">
             Last checked: {status.lastChecked.toLocaleTimeString()}
           </div>
           <button
             onClick={checkConnection}
-            className="mt-2 w-full bg-blue-500 text-white px-3 py-1 rounded text-xs hover:bg-blue-600 transition-colors"
+            className="mt-2 w-full bg-info text-white px-3 py-1 rounded text-xs transition-all duration-brand hover:brightness-110"
           >
             Refresh Status
           </button>
         </div>
 
         {!status.isOnline && (
-          <div className="mt-3 p-2 bg-red-50 border border-red-200 rounded text-xs text-red-700">
+          <div className="mt-3 p-2 bg-danger-soft border border-danger-border rounded text-xs text-danger">
             No internet connection. The app will work in offline mode with limited functionality.
           </div>
         )}

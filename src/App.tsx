@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider } from './context/AuthContext';
 import { ToastProvider } from './context/ToastContext';
+import { ThemeProvider } from './context/ThemeContext';
 import { courseStore } from './store/courseStore';
 import { LoadingSpinner } from './components/LoadingComponents';
 import { ErrorBoundary } from './components/ErrorHandling';
@@ -85,9 +86,10 @@ function App() {
     <ErrorBoundary>
       <ToastProvider>
         <AuthProvider>
-          <Router>
-            <div className="min-h-screen flex flex-col bg-white">
-            <Header />
+          <ThemeProvider>
+            <Router>
+              <div className="min-h-screen flex flex-col bg-background text-foreground transition-colors duration-brand">
+              <Header />
             <DemoModeBanner />
             <main className="flex-grow">
               <Suspense fallback={<LoadingSpinner size="lg" className="py-20" text="Loading..." />}>
@@ -163,37 +165,41 @@ function App() {
                 </Routes>
               </Suspense>
             </main>
-            <Footer />
-            <AIBot />
-            <ConnectionDiagnostic />
-            <TroubleshootingGuide />
-          </div>
-          <Toaster 
-            position="top-right"
-            toastOptions={{
-              duration: 4000,
-              style: {
-                background: '#363636',
-                color: '#fff',
-              },
-              success: {
-                duration: 3000,
-                iconTheme: {
-                  primary: '#10b981',
-                  secondary: '#fff',
+              <Footer />
+              <AIBot />
+              <ConnectionDiagnostic />
+              <TroubleshootingGuide />
+            </div>
+            <Toaster
+              position="top-right"
+              toastOptions={{
+                duration: 4000,
+                style: {
+                  background: 'var(--color-surface-elevated)',
+                  color: 'var(--color-foreground)',
+                  borderRadius: 'var(--radius-lg)',
+                  border: '1px solid var(--color-border-subtle)',
+                  boxShadow: 'var(--shadow-card)'
                 },
-              },
-              error: {
-                duration: 5000,
-                iconTheme: {
-                  primary: '#ef4444',
-                  secondary: '#fff',
+                success: {
+                  duration: 3000,
+                  iconTheme: {
+                    primary: 'var(--color-success)',
+                    secondary: 'var(--color-on-success)'
+                  }
                 },
-              },
-            }}
-          />
-        </Router>
-      </AuthProvider>
+                error: {
+                  duration: 5000,
+                  iconTheme: {
+                    primary: 'var(--color-danger)',
+                    secondary: 'var(--color-on-danger)'
+                  }
+                }
+              }}
+            />
+          </Router>
+          </ThemeProvider>
+        </AuthProvider>
       </ToastProvider>
     </ErrorBoundary>
   );
