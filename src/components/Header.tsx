@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { Menu, X, Users } from 'lucide-react';
+import ThemeToggle from './ThemeToggle';
 
 const Header = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -18,27 +19,27 @@ const Header = () => {
   const isActive = (href: string) => location.pathname === href;
 
   return (
-    <header className="bg-white shadow-sm sticky top-0 z-50">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between items-center py-4">
+    <header className="sticky top-0 z-50 bg-surface shadow-card border-b border-border/50 backdrop-blur supports-[backdrop-filter]:bg-surface/90">
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div className="flex items-center justify-between py-4">
           {/* Logo */}
           <Link to="/" className="flex items-center space-x-2">
-            <div className="bg-gradient-to-r from-orange-400 to-red-500 p-2 rounded-lg">
+            <div className="bg-gradient-to-r from-primary to-secondary p-2 rounded-lg shadow-card">
               <Users className="h-6 w-6 text-white" />
             </div>
-            <span className="font-bold text-xl text-gray-900">The Huddle Co.</span>
+            <span className="font-heading text-xl font-semibold text-foreground">The Huddle Co.</span>
           </Link>
 
           {/* Desktop Navigation */}
-          <nav className="hidden md:flex space-x-8" role="navigation" aria-label="Main navigation">
+          <nav className="hidden md:flex items-center space-x-6" role="navigation" aria-label="Main navigation">
             {navigation.map((item) => (
               <Link
                 key={item.name}
                 to={item.href}
-                className={`font-medium transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 rounded-lg px-2 py-1 ${
+                className={`font-medium transition-colors duration-brand focus:outline-none focus-visible:shadow-focus rounded-lg px-2 py-1 ${
                   isActive(item.href)
-                    ? 'text-orange-500 border-b-2 border-orange-500'
-                    : 'text-gray-600 hover:text-orange-500'
+                    ? 'text-primary border-b-2 border-primary'
+                    : 'text-muted hover:text-primary'
                 }`}
                 aria-current={isActive(item.href) ? 'page' : undefined}
               >
@@ -51,81 +52,80 @@ const Header = () => {
           <div className="hidden md:flex items-center space-x-4">
             <Link
               to="/lms/login"
-              className="text-gray-600 hover:text-orange-500 font-medium transition-colors duration-200"
+              className="text-muted hover:text-primary font-medium transition-colors duration-brand"
             >
               Client Login
             </Link>
             <Link
               to="/admin/login"
-              className="text-gray-600 hover:text-orange-500 font-medium transition-colors duration-200 text-sm"
+              className="text-muted hover:text-primary font-medium transition-colors duration-brand text-sm"
             >
               Admin
             </Link>
             <a
               href="#book-call"
-              className="bg-gradient-to-r from-orange-400 to-red-500 text-white px-6 py-2 rounded-full font-medium hover:from-orange-500 hover:to-red-600 transition-all duration-200 transform hover:scale-105"
+              className="bg-gradient-to-r from-primary to-secondary text-white px-6 py-2 rounded-full font-medium shadow-card hover:shadow-lg transition-transform duration-brand hover:scale-105"
             >
               Book Discovery Call
             </a>
+            <ThemeToggle />
           </div>
 
           {/* Mobile menu button */}
-                    {/* Mobile menu button */}
           <div className="md:hidden">
             <button
               onClick={() => setIsMenuOpen(!isMenuOpen)}
-              className="text-gray-500 hover:text-gray-700 focus:outline-none focus:text-gray-700 focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 rounded-lg p-2"
+              className="rounded-lg p-2 text-muted hover:text-primary focus:outline-none focus-visible:shadow-focus"
               aria-expanded={isMenuOpen}
               aria-label={isMenuOpen ? 'Close navigation menu' : 'Open navigation menu'}
             >
-              {isMenuOpen ? (
-                <X className="h-6 w-6" />
-              ) : (
-                <Menu className="h-6 w-6" />
-              )}
+              {isMenuOpen ? <X className="h-6 w-6" /> : <Menu className="h-6 w-6" />}
             </button>
           </div>
         </div>
 
         {/* Mobile Navigation */}
         {isMenuOpen && (
-          <div className="md:hidden py-4 border-t border-gray-200">
+          <div className="md:hidden py-4 border-t border-border-subtle bg-surface">
             <div className="flex flex-col space-y-4">
               {navigation.map((item) => (
                 <Link
                   key={item.name}
                   to={item.href}
-                  className={`font-medium px-4 py-2 rounded-lg transition-colors duration-200 ${
+                  className={`font-medium px-4 py-2 rounded-lg transition-colors duration-brand ${
                     isActive(item.href)
-                      ? 'text-orange-500 bg-orange-50'
-                      : 'text-gray-600 hover:text-orange-500 hover:bg-gray-50'
+                      ? 'text-primary bg-primary-soft'
+                      : 'text-muted hover:text-primary hover:bg-surface-subtle'
                   }`}
                   onClick={() => setIsMenuOpen(false)}
                 >
                   {item.name}
                 </Link>
               ))}
-              <div className="px-4 pt-4 border-t border-gray-200">
+              <div className="px-4 pt-4 border-t border-border-subtle space-y-3">
                 <Link
                   to="/lms/login"
-                  className="block text-gray-600 hover:text-orange-500 font-medium mb-3"
+                  className="block text-muted hover:text-primary font-medium"
                   onClick={() => setIsMenuOpen(false)}
                 >
                   Client Login
                 </Link>
                 <Link
                   to="/admin/login"
-                  className="block text-gray-600 hover:text-orange-500 font-medium mb-3 text-sm"
+                  className="block text-muted hover:text-primary font-medium text-sm"
                   onClick={() => setIsMenuOpen(false)}
                 >
                   Admin Portal
                 </Link>
                 <a
                   href="#book-call"
-                  className="block text-center bg-gradient-to-r from-orange-400 to-red-500 text-white px-6 py-3 rounded-full font-medium hover:from-orange-500 hover:to-red-600 transition-all duration-200"
+                  className="block text-center bg-gradient-to-r from-primary to-secondary text-white px-6 py-3 rounded-full font-medium shadow-card hover:shadow-lg transition-transform duration-brand hover:scale-105"
                 >
                   Book Discovery Call
                 </a>
+                <div className="flex justify-center pt-3">
+                  <ThemeToggle />
+                </div>
               </div>
             </div>
           </div>
