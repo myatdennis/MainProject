@@ -66,6 +66,7 @@ const AdminUserProfile = lazy(() => import('./pages/Admin/AdminUserProfile'));
 const AdminOrgProfile = lazy(() => import('./pages/Admin/AdminOrgProfile'));
 const AdminResourceSender = lazy(() => import('./pages/Admin/AdminResourceSender'));
 const AdminPerformanceDashboard = lazy(() => import('./pages/Admin/AdminPerformanceDashboard'));
+const AdminMobileDashboard = lazy(() => import('./pages/Admin/AdminMobileDashboard'));
 
 // Lazy load additional components
 const AIBot = lazy(() => import('./components/AIBot/AIBot'));
@@ -161,6 +162,7 @@ function App() {
                     <Route path="courses/:courseId/details" element={<AdminCourseDetail />} />
                     <Route path="documents" element={<AdminDocuments />} />
                     <Route path="settings" element={<AdminSettings />} />
+                    <Route path="mobile" element={<AdminMobileDashboard />} />
                   </Routes>
                 </AdminLayout>
               } />

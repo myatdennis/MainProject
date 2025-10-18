@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
-import { 
-  LayoutDashboard, 
-  BookOpen, 
+import {
+  LayoutDashboard,
+  BookOpen,
   Download, 
   MessageSquare, 
   Phone, 
@@ -20,6 +20,18 @@ import {
 interface LMSLayoutProps {
   children: React.ReactNode;
 }
+
+export const LMS_NAVIGATION_LINKS = [
+  { name: 'Dashboard', href: '/lms/dashboard', icon: LayoutDashboard },
+  { name: 'My Courses', href: '/lms/courses', icon: BookOpen },
+  { name: 'Progress', href: '/lms/progress', icon: TrendingUp },
+  { name: 'Certificates', href: '/lms/certificates', icon: Award },
+  { name: 'Downloads', href: '/lms/downloads', icon: Download },
+  { name: 'Submit Feedback', href: '/lms/feedback', icon: MessageSquare },
+  { name: 'Contact Coach', href: '/lms/contact', icon: Phone },
+  { name: 'Settings', href: '/lms/settings', icon: Settings },
+  { name: 'Help', href: '/lms/help', icon: HelpCircle }
+] as const;
 
 const LMSLayout: React.FC<LMSLayoutProps> = ({ children }) => {
   const { logout, isAuthenticated, user } = useAuth();
@@ -58,18 +70,6 @@ const LMSLayout: React.FC<LMSLayoutProps> = ({ children }) => {
       navigate('/lms/login');
     }
   }, [isAuthenticated.lms, navigate]);
-
-  const navigation = [
-    { name: 'Dashboard', href: '/lms/dashboard', icon: LayoutDashboard },
-    { name: 'My Courses', href: '/lms/courses', icon: BookOpen },
-    { name: 'Progress', href: '/lms/progress', icon: TrendingUp },
-    { name: 'Certificates', href: '/lms/certificates', icon: Award },
-    { name: 'Downloads', href: '/lms/downloads', icon: Download },
-    { name: 'Submit Feedback', href: '/lms/feedback', icon: MessageSquare },
-    { name: 'Contact Coach', href: '/lms/contact', icon: Phone },
-    { name: 'Settings', href: '/lms/settings', icon: Settings },
-    { name: 'Help', href: '/lms/help', icon: HelpCircle },
-  ];
 
   const isActive = (href: string) => location.pathname === href;
 
@@ -114,7 +114,7 @@ const LMSLayout: React.FC<LMSLayoutProps> = ({ children }) => {
             </div>
 
             <nav className="space-y-2">
-              {navigation.map((item) => {
+              {LMS_NAVIGATION_LINKS.map((item) => {
                 const Icon = item.icon;
                 return (
                   <Link

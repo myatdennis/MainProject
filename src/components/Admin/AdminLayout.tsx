@@ -31,15 +31,15 @@ interface AdminLayoutProps {
   children?: ReactNode;
 }
 
-const navigation = [
+export const ADMIN_NAVIGATION_LINKS = [
   { name: 'Dashboard', href: '/admin/dashboard', icon: LayoutDashboard },
   { name: 'Users', href: '/admin/users', icon: Users },
   { name: 'Organizations', href: '/admin/organizations', icon: Building2 },
   { name: 'Courses', href: '/admin/courses', icon: BookOpen },
   { name: 'Analytics', href: '/admin/analytics', icon: BarChart3 },
   { name: 'Performance', href: '/admin/performance', icon: TrendingUp },
-  { name: 'Settings', href: '/admin/settings', icon: Settings },
-];
+  { name: 'Settings', href: '/admin/settings', icon: Settings }
+] as const;
 
 const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -134,8 +134,8 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
   };
 
   const handleMobileView = () => {
-    // Open mobile admin interface in new tab or modal
-    window.open('/admin/mobile', '_blank');
+    // Navigate to mobile optimized admin view
+    navigate('/admin/mobile');
   };
 
   const handleQuickActivity = () => {
@@ -187,7 +187,7 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
               </div>
 
               <nav className="space-y-2">
-                {navigation.map((item) => {
+                {ADMIN_NAVIGATION_LINKS.map((item) => {
                   const Icon = item.icon;
                   return (
                     <Link
