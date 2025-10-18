@@ -1,9 +1,10 @@
-import { useEffect, useCallback, useRef } from 'react';
-import { supabase } from '../lib/supabase';
+import { useEffect, useCallback, useRef, useState } from 'react';
 import toast from 'react-hot-toast';
+import syncService, { SyncEventType } from '../services/syncService';
+import type { SyncScope } from '../services/realtimeSyncEngine';
 
 export interface RealtimeEvent {
-  type: 'course_assigned' | 'course_updated' | 'progress_sync' | 'enrollment_changed' | 'user_status_changed';
+  type: SyncEventType;
   payload: any;
   timestamp: number;
   userId?: string;
@@ -11,217 +12,184 @@ export interface RealtimeEvent {
 
 interface UseRealtimeSyncOptions {
   userId?: string;
-  channels?: string[];
+  organizationId?: string;
+  events?: SyncEventType[];
   onEvent?: (event: RealtimeEvent) => void;
   onError?: (error: Error) => void;
   enabled?: boolean;
 }
 
+const DEFAULT_EVENTS: SyncEventType[] = [
+  'course_assigned',
+  'course_updated',
+  'user_progress',
+  'user_enrolled',
+  'user_completed',
+  'notification_created',
+  'survey_response',
+  'analytics_updated',
+];
+
+const makeRealtimeEvent = (type: SyncEventType, payload: any, userId?: string): RealtimeEvent => ({
+  type,
+  payload,
+  timestamp: Date.now(),
+  userId,
+});
+
+const showToastForEvent = (event: RealtimeEvent) => {
+  switch (event.type) {
+    case 'course_assigned': {
+      const courseName = event.payload?.assignment?.course_name || event.payload?.course?.title || 'course';
+      toast.success(`New course assigned: ${courseName}`);
+      break;
+    }
+    case 'course_updated': {
+      const courseName = event.payload?.course?.title || event.payload?.course_name || 'Course';
+      toast(`Course updated: ${courseName}`, { icon: 'ℹ️' });
+      break;
+    }
+    case 'user_enrolled': {
+      const courseName = event.payload?.enrollment?.course_name || 'course';
+      toast.success(`Enrolled in ${courseName}`);
+      break;
+    }
+    case 'user_completed': {
+      const courseName = event.payload?.courseId || event.payload?.enrollment?.course_name || 'course';
+      toast.success(`Course completed: ${courseName}`);
+      break;
+    }
+    case 'notification_created': {
+      toast(event.payload?.notification?.title || 'New notification received', { icon: '🔔' });
+      break;
+    }
+    case 'survey_response': {
+      toast.success('New survey response received');
+      break;
+    }
+  }
+};
+
 export const useRealtimeSync = (options: UseRealtimeSyncOptions = {}) => {
   const {
     userId,
-    channels = ['course_assignments', 'user_progress', 'enrollments'],
+    organizationId,
+    events = DEFAULT_EVENTS,
     onEvent,
     onError,
-    enabled = true
+    enabled = true,
   } = options;
 
-  const subscriptionsRef = useRef<any[]>([]);
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout>();
-  const reconnectAttemptsRef = useRef(0);
+  const [isActive, setIsActive] = useState(enabled);
+  const [connectionStatus, setConnectionStatus] = useState(syncService.getSyncStatus().connection);
+  const unsubscribersRef = useRef<(() => void)[]>([]);
+  const lastEventsRef = useRef<string>('');
 
-  const handleRealtimeEvent = useCallback((payload: any, eventType: string, channel: string) => {
-    const event: RealtimeEvent = {
-      type: eventType as RealtimeEvent['type'],
-      payload,
-      timestamp: Date.now(),
-      userId: payload.user_id || userId
+  useEffect(() => {
+    setIsActive(enabled);
+  }, [enabled]);
+
+  useEffect(() => {
+    if (!isActive) {
+      unsubscribersRef.current.forEach(unsub => unsub());
+      unsubscribersRef.current = [];
+      toast.dismiss('realtime-status');
+      toast.dismiss('realtime-reconnect');
+      return;
+    }
+
+    const eventsKey = JSON.stringify([...events].sort());
+    if (eventsKey === lastEventsRef.current) {
+      // Events unchanged, no need to resubscribe
+    } else {
+      unsubscribersRef.current.forEach(unsub => unsub());
+      unsubscribersRef.current = [];
+      lastEventsRef.current = eventsKey;
+    }
+
+    syncService.configureContext({ userId, organizationId });
+
+    const handleSubscription = (eventType: SyncEventType) => {
+      const unsubscribe = syncService.subscribe(eventType, payload => {
+        const realtimeEvent = makeRealtimeEvent(eventType, payload, userId);
+        try {
+          onEvent?.(realtimeEvent);
+          showToastForEvent(realtimeEvent);
+        } catch (error) {
+          console.error('[useRealtimeSync] Event handler error:', error);
+          onError?.(error as Error);
+        }
+      });
+      unsubscribersRef.current.push(unsubscribe);
     };
 
-    console.log(`[RealtimeSync] Event received on ${channel}:`, event);
-    
-    // Call custom event handler if provided
-    onEvent?.(event);
+    events.forEach(handleSubscription);
 
-    // Handle specific event types with user notifications
-    switch (event.type) {
-      case 'course_assigned':
-        toast.success(`New course assigned: ${payload.course_name || 'Course'}`);
-        break;
-      case 'course_updated':
-        toast(`Course updated: ${payload.course_name || 'Course'}`, { icon: 'ℹ️' });
-        break;
-      case 'enrollment_changed':
-        if (payload.status === 'enrolled') {
-          toast.success(`Successfully enrolled in ${payload.course_name || 'course'}`);
-        } else if (payload.status === 'unenrolled') {
-          toast(`Unenrolled from ${payload.course_name || 'course'}`, { icon: 'ℹ️' });
-        }
-        break;
-      case 'user_status_changed':
-        if (payload.status === 'suspended') {
-          toast.error('Your account has been suspended. Please contact support.');
-        } else if (payload.status === 'activated') {
-          toast.success('Your account has been activated!');
-        }
-        break;
-    }
-  }, [onEvent, userId]);
-
-  const connect = useCallback(async () => {
-    if (!enabled || !supabase) {
-      console.log('[RealtimeSync] Connection disabled or Supabase not available');
-      return;
-    }
-
-    try {
-      console.log('[RealtimeSync] Establishing realtime connections...');
-      
-      // Clear any existing subscriptions
-      subscriptionsRef.current.forEach(sub => {
-        supabase.removeChannel(sub);
-      });
-      subscriptionsRef.current = [];
-
-      // Subscribe to each channel
-      for (const channelName of channels) {
-        const channel = supabase.channel(channelName)
-          .on('postgres_changes', 
-            { 
-              event: '*', 
-              schema: 'public',
-              table: channelName,
-              filter: userId ? `user_id=eq.${userId}` : undefined
-            }, 
-            (payload: any) => {
-              handleRealtimeEvent(payload.new || payload.old, payload.eventType, channelName);
-            }
-          )
-          .on('broadcast', 
-            { event: 'sync_update' },
-            (payload: any) => {
-              handleRealtimeEvent(payload, 'progress_sync', channelName);
-            }
-          )
-          .subscribe((status: any) => {
-            console.log(`[RealtimeSync] Channel ${channelName} status:`, status);
-            
-            if (status === 'SUBSCRIBED') {
-              reconnectAttemptsRef.current = 0;
-              toast.success('Real-time sync connected', { 
-                id: 'realtime-status',
-                duration: 2000 
-              });
-            } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
-              handleReconnection();
-            }
-          });
-
-        subscriptionsRef.current.push(channel);
+    const connectionUnsub = syncService.subscribe('connection_status', status => {
+      setConnectionStatus(status);
+      if (!status.online) {
+        toast.error('You appear to be offline. Realtime updates paused.', {
+          id: 'realtime-offline',
+          duration: 4000,
+        });
+        return;
       }
 
-    } catch (error) {
-      console.error('[RealtimeSync] Connection error:', error);
-      onError?.(error as Error);
-      handleReconnection();
-    }
-  }, [enabled, channels, userId, handleRealtimeEvent, onError]);
-
-  const handleReconnection = useCallback(() => {
-    const maxRetries = 5;
-    const baseDelay = 1000;
-    
-    if (reconnectAttemptsRef.current < maxRetries) {
-      reconnectAttemptsRef.current++;
-      const delay = baseDelay * Math.pow(2, reconnectAttemptsRef.current - 1);
-      
-      console.log(`[RealtimeSync] Reconnecting in ${delay}ms (attempt ${reconnectAttemptsRef.current}/${maxRetries})`);
-      
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
+      if (!status.connected) {
+        toast.loading('Reconnecting to realtime sync...', {
+          id: 'realtime-reconnect',
+        });
+      } else {
+        toast.dismiss('realtime-reconnect');
+        toast.success('Real-time sync connected', {
+          id: 'realtime-status',
+          duration: 2000,
+        });
       }
-      
-      reconnectTimeoutRef.current = setTimeout(() => {
-        connect();
-      }, delay);
-      
-      toast.loading(`Reconnecting... (${reconnectAttemptsRef.current}/${maxRetries})`, {
-        id: 'realtime-reconnect'
-      });
-    } else {
-      toast.error('Real-time sync disconnected. Please refresh the page.', {
-        id: 'realtime-error',
-        duration: 5000
-      });
-    }
-  }, [connect]);
-
-  const disconnect = useCallback(() => {
-    console.log('[RealtimeSync] Disconnecting...');
-    
-    if (reconnectTimeoutRef.current) {
-      clearTimeout(reconnectTimeoutRef.current);
-    }
-    
-    subscriptionsRef.current.forEach(sub => {
-      supabase?.removeChannel(sub);
     });
-    subscriptionsRef.current = [];
-    
-    toast.dismiss('realtime-status');
-    toast.dismiss('realtime-reconnect');
-    toast.dismiss('realtime-error');
+
+    unsubscribersRef.current.push(connectionUnsub);
+
+    return () => {
+      unsubscribersRef.current.forEach(unsub => unsub());
+      unsubscribersRef.current = [];
+      toast.dismiss('realtime-status');
+      toast.dismiss('realtime-reconnect');
+      toast.dismiss('realtime-offline');
+    };
+  }, [isActive, userId, organizationId, JSON.stringify(events), onEvent, onError]);
+
+  const connect = useCallback(() => {
+    setIsActive(true);
   }, []);
 
-  const broadcastUpdate = useCallback(async (eventType: string, data: any) => {
-    if (!supabase || subscriptionsRef.current.length === 0) {
-      console.warn('[RealtimeSync] Cannot broadcast - no active connections');
-      return;
-    }
+  const disconnect = useCallback(() => {
+    setIsActive(false);
+  }, []);
 
-    try {
-      const channel = subscriptionsRef.current[0];
-      await channel.send({
-        type: 'broadcast',
-        event: 'sync_update',
-        payload: {
+  const broadcastUpdate = useCallback(
+    (eventType: SyncEventType, data: any, scope?: SyncScope) => {
+      try {
+        syncService.logSyncEvent({
           type: eventType,
           data,
           timestamp: Date.now(),
-          userId
-        }
-      });
-      
-      console.log('[RealtimeSync] Broadcast sent:', { eventType, data });
-    } catch (error) {
-      console.error('[RealtimeSync] Broadcast error:', error);
-      onError?.(error as Error);
-    }
-  }, [userId, onError]);
-
-  // Auto-connect on mount and when options change
-  useEffect(() => {
-    if (enabled) {
-      connect();
-    }
-    
-    return () => {
-      disconnect();
-    };
-  }, [enabled, connect, disconnect]);
-
-  // Cleanup on unmount
-  useEffect(() => {
-    return () => {
-      disconnect();
-    };
-  }, [disconnect]);
+          scope,
+          userId,
+        });
+      } catch (error) {
+        console.error('[useRealtimeSync] Broadcast failed', error);
+        onError?.(error as Error);
+      }
+    },
+    [userId, onError]
+  );
 
   return {
     connect,
     disconnect,
     broadcastUpdate,
-    isConnected: subscriptionsRef.current.length > 0,
-    reconnectAttempts: reconnectAttemptsRef.current
+    isConnected: connectionStatus.connected,
+    connectionStatus,
   };
 };
