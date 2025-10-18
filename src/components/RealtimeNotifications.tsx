@@ -17,7 +17,7 @@ interface Notification {
   id: string;
   title: string;
   message: string;
-  type: 'course_assigned' | 'progress_sync' | 'achievement' | 'announcement' | 'reminder';
+  type: 'course_assigned' | 'user_progress' | 'achievement' | 'announcement' | 'reminder';
   priority: 'low' | 'medium' | 'high';
   timestamp: Date;
   read: boolean;
@@ -70,18 +70,74 @@ const RealtimeNotifications = ({
     }
   }, [userId]);
 
+  const markAsRead = useCallback((notificationId: string) => {
+    setNotifications(prev => {
+      const updated = prev.map(n =>
+        n.id === notificationId ? { ...n, read: true } : n
+      );
+      saveNotifications(updated);
+      return updated;
+    });
+
+    setUnreadCount(prev => Math.max(0, prev - 1));
+  }, [saveNotifications]);
+
+  const markNotificationAsRead = useCallback((notificationId?: string) => {
+    if (!notificationId) return;
+    markAsRead(notificationId);
+  }, [markAsRead]);
+
+  const markAllAsRead = useCallback(() => {
+    setNotifications(prev => {
+      const updated = prev.map(n => ({ ...n, read: true }));
+      saveNotifications(updated);
+      return updated;
+    });
+
+    setUnreadCount(0);
+  }, [saveNotifications]);
+
+  const deleteNotification = useCallback((notificationId: string) => {
+    setNotifications(prev => {
+      const notification = prev.find(n => n.id === notificationId);
+      const updated = prev.filter(n => n.id !== notificationId);
+      saveNotifications(updated);
+
+      if (notification && !notification.read) {
+        setUnreadCount(prev => Math.max(0, prev - 1));
+      }
+
+      return updated;
+    });
+  }, [saveNotifications]);
+
+  const clearAllNotifications = useCallback(() => {
+    setNotifications([]);
+    setUnreadCount(0);
+    saveNotifications([]);
+  }, [saveNotifications]);
+
   // Handle realtime events
   const handleRealtimeEvent = useCallback((event: RealtimeEvent) => {
     const notification = createNotificationFromEvent(event);
     if (notification) {
       addNotification(notification);
     }
-  }, []);
+  }, [addNotification, createNotificationFromEvent]);
 
   // Initialize realtime sync
   useRealtimeSync({
     userId,
     enabled,
+    events: [
+      'course_assigned',
+      'course_updated',
+      'user_progress',
+      'user_enrolled',
+      'user_completed',
+      'notification_created',
+      'notification_read'
+    ],
     onEvent: handleRealtimeEvent,
     onError: (error) => {
       console.error('[RealtimeNotifications] Realtime error:', error);
@@ -97,7 +153,7 @@ const RealtimeNotifications = ({
     }
   });
 
-  const createNotificationFromEvent = (event: RealtimeEvent): Notification | null => {
+  const createNotificationFromEvent = useCallback((event: RealtimeEvent): Notification | null => {
     const baseId = `${event.type}_${event.timestamp}`;
     
     switch (event.type) {
@@ -105,81 +161,98 @@ const RealtimeNotifications = ({
         return {
           id: baseId,
           title: 'New Course Assigned',
-          message: `You've been enrolled in "${event.payload.course_name || 'a new course'}".`,
+          message: `You've been enrolled in "${event.payload.assignment?.course_name || event.payload.courseTitle || 'a new course'}".`,
           type: 'course_assigned',
           priority: 'high',
           timestamp: new Date(event.timestamp),
           read: false,
-          actionUrl: `/lms/courses/${event.payload.course_id}`,
+          actionUrl: `/lms/courses/${event.payload.courseId || event.payload.assignment?.course_id}`,
           actionLabel: 'View Course'
         };
-        
+
       case 'course_updated':
         return {
           id: baseId,
           title: 'Course Updated',
-          message: `"${event.payload.course_name || 'Course'}" has been updated with new content.`,
+          message: `"${event.payload.course?.title || event.payload.course_name || 'Course'}" has been updated with new content.`,
           type: 'announcement',
           priority: 'medium',
           timestamp: new Date(event.timestamp),
           read: false,
-          actionUrl: `/lms/courses/${event.payload.course_id}`,
+          actionUrl: `/lms/courses/${event.payload.courseId || event.payload.course?.id}`,
           actionLabel: 'View Updates'
         };
-        
-      case 'progress_sync':
-        // Only show progress sync notifications for significant milestones
-        if (event.payload.completed || (event.payload.progress && event.payload.progress >= 100)) {
+
+      case 'user_progress': {
+        const progressRecord = event.payload?.progress;
+        const isComplete = progressRecord?.completed || progressRecord?.progress_percentage >= 100;
+        if (isComplete) {
           return {
             id: baseId,
             title: 'Lesson Completed!',
-            message: `Great job completing "${event.payload.lesson_name || 'lesson'}"!`,
+            message: `Great job completing "${progressRecord?.lesson_title || 'lesson'}"!`,
             type: 'achievement',
             priority: 'medium',
             timestamp: new Date(event.timestamp),
             read: false,
-            actionUrl: `/lms/module/${event.payload.module_id}/lesson/${event.payload.lesson_id}`,
+            actionUrl: progressRecord?.lesson_id
+              ? `/lms/module/${progressRecord.module_id || 'module'}/lesson/${progressRecord.lesson_id}`
+              : undefined,
             actionLabel: 'Continue Learning'
           };
         }
         break;
-        
-      case 'enrollment_changed':
+      }
+
+      case 'user_enrolled':
         return {
           id: baseId,
           title: 'Enrollment Updated',
-          message: event.payload.status === 'enrolled' 
-            ? `You're now enrolled in "${event.payload.course_name || 'course'}"`
-            : `Your enrollment in "${event.payload.course_name || 'course'}" has been updated`,
-          type: 'announcement',
-          priority: event.payload.status === 'enrolled' ? 'high' : 'medium',
-          timestamp: new Date(event.timestamp),
-          read: false,
-          actionUrl: event.payload.status === 'enrolled' ? `/lms/courses/${event.payload.course_id}` : undefined,
-          actionLabel: event.payload.status === 'enrolled' ? 'Start Learning' : undefined
-        };
-        
-      case 'user_status_changed':
-        return {
-          id: baseId,
-          title: 'Account Status Updated',
-          message: event.payload.status === 'suspended' 
-            ? 'Your account has been suspended. Please contact support.'
-            : event.payload.status === 'activated'
-            ? 'Your account has been activated. Welcome back!'
-            : `Your account status has been updated to ${event.payload.status}`,
+          message: `You're now enrolled in "${event.payload.enrollment?.course_name || event.payload.courseId || 'course'}"`,
           type: 'announcement',
           priority: 'high',
           timestamp: new Date(event.timestamp),
-          read: false
+          read: false,
+          actionUrl: `/lms/courses/${event.payload.courseId || event.payload.enrollment?.course_id}`,
+          actionLabel: 'Start Learning'
         };
-        
+
+      case 'user_completed':
+        return {
+          id: baseId,
+          title: 'Course Completed',
+          message: `Congratulations on completing "${event.payload.enrollment?.course_name || event.payload.courseId || 'your course'}"!`,
+          type: 'achievement',
+          priority: 'high',
+          timestamp: new Date(event.timestamp),
+          read: false,
+          actionUrl: event.payload.courseId ? `/lms/courses/${event.payload.courseId}` : undefined,
+          actionLabel: 'View Certificate'
+        };
+
+      case 'notification_created':
+        return {
+          id: baseId,
+          title: event.payload?.notification?.title || 'New Notification',
+          message: event.payload?.notification?.message || 'You have a new update.',
+          type: 'announcement',
+          priority: event.payload?.notification?.priority || 'medium',
+          timestamp: new Date(event.timestamp),
+          read: false,
+          actionUrl: event.payload?.notification?.action_url,
+          actionLabel: event.payload?.notification?.action_label,
+        };
+
+      case 'notification_read':
+        markNotificationAsRead(event.payload?.notification?.id);
+        return null;
+
       default:
         return null;
     }
-    
+
     return null;
-  };
+  }, [markNotificationAsRead]);
 
   const addNotification = useCallback((notification: Notification) => {
     setNotifications(prev => {
@@ -202,53 +275,12 @@ const RealtimeNotifications = ({
     });
   }, [maxNotifications, saveNotifications]);
 
-  const markAsRead = useCallback((notificationId: string) => {
-    setNotifications(prev => {
-      const updated = prev.map(n => 
-        n.id === notificationId ? { ...n, read: true } : n
-      );
-      saveNotifications(updated);
-      return updated;
-    });
-    
-    setUnreadCount(prev => Math.max(0, prev - 1));
-  }, [saveNotifications]);
-
-  const markAllAsRead = useCallback(() => {
-    setNotifications(prev => {
-      const updated = prev.map(n => ({ ...n, read: true }));
-      saveNotifications(updated);
-      return updated;
-    });
-    
-    setUnreadCount(0);
-  }, [saveNotifications]);
-
-  const deleteNotification = useCallback((notificationId: string) => {
-    setNotifications(prev => {
-      const notification = prev.find(n => n.id === notificationId);
-      const updated = prev.filter(n => n.id !== notificationId);
-      saveNotifications(updated);
-      
-      if (notification && !notification.read) {
-        setUnreadCount(prev => Math.max(0, prev - 1));
-      }
-      
-      return updated;
-    });
-  }, [saveNotifications]);
-
-  const clearAllNotifications = useCallback(() => {
-    setNotifications([]);
-    setUnreadCount(0);
-    saveNotifications([]);
-  }, [saveNotifications]);
 
   const getNotificationIcon = (type: Notification['type']) => {
     switch (type) {
       case 'course_assigned':
         return <BookOpen className="w-4 h-4 text-blue-600" />;
-      case 'progress_sync':
+      case 'user_progress':
         return <TrendingUp className="w-4 h-4 text-green-600" />;
       case 'achievement':
         return <Award className="w-4 h-4 text-yellow-600" />;

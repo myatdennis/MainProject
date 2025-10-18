@@ -64,22 +64,39 @@ export const useEnhancedCourseProgress = (courseId: string, options: UseCoursePr
 
   // Handle real-time events
   const handleRealtimeEvent = useCallback((event: RealtimeEvent) => {
-    if (event.type === 'course_updated' && event.payload.course_id === courseId) {
-      console.log('[CourseProgress] Course updated via realtime:', event.payload);
-      // Reload course data
-      loadProgressData();
-    } else if (event.type === 'progress_sync' && event.payload.course_id === courseId) {
+    if (event.type === 'course_updated') {
+      const updatedCourseId = event.payload?.course?.id || event.payload?.courseId;
+      if (updatedCourseId === courseId) {
+        console.log('[CourseProgress] Course updated via realtime:', event.payload);
+        loadProgressData();
+      }
+      return;
+    }
+
+    if (event.type === 'user_progress') {
+      const progressCourseId = event.payload?.courseId || event.payload?.progress?.course_id;
+      if (progressCourseId !== courseId) return;
+
       console.log('[CourseProgress] Progress sync event:', event.payload);
-      // Update local progress if from another device
-      if (event.userId !== userId) {
-        updateLessonProgressFromSync(event.payload);
+      if (event.userId && event.userId !== userId) {
+        updateLessonProgressFromSync(event.payload.progress);
+      }
+      return;
+    }
+
+    if (event.type === 'user_completed') {
+      const completedCourseId = event.payload?.courseId || event.payload?.progress?.course_id;
+      if (completedCourseId === courseId) {
+        console.log('[CourseProgress] Completion event received:', event.payload);
+        loadProgressData();
       }
     }
-  }, [courseId, userId]);
+  }, [courseId, userId, loadProgressData, updateLessonProgressFromSync]);
 
   // Initialize real-time sync
   const realtimeSync = useRealtimeSync({
     userId,
+    events: ['course_updated', 'user_progress', 'user_completed', 'analytics_updated'],
     enabled: enableRealtime,
     onEvent: handleRealtimeEvent,
     onError: (error) => {
@@ -264,7 +281,7 @@ export const useEnhancedCourseProgress = (courseId: string, options: UseCoursePr
           courseId,
           lessonId,
           moduleId,
-          action: 'progress_update',
+          action: 'user_progress',
           data: updatedProgress,
           priority: 'medium'
         });
@@ -272,12 +289,18 @@ export const useEnhancedCourseProgress = (courseId: string, options: UseCoursePr
 
       // Broadcast to other devices if online and realtime enabled
       if (navigator.onLine && enableRealtime && realtimeSync.isConnected) {
-        await realtimeSync.broadcastUpdate('progress_update', {
-          course_id: courseId,
-          lesson_id: lessonId,
-          progress: updatedProgress.progress_percentage,
-          completed: updatedProgress.completed,
-          timestamp: Date.now()
+        await realtimeSync.broadcastUpdate('user_progress', {
+          progress: {
+            ...updatedProgress,
+            course_id: courseId,
+            lesson_id: lessonId,
+            user_id: userId,
+            updated_at: new Date().toISOString(),
+          },
+          courseId,
+          lessonId,
+          userId,
+          timestamp: Date.now(),
         });
       }
 
@@ -372,29 +395,47 @@ export const useEnhancedCourseProgress = (courseId: string, options: UseCoursePr
 
   // Update progress from realtime sync
   const updateLessonProgressFromSync = useCallback((syncData: any) => {
-    if (syncData.lesson_id && syncData.progress !== undefined) {
-      setLessonProgress(prev => {
-        const current = prev[syncData.lesson_id] || {};
-        
-        // Only update if the sync data is newer
-        const syncTime = new Date(syncData.timestamp || 0);
-        const currentTime = new Date(current.last_accessed_at || 0);
-        
-        if (syncTime > currentTime) {
-          return {
-            ...prev,
-            [syncData.lesson_id]: {
-              ...current,
-              progress: syncData.progress,
-              completed: syncData.completed || current.completed,
-              last_accessed_at: syncData.timestamp || current.last_accessed_at
-            }
-          };
-        }
-        
-        return prev;
-      });
-    }
+    const lessonId = syncData?.lesson_id || syncData?.lessonId;
+    if (!lessonId) return;
+
+    const progressRecord = syncData?.progress ? syncData.progress : syncData;
+    const progressValue =
+      typeof progressRecord?.progress === 'number'
+        ? progressRecord.progress
+        : progressRecord?.progress_percentage ?? progressRecord?.percentage ?? 0;
+
+    const completedValue =
+      typeof progressRecord?.completed === 'boolean'
+        ? progressRecord.completed
+        : syncData?.completed ?? false;
+
+    const updatedAt =
+      progressRecord?.updated_at ||
+      progressRecord?.last_accessed_at ||
+      syncData?.timestamp ||
+      new Date().toISOString();
+
+    setLessonProgress(prev => {
+      const current = prev[lessonId] || {};
+
+      const syncTime = new Date(updatedAt);
+      const currentTime = new Date(current.last_accessed_at || current.updated_at || 0);
+
+      if (syncTime > currentTime) {
+        return {
+          ...prev,
+          [lessonId]: {
+            ...current,
+            ...progressRecord,
+            progress_percentage: progressValue,
+            completed: completedValue,
+            last_accessed_at: updatedAt,
+          }
+        };
+      }
+
+      return prev;
+    });
   }, []);
 
   // Calculate course progress

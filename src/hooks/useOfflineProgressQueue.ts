@@ -7,7 +7,7 @@ export interface QueuedProgress {
   courseId: string;
   lessonId: string;
   moduleId: string;
-  action: 'progress_update' | 'lesson_complete' | 'quiz_submit' | 'reflection_save';
+  action: 'user_progress' | 'lesson_complete' | 'quiz_submit' | 'reflection_save';
   data: any;
   timestamp: number;
   attempts: number;
@@ -265,7 +265,7 @@ export const useOfflineProgressQueue = (options: UseOfflineQueueOptions = {}) =>
 
       // In a real implementation, you would:
       switch (item.action) {
-        case 'progress_update':
+        case 'user_progress':
           // await supabase.from('user_progress').upsert(item.data);
           break;
         case 'lesson_complete':
