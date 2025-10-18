@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import { 
   Play, 
   Pause, 
@@ -22,12 +22,66 @@ import {
   MessageCircle,
   FileText
 } from 'lucide-react';
-import { Course, Lesson, LearnerProgress, UserBookmark, UserNote } from '../../types/courseTypes';
+import { Course, Lesson, LearnerProgress, UserBookmark, UserNote, Module } from '../../types/courseTypes';
 import courseManagementStore from '../../store/courseManagementStore';
+import { courseStore } from '../../store/courseStore';
+
+const convertModulesToChapters = (course: Course): Course => {
+  if (course.chapters && course.chapters.length > 0) {
+    return course;
+  }
+
+  const modules: Module[] = course.modules || [];
+  if (modules.length === 0) {
+    return course;
+  }
+
+  const chapters = modules.map((module, moduleIndex) => {
+    const chapterId = module.id || `module-${moduleIndex}`;
+    const lessons = module.lessons?.map((lesson, lessonIndex) => ({
+      ...lesson,
+      chapterId,
+      order: typeof lesson.order === 'number' ? lesson.order : lessonIndex,
+    })) || [];
+
+    const estimatedDuration = lessons.reduce((total, lesson) => {
+      if (lesson.estimatedDuration) return total + lesson.estimatedDuration;
+      const parsed = typeof lesson.duration === 'string' ? parseInt(lesson.duration, 10) : 0;
+      return total + (Number.isFinite(parsed) ? parsed : 0);
+    }, 0);
+
+    return {
+      id: chapterId,
+      courseId: course.id,
+      title: module.title,
+      description: module.description,
+      order: typeof module.order === 'number' ? module.order : moduleIndex,
+      estimatedDuration,
+      lessons,
+      isLocked: false,
+    };
+  });
+
+  return {
+    ...course,
+    chapters,
+  };
+};
 
 const CoursePlayer: React.FC = () => {
   const { courseId, lessonId } = useParams();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+
+  const isPreview = searchParams.get('preview') === 'true';
+
+  const buildLessonPath = (id: string) => {
+    if (!courseId) {
+      return '/lms/courses';
+    }
+    const basePath = `/lms/course/${courseId}/lesson/${id}`;
+    return isPreview ? `${basePath}?preview=true` : basePath;
+  };
   
   const [course, setCourse] = useState<Course | null>(null);
   const [currentLesson, setCurrentLesson] = useState<Lesson | null>(null);
@@ -58,34 +112,51 @@ const CoursePlayer: React.FC = () => {
   const [userBookmarks, setUserBookmarks] = useState<UserBookmark[]>([]);
 
   useEffect(() => {
-    if (courseId) {
-      const courseData = courseManagementStore.getCourse(courseId);
-      if (courseData) {
-        setCourse(courseData);
-        
-        // Get user progress
-        const userProgress = courseManagementStore.getLearnerProgress('user-123', courseId);
-        setProgress(userProgress);
-        
-        // Set current lesson
-        if (lessonId) {
-          const lesson = findLessonById(courseData, lessonId);
-          setCurrentLesson(lesson);
-        } else {
-          // Start with first lesson if no specific lesson
-          const firstLesson = getFirstLesson(courseData);
-          if (firstLesson) {
-            setCurrentLesson(firstLesson);
-            navigate(`/lms/course/${courseId}/lesson/${firstLesson.id}`, { replace: true });
-          }
-        }
-        
-        // Load user notes and bookmarks
-        loadUserNotesAndBookmarks();
-      }
-      setIsLoading(false);
+    if (!courseId) {
+      return;
     }
-  }, [courseId, lessonId, navigate]);
+
+    let resolvedCourse: Course | null = null;
+
+    const courseFromStore = courseManagementStore.getCourse(courseId);
+
+    if (courseFromStore) {
+      resolvedCourse = courseFromStore;
+      const userProgress = courseManagementStore.getLearnerProgress('user-123', courseId);
+      setProgress(userProgress);
+    } else if (isPreview) {
+      const builderCourse = courseStore.getCourse(courseId);
+      if (builderCourse) {
+        resolvedCourse = convertModulesToChapters(builderCourse);
+        setProgress(null);
+      }
+    }
+
+    if (resolvedCourse) {
+      setCourse(resolvedCourse);
+
+      const targetLesson = lessonId ? findLessonById(resolvedCourse, lessonId) : null;
+
+      if (targetLesson) {
+        setCurrentLesson(targetLesson);
+      } else {
+        const firstLesson = getFirstLesson(resolvedCourse);
+        if (firstLesson) {
+          setCurrentLesson(firstLesson);
+          navigate(buildLessonPath(firstLesson.id), { replace: true });
+        } else {
+          setCurrentLesson(null);
+        }
+      }
+
+      loadUserNotesAndBookmarks();
+    } else {
+      setCourse(null);
+      setCurrentLesson(null);
+    }
+
+    setIsLoading(false);
+  }, [courseId, lessonId, navigate, isPreview]);
 
   const findLessonById = (course: Course, lessonId: string): Lesson | null => {
     for (const chapter of course.chapters || []) {
@@ -169,11 +240,11 @@ const CoursePlayer: React.FC = () => {
   };
 
   const navigateLesson = (direction: 'prev' | 'next') => {
-    if (!course || !currentLesson) return;
+    if (!course || !currentLesson || !courseId) return;
 
     const allLessons = (course.chapters || []).flatMap((chapter: { lessons: Lesson[] }) => chapter.lessons);
     const currentIndex = allLessons.findIndex(lesson => lesson.id === currentLesson.id);
-    
+
     let nextIndex: number;
     if (direction === 'next') {
       nextIndex = currentIndex + 1;
@@ -183,7 +254,7 @@ const CoursePlayer: React.FC = () => {
 
     if (nextIndex >= 0 && nextIndex < allLessons.length) {
       const nextLesson = allLessons[nextIndex];
-      navigate(`/lms/course/${courseId}/lesson/${nextLesson.id}`);
+      navigate(buildLessonPath(nextLesson.id));
     }
   };
 
@@ -294,7 +365,7 @@ const CoursePlayer: React.FC = () => {
             currentLesson={currentLesson}
             progress={progress}
             collapsed={sidebarCollapsed}
-            onLessonSelect={(lesson) => navigate(`/lms/course/${courseId}/lesson/${lesson.id}`)}
+            onLessonSelect={(lesson) => navigate(buildLessonPath(lesson.id))}
           />
         </div>
       </div>
