@@ -1,14 +1,17 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { courseStore, generateId, calculateCourseDuration, countTotalLessons } from '../../store/courseStore';
 import type { Course, Module, Lesson } from '../../types/courseTypes';
 import { supabase } from '../../lib/supabase';
 import { getVideoEmbedUrl } from '../../utils/videoUtils';
-import { 
-  ArrowLeft, 
-  Save, 
-  Plus, 
-  Trash2, 
+import { useCourseAutosave } from '../../hooks/useCourseAutosave';
+import { validateCourse } from '../../utils/courseValidation';
+import { CourseService } from '../../services/courseService';
+import {
+  ArrowLeft,
+  Save,
+  Plus,
+  Trash2,
   Edit, 
   Eye,
   Upload,
@@ -28,7 +31,10 @@ import {
   ChevronUp,
   ChevronDown,
   Copy,
-  Loader
+  Loader,
+  AlertCircle,
+  AlertTriangle,
+  WifiOff
 } from 'lucide-react';
 import CourseAssignmentModal from '../../components/CourseAssignmentModal';
 import LivePreview from '../../components/LivePreview';
@@ -59,6 +65,20 @@ const AdminCourseBuilder = () => {
 
   const [searchParams] = useSearchParams();
   const [highlightLessonId, setHighlightLessonId] = useState<string | null>(null);
+
+  const handleAutosavePersist = useCallback((persistedCourse: Course) => {
+    const withDerivedFields = {
+      ...persistedCourse,
+      duration: calculateCourseDuration(persistedCourse.modules || []),
+      lessons: countTotalLessons(persistedCourse.modules || [])
+    };
+    courseStore.saveCourse(withDerivedFields);
+  }, []);
+
+  const { autosaveState, markAsSaved, markAsPending } = useCourseAutosave(course, {
+    intervalMs: 10000,
+    onAfterSave: handleAutosavePersist
+  });
 
   useEffect(() => {
     const moduleQ = searchParams.get('module');
@@ -147,56 +167,6 @@ const AdminCourseBuilder = () => {
     }
   }, [course]);
 
-  // Course validation function
-  const validateCourse = (course: Course) => {
-    const issues: string[] = [];
-    
-    // Basic course info validation
-    if (!course.title?.trim()) issues.push('Course title is required');
-    if (!course.description?.trim()) issues.push('Course description is required');
-    if (!course.modules || course.modules.length === 0) issues.push('At least one module is required');
-    
-    // Module and lesson validation
-    course.modules?.forEach((module, mIndex) => {
-      if (!module.title?.trim()) issues.push(`Module ${mIndex + 1}: Title is required`);
-      if (!module.lessons || module.lessons.length === 0) {
-        issues.push(`Module ${mIndex + 1}: At least one lesson is required`);
-      }
-      
-      module.lessons?.forEach((lesson, lIndex) => {
-        if (!lesson.title?.trim()) {
-          issues.push(`Module ${mIndex + 1}, Lesson ${lIndex + 1}: Title is required`);
-        }
-        
-        // Type-specific validation
-        switch (lesson.type) {
-          case 'video':
-            if (!lesson.content?.videoUrl?.trim()) {
-              issues.push(`Module ${mIndex + 1}, Lesson ${lIndex + 1}: Video URL is required`);
-            }
-            break;
-          case 'quiz':
-            if (!lesson.content?.questions || lesson.content.questions.length === 0) {
-              issues.push(`Module ${mIndex + 1}, Lesson ${lIndex + 1}: Quiz questions are required`);
-            }
-            break;
-          case 'document':
-            if (!lesson.content?.fileUrl?.trim()) {
-              issues.push(`Module ${mIndex + 1}, Lesson ${lIndex + 1}: Document file is required`);
-            }
-            break;
-          case 'text':
-            if (!lesson.content?.textContent?.trim()) {
-              issues.push(`Module ${mIndex + 1}, Lesson ${lIndex + 1}: Text content is required`);
-            }
-            break;
-        }
-      });
-    });
-    
-    return { isValid: issues.length === 0, issues };
-  };
-
   function createEmptyCourse(): Course {
     // Smart defaults based on common course patterns
     const currentDate = new Date().toISOString();
@@ -270,7 +240,6 @@ const AdminCourseBuilder = () => {
   }
 
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
-  const [lastSaveTime, setLastSaveTime] = useState<Date | null>(null);
   
   // Inline editing state
   const [inlineEditing, setInlineEditing] = useState<{moduleId: string, lessonId: string} | null>(null);
@@ -399,24 +368,28 @@ const AdminCourseBuilder = () => {
       
       if (!validation.isValid) {
         console.warn('⚠️ Course validation issues:', validation.issues);
+        setSaveStatus('error');
+        setTimeout(() => setSaveStatus('idle'), 5000);
+        return;
       }
-      
-      await new Promise(resolve => setTimeout(resolve, 300)); // Simulate save delay
+
+      await CourseService.syncCourseToDatabase(updatedCourse);
       courseStore.saveCourse(updatedCourse);
       setCourse(updatedCourse);
-      
+      markAsSaved(updatedCourse);
+
       setSaveStatus('saved');
-      setLastSaveTime(new Date());
-      
+
       // Reset to idle after 3 seconds
       setTimeout(() => setSaveStatus('idle'), 3000);
-      
+
       if (courseId === 'new') {
         navigate(`/admin/course-builder/${updatedCourse.id}`);
       }
     } catch (error) {
       console.error('❌ Error saving course:', error);
       setSaveStatus('error');
+      markAsPending();
       setTimeout(() => setSaveStatus('idle'), 5000);
     }
   };
@@ -438,6 +411,54 @@ const AdminCourseBuilder = () => {
   const handleAssignmentComplete = () => {
     setShowAssignmentModal(false);
     // Optionally refresh course data or show success message
+  };
+
+  const renderAutosaveIndicator = () => {
+    const timestamp = autosaveState.lastSavedAt
+      ? autosaveState.lastSavedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      : null;
+
+    let icon = <Clock className="h-4 w-4 text-gray-400" />;
+    let textClasses = 'text-gray-600';
+
+    switch (autosaveState.status) {
+      case 'saving':
+        icon = <Loader className="h-4 w-4 text-blue-500 animate-spin" />;
+        textClasses = 'text-blue-600';
+        break;
+      case 'saved':
+        icon = <CheckCircle className="h-4 w-4 text-green-500" />;
+        textClasses = 'text-green-600';
+        break;
+      case 'error':
+        icon = <AlertTriangle className="h-4 w-4 text-red-500" />;
+        textClasses = 'text-red-600';
+        break;
+      case 'offline':
+        icon = <WifiOff className="h-4 w-4 text-orange-500" />;
+        textClasses = 'text-orange-600';
+        break;
+      case 'invalid':
+        icon = <AlertCircle className="h-4 w-4 text-amber-500" />;
+        textClasses = 'text-amber-600';
+        break;
+      case 'dirty':
+        icon = <Clock className="h-4 w-4 text-gray-400" />;
+        textClasses = 'text-gray-600';
+        break;
+      default:
+        break;
+    }
+
+    return (
+      <div className="flex items-center space-x-2 text-sm" data-autosave-indicator>
+        {icon}
+        <span className={textClasses}>
+          {autosaveState.message}
+          {autosaveState.status === 'saved' && timestamp ? ` • ${timestamp}` : ''}
+        </span>
+      </div>
+    );
   };
 
   const addModule = () => {
@@ -1774,14 +1795,9 @@ const AdminCourseBuilder = () => {
                 </>
               )}
             </button>
-            
-            {/* Auto-save status indicator */}
-            {lastSaveTime && saveStatus === 'idle' && (
-              <span className="text-sm text-gray-500 flex items-center">
-                <CheckCircle className="h-3 w-3 mr-1 text-green-500" />
-                Auto-saved at {lastSaveTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-              </span>
-            )}
+
+            {renderAutosaveIndicator()}
+
             {course.status === 'draft' && (
               <button
                 onClick={() => setShowAssignmentModal(true)}
