@@ -52,10 +52,10 @@ const LMSCourses = () => {
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">My Courses</h1>
-        <p className="text-gray-600">Your personalized learning journey in inclusive leadership</p>
+      {/* Header with gradient */}
+      <div className="mb-8 bg-gradient-to-r from-blue-50 to-green-50 rounded-2xl p-8 border border-blue-100">
+        <h1 className="text-4xl font-bold text-gray-900 mb-3">My Learning Journey</h1>
+        <p className="text-lg text-gray-700">Explore courses designed to enhance your skills and knowledge</p>
       </div>
 
       {/* Search and Filter */}
@@ -89,16 +89,52 @@ const LMSCourses = () => {
         </div>
       </div>
 
+      {/* Stats Overview */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-gray-600 mb-1">Total Courses</p>
+              <p className="text-3xl font-bold text-gray-900">{filteredModules.length}</p>
+            </div>
+            <BookOpen className="h-12 w-12 text-blue-500 opacity-20" />
+          </div>
+        </div>
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-gray-600 mb-1">In Progress</p>
+              <p className="text-3xl font-bold text-gray-900">
+                {filteredModules.filter(m => m.progress > 0 && m.progress < 100).length}
+              </p>
+            </div>
+            <Clock className="h-12 w-12 text-orange-500 opacity-20" />
+          </div>
+        </div>
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <p className="text-sm text-gray-600 mb-1">Completed</p>
+              <p className="text-3xl font-bold text-gray-900">
+                {filteredModules.filter(m => m.progress >= 100).length}
+              </p>
+            </div>
+            <CheckCircle className="h-12 w-12 text-green-500 opacity-20" />
+          </div>
+        </div>
+      </div>
+
       {/* Course Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
         {filteredModules.map((module) => (
-          <div key={module.id} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow duration-200">
-            <div className="relative">
-              <img 
-                src={module.thumbnail} 
+          <div key={module.id} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-xl hover:-translate-y-1 transition-all duration-300">
+            <div className="relative group">
+              <img
+                src={module.thumbnail}
                 alt={module.title}
-                className="w-full h-48 object-cover"
+                className="w-full h-48 object-cover group-hover:scale-105 transition-transform duration-300"
               />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/50 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
               <div className="absolute top-4 left-4">
                 <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(module.progress)}`}>
                   {getStatusText(module.progress)}
@@ -110,28 +146,30 @@ const LMSCourses = () => {
                 </span>
               </div>
               {module.progress > 0 && (
-                <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-50 p-2">
-                  <div className="w-full bg-gray-300 rounded-full h-2">
-                    <div 
-                      className="bg-gradient-to-r from-orange-400 to-red-500 h-2 rounded-full"
+                <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/90 to-transparent p-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-white text-xs font-medium">{module.progress}% Complete</span>
+                  </div>
+                  <div className="w-full bg-white/30 rounded-full h-2">
+                    <div
+                      className="bg-gradient-to-r from-blue-400 to-green-400 h-2 rounded-full shadow-lg"
                       style={{ width: `${module.progress}%` }}
                     ></div>
                   </div>
-                  <div className="text-white text-xs mt-1">{module.progress}% complete</div>
                 </div>
               )}
             </div>
             
             <div className="p-6">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-xl font-bold text-gray-900">{module.title}</h3>
-                <div className="flex items-center space-x-1">
+              <div className="flex items-center justify-between mb-3">
+                <h3 className="text-lg font-bold text-gray-900 line-clamp-2 flex-1">{module.title}</h3>
+                <div className="flex items-center space-x-1 ml-2">
                   <Star className="h-4 w-4 text-yellow-400 fill-current" />
-                  <span className="text-sm text-gray-600">{module.rating}</span>
+                  <span className="text-sm font-semibold text-gray-700">{module.rating}</span>
                 </div>
               </div>
               
-              <p className="text-gray-600 mb-4">{module.description}</p>
+              <p className="text-gray-600 text-sm mb-4 line-clamp-2">{module.description}</p>
               
               <div className="flex items-center space-x-4 text-sm text-gray-600 mb-4">
                 <span className="flex items-center">
@@ -162,12 +200,11 @@ const LMSCourses = () => {
                 </ul>
               </div>
 
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between pt-4 border-t border-gray-100">
                 <Link
                   to={`/lms/module/${module.id}`}
                   onClick={() => {
                     try {
-                      // increment enrollments when starting for the first time (progress === 0)
                       const c = courseStore.getCourse(module.id);
                       if (c && (c.progress || 0) === 0) {
                         courseStore.updateCourseStats(c.id, { enrollments: (c.enrollments || 0) + 1 });
@@ -176,11 +213,11 @@ const LMSCourses = () => {
                       console.warn('Failed to update enrollment', e);
                     }
                   }}
-                  className="bg-gradient-to-r from-orange-400 to-red-500 text-white px-6 py-2 rounded-lg font-medium hover:from-orange-500 hover:to-red-600 transition-all duration-200 flex items-center space-x-2"
+                  className="bg-gradient-to-r from-blue-500 to-green-500 text-white px-5 py-2.5 rounded-lg font-semibold hover:from-blue-600 hover:to-green-600 transition-all duration-200 flex items-center space-x-2 shadow-md hover:shadow-lg"
                 >
                   <Play className="h-4 w-4" />
                   <span>
-                    {module.progress >= 100 ? 'Review' : module.progress > 0 ? 'Continue' : 'Start Course'}
+                    {module.progress >= 100 ? 'Review Course' : module.progress > 0 ? 'Continue Learning' : 'Start Learning'}
                   </span>
                 </Link>
                 
