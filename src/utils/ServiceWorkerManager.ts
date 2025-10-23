@@ -15,11 +15,13 @@ class ServiceWorkerManager {
 
     if ('serviceWorker' in navigator && 'caches' in window) {
       try {
-        const swUrl = '/sw.js';
-        
+        const baseUrl = import.meta.env.BASE_URL ?? '/';
+        const scopeUrl = new URL(baseUrl, window.location.origin);
+        const swUrl = new URL('sw.js', scopeUrl).toString();
+
         // Register the service worker
         this.registration = await navigator.serviceWorker.register(swUrl, {
-          scope: '/'
+          scope: scopeUrl.pathname
         });
 
         console.log('[SW] Service worker registered:', this.registration);

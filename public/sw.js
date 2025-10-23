@@ -2,6 +2,23 @@ const CACHE_NAME = 'huddle-admin-v1';
 const STATIC_CACHE_NAME = 'huddle-admin-static-v1';
 const API_CACHE_NAME = 'huddle-admin-api-v1';
 
+const ensureTrailingSlash = (value) => (value.endsWith('/') ? value : `${value}/`);
+const BASE_PATH = ensureTrailingSlash(new URL('./', self.location).pathname);
+const resolveWithBase = (path) => {
+  if (path === '/' || path === './') {
+    return BASE_PATH;
+  }
+
+  if (path.startsWith('http')) {
+    return path;
+  }
+
+  const trimmed = path.replace(/^\//, '');
+  return `${BASE_PATH}${trimmed}`;
+};
+
+const ROOT_ASSET = resolveWithBase('/');
+
 // Resources to cache for offline functionality
 const STATIC_ASSETS = [
   '/',
@@ -12,7 +29,9 @@ const STATIC_ASSETS = [
   '/admin/surveys',
   '/manifest.json',
   // Add critical CSS and JS files here - these will be dynamically added by Vite
-];
+].map(resolveWithBase);
+
+const ADMIN_BASE_PATH = `${BASE_PATH}admin`;
 
 // API endpoints that should be cached
 const CACHEABLE_API_PATTERNS = [
@@ -37,7 +56,7 @@ self.addEventListener('install', (event) => {
       // Cache static assets
       caches.open(STATIC_CACHE_NAME).then((cache) => {
         console.log('[SW] Caching static assets');
-        return cache.addAll(STATIC_ASSETS.filter(url => url !== '/'));
+        return cache.addAll(STATIC_ASSETS.filter(url => url !== ROOT_ASSET));
       }),
       // Skip waiting to activate immediately
       self.skipWaiting()
@@ -140,7 +159,7 @@ async function handlePageRequest(request) {
     
     // Return offline page for admin routes
     const url = new URL(request.url);
-    if (url.pathname.startsWith('/admin')) {
+    if (url.pathname.startsWith(ADMIN_BASE_PATH)) {
       return new Response(
         getOfflinePage(),
         {
