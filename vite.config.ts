@@ -1,10 +1,24 @@
 /// <reference types="vitest" />
-import { defineConfig } from 'vite';
+import { defineConfig, type PluginOption } from 'vite';
 import react from '@vitejs/plugin-react';
+import { analyzer } from 'vite-bundle-analyzer';
 
 // https://vitejs.dev/config/
+const shouldAnalyze = process.env.ANALYZE === 'true';
+const plugins: PluginOption[] = [react()];
+
+if (shouldAnalyze) {
+  plugins.push(
+    analyzer({
+      analyzerMode: 'static',
+      fileName: (outDir: string) => `${outDir}/../tmp/bundle-report.html`,
+      defaultSizes: 'gzip',
+    }) as PluginOption
+  );
+}
+
 export default defineConfig({
-  plugins: [react()],
+  plugins,
   test: {
     globals: true,
     environment: 'jsdom',
@@ -67,6 +81,7 @@ export default defineConfig({
     target: 'es2015',
     minify: 'esbuild',
     sourcemap: false,
-    chunkSizeWarningLimit: 1000,
+    chunkSizeWarningLimit: 600,
+    reportCompressedSize: true,
   },
 });

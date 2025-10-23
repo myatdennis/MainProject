@@ -999,10 +999,12 @@ export const courseStore = {
           const defaultCourses = getDefaultCourses();
           courses = defaultCourses;
           
-          for (const course of Object.values(defaultCourses)) {
-            await CourseService.syncCourseToDatabase(course);
-            console.log(`Synced course: ${course.title}`);
-          }
+          await Promise.all(
+            Object.values(defaultCourses).map(async course => {
+              await CourseService.syncCourseToDatabase(course);
+              console.log(`Synced course: ${course.title}`);
+            })
+          );
           
           _saveCoursesToLocalStorage(courses);
           console.log('Default courses synced to database successfully');

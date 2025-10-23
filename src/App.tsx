@@ -90,10 +90,16 @@ function App() {
         <AuthProvider>
           <ThemeProvider>
             <Router>
+              <a
+                href="#main-content"
+                className="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-[1000] focus:bg-white focus:text-gray-900 focus:px-4 focus:py-2 focus:rounded-lg focus:shadow-lg"
+              >
+                Skip to main content
+              </a>
               <div className="min-h-screen flex flex-col bg-background text-foreground transition-colors duration-brand">
               <Header />
             <DemoModeBanner />
-            <main className="flex-grow">
+            <main id="main-content" className="flex-grow" tabIndex={-1} role="main">
               <Suspense fallback={<LoadingSpinner size="lg" className="py-20" text="Loading..." />}>
                 <Routes>
               <Route path="/" element={<HomePage />} />

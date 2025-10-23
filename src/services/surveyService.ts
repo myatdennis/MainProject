@@ -25,9 +25,10 @@ export const getAssignments = async (surveyId: string): Promise<SurveyAssignment
 
 export const saveAssignments = async (surveyId: string, organizationIds: string[]) => {
   try {
+    const sanitizedIds = Array.from(new Set((organizationIds || []).filter(Boolean)));
     const payload = {
       survey_id: surveyId,
-      organization_ids: organizationIds,
+      organization_ids: sanitizedIds,
       updated_at: new Date().toISOString()
     };
     const { data, error } = await supabase.from('survey_assignments').upsert(payload).select();
@@ -43,23 +44,38 @@ export const saveAssignments = async (surveyId: string, organizationIds: string[
 };
 
 // Mock analytics; later replace with real aggregation queries
-export const getAnalytics = async (surveyId: string) => {
-  // If supabase is configured, you would query response tables and aggregate.
-  // For now, return a mocked analytics object.
+export const getAnalytics = async (surveyId: string, organizationId?: string) => {
+  const supabaseConfigured = Boolean(
+    import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY
+  );
+
+  if (supabaseConfigured) {
+    try {
+      const { data, error } = await supabase.rpc('fetch_survey_summary', {
+        survey_identifier: surveyId,
+        target_org: organizationId ?? null,
+      });
+
+      if (!error && data) {
+        return data;
+      }
+
+      if (error) {
+        console.warn('fetch_survey_summary rpc error, falling back to local analytics', error);
+      }
+    } catch (rpcError) {
+      console.warn('fetch_survey_summary rpc exception, using fallback analytics', rpcError);
+    }
+  }
+
   return {
     surveyId,
     title: 'Mock Survey Analytics',
-    totalResponses: 180,
-    completionRate: 78,
-    avgCompletionTime: 13,
-    questionSummaries: [
-      { questionId: 'belonging-1', avgScore: 3.8 },
-      { questionId: 'safety-1', avgScore: 3.6 }
-    ],
-    insights: [
-      'Belonging scores above average in Engineering',
-      'New hires report lower psychological safety'
-    ]
+    totalResponses: 0,
+    completionRate: 0,
+    avgCompletionTime: 0,
+    questionSummaries: [],
+    insights: ['Real-time analytics will appear once responses are collected.'],
   };
 };
 
