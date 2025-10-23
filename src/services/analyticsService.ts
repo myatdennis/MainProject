@@ -5,6 +5,8 @@
  * for deep insights into course performance and learner engagement.
  */
 
+import { supabase } from '../lib/supabase';
+
 export interface AnalyticsEvent {
   id: string;
   type: EventType;
@@ -111,11 +113,24 @@ class AnalyticsService {
   private events: Map<string, AnalyticsEvent> = new Map();
   private learnerJourneys: Map<string, LearnerJourney> = new Map();
   private sessionId: string;
+  private supabaseConfigured = Boolean(
+    import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY
+  );
+  private remoteQueue: AnalyticsEvent[] = [];
+  private remoteFlushTimer: number | null = null;
+  private readonly REMOTE_FLUSH_INTERVAL = 4000;
+  private readonly REMOTE_BATCH_SIZE = 50;
+  private readonly handleReconnect = () => {
+    if (this.supabaseConfigured) {
+      void this.flushRemoteQueue();
+    }
+  };
 
   constructor() {
     this.sessionId = this.generateSessionId();
     this.loadStoredAnalytics();
     this.setupEventCollection();
+    window.addEventListener('online', this.handleReconnect);
   }
 
   /**
@@ -145,6 +160,7 @@ class AnalyticsService {
     this.events.set(event.id, event);
     this.updateLearnerJourney(event);
     this.persistAnalytics();
+    this.enqueueRemoteEvent(event);
 
     // Real-time processing for critical events
     this.processRealTimeEvent(event);
@@ -661,6 +677,67 @@ class AnalyticsService {
     // Persist journeys
     const journeyArray = Array.from(this.learnerJourneys.values());
     localStorage.setItem('learner_journeys', JSON.stringify(journeyArray));
+  }
+
+  private enqueueRemoteEvent(event: AnalyticsEvent): void {
+    if (!this.supabaseConfigured) return;
+    this.remoteQueue.push(event);
+
+    if (this.remoteQueue.length >= this.REMOTE_BATCH_SIZE) {
+      void this.flushRemoteQueue();
+      return;
+    }
+
+    this.scheduleRemoteFlush();
+  }
+
+  private scheduleRemoteFlush(): void {
+    if (!this.supabaseConfigured || this.remoteFlushTimer || !navigator.onLine) {
+      return;
+    }
+
+    this.remoteFlushTimer = window.setTimeout(() => {
+      this.remoteFlushTimer = null;
+      void this.flushRemoteQueue();
+    }, this.REMOTE_FLUSH_INTERVAL);
+  }
+
+  private async flushRemoteQueue(): Promise<void> {
+    if (!this.supabaseConfigured || this.remoteQueue.length === 0) {
+      return;
+    }
+
+    if (this.remoteFlushTimer) {
+      window.clearTimeout(this.remoteFlushTimer);
+      this.remoteFlushTimer = null;
+    }
+
+    const batch = this.remoteQueue.splice(0, this.REMOTE_BATCH_SIZE);
+    if (batch.length === 0) return;
+
+    const payload = batch.map(event => ({
+      event_id: event.id,
+      organization_id: (event.data?.organizationId ?? null) as string | null,
+      user_id: event.userId || null,
+      course_id: event.courseId ?? null,
+      lesson_id: event.lessonId ?? null,
+      module_id: event.moduleId ?? null,
+      event_type: event.type,
+      payload: event.data ?? {},
+      user_agent: event.userAgent,
+      session_id: event.sessionId,
+      occurred_at: event.timestamp,
+    }));
+
+    const { error } = await supabase
+      .from('analytics_events')
+      .upsert(payload, { onConflict: 'event_id' });
+
+    if (error) {
+      console.warn('Failed to persist analytics remotely, will retry', error);
+      this.remoteQueue.unshift(...batch);
+      this.scheduleRemoteFlush();
+    }
   }
 
   // Public API Methods
