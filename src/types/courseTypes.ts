@@ -1,4 +1,5 @@
 // Core types for the Course Management System
+import type { CourseAssignmentSummary } from './assignment';
 
 export interface Course {
   // Core identification
@@ -70,6 +71,7 @@ export interface Course {
   lessons?: number;
   progress?: number;
   isPublished?: boolean; // for backwards compatibility
+  assignmentSummary?: CourseAssignmentSummary;
 }
 
 export interface Module {

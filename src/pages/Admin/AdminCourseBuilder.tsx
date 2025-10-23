@@ -37,6 +37,7 @@ import {
   WifiOff
 } from 'lucide-react';
 import CourseAssignmentModal from '../../components/CourseAssignmentModal';
+import type { CourseAssignmentRequest } from '../../types/assignment';
 import LivePreview from '../../components/LivePreview';
 import AIContentAssistant from '../../components/AIContentAssistant';
 // import DragDropItem from '../../components/DragDropItem'; // TODO: Implement drag drop functionality
@@ -408,7 +409,7 @@ const AdminCourseBuilder = () => {
     setCourse(publishedCourse);
   };
 
-  const handleAssignmentComplete = () => {
+  const handleAssignmentComplete = (_assignment?: Omit<CourseAssignmentRequest, 'assignedBy'>) => {
     setShowAssignmentModal(false);
     // Optionally refresh course data or show success message
   };
@@ -2407,6 +2408,9 @@ const AdminCourseBuilder = () => {
         onAssignComplete={handleAssignmentComplete}
         selectedUsers={[]}
         course={{ id: course.id, title: course.title, duration: course.duration }}
+        courseOptions={[{ id: course.id, title: course.title, duration: course.duration }]}
+        availableOrganizations={[]}
+        availableUsers={[]}
       />
 
       {/* Live Preview Modal */}
