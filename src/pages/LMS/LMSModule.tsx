@@ -25,7 +25,9 @@ import {
   RefreshCw,
   Lightbulb,
   Trophy,
-  PlayCircle
+  PlayCircle,
+  List,
+  X
 } from 'lucide-react';
 import EnhancedVideoPlayer from '../../components/EnhancedVideoPlayer';
 import FloatingProgressBar from '../../components/FloatingProgressBar';
@@ -44,7 +46,7 @@ const LMSModule = () => {
   const [isAutoSaving, setIsAutoSaving] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
   const autoSaveTimeoutRef = useRef<NodeJS.Timeout>();
-  const debouncedAutoSave = useCallback(async (data: any) => {
+  const debouncedAutoSave = useCallback(async (_payload: any) => {
     if (autoSaveTimeoutRef.current) {
       clearTimeout(autoSaveTimeoutRef.current);
     }
@@ -88,12 +90,16 @@ const LMSModule = () => {
   const [focusTime, setFocusTime] = useState(0);
   const [isPageFocused, setIsPageFocused] = useState(true);
   // smartRecommendations and engagementMetrics can be re-added if actually used
-  
+
   // Sidebar state (for future CourseProgressSidebar integration)
-  
+
   // Refs for optimization
   const videoRef = useRef<HTMLVideoElement>(null);
   const focusTimerRef = useRef<NodeJS.Timeout>();
+  const lessonContentRef = useRef<HTMLDivElement>(null);
+  const lastVideoSyncRef = useRef(0);
+  const lastVideoDetailRef = useRef({ currentTime: 0, duration: 0, percent: 0 });
+  const [isLessonMenuOpen, setIsLessonMenuOpen] = useState(false);
 
   // Course refresh state
   const [lastRefreshTime, setLastRefreshTime] = useState(Date.now());
@@ -564,7 +570,8 @@ const LMSModule = () => {
   }, [course, lessonProgress, engagementMetrics.timeSpent]);
 
   const calculateOverallProgress = () => {
-    const totalLessons = (course.modules || []).reduce((acc, module) => acc + module.lessons.length, 0);
+    const modules = course?.modules ?? [];
+    const totalLessons = modules.reduce((acc, module) => acc + module.lessons.length, 0);
     const completedLessons = Object.values(lessonProgress).filter(progress => progress.completed).length;
     return totalLessons > 0 ? Math.round((completedLessons / totalLessons) * 100) : 0;
   };
@@ -576,6 +583,77 @@ const LMSModule = () => {
       setShowCompletionModal(true);
     }
   }, [overallProgress]);
+
+  const currentLessonProgress = currentLessonData ? lessonProgress[currentLessonData.id] : undefined;
+  const isLessonCompleted = currentLessonProgress?.completed || false;
+  const hasPreviousLesson =
+    !!currentModule && !(currentModuleIndex === 0 && currentLessonIndex === 0);
+  const hasNextLesson =
+    !!currentModule &&
+    (
+      currentLessonIndex < (currentModule?.lessons.length ?? 0) - 1 ||
+      currentModuleIndex < ((course?.modules || []).length - 1)
+    );
+  const mobileNextButtonClass = [
+    'flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold shadow-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-300',
+    hasNextLesson ? 'bg-orange-500 text-white hover:bg-orange-600' : 'bg-gray-200 text-gray-500 cursor-not-allowed'
+  ].join(' ');
+
+  const openLessonMenu = useCallback(() => {
+    setIsLessonMenuOpen(true);
+  }, []);
+
+  const closeLessonMenu = useCallback(() => {
+    setIsLessonMenuOpen(false);
+    window.setTimeout(() => {
+      lessonContentRef.current?.focus();
+    }, 0);
+  }, []);
+
+  useEffect(() => {
+    if (!currentLessonData) {
+      return;
+    }
+
+    lastVideoSyncRef.current = 0;
+    lastVideoDetailRef.current = {
+      currentTime: currentLessonProgress?.time_spent || 0,
+      duration: lastVideoDetailRef.current.duration,
+      percent: currentLessonProgress?.progress_percentage || 0
+    };
+
+    lessonContentRef.current?.focus();
+  }, [currentLessonData, currentLessonProgress?.time_spent, currentLessonProgress?.progress_percentage]);
+
+  const handleVideoProgressUpdate = useCallback(
+    (detail: { currentTime: number; duration: number; percent: number }) => {
+      if (!currentLessonData || !currentModule || !detail.duration) {
+        return;
+      }
+
+      const previousDetail = lastVideoDetailRef.current;
+      lastVideoDetailRef.current = detail;
+      setVideoProgress(detail.percent);
+
+      const now = Date.now();
+      const timeAdvanced = Math.abs(detail.currentTime - previousDetail.currentTime);
+      if (detail.percent < 99.5 && now - lastVideoSyncRef.current < 4000 && timeAdvanced < 2) {
+        return;
+      }
+
+      const nextPercent = Math.min(100, Math.max(currentLessonProgress?.progress_percentage || 0, detail.percent));
+      const nextTime = Math.max(currentLessonProgress?.time_spent || 0, Math.round(detail.currentTime));
+
+      lastVideoSyncRef.current = now;
+
+      updateLessonProgress(currentLessonData.id, currentModule.id, {
+        progress_percentage: nextPercent,
+        time_spent: nextTime,
+        last_accessed_at: new Date().toISOString()
+      });
+    },
+    [currentLessonData, currentLessonProgress?.progress_percentage, currentLessonProgress?.time_spent, currentModule, updateLessonProgress]
+  );
 
   if (!course) {
     return (
@@ -617,9 +695,6 @@ const LMSModule = () => {
   if (!currentModule || !currentLessonData) {
     return <div className="p-6">Loading...</div>;
   }
-
-  const currentLessonProgress = lessonProgress[currentLessonData.id];
-  const isLessonCompleted = currentLessonProgress?.completed || false;
 
 
 
@@ -877,21 +952,7 @@ const LMSModule = () => {
             title={currentLessonData.title}
             onProgress={(progress) => {
               setVideoProgress(progress);
-              
-              if (progress > (currentLessonProgress?.progress_percentage || 0)) {
-                const progressData = {
-                  progress_percentage: progress,
-                  time_spent: Math.round((progress / 100) * (videoRef.current?.duration || 0))
-                };
-                
-                // Use debounced auto-save
-                debouncedAutoSave({
-                  lessonId: currentLessonData.id,
-                  moduleId: currentModule.id,
-                  progress: progressData
-                });
-              }
-              
+
               // Track engagement milestones
               if (progress === 25 || progress === 50 || progress === 75) {
                 trackEngagement('progress_milestone', { milestone: progress });
@@ -901,9 +962,15 @@ const LMSModule = () => {
               trackEngagement('video_complete');
               updateLessonProgress(currentLessonData.id, currentModule.id, {
                 completed: true,
-                progress_percentage: 100
+                progress_percentage: 100,
+                time_spent: Math.max(
+                  currentLessonProgress?.time_spent || 0,
+                  Math.round(
+                    lastVideoDetailRef.current.duration || lastVideoDetailRef.current.currentTime || 0
+                  )
+                )
               });
-              
+
               // Generate completion celebration
               const event = new CustomEvent('show-notification', {
                 detail: {
@@ -923,6 +990,8 @@ const LMSModule = () => {
               end: c.endTime || 0,
               text: c.text || ''
             })) || []}
+            resumeKey={`${course?.id || moduleId || 'module'}-${currentLessonData.id}`}
+            onTimeUpdate={handleVideoProgressUpdate}
             className="aspect-video"
           />
           
@@ -1404,17 +1473,25 @@ const LMSModule = () => {
   };
 
   return (
-    <div className="p-6 max-w-7xl mx-auto" style={{ minHeight: '100vh' }}>
+    <>
+      <a
+        href="#lesson-content"
+        className="sr-only focus:not-sr-only focus:absolute focus:top-4 focus:left-4 focus:z-50 focus:rounded-md focus:bg-white focus:px-4 focus:py-2 focus:text-sm focus:shadow-lg"
+      >
+        Skip to lesson content
+      </a>
+      <div className="relative">
+        <div className="p-6 max-w-7xl mx-auto" style={{ minHeight: '100vh' }}>
       {/* Floating Progress Bar */}
-      <FloatingProgressBar 
+      <FloatingProgressBar
         currentProgress={overallProgress}
         totalLessons={(course.modules || []).reduce((acc, module) => acc + module.lessons.length, 0)}
         completedLessons={Object.values(lessonProgress).filter(progress => progress.completed).length}
         currentLessonTitle={currentLessonData.title}
         onPrevious={handlePrevLesson}
         onNext={handleNextLesson}
-        hasPrevious={!(currentModuleIndex === 0 && currentLessonIndex === 0)}
-        hasNext={true}
+        hasPrevious={hasPreviousLesson}
+        hasNext={hasNextLesson}
         estimatedTimeRemaining={predictCompletionTime ? `${Math.round(predictCompletionTime.estimatedTimeRemaining / (1000 * 60 * 60 * 24))} days` : undefined}
         visible={true}
       />
@@ -1623,14 +1700,17 @@ const LMSModule = () => {
                 <div className="flex items-center space-x-2">
                   <button
                     onClick={handlePrevLesson}
-                    disabled={currentModuleIndex === 0 && currentLessonIndex === 0}
+                    disabled={!hasPreviousLesson}
                     className="p-2 rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    aria-label="Go to previous lesson"
                   >
                     <ArrowLeft className="h-5 w-5" />
                   </button>
                   <button
                     onClick={handleNextLesson}
-                    className="p-2 rounded-lg border border-gray-300 hover:bg-gray-50"
+                    disabled={!hasNextLesson}
+                    className="p-2 rounded-lg border border-gray-300 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                    aria-label="Go to next lesson"
                   >
                     <ArrowRight className="h-5 w-5" />
                   </button>
@@ -1647,7 +1727,13 @@ const LMSModule = () => {
               </div>
             </div>
             
-            <div className="p-6">
+            <div
+              id="lesson-content"
+              ref={lessonContentRef}
+              tabIndex={-1}
+              className="p-6 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 focus-visible:ring-offset-2 focus-visible:ring-offset-white"
+              aria-label={`${currentLessonData.title} lesson content`}
+            >
               {renderCurrentLessonContent()}
             </div>
           </div>
@@ -2050,6 +2136,112 @@ const LMSModule = () => {
         </div>
       </div>
     </div>
+    {isLessonMenuOpen && (
+        <div
+          className="fixed inset-0 z-40 flex items-end justify-center bg-black/40 backdrop-blur-sm md:hidden"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="mobile-lesson-list-title"
+        >
+          <div className="absolute inset-0" onClick={closeLessonMenu} aria-hidden="true"></div>
+          <div className="relative z-50 w-full max-h-[70vh] rounded-t-2xl bg-white shadow-2xl">
+            <div className="flex items-center justify-between border-b border-gray-200 px-4 py-3">
+              <h2 id="mobile-lesson-list-title" className="text-sm font-semibold text-gray-900">
+                Lesson outline
+              </h2>
+              <button
+                type="button"
+                onClick={closeLessonMenu}
+                className="rounded-full p-2 text-gray-500 transition hover:bg-gray-100 hover:text-gray-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-400"
+                aria-label="Close lesson outline"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="max-h-[60vh] overflow-y-auto px-4 py-2">
+              {(course.modules || []).map((module, moduleIdx) => (
+                <div key={module.id} className="py-2">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+                    Module {moduleIdx + 1}: {module.title}
+                  </p>
+                  <ul className="mt-2 space-y-1">
+                    {module.lessons.map((lesson, lessonIdx) => {
+                      const isActive = moduleIdx === currentModuleIndex && lessonIdx === currentLessonIndex;
+                      const progressRecord = lessonProgress[lesson.id];
+                      return (
+                        <li key={lesson.id}>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCurrentModuleIndex(moduleIdx);
+                              setCurrentLessonIndex(lessonIdx);
+                              const routeModuleId = moduleId || module.id;
+                              navigate(`/lms/module/${routeModuleId}/lesson/${lesson.id}`);
+                              closeLessonMenu();
+                            }}
+                            className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 ${
+                              isActive
+                                ? 'bg-orange-50 text-orange-900 ring-1 ring-orange-200'
+                                : 'bg-white text-gray-700 hover:bg-gray-50'
+                            }`}
+                            aria-current={isActive ? 'true' : 'false'}
+                          >
+                            <span className="flex-1 truncate">{lesson.title}</span>
+                            {progressRecord?.completed && (
+                              <CheckCircle className="ml-2 h-4 w-4 text-green-500" aria-hidden="true" />
+                            )}
+                          </button>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+      <nav
+        className="fixed inset-x-0 bottom-0 z-30 border-t border-gray-200 bg-white/95 shadow-lg backdrop-blur md:hidden"
+        aria-label="Lesson navigation"
+      >
+        <div className="mx-auto flex max-w-3xl items-center justify-between gap-3 px-4 py-3">
+          <button
+            type="button"
+            onClick={openLessonMenu}
+            aria-expanded={isLessonMenuOpen}
+            aria-controls="mobile-lesson-list-title"
+            className="flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-400"
+          >
+            <List className="h-4 w-4" />
+            Lessons
+          </button>
+          <div className="flex flex-1 items-center justify-end gap-2">
+            <button
+              type="button"
+              onClick={handlePrevLesson}
+              disabled={currentModuleIndex === 0 && currentLessonIndex === 0}
+              className="flex items-center gap-2 rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-medium text-gray-700 shadow-sm transition hover:bg-gray-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 disabled:cursor-not-allowed disabled:opacity-50"
+              aria-label="Go to previous lesson"
+            >
+              <ArrowLeft className="h-4 w-4" />
+              Prev
+            </button>
+            <button
+              type="button"
+              onClick={handleNextLesson}
+              disabled={!hasNextLesson}
+              className={mobileNextButtonClass}
+              aria-label="Go to next lesson"
+            >
+              Next
+              <ArrowRight className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      </nav>
+      </div>
+    </>
   );
 };
 

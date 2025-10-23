@@ -22,6 +22,7 @@ interface UseAutoSaveOptions {
   maxRetries?: number;
   onSaveSuccess?: (data: ProgressData) => void;
   onSaveError?: (error: Error, data: ProgressData) => void;
+  debounceMs?: number;
 }
 
 interface QueuedSave {
@@ -38,7 +39,8 @@ export const useAutoSaveProgress = (options: UseAutoSaveOptions = {}) => {
     saveInterval = 30000, // 30 seconds
     maxRetries = 3,
     onSaveSuccess,
-    onSaveError
+    onSaveError,
+    debounceMs = 1500,
   } = options;
 
   const [isSaving, setIsSaving] = useState(false);
@@ -49,6 +51,7 @@ export const useAutoSaveProgress = (options: UseAutoSaveOptions = {}) => {
   const saveQueueRef = useRef<QueuedSave[]>([]);
   const saveIntervalRef = useRef<NodeJS.Timeout>();
   const pendingDataRef = useRef<Map<string, ProgressData>>(new Map());
+  const debounceTimersRef = useRef<Map<string, number>>(new Map());
 
   // Track online/offline status
   useEffect(() => {
@@ -197,41 +200,80 @@ export const useAutoSaveProgress = (options: UseAutoSaveOptions = {}) => {
     setLastSaved(new Date());
   }, [isOnline, isSaving, saveToDatabase, maxRetries, onSaveSuccess, onSaveError, clearStoredProgress]);
 
-  const scheduleProgressSave = useCallback((data: ProgressData) => {
-    if (!enabled) return;
-
+  const queueSave = useCallback((data: ProgressData) => {
     const saveId = generateSaveId(data);
-    
-    // Update pending data map
-    pendingDataRef.current.set(saveId, data);
-    setPendingChanges(pendingDataRef.current.size);
 
-    // Always save to local storage immediately
-    saveToStorage(data);
+    saveQueueRef.current = saveQueueRef.current.filter(item => item.id !== saveId);
+    saveQueueRef.current.push({
+      id: saveId,
+      data,
+      timestamp: Date.now(),
+      attempts: 0
+    });
 
-    // Queue for database save if online, or save locally if offline
-    if (isOnline) {
-      // Remove any existing queued save for this item
-      saveQueueRef.current = saveQueueRef.current.filter(item => item.id !== saveId);
-      
-      // Add new save to queue
-      saveQueueRef.current.push({
-        id: saveId,
-        data,
-        timestamp: Date.now(),
-        attempts: 0
-      });
-    } else {
+    if (!isOnline) {
       toast('Progress saved offline. Will sync when connection restored.', {
         icon: '💾',
         id: 'offline-save'
       });
     }
-  }, [enabled, generateSaveId, saveToStorage, isOnline]);
+  }, [generateSaveId, isOnline]);
+
+  const flushPending = useCallback((ids?: string[]) => {
+    const targets = ids ?? Array.from(pendingDataRef.current.keys());
+
+    targets.forEach(id => {
+      const timer = debounceTimersRef.current.get(id);
+      if (timer) {
+        clearTimeout(timer);
+        debounceTimersRef.current.delete(id);
+      }
+
+      const data = pendingDataRef.current.get(id);
+      if (data) {
+        queueSave(data);
+      }
+    });
+  }, [queueSave]);
+
+  const scheduleProgressSave = useCallback((data: ProgressData) => {
+    if (!enabled) return;
+
+    const saveId = generateSaveId(data);
+
+    pendingDataRef.current.set(saveId, data);
+    setPendingChanges(pendingDataRef.current.size);
+
+    saveToStorage(data);
+
+    if (!isOnline) {
+      queueSave(data);
+      return;
+    }
+
+    const enqueue = () => {
+      debounceTimersRef.current.delete(saveId);
+      queueSave(data);
+    };
+
+    if (debounceMs <= 0) {
+      enqueue();
+      return;
+    }
+
+    const existingTimer = debounceTimersRef.current.get(saveId);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+    }
+
+    const timer = window.setTimeout(enqueue, debounceMs);
+    debounceTimersRef.current.set(saveId, timer);
+  }, [enabled, generateSaveId, saveToStorage, isOnline, queueSave, debounceMs]);
 
   const forceSave = useCallback(async (data?: ProgressData): Promise<boolean> => {
     if (data) {
       scheduleProgressSave(data);
+      flushPending([generateSaveId(data)]);
     }
 
     if (!isOnline) {
@@ -239,9 +281,13 @@ export const useAutoSaveProgress = (options: UseAutoSaveOptions = {}) => {
       return false;
     }
 
+    if (!data) {
+      flushPending();
+    }
+
     await processQueue();
     return saveQueueRef.current.length === 0;
-  }, [scheduleProgressSave, isOnline, processQueue]);
+  }, [scheduleProgressSave, flushPending, generateSaveId, isOnline, processQueue]);
 
   // Auto-save interval
   useEffect(() => {
@@ -273,6 +319,8 @@ export const useAutoSaveProgress = (options: UseAutoSaveOptions = {}) => {
       if (saveIntervalRef.current) {
         clearInterval(saveIntervalRef.current);
       }
+      debounceTimersRef.current.forEach(timer => clearTimeout(timer));
+      debounceTimersRef.current.clear();
     };
   }, []);
 

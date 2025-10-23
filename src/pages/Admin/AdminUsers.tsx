@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { 
   Search, 
@@ -21,6 +21,9 @@ import CourseAssignmentModal from '../../components/CourseAssignmentModal';
 import LoadingButton from '../../components/LoadingButton';
 import { useToast } from '../../context/ToastContext';
 import { User } from '../../types/user';
+import { courseStore } from '../../store/courseStore';
+import orgService, { type Org } from '../../services/orgService';
+import type { CourseAssignmentRequest } from '../../types/assignment';
 
 const AdminUsers = () => {
   const { showToast } = useToast();
@@ -35,6 +38,7 @@ const AdminUsers = () => {
   const [userToDelete, setUserToDelete] = useState<string | null>(null);
   const [userToEdit, setUserToEdit] = useState<User | null>(null);
   const [loading, setLoading] = useState(false);
+  const [organizations, setOrganizations] = useState<Org[]>([]);
 
   const users: User[] = [
     {
@@ -151,9 +155,21 @@ const AdminUsers = () => {
 
   const [usersList, setUsersList] = useState<User[]>(users); // Make users editable
 
-  const organizations = [
+  useEffect(() => {
+    orgService
+      .listOrgs()
+      .then(setOrganizations)
+      .catch(error => console.warn('Failed to load organizations for assignments', error));
+  }, []);
+
+  const courseOptions = useMemo(
+    () => courseStore.getAllCourses().map(course => ({ id: course.id, title: course.title, duration: course.duration })),
+    [],
+  );
+
+  const organizationFilters = [
     'Pacific Coast University',
-    'Mountain View High School', 
+    'Mountain View High School',
     'Community Impact Network',
     'Regional Fire Department',
     'TechForward Solutions'
@@ -242,7 +258,7 @@ const AdminUsers = () => {
     setShowCourseAssignModal(true);
   };
 
-  const handleCourseAssignComplete = () => {
+  const handleCourseAssignComplete = (_assignment?: Omit<CourseAssignmentRequest, 'assignedBy'>) => {
     setSelectedUsers([]);
     setShowCourseAssignModal(false);
   };
@@ -388,7 +404,7 @@ const AdminUsers = () => {
                 className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
               >
                 <option value="all">All Organizations</option>
-                {organizations.map(org => (
+                {organizationFilters.map(org => (
                   <option key={org} value={org}>{org}</option>
                 ))}
               </select>
@@ -625,6 +641,9 @@ const AdminUsers = () => {
         isOpen={showCourseAssignModal}
         onClose={() => setShowCourseAssignModal(false)}
         selectedUsers={selectedUsers}
+        courseOptions={courseOptions}
+        availableOrganizations={organizations.map(org => ({ id: org.id, name: org.name, contactEmail: org.contactEmail }))}
+        availableUsers={usersList.map(user => ({ id: user.id, name: user.name, email: user.email, organization: user.organization }))}
         onAssignComplete={handleCourseAssignComplete}
       />
 

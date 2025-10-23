@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { courseStore } from '../../store/courseStore';
 import { Course } from '../../types/courseTypes';
@@ -28,11 +28,18 @@ import CourseEditModal from '../../components/CourseEditModal';
 import CourseAssignmentModal from '../../components/CourseAssignmentModal';
 import { useToast } from '../../context/ToastContext';
 import { useSyncService } from '../../services/syncService';
+import courseAssignmentService from '../../services/courseAssignmentService';
+import orgService, { type Org } from '../../services/orgService';
+import profileService from '../../services/ProfileService';
+import type { UserProfile } from '../../models/Profile';
+import type { CourseAssignmentRequest, CourseAssignmentSummary } from '../../types/assignment';
+import { useRetryableAction } from '../../hooks/useRetryableAction';
 
 
 const AdminCourses = () => {
   const { showToast } = useToast();
   const syncService = useSyncService();
+  const { execute: runRetryableAction } = useRetryableAction();
   
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
@@ -46,12 +53,59 @@ const AdminCourses = () => {
   const [editMode, setEditMode] = useState<'create' | 'edit'>('edit');
   const [showAssignmentModal, setShowAssignmentModal] = useState(false);
   const [courseToAssign, setCourseToAssign] = useState<Course | null>(null);
+  const [organizations, setOrganizations] = useState<Org[]>([]);
+  const [userProfiles, setUserProfiles] = useState<UserProfile[]>([]);
+  const [assignmentSummaries, setAssignmentSummaries] = useState<Record<string, CourseAssignmentSummary>>({});
+  const [assignmentLoading, setAssignmentLoading] = useState(false);
 
 
   const navigate = useNavigate();
 
   // Get courses from store (re-read when version changes)
   const courses = useMemo(() => courseStore.getAllCourses(), [version]);
+
+  useEffect(() => {
+    orgService
+      .listOrgs()
+      .then(setOrganizations)
+      .catch(error => console.warn('Failed to load organizations for assignment modal', error));
+
+    profileService
+      .listUserProfiles()
+      .then(setUserProfiles)
+      .catch(error => console.warn('Failed to load user profiles for assignment modal', error));
+  }, []);
+
+  useEffect(() => {
+    let isActive = true;
+
+    const loadSummaries = async () => {
+      try {
+        const entries = await Promise.all(
+          courses.map(async course => {
+            const summary = await courseAssignmentService.getAssignmentSummary(course.id, course.title);
+            return [course.id, summary] as const;
+          }),
+        );
+
+        if (isActive) {
+          setAssignmentSummaries(Object.fromEntries(entries));
+        }
+      } catch (error) {
+        console.warn('Failed to load assignment summaries', error);
+      }
+    };
+
+    if (courses.length > 0) {
+      loadSummaries();
+    } else {
+      setAssignmentSummaries({});
+    }
+
+    return () => {
+      isActive = false;
+    };
+  }, [courses]);
 
   const filteredCourses = courses.filter((course: Course) => {
     const matchesSearch = course.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -123,29 +177,59 @@ const AdminCourses = () => {
     setShowAssignmentModal(true);
   };
 
-  const handleAssignmentComplete = async (assignment: any) => {
+  const handleAssignmentComplete = async (assignment: Omit<CourseAssignmentRequest, 'assignedBy'>) => {
+    const selectedCourse = courses.find(course => course.id === assignment.courseId) || courseToAssign;
+    if (!selectedCourse) {
+      showToast('Unable to assign course. Please try again.', 'error');
+      return;
+    }
+
     try {
-      // In a real app, this would make API calls to assign the course
-      console.log('Course assignment:', assignment);
-      
-      // Simulate assignment processing
-      showToast(`Course "${courseToAssign?.title}" assigned successfully!`, 'success');
-      
-      // Log sync event
-      syncService.logEvent({
-        type: 'course_updated',
-        data: {
-          ...courseToAssign,
-          assignmentCount: (courseToAssign?.enrollments || 0) + assignment.assignees.length
-        },
-        timestamp: Date.now()
+      setAssignmentLoading(true);
+
+      const result = await courseAssignmentService.assignCourse({
+        ...assignment,
+        courseId: selectedCourse.id,
+        courseTitle: selectedCourse.title,
+        assignedBy: 'admin-portal',
       });
-      
+
+      const updatedCourse: Course = {
+        ...selectedCourse,
+        enrollments: (selectedCourse.enrollments || 0) + result.summary.newAssignments,
+        assignmentSummary: result.summary,
+      };
+
+      courseStore.saveCourse(updatedCourse);
+      setAssignmentSummaries(prev => ({ ...prev, [updatedCourse.id]: result.summary }));
+      setVersion(prev => prev + 1);
+
+      const totalRecipients = result.summary.totalAssignments;
+      const messageSuffix = totalRecipients === 1 ? 'recipient' : 'recipients';
+
+      showToast(
+        `Course "${result.summary.courseTitle}" assigned to ${totalRecipients} ${messageSuffix}.`,
+        'success',
+      );
+
+      syncService.logEvent({
+        type: 'course_assigned',
+        data: {
+          courseId: selectedCourse.id,
+          courseTitle: selectedCourse.title,
+          assignment: result.summary,
+          assignments: result.assignments,
+        },
+        timestamp: Date.now(),
+      });
+
       setShowAssignmentModal(false);
       setCourseToAssign(null);
     } catch (error) {
-      showToast('Assignment failed. Please try again.', 'error');
       console.error('Assignment error:', error);
+      showToast('Assignment failed. Please try again.', 'error');
+    } finally {
+      setAssignmentLoading(false);
     }
   };
 
@@ -227,18 +311,39 @@ const AdminCourses = () => {
       return;
     }
     setLoading(true);
+    const publishCount = selectedCourses.length;
     try {
-      selectedCourses.forEach(id => {
-        const c = courseStore.getCourse(id);
-        if (!c) return;
-        const updated = { ...c, status: 'published' as const, publishedDate: new Date().toISOString(), lastUpdated: new Date().toISOString() };
-        courseStore.saveCourse(updated);
-      });
-      setSelectedCourses([]);
-      refresh();
-      showToast(`${selectedCourses.length} course(s) published successfully!`, 'success');
-    } catch (error) {
-      showToast('Failed to publish courses', 'error');
+      await runRetryableAction(
+        async () => {
+          selectedCourses.forEach(id => {
+            const c = courseStore.getCourse(id);
+            if (!c) return;
+            const updated = {
+              ...c,
+              status: 'published' as const,
+              publishedDate: new Date().toISOString(),
+              lastUpdated: new Date().toISOString()
+            };
+            courseStore.saveCourse(updated);
+          });
+          return publishCount;
+        },
+        {
+          loadingMessage: `Publishing ${publishCount} course${publishCount > 1 ? 's' : ''}...`,
+          retryLoadingMessage: 'Retrying publish...',
+          successMessage: `${publishCount} course${publishCount > 1 ? 's' : ''} published successfully!`,
+          errorMessage: 'Failed to publish selected courses. Please try again.',
+          onSuccess: () => {
+            setSelectedCourses([]);
+            refresh();
+          },
+          onError: (error) => {
+            console.error('Bulk publish failed', error);
+          }
+        }
+      );
+    } catch {
+      // handled by retryable action toast
     } finally {
       setLoading(false);
     }
@@ -389,11 +494,14 @@ const AdminCourses = () => {
 
       {/* Course Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 mb-8">
-        {filteredCourses.map((course: Course) => (
-          <div key={course.id} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow duration-200">
+        {filteredCourses.map((course: Course) => {
+          const summary = course.assignmentSummary || assignmentSummaries[course.id];
+
+          return (
+            <div key={course.id} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow duration-200">
             <div className="relative">
-              <img 
-                src={course.thumbnail} 
+              <img
+                src={course.thumbnail}
                 alt={course.title}
                 className="w-full h-48 object-cover"
               />
@@ -436,6 +544,17 @@ const AdminCourses = () => {
                   {course.enrollments}
                 </span>
               </div>
+
+              {summary && summary.totalAssignments > 0 && (
+                <div className="flex items-center justify-between text-xs text-gray-500 mb-4">
+                  <span>
+                    Assigned to {summary.totalAssignments} recipient{summary.totalAssignments === 1 ? '' : 's'}
+                  </span>
+                  {summary.lastAssignedAt && (
+                    <span>Last assigned {new Date(summary.lastAssignedAt).toLocaleDateString()}</span>
+                  )}
+                </div>
+              )}
 
               {course.status === 'published' && (
                 <div className="mb-4">
@@ -509,7 +628,8 @@ const AdminCourses = () => {
               </div>
             </div>
           </div>
-        ))}
+        );
+        })}
       </div>
 
       {/* Course Table */}
@@ -556,8 +676,11 @@ const AdminCourses = () => {
               </tr>
             </thead>
             <tbody>
-              {filteredCourses.map((course: Course) => (
-                <tr key={course.id} className="border-b border-gray-100 hover:bg-gray-50">
+              {filteredCourses.map((course: Course) => {
+                const summary = course.assignmentSummary || assignmentSummaries[course.id];
+
+                return (
+                  <tr key={course.id} className="border-b border-gray-100 hover:bg-gray-50">
                   <td className="py-4 px-6">
                     <input
                       type="checkbox"
@@ -588,6 +711,9 @@ const AdminCourses = () => {
                   <td className="py-4 px-6 text-center">
                     <div className="font-medium text-gray-900">{course.enrollments}</div>
                     <div className="text-sm text-gray-600">{course.completions} completed</div>
+                    {summary && summary.totalAssignments > 0 && (
+                      <div className="text-xs text-gray-500 mt-1">{summary.totalAssignments} assigned</div>
+                    )}
                   </td>
                   <td className="py-4 px-6 text-center">
                     <div className="font-medium text-gray-900">{course.completionRate}%</div>
@@ -615,7 +741,7 @@ const AdminCourses = () => {
                   </td>
                   <td className="py-4 px-6 text-center">
                     <div className="flex items-center justify-center space-x-2">
-                      <Link 
+                      <Link
                         to={`/admin/courses/${course.id}/details?viewMode=learner`}
                         className="p-1 text-blue-600 hover:text-blue-800" 
                         title="Preview as Participant"
@@ -653,7 +779,8 @@ const AdminCourses = () => {
                     </div>
                   </td>
                 </tr>
-              ))}
+              );
+              })}
             </tbody>
           </table>
         </div>
@@ -713,15 +840,19 @@ const AdminCourses = () => {
       <CourseAssignmentModal
         isOpen={showAssignmentModal}
         onClose={() => {
+          if (assignmentLoading) return;
           setShowAssignmentModal(false);
           setCourseToAssign(null);
         }}
-        selectedUsers={[]} // For now, empty - will be enhanced
+        selectedUsers={[]}
         course={courseToAssign ? {
           id: courseToAssign.id,
           title: courseToAssign.title,
           duration: courseToAssign.duration
         } : undefined}
+        courseOptions={courses.map(course => ({ id: course.id, title: course.title, duration: course.duration }))}
+        availableOrganizations={organizations.map(org => ({ id: org.id, name: org.name, contactEmail: org.contactEmail }))}
+        availableUsers={userProfiles.map(user => ({ id: user.id, name: user.name, email: user.email, organization: user.organization }))}
         onAssignComplete={handleAssignmentComplete}
       />
     </div>

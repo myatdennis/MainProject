@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { 
   Play, 
   Pause, 
@@ -29,6 +29,8 @@ interface EnhancedVideoPlayerProps {
     end: number;
     text: string;
   }>;
+  resumeKey?: string;
+  onTimeUpdate?: (details: { currentTime: number; duration: number; percent: number }) => void;
 }
 
 const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
@@ -42,11 +44,18 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
   autoPlay = false,
   showTranscript = false,
   transcript = '',
-  captions = []
+  captions = [],
+  resumeKey,
+  onTimeUpdate
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const progressBarRef = useRef<HTMLDivElement>(null);
+
+  const storageKey = useMemo(
+    () => (resumeKey ? `video-progress-${resumeKey}` : `video-progress-${encodeURIComponent(src)}`),
+    [resumeKey, src]
+  );
   
   // Player state
   const [isPlaying, setIsPlaying] = useState(false);
@@ -68,9 +77,40 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
   const [watchTime] = useState(0); // TODO: Implement watch time tracking
   const [buffered, setBuffered] = useState(0);
   const [currentCaption, setCurrentCaption] = useState('');
-  
+
   // Hide controls timer
   const controlsTimeoutRef = useRef<NodeJS.Timeout>();
+  const lastPersistedTimeRef = useRef(0);
+  const lastPersistedAtRef = useRef(0);
+
+  const persistProgress = useCallback(
+    (time: number) => {
+      const video = videoRef.current;
+      if (!video) return;
+
+      const effectiveDuration = video.duration || duration || 0;
+      if (!Number.isFinite(effectiveDuration) || effectiveDuration <= 0) {
+        return;
+      }
+
+      const clampedTime = Math.max(0, Math.min(effectiveDuration, time));
+
+      try {
+        const payload = {
+          time: clampedTime,
+          currentTime: clampedTime,
+          duration: effectiveDuration,
+          updatedAt: Date.now()
+        };
+        localStorage.setItem(storageKey, JSON.stringify(payload));
+        lastPersistedTimeRef.current = clampedTime;
+        lastPersistedAtRef.current = Date.now();
+      } catch (error) {
+        console.warn('[EnhancedVideoPlayer] Failed to persist video progress', error);
+      }
+    },
+    [duration, storageKey]
+  );
 
   // Initialize video
   useEffect(() => {
@@ -80,11 +120,11 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
     const handleLoadStart = () => setIsLoading(true);
     const handleCanPlay = () => {
       setIsLoading(false);
-      if (initialTime > 0) {
+      if (initialTime > 0 && lastPersistedTimeRef.current === 0) {
         video.currentTime = initialTime;
       }
     };
-    
+
     const handleLoadedMetadata = () => {
       setDuration(video.duration);
     };
@@ -92,20 +132,29 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
     const handleTimeUpdate = () => {
       const time = video.currentTime;
       setCurrentTime(time);
-      
-      if (!isDragging && onProgress) {
-        onProgress((time / video.duration) * 100);
+
+      const videoDuration = video.duration || duration || 0;
+
+      if (!isDragging && onProgress && videoDuration > 0) {
+        onProgress((time / videoDuration) * 100);
+      }
+
+      if (videoDuration > 0) {
+        const percent = (time / videoDuration) * 100;
+        onTimeUpdate?.({ currentTime: time, duration: videoDuration, percent });
+
+        const now = Date.now();
+        const timeDiff = Math.abs(time - lastPersistedTimeRef.current);
+        if (timeDiff >= 5 || now - lastPersistedAtRef.current >= 10000 || percent >= 99.5) {
+          persistProgress(time);
+          lastPersistedAtRef.current = now;
+        }
       }
 
       // Update captions
       if (captions.length > 0 && showCaptions) {
         const caption = captions.find(c => time >= c.start && time <= c.end);
         setCurrentCaption(caption ? caption.text : '');
-      }
-
-      // Auto-save progress every 10 seconds
-      if (Math.floor(time) % 10 === 0) {
-        localStorage.setItem(`video-progress-${src}`, time.toString());
       }
     };
 
@@ -118,11 +167,16 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
 
     const handleEnded = () => {
       setIsPlaying(false);
-      setCurrentTime(duration);
+      const videoDuration = video.duration || duration || 0;
+      setCurrentTime(videoDuration);
       if (onComplete) onComplete();
-      
+
       // Clear saved progress
-      localStorage.removeItem(`video-progress-${src}`);
+      persistProgress(videoDuration);
+      localStorage.removeItem(storageKey);
+      lastPersistedTimeRef.current = 0;
+      lastPersistedAtRef.current = 0;
+      onTimeUpdate?.({ currentTime: videoDuration, duration: videoDuration, percent: 100 });
     };
 
     const handlePlay = () => {
@@ -130,7 +184,18 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
       setHasStarted(true);
     };
 
-    const handlePause = () => setIsPlaying(false);
+    const handlePause = () => {
+      setIsPlaying(false);
+      const videoDuration = video.duration || duration || 0;
+      const time = video.currentTime;
+      if (time > 0) {
+        persistProgress(time);
+      }
+      if (videoDuration > 0) {
+        const percent = videoDuration ? (time / videoDuration) * 100 : 0;
+        onTimeUpdate?.({ currentTime: time, duration: videoDuration, percent });
+      }
+    };
 
     video.addEventListener('loadstart', handleLoadStart);
     video.addEventListener('canplay', handleCanPlay);
@@ -151,17 +216,51 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
       video.removeEventListener('play', handlePlay);
       video.removeEventListener('pause', handlePause);
     };
-  }, [src, initialTime, onProgress, onComplete, isDragging, duration, captions, showCaptions]);
+  }, [
+    initialTime,
+    onProgress,
+    onComplete,
+    isDragging,
+    duration,
+    captions,
+    showCaptions,
+    persistProgress,
+    storageKey,
+    onTimeUpdate
+  ]);
 
   // Load saved progress
   useEffect(() => {
-    const savedProgress = localStorage.getItem(`video-progress-${src}`);
-    if (savedProgress && videoRef.current) {
-      const savedTime = parseFloat(savedProgress);
-      videoRef.current.currentTime = savedTime;
-      setCurrentTime(savedTime);
+    const savedProgress = localStorage.getItem(storageKey);
+    if (!savedProgress || !videoRef.current) {
+      return;
     }
-  }, [src]);
+
+    try {
+      const parsed = JSON.parse(savedProgress);
+      const savedTime =
+        typeof parsed === 'number'
+          ? parsed
+          : typeof parsed?.time === 'number'
+          ? parsed.time
+          : typeof parsed?.currentTime === 'number'
+          ? parsed.currentTime
+          : parseFloat(parsed);
+
+      if (!Number.isNaN(savedTime) && savedTime > 0) {
+        videoRef.current.currentTime = savedTime;
+        setCurrentTime(savedTime);
+        lastPersistedTimeRef.current = savedTime;
+      }
+    } catch (error) {
+      const fallbackTime = parseFloat(savedProgress);
+      if (!Number.isNaN(fallbackTime) && fallbackTime > 0) {
+        videoRef.current.currentTime = fallbackTime;
+        setCurrentTime(fallbackTime);
+        lastPersistedTimeRef.current = fallbackTime;
+      }
+    }
+  }, [storageKey]);
 
   // Watch time tracking
   useEffect(() => {
@@ -176,6 +275,28 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
       if (interval) clearInterval(interval);
     };
   }, [isPlaying, isDragging]);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden' && videoRef.current) {
+        persistProgress(videoRef.current.currentTime || 0);
+      }
+    };
+
+    const handleBeforeUnload = () => {
+      if (videoRef.current) {
+        persistProgress(videoRef.current.currentTime || 0);
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('beforeunload', handleBeforeUnload);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [persistProgress]);
 
   // Auto-hide controls
   const resetControlsTimeout = useCallback(() => {

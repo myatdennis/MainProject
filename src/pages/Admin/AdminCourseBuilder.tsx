@@ -5,6 +5,7 @@ import type { Course, Module, Lesson } from '../../types/courseTypes';
 import { supabase } from '../../lib/supabase';
 import { getVideoEmbedUrl } from '../../utils/videoUtils';
 import { useCourseAutosave } from '../../hooks/useCourseAutosave';
+import { useRetryableAction } from '../../hooks/useRetryableAction';
 import { validateCourse } from '../../utils/courseValidation';
 import { CourseService } from '../../services/courseService';
 import {
@@ -37,6 +38,7 @@ import {
   WifiOff
 } from 'lucide-react';
 import CourseAssignmentModal from '../../components/CourseAssignmentModal';
+import type { CourseAssignmentRequest } from '../../types/assignment';
 import LivePreview from '../../components/LivePreview';
 import AIContentAssistant from '../../components/AIContentAssistant';
 // import DragDropItem from '../../components/DragDropItem'; // TODO: Implement drag drop functionality
@@ -240,7 +242,9 @@ const AdminCourseBuilder = () => {
   }
 
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
-  
+  const [publishStatus, setPublishStatus] = useState<'idle' | 'publishing' | 'success' | 'error'>('idle');
+  const { execute: runRetryableAction } = useRetryableAction();
+
   // Inline editing state
   const [inlineEditing, setInlineEditing] = useState<{moduleId: string, lessonId: string} | null>(null);
   
@@ -346,55 +350,75 @@ const AdminCourseBuilder = () => {
 
   const handleSave = async () => {
     setSaveStatus('saving');
-    
-    try {
-      // Update calculated fields
-      const updatedCourse = {
-        ...course,
-        duration: calculateCourseDuration(course.modules || []),
-        lessons: countTotalLessons(course.modules || []),
-        lastUpdated: new Date().toISOString()
-      };
-      
-      // Validate course before saving
-      const validation = validateCourse(updatedCourse);
-      console.log('💾 Saving course:', updatedCourse.title, 'ID:', updatedCourse.id);
-      console.log('📊 Course data:', {
-        modules: updatedCourse.modules?.length,
-        lessons: updatedCourse.lessons,
-        duration: updatedCourse.duration,
-        validation: validation
-      });
-      
-      if (!validation.isValid) {
-        console.warn('⚠️ Course validation issues:', validation.issues);
-        setSaveStatus('error');
-        setTimeout(() => setSaveStatus('idle'), 5000);
-        return;
-      }
 
-      await CourseService.syncCourseToDatabase(updatedCourse);
-      courseStore.saveCourse(updatedCourse);
-      setCourse(updatedCourse);
-      markAsSaved(updatedCourse);
+    const updatedCourse = {
+      ...course,
+      duration: calculateCourseDuration(course.modules || []),
+      lessons: countTotalLessons(course.modules || []),
+      lastUpdated: new Date().toISOString()
+    };
 
-      setSaveStatus('saved');
+    const validation = validateCourse(updatedCourse);
+    console.log('💾 Saving course:', updatedCourse.title, 'ID:', updatedCourse.id);
+    console.log('📊 Course data:', {
+      modules: updatedCourse.modules?.length,
+      lessons: updatedCourse.lessons,
+      duration: updatedCourse.duration,
+      validation
+    });
 
-      // Reset to idle after 3 seconds
-      setTimeout(() => setSaveStatus('idle'), 3000);
-
-      if (courseId === 'new') {
-        navigate(`/admin/course-builder/${updatedCourse.id}`);
-      }
-    } catch (error) {
-      console.error('❌ Error saving course:', error);
+    if (!validation.isValid) {
+      console.warn('⚠️ Course validation issues:', validation.issues);
       setSaveStatus('error');
-      markAsPending();
       setTimeout(() => setSaveStatus('idle'), 5000);
+      return;
+    }
+
+    try {
+      await runRetryableAction(
+        async () => {
+          await CourseService.syncCourseToDatabase(updatedCourse);
+          courseStore.saveCourse(updatedCourse);
+          setCourse(updatedCourse);
+          markAsSaved(updatedCourse);
+
+          if (courseId === 'new') {
+            navigate(`/admin/course-builder/${updatedCourse.id}`);
+          }
+
+          return updatedCourse;
+        },
+        {
+          loadingMessage: 'Saving course...',
+          retryLoadingMessage: 'Retrying save...',
+          successMessage: 'Course saved successfully',
+          errorMessage: 'Failed to save course. Please try again.',
+          onSuccess: () => {
+            setSaveStatus('saved');
+            setTimeout(() => setSaveStatus('idle'), 3000);
+          },
+          onError: (error) => {
+            console.error('❌ Error saving course:', error);
+            setSaveStatus('error');
+            markAsPending();
+            setTimeout(() => setSaveStatus('idle'), 5000);
+          }
+        }
+      );
+    } catch {
+      // handled by retryable action toast
     }
   };
 
-  const handlePublish = () => {
+  const handlePublish = async () => {
+    if ((course.modules || []).length === 0) {
+      setPublishStatus('error');
+      setTimeout(() => setPublishStatus('idle'), 4000);
+      return;
+    }
+
+    setPublishStatus('publishing');
+
     const publishedCourse = {
       ...course,
       status: 'published' as const,
@@ -403,12 +427,41 @@ const AdminCourseBuilder = () => {
       lessons: countTotalLessons(course.modules || []),
       lastUpdated: new Date().toISOString()
     };
-    
-    courseStore.saveCourse(publishedCourse);
-    setCourse(publishedCourse);
+
+    try {
+      await runRetryableAction(
+        async () => {
+          await CourseService.syncCourseToDatabase(publishedCourse);
+          courseStore.saveCourse(publishedCourse);
+          setCourse(publishedCourse);
+          markAsSaved(publishedCourse);
+          return publishedCourse;
+        },
+        {
+          loadingMessage: course.status === 'published' ? 'Updating published course...' : 'Publishing course...',
+          retryLoadingMessage: 'Retrying publish...',
+          successMessage:
+            course.status === 'published'
+              ? 'Published course updated'
+              : 'Course published successfully',
+          errorMessage: 'Failed to publish course. Please try again.',
+          onSuccess: () => {
+            setPublishStatus('success');
+            setTimeout(() => setPublishStatus('idle'), 3000);
+          },
+          onError: (error) => {
+            console.error('❌ Error publishing course:', error);
+            setPublishStatus('error');
+            setTimeout(() => setPublishStatus('idle'), 5000);
+          }
+        }
+      );
+    } catch {
+      // errors handled by retryable action toast
+    }
   };
 
-  const handleAssignmentComplete = () => {
+  const handleAssignmentComplete = (_assignment?: Omit<CourseAssignmentRequest, 'assignedBy'>) => {
     setShowAssignmentModal(false);
     // Optionally refresh course data or show success message
   };
@@ -1811,12 +1864,37 @@ const AdminCourseBuilder = () => {
             )}
             <button
               onClick={handlePublish}
-              className="bg-green-600 text-white px-6 py-3 rounded-lg hover:bg-green-700 transition-colors duration-200 flex items-center space-x-2"
-              disabled={(course.modules || []).length === 0}
+              className={`px-6 py-3 rounded-lg transition-colors duration-200 flex items-center space-x-2 font-medium ${
+                publishStatus === 'success'
+                  ? 'bg-green-600 text-white hover:bg-green-700'
+                  : publishStatus === 'error'
+                  ? 'bg-red-500 text-white hover:bg-red-600'
+                  : 'bg-green-600 text-white hover:bg-green-700'
+              } ${((course.modules || []).length === 0 || publishStatus === 'publishing') ? 'opacity-75 cursor-not-allowed' : ''}`}
+              disabled={(course.modules || []).length === 0 || publishStatus === 'publishing'}
               title={(course.modules || []).length === 0 ? "Add content before publishing" : ""}
             >
-              <CheckCircle className="h-4 w-4" />
-              <span>{course.status === 'published' ? 'Update Published' : 'Publish Course'}</span>
+              {publishStatus === 'publishing' ? (
+                <>
+                  <Loader className="h-4 w-4 animate-spin" />
+                  <span>{course.status === 'published' ? 'Updating...' : 'Publishing...'}</span>
+                </>
+              ) : publishStatus === 'success' ? (
+                <>
+                  <CheckCircle className="h-4 w-4" />
+                  <span>Published!</span>
+                </>
+              ) : publishStatus === 'error' ? (
+                <>
+                  <AlertTriangle className="h-4 w-4" />
+                  <span>Retry Publish</span>
+                </>
+              ) : (
+                <>
+                  <CheckCircle className="h-4 w-4" />
+                  <span>{course.status === 'published' ? 'Update Published' : 'Publish Course'}</span>
+                </>
+              )}
             </button>
             <button
               onClick={() => window.open(`/courses/${course.id}`, '_blank')}
@@ -2407,6 +2485,9 @@ const AdminCourseBuilder = () => {
         onAssignComplete={handleAssignmentComplete}
         selectedUsers={[]}
         course={{ id: course.id, title: course.title, duration: course.duration }}
+        courseOptions={[{ id: course.id, title: course.title, duration: course.duration }]}
+        availableOrganizations={[]}
+        availableUsers={[]}
       />
 
       {/* Live Preview Modal */}
