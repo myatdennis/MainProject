@@ -33,11 +33,13 @@ import orgService, { type Org } from '../../services/orgService';
 import profileService from '../../services/ProfileService';
 import type { UserProfile } from '../../models/Profile';
 import type { CourseAssignmentRequest, CourseAssignmentSummary } from '../../types/assignment';
+import { useRetryableAction } from '../../hooks/useRetryableAction';
 
 
 const AdminCourses = () => {
   const { showToast } = useToast();
   const syncService = useSyncService();
+  const { execute: runRetryableAction } = useRetryableAction();
   
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
@@ -309,18 +311,39 @@ const AdminCourses = () => {
       return;
     }
     setLoading(true);
+    const publishCount = selectedCourses.length;
     try {
-      selectedCourses.forEach(id => {
-        const c = courseStore.getCourse(id);
-        if (!c) return;
-        const updated = { ...c, status: 'published' as const, publishedDate: new Date().toISOString(), lastUpdated: new Date().toISOString() };
-        courseStore.saveCourse(updated);
-      });
-      setSelectedCourses([]);
-      refresh();
-      showToast(`${selectedCourses.length} course(s) published successfully!`, 'success');
-    } catch (error) {
-      showToast('Failed to publish courses', 'error');
+      await runRetryableAction(
+        async () => {
+          selectedCourses.forEach(id => {
+            const c = courseStore.getCourse(id);
+            if (!c) return;
+            const updated = {
+              ...c,
+              status: 'published' as const,
+              publishedDate: new Date().toISOString(),
+              lastUpdated: new Date().toISOString()
+            };
+            courseStore.saveCourse(updated);
+          });
+          return publishCount;
+        },
+        {
+          loadingMessage: `Publishing ${publishCount} course${publishCount > 1 ? 's' : ''}...`,
+          retryLoadingMessage: 'Retrying publish...',
+          successMessage: `${publishCount} course${publishCount > 1 ? 's' : ''} published successfully!`,
+          errorMessage: 'Failed to publish selected courses. Please try again.',
+          onSuccess: () => {
+            setSelectedCourses([]);
+            refresh();
+          },
+          onError: (error) => {
+            console.error('Bulk publish failed', error);
+          }
+        }
+      );
+    } catch {
+      // handled by retryable action toast
     } finally {
       setLoading(false);
     }
