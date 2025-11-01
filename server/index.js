@@ -2,6 +2,7 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createClient } from '@supabase/supabase-js';
+import { WebSocketServer } from 'ws';
 
 // Resolve __dirname in ESM
 const __filename = fileURLToPath(import.meta.url);
@@ -162,6 +163,59 @@ const sortActionItems = (items) =>
 app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', supabaseConfigured: Boolean(supabase) });
 });
+
+// Simple in-memory topic subscriptions for WS clients
+const topicSubscribers = new Map(); // topic -> Set(ws)
+
+function subscribeClientToTopic(ws, topic) {
+  if (!topicSubscribers.has(topic)) topicSubscribers.set(topic, new Set());
+  topicSubscribers.get(topic).add(ws);
+}
+
+function unsubscribeClientFromTopic(ws, topic) {
+  if (!topicSubscribers.has(topic)) return;
+  topicSubscribers.get(topic).delete(ws);
+}
+
+function broadcastToTopic(topic, payload) {
+  const set = topicSubscribers.get(topic);
+  const message = JSON.stringify(payload);
+  if (!set) return;
+  for (const ws of set) {
+    try {
+      if (ws.readyState === ws.OPEN) ws.send(message);
+    } catch (err) {
+      console.warn('Failed to send WS message', err);
+    }
+  }
+}
+
+// HTTP endpoint to broadcast events (secured: require admin header)
+app.post('/api/broadcast', (req, res) => {
+  const { type, topic, data } = req.body || {};
+  const userRole = (req.get('x-user-role') || '').toLowerCase();
+  if (userRole !== 'admin') {
+    res.status(403).json({ error: 'Admin role required to broadcast' });
+    return;
+  }
+
+  if (!type) {
+    res.status(400).json({ error: 'type is required' });
+    return;
+  }
+
+  const payload = { type, data, timestamp: Date.now() };
+  if (topic) broadcastToTopic(topic, payload);
+  else {
+    // broadcast to all topics
+    for (const t of topicSubscribers.keys()) broadcastToTopic(t, payload);
+  }
+
+  res.json({ ok: true });
+});
+
+// Expose broadcast helper to other server modules
+app.locals.broadcastToTopic = broadcastToTopic;
 
 app.get('/api/admin/courses', async (_req, res) => {
   if (!ensureSupabase(res)) return;
@@ -1783,6 +1837,38 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(distPath, 'index.html'));
 });
 
-app.listen(port, () => {
+const server = app.listen(port, () => {
   console.log(`Serving production build from ${distPath} at http://localhost:${port}`);
 });
+
+// Initialize WebSocket server (ws) to handle realtime broadcasts at /ws
+try {
+  const wss = new WebSocketServer({ server, path: '/ws' });
+
+  wss.on('connection', (ws, req) => {
+    console.log('WS client connected', req.socket.remoteAddress);
+
+    ws.on('message', (message) => {
+      try {
+        const msg = JSON.parse(message.toString());
+        if (msg.type === 'subscribe' && msg.topic) {
+          subscribeClientToTopic(ws, msg.topic);
+        } else if (msg.type === 'unsubscribe' && msg.topic) {
+          unsubscribeClientFromTopic(ws, msg.topic);
+        } else if (msg.type === 'ping') {
+          ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));
+        }
+      } catch (err) {
+        console.warn('Invalid WS message', err);
+      }
+    });
+
+    ws.on('close', () => {
+      for (const [, set] of topicSubscribers) set.delete(ws);
+    });
+  });
+
+  console.log('WebSocket server initialized at /ws');
+} catch (err) {
+  console.warn('Failed to initialize WebSocket server:', err);
+}
