@@ -215,11 +215,14 @@ export const useEnhancedCourseProgress = (courseId: string, options: UseCoursePr
         id: currentProgress.id || `progress_${Date.now()}`,
         user_id: userId,
         lesson_id: lessonId,
+        module_id: moduleId,
+        course_id: courseId,
         time_spent: currentProgress.time_spent || 0,
         completed: currentProgress.completed || false,
         progress_percentage: currentProgress.progress_percentage || 0,
         last_accessed_at: new Date().toISOString(),
         completed_at: currentProgress.completed_at,
+        status: currentProgress.status || (currentProgress.completed ? 'completed' : 'in-progress'),
         ...updates
       };
 
@@ -459,11 +462,13 @@ export const useEnhancedCourseProgress = (courseId: string, options: UseCoursePr
     isProcessingQueue: offlineQueue.isProcessing,
     pendingChanges: autoSave.pendingChanges,
     queueSize: offlineQueue.queueSize,
+    queuedItems: offlineQueue.queue,
     lastSaved: autoSave.lastSaved,
 
     // Actions
     forceSave: autoSave.forceSave,
     processQueue: offlineQueue.processQueue,
+    flushQueue: offlineQueue.flushQueue,
     loadFromStorage: autoSave.loadFromStorage,
     reloadData: loadProgressData,
 

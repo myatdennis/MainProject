@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { render } from '@testing-library/react';
+import { render, waitFor } from '@testing-library/react';
 import { BrowserRouter } from 'react-router-dom';
 import { HelmetProvider } from 'react-helmet-async';
 import SEO from '../components/SEO';
@@ -20,11 +20,13 @@ describe('SEO Component', () => {
         <div>Test content</div>
       </TestWrapper>
     );
-    
-    expect(document.title).toBe('MainProject LMS - Modern Learning Management System');
+
+    return waitFor(() => {
+      expect(document.title).toBe('MainProject LMS - Modern Learning Management System');
+    });
   });
 
-  it('renders with custom title', () => {
+  it('renders with custom title', async () => {
     render(
       <TestWrapper>
         <SEO title="Custom Page Title" />
@@ -32,10 +34,12 @@ describe('SEO Component', () => {
       </TestWrapper>
     );
     
-    expect(document.title).toBe('Custom Page Title | MainProject LMS');
+    await waitFor(() => {
+      expect(document.title).toBe('Custom Page Title | MainProject LMS');
+    });
   });
 
-  it('sets meta description', () => {
+  it('sets meta description', async () => {
     const customDescription = 'Custom description for testing';
     
     render(
@@ -45,7 +49,9 @@ describe('SEO Component', () => {
       </TestWrapper>
     );
     
-    const metaDescription = document.querySelector('meta[name="description"]');
-    expect(metaDescription?.getAttribute('content')).toBe(customDescription);
+    await waitFor(() => {
+      const metaDescription = document.querySelector('meta[name="description"]');
+      expect(metaDescription?.getAttribute('content')).toBe(customDescription);
+    });
   });
 });

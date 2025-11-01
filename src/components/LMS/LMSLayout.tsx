@@ -1,75 +1,81 @@
-import React, { useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { useAuth } from '../../context/AuthContext';
-import { 
-  LayoutDashboard, 
-  BookOpen, 
-  Download, 
-  MessageSquare, 
-  Phone, 
-  LogOut, 
-  Menu, 
-  X,
-  Users,
+import {
+  LayoutDashboard,
+  BookOpen,
   TrendingUp,
   Award,
+  Download,
+  MessageSquare,
+  Phone,
   Settings,
-  HelpCircle
+  HelpCircle,
+  Menu,
+  X,
+  Users,
+  LogOut,
 } from 'lucide-react';
+import { useAuth } from '../../context/AuthContext';
+import Card from '../ui/Card';
+import Button from '../ui/Button';
+import Badge from '../ui/Badge';
+import LoadingSpinner from '../ui/LoadingSpinner';
 
 interface LMSLayoutProps {
-  children: React.ReactNode;
+  children: ReactNode;
 }
 
-const LMSLayout: React.FC<LMSLayoutProps> = ({ children }) => {
+const navigation = [
+  { name: 'Dashboard', href: '/lms/dashboard', icon: LayoutDashboard },
+  { name: 'My Courses', href: '/lms/courses', icon: BookOpen },
+  { name: 'Progress', href: '/lms/progress', icon: TrendingUp },
+  { name: 'Certificates', href: '/lms/certificates', icon: Award },
+  { name: 'Downloads', href: '/lms/downloads', icon: Download },
+  { name: 'Submit Feedback', href: '/lms/feedback', icon: MessageSquare },
+  { name: 'Contact Coach', href: '/lms/contact', icon: Phone },
+  { name: 'Settings', href: '/lms/settings', icon: Settings },
+  { name: 'Help', href: '/lms/help', icon: HelpCircle },
+];
+
+const LMSLayout = ({ children }: LMSLayoutProps) => {
   const { logout, isAuthenticated, user } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
 
-  // Check authentication - but allow demo mode
-  React.useEffect(() => {
-    // Check if we're in demo mode (Supabase not configured)
+  useEffect(() => {
     const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
     const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-    
-    // In demo mode, auto-authenticate as demo user
+
     if (!supabaseUrl || !supabaseAnonKey) {
-      console.log('[LMSLayout] Running in demo mode - auto-authenticating demo user');
-      
-      // Set up demo authentication if not already done
       if (!isAuthenticated.lms) {
         localStorage.setItem('huddle_lms_auth', 'true');
-        const demoUser = {
-          name: 'Sarah Chen',
-          email: 'demo@thehuddleco.com',
-          role: 'user',
-          id: `demo-lms-${Date.now()}`
-        };
-        localStorage.setItem('huddle_user', JSON.stringify(demoUser));
-        
-        // Refresh the page to pick up the new auth state
+        localStorage.setItem(
+          'huddle_user',
+          JSON.stringify({
+            name: 'Sarah Chen',
+            email: 'demo@thehuddleco.com',
+            role: 'Learner',
+            id: `demo-lms-${Date.now()}`,
+          })
+        );
         window.location.reload();
       }
       return;
     }
-    
+
     if (!isAuthenticated.lms) {
       navigate('/lms/login');
     }
   }, [isAuthenticated.lms, navigate]);
 
-  const navigation = [
-    { name: 'Dashboard', href: '/lms/dashboard', icon: LayoutDashboard },
-    { name: 'My Courses', href: '/lms/courses', icon: BookOpen },
-    { name: 'Progress', href: '/lms/progress', icon: TrendingUp },
-    { name: 'Certificates', href: '/lms/certificates', icon: Award },
-    { name: 'Downloads', href: '/lms/downloads', icon: Download },
-    { name: 'Submit Feedback', href: '/lms/feedback', icon: MessageSquare },
-    { name: 'Contact Coach', href: '/lms/contact', icon: Phone },
-    { name: 'Settings', href: '/lms/settings', icon: Settings },
-    { name: 'Help', href: '/lms/help', icon: HelpCircle },
-  ];
+  if (isAuthenticated.lms === undefined) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-softwhite">
+        <LoadingSpinner size="lg" />
+      </div>
+    );
+  }
 
   const isActive = (href: string) => location.pathname === href;
 
@@ -79,55 +85,65 @@ const LMSLayout: React.FC<LMSLayoutProps> = ({ children }) => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 flex">
-      {/* Mobile sidebar overlay */}
+    <div className="flex min-h-screen bg-softwhite">
       {sidebarOpen && (
-        <div className="fixed inset-0 z-40 lg:hidden">
-          <div className="fixed inset-0 bg-gray-600 bg-opacity-75" onClick={() => setSidebarOpen(false)} />
-        </div>
+        <div className="fixed inset-0 z-40 bg-charcoal/40 backdrop-blur lg:hidden" onClick={() => setSidebarOpen(false)} />
       )}
 
-      {/* Sidebar */}
-      <div className={`fixed inset-y-0 left-0 z-50 w-64 bg-white shadow-lg transform ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'} transition-transform duration-300 ease-in-out lg:translate-x-0 lg:static lg:inset-0`}>
-        <div className="flex items-center justify-between h-16 px-6 border-b border-gray-200">
-          <Link to="/" className="flex items-center space-x-2">
-            <div className="bg-gradient-to-r from-orange-400 to-red-500 p-2 rounded-lg">
-              <Users className="h-6 w-6 text-white" />
+      <aside
+        className={`fixed inset-y-0 left-0 z-50 w-[260px] transform bg-white shadow-[0_24px_60px_rgba(16,24,40,0.12)] transition-transform duration-300 ease-out lg:static lg:translate-x-0 ${
+          sidebarOpen ? 'translate-x-0' : '-translate-x-full'
+        }`}
+      >
+        <div className="flex items-center justify-between border-b border-mist/70 px-6 py-6">
+          <Link to="/" className="flex items-center gap-3 no-underline">
+            <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-sunrise via-skyblue to-forest text-white">
+              <Users className="h-5 w-5" />
+            </span>
+            <div>
+              <p className="font-heading text-base font-bold text-charcoal">The Huddle Co.</p>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.35em] text-slate/70">Learner Portal</p>
             </div>
-            <span className="font-bold text-lg text-gray-900">The Huddle Co.</span>
           </Link>
-          <button
-            className="lg:hidden"
-            onClick={() => setSidebarOpen(false)}
-          >
-            <X className="h-6 w-6 text-gray-600" />
+          <button className="lg:hidden" onClick={() => setSidebarOpen(false)}>
+            <X className="h-5 w-5 text-slate/70" />
           </button>
         </div>
 
-        <div className="flex flex-col h-full">
-          <div className="flex-1 px-4 py-6">
-            <div className="mb-6">
-              <div className="bg-gradient-to-r from-blue-50 to-green-50 p-4 rounded-lg">
-                <h3 className="font-semibold text-gray-900 mb-1">Spring 2025 Leadership Cohort</h3>
-                <p className="text-sm text-gray-600">Welcome back, {user?.name || 'Learner'}!</p>
+        <div className="flex h-full flex-col justify-between px-5 py-6">
+          <div className="space-y-6">
+            <Card tone="muted" className="space-y-3">
+              <Badge tone="info" className="bg-skyblue/10 text-skyblue">
+                Spring 2025 Cohort
+              </Badge>
+              <div>
+                <p className="font-heading text-base font-semibold text-charcoal">Welcome, {user?.name || 'Learner'}</p>
+                <p className="text-xs text-slate/70">Keep building your inclusive leadership practice.</p>
               </div>
-            </div>
+            </Card>
 
             <nav className="space-y-2">
               {navigation.map((item) => {
                 const Icon = item.icon;
+                const active = isActive(item.href);
                 return (
                   <Link
                     key={item.name}
                     to={item.href}
-                    className={`flex items-center px-4 py-3 text-sm font-medium rounded-lg transition-colors duration-200 ${
-                      isActive(item.href)
-                        ? 'bg-orange-50 text-orange-600 border-r-2 border-orange-500'
-                        : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-                    }`}
                     onClick={() => setSidebarOpen(false)}
+                    className={`flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-semibold transition ${
+                      active
+                        ? 'bg-gradient-to-r from-sunrise/90 to-skyblue/90 text-white shadow-card-sm'
+                        : 'text-slate/80 hover:bg-cloud hover:text-skyblue'
+                    }`}
                   >
-                    <Icon className="h-5 w-5 mr-3" />
+                    <span
+                      className={`flex h-8 w-8 items-center justify-center rounded-lg ${
+                        active ? 'bg-white/20 text-white' : 'bg-cloud text-slate'
+                      }`}
+                    >
+                      <Icon className="h-4 w-4" />
+                    </span>
                     {item.name}
                   </Link>
                 );
@@ -135,42 +151,31 @@ const LMSLayout: React.FC<LMSLayoutProps> = ({ children }) => {
             </nav>
           </div>
 
-          <div className="p-4 border-t border-gray-200">
-            <button
-              onClick={handleLogout}
-              className="flex items-center w-full px-4 py-3 text-sm font-medium text-gray-600 rounded-lg hover:bg-gray-50 hover:text-gray-900 transition-colors duration-200"
-            >
-              <LogOut className="h-5 w-5 mr-3" />
-              Logout
-            </button>
-          </div>
+          <Button variant="ghost" className="w-full justify-center" leadingIcon={<LogOut className="h-4 w-4" />} onClick={handleLogout}>
+            Logout
+          </Button>
         </div>
-      </div>
+      </aside>
 
-      {/* Main content */}
-      <div className="flex-1 lg:ml-0">
-        {/* Top bar */}
-        <div className="bg-white shadow-sm border-b border-gray-200 lg:hidden">
-          <div className="flex items-center justify-between h-16 px-4">
-            <button
-              onClick={() => setSidebarOpen(true)}
-              className="text-gray-600 hover:text-gray-900"
-            >
-              <Menu className="h-6 w-6" />
-            </button>
-            <div className="flex items-center space-x-2">
-              <div className="bg-gradient-to-r from-orange-400 to-red-500 p-2 rounded-lg">
-                <Users className="h-5 w-5 text-white" />
-              </div>
-              <span className="font-bold text-gray-900">The Huddle Co.</span>
+      <div className="flex flex-1 flex-col">
+        <header className="sticky top-0 z-20 border-b border-mist/60 bg-white/90 backdrop-blur">
+          <div className="flex h-16 items-center justify-between px-6 lg:px-10">
+            <div className="flex items-center gap-3">
+              <button className="text-slate/70 hover:text-sunrise lg:hidden" onClick={() => setSidebarOpen(true)}>
+                <Menu className="h-6 w-6" />
+              </button>
+              <p className="hidden font-heading text-lg font-semibold text-charcoal lg:block">Leadership Journey</p>
+            </div>
+            <div className="flex items-center gap-3 text-xs text-slate/70">
+              <Badge tone="info" className="bg-sunrise/10 text-sunrise">
+                {new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+              </Badge>
+              <span>{user?.email}</span>
             </div>
           </div>
-        </div>
+        </header>
 
-        {/* Page content */}
-        <main className="flex-1">
-          {children}
-        </main>
+        <main className="flex-1 overflow-y-auto bg-softwhite px-6 py-8 lg:px-12">{children}</main>
       </div>
     </div>
   );

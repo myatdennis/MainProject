@@ -1,0 +1,2 @@
+-- Migration placeholder retained to match remote history.
+-- Logic superseded by 20251031173857_normalize_documents_updated_trigger.sql.

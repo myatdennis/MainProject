@@ -1,0 +1,16 @@
+export {
+  lessonSchema,
+  lessonPatchSchema,
+  moduleSchema,
+  modulePatchSchema,
+  lessonContentSchema,
+  completionRuleSchema,
+  moduleReorderSchema,
+  lessonReorderSchema,
+  type LessonInput,
+  type LessonPatchInput,
+  type ModuleInput,
+  type ModulePatchInput,
+  type ModuleReorderInput,
+  type LessonReorderInput,
+} from '../../shared/api/schemas';

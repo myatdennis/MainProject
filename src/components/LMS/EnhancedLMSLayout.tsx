@@ -37,8 +37,11 @@ const EnhancedLMSLayout: React.FC<EnhancedLMSLayoutProps> = ({ children }) => {
     isSaving,
     pendingChanges,
     queueSize,
+    queuedItems,
+    isProcessingQueue,
     lastSaved,
-    forceSave
+    forceSave,
+    flushQueue
   } = useEnhancedCourseProgress('global', {
     enableAutoSave: true,
     enableRealtime: true,
@@ -189,8 +192,11 @@ const EnhancedLMSLayout: React.FC<EnhancedLMSLayoutProps> = ({ children }) => {
                   syncStatus={syncStatus}
                   pendingChanges={pendingChanges}
                   queueSize={queueSize}
+                  isProcessingQueue={isProcessingQueue}
+                  queuedItems={queuedItems}
                   lastSaved={lastSaved}
                   onForceSave={forceSave}
+                  onFlushQueue={flushQueue}
                   showDetailed={true}
                 />
               </div>
@@ -261,8 +267,11 @@ const EnhancedLMSLayout: React.FC<EnhancedLMSLayoutProps> = ({ children }) => {
                     syncStatus={syncStatus}
                     pendingChanges={pendingChanges}
                     queueSize={queueSize}
+                    isProcessingQueue={isProcessingQueue}
+                    queuedItems={queuedItems}
                     lastSaved={lastSaved}
                     onForceSave={forceSave}
+                    onFlushQueue={flushQueue}
                   />
 
                   {/* Real-time Notifications */}

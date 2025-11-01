@@ -70,7 +70,7 @@ interface SurveyAnalyticsProps {
   surveyId: string;
 }
 
-const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#06B6D4', '#84CC16', '#F97316'];
+const COLORS = ['#F28C1A', '#2B84C6', '#3BAA66', '#E6473A', '#F6C87B', '#1E1E1E', '#F28C1A', '#2B84C6'];
 
 const SurveyAnalyticsDashboard: React.FC<SurveyAnalyticsProps> = ({ surveyId }) => {
   const [analytics, setAnalytics] = useState<SurveyAnalytics | null>(null);
@@ -268,8 +268,8 @@ const SurveyAnalyticsDashboard: React.FC<SurveyAnalyticsProps> = ({ surveyId }) 
               <YAxis />
               <Tooltip />
               <Legend />
-              <Line type="monotone" dataKey="responses" stroke="#3B82F6" strokeWidth={2} name="Started" />
-              <Line type="monotone" dataKey="completions" stroke="#10B981" strokeWidth={2} name="Completed" />
+              <Line type="monotone" dataKey="responses" stroke="#2B84C6" strokeWidth={2} name="Started" />
+              <Line type="monotone" dataKey="completions" stroke="#3BAA66" strokeWidth={2} name="Completed" />
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -285,7 +285,7 @@ const SurveyAnalyticsDashboard: React.FC<SurveyAnalyticsProps> = ({ surveyId }) 
                 <XAxis dataKey="hour" />
                 <YAxis />
                 <Tooltip />
-                <Bar dataKey="responses" fill="#3B82F6" />
+                <Bar dataKey="responses" fill="#2B84C6" />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -326,8 +326,8 @@ const SurveyAnalyticsDashboard: React.FC<SurveyAnalyticsProps> = ({ surveyId }) 
                 <YAxis />
                 <Tooltip />
                 <Legend />
-                <Bar dataKey="responses" fill="#3B82F6" name="Responses" />
-                <Bar dataKey="invited" fill="#E5E7EB" name="Invited" />
+                <Bar dataKey="responses" fill="#2B84C6" name="Responses" />
+                <Bar dataKey="invited" fill="#E4E7EB" name="Invited" />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -346,7 +346,7 @@ const SurveyAnalyticsDashboard: React.FC<SurveyAnalyticsProps> = ({ surveyId }) 
                   cx="50%"
                   cy="50%"
                   outerRadius={100}
-                  fill="#8884d8"
+                  fill="#2B84C6"
                   label
                 >
                   {analytics.demographics.byRole.map((_, index) => (
@@ -395,7 +395,7 @@ const SurveyAnalyticsDashboard: React.FC<SurveyAnalyticsProps> = ({ surveyId }) 
                 <XAxis type="number" />
                 <YAxis dataKey="name" type="category" width={80} />
                 <Tooltip />
-                <Bar dataKey="responses" fill="#10B981" />
+                <Bar dataKey="responses" fill="#3BAA66" />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -504,7 +504,7 @@ const SurveyAnalyticsDashboard: React.FC<SurveyAnalyticsProps> = ({ surveyId }) 
               }))}
               dataKey="size"
               stroke="#fff"
-              fill="#8884d8"
+              fill="#2B84C6"
             />
           </ResponsiveContainer>
         </div>

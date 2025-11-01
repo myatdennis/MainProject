@@ -1,7 +1,7 @@
-// Local-first document service for dev. Stores documents in localStorage.
 export type Visibility = 'global' | 'org' | 'user';
 
 import { supabase } from '../lib/supabase';
+import apiRequest from '../utils/apiClient';
 
 export type DocumentMeta = {
   id: string;
@@ -20,33 +20,105 @@ export type DocumentMeta = {
   downloadCount?: number;
 };
 
-const STORAGE_KEY = 'huddle_documents_v1';
-
-const readAll = (): DocumentMeta[] => {
-  const raw = localStorage.getItem(STORAGE_KEY);
-  if (!raw) return [];
-  try { return JSON.parse(raw) as DocumentMeta[]; } catch { return []; }
+const withQuery = (path: string, params?: Record<string, any>) => {
+  if (!params) return path;
+  const url = new URL(path, 'http://api-local');
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === '') return;
+    if (Array.isArray(value)) {
+      value.forEach((item) => url.searchParams.append(key, String(item)));
+    } else {
+      url.searchParams.set(key, String(value));
+    }
+  });
+  const query = url.searchParams.toString();
+  return query ? `${path}?${query}` : path;
 };
 
-const writeAll = (docs: DocumentMeta[]) => localStorage.setItem(STORAGE_KEY, JSON.stringify(docs));
+const apiFetch = async <T>(path: string, options: RequestInit = {}, params?: Record<string, any>) => {
+  const resolvedPath = withQuery(path, params);
+  return apiRequest<T>(resolvedPath, options);
+};
+
+const mapDocumentRecord = (record: any): DocumentMeta => ({
+  id: record.id,
+  name: record.name,
+  filename: record.filename ?? undefined,
+  url: record.url ?? undefined,
+  category: record.category,
+  subcategory: record.subcategory ?? undefined,
+  tags: record.tags ?? [],
+  fileType: record.file_type ?? undefined,
+  visibility: record.visibility ?? 'global',
+  orgId: record.org_id ?? undefined,
+  userId: record.user_id ?? undefined,
+  createdAt: record.created_at ?? new Date().toISOString(),
+  createdBy: record.created_by ?? undefined,
+  downloadCount: record.download_count ?? 0
+});
 
 export const listDocuments = async (opts?: { orgId?: string; userId?: string; tag?: string; category?: string; search?: string }) => {
-  let docs = readAll();
-  if (opts?.orgId) docs = docs.filter(d => d.visibility === 'org' && d.orgId === opts.orgId || d.visibility === 'global');
-  if (opts?.userId) docs = docs.filter(d => d.visibility === 'user' && d.userId === opts.userId || d.visibility === 'global');
-  if (opts?.tag) docs = docs.filter(d => d.tags.includes(opts.tag!));
-  if (opts?.category) docs = docs.filter(d => d.category === opts.category);
-  if (opts?.search) docs = docs.filter(d => (d.name + ' ' + d.tags.join(' ') + ' ' + (d.category||'')).toLowerCase().includes(opts.search!.toLowerCase()));
-  return docs.sort((a,b) => +new Date(b.createdAt) - +new Date(a.createdAt));
+  const json = await apiFetch<{ data: any[] }>('/api/admin/documents');
+  let docs = (json.data || []).map(mapDocumentRecord);
+
+  if (docs.length === 0) {
+    const seedDocs: Array<Omit<DocumentMeta, 'id' | 'createdAt'>> = [
+      {
+        name: 'Inclusive Leadership Handbook',
+        category: 'Leadership',
+        tags: ['handbook', 'leadership'],
+        visibility: 'global',
+        filename: 'inclusive-leadership-handbook.pdf',
+        url: 'https://storage.thehuddleco.com/resources/inclusive-leadership-handbook.pdf'
+      },
+      {
+        name: 'Bias Mitigation Checklist',
+        category: 'Bias',
+        tags: ['bias', 'checklist'],
+        visibility: 'global',
+        filename: 'bias-mitigation-checklist.pdf',
+        url: 'https://storage.thehuddleco.com/resources/bias-mitigation-checklist.pdf'
+      }
+    ];
+
+    for (const seed of seedDocs) {
+      await addDocument(seed as any, undefined);
+    }
+
+    const refreshed = await apiFetch<{ data: any[] }>('/api/admin/documents');
+    docs = (refreshed.data || []).map(mapDocumentRecord);
+  }
+
+  if (opts?.orgId) {
+    docs = docs.filter(doc => doc.visibility === 'global' || (doc.visibility === 'org' && doc.orgId === opts.orgId));
+  }
+
+  if (opts?.userId) {
+    docs = docs.filter(doc => doc.visibility === 'global' || (doc.visibility === 'user' && doc.userId === opts.userId));
+  }
+
+  if (opts?.tag) {
+    docs = docs.filter(doc => doc.tags.includes(opts.tag!));
+  }
+
+  if (opts?.category) {
+    docs = docs.filter(doc => doc.category === opts.category);
+  }
+
+  if (opts?.search) {
+    const needle = opts.search.toLowerCase();
+    docs = docs.filter(doc => `${doc.name} ${doc.category ?? ''} ${doc.tags.join(' ')}`.toLowerCase().includes(needle));
+  }
+
+  return docs.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 };
 
 export const getDocument = async (id: string) => {
-  const docs = readAll();
+  const docs = await listDocuments();
   return docs.find(d => d.id === id) || null;
 };
 
 export const addDocument = async (meta: Omit<DocumentMeta,'id'|'createdAt'>, file?: File | null) => {
-  const docs = readAll();
   const docId = `doc-${Date.now()}`;
   let url = meta.url;
 
@@ -76,35 +148,47 @@ export const addDocument = async (meta: Omit<DocumentMeta,'id'|'createdAt'>, fil
     });
   }
 
-  const doc: DocumentMeta = { id: docId, createdAt: new Date().toISOString(), ...meta, url } as DocumentMeta;
-  doc.downloadCount = doc.downloadCount || 0;
-  docs.push(doc);
-  writeAll(docs);
-  return doc;
+  const payload = {
+    id: docId,
+    name: meta.name,
+    filename: meta.filename,
+    url,
+    category: meta.category,
+    subcategory: meta.subcategory,
+    tags: meta.tags ?? [],
+    fileType: meta.fileType,
+    visibility: meta.visibility,
+    orgId: meta.orgId,
+    userId: meta.userId,
+    createdBy: meta.createdBy,
+    metadata: meta
+  };
+
+  const json = await apiFetch<{ data: any }>('/api/admin/documents', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+
+  return mapDocumentRecord(json.data);
 };
 
 export const recordDownload = async (id: string) => {
-  const docs = readAll();
-  const idx = docs.findIndex(d => d.id === id);
-  if (idx === -1) return;
-  docs[idx].downloadCount = (docs[idx].downloadCount || 0) + 1;
-  writeAll(docs);
-  return docs[idx];
+  const json = await apiFetch<{ data: any }>(`/api/admin/documents/${id}/download`, {
+    method: 'POST'
+  });
+  return mapDocumentRecord(json.data);
 };
 
 export const updateDocument = async (id: string, patch: Partial<DocumentMeta>) => {
-  const docs = readAll();
-  const idx = docs.findIndex(d => d.id === id);
-  if (idx === -1) throw new Error('Not found');
-  docs[idx] = { ...docs[idx], ...patch };
-  writeAll(docs);
-  return docs[idx];
+  const json = await apiFetch<{ data: any }>(`/api/admin/documents/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(patch)
+  });
+  return mapDocumentRecord(json.data);
 };
 
 export const deleteDocument = async (id: string) => {
-  let docs = readAll();
-  docs = docs.filter(d => d.id !== id);
-  writeAll(docs);
+  await apiFetch(`/api/admin/documents/${id}`, { method: 'DELETE' });
 };
 
 export const assignToOrg = async (id: string, orgId: string) => updateDocument(id, { visibility: 'org', orgId });
@@ -117,6 +201,6 @@ export default {
   updateDocument,
   deleteDocument,
   assignToOrg,
-  assignToUser
-  , recordDownload
+  assignToUser,
+  recordDownload
 };

@@ -1,5 +1,6 @@
 import React from 'react';
 import { Loader2 } from 'lucide-react';
+import { motion } from 'framer-motion';
 
 interface LoadingButtonProps {
   onClick?: () => void | Promise<void>;
@@ -35,54 +36,102 @@ const LoadingButton: React.FC<LoadingButtonProps> = ({
   const getVariantClasses = () => {
     switch (variant) {
       case 'primary':
-        return 'bg-gradient-to-r from-orange-400 to-red-500 hover:from-orange-500 hover:to-red-600 text-white disabled:from-gray-400 disabled:to-gray-500';
+        return {
+          background: 'linear-gradient(90deg, var(--primary) 0%, var(--secondary) 100%)',
+          color: '#fff',
+          boxShadow: 'var(--elevation-card)'
+        };
       case 'secondary':
-        return 'border border-gray-300 bg-white hover:bg-gray-50 text-gray-700 disabled:bg-gray-100 disabled:text-gray-400';
+        return {
+          background: 'transparent',
+          color: 'var(--secondary)',
+          border: '1px solid var(--secondary)'
+        };
       case 'success':
-        return 'bg-green-500 hover:bg-green-600 text-white disabled:bg-gray-400';
+        return {
+          background: 'var(--accent-success)',
+          color: '#fff',
+          boxShadow: 'var(--elevation-card)'
+        };
       case 'danger':
-        return 'bg-red-500 hover:bg-red-600 text-white disabled:bg-gray-400';
+        return {
+          background: 'var(--danger, #E6473A)',
+          color: '#fff',
+          boxShadow: 'var(--elevation-card)'
+        };
       case 'warning':
-        return 'bg-orange-500 hover:bg-orange-600 text-white disabled:bg-gray-400';
+        return {
+          background: 'var(--subtext-muted)',
+          color: '#fff',
+          boxShadow: 'var(--elevation-card)'
+        };
       default:
-        return 'bg-gradient-to-r from-orange-400 to-red-500 hover:from-orange-500 hover:to-red-600 text-white disabled:from-gray-400 disabled:to-gray-500';
+        return {
+          background: 'linear-gradient(90deg, var(--primary) 0%, var(--secondary) 100%)',
+          color: '#fff',
+          boxShadow: 'var(--elevation-card)'
+        };
     }
   };
 
-  const getSizeClasses = () => {
+  
+
+  const sizeStyles = () => {
     switch (size) {
       case 'sm':
-        return 'px-3 py-1.5 text-sm';
+        return { padding: '6px 10px', fontSize: 14 };
       case 'md':
-        return 'px-4 py-2 text-sm';
+        return { padding: '10px 14px', fontSize: 15 };
       case 'lg':
-        return 'px-6 py-3 text-base';
+        return { padding: '14px 20px', fontSize: 16 };
       default:
-        return 'px-4 py-2 text-sm';
+        return { padding: '10px 14px', fontSize: 15 };
     }
   };
 
-  const baseClasses = 'font-medium rounded-lg transition-all duration-200 flex items-center justify-center space-x-2 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2';
-  const variantClasses = getVariantClasses();
-  const sizeClasses = getSizeClasses();
-  
   const isDisabled = disabled || loading;
+  const variantStyle = getVariantClasses();
+  const sStyle = sizeStyles();
 
   return (
-    <button
+    <motion.button
       type={type}
       onClick={handleClick}
       disabled={isDisabled}
+      aria-busy={loading}
       title={title}
-      className={`${baseClasses} ${variantClasses} ${sizeClasses} ${isDisabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer transform hover:scale-105'} ${className}`}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        borderRadius: 'var(--radius-btn)',
+        cursor: isDisabled ? 'not-allowed' : 'pointer',
+        opacity: isDisabled ? 0.6 : 1,
+        border: variantStyle.border || 'none',
+        background: variantStyle.background,
+        color: variantStyle.color,
+        boxShadow: variantStyle.boxShadow,
+        padding: sStyle.padding,
+        fontFamily: 'var(--font-heading)',
+        fontWeight: 700,
+        fontSize: sStyle.fontSize,
+        transition: 'transform var(--motion-duration-base), box-shadow var(--motion-duration-base)'
+      }}
+      whileHover={!isDisabled && window.matchMedia('(prefers-reduced-motion: no-preference)').matches ? { scale: 1.03, boxShadow: 'var(--shadow-soft)' } : {}}
+      whileTap={!isDisabled && window.matchMedia('(prefers-reduced-motion: no-preference)').matches ? { scale: 0.98 } : {}}
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.25 }}
+      className={className}
     >
-      {loading ? (
-        <Loader2 className="h-4 w-4 animate-spin" />
-      ) : Icon ? (
-        <Icon className="h-4 w-4" />
-      ) : null}
+        {loading ? (
+          <Loader2 className="icon-16 animate-spin" role="progressbar" aria-label="Loading" />
+        ) : Icon ? (
+          <Icon className="icon-16" />
+        ) : null}
       <span>{children}</span>
-    </button>
+    </motion.button>
   );
 };
 

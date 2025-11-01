@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { 
   Trophy, 
   Download, 
@@ -9,13 +9,16 @@ import {
   Target,
   BookOpen,
   Award,
+  Loader2,
   Linkedin,
   Twitter,
   Mail,
   Copy,
-  ExternalLink,
-  RefreshCw
+  ExternalLink
 } from 'lucide-react';
+import { toast } from 'react-hot-toast';
+import { certificateService } from '../services/certificateService';
+import { analyticsService } from '../services/analyticsService';
 
 interface CourseCompletionProps {
   course: {
@@ -78,6 +81,9 @@ const CourseCompletion: React.FC<CourseCompletionProps> = ({
   const [activeTab, setActiveTab] = useState<'summary' | 'certificate' | 'next-steps'>('summary');
   const [shareUrl, setShareUrl] = useState('');
   const [copySuccess, setCopySuccess] = useState(false);
+  const [certificateUrl, setCertificateUrl] = useState<string | undefined>(completionData.certificateUrl);
+  const [certificateId, setCertificateId] = useState<string | undefined>(completionData.certificateId);
+  const [isGeneratingCertificate, setIsGeneratingCertificate] = useState(false);
 
   useEffect(() => {
     // Generate shareable URL
@@ -88,6 +94,26 @@ const CourseCompletion: React.FC<CourseCompletionProps> = ({
     const timer = setTimeout(() => setShowConfetti(false), 5000);
     return () => clearTimeout(timer);
   }, [course.id]);
+
+  useEffect(() => {
+    setCertificateUrl(completionData.certificateUrl);
+    setCertificateId(completionData.certificateId);
+  }, [completionData.certificateId, completionData.certificateUrl]);
+
+  const learnerProfile = useMemo(() => {
+    try {
+      const raw = localStorage.getItem('huddle_user');
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch (error) {
+      console.warn('Failed to parse learner profile:', error);
+      return null;
+    }
+  }, []);
+
+  const learnerId = learnerProfile?.id || learnerProfile?.email || 'local-user';
+  const learnerName = learnerProfile?.name || learnerProfile?.fullName || learnerProfile?.email || 'Learner';
+  const learnerEmail = learnerProfile?.email || 'demo@learner.com';
 
   const formatTime = (minutes: number): string => {
     const hours = Math.floor(minutes / 60);
@@ -153,9 +179,68 @@ const CourseCompletion: React.FC<CourseCompletionProps> = ({
   const totalLessons = course.modules?.reduce((acc, module) => acc + module.lessons.length, 0) || 0;
   const completedLessons = course.modules?.reduce((acc, module) => 
     acc + module.lessons.filter(lesson => lesson.completed).length, 0) || 0;
+  const totalModules = course.modules?.length || 0;
 
+  const moduleRequirements = useMemo(() => {
+    return (course.modules || []).map(module => `Completed module: ${module.title}`);
+  }, [course.modules]);
+
+  const handleCertificateDownloadInternal = useCallback(() => {
+    if (onCertificateDownload) {
+      onCertificateDownload();
+      return;
+    }
+
+    if (certificateUrl) {
+      const anchor = document.createElement('a');
+      anchor.href = certificateUrl;
+      anchor.download = `${course.title.replace(/\s+/g, '-')}-certificate.pdf`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+    }
+  }, [certificateUrl, course.title, onCertificateDownload]);
+
+  const handleGenerateCertificate = useCallback(async () => {
+    setIsGeneratingCertificate(true);
+    try {
+      const generated = await certificateService.generateFromCompletion({
+        userId: learnerId,
+        userName: learnerName,
+        userEmail: learnerEmail,
+        courseId: course.id,
+        courseTitle: course.title,
+        certificationName: `${course.title} Certificate`,
+        completionDate: completionData.completedAt.toISOString(),
+        completionTimeMinutes: completionData.timeSpent,
+        finalScore: completionData.score,
+        requirementsMet: moduleRequirements
+      });
+
+      setCertificateUrl(generated.certificateUrl);
+      setCertificateId(generated.id);
+      setActiveTab('certificate');
+      toast.success('Certificate generated successfully!');
+
+      analyticsService.trackCourseCompletion(learnerId, course.id, {
+        totalTimeSpent: completionData.timeSpent,
+        finalScore: completionData.score,
+        modulesCompleted: totalModules,
+        lessonsCompleted: completedLessons,
+        quizzesPassed: 0,
+        certificateGenerated: true
+      });
+    } catch (error) {
+      console.error('Failed to generate certificate:', error);
+      toast.error('Unable to generate certificate. Please try again.');
+    } finally {
+      setIsGeneratingCertificate(false);
+    }
+  }, [completionData.completedAt, completionData.score, completionData.timeSpent, completedLessons, course.id, course.title, learnerEmail, learnerId, learnerName, moduleRequirements, totalModules]);
+
+  const [darkMode, setDarkMode] = useState(false);
   return (
-    <div className={`min-h-screen bg-gradient-to-br from-orange-50 via-red-50 to-pink-50 ${className}`}>
+    <div className={`min-h-screen bg-gradient-to-br from-orange-50 via-red-50 to-pink-50 ${className} ${darkMode ? 'dark' : ''}`}>
       {/* Confetti Animation */}
       {showConfetti && (
         <div className="fixed inset-0 pointer-events-none z-10">
@@ -167,7 +252,7 @@ const CourseCompletion: React.FC<CourseCompletionProps> = ({
                 style={{
                   left: `${Math.random() * 100}%`,
                   animationDelay: `${Math.random() * 3}s`,
-                  backgroundColor: ['#FF8895', '#D72638', '#3A7FFF', '#2D9B66'][Math.floor(Math.random() * 4)]
+                  backgroundColor: ['#F28C1A', '#E6473A', '#2B84C6', '#3BAA66'][Math.floor(Math.random() * 4)]
                 }}
               />
             ))}
@@ -175,22 +260,22 @@ const CourseCompletion: React.FC<CourseCompletionProps> = ({
         </div>
       )}
 
-      <div className="container mx-auto px-4 py-12 relative z-20">
+  <div className="container mx-auto px-4 py-12 relative z-20">
         {/* Hero Section */}
-        <div className="text-center mb-12">
+  <div className="text-center mb-12">
           <div className="mb-6">
             <Trophy className="h-20 w-20 text-yellow-500 mx-auto animate-bounce" />
           </div>
           
-          <h1 className="text-4xl md:text-6xl font-bold text-gray-900 mb-4">
+          <h1 className={`text-4xl md:text-6xl font-bold mb-4 ${darkMode ? 'text-ivorywhite' : 'text-gray-900'}`}> 
             Congratulations!
           </h1>
           
-          <p className="text-xl text-gray-600 mb-6 max-w-2xl mx-auto">
+          <p className={`text-xl mb-6 max-w-2xl mx-auto ${darkMode ? 'text-mutedgrey' : 'text-gray-600'}`}> 
             You've successfully completed <span className="font-semibold text-gray-900">"{course.title}"</span>
           </p>
 
-          <div className="flex flex-wrap items-center justify-center gap-6 text-sm text-gray-600">
+          <div className={`flex flex-wrap items-center justify-center gap-6 text-sm ${darkMode ? 'text-mutedgrey' : 'text-gray-600'}`}> 
             <div className="flex items-center space-x-2">
               <Clock className="h-4 w-4" />
               <span>Completed in {formatTime(completionData.timeSpent)}</span>
@@ -202,7 +287,7 @@ const CourseCompletion: React.FC<CourseCompletionProps> = ({
             </div>
             
             {completionData.grade && (
-              <div className={`flex items-center space-x-2 px-3 py-1 rounded-full ${getGradeColor(completionData.grade)}`}>
+              <div className={`flex items-center space-x-2 px-3 py-1 rounded-full ${getGradeColor(completionData.grade)} ${darkMode ? 'bg-indigo-900 text-ivorywhite' : ''}`}> 
                 <Star className="h-4 w-4" />
                 <span className="font-medium">Grade: {completionData.grade}</span>
               </div>
@@ -217,7 +302,7 @@ const CourseCompletion: React.FC<CourseCompletionProps> = ({
 
         {/* Tab Navigation */}
         <div className="flex justify-center mb-8">
-          <div className="bg-white rounded-xl p-1 shadow-lg border border-gray-200">
+          <div className={`rounded-xl p-1 shadow-lg border ${darkMode ? 'bg-charcoal border-indigo-900' : 'bg-white border-gray-200'}`}> 
             {[
               { id: 'summary', label: 'Summary', icon: BookOpen },
               { id: 'certificate', label: 'Certificate', icon: Award },
@@ -228,8 +313,8 @@ const CourseCompletion: React.FC<CourseCompletionProps> = ({
                 onClick={() => setActiveTab(id as any)}
                 className={`px-6 py-3 rounded-lg font-medium transition-all duration-200 flex items-center space-x-2 ${
                   activeTab === id
-                    ? 'bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-md'
-                    : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50'
+                    ? (darkMode ? 'bg-gradient-to-r from-indigo-900 to-sunrise text-ivorywhite shadow-md' : 'bg-gradient-to-r from-orange-500 to-red-500 text-white shadow-md')
+                    : (darkMode ? 'text-mutedgrey hover:text-ivorywhite hover:bg-indigo-900/10' : 'text-gray-600 hover:text-gray-900 hover:bg-gray-50')
                 }`}
               >
                 <Icon className="h-4 w-4" />
@@ -240,11 +325,11 @@ const CourseCompletion: React.FC<CourseCompletionProps> = ({
         </div>
 
         {/* Tab Content */}
-        <div className="max-w-4xl mx-auto">
+  <div className="max-w-4xl mx-auto">
           {activeTab === 'summary' && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               {/* Course Summary */}
-              <div className="bg-white rounded-2xl p-8 shadow-lg border border-gray-200">
+              <div className={`rounded-2xl p-8 shadow-lg border ${darkMode ? 'bg-charcoal border-indigo-900 text-ivorywhite' : 'bg-white border-gray-200'}`}> 
                 <h2 className="text-2xl font-bold text-gray-900 mb-6">Course Summary</h2>
                 
                 <div className="space-y-6">
@@ -253,50 +338,55 @@ const CourseCompletion: React.FC<CourseCompletionProps> = ({
                       <img 
                         src={course.thumbnail} 
                         alt={course.title}
-                        className="w-16 h-16 rounded-lg object-cover"
+                        className="w-16 h-16 rounded-lg object-cover bg-gradient-to-r from-sunrise/20 via-indigo-100 to-ivory"
+                        onError={(e) => {
+                          e.currentTarget.src = '/default-course-fallback.png';
+                          e.currentTarget.className += ' bg-gradient-to-r from-sunrise/20 via-indigo-100 to-ivory';
+                        }}
+                        aria-label={`Course image for ${course.title}`}
                       />
                     )}
                     <div>
-                      <h3 className="font-semibold text-gray-900">{course.title}</h3>
+                      <h3 className={`font-semibold ${darkMode ? 'text-ivorywhite' : 'text-gray-900'}`}>{course.title}</h3>
                       {course.instructor && (
-                        <p className="text-sm text-gray-600">by {course.instructor}</p>
+                        <p className={`text-sm ${darkMode ? 'text-mutedgrey' : 'text-gray-600'}`}>by {course.instructor}</p>
                       )}
                       {course.description && (
-                        <p className="text-sm text-gray-600 mt-2">{course.description}</p>
+                        <p className={`text-sm mt-2 ${darkMode ? 'text-mutedgrey' : 'text-gray-600'}`}>{course.description}</p>
                       )}
                     </div>
                   </div>
 
                   <div className="grid grid-cols-2 gap-4">
-                    <div className="text-center p-4 bg-green-50 rounded-lg">
-                      <div className="text-2xl font-bold text-green-600">{completedLessons}</div>
-                      <div className="text-sm text-green-600">Lessons Completed</div>
+                    <div className={`text-center p-4 rounded-lg ${darkMode ? 'bg-indigo-900/10' : 'bg-green-50'}`}>
+                      <div className={`text-2xl font-bold ${darkMode ? 'text-emerald' : 'text-green-600'}`}>{completedLessons}</div>
+                      <div className={`text-sm ${darkMode ? 'text-emerald' : 'text-green-600'}`}>Lessons Completed</div>
                     </div>
                     
-                    <div className="text-center p-4 bg-blue-50 rounded-lg">
-                      <div className="text-2xl font-bold text-blue-600">{formatTime(completionData.timeSpent)}</div>
-                      <div className="text-sm text-blue-600">Time Invested</div>
+                    <div className={`text-center p-4 rounded-lg ${darkMode ? 'bg-indigo-900/10' : 'bg-blue-50'}`}>
+                      <div className={`text-2xl font-bold ${darkMode ? 'text-indigo-400' : 'text-blue-600'}`}>{formatTime(completionData.timeSpent)}</div>
+                      <div className={`text-sm ${darkMode ? 'text-indigo-400' : 'text-blue-600'}`}>Time Invested</div>
                     </div>
                   </div>
 
                   {completionData.score && (
-                    <div className="text-center p-4 bg-purple-50 rounded-lg">
-                      <div className="text-2xl font-bold text-purple-600">{completionData.score}%</div>
-                      <div className="text-sm text-purple-600">Overall Score</div>
+                    <div className={`text-center p-4 rounded-lg ${darkMode ? 'bg-indigo-900/10' : 'bg-purple-50'}`}>
+                      <div className={`text-2xl font-bold ${darkMode ? 'text-indigo-300' : 'text-purple-600'}`}>{completionData.score}%</div>
+                      <div className={`text-sm ${darkMode ? 'text-indigo-300' : 'text-purple-600'}`}>Overall Score</div>
                     </div>
                   )}
                 </div>
               </div>
 
               {/* Key Takeaways */}
-              <div className="bg-white rounded-2xl p-8 shadow-lg border border-gray-200">
+              <div className={`rounded-2xl p-8 shadow-lg border ${darkMode ? 'bg-charcoal border-indigo-900 text-ivorywhite' : 'bg-white border-gray-200'}`}> 
                 <h2 className="text-2xl font-bold text-gray-900 mb-6">Key Takeaways</h2>
                 
                 {keyTakeaways.length > 0 ? (
                   <ul className="space-y-4">
                     {keyTakeaways.map((takeaway, index) => (
                       <li key={index} className="flex items-start space-x-3">
-                        <div className="flex-shrink-0 w-6 h-6 bg-gradient-to-r from-orange-400 to-red-500 rounded-full flex items-center justify-center text-white text-sm font-bold">
+                        <div className={`flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-white text-sm font-bold ${darkMode ? 'bg-gradient-to-r from-indigo-900 to-sunrise' : 'bg-gradient-to-r from-orange-400 to-red-500'}`}> 
                           {index + 1}
                         </div>
                         <span className="text-gray-700">{takeaway}</span>
@@ -357,12 +447,12 @@ const CourseCompletion: React.FC<CourseCompletionProps> = ({
               
               <h2 className="text-2xl font-bold text-gray-900 mb-4">Your Certificate</h2>
               
-              {completionData.certificateUrl ? (
+              {certificateUrl ? (
                 <div className="space-y-6">
                   <p className="text-gray-600">
                     Congratulations! Your certificate is ready for download.
                   </p>
-                  
+
                   <div className="bg-gradient-to-r from-orange-50 to-red-50 rounded-xl p-6 border border-orange-200">
                     <div className="font-semibold text-gray-900 mb-2">
                       Certificate of Completion
@@ -371,13 +461,13 @@ const CourseCompletion: React.FC<CourseCompletionProps> = ({
                       {course.title}
                     </div>
                     <div className="text-xs text-gray-500">
-                      Certificate ID: {completionData.certificateId}
+                      Certificate ID: {certificateId}
                     </div>
                   </div>
                   
                   <div className="flex justify-center space-x-4">
                     <button
-                      onClick={onCertificateDownload}
+                      onClick={handleCertificateDownloadInternal}
                       className="bg-gradient-to-r from-green-500 to-emerald-600 text-white px-8 py-3 rounded-xl font-semibold hover:from-green-600 hover:to-emerald-700 transition-all duration-200 shadow-lg flex items-center space-x-2"
                     >
                       <Download className="h-5 w-5" />
@@ -385,7 +475,7 @@ const CourseCompletion: React.FC<CourseCompletionProps> = ({
                     </button>
                     
                     <a
-                      href={completionData.certificateUrl}
+                      href={certificateUrl}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="bg-white border border-gray-300 text-gray-700 px-8 py-3 rounded-xl font-medium hover:bg-gray-50 transition-all duration-200 flex items-center space-x-2"
@@ -398,15 +488,25 @@ const CourseCompletion: React.FC<CourseCompletionProps> = ({
               ) : (
                 <div className="space-y-6">
                   <p className="text-gray-600">
-                    Your certificate is being generated. Please check back in a few minutes.
+                    Generate your certificate instantly once you are ready.
                   </p>
-                  
+
                   <button
-                    onClick={() => window.location.reload()}
-                    className="bg-gradient-to-r from-orange-500 to-red-500 text-white px-8 py-3 rounded-xl font-semibold hover:from-orange-600 hover:to-red-600 transition-all duration-200 shadow-lg flex items-center space-x-2 mx-auto"
+                    onClick={handleGenerateCertificate}
+                    disabled={isGeneratingCertificate}
+                    className="bg-gradient-to-r from-orange-500 to-red-500 text-white px-8 py-3 rounded-xl font-semibold hover:from-orange-600 hover:to-red-600 transition-all duration-200 shadow-lg flex items-center space-x-2 mx-auto disabled:opacity-60 disabled:cursor-not-allowed"
                   >
-                    <RefreshCw className="h-5 w-5" />
-                    <span>Check Again</span>
+                    {isGeneratingCertificate ? (
+                      <>
+                        <Loader2 className="h-5 w-5 animate-spin" />
+                        <span>Preparing certificate…</span>
+                      </>
+                    ) : (
+                      <>
+                        <Award className="h-5 w-5" />
+                        <span>Generate Certificate</span>
+                      </>
+                    )}
                   </button>
                 </div>
               )}
@@ -456,7 +556,12 @@ const CourseCompletion: React.FC<CourseCompletionProps> = ({
                         <img 
                           src={recCourse.thumbnail} 
                           alt={recCourse.title}
-                          className="w-full h-32 object-cover"
+                          className="w-full h-32 object-cover rounded-xl bg-gradient-to-r from-sunrise/20 via-indigo-100 to-ivory"
+                          onError={(e) => {
+                            e.currentTarget.src = '/default-course-fallback.png';
+                            e.currentTarget.className += ' bg-gradient-to-r from-sunrise/20 via-indigo-100 to-ivory';
+                          }}
+                          aria-label={`Course image for ${recCourse.title}`}
                         />
                         <div className="p-4">
                           <h3 className="font-semibold text-gray-900 mb-2">{recCourse.title}</h3>
@@ -482,9 +587,19 @@ const CourseCompletion: React.FC<CourseCompletionProps> = ({
           <div className="space-y-4">
             <button
               onClick={onClose}
-              className="bg-white text-gray-700 border border-gray-300 px-8 py-3 rounded-xl font-medium hover:bg-gray-50 transition-all duration-200"
+              className={`px-8 py-3 rounded-xl font-medium transition-all duration-200 border ${darkMode ? 'bg-charcoal text-ivorywhite border-indigo-900 hover:bg-indigo-900' : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50'}`}
             >
               Return to Courses
+            </button>
+          </div>
+          {/* Dark mode toggle for Course Completion */}
+          <div className="mt-8 flex justify-end">
+            <button
+              onClick={() => setDarkMode(!darkMode)}
+              className="px-4 py-2 rounded-xl bg-charcoal text-ivorywhite font-heading hover:bg-indigo-700 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500"
+              aria-label={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+            >
+              {darkMode ? 'Light Mode' : 'Dark Mode'}
             </button>
           </div>
         </div>

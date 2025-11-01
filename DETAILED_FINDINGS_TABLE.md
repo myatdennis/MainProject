@@ -62,7 +62,7 @@ return total + (progress.timeSpent || 0);
 
 ## 3️⃣ **Visual Design: 8.5/10**
 **Strengths:**
-- ✅ Excellent brand consistency (#FF8895, #D72638, #3A7FFF, #2D9B66)
+- ✅ Excellent brand consistency (#F28C1A, #E6473A, #2B84C6, #3BAA66)
 - ✅ Typography well-implemented (Montserrat, Lato, Quicksand)
 - ✅ Consistent Tailwind spacing system
 - ✅ Modern glassmorphism effects

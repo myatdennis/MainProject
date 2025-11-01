@@ -1,12 +1,19 @@
 import { useState } from 'react';
 import { useParams, Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { courseStore } from '../../store/courseStore';
-import { 
-  ArrowLeft, 
-  Edit, 
-  Eye, 
-  Clock, 
-  Award, 
+import { CourseService, CourseValidationError } from '../../services/courseService';
+import type { Course } from '../../types/courseTypes';
+import { useToast } from '../../context/ToastContext';
+import Card from '../../components/ui/Card';
+import Button from '../../components/ui/Button';
+import Badge from '../../components/ui/Badge';
+import ProgressBar from '../../components/ui/ProgressBar';
+import {
+  ArrowLeft,
+  Edit,
+  Eye,
+  Clock,
+  Award,
   Calendar,
   CheckCircle,
   Play,
@@ -22,19 +29,67 @@ import {
   BookOpen,
   Target,
   AlertTriangle,
-  Info
+  Info,
+  LayoutPanelLeft,
 } from 'lucide-react';
 
 const AdminCourseDetail = () => {
   const { courseId } = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const { showToast } = useToast();
   const [viewMode, setViewMode] = useState<'admin' | 'learner'>(
     searchParams.get('viewMode') === 'learner' ? 'learner' : 'admin'
   );
 
   // Get course from store
   const course = courseId ? courseStore.getCourse(courseId) : null;
+
+  const persistCourse = async (inputCourse: Course, statusOverride?: 'draft' | 'published') => {
+    const prepared: Course = {
+      ...inputCourse,
+      status: statusOverride ?? inputCourse.status ?? 'draft',
+      lastUpdated: new Date().toISOString(),
+      publishedDate:
+        statusOverride === 'published'
+          ? inputCourse.publishedDate || new Date().toISOString()
+          : inputCourse.publishedDate,
+    };
+
+    const snapshot = await CourseService.syncCourseToDatabase(prepared);
+    const finalCourse = (snapshot ?? prepared) as Course;
+    courseStore.saveCourse(finalCourse, { skipRemoteSync: true });
+    return finalCourse;
+  };
+
+  const handleDuplicateCourse = async () => {
+    if (!course) return;
+
+    try {
+      const newId = `course-${Date.now()}`;
+      const cloned: Course = {
+        ...course,
+        id: newId,
+        title: `${course.title} (Copy)`,
+        createdDate: new Date().toISOString(),
+        lastUpdated: new Date().toISOString(),
+        enrollments: 0,
+        completions: 0,
+        completionRate: 0,
+      };
+
+      const persistedClone = await persistCourse(cloned);
+      showToast('Course duplicated successfully.', 'success');
+      navigate(`/admin/course-builder/${persistedClone.id}`);
+    } catch (error) {
+      if (error instanceof CourseValidationError) {
+        showToast(`Duplicate failed: ${error.issues.join(' • ')}`, 'error');
+      } else {
+        console.warn('Duplicate failed', error);
+        showToast('Unable to duplicate course right now.', 'error');
+      }
+    }
+  };
 
   if (!course) {
     return (
@@ -167,14 +222,7 @@ const AdminCourseDetail = () => {
               <Edit className="h-4 w-4" />
               <span>Edit Course</span>
             </Link>
-            <button onClick={() => {
-                try {
-                  const newId = `course-${Date.now()}`;
-                  const cloned = { ...course, id: newId, title: `${course.title} (Copy)`, createdDate: new Date().toISOString(), lastUpdated: new Date().toISOString(), enrollments: 0, completions: 0, completionRate: 0 };
-                  courseStore.saveCourse(cloned);
-                  navigate(`/admin/course-builder/${newId}`);
-                } catch (err) { console.warn('Duplicate failed', err); }
-              }} className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2">
+            <button onClick={() => void handleDuplicateCourse()} className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2">
               <Copy className="h-4 w-4" />
               <span>Duplicate</span>
             </button>

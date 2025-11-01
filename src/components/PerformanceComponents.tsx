@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { motion } from 'framer-motion';
 
 interface LazyImageProps extends React.ImgHTMLAttributes<HTMLImageElement> {
   src: string;
@@ -15,8 +16,7 @@ export const LazyImage: React.FC<LazyImageProps> = ({
   fallbackSrc,
   className = '',
   placeholder,
-  threshold = 0.1,
-  ...props
+  threshold = 0.1
 }) => {
   const [isLoaded, setIsLoaded] = useState(false);
   const [isInView, setIsInView] = useState(false);
@@ -52,27 +52,36 @@ export const LazyImage: React.FC<LazyImageProps> = ({
 
   const imageSrc = hasError && fallbackSrc ? fallbackSrc : src;
 
+  const [darkMode, setDarkMode] = useState(false);
   return (
-    <div ref={imgRef} className={`relative overflow-hidden ${className}`}>
+    <div ref={imgRef} className={`relative overflow-hidden rounded-2xl ${darkMode ? 'bg-gradient-to-br from-indigo-900 via-charcoal to-sunrise/10' : 'bg-gradient-to-br from-indigo-50 via-ivory to-sunrise/10'} ${className}`} aria-label={alt} role="img">
       {!isLoaded && placeholder && (
-        <div className="absolute inset-0 flex items-center justify-center bg-gray-100">
+        <div className={`absolute inset-0 flex items-center justify-center animate-pulse rounded-2xl ${darkMode ? 'bg-mutedgrey/40' : 'bg-mutedgrey'}`}>
           {placeholder}
         </div>
       )}
-      
       {isInView && (
-        <img
-          {...props}
+        <motion.img
           src={imageSrc}
           alt={alt}
           onLoad={handleLoad}
           onError={handleError}
-          className={`transition-opacity duration-300 ${
-            isLoaded ? 'opacity-100' : 'opacity-0'
-          } ${className}`}
+          className={`transition-opacity duration-300 ${isLoaded ? 'opacity-100' : 'opacity-0'} rounded-2xl shadow-card ${className} ${darkMode ? 'bg-charcoal' : ''}`}
           loading="lazy"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: isLoaded ? 1 : 0 }}
         />
       )}
+      {/* Dark mode toggle for LazyImage */}
+      <div className="absolute bottom-2 right-2 z-10">
+        <button
+          onClick={() => setDarkMode(!darkMode)}
+          className="px-2 py-1 rounded bg-charcoal text-ivorywhite text-xs font-heading hover:bg-indigo-700 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          aria-label={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+        >
+          {darkMode ? 'Light' : 'Dark'}
+        </button>
+      </div>
     </div>
   );
 };
@@ -88,20 +97,33 @@ export const ImageSkeleton: React.FC<ImageSkeletonProps> = ({
   width = 'w-full',
   height = 'h-48'
 }) => {
+  const [darkMode, setDarkMode] = useState(false);
   return (
-    <div className={`animate-pulse bg-gray-200 ${width} ${height} ${className}`}>
+    <div className={`animate-pulse rounded-2xl shadow-card ${width} ${height} ${className} ${darkMode ? 'bg-gradient-to-r from-indigo-900/20 via-charcoal to-ivory' : 'bg-gradient-to-r from-sunrise/20 via-indigo-100 to-ivory'}`} aria-label="Loading image" role="img">
       <div className="flex items-center justify-center h-full">
         <svg
-          className="w-8 h-8 text-gray-400"
+          className="w-10 h-10 text-mutedgrey"
           fill="currentColor"
           viewBox="0 0 20 20"
         >
-          <path
-            fillRule="evenodd"
-            d="M4 3a2 2 0 00-2 2v10a2 2 0 002 2h12a2 2 0 002-2V5a2 2 0 00-2-2H4zm12 12H4l4-8 3 6 2-4 3 6z"
-            clipRule="evenodd"
-          />
+          <circle cx="10" cy="10" r="8" fill="url(#huddle-gradient)" />
+          <defs>
+            <linearGradient id="huddle-gradient" x1="0" y1="0" x2="20" y2="20" gradientUnits="userSpaceOnUse">
+              <stop stopColor={darkMode ? '#2B84C6' : '#F28C1A'} />
+              <stop offset="1" stopColor={darkMode ? '#F28C1A' : '#2B84C6'} />
+            </linearGradient>
+          </defs>
         </svg>
+      </div>
+      {/* Dark mode toggle for ImageSkeleton */}
+      <div className="absolute bottom-2 right-2 z-10">
+        <button
+          onClick={() => setDarkMode(!darkMode)}
+          className="px-2 py-1 rounded bg-charcoal text-ivorywhite text-xs font-heading hover:bg-indigo-700 transition-colors focus:outline-none focus:ring-2 focus:ring-indigo-500"
+          aria-label={darkMode ? 'Switch to light mode' : 'Switch to dark mode'}
+        >
+          {darkMode ? 'Light' : 'Dark'}
+        </button>
       </div>
     </div>
   );

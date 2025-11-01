@@ -3,6 +3,7 @@
 export interface Course {
   // Core identification
   id: string;
+  slug?: string;
   title: string;
   description: string;
   
@@ -104,6 +105,7 @@ export interface Lesson {
   estimatedDuration?: number; // optional for backward compatibility
   duration?: string; // formatted duration string for backwards compatibility
   content: LessonContent;
+  completionRule?: Record<string, any>;
   isRequired?: boolean; // optional for backward compatibility
   passingScore?: number; // for quizzes
   maxAttempts?: number;

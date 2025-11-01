@@ -72,7 +72,17 @@ export type Org = {
   tags?: string[];
 };
 
-const STORAGE_KEY = 'huddle_orgs_v1';
+export type OrgMember = {
+  id: string;
+  orgId: string;
+  userId: string;
+  role: string;
+  invitedBy?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+import apiRequest from '../utils/apiClient';
 
 const seedOrgs = (): Org[] => ([
   {
@@ -162,186 +172,173 @@ const seedOrgs = (): Org[] => ([
   }
 ]);
 
-const read = (): Org[] => {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return seedOrgs();
-    return JSON.parse(raw) as Org[];
-  } catch {
-    return seedOrgs();
-  }
-};
+const mapOrgRecord = (record: any): Org => ({
+  id: record.id,
+  name: record.name,
+  type: record.type,
+  description: record.description ?? undefined,
+  logo: record.logo ?? undefined,
+  contactPerson: record.contact_person ?? '',
+  contactEmail: record.contact_email,
+  contactPhone: record.contact_phone ?? undefined,
+  website: record.website ?? undefined,
+  address: record.address ?? undefined,
+  city: record.city ?? undefined,
+  state: record.state ?? undefined,
+  country: record.country ?? undefined,
+  postalCode: record.postal_code ?? undefined,
+  subscription: record.subscription,
+  billingEmail: record.billing_email ?? undefined,
+  billingCycle: record.billing_cycle ?? undefined,
+  customPricing: record.custom_pricing ?? undefined,
+  maxLearners: record.max_learners ?? undefined,
+  maxCourses: record.max_courses ?? undefined,
+  maxStorage: record.max_storage ?? undefined,
+  features: record.features ?? {},
+  settings: record.settings ?? {},
+  status: record.status,
+  enrollmentDate: record.enrollment_date ?? undefined,
+  contractStart: record.contract_start ?? undefined,
+  contractEnd: record.contract_end ?? undefined,
+  createdAt: record.created_at ?? undefined,
+  updatedAt: record.updated_at ?? undefined,
+  totalLearners: record.total_learners ?? 0,
+  activeLearners: record.active_learners ?? 0,
+  completionRate: Number(record.completion_rate ?? 0),
+  cohorts: record.cohorts ?? [],
+  lastActivity: record.last_activity ?? undefined,
+  modules: record.modules ?? {},
+  notes: record.notes ?? undefined,
+  tags: record.tags ?? []
+});
 
-const write = (items: Org[]) => localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+const mapMemberRecord = (record: any): OrgMember => ({
+  id: record.id,
+  orgId: record.org_id ?? record.orgId,
+  userId: record.user_id ?? record.userId,
+  role: record.role ?? 'member',
+  invitedBy: record.invited_by ?? null,
+  createdAt: record.created_at ?? new Date().toISOString(),
+  updatedAt: record.updated_at ?? new Date().toISOString()
+});
 
 export const listOrgs = async (): Promise<Org[]> => {
-  return read();
+  const json = await apiRequest<{ data: any[] }>('/api/admin/organizations');
+  if ((json.data?.length ?? 0) === 0) {
+    for (const org of seedOrgs()) {
+      await createOrg(org);
+    }
+    const refreshed = await apiRequest<{ data: any[] }>('/api/admin/organizations');
+    return (refreshed.data || []).map(mapOrgRecord);
+  }
+  return (json.data || []).map(mapOrgRecord);
 };
 
 export const getOrg = async (id: string): Promise<Org | null> => {
-  const all = read();
-  return all.find(o => o.id === id) || null;
-};
-
-export const updateOrg = async (id: string, patch: Partial<Org>): Promise<Org> => {
-  const all = read();
-  const idx = all.findIndex(o => o.id === id);
-  if (idx === -1) throw new Error('Org not found');
-  all[idx] = { ...all[idx], ...patch };
-  write(all);
-  return all[idx];
+  const json = await apiRequest<{ data: any[] }>('/api/admin/organizations');
+  const record = (json.data || []).find(org => org.id === id);
+  return record ? mapOrgRecord(record) : null;
 };
 
 export const createOrg = async (payload: Partial<Org>): Promise<Org> => {
-  const all = read();
-  const id = String(Date.now());
-  const now = new Date().toISOString();
-  
-  const newOrg: Org = {
-    id,
-    name: payload.name || 'New Organization',
-    type: payload.type || 'Organization',
-    description: payload.description,
-    logo: payload.logo,
-    
-    // Contact Information
-    contactPerson: payload.contactPerson || 'Unknown',
-    contactEmail: payload.contactEmail || '',
-    contactPhone: payload.contactPhone,
-    website: payload.website,
-    
-    // Address Information
-    address: payload.address,
-    city: payload.city,
-    state: payload.state,
-    country: payload.country || 'United States',
-    postalCode: payload.postalCode,
-    
-    // Subscription & Billing
-    subscription: payload.subscription || 'Standard',
-    billingEmail: payload.billingEmail,
-    billingCycle: payload.billingCycle || 'monthly',
-    customPricing: payload.customPricing,
-    
-    // Capacity & Limits
-    maxLearners: payload.maxLearners || 100,
-    maxCourses: payload.maxCourses || 50,
-    maxStorage: payload.maxStorage || 10,
-    
-    // Features & Permissions
-    features: payload.features || {
-      analytics: true,
-      certificates: true,
-      apiAccess: false,
-      customBranding: false,
-      sso: false,
-      mobileApp: true,
-      reporting: true,
-      integrations: false,
-    },
-    
-    // Settings
-    settings: payload.settings || {
-      autoEnrollment: false,
-      emailNotifications: true,
-      progressTracking: true,
-      allowDownloads: true,
-      requireCompletion: false,
-      dataRetention: 24,
-    },
-    
-    // Status & Metadata
-    status: payload.status || 'active',
-    enrollmentDate: payload.enrollmentDate || now,
-    contractStart: payload.contractStart,
-    contractEnd: payload.contractEnd,
-    createdAt: now,
-    updatedAt: now,
-    
-    // Usage Statistics
-    totalLearners: payload.totalLearners || 0,
-    activeLearners: payload.activeLearners || 0,
-    completionRate: payload.completionRate || 0,
-    cohorts: payload.cohorts || [],
-    lastActivity: payload.lastActivity,
-    modules: payload.modules || {},
-    
-    // Additional Data
-    notes: payload.notes || '',
-    tags: payload.tags || [],
-  };
-  
-  all.push(newOrg);
-  write(all);
-  return newOrg;
-};
-
-// Add new functions for comprehensive org management
-export const deleteOrg = async (id: string): Promise<void> => {
-  const all = read();
-  const filtered = all.filter(org => org.id !== id);
-  write(filtered);
-};
-
-export const bulkUpdateOrgs = async (updates: Array<{id: string, data: Partial<Org>}>): Promise<Org[]> => {
-  const all = read();
-  const updatedOrgs: Org[] = [];
-  
-  updates.forEach(update => {
-    const idx = all.findIndex(org => org.id === update.id);
-    if (idx !== -1) {
-      all[idx] = { ...all[idx], ...update.data, updatedAt: new Date().toISOString() };
-      updatedOrgs.push(all[idx]);
-    }
+  const json = await apiRequest<{ data: any }>('/api/admin/organizations', {
+    method: 'POST',
+    body: JSON.stringify(payload)
   });
-  
-  write(all);
-  return updatedOrgs;
+  return mapOrgRecord(json.data);
+};
+
+export const updateOrg = async (id: string, patch: Partial<Org>): Promise<Org> => {
+  const json = await apiRequest<{ data: any }>(`/api/admin/organizations/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(patch)
+  });
+  return mapOrgRecord(json.data);
+};
+
+export const deleteOrg = async (id: string): Promise<void> => {
+  await apiRequest(`/api/admin/organizations/${id}`, { method: 'DELETE' });
+};
+
+export const bulkUpdateOrgs = async (updates: Array<{ id: string; data: Partial<Org> }>): Promise<Org[]> => {
+  const results: Org[] = [];
+  for (const update of updates) {
+    const org = await updateOrg(update.id, update.data);
+    results.push(org);
+  }
+  return results;
 };
 
 export const getOrgStats = async (id: string): Promise<any> => {
   const org = await getOrg(id);
   if (!org) return null;
-  
-  // Mock advanced statistics
+
   return {
     overview: {
       totalUsers: org.totalLearners,
       activeUsers: org.activeLearners,
       completionRate: org.completionRate,
-      avgSessionTime: Math.floor(Math.random() * 30) + 15, // 15-45 minutes
+      avgSessionTime: Math.floor(Math.random() * 30) + 15
     },
     engagement: {
       dailyActiveUsers: Math.floor(org.activeLearners * 0.6),
       weeklyActiveUsers: Math.floor(org.activeLearners * 0.8),
-      monthlyActiveUsers: org.activeLearners,
+      monthlyActiveUsers: org.activeLearners
     },
     performance: {
       coursesCompleted: Object.values(org.modules).reduce((sum, val) => sum + Math.floor(val * 0.8), 0),
       certificatesIssued: Math.floor(org.totalLearners * (org.completionRate / 100)),
       avgScores: Object.fromEntries(
         Object.keys(org.modules).map(key => [key, Math.floor(Math.random() * 30) + 70])
-      ),
+      )
     },
     trends: {
       userGrowth: Array.from({ length: 12 }, (_, i) => ({
         month: new Date(Date.now() - (11 - i) * 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 7),
-        users: Math.floor(Math.random() * 10) + org.totalLearners * 0.8,
+        users: Math.floor(Math.random() * 10) + org.totalLearners * 0.8
       })),
       completionTrends: Array.from({ length: 30 }, (_, i) => ({
         date: new Date(Date.now() - (29 - i) * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
-        completions: Math.floor(Math.random() * 5) + 2,
-      })),
+        completions: Math.floor(Math.random() * 5) + 2
+      }))
     }
   };
 };
 
-export default { 
-  listOrgs, 
-  getOrg, 
-  updateOrg, 
-  createOrg, 
-  deleteOrg, 
-  bulkUpdateOrgs, 
-  getOrgStats 
+export const listOrgMembers = async (orgId: string): Promise<OrgMember[]> => {
+  const json = await apiRequest<{ data: any[] }>(`/api/admin/organizations/${orgId}/members`);
+  return (json.data ?? []).map(mapMemberRecord);
+};
+
+export const addOrgMember = async (
+  orgId: string,
+  payload: { userId: string; role?: string }
+): Promise<OrgMember> => {
+  const json = await apiRequest<{ data: any }>(`/api/admin/organizations/${orgId}/members`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+
+  return mapMemberRecord(json.data);
+};
+
+export const removeOrgMember = async (orgId: string, membershipId: string): Promise<void> => {
+  await apiRequest(`/api/admin/organizations/${orgId}/members/${membershipId}`, {
+    method: 'DELETE',
+    expectedStatus: [200, 204],
+    rawResponse: true
+  });
+};
+
+export default {
+  listOrgs,
+  getOrg,
+  updateOrg,
+  createOrg,
+  deleteOrg,
+  bulkUpdateOrgs,
+  getOrgStats,
+  listOrgMembers,
+  addOrgMember,
+  removeOrgMember
 };

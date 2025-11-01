@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Wifi, WifiOff, CheckCircle, AlertTriangle, Info } from 'lucide-react';
+import { api } from '@/lib/api';
 
 interface ConnectionStatus {
   isOnline: boolean;
@@ -38,7 +39,7 @@ const ConnectionDiagnostic: React.FC = () => {
 
     // Test API response (for when we have real APIs)
     try {
-      const apiTest = await fetch('/api/health', {
+      const apiTest = await api('/api/health', {
         method: 'GET',
         timeout: 5000
       } as any);

@@ -1,120 +1,222 @@
-// Local-first client workspace service for development
-// Stores org workspaces under localStorage key `huddle_org_workspace_<orgId>`
-type StrategicPlanVersion = {
+import apiRequest, { type ApiRequestOptions } from '../utils/apiClient';
+
+const apiFetch = async <T>(path: string, options: ApiRequestOptions = {}) =>
+  apiRequest<T>(path, options);
+
+export type StrategicPlanVersion = {
   id: string;
-  content: string; // could be markdown or HTML for now
+  orgId: string;
+  content: string;
   createdAt: string;
   createdBy: string;
+  metadata?: Record<string, any>;
 };
 
-type SessionNote = {
+export type SessionAttachment = { id: string; name: string; url?: string };
+
+export type SessionNote = {
   id: string;
+  orgId: string;
   title: string;
   body: string;
   date: string;
   tags: string[];
-  attachments: { id: string; name: string; url?: string }[];
+  attachments: SessionAttachment[];
   createdBy: string;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
-type ActionItem = {
+export type ActionItem = {
   id: string;
+  orgId: string;
   title: string;
   description?: string;
   assignee?: string;
   dueDate?: string;
   status: 'Not Started' | 'In Progress' | 'Completed';
+  metadata?: Record<string, any>;
+  createdAt?: string;
+  updatedAt?: string;
 };
 
-type OrgWorkspace = {
+export type OrgWorkspace = {
   orgId: string;
   strategicPlans: StrategicPlanVersion[];
   sessionNotes: SessionNote[];
   actionItems: ActionItem[];
 };
 
-const storageKey = (orgId: string) => `huddle_org_workspace_${orgId}`;
+const mapStrategicPlan = (record: any): StrategicPlanVersion => ({
+  id: record.id,
+  orgId: record.orgId ?? record.org_id,
+  content: record.content ?? '',
+  createdAt: record.createdAt ?? record.created_at ?? new Date().toISOString(),
+  createdBy: record.createdBy ?? record.created_by ?? 'System',
+  metadata: record.metadata ?? {}
+});
+
+const mapSessionNote = (record: any): SessionNote => ({
+  id: record.id,
+  orgId: record.orgId ?? record.org_id,
+  title: record.title,
+  body: record.body ?? '',
+  date: record.date ?? record.note_date ?? record.created_at ?? new Date().toISOString(),
+  tags: Array.isArray(record.tags) ? record.tags : [],
+  attachments: Array.isArray(record.attachments) ? record.attachments : [],
+  createdBy: record.createdBy ?? record.created_by ?? 'System',
+  createdAt: record.createdAt ?? record.created_at,
+  updatedAt: record.updatedAt ?? record.updated_at
+});
+
+const mapActionItem = (record: any): ActionItem => ({
+  id: record.id,
+  orgId: record.orgId ?? record.org_id,
+  title: record.title,
+  description: record.description ?? undefined,
+  assignee: record.assignee ?? undefined,
+  dueDate: record.dueDate ?? record.due_at ?? undefined,
+  status: record.status ?? 'Not Started',
+  metadata: record.metadata ?? {},
+  createdAt: record.createdAt ?? record.created_at,
+  updatedAt: record.updatedAt ?? record.updated_at
+});
 
 export const getWorkspace = async (orgId: string): Promise<OrgWorkspace> => {
-  const raw = localStorage.getItem(storageKey(orgId));
-  if (raw) return JSON.parse(raw) as OrgWorkspace;
-  const initial: OrgWorkspace = { orgId, strategicPlans: [], sessionNotes: [], actionItems: [] };
-  localStorage.setItem(storageKey(orgId), JSON.stringify(initial));
-  return initial;
+  const json = await apiFetch<{ data: { orgId: string; strategicPlans: any[]; sessionNotes: any[]; actionItems: any[] } }>(
+    `/api/orgs/${orgId}/workspace`
+  );
+
+  return {
+    orgId: json.data.orgId,
+    strategicPlans: (json.data.strategicPlans ?? []).map(mapStrategicPlan),
+    sessionNotes: (json.data.sessionNotes ?? []).map(mapSessionNote),
+    actionItems: (json.data.actionItems ?? []).map(mapActionItem)
+  };
 };
 
-export const saveWorkspace = async (workspace: OrgWorkspace): Promise<void> => {
-  localStorage.setItem(storageKey(workspace.orgId), JSON.stringify(workspace));
-};
+export const addStrategicPlanVersion = async (
+  orgId: string,
+  content: string,
+  createdBy = 'Huddle Co.',
+  metadata: Record<string, any> = {}
+): Promise<StrategicPlanVersion> => {
+  const json = await apiFetch<{ data: any }>(`/api/orgs/${orgId}/workspace/strategic-plans`, {
+    method: 'POST',
+    body: JSON.stringify({ content, createdBy, metadata })
+  });
 
-export const addStrategicPlanVersion = async (orgId: string, content: string, createdBy = 'Huddle Co.'): Promise<StrategicPlanVersion> => {
-  const ws = await getWorkspace(orgId);
-  const version: StrategicPlanVersion = { id: `sp-${Date.now()}`, content, createdAt: new Date().toISOString(), createdBy };
-  ws.strategicPlans.push(version);
-  await saveWorkspace(ws);
-  return version;
+  return mapStrategicPlan(json.data);
 };
 
 export const listStrategicPlans = async (orgId: string): Promise<StrategicPlanVersion[]> => {
-  const ws = await getWorkspace(orgId);
-  return ws.strategicPlans.slice().sort((a,b) => +new Date(b.createdAt) - +new Date(a.createdAt));
+  const json = await apiFetch<{ data: any[] }>(`/api/orgs/${orgId}/workspace/strategic-plans`);
+  return (json.data ?? []).map(mapStrategicPlan);
 };
 
 export const deleteStrategicPlanVersion = async (orgId: string, versionId: string) => {
-  const ws = await getWorkspace(orgId);
-  ws.strategicPlans = ws.strategicPlans.filter(v => v.id !== versionId);
-  await saveWorkspace(ws);
+  await apiFetch<void>(`/api/orgs/${orgId}/workspace/strategic-plans/${versionId}`, {
+    method: 'DELETE',
+    expectedStatus: [200, 204],
+    rawResponse: true
+  });
 };
 
 export const getStrategicPlanVersion = async (orgId: string, versionId: string) => {
-  const ws = await getWorkspace(orgId);
-  return ws.strategicPlans.find(v => v.id === versionId) || null;
+  const json = await apiFetch<{ data: any }>(`/api/orgs/${orgId}/workspace/strategic-plans/${versionId}`);
+  return json?.data ? mapStrategicPlan(json.data) : null;
 };
 
-export const addSessionNote = async (orgId: string, note: Omit<SessionNote,'id'|'createdBy'>, createdBy = 'Huddle Co.') => {
-  const ws = await getWorkspace(orgId);
-  const n: SessionNote = { id: `note-${Date.now()}`, createdBy, ...note } as SessionNote;
-  ws.sessionNotes.push(n);
-  await saveWorkspace(ws);
-  return n;
+export const addSessionNote = async (
+  orgId: string,
+  note: Omit<SessionNote, 'id' | 'createdBy' | 'orgId'>,
+  createdBy = 'Huddle Co.'
+) => {
+  const payload = {
+    title: note.title,
+    body: note.body,
+    date: note.date,
+    tags: note.tags,
+    attachments: note.attachments,
+    createdBy
+  };
+
+  const json = await apiFetch<{ data: any }>(`/api/orgs/${orgId}/workspace/session-notes`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+
+  return mapSessionNote(json.data);
 };
 
 export const listSessionNotes = async (orgId: string) => {
-  const ws = await getWorkspace(orgId);
-  return ws.sessionNotes.slice().sort((a,b) => +new Date(b.date) - +new Date(a.date));
+  const json = await apiFetch<{ data: any[] }>(`/api/orgs/${orgId}/workspace/session-notes`);
+  return (json.data ?? []).map(mapSessionNote);
 };
 
-export const addActionItem = async (orgId: string, item: Omit<ActionItem,'id'>) => {
-  const ws = await getWorkspace(orgId);
-  const ai: ActionItem = { id: `action-${Date.now()}`, ...item } as ActionItem;
-  ws.actionItems.push(ai);
-  await saveWorkspace(ws);
-  return ai;
+export const addActionItem = async (orgId: string, item: Omit<ActionItem, 'id' | 'orgId'>) => {
+  const payload = {
+    title: item.title,
+    description: item.description,
+    assignee: item.assignee,
+    dueDate: item.dueDate,
+    status: item.status,
+    metadata: item.metadata
+  };
+
+  const json = await apiFetch<{ data: any }>(`/api/orgs/${orgId}/workspace/action-items`, {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+
+  return mapActionItem(json.data);
 };
 
 export const updateActionItem = async (orgId: string, item: ActionItem) => {
-  const ws = await getWorkspace(orgId);
-  ws.actionItems = ws.actionItems.map(i => i.id === item.id ? item : i);
-  await saveWorkspace(ws);
-  return item;
+  const payload = {
+    title: item.title,
+    description: item.description,
+    assignee: item.assignee,
+    dueDate: item.dueDate,
+    status: item.status,
+    metadata: item.metadata
+  };
+
+  const json = await apiFetch<{ data: any }>(`/api/orgs/${orgId}/workspace/action-items/${item.id}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload)
+  });
+
+  return mapActionItem(json.data);
 };
 
 export const listActionItems = async (orgId: string) => {
-  const ws = await getWorkspace(orgId);
-  return ws.actionItems.slice().sort((a,b) => {
-    const order = { 'Not Started': 0, 'In Progress': 1, 'Completed': 2 } as Record<string, number>;
-    return order[a.status] - order[b.status];
-  });
+  const json = await apiFetch<{ data: any[] }>(`/api/orgs/${orgId}/workspace/action-items`);
+  return (json.data ?? []).map(mapActionItem);
+};
+
+export const checkWorkspaceAccess = async (orgId: string) => {
+  try {
+    const json = await apiFetch<{ data: { role: string } }>(`/api/orgs/${orgId}/workspace/access`);
+    return json?.data ?? null;
+  } catch (error) {
+    if (error instanceof Error && /(401|403)/.test(error.message)) {
+      return null;
+    }
+    throw error;
+  }
 };
 
 export default {
   getWorkspace,
-  saveWorkspace,
   addStrategicPlanVersion,
   listStrategicPlans,
+  deleteStrategicPlanVersion,
+  getStrategicPlanVersion,
   addSessionNote,
   listSessionNotes,
   addActionItem,
+  updateActionItem,
   listActionItems,
-  updateActionItem
+  checkWorkspaceAccess
 };

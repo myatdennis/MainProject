@@ -1,123 +1,266 @@
-import React, { useState, useEffect } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { 
-  BookOpen, 
-  Clock, 
-  Star, 
-  Play, 
-  CheckCircle, 
-  BarChart3, 
+import {
+  ArrowUpRight,
+  BarChart3,
+  BookOpen,
+  CheckCircle2,
+  Clock,
+  Play,
   Search,
-  Grid,
-  List,
-  Award,
-  Eye,
-  ChevronRight,
-  Target
+  Target,
 } from 'lucide-react';
+
 import { Course, LearnerProgress } from '../types/courseTypes';
+import { courseStore } from '../store/courseStore';
+import { normalizeCourse } from '../utils/courseNormalization';
+import {
+  syncCourseProgressWithRemote,
+  buildLearnerProgressSnapshot,
+  loadStoredCourseProgress,
+} from '../utils/courseProgress';
+import syncService from '../services/syncService';
+import { getAssignmentsForUser } from '../utils/assignmentStorage';
+import type { CourseAssignment } from '../types/assignment';
 
 import SEO from '../components/SEO';
 import { LoadingSpinner, CourseCardSkeleton } from '../components/LoadingComponents';
 import { LazyImage, ImageSkeleton, useDebounce } from '../components/PerformanceComponents';
+import Card from '../components/ui/Card';
+import Button from '../components/ui/Button';
+import Input from '../components/ui/Input';
+import Badge from '../components/ui/Badge';
+import ProgressBar from '../components/ui/ProgressBar';
 
-const LearnerDashboard: React.FC = () => {
+const filterOptions: Array<{ value: 'all' | 'in-progress' | 'not-started' | 'completed'; label: string }> = [
+  { value: 'all', label: 'All' },
+  { value: 'in-progress', label: 'In Progress' },
+  { value: 'not-started', label: 'Not Started' },
+  { value: 'completed', label: 'Completed' },
+];
+
+type CourseStats = {
+  progress: number;
+  completedLessons: number;
+  totalLessons: number;
+  timeSpent: number;
+  isCompleted: boolean;
+};
+
+const LearnerDashboard = () => {
   const navigate = useNavigate();
   const [enrolledCourses, setEnrolledCourses] = useState<Course[]>([]);
   const [progressData, setProgressData] = useState<Map<string, LearnerProgress>>(new Map());
   const [isLoading, setIsLoading] = useState(true);
-  const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [searchQuery, setSearchQuery] = useState('');
-  const [filterStatus, setFilterStatus] = useState<'all' | 'in-progress' | 'completed' | 'not-started'>('all');
-  const debouncedSearchQuery = useDebounce(searchQuery, 300);
+  const [filterStatus, setFilterStatus] = useState<'all' | 'in-progress' | 'not-started' | 'completed'>('all');
+  const debouncedSearchQuery = useDebounce(searchQuery, 250);
+  const [assignments, setAssignments] = useState<CourseAssignment[]>([]);
+  const [progressRefreshToken, setProgressRefreshToken] = useState(0);
 
-  useEffect(() => {
-    loadUserCourses();
+  const learnerId = useMemo(() => {
+    try {
+      const raw = localStorage.getItem('huddle_user');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        return (parsed.email || parsed.id || 'local-user').toLowerCase();
+      }
+    } catch (error) {
+      console.warn('Failed to read learner identity:', error);
+    }
+    return 'local-user';
   }, []);
 
-  const loadUserCourses = () => {
-    setIsLoading(true);
-    
-    console.log('📚 Loading learner courses - temporarily using mock data to avoid type conflicts');
-    
-    // Temporary: Use mock courses to avoid type conflicts between courseStore and LearnerDashboard
-    // TODO: Fix the Course type conflicts between different stores
-    const mockCourses: Course[] = [
-      {
-        id: 'course-1',
-        title: 'Introduction to Workplace Diversity',
-        description: 'Learn the fundamentals of creating an inclusive workplace environment.',
-        instructorId: 'instructor-1',
-        instructorName: 'Dr. Sarah Johnson',
-        instructorAvatar: '/avatars/instructor-1.jpg',
-        category: 'Diversity & Inclusion',
-        difficulty: 'Beginner',
-        duration: '120 min',
-        estimatedDuration: 120,
-        thumbnail: '/images/course-diversity.jpg',
+  useEffect(() => {
+    let isMounted = true;
 
-        rating: 4.8,
-        enrollmentCount: 156,
-        chapters: [],
-        learningObjectives: ['Understand diversity concepts', 'Create inclusive environments'],
-        prerequisites: [],
-        tags: ['diversity', 'inclusion', 'workplace'],
-        language: 'English',
-        lastUpdated: new Date().toISOString(),
-        createdAt: new Date().toISOString(),
-        isPublished: true,
-        status: 'published'
+    const run = async () => {
+      setIsLoading(true);
+      try {
+        if (courseStore.getAllCourses().length === 0 && typeof courseStore.init === 'function') {
+          await courseStore.init();
+        }
+
+        const storedCourses = courseStore.getAllCourses();
+        const normalizedCourses = storedCourses
+          .map((course) => normalizeCourse(course))
+          .filter((course) => course.status === 'published');
+
+        const assignmentRecords = await getAssignmentsForUser(learnerId);
+        const mergedCourses = [...normalizedCourses];
+        assignmentRecords.forEach((record) => {
+          if (!mergedCourses.some((course) => course.id === record.courseId)) {
+            const fromStore = courseStore.getCourse(record.courseId);
+            if (fromStore) {
+              mergedCourses.push(normalizeCourse(fromStore));
+            }
+          }
+        });
+
+        if (!isMounted) return;
+
+        setAssignments(assignmentRecords);
+        setEnrolledCourses(mergedCourses);
+
+        const progressMap = new Map<string, LearnerProgress>();
+        mergedCourses.forEach((course) => {
+          const normalized = normalizeCourse(course);
+          const storedProgress = loadStoredCourseProgress(normalized.slug);
+          const completedSet = new Set(storedProgress.completedLessonIds);
+          const snapshot = buildLearnerProgressSnapshot(
+            normalized,
+            completedSet,
+            storedProgress.lessonProgress || {}
+          );
+          progressMap.set(normalized.id, snapshot);
+        });
+
+        setProgressData(progressMap);
+      } catch (error) {
+        console.error('Failed to load learner courses:', error);
+        if (isMounted) {
+          setEnrolledCourses([]);
+          setProgressData(new Map());
+        }
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
       }
-    ];
-    
-    setEnrolledCourses(mockCourses);
+    };
 
-    // Mock progress data
-    const progressMap = new Map<string, LearnerProgress>();
-    mockCourses.forEach((course: Course) => {
-      const mockProgress: LearnerProgress = {
-        id: `progress-${course.id}`,
-        learnerId: 'learner-1',
-        courseId: course.id,
-        overallProgress: Math.random() * 0.8, // Random progress between 0-80%
-        timeSpent: Math.floor(Math.random() * 3600), // Random seconds
-        lastAccessedAt: new Date().toISOString(),
-        enrolledAt: new Date(Date.now() - Math.floor(Math.random() * 30 * 24 * 60 * 60 * 1000)).toISOString(),
-        completedAt: Math.random() > 0.8 ? new Date().toISOString() : undefined,
-        chapterProgress: [],
-        lessonProgress: [],
-        bookmarks: [],
-        notes: []
-      };
-      progressMap.set(course.id, mockProgress);
+    void run();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [learnerId]);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadAssignments = async () => {
+      try {
+        const records = await getAssignmentsForUser(learnerId);
+        if (isMounted) {
+          setAssignments(records);
+        }
+      } catch (error) {
+        console.error('Failed to load assignments:', error);
+      }
+    };
+
+    void loadAssignments();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [learnerId]);
+
+  useEffect(() => {
+    const refreshAssignments = async () => {
+      try {
+        const records = await getAssignmentsForUser(learnerId);
+        setAssignments(records);
+      } catch (error) {
+        console.error('Failed to refresh assignments:', error);
+      }
+    };
+    const unsubAssignCreate = syncService.subscribe('assignment_created', () => {
+      void refreshAssignments();
     });
-    setProgressData(progressMap);
-    
-    setIsLoading(false);
-  };
+    const unsubAssignUpdate = syncService.subscribe('assignment_updated', () => {
+      void refreshAssignments();
+    });
+    const unsubProgress = syncService.subscribe('user_progress', (event) => {
+      const targetId = event?.userId || event?.data?.userId;
+      if (targetId?.toLowerCase?.() === learnerId) {
+        void refreshAssignments();
+      }
+    });
+    const unsubComplete = syncService.subscribe('user_completed', (event) => {
+      const targetId = event?.userId || event?.data?.userId;
+      if (targetId?.toLowerCase?.() === learnerId) {
+        void refreshAssignments();
+      }
+    });
 
-  const getFilteredCourses = () => {
-    let filtered = enrolledCourses;
+    return () => {
+      unsubAssignCreate?.();
+      unsubAssignUpdate?.();
+      unsubProgress?.();
+      unsubComplete?.();
+    };
+  }, [learnerId]);
 
-    // Apply search filter with debounced query
-    if (debouncedSearchQuery) {
-      filtered = filtered.filter(course =>
-        course.title.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) ||
-        course.description.toLowerCase().includes(debouncedSearchQuery.toLowerCase()) ||
-        course.category?.toLowerCase().includes(debouncedSearchQuery.toLowerCase())
+
+  useEffect(() => {
+    let isMounted = true;
+    const syncProgress = async () => {
+      if (!enrolledCourses.length) return;
+
+      const results = await Promise.all(
+        enrolledCourses.map(async (course) => {
+          const normalized = normalizeCourse(course);
+          const lessonIds =
+            normalized.chapters?.flatMap((chapter) => chapter.lessons?.map((lesson) => lesson.id) ?? []) ?? [];
+          if (!lessonIds.length) return null;
+          return syncCourseProgressWithRemote({
+            courseSlug: normalized.slug,
+            courseId: normalized.id,
+            userId: learnerId,
+            lessonIds,
+          });
+        })
       );
+
+      if (!isMounted) return;
+      if (results.some((entry) => entry)) {
+        setProgressRefreshToken((token) => token + 1);
+        const progressMap = new Map<string, LearnerProgress>();
+        enrolledCourses.forEach((course) => {
+          const normalized = normalizeCourse(course);
+          const storedProgress = loadStoredCourseProgress(normalized.slug);
+          const completedSet = new Set(storedProgress.completedLessonIds);
+          const snapshot = buildLearnerProgressSnapshot(
+            normalized,
+            completedSet,
+            storedProgress.lessonProgress || {}
+          );
+          progressMap.set(normalized.id, snapshot);
+        });
+        setProgressData(progressMap);
+      }
+    };
+
+    void syncProgress();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [enrolledCourses, learnerId]);
+
+  const filteredCourses = useMemo(() => {
+    let courses = [...enrolledCourses];
+
+    if (debouncedSearchQuery) {
+      const query = debouncedSearchQuery.toLowerCase();
+      courses = courses.filter((course) => {
+        const titleMatch = course.title.toLowerCase().includes(query);
+        const descriptionMatch = (course.description || '').toLowerCase().includes(query);
+        const categoryMatch = course.category?.toLowerCase().includes(query);
+        return titleMatch || descriptionMatch || categoryMatch;
+      });
     }
 
-    // Apply status filter
     if (filterStatus !== 'all') {
-      filtered = filtered.filter(course => {
+      courses = courses.filter((course) => {
         const progress = progressData.get(course.id);
-        
         switch (filterStatus) {
-          case 'completed':
-            return progress?.overallProgress === 1;
           case 'in-progress':
             return progress && progress.overallProgress > 0 && progress.overallProgress < 1;
+          case 'completed':
+            return progress?.overallProgress === 1;
           case 'not-started':
             return !progress || progress.overallProgress === 0;
           default:
@@ -126,64 +269,99 @@ const LearnerDashboard: React.FC = () => {
       });
     }
 
-    return filtered;
-  };
+    return courses;
+  }, [enrolledCourses, debouncedSearchQuery, filterStatus, progressData, progressRefreshToken]);
 
   const handleCourseClick = (course: Course) => {
-    navigate(`/lms/course/${course.id}`);
+    navigate(`/lms/course/${course.slug || course.id}`);
   };
 
   const handleContinueCourse = (course: Course) => {
     const progress = progressData.get(course.id);
     if (progress && progress.lessonProgress.length > 0) {
-      // Find the next incomplete lesson
-      const nextLesson = (course.chapters || [])
-        .flatMap(chapter => chapter.lessons)
-        .find(lesson => {
-          const lessonProg = progress.lessonProgress.find((p: any) => p.lessonId === lesson.id);
-          return !lessonProg?.completedAt;
-        });
-      
+      const nextLesson = progress.lessonProgress.find((p) => !p.isCompleted);
       if (nextLesson) {
-        navigate(`/lms/course/${course.id}/lesson/${nextLesson.id}`);
-      } else {
-        navigate(`/lms/course/${course.id}`);
-      }
-    } else {
-      // Start from the beginning
-      const firstLesson = course.chapters?.[0]?.lessons[0];
-      if (firstLesson) {
-        navigate(`/lms/course/${course.id}/lesson/${firstLesson.id}`);
+        navigate(`/lms/course/${course.slug || course.id}/lesson/${nextLesson.lessonId}`);
+        return;
       }
     }
+
+    const storedProgress = loadStoredCourseProgress(course.slug);
+    if (storedProgress.lastLessonId) {
+      navigate(`/lms/course/${course.slug || course.id}/lesson/${storedProgress.lastLessonId}`);
+      return;
+    }
+
+    const firstLesson = course.chapters?.[0]?.lessons?.[0] || course.modules?.[0]?.lessons?.[0];
+    if (firstLesson) {
+      navigate(`/lms/course/${course.slug || course.id}/lesson/${firstLesson.id}`);
+      return;
+    }
+
+    navigate(`/lms/course/${course.slug || course.id}`);
   };
 
-  const getCourseStats = (course: Course) => {
+  const getCourseStats = (course: Course): CourseStats => {
     const progress = progressData.get(course.id);
-    const completedLessons = progress?.lessonProgress.filter(lp => lp.isCompleted).length || 0;
-    const totalLessons = (course.chapters || []).reduce((total, chapter) => total + chapter.lessons.length, 0);
-    
+    const assignment = assignments.find((record) => record.courseId === course.id);
+    const assignmentProgress = assignment ? assignment.progress / 100 : 0;
+    const overallProgress = Math.max(progress?.overallProgress || 0, assignmentProgress);
+
+    const totalLessons = (course.chapters || []).reduce(
+      (total, chapter) => total + chapter.lessons.length,
+      0
+    );
+
+    const completedLessons = overallProgress >= 1
+      ? totalLessons
+      : progress?.lessonProgress.filter((lp) => lp.isCompleted).length || 0;
+
     return {
-      progress: progress?.overallProgress || 0,
+      progress: overallProgress,
       completedLessons,
       totalLessons,
       timeSpent: progress?.timeSpent || 0,
-      isCompleted: progress?.overallProgress === 1
+      isCompleted: overallProgress >= 1 || assignment?.status === 'completed',
     };
   };
 
+  const activeCourses = filteredCourses.filter((course) => {
+    const stats = getCourseStats(course);
+    return stats.progress > 0 && !stats.isCompleted;
+  });
+
+  const notStartedCourses = filteredCourses.filter((course) => getCourseStats(course).progress === 0);
+
+  const progressValues = filteredCourses.map((course) => getCourseStats(course).progress);
+  const completedCount = progressValues.filter((value) => value >= 1).length;
+  const inProgressCount = progressValues.filter((value) => value > 0 && value < 1).length;
+  const snapshotValues = Array.from(progressData.values());
+  const totalSeconds = snapshotValues.reduce((sum, item) => sum + (item.timeSpent || 0), 0);
+  const completedLessonAggregate = snapshotValues.reduce(
+    (sum, item) => sum + (item.lessonProgress?.filter((lesson) => lesson.isCompleted).length || 0),
+    0
+  );
+  const hoursSpent = Math.floor(totalSeconds / 3600);
+  const averageCompletion = progressValues.length
+    ? Math.round(
+        (progressValues.reduce((sum, value) => sum + value, 0) / progressValues.length) *
+          100
+      )
+    : 0;
+
+  const recommendedCourses = notStartedCourses.length > 0 ? notStartedCourses : filteredCourses;
+
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-gray-50">
-        <SEO 
+      <div className="min-h-screen bg-softwhite">
+        <SEO
           title="My Learning Dashboard"
           description="Track your learning progress, continue courses, and discover new educational opportunities."
           keywords="learning dashboard, course progress, online education, skills development"
         />
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className="mx-auto max-w-7xl px-6 py-12 lg:px-12">
           <LoadingSpinner size="lg" text="Loading your courses..." className="py-20" />
-          
-          <div className="mt-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          <div className="mt-10 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
             {[1, 2, 3, 4, 5, 6].map((i) => (
               <CourseCardSkeleton key={i} />
             ))}
@@ -193,399 +371,381 @@ const LearnerDashboard: React.FC = () => {
     );
   }
 
-  const filteredCourses = getFilteredCourses();
-
   return (
-    <div className="min-h-screen bg-gray-50">
-      <SEO 
+    <div className="min-h-screen bg-softwhite pb-20">
+      <SEO
         title="My Learning Dashboard"
         description="Track your learning progress, continue courses, and discover new educational opportunities."
         keywords="learning dashboard, course progress, online education, skills development"
       />
-      {/* Header */}
-      <div className="bg-white border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-3xl font-bold text-gray-900">My Learning</h1>
-              <p className="text-gray-600 mt-1">Continue your learning journey</p>
-            </div>
-            
-            <div className="flex items-center space-x-4">
-              <DashboardStats progressData={progressData} enrolledCourses={enrolledCourses} />
-            </div>
-          </div>
-
-          {/* Search and Filters */}
-          <div className="mt-6 flex flex-col sm:flex-row gap-4"
-               role="search"
-               aria-label="Course search and filters">
-            <div className="flex-1 relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
-              <input
-                type="text"
-                placeholder="Search courses..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                aria-label="Search courses"
-              />
-            </div>
-            
-            <div className="flex items-center space-x-3">
-              <select
-                value={filterStatus}
-                onChange={(e) => setFilterStatus(e.target.value as any)}
-                className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+      <div className="mx-auto max-w-7xl px-6 py-10 lg:px-12">
+        <div className="grid gap-6 lg:grid-cols-[2fr,1fr]">
+          <Card tone="gradient" withBorder={false} className="overflow-hidden">
+            <div className="relative z-10 flex flex-col gap-5 text-charcoal">
+              <Badge
+                tone="info"
+                className="w-max bg-white/70 px-3 py-1 text-xs font-semibold uppercase tracking-[0.3em] text-skyblue"
               >
-                <option value="all">All Courses</option>
-                <option value="in-progress">In Progress</option>
-                <option value="completed">Completed</option>
-                <option value="not-started">Not Started</option>
-              </select>
+                My Learning Journey
+              </Badge>
+              <h1 className="font-heading text-3xl font-bold md:text-4xl">
+                Welcome back, continue building inclusive leadership skills.
+              </h1>
+              <p className="max-w-2xl text-base text-slate/80">
+                Review your progress, pick up the next lesson, or explore new courses designed to spark
+                belonging across your teams.
+              </p>
 
-              <div className="flex border border-gray-300 rounded-lg">
-                <button
-                  onClick={() => setViewMode('grid')}
-                  className={`p-2 ${viewMode === 'grid' ? 'bg-orange-100 text-orange-600' : 'text-gray-600 hover:text-gray-800'}`}
-                >
-                  <Grid className="w-5 h-5" />
-                </button>
-                <button
-                  onClick={() => setViewMode('list')}
-                  className={`p-2 ${viewMode === 'list' ? 'bg-orange-100 text-orange-600' : 'text-gray-600 hover:text-gray-800'}`}
-                >
-                  <List className="w-5 h-5" />
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Main Content */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {/* Quick Actions */}
-        <QuickActions onCourseSearch={() => navigate('/lms/courses')} />
-
-        {/* Course Grid/List */}
-        <div className="mt-8">
-          <div className="flex items-center justify-between mb-6">
-            <h2 className="text-xl font-semibold text-gray-900">
-              My Courses ({filteredCourses.length})
-            </h2>
-          </div>
-
-          {filteredCourses.length === 0 ? (
-            <EmptyState searchQuery={searchQuery} filterStatus={filterStatus} />
-          ) : (
-            <div className={viewMode === 'grid' 
-              ? 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6'
-              : 'space-y-4'
-            }>
-              {filteredCourses.map(course => (
-                <CourseCard
-                  key={course.id}
-                  course={course}
-                  stats={getCourseStats(course)}
-                  viewMode={viewMode}
-                  onCourseClick={() => handleCourseClick(course)}
-                  onContinue={() => handleContinueCourse(course)}
-                />
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// Dashboard Stats Component
-const DashboardStats: React.FC<{
-  progressData: Map<string, LearnerProgress>;
-  enrolledCourses: Course[];
-}> = ({ progressData }) => {
-  const completedCourses = Array.from(progressData.values()).filter(p => p.overallProgress === 1).length;
-  const inProgressCourses = Array.from(progressData.values()).filter(p => p.overallProgress > 0 && p.overallProgress < 1).length;
-  const totalTime = Array.from(progressData.values()).reduce((total, p) => total + p.timeSpent, 0);
-
-  return (
-    <div className="flex items-center space-x-6 text-sm">
-      <div className="text-center">
-        <div className="text-2xl font-bold text-orange-600">{completedCourses}</div>
-        <div className="text-gray-600">Completed</div>
-      </div>
-      <div className="text-center">
-        <div className="text-2xl font-bold text-blue-600">{inProgressCourses}</div>
-        <div className="text-gray-600">In Progress</div>
-      </div>
-      <div className="text-center">
-        <div className="text-2xl font-bold text-green-600">{Math.round(totalTime / 60)}</div>
-        <div className="text-gray-600">Hours</div>
-      </div>
-    </div>
-  );
-};
-
-// Quick Actions Component
-const QuickActions: React.FC<{ onCourseSearch: () => void }> = ({ onCourseSearch }) => {
-  const navigate = useNavigate();
-
-  return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-      <button
-        onClick={onCourseSearch}
-        className="p-4 bg-white rounded-lg border border-gray-200 hover:border-orange-300 hover:shadow-md transition-all text-left"
-      >
-        <Search className="w-6 h-6 text-orange-600 mb-2" />
-        <h3 className="font-medium text-gray-900">Browse Courses</h3>
-        <p className="text-sm text-gray-600">Discover new learning opportunities</p>
-      </button>
-
-      <button
-        onClick={() => navigate('/lms/certificates')}
-        className="p-4 bg-white rounded-lg border border-gray-200 hover:border-orange-300 hover:shadow-md transition-all text-left"
-      >
-        <Award className="w-6 h-6 text-orange-600 mb-2" />
-        <h3 className="font-medium text-gray-900">My Certificates</h3>
-        <p className="text-sm text-gray-600">View earned certifications</p>
-      </button>
-
-      <button
-        onClick={() => navigate('/lms/progress')}
-        className="p-4 bg-white rounded-lg border border-gray-200 hover:border-orange-300 hover:shadow-md transition-all text-left"
-      >
-        <BarChart3 className="w-6 h-6 text-orange-600 mb-2" />
-        <h3 className="font-medium text-gray-900">Progress Report</h3>
-        <p className="text-sm text-gray-600">Track your learning analytics</p>
-      </button>
-
-      <button
-        onClick={() => navigate('/lms/goals')}
-        className="p-4 bg-white rounded-lg border border-gray-200 hover:border-orange-300 hover:shadow-md transition-all text-left"
-      >
-        <Target className="w-6 h-6 text-orange-600 mb-2" />
-        <h3 className="font-medium text-gray-900">Learning Goals</h3>
-        <p className="text-sm text-gray-600">Set and track your objectives</p>
-      </button>
-    </div>
-  );
-};
-
-// Course Card Component
-const CourseCard: React.FC<{
-  course: Course;
-  stats: any;
-  viewMode: 'grid' | 'list';
-  onCourseClick: () => void;
-  onContinue: () => void;
-}> = ({ course, stats, viewMode, onCourseClick, onContinue }) => {
-  if (viewMode === 'list') {
-    return (
-      <div className="bg-white rounded-lg border border-gray-200 p-6 hover:border-orange-300 hover:shadow-md transition-all">
-        <div className="flex items-center space-x-6">
-          <LazyImage
-            src={course.thumbnail}
-            alt={course.title}
-            className="w-24 h-16 object-cover rounded-lg"
-            placeholder={<ImageSkeleton className="rounded-lg" />}
-            fallbackSrc="/placeholder-course.jpg"
-          />
-          
-          <div className="flex-1">
-            <div className="flex items-start justify-between">
-              <div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-1">{course.title}</h3>
-                <p className="text-gray-600 text-sm mb-2 line-clamp-2">{course.description}</p>
-                <div className="flex items-center space-x-4 text-sm text-gray-500">
-                  <span className="flex items-center">
-                    <BookOpen className="w-4 h-4 mr-1" />
-                    {stats.completedLessons}/{stats.totalLessons} lessons
-                  </span>
-                  <span className="flex items-center">
-                    <Clock className="w-4 h-4 mr-1" />
-                    {course.estimatedDuration} min
-                  </span>
-                  {course.rating && (
-                    <span className="flex items-center">
-                      <Star className="w-4 h-4 mr-1 fill-yellow-400 text-yellow-400" />
-                      {course.rating.toFixed(1)}
-                    </span>
-                  )}
-                </div>
-              </div>
-              
-              <div className="text-right">
-                <div className="mb-2">
-                  {stats.isCompleted ? (
-                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                      <CheckCircle className="w-3 h-3 mr-1" />
-                      Completed
-                    </span>
-                  ) : stats.progress > 0 ? (
-                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                      <Play className="w-3 h-3 mr-1" />
-                      In Progress
-                    </span>
-                  ) : (
-                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
-                      Not Started
-                    </span>
-                  )}
-                </div>
-                
-                <button
-                  onClick={onContinue}
-                  className="px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors text-sm font-medium"
-                >
-                  {stats.progress > 0 ? 'Continue' : 'Start Course'}
-                </button>
-              </div>
-            </div>
-
-            {stats.progress > 0 && (
-              <div className="mt-4">
-                <div className="flex items-center justify-between text-sm mb-1">
-                  <span className="text-gray-600">Progress</span>
-                  <span className="font-medium">{Math.round(stats.progress * 100)}%</span>
-                </div>
-                <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div
-                    className="bg-orange-500 h-2 rounded-full transition-all duration-300"
-                    style={{ width: `${stats.progress * 100}%` }}
+              <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto]">
+                <div className="relative flex items-center">
+                  <Search className="pointer-events-none absolute left-4 h-5 w-5 text-slate/60" />
+                  <Input
+                    value={searchQuery}
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                    placeholder="Search your courses"
+                    className="w-full rounded-full border-none bg-white/90 pl-12 pr-6 text-sm shadow-card-sm"
+                    aria-label="Search courses"
                   />
                 </div>
+                <div className="hidden rounded-full bg-white/80 p-1 text-sm font-semibold text-slate/70 md:flex">
+                  {filterOptions.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setFilterStatus(option.value)}
+                      className={`flex-1 rounded-full px-4 py-2 transition ${
+                        filterStatus === option.value
+                          ? 'bg-sunrise text-white shadow-card-sm'
+                          : 'text-slate/70 hover:text-charcoal'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
               </div>
-            )}
+
+              <div className="flex flex-wrap gap-4 pt-2">
+                <HeroStat icon={<Play className="h-4 w-4" />} label="Active Courses" value={inProgressCount} />
+                <HeroStat icon={<CheckCircle2 className="h-4 w-4" />} label="Completion" value={`${averageCompletion}%`} />
+                <HeroStat icon={<Clock className="h-4 w-4" />} label="Hours Learned" value={hoursSpent} />
+              </div>
+            </div>
+            <div className="pointer-events-none absolute inset-y-0 right-0 hidden w-64 translate-x-10 rounded-full bg-gradient-to-br from-sunrise/30 via-skyblue/20 to-forest/20 blur-3xl md:block" />
+          </Card>
+
+          <Card tone="muted" padding="lg">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="font-heading text-lg font-semibold text-charcoal">Learning snapshot</h2>
+                <p className="mt-1 text-sm text-slate/80">A quick look at your momentum this week.</p>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => navigate('/lms/progress')}
+                trailingIcon={<ArrowUpRight className="h-4 w-4" />}
+              >
+                View report
+              </Button>
+            </div>
+            <div className="mt-6 space-y-4">
+              <SnapshotRow
+                icon={<BarChart3 className="h-5 w-5 text-skyblue" />}
+                label="Completed courses"
+                value={`${completedCount}`}
+                helper="All time"
+              />
+              <SnapshotRow
+                icon={<Target className="h-5 w-5 text-forest" />}
+                label="Goals in focus"
+                value={`${Math.max(inProgressCount, 1)}`}
+                helper="Active this month"
+              />
+              <SnapshotRow
+                icon={<BookOpen className="h-5 w-5 text-sunrise" />}
+                label="Lessons completed"
+                value={`${completedLessonAggregate}`}
+                helper="Across all courses"
+              />
+            </div>
+          </Card>
+        </div>
+
+        <div className="mt-6 md:hidden">
+          <div className="flex gap-2">
+            {filterOptions.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => setFilterStatus(option.value)}
+                className={`flex-1 rounded-full border px-3 py-2 text-xs font-semibold transition ${
+                  filterStatus === option.value
+                    ? 'border-sunrise bg-sunrise/10 text-sunrise'
+                    : 'border-mist text-slate/80'
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
           </div>
         </div>
+
+        <section className="mt-12 space-y-14">
+          <div>
+            <SectionHeading
+              title="Continue learning"
+              description="Pick up where you left off in courses that are already underway."
+              badgeValue={activeCourses.length}
+              actionLabel="Browse all courses"
+              onAction={() => navigate('/lms/courses')}
+            />
+            {activeCourses.length === 0 ? (
+              <EmptyState
+                title="You're all caught up"
+                description="Start a new course to keep building your practice of inclusive leadership."
+                actionLabel="Explore catalog"
+                onAction={() => navigate('/lms/courses')}
+              />
+            ) : (
+              <CourseGrid>
+                {activeCourses.map((course) => (
+                  <CourseTile
+                    key={course.id}
+                    course={course}
+                    stats={getCourseStats(course)}
+                    assignment={assignments.find((record) => record.courseId === course.id)}
+                    onPrimaryAction={() => handleContinueCourse(course)}
+                    onSecondaryAction={() => handleCourseClick(course)}
+                  />
+                ))}
+              </CourseGrid>
+            )}
+          </div>
+
+          <div>
+            <SectionHeading
+              title="Recommended for you"
+              description="Curated programs to deepen your inclusive leadership toolkit."
+              badgeValue={recommendedCourses.length}
+              actionLabel="View recommendations"
+              onAction={() => navigate('/lms/courses')}
+            />
+            {recommendedCourses.length === 0 ? (
+              <EmptyState
+                title="No matches just yet"
+                description="Adjust your search or filters to discover tailored content."
+                actionLabel="Reset filters"
+                onAction={() => {
+                  setSearchQuery('');
+                  setFilterStatus('all');
+                }}
+              />
+            ) : (
+              <CourseGrid>
+                {recommendedCourses.map((course) => (
+                  <CourseTile
+                    key={course.id}
+                    course={course}
+                    stats={getCourseStats(course)}
+                    assignment={assignments.find((record) => record.courseId === course.id)}
+                    isRecommended
+                    onPrimaryAction={() => handleCourseClick(course)}
+                    onSecondaryAction={() => handleCourseClick(course)}
+                  />
+                ))}
+              </CourseGrid>
+            )}
+          </div>
+        </section>
       </div>
-    );
-  }
+    </div>
+  );
+};
+
+interface HeroStatProps {
+  icon: ReactNode;
+  label: string;
+  value: string | number;
+}
+
+const HeroStat = ({ icon, label, value }: HeroStatProps) => (
+  <div className="inline-flex min-w-[130px] items-center gap-3 rounded-xl bg-white/70 px-4 py-3 shadow-card-sm">
+    <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-skyblue/12 text-skyblue">
+      {icon}
+    </span>
+    <div>
+      <div className="font-heading text-lg font-bold text-charcoal">{value}</div>
+      <div className="text-xs font-semibold uppercase tracking-wide text-slate/70">{label}</div>
+    </div>
+  </div>
+);
+
+interface SnapshotRowProps {
+  icon: ReactNode;
+  label: string;
+  value: string;
+  helper: string;
+}
+
+const SnapshotRow = ({ icon, label, value, helper }: SnapshotRowProps) => (
+  <div className="flex items-start gap-3 rounded-xl border border-mist/60 bg-white/70 p-4">
+    <span className="mt-1 flex h-10 w-10 items-center justify-center rounded-full bg-cloud text-slate">
+      {icon}
+    </span>
+    <div className="flex-1">
+      <div className="flex items-center justify-between">
+        <p className="font-heading text-base font-semibold text-charcoal">{label}</p>
+        <span className="font-heading text-lg font-bold text-charcoal">{value}</span>
+      </div>
+      <p className="text-xs text-slate/70">{helper}</p>
+    </div>
+  </div>
+);
+
+interface SectionHeadingProps {
+  title: string;
+  description: string;
+  badgeValue: number;
+  actionLabel: string;
+  onAction: () => void;
+}
+
+const SectionHeading = ({ title, description, badgeValue, actionLabel, onAction }: SectionHeadingProps) => (
+  <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+    <div>
+      <div className="flex items-center gap-3">
+        <h2 className="font-heading text-2xl font-bold text-charcoal">{title}</h2>
+        <Badge tone="info" className="bg-skyblue/10 text-skyblue">
+          {badgeValue}
+        </Badge>
+      </div>
+      <p className="mt-1 text-sm text-slate/80">{description}</p>
+    </div>
+    <Button variant="ghost" size="sm" trailingIcon={<ArrowUpRight className="h-4 w-4" />} onClick={onAction}>
+      {actionLabel}
+    </Button>
+  </div>
+);
+
+const CourseGrid = ({ children }: { children: ReactNode }) => (
+  <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">{children}</div>
+);
+
+interface CourseTileProps {
+  course: Course;
+  stats: CourseStats;
+  assignment?: CourseAssignment;
+  onPrimaryAction: () => void;
+  onSecondaryAction: () => void;
+  isRecommended?: boolean;
+}
+
+const CourseTile = ({
+  course,
+  stats,
+  assignment,
+  onPrimaryAction,
+  onSecondaryAction,
+  isRecommended,
+}: CourseTileProps) => {
+  const progressPercent = Math.round((stats.progress || 0) * 100);
+  const statusLabel = assignment?.status === 'completed' || stats.isCompleted
+    ? 'Completed'
+    : progressPercent > 0
+      ? `${progressPercent}% complete`
+      : assignment
+        ? 'Assigned'
+        : 'Ready to start';
+  const dueDateLabel = assignment?.dueDate
+    ? new Date(assignment.dueDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+    : null;
 
   return (
-    <div className="bg-white rounded-lg border border-gray-200 overflow-hidden hover:border-orange-300 hover:shadow-md transition-all">
-      <div className="aspect-video relative">
+    <Card className="flex h-full flex-col gap-4">
+      <div className="relative overflow-hidden rounded-2xl">
         <LazyImage
           src={course.thumbnail}
           alt={course.title}
-          className="w-full h-full object-cover"
-          placeholder={<ImageSkeleton />}
+          className="h-44 w-full object-cover"
+          placeholder={<ImageSkeleton className="h-44 w-full rounded-2xl" />}
           fallbackSrc="/placeholder-course.jpg"
         />
-        <div className="absolute inset-0 bg-black bg-opacity-0 hover:bg-opacity-20 transition-all cursor-pointer flex items-center justify-center">
-          <Play className="w-12 h-12 text-white opacity-0 hover:opacity-100 transition-opacity" />
-        </div>
-        {stats.isCompleted && (
-          <div className="absolute top-2 right-2">
-            <div className="bg-green-500 text-white p-1 rounded-full">
-              <CheckCircle className="w-4 h-4" />
-            </div>
-          </div>
+        {isRecommended && (
+          <Badge tone="info" className="absolute left-4 top-4 bg-white/90 text-skyblue">
+            Recommended
+          </Badge>
+        )}
+        {assignment && (
+          <Badge tone="info" className="absolute right-4 top-4 bg-white/90 text-sunrise">
+            {assignment.status === 'completed' ? 'Completed' : 'Assigned'}
+          </Badge>
         )}
       </div>
-      
-      <div className="p-4">
-        <div className="flex items-start justify-between mb-2">
-          <h3 className="text-lg font-semibold text-gray-900 line-clamp-2">{course.title}</h3>
-        </div>
-        
-        <p className="text-gray-600 text-sm mb-3 line-clamp-2">{course.description}</p>
-        
-        <div className="flex items-center justify-between text-sm text-gray-500 mb-4">
-          <span className="flex items-center">
-            <Clock className="w-4 h-4 mr-1" />
-            {course.estimatedDuration} min
-          </span>
-          <span className="flex items-center">
-            <BookOpen className="w-4 h-4 mr-1" />
-            {stats.totalLessons} lessons
-          </span>
-          {course.rating && (
-            <span className="flex items-center">
-              <Star className="w-4 h-4 mr-1 fill-yellow-400 text-yellow-400" />
-              {course.rating.toFixed(1)}
-            </span>
-          )}
+
+      <div className="flex flex-1 flex-col gap-4">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h3 className="font-heading text-xl font-semibold text-charcoal">{course.title}</h3>
+            <p className="mt-2 line-clamp-2 text-sm text-slate/80">{course.description}</p>
+          </div>
         </div>
 
-        {stats.progress > 0 && (
-          <div className="mb-4">
-            <div className="flex items-center justify-between text-sm mb-1">
-              <span className="text-gray-600">Progress</span>
-              <span className="font-medium">{Math.round(stats.progress * 100)}%</span>
-            </div>
-            <div className="w-full bg-gray-200 rounded-full h-2">
-              <div
-                className="bg-orange-500 h-2 rounded-full transition-all duration-300"
-                style={{ width: `${stats.progress * 100}%` }}
-              />
-            </div>
+        <div className="flex items-center gap-4 text-sm text-slate/80">
+          <span className="flex items-center gap-1">
+            <BookOpen className="h-4 w-4" />
+            {(course.chapters || []).reduce((total, chapter) => total + chapter.lessons.length, 0)} lessons
+          </span>
+          <span className="flex items-center gap-1">
+            <Clock className="h-4 w-4" />
+            {course.estimatedDuration || 0} min
+          </span>
+        </div>
+
+        {dueDateLabel && (
+          <div className="text-xs font-semibold uppercase tracking-wide text-slate/70">
+            Due {dueDateLabel}
           </div>
         )}
 
-        <div className="flex items-center space-x-2">
-          <button
-            onClick={onContinue}
-            className="flex-1 px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors font-medium"
-          >
-            {stats.progress > 0 ? 'Continue' : 'Start Course'}
-          </button>
-          <button
-            onClick={onCourseClick}
-            className="px-3 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
-            title="View Details"
-          >
-            <Eye className="w-4 h-4" />
-          </button>
+        <div>
+          <ProgressBar value={progressPercent} srLabel={`${course.title} completion`} />
+          <div className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate/70">
+            {statusLabel}
+          </div>
+        </div>
+
+        <div className="mt-auto flex items-center justify-between gap-3">
+          <Button onClick={onPrimaryAction} className="flex-1" size="sm">
+            {stats.isCompleted ? 'Review course' : progressPercent > 0 ? 'Continue' : 'Start course'}
+          </Button>
+          <Button variant="ghost" size="sm" onClick={onSecondaryAction}>
+            Details
+          </Button>
         </div>
       </div>
-    </div>
+    </Card>
   );
 };
 
-// Empty State Component
-const EmptyState: React.FC<{
-  searchQuery: string;
-  filterStatus: string;
-}> = ({ searchQuery, filterStatus }) => {
-  const navigate = useNavigate();
+interface EmptyStateProps {
+  title: string;
+  description: string;
+  actionLabel: string;
+  onAction: () => void;
+}
 
-  if (searchQuery || filterStatus !== 'all') {
-    return (
-      <div className="text-center py-12">
-        <Search className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-        <h3 className="text-lg font-medium text-gray-900 mb-2">No courses found</h3>
-        <p className="text-gray-600 mb-4">
-          Try adjusting your search or filter criteria
-        </p>
-        <button
-          onClick={() => window.location.reload()}
-          className="text-orange-600 hover:text-orange-800"
-        >
-          Clear filters
-        </button>
-      </div>
-    );
-  }
-
-  return (
-    <div className="text-center py-12">
-      <BookOpen className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-      <h3 className="text-lg font-medium text-gray-900 mb-2">No courses yet</h3>
-      <p className="text-gray-600 mb-4">
-        Start your learning journey by enrolling in courses
-      </p>
-      <button
-        onClick={() => navigate('/lms/courses')}
-        className="inline-flex items-center px-4 py-2 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition-colors"
-      >
-        Browse Courses
-        <ChevronRight className="w-4 h-4 ml-2" />
-      </button>
+const EmptyState = ({ title, description, actionLabel, onAction }: EmptyStateProps) => (
+  <Card tone="muted" className="mt-6 flex flex-col items-center gap-4 text-center" padding="lg">
+    <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-sunrise/10 text-sunrise">
+      <Target className="h-6 w-6" />
     </div>
-  );
-};
+    <h3 className="font-heading text-xl font-semibold text-charcoal">{title}</h3>
+    <p className="max-w-md text-sm text-slate/80">{description}</p>
+    <Button onClick={onAction} trailingIcon={<ArrowUpRight className="h-4 w-4" />}>
+      {actionLabel}
+    </Button>
+  </Card>
+);
 
 export default LearnerDashboard;

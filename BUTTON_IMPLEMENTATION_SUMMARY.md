@@ -176,10 +176,10 @@ const handleExportReport = async () => {
 ## 🎨 Design System Compliance
 
 **Colors Used:**
-- Primary: `#FF8895` (coral/orange)
-- Secondary: `#D72638` (red)
-- Success: `#2D9B66` (green) 
-- Info: `#3A7FFF` (blue)
+- Primary: `#F28C1A` (coral/orange)
+- Secondary: `#E6473A` (red)
+- Success: `#3BAA66` (green) 
+- Info: `#2B84C6` (blue)
 
 **Button Hierarchy:**
 - Primary: Solid background colors

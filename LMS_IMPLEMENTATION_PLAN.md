@@ -190,9 +190,9 @@ git add . && git commit -m "Backup before LMS enhancement integration"
 - ✅ Loading state animations
 
 ### **Color Scheme Integration:**
-- ✅ Orange (#FF8895) to Red (#D72638) gradients
-- ✅ Blue (#3A7FFF) for information states
-- ✅ Green (#2D9B66) for completion states
+- ✅ Orange (#F28C1A) to Red (#E6473A) gradients
+- ✅ Blue (#2B84C6) for information states
+- ✅ Green (#3BAA66) for completion states
 - ✅ Consistent shadow and border radius
 
 ### **Typography & Layout:**

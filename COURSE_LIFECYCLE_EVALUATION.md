@@ -194,7 +194,7 @@
 
 ### **Current Strengths**
 - Professional SafeSport/LinkedIn Learning inspired design
-- Consistent color system (#FF8895, #D72638, #3A7FFF, #2D9B66)
+- Consistent color system (#F28C1A, #E6473A, #2B84C6, #3BAA66)
 - Clean tabbed interface for course editing
 - Responsive grid layouts
 
@@ -204,13 +204,13 @@
 ```css
 /* Enhanced button hierarchy */
 .primary-action { 
-  background: linear-gradient(135deg, #FF8895 0%, #D72638 100%);
+  background: linear-gradient(135deg, #F28C1A 0%, #E6473A 100%);
   box-shadow: 0 4px 12px rgba(215, 38, 56, 0.3);
 }
 
 .secondary-action {
-  border: 2px solid #3A7FFF;
-  color: #3A7FFF;
+  border: 2px solid #2B84C6;
+  color: #2B84C6;
   background: transparent;
 }
 ```

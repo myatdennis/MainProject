@@ -1,3 +1,5 @@
+import apiRequest, { type ApiRequestOptions } from '../utils/apiClient';
+
 export type Notification = {
   id: string;
   title: string;
@@ -8,31 +10,73 @@ export type Notification = {
   read?: boolean;
 };
 
-const KEY = 'huddle_notifications_v1';
+const apiFetch = async <T>(path: string, options: ApiRequestOptions = {}) =>
+  apiRequest<T>(path, options);
 
-const read = (): Notification[] => {
-  const raw = localStorage.getItem(KEY);
-  if (!raw) return [];
-  try { return JSON.parse(raw) as Notification[]; } catch { return []; }
-};
-
-const write = (items: Notification[]) => localStorage.setItem(KEY, JSON.stringify(items));
+const mapNotification = (record: any): Notification => ({
+  id: record.id,
+  title: record.title,
+  body: record.body ?? undefined,
+  orgId: record.orgId ?? record.org_id ?? undefined,
+  userId: record.userId ?? record.user_id ?? undefined,
+  createdAt: record.createdAt ?? record.created_at ?? new Date().toISOString(),
+  read: record.read ?? false
+});
 
 export const listNotifications = async (opts?: { orgId?: string; userId?: string }) => {
-  let items = read();
-  if (opts?.orgId) items = items.filter(i => i.orgId === opts.orgId || !i.orgId);
-  if (opts?.userId) items = items.filter(i => i.userId === opts.userId || !i.userId);
-  return items.slice().sort((a,b) => +new Date(b.createdAt) - +new Date(a.createdAt));
+  const params = new URLSearchParams();
+  if (opts?.orgId) params.set('org_id', opts.orgId);
+  if (opts?.userId) params.set('user_id', opts.userId);
+
+  const path = `/api/admin/notifications${params.toString() ? `?${params.toString()}` : ''}`;
+
+  const json = await apiFetch<{ data: any[] }>(path);
+  const items = (json.data ?? []).map(mapNotification);
+
+  return items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 };
 
-export const addNotification = async (n: Omit<Notification,'id'|'createdAt'>) => {
-  const items = read();
-  const note: Notification = { id: `note-${Date.now()}`, createdAt: new Date().toISOString(), ...n };
-  items.push(note);
-  write(items);
-  return note;
+export const addNotification = async (notification: Omit<Notification, 'id' | 'createdAt'>) => {
+  const json = await apiFetch<{ data: any }>('/api/admin/notifications', {
+    method: 'POST',
+    body: JSON.stringify({
+      title: notification.title,
+      body: notification.body,
+      orgId: notification.orgId,
+      userId: notification.userId,
+      read: notification.read ?? false
+    })
+  });
+
+  return mapNotification(json.data);
 };
 
-export const clearNotifications = async () => { write([]); };
+export const markNotificationRead = async (id: string, read = true) => {
+  const json = await apiFetch<{ data: any }>(`/api/admin/notifications/${id}/read`, {
+    method: 'POST',
+    body: JSON.stringify({ read })
+  });
 
-export default { listNotifications, addNotification, clearNotifications };
+  return mapNotification(json.data);
+};
+
+export const deleteNotification = async (id: string) => {
+  await apiFetch<void>(`/api/admin/notifications/${id}`, {
+    method: 'DELETE',
+    expectedStatus: [200, 204],
+    rawResponse: true
+  });
+};
+
+export const clearNotifications = async (opts?: { orgId?: string; userId?: string }) => {
+  const existing = await listNotifications(opts);
+  await Promise.all(existing.map(note => deleteNotification(note.id)));
+};
+
+export default {
+  listNotifications,
+  addNotification,
+  markNotificationRead,
+  deleteNotification,
+  clearNotifications
+};

@@ -1,15 +1,22 @@
 /// <reference types="vitest" />
+import path from 'node:path';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
-// https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, 'src'),
+    },
+  },
   test: {
     globals: true,
     environment: 'jsdom',
     setupFiles: ['./src/test/setup.ts'],
     css: true,
+    include: ['src/**/*.{test,spec}.{ts,tsx}'],
+    exclude: ['tests/**'],
   },
   server: {
     headers: {
@@ -17,8 +24,8 @@ export default defineConfig({
       'X-Frame-Options': 'DENY',
       'X-XSS-Protection': '1; mode=block',
       'Referrer-Policy': 'strict-origin-when-cross-origin',
-      'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), interest-cohort=()'
-    }
+      'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), interest-cohort=()',
+    },
   },
   optimizeDeps: {
     exclude: ['lucide-react'],
@@ -28,20 +35,15 @@ export default defineConfig({
       output: {
         manualChunks(id: string) {
           if (id.includes('node_modules')) {
-            // Split React vendor chunk smaller
             if (id.includes('react-dom')) return 'vendor-react-dom';
             if (id.includes('react')) return 'vendor-react';
             if (id.includes('lucide-react')) return 'vendor-icons';
-            
-            // Split large libraries
             if (id.includes('@dnd-kit') || id.includes('dnd-kit')) return 'dnd-kit';
             if (id.includes('@supabase') || id.includes('supabase')) return 'supabase';
             if (id.includes('react-router')) return 'vendor-router';
-            
             return 'vendor';
           }
-          
-          // Admin chunk splitting
+
           if (id.includes('/src/pages/Admin/AdminSurveyBuilder') || id.includes('/src/components/SurveyBuilder')) {
             return 'admin-surveys';
           }
@@ -54,8 +56,6 @@ export default defineConfig({
           if (id.includes('/src/pages/Admin/') && !id.includes('AdminDashboard') && !id.includes('AdminLogin')) {
             return 'admin-secondary';
           }
-          
-          // Org workspace code together
           if (id.includes('/src/components/OrgWorkspace') || id.includes('/src/services/clientWorkspaceService')) {
             return 'org-workspace';
           }

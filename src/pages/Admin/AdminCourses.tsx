@@ -1,7 +1,8 @@
-import { useState, useMemo } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useEffect, useState, useMemo } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { courseStore } from '../../store/courseStore';
 import { Course } from '../../types/courseTypes';
+import { CourseService, CourseValidationError } from '../../services/courseService';
 import { 
   BookOpen, 
   Plus, 
@@ -25,9 +26,9 @@ import {
 import LoadingButton from '../../components/LoadingButton';
 import ConfirmationModal from '../../components/ConfirmationModal';
 import CourseEditModal from '../../components/CourseEditModal';
-import CourseAssignmentModal from '../../components/CourseAssignmentModal';
 import { useToast } from '../../context/ToastContext';
 import { useSyncService } from '../../services/syncService';
+import { slugify } from '../../utils/courseNormalization';
 
 
 const AdminCourses = () => {
@@ -41,17 +42,30 @@ const AdminCourses = () => {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [courseToDelete, setCourseToDelete] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [showEditModal, setShowEditModal] = useState(false);
-  const [editingCourse, setEditingCourse] = useState<Course | null>(null);
-  const [editMode, setEditMode] = useState<'create' | 'edit'>('edit');
-  const [showAssignmentModal, setShowAssignmentModal] = useState(false);
-  const [courseToAssign, setCourseToAssign] = useState<Course | null>(null);
-
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [searchParams, setSearchParams] = useSearchParams();
 
   const navigate = useNavigate();
 
   // Get courses from store (re-read when version changes)
   const courses = useMemo(() => courseStore.getAllCourses(), [version]);
+
+  const persistCourse = async (inputCourse: Course, statusOverride?: 'draft' | 'published') => {
+    const prepared: Course = {
+      ...inputCourse,
+      status: statusOverride ?? inputCourse.status ?? 'draft',
+      lastUpdated: new Date().toISOString(),
+      publishedDate:
+        statusOverride === 'published'
+          ? inputCourse.publishedDate || new Date().toISOString()
+          : inputCourse.publishedDate,
+    };
+
+    const snapshot = await CourseService.syncCourseToDatabase(prepared);
+    const finalCourse = (snapshot ?? prepared) as Course;
+    courseStore.saveCourse(finalCourse, { skipRemoteSync: true });
+    return finalCourse;
+  };
 
   const filteredCourses = courses.filter((course: Course) => {
     const matchesSearch = course.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -78,76 +92,57 @@ const AdminCourses = () => {
   };
 
   const handleEditCourse = (course: Course) => {
-    setEditingCourse(course);
-    setEditMode('edit');
-    setShowEditModal(true);
+    navigate(`/admin/courses/${course.id}/edit`);
   };
 
   const handleCreateCourse = () => {
-    setEditingCourse(null);
-    setEditMode('create');
-    setShowEditModal(true);
-  };
-
-  const handleSaveCourse = (course: Course) => {
-    if (editMode === 'create') {
-      const newCourse = courseStore.createCourse(course);
-      courseStore.saveCourse(newCourse);
-      
-      // Log sync event for real-time updates
-      syncService.logEvent({
-        type: 'course_created',
-        data: newCourse,
-        timestamp: Date.now()
-      });
-      
-      showToast('Course created successfully', 'success');
-    } else {
-      courseStore.saveCourse(course);
-      
-      // Log sync event for real-time updates
-      syncService.logEvent({
-        type: 'course_updated',
-        data: course,
-        timestamp: Date.now()
-      });
-      
-      showToast('Course updated successfully', 'success');
-    }
-    setShowEditModal(false);
-    setVersion(prev => prev + 1); // Force refresh
+    setSearchParams(prev => {
+      const params = new URLSearchParams(prev);
+      params.set('create', '1');
+      return params;
+    });
+    setShowCreateModal(true);
   };
 
   const handleAssignCourse = (course: Course) => {
-    setCourseToAssign(course);
-    setShowAssignmentModal(true);
+    navigate(`/admin/courses/${course.id}/assign`);
   };
 
-  const handleAssignmentComplete = async (assignment: any) => {
-    try {
-      // In a real app, this would make API calls to assign the course
-      console.log('Course assignment:', assignment);
-      
-      // Simulate assignment processing
-      showToast(`Course "${courseToAssign?.title}" assigned successfully!`, 'success');
-      
-      // Log sync event
-      syncService.logEvent({
-        type: 'course_updated',
-        data: {
-          ...courseToAssign,
-          assignmentCount: (courseToAssign?.enrollments || 0) + assignment.assignees.length
-        },
-        timestamp: Date.now()
-      });
-      
-      setShowAssignmentModal(false);
-      setCourseToAssign(null);
-    } catch (error) {
-      showToast('Assignment failed. Please try again.', 'error');
-      console.error('Assignment error:', error);
-    }
+  const handleCreateCourseSave = (course: Course) => {
+    const normalizedSlug = slugify(course.slug || course.title || course.id);
+    const created = courseStore.createCourse({
+      ...course,
+      slug: normalizedSlug,
+      status: course.status || 'draft',
+      lastUpdated: new Date().toISOString(),
+    });
+
+    syncService.logEvent({
+      type: 'course_created',
+      data: created,
+      timestamp: Date.now(),
+    });
+
+    showToast('Course created successfully.', 'success');
+    closeCreateModal();
+    refresh();
+    navigate(`/admin/courses/${created.id}/details`);
   };
+
+  const closeCreateModal = () => {
+    setShowCreateModal(false);
+    setSearchParams(prev => {
+      const params = new URLSearchParams(prev);
+      params.delete('create');
+      return params;
+    });
+  };
+
+  useEffect(() => {
+    if (searchParams.get('create') === '1') {
+      setShowCreateModal(true);
+    }
+  }, [searchParams]);
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -192,7 +187,7 @@ const AdminCourses = () => {
     }
   };
 
-  const duplicateCourse = (courseId: string) => {
+  const duplicateCourse = async (courseId: string) => {
     const original = courseStore.getCourse(courseId);
     if (!original) return;
 
@@ -211,11 +206,22 @@ const AdminCourses = () => {
 
     // Save to store and navigate to builder
     try {
-      courseStore.saveCourse(cloned);
+      const persistedClone = await persistCourse(cloned);
+      syncService.logEvent({
+        type: 'course_created',
+        data: persistedClone,
+        timestamp: Date.now()
+      });
       setVersion(v => v + 1);
-      navigate(`/admin/course-builder/${newId}`);
+      navigate(`/admin/course-builder/${persistedClone.id}`);
+      showToast('Course duplicated successfully.', 'success');
     } catch (err) {
-      console.warn('Failed to duplicate course', err);
+      if (err instanceof CourseValidationError) {
+        showToast(`Duplicate failed: ${err.issues.join(' • ')}`, 'error');
+      } else {
+        console.warn('Failed to duplicate course', err);
+        showToast('Could not duplicate course. Please try again.', 'error');
+      }
     }
   };
 
@@ -228,15 +234,46 @@ const AdminCourses = () => {
     }
     setLoading(true);
     try {
-      selectedCourses.forEach(id => {
-        const c = courseStore.getCourse(id);
-        if (!c) return;
-        const updated = { ...c, status: 'published' as const, publishedDate: new Date().toISOString(), lastUpdated: new Date().toISOString() };
-        courseStore.saveCourse(updated);
-      });
+      const publishResults = await Promise.allSettled(
+        selectedCourses.map(async (id) => {
+          const existing = courseStore.getCourse(id);
+          if (!existing) {
+            return null;
+          }
+          const updated = {
+            ...existing,
+            status: 'published' as const,
+            publishedDate: new Date().toISOString(),
+            lastUpdated: new Date().toISOString(),
+          };
+          const persisted = await persistCourse(updated, 'published');
+          syncService.logEvent({
+            type: 'course_updated',
+            data: persisted,
+            timestamp: Date.now(),
+          });
+          return persisted;
+        }),
+      );
+
+      const successes = publishResults.filter((result) => result.status === 'fulfilled').length;
+      const validationErrors = publishResults
+        .filter((result): result is PromiseRejectedResult & { reason: CourseValidationError } =>
+          result.status === 'rejected' && result.reason instanceof CourseValidationError,
+        )
+        .map((result) => result.reason);
+
+      if (successes > 0) {
+        showToast(`${successes} course(s) published successfully!`, 'success');
+      }
+
+      if (validationErrors.length > 0) {
+        const messages = Array.from(new Set(validationErrors.flatMap((error) => error.issues)));
+        showToast(`Some courses failed validation: ${messages.join(' • ')}`, 'error');
+      }
+
       setSelectedCourses([]);
       refresh();
-      showToast(`${selectedCourses.length} course(s) published successfully!`, 'success');
     } catch (error) {
       showToast('Failed to publish courses', 'error');
     } finally {
@@ -277,6 +314,11 @@ const AdminCourses = () => {
     setLoading(true);
     try {
       courseStore.deleteCourse(courseToDelete);
+      syncService.logEvent({
+        type: 'course_deleted',
+        data: { id: courseToDelete },
+        timestamp: Date.now()
+      });
       setSelectedCourses((prev: string[]) => prev.filter((x: string) => x !== courseToDelete));
       refresh();
       showToast('Course deleted successfully!', 'success');
@@ -367,13 +409,20 @@ const AdminCourses = () => {
                 </button>
               </div>
             )}
-                        <LoadingButton
+            <LoadingButton
               onClick={handleCreateCourse}
               variant="primary"
               size="md"
               icon={Plus}
             >
               New Course
+            </LoadingButton>
+            <LoadingButton
+              onClick={() => navigate('/admin/courses/new')}
+              variant="secondary"
+              icon={BookOpen}
+            >
+              Create Course
             </LoadingButton>
             <LoadingButton
               onClick={handleImportCourses}
@@ -479,7 +528,7 @@ const AdminCourses = () => {
                   >
                     <Edit className="h-4 w-4" />
                   </button>
-                  <button onClick={() => duplicateCourse(course.id)} className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-50 rounded-lg" title="Duplicate">
+                  <button onClick={() => void duplicateCourse(course.id)} className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-50 rounded-lg" title="Duplicate">
                     <Copy className="h-4 w-4" />
                   </button>
                   
@@ -629,7 +678,7 @@ const AdminCourses = () => {
                       >
                         <Edit className="h-4 w-4" />
                       </Link>
-                      <button onClick={() => duplicateCourse(course.id)} className="p-1 text-gray-600 hover:text-gray-800" title="Duplicate">
+                      <button onClick={() => void duplicateCourse(course.id)} className="p-1 text-gray-600 hover:text-gray-800" title="Duplicate">
                         <Copy className="h-4 w-4" />
                       </button>
                       <button 
@@ -700,30 +749,13 @@ const AdminCourses = () => {
         type="danger"
       />
 
-      {/* Course Edit Modal */}
       <CourseEditModal
-        isOpen={showEditModal}
-        onClose={() => setShowEditModal(false)}
-        onSave={handleSaveCourse}
-        course={editingCourse}
-        mode={editMode}
+        isOpen={showCreateModal}
+        onClose={closeCreateModal}
+        onSave={handleCreateCourseSave}
+        mode="create"
       />
 
-      {/* Course Assignment Modal */}
-      <CourseAssignmentModal
-        isOpen={showAssignmentModal}
-        onClose={() => {
-          setShowAssignmentModal(false);
-          setCourseToAssign(null);
-        }}
-        selectedUsers={[]} // For now, empty - will be enhanced
-        course={courseToAssign ? {
-          id: courseToAssign.id,
-          title: courseToAssign.title,
-          duration: courseToAssign.duration
-        } : undefined}
-        onAssignComplete={handleAssignmentComplete}
-      />
     </div>
   );
 };

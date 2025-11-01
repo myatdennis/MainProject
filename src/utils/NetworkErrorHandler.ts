@@ -131,9 +131,9 @@ export class NetworkErrorHandler {
         duration: 5000,
         position: 'top-right',
         style: {
-          background: errorType === 'error' ? '#FEE2E2' : '#FEF3C7',
-          color: errorType === 'error' ? '#DC2626' : '#D97706',
-          border: errorType === 'error' ? '1px solid #FECACA' : '1px solid #FDE68A'
+          background: errorType === 'error' ? 'rgba(215, 38, 56, 0.12)' : 'rgba(246, 200, 123, 0.18)',
+          color: errorType === 'error' ? '#E6473A' : 'var(--accent-warning)',
+          border: errorType === 'error' ? '1px solid rgba(215, 38, 56, 0.25)' : '1px solid rgba(246, 200, 123, 0.35)'
         }
       });
     }

@@ -1,8 +1,26 @@
 import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Lock, Users, BookOpen, BarChart3, Download, Video, Calendar, MessageSquare, Settings, ArrowRight, Send, CheckCircle, Mail, Phone } from 'lucide-react';
+import {
+  Lock,
+  Users,
+  BookOpen,
+  BarChart3,
+  Download,
+  Video,
+  Calendar,
+  MessageSquare,
+  Settings,
+  ArrowRight,
+  Send,
+  CheckCircle,
+  Mail,
+  Phone,
+} from 'lucide-react';
 import Modal from '../components/Modal';
 import Toast, { ToastType } from '../components/Toast';
+import Card from '../components/ui/Card';
+import Button from '../components/ui/Button';
+import Badge from '../components/ui/Badge';
 
 const ClientPortalPage = () => {
   const navigate = useNavigate();
@@ -200,70 +218,69 @@ const ClientPortalPage = () => {
   return (
     <div>
       {/* Hero Section */}
-      <section className="bg-gradient-to-br from-blue-50 to-purple-50 py-20">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+      <section className="relative overflow-hidden bg-softwhite py-20">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(242,140,26,0.18),transparent_55%),radial-gradient(circle_at_top_right,rgba(43,132,198,0.22),transparent_45%),radial-gradient(circle_at_bottom_left,rgba(59,170,102,0.2),transparent_45%)]" />
+        <div className="relative mx-auto max-w-7xl px-6 lg:px-12">
+          <div className="grid items-center gap-12 lg:grid-cols-[minmax(0,1fr)_420px]">
             <div>
-              <div className="flex items-center space-x-2 mb-6">
-                <div className="bg-gradient-to-r from-blue-400 to-purple-500 p-3 rounded-lg">
-                  <Lock className="h-8 w-8 text-white" />
-                </div>
-                <span className="text-2xl font-bold text-gray-900">Client Portal</span>
-              </div>
-              <h1 className="text-4xl md:text-5xl font-bold text-gray-900 mb-6">
-                Your Secure Learning Space is Coming Soon
+              <Badge tone="info" className="bg-white/80 text-skyblue">
+                Client Portal Preview
+              </Badge>
+              <h1 className="mt-4 font-heading text-4xl font-bold text-charcoal md:text-[3rem]">
+                Your secure learning space is almost here.
               </h1>
-              <p className="text-xl text-gray-600 mb-8">
-                We're building a comprehensive learning management system where your team can access 
-                custom training materials, track progress, and continue your DEI journey beyond our workshops.
+              <p className="mt-4 max-w-xl text-base text-slate/80">
+                We’re building a comprehensive environment where your team can access tailored training, track
+                progress, and keep momentum between live workshops.
               </p>
-              <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4">
-                <button 
-                  onClick={() => setShowEarlyAccessModal(true)}
-                  className="bg-gradient-to-r from-blue-400 to-purple-500 text-white px-8 py-4 rounded-full font-semibold text-lg hover:from-blue-500 hover:to-purple-600 transition-all duration-200 transform hover:scale-105"
-                >
-                  Get Early Access
-                </button>
-                <button 
+              <div className="mt-8 flex flex-wrap gap-4">
+                <Button size="lg" leadingIcon={<Lock className="h-4 w-4" />} onClick={() => setShowEarlyAccessModal(true)}>
+                  Request early access
+                </Button>
+                <Button
+                  size="lg"
+                  variant="secondary"
+                  leadingIcon={<Download className="h-4 w-4" />}
                   onClick={() => setShowLearnMoreModal(true)}
-                  className="border-2 border-blue-500 text-blue-500 px-8 py-4 rounded-full font-semibold text-lg hover:bg-blue-500 hover:text-white transition-all duration-200"
                 >
-                  Learn More
-                </button>
+                  Learn more
+                </Button>
               </div>
             </div>
-            <div className="relative">
-              <div className="bg-white rounded-2xl shadow-2xl p-8">
-                <div className="space-y-4">
-                  <div className="flex items-center space-x-3">
-                    <Users className="h-6 w-6 text-blue-500" />
-                    <span className="font-semibold">Team Dashboard</span>
-                  </div>
-                  <div className="bg-gray-100 h-4 rounded-full">
-                    <div className="bg-gradient-to-r from-blue-400 to-purple-500 h-4 rounded-full" style={{ width: '75%' }}></div>
-                  </div>
-                  <div className="flex items-center justify-between text-sm text-gray-600">
-                    <span>Training Progress</span>
-                    <span>75% Complete</span>
-                  </div>
-                  <div className="space-y-2 mt-6">
-                    <div className="flex items-center space-x-2 p-2 bg-green-50 rounded">
-                      <div className="w-2 h-2 bg-green-500 rounded-full"></div>
-                      <span className="text-sm">Inclusive Leadership Module</span>
+            <div className="relative mx-auto w-full max-w-[420px]">
+              <Card className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-skyblue/10 text-skyblue">
+                      <Users className="h-5 w-5" />
+                    </span>
+                    <div>
+                      <p className="font-heading text-sm font-semibold text-charcoal">Team dashboard</p>
+                      <p className="text-xs text-slate/70">Spring 2025 cohort</p>
                     </div>
-                    <div className="flex items-center space-x-2 p-2 bg-yellow-50 rounded">
-                      <div className="w-2 h-2 bg-yellow-500 rounded-full"></div>
-                      <span className="text-sm">Courageous Conversations</span>
-                    </div>
-                    <div className="flex items-center space-x-2 p-2 bg-gray-50 rounded">
-                      <div className="w-2 h-2 bg-gray-300 rounded-full"></div>
-                      <span className="text-sm">Strategic Planning Tools</span>
-                    </div>
+                  </div>
+                  <Badge tone="info" className="bg-skyblue/10 text-skyblue">
+                    75% complete
+                  </Badge>
+                </div>
+                <ProgressBar value={75} tone="info" srLabel="Training progress" />
+                <div className="space-y-2 text-sm text-slate/80">
+                  <div className="flex items-center justify-between rounded-xl bg-cloud px-3 py-2">
+                    <span>Inclusive Leadership</span>
+                    <span>Completed</span>
+                  </div>
+                  <div className="flex items-center justify-between rounded-xl bg-cloud px-3 py-2">
+                    <span>Courageous Conversations</span>
+                    <span>In progress</span>
+                  </div>
+                  <div className="flex items-center justify-between rounded-xl bg-cloud px-3 py-2">
+                    <span>Strategic Planning Tools</span>
+                    <span>Upcoming</span>
                   </div>
                 </div>
-              </div>
-              <div className="absolute -top-4 -right-4 bg-orange-100 p-3 rounded-full">
-                <BookOpen className="h-6 w-6 text-orange-500" />
+              </Card>
+              <div className="pointer-events-none absolute -top-4 -right-4 flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-sunrise to-skyblue text-white">
+                <BookOpen className="h-5 w-5" />
               </div>
             </div>
           </div>
@@ -271,132 +288,120 @@ const ClientPortalPage = () => {
       </section>
 
       {/* Features Preview */}
-      <section className="py-20">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-6">
-              What You'll Have Access To
-            </h2>
-            <p className="text-xl text-gray-600 max-w-3xl mx-auto">
-              A comprehensive learning environment designed to support your organization's ongoing DEI transformation.
+      <section className="bg-white py-20">
+        <div className="mx-auto max-w-7xl px-6 lg:px-12">
+          <div className="text-center">
+            <Badge tone="info" className="mx-auto bg-sunrise/15 text-sunrise">
+              Coming soon
+            </Badge>
+            <h2 className="mt-4 font-heading text-3xl font-bold text-charcoal">What you’ll unlock</h2>
+            <p className="mx-auto mt-3 max-w-3xl text-base text-slate/80">
+              A comprehensive environment to sustain your organization’s DEI transformation beyond the live sessions.
             </p>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-            {features.map((feature, index) => (
-              <div 
-                key={index} 
+          <div className="mt-12 grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+            {features.map((feature) => (
+              <Card
+                key={feature.title}
+                className="h-full cursor-pointer space-y-3 transition hover:-translate-y-1 hover:shadow-card"
                 onClick={() => handleFeatureCardClick(feature.title)}
-                className="bg-white p-8 rounded-2xl shadow-lg hover:shadow-xl transition-all duration-200 cursor-pointer transform hover:scale-105"
               >
-                <div className="mb-4">{feature.icon}</div>
-                <h3 className="text-2xl font-bold text-gray-900 mb-4">{feature.title}</h3>
-                <p className="text-gray-600 mb-4">{feature.description}</p>
-                <div className="text-blue-500 font-medium flex items-center">
-                  <span className="text-sm">Click to explore</span>
-                  <ArrowRight className="h-4 w-4 ml-1" />
+                <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-cloud text-skyblue">
+                  {feature.icon}
                 </div>
-              </div>
+                <h3 className="font-heading text-xl font-semibold text-charcoal">{feature.title}</h3>
+                <p className="text-sm text-slate/80">{feature.description}</p>
+                <span className="inline-flex items-center text-sm font-semibold text-skyblue">
+                  Click to explore <ArrowRight className="ml-1 h-4 w-4" />
+                </span>
+              </Card>
             ))}
           </div>
         </div>
       </section>
 
       {/* Benefits Section */}
-      <section className="bg-gray-50 py-20">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+      <section className="bg-softwhite py-20">
+        <div className="mx-auto max-w-7xl px-6 lg:px-12">
+          <div className="grid items-center gap-12 lg:grid-cols-[minmax(0,1fr)_420px]">
             <div>
-              <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-6">
-                Why a Client Portal?
-              </h2>
-              <p className="text-lg text-gray-600 mb-8">
-                Research shows that sustained learning and ongoing support are critical for lasting organizational change. 
-                Our client portal extends your transformation journey beyond our workshops, providing the tools and 
-                community you need for long-term success.
+              <h2 className="font-heading text-3xl font-bold text-charcoal">Why a client portal?</h2>
+              <p className="mt-4 text-base text-slate/80">
+                Sustained learning requires ongoing practice and support. Our portal extends your team’s transformation
+                journey, offering always-on resources, community, and coach access.
               </p>
-              <div className="space-y-4">
-                {benefits.map((benefit, index) => (
-                  <div key={index} className="flex items-center space-x-3">
-                    <div className="w-2 h-2 bg-blue-500 rounded-full"></div>
-                    <span className="text-gray-700">{benefit}</span>
-                  </div>
+              <ul className="mt-6 space-y-3 text-sm text-slate/80">
+                {benefits.map((benefit) => (
+                  <li key={benefit} className="flex items-center gap-3">
+                    <span className="flex h-6 w-6 items-center justify-center rounded-full bg-skyblue/10 text-skyblue">
+                      <CheckCircle className="h-3 w-3" />
+                    </span>
+                    {benefit}
+                  </li>
                 ))}
-              </div>
+              </ul>
             </div>
-            <div className="relative">
+            <div className="relative mx-auto w-full max-w-[420px]">
               <img
                 src="https://images.pexels.com/photos/3184317/pexels-photo-3184317.jpeg?auto=compress&cs=tinysrgb&w=800"
                 alt="Team collaboration"
-                className="rounded-2xl shadow-2xl"
+                className="w-full rounded-[28px] border border-white shadow-[0_32px_60px_rgba(16,24,40,0.18)]"
               />
-              <div className="absolute -bottom-6 -left-6 bg-white p-4 rounded-xl shadow-lg">
-                <div className="text-2xl font-bold text-blue-500">24/7</div>
-                <div className="text-gray-600">Access</div>
-              </div>
+              <Card tone="muted" className="absolute -bottom-5 left-6 flex w-[200px] flex-col items-center gap-1 rounded-2xl border border-white/70 bg-white/90 py-3 text-center shadow-card-sm">
+                <p className="font-heading text-xl font-bold text-skyblue">24/7</p>
+                <p className="text-xs text-slate/70">Secure access</p>
+              </Card>
             </div>
           </div>
         </div>
       </section>
 
       {/* Roadmap Section */}
-      <section className="py-20">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-6">
-              Development Roadmap
-            </h2>
-            <p className="text-xl text-gray-600 max-w-3xl mx-auto">
-              We're continuously improving and expanding the client portal experience. Here's what's coming:
+      <section className="bg-white py-20">
+        <div className="mx-auto max-w-7xl px-6 lg:px-12">
+          <div className="text-center">
+            <h2 className="font-heading text-3xl font-bold text-charcoal">Development roadmap</h2>
+            <p className="mx-auto mt-3 max-w-3xl text-base text-slate/80">
+              We’re continuously enhancing the portal experience. Here’s a snapshot of what’s on the way.
             </p>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-            {upcomingFeatures.map((feature, index) => (
-              <div key={index} className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-                <div className="text-sm text-blue-500 font-medium mb-2">{feature.eta}</div>
-                <h3 className="text-lg font-bold text-gray-900 mb-3">{feature.title}</h3>
-                <p className="text-gray-600 text-sm">{feature.description}</p>
-              </div>
+          <div className="mt-10 grid gap-6 md:grid-cols-2 xl:grid-cols-4">
+            {upcomingFeatures.map((feature) => (
+              <Card key={feature.title} tone="muted" className="space-y-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-skyblue">{feature.eta}</p>
+                <p className="font-heading text-base font-semibold text-charcoal">{feature.title}</p>
+                <p className="text-sm text-slate/80">{feature.description}</p>
+              </Card>
             ))}
           </div>
         </div>
       </section>
 
       {/* Current Client Access */}
-      <section className="bg-gradient-to-r from-blue-500 to-purple-500 py-20">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-          <h2 className="text-3xl md:text-4xl font-bold text-white mb-6">
-            Current Clients
-          </h2>
-          <p className="text-xl text-blue-100 mb-8 max-w-2xl mx-auto">
-            If you're an existing client looking for your training materials or session recordings, 
-            we'll send them to you directly via secure email until the portal launches.
+      <section className="relative overflow-hidden py-20">
+        <div className="absolute inset-0 bg-gradient-to-r from-sunrise via-skyblue to-forest" />
+        <div className="relative mx-auto max-w-7xl px-6 text-center text-white lg:px-12">
+          <h2 className="font-heading text-3xl font-bold">Current clients</h2>
+          <p className="mx-auto mt-3 max-w-2xl text-base text-white/85">
+            Until the portal launches, we’ll continue sending materials directly through secure email. Need something now? Let us know.
           </p>
-          <div className="flex flex-col sm:flex-row justify-center space-y-4 sm:space-y-0 sm:space-x-4">
-            <button 
-              onClick={() => setShowRequestMaterialsModal(true)}
-              className="bg-white text-blue-500 px-8 py-4 rounded-full font-semibold text-lg hover:bg-gray-50 transition-colors duration-200"
-            >
-              Request Materials
-            </button>
-            <button 
-              onClick={() => setShowScheduleFollowupModal(true)}
-              className="border-2 border-white text-white px-8 py-4 rounded-full font-semibold text-lg hover:bg-white hover:text-blue-500 transition-colors duration-200"
-            >
-              Schedule Follow-up
-            </button>
+          <div className="mt-6 flex flex-wrap justify-center gap-4">
+            <Button size="lg" variant="outline" className="border-white/60 bg-white text-skyblue hover:bg-white/90" onClick={() => setShowRequestMaterialsModal(true)}>
+              Request materials
+            </Button>
+            <Button size="lg" variant="ghost" className="text-white hover:bg-white/10" onClick={() => setShowScheduleFollowupModal(true)}>
+              Schedule a follow-up
+            </Button>
           </div>
         </div>
       </section>
 
       {/* Early Access */}
-      <section className="py-20">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-          <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-6">
-            Get Early Access
-          </h2>
-          <p className="text-xl text-gray-600 mb-8">
-            Be among the first to experience our client portal when it launches. 
-            Early access members get exclusive features and priority support.
+      <section className="bg-softwhite py-20">
+        <div className="mx-auto max-w-4xl px-6 text-center lg:px-12">
+          <h2 className="font-heading text-3xl font-bold text-charcoal">Get early access</h2>
+          <p className="mt-3 text-base text-slate/80">
+            Join the waitlist to experience the client portal as soon as it launches. Early access members receive exclusive features and priority support.
           </p>
           <div className="bg-white rounded-2xl shadow-xl p-8">
             <div className="flex flex-col md:flex-row items-center justify-between space-y-4 md:space-y-0 md:space-x-6">

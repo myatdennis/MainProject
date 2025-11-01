@@ -314,7 +314,7 @@ export const UX_ANALYSIS = {
 export const DESIGN_ANALYSIS = {
   score: 8.5,
   strengths: [
-    '✅ Excellent brand consistency (#FF8895, #D72638, #3A7FFF, #2D9B66)',
+    '✅ Excellent brand consistency (#F28C1A, #E6473A, #2B84C6, #3BAA66)',
     '✅ Typography scale well-implemented (Montserrat, Lato)',
     '✅ Consistent spacing using Tailwind system',
     '✅ Modern glassmorphism and gradient effects',

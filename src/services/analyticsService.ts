@@ -5,6 +5,10 @@
  * for deep insights into course performance and learner engagement.
  */
 
+import { analyticsApiClient } from './analytics/analyticsApiClient';
+import { EventQueue } from './analytics/eventQueue';
+import { ensureJourney, recordJourneyEvent, deriveJourneyKey } from './analytics/journeyUpdater';
+
 export interface AnalyticsEvent {
   id: string;
   type: EventType;
@@ -108,13 +112,13 @@ export interface HourlyUsage {
 }
 
 class AnalyticsService {
-  private events: Map<string, AnalyticsEvent> = new Map();
+  private eventQueue = new EventQueue();
   private learnerJourneys: Map<string, LearnerJourney> = new Map();
   private sessionId: string;
 
   constructor() {
     this.sessionId = this.generateSessionId();
-    this.loadStoredAnalytics();
+    this.bootstrapAnalytics();
     this.setupEventCollection();
   }
 
@@ -142,9 +146,11 @@ class AnalyticsService {
       sessionId: this.sessionId
     };
 
-    this.events.set(event.id, event);
+    this.eventQueue.add(event);
     this.updateLearnerJourney(event);
-    this.persistAnalytics();
+    this.persistEventRemote(event).catch((error) => {
+      console.error('Failed to persist analytics event remotely', error);
+    });
 
     // Real-time processing for critical events
     this.processRealTimeEvent(event);
@@ -210,31 +216,15 @@ class AnalyticsService {
    * 🧠 Advanced learner journey analysis
    */
   updateLearnerJourney(event: AnalyticsEvent): void {
-    if (!event.courseId) return;
+    if (!event.courseId || event.userId === 'system') return;
 
-    const journeyKey = `${event.userId}_${event.courseId}`;
-    let journey = this.learnerJourneys.get(journeyKey);
+    const journey = ensureJourney(this.learnerJourneys, event);
+    if (!journey) return;
 
-    if (!journey) {
-      journey = {
-        userId: event.userId,
-        courseId: event.courseId,
-        startedAt: event.timestamp,
-        lastActiveAt: event.timestamp,
-        totalTimeSpent: 0,
-        sessionsCount: 1,
-        progressPercentage: 0,
-        engagementScore: 0,
-        strugglingIndicators: [],
-        milestones: [],
-        dropOffPoints: [],
-        pathTaken: []
-      };
-    }
+    recordJourneyEvent(journey, event);
 
     // Update journey metrics
     journey.lastActiveAt = event.timestamp;
-    journey.pathTaken.push(`${event.type}:${event.lessonId || 'general'}`);
     
     // Calculate engagement score
     journey.engagementScore = this.calculateEngagementScore(journey, event);
@@ -245,14 +235,18 @@ class AnalyticsService {
     // Track milestones
     this.trackMilestones(journey, event);
 
-    this.learnerJourneys.set(journeyKey, journey);
+    this.learnerJourneys.set(deriveJourneyKey(journey.userId, journey.courseId), journey);
+    this.persistJourneyRemote(journey).catch((error) => {
+      console.error('Failed to persist learner journey', error);
+    });
   }
 
   /**
    * 📊 Generate comprehensive course analytics
    */
   getCourseAnalytics(courseId: string): EngagementMetrics {
-    const courseEvents = Array.from(this.events.values())
+    const courseEvents = this.eventQueue
+      .all()
       .filter(event => event.courseId === courseId);
     
     const uniqueLearners = new Set(courseEvents.map(e => e.userId)).size;
@@ -285,7 +279,8 @@ class AnalyticsService {
   private getHottestContent(courseId: string): ContentEngagement[] {
     const contentMap = new Map<string, ContentEngagement>();
     
-    Array.from(this.events.values())
+    this.eventQueue
+      .all()
       .filter(event => event.courseId === courseId && event.lessonId)
       .forEach(event => {
         const key = event.lessonId!;
@@ -349,7 +344,8 @@ class AnalyticsService {
       engagement: 0
     }));
 
-    Array.from(this.events.values())
+    this.eventQueue
+      .all()
       .filter(event => event.courseId === courseId)
       .forEach(event => {
         const hour = new Date(event.timestamp).getHours();
@@ -405,7 +401,8 @@ class AnalyticsService {
     const indicators = journey.strugglingIndicators;
     
     // Multiple quiz failures
-    const recentEvents = Array.from(this.events.values())
+    const recentEvents = this.eventQueue
+      .all()
       .filter(e => e.userId === journey.userId && e.courseId === journey.courseId)
       .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())
       .slice(0, 10);
@@ -485,18 +482,12 @@ class AnalyticsService {
    * 🚨 Trigger real-time alerts for admin
    */
   private triggerRealTimeAlert(event: AnalyticsEvent): void {
-    const alerts = JSON.parse(localStorage.getItem('realtime_alerts') || '[]');
-    alerts.push({
-      id: this.generateEventId(),
+    console.info('[Analytics] Alert triggered', {
+      eventId: event.id,
       type: event.type,
-      userId: event.userId,
-      courseId: event.courseId,
-      timestamp: new Date().toISOString(),
       severity: this.getAlertSeverity(event.type),
       message: this.generateAlertMessage(event)
     });
-    
-    localStorage.setItem('realtime_alerts', JSON.stringify(alerts.slice(-50)));
   }
 
   private getAlertSeverity(eventType: EventType): 'low' | 'medium' | 'high' {
@@ -533,10 +524,12 @@ class AnalyticsService {
   }
 
   private calculateDropOffRate(courseId: string): number {
-    const started = Array.from(this.events.values())
+    const started = this.eventQueue
+      .all()
       .filter(e => e.courseId === courseId && e.type === 'course_started').length;
     
-    const abandoned = Array.from(this.events.values())
+    const abandoned = this.eventQueue
+      .all()
       .filter(e => e.courseId === courseId && e.type === 'course_abandoned').length;
     
     return started > 0 ? (abandoned / started) * 100 : 0;
@@ -554,7 +547,8 @@ class AnalyticsService {
 
   private detectSeekingPatterns(userId: string, courseId: string, lessonId: string, _videoData: any): void {
     // Implementation for detecting excessive seeking or confusion patterns
-    const seekEvents = Array.from(this.events.values())
+    const seekEvents = this.eventQueue
+      .all()
       .filter(e => 
         e.userId === userId && 
         e.courseId === courseId && 
@@ -587,14 +581,12 @@ class AnalyticsService {
   }
 
   private logPerformanceIssue(event: AnalyticsEvent): void {
-    const issues = JSON.parse(localStorage.getItem('performance_issues') || '[]');
-    issues.push({
+    console.warn('[Analytics] Performance issue detected', {
       timestamp: event.timestamp,
       type: event.type,
       data: event.data,
       userAgent: event.userAgent
     });
-    localStorage.setItem('performance_issues', JSON.stringify(issues.slice(-100)));
   }
 
   private setupEventCollection(): void {
@@ -624,58 +616,69 @@ class AnalyticsService {
     return `sess_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
   }
 
-  private loadStoredAnalytics(): void {
-    // Load events
-    const storedEvents = localStorage.getItem('analytics_events');
-    if (storedEvents) {
-      try {
-        const eventArray = JSON.parse(storedEvents);
-        eventArray.forEach((event: AnalyticsEvent) => {
-          this.events.set(event.id, event);
-        });
-      } catch (error) {
-        console.error('Failed to load stored analytics events:', error);
-      }
-    }
+  private async bootstrapAnalytics(): Promise<void> {
+    try {
+      const eventsResponse = await analyticsApiClient.fetchEvents();
+      (eventsResponse.data || []).forEach((record) => {
+        const event: AnalyticsEvent = {
+          id: record.id,
+          type: record.event_type,
+          userId: record.user_id,
+          courseId: record.course_id ?? undefined,
+          lessonId: record.lesson_id ?? undefined,
+          moduleId: record.module_id ?? undefined,
+          timestamp: record.created_at,
+          data: record.payload ?? {},
+          userAgent: record.user_agent ?? '',
+          sessionId: record.session_id ?? ''
+        };
+        this.eventQueue.add(event);
+      });
 
-    // Load journeys
-    const storedJourneys = localStorage.getItem('learner_journeys');
-    if (storedJourneys) {
-      try {
-        const journeyArray = JSON.parse(storedJourneys);
-        journeyArray.forEach((journey: LearnerJourney) => {
-          const key = `${journey.userId}_${journey.courseId}`;
-          this.learnerJourneys.set(key, journey);
-        });
-      } catch (error) {
-        console.error('Failed to load stored learner journeys:', error);
-      }
+      const journeysResponse = await analyticsApiClient.fetchJourneys();
+      (journeysResponse.data || []).forEach((record) => {
+        const journey: LearnerJourney = {
+          userId: record.user_id,
+          courseId: record.course_id,
+          startedAt: record.started_at,
+          lastActiveAt: record.last_active_at,
+          completedAt: record.completed_at ?? undefined,
+          totalTimeSpent: record.total_time_spent ?? 0,
+          sessionsCount: record.sessions_count ?? 0,
+          progressPercentage: Number(record.progress_percentage ?? 0),
+          engagementScore: Number(record.engagement_score ?? 0),
+          strugglingIndicators: [],
+          milestones: record.milestones ?? [],
+          dropOffPoints: record.drop_off_points ?? [],
+          pathTaken: record.path_taken ?? []
+        };
+        const key = `${journey.userId}_${journey.courseId}`;
+        this.learnerJourneys.set(key, journey);
+      });
+    } catch (error) {
+      console.warn('Failed to bootstrap analytics from API', error);
     }
   }
 
   private persistAnalytics(): void {
-    // Persist events (keep last 1000)
-    const eventArray = Array.from(this.events.values()).slice(-1000);
-    localStorage.setItem('analytics_events', JSON.stringify(eventArray));
+    // Remote persistence handled per event; no local persistence required
+  }
 
-    // Persist journeys
-    const journeyArray = Array.from(this.learnerJourneys.values());
-    localStorage.setItem('learner_journeys', JSON.stringify(journeyArray));
+  private async persistEventRemote(event: AnalyticsEvent): Promise<void> {
+    await analyticsApiClient.persistEvent(event);
+  }
+
+  private async persistJourneyRemote(journey: LearnerJourney): Promise<void> {
+    await analyticsApiClient.persistJourney(journey);
   }
 
   // Public API Methods
   getEvents(filters?: Partial<AnalyticsEvent>): AnalyticsEvent[] {
-    let events = Array.from(this.events.values());
-    
-    if (filters) {
-      events = events.filter(event => {
-        return Object.entries(filters).every(([key, value]) => {
-          return event[key as keyof AnalyticsEvent] === value;
-        });
-      });
-    }
+    const events = this.eventQueue
+      .filter(filters)
+      .sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
 
-    return events.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    return events;
   }
 
   getLearnerJourney(userId: string, courseId: string): LearnerJourney | null {
@@ -687,15 +690,7 @@ class AnalyticsService {
   }
 
   clearOldData(daysOld: number): void {
-    const cutoffDate = new Date(Date.now() - daysOld * 24 * 60 * 60 * 1000);
-    
-    // Remove old events
-    for (const [id, event] of this.events.entries()) {
-      if (new Date(event.timestamp) < cutoffDate) {
-        this.events.delete(id);
-      }
-    }
-
+    this.eventQueue.clearOlderThan(daysOld);
     this.persistAnalytics();
   }
 }

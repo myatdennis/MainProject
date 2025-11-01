@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { 
   ArrowLeft, 
@@ -23,9 +23,11 @@ import {
   Share,
   AlertCircle,
   CheckCircle,
-  Zap
+  Zap,
+  UserPlus,
+  Trash2
 } from 'lucide-react';
-import orgService, { Org } from '../../services/orgService';
+import orgService, { Org, OrgMember } from '../../services/orgService';
 import LoadingButton from '../../components/LoadingButton';
 import EditOrganizationModal from '../../components/EditOrganizationModal';
 import { useToast } from '../../context/ToastContext';
@@ -40,6 +42,24 @@ const OrganizationDetails: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [showEditModal, setShowEditModal] = useState(false);
   const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'analytics' | 'settings' | 'billing'>('overview');
+  const [members, setMembers] = useState<OrgMember[]>([]);
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [memberForm, setMemberForm] = useState({ userId: '', role: 'member' });
+  const [memberSubmitting, setMemberSubmitting] = useState(false);
+
+  const loadMembers = useCallback(async () => {
+    if (!id) return;
+    setMembersLoading(true);
+    try {
+      const data = await orgService.listOrgMembers(id);
+      setMembers(data);
+    } catch (error) {
+      console.error('Failed to load organization members:', error);
+      showToast('Failed to load organization members', 'error');
+    } finally {
+      setMembersLoading(false);
+    }
+  }, [id, showToast]);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -64,9 +84,53 @@ const OrganizationDetails: React.FC = () => {
     fetchData();
   }, [id, showToast]);
 
+  useEffect(() => {
+    loadMembers();
+  }, [loadMembers]);
+
   const handleOrganizationUpdated = (updatedOrg: Org) => {
     setOrganization(updatedOrg);
     showToast('Organization updated successfully!', 'success');
+  };
+
+  const handleAddMember = async () => {
+    if (!id) return;
+    const userId = memberForm.userId.trim();
+    if (!userId) {
+      showToast('User ID is required', 'error');
+      return;
+    }
+
+    setMemberSubmitting(true);
+    try {
+      const member = await orgService.addOrgMember(id, { userId, role: memberForm.role });
+      setMembers((prev) => {
+        const exists = prev.find((m) => m.id === member.id);
+        if (exists) {
+          return prev.map((m) => (m.id === member.id ? member : m));
+        }
+        return [member, ...prev];
+      });
+      setMemberForm((form) => ({ ...form, userId: '' }));
+      showToast('Member added successfully', 'success');
+    } catch (error) {
+      console.error('Failed to add organization member:', error);
+      showToast('Failed to add organization member', 'error');
+    } finally {
+      setMemberSubmitting(false);
+    }
+  };
+
+  const handleRemoveMember = async (membershipId: string) => {
+    if (!id) return;
+    try {
+      await orgService.removeOrgMember(id, membershipId);
+      setMembers((prev) => prev.filter((member) => member.id !== membershipId));
+      showToast('Member removed successfully', 'success');
+    } catch (error) {
+      console.error('Failed to remove organization member:', error);
+      showToast('Failed to remove organization member', 'error');
+    }
   };
 
   if (loading) {
@@ -114,7 +178,7 @@ const OrganizationDetails: React.FC = () => {
     }
   };
 
-  const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'];
+  const COLORS = ['#2B84C6', '#3BAA66', '#F6C87B', '#E6473A', '#F28C1A'];
 
   const tabs = [
     { id: 'overview', label: 'Overview', icon: BarChart3 },
@@ -362,7 +426,7 @@ const OrganizationDetails: React.FC = () => {
                             <YAxis fontSize={12} />
                             <CartesianGrid strokeDasharray="3 3" />
                             <Tooltip />
-                            <Line type="monotone" dataKey="users" stroke="#3B82F6" strokeWidth={2} />
+                            <Line type="monotone" dataKey="users" stroke="#2B84C6" strokeWidth={2} />
                           </LineChart>
                         </ResponsiveContainer>
                       </div>
@@ -417,8 +481,90 @@ const OrganizationDetails: React.FC = () => {
 
           {activeTab === 'users' && (
             <div className="space-y-6">
+              <div className="bg-white rounded-lg border border-gray-200 shadow-sm">
+                <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 p-4 border-b border-gray-200">
+                  <div>
+                    <h3 className="text-lg font-semibold text-gray-900 flex items-center space-x-2">
+                      <span>Organization Members</span>
+                      <Users className="w-4 h-4 text-gray-500" />
+                    </h3>
+                    <p className="text-sm text-gray-600">Manage member access for this organization workspace.</p>
+                  </div>
+                  <div className="flex flex-col md:flex-row md:items-center gap-2">
+                    <input
+                      type="text"
+                      value={memberForm.userId}
+                      onChange={(e) => setMemberForm((form) => ({ ...form, userId: e.target.value }))}
+                      placeholder="Supabase User ID"
+                      className="w-full md:w-64 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    <select
+                      value={memberForm.role}
+                      onChange={(e) => setMemberForm((form) => ({ ...form, role: e.target.value }))}
+                      className="border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="member">Member</option>
+                      <option value="editor">Editor</option>
+                      <option value="manager">Manager</option>
+                      <option value="admin">Admin</option>
+                      <option value="owner">Owner</option>
+                    </select>
+                    <button
+                      onClick={handleAddMember}
+                      disabled={memberSubmitting}
+                      className="inline-flex items-center justify-center px-3 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-60"
+                    >
+                      <UserPlus className="w-4 h-4 mr-2" />
+                      {memberSubmitting ? 'Adding…' : 'Add Member'}
+                    </button>
+                  </div>
+                </div>
+                <div className="overflow-hidden">
+                  {membersLoading ? (
+                    <div className="p-6 flex items-center justify-center text-sm text-gray-500">
+                      Loading members…
+                    </div>
+                  ) : members.length === 0 ? (
+                    <div className="p-6 text-sm text-gray-500">No members found for this organization.</div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">User ID</th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Role</th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Invited By</th>
+                            <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Added</th>
+                            <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                          {members.map((member) => (
+                            <tr key={member.id}>
+                              <td className="px-4 py-3 text-sm text-gray-900 font-mono">{member.userId}</td>
+                              <td className="px-4 py-3 text-sm text-gray-700 capitalize">{member.role}</td>
+                              <td className="px-4 py-3 text-sm text-gray-500 font-mono">{member.invitedBy ?? '—'}</td>
+                              <td className="px-4 py-3 text-sm text-gray-500">{new Date(member.createdAt).toLocaleString()}</td>
+                              <td className="px-4 py-3 text-right">
+                                <button
+                                  onClick={() => handleRemoveMember(member.id)}
+                                  className="inline-flex items-center px-2.5 py-1.5 border border-red-200 text-sm text-red-600 rounded-lg hover:bg-red-50"
+                                >
+                                  <Trash2 className="w-4 h-4 mr-1" />
+                                  Remove
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              </div>
+
               <div className="flex items-center justify-between">
-                <h3 className="text-lg font-semibold text-gray-900">User Management</h3>
+                <h3 className="text-lg font-semibold text-gray-900">User Engagement Insights</h3>
                 <div className="flex space-x-2">
                   <button className="px-3 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50">
                     Import Users
@@ -430,7 +576,7 @@ const OrganizationDetails: React.FC = () => {
               </div>
 
               {orgStats && (
-                <div className="grid grid-cols-3 gap-6">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                   {/* Engagement Stats */}
                   <div className="bg-gray-50 rounded-lg p-4">
                     <h4 className="font-medium text-gray-900 mb-3">User Engagement</h4>
@@ -513,7 +659,7 @@ const OrganizationDetails: React.FC = () => {
                       <YAxis fontSize={12} />
                       <CartesianGrid strokeDasharray="3 3" />
                       <Tooltip />
-                      <Bar dataKey="completions" fill="#10B981" />
+                      <Bar dataKey="completions" fill="#3BAA66" />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>

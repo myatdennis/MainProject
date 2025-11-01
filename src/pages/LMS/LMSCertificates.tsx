@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { 
   Award, 
@@ -14,6 +14,7 @@ import {
 } from 'lucide-react';
 import SEO from '../../components/SEO/SEO';
 import { useToast } from '../../context/ToastContext';
+import { certificateService, GeneratedCertificate } from '../../services/certificateService';
 
 interface Certificate {
   id: string;
@@ -44,68 +45,55 @@ const LMSCertificates: React.FC = () => {
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'expired'>('all');
   const [sortBy, setSortBy] = useState<'date' | 'course' | 'grade'>('date');
+  const learnerProfile = useMemo(() => {
+    try {
+      const raw = localStorage.getItem('huddle_user');
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch (error) {
+      console.warn('Failed to parse learner identity for certificates:', error);
+      return null;
+    }
+  }, []);
 
+  const learnerId = learnerProfile?.id || learnerProfile?.email || 'local-user';
+  
   useEffect(() => {
     loadCertificates();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [learnerId]);
 
   const loadCertificates = async () => {
     setLoading(true);
     try {
-      // Mock certificates data - replace with actual API call
-      const mockCertificates: Certificate[] = [
-        {
-          id: 'cert_001',
-          courseTitle: 'Inclusive Leadership Fundamentals',
-          courseName: 'inclusive-leadership-fundamentals',
-          completionDate: '2024-01-15',
-          issueDate: '2024-01-16',
-          certificateUrl: '/certificates/cert_001.pdf',
-          instructor: 'Dr. Sarah Johnson',
-          credentialId: 'ILF-2024-001',
-          skills: ['Inclusive Leadership', 'Team Management', 'Bias Recognition'],
-          category: 'Leadership',
-          hours: 12,
-          grade: 'A',
-          status: 'active',
-          shareableUrl: 'https://platform.inclusiveexcellence.com/verify/cert_001'
-        },
-        {
-          id: 'cert_002',
-          courseTitle: 'Courageous Conversations',
-          courseName: 'courageous-conversations',
-          completionDate: '2024-01-20',
-          issueDate: '2024-01-21',
-          certificateUrl: '/certificates/cert_002.pdf',
-          instructor: 'Maria Rodriguez',
-          credentialId: 'CC-2024-002',
-          skills: ['Difficult Conversations', 'Conflict Resolution', 'Active Listening'],
-          category: 'Communication',
-          hours: 8,
-          grade: 'A-',
-          status: 'active',
-          shareableUrl: 'https://platform.inclusiveexcellence.com/verify/cert_002'
-        },
-        {
-          id: 'cert_003',
-          courseTitle: 'DEI Strategy Implementation',
-          courseName: 'dei-strategy',
-          completionDate: '2023-11-10',
-          issueDate: '2023-11-11',
-          certificateUrl: '/certificates/cert_003.pdf',
-          instructor: 'Dr. Michael Chen',
-          credentialId: 'DEI-2023-003',
-          skills: ['Strategy Development', 'Change Management', 'Metrics & Analytics'],
-          category: 'Strategy',
-          hours: 16,
-          grade: 'B+',
-          status: 'active',
-          validUntil: '2026-11-11',
-          shareableUrl: 'https://platform.inclusiveexcellence.com/verify/cert_003'
-        }
-      ];
+      const generatedCertificates = await certificateService.getCertificatesByUser(learnerId);
+      const normalized = generatedCertificates.map((cert: GeneratedCertificate) => {
+        const completionTimeToken = cert.metadata?.completionTime ?? '';
+        const completionMinutes = parseInt(String(completionTimeToken).replace(/[^0-9]/g, ''), 10);
+        const effectiveMinutes = Number.isFinite(completionMinutes) ? completionMinutes : 60;
+        const inferredHours = Math.max(1, Math.round(effectiveMinutes / 60));
+        const requirements = cert.metadata.requirements || [];
 
-      setCertificates(mockCertificates);
+        return {
+          id: cert.id,
+          courseTitle: cert.courseName,
+          courseName: cert.courseName.toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+          completionDate: cert.completionDate,
+          issueDate: cert.generatedAt,
+          certificateUrl: cert.certificateUrl,
+          instructor: cert.metadata.instructorName,
+          credentialId: cert.verificationCode,
+          skills: requirements.length > 0 ? requirements : ['Certificate earned'],
+          category: cert.metadata.organizationName || 'Learning',
+          hours: inferredHours,
+          grade: cert.metadata.finalScore !== undefined ? `${cert.metadata.finalScore}%` : undefined,
+          status: cert.status === 'expired' ? 'expired' : 'active',
+          validUntil: cert.validUntil,
+          shareableUrl: `${window.location.origin}/verify/${cert.verificationCode}`
+        } as Certificate;
+      });
+
+      setCertificates(normalized);
     } catch (error) {
       showToast('Failed to load certificates', 'error');
     } finally {
@@ -139,12 +127,19 @@ const LMSCertificates: React.FC = () => {
 
   const downloadCertificate = async (certificate: Certificate) => {
     try {
-      // Mock download - replace with actual implementation
-      showToast(`Downloading certificate for ${certificate.courseTitle}...`, 'info');
-      // Simulate download
-      setTimeout(() => {
-        showToast('Certificate downloaded successfully!', 'success');
-      }, 1000);
+      if (!certificate.certificateUrl) {
+        showToast('Certificate link unavailable', 'error');
+        return;
+      }
+
+      const anchor = document.createElement('a');
+      anchor.href = certificate.certificateUrl;
+      anchor.download = `${certificate.courseTitle.replace(/\s+/g, '-')}-certificate.pdf`;
+      document.body.appendChild(anchor);
+      anchor.click();
+      document.body.removeChild(anchor);
+
+      showToast('Certificate download started', 'success');
     } catch (error) {
       showToast('Failed to download certificate', 'error');
     }

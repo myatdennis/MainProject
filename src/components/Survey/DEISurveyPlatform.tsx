@@ -78,8 +78,8 @@ const DEISurveyPlatform: React.FC<DEISurveyPlatformProps> = ({
           randomizeOptions: false,
         },
         branding: {
-          primaryColor: '#3A7FFF',
-          secondaryColor: '#2D9B66',
+          primaryColor: '#2B84C6',
+          secondaryColor: '#3BAA66',
         },
         defaultLanguage: 'en',
         supportedLanguages: ['en'],
@@ -111,8 +111,8 @@ const DEISurveyPlatform: React.FC<DEISurveyPlatformProps> = ({
           randomizeOptions: false,
         },
         branding: {
-          primaryColor: '#8B5CF6',
-          secondaryColor: '#10B981',
+          primaryColor: '#F28C1A',
+          secondaryColor: '#3BAA66',
         },
         defaultLanguage: 'en',
         supportedLanguages: ['en', 'es'],
@@ -178,24 +178,22 @@ const DEISurveyPlatform: React.FC<DEISurveyPlatformProps> = ({
   const renderDashboard = () => (
     <div className="space-y-6">
       {/* Platform Overview */}
-      <div className="bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg p-6 text-white">
+      <div className="rounded-lg p-6 text-white" style={{ background: 'var(--gradient-banner)' }}>
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold mb-2">DEI Survey Platform</h1>
-            <p className="text-blue-100">
-              Create, distribute, and analyze diversity, equity, and inclusion surveys with AI-powered insights
-            </p>
+            <p className="text-white/90">Create, distribute, and analyze diversity, equity, and inclusion surveys with AI-powered insights</p>
           </div>
           <div className="text-right">
             <div className="text-3xl font-bold">{surveys.length}</div>
-            <div className="text-blue-100">Total Surveys</div>
+            <div className="text-white/80">Total Surveys</div>
           </div>
         </div>
       </div>
 
       {/* Quick Stats */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
+        <div className="card p-6">
           <div className="flex items-center space-x-3">
             <div className="p-2 bg-green-100 rounded-lg">
               <FileText className="w-6 h-6 text-green-600" />
@@ -259,13 +257,13 @@ const DEISurveyPlatform: React.FC<DEISurveyPlatformProps> = ({
       </div>
 
       {/* Recent Surveys */}
-      <div className="bg-white rounded-lg border border-gray-200">
+      <div className="card">
         <div className="px-6 py-4 border-b border-gray-200">
           <div className="flex items-center justify-between">
             <h2 className="text-lg font-semibold text-gray-900">Recent Surveys</h2>
             <button
               onClick={handleCreateSurvey}
-              className="flex items-center space-x-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
+              className="btn-primary inline-flex items-center space-x-2"
             >
               <Plus className="w-4 h-4" />
               <span>Create Survey</span>
@@ -348,15 +346,10 @@ const DEISurveyPlatform: React.FC<DEISurveyPlatformProps> = ({
             })
           ) : (
             <div className="p-12 text-center">
-              <FileText className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-              <h3 className="text-lg font-medium text-gray-900 mb-2">No surveys yet</h3>
-              <p className="text-gray-600 mb-4">
-                Get started by creating your first DEI survey from our research-backed templates
-              </p>
-              <button
-                onClick={handleCreateSurvey}
-                className="inline-flex items-center space-x-2 px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
-              >
+              <FileText className="w-12 h-12 text-muted-text mx-auto mb-4" />
+              <h3 className="text-lg font-medium text-neutral-text mb-2">No surveys yet</h3>
+              <p className="text-subtext-muted mb-4">Get started by creating your first DEI survey from our research-backed templates</p>
+              <button onClick={handleCreateSurvey} className="btn-primary inline-flex items-center space-x-2">
                 <Plus className="w-4 h-4" />
                 <span>Create Your First Survey</span>
               </button>

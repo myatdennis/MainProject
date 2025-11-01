@@ -54,9 +54,9 @@ const AdminSettings = () => {
       backupFrequency: 'daily'
     },
     branding: {
-      primaryColor: '#FF8895',
-      secondaryColor: '#D72638',
-      accentColor: '#3A7DFF',
+      primaryColor: '#F28C1A',
+      secondaryColor: '#E6473A',
+      accentColor: '#2B84C6',
       logoUrl: '',
       faviconUrl: '',
       customCss: ''

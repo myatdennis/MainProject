@@ -21,6 +21,7 @@ import CourseAssignmentModal from '../../components/CourseAssignmentModal';
 import LoadingButton from '../../components/LoadingButton';
 import { useToast } from '../../context/ToastContext';
 import { User } from '../../types/user';
+import PageWrapper from '../../components/PageWrapper';
 
 const AdminUsers = () => {
   const { showToast } = useToast();
@@ -203,17 +204,6 @@ const AdminUsers = () => {
     }
   };
 
-  const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'active':
-        return 'text-green-600 bg-green-50';
-      case 'inactive':
-        return 'text-yellow-600 bg-yellow-50';
-      default:
-        return 'text-red-600 bg-red-50';
-    }
-  };
-
   // Handler functions for button actions
   const handleAddUser = () => {
     setShowAddUserModal(true);
@@ -359,33 +349,35 @@ const AdminUsers = () => {
   };
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
+    <PageWrapper>
       {/* Header */}
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">User Management</h1>
-        <p className="text-gray-600">Monitor learner progress, assign courses, and manage user accounts</p>
+        <h1 className="h1">User Management</h1>
+        <p className="muted-text">Monitor learner progress, assign courses, and manage user accounts</p>
       </div>
 
       {/* Search and Filter Bar */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
-          <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4 flex-1">
-            <div className="relative flex-1 max-w-md">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+      <div className="card mb-8">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-col gap-3 sm:flex-row">
+            <div className="relative flex-1 max-w-[520px]">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 muted-text" />
               <input
                 type="text"
                 placeholder="Search users..."
                 value={searchTerm}
                 onChange={(e: React.ChangeEvent<HTMLInputElement>) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                className="input pl-10"
+                aria-label="Search users"
               />
             </div>
-            <div className="flex items-center space-x-2">
-              <Filter className="h-5 w-5 text-gray-400" />
+            <div className="flex items-center gap-2">
+              <Filter className="h-4 w-4 muted-text" />
               <select
                 value={filterOrg}
                 onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setFilterOrg(e.target.value)}
-                className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                className="input min-w-[160px]"
+                aria-label="Filter by organization"
               >
                 <option value="all">All Organizations</option>
                 {organizations.map(org => (
@@ -395,7 +387,8 @@ const AdminUsers = () => {
               <select
                 value={filterStatus}
                 onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setFilterStatus(e.target.value)}
-                className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                className="input min-w-[140px]"
+                aria-label="Filter by status"
               >
                 <option value="all">All Status</option>
                 <option value="active">Active</option>
@@ -403,17 +396,16 @@ const AdminUsers = () => {
               </select>
             </div>
           </div>
-          
-          <div className="flex items-center space-x-4">
+
+          <div className="flex items-center gap-3">
             {selectedUsers.length > 0 && (
-              <div className="flex items-center space-x-2">
+              <div className="flex items-center gap-2">
                 <LoadingButton
                   onClick={handleSendReminder}
                   loading={loading}
                   variant="primary"
-                  className="bg-blue-500 hover:bg-blue-600"
                 >
-                  <Mail className="h-4 w-4" />
+                  <Mail className="icon-16" />
                   Send Reminder ({selectedUsers.length})
                 </LoadingButton>
                 <LoadingButton
@@ -429,14 +421,14 @@ const AdminUsers = () => {
               onClick={handleAddUser}
               variant="primary"
             >
-              <Plus className="h-4 w-4" />
+              <Plus className="icon-16" />
               Add User
             </LoadingButton>
             <LoadingButton
               onClick={handleImportCSV}
               variant="secondary"
             >
-              <Upload className="h-4 w-4" />
+              <Upload className="icon-16" />
               Import CSV
             </LoadingButton>
             <LoadingButton
@@ -444,7 +436,7 @@ const AdminUsers = () => {
               loading={loading}
               variant="secondary"
             >
-              <Download className="h-4 w-4" />
+              <Download className="icon-16" />
               Export
             </LoadingButton>
           </div>
@@ -452,124 +444,129 @@ const AdminUsers = () => {
       </div>
 
       {/* Users Table */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+      <div className="table-card">
         <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-gray-50 border-b border-gray-200">
+          <table className="w-full table-collapse">
+            <thead className="table-head">
               <tr>
-                <th className="text-left py-4 px-6">
+                <th className="table-cell">
                   <input
                     type="checkbox"
                     checked={selectedUsers.length === filteredUsers.length && filteredUsers.length > 0}
                     onChange={handleSelectAll}
-                    className="h-4 w-4 text-orange-500 focus:ring-orange-500 border-gray-300 rounded"
+                    aria-label="Select all users"
+                    className="checkbox-sm"
                   />
                 </th>
-                <th className="text-left py-4 px-6 font-semibold text-gray-900">User</th>
-                <th className="text-left py-4 px-6 font-semibold text-gray-900">Organization</th>
-                <th className="text-center py-4 px-6 font-semibold text-gray-900">Progress</th>
-                <th className="text-center py-4 px-6 font-semibold text-gray-900">Modules</th>
-                <th className="text-center py-4 px-6 font-semibold text-gray-900">Status</th>
-                <th className="text-center py-4 px-6 font-semibold text-gray-900">Last Login</th>
-                <th className="text-center py-4 px-6 font-semibold text-gray-900">Actions</th>
+                <th className="table-cell table-head-cell" scope="col">User</th>
+                <th className="table-cell table-head-cell" scope="col">Organization</th>
+                <th className="table-cell table-head-cell text-center" scope="col">Progress</th>
+                <th className="table-cell table-head-cell text-center" scope="col">Modules</th>
+                <th className="table-cell table-head-cell text-center" scope="col">Status</th>
+                <th className="table-cell table-head-cell text-center" scope="col">Last Login</th>
+                <th className="table-cell table-head-cell text-center" scope="col">Actions</th>
               </tr>
             </thead>
             <tbody>
               {filteredUsers.map((user: User) => (
-                <tr key={user.id} className="border-b border-gray-100 hover:bg-gray-50">
-                  <td className="py-4 px-6">
+                <tr key={user.id} className="table-row-border">
+                  <td className="table-cell">
                     <input
                       type="checkbox"
                       checked={selectedUsers.includes(user.id)}
                       onChange={() => handleSelectUser(user.id)}
-                      className="h-4 w-4 text-orange-500 focus:ring-orange-500 border-gray-300 rounded"
+                      aria-label={`Select user ${user.name}`}
+                      className="checkbox-sm"
                     />
                   </td>
-                  <td className="py-4 px-6">
+                  <td className="table-cell">
                     <div>
-                      <div className="font-medium text-gray-900">{user.name}</div>
-                      <div className="text-sm text-gray-600">{user.email}</div>
-                      <div className="text-xs text-gray-500">{user.role}</div>
+                      <div className="progress-number">{user.name}</div>
+                      <div className="muted-small text-13">{user.email}</div>
+                      <div className="muted-small text-12">{user.role}</div>
                     </div>
                   </td>
-                  <td className="py-4 px-6">
+                  <td className="table-cell">
                     <div>
-                      <div className="font-medium text-gray-900">{user.organization}</div>
-                      <div className="text-sm text-gray-600">{user.cohort}</div>
+                      <div className="progress-number">{user.organization}</div>
+                      <div className="muted-small text-13">{user.cohort}</div>
                     </div>
                   </td>
-                  <td className="py-4 px-6 text-center">
+                  <td className="table-cell text-center">
                     <div className="flex flex-col items-center">
-                      <div className="text-lg font-bold text-gray-900">{user.overallProgress}%</div>
-                      <div className="w-20 bg-gray-200 rounded-full h-2 mt-1">
-                        <div 
-                          className="bg-gradient-to-r from-orange-400 to-red-500 h-2 rounded-full"
+                      <div className="progress-number">{user.overallProgress}%</div>
+                      <div className="progress-track mt-1">
+                        <div
+                          className="progress-fill"
                           style={{ width: `${user.overallProgress}%` }}
-                        ></div>
+                          role="progressbar"
+                          aria-valuemin={0}
+                          aria-valuemax={100}
+                          aria-valuenow={user.overallProgress}
+                          aria-label={`${user.name} overall progress`}
+                        />
                       </div>
                     </div>
                   </td>
-                  <td className="py-4 px-6 text-center">
-                    <div className="text-sm">
-                      <span className="font-medium">{user.completedModules}</span>
-                      <span className="text-gray-500">/{user.totalModules}</span>
+                  <td className="table-cell text-center">
+                      <div className="text-13">
+                      <span className="font-bold">{user.completedModules}</span>
+                      <span className="muted-text">/ {user.totalModules}</span>
                     </div>
-                    <div className="flex justify-center space-x-1 mt-1">
-                      {modules.map((module) => (
-                        <div
-                          key={module.key}
-                          className={`w-3 h-3 rounded-full ${
-                            user.progress[module.key as keyof typeof user.progress] === 100
-                              ? 'bg-green-500'
-                              : user.progress[module.key as keyof typeof user.progress] > 0
-                              ? 'bg-yellow-500'
-                              : 'bg-gray-300'
-                          }`}
-                          title={`${module.name}: ${user.progress[module.key as keyof typeof user.progress]}%`}
-                        />
-                      ))}
+                    <div className="flex justify-center gap-2 mt-1">
+                      {modules.map((module) => {
+                        const val = user.progress[module.key as keyof typeof user.progress] as number;
+                        const color = val === 100 ? 'var(--accent-success)' : val > 0 ? 'var(--highlight)' : 'var(--surface-muted)';
+                        return (
+                          <div key={module.key} title={`${module.name}: ${val}%`} className="module-dot" style={{ background: color }} />
+                        );
+                      })}
                     </div>
                   </td>
-                  <td className="py-4 px-6 text-center">
-                    <div className="flex items-center justify-center space-x-2">
+                  <td className="table-cell text-center">
+                    <div className="flex items-center justify-center gap-2">
                       {getStatusIcon(user.status)}
-                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(user.status)}`}>
+                      <span className={`status-badge ${user.status === 'active' ? 'status-active' : user.status === 'inactive' ? 'status-inactive' : 'status-error'}`}>
                         {user.status}
                       </span>
                     </div>
                   </td>
-                  <td className="py-4 px-6 text-center text-sm text-gray-600">
+                  <td className="table-cell text-center muted-text text-13">
                     {new Date(user.lastLogin).toLocaleDateString()}
                   </td>
-                  <td className="py-4 px-6 text-center">
-                    <div className="flex items-center justify-center space-x-2">
-                      <Link 
+                  <td className="table-cell text-center">
+                    <div className="flex items-center justify-center gap-2">
+                      <Link
                         to={`/admin/users/user-${user.id}`}
-                        className="p-1 text-blue-600 hover:text-blue-800" 
                         title="View Profile"
+                        aria-label={`View profile for ${user.name}`}
+                        className="icon-action secondary"
                       >
-                        <Eye className="h-4 w-4" />
+                        <Eye className="icon-16" />
                       </Link>
-                      <button 
+                      <button
                         onClick={() => handleEditUser(user.id)}
-                        className="p-1 text-gray-600 hover:text-gray-800 transition-colors" 
                         title="Edit User"
+                        aria-label={`Edit ${user.name}`}
+                        className="icon-action muted"
                       >
-                        <Edit className="h-4 w-4" />
+                        <Edit className="icon-16" />
                       </button>
-                      <button 
+                      <button
                         onClick={() => handleDeleteUser(user.id)}
-                        className="p-1 text-red-600 hover:text-red-800 transition-colors" 
                         title="Delete User"
+                        aria-label={`Delete ${user.name}`}
+                        className="icon-action primary"
                       >
-                        <Trash2 className="h-4 w-4" />
+                        <Trash2 className="icon-16" />
                       </button>
-                      <button 
+                      <button
                         onClick={() => handleMoreOptions(user.id)}
-                        className="p-1 text-gray-600 hover:text-gray-800 transition-colors" 
                         title="More Options"
+                        aria-label={`More options for ${user.name}`}
+                        className="icon-action muted"
                       >
-                        <MoreVertical className="h-4 w-4" />
+                        <MoreVertical className="icon-16" />
                       </button>
                     </div>
                   </td>
@@ -654,7 +651,7 @@ const AdminUsers = () => {
           editUser={userToEdit}
         />
       )}
-    </div>
+    </PageWrapper>
   );
 };
 

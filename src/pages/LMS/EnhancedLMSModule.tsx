@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react';
+import VideoPlayer from '../../components/VideoPlayer';
+import CompletionScreen from '../../components/CompletionScreen';
 import { useParams, useNavigate } from 'react-router-dom';
 import { courseStore } from '../../store/courseStore';
 import { useEnhancedCourseProgress } from '../../hooks/useEnhancedCourseProgress';
@@ -32,7 +34,7 @@ const EnhancedLMSModule = () => {
   const [quizAnswers, setQuizAnswers] = useState<{ [questionId: string]: number }>({});
   const [quizSubmitted, setQuizSubmitted] = useState(false);
   const [quizScore, setQuizScore] = useState<{ score: number; maxScore: number; passed: boolean } | null>(null);
-  const [videoProgress, setVideoProgress] = useState(0);
+  // Removed unused videoProgress state
   
   // Get course from store
   const course = moduleId ? courseStore.getCourse(moduleId) : null;
@@ -212,8 +214,6 @@ const EnhancedLMSModule = () => {
 
   // Video progress tracking
   const handleVideoProgress = (progress: number) => {
-    setVideoProgress(progress);
-    
     // Auto-save video progress every 10%
     if (progress % 10 === 0 && progress > (currentLessonProgress?.progress_percentage || 0)) {
       updateCurrentLessonProgress({
@@ -286,11 +286,44 @@ const EnhancedLMSModule = () => {
   const completionStats = getCompletionStats();
   const courseProgress = calculateCourseProgress();
 
+  // Determine if course is fully completed
+  const allLessonsCompleted = completionStats.total > 0 && completionStats.completed === completionStats.total;
+
   return (
     <ClientErrorBoundary>
       <div className="min-h-screen bg-gray-50">
-        {/* Header with sync status */}
-        <div className="bg-white shadow-sm border-b">
+        {/* Show CompletionScreen if all lessons are completed */}
+        {allLessonsCompleted ? (
+          <div className="flex items-center justify-center min-h-[60vh]">
+            <CompletionScreen
+              courseTitle={course?.title || 'Course'}
+              certificateUrl={course?.certification?.available ? '/lms/certificates' : undefined}
+              onDownloadCertificate={() => {
+                // Navigate to certificates page or trigger download
+                window.location.href = '/lms/certificates';
+              }}
+              onShare={() => {
+                if (navigator.share) {
+                  navigator.share({
+                    title: `I just completed ${course?.title}!`,
+                    text: `I earned a certificate in ${course?.title}. Check it out!`,
+                    url: window.location.origin + '/lms/certificates'
+                  });
+                } else {
+                  navigator.clipboard.writeText(window.location.origin + '/lms/certificates');
+                  toast.success('Certificate link copied to clipboard!');
+                }
+              }}
+              onNextCourse={() => {
+                // Navigate to courses page for now
+                window.location.href = '/lms/courses';
+              }}
+            />
+          </div>
+        ) : (
+          <>
+            {/* Header with sync status */}
+            <div className="bg-white shadow-sm border-b">
           <div className="max-w-7xl mx-auto px-4 py-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center space-x-4">
@@ -362,7 +395,6 @@ const EnhancedLMSModule = () => {
         {/* Main Content */}
         <div className="max-w-7xl mx-auto px-4 py-8">
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-            
             {/* Main Lesson Content */}
             <div className="lg:col-span-3">
               <div className="bg-white rounded-xl shadow-sm p-8">
@@ -400,42 +432,24 @@ const EnhancedLMSModule = () => {
                 {/* Lesson Content Based on Type */}
                 {currentLessonData.type === 'video' && (
                   <div className="mb-8">
-                    <div className="aspect-video bg-gray-900 rounded-lg overflow-hidden">
-                      {/* Video player would go here */}
-                      <div className="flex items-center justify-center h-full text-white">
-                        <div className="text-center">
-                          <Video className="w-16 h-16 mx-auto mb-4 opacity-50" />
-                          <p className="text-lg">Video Player</p>
-                          <p className="text-sm opacity-75 mt-2">
-                            Progress: {videoProgress}%
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                    
-                    {/* Video Controls */}
-                    <div className="mt-4 flex items-center space-x-4">
-                      <button
-                        onClick={handleVideoComplete}
-                        className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700"
-                      >
-                        Mark Video Complete
-                      </button>
-                      
-                      <div className="flex-1">
-                        <input
-                          type="range"
-                          min="0"
-                          max="100"
-                          value={videoProgress}
-                          onChange={(e) => handleVideoProgress(parseInt(e.target.value))}
-                          className="w-full"
-                        />
-                        <div className="text-xs text-gray-500 mt-1">
-                          Drag to simulate video progress
-                        </div>
-                      </div>
-                    </div>
+                    <VideoPlayer
+                      videoContent={{
+                        id: currentLessonData.id,
+                        type: 'url',
+                        title: currentLessonData.title,
+                        description: currentLessonData.description,
+                        url: currentLessonData.content?.videoUrl,
+                        thumbnail: currentLessonData.content?.videoThumbnail,
+                        duration: typeof currentLessonData.content?.videoDuration === 'number' ? currentLessonData.content.videoDuration : undefined,
+                        settings: {
+                          requireWatchPercentage: 90,
+                          resumeFromLastPosition: true,
+                          markAsWatched: true
+                        }
+                      }}
+                      onProgress={handleVideoProgress}
+                      onComplete={handleVideoComplete}
+                    />
                   </div>
                 )}
 
@@ -678,6 +692,8 @@ const EnhancedLMSModule = () => {
             </div>
           </div>
         </div>
+          </>
+        )}
       </div>
     </ClientErrorBoundary>
   );

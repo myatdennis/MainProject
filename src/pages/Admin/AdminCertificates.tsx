@@ -37,8 +37,8 @@ const AdminCertificates = () => {
       lastUpdated: '2025-02-15',
       requirements: ['Complete all 5 modules', 'Pass final assessment (80%)', 'Submit action plan'],
       design: {
-        primaryColor: '#FF8895',
-        secondaryColor: '#D72638',
+        primaryColor: '#F28C1A',
+        secondaryColor: '#E6473A',
         logo: 'huddle-co-logo.png',
         background: 'certificate-bg-1.jpg'
       }
@@ -54,8 +54,8 @@ const AdminCertificates = () => {
       lastUpdated: '2025-02-10',
       requirements: ['Complete Conversations module', 'Practice session recording', 'Peer feedback'],
       design: {
-        primaryColor: '#3A7DFF',
-        secondaryColor: '#2D9B66',
+        primaryColor: '#2B84C6',
+        secondaryColor: '#3BAA66',
         logo: 'huddle-co-logo.png',
         background: 'certificate-bg-2.jpg'
       }
@@ -71,8 +71,8 @@ const AdminCertificates = () => {
       lastUpdated: '2025-01-20',
       requirements: ['Complete Foundations module', 'Pass quiz (70%)', 'Reflection submission'],
       design: {
-        primaryColor: '#2D9B66',
-        secondaryColor: '#FF8895',
+        primaryColor: '#3BAA66',
+        secondaryColor: '#F28C1A',
         logo: 'huddle-co-logo.png',
         background: 'certificate-bg-3.jpg'
       }
@@ -88,8 +88,8 @@ const AdminCertificates = () => {
       lastUpdated: '2025-03-01',
       requirements: ['Complete all modules', 'Leadership project', 'Mentor 2 colleagues', 'Executive assessment'],
       design: {
-        primaryColor: '#D72638',
-        secondaryColor: '#3A7DFF',
+        primaryColor: '#E6473A',
+        secondaryColor: '#2B84C6',
         logo: 'huddle-co-logo.png',
         background: 'certificate-bg-4.jpg'
       }

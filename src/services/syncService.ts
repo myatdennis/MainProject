@@ -1,10 +1,14 @@
 import { courseStore } from '../store/courseStore';
 import { Course } from '../types/courseTypes';
 import { supabase } from '../lib/supabase';
+import type { CourseAssignment } from '../types/assignment';
+import { CourseValidationError } from './courseService';
+import { wsClient } from './wsClient';
 
 interface SyncEvent {
   type: 'course_updated' | 'course_created' | 'course_deleted' | 
         'user_progress' | 'user_enrolled' | 'user_completed' |
+        'assignment_created' | 'assignment_updated' | 'assignment_deleted' |
         'survey_created' | 'survey_updated' | 'survey_response' | 'refresh_all';
   data: any;
   timestamp: number;
@@ -13,12 +17,33 @@ interface SyncEvent {
   source?: 'admin' | 'client';
 }
 
+const normalizeAssignmentStatus = (status?: string | null): CourseAssignment['status'] => {
+  if (status === 'in-progress' || status === 'completed') {
+    return status;
+  }
+  return 'assigned';
+};
+
+const mapAssignmentFromSupabase = (record: any): CourseAssignment => ({
+  id: record?.id,
+  courseId: record?.course_id,
+  userId: (record?.user_id || '').toLowerCase(),
+  status: normalizeAssignmentStatus(record?.status),
+  progress: Number.isFinite(record?.progress) ? Number(record.progress) : 0,
+  dueDate: record?.due_date ?? null,
+  note: record?.note ?? null,
+  assignedBy: record?.assigned_by ?? null,
+  createdAt: record?.created_at || new Date().toISOString(),
+  updatedAt: record?.updated_at || new Date().toISOString(),
+});
+
 class SyncService {
   private subscribers: { [key: string]: ((data: any) => void)[] } = {};
   private syncInterval: number | null = null;
-  private lastSyncTime: number = Date.now();
+  private lastSyncTime: number = 0;
   private isOnline: boolean = navigator.onLine;
   private pendingSync: SyncEvent[] = [];
+  private eventLog: SyncEvent[] = [];
 
   constructor() {
     // Listen for online/offline events
@@ -36,6 +61,46 @@ class SyncService {
 
     // Initialize real-time Supabase listeners
     this.initializeRealtimeSync();
+
+    // Initialize WebSocket client if configured (fast realtime fallback)
+    try {
+      if (import.meta.env.VITE_WS_URL) {
+        wsClient.connect();
+
+        // Map incoming WS events to local emitters
+        wsClient.on('event', (payload: any) => {
+          const t = payload.type;
+          const d = payload.data;
+
+          switch (t) {
+            case 'assignment_created':
+            case 'assignment_updated':
+            case 'assignment_deleted':
+              this.emit(t, d);
+              break;
+            case 'user_progress':
+              this.emit('user_progress', { progress: d, userId: d.user_id, timestamp: Date.now(), source: 'client' });
+              break;
+            case 'course_updated':
+            case 'course_created':
+            case 'course_deleted':
+              this.emit(t, { course: d, courseId: d?.id, timestamp: Date.now(), source: 'admin' });
+              break;
+            default:
+              this.emit('ws_event', payload);
+          }
+        });
+
+        wsClient.on('open', () => {
+          // optionally subscribe to org-specific channels after auth
+          this.emit('ws_connected', { timestamp: Date.now() });
+        });
+
+        wsClient.on('close', () => this.emit('ws_disconnected', { timestamp: Date.now() }));
+      }
+    } catch (err) {
+      console.warn('WS client initialization failed', err);
+    }
   }
 
   // Initialize real-time Supabase synchronization
@@ -110,6 +175,29 @@ class SyncService {
                 });
               }
             });
+        })
+        .subscribe();
+
+      // Listen for assignment changes
+      supabase
+        .channel('assignment_changes')
+        .on('postgres_changes', {
+          event: '*',
+          schema: 'public',
+          table: 'course_assignments'
+        }, (payload: any) => {
+          console.log('Real-time assignment change detected:', payload);
+          const record = payload.new || payload.old;
+          if (!record) return;
+
+          const eventType = payload.eventType === 'DELETE'
+            ? 'assignment_deleted'
+            : payload.eventType === 'UPDATE'
+              ? 'assignment_updated'
+              : 'assignment_created';
+
+          const assignment = mapAssignmentFromSupabase(record);
+          this.emit(eventType, assignment);
         })
         .subscribe();
 
@@ -206,7 +294,7 @@ class SyncService {
           manual: true
         });
       } else {
-        // Fallback to localStorage refresh
+        // Fallback to client-side refresh
         await courseStore.init();
         this.emit('course_updated', {
           courseId,
@@ -282,7 +370,7 @@ class SyncService {
   private async syncWithRemote() {
     try {
       // In a real implementation, this would call your backend API
-      // For now, we'll simulate checking for updates from localStorage timestamps
+      // For now, we'll simulate checking for updates from the in-memory event log
       const remoteData = this.checkForRemoteUpdates();
       
       if (remoteData.length > 0) {
@@ -297,33 +385,41 @@ class SyncService {
 
   // Simulate checking for remote updates
   private checkForRemoteUpdates(): SyncEvent[] {
-    try {
-      const syncLog = localStorage.getItem('huddle_sync_log');
-      if (!syncLog) return [];
+    const newEvents = this.eventLog.filter(event => event.timestamp > this.lastSyncTime);
 
-      const events: SyncEvent[] = JSON.parse(syncLog);
-      const newEvents = events.filter(event => event.timestamp > this.lastSyncTime);
-      
-      if (newEvents.length > 0) {
-        this.lastSyncTime = Math.max(...newEvents.map(e => e.timestamp));
-      }
-      
-      return newEvents;
-    } catch {
-      return [];
+    if (newEvents.length > 0) {
+      this.lastSyncTime = Math.max(...newEvents.map((e) => e.timestamp));
     }
+
+    return newEvents;
   }
 
   // Handle remote updates
   private handleRemoteUpdate(event: SyncEvent) {
     switch (event.type) {
       case 'course_updated':
-        courseStore.saveCourse(event.data as Course);
+        try {
+          courseStore.saveCourse(event.data as Course, { skipRemoteSync: true });
+        } catch (error) {
+          if (error instanceof CourseValidationError) {
+            console.warn('Remote update skipped due to validation issues:', error.issues);
+          } else {
+            console.warn('Failed to apply remote course update', error);
+          }
+        }
         this.emit('course_updated', event.data);
         break;
       
       case 'course_created':
-        courseStore.saveCourse(event.data as Course);
+        try {
+          courseStore.saveCourse(event.data as Course, { skipRemoteSync: true });
+        } catch (error) {
+          if (error instanceof CourseValidationError) {
+            console.warn('Remote course creation skipped due to validation issues:', error.issues);
+          } else {
+            console.warn('Failed to add remote course', error);
+          }
+        }
         this.emit('course_created', event.data);
         break;
       
@@ -335,33 +431,29 @@ class SyncService {
       case 'user_progress':
         this.emit('user_progress', event.data);
         break;
+
+      case 'assignment_created':
+      case 'assignment_updated':
+      case 'assignment_deleted':
+        this.emit(event.type, event.data);
+        break;
     }
   }
 
   // Log sync events
   logSyncEvent(event: SyncEvent) {
-    try {
-      const syncLog = localStorage.getItem('huddle_sync_log');
-      const events: SyncEvent[] = syncLog ? JSON.parse(syncLog) : [];
-      
-      events.push({
-        ...event,
-        timestamp: Date.now()
-      });
-      
-      // Keep only last 100 events
-      const recentEvents = events.slice(-100);
-      localStorage.setItem('huddle_sync_log', JSON.stringify(recentEvents));
-      
-      // If online, emit immediately for real-time updates
-      if (this.isOnline) {
-        this.emit(event.type, event.data);
-      } else {
-        // Queue for later sync
-        this.pendingSync.push(event);
-      }
-    } catch (error) {
-      console.error('Failed to log sync event:', error);
+    const enrichedEvent: SyncEvent = {
+      ...event,
+      timestamp: Date.now()
+    };
+
+    this.eventLog.push(enrichedEvent);
+    this.eventLog = this.eventLog.slice(-100);
+
+    if (this.isOnline) {
+      this.emit(enrichedEvent.type, enrichedEvent.data);
+    } else {
+      this.pendingSync.push(enrichedEvent);
     }
   }
 

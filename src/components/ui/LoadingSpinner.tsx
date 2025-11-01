@@ -24,7 +24,11 @@ const LoadingSpinner: React.FC<LoadingSpinnerProps> = ({
   };
 
   return (
-    <div className={`animate-spin ${sizeClasses[size]} ${colorClasses[color]} ${className}`}>
+    <div
+      className={`animate-spin ${sizeClasses[size]} ${colorClasses[color]} ${className}`}
+      role="status"
+      aria-live="polite"
+    >
       <svg 
         className="w-full h-full" 
         xmlns="http://www.w3.org/2000/svg" 

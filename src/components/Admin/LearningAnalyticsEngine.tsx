@@ -68,14 +68,14 @@ const LearningAnalyticsEngine: React.FC = () => {
     });
   }, [timeRange]);
 
-  const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'];
+  const COLORS = ['#F28C1A', '#2B84C6', '#3BAA66', '#E6473A', '#1E1E1E'];
 
   const getRiskColor = (risk: string) => {
     switch (risk) {
-      case 'low': return 'text-green-600 bg-green-100';
-      case 'medium': return 'text-yellow-600 bg-yellow-100';
-      case 'high': return 'text-red-600 bg-red-100';
-      default: return 'text-gray-600 bg-gray-100';
+      case 'low': return 'text-forest bg-forest/10';
+      case 'medium': return 'text-gold bg-gold/10';
+      case 'high': return 'text-deepred bg-deepred/10';
+      default: return 'text-slate/80 bg-cloud';
     }
   };
 
@@ -90,12 +90,12 @@ const LearningAnalyticsEngine: React.FC = () => {
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold text-gray-900">Learning Analytics Engine</h2>
+        <h2 className="text-2xl font-bold text-charcoal">Learning Analytics Engine</h2>
         <div className="flex items-center space-x-4">
           <select
             value={timeRange}
             onChange={(e) => setTimeRange(e.target.value as any)}
-            className="border border-gray-300 rounded-lg px-3 py-2 text-sm"
+            className="border border-mist rounded-lg px-3 py-2 text-sm bg-softwhite text-charcoal focus:ring-2 focus:ring-skyblue focus:outline-none"
           >
             <option value="7d">Last 7 days</option>
             <option value="30d">Last 30 days</option>
@@ -105,16 +105,16 @@ const LearningAnalyticsEngine: React.FC = () => {
       </div>
 
       {/* Tab Navigation */}
-      <div className="border-b border-gray-200">
+      <div className="border-b border-mist">
         <nav className="-mb-px flex space-x-8">
           {tabs.map((tab) => (
             <button
               key={tab.id}
               onClick={() => setActiveTab(tab.id as any)}
-              className={`py-2 px-1 border-b-2 font-medium text-sm flex items-center space-x-2 ${
+              className={`py-2 px-1 border-b-2 font-medium text-sm flex items-center space-x-2 transition-colors ${
                 activeTab === tab.id
-                  ? 'border-blue-500 text-blue-600'
-                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                  ? 'border-skyblue text-skyblue'
+                  : 'border-transparent text-slate/70 hover:text-skyblue/80 hover:border-skyblue/40'
               }`}
             >
               <tab.icon className="w-4 h-4" />
@@ -125,10 +125,10 @@ const LearningAnalyticsEngine: React.FC = () => {
       </div>
 
       {/* Content */}
-      <div className="bg-white rounded-lg border border-gray-200 p-6">
+      <div className="bg-softwhite rounded-lg border border-mist p-6 shadow-card-sm">
         {activeTab === 'engagement' && (
           <div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Engagement & Completion Trends</h3>
+            <h3 className="text-lg font-semibold text-charcoal mb-4">Engagement & Completion Trends</h3>
             <ResponsiveContainer width="100%" height={400}>
               <LineChart data={data.engagement}>
                 <CartesianGrid strokeDasharray="3 3" />
@@ -138,14 +138,14 @@ const LearningAnalyticsEngine: React.FC = () => {
                 <Line 
                   type="monotone" 
                   dataKey="engagement" 
-                  stroke="#3B82F6" 
+                  stroke="#2B84C6" 
                   strokeWidth={2}
                   name="Engagement %" 
                 />
                 <Line 
                   type="monotone" 
                   dataKey="completion" 
-                  stroke="#10B981" 
+                  stroke="#3BAA66" 
                   strokeWidth={2}
                   name="Completion %" 
                 />
@@ -154,26 +154,26 @@ const LearningAnalyticsEngine: React.FC = () => {
             
             {/* Key Insights */}
             <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="bg-blue-50 p-4 rounded-lg">
+              <div className="bg-skyblue/10 p-4 rounded-lg">
                 <div className="flex items-center">
-                  <TrendingUp className="w-5 h-5 text-blue-600 mr-2" />
-                  <span className="font-medium text-blue-900">Engagement Up</span>
+                  <TrendingUp className="w-5 h-5 text-skyblue mr-2" />
+                  <span className="font-medium text-charcoal">Engagement Up</span>
                 </div>
-                <p className="text-sm text-blue-700 mt-1">+12% increase in last 7 days</p>
+                <p className="text-sm text-skyblue mt-1">+12% increase in last 7 days</p>
               </div>
-              <div className="bg-green-50 p-4 rounded-lg">
+              <div className="bg-forest/10 p-4 rounded-lg">
                 <div className="flex items-center">
-                  <BookOpen className="w-5 h-5 text-green-600 mr-2" />
-                  <span className="font-medium text-green-900">Peak Hours</span>
+                  <BookOpen className="w-5 h-5 text-forest mr-2" />
+                  <span className="font-medium text-charcoal">Peak Hours</span>
                 </div>
-                <p className="text-sm text-green-700 mt-1">Most active: 10-11 AM</p>
+                <p className="text-sm text-forest mt-1">Most active: 10-11 AM</p>
               </div>
-              <div className="bg-orange-50 p-4 rounded-lg">
+              <div className="bg-sunrise/10 p-4 rounded-lg">
                 <div className="flex items-center">
-                  <Clock className="w-5 h-5 text-orange-600 mr-2" />
-                  <span className="font-medium text-orange-900">Avg Session</span>
+                  <Clock className="w-5 h-5 text-sunrise mr-2" />
+                  <span className="font-medium text-charcoal">Avg Session</span>
                 </div>
-                <p className="text-sm text-orange-700 mt-1">25 minutes (+3 min)</p>
+                <p className="text-sm text-sunrise mt-1">25 minutes (+3 min)</p>
               </div>
             </div>
           </div>
@@ -181,33 +181,33 @@ const LearningAnalyticsEngine: React.FC = () => {
 
         {activeTab === 'dropoff' && (
           <div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Learning Drop-off Points</h3>
+            <h3 className="text-lg font-semibold text-charcoal mb-4">Learning Drop-off Points</h3>
             <ResponsiveContainer width="100%" height={400}>
               <BarChart data={data.dropoffPoints}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="lesson" />
                 <YAxis />
                 <Tooltip />
-                <Bar dataKey="dropoff" fill="#EF4444" name="Drop-off %" />
+                <Bar dataKey="dropoff" fill="#E6473A" name="Drop-off %" />
               </BarChart>
             </ResponsiveContainer>
 
             {/* Recommendations */}
             <div className="mt-6">
-              <h4 className="font-medium text-gray-900 mb-3">Optimization Recommendations</h4>
+              <h4 className="font-medium text-charcoal mb-3">Optimization Recommendations</h4>
               <div className="space-y-2">
-                <div className="flex items-start space-x-3 p-3 bg-red-50 rounded-lg">
-                  <AlertTriangle className="w-5 h-5 text-red-500 mt-0.5" />
+                <div className="flex items-start space-x-3 p-3 bg-deepred/10 rounded-lg">
+                  <AlertTriangle className="w-5 h-5 text-deepred mt-0.5" />
                   <div>
-                    <p className="font-medium text-red-900">High Drop-off Alert</p>
-                    <p className="text-sm text-red-700">Module 5: Assessment has 55% drop-off rate. Consider breaking into smaller segments.</p>
+                    <p className="font-medium text-deepred">High Drop-off Alert</p>
+                    <p className="text-sm text-deepred/80">Module 5: Assessment has 55% drop-off rate. Consider breaking into smaller segments.</p>
                   </div>
                 </div>
-                <div className="flex items-start space-x-3 p-3 bg-yellow-50 rounded-lg">
-                  <Brain className="w-5 h-5 text-yellow-600 mt-0.5" />
+                <div className="flex items-start space-x-3 p-3 bg-gold/10 rounded-lg">
+                  <Brain className="w-5 h-5 text-gold mt-0.5" />
                   <div>
-                    <p className="font-medium text-yellow-900">Content Difficulty</p>
-                    <p className="text-sm text-yellow-700">Modules 2 & 4 show high correlation between difficulty and drop-off. Add more interactive elements.</p>
+                    <p className="font-medium text-gold">Content Difficulty</p>
+                    <p className="text-sm text-gold/80">Modules 2 & 4 show high correlation between difficulty and drop-off. Add more interactive elements.</p>
                   </div>
                 </div>
               </div>
@@ -217,10 +217,10 @@ const LearningAnalyticsEngine: React.FC = () => {
 
         {activeTab === 'paths' && (
           <div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Learning Path Performance</h3>
+            <h3 className="text-lg font-semibold text-charcoal mb-4">Learning Path Performance</h3>
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
               <div>
-                <h4 className="font-medium text-gray-700 mb-3">Success Rates</h4>
+                <h4 className="font-medium text-slate mb-3">Success Rates</h4>
                 <ResponsiveContainer width="100%" height={300}>
                   <PieChart>
                     <Pie
@@ -230,7 +230,7 @@ const LearningAnalyticsEngine: React.FC = () => {
                       labelLine={false}
                       label={({ name, value }: any) => `${name}: ${value}%`}
                       outerRadius={80}
-                      fill="#8884d8"
+                      fill="#2B84C6"
                       dataKey="success"
                       nameKey="path"
                     >
@@ -244,21 +244,21 @@ const LearningAnalyticsEngine: React.FC = () => {
               </div>
 
               <div>
-                <h4 className="font-medium text-gray-700 mb-3">Detailed Metrics</h4>
+                <h4 className="font-medium text-slate mb-3">Detailed Metrics</h4>
                 <div className="space-y-3">
                   {data.learningPaths.map((path) => (
-                    <div key={path.path} className="border border-gray-200 rounded-lg p-4">
+                    <div key={path.path} className="border border-mist rounded-lg p-4 bg-softwhite shadow-card-sm">
                       <div className="flex items-center justify-between mb-2">
-                        <h5 className="font-medium text-gray-900">{path.path}</h5>
+                        <h5 className="font-medium text-charcoal">{path.path}</h5>
                         <span className={`px-2 py-1 rounded text-xs font-medium ${
-                          path.success >= 85 ? 'bg-green-100 text-green-800' :
-                          path.success >= 70 ? 'bg-yellow-100 text-yellow-800' :
-                          'bg-red-100 text-red-800'
+                          path.success >= 85 ? 'bg-forest/15 text-forest' :
+                          path.success >= 70 ? 'bg-gold/15 text-gold' :
+                          'bg-deepred/15 text-deepred'
                         }`}>
                           {path.success}% Success
                         </span>
                       </div>
-                      <div className="text-sm text-gray-600">
+                      <div className="text-sm text-slate/80">
                         <p>Avg Time: {path.avgTime} minutes</p>
                         <p>Satisfaction: {path.satisfaction}/5.0</p>
                       </div>
@@ -272,32 +272,32 @@ const LearningAnalyticsEngine: React.FC = () => {
 
         {activeTab === 'gaps' && (
           <div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Organizational Skill Gaps</h3>
+            <h3 className="text-lg font-semibold text-charcoal mb-4">Organizational Skill Gaps</h3>
             <ResponsiveContainer width="100%" height={400}>
               <BarChart data={data.skillGaps}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="skill" />
                 <YAxis />
                 <Tooltip />
-                <Bar dataKey="current" fill="#3B82F6" name="Current Level" />
-                <Bar dataKey="target" fill="#10B981" name="Target Level" />
+                <Bar dataKey="current" fill="#2B84C6" name="Current Level" />
+                <Bar dataKey="target" fill="#3BAA66" name="Target Level" />
               </BarChart>
             </ResponsiveContainer>
 
             <div className="mt-6">
-              <h4 className="font-medium text-gray-900 mb-3">Priority Skills for Development</h4>
+              <h4 className="font-medium text-charcoal mb-3">Priority Skills for Development</h4>
               <div className="space-y-2">
                 {data.skillGaps.sort((a, b) => b.gap - a.gap).map((skill) => (
-                  <div key={skill.skill} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                    <span className="font-medium text-gray-900">{skill.skill}</span>
+                  <div key={skill.skill} className="flex items-center justify-between p-3 bg-cloud rounded-lg shadow-card-sm">
+                    <span className="font-medium text-charcoal">{skill.skill}</span>
                     <div className="flex items-center space-x-4">
-                      <span className="text-sm text-gray-600">
+                      <span className="text-sm text-slate/80">
                         {skill.current}% → {skill.target}%
                       </span>
                       <span className={`px-2 py-1 rounded text-xs font-medium ${
-                        skill.gap > 20 ? 'bg-red-100 text-red-800' :
-                        skill.gap > 15 ? 'bg-yellow-100 text-yellow-800' :
-                        'bg-green-100 text-green-800'
+                        skill.gap > 20 ? 'bg-deepred/15 text-deepred' :
+                        skill.gap > 15 ? 'bg-gold/15 text-gold' :
+                        'bg-forest/15 text-forest'
                       }`}>
                         {skill.gap}% gap
                       </span>
@@ -311,25 +311,25 @@ const LearningAnalyticsEngine: React.FC = () => {
 
         {activeTab === 'predictions' && (
           <div>
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Completion Predictions</h3>
+            <h3 className="text-lg font-semibold text-charcoal mb-4">Completion Predictions</h3>
             <div className="space-y-4">
               {data.predictions.map((prediction) => (
-                <div key={prediction.user} className="flex items-center justify-between p-4 border border-gray-200 rounded-lg">
+                <div key={prediction.user} className="flex items-center justify-between p-4 border border-mist rounded-lg bg-softwhite shadow-card-sm">
                   <div className="flex items-center space-x-4">
-                    <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
-                      <Users className="w-5 h-5 text-blue-600" />
+                    <div className="w-10 h-10 bg-skyblue/10 rounded-full flex items-center justify-center">
+                      <Users className="w-5 h-5 text-skyblue" />
                     </div>
                     <div>
-                      <h4 className="font-medium text-gray-900">{prediction.user}</h4>
-                      <p className="text-sm text-gray-600">Completion likelihood: {prediction.likelihood}%</p>
+                      <h4 className="font-medium text-charcoal">{prediction.user}</h4>
+                      <p className="text-sm text-slate/80">Completion likelihood: {prediction.likelihood}%</p>
                     </div>
                   </div>
                   <div className="flex items-center space-x-4">
-                    <div className="w-32 bg-gray-200 rounded-full h-2">
+                    <div className="w-32 bg-mist rounded-full h-2">
                       <div
                         className={`h-2 rounded-full ${
-                          prediction.likelihood >= 70 ? 'bg-green-500' :
-                          prediction.likelihood >= 50 ? 'bg-yellow-500' : 'bg-red-500'
+                          prediction.likelihood >= 70 ? 'bg-forest' :
+                          prediction.likelihood >= 50 ? 'bg-gold' : 'bg-deepred'
                         }`}
                         style={{ width: `${prediction.likelihood}%` }}
                       />
@@ -342,9 +342,9 @@ const LearningAnalyticsEngine: React.FC = () => {
               ))}
             </div>
 
-            <div className="mt-6 p-4 bg-blue-50 rounded-lg">
-              <h4 className="font-medium text-blue-900 mb-2">AI Recommendations</h4>
-              <ul className="text-sm text-blue-700 space-y-1">
+            <div className="mt-6 p-4 bg-skyblue/10 rounded-lg">
+              <h4 className="font-medium text-skyblue mb-2">AI Recommendations</h4>
+              <ul className="text-sm text-skyblue space-y-1">
                 <li>• Send personalized encouragement to high-risk learners</li>
                 <li>• Offer additional support for users below 50% completion likelihood</li>
                 <li>• Create peer mentoring groups for medium-risk learners</li>

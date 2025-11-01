@@ -1,6 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { courseStore, generateId, calculateCourseDuration, countTotalLessons } from '../../store/courseStore';
+import { CourseService, CourseValidationError } from '../../services/courseService';
+import { computeCourseDiff } from '../../utils/courseDiff';
+import type { NormalizedCourse } from '../../utils/courseNormalization';
 import type { Course, Module, Lesson } from '../../types/courseTypes';
 import { supabase } from '../../lib/supabase';
 import { getVideoEmbedUrl } from '../../utils/videoUtils';
@@ -36,6 +39,89 @@ import AIContentAssistant from '../../components/AIContentAssistant';
 // import DragDropItem from '../../components/DragDropItem'; // TODO: Implement drag drop functionality
 import VersionControl from '../../components/VersionControl';
 
+const formatMinutesLabel = (minutes: number): string => {
+  if (!Number.isFinite(minutes) || minutes <= 0) {
+    return '0 min';
+  }
+
+  if (minutes < 60) {
+    return `${minutes} min`;
+  }
+
+  const hours = Math.floor(minutes / 60);
+  const remaining = minutes % 60;
+  return remaining > 0 ? `${hours}h ${remaining}m` : `${hours}h`;
+};
+
+const mapPersistedLessonType = (persistedType: string, fallback?: Lesson['type']): Lesson['type'] => {
+  if (fallback) return fallback;
+  switch (persistedType) {
+    case 'resource':
+      return 'interactive';
+    case 'reflection':
+      return 'text';
+    default:
+      return persistedType as Lesson['type'];
+  }
+};
+
+const mergePersistedCourse = (local: Course, persisted: NormalizedCourse): Course => {
+  const localModules = new Map((local.modules || []).map((module) => [module.id, module]));
+
+  const mergedModules: Module[] = (persisted.modules || []).map((pModule, moduleIndex) => {
+    const existingModule = localModules.get(pModule.id) || (local.modules || [])[moduleIndex];
+    const localLessons = new Map((existingModule?.lessons || []).map((lesson) => [lesson.id, lesson]));
+
+    const mergedLessons: Lesson[] = (pModule.lessons || []).map((pLesson, lessonIndex) => {
+      const existingLesson = localLessons.get(pLesson.id) || (existingModule?.lessons || [])[lessonIndex];
+      const estimatedMinutes =
+        existingLesson?.estimatedDuration ??
+        (typeof pLesson.durationSeconds === 'number'
+          ? Math.max(0, Math.round(pLesson.durationSeconds / 60))
+          : undefined);
+
+      return {
+        ...existingLesson,
+        id: pLesson.id,
+        title: pLesson.title,
+        description: existingLesson?.description ?? '',
+        type: mapPersistedLessonType(pLesson.type, existingLesson?.type),
+        duration: existingLesson?.duration ?? formatMinutesLabel(estimatedMinutes ?? 0),
+        estimatedDuration: estimatedMinutes,
+        content: existingLesson?.content ?? ((pLesson.content as any)?.body ?? {}),
+        order: pLesson.orderIndex ?? lessonIndex + 1,
+        resources: existingLesson?.resources ?? [],
+        completed: existingLesson?.completed ?? false,
+      } as Lesson;
+    });
+
+    const moduleMinutes = mergedLessons.reduce((total, lesson) => total + (lesson.estimatedDuration ?? 0), 0);
+
+    return {
+      ...existingModule,
+      id: pModule.id,
+      title: pModule.title,
+      description: pModule.description ?? existingModule?.description ?? '',
+      duration: existingModule?.duration ?? formatMinutesLabel(moduleMinutes),
+      order: pModule.orderIndex ?? moduleIndex + 1,
+      lessons: mergedLessons,
+      resources: existingModule?.resources ?? [],
+    } as Module;
+  });
+
+  return {
+    ...local,
+    id: persisted.id,
+    slug: persisted.slug ?? local.slug,
+    title: persisted.name ?? local.title,
+    status: persisted.status,
+    modules: mergedModules,
+    duration: calculateCourseDuration(mergedModules),
+    lessons: countTotalLessons(mergedModules),
+    lastUpdated: new Date().toISOString(),
+  };
+};
+
 const AdminCourseBuilder = () => {
   const { courseId } = useParams();
   const navigate = useNavigate();
@@ -56,6 +142,7 @@ const AdminCourseBuilder = () => {
   const [uploadProgress, setUploadProgress] = useState<{ [key: string]: number }>({});
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [showAssignmentModal, setShowAssignmentModal] = useState(false);
+  const lastPersistedRef = useRef<Course | null>(null);
 
   const [searchParams] = useSearchParams();
   const [highlightLessonId, setHighlightLessonId] = useState<string | null>(null);
@@ -123,7 +210,7 @@ const AdminCourseBuilder = () => {
             lastUpdated: new Date().toISOString()
           };
           
-          courseStore.saveCourse(updatedCourse);
+          courseStore.saveCourse(updatedCourse, { skipRemoteSync: true });
           console.log('� Auto-saved course:', course.title, {
             id: course.id,
             modules: course.modules?.length || 0,
@@ -375,6 +462,47 @@ const AdminCourseBuilder = () => {
     setCourse(version.course);
   };
 
+  useEffect(() => {
+    if (course && !lastPersistedRef.current) {
+      lastPersistedRef.current = course;
+    }
+  }, [course]);
+
+  const persistCourse = async (nextCourse: Course, statusOverride?: 'draft' | 'published') => {
+    const preparedCourse: Course = {
+      ...nextCourse,
+      status: statusOverride ?? nextCourse.status ?? 'draft',
+      duration: calculateCourseDuration(nextCourse.modules || []),
+      lessons: countTotalLessons(nextCourse.modules || []),
+      lastUpdated: new Date().toISOString(),
+      publishedDate:
+        statusOverride === 'published'
+          ? nextCourse.publishedDate || new Date().toISOString()
+          : nextCourse.publishedDate,
+    };
+
+    const diff = computeCourseDiff(lastPersistedRef.current, preparedCourse);
+
+    const validation = validateCourse(preparedCourse);
+    if (!validation.isValid) {
+      throw new CourseValidationError('course', validation.issues);
+    }
+
+    if (!diff.hasChanges) {
+      courseStore.saveCourse(preparedCourse, { skipRemoteSync: true });
+      setCourse(preparedCourse);
+      return preparedCourse;
+    }
+
+    const persisted = await CourseService.syncCourseToDatabase(preparedCourse);
+    const merged = persisted ? mergePersistedCourse(preparedCourse, persisted) : preparedCourse;
+
+    courseStore.saveCourse(merged, { skipRemoteSync: true });
+    setCourse(merged);
+    lastPersistedRef.current = merged;
+    return merged;
+  };
+
   const handleSave = async () => {
     setSaveStatus('saving');
     
@@ -387,24 +515,9 @@ const AdminCourseBuilder = () => {
         lastUpdated: new Date().toISOString()
       };
       
-      // Validate course before saving
-      const validation = validateCourse(updatedCourse);
-      console.log('💾 Saving course:', updatedCourse.title, 'ID:', updatedCourse.id);
-      console.log('📊 Course data:', {
-        modules: updatedCourse.modules?.length,
-        lessons: updatedCourse.lessons,
-        duration: updatedCourse.duration,
-        validation: validation
-      });
-      
-      if (!validation.isValid) {
-        console.warn('⚠️ Course validation issues:', validation.issues);
-      }
-      
       await new Promise(resolve => setTimeout(resolve, 300)); // Simulate save delay
-      courseStore.saveCourse(updatedCourse);
-      setCourse(updatedCourse);
-      
+      await persistCourse(updatedCourse);
+
       setSaveStatus('saved');
       setLastSaveTime(new Date());
       
@@ -415,24 +528,43 @@ const AdminCourseBuilder = () => {
         navigate(`/admin/course-builder/${updatedCourse.id}`);
       }
     } catch (error) {
-      console.error('❌ Error saving course:', error);
+      if (error instanceof CourseValidationError) {
+        console.warn('⚠️ Course validation issues:', error.issues);
+      } else {
+        console.error('❌ Error saving course:', error);
+      }
       setSaveStatus('error');
       setTimeout(() => setSaveStatus('idle'), 5000);
     }
   };
 
-  const handlePublish = () => {
-    const publishedCourse = {
-      ...course,
-      status: 'published' as const,
-      publishedDate: new Date().toISOString(),
-      duration: calculateCourseDuration(course.modules || []),
-      lessons: countTotalLessons(course.modules || []),
-      lastUpdated: new Date().toISOString()
-    };
-    
-    courseStore.saveCourse(publishedCourse);
-    setCourse(publishedCourse);
+  const handlePublish = async () => {
+    setSaveStatus('saving');
+
+    try {
+      const publishedCourse = {
+        ...course,
+        status: 'published' as const,
+        publishedDate: new Date().toISOString(),
+        duration: calculateCourseDuration(course.modules || []),
+        lessons: countTotalLessons(course.modules || []),
+        lastUpdated: new Date().toISOString()
+      };
+
+      await persistCourse(publishedCourse, 'published');
+
+      setSaveStatus('saved');
+      setLastSaveTime(new Date());
+      setTimeout(() => setSaveStatus('idle'), 3000);
+    } catch (error) {
+      if (error instanceof CourseValidationError) {
+        console.warn('⚠️ Course validation issues:', error.issues);
+      } else {
+        console.error('❌ Error publishing course:', error);
+      }
+      setSaveStatus('error');
+      setTimeout(() => setSaveStatus('idle'), 5000);
+    }
   };
 
   const handleAssignmentComplete = () => {
@@ -467,7 +599,7 @@ const AdminCourseBuilder = () => {
       };
       
       // Save the updated course to localStorage
-      courseStore.saveCourse(updatedCourse);
+      courseStore.saveCourse(updatedCourse, { skipRemoteSync: true });
       
       return updatedCourse;
     });
@@ -1814,7 +1946,7 @@ const AdminCourseBuilder = () => {
                 try {
                   const newId = generateId('course');
                   const cloned = { ...course, id: newId, title: `${course.title} (Copy)`, createdDate: new Date().toISOString(), lastUpdated: new Date().toISOString(), enrollments: 0, completions: 0, completionRate: 0 };
-                  courseStore.saveCourse(cloned);
+                  courseStore.saveCourse(cloned, { skipRemoteSync: true });
                   navigate(`/admin/course-builder/${newId}`);
                 } catch (err) {
                   console.warn('Failed to duplicate course', err);

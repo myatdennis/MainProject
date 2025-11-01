@@ -80,7 +80,7 @@ const SEO: React.FC<SEOProps> = ({
       <meta httpEquiv="X-XSS-Protection" content="1; mode=block" />
       
       {/* PWA Meta Tags */}
-      <meta name="theme-color" content="#3B82F6" />
+      <meta name="theme-color" content="#2B84C6" />
       <meta name="apple-mobile-web-app-capable" content="yes" />
       <meta name="apple-mobile-web-app-status-bar-style" content="default" />
       <meta name="apple-mobile-web-app-title" content={baseTitle} />

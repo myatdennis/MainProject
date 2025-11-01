@@ -575,9 +575,9 @@ export const censusDemographicOptions = {
 };
 
 export const defaultBranding: SurveyBranding = {
-  primaryColor: '#FF8895', // Sunrise Orange
-  secondaryColor: '#D72638', // Deep Red
-  accentColor: '#3A7DFF', // Sky Blue
+  primaryColor: '#F28C1A', // Sunrise Orange
+  secondaryColor: '#E6473A', // Deep Red
+  accentColor: '#2B84C6', // Signature Blue
   fontFamily: {
     heading: 'Montserrat',
     body: 'Lato',

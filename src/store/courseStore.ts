@@ -1,5 +1,6 @@
-import { CourseService } from '../services/courseService';
+import { CourseService, CourseValidationError } from '../services/courseService';
 import { Course, Module } from '../types/courseTypes';
+import { slugify, normalizeCourse } from '../utils/courseNormalization';
 
 // Course data types
 export interface ScenarioChoice {
@@ -95,27 +96,10 @@ export interface InteractiveElement {
 // Interfaces now imported from courseTypes
 
 // Load courses from localStorage or use defaults
-const _loadCoursesFromLocalStorage = (): { [key: string]: Course } => {
-  try {
-    const savedCourses = localStorage.getItem('huddle_courses');
-    if (savedCourses) {
-      return JSON.parse(savedCourses);
-    }
-  } catch (error) {
-    console.error('Error loading courses from localStorage:', error);
-  }
-  
-  // Return default courses if nothing in localStorage
-  return getDefaultCourses();
-};
+const _loadCoursesFromLocalStorage = (): { [key: string]: Course } => ({ });
 
-// Save courses to localStorage
-const _saveCoursesToLocalStorage = (courses: { [key: string]: Course }): void => {
-  try {
-    localStorage.setItem('huddle_courses', JSON.stringify(courses));
-  } catch (error) {
-    console.error('Error saving courses to localStorage:', error);
-  }
+const _saveCoursesToLocalStorage = (_courses: { [key: string]: Course }): void => {
+  // persistence handled via CourseService / API gateway
 };
 
 // Default course data
@@ -979,56 +963,70 @@ let courses: { [key: string]: Course } = _loadCoursesFromLocalStorage();
 export const courseStore = {
   init: async (): Promise<void> => {
     try {
-      // Check if Supabase is configured
-      if (import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY) {
-        // Try to load courses from database first
-        const dbCourses = await CourseService.getAllCoursesFromDatabase();
-        
-        if (dbCourses.length > 0) {
-          // Load courses from database (including drafts)
-          console.log(`Loading ${dbCourses.length} courses from database...`);
-          courses = {};
-          dbCourses.forEach((course: Course) => {
-            courses[course.id] = course;
-          });
-          _saveCoursesToLocalStorage(courses);
-          console.log('Courses loaded from database successfully');
-        } else {
-          // No courses in database, sync default courses
-          console.log('No courses found in database, syncing default courses...');
-          const defaultCourses = getDefaultCourses();
-          courses = defaultCourses;
-          
-          for (const course of Object.values(defaultCourses)) {
-            await CourseService.syncCourseToDatabase(course);
-            console.log(`Synced course: ${course.title}`);
-          }
-          
-          _saveCoursesToLocalStorage(courses);
-          console.log('Default courses synced to database successfully');
-        }
+      const dbCourses = await CourseService.getAllCoursesFromDatabase();
+
+      if (dbCourses.length > 0) {
+        courses = {};
+        dbCourses.forEach((course: Course) => {
+          courses[course.id] = course;
+        });
+        console.log(`Loaded ${dbCourses.length} courses from API`);
       } else {
-        // Supabase not configured, use local storage only
-        console.warn('Supabase not configured - using local storage for courses');
-        const localCourses = _loadCoursesFromLocalStorage();
-        if (Object.keys(localCourses).length === 0) {
-          courses = getDefaultCourses();
-          _saveCoursesToLocalStorage(courses);
-          console.log('Initialized with default courses (local storage only)');
-        } else {
-          courses = localCourses;
-          console.log('Loaded courses from local storage');
+        console.log('No courses returned from API, seeding defaults...');
+        const defaultCourses = getDefaultCourses();
+        courses = defaultCourses;
+        for (const course of Object.values(defaultCourses)) {
+          try {
+            const persisted = await CourseService.syncCourseToDatabase(course);
+            if (persisted) {
+              const normalized = normalizeCourse(persisted as Course);
+              courses[normalized.id] = {
+                ...courses[course.id],
+                ...normalized,
+              };
+              if (normalized.id !== course.id) {
+                delete courses[course.id];
+              }
+            }
+          } catch (error) {
+            if (error instanceof CourseValidationError) {
+              console.warn(
+                `Default course "${course.title}" failed validation during seed: ${error.issues.join(
+                  ' | ',
+                )}`,
+              );
+            } else {
+              console.error('Failed to seed default course', error);
+            }
+          }
         }
+        console.log('Default courses synced to backend');
       }
     } catch (error) {
       console.error('Error initializing course store:', error);
-      // Fall back to local storage or defaults if database fails
-      const localCourses = _loadCoursesFromLocalStorage();
-      if (Object.keys(localCourses).length === 0) {
-        courses = getDefaultCourses();
-        _saveCoursesToLocalStorage(courses);
-      } else {
-        courses = localCourses;
+      const defaultCourses = getDefaultCourses();
+      courses = defaultCourses;
+      for (const course of Object.values(defaultCourses)) {
+        try {
+          const persisted = await CourseService.syncCourseToDatabase(course);
+          if (!persisted) continue;
+          const normalized = normalizeCourse(persisted as Course);
+          courses[normalized.id] = {
+            ...courses[course.id],
+            ...normalized,
+          };
+          if (normalized.id !== course.id) {
+            delete courses[course.id];
+          }
+        } catch (seedError) {
+          if (seedError instanceof CourseValidationError) {
+            console.warn(
+              `Skipped syncing default course "${course.title}" due to validation issues: ${seedError.issues.join(
+                ' | ',
+              )}`,
+            );
+          }
+        }
       }
     }
   },
@@ -1037,16 +1035,70 @@ export const courseStore = {
     return courses[id] || null;
   },
 
-  saveCourse: (course: Course): void => {
+  resolveCourse: (identifier: string): Course | null => {
+    if (!identifier) {
+      return null;
+    }
+
+    const directMatch = courses[identifier];
+    if (directMatch) {
+      return directMatch;
+    }
+
+    const normalizedIdentifier = slugify(identifier);
+    return Object.values(courses).find((entry) => {
+      if (!entry) return false;
+
+      if (entry.slug && slugify(entry.slug) === normalizedIdentifier) {
+        return true;
+      }
+
+      if (entry.id && slugify(entry.id) === normalizedIdentifier) {
+        return true;
+      }
+
+      if (entry.title && slugify(entry.title) === normalizedIdentifier) {
+        return true;
+      }
+
+      return false;
+    }) || null;
+  },
+
+  saveCourse: (course: Course, options: { skipRemoteSync?: boolean } = {}): void => {
     course.lastUpdated = new Date().toISOString();
     courses[course.id] = { ...course };
     _saveCoursesToLocalStorage(courses);
     
     // Only sync to Supabase if configured
-    if (import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY) {
-      CourseService.syncCourseToDatabase(course).catch(error => {
-        console.warn(`Failed to sync course "${course.title}" to database:`, error.message || error);
-      });
+    if (
+      !options.skipRemoteSync &&
+      import.meta.env.VITE_SUPABASE_URL &&
+      import.meta.env.VITE_SUPABASE_ANON_KEY
+    ) {
+      CourseService.syncCourseToDatabase(course)
+        .then((persisted) => {
+          if (!persisted) return;
+          const normalized = normalizeCourse(persisted as Course);
+          const targetId = normalized.id || course.id;
+          courses[targetId] = {
+            ...(courses[course.id] || course),
+            ...normalized,
+          };
+          if (targetId !== course.id) {
+            delete courses[course.id];
+          }
+          _saveCoursesToLocalStorage(courses);
+        })
+        .catch(error => {
+          if (error instanceof CourseValidationError) {
+            console.warn(
+              `Skipped remote sync for course "${course.title}" due to validation errors: ${error.issues.join(' | ')}`,
+            );
+            return;
+          }
+          console.warn(`Failed to sync course "${course.title}" to database:`, error.message || error);
+        });
     }
   },
 
@@ -1058,15 +1110,27 @@ export const courseStore = {
     if (courses[id]) {
       delete courses[id];
       _saveCoursesToLocalStorage(courses);
+      if (import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY) {
+        CourseService.deleteCourseFromDatabase(id).catch((error) => {
+          console.warn(`Failed to delete course "${id}" from database:`, error.message || error);
+        });
+      }
       return true;
     }
     return false;
   },
 
   createCourse: (courseData: Partial<Course>): Course => {
-    const id = courseData.id || `course-${Date.now()}`;
+    const generatedId =
+      courseData.id ||
+      (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+        ? crypto.randomUUID()
+        : `course-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`);
+    const slug = slugify(courseData.slug || courseData.title || generatedId);
+    const now = new Date().toISOString();
     const newCourse: Course = {
-      id,
+      id: generatedId,
+      slug,
       title: courseData.title || 'New Course',
       description: courseData.description || '',
       status: 'draft',
@@ -1082,8 +1146,8 @@ export const courseStore = {
       prerequisites: [],
       tags: [],
       language: 'en',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt: now,
+      updatedAt: now,
       enrollmentCount: 0,
       enrollments: 0,
       rating: 0,
@@ -1097,8 +1161,35 @@ export const courseStore = {
       ...courseData
     };
     
-    courses[id] = newCourse;
+    courses[newCourse.id] = newCourse;
     _saveCoursesToLocalStorage(courses);
+
+    if (import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY) {
+      CourseService.syncCourseToDatabase(newCourse)
+        .then((persisted) => {
+          if (!persisted) return;
+          const normalized = normalizeCourse(persisted as Course);
+          const normalizedId = normalized.id || newCourse.id;
+          courses[normalizedId] = {
+            ...courses[newCourse.id],
+            ...normalized
+          };
+          if (normalizedId !== newCourse.id) {
+            delete courses[newCourse.id];
+          }
+          _saveCoursesToLocalStorage(courses);
+        })
+        .catch((error) => {
+          if (error instanceof CourseValidationError) {
+            console.warn(
+              `New course "${newCourse.title}" failed validation when syncing: ${error.issues.join(' | ')}`,
+            );
+            return;
+          }
+          console.warn(`Failed to persist course "${newCourse.title}" to database:`, error.message || error);
+        });
+    }
+
     return newCourse;
   },
 

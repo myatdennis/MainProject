@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { 
   Save, 
@@ -21,15 +21,264 @@ import {
   Move,
   Copy
 } from 'lucide-react';
-import { Course, Chapter, Lesson } from '../../types/courseTypes';
+import { Course, Chapter, Lesson, LessonContent } from '../../types/courseTypes';
 import courseManagementStore from '../../store/courseManagementStore';
 import LoadingButton from '../../components/LoadingButton';
 import Modal from '../../components/Modal';
+import { useToast } from '../../context/ToastContext';
+import { courseStore } from '../../store/courseStore';
+import { formatMinutes, slugify, parseDurationToMinutes } from '../../utils/courseNormalization';
+import { clearCourseCache } from '../../services/courseDataLoader';
+import { CourseService, CourseValidationError } from '../../services/courseService';
+import { computeCourseDiff } from '../../utils/courseDiff';
+
+type LessonUpdate = Partial<Lesson> & {
+  content?: Partial<LessonContent>;
+};
+
+const generateId = (prefix: string) =>
+  `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+const DRAFT_STORAGE_PREFIX = 'course_builder_draft_';
+const AUTOSAVE_DELAY = 800;
+const REMOTE_AUTOSAVE_DELAY = 1500;
+const isSupabaseReady =
+  Boolean(import.meta.env.VITE_SUPABASE_URL) && Boolean(import.meta.env.VITE_SUPABASE_ANON_KEY);
+const remoteDraftTimers = new Map<string, number>();
+
+const readDraftCourse = (id: string): Course | null => {
+  try {
+    const raw = localStorage.getItem(`${DRAFT_STORAGE_PREFIX}${id}`);
+    if (!raw) return null;
+    return JSON.parse(raw) as Course;
+  } catch (error) {
+    console.warn('Failed to parse course draft', error);
+    return null;
+  }
+};
+
+const writeDraftCourse = (id: string, data: Course) => {
+  try {
+    localStorage.setItem(`${DRAFT_STORAGE_PREFIX}${id}`, JSON.stringify(data));
+  } catch (error) {
+    console.warn('Failed to write course draft', error);
+  }
+};
+
+const removeDraftCourse = (id: string) => {
+  try {
+    localStorage.removeItem(`${DRAFT_STORAGE_PREFIX}${id}`);
+  } catch (error) {
+    console.warn('Failed to remove course draft', error);
+  }
+};
+
+const queueRemoteDraftSync = (course: Course) => {
+  if (!isSupabaseReady) {
+    return;
+  }
+
+  const existingTimer = remoteDraftTimers.get(course.id);
+  if (existingTimer) {
+    window.clearTimeout(existingTimer);
+  }
+
+  const timeoutId = window.setTimeout(() => {
+    CourseService.syncCourseToDatabase({
+      ...course,
+      status: course.status === 'published' ? 'published' : 'draft',
+    })
+      .catch((error) => {
+        if (error instanceof CourseValidationError) {
+          console.warn('Autosave skipped due to validation errors:', error.issues);
+          return;
+        }
+        console.error('Failed to autosave course draft to Supabase:', error);
+      })
+      .finally(() => {
+        remoteDraftTimers.delete(course.id);
+      });
+  }, REMOTE_AUTOSAVE_DELAY);
+
+  remoteDraftTimers.set(course.id, timeoutId);
+};
+
+const convertModulesToChapters = (course: Course): Course => {
+  if (course.chapters && course.chapters.length > 0) {
+    return recalculateCourseDurations(course);
+  }
+
+  const modules = course.modules || [];
+  const chapters: Chapter[] = modules.map((module, moduleIndex) => {
+    const lessons = (module.lessons || []).map((lesson, lessonIndex) => {
+      const estimated =
+        lesson.estimatedDuration ??
+        parseDurationToMinutes(lesson.duration) ??
+        (lesson.content?.videoDuration ? Math.round(lesson.content.videoDuration / 60) : 0);
+
+      return {
+        ...lesson,
+        chapterId: module.id,
+        order: lesson.order ?? lessonIndex + 1,
+        estimatedDuration: Number.isFinite(estimated) ? estimated : 0,
+        content: {
+          ...(lesson.content || {}),
+        },
+      };
+    });
+
+    const estimatedDuration = lessons.reduce((total, l) => total + (l.estimatedDuration || 0), 0);
+
+    return {
+      id: module.id,
+      courseId: course.id,
+      title: module.title,
+      description: module.description,
+      order: module.order ?? moduleIndex + 1,
+      estimatedDuration,
+      lessons,
+    };
+  });
+
+  return recalculateCourseDurations({
+    ...course,
+    chapters,
+  });
+};
+
+const mergeDraft = (base: Course, draft: Course): Course => {
+  if (base.id !== draft.id) {
+    return base;
+  }
+
+  const merged: Course = {
+    ...base,
+    ...draft,
+    chapters: draft.chapters && draft.chapters.length > 0 ? draft.chapters : base.chapters,
+    modules: draft.modules && draft.modules.length > 0 ? draft.modules : base.modules,
+  };
+
+  return recalculateCourseDurations(merged);
+};
+
+const recalculateCourseDurations = (course: Course): Course => {
+  const chapters = (course.chapters || []).map((chapter, chapterIndex) => {
+    const lessons = (chapter.lessons || []).map((lesson, lessonIndex) => ({
+      ...lesson,
+      order: lesson.order ?? lessonIndex + 1,
+      estimatedDuration: lesson.estimatedDuration ?? 0,
+      content: {
+        ...(lesson.content || {}),
+      },
+    }));
+
+    const estimatedDuration = lessons.reduce((sum, lesson) => {
+      return sum + (lesson.estimatedDuration || 0);
+    }, 0);
+
+    return {
+      ...chapter,
+      order: chapter.order ?? chapterIndex + 1,
+      lessons,
+      estimatedDuration,
+    };
+  });
+
+  const totalMinutes = chapters.reduce((sum, chapter) => {
+    return sum + (chapter.estimatedDuration || 0);
+  }, 0);
+
+  return {
+    ...course,
+    chapters,
+    estimatedDuration: totalMinutes,
+    duration: formatMinutes(totalMinutes) || `${totalMinutes} min`,
+  };
+};
+
+const buildModulesFromChapters = (course: Course): Course => {
+  const chapters = course.chapters || [];
+  const modules = chapters.map((chapter, chapterIndex) => {
+    const lessons = (chapter.lessons || []).map((lesson, lessonIndex) => {
+      const estimated = lesson.estimatedDuration ?? 0;
+      return {
+        ...lesson,
+        order: lesson.order ?? lessonIndex + 1,
+        chapterId: chapter.id,
+        duration: lesson.duration || formatMinutes(estimated) || `${estimated} min`,
+        content: {
+          ...(lesson.content || {}),
+        },
+      };
+    });
+
+    const chapterMinutes = chapter.estimatedDuration ?? lessons.reduce((sum, item) => {
+      return sum + (item.estimatedDuration || 0);
+    }, 0);
+
+    return {
+      id: chapter.id,
+      title: chapter.title,
+      description: chapter.description,
+      order: chapter.order ?? chapterIndex + 1,
+      lessons,
+      duration: formatMinutes(chapterMinutes) || `${chapterMinutes} min`,
+    };
+  });
+
+  const totalMinutes = chapters.reduce((sum, chapter) => sum + (chapter.estimatedDuration || 0), 0);
+  const totalLessons = modules.reduce((sum, module) => sum + (module.lessons?.length || 0), 0);
+
+  return {
+    ...course,
+    modules,
+    chapters,
+    estimatedDuration: totalMinutes,
+    duration: formatMinutes(totalMinutes) || `${totalMinutes} min`,
+    lessons: totalLessons,
+  };
+};
+
+const validateCourse = (course: Course): string[] => {
+  const issues: string[] = [];
+  if (!course.title || course.title.trim().length === 0) {
+    issues.push('Course title is required.');
+  }
+  if (!course.description || course.description.trim().length < 20) {
+    issues.push('Course description should be at least 20 characters.');
+  }
+  if (!course.chapters || course.chapters.length === 0) {
+    issues.push('Add at least one chapter before saving.');
+  } else {
+    course.chapters.forEach((chapter, chapterIndex) => {
+      if (!chapter.title || chapter.title.trim().length === 0) {
+        issues.push(`Chapter ${chapterIndex + 1} needs a title.`);
+      }
+      if (!chapter.lessons || chapter.lessons.length === 0) {
+        issues.push(`Chapter ${chapterIndex + 1} must include at least one lesson.`);
+      } else {
+        chapter.lessons.forEach((lesson, lessonIndex) => {
+          if (!lesson.title || lesson.title.trim().length === 0) {
+            issues.push(`Lesson ${lessonIndex + 1} in "${chapter.title}" needs a title.`);
+          }
+          if (lesson.type === 'video' && !lesson.content?.videoUrl) {
+            issues.push(`Lesson "${lesson.title}" requires a video URL.`);
+          }
+          if (lesson.type === 'text' && !(lesson.content?.textContent || lesson.content?.content)) {
+            issues.push(`Lesson "${lesson.title}" requires text content.`);
+          }
+        });
+      }
+    });
+  }
+  return Array.from(new Set(issues));
+};
 
 const AdvancedCourseBuilder: React.FC = () => {
   const navigate = useNavigate();
   const { courseId } = useParams();
   const isEditing = courseId !== 'new';
+  const { showToast } = useToast();
 
   const [course, setCourse] = useState<Course | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -37,105 +286,272 @@ const AdvancedCourseBuilder: React.FC = () => {
   const [expandedChapters, setExpandedChapters] = useState<Set<string>>(new Set());
   const [editingLesson, setEditingLesson] = useState<string | null>(null);
   const [showPreview, setShowPreview] = useState(false);
-
-  // Modal states
-  const [showChapterModal, setShowChapterModal] = useState(false);
-  const [showLessonModal, setShowLessonModal] = useState(false);
-  const [showSettingsModal, setShowSettingsModal] = useState(false);
-  const [selectedChapter, setSelectedChapter] = useState<string | null>(null);
+  const autosaveTimeoutRef = useRef<number | null>(null);
+  const lastPersistedRef = useRef<Course | null>(null);
 
   useEffect(() => {
     if (isEditing && courseId) {
       const existingCourse = courseManagementStore.getCourse(courseId);
       if (existingCourse) {
-        setCourse(existingCourse);
+        const normalized = recalculateCourseDurations(existingCourse);
+        const draft = readDraftCourse(courseId);
+        setCourse(draft ? mergeDraft(normalized, draft) : normalized);
+        return;
+      }
+
+      const resolved =
+        typeof courseStore.resolveCourse === 'function'
+          ? courseStore.resolveCourse(courseId) || courseStore.getCourse(courseId)
+          : courseStore.getCourse(courseId);
+
+      if (resolved) {
+        const editableCourse = convertModulesToChapters(resolved);
+        courseManagementStore.setCourse(editableCourse);
+        const draft = readDraftCourse(resolved.id);
+        const initialCourse = draft ? mergeDraft(editableCourse, draft) : editableCourse;
+        setCourse(initialCourse);
+        lastPersistedRef.current = initialCourse;
       } else {
+        showToast('We could not find that course. Redirecting back to the course list.', 'error');
         navigate('/admin/courses');
       }
     } else {
-      // Create new course
       const newCourse = courseManagementStore.createCourse({
         title: 'New Course',
-        description: 'Course description',
+        description: 'Add a compelling course description to help learners prepare.',
       });
-      setCourse(newCourse);
+      const normalized = recalculateCourseDurations(newCourse);
+      const initialDraft = buildModulesFromChapters({
+        ...normalized,
+        status: 'draft',
+        updatedAt: new Date().toISOString(),
+      });
+      courseManagementStore.setCourse(initialDraft);
+      setCourse(initialDraft);
+      lastPersistedRef.current = initialDraft;
+      writeDraftCourse(initialDraft.id, initialDraft);
+      queueRemoteDraftSync(initialDraft);
     }
-  }, [courseId, isEditing, navigate]);
+  }, [courseId, isEditing, navigate, showToast]);
 
-  const handleSaveCourse = async () => {
-    if (!course) return;
+  useEffect(() => {
+    if (course) {
+      courseManagementStore.setCourse(course);
+    }
+  }, [course]);
+
+  const scheduleAutosave = (snapshot: Course | null) => {
+    if (!snapshot) return;
+
+    const draftPayload = buildModulesFromChapters(
+      recalculateCourseDurations({
+        ...snapshot,
+        status: snapshot.status === 'published' ? snapshot.status : 'draft',
+        updatedAt: new Date().toISOString(),
+      })
+    );
+
+    if (autosaveTimeoutRef.current) {
+      window.clearTimeout(autosaveTimeoutRef.current);
+    }
+
+    autosaveTimeoutRef.current = window.setTimeout(() => {
+      writeDraftCourse(draftPayload.id, draftPayload);
+      queueRemoteDraftSync(draftPayload);
+      autosaveTimeoutRef.current = null;
+    }, AUTOSAVE_DELAY);
+  };
+
+  useEffect(() => {
+    scheduleAutosave(course);
+  }, [course?.title, course?.description, course?.chapters]);
+
+  const validationErrors = useMemo(() => {
+    if (!course) return [];
+    return validateCourse(course);
+  }, [course]);
+
+  useEffect(() => {
+    return () => {
+      if (autosaveTimeoutRef.current) {
+        window.clearTimeout(autosaveTimeoutRef.current);
+      }
+
+      if (course?.id) {
+        const remoteTimer = remoteDraftTimers.get(course.id);
+        if (remoteTimer) {
+          window.clearTimeout(remoteTimer);
+          remoteDraftTimers.delete(course.id);
+        }
+      }
+    };
+  }, [course?.id]);
+
+  const persistCourse = async (statusOverride?: 'draft' | 'published') => {
+    if (!course) return null;
 
     setIsLoading(true);
     try {
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate API call
-      
-      if (isEditing) {
-        courseManagementStore.updateCourse(course.id, course);
+      const recalculated = recalculateCourseDurations(course);
+      const slug = recalculated.slug || slugify(recalculated.title || recalculated.id);
+      const status = statusOverride ?? recalculated.status ?? 'draft';
+      const publishedAt =
+        status === 'published'
+          ? recalculated.publishedAt || new Date().toISOString()
+          : recalculated.publishedAt;
+
+      const courseForStore = buildModulesFromChapters({
+        ...recalculated,
+        slug,
+        status,
+        publishedAt,
+        createdAt: recalculated.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      });
+
+      const diff = computeCourseDiff(lastPersistedRef.current, recalculated);
+
+      if (!diff.hasChanges) {
+        const storePayload = buildModulesFromChapters(recalculated);
+        courseManagementStore.setCourse(storePayload);
+        courseStore.saveCourse(storePayload, { skipRemoteSync: true });
+        clearCourseCache();
+        setCourse(recalculated);
+        return storePayload;
       }
-      
-      // Show success message
-      alert('Course saved successfully!');
-    } catch (error) {
-      console.error('Error saving course:', error);
-      alert('Error saving course. Please try again.');
+
+      let persistedSnapshot = null;
+      try {
+        persistedSnapshot = await CourseService.syncCourseToDatabase(courseForStore);
+      } catch (error) {
+        if (error instanceof CourseValidationError) {
+          showToast(
+            `Save blocked until the following issues are fixed: ${error.issues.join(' • ')}`,
+            'error'
+          );
+          return null;
+        }
+        throw error;
+      }
+
+      const authoritativeCourse = recalculateCourseDurations(
+        persistedSnapshot ? convertModulesToChapters(persistedSnapshot as Course) : recalculated
+      );
+
+      const storePayload = buildModulesFromChapters(authoritativeCourse);
+      courseManagementStore.setCourse(storePayload);
+      courseStore.saveCourse(storePayload, { skipRemoteSync: true });
+      clearCourseCache();
+
+      setCourse(authoritativeCourse);
+      lastPersistedRef.current = authoritativeCourse;
+
+      return storePayload;
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleSaveCourse = async () => {
+    try {
+      const saved = await persistCourse();
+      if (saved) {
+        showToast('Course changes saved.', 'success');
+      }
+    } catch (error) {
+      console.error('Error saving course:', error);
+      showToast('Something went wrong while saving. Please try again.', 'error');
     }
   };
 
   const handlePublishCourse = async () => {
     if (!course) return;
 
-    const confirmed = confirm('Are you sure you want to publish this course? It will be available to learners immediately.');
+    const confirmed = confirm(
+      'Publish this course? Learners assigned to it will immediately see the updated content.'
+    );
     if (!confirmed) return;
 
-    setIsLoading(true);
     try {
-      await new Promise(resolve => setTimeout(resolve, 1000)); // Simulate API call
-      
-      const publishedCourse = courseManagementStore.publishCourse(course.id);
-      if (publishedCourse) {
-        setCourse(publishedCourse);
-        alert('Course published successfully!');
+      const published = await persistCourse('published');
+      if (published) {
+        showToast('Course published successfully.', 'success');
       }
     } catch (error) {
       console.error('Error publishing course:', error);
-      alert('Error publishing course. Please try again.');
-    } finally {
-      setIsLoading(false);
+      showToast('We could not publish the course. Please try again.', 'error');
     }
   };
 
   const addChapter = () => {
     if (!course) return;
-    
-    const chapter = courseManagementStore.addChapterToCourse(course.id, {
-      title: `Chapter ${course.chapters.length + 1}`,
-      description: 'New chapter description',
+    setCourse((current) => {
+      if (!current) return current;
+
+      const chapterId = generateId('chapter');
+      const newChapter: Chapter = {
+        id: chapterId,
+        courseId: current.id,
+        title: `Chapter ${current.chapters.length + 1}`,
+        description: 'New chapter description',
+        order: current.chapters.length + 1,
+        estimatedDuration: 0,
+        lessons: [],
+      };
+
+      const nextCourse = recalculateCourseDurations({
+        ...current,
+        chapters: [...current.chapters, newChapter],
+      });
+
+      setExpandedChapters((prev) => new Set([...prev, chapterId]));
+      return nextCourse;
     });
-    
-    if (chapter) {
-      const updatedCourse = courseManagementStore.getCourse(course.id);
-      if (updatedCourse) setCourse(updatedCourse);
-      setExpandedChapters((prev: Set<string>) => new Set([...prev, chapter.id]));
-    }
+    showToast('Chapter added. Start adding lessons to build out the module.', 'success');
   };
 
-  const addLesson = (chapterId: string, lessonType: 'video' | 'text' | 'quiz' | 'interactive') => {
+  const addLesson = (
+    chapterId: string,
+    lessonType: 'video' | 'text' | 'quiz' | 'interactive'
+  ) => {
     if (!course) return;
+    setCourse((current) => {
+      if (!current) return current;
 
-    const lesson = courseManagementStore.addLessonToChapter(course.id, chapterId, {
-      title: `New ${lessonType.charAt(0).toUpperCase() + lessonType.slice(1)} Lesson`,
-      description: `${lessonType} lesson description`,
-      type: lessonType,
-      estimatedDuration: lessonType === 'quiz' ? 10 : 15,
+      const chapterIndex = current.chapters.findIndex((chapter) => chapter.id === chapterId);
+      if (chapterIndex === -1) return current;
+
+      const lessonId = generateId('lesson');
+      const newLesson: Lesson = {
+        id: lessonId,
+        chapterId,
+        title: `New ${lessonType.charAt(0).toUpperCase() + lessonType.slice(1)} Lesson`,
+        description: `${lessonType} lesson description`,
+        type: lessonType,
+        order: current.chapters[chapterIndex].lessons.length + 1,
+        estimatedDuration: lessonType === 'quiz' ? 10 : 15,
+        content: {},
+        isRequired: true,
+        resources: [],
+      };
+
+      const updatedChapters = current.chapters.map((chapter, index) => {
+        if (index !== chapterIndex) return chapter;
+        return {
+          ...chapter,
+          lessons: [...chapter.lessons, newLesson],
+        };
+      });
+
+      const recalculated = recalculateCourseDurations({
+        ...current,
+        chapters: updatedChapters,
+      });
+
+      setEditingLesson(lessonId);
+      return recalculated;
     });
-
-    if (lesson) {
-      const updatedCourse = courseManagementStore.getCourse(course.id);
-      if (updatedCourse) setCourse(updatedCourse);
-      setEditingLesson(lesson.id);
-    }
+    showToast('Lesson added. Update the details below to make it learner-ready.', 'info');
   };
 
   const toggleChapterExpansion = (chapterId: string) => {
@@ -155,6 +571,81 @@ const AdvancedCourseBuilder: React.FC = () => {
     
     const updatedCourse = { ...course, [field]: value };
     setCourse(updatedCourse);
+  };
+
+  const updateLesson = (
+    chapterId: string,
+    lessonId: string,
+    updates: LessonUpdate
+  ) => {
+    setCourse((current) => {
+      if (!current) return current;
+
+      const updatedChapters = current.chapters.map((chapter) => {
+        if (chapter.id !== chapterId) return chapter;
+
+        const updatedLessons = chapter.lessons.map((lesson) => {
+          if (lesson.id !== lessonId) return lesson;
+
+          const nextContent = updates.content
+            ? { ...(lesson.content || {}), ...updates.content }
+            : lesson.content;
+
+          const estimatedDuration =
+            updates.estimatedDuration !== undefined
+              ? updates.estimatedDuration
+              : lesson.estimatedDuration;
+
+          return {
+            ...lesson,
+            ...updates,
+            estimatedDuration,
+            content: nextContent || {},
+          };
+        });
+
+        return {
+          ...chapter,
+          lessons: updatedLessons,
+        };
+      });
+
+      return recalculateCourseDurations({
+        ...current,
+        chapters: updatedChapters,
+      });
+    });
+  };
+
+  const deleteLesson = (chapterId: string, lessonId: string) => {
+    if (!course) return;
+    setCourse((current) => {
+      if (!current) return current;
+
+      const updatedChapters = current.chapters.map((chapter) => {
+        if (chapter.id !== chapterId) return chapter;
+        const filteredLessons = chapter.lessons
+          .filter((lesson) => lesson.id !== lessonId)
+          .map((lesson, index) => ({
+            ...lesson,
+            order: index + 1,
+          }));
+
+        return {
+          ...chapter,
+          lessons: filteredLessons,
+        };
+      });
+
+      const recalculated = recalculateCourseDurations({
+        ...current,
+        chapters: updatedChapters,
+      });
+
+      setEditingLesson((prev) => (prev === lessonId ? null : prev));
+      return recalculated;
+    });
+    showToast('Lesson removed from the course.', 'success');
   };
 
   if (!course) {
@@ -215,6 +706,7 @@ const AdvancedCourseBuilder: React.FC = () => {
               isLoading={isLoading}
               variant="secondary"
               className="flex items-center"
+              disabled={validationErrors.length > 0}
             >
               <Save className="w-4 h-4 mr-2" />
               Save
@@ -226,15 +718,30 @@ const AdvancedCourseBuilder: React.FC = () => {
                 isLoading={isLoading}
                 variant="success"
                 className="flex items-center"
+                disabled={validationErrors.length > 0}
               >
                 <Award className="w-4 h-4 mr-2" />
                 Publish
               </LoadingButton>
             )}
-          </div>
-        </div>
+      </div>
+    </div>
 
-        {/* Tabs */}
+    {validationErrors.length > 0 && (
+      <div className="mx-6 mt-4 rounded-lg border border-deepred/30 bg-deepred/10 px-4 py-3 text-sm text-deepred">
+        <p className="font-semibold">Resolve the following before saving:</p>
+        <ul className="mt-2 space-y-1 list-disc pl-5">
+          {validationErrors.slice(0, 4).map((issue) => (
+            <li key={issue}>{issue}</li>
+          ))}
+          {validationErrors.length > 4 && (
+            <li>+ {validationErrors.length - 4} more issue(s)...</li>
+          )}
+        </ul>
+      </div>
+    )}
+
+    {/* Tabs */}
         <div className="mt-4">
           <nav className="flex space-x-8">
             {[
@@ -276,6 +783,9 @@ const AdvancedCourseBuilder: React.FC = () => {
             onAddChapter={addChapter}
             onAddLesson={addLesson}
             onEditLesson={setEditingLesson}
+            onUpdateLesson={updateLesson}
+            onDeleteLesson={deleteLesson}
+            onCloseLessonEditor={() => setEditingLesson(null)}
             editingLesson={editingLesson}
           />
         )}
@@ -436,6 +946,9 @@ const ContentTab: React.FC<{
   onAddChapter: () => void;
   onAddLesson: (chapterId: string, type: 'video' | 'text' | 'quiz' | 'interactive') => void;
   onEditLesson: (lessonId: string) => void;
+  onUpdateLesson: (chapterId: string, lessonId: string, updates: LessonUpdate) => void;
+  onDeleteLesson: (chapterId: string, lessonId: string) => void;
+  onCloseLessonEditor: () => void;
   editingLesson: string | null;
 }> = ({
   course,
@@ -444,6 +957,9 @@ const ContentTab: React.FC<{
   onAddChapter,
   onAddLesson,
   onEditLesson,
+  onUpdateLesson,
+  onDeleteLesson,
+  onCloseLessonEditor,
   editingLesson
 }) => {
   return (
@@ -469,6 +985,9 @@ const ContentTab: React.FC<{
             onToggleExpanded={() => onToggleChapter(chapter.id)}
             onAddLesson={(type) => onAddLesson(chapter.id, type)}
             onEditLesson={onEditLesson}
+            onUpdateLesson={(lessonId, updates) => onUpdateLesson(chapter.id, lessonId, updates)}
+            onDeleteLesson={(lessonId) => onDeleteLesson(chapter.id, lessonId)}
+            onCloseLessonEditor={onCloseLessonEditor}
             editingLesson={editingLesson}
           />
         ))}
@@ -651,8 +1170,22 @@ const ChapterEditor: React.FC<{
   onToggleExpanded: () => void;
   onAddLesson: (type: 'video' | 'text' | 'quiz' | 'interactive') => void;
   onEditLesson: (lessonId: string) => void;
+  onUpdateLesson: (lessonId: string, updates: LessonUpdate) => void;
+  onDeleteLesson: (lessonId: string) => void;
+  onCloseLessonEditor: () => void;
   editingLesson: string | null;
-}> = ({ chapter, index, isExpanded, onToggleExpanded, onAddLesson, onEditLesson, editingLesson }) => {
+}> = ({
+  chapter,
+  index,
+  isExpanded,
+  onToggleExpanded,
+  onAddLesson,
+  onEditLesson,
+  onUpdateLesson,
+  onDeleteLesson,
+  onCloseLessonEditor,
+  editingLesson,
+}) => {
   return (
     <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
       <div className="p-4 border-b border-gray-200 bg-gray-50">
@@ -698,6 +1231,9 @@ const ChapterEditor: React.FC<{
                 index={lessonIndex}
                 isEditing={editingLesson === lesson.id}
                 onEdit={() => onEditLesson(lesson.id)}
+                onUpdate={(updates) => onUpdateLesson(lesson.id, updates)}
+                onDelete={() => onDeleteLesson(lesson.id)}
+                onClose={onCloseLessonEditor}
               />
             ))}
           </div>
@@ -744,7 +1280,10 @@ const LessonItem: React.FC<{
   index: number;
   isEditing: boolean;
   onEdit: () => void;
-}> = ({ lesson, index, isEditing, onEdit }) => {
+  onUpdate: (updates: LessonUpdate) => void;
+  onDelete: () => void;
+  onClose: () => void;
+}> = ({ lesson, index, isEditing, onEdit, onUpdate, onDelete, onClose }) => {
   const getTypeIcon = (type: string) => {
     switch (type) {
       case 'video': return <Video className="w-4 h-4 text-blue-600" />;
@@ -754,6 +1293,191 @@ const LessonItem: React.FC<{
       default: return <FileText className="w-4 h-4 text-gray-600" />;
     }
   };
+
+  const handleDelete = () => {
+    const confirmed = confirm('Remove this lesson? This action cannot be undone.');
+    if (confirmed) {
+      onDelete();
+    }
+  };
+
+  const handleDurationChange = (value: string) => {
+    const minutes = Math.max(0, Number.parseInt(value, 10) || 0);
+    onUpdate({ estimatedDuration: minutes });
+  };
+
+  if (isEditing) {
+    const videoUrl = lesson.content?.videoUrl || '';
+    const transcript = lesson.content?.transcript || '';
+    const textContent = lesson.content?.textContent || lesson.content?.content || '';
+    const interactiveUrl = lesson.content?.interactiveUrl || '';
+
+    return (
+      <div className="space-y-4 rounded-lg border border-orange-400 bg-orange-50 p-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center space-x-2">
+            {getTypeIcon(lesson.type)}
+            <span className="text-sm font-semibold text-orange-700">
+              Editing: Lesson {index + 1}
+            </span>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-sm font-medium text-orange-700 hover:text-orange-900"
+          >
+            Done
+          </button>
+        </div>
+
+        <div className="grid gap-4 md:grid-cols-2">
+          <div className="space-y-2 md:col-span-2">
+            <label className="text-xs font-medium uppercase tracking-wide text-orange-800">
+              Lesson title
+            </label>
+            <input
+              type="text"
+              value={lesson.title}
+              onChange={(event) => onUpdate({ title: event.target.value })}
+              className="w-full rounded-lg border border-orange-200 bg-white px-3 py-2 text-sm focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-200"
+              placeholder="Enter lesson title"
+            />
+          </div>
+
+          <div className="space-y-2 md:col-span-2">
+            <label className="text-xs font-medium uppercase tracking-wide text-orange-800">
+              Description
+            </label>
+            <textarea
+              value={lesson.description || ''}
+              onChange={(event) => onUpdate({ description: event.target.value })}
+              rows={3}
+              className="w-full rounded-lg border border-orange-200 bg-white px-3 py-2 text-sm focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-200"
+              placeholder="What should learners expect from this lesson?"
+            />
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-xs font-medium uppercase tracking-wide text-orange-800">
+              Estimated duration (minutes)
+            </label>
+            <input
+              type="number"
+              min={0}
+              value={lesson.estimatedDuration ?? 0}
+              onChange={(event) => handleDurationChange(event.target.value)}
+              className="w-full rounded-lg border border-orange-200 bg-white px-3 py-2 text-sm focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-200"
+            />
+          </div>
+
+          <div className="flex items-center space-x-2">
+            <input
+              id={`lesson-required-${lesson.id}`}
+              type="checkbox"
+              checked={lesson.isRequired !== false}
+              onChange={(event) => onUpdate({ isRequired: event.target.checked })}
+              className="h-4 w-4 rounded border-orange-200 text-orange-600 focus:ring-orange-400"
+            />
+            <label
+              htmlFor={`lesson-required-${lesson.id}`}
+              className="text-sm text-orange-800"
+            >
+              Required for course completion
+            </label>
+          </div>
+
+            {lesson.type === 'video' && (
+              <>
+                <div className="space-y-2 md:col-span-2">
+                  <label className="text-xs font-medium uppercase tracking-wide text-orange-800">
+                    Video URL
+                  </label>
+                  <input
+                    type="url"
+                    value={videoUrl}
+                    onChange={(event) =>
+                      onUpdate({
+                        content: {
+                          videoUrl: event.target.value.trim(),
+                          videoSourceType: event.target.value ? 'external' : undefined,
+                        },
+                      })
+                    }
+                    className="w-full rounded-lg border border-orange-200 bg-white px-3 py-2 text-sm focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-200"
+                    placeholder="https://"
+                  />
+                </div>
+
+                <div className="space-y-2 md:col-span-2">
+                  <label className="text-xs font-medium uppercase tracking-wide text-orange-800">
+                    Transcript (optional)
+                  </label>
+                  <textarea
+                    value={transcript}
+                    onChange={(event) =>
+                      onUpdate({ content: { transcript: event.target.value } })
+                    }
+                    rows={3}
+                    className="w-full rounded-lg border border-orange-200 bg-white px-3 py-2 text-sm focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-200"
+                    placeholder="Paste a transcript or summary learners can read."
+                  />
+                </div>
+              </>
+            )}
+
+            {lesson.type === 'text' && (
+              <div className="space-y-2 md:col-span-2">
+                <label className="text-xs font-medium uppercase tracking-wide text-orange-800">
+                  Lesson body
+                </label>
+                <textarea
+                  value={textContent}
+                  onChange={(event) =>
+                    onUpdate({ content: { textContent: event.target.value, content: event.target.value } })
+                  }
+                  rows={6}
+                  className="w-full rounded-lg border border-orange-200 bg-white px-3 py-2 text-sm focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-200"
+                  placeholder="Write or paste the lesson content."
+                />
+              </div>
+            )}
+
+            {lesson.type === 'interactive' && (
+              <div className="space-y-2 md:col-span-2">
+                <label className="text-xs font-medium uppercase tracking-wide text-orange-800">
+                  Interactive content URL
+                </label>
+                <input
+                  type="url"
+                  value={interactiveUrl}
+                  onChange={(event) =>
+                    onUpdate({ content: { interactiveUrl: event.target.value.trim() } })
+                  }
+                  className="w-full rounded-lg border border-orange-200 bg-white px-3 py-2 text-sm focus:border-orange-400 focus:outline-none focus:ring-2 focus:ring-orange-200"
+                  placeholder="https://"
+                />
+              </div>
+            )}
+        </div>
+
+        <div className="flex items-center justify-between">
+          <button
+            onClick={handleDelete}
+            className="text-sm font-medium text-red-600 hover:text-red-700"
+          >
+            Delete lesson
+          </button>
+          <div className="flex items-center space-x-3">
+            <button
+              onClick={onClose}
+              className="rounded-lg border border-orange-200 px-4 py-2 text-sm font-medium text-orange-700 hover:bg-orange-100"
+            >
+              Done editing
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className={`p-3 border rounded-lg transition-colors ${

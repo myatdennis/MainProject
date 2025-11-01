@@ -3,60 +3,18 @@ import { createClient } from '@supabase/supabase-js';
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-let supabase: any;
+export const hasSupabaseConfig = Boolean(supabaseUrl && supabaseAnonKey);
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  console.warn('Supabase environment variables not found. Please click "Connect to Supabase" in the top right to set up your database connection.');
-  
-  // Create a mock client that won't break the app
-  const createMockQuery = () => ({
-    select: () => createMockQuery(),
-    insert: () => createMockQuery(),
-    update: () => createMockQuery(),
-    upsert: () => createMockQuery(),
-    delete: () => createMockQuery(),
-    eq: () => createMockQuery(),
-    order: () => createMockQuery(),
-    single: () => Promise.resolve({ data: null, error: { message: 'Supabase not configured' } }),
-    then: (resolve: any) => resolve({ data: [], error: null })
-  });
+const resolvedUrl = hasSupabaseConfig ? supabaseUrl : 'http://localhost:54321';
+const resolvedAnonKey = hasSupabaseConfig ? supabaseAnonKey : 'test-anon-key';
 
-  const mockChannel = {
-    on: () => mockChannel,
-    subscribe: (callback: (status: string) => void) => {
-      // Simulate successful subscription in mock mode
-      setTimeout(() => callback('SUBSCRIBED'), 100);
-      return mockChannel;
-    },
-    send: () => Promise.resolve('ok'),
-    unsubscribe: () => Promise.resolve('ok')
-  };
-
-  supabase = {
-    auth: {
-      getSession: () => Promise.resolve({ data: { session: null }, error: null }),
-      getUser: () => Promise.resolve({ data: { user: null }, error: null }),
-      signUp: () => Promise.resolve({ data: { user: null }, error: { message: 'Supabase not configured' } }),
-      signInWithPassword: () => Promise.resolve({ data: { user: null }, error: { message: 'Supabase not configured' } }),
-      signOut: () => Promise.resolve({ error: null }),
-      resetPasswordForEmail: () => Promise.resolve({ error: { message: 'Password reset not available in demo mode' } }),
-      onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => {} } } })
-    },
-    from: () => createMockQuery(),
-    channel: () => mockChannel,
-    removeChannel: () => 'ok'
-  };
-} else {
-  supabase = createClient(supabaseUrl, supabaseAnonKey, {
-    realtime: {
-      params: {
-        eventsPerSecond: 10
-      }
+export const supabase = createClient(resolvedUrl, resolvedAnonKey, {
+  realtime: {
+    params: {
+      eventsPerSecond: 10
     }
-  });
-}
-
-export { supabase };
+  }
+});
 
 // Database types
 export interface UserProfile {
@@ -129,11 +87,17 @@ export interface UserLessonProgress {
   id: string;
   user_id: string;
   lesson_id: string;
+  module_id?: string;
+  course_id?: string;
   completed: boolean;
   completed_at?: string;
   time_spent: number; // in seconds
   progress_percentage: number;
   last_accessed_at: string;
+  status?: 'not-started' | 'in-progress' | 'completed';
+  score?: number;
+  attempts?: number;
+  last_position?: number;
 }
 
 export interface UserQuizAttempt {

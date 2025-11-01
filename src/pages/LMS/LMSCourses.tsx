@@ -1,234 +1,384 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { courseStore } from '../../store/courseStore';
-import { 
-  Play,
-  Clock,
-  CheckCircle,
+import {
+  ArrowUpRight,
   BookOpen,
-  Star,
+  Clock,
   Filter,
-  Search
+  Layers3,
+  Play,
+  Search,
+  Sparkle,
 } from 'lucide-react';
+
+import { courseStore } from '../../store/courseStore';
+import { normalizeCourse } from '../../utils/courseNormalization';
+import {
+  syncCourseProgressWithRemote,
+  loadStoredCourseProgress,
+} from '../../utils/courseProgress';
+import Button from '../../components/ui/Button';
+import Card from '../../components/ui/Card';
+import Badge from '../../components/ui/Badge';
+import Input from '../../components/ui/Input';
+import ProgressBar from '../../components/ui/ProgressBar';
+import { LazyImage, ImageSkeleton } from '../../components/PerformanceComponents';
+
+type StatusFilter = 'all' | 'not-started' | 'in-progress' | 'completed';
+
+const statusFilters: Array<{ value: StatusFilter; label: string }> = [
+  { value: 'all', label: 'All' },
+  { value: 'in-progress', label: 'In Progress' },
+  { value: 'not-started', label: 'Not Started' },
+  { value: 'completed', label: 'Completed' },
+];
 
 const LMSCourses = () => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [filterStatus, setFilterStatus] = useState('all');
+  const [filterStatus, setFilterStatus] = useState<StatusFilter>('all');
+  const [progressRefreshToken, setProgressRefreshToken] = useState(0);
 
-  // Get courses from store and filter only published ones for learners
-  const modules = courseStore.getAllCourses().filter(course => course.status === 'published');
-
-  const filteredModules = modules.filter(module => {
-    const matchesSearch = module.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         module.description.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesFilter = filterStatus === 'all' || module.status === filterStatus;
-    return matchesSearch && matchesFilter;
-  });
-
-  const getStatusColor = (progress: number) => {
-    if (progress >= 100) return 'bg-green-100 text-green-800';
-    if (progress > 0) return 'bg-orange-100 text-orange-800';
-    return 'bg-gray-100 text-gray-800';
-  };
-
-  const getStatusText = (progress: number) => {
-    if (progress >= 100) return 'Completed';
-    if (progress > 0) return 'In Progress';
-    return 'Not Started';
-  };
-
-  const getDifficultyColor = (difficulty: string) => {
-    switch (difficulty) {
-      case 'Beginner':
-        return 'bg-blue-100 text-blue-800';
-      case 'Intermediate':
-        return 'bg-yellow-100 text-yellow-800';
-      case 'Advanced':
-        return 'bg-red-100 text-red-800';
-      default:
-        return 'bg-gray-100 text-gray-800';
+  const learnerId = useMemo(() => {
+    try {
+      const raw = localStorage.getItem('huddle_user');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        return (parsed.email || parsed.id || 'local-user').toLowerCase();
+      }
+    } catch (error) {
+      console.warn('Failed to read learner identity:', error);
     }
-  };
+    return 'local-user';
+  }, []);
+
+  const publishedCourses = useMemo(() => {
+    return courseStore
+      .getAllCourses()
+      .filter((course) => course.status === 'published')
+      .map((course) => {
+        const normalized = normalizeCourse(course);
+        const storedProgress = loadStoredCourseProgress(normalized.slug);
+        const completedLessonCount = storedProgress.completedLessonIds.length;
+        const progressPercent =
+          normalized.lessons > 0
+            ? Math.round((completedLessonCount / normalized.lessons) * 100)
+            : 0;
+
+        return {
+          ...normalized,
+          progress: progressPercent,
+        };
+      });
+  }, [progressRefreshToken]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const syncProgress = async () => {
+      const results = await Promise.all(
+        publishedCourses.map(async (course) => {
+          const lessonIds =
+            course.chapters?.flatMap((chapter) => chapter.lessons?.map((lesson) => lesson.id) ?? []) ?? [];
+          if (!lessonIds.length) return null;
+          return syncCourseProgressWithRemote({
+            courseSlug: course.slug,
+            courseId: course.id,
+            userId: learnerId,
+            lessonIds,
+          });
+        })
+      );
+
+      if (!isMounted) return;
+      if (results.some((entry) => entry)) {
+        setProgressRefreshToken((token) => token + 1);
+      }
+    };
+
+    void syncProgress();
+    return () => {
+      isMounted = false;
+    };
+  }, [publishedCourses, learnerId]);
+
+  const filteredCourses = useMemo(() => {
+    const query = searchTerm.trim().toLowerCase();
+    return publishedCourses.filter((course) => {
+      const matchesSearch =
+        !query ||
+        course.title.toLowerCase().includes(query) ||
+        (course.description || '').toLowerCase().includes(query) ||
+        course.category?.toLowerCase().includes(query);
+
+      if (!matchesSearch) return false;
+
+      if (filterStatus === 'all') return true;
+      if (filterStatus === 'completed') return course.progress >= 100;
+      if (filterStatus === 'in-progress') return course.progress > 0 && course.progress < 100;
+      if (filterStatus === 'not-started') return course.progress === 0;
+      return true;
+    });
+  }, [publishedCourses, searchTerm, filterStatus]);
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">My Courses</h1>
-        <p className="text-gray-600">Your personalized learning journey in inclusive leadership</p>
-      </div>
+    <div className="min-h-screen bg-softwhite pb-16">
+      <div className="mx-auto max-w-7xl px-6 py-10 lg:px-12">
+        <div className="grid gap-6 lg:grid-cols-[2fr,1fr]">
+          <Card tone="gradient" withBorder={false} className="overflow-hidden">
+            <div className="relative z-10 flex flex-col gap-4 text-charcoal">
+              <Badge tone="info" className="w-max bg-white/80 px-3 py-1 text-xs font-semibold uppercase tracking-[0.3em] text-skyblue">
+                Learning Catalog
+              </Badge>
+              <h1 className="font-heading text-3xl font-bold md:text-4xl">Explore courses crafted for inclusive leaders</h1>
+              <p className="max-w-2xl text-sm text-slate/80">
+                Browse The Huddle Co. collection to build habits of belonging, courage, and cultural fluency across your organization.
+              </p>
 
-      {/* Search and Filter */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between space-y-4 md:space-y-0">
-          <div className="relative flex-1 max-w-md">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
-            <input
-              type="text"
-              placeholder="Search courses..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-            />
-          </div>
-          <div className="flex items-center space-x-4">
-            <div className="flex items-center space-x-2">
-              <Filter className="h-5 w-5 text-gray-400" />
-              <select
-                value={filterStatus}
-                onChange={(e) => setFilterStatus(e.target.value)}
-                className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-              >
-                <option value="all">All Courses</option>
-                <option value="not-started">Not Started</option>
-                <option value="in-progress">In Progress</option>
-                <option value="completed">Completed</option>
-              </select>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Course Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {filteredModules.map((module) => (
-          <div key={module.id} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow duration-200">
-            <div className="relative">
-              <img 
-                src={module.thumbnail} 
-                alt={module.title}
-                className="w-full h-48 object-cover"
-              />
-              <div className="absolute top-4 left-4">
-                <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(module.progress)}`}>
-                  {getStatusText(module.progress)}
-                </span>
-              </div>
-              <div className="absolute top-4 right-4">
-                <span className={`px-2 py-1 rounded-full text-xs font-medium ${getDifficultyColor(module.difficulty)}`}>
-                  {module.difficulty}
-                </span>
-              </div>
-              {module.progress > 0 && (
-                <div className="absolute bottom-0 left-0 right-0 bg-black bg-opacity-50 p-2">
-                  <div className="w-full bg-gray-300 rounded-full h-2">
-                    <div 
-                      className="bg-gradient-to-r from-orange-400 to-red-500 h-2 rounded-full"
-                      style={{ width: `${module.progress}%` }}
-                    ></div>
-                  </div>
-                  <div className="text-white text-xs mt-1">{module.progress}% complete</div>
+              <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto]">
+                <div className="relative flex items-center">
+                  <Search className="pointer-events-none absolute left-4 h-5 w-5 text-slate/60" />
+                  <Input
+                    value={searchTerm}
+                    onChange={(event) => setSearchTerm(event.target.value)}
+                    placeholder="Search courses by title, skill, or keyword"
+                    className="w-full rounded-full border-none bg-white/90 pl-12 pr-6 text-sm shadow-card-sm"
+                    aria-label="Search courses"
+                  />
                 </div>
-              )}
-            </div>
-            
-            <div className="p-6">
-              <div className="flex items-center justify-between mb-2">
-                <h3 className="text-xl font-bold text-gray-900">{module.title}</h3>
-                <div className="flex items-center space-x-1">
-                  <Star className="h-4 w-4 text-yellow-400 fill-current" />
-                  <span className="text-sm text-gray-600">{module.rating}</span>
-                </div>
-              </div>
-              
-              <p className="text-gray-600 mb-4">{module.description}</p>
-              
-              <div className="flex items-center space-x-4 text-sm text-gray-600 mb-4">
-                <span className="flex items-center">
-                  <Clock className="h-4 w-4 mr-1" />
-                  {module.duration}
-                </span>
-                <span className="flex items-center">
-                  <BookOpen className="h-4 w-4 mr-1" />
-                  {module.lessons} lessons
-                </span>
-                <span>{module.type}</span>
-              </div>
-
-              <div className="mb-4">
-                <h4 className="font-semibold text-gray-900 mb-2">Key Takeaways:</h4>
-                <ul className="space-y-1">
-                  {module.keyTakeaways.slice(0, 2).map((takeaway, index) => (
-                    <li key={index} className="flex items-center text-sm text-gray-600">
-                      <div className="w-1.5 h-1.5 bg-orange-400 rounded-full mr-2"></div>
-                      {takeaway}
-                    </li>
+                <div className="hidden items-center gap-2 rounded-full bg-white/80 p-1 text-xs font-semibold uppercase tracking-wide text-slate/70 md:flex">
+                  {statusFilters.map((option) => (
+                    <button
+                      key={option.value}
+                      type="button"
+                      onClick={() => setFilterStatus(option.value)}
+                      className={`rounded-full px-4 py-2 transition ${
+                        filterStatus === option.value
+                          ? 'bg-skyblue text-white shadow-card-sm'
+                          : 'text-slate/80 hover:text-charcoal'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
                   ))}
-                  {module.keyTakeaways.length > 2 && (
-                    <li className="text-sm text-gray-500">
-                      +{module.keyTakeaways.length - 2} more topics
-                    </li>
-                  )}
-                </ul>
+                </div>
               </div>
 
-              <div className="flex items-center justify-between">
-                <Link
-                  to={`/lms/module/${module.id}`}
-                  onClick={() => {
-                    try {
-                      // increment enrollments when starting for the first time (progress === 0)
-                      const c = courseStore.getCourse(module.id);
-                      if (c && (c.progress || 0) === 0) {
-                        courseStore.updateCourseStats(c.id, { enrollments: (c.enrollments || 0) + 1 });
-                      }
-                    } catch (e) {
-                      console.warn('Failed to update enrollment', e);
-                    }
-                  }}
-                  className="bg-gradient-to-r from-orange-400 to-red-500 text-white px-6 py-2 rounded-lg font-medium hover:from-orange-500 hover:to-red-600 transition-all duration-200 flex items-center space-x-2"
+              <div className="flex flex-wrap gap-4 pt-2 text-sm text-slate/80">
+                <span className="inline-flex items-center gap-2 rounded-full bg-white/80 px-4 py-2 shadow-card-sm">
+                  <Layers3 className="h-4 w-4 text-sunrise" />
+                  {publishedCourses.length} courses available
+                </span>
+                <span className="inline-flex items-center gap-2 rounded-full bg-white/70 px-4 py-2 shadow-card-sm">
+                  <Sparkle className="h-4 w-4 text-forest" />
+                  Curated for DEI impact
+                </span>
+              </div>
+            </div>
+            <div className="pointer-events-none absolute inset-y-0 right-0 hidden w-72 translate-x-12 rounded-full bg-gradient-to-br from-sunrise/25 via-skyblue/18 to-forest/18 blur-3xl md:block" />
+          </Card>
+
+          <Card tone="muted" padding="lg">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="font-heading text-lg font-semibold text-charcoal">Filter courses</h2>
+                <p className="mt-1 text-sm text-slate/80">Find the next program for you or your team.</p>
+              </div>
+              <Button variant="ghost" size="sm" leadingIcon={<Filter className="h-4 w-4" />}
+                onClick={() => {
+                  setFilterStatus('all');
+                  setSearchTerm('');
+                }}
+              >
+                Reset
+              </Button>
+            </div>
+
+            <div className="mt-6 grid gap-2 text-sm font-semibold text-slate/80">
+              {statusFilters.map((option) => (
+                <label
+                  key={option.value}
+                  className={`flex cursor-pointer items-center justify-between rounded-xl border px-4 py-3 transition ${
+                    filterStatus === option.value ? 'border-skyblue bg-skyblue/8 text-skyblue' : 'border-mist bg-white'
+                  }`}
                 >
-                  <Play className="h-4 w-4" />
-                  <span>
-                    {module.progress >= 100 ? 'Review' : module.progress > 0 ? 'Continue' : 'Start Course'}
-                  </span>
-                </Link>
-                
-                {module.progress >= 100 && (
-                  <div className="flex items-center text-green-600">
-                    <CheckCircle className="h-5 w-5 mr-1" />
-                    <span className="text-sm font-medium">Completed</span>
+                  <div>
+                    <p>{option.label}</p>
+                    <p className="text-xs font-normal text-slate/70">
+                      {getFilterHelper(option.value, publishedCourses)}
+                    </p>
                   </div>
-                )}
-              </div>
+                  <input
+                    type="radio"
+                    name="course-filter"
+                    value={option.value}
+                    checked={filterStatus === option.value}
+                    onChange={() => setFilterStatus(option.value)}
+                    className="h-4 w-4 accent-skyblue"
+                    aria-label={`Filter ${option.label}`}
+                  />
+                </label>
+              ))}
             </div>
-          </div>
-        ))}
-      </div>
-
-      {filteredModules.length === 0 && (
-        <div className="text-center py-12">
-          <BookOpen className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">No courses found</h3>
-          <p className="text-gray-600">Try adjusting your search or filter criteria.</p>
+          </Card>
         </div>
-      )}
 
-      {/* Learning Path Overview */}
-      <div className="mt-12 bg-gradient-to-r from-blue-50 to-green-50 rounded-xl p-8">
-        <div className="text-center">
-          <h2 className="text-2xl font-bold text-gray-900 mb-4">Your Learning Journey</h2>
-          <p className="text-gray-600 mb-6 max-w-2xl mx-auto">
-            These courses are designed to build upon each other, creating a comprehensive foundation in inclusive leadership. 
-            Complete them in order for the best learning experience.
-          </p>
-          <div className="flex items-center justify-center space-x-4">
-            <div className="text-center">
-              <div className="text-2xl font-bold text-blue-600">2/5</div>
-              <div className="text-sm text-gray-600">Modules Started</div>
-            </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-green-600">1/5</div>
-              <div className="text-sm text-gray-600">Modules Completed</div>
-            </div>
-            <div className="text-center">
-              <div className="text-2xl font-bold text-orange-600">45%</div>
-              <div className="text-sm text-gray-600">Overall Progress</div>
-            </div>
+        <div className="mt-6 md:hidden">
+          <div className="flex gap-2">
+            {statusFilters.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => setFilterStatus(option.value)}
+                className={`flex-1 rounded-full border px-3 py-2 text-xs font-semibold transition ${
+                  filterStatus === option.value
+                    ? 'border-skyblue bg-skyblue/10 text-skyblue'
+                    : 'border-mist text-slate/80'
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
           </div>
         </div>
+
+        <SectionHeading
+          title="Available courses"
+          helper={`${filteredCourses.length} of ${publishedCourses.length} courses`}
+          actionLabel="View learning plan"
+          onAction={() => {/* placeholder for deeper integration */}}
+        />
+
+        {filteredCourses.length === 0 ? (
+          <Card tone="muted" className="mt-8 flex flex-col items-center gap-4 py-16 text-center">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-skyblue/10 text-skyblue">
+              <Search className="h-6 w-6" />
+            </div>
+            <h3 className="font-heading text-xl font-semibold text-charcoal">No courses match that search</h3>
+            <p className="max-w-md text-sm text-slate/80">
+              Try a different keyword or reset your filters to rediscover The Huddle Co. catalog.
+            </p>
+            <Button onClick={() => { setSearchTerm(''); setFilterStatus('all'); }} trailingIcon={<ArrowUpRight className="h-4 w-4" />}>
+              Reset search
+            </Button>
+          </Card>
+        ) : (
+          <div className="mt-8 grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
+            {filteredCourses.map((course) => (
+              <CourseCard key={course.id} course={course} />
+            ))}
+          </div>
+        )}
       </div>
     </div>
+  );
+};
+
+const getFilterHelper = (filter: StatusFilter, courses: Array<{ progress: number }>) => {
+  const count = courses.filter((course) => {
+    if (filter === 'all') return true;
+    if (filter === 'completed') return course.progress >= 100;
+    if (filter === 'in-progress') return course.progress > 0 && course.progress < 100;
+    if (filter === 'not-started') return course.progress === 0;
+    return true;
+  }).length;
+
+  switch (filter) {
+    case 'completed':
+      return `${count} finished`;
+    case 'in-progress':
+      return `${count} underway`;
+    case 'not-started':
+      return `${count} ready to begin`;
+    default:
+      return `${count} total`;
+  }
+};
+
+interface SectionHeadingProps {
+  title: string;
+  helper: string;
+  actionLabel: string;
+  onAction: () => void;
+}
+
+const SectionHeading = ({ title, helper, actionLabel, onAction }: SectionHeadingProps) => (
+  <div className="mt-12 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+    <div>
+      <h2 className="font-heading text-2xl font-bold text-charcoal">{title}</h2>
+      <p className="mt-1 text-sm text-slate/80">{helper}</p>
+    </div>
+    <Button variant="ghost" size="sm" trailingIcon={<ArrowUpRight className="h-4 w-4" />} onClick={onAction}>
+      {actionLabel}
+    </Button>
+  </div>
+);
+
+interface CourseCardProps {
+  course: ReturnType<typeof normalizeCourse> & { progress: number };
+}
+
+const CourseCard = ({ course }: CourseCardProps) => {
+  const progressLabel = course.progress >= 100
+    ? 'Completed'
+    : course.progress > 0
+      ? `${course.progress}% complete`
+      : 'Ready to start';
+
+  return (
+    <Card className="flex h-full flex-col">
+      <div className="relative overflow-hidden rounded-2xl">
+        <LazyImage
+          src={course.thumbnail}
+          alt={course.title}
+          className="h-44 w-full object-cover"
+          placeholder={<ImageSkeleton className="h-44 w-full rounded-2xl" />}
+          fallbackSrc="/placeholder-course.jpg"
+        />
+        <div className="absolute top-4 left-4 flex gap-2">
+          <Badge tone="info" className="bg-white/90 text-skyblue">
+            {course.difficulty}
+          </Badge>
+          <Badge tone={course.progress >= 100 ? 'positive' : course.progress > 0 ? 'info' : 'neutral'} className="bg-white/90">
+            {progressLabel}
+          </Badge>
+        </div>
+      </div>
+
+      <div className="mt-4 flex flex-1 flex-col gap-4">
+        <div>
+          <h3 className="font-heading text-xl font-semibold text-charcoal">{course.title}</h3>
+          <p className="mt-2 line-clamp-2 text-sm text-slate/80">{course.description}</p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-4 text-sm text-slate/80">
+          <span className="flex items-center gap-1">
+            <Clock className="h-4 w-4" />
+            {course.duration}
+          </span>
+          <span className="flex items-center gap-1">
+            <BookOpen className="h-4 w-4" />
+            {course.lessons} lessons
+          </span>
+        </div>
+
+        <div>
+          <ProgressBar value={course.progress} srLabel={`${course.title} completion`} />
+          <span className="mt-2 block text-xs font-semibold uppercase tracking-wide text-slate/70">
+            {progressLabel}
+          </span>
+        </div>
+
+        <div className="mt-auto flex items-center justify-between gap-3">
+          <Button size="sm" className="flex-1" asChild>
+            <Link to={`/lms/course/${course.slug || course.id}`}>
+              {course.progress >= 100 ? 'Review course' : course.progress > 0 ? 'Continue' : 'Start course'}
+            </Link>
+          </Button>
+          <Button variant="ghost" size="sm" asChild>
+            <Link to={`/lms/course/${course.slug || course.id}`}>Details</Link>
+          </Button>
+        </div>
+      </div>
+    </Card>
   );
 };
 

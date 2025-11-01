@@ -1,171 +1,219 @@
 // React import not required with the new JSX transform
-import { useState } from 'react';
+import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowRight, Users, Heart, MessageSquare, Target, Download, Calendar } from 'lucide-react';
+import {
+  ArrowRight,
+  Users,
+  Heart,
+  MessageSquare,
+  Target,
+  Download,
+  Calendar,
+  Sparkles,
+} from 'lucide-react';
 import BookingWidget from '../components/BookingWidget/BookingWidget';
+import Card from '../components/ui/Card';
+import Button from '../components/ui/Button';
+import Badge from '../components/ui/Badge';
 
 const HomePage = () => {
   const navigate = useNavigate();
-  const [showBookingWidget, setShowBookingWidget] = useState(false);
+  const [showBookingWidget, setShowBookingWidget] = React.useState(false);
+
   const features = [
     {
-      icon: <Users className="h-8 w-8 text-blue-500" />,
-      title: "Inclusive Leadership",
-      description: "Transform your leadership approach with empathy-driven strategies that create belonging for everyone."
+      icon: <Users className="icon-32 text-skyblue" />,
+      title: 'Inclusive leadership',
+      description:
+        'Short, practical courses that help managers build trust, give clearer feedback, and lead teams where everyone contributes.'
     },
     {
-      icon: <MessageSquare className="h-8 w-8 text-green-500" />,
-      title: "Courageous Conversations",
-      description: "Navigate difficult discussions with confidence and create safe spaces for meaningful dialogue."
+      icon: <MessageSquare className="icon-32 text-sunrise" />,
+      title: 'Courageous conversations',
+      description:
+        'Tools and coaching to hold difficult conversations with care so issues get resolved and relationships strengthen.'
     },
     {
-      icon: <Target className="h-8 w-8 text-orange-500" />,
-      title: "Strategic DEI Planning",
-      description: "Develop comprehensive diversity, equity, and inclusion strategies that drive real organizational change."
+      icon: <Target className="icon-32 text-forest" />,
+      title: 'DEI that lasts',
+      description:
+        'Practical planning and simple process changes that turn good intentions into measurable results.'
     }
   ];
 
   const stats = [
-    { number: "500+", label: "Leaders Trained" },
-    { number: "150+", label: "Organizations Served" },
-    { number: "98%", label: "Client Satisfaction" },
-    { number: "3x", label: "Engagement Increase" }
+    { number: '500+', label: 'Leaders trained' },
+    { number: '150+', label: 'Organizations partnered' },
+    { number: '98%', label: 'Satisfaction' },
+    { number: '3x', label: 'Average engagement lift' }
   ];
 
   return (
     <div>
-      {/* Hero Section */}
-      <section className="relative bg-gradient-to-br from-orange-50 to-blue-50 py-20">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+      <section className="relative overflow-hidden bg-softwhite py-20">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(242,140,26,0.3),transparent_55%),radial-gradient(circle_at_top_right,rgba(43,132,198,0.25),transparent_45%),radial-gradient(circle_at_bottom_left,rgba(59,170,102,0.25),transparent_45%)]" />
+        <div className="relative z-10 mx-auto max-w-7xl px-6 lg:px-12">
+          <div className="grid items-center gap-12 lg:grid-cols-[minmax(0,1fr)_440px]">
             <div>
-              <h1 className="text-4xl md:text-6xl font-bold text-gray-900 mb-6 leading-tight">
-                Where Teams Become <span className="text-transparent bg-clip-text bg-gradient-to-r from-orange-500 to-red-500">Trusting</span>, <span className="text-transparent bg-clip-text bg-gradient-to-r from-blue-500 to-green-500">Inclusive</span>, and <span className="text-transparent bg-clip-text bg-gradient-to-r from-green-500 to-blue-500">Human</span>.
+              <Badge tone="info" className="bg-white/80 text-skyblue">
+                The Huddle Co.
+              </Badge>
+              <h1 className="mt-4 font-heading text-4xl font-black leading-tight text-charcoal md:text-[3.2rem]">
+                Where teams become{' '}
+                <span className="bg-gradient-to-r from-sunrise via-skyblue to-forest bg-clip-text text-transparent">
+                  trusting, inclusive, and human.
+                </span>
               </h1>
-              <p className="text-xl text-gray-600 mb-8">
-                We help organizations lead with empathy, build inclusive cultures, and hold space for courageous conversations.
+
+              <p className="mt-6 max-w-xl text-lg text-slate/80">
+                We pair practical learning with live support, helping leaders build psychological safety,
+                deliver courageous feedback, and embed inclusion into daily rituals.
               </p>
-              <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4">
-                <button onClick={() => setShowBookingWidget(true)} className="bg-gradient-to-r from-orange-400 to-red-500 text-white px-8 py-4 rounded-full font-semibold text-lg hover:from-orange-500 hover:to-red-600 transition-all duration-200 transform hover:scale-105 flex items-center justify-center space-x-2">
-                  <Calendar className="h-5 w-5" />
-                  <span>Book a Discovery Call</span>
-                </button>
-                <Link to="/resources" className="bg-white text-gray-900 px-8 py-4 rounded-full font-semibold text-lg border-2 border-gray-200 hover:border-orange-500 hover:text-orange-500 transition-all duration-200 flex items-center justify-center space-x-2">
-                  <Download className="h-5 w-5" />
-                  <span>Download Free Resource</span>
-                </Link>
+
+              <div className="mt-8 flex flex-wrap gap-4">
+                <Button size="lg" leadingIcon={<Calendar className="h-4 w-4" />} onClick={() => setShowBookingWidget(true)}>
+                  Book a discovery call
+                </Button>
+                <Button
+                  asChild
+                  variant="secondary"
+                  size="lg"
+                  leadingIcon={<Download className="h-4 w-4" />}
+                  className="bg-white"
+                >
+                  <Link to="/resources">Download the leadership guide</Link>
+                </Button>
+              </div>
+
+              <div className="mt-6 flex flex-wrap gap-4 text-sm text-slate/70">
+                <span className="inline-flex items-center gap-2 rounded-full bg-white/80 px-4 py-2 shadow-card-sm">
+                  <Sparkles className="h-4 w-4 text-sunrise" />
+                  Trusted by 150+ organizations
+                </span>
+                <span className="inline-flex items-center gap-2 rounded-full bg-white/80 px-4 py-2 shadow-card-sm">
+                  <Users className="h-4 w-4 text-skyblue" />
+                  500+ leaders certified
+                </span>
               </div>
             </div>
-            <div className="relative">
+
+            <div className="relative mx-auto w-full max-w-[420px]">
               <img
-                src="https://images.pexels.com/photos/3184465/pexels-photo-3184465.jpeg?auto=compress&cs=tinysrgb&w=800"
-                alt="Diverse team collaboration"
-                className="rounded-2xl shadow-2xl"
+                src="https://images.pexels.com/photos/3184675/pexels-photo-3184675.jpeg?auto=compress&cs=tinysrgb&w=1200"
+                alt="Inclusive team collaboration"
+                className="w-full rounded-[28px] border border-white/60 shadow-[0_32px_60px_rgba(16,24,40,0.18)]"
               />
-              <div className="absolute -bottom-6 -left-6 bg-white p-4 rounded-xl shadow-lg">
-                <div className="flex items-center space-x-2">
-                  <Heart className="h-6 w-6 text-red-500" />
-                  <span className="font-semibold text-gray-900">Built on Empathy</span>
+              <Card tone="muted" padding="sm" className="absolute -bottom-5 left-6 flex w-[260px] items-center gap-3 rounded-2xl border border-white/80 bg-white/90 shadow-card-sm">
+                <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-sunrise/15 text-sunrise">
+                  <Heart className="h-5 w-5" />
+                </span>
+                <div>
+                  <p className="font-heading text-sm font-semibold text-charcoal">Programs built on empathy</p>
+                  <p className="text-xs text-slate/70">Rooted in belonging, backed by results.</p>
                 </div>
-              </div>
+              </Card>
             </div>
           </div>
         </div>
       </section>
 
-      {/* Stats Section */}
-      <section className="bg-gray-900 py-16">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-8">
-            {stats.map((stat, index) => (
-              <div key={index} className="text-center">
-                <div className="text-3xl md:text-4xl font-bold text-white mb-2">{stat.number}</div>
-                <div className="text-gray-300">{stat.label}</div>
-              </div>
+      <section className="bg-white py-12">
+        <div className="mx-auto max-w-7xl px-6 lg:px-12">
+          <div className="grid grid-cols-2 gap-4 text-center md:grid-cols-4">
+            {stats.map((stat) => (
+              <Card key={stat.label} tone="muted" className="py-8">
+                <div className="font-heading text-3xl font-bold text-charcoal">{stat.number}</div>
+                <p className="mt-2 text-sm text-slate/70">{stat.label}</p>
+              </Card>
             ))}
           </div>
         </div>
       </section>
 
-      {/* Features Section */}
-      <section className="py-20">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">
-              How We Transform Organizations
+      <section className="bg-softwhite py-16">
+        <div className="mx-auto max-w-7xl px-6 lg:px-12">
+          <div className="text-center">
+            <Badge tone="info" className="mx-auto bg-skyblue/10 text-skyblue">
+              What we deliver
+            </Badge>
+            <h2 className="mt-4 font-heading text-3xl font-bold text-charcoal">
+              How we help teams do better work together
             </h2>
-            <p className="text-xl text-gray-600 max-w-3xl mx-auto">
-              Our proven approach helps leaders create environments where people feel seen, heard, and valued.
+            <p className="mx-auto mt-3 max-w-3xl text-base text-slate/80">
+              Short, practical learning, hands-on coaching, and simple process changes so inclusion is woven into everyday work—not just the workshop.
             </p>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
-            {features.map((feature, index) => (
-              <div key={index} className="bg-white p-8 rounded-2xl shadow-lg hover:shadow-xl transition-shadow duration-200 border border-gray-100">
+
+          <div className="mt-10 grid gap-6 md:grid-cols-3">
+            {features.map((feature) => (
+              <Card key={feature.title} className="h-full p-6">
                 <div className="mb-4">{feature.icon}</div>
-                <h3 className="text-2xl font-bold text-gray-900 mb-4">{feature.title}</h3>
-                <p className="text-gray-600 mb-6">{feature.description}</p>
-                <Link to="/services" className="inline-flex items-center text-orange-500 font-semibold hover:text-orange-600 transition-colors duration-200">
-                  Learn more <ArrowRight className="h-4 w-4 ml-2" />
+                <h3 className="font-heading text-xl font-semibold text-charcoal">{feature.title}</h3>
+                <p className="mt-2 text-sm text-slate/80">{feature.description}</p>
+                <Link to="/services" className="mt-4 inline-flex items-center font-heading text-sm font-semibold text-skyblue">
+                  Learn more <ArrowRight className="ml-2 w-4 h-4" />
                 </Link>
-              </div>
+              </Card>
             ))}
           </div>
         </div>
       </section>
 
-      {/* Social Proof */}
-      <section className="bg-gradient-to-r from-blue-50 to-green-50 py-20">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-12">
-            <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-4">
-              Trusted by Leading Organizations
+      <section className="bg-white py-16">
+        <div className="mx-auto max-w-7xl px-6 lg:px-12">
+          <div className="text-center">
+            <Badge tone="info" className="mx-auto bg-sunrise/15 text-sunrise">
+              Partners
+            </Badge>
+            <h2 className="mt-4 font-heading text-3xl font-bold text-charcoal">
+              Trusted by organizations across sectors
             </h2>
-            <p className="text-xl text-gray-600">
-              Universities, sports organizations, nonprofits, government agencies, and corporations choose us.
+            <p className="mx-auto mt-3 max-w-2xl text-base text-slate/80">
+              Universities, sports leagues, nonprofits, government agencies, and corporations rely on The Huddle Co. to build inclusive cultures.
             </p>
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-8 opacity-60">
-            <div className="bg-white p-6 rounded-lg shadow-sm text-center">
-              <div className="font-bold text-gray-700">University Partners</div>
-            </div>
-            <div className="bg-white p-6 rounded-lg shadow-sm text-center">
-              <div className="font-bold text-gray-700">Sports Organizations</div>
-            </div>
-            <div className="bg-white p-6 rounded-lg shadow-sm text-center">
-              <div className="font-bold text-gray-700">Nonprofits</div>
-            </div>
-            <div className="bg-white p-6 rounded-lg shadow-sm text-center">
-              <div className="font-bold text-gray-700">Corporations</div>
-            </div>
+
+          <div className="mt-10 grid grid-cols-2 gap-4 md:grid-cols-4">
+            {['University partners', 'Sports organizations', 'Nonprofits', 'Corporations'].map((label) => (
+              <Card key={label} tone="muted" className="py-6 text-center font-heading text-sm font-semibold text-charcoal">
+                {label}
+              </Card>
+            ))}
           </div>
         </div>
       </section>
 
-      {/* CTA Section */}
-      <section className="bg-gradient-to-r from-orange-500 to-red-500 py-20">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-          <h2 className="text-3xl md:text-4xl font-bold text-white mb-6">
-            Ready to Transform Your Organization?
-          </h2>
-          <p className="text-xl text-orange-100 mb-8 max-w-2xl mx-auto">
-            Join hundreds of leaders who have created more inclusive, empathetic workplaces with our proven methods.
+      <section className="relative overflow-hidden py-16">
+        <div className="absolute inset-0 bg-gradient-to-r from-sunrise via-skyblue to-forest" />
+        <div className="relative mx-auto max-w-7xl px-6 text-center text-white lg:px-12">
+          <h2 className="font-heading text-3xl font-bold">Ready to transform your organization?</h2>
+          <p className="mx-auto mt-3 max-w-2xl text-base text-white/90">
+            Join leaders who have built more inclusive, empathetic workplaces with our practical, evidence-based methods.
           </p>
-          <div className="flex flex-col sm:flex-row justify-center space-y-4 sm:space-y-0 sm:space-x-4">
-            <button onClick={() => navigate('/contact')} className="bg-white text-orange-500 px-8 py-4 rounded-full font-semibold text-lg hover:bg-gray-50 transition-colors duration-200">
-              Schedule Your Discovery Call
-            </button>
-            <Link to="/resources" className="border-2 border-white text-white px-8 py-4 rounded-full font-semibold text-lg hover:bg-white hover:text-orange-500 transition-colors duration-200">
-              Get Free Leadership Guide
-            </Link>
+          <div className="mt-6 flex flex-wrap justify-center gap-4">
+            <Button
+              size="lg"
+              variant="outline"
+              className="border-white/60 bg-white text-sunrise hover:bg-white/95"
+              leadingIcon={<Calendar className="h-4 w-4" />}
+              onClick={() => navigate('/contact')}
+            >
+              Schedule a discovery call
+            </Button>
+            <Button
+              asChild
+              variant="ghost"
+              size="lg"
+              className="text-white hover:bg-white/10"
+              leadingIcon={<Download className="h-4 w-4" />}
+            >
+              <Link to="/resources">Get the leadership guide</Link>
+            </Button>
           </div>
         </div>
       </section>
-      
-      {/* Booking Widget */}
-      <BookingWidget 
-        isOpen={showBookingWidget} 
-        onClose={() => setShowBookingWidget(false)} 
-      />
+
+      <BookingWidget isOpen={showBookingWidget} onClose={() => setShowBookingWidget(false)} />
     </div>
   );
 };

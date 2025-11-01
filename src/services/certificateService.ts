@@ -6,6 +6,23 @@
  */
 
 import { Course } from '../types/courseTypes';
+import apiRequest from '../utils/apiClient';
+
+const apiFetch = async <T>(path: string, options: RequestInit = {}) =>
+  apiRequest<T>(path, options);
+
+export interface CertificateCompletionPayload {
+  userId: string;
+  userName: string;
+  userEmail: string;
+  courseId: string;
+  courseTitle: string;
+  certificationName?: string;
+  completionDate: string;
+  completionTimeMinutes?: number;
+  finalScore?: number;
+  requirementsMet?: string[];
+}
 
 export interface CertificateTemplate {
   id: string;
@@ -149,6 +166,55 @@ class CertificateService {
     return certificate;
   }
 
+  async generateFromCompletion(payload: CertificateCompletionPayload): Promise<GeneratedCertificate> {
+    const {
+      userId,
+      userName,
+      userEmail,
+      courseId,
+      courseTitle,
+      certificationName,
+      completionDate,
+      completionTimeMinutes,
+      finalScore,
+      requirementsMet
+    } = payload;
+
+    const certificate: GeneratedCertificate = {
+      id: this.generateCertificateId(),
+      userId,
+      userName,
+      userEmail,
+      courseId,
+      courseName: courseTitle,
+      certificateName: certificationName || 'Certificate of Completion',
+      templateId: 'template-professional-a',
+      generatedAt: new Date().toISOString(),
+      completionDate,
+      validUntil: undefined,
+      certificateUrl: this.generateCertificateUrl(userId, courseId),
+      verificationCode: this.generateVerificationCode(),
+      status: 'generated',
+      metadata: {
+        completionTime: completionTimeMinutes ? `${completionTimeMinutes} minutes` : 'N/A',
+        finalScore,
+        requirements: requirementsMet && requirementsMet.length > 0 ? requirementsMet : ['Completed course requirements'],
+        instructorName: 'Course Instructor',
+        organizationName: 'The Huddle Co.'
+      }
+    };
+
+    await this.persistCertificateRemote(certificate);
+    this.certificates.set(certificate.id, certificate);
+    this.logCertificateEvent('generated', certificate);
+
+    if (this.deliverySettings.autoSend) {
+      await this.deliverCertificate(certificate);
+    }
+
+    return certificate;
+  }
+
   /**
    * 📋 Verify course completion requirements
    */
@@ -254,17 +320,6 @@ class CertificateService {
     console.log('📧 Sending certificate email to:', certificate.userEmail);
     console.log('Subject:', emailContent.subject);
     console.log('Body preview:', emailContent.body.substring(0, 100) + '...');
-    
-    // Log to localStorage for demo purposes
-    const emailLog = JSON.parse(localStorage.getItem('certificate_emails') || '[]');
-    emailLog.push({
-      timestamp: new Date().toISOString(),
-      recipient: certificate.userEmail,
-      certificateId: certificate.id,
-      subject: emailContent.subject,
-      status: 'sent'
-    });
-    localStorage.setItem('certificate_emails', JSON.stringify(emailLog));
     
     return true;
   }
@@ -428,45 +483,49 @@ Certificate Verification: Visit our verification portal and enter code ${certifi
   }
 
   private notifyAdminOfGeneration(certificate: GeneratedCertificate): void {
-    const adminNotifications = JSON.parse(localStorage.getItem('admin_notifications') || '[]');
-    adminNotifications.push({
-      type: 'certificate_generated',
-      timestamp: new Date().toISOString(),
-      message: `Certificate generated for ${certificate.userName} - ${certificate.certificateName}`,
-      certificateId: certificate.id
-    });
-    localStorage.setItem('admin_notifications', JSON.stringify(adminNotifications));
+    console.log('[CertificateService] Notification: certificate generated', certificate.id);
   }
 
   private logCertificateEvent(action: string, certificate: GeneratedCertificate): void {
-    const events = JSON.parse(localStorage.getItem('certificate_events') || '[]');
-    events.push({
-      action,
-      certificateId: certificate.id,
-      userId: certificate.userId,
-      courseId: certificate.courseId,
-      timestamp: new Date().toISOString()
-    });
-    localStorage.setItem('certificate_events', JSON.stringify(events.slice(-100))); // Keep last 100 events
+    console.log(`[CertificateService] Event logged: ${action}`, certificate.id);
   }
 
-  private loadStoredCertificates(): void {
-    const stored = localStorage.getItem('generated_certificates');
-    if (stored) {
-      try {
-        const certificateArray = JSON.parse(stored);
-        certificateArray.forEach((cert: GeneratedCertificate) => {
-          this.certificates.set(cert.id, cert);
-        });
-      } catch (error) {
-        console.error('Failed to load stored certificates:', error);
+  private async persistCertificateRemote(certificate: GeneratedCertificate): Promise<void> {
+    try {
+      const saved = await apiFetch<{ data: any }>(`/api/client/certificates/${certificate.courseId}`, {
+        method: 'POST',
+        body: JSON.stringify({
+          id: certificate.id,
+          user_id: certificate.userId,
+          pdf_url: certificate.certificateUrl,
+          metadata: {
+            certificateName: certificate.certificateName,
+            userName: certificate.userName,
+            userEmail: certificate.userEmail,
+            templateId: certificate.templateId,
+            generatedAt: certificate.generatedAt,
+            completionDate: certificate.completionDate,
+            validUntil: certificate.validUntil,
+            verificationCode: certificate.verificationCode,
+            status: certificate.status,
+            details: certificate.metadata
+          }
+        })
+      });
+      if (saved?.data?.id) {
+        certificate.id = saved.data.id;
       }
+    } catch (error) {
+      console.error('Failed to persist certificate remotely', error);
     }
   }
 
+  private loadStoredCertificates(): void {
+    this.certificates.clear();
+  }
+
   private persistCertificates(): void {
-    const certificateArray = Array.from(this.certificates.values());
-    localStorage.setItem('generated_certificates', JSON.stringify(certificateArray));
+    // persisted remotely; no-op
   }
 
   private loadDefaultTemplates(): void {
@@ -476,8 +535,8 @@ Certificate Verification: Visit our verification portal and enter code ${certifi
         name: 'Professional Template A',
         type: 'professional',
         design: {
-          primaryColor: '#FF8895',
-          secondaryColor: '#D72638',
+          primaryColor: '#F28C1A',
+          secondaryColor: '#E6473A',
           logo: 'huddle-co-logo.png',
           background: 'certificate-bg-professional.jpg',
           font: 'serif'
@@ -499,8 +558,8 @@ Certificate Verification: Visit our verification portal and enter code ${certifi
         name: 'Modern Template B',
         type: 'modern',
         design: {
-          primaryColor: '#3A7DFF',
-          secondaryColor: '#2D9B66',
+          primaryColor: '#2B84C6',
+          secondaryColor: '#3BAA66',
           logo: 'huddle-co-logo.png',
           background: 'certificate-bg-modern.jpg',
           font: 'sans-serif'
@@ -525,25 +584,50 @@ Certificate Verification: Visit our verification portal and enter code ${certifi
   }
 
   // Public API Methods
-  getAllCertificates(): GeneratedCertificate[] {
-    return Array.from(this.certificates.values());
+  async getAllCertificates(): Promise<GeneratedCertificate[]> {
+    const json = await apiFetch<{ data: any[] }>('/api/client/certificates');
+    return (json.data || []).map(record => this.mapCertificateRecord(record));
   }
 
-  getCertificatesByUser(userId: string): GeneratedCertificate[] {
-    return Array.from(this.certificates.values()).filter(cert => cert.userId === userId);
+  async getCertificatesByUser(userId: string): Promise<GeneratedCertificate[]> {
+    if (!userId) return [];
+    const json = await apiFetch<{ data: any[] }>(`/api/client/certificates?user_id=${encodeURIComponent(userId)}`);
+    return (json.data || []).map(record => this.mapCertificateRecord(record));
   }
 
-  getCertificatesByCourse(courseId: string): GeneratedCertificate[] {
-    return Array.from(this.certificates.values()).filter(cert => cert.courseId === courseId);
+  async getCertificatesByCourse(courseId: string): Promise<GeneratedCertificate[]> {
+    if (!courseId) return [];
+    const json = await apiFetch<{ data: any[] }>(`/api/client/certificates?course_id=${encodeURIComponent(courseId)}`);
+    return (json.data || []).map(record => this.mapCertificateRecord(record));
   }
 
   updateDeliverySettings(settings: Partial<CertificateDelivery>): void {
     this.deliverySettings = { ...this.deliverySettings, ...settings };
-    localStorage.setItem('certificate_delivery_settings', JSON.stringify(this.deliverySettings));
   }
 
   getDeliverySettings(): CertificateDelivery {
     return { ...this.deliverySettings };
+  }
+
+  private mapCertificateRecord(record: any): GeneratedCertificate {
+    const meta = record?.metadata || {};
+    return {
+      id: record.id,
+      userId: record.user_id,
+      userName: meta.userName ?? meta.learnerName ?? 'Learner',
+      userEmail: meta.userEmail ?? '',
+      courseId: record.course_id,
+      courseName: meta.courseName ?? record.course_name ?? 'Course',
+      certificateName: meta.certificateName ?? 'Certificate of Completion',
+      templateId: meta.templateId ?? 'template-professional-a',
+      generatedAt: meta.generatedAt ?? record.created_at ?? new Date().toISOString(),
+      completionDate: meta.completionDate ?? record.issued_at ?? new Date().toISOString(),
+      validUntil: meta.validUntil,
+      certificateUrl: record.pdf_url ?? '',
+      verificationCode: meta.verificationCode ?? record.id,
+      status: meta.status ?? 'generated',
+      metadata: meta.details ?? meta
+    };
   }
 }
 

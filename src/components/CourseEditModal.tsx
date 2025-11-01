@@ -7,6 +7,50 @@ import {
   TrendingUp, Target, Award, AlertTriangle, CheckCircle2, Sparkles
 } from 'lucide-react';
 import { Course } from '../types/courseTypes';
+import { slugify } from '../utils/courseNormalization';
+
+const generateCourseId = () => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  const randomSuffix = Math.random().toString(16).slice(2, 10);
+  return `course-${Date.now()}-${randomSuffix}`;
+};
+
+const buildDefaultCourse = (): Course => {
+  const now = new Date().toISOString();
+  const id = generateCourseId();
+  const fallbackSlug = slugify(`course-${id}`);
+
+  return {
+    id,
+    slug: fallbackSlug,
+    title: '',
+    description: '',
+    status: 'draft',
+    thumbnail: '',
+    duration: '0 min',
+    difficulty: 'Beginner',
+    enrollments: 0,
+    completions: 0,
+    completionRate: 0,
+    avgRating: 0,
+    totalRatings: 0,
+    createdBy: '',
+    createdDate: now,
+    lastUpdated: now,
+    estimatedTime: '30 min',
+    prerequisites: [],
+    learningObjectives: [],
+    tags: [],
+    modules: [],
+    keyTakeaways: [],
+    type: '',
+    lessons: 0,
+    rating: 0,
+    progress: 0
+  };
+};
 
 interface CourseEditModalProps {
   isOpen: boolean;
@@ -116,33 +160,7 @@ const CourseEditModal: React.FC<CourseEditModalProps> = ({
   course,
   mode
 }) => {
-  const [formData, setFormData] = useState<Course>({
-    id: '',
-    title: '',
-    description: '',
-    status: 'draft',
-    thumbnail: '',
-    duration: '0 min',
-    difficulty: 'Beginner',
-    enrollments: 0,
-    completions: 0,
-    completionRate: 0,
-    avgRating: 0,
-    totalRatings: 0,
-    createdBy: '',
-    createdDate: new Date().toISOString(),
-    lastUpdated: new Date().toISOString(),
-    estimatedTime: '30 min',
-    prerequisites: [],
-    learningObjectives: [],
-    tags: [],
-    modules: [],
-    keyTakeaways: [],
-    type: '',
-    lessons: 0,
-    rating: 0,
-    progress: 0
-  });
+  const [formData, setFormData] = useState<Course>(buildDefaultCourse());
 
   const [currentTag, setCurrentTag] = useState('');
   const [currentObjective, setCurrentObjective] = useState('');
@@ -172,23 +190,41 @@ const CourseEditModal: React.FC<CourseEditModalProps> = ({
     if (course && mode === 'edit') {
       setFormData({ ...course });
     } else if (mode === 'create') {
-      setFormData(prev => ({
-        ...prev,
-        id: `course-${Date.now()}`,
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      }));
+      const resetCourse = buildDefaultCourse();
+      setFormData(resetCourse);
+      setLessonContents([]);
+      setSelectedContent([]);
+      setCurrentTag('');
+      setCurrentObjective('');
+      setCurrentPrerequisite('');
+      setActiveTab('basic');
+      setSuccessMessage(null);
+      setAiSuggestions([]);
+      setSearchFilter('');
+      setTypeFilter('all');
     }
   }, [course, mode, isOpen]);
 
 
 
   const handleInputChange = (field: string, value: any) => {
-    setFormData(prev => ({
-      ...prev,
-      [field]: value,
-      updatedAt: new Date().toISOString()
-    }));
+    setFormData(prev => {
+      const updatedAt = new Date().toISOString();
+      if (field === 'title' && mode === 'create') {
+        const normalizedSlug = slugify(String(value || prev.slug || prev.id));
+        return {
+          ...prev,
+          title: value,
+          slug: normalizedSlug,
+          updatedAt
+        };
+      }
+      return {
+        ...prev,
+        [field]: value,
+        updatedAt
+      };
+    });
     
     // Trigger autosave for any form changes
     if (mode === 'edit') {
@@ -264,7 +300,7 @@ const CourseEditModal: React.FC<CourseEditModalProps> = ({
       } else {
         setAutosaveStatus('idle');
       }
-    }, 3000)); // 3 seconds - improved from 10 seconds
+    }, 10000)); // autosave after 10 seconds of inactivity
   };
 
   const createContentFromModal = (formData: any) => {
@@ -696,14 +732,20 @@ ${content.type === 'quiz' && 'questions' in content.content ? `\nQuestions: ${co
       modules: convertedModules
     };
 
+    const normalizedSlug = slugify(enhancedFormData.slug || enhancedFormData.title || enhancedFormData.id);
+    const coursePayload = {
+      ...enhancedFormData,
+      slug: normalizedSlug
+    };
+
     console.log('💾 Saving course with enhanced data:', {
-      formData: enhancedFormData,
+      formData: coursePayload,
       lessonContents: lessonContents,
       convertedModules: convertedModules
     });
 
     setTimeout(() => setSuccessMessage(null), 5000);
-    onSave(enhancedFormData);
+    onSave(coursePayload);
   };
 
   // Convert our enhanced lesson contents to courseStore modules format
@@ -891,7 +933,8 @@ ${content.type === 'quiz' && 'questions' in content.content ? `\nQuestions: ${co
       ...formData,
       status: 'published' as const,
       publishedDate: new Date().toISOString(),
-      lastUpdated: new Date().toISOString()
+      lastUpdated: new Date().toISOString(),
+      slug: slugify(formData.slug || formData.title || formData.id)
     };
     onSave(publishedCourse);
   };

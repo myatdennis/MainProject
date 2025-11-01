@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { api } from '@/lib/api';
 
 interface EditableTextItem {
   key: string;
@@ -13,7 +14,7 @@ const AdminWebpageEditor: React.FC = () => {
   const [success, setSuccess] = useState(false);
 
   useEffect(() => {
-    fetch('/api/text-content')
+    api('/api/text-content')
       .then(res => res.json())
       .then(data => {
         setTextItems(data);
@@ -35,7 +36,7 @@ const AdminWebpageEditor: React.FC = () => {
 
   const handleSave = () => {
     setSaving(true);
-    fetch('/api/text-content', {
+    api('/api/text-content', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(textItems)

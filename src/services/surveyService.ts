@@ -1,5 +1,21 @@
 import { supabase } from '../lib/supabase';
 import type { Survey } from '../types/survey';
+import apiRequest, { type ApiRequestOptions } from '../utils/apiClient';
+
+const apiFetch = async <T>(path: string, options: ApiRequestOptions = {}) =>
+  apiRequest<T>(path, options);
+
+const mapSurveyRecord = (record: any): Survey => ({
+  id: record.id,
+  title: record.title,
+  description: record.description ?? '',
+  type: record.type ?? 'custom',
+  status: record.status ?? 'draft',
+  sections: record.sections ?? [],
+  branding: record.branding ?? {},
+  settings: record.settings ?? {},
+  assignedTo: record.assigned_to ?? []
+});
 
 export interface SurveyAssignment {
   id?: string;
@@ -63,21 +79,25 @@ export const getAnalytics = async (surveyId: string) => {
   };
 };
 
-// Local persistence helpers for development when Supabase is not configured
 export const saveSurvey = async (survey: Survey) => {
-  try {
-    const key = 'local_surveys';
-    const raw = localStorage.getItem(key);
-    const items: Survey[] = raw ? JSON.parse(raw) : [];
-    const idx = items.findIndex(s => s.id === survey.id);
-    if (idx >= 0) items[idx] = survey;
-    else items.push(survey);
-    localStorage.setItem(key, JSON.stringify(items));
-    return survey;
-  } catch (err) {
-    console.warn('saveSurvey error:', err);
-    return null;
-  }
+  const payload = {
+    id: survey.id,
+    title: survey.title,
+    description: survey.description,
+    type: survey.type,
+    status: survey.status,
+    sections: survey.sections,
+    branding: survey.branding,
+    settings: survey.settings,
+    assignedTo: survey.assignedTo ?? []
+  };
+
+  const json = await apiFetch<{ data: any }>('/api/admin/surveys', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+
+  return mapSurveyRecord(json.data);
 };
 
 // Batched save queue: collects surveys and flushes to Supabase periodically when configured.
@@ -98,52 +118,10 @@ const flushQueue = async () => {
   // take snapshot
   const itemsToFlush = saveQueue.splice(0, saveQueue.length);
 
-  // ensure localStorage is up-to-date
   try {
-    const key = 'local_surveys';
-    const raw = localStorage.getItem(key);
-    const existing: Survey[] = raw ? JSON.parse(raw) : [];
-    // merge/replace by id
-    itemsToFlush.forEach(survey => {
-      const idx = existing.findIndex(e => e.id === survey.id);
-      if (idx >= 0) existing[idx] = survey;
-      else existing.push(survey);
-    });
-    localStorage.setItem(key, JSON.stringify(existing));
-  } catch (err) {
-    console.warn('flushQueue local merge failed', err);
-  }
-
-  // If Supabase not configured, nothing more to do
-  if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
-    console.warn('Supabase not configured - flushQueue saved to localStorage only');
-    return;
-  }
-
-  // Attempt to upsert all surveys to Supabase in a single batch where possible
-  try {
-    // Supabase upsert supports array of objects
-    const upsertPayload = itemsToFlush.map(s => ({
-      id: s.id,
-      title: s.title,
-      description: s.description,
-      type: s.type,
-      status: s.status,
-      sections: s.sections,
-      branding: s.branding,
-      settings: s.settings,
-      assigned_to: s.assignedTo,
-      updated_at: new Date().toISOString()
-    }));
-
-    const { error } = await supabase.from('surveys').upsert(upsertPayload);
-    if (error) {
-      console.warn('flushQueue supabase upsert error:', error);
-    } else {
-      console.log(`Flushed ${upsertPayload.length} surveys to Supabase`);
-    }
+    await Promise.all(itemsToFlush.map(saveSurvey));
     lastFlushAt = new Date().toISOString();
-    surveyQueueEvents.dispatchEvent(new CustomEvent('flush', { detail: { count: upsertPayload.length, at: lastFlushAt } }));
+    surveyQueueEvents.dispatchEvent(new CustomEvent('flush', { detail: { count: itemsToFlush.length, at: lastFlushAt } }));
   } catch (err) {
     console.warn('flushQueue exception:', err);
   }
@@ -151,9 +129,6 @@ const flushQueue = async () => {
 
 export const queueSaveSurvey = async (survey: Survey) => {
   try {
-    // Immediately write to localStorage for local-first behavior
-    await saveSurvey(survey);
-
     // Add to queue (replace if exists)
     const idx = saveQueue.findIndex(s => s.id === survey.id);
     if (idx >= 0) saveQueue[idx] = survey;
@@ -190,10 +165,8 @@ export const flushNow = async () => {
 
 export const getSurveyById = async (id: string) => {
   try {
-    const key = 'local_surveys';
-    const raw = localStorage.getItem(key);
-    const items: Survey[] = raw ? JSON.parse(raw) : [];
-    return items.find(s => s.id === id) || null;
+    const json = await apiFetch<{ data: any }>(`/api/admin/surveys/${id}`);
+    return json.data ? mapSurveyRecord(json.data) : null;
   } catch (err) {
     console.warn('getSurveyById error:', err);
     return null;

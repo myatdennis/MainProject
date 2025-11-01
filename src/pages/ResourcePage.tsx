@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Download, CheckCircle, Mail, FileText, Video, Users, Calendar, ArrowRight } from 'lucide-react';
+import PageWrapper from '../components/PageWrapper';
+import { Download, CheckCircle, FileText, Video, Users, Calendar, ArrowRight } from 'lucide-react';
 
 const ResourcePage = () => {
   const [email, setEmail] = useState('');
@@ -51,164 +52,104 @@ const ResourcePage = () => {
 
   if (isSubmitted) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-green-50 to-blue-50 py-20">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-          <div className="bg-white p-12 rounded-2xl shadow-xl">
-            <div className="bg-green-100 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-6">
-              <CheckCircle className="h-12 w-12 text-green-500" />
+      <PageWrapper>
+        <div className="centered">
+          <div className="card-md max-w-48rem mx-auto">
+            <div className="centered mb-4">
+              <div className="w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4" style={{background: 'var(--success-bg)'}}>
+                <CheckCircle className="h-10 w-10 text-success" />
+              </div>
             </div>
-            <h1 className="text-3xl md:text-4xl font-bold text-gray-900 mb-6">
-              Success! Check Your Email
-            </h1>
-            <p className="text-xl text-gray-600 mb-8">
-              We've sent you the "10 Inclusive Leadership Practices" guide along with some bonus resources. 
-              Check your inbox (and spam folder) for the email from Mya at The Huddle Co.
-            </p>
-            <div className="bg-orange-50 p-6 rounded-lg mb-8">
-              <h3 className="font-semibold text-gray-900 mb-2">What's Next?</h3>
-              <p className="text-gray-700">
-                Ready to put these practices into action? Book a free 30-minute consultation to discuss 
-                how we can support your organization's inclusive leadership journey.
-              </p>
+            <h1 className="text-2xl font-bold text-neutral-text mb-3">Success! Check Your Email</h1>
+            <p className="muted-text mb-4">We've sent you the "10 Inclusive Leadership Practices" guide along with some bonus resources. Check your inbox (and spam folder) for the email from Mya at The Huddle Co.</p>
+            <div className="card-md mb-4">
+              <h3 className="font-semibold text-neutral-text mb-2">What's Next?</h3>
+              <p className="muted-text">Ready to put these practices into action? Book a free 30-minute consultation to discuss how we can support your organization's inclusive leadership journey.</p>
             </div>
-            <button onClick={() => navigate('/contact')} className="bg-gradient-to-r from-orange-400 to-red-500 text-white px-8 py-4 rounded-full font-semibold text-lg hover:from-orange-500 hover:to-red-600 transition-all duration-200 transform hover:scale-105 flex items-center mx-auto space-x-2">
-              <Calendar className="h-5 w-5" />
+            <button onClick={() => navigate('/contact')} className="btn-primary primary-gradient inline-flex items-center gap-2">
+              <Calendar className="w-4 h-4" />
               <span>Schedule Free Consultation</span>
             </button>
           </div>
         </div>
-      </div>
+      </PageWrapper>
     );
   }
 
   return (
-    <div>
+    <PageWrapper>
       {/* Hero Section */}
-      <section className="bg-gradient-to-br from-blue-50 to-green-50 py-20">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-12 items-center">
+      <section className="py-16">
+        <div>
+          <div className="grid grid-cols-1 gap-12 items-center">
             <div>
-              <h1 className="text-4xl md:text-5xl font-bold text-gray-900 mb-6">
-                Free Resource: 10 Inclusive Leadership Practices
-              </h1>
-              <p className="text-xl text-gray-600 mb-8">
-                Transform your leadership approach with proven strategies that create psychological safety, 
-                build trust, and empower every team member to contribute their best work.
-              </p>
-              <div className="space-y-3 mb-8">
+              <h1 style={{fontSize: '2rem', fontWeight: 700, color: 'var(--neutral-text)', marginBottom: '1rem'}}>Free Resource: 10 Inclusive Leadership Practices</h1>
+              <p style={{fontSize: '1.125rem', color: 'var(--muted-text)', marginBottom: '1.5rem'}}>Transform your leadership approach with proven strategies that create psychological safety, build trust, and empower every team member to contribute their best work.</p>
+              <div style={{display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '1rem'}}>
                 {benefits.slice(0, 3).map((benefit, index) => (
-                  <div key={index} className="flex items-center space-x-3">
-                    <CheckCircle className="h-5 w-5 text-green-500 flex-shrink-0" />
-                    <span className="text-gray-700">{benefit}</span>
+                  <div key={index} style={{display: 'flex', alignItems: 'center', gap: '0.75rem'}}>
+                    <CheckCircle style={{height: '1.25rem', width: '1.25rem', color: 'var(--success)'}} />
+                    <span style={{color: 'var(--neutral-text)'}}>{benefit}</span>
                   </div>
                 ))}
               </div>
-              <div className="flex items-center space-x-2 text-orange-500">
-                <Download className="h-5 w-5" />
-                <span className="font-semibold">Instant download • No spam • Unsubscribe anytime</span>
+              <div style={{display: 'flex', alignItems: 'center', gap: '0.75rem', color: 'var(--accent)'}}>
+                <Download style={{height: '1rem', width: '1rem'}} />
+                <span style={{fontWeight: 600}}>Instant download • No spam • Unsubscribe anytime</span>
               </div>
             </div>
             <div>
-              <img
-                src="https://images.pexels.com/photos/3184291/pexels-photo-3184291.jpeg?auto=compress&cs=tinysrgb&w=800"
-                alt="Inclusive leadership guide preview"
-                className="rounded-2xl shadow-2xl"
-              />
+              <img src="https://images.pexels.com/photos/3184291/pexels-photo-3184291.jpeg?auto=compress&cs=tinysrgb&w=800" alt="Inclusive leadership guide preview" className="img-rounded" />
             </div>
           </div>
         </div>
       </section>
 
       {/* Download Form */}
-      <section className="py-20">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="bg-white rounded-2xl shadow-xl p-12">
-            <div className="text-center mb-8">
-              <h2 className="text-3xl font-bold text-gray-900 mb-4">
-                Get Your Free Leadership Guide
-              </h2>
-              <p className="text-lg text-gray-600">
-                Join 2,000+ leaders who have transformed their teams with these inclusive practices.
-              </p>
-            </div>
-            
-            <form onSubmit={handleSubmit} className="space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <label htmlFor="firstName" className="block text-sm font-medium text-gray-700 mb-2">
-                    First Name *
-                  </label>
-                  <input
-                    type="text"
-                    id="firstName"
-                    value={firstName}
-                    onChange={(e) => setFirstName(e.target.value)}
-                    required
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent transition-colors duration-200"
-                    placeholder="Enter your first name"
-                  />
-                </div>
-                <div>
-                  <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">
-                    Email Address *
-                  </label>
-                  <input
-                    type="email"
-                    id="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required
-                    className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent transition-colors duration-200"
-                    placeholder="Enter your email"
-                  />
-                </div>
+      <section className="container">
+        <div className="card-md">
+          <div className="centered mb-6">
+            <h2 className="text-xl font-bold text-neutral-text mb-2">Get Your Free Leadership Guide</h2>
+            <p className="muted-text">Join 2,000+ leaders who have transformed their teams with these inclusive practices.</p>
+          </div>
+
+          <form onSubmit={handleSubmit} className="grid gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label htmlFor="firstName" className="text-sm font-semibold muted-text block mb-2">First Name *</label>
+                <input className="input" id="firstName" type="text" value={firstName} onChange={(e) => setFirstName(e.target.value)} required placeholder="Enter your first name" />
               </div>
               <div>
-                <label htmlFor="organization" className="block text-sm font-medium text-gray-700 mb-2">
-                  Organization (Optional)
-                </label>
-                <input
-                  type="text"
-                  id="organization"
-                  value={organization}
-                  onChange={(e) => setOrganization(e.target.value)}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent transition-colors duration-200"
-                  placeholder="Your company or organization"
-                />
+                <label htmlFor="email" className="text-sm font-semibold muted-text block mb-2">Email Address *</label>
+                <input className="input" id="email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="Enter your email" />
               </div>
-              <button
-                type="submit"
-                className="w-full bg-gradient-to-r from-orange-400 to-red-500 text-white px-8 py-4 rounded-full font-semibold text-lg hover:from-orange-500 hover:to-red-600 transition-all duration-200 transform hover:scale-105 flex items-center justify-center space-x-2"
-              >
-                <Download className="h-5 w-5" />
-                <span>Download Free Guide</span>
-              </button>
-            </form>
+            </div>
+            <div>
+              <label htmlFor="organization" className="text-sm font-semibold muted-text block mb-2">Organization (Optional)</label>
+              <input className="input" id="organization" type="text" value={organization} onChange={(e) => setOrganization(e.target.value)} placeholder="Your company or organization" />
+            </div>
+            <button type="submit" className="btn-primary primary-gradient w-full inline-flex justify-center items-center gap-2">
+              <Download className="w-4 h-4" />
+              <span>Download Free Guide</span>
+            </button>
+          </form>
 
-            <p className="text-center text-sm text-gray-500 mt-6">
-              By downloading this guide, you'll also receive our weekly newsletter with leadership tips and DEI insights. 
-              You can unsubscribe at any time.
-            </p>
-          </div>
+          <p className="centered text-sm muted-text mt-4">By downloading this guide, you'll also receive our weekly newsletter with leadership tips and DEI insights. You can unsubscribe at any time.</p>
         </div>
       </section>
 
       {/* What's Inside */}
-      <section className="bg-gray-50 py-20">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-6">
-              What's Inside the Guide
-            </h2>
-            <p className="text-xl text-gray-600 max-w-3xl mx-auto">
-              This comprehensive 24-page guide gives you everything you need to start leading more inclusively today.
-            </p>
+      <section style={{background: 'var(--background-muted)', padding: '4rem 0'}}>
+        <div>
+          <div style={{textAlign: 'center', marginBottom: '2rem'}}>
+            <h2 style={{fontSize: '1.75rem', fontWeight: 700, color: 'var(--neutral-text)', marginBottom: '0.5rem'}}>What's Inside the Guide</h2>
+            <p style={{fontSize: '1.125rem', color: 'var(--muted-text)', maxWidth: '48rem', margin: '0 auto'}}>This comprehensive 24-page guide gives you everything you need to start leading more inclusively today.</p>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+          <div style={{display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1.5rem'}}>
             {benefits.map((benefit, index) => (
-              <div key={index} className="flex items-center space-x-3">
-                <CheckCircle className="h-6 w-6 text-green-500 flex-shrink-0" />
-                <span className="text-gray-700">{benefit}</span>
+              <div key={index} style={{display: 'flex', alignItems: 'center', gap: '0.75rem'}}>
+                <CheckCircle style={{height: '1.5rem', width: '1.5rem', color: 'var(--success)'}} />
+                <span style={{color: 'var(--neutral-text)'}}>{benefit}</span>
               </div>
             ))}
           </div>
@@ -216,31 +157,27 @@ const ResourcePage = () => {
       </section>
 
       {/* Additional Resources */}
-      <section className="py-20">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="text-center mb-16">
-            <h2 className="text-3xl md:text-4xl font-bold text-gray-900 mb-6">
-              More Free Resources
-            </h2>
-            <p className="text-xl text-gray-600 max-w-3xl mx-auto">
-              Continue your learning journey with these additional tools and resources.
-            </p>
+      <section style={{padding: '4rem 0'}}>
+        <div style={{maxWidth: '72rem', margin: '0 auto'}}>
+          <div style={{textAlign: 'center', marginBottom: '2rem'}}>
+            <h2 style={{fontSize: '1.5rem', fontWeight: 700, color: 'var(--neutral-text)', marginBottom: '0.5rem'}}>More Free Resources</h2>
+            <p style={{fontSize: '1.125rem', color: 'var(--muted-text)', maxWidth: '48rem', margin: '0 auto'}}>Continue your learning journey with these additional tools and resources.</p>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          <div style={{display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1.5rem'}}>
             {additionalResources.map((resource, index) => (
-              <div key={index} className="bg-white p-8 rounded-2xl shadow-lg hover:shadow-xl transition-shadow duration-200">
-                <div className="mb-4">{resource.icon}</div>
-                <h3 className="text-2xl font-bold text-gray-900 mb-4">{resource.title}</h3>
-                <p className="text-gray-600 mb-6">{resource.description}</p>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm text-orange-500 font-medium">{resource.type}</span>
+              <div key={index} style={{background: 'var(--card-bg)', padding: '1.5rem', borderRadius: '1rem', boxShadow: 'var(--elevation-2)'}}>
+                <div style={{marginBottom: '1rem'}}>{resource.icon}</div>
+                <h3 style={{fontSize: '1.25rem', fontWeight: 700, color: 'var(--neutral-text)', marginBottom: '0.75rem'}}>{resource.title}</h3>
+                <p style={{color: 'var(--muted-text)', marginBottom: '1rem'}}>{resource.description}</p>
+                <div style={{display: 'flex', alignItems: 'center', justifyContent: 'space-between'}}>
+                  <span style={{fontSize: '0.875rem', color: 'var(--accent)', fontWeight: 600}}>{resource.type}</span>
                   <button onClick={() => {
                     if (resource.type.includes('Download')) navigate('/resources');
                     else if (resource.type.includes('Video')) navigate('/lms/courses');
                     else navigate('/resources');
-                  }} className="bg-gray-100 text-gray-700 px-4 py-2 rounded-full font-medium hover:bg-orange-500 hover:text-white transition-colors duration-200 flex items-center space-x-2">
+                  }} style={{background: 'var(--muted-button-bg)', color: 'var(--muted-button-text)', padding: '0.5rem 0.75rem', borderRadius: '999px', border: 'none', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '0.5rem'}}>
                     <span>{resource.action}</span>
-                    <ArrowRight className="h-4 w-4" />
+                    <ArrowRight style={{height: '1rem', width: '1rem'}} />
                   </button>
                 </div>
               </div>
@@ -250,24 +187,17 @@ const ResourcePage = () => {
       </section>
 
       {/* CTA Section */}
-      <section className="bg-gradient-to-r from-blue-500 to-green-500 py-20">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 text-center">
-          <h2 className="text-3xl md:text-4xl font-bold text-white mb-6">
-            Ready to Go Deeper?
-          </h2>
-          <p className="text-xl text-blue-100 mb-8 max-w-2xl mx-auto">
-            These resources are just the beginning. Let's discuss how we can create a custom DEI strategy for your organization.
-          </p>
-          <button 
-            onClick={() => navigate('/contact')}
-            className="bg-white text-blue-500 px-8 py-4 rounded-full font-semibold text-lg hover:bg-gray-50 transition-colors duration-200 flex items-center mx-auto space-x-2"
-          >
-            <Calendar className="h-5 w-5" />
+      <section style={{background: 'var(--primary-gradient)', padding: '4rem 0', borderRadius: '1rem'}}>
+        <div style={{maxWidth: '72rem', margin: '0 auto', textAlign: 'center'}}>
+          <h2 style={{fontSize: '1.75rem', fontWeight: 700, color: 'var(--button-text)', marginBottom: '0.75rem'}}>Ready to Go Deeper?</h2>
+          <p style={{fontSize: '1.125rem', color: 'var(--button-muted)', marginBottom: '1rem', maxWidth: '40rem', marginLeft: 'auto', marginRight: 'auto'}}>These resources are just the beginning. Let's discuss how we can create a custom DEI strategy for your organization.</p>
+          <button onClick={() => navigate('/contact')} style={{background: 'var(--button-bg)', color: 'var(--primary)', padding: '0.75rem 1.25rem', borderRadius: '999px', fontWeight: 700, border: 'none', cursor: 'pointer', display: 'inline-flex', gap: '0.5rem', alignItems: 'center'}}>
+            <Calendar style={{height: '1.25rem', width: '1.25rem'}} />
             <span>Schedule Discovery Call</span>
           </button>
         </div>
       </section>
-    </div>
+    </PageWrapper>
   );
 };
 

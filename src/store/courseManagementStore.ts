@@ -61,6 +61,14 @@ class CourseManagementStore {
     return Array.from(this.courses.values());
   }
 
+  setCourse(course: Course): Course {
+    this.courses.set(course.id, {
+      ...course,
+      updatedAt: course.updatedAt || new Date().toISOString(),
+    });
+    return course;
+  }
+
   updateCourse(id: string, updates: Partial<Course>): Course | null {
     const course = this.courses.get(id);
     if (!course) return null;

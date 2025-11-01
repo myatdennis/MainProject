@@ -1,136 +1,139 @@
-import { useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
-import { Menu, X, Users } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Menu, X, Search, Zap } from 'lucide-react';
+import Button from './ui/Button';
+import Input from './ui/Input';
+import cn from '../utils/cn';
 
 const Header = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [scrolled, setScrolled] = useState(false);
   const location = useLocation();
-
   const navigation = [
     { name: 'Home', href: '/' },
-    { name: 'About', href: '/about' },
-    { name: 'Services', href: '/services' },
+    { name: 'Courses', href: '/courses' },
     { name: 'Resources', href: '/resources' },
-    { name: 'Testimonials', href: '/testimonials' },
+    { name: 'About', href: '/about' },
     { name: 'Contact', href: '/contact' },
   ];
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 8);
+    window.addEventListener('scroll', onScroll);
+    return () => window.removeEventListener('scroll', onScroll);
+  }, []);
 
   const isActive = (href: string) => location.pathname === href;
 
   return (
-    <header className="bg-white shadow-sm sticky top-0 z-50">
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex justify-between items-center py-4">
-          {/* Logo */}
-          <Link to="/" className="flex items-center space-x-2">
-            <div className="bg-gradient-to-r from-orange-400 to-red-500 p-2 rounded-lg">
-              <Users className="h-6 w-6 text-white" />
-            </div>
-            <span className="font-bold text-xl text-gray-900">The Huddle Co.</span>
-          </Link>
+    <header
+      className={`sticky top-0 z-50 border-b border-mist/60 bg-softwhite/95 backdrop-blur supports-[backdrop-filter]:bg-softwhite/80 transition-shadow ${
+        scrolled ? 'shadow-[0_6px_24px_rgba(16,24,40,0.08)]' : ''
+      }`}
+      aria-label="Primary navigation"
+      role="navigation"
+    >
+      <div className="mx-auto flex h-20 max-w-7xl items-center justify-between px-6 lg:px-12">
+        <Link to="/" aria-label="Go to home" className="flex items-center gap-3 no-underline">
+          <img
+            src="/logo.svg"
+            alt="Huddle Co."
+            className="h-12 w-12 rounded-2xl shadow-card-sm"
+          />
+        </Link>
 
-          {/* Desktop Navigation */}
-          <nav className="hidden md:flex space-x-8" role="navigation" aria-label="Main navigation">
+        <nav className="hidden lg:flex items-center gap-6" aria-label="Main navigation">
+          {navigation.map((item) => (
+            <Link
+              key={item.name}
+              to={item.href}
+              aria-current={isActive(item.href) ? 'page' : undefined}
+              className={`rounded-lg px-3 py-2 text-sm font-semibold transition-colors ${
+                isActive(item.href) ? 'text-sunrise' : 'text-slate/80 hover:text-charcoal'
+              }`}
+            >
+              {item.name}
+            </Link>
+          ))}
+        </nav>
+
+        <div className="flex items-center gap-3">
+          <div className="hidden md:flex items-center gap-2 rounded-full border border-mist bg-white px-3 py-1.5 shadow-sm">
+            <Search className="h-4 w-4 text-slate/70" />
+            <Input
+              placeholder="Search courses"
+              className="w-40 border-none p-0 text-sm text-charcoal focus-visible:ring-0 focus-visible:ring-offset-0"
+            />
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="hidden md:inline-flex"
+            leadingIcon={<Zap className="h-4 w-4" />}
+          >
+            Demo Mode
+          </Button>
+          <Link
+            to="/lms/login"
+            className={cn(
+              'hidden sm:inline-flex h-11 items-center justify-center rounded-lg border border-skyblue/30 px-4 text-sm font-semibold text-skyblue transition-colors hover:bg-skyblue/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-skyblue focus-visible:ring-offset-2 focus-visible:ring-offset-softwhite'
+            )}
+          >
+            Client Login
+          </Link>
+          <button
+            type="button"
+            onClick={() => navigate('/admin/login')}
+            className="inline-flex h-11 items-center justify-center rounded-lg bg-sunrise px-5 text-sm font-heading font-semibold text-white shadow-card-sm transition hover:bg-sunrise/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-skyblue focus-visible:ring-offset-2 focus-visible:ring-offset-softwhite"
+          >
+            Admin Portal
+          </button>
+          <button
+            onClick={() => setIsMenuOpen(!isMenuOpen)}
+            aria-expanded={isMenuOpen}
+            aria-label={isMenuOpen ? 'Close menu' : 'Open menu'}
+            className="ml-1 inline-flex h-10 w-10 items-center justify-center rounded-xl border border-mist text-charcoal lg:hidden"
+          >
+            {isMenuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+          </button>
+        </div>
+      </div>
+
+      {isMenuOpen && (
+        <div className="border-t border-mist/60 bg-softwhite lg:hidden">
+          <div className="mx-auto flex max-w-7xl flex-col gap-2 px-6 py-4">
             {navigation.map((item) => (
               <Link
                 key={item.name}
                 to={item.href}
-                className={`font-medium transition-colors duration-200 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 rounded-lg px-2 py-1 ${
-                  isActive(item.href)
-                    ? 'text-orange-500 border-b-2 border-orange-500'
-                    : 'text-gray-600 hover:text-orange-500'
+                onClick={() => setIsMenuOpen(false)}
+                className={`rounded-lg px-3 py-2 text-sm font-semibold ${
+                  isActive(item.href) ? 'bg-sunrise/10 text-sunrise' : 'text-charcoal'
                 }`}
-                aria-current={isActive(item.href) ? 'page' : undefined}
               >
                 {item.name}
               </Link>
             ))}
-          </nav>
-
-          {/* CTA Buttons */}
-          <div className="hidden md:flex items-center space-x-4">
-            <Link
-              to="/lms/login"
-              className="text-gray-600 hover:text-orange-500 font-medium transition-colors duration-200"
-            >
-              Client Login
-            </Link>
-            <Link
-              to="/admin/login"
-              className="text-gray-600 hover:text-orange-500 font-medium transition-colors duration-200 text-sm"
-            >
-              Admin
-            </Link>
-            <a
-              href="#book-call"
-              className="bg-gradient-to-r from-orange-400 to-red-500 text-white px-6 py-2 rounded-full font-medium hover:from-orange-500 hover:to-red-600 transition-all duration-200 transform hover:scale-105"
-            >
-              Book Discovery Call
-            </a>
-          </div>
-
-          {/* Mobile menu button */}
-                    {/* Mobile menu button */}
-          <div className="md:hidden">
-            <button
-              onClick={() => setIsMenuOpen(!isMenuOpen)}
-              className="text-gray-500 hover:text-gray-700 focus:outline-none focus:text-gray-700 focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 rounded-lg p-2"
-              aria-expanded={isMenuOpen}
-              aria-label={isMenuOpen ? 'Close navigation menu' : 'Open navigation menu'}
-            >
-              {isMenuOpen ? (
-                <X className="h-6 w-6" />
-              ) : (
-                <Menu className="h-6 w-6" />
-              )}
-            </button>
-          </div>
-        </div>
-
-        {/* Mobile Navigation */}
-        {isMenuOpen && (
-          <div className="md:hidden py-4 border-t border-gray-200">
-            <div className="flex flex-col space-y-4">
-              {navigation.map((item) => (
-                <Link
-                  key={item.name}
-                  to={item.href}
-                  className={`font-medium px-4 py-2 rounded-lg transition-colors duration-200 ${
-                    isActive(item.href)
-                      ? 'text-orange-500 bg-orange-50'
-                      : 'text-gray-600 hover:text-orange-500 hover:bg-gray-50'
-                  }`}
-                  onClick={() => setIsMenuOpen(false)}
-                >
-                  {item.name}
-                </Link>
-              ))}
-              <div className="px-4 pt-4 border-t border-gray-200">
-                <Link
-                  to="/lms/login"
-                  className="block text-gray-600 hover:text-orange-500 font-medium mb-3"
-                  onClick={() => setIsMenuOpen(false)}
-                >
-                  Client Login
-                </Link>
-                <Link
-                  to="/admin/login"
-                  className="block text-gray-600 hover:text-orange-500 font-medium mb-3 text-sm"
-                  onClick={() => setIsMenuOpen(false)}
-                >
-                  Admin Portal
-                </Link>
-                <a
-                  href="#book-call"
-                  className="block text-center bg-gradient-to-r from-orange-400 to-red-500 text-white px-6 py-3 rounded-full font-medium hover:from-orange-500 hover:to-red-600 transition-all duration-200"
-                >
-                  Book Discovery Call
-                </a>
-              </div>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <Link
+                to="/lms/login"
+                onClick={() => setIsMenuOpen(false)}
+                className="inline-flex h-11 items-center justify-center rounded-lg border border-skyblue/30 text-sm font-semibold text-skyblue transition hover:bg-skyblue/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-skyblue focus-visible:ring-offset-2 focus-visible:ring-offset-softwhite"
+              >
+                Client
+              </Link>
+              <Link
+                to="/admin/login"
+                onClick={() => setIsMenuOpen(false)}
+                className="inline-flex h-11 items-center justify-center rounded-lg bg-sunrise text-sm font-heading font-semibold text-white shadow-card-sm transition hover:bg-sunrise/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-skyblue focus-visible:ring-offset-2 focus-visible:ring-offset-softwhite"
+              >
+                Admin
+              </Link>
             </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </header>
   );
 };

@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import toast from 'react-hot-toast';
 import { 
   BarChart3, 
   TrendingUp, 
@@ -33,6 +34,30 @@ interface UserBehaviorMetrics {
 }
 
 const AdminPerformanceDashboard: React.FC = () => {
+  // ...existing useState declarations...
+
+  function exportDashboardData() {
+    try {
+      const data = {
+        metrics,
+        behaviorMetrics,
+        optimizationImpacts,
+        liveData
+      };
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'dashboard_export.json';
+      a.click();
+      toast.success('Dashboard data exported!');
+    } catch (err) {
+      toast.error('Export failed');
+    }
+  }
+  // ...existing useState declarations...
+
+
   const [metrics, setMetrics] = useState<PerformanceMetrics>({
     pageLoadTime: 0.8,
     componentRenderTime: 12,
@@ -111,6 +136,16 @@ const AdminPerformanceDashboard: React.FC = () => {
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900 mb-2">Performance Optimization Dashboard</h1>
         <p className="text-gray-600">Real-time monitoring of platform performance improvements</p>
+      </div>
+
+      {/* Export Button */}
+      <div className="mb-6 flex justify-end">
+        <button
+          className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+          onClick={exportDashboardData}
+        >
+          Export Data
+        </button>
       </div>
 
       {/* Live Metrics Overview */}

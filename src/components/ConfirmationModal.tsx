@@ -1,5 +1,6 @@
 import React from 'react';
 import { AlertTriangle, X, Trash2, CheckCircle } from 'lucide-react';
+import { motion, AnimatePresence } from 'framer-motion';
 import LoadingButton from './LoadingButton';
 
 export interface ConfirmationModalProps {
@@ -25,6 +26,12 @@ const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
   type = 'danger',
   loading = false
 }) => {
+  // Framer Motion modal animation
+  const modalVariants = {
+    hidden: { opacity: 0, y: 40 },
+    visible: { opacity: 1, y: 0, transition: { duration: 0.22 } },
+    exit: { opacity: 0, y: 40, transition: { duration: 0.14 } }
+  };
   if (!isOpen) return null;
 
   const getTypeConfig = () => {
@@ -66,50 +73,74 @@ const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
     }
   };
 
+  const headerBg = type === 'danger'
+    ? 'rgba(229,62,62,0.12)'
+    : type === 'warning'
+    ? 'rgba(250,204,100,0.12)'
+    : 'rgba(58,125,255,0.08)';
+
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-xl shadow-xl max-w-md w-full mx-4">
-        {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-gray-200">
-          <div className="flex items-center space-x-3">
-            <div className={`p-2 rounded-lg ${typeConfig.bgColor}`}>
-              {typeConfig.icon}
+    <AnimatePresence>
+      {isOpen && (
+        <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="confirmation-modal-title">
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="modal-overlay"
+            onClick={onClose}
+            aria-label="Close modal background"
+          />
+          <motion.div
+            className="modal-panel"
+            tabIndex={-1}
+            variants={modalVariants}
+            initial="hidden"
+            animate="visible"
+            exit="exit"
+            aria-label="Confirmation Modal"
+          >
+            {/* Header */}
+            <div className="modal-header">
+              <div style={{display: 'flex', alignItems: 'center', gap: 12}}>
+                <div className="icon-wrap" style={{background: headerBg}}>{typeConfig.icon}</div>
+                <h2 id="confirmation-modal-title" style={{fontSize: 20, fontWeight: 800, color: 'var(--neutral-text)'}}>{title}</h2>
+              </div>
+              <button
+                onClick={onClose}
+                className="modal-close"
+                disabled={loading}
+                aria-label="Close modal"
+              >
+                <X style={{width: 18, height: 18, color: 'var(--subtext-muted)'}} />
+              </button>
             </div>
-            <h2 className="text-xl font-bold text-gray-900">{title}</h2>
-          </div>
-          <button
-            onClick={onClose}
-            className="p-2 text-gray-400 hover:text-gray-600 rounded-lg"
-            disabled={loading}
-          >
-            <X className="h-5 w-5" />
-          </button>
+            {/* Content */}
+            <div className="modal-content">
+              <p>{message}</p>
+            </div>
+            {/* Actions */}
+            <div className="modal-actions">
+              <button
+                onClick={onClose}
+                className="" 
+                disabled={loading}
+                style={{padding: '8px 14px', color: 'var(--neutral-text)', background: 'transparent', border: '1px solid var(--card-border)', borderRadius: 12, fontWeight: 700}}
+              >
+                {cancelText}
+              </button>
+              <LoadingButton
+                onClick={handleConfirm}
+                loading={loading}
+                variant={typeConfig.buttonVariant}
+              >
+                {confirmText}
+              </LoadingButton>
+            </div>
+          </motion.div>
         </div>
-
-        {/* Content */}
-        <div className="p-6">
-          <p className="text-gray-700 leading-relaxed">{message}</p>
-        </div>
-
-        {/* Actions */}
-        <div className="flex items-center justify-end space-x-4 p-6 border-t border-gray-200">
-          <button
-            onClick={onClose}
-            className="px-4 py-2 text-gray-700 bg-gray-100 hover:bg-gray-200 rounded-lg transition-colors duration-200"
-            disabled={loading}
-          >
-            {cancelText}
-          </button>
-          <LoadingButton
-            onClick={handleConfirm}
-            loading={loading}
-            variant={typeConfig.buttonVariant}
-          >
-            {confirmText}
-          </LoadingButton>
-        </div>
-      </div>
-    </div>
+      )}
+    </AnimatePresence>
   );
 };
 

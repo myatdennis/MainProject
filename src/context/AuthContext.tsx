@@ -15,6 +15,7 @@ interface LoginResult {
 
 interface AuthContextType {
   isAuthenticated: AuthState;
+  authInitializing: boolean;
   login: (email: string, password: string, type: 'lms' | 'admin') => Promise<LoginResult>;
   logout: (type: 'lms' | 'admin') => Promise<void>;
   forgotPassword: (email: string) => Promise<boolean>;
@@ -40,38 +41,52 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   });
   const [user, setUser] = useState<AuthContextType['user']>(null);
   const [supabaseUser, setSupabaseUser] = useState<User | null>(null);
+  const [authInitializing, setAuthInitializing] = useState(true);
 
   // Check for existing authentication on mount
   useEffect(() => {
-    // Check for existing Supabase session
-    supabase.auth.getSession().then((res: { data: { session: Session | null } }) => {
-      const session: Session | null = res.data.session;
-      if (session?.user) {
-        setSupabaseUser(session.user);
-        const lmsAuth = localStorage.getItem('huddle_lms_auth') === 'true';
-        const adminAuth = localStorage.getItem('huddle_admin_auth') === 'true';
-        const savedUser = localStorage.getItem('huddle_user');
+    let isMounted = true;
 
-        setIsAuthenticated({
-          lms: lmsAuth,
-          admin: adminAuth
-        });
+    const loadExistingSession = async () => {
+      try {
+        const res = await supabase.auth.getSession();
+        if (!isMounted) return;
 
-        if (savedUser) {
-          try {
-            setUser(JSON.parse(savedUser));
-          } catch (error) {
-            console.error('Error parsing saved user data:', error);
-            localStorage.removeItem('huddle_user');
+        const session: Session | null = res.data.session;
+        if (session?.user) {
+          setSupabaseUser(session.user);
+          const lmsAuth = localStorage.getItem('huddle_lms_auth') === 'true';
+          const adminAuth = localStorage.getItem('huddle_admin_auth') === 'true';
+          const savedUser = localStorage.getItem('huddle_user');
+
+          setIsAuthenticated({
+            lms: lmsAuth,
+            admin: adminAuth
+          });
+
+          if (savedUser) {
+            try {
+              setUser(JSON.parse(savedUser));
+            } catch (error) {
+              console.error('Error parsing saved user data:', error);
+              localStorage.removeItem('huddle_user');
+            }
           }
         }
+      } catch (error) {
+        console.warn('Supabase session lookup failed, continuing in demo mode:', error);
+      } finally {
+        if (isMounted) {
+          setAuthInitializing(false);
+        }
       }
-    });
+    };
+
+    loadExistingSession();
 
     // Listen for auth changes
     const { data } = supabase.auth.onAuthStateChange(
       async (_event: string, session: Session | null) => {
-        // eslint-disable-next-line no-console
         console.log('AuthContext auth state change, has session:', !!session);
         if (session?.user) {
           setSupabaseUser(session.user);
@@ -86,7 +101,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       }
     );
 
-    return () => data.subscription.unsubscribe();
+    return () => {
+      isMounted = false;
+      data.subscription.unsubscribe();
+    };
   }, []);
 
   const login = async (email: string, password: string, type: 'lms' | 'admin'): Promise<LoginResult> => {
@@ -281,6 +299,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   return (
     <AuthContext.Provider value={{
       isAuthenticated,
+      authInitializing,
       login,
       logout,
       forgotPassword,

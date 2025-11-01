@@ -1,6 +1,6 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { 
+import {
   Play, 
   Pause, 
   SkipForward, 
@@ -20,22 +20,86 @@ import {
   ArrowRight,
   Bookmark,
   MessageCircle,
-  FileText
+  FileText,
+  AlertCircle,
+  RefreshCw,
+  BookOpen,
+  Download
 } from 'lucide-react';
 import { Course, Lesson, LearnerProgress, UserBookmark, UserNote } from '../../types/courseTypes';
-import courseManagementStore from '../../store/courseManagementStore';
+import type { NormalizedCourse, NormalizedLesson } from '../../utils/courseNormalization';
+import { loadCourse } from '../../services/courseDataLoader';
+import {
+  loadStoredCourseProgress,
+  saveStoredCourseProgress,
+  syncCourseProgressWithRemote,
+  buildLearnerProgressSnapshot,
+  type StoredCourseProgress
+} from '../../utils/courseProgress';
+import cn from '../../utils/cn';
+import Card from '../ui/Card';
+import Button from '../ui/Button';
+import Badge from '../ui/Badge';
+import ProgressBar from '../ui/ProgressBar';
+import LoadingSpinner from '../ui/LoadingSpinner';
+import CourseCompletion from '../CourseCompletion';
+import { useSyncService } from '../../services/syncService';
+import { useToast } from '../../context/ToastContext';
+import {
+  updateAssignmentProgress,
+} from '../../utils/assignmentStorage';
+import { analyticsService } from '../../services/analyticsService';
 
-const CoursePlayer: React.FC = () => {
+interface CoursePlayerProps {
+  namespace?: 'lms' | 'client';
+}
+
+const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'lms' }) => {
   const { courseId, lessonId } = useParams();
   const navigate = useNavigate();
-  
-  const [course, setCourse] = useState<Course | null>(null);
-  const [currentLesson, setCurrentLesson] = useState<Lesson | null>(null);
-  const [progress, setProgress] = useState<LearnerProgress | null>(null);
+  const syncService = useSyncService();
+  const { showToast } = useToast();
+  const isClientNamespace = namespace === 'client';
+  const coursePathBase = isClientNamespace ? '/client/courses' : '/lms/course';
+  const lessonPathSegment = isClientNamespace ? 'lessons' : 'lesson';
+  const coursesIndexPath = isClientNamespace ? '/client/courses' : '/lms/courses';
+  const eventSource = isClientNamespace ? 'client' : 'lms';
+
+  const learnerId = useMemo(() => {
+    try {
+      const raw = localStorage.getItem('huddle_user');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        return (parsed.email || parsed.id || 'local-user').toLowerCase();
+      }
+    } catch (error) {
+      console.warn('Failed to read learner identity:', error);
+    }
+    return 'local-user';
+  }, []);
+
+  const [courseData, setCourseData] = useState<{ course: NormalizedCourse; lessons: NormalizedLesson[] } | null>(null);
+  const [currentLesson, setCurrentLesson] = useState<NormalizedLesson | null>(null);
+  const [completedLessons, setCompletedLessons] = useState<Set<string>>(new Set());
+  const [lessonProgressMap, setLessonProgressMap] = useState<Record<string, number>>({});
+  const [lessonPositions, setLessonPositions] = useState<Record<string, number>>({});
   const [isLoading, setIsLoading] = useState(true);
-  
+  const [error, setError] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
+  const [showCompletionScreen, setShowCompletionScreen] = useState(false);
+  const [completionTimestamp, setCompletionTimestamp] = useState<number | null>(null);
+  const [hasLoggedCourseCompletion, setHasLoggedCourseCompletion] = useState(false);
+
+  const handleRetry = () => setReloadToken((token) => token + 1);
+
+  const storedProgressRef = useRef<StoredCourseProgress | null>(null);
+  const lessonIdRef = useRef<string | undefined>(lessonId);
+  const hasTrackedInitialEventRef = useRef(false);
+  const lastLoggedErrorRef = useRef<string | null>(null);
+
   // Video player state
   const videoRef = useRef<HTMLVideoElement>(null);
+  const headingRef = useRef<HTMLHeadingElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
@@ -44,70 +108,310 @@ const CoursePlayer: React.FC = () => {
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
   const [showControls, _setShowControls] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
-  
+
   // UI state
   const [showTranscript, setShowTranscript] = useState(false);
   const [showNotes, setShowNotes] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [showQuizModal, setShowQuizModal] = useState(false);
-  
+
   // Note-taking state
   const [noteText, setNoteText] = useState('');
   const [userNotes, setUserNotes] = useState<UserNote[]>([]);
   const [userBookmarks, setUserBookmarks] = useState<UserBookmark[]>([]);
 
-  useEffect(() => {
-    if (courseId) {
-      const courseData = courseManagementStore.getCourse(courseId);
-      if (courseData) {
-        setCourse(courseData);
-        
-        // Get user progress
-        const userProgress = courseManagementStore.getLearnerProgress('user-123', courseId);
-        setProgress(userProgress);
-        
-        // Set current lesson
-        if (lessonId) {
-          const lesson = findLessonById(courseData, lessonId);
-          setCurrentLesson(lesson);
-        } else {
-          // Start with first lesson if no specific lesson
-          const firstLesson = getFirstLesson(courseData);
-          if (firstLesson) {
-            setCurrentLesson(firstLesson);
-            navigate(`/lms/course/${courseId}/lesson/${firstLesson.id}`, { replace: true });
-          }
-        }
-        
-        // Load user notes and bookmarks
-        loadUserNotesAndBookmarks();
+  const progress = useMemo(() => {
+    if (!courseData) return null;
+    return buildLearnerProgressSnapshot(courseData.course, completedLessons, lessonProgressMap, lessonPositions);
+  }, [courseData, completedLessons, lessonProgressMap, lessonPositions]);
+
+  const courseLessons = courseData?.lessons ?? [];
+  const course = courseData?.course ?? null;
+  const currentLessonIndex = currentLesson
+    ? courseLessons.findIndex((lesson) => lesson.id === currentLesson.id)
+    : -1;
+  const canGoPrevious = currentLessonIndex > 0;
+  const canGoNext = currentLessonIndex !== -1 && currentLessonIndex < courseLessons.length - 1;
+
+  const calculateOverallPercent = useCallback(
+    (progressMap: Record<string, number>, completedSet: Set<string>) => {
+      if (courseLessons.length === 0) {
+        return 0;
       }
-      setIsLoading(false);
+
+      const total = courseLessons.reduce((accumulator, lesson) => {
+        if (completedSet.has(lesson.id)) {
+          return accumulator + 100;
+        }
+        const lessonProgress = Math.min(progressMap[lesson.id] ?? 0, 100);
+        return accumulator + lessonProgress;
+      }, 0);
+
+      return Math.round(total / courseLessons.length);
+    },
+    [courseLessons]
+  );
+
+  useEffect(() => {
+    if (!course || courseLessons.length === 0) return;
+
+    const allLessonsCompleted = completedLessons.size === courseLessons.length;
+
+    if (allLessonsCompleted) {
+      if (!hasLoggedCourseCompletion) {
+        const totalTimeSeconds = Object.values(lessonPositions).reduce(
+          (sum, value) => sum + Math.max(0, Math.round(value ?? 0)),
+          0
+        );
+        const modulesCompletedCount = Array.isArray((course as any)?.modules)
+          ? ((course as any).modules as Array<{ lessons?: Array<{ id: string }> }>).filter(
+              (module) =>
+                Array.isArray(module?.lessons) &&
+                module.lessons.length > 0 &&
+                module.lessons.every((moduleLesson) => completedLessons.has(moduleLesson.id))
+            ).length
+          : 0;
+
+        syncService.logEvent({
+          type: 'course_completed',
+          courseId: course.id,
+          source: eventSource,
+          userId: learnerId,
+          data: {
+            courseId: course.id,
+            completedAt: Date.now(),
+            overallProgress: 1,
+          },
+          timestamp: Date.now(),
+        });
+        analyticsService.trackCourseCompletion(learnerId, course.id, {
+          totalTimeSpent: Math.max(0, Math.round(totalTimeSeconds / 60)),
+          modulesCompleted: modulesCompletedCount,
+          lessonsCompleted: courseLessons.length,
+          quizzesPassed: 0,
+          certificateGenerated: Boolean(storedProgressRef.current?.lastLessonId),
+        });
+        setHasLoggedCourseCompletion(true);
+      }
+
+      if (completionTimestamp === null) {
+        setCompletionTimestamp(Date.now());
+        setShowCompletionScreen(true);
+      }
+    } else {
+      if (hasLoggedCourseCompletion) {
+        setHasLoggedCourseCompletion(false);
+      }
+      if (completionTimestamp !== null) {
+        setCompletionTimestamp(null);
+      }
+      if (showCompletionScreen) {
+        setShowCompletionScreen(false);
+      }
     }
-  }, [courseId, lessonId, navigate]);
+  }, [
+    completedLessons,
+    course,
+    courseLessons.length,
+    eventSource,
+    hasLoggedCourseCompletion,
+    learnerId,
+    syncService,
+    completionTimestamp,
+    showCompletionScreen,
+  ]);
 
-  const findLessonById = (course: Course, lessonId: string): Lesson | null => {
-    for (const chapter of course.chapters || []) {
-      const lesson = chapter.lessons.find(l => l.id === lessonId);
-      if (lesson) return lesson;
+  const persistProgress = useCallback(
+    (lastLesson?: string) => {
+      if (!courseData) return;
+      const payload: StoredCourseProgress = {
+        completedLessonIds: Array.from(completedLessons),
+        lessonProgress: lessonProgressMap,
+        lessonPositions,
+        lastLessonId: lastLesson ?? storedProgressRef.current?.lastLessonId
+      };
+      storedProgressRef.current = payload;
+      saveStoredCourseProgress(courseData.course.slug, payload, {
+        courseId: courseData.course.id,
+        userId: learnerId,
+        lessonIds: courseLessons.map((lesson) => lesson.id),
+      });
+    },
+    [courseData, completedLessons, lessonProgressMap, lessonPositions, courseLessons, learnerId]
+  );
+
+  useEffect(() => {
+    if (!courseData || !currentLesson) {
+      return;
     }
-    return null;
-  };
+    persistProgress(currentLesson.id);
+  }, [courseData, currentLesson, persistProgress]);
 
-  const getFirstLesson = (course: Course): Lesson | null => {
-    return (course.chapters || [])[0]?.lessons[0] || null;
-  };
+  useEffect(() => {
+    if (!courseData) return;
+    persistProgress(currentLesson?.id);
+  }, [completedLessons, lessonProgressMap, lessonPositions, courseData, currentLesson, persistProgress]);
 
-  const loadUserNotesAndBookmarks = () => {
-    if (!courseId) return;
-    
-    const notes = courseManagementStore.getUserNotes('user-123', courseId);
-    const bookmarks = courseManagementStore.getUserBookmarks('user-123', courseId);
-    
-    setUserNotes(notes);
-    setUserBookmarks(bookmarks);
-  };
+  useEffect(() => {
+    if (!error || !course?.id) {
+      if (!error) {
+        lastLoggedErrorRef.current = null;
+      }
+      return;
+    }
+
+    if (lastLoggedErrorRef.current === error) {
+      return;
+    }
+
+    analyticsService.trackEvent(
+      'error_occurred',
+      learnerId,
+      {
+        courseId: course.id,
+        message: error,
+        source: eventSource,
+      },
+      course.id
+    );
+
+    lastLoggedErrorRef.current = error;
+  }, [error, course?.id, learnerId, eventSource]);
+
+  useEffect(() => {
+    lessonIdRef.current = lessonId;
+  }, [lessonId]);
+
+  useEffect(() => {
+    if (!currentLesson) return;
+    const savedPosition = lessonPositions[currentLesson.id] ?? 0;
+    setCurrentTime(savedPosition);
+  }, [currentLesson?.id]);
+
+  useEffect(() => {
+    if (!courseData) return;
+    if (!lessonId) return;
+
+    const lesson = courseLessons.find((item) => item.id === lessonId);
+    if (lesson) {
+      setCurrentLesson(lesson);
+    }
+  }, [lessonId, courseData, courseLessons]);
+
+  useEffect(() => {
+    if (isLoading) return;
+    if (headingRef.current) {
+      headingRef.current.focus();
+    }
+  }, [isLoading, currentLesson?.id, showCompletionScreen, error]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const loadData = async () => {
+      if (!courseId) {
+        setError('Missing course identifier');
+        setIsLoading(false);
+        return;
+      }
+
+      setIsLoading(true);
+      setError(null);
+
+      try {
+        const result = await loadCourse(courseId, { includeDrafts: false, preferRemote: true });
+
+        if (!isMounted) return;
+
+        if (!result) {
+          setCourseData(null);
+          setCurrentLesson(null);
+          setError('Course not found.');
+          setIsLoading(false);
+          return;
+        }
+
+        setCourseData({ course: result.course, lessons: result.lessons });
+
+        if (learnerId) {
+          await syncCourseProgressWithRemote({
+            courseSlug: result.course.slug,
+            courseId: result.course.id,
+            userId: learnerId,
+            lessonIds: result.lessons.map((lesson) => lesson.id),
+          });
+        }
+
+        const stored = loadStoredCourseProgress(result.course.slug);
+        storedProgressRef.current = stored;
+
+        setCompletedLessons(new Set(stored.completedLessonIds));
+        setLessonProgressMap(stored.lessonProgress || {});
+        setLessonPositions(stored.lessonPositions || {});
+
+        const desiredLessonId = lessonIdRef.current || stored.lastLessonId;
+        const startingLesson =
+          (desiredLessonId && result.lessons.find((lesson) => lesson.id === desiredLessonId)) ||
+          result.lessons[0] ||
+          null;
+
+        if (startingLesson) {
+          setCurrentLesson(startingLesson);
+          if (!lessonId || lessonId !== startingLesson.id) {
+            navigate(
+              `${coursePathBase}/${result.course.slug}/${lessonPathSegment}/${startingLesson.id}`,
+              { replace: true }
+            );
+          }
+        } else {
+          setCurrentLesson(null);
+        }
+      } catch (err) {
+        if (!isMounted) return;
+        console.error('Failed to load course data:', err);
+        setCourseData(null);
+        setCurrentLesson(null);
+        setError(err instanceof Error ? err.message : 'Failed to load course data');
+      } finally {
+        if (isMounted) {
+          setIsLoading(false);
+        }
+      }
+    };
+
+    loadData();
+
+    return () => {
+      isMounted = false;
+    };
+  }, [courseId, navigate, reloadToken, learnerId]);
+
+  useEffect(() => {
+    if (!courseData?.course || !learnerId || hasTrackedInitialEventRef.current) {
+      return;
+    }
+
+    const stored = storedProgressRef.current;
+    if (!stored) {
+      return;
+    }
+
+    const hasAnyProgress =
+      stored.completedLessonIds.length > 0 ||
+      Object.values(stored.lessonProgress ?? {}).some((value) => (value ?? 0) > 0);
+
+    const eventType = hasAnyProgress ? 'course_resumed' : 'course_started';
+    analyticsService.trackEvent(
+      eventType,
+      learnerId,
+      {
+        courseSlug: courseData.course.slug,
+        source: eventSource,
+      },
+      courseData.course.id
+    );
+
+    hasTrackedInitialEventRef.current = true;
+  }, [courseData, learnerId, eventSource]);
 
   const handlePlayPause = () => {
     if (videoRef.current) {
@@ -120,14 +424,133 @@ const CoursePlayer: React.FC = () => {
     }
   };
 
+  const logProgress = useCallback(
+    (lessonId: string, progressValue: number, position: number) => {
+      syncService.logEvent({
+        type: 'user_progress',
+        source: eventSource,
+        courseId: course?.id,
+        userId: learnerId,
+        data: {
+          courseId: course?.id,
+          lessonId,
+          progress: progressValue,
+          position,
+        },
+        timestamp: Date.now(),
+      });
+
+      if (course?.id) {
+        const boundedProgress = Math.min(progressValue, 100);
+        const nextProgressMap = {
+          ...lessonProgressMap,
+          [lessonId]: boundedProgress,
+        };
+
+        const nextCompleted = new Set(completedLessons);
+        if (boundedProgress >= 100) {
+          nextCompleted.add(lessonId);
+        }
+
+        const overallPercent = calculateOverallPercent(nextProgressMap, nextCompleted);
+        void updateAssignmentProgress(course.id, learnerId, overallPercent);
+      }
+    },
+    [
+      course?.id,
+      learnerId,
+      syncService,
+      eventSource,
+      lessonProgressMap,
+      completedLessons,
+      calculateOverallPercent,
+    ]
+  );
+
+  const completeLesson = useCallback(
+    (lesson: NormalizedLesson, position?: number, totalDuration?: number, silent = false) => {
+      const nextCompleted = new Set(completedLessons);
+      nextCompleted.add(lesson.id);
+
+      const nextProgressMap = {
+        ...lessonProgressMap,
+        [lesson.id]: 100,
+      };
+
+      setCompletedLessons(nextCompleted);
+      if ((lessonProgressMap[lesson.id] ?? 0) < 100) {
+        setLessonProgressMap(nextProgressMap);
+      }
+
+      if (position !== undefined) {
+        setLessonPositions((prev) => ({
+          ...prev,
+          [lesson.id]: totalDuration ? Math.min(position, totalDuration) : position,
+        }));
+      }
+
+      syncService.logEvent({
+        type: 'user_completed',
+        source: eventSource,
+        courseId: course?.id,
+        userId: learnerId,
+        data: {
+          courseId: course?.id,
+          lessonId: lesson.id,
+          completedAt: Date.now(),
+        },
+        timestamp: Date.now(),
+      });
+
+      if (!silent) {
+        showToast(`Marked "${lesson.title}" complete`, 'success');
+      }
+
+      if (course?.id) {
+        const overallPercent = calculateOverallPercent(nextProgressMap, nextCompleted);
+        void updateAssignmentProgress(course.id, learnerId, overallPercent);
+      }
+    },
+    [
+      course?.id,
+      learnerId,
+      showToast,
+      syncService,
+      eventSource,
+      lessonProgressMap,
+      completedLessons,
+      calculateOverallPercent,
+    ]
+  );
+
   const handleTimeUpdate = () => {
-    if (videoRef.current) {
-      setCurrentTime(videoRef.current.currentTime);
-      
-      // Update progress
-      if (currentLesson && courseId) {
-        const progressPercent = (videoRef.current.currentTime / videoRef.current.duration) * 100;
-        courseManagementStore.updateLessonProgress('user-123', courseId, currentLesson.id, { progress: progressPercent });
+    if (!videoRef.current || !currentLesson) return;
+
+    const player = videoRef.current;
+    if (!player.duration || Number.isNaN(player.duration)) return;
+
+    const position = player.currentTime;
+    const progressPercent = Math.min(100, Math.round((position / player.duration) * 100));
+
+    setCurrentTime(position);
+
+    setLessonPositions((prev) => {
+      const previous = prev[currentLesson.id] ?? 0;
+      if (Math.abs(previous - position) < 1) return prev;
+      return { ...prev, [currentLesson.id]: position };
+    });
+
+    const previousProgress = lessonProgressMap[currentLesson.id] ?? 0;
+    if (progressPercent > previousProgress) {
+      setLessonProgressMap((prev) => ({
+        ...prev,
+        [currentLesson.id]: progressPercent,
+      }));
+
+      if (progressPercent >= 90 && !completedLessons.has(currentLesson.id)) {
+        completeLesson(currentLesson, position, player.duration, true);
+      } else if (progressPercent - previousProgress >= 10) {
+        logProgress(currentLesson.id, progressPercent, position);
       }
     }
   };
@@ -168,246 +591,356 @@ const CoursePlayer: React.FC = () => {
     }
   };
 
-  const navigateLesson = (direction: 'prev' | 'next') => {
-    if (!course || !currentLesson) return;
+  const navigateLesson = useCallback(
+    (direction: 'prev' | 'next') => {
+      if (!currentLesson || courseLessons.length === 0) return;
 
-    const allLessons = (course.chapters || []).flatMap((chapter: { lessons: Lesson[] }) => chapter.lessons);
-    const currentIndex = allLessons.findIndex(lesson => lesson.id === currentLesson.id);
-    
-    let nextIndex: number;
-    if (direction === 'next') {
-      nextIndex = currentIndex + 1;
-    } else {
-      nextIndex = currentIndex - 1;
-    }
+      const currentIndex = courseLessons.findIndex((lesson) => lesson.id === currentLesson.id);
+      if (currentIndex === -1) return;
 
-    if (nextIndex >= 0 && nextIndex < allLessons.length) {
-      const nextLesson = allLessons[nextIndex];
-      navigate(`/lms/course/${courseId}/lesson/${nextLesson.id}`);
-    }
-  };
+      const offset = direction === 'next' ? 1 : -1;
+      const nextIndex = currentIndex + offset;
+      if (nextIndex < 0 || nextIndex >= courseLessons.length) return;
+
+      const nextLesson = courseLessons[nextIndex];
+      const courseSlug = courseData?.course.slug || courseId || '';
+      if (!courseSlug) return;
+      navigate(`${coursePathBase}/${courseSlug}/${lessonPathSegment}/${nextLesson.id}`);
+    },
+    [courseLessons, currentLesson, navigate, courseData, courseId, coursePathBase, lessonPathSegment]
+  );
 
   const markLessonComplete = () => {
-    if (currentLesson && courseId) {
-      courseManagementStore.markLessonComplete('user-123', courseId, currentLesson.id);
-      
-      // Refresh progress
-      const updatedProgress = courseManagementStore.getLearnerProgress('user-123', courseId);
-      setProgress(updatedProgress);
-      
-      // Auto-navigate to next lesson
-      navigateLesson('next');
-    }
+    if (!currentLesson) return;
+    completeLesson(currentLesson);
+    navigateLesson('next');
   };
 
   const addBookmark = () => {
-    if (currentLesson && courseId) {
-      const timestamp = Math.floor(currentTime);
-      courseManagementStore.addBookmark('user-123', courseId, { 
-        lessonId: currentLesson.id, 
-        position: timestamp, 
-        note: 'Video bookmark' 
-      });
-      loadUserNotesAndBookmarks();
-    }
+    if (!currentLesson) return;
+    const timestamp = Math.floor(currentTime);
+    const newBookmark: UserBookmark = {
+      id: `bookmark-${Date.now()}`,
+      lessonId: currentLesson.id,
+      position: timestamp,
+      note: 'Video bookmark',
+      createdAt: new Date().toISOString()
+    };
+    setUserBookmarks((prev) => [newBookmark, ...prev]);
   };
 
   const addNote = () => {
-    if (noteText.trim() && currentLesson && courseId) {
-      const timestamp = Math.floor(currentTime);
-      courseManagementStore.addNote('user-123', courseId, { 
-        lessonId: currentLesson.id, 
-        content: noteText, 
-        position: timestamp 
-      });
-      setNoteText('');
-      loadUserNotesAndBookmarks();
-    }
+    if (!noteText.trim() || !currentLesson) return;
+
+    const timestamp = Math.floor(currentTime);
+    const newNote: UserNote = {
+      id: `note-${Date.now()}`,
+      lessonId: currentLesson.id,
+      position: timestamp,
+      content: noteText,
+      isPrivate: true,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    setUserNotes((prev) => [newNote, ...prev]);
+    setNoteText('');
   };
 
   if (isLoading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-500"></div>
+      <div className="flex min-h-screen items-center justify-center bg-softwhite">
+        <LoadingSpinner size="lg" />
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="bg-softwhite py-24">
+        <div className="mx-auto max-w-xl px-6">
+          <Card tone="muted" padding="lg" className="text-center" role="alert" aria-live="polite">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-sunrise/10 text-sunrise">
+              <AlertCircle className="h-6 w-6" />
+            </div>
+            <h2 className="mt-4 font-heading text-xl font-semibold text-charcoal">Unable to load course</h2>
+            <p className="mt-2 text-sm text-slate/80">{error}</p>
+            <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-center">
+              <Button onClick={handleRetry} trailingIcon={<RefreshCw className="h-4 w-4" />}>
+                Try again
+              </Button>
+              <Button variant="ghost" onClick={() => navigate(coursesIndexPath)}>
+                Back to courses
+              </Button>
+            </div>
+          </Card>
+        </div>
+      </div>
+    );
+  }
+
+  if (showCompletionScreen && course) {
+    const completionModules = (course.modules || []).map((module) => ({
+      id: module.id,
+      title: module.title,
+      lessons: (module.lessons || []).map((lesson) => ({
+        id: lesson.id,
+        title: lesson.title,
+        completed: completedLessons.has(lesson.id),
+      })),
+    }));
+
+    const totalSecondsSpent = Object.values(lessonPositions).reduce((sum, value) => {
+      if (!Number.isFinite(value)) return sum;
+      return sum + value;
+    }, 0);
+
+    const fallbackMinutes =
+      typeof course.estimatedDuration === 'number' && course.estimatedDuration > 0
+        ? course.estimatedDuration
+        : 0;
+    const timeSpentMinutes =
+      totalSecondsSpent > 0 ? Math.round(totalSecondsSpent / 60) : fallbackMinutes;
+
+    const completionCourse = {
+      id: course.id,
+      title: course.title,
+      description: course.description,
+      thumbnail: course.thumbnail,
+      instructor: course.instructorName,
+      duration: course.duration,
+      modules: completionModules,
+    };
+
+    const completionData = {
+      completedAt: new Date(completionTimestamp ?? Date.now()),
+      timeSpent: Math.max(timeSpentMinutes, 1),
+      score: undefined,
+      grade: undefined,
+      certificateId: undefined,
+      certificateUrl: undefined,
+    };
+
+    return (
+      <div className="bg-softwhite pb-16">
+        <CourseCompletion
+          course={completionCourse}
+          completionData={completionData}
+          keyTakeaways={course.keyTakeaways || []}
+          nextSteps={[
+            {
+              title: 'Review lessons',
+              description: 'Revisit course modules to reinforce the material.',
+              action: () => setShowCompletionScreen(false),
+            },
+            {
+              title: 'Back to my courses',
+              description: 'Head back to your course list to pick what is next.',
+              action: () => navigate(coursesIndexPath),
+            },
+          ]}
+          recommendedCourses={[]}
+          onClose={() => setShowCompletionScreen(false)}
+        />
+        <div className="mx-auto mt-8 flex max-w-4xl flex-wrap justify-center gap-3 px-6">
+          <Button variant="ghost" size="sm" onClick={() => setShowCompletionScreen(false)}>
+            Review lessons
+          </Button>
+          <Button size="sm" onClick={() => navigate(coursesIndexPath)}>
+            Back to courses
+          </Button>
+        </div>
       </div>
     );
   }
 
   if (!course || !currentLesson) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-center">
-          <h2 className="text-xl font-semibold text-gray-900 mb-2">Course not found</h2>
-          <button
-            onClick={() => navigate('/lms/courses')}
-            className="text-orange-600 hover:text-orange-800"
-          >
-            Return to courses
-          </button>
+      <div className="bg-softwhite py-24">
+        <div className="mx-auto max-w-xl px-6">
+          <Card tone="muted" padding="lg" className="text-center">
+            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-skyblue/10 text-skyblue">
+              <BookOpen className="h-6 w-6" />
+            </div>
+            <h2 className="mt-4 font-heading text-xl font-semibold text-charcoal">Course not found</h2>
+            <p className="mt-2 text-sm text-slate/80">Return to the catalog to choose another learning experience.</p>
+            <Button className="mt-6" onClick={() => navigate(coursesIndexPath)}>
+              Back to courses
+            </Button>
+          </Card>
         </div>
       </div>
     );
   }
 
+  const courseProgressPercent = Math.round((progress?.overallProgress || 0) * 100);
+
   return (
-    <div className="min-h-screen bg-gray-900 text-white flex">
-      {/* Sidebar */}
-      <div className={`${sidebarCollapsed ? 'w-16' : 'w-80'} bg-gray-800 transition-all duration-300 flex flex-col`}>
-        <div className="p-4 border-b border-gray-700">
-          <div className="flex items-center justify-between">
-            <button
-              onClick={() => navigate('/lms/courses')}
-              className="flex items-center text-gray-300 hover:text-white"
-            >
-              <ArrowLeft className="w-4 h-4 mr-2" />
-              {!sidebarCollapsed && 'Back to Courses'}
-            </button>
-            <button
-              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
-              className="text-gray-300 hover:text-white"
-            >
-              {sidebarCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
-            </button>
+    <div className="min-h-screen bg-softwhite pb-16">
+      <div className="mx-auto max-w-7xl px-6 py-8 lg:px-12">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Button
+            variant="ghost"
+            size="sm"
+            leadingIcon={<ArrowLeft className="h-4 w-4" />}
+            onClick={() => navigate(coursesIndexPath)}
+          >
+            Back to catalog
+          </Button>
+          <div className="flex items-center gap-2">
+            <Badge tone="info" className="bg-skyblue/10 text-skyblue">
+              {course.difficulty}
+            </Badge>
+            <Badge tone={courseProgressPercent >= 100 ? 'positive' : courseProgressPercent > 0 ? 'info' : 'neutral'}>
+              {courseProgressPercent >= 100 ? 'Completed' : `${courseProgressPercent}% complete`}
+            </Badge>
           </div>
-          {!sidebarCollapsed && (
-            <div className="mt-3">
-              <h1 className="font-semibold text-white">{course.title}</h1>
-              <div className="mt-2">
-                <div className="flex items-center justify-between text-sm text-gray-300 mb-1">
-                  <span>Progress</span>
-                  <span>{Math.round((progress?.overallProgress || 0) * 100)}%</span>
-                </div>
-                <div className="w-full bg-gray-700 rounded-full h-2">
-                  <div 
-                    className="bg-orange-500 h-2 rounded-full transition-all duration-300" 
-                    style={{ width: `${(progress?.overallProgress || 0) * 100}%` }}
-                  ></div>
-                </div>
-              </div>
-            </div>
-          )}
         </div>
 
-        <div className="flex-1 overflow-y-auto">
-          <CourseOutline
-            course={course}
-            currentLesson={currentLesson}
-            progress={progress}
-            collapsed={sidebarCollapsed}
-            onLessonSelect={(lesson) => navigate(`/lms/course/${courseId}/lesson/${lesson.id}`)}
-          />
+        <div className="mt-4">
+          <h1
+            ref={headingRef}
+            tabIndex={-1}
+            className="font-heading text-3xl font-bold text-charcoal outline-none md:text-4xl focus-visible:ring-2 focus-visible:ring-skyblue focus-visible:ring-offset-2 focus-visible:ring-offset-softwhite"
+          >
+            {course.title}
+          </h1>
+          <p className="mt-2 max-w-3xl text-sm text-slate/80">{course.description}</p>
         </div>
-      </div>
 
-      {/* Main Content */}
-      <div className="flex-1 flex flex-col">
-        {/* Video Player */}
-        {currentLesson.type === 'video' && (
-          <div className="relative bg-black">
-            <video
-              ref={videoRef}
-              src={currentLesson.content.videoUrl}
-              className="w-full h-auto max-h-96"
-              onTimeUpdate={handleTimeUpdate}
-              onLoadedMetadata={() => setDuration(videoRef.current?.duration || 0)}
-              onPlay={() => setIsPlaying(true)}
-              onPause={() => setIsPlaying(false)}
-            />
-            
-            <VideoControls
-              isPlaying={isPlaying}
-              currentTime={currentTime}
-              duration={duration}
-              volume={volume}
-              isMuted={isMuted}
-              playbackSpeed={playbackSpeed}
-              showControls={showControls}
-              onPlayPause={handlePlayPause}
-              onSeek={handleSeek}
-              onVolumeChange={handleVolumeChange}
-              onToggleMute={toggleMute}
-              onSpeedChange={changePlaybackSpeed}
-              onSkip={skipTime}
-              onFullscreen={() => setIsFullscreen(!isFullscreen)}
-              onSettings={() => setShowSettings(!showSettings)}
-            />
-          </div>
-        )}
+        <div className="mt-4 flex flex-wrap gap-3 text-sm text-slate/70">
+          <span className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 shadow-card-sm">
+            <Clock className="h-4 w-4" />
+            {course.duration}
+          </span>
+          <span className="inline-flex items-center gap-2 rounded-full bg-white px-4 py-2 shadow-card-sm">
+            <BookOpen className="h-4 w-4" />
+            {course.lessons} lessons
+          </span>
+        </div>
 
-        {/* Lesson Content */}
-        <div className="flex-1 bg-white text-gray-900">
-          <div className="p-6">
-            <div className="flex items-center justify-between mb-6">
+        <div className="mt-8 grid gap-6 lg:grid-cols-[320px,1fr]">
+          <Card tone="muted" className="h-full">
+            <div className="flex flex-col gap-6">
               <div>
-                <h2 className="text-2xl font-bold text-gray-900">{currentLesson.title}</h2>
-                <p className="text-gray-600 mt-1">{currentLesson.description}</p>
+                <div className="flex items-center justify-between text-sm text-slate/80">
+                  <span>Overall progress</span>
+                  <span>{courseProgressPercent}%</span>
+                </div>
+                <ProgressBar value={courseProgressPercent} className="mt-2" />
               </div>
-              <div className="flex items-center space-x-2">
-                <button
-                  onClick={addBookmark}
-                  className="p-2 text-gray-600 hover:text-orange-600"
-                  title="Add bookmark"
-                >
-                  <Bookmark className="w-5 h-5" />
-                </button>
-                <button
-                  onClick={() => setShowNotes(!showNotes)}
-                  className="p-2 text-gray-600 hover:text-orange-600"
-                  title="Toggle notes"
-                >
-                  <MessageCircle className="w-5 h-5" />
-                </button>
-                <button
-                  onClick={() => setShowTranscript(!showTranscript)}
-                  className="p-2 text-gray-600 hover:text-orange-600"
-                  title="Toggle transcript"
-                >
-                  <FileText className="w-5 h-5" />
-                </button>
-              </div>
+              <CourseOutline
+                course={course}
+                currentLesson={currentLesson}
+                progress={progress}
+                onLessonSelect={(lesson) => {
+                  const slug = course.slug || courseId || '';
+                  setCurrentLesson(lesson as NormalizedLesson);
+                  if (!slug) return;
+                  navigate(`${coursePathBase}/${slug}/${lessonPathSegment}/${lesson.id}`);
+                }}
+              />
             </div>
+          </Card>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Main Content Area */}
-              <div className="lg:col-span-2">
-                <LessonContent 
-                  lesson={currentLesson} 
-                  onComplete={markLessonComplete}
-                  showQuizModal={showQuizModal}
-                  onShowQuizModal={setShowQuizModal}
-                />
-                
-                {showTranscript && currentLesson.content.transcript && (
-                  <TranscriptPanel 
-                    transcript={currentLesson.content.transcript}
+          <Card padding="none" className="overflow-hidden">
+            {currentLesson.type === 'video' && (
+              <div className="relative bg-ink">
+                {currentLesson.content?.videoUrl ? (
+                  <video
+                    ref={videoRef}
+                    src={currentLesson.content.videoUrl}
+                    className="h-full w-full max-h-[520px] bg-black object-cover"
+                    onTimeUpdate={handleTimeUpdate}
+                    onLoadedMetadata={() => {
+                      if (!videoRef.current) return;
+                      const metaDuration = videoRef.current.duration || 0;
+                      setDuration(metaDuration);
+                      const storedPosition = lessonPositions[currentLesson.id] ?? 0;
+                      if (storedPosition > 0 && storedPosition < metaDuration) {
+                        videoRef.current.currentTime = storedPosition;
+                        setCurrentTime(storedPosition);
+                      }
+                    }}
+                    onPlay={() => setIsPlaying(true)}
+                    onPause={() => setIsPlaying(false)}
+                  />
+                ) : (
+                  <Card tone="muted" className="h-full w-full rounded-none border-none">
+                    <p className="text-sm text-slate/80">Video source unavailable. Please contact your facilitator.</p>
+                  </Card>
+                )}
+
+                {currentLesson.content?.videoUrl && (
+                  <VideoControls
+                    isPlaying={isPlaying}
                     currentTime={currentTime}
+                    duration={duration}
+                    volume={volume}
+                    isMuted={isMuted}
+                    playbackSpeed={playbackSpeed}
+                    showControls={showControls}
+                    onPlayPause={handlePlayPause}
                     onSeek={handleSeek}
+                    onVolumeChange={handleVolumeChange}
+                    onToggleMute={toggleMute}
+                    onSpeedChange={changePlaybackSpeed}
+                    onSkip={skipTime}
+                    onFullscreen={() => setIsFullscreen(!isFullscreen)}
+                    onSettings={() => setShowSettings(!showSettings)}
                   />
                 )}
               </div>
+            )}
 
-              {/* Sidebar Content */}
+            <div className="grid gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_280px]">
+              <div className="space-y-6">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h2 className="font-heading text-2xl font-semibold text-charcoal">{currentLesson.title}</h2>
+                    {currentLesson.description && (
+                      <p className="mt-1 text-sm text-slate/80">{currentLesson.description}</p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <IconToggle onClick={addBookmark} icon={<Bookmark className="h-4 w-4" />} label="Bookmark lesson" />
+                    <IconToggle onClick={() => setShowNotes(!showNotes)} icon={<MessageCircle className="h-4 w-4" />} label="Toggle notes" active={showNotes} />
+                    <IconToggle onClick={() => setShowTranscript(!showTranscript)} icon={<FileText className="h-4 w-4" />} label="Toggle transcript" active={showTranscript} />
+                  </div>
+                </div>
+
+                <LessonContent
+                  lesson={currentLesson}
+                  onComplete={markLessonComplete}
+                  onShowQuizModal={setShowQuizModal}
+                />
+
+                {showTranscript && currentLesson.content.transcript && (
+                  <TranscriptPanel transcript={currentLesson.content.transcript} currentTime={currentTime} onSeek={handleSeek} />
+                )}
+              </div>
+
               <div className="space-y-6">
                 {showNotes && (
                   <NotesPanel
-                    notes={userNotes.filter(note => note.lessonId === currentLesson.id)}
-                    bookmarks={userBookmarks.filter(bookmark => bookmark.lessonId === currentLesson.id)}
+                    notes={userNotes.filter((note) => note.lessonId === currentLesson.id)}
+                    bookmarks={userBookmarks.filter((bookmark) => bookmark.lessonId === currentLesson.id)}
                     noteText={noteText}
                     onNoteTextChange={setNoteText}
                     onAddNote={addNote}
-                    onSeek={handleSeek}
                   />
                 )}
-                
+
                 <NavigationPanel
                   onPrevious={() => navigateLesson('prev')}
                   onNext={() => navigateLesson('next')}
-                  canGoPrevious={true} // You'd calculate this based on lesson position
-                  canGoNext={true}
+                  canGoPrevious={canGoPrevious}
+                  canGoNext={canGoNext}
+                  onMarkComplete={markLessonComplete}
                 />
               </div>
             </div>
-          </div>
+          </Card>
         </div>
       </div>
     </div>
@@ -419,95 +952,101 @@ const CourseOutline: React.FC<{
   course: Course;
   currentLesson: Lesson;
   progress: LearnerProgress | null;
-  collapsed: boolean;
   onLessonSelect: (lesson: Lesson) => void;
-}> = ({ course, currentLesson, progress, collapsed, onLessonSelect }) => {
-  const [expandedChapters, setExpandedChapters] = useState<Set<string>>(new Set());
+}> = ({ course, currentLesson, progress, onLessonSelect }) => {
+  const [expandedChapters, setExpandedChapters] = useState<Set<string>>(() => {
+    const firstChapterId = course.chapters?.[0]?.id;
+    return firstChapterId ? new Set([firstChapterId]) : new Set();
+  });
 
   const toggleChapter = (chapterId: string) => {
-    const newExpanded = new Set(expandedChapters);
-    if (newExpanded.has(chapterId)) {
-      newExpanded.delete(chapterId);
+    const next = new Set(expandedChapters);
+    if (next.has(chapterId)) {
+      next.delete(chapterId);
     } else {
-      newExpanded.add(chapterId);
+      next.add(chapterId);
     }
-    setExpandedChapters(newExpanded);
+    setExpandedChapters(next);
   };
 
-  const getLessonProgress = (lessonId: string) => {
-    return progress?.lessonProgress.find(lp => lp.lessonId === lessonId);
-  };
-
-  if (collapsed) {
-    return (
-      <div className="p-2">
-        {(course.chapters || []).map((chapter) => (
-          <div key={chapter.id} className="mb-2">
-            <div className="w-3 h-3 bg-gray-600 rounded-full mx-auto"></div>
-          </div>
-        ))}
-      </div>
-    );
-  }
+  const getLessonProgress = (lessonId: string) =>
+    progress?.lessonProgress.find((lp) => lp.lessonId === lessonId);
 
   return (
-    <div className="p-4 space-y-2">
-      {(course.chapters || []).map((chapter, chapterIndex) => (
-        <div key={chapter.id}>
-          <button
-            onClick={() => toggleChapter(chapter.id)}
-            className="w-full flex items-center justify-between p-2 text-left text-gray-300 hover:text-white hover:bg-gray-700 rounded"
-          >
-            <span className="font-medium">
-              {chapterIndex + 1}. {chapter.title}
-            </span>
-            {expandedChapters.has(chapter.id) ? (
-              <ChevronUp className="w-4 h-4" />
-            ) : (
-              <ChevronDown className="w-4 h-4" />
+    <div className="space-y-4">
+      {(course.chapters || []).map((chapter, index) => {
+        const expanded = expandedChapters.has(chapter.id);
+        return (
+          <div key={chapter.id} className="rounded-2xl bg-white shadow-card-sm">
+            <button
+              type="button"
+              onClick={() => toggleChapter(chapter.id)}
+              className="flex w-full items-center justify-between gap-3 rounded-2xl px-4 py-3 text-left"
+              aria-expanded={expanded}
+              aria-controls={`${chapter.id}-lessons`}
+            >
+              <div>
+                <p className="font-heading text-sm font-semibold text-charcoal">
+                  {index + 1}. {chapter.title}
+                </p>
+                {chapter.description && (
+                  <p className="text-xs text-slate/70">{chapter.description}</p>
+                )}
+              </div>
+              {expanded ? (
+                <ChevronUp className="h-4 w-4 text-slate/70" />
+              ) : (
+                <ChevronDown className="h-4 w-4 text-slate/70" />
+              )}
+            </button>
+            {expanded && (
+              <div
+                className="border-t border-mist/60 px-2 py-3"
+                id={`${chapter.id}-lessons`}
+                role="region"
+                aria-label={`${chapter.title} lessons`}
+              >
+                <div className="space-y-2">
+                  {(chapter.lessons || []).map((lesson, lessonIndex) => {
+                    const lessonProgress = getLessonProgress(lesson.id);
+                    const isComplete = lessonProgress?.isCompleted || false;
+                    const isCurrent = lesson.id === currentLesson.id;
+
+                    return (
+                      <button
+                        key={lesson.id}
+                        type="button"
+                        onClick={() => onLessonSelect(lesson)}
+                        className={`flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition ${
+                          isCurrent
+                            ? 'bg-skyblue/10 text-skyblue'
+                            : 'text-slate/80 hover:bg-cloud hover:text-charcoal'
+                        }`}
+                        aria-current={isCurrent ? 'page' : undefined}
+                      >
+                        <span className="flex h-7 w-7 items-center justify-center rounded-full border border-mist text-xs font-semibold">
+                          {lessonIndex + 1}
+                        </span>
+                        <div className="flex-1">
+                          <p className="font-heading text-sm font-semibold">{lesson.title}</p>
+                          <p className="text-xs text-slate/70">
+                            {lesson.estimatedDuration || lesson.duration || '5 min'}
+                          </p>
+                        </div>
+                        {isComplete ? (
+                          <CheckCircle className="h-4 w-4 text-forest" />
+                        ) : (
+                          <Circle className="h-4 w-4 text-mist" />
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             )}
-          </button>
-          
-          {expandedChapters.has(chapter.id) && (
-            <div className="ml-4 mt-2 space-y-1">
-              {chapter.lessons.map((lesson, lessonIndex) => {
-                const lessonProgress = getLessonProgress(lesson.id);
-                const isComplete = lessonProgress?.isCompleted || false;
-                const isCurrent = lesson.id === currentLesson.id;
-                
-                return (
-                  <button
-                    key={lesson.id}
-                    onClick={() => onLessonSelect(lesson)}
-                    className={`w-full flex items-center p-2 text-left text-sm rounded transition-colors ${
-                      isCurrent
-                        ? 'bg-orange-600 text-white'
-                        : 'text-gray-400 hover:text-gray-200 hover:bg-gray-700'
-                    }`}
-                  >
-                    <div className="mr-3">
-                      {isComplete ? (
-                        <CheckCircle className="w-4 h-4 text-green-400" />
-                      ) : (
-                        <Circle className="w-4 h-4" />
-                      )}
-                    </div>
-                    <div className="flex-1">
-                      <div className="font-medium">
-                        {lessonIndex + 1}. {lesson.title}
-                      </div>
-                      <div className="flex items-center text-xs opacity-75">
-                        <Clock className="w-3 h-3 mr-1" />
-                        {lesson.estimatedDuration} min
-                      </div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      ))}
+          </div>
+        );
+      })}
     </div>
   );
 };
@@ -631,20 +1170,33 @@ const VideoControls: React.FC<{
 const LessonContent: React.FC<{
   lesson: Lesson;
   onComplete: () => void;
-  showQuizModal: boolean;
   onShowQuizModal: (show: boolean) => void;
-}> = ({ lesson, onComplete, showQuizModal: _showQuizModal, onShowQuizModal }) => {
-  if (lesson.type === 'text') {
+}> = ({ lesson, onComplete, onShowQuizModal }) => {
+  const renderFallback = (message: string) => (
+    <Card tone="muted" className="space-y-3">
+      <p className="text-sm text-slate/80">{message}</p>
+      <Button size="sm" onClick={onComplete}>
+        Mark as complete
+      </Button>
+    </Card>
+  );
+
+  if (!lesson.content || (typeof lesson.content === 'object' && Object.keys(lesson.content).length === 0)) {
+    return renderFallback('Lesson content unavailable. Please check back later.');
+  }
+
+  if (lesson.type === 'text' || lesson.type === 'document') {
+    const html = lesson.content.textContent || lesson.content.content || lesson.description || '';
+    if (!html.trim()) {
+      return renderFallback('Lesson notes will appear here once your facilitator adds them.');
+    }
     return (
-      <div className="prose max-w-none">
-        <div dangerouslySetInnerHTML={{ __html: lesson.content.textContent || '' }} />
-        <div className="mt-8 pt-6 border-t border-gray-200">
-          <button
-            onClick={onComplete}
-            className="bg-orange-600 text-white px-6 py-2 rounded-lg hover:bg-orange-700 transition-colors"
-          >
-            Mark as Complete
-          </button>
+      <div className="prose max-w-none text-charcoal">
+        <div dangerouslySetInnerHTML={{ __html: html }} />
+        <div className="mt-8 flex justify-end border-t border-mist/60 pt-6">
+          <Button onClick={onComplete} trailingIcon={<CheckCircle className="h-4 w-4" />}>
+            Mark as complete
+          </Button>
         </div>
       </div>
     );
@@ -652,35 +1204,86 @@ const LessonContent: React.FC<{
 
   if (lesson.type === 'quiz') {
     return (
-      <div className="bg-gray-50 rounded-lg p-6">
-        <h3 className="text-lg font-semibold mb-4">Quiz: {lesson.title}</h3>
-        <p className="text-gray-600 mb-6">{lesson.description}</p>
-        <button
-          onClick={() => onShowQuizModal(true)}
-          className="bg-orange-600 text-white px-6 py-2 rounded-lg hover:bg-orange-700 transition-colors"
-        >
-          Start Quiz
-        </button>
-      </div>
+      <Card tone="muted" className="space-y-3">
+        <h3 className="font-heading text-lg font-semibold text-charcoal">Quiz: {lesson.title}</h3>
+        <p className="text-sm text-slate/80">{lesson.description || 'Check your understanding before moving on.'}</p>
+        <Button onClick={() => onShowQuizModal(true)}>Start quiz</Button>
+      </Card>
     );
   }
 
-  return (
-    <div className="text-center py-8">
-      <p className="text-gray-600">Interactive content will be displayed here.</p>
-    </div>
-  );
+  if (lesson.type === 'interactive') {
+    const instructions = lesson.content.instructions || lesson.description || 'Complete the activity to continue.';
+    return (
+      <Card tone="muted" className="space-y-4">
+        <h3 className="font-heading text-lg font-semibold text-charcoal">Interactive activity</h3>
+        <p className="text-sm text-slate/80">{instructions}</p>
+        <Button onClick={onComplete} trailingIcon={<CheckCircle className="h-4 w-4" />}>
+          Mark activity complete
+        </Button>
+      </Card>
+    );
+  }
+
+  if (lesson.type === 'resource' || lesson.type === 'document') {
+    const resource: any = lesson.content;
+    const downloadUrl = resource.downloadUrl || resource.url;
+    return (
+      <Card tone="muted" className="space-y-4">
+        <h3 className="font-heading text-lg font-semibold text-charcoal">Resource download</h3>
+        <p className="text-sm text-slate/80">{resource.description || lesson.description || 'Access the supporting material below.'}</p>
+        {downloadUrl ? (
+          <Button asChild leadingIcon={<Download className="h-4 w-4" />}>
+            <a href={downloadUrl} target="_blank" rel="noopener noreferrer">
+              Download resource
+            </a>
+          </Button>
+        ) : (
+          <p className="text-xs text-slate/70">Download link not available.</p>
+        )}
+        <Button variant="ghost" size="sm" onClick={onComplete}>
+          Mark as reviewed
+        </Button>
+      </Card>
+    );
+  }
+
+  return renderFallback('This lesson type is not interactive in the preview environment.');
 };
 
 // Additional helper components would go here...
+const IconToggle = ({
+  onClick,
+  icon,
+  label,
+  active = false,
+}: {
+  onClick: () => void;
+  icon: React.ReactNode;
+  label: string;
+  active?: boolean;
+}) => (
+  <button
+    type="button"
+    onClick={onClick}
+    aria-label={label}
+    className={cn(
+      'rounded-full border border-transparent p-2 transition',
+      active ? 'bg-skyblue/10 text-skyblue' : 'text-slate/70 hover:bg-cloud hover:text-skyblue'
+    )}
+  >
+    {icon}
+  </button>
+);
+
 const TranscriptPanel: React.FC<{
   transcript: string;
   currentTime: number;
   onSeek: (time: number) => void;
 }> = ({ transcript }) => (
-  <div className="mt-6 p-4 bg-gray-50 rounded-lg">
-    <h3 className="font-semibold mb-3">Transcript</h3>
-    <div className="prose text-sm">
+  <div className="rounded-2xl border border-mist bg-white p-4 shadow-card-sm">
+    <h3 className="font-heading text-sm font-semibold text-charcoal">Transcript</h3>
+    <div className="mt-2 max-h-64 overflow-y-auto text-sm text-slate/80">
       {transcript}
     </div>
   </div>
@@ -692,45 +1295,48 @@ const NotesPanel: React.FC<{
   noteText: string;
   onNoteTextChange: (text: string) => void;
   onAddNote: () => void;
-  onSeek: (time: number) => void;
 }> = ({ notes, bookmarks, noteText, onNoteTextChange, onAddNote }) => (
-  <div className="bg-gray-50 rounded-lg p-4">
-    <h3 className="font-semibold mb-3">Notes & Bookmarks</h3>
-    
-    <div className="space-y-3 mb-4">
+  <div className="rounded-2xl border border-mist bg-white p-4 shadow-card-sm">
+    <h3 className="font-heading text-sm font-semibold text-charcoal">Notes & bookmarks</h3>
+    <p className="mt-1 text-xs text-slate/70">Capture reflections and jump back to key moments.</p>
+
+    <div className="mt-4 space-y-3">
       <textarea
         value={noteText}
-        onChange={(e) => onNoteTextChange(e.target.value)}
+        onChange={(event) => onNoteTextChange(event.target.value)}
         placeholder="Add a note..."
-        className="w-full p-2 border border-gray-300 rounded resize-none"
+        className="w-full rounded-lg border border-mist bg-cloud px-3 py-2 text-sm text-charcoal focus:border-skyblue focus:outline-none focus:ring-2 focus:ring-skyblue/40"
         rows={3}
       />
-      <button
-        onClick={onAddNote}
-        className="bg-orange-600 text-white px-4 py-1 rounded text-sm hover:bg-orange-700"
-      >
-        Add Note
-      </button>
+      <Button size="sm" onClick={onAddNote} className="w-full">
+        Save note
+      </Button>
     </div>
 
-    <div className="space-y-2 max-h-64 overflow-y-auto">
-      {bookmarks.map(bookmark => (
-        <div key={bookmark.id} className="p-2 bg-white rounded border text-sm">
-          <div className="flex items-center justify-between">
-            <span className="font-medium">Bookmark</span>
-            <span className="text-gray-500">{Math.floor(bookmark.position / 60)}:{(bookmark.position % 60).toString().padStart(2, '0')}</span>
+    <div className="mt-4 space-y-3">
+      {bookmarks.map((bookmark) => (
+        <div key={bookmark.id} className="rounded-xl border border-mist bg-cloud px-3 py-2 text-sm">
+          <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate/70">
+            <span>Bookmark</span>
+            <span>
+              {Math.floor(bookmark.position / 60)}:{(bookmark.position % 60).toString().padStart(2, '0')}
+            </span>
           </div>
-          <p className="text-gray-600">{bookmark.note || 'No note'}</p>
+          <p className="mt-1 text-sm text-charcoal">{bookmark.note || 'Quick reference saved.'}</p>
         </div>
       ))}
-      
-      {notes.map(note => (
-        <div key={note.id} className="p-2 bg-white rounded border text-sm">
-          <div className="flex items-center justify-between mb-1">
-            <span className="font-medium">Note</span>
-            <span className="text-gray-500">{note.position ? `${Math.floor(note.position / 60)}:${(note.position % 60).toString().padStart(2, '0')}` : ''}</span>
+
+      {notes.map((note) => (
+        <div key={note.id} className="rounded-xl border border-mist bg-cloud px-3 py-2 text-sm">
+          <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-wide text-slate/70">
+            <span>Note</span>
+            <span>
+              {note.position
+                ? `${Math.floor(note.position / 60)}:${(note.position % 60).toString().padStart(2, '0')}`
+                : ''}
+            </span>
           </div>
-          <p className="text-gray-700">{note.content}</p>
+          <p className="mt-1 text-sm text-charcoal">{note.content}</p>
         </div>
       ))}
     </div>
@@ -742,26 +1348,23 @@ const NavigationPanel: React.FC<{
   onNext: () => void;
   canGoPrevious: boolean;
   canGoNext: boolean;
-}> = ({ onPrevious, onNext, canGoPrevious, canGoNext }) => (
-  <div className="bg-gray-50 rounded-lg p-4">
-    <h3 className="font-semibold mb-3">Navigation</h3>
-    <div className="flex space-x-2">
-      <button
-        onClick={onPrevious}
-        disabled={!canGoPrevious}
-        className="flex-1 flex items-center justify-center px-4 py-2 border border-gray-300 rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-100"
-      >
-        <ArrowLeft className="w-4 h-4 mr-2" />
-        Previous
-      </button>
-      <button
-        onClick={onNext}
-        disabled={!canGoNext}
-        className="flex-1 flex items-center justify-center px-4 py-2 bg-orange-600 text-white rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-orange-700"
-      >
-        Next
-        <ArrowRight className="w-4 h-4 ml-2" />
-      </button>
+  onMarkComplete: () => void;
+}> = ({ onPrevious, onNext, canGoPrevious, canGoNext, onMarkComplete }) => (
+  <div className="rounded-2xl border border-mist bg-white p-4 shadow-card-sm">
+    <h3 className="font-heading text-sm font-semibold text-charcoal">Lesson actions</h3>
+    <p className="mt-1 text-xs text-slate/70">Navigate through the module or mark this lesson complete.</p>
+    <div className="mt-4 flex flex-col gap-3">
+      <div className="flex gap-2">
+        <Button variant="outline" size="sm" onClick={onPrevious} disabled={!canGoPrevious} leadingIcon={<ArrowLeft className="h-4 w-4" />} className="flex-1">
+          Previous
+        </Button>
+        <Button size="sm" onClick={onNext} disabled={!canGoNext} trailingIcon={<ArrowRight className="h-4 w-4" />} className="flex-1">
+          Next lesson
+        </Button>
+      </div>
+      <Button variant="success" size="sm" onClick={onMarkComplete} leadingIcon={<CheckCircle className="h-4 w-4" />}>
+        Mark as complete
+      </Button>
     </div>
   </div>
 );
