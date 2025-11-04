@@ -8,10 +8,12 @@ import {
   Clock,
   Save,
   Upload,
-  Download
+  Download,
+  Trash2
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import type { QueuedProgress } from '../hooks/useOfflineProgressQueue';
+import { clearOfflineQueue } from '../dal/offlineQueue';
 
 interface ProgressSyncStatusProps {
   isOnline: boolean;
@@ -99,11 +101,22 @@ const ProgressSyncStatus = ({
     try {
       setIsFlushingQueue(true);
       await onFlushQueue();
-      toast.success('Queued progress submitted for syncing');
+      toast.success('Queued progress submitted for syncing', { id: 'sync-flush-success' });
     } catch (error) {
-      toast.error('Unable to flush queued progress right now');
+      toast.error('Unable to flush queued progress right now', { id: 'sync-flush-failure' });
     } finally {
       setIsFlushingQueue(false);
+    }
+  };
+
+  const handleClearQueue = async () => {
+    const confirm = window.confirm('Clear all queued offline progress? This cannot be undone.');
+    if (!confirm) return;
+    try {
+      await clearOfflineQueue();
+      toast.success('Offline queue cleared', { id: 'offline-queue-cleared' });
+    } catch (e) {
+      toast.error('Failed to clear offline queue', { id: 'offline-queue-clear-failed' });
     }
   };
 
@@ -257,6 +270,16 @@ const ProgressSyncStatus = ({
                   {isProcessingQueue ? 'Syncing…' : 'Sync now'}
                 </button>
               )}
+              {currentQueueSize > 0 && (
+                <button
+                  onClick={handleClearQueue}
+                  className="ml-2 inline-flex items-center gap-1 rounded-md bg-red-50 px-2 py-1 text-[11px] font-medium text-red-700 hover:bg-red-100 border border-red-200"
+                  title="Clear queued items"
+                >
+                  <Trash2 className="w-3 h-3" />
+                  Clear
+                </button>
+              )}
             </div>
             <ul className="max-h-40 space-y-2 overflow-y-auto">
               {queuedItems.map((item) => (
@@ -373,6 +396,16 @@ const ProgressSyncStatus = ({
             >
               <RefreshCw className={`w-3 h-3 ${isProcessingQueue || isFlushingQueue ? 'animate-spin' : ''}`} />
               Sync
+            </button>
+          )}
+          {currentQueueSize > 0 && (
+            <button
+              onClick={handleClearQueue}
+              className="inline-flex items-center gap-1 rounded bg-red-50 px-2 py-0.5 text-[11px] font-medium text-red-700 hover:bg-red-100 border border-red-200"
+              title="Clear queued items"
+            >
+              <Trash2 className="w-3 h-3" />
+              Clear
             </button>
           )}
         </div>

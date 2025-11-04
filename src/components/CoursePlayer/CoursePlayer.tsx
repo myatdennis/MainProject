@@ -11,8 +11,6 @@ import {
   Settings,
   ChevronDown,
   ChevronUp,
-  ChevronLeft,
-  ChevronRight,
   CheckCircle,
   Circle,
   Clock,
@@ -28,7 +26,7 @@ import {
 } from 'lucide-react';
 import { Course, Lesson, LearnerProgress, UserBookmark, UserNote } from '../../types/courseTypes';
 import type { NormalizedCourse, NormalizedLesson } from '../../utils/courseNormalization';
-import { loadCourse } from '../../services/courseDataLoader';
+import { loadCourse } from '../../dal/courseData';
 import {
   loadStoredCourseProgress,
   saveStoredCourseProgress,
@@ -43,18 +41,18 @@ import Badge from '../ui/Badge';
 import ProgressBar from '../ui/ProgressBar';
 import LoadingSpinner from '../ui/LoadingSpinner';
 import CourseCompletion from '../CourseCompletion';
-import { useSyncService } from '../../services/syncService';
+import { useSyncService } from '../../dal/sync';
 import { useToast } from '../../context/ToastContext';
 import {
   updateAssignmentProgress,
 } from '../../utils/assignmentStorage';
-import { analyticsService } from '../../services/analyticsService';
+import { trackCourseCompletion as dalTrackCourseCompletion, trackEvent as dalTrackEvent } from '../../dal/analytics';
 
 interface CoursePlayerProps {
-  namespace?: 'lms' | 'client';
+  namespace?: 'admin' | 'client';
 }
 
-const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'lms' }) => {
+const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
   const { courseId, lessonId } = useParams();
   const navigate = useNavigate();
   const syncService = useSyncService();
@@ -63,7 +61,7 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'lms' }) => {
   const coursePathBase = isClientNamespace ? '/client/courses' : '/lms/course';
   const lessonPathSegment = isClientNamespace ? 'lessons' : 'lesson';
   const coursesIndexPath = isClientNamespace ? '/client/courses' : '/lms/courses';
-  const eventSource = isClientNamespace ? 'client' : 'lms';
+  const eventSource = isClientNamespace ? 'client' : 'admin';
 
   const learnerId = useMemo(() => {
     try {
@@ -113,7 +111,7 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'lms' }) => {
   const [showTranscript, setShowTranscript] = useState(false);
   const [showNotes, setShowNotes] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  const [showQuizModal, setShowQuizModal] = useState(false);
+  // Placeholder for future quiz modal; currently unused to avoid TS noUnusedLocals
 
   // Note-taking state
   const [noteText, setNoteText] = useState('');
@@ -184,7 +182,7 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'lms' }) => {
           },
           timestamp: Date.now(),
         });
-        analyticsService.trackCourseCompletion(learnerId, course.id, {
+        dalTrackCourseCompletion(learnerId, course.id, {
           totalTimeSpent: Math.max(0, Math.round(totalTimeSeconds / 60)),
           modulesCompleted: modulesCompletedCount,
           lessonsCompleted: courseLessons.length,
@@ -264,7 +262,7 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'lms' }) => {
       return;
     }
 
-    analyticsService.trackEvent(
+    dalTrackEvent(
       'error_occurred',
       learnerId,
       {
@@ -400,7 +398,7 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'lms' }) => {
       Object.values(stored.lessonProgress ?? {}).some((value) => (value ?? 0) > 0);
 
     const eventType = hasAnyProgress ? 'course_resumed' : 'course_started';
-    analyticsService.trackEvent(
+    dalTrackEvent(
       eventType,
       learnerId,
       {
@@ -846,10 +844,19 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'lms' }) => {
           <Card padding="none" className="overflow-hidden">
             {currentLesson.type === 'video' && (
               <div className="relative bg-ink">
-                {currentLesson.content?.videoUrl ? (
+                {(() => {
+                  // Support multiple content shapes for video URLs coming from different backends
+                  const raw = (currentLesson as any).content || {};
+                  const videoUrl =
+                    raw.videoUrl ||
+                    raw.src ||
+                    raw.url ||
+                    (raw.body && (raw.body.videoUrl || raw.body.src)) ||
+                    undefined;
+                  return videoUrl ? (
                   <video
                     ref={videoRef}
-                    src={currentLesson.content.videoUrl}
+                    src={videoUrl}
                     className="h-full w-full max-h-[520px] bg-black object-cover"
                     onTimeUpdate={handleTimeUpdate}
                     onLoadedMetadata={() => {
@@ -864,14 +871,24 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'lms' }) => {
                     }}
                     onPlay={() => setIsPlaying(true)}
                     onPause={() => setIsPlaying(false)}
+                    data-test="video-player"
                   />
-                ) : (
+                  ) : (
                   <Card tone="muted" className="h-full w-full rounded-none border-none">
                     <p className="text-sm text-slate/80">Video source unavailable. Please contact your facilitator.</p>
                   </Card>
-                )}
+                  );
+                })()}
 
-                {currentLesson.content?.videoUrl && (
+                {(() => {
+                  const raw = (currentLesson as any).content || {};
+                  const hasVideo =
+                    Boolean(raw.videoUrl) ||
+                    Boolean(raw.src) ||
+                    Boolean(raw.url) ||
+                    Boolean(raw.body && (raw.body.videoUrl || raw.body.src));
+                  return hasVideo;
+                })() && (
                   <VideoControls
                     isPlaying={isPlaying}
                     currentTime={currentTime}
@@ -912,7 +929,7 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'lms' }) => {
                 <LessonContent
                   lesson={currentLesson}
                   onComplete={markLessonComplete}
-                  onShowQuizModal={setShowQuizModal}
+                  onShowQuizModal={() => {}}
                 />
 
                 {showTranscript && currentLesson.content.transcript && (
@@ -1181,11 +1198,12 @@ const LessonContent: React.FC<{
     </Card>
   );
 
+  const lessonType = (lesson as any).type as string;
+
   if (!lesson.content || (typeof lesson.content === 'object' && Object.keys(lesson.content).length === 0)) {
     return renderFallback('Lesson content unavailable. Please check back later.');
   }
-
-  if (lesson.type === 'text' || lesson.type === 'document') {
+  if (lessonType === 'text' || lessonType === 'document') {
     const html = lesson.content.textContent || lesson.content.content || lesson.description || '';
     if (!html.trim()) {
       return renderFallback('Lesson notes will appear here once your facilitator adds them.');
@@ -1202,7 +1220,7 @@ const LessonContent: React.FC<{
     );
   }
 
-  if (lesson.type === 'quiz') {
+  if (lessonType === 'quiz') {
     return (
       <Card tone="muted" className="space-y-3">
         <h3 className="font-heading text-lg font-semibold text-charcoal">Quiz: {lesson.title}</h3>
@@ -1212,7 +1230,7 @@ const LessonContent: React.FC<{
     );
   }
 
-  if (lesson.type === 'interactive') {
+  if (lessonType === 'interactive') {
     const instructions = lesson.content.instructions || lesson.description || 'Complete the activity to continue.';
     return (
       <Card tone="muted" className="space-y-4">
@@ -1225,7 +1243,7 @@ const LessonContent: React.FC<{
     );
   }
 
-  if (lesson.type === 'resource' || lesson.type === 'document') {
+  if (lessonType === 'resource' || lessonType === 'document') {
     const resource: any = lesson.content;
     const downloadUrl = resource.downloadUrl || resource.url;
     return (

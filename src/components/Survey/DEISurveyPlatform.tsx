@@ -78,8 +78,8 @@ const DEISurveyPlatform: React.FC<DEISurveyPlatformProps> = ({
           randomizeOptions: false,
         },
         branding: {
-          primaryColor: '#2B84C6',
-          secondaryColor: '#3BAA66',
+          primaryColor: '#3A7DFF',
+          secondaryColor: '#228B22',
         },
         defaultLanguage: 'en',
         supportedLanguages: ['en'],
@@ -111,8 +111,8 @@ const DEISurveyPlatform: React.FC<DEISurveyPlatformProps> = ({
           randomizeOptions: false,
         },
         branding: {
-          primaryColor: '#F28C1A',
-          secondaryColor: '#3BAA66',
+          primaryColor: '#de7b12',
+          secondaryColor: '#228B22',
         },
         defaultLanguage: 'en',
         supportedLanguages: ['en', 'es'],

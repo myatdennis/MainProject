@@ -34,4 +34,36 @@ export default tseslint.config(
       'react-refresh/only-export-components': 'off',
     },
   }
+  ,
+  {
+    // Warn-only boundaries: prefer DAL in UI layers instead of reaching into services directly
+    files: ['src/pages/**/*.{ts,tsx}', 'src/components/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'warn',
+        {
+          patterns: [
+            {
+              group: ['src/services/*', '**/services/*'],
+              message:
+                'UI layers should prefer DAL facades in src/dal/* instead of importing from services directly (incremental migration).',
+            },
+            {
+              group: ['server/*', 'src/server/*', '**/server/*'],
+              message: 'Do not import server code into client UI layers.',
+            },
+          ],
+        },
+      ],
+    },
+  }
+  ,
+  {
+    // Relax a couple of rules in tests to avoid noise from placeholder blocks in e2e scaffolding
+    files: ['tests/**/*.ts', 'tests/**/*.tsx'],
+    rules: {
+      'no-empty': 'off',
+      'no-restricted-imports': 'off',
+    },
+  }
 );

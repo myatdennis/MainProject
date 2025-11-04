@@ -6,7 +6,7 @@ const AdminQueueMonitor: React.FC = () => {
   const [lastFlush, setLastFlush] = useState<string | null>(null);
 
   const refresh = async () => {
-    const mod = await import('../../services/surveyService');
+    const mod = await import('../../dal/surveys');
     setQueue(mod.getQueueSnapshot());
     setLastFlush(mod.getLastFlushTime());
   };
@@ -14,7 +14,7 @@ const AdminQueueMonitor: React.FC = () => {
   useEffect(() => {
     refresh();
     let mounted = true;
-    import('../../services/surveyService').then(mod => {
+    import('../../dal/surveys').then(mod => {
       const handler = () => { if (mounted) refresh(); };
       mod.surveyQueueEvents.addEventListener('queuechange', handler);
       mod.surveyQueueEvents.addEventListener('flush', handler);
@@ -28,7 +28,7 @@ const AdminQueueMonitor: React.FC = () => {
         <h1 className="text-2xl font-bold">Queue Monitor</h1>
         <div>
           <Link to="/admin/surveys" className="text-sm text-orange-500 mr-4">← Back to Surveys</Link>
-          <button onClick={async () => { const mod = await import('../../services/surveyService'); await mod.flushNow(); refresh(); }} className="px-3 py-2 bg-blue-600 text-white rounded">Flush Now</button>
+          <button onClick={async () => { const mod = await import('../../dal/surveys'); await mod.flushNow(); refresh(); }} className="px-3 py-2 bg-blue-600 text-white rounded">Flush Now</button>
         </div>
       </div>
 

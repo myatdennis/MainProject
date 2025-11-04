@@ -22,6 +22,8 @@ import LoadingButton from '../../components/LoadingButton';
 import { useToast } from '../../context/ToastContext';
 import { User } from '../../types/user';
 import PageWrapper from '../../components/PageWrapper';
+import Breadcrumbs from '../../components/ui/Breadcrumbs';
+import EmptyState from '../../components/ui/EmptyState';
 
 const AdminUsers = () => {
   const { showToast } = useToast();
@@ -350,6 +352,7 @@ const AdminUsers = () => {
 
   return (
     <PageWrapper>
+      <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Users', to: '/admin/users' }]} />
       {/* Header */}
       <div className="mb-8">
         <h1 className="h1">User Management</h1>
@@ -578,10 +581,21 @@ const AdminUsers = () => {
       </div>
 
       {filteredUsers.length === 0 && (
-        <div className="text-center py-12">
-          <Search className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 mb-2">No users found</h3>
-          <p className="text-gray-600">Try adjusting your search or filter criteria.</p>
+        <div className="mt-8">
+          <EmptyState
+            title="No users found"
+            description="Try adjusting your search or filter criteria."
+            action={(
+              <button
+                type="button"
+                onClick={() => { setSearchTerm(''); setFilterOrg('all'); setFilterStatus('all'); setSelectedUsers([]); }}
+                className="btn-outline"
+              >
+                Reset filters
+              </button>
+            )}
+            illustrationSrc={undefined}
+          />
         </div>
       )}
 

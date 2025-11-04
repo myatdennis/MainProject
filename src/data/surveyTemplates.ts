@@ -1,4 +1,4 @@
-import type { SurveyTemplate } from '../types/survey';
+import type { SurveyTemplate, SurveyBranding } from '../types/survey';
 
 export const surveyTemplates: SurveyTemplate[] = [
   {
@@ -575,9 +575,9 @@ export const censusDemographicOptions = {
 };
 
 export const defaultBranding: SurveyBranding = {
-  primaryColor: '#F28C1A', // Sunrise Orange
-  secondaryColor: '#E6473A', // Deep Red
-  accentColor: '#2B84C6', // Signature Blue
+  primaryColor: '#de7b12', // Sunrise Orange (exact)
+  secondaryColor: '#D72638', // Deep Red
+  accentColor: '#3A7DFF', // Sky Blue
   fontFamily: {
     heading: 'Montserrat',
     body: 'Lato',

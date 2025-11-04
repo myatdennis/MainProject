@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { 
   Send, 
-  Plus, 
   X, 
   FileText, 
   Link as LinkIcon, 
@@ -9,15 +8,14 @@ import {
   StickyNote, 
   ClipboardList,
   Search,
-  Filter,
   User,
   Building2,
   AlertTriangle,
   CheckCircle
 } from 'lucide-react';
 import { BaseResource, UserProfile, OrganizationProfile, ResourceSendRequest } from '../models/Profile';
-import profileService from '../services/ProfileService';
-import documentService from '../services/documentService';
+import profileService from '../dal/profile';
+import documentService from '../dal/documents';
 
 interface ResourceSenderProps {
   onResourceSent?: (resource: BaseResource, profileType: 'user' | 'organization', profileId: string) => void;

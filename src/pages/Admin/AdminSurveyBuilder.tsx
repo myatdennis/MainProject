@@ -26,7 +26,7 @@ import {
 const AssignmentModal = lazy(() => import('../../components/Survey/AssignmentModal'));
 const SurveySettingsModal = lazy(() => import('../../components/Survey/SurveySettingsModal'));
 import { surveyTemplates, questionTypes, defaultBranding, aiGeneratedQuestions, censusDemographicOptions } from '../../data/surveyTemplates';
-import { getAssignments, saveAssignments, getSurveyById, queueSaveSurvey } from '../../services/surveyService';
+import { getAssignments, saveAssignments, getSurveyById, queueSaveSurvey } from '../../dal/surveys';
 import type { Survey, SurveyQuestion, SurveySection, AnonymityMode } from '../../types/survey';
 
 const AdminSurveyBuilder = () => {
@@ -481,7 +481,7 @@ const AdminSurveyBuilder = () => {
 
   // Subscribe to queue events
   useEffect(() => {
-    import('../../services/surveyService').then(mod => {
+    import('../../dal/surveys').then(mod => {
       setQueueLength(mod.getQueueLength());
       setLastFlush(mod.getLastFlushTime());
       const handler = () => {

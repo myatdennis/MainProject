@@ -1,16 +1,13 @@
-import React, { useState } from 'react';
-import { 
-  Settings, 
-  User, 
-  Bell, 
-  Shield, 
+import { useState } from 'react';
+import {
+  User,
+  Bell,
+  Shield,
   Database,
-  Mail,
   Palette,
   Globe,
   Save,
   Upload,
-  Download,
   RefreshCw,
   AlertTriangle,
   CheckCircle,
@@ -54,9 +51,9 @@ const AdminSettings = () => {
       backupFrequency: 'daily'
     },
     branding: {
-      primaryColor: '#F28C1A',
-      secondaryColor: '#E6473A',
-      accentColor: '#2B84C6',
+      primaryColor: '#de7b12',
+      secondaryColor: '#D72638',
+      accentColor: '#3A7DFF',
       logoUrl: '',
       faviconUrl: '',
       customCss: ''
@@ -98,13 +95,17 @@ const AdminSettings = () => {
     <div className="space-y-6">
       <div className="flex items-center space-x-6">
         <div className="relative">
-          <img 
-            src="https://images.pexels.com/photos/3184416/pexels-photo-3184416.jpeg?auto=compress&cs=tinysrgb&w=200" 
+          <img
+            src="https://images.pexels.com/photos/3184416/pexels-photo-3184416.jpeg?auto=compress&cs=tinysrgb&w=200"
             alt="Profile"
             className="w-24 h-24 rounded-full object-cover"
           />
-          <button className="absolute bottom-0 right-0 bg-orange-500 text-white p-2 rounded-full hover:bg-orange-600 transition-colors duration-200">
-            <Upload className="h-4 w-4" />
+          <button
+            type="button"
+            className="absolute -bottom-2 -right-2 bg-white border border-gray-200 rounded-full p-2 shadow-sm hover:bg-gray-50"
+            title="Upload new photo"
+          >
+            <Upload className="h-4 w-4 text-gray-700" />
           </button>
         </div>
         <div>

@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus } from 'lucide-react';
-import orgService from '../../services/orgService';
+import { createOrg } from '../../dal/orgs';
 
 const AdminOrganizationCreate: React.FC = () => {
   const navigate = useNavigate();
@@ -16,7 +16,7 @@ const AdminOrganizationCreate: React.FC = () => {
     e.preventDefault();
     setSaving(true);
     try {
-      const created = await orgService.createOrg({ name, type, contactPerson, contactEmail, status });
+  const created = await createOrg({ name, type, contactPerson, contactEmail, status });
       navigate(`/admin/organizations/${created.id}`);
     } catch (err) {
       console.error('Failed to create org', err);

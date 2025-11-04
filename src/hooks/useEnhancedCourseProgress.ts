@@ -55,6 +55,8 @@ export const useEnhancedCourseProgress = (courseId: string, options: UseCoursePr
     onSync: (item) => {
       console.log('[CourseProgress] Offline item synced:', item);
       toast.success(`Progress synced: ${item.action}`);
+      // indicate that processing succeeded
+      return true;
     },
     onSyncError: (item, error) => {
       console.error('[CourseProgress] Offline sync failed:', item, error);
@@ -467,7 +469,7 @@ export const useEnhancedCourseProgress = (courseId: string, options: UseCoursePr
 
     // Actions
     forceSave: autoSave.forceSave,
-    processQueue: offlineQueue.processQueue,
+  processQueue: offlineQueue.flushQueue,
     flushQueue: offlineQueue.flushQueue,
     loadFromStorage: autoSave.loadFromStorage,
     reloadData: loadProgressData,

@@ -1,5 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { supabase } from '../lib/supabase';
+import { supabase, hasSupabaseConfig } from '../lib/supabase';
+import { wsClient } from '../services/wsClient';
+import { useRef } from 'react';
 import type { User, Session } from '@supabase/supabase-js';
 
 interface AuthState {
@@ -72,6 +74,21 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
               localStorage.removeItem('huddle_user');
             }
           }
+        } else if (!hasSupabaseConfig) {
+          // Demo mode: allow persisted local auth flags to gate routes without Supabase
+          const lmsAuth = localStorage.getItem('huddle_lms_auth') === 'true';
+          const adminAuth = localStorage.getItem('huddle_admin_auth') === 'true';
+          const savedUser = localStorage.getItem('huddle_user');
+
+          setIsAuthenticated({ lms: lmsAuth, admin: adminAuth });
+          if (savedUser) {
+            try {
+              setUser(JSON.parse(savedUser));
+            } catch (error) {
+              console.error('Error parsing saved user data:', error);
+              localStorage.removeItem('huddle_user');
+            }
+          }
         }
       } catch (error) {
         console.warn('Supabase session lookup failed, continuing in demo mode:', error);
@@ -90,13 +107,20 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         console.log('AuthContext auth state change, has session:', !!session);
         if (session?.user) {
           setSupabaseUser(session.user);
+          // Subscribe to WS topics for this supabase user id
+          try { subscribeTopicsForUser(session.user.id); } catch (e) { /* ignore */ }
         } else {
-          setSupabaseUser(null);
-          setIsAuthenticated({ lms: false, admin: false });
-          setUser(null);
-          localStorage.removeItem('huddle_lms_auth');
-          localStorage.removeItem('huddle_admin_auth');
-          localStorage.removeItem('huddle_user');
+          // In demo mode (no Supabase config), do not clear local demo auth flags on session change
+          if (hasSupabaseConfig) {
+            setSupabaseUser(null);
+            setIsAuthenticated({ lms: false, admin: false });
+            setUser(null);
+            localStorage.removeItem('huddle_lms_auth');
+            localStorage.removeItem('huddle_admin_auth');
+            localStorage.removeItem('huddle_user');
+            // Unsubscribe from WS topics when session ends
+            try { unsubscribeAllTopics(); } catch (e) { /* ignore */ }
+          }
         }
       }
     );
@@ -106,6 +130,46 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       data.subscription.unsubscribe();
     };
   }, []);
+
+  // Manage WS subscriptions for real-time updates based on authenticated user
+  const subscribedTopicsRef = useRef<Set<string>>(new Set());
+
+  const subscribeTopicsForUser = async (userId?: string) => {
+    try {
+      if (!userId) return;
+      const uid = String(userId).toLowerCase();
+      // Ensure connection
+      wsClient.connect();
+
+      const topics = [
+        `assignment:user:${uid}`,
+        `progress:user:${uid}`,
+        // Generic fallbacks
+        `assignment:org:global`,
+        `progress:all`
+      ];
+
+      for (const t of topics) {
+        if (!subscribedTopicsRef.current.has(t)) {
+          wsClient.subscribeTopic(t);
+          subscribedTopicsRef.current.add(t);
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to subscribe to WS topics for user', err);
+    }
+  };
+
+  const unsubscribeAllTopics = () => {
+    try {
+      for (const t of Array.from(subscribedTopicsRef.current)) {
+        wsClient.unsubscribeTopic(t);
+      }
+      subscribedTopicsRef.current.clear();
+    } catch (err) {
+      console.warn('Failed to unsubscribe WS topics', err);
+    }
+  };
 
   const login = async (email: string, password: string, type: 'lms' | 'admin'): Promise<LoginResult> => {
     try {
@@ -149,7 +213,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         localStorage.setItem('huddle_user', JSON.stringify(userData));
         setIsAuthenticated(prev => ({ ...prev, [type]: true }));
         setUser(userData);
-        
+  // Subscribe to WS topics for this demo user
+  subscribeTopicsForUser(userData.id);
         console.log('Demo login successful for:', email);
         return { success: true };
       }
@@ -216,6 +281,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
       setIsAuthenticated(prev => ({ ...prev, [type]: true }));
       setUser(userData);
+
+  // Subscribe to WS topics for this user
+  subscribeTopicsForUser(userData.id);
 
       // Create or update user profile in Supabase
       if (currentUser) {
@@ -291,6 +359,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       }));
       setUser(null);
       setSupabaseUser(null);
+      // Unsubscribe from WS topics on logout
+      unsubscribeAllTopics();
+      try { wsClient.disconnect(); } catch(e) { /* ignore */ }
     } catch (error) {
       console.error('Logout error:', error);
     }

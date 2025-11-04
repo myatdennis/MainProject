@@ -1,5 +1,5 @@
 import { supabase } from '../lib/supabase';
-import { syncService } from '../services/syncService';
+import { syncService } from '../dal/sync';
 import type { CourseAssignment, CourseAssignmentStatus } from '../types/assignment';
 
 const STORAGE_KEY = 'huddle_course_assignments_v1';

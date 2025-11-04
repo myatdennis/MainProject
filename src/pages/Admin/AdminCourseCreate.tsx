@@ -8,7 +8,8 @@ import CourseEditModal from '../../components/CourseEditModal';
 import { courseStore } from '../../store/courseStore';
 import { Course } from '../../types/courseTypes';
 import { useToast } from '../../context/ToastContext';
-import { useSyncService } from '../../services/syncService';
+import { useSyncService } from '../../dal/sync';
+import { syncCourseToDatabase, CourseValidationError } from '../../dal/courses';
 
 const AdminCourseCreate = () => {
   const navigate = useNavigate();
@@ -17,21 +18,32 @@ const AdminCourseCreate = () => {
 
   const [builderOpen, setBuilderOpen] = useState(true);
 
-  const handleSave = (course: Course) => {
-    const created = courseStore.createCourse({
-      ...course,
-      status: course.status || 'draft',
-      lastUpdated: new Date().toISOString(),
-    });
+  const handleSave = async (course: Course) => {
+    try {
+      const snapshot = await syncCourseToDatabase({
+        ...course,
+        status: course.status || 'draft',
+        lastUpdated: new Date().toISOString(),
+      });
+      const created = (snapshot ?? course) as Course;
+      courseStore.saveCourse(created, { skipRemoteSync: true });
 
-    syncService.logEvent({
-      type: 'course_created',
-      data: created,
-      timestamp: Date.now(),
-    });
+      syncService.logEvent({
+        type: 'course_created',
+        data: created,
+        timestamp: Date.now(),
+      });
 
-    showToast('Course saved successfully', 'success');
-    navigate(`/admin/courses/${created.id}/details`);
+      showToast('Course saved successfully', 'success');
+      navigate(`/admin/courses/${created.id}/details`);
+    } catch (err) {
+      if (err instanceof CourseValidationError) {
+        showToast(`Save failed: ${err.issues.join(' • ')}`, 'error');
+      } else {
+        console.error('Failed to save course', err);
+        showToast('Could not save course. Please try again.', 'error');
+      }
+    }
   };
 
   return (

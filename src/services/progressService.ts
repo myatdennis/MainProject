@@ -21,10 +21,27 @@ type LessonProgressRow = {
 
 const toInt = (value: number) => Math.min(100, Math.max(0, Math.round(value)));
 
-let retryTimer: ReturnType<typeof setTimeout> | null = null;
+let retryTimer: number | null = null;
 let isDraining = false;
+let eventRetryTimer: number | null = null;
+let isDrainingEvents = false;
 
-type ProgressSnapshot = ReturnType<typeof buildSnapshotPayload>;
+interface ProgressSnapshot {
+  userId: string;
+  courseId: string;
+  lessonIds: string[];
+  lessons: Array<{
+    lessonId: string;
+    progressPercent: number;
+    completed: boolean;
+    positionSeconds: number;
+    lastAccessedAt?: string;
+  }>;
+  overallPercent: number;
+  completedAt?: string | null;
+  totalTimeSeconds?: number | null;
+  lastLessonId?: string | null;
+}
 
 const buildSnapshotPayload = ({
   userId,
@@ -122,7 +139,7 @@ const flushPendingSnapshots = async () => {
   try {
     await initializeOfflineQueue();
     const result = await processOfflineQueue('progress-snapshot', (item: OfflineQueueItem) =>
-      postSnapshot(item.payload as ProgressSnapshot, { showFailureToast: false })
+      postSnapshot(item.payload as unknown as ProgressSnapshot, { showFailureToast: false })
     );
     if (result.remaining > 0) {
       const delay = result.nextDelayMs ?? 10000;
@@ -133,12 +150,82 @@ const flushPendingSnapshots = async () => {
   }
 };
 
+const postProgressEvent = async (item: OfflineQueueItem): Promise<boolean> => {
+  try {
+    const payload = item.payload as any || {};
+
+    // Ensure idempotency: include client_event_id
+    if (!payload.client_event_id) {
+      payload.client_event_id = item.id;
+    }
+
+    // Decide endpoint based on presence of lessonId
+    const endpoint = payload.lesson_id ? '/api/client/progress/lesson' : '/api/client/progress/course';
+
+    await NetworkErrorHandler.handleApiCall(
+      () =>
+        apiRequest(endpoint, {
+          method: 'POST',
+          body: JSON.stringify(payload),
+        }),
+      {
+        retryConfig: { maxAttempts: 2, delay: 800, backoffMultiplier: 2 },
+        showErrorToast: false,
+        errorMessage: 'Progress event sync failed',
+      }
+    );
+
+    return true;
+  } catch (error) {
+    console.warn('Failed to post progress event', item.id, error);
+    return false;
+  }
+};
+
+const scheduleEventRetry = (delayMs: number = 5000) => {
+  if (typeof window === 'undefined') return;
+  if (eventRetryTimer) {
+    clearTimeout(eventRetryTimer);
+  }
+  eventRetryTimer = window.setTimeout(async () => {
+    eventRetryTimer = null;
+    await flushPendingEvents();
+  }, delayMs);
+};
+
+const flushPendingEvents = async () => {
+  if (isDrainingEvents || typeof window === 'undefined') return;
+
+  if (!NetworkErrorHandler.isOnline()) {
+    scheduleEventRetry(10000);
+    return;
+  }
+
+  if (!hasPendingItems('progress-event')) {
+    return;
+  }
+
+  isDrainingEvents = true;
+  try {
+    await initializeOfflineQueue();
+    const result = await processOfflineQueue('progress-event', (item: OfflineQueueItem) => postProgressEvent(item));
+    if (result.remaining > 0) {
+      const delay = result.nextDelayMs ?? 10000;
+      scheduleEventRetry(delay);
+    }
+  } finally {
+    isDrainingEvents = false;
+  }
+};
+
 if (typeof window !== 'undefined') {
   window.addEventListener('online', () => {
     void flushPendingSnapshots();
+    void flushPendingEvents();
   });
 
   void flushPendingSnapshots();
+  void flushPendingEvents();
 }
 
 export const progressService = {
@@ -210,7 +297,7 @@ export const progressService = {
     const success = await postSnapshot(snapshot, { showFailureToast: true });
 
     if (!success) {
-      await enqueueProgressSnapshot(snapshot);
+      await enqueueProgressSnapshot(snapshot as unknown as Record<string, unknown>);
       scheduleRetry();
     } else if (hasPendingItems('progress-snapshot')) {
       scheduleRetry(2000);

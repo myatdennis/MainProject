@@ -1,4 +1,4 @@
-import type { Course, Module, Lesson, Resource } from '../types/courseTypes';
+import type { Course, Module, Lesson } from '../types/courseTypes';
 import type { NormalizedCourse } from '../utils/courseNormalization';
 import {
   normalizeCourse,
@@ -15,16 +15,15 @@ import {
   moduleReorderSchema,
   lessonReorderSchema,
 } from '../types/apiSchemas';
+import type { Module as ModuleDto, Lesson as LessonDto } from '../types/api';
 import type {
-  Module as ModuleDto,
-  Lesson as LessonDto,
   ModuleInput,
   ModulePatchInput,
   LessonInput,
   LessonPatchInput,
   ModuleReorderInput,
   LessonReorderInput,
-} from '../types/api';
+} from '../types/apiSchemas';
 import { ZodError } from 'zod';
 
 type SupabaseCourseRecord = {
@@ -342,111 +341,12 @@ const mapCompletionRule = (lesson: Lesson): LessonInput['completionRule'] => {
   };
 };
 
-const buildLessonInput = (moduleId: string, lesson: Lesson, index: number): LessonInput => {
-  const type = mapLessonTypeForApi(lesson.type);
-  const estimatedMinutes =
-    typeof lesson.estimatedDuration === 'number'
-      ? lesson.estimatedDuration
-      : parseDurationToMinutes(lesson.duration);
-  const durationSeconds =
-    typeof estimatedMinutes === 'number' && Number.isFinite(estimatedMinutes) ? estimatedMinutes * 60 : null;
+// Removed granular build helpers in favor of single upsert path; keep create/update APIs for targeted edits.
 
-  const payload: LessonInput = {
-    moduleId,
-    title: (lesson.title || '').trim() || `Lesson ${index + 1}`,
-    type,
-    description: lesson.description ?? null,
-    orderIndex: lesson.order ?? index,
-    durationSeconds,
-    content: buildLessonContent(lesson, type),
-  };
+// Resource normalization handled at call sites as needed; no-op here after consolidation.
 
-  const completionRule = mapCompletionRule(lesson);
-  if (completionRule) {
-    payload.completionRule = completionRule;
-  }
+// Legacy metadata builder retained for reference; module resources can be attached via metadata when needed.
 
-  return parseWithValidation(lessonSchema, payload, 'lesson');
-};
-
-const buildLessonPatch = (moduleId: string, lesson: Lesson, index: number): LessonPatchInput => {
-  const base = buildLessonInput(moduleId, lesson, index);
-  const patch: LessonPatchInput = {
-    moduleId: base.moduleId,
-    title: base.title,
-    description: base.description ?? null,
-    type: base.type,
-    orderIndex: base.orderIndex,
-    durationSeconds: base.durationSeconds ?? null,
-    content: base.content,
-  };
-
-  if (base.completionRule !== undefined) {
-    patch.completionRule = base.completionRule;
-  }
-
-  return parseWithValidation(lessonPatchSchema, patch, 'lesson');
-};
-
-const normalizeResource = (resource: Resource) => {
-  const url = resource.url ?? resource.downloadUrl;
-  if (!url) return null;
-
-  return {
-    id: resource.id,
-    title: resource.title,
-    description: resource.description ?? null,
-    type: resource.type,
-    url,
-    downloadable: resource.downloadable ?? false,
-    size: resource.size ?? null,
-  };
-};
-
-const buildModuleMetadata = (module: Module): Record<string, unknown> | undefined => {
-  if (!module.resources || module.resources.length === 0) {
-    return undefined;
-  }
-
-  const resources = module.resources.map(normalizeResource).filter((item): item is NonNullable<ReturnType<typeof normalizeResource>> => !!item);
-
-  if (resources.length === 0) {
-    return undefined;
-  }
-
-  return { resources };
-};
-
-const buildModuleInput = (courseId: string, module: Module, index: number): ModuleInput => {
-  const metadata = buildModuleMetadata(module);
-  const payload: ModuleInput = {
-    courseId,
-    title: (module.title || '').trim() || `Module ${index + 1}`,
-    description: module.description ?? null,
-    orderIndex: module.order ?? index,
-  };
-
-  if (metadata) {
-    payload.metadata = metadata;
-  }
-
-  return parseWithValidation(moduleSchema, payload, 'module');
-};
-
-const buildModulePatch = (module: Module, index: number): ModulePatchInput => {
-  const metadata = buildModuleMetadata(module);
-  const patch: ModulePatchInput = {
-    title: (module.title || '').trim(),
-    description: module.description ?? null,
-    orderIndex: module.order ?? index,
-  };
-
-  if (metadata) {
-    patch.metadata = metadata;
-  }
-
-  return parseWithValidation(modulePatchSchema, patch, 'module');
-};
 
 const guessOrganizationId = (course: Course | NormalizedCourse): string | null => {
   const candidate =
@@ -487,18 +387,56 @@ const buildCoursePayload = (course: NormalizedCourse) => {
 };
 
 export class CourseService {
+  private static buildModulesPayloadForUpsert(course: NormalizedCourse) {
+    const modules = (course.modules || []).map((mod, moduleIndex) => {
+      const lessons = (mod.lessons || []).map((lesson, lessonIndex) => {
+        const apiType = mapLessonTypeForApi(lesson.type);
+        const estimatedMinutes =
+          typeof lesson.estimatedDuration === 'number'
+            ? lesson.estimatedDuration
+            : parseDurationToMinutes(lesson.duration);
+        const durationSeconds =
+          typeof estimatedMinutes === 'number' && Number.isFinite(estimatedMinutes) ? estimatedMinutes * 60 : null;
+
+        const content = buildLessonContent(lesson, apiType);
+        const completionRule = mapCompletionRule(lesson);
+
+        return {
+          id: lesson.id,
+          title: (lesson.title || '').trim() || `Lesson ${lessonIndex + 1}`,
+          description: lesson.description ?? null,
+          type: apiType,
+          order_index: lesson.order ?? lessonIndex,
+          duration_s: durationSeconds,
+          content_json: content,
+          completion_rule_json: completionRule ?? null,
+        };
+      });
+
+      return {
+        id: mod.id,
+        title: (mod.title || '').trim() || `Module ${moduleIndex + 1}`,
+        description: mod.description ?? null,
+        order_index: mod.order ?? moduleIndex,
+        lessons,
+      };
+    });
+    return modules;
+  }
+
   private static async upsertCourse(course: NormalizedCourse): Promise<void> {
     const payload = buildCoursePayload(course);
+    const modules = CourseService.buildModulesPayloadForUpsert(course);
     await apiRequest(`/api/admin/courses`, {
       method: 'POST',
-      body: JSON.stringify({ course: payload }),
+      body: JSON.stringify({ course: payload, modules }),
     });
   }
 
   private static async fetchCourseStructure(identifier: string): Promise<NormalizedCourse | null> {
     try {
       const queryParam = '?includeDrafts=true';
-      const json = await apiRequest<{ data: SupabaseCourseRecord | null }>(`/api/client/courses/${identifier}${queryParam}`);
+      const json = await apiRequest<{ data: SupabaseCourseRecord | null }>(`/api/client/courses/${identifier}${queryParam}`, { noTransform: true });
       if (!json.data) return null;
       return mapCourseRecord(json.data);
     } catch (error) {
@@ -507,14 +445,7 @@ export class CourseService {
     }
   }
 
-  private static async resolveExistingCourse(course: NormalizedCourse): Promise<NormalizedCourse | null> {
-    const byId = await CourseService.fetchCourseStructure(course.id);
-    if (byId) return byId;
-    if (course.slug) {
-      return CourseService.fetchCourseStructure(course.slug);
-    }
-    return null;
-  }
+  // resolveExistingCourse no longer required with single upsert path; fetching occurs post-upsert.
 
   static async createModule(input: ModuleInput): Promise<ModuleDto> {
     const parsed = parseWithValidation(moduleSchema, input, 'module');
@@ -622,113 +553,12 @@ export class CourseService {
 
   static async syncCourseToDatabase(course: Course): Promise<NormalizedCourse | null> {
     const normalizedCourse = normalizeCourse(course);
+    // Single upsert with full graph (course + modules + lessons)
     await CourseService.upsertCourse(normalizedCourse);
 
-    const existingCourse = await CourseService.resolveExistingCourse(normalizedCourse);
-    const existingModulesMap = new Map<string, Module>(
-      (existingCourse?.modules || [])
-        .filter((module) => Boolean(module.id))
-        .map((module) => [module.id as string, module]),
-    );
-
-    for (const [moduleIndex, module] of (normalizedCourse.modules || []).entries()) {
-      const existingModule = module.id ? existingModulesMap.get(module.id) : undefined;
-      const moduleId = existingModule?.id ?? module.id ?? null;
-
-      if (moduleId && existingModule) {
-        const updatedModule = await CourseService.updateModule(moduleId, buildModulePatch(module, moduleIndex));
-        module.id = updatedModule.id;
-        module.order = updatedModule.orderIndex ?? module.order ?? moduleIndex;
-        existingModulesMap.delete(moduleId);
-
-        const existingLessonsMap = new Map<string, Lesson>(
-          (existingModule.lessons || [])
-            .filter((lesson) => Boolean(lesson.id))
-            .map((lesson) => [lesson.id as string, lesson]),
-        );
-
-        const targetLessons = module.lessons || [];
-        for (const [lessonIndex, lesson] of targetLessons.entries()) {
-          const lessonId = lesson.id ?? null;
-          if (lessonId && existingLessonsMap.has(lessonId)) {
-            const updatedLesson = await CourseService.updateLesson(
-              lessonId,
-              buildLessonPatch(moduleId, lesson, lessonIndex),
-            );
-            lesson.id = updatedLesson.id;
-            lesson.order = updatedLesson.orderIndex ?? lesson.order ?? lessonIndex;
-            existingLessonsMap.delete(lessonId);
-          } else {
-            const createdLesson = await CourseService.createLesson(
-              buildLessonInput(moduleId, lesson, lessonIndex),
-            );
-            lesson.id = createdLesson.id;
-            lesson.order = createdLesson.orderIndex ?? lesson.order ?? lessonIndex;
-          }
-        }
-
-        for (const orphanLessonId of existingLessonsMap.keys()) {
-          await CourseService.deleteLesson(orphanLessonId);
-        }
-      } else {
-        const createdModule = await CourseService.createModule(
-          buildModuleInput(normalizedCourse.id, module, moduleIndex),
-        );
-        module.id = createdModule.id;
-        module.order = createdModule.orderIndex ?? module.order ?? moduleIndex;
-        const createdModuleId = createdModule.id;
-
-        const targetLessons = module.lessons || [];
-        for (const [lessonIndex, lesson] of targetLessons.entries()) {
-          const createdLesson = await CourseService.createLesson(
-            buildLessonInput(createdModuleId, lesson, lessonIndex),
-          );
-          lesson.id = createdLesson.id;
-          lesson.order = createdLesson.orderIndex ?? lesson.order ?? lessonIndex;
-        }
-      }
-    }
-
-    for (const orphanModuleId of existingModulesMap.keys()) {
-      await CourseService.deleteModule(orphanModuleId);
-    }
-
-    const modulesForOrdering = (normalizedCourse.modules || []).filter((module) => Boolean(module.id));
-    if (modulesForOrdering.length > 0) {
-      const reorderedModules = await CourseService.reorderModules(normalizedCourse.id, modulesForOrdering);
-      const moduleOrderMap = new Map<string, number>(
-        reorderedModules.map((module) => [module.id, module.orderIndex ?? 0]),
-      );
-
-      modulesForOrdering.forEach((module) => {
-        const updatedOrder = moduleOrderMap.get(module.id as string);
-        if (typeof updatedOrder === 'number') {
-          module.order = updatedOrder;
-        }
-      });
-
-      await Promise.all(
-        modulesForOrdering.map(async (module) => {
-          const reorderedLessons = await CourseService.reorderLessons(
-            module.id as string,
-            module.lessons || [],
-          );
-          const lessonOrderMap = new Map<string, number>(
-            reorderedLessons.map((lesson) => [lesson.id, lesson.orderIndex ?? 0]),
-          );
-
-          (module.lessons || []).forEach((lesson) => {
-            const updatedOrder = lessonOrderMap.get(lesson.id as string);
-            if (typeof updatedOrder === 'number') {
-              lesson.order = updatedOrder;
-            }
-          });
-        }),
-      );
-    }
-
+    // Reload fresh graph to get server-assigned IDs and order
     const refreshed =
-      (await CourseService.fetchCourseStructure(normalizedCourse.id)) ??
+      (await CourseService.fetchCourseStructure(normalizedCourse.id)) ||
       (normalizedCourse.slug ? await CourseService.fetchCourseStructure(normalizedCourse.slug) : null);
 
     return refreshed ?? normalizedCourse;
@@ -746,12 +576,14 @@ export class CourseService {
     try {
       const json = await apiRequest<{ data: SupabaseCourseRecord | null }>(
         `/api/client/courses/${normalizedIdentifier}${queryParam}`,
+        { noTransform: true },
       );
       if (!json.data) {
         const slugCandidate = slugify(normalizedIdentifier);
         if (slugCandidate && slugCandidate !== normalizedIdentifier) {
           const slugJson = await apiRequest<{ data: SupabaseCourseRecord | null }>(
             `/api/client/courses/${slugCandidate}${queryParam}`,
+            { noTransform: true },
           );
           if (slugJson.data) {
             return mapCourseRecord(slugJson.data);
@@ -768,7 +600,7 @@ export class CourseService {
 
   static async getPublishedCourses(): Promise<NormalizedCourse[]> {
     try {
-      const json = await apiRequest<{ data: SupabaseCourseRecord[] }>('/api/client/courses');
+      const json = await apiRequest<{ data: SupabaseCourseRecord[] }>('/api/client/courses', { noTransform: true });
       return (json.data || []).map(mapCourseRecord);
     } catch (error) {
       console.error('Error loading published courses:', error);
@@ -778,7 +610,7 @@ export class CourseService {
 
   static async getAllCoursesFromDatabase(): Promise<NormalizedCourse[]> {
     try {
-      const json = await apiRequest<{ data: SupabaseCourseRecord[] }>('/api/admin/courses');
+      const json = await apiRequest<{ data: SupabaseCourseRecord[] }>('/api/admin/courses', { noTransform: true });
       return (json.data || []).map(mapCourseRecord);
     } catch (error) {
       console.error('Error loading courses from API:', error);

@@ -19,7 +19,7 @@ import {
   buildLearnerProgressSnapshot,
   loadStoredCourseProgress,
 } from '../utils/courseProgress';
-import syncService from '../services/syncService';
+import { syncService } from '../dal/sync';
 import { getAssignmentsForUser } from '../utils/assignmentStorage';
 import type { CourseAssignment } from '../types/assignment';
 
@@ -172,13 +172,13 @@ const LearnerDashboard = () => {
     const unsubAssignUpdate = syncService.subscribe('assignment_updated', () => {
       void refreshAssignments();
     });
-    const unsubProgress = syncService.subscribe('user_progress', (event) => {
+  const unsubProgress = syncService.subscribe('user_progress', (event: any) => {
       const targetId = event?.userId || event?.data?.userId;
       if (targetId?.toLowerCase?.() === learnerId) {
         void refreshAssignments();
       }
     });
-    const unsubComplete = syncService.subscribe('user_completed', (event) => {
+  const unsubComplete = syncService.subscribe('user_completed', (event: any) => {
       const targetId = event?.userId || event?.data?.userId;
       if (targetId?.toLowerCase?.() === learnerId) {
         void refreshAssignments();

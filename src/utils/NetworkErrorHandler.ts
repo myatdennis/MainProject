@@ -132,7 +132,7 @@ export class NetworkErrorHandler {
         position: 'top-right',
         style: {
           background: errorType === 'error' ? 'rgba(215, 38, 56, 0.12)' : 'rgba(246, 200, 123, 0.18)',
-          color: errorType === 'error' ? '#E6473A' : 'var(--accent-warning)',
+          color: errorType === 'error' ? '#D72638' : 'var(--accent-warning)',
           border: errorType === 'error' ? '1px solid rgba(215, 38, 56, 0.25)' : '1px solid rgba(246, 200, 123, 0.35)'
         }
       });

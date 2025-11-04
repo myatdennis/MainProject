@@ -1,10 +1,12 @@
-const BASE = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+import apiRequest, { ApiRequestOptions } from '../utils/apiClient';
 
-export function api(path: string, init?: RequestInit) {
-  if (!BASE) {
-    throw new Error('VITE_API_BASE_URL is not configured');
-  }
+/**
+ * Lightweight compatibility wrapper used across the app as `api`.
+ * Keeps the older `api(path, opts)` call-site shape intact while reusing apiClient.
+ */
+export const api = async <T = any>(path: string, options: ApiRequestOptions = {}): Promise<T> => {
+  return await apiRequest<T>(path, options);
+};
 
-  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-  return fetch(`${BASE}${normalizedPath}`, init);
-}
+export default api;
+// Export default already provides `api` compatibility. Keep this module minimal.

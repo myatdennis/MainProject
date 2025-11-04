@@ -79,8 +79,8 @@ const SEO: React.FC<SEOProps> = ({
       <meta httpEquiv="X-Frame-Options" content="DENY" />
       <meta httpEquiv="X-XSS-Protection" content="1; mode=block" />
       
-      {/* PWA Meta Tags */}
-      <meta name="theme-color" content="#2B84C6" />
+  {/* PWA Meta Tags */}
+  <meta name="theme-color" content="#3A7DFF" />
       <meta name="apple-mobile-web-app-capable" content="yes" />
       <meta name="apple-mobile-web-app-status-bar-style" content="default" />
       <meta name="apple-mobile-web-app-title" content={baseTitle} />

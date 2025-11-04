@@ -1,15 +1,20 @@
 import fs from 'fs';
 import path from 'path';
 
+// Canonical brand palette (lowercased for normalization)
 const BRAND_COLORS = [
-  '#F28C1A', // Sunrise Orange
-  '#E6473A', // Deep Red Accent
-  '#2B84C6', // Signature Blue
-  '#3BAA66', // Forest Green
-  '#1E1E1E', // Charcoal Block
-  '#F9F9F1', // Soft White
+  '#de7b12', // Sunrise Orange
+  '#d72638', // Deep Red Accent
+  '#3a7dff', // Sky Blue
+  '#228b22', // Forest Green
+  '#1e1e1e', // Charcoal Block
+  '#f9f9f1', // Soft White
+  '#3f3f3f', // Slate text
+  '#e4e7eb', // Mist border
+  '#f4f5f7', // Cloud surface
+  '#f6c87b', // Accent gold
 ];
-const BRAND_FONTS = ['Montserrat', 'Lato', 'Quicksand'];
+const BRAND_FONTS = ['Inter', 'system-ui', 'sans-serif'];
 
 function scanFile(filePath: string) {
   const content = fs.readFileSync(filePath, 'utf8');
@@ -30,7 +35,8 @@ function checkConsistency(rootDir: string) {
       } else if (fullPath.endsWith('.tsx') || fullPath.endsWith('.css')) {
         const { colors, fonts } = scanFile(fullPath);
         for (const color of colors) {
-          if (!BRAND_COLORS.includes(color)) {
+          const lc = color.toLowerCase();
+          if (!BRAND_COLORS.includes(lc)) {
             results.colorIssues.push({ file: fullPath, color });
           }
         }

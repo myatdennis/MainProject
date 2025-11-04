@@ -11,6 +11,7 @@ import {
   Eye,
   Zap
 } from 'lucide-react';
+import Breadcrumbs from '../../components/ui/Breadcrumbs';
 
 const AdminAnalytics = () => {
   const [dateRange, setDateRange] = useState('last-30-days');
@@ -166,15 +167,18 @@ const AdminAnalytics = () => {
   };
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
+    <div className="container mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
       {/* Header */}
+      <div className="mb-6">
+        <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Analytics', to: '/admin/analytics' }]} />
+      </div>
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900 mb-2">Advanced Analytics & AI Insights</h1>
         <p className="text-gray-600">AI-powered analytics to optimize learning experiences and predict outcomes</p>
       </div>
 
       {/* Controls */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
+      <div className="card-lg card-hover mb-8">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
           <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4">
             <div className="flex items-center space-x-2">
@@ -182,7 +186,7 @@ const AdminAnalytics = () => {
               <select
                 value={dateRange}
                 onChange={(e) => setDateRange(e.target.value)}
-                className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-[var(--hud-orange)] focus:border-transparent"
               >
                 <option value="last-7-days">Last 7 Days</option>
                 <option value="last-30-days">Last 30 Days</option>
@@ -195,7 +199,7 @@ const AdminAnalytics = () => {
               <select
                 value={selectedMetric}
                 onChange={(e) => setSelectedMetric(e.target.value)}
-                className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-[var(--hud-orange)] focus:border-transparent"
               >
                 <option value="engagement">Engagement Analysis</option>
                 <option value="performance">Performance Metrics</option>
@@ -210,7 +214,7 @@ const AdminAnalytics = () => {
               <RefreshCw className="h-4 w-4" />
               <span>Refresh AI Analysis</span>
             </button>
-            <button onClick={exportInsights} className="bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-2">
+            <button onClick={exportInsights} className="btn-cta px-4 py-2 rounded-lg flex items-center space-x-2">
               <Download className="h-4 w-4" />
               <span>Export Insights</span>
             </button>
@@ -273,7 +277,7 @@ const AdminAnalytics = () => {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
         {/* Engagement Heatmap */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        <div className="card-lg">
           <h2 className="text-xl font-bold text-gray-900 mb-6">Engagement Heatmap</h2>
           <div className="space-y-2">
             <div className="grid grid-cols-13 gap-1 text-xs text-gray-500 mb-2">
@@ -309,7 +313,7 @@ const AdminAnalytics = () => {
         </div>
 
         {/* Learner Journey */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        <div className="card-lg">
           <h2 className="text-xl font-bold text-gray-900 mb-6">Learner Journey Analysis</h2>
           <div className="space-y-4">
             {learnerJourney.map((stage, index) => (
@@ -322,8 +326,8 @@ const AdminAnalytics = () => {
                   <div className="text-lg font-bold text-gray-900">{stage.conversion}%</div>
                   <div className="w-16 bg-gray-200 rounded-full h-2 mt-1">
                     <div 
-                      className="bg-gradient-to-r from-orange-400 to-red-500 h-2 rounded-full"
-                      style={{ width: `${stage.conversion}%` }}
+                      className="h-2 rounded-full"
+                      style={{ width: `${stage.conversion}%`, background: 'var(--gradient-blue-green)' }}
                     ></div>
                   </div>
                 </div>
@@ -334,7 +338,7 @@ const AdminAnalytics = () => {
       </div>
 
       {/* Content Performance */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
+      <div className="card-lg mb-8">
         <h2 className="text-xl font-bold text-gray-900 mb-6">Content Performance Analysis</h2>
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -388,7 +392,7 @@ const AdminAnalytics = () => {
       </div>
 
       {/* AI Recommendations */}
-      <div className="bg-gradient-to-r from-purple-50 to-blue-50 rounded-xl p-8">
+      <div className="rounded-xl p-8" style={{ background: 'var(--gradient-banner)' }}>
         <div className="flex items-center space-x-3 mb-6">
           <Zap className="h-6 w-6 text-purple-500" />
           <h2 className="text-xl font-bold text-gray-900">AI Recommendations</h2>

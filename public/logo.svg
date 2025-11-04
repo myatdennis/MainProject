@@ -1,12 +1,12 @@
 <svg width="160" height="160" viewBox="0 0 160 160" fill="none" xmlns="http://www.w3.org/2000/svg">
   <circle cx="80" cy="80" r="62" fill="#F9F6F1" />
-  <path d="M80 22c14.4 0 28.1 4.7 39.5 13.4a62 62 0 0 1 12 12.4L105.4 66c-5.4-6.7-13.4-10.7-22.4-10.7s-17 4-22.4 10.7L28.5 47.8A62.1 62.1 0 0 1 80 22Z" fill="#F28C1A" stroke="#F9F6F1" stroke-width="6" stroke-linejoin="round" />
-  <path d="M138 80c0 12-3.5 23.5-10 33.4a62.3 62.3 0 0 1-8 10.2L104.6 99c3.4-5.5 5.3-11.8 5.3-18.3 0-6.5-1.9-12.8-5.3-18.3l22.1-24.6A61.9 61.9 0 0 1 138 80Z" fill="#E6473A" stroke="#F9F6F1" stroke-width="6" stroke-linejoin="round" />
-  <path d="M80 138c-14.4 0-28.1-4.7-39.5-13.4a62 62 0 0 1-12-12.4L54.6 94c5.4 6.7 13.4 10.7 22.4 10.7s17-4 22.4-10.7l22.9 18.2A62.1 62.1 0 0 1 80 138Z" fill="#2B84C6" stroke="#F9F6F1" stroke-width="6" stroke-linejoin="round" />
-  <path d="M22 80c0-12 3.5-23.5 10-33.4a62.3 62.3 0 0 1 8-10.2L55.4 61c-3.4 5.5-5.3 11.8-5.3 18.3 0 6.5 1.9 12.8 5.3 18.3L33.2 122.2A61.9 61.9 0 0 1 22 80Z" fill="#3BAA66" stroke="#F9F6F1" stroke-width="6" stroke-linejoin="round" />
-  <circle cx="80" cy="32" r="16" fill="#F28C1A" />
-  <circle cx="128" cy="80" r="16" fill="#E6473A" />
-  <circle cx="80" cy="128" r="16" fill="#2B84C6" />
-  <circle cx="32" cy="80" r="16" fill="#3BAA66" />
+  <path d="M80 22c14.4 0 28.1 4.7 39.5 13.4a62 62 0 0 1 12 12.4L105.4 66c-5.4-6.7-13.4-10.7-22.4-10.7s-17 4-22.4 10.7L28.5 47.8A62.1 62.1 0 0 1 80 22Z" fill="#de7b12" stroke="#F9F6F1" stroke-width="6" stroke-linejoin="round" />
+  <path d="M138 80c0 12-3.5 23.5-10 33.4a62.3 62.3 0 0 1-8 10.2L104.6 99c3.4-5.5 5.3-11.8 5.3-18.3 0-6.5-1.9-12.8-5.3-18.3l22.1-24.6A61.9 61.9 0 0 1 138 80Z" fill="#D72638" stroke="#F9F6F1" stroke-width="6" stroke-linejoin="round" />
+  <path d="M80 138c-14.4 0-28.1-4.7-39.5-13.4a62 62 0 0 1-12-12.4L54.6 94c5.4 6.7 13.4 10.7 22.4 10.7s17-4 22.4-10.7l22.9 18.2A62.1 62.1 0 0 1 80 138Z" fill="#3A7DFF" stroke="#F9F6F1" stroke-width="6" stroke-linejoin="round" />
+  <path d="M22 80c0-12 3.5-23.5 10-33.4a62.3 62.3 0 0 1 8-10.2L55.4 61c-3.4 5.5-5.3 11.8-5.3 18.3 0 6.5 1.9 12.8 5.3 18.3L33.2 122.2A61.9 61.9 0 0 1 22 80Z" fill="#228B22" stroke="#F9F6F1" stroke-width="6" stroke-linejoin="round" />
+  <circle cx="80" cy="32" r="16" fill="#de7b12" />
+  <circle cx="128" cy="80" r="16" fill="#D72638" />
+  <circle cx="80" cy="128" r="16" fill="#3A7DFF" />
+  <circle cx="32" cy="80" r="16" fill="#228B22" />
   <circle cx="80" cy="80" r="28" fill="#F9F6F1" />
 </svg>

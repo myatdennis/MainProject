@@ -1,12 +1,15 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import Button from '../../components/ui/Button';
 import { Building2, Plus, Search, MoreVertical, Edit, Eye, Settings, Download, Upload, CheckCircle, Clock, AlertTriangle } from 'lucide-react';
-import orgService from '../../services/orgService';
+import orgService from '../../dal/orgs';
 import LoadingButton from '../../components/LoadingButton';
 import ConfirmationModal from '../../components/ConfirmationModal';
 import AddOrganizationModal from '../../components/AddOrganizationModal';
 import EditOrganizationModal from '../../components/EditOrganizationModal';
 import { useToast } from '../../context/ToastContext';
+import Breadcrumbs from '../../components/ui/Breadcrumbs';
+import EmptyState from '../../components/ui/EmptyState';
 
 const AdminOrganizations = () => {
   const { showToast } = useToast();
@@ -157,15 +160,18 @@ const AdminOrganizations = () => {
 
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
+    <div className="container mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
       {/* Header */}
+      <div className="mb-6">
+        <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Organizations', to: '/admin/organizations' }]} />
+      </div>
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900 mb-2">Organization Management</h1>
         <p className="text-gray-600">Manage client organizations, track progress, and oversee cohorts</p>
       </div>
 
       {/* Search and Actions */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
+      <div className="card-lg card-hover mb-8">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
           <div className="relative flex-1 max-w-md">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
@@ -174,7 +180,7 @@ const AdminOrganizations = () => {
               placeholder="Search organizations..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+              className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[var(--hud-orange)] focus:border-transparent"
             />
           </div>
           
@@ -212,10 +218,36 @@ const AdminOrganizations = () => {
         </div>
       </div>
 
+      {/* Empty state */}
+      {filteredOrgs.length === 0 && (
+        <div className="mb-8">
+          <EmptyState
+            title="No organizations found"
+            description={
+              searchTerm
+                ? 'Try changing your search to find organizations.'
+                : 'You have not added any organizations yet.'
+            }
+            action={
+              <button
+                className={searchTerm ? 'btn-outline' : 'btn-cta'}
+                onClick={() => {
+                  if (searchTerm) setSearchTerm('');
+                  else handleAddOrganization();
+                }}
+              >
+                {searchTerm ? 'Reset search' : 'Add organization'}
+              </button>
+            }
+          />
+        </div>
+      )}
+
       {/* Organizations Grid */}
+      {filteredOrgs.length > 0 && (
       <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 mb-8">
         {filteredOrgs.map((org) => (
-          <div key={org.id} className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 hover:shadow-md transition-shadow duration-200">
+          <div key={org.id} className="card-lg card-hover">
             <div className="flex items-start justify-between mb-4">
                 <div className="flex items-center space-x-3">
                 <div className="bg-blue-100 p-2 rounded-lg">
@@ -228,7 +260,9 @@ const AdminOrganizations = () => {
               </div>
                 <div className="flex items-center space-x-2">
                 {getStatusIcon(org.status)}
-                <a href={`/admin/organizations/${org.id}`} className="text-sm text-blue-600 hover:underline">View</a>
+                <Button asChild variant="ghost" size="sm" aria-label="View organization">
+                  <Link to={`/admin/organizations/${org.id}`}>View</Link>
+                </Button>
                 <button className="p-1 text-gray-400 hover:text-gray-600">
                   <MoreVertical className="h-4 w-4" />
                 </button>
@@ -265,8 +299,8 @@ const AdminOrganizations = () => {
               </div>
               <div className="w-full bg-gray-200 rounded-full h-2">
                 <div 
-                  className="bg-gradient-to-r from-green-400 to-green-500 h-2 rounded-full"
-                  style={{ width: `${org.completionRate}%` }}
+                  className="h-2 rounded-full"
+                  style={{ width: `${org.completionRate}%`, background: 'var(--gradient-blue-green)' }}
                 ></div>
               </div>
             </div>
@@ -311,26 +345,27 @@ const AdminOrganizations = () => {
           </div>
         ))}
       </div>
+      )}
 
       {/* Summary Statistics */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 text-center">
+        <div className="card-lg text-center">
           <div className="text-2xl font-bold text-blue-600">{organizations.length}</div>
           <div className="text-sm text-gray-600">Total Organizations</div>
         </div>
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 text-center">
+        <div className="card-lg text-center">
           <div className="text-2xl font-bold text-green-600">
             {organizations.filter(org => org.status === 'active').length}
           </div>
           <div className="text-sm text-gray-600">Active Organizations</div>
         </div>
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 text-center">
+        <div className="card-lg text-center">
           <div className="text-2xl font-bold text-orange-600">
             {organizations.reduce((acc, org) => acc + org.totalLearners, 0)}
           </div>
           <div className="text-sm text-gray-600">Total Learners</div>
         </div>
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 text-center">
+        <div className="card-lg text-center">
           <div className="text-2xl font-bold text-purple-600">
             {organizations.length === 0 ? '—' : `${Math.round(organizations.reduce((acc, org) => acc + (org.completionRate || 0), 0) / organizations.length)}%`}
           </div>
@@ -339,7 +374,7 @@ const AdminOrganizations = () => {
       </div>
 
       {/* Detailed Organization Table */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+      <div className="card-lg overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-200">
           <h2 className="text-lg font-bold text-gray-900">Organization Details</h2>
         </div>

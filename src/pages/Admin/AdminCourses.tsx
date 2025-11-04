@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { courseStore } from '../../store/courseStore';
 import { Course } from '../../types/courseTypes';
-import { CourseService, CourseValidationError } from '../../services/courseService';
+import { syncCourseToDatabase, CourseValidationError } from '../../dal/courses';
 import { 
   BookOpen, 
   Plus, 
@@ -27,8 +27,12 @@ import LoadingButton from '../../components/LoadingButton';
 import ConfirmationModal from '../../components/ConfirmationModal';
 import CourseEditModal from '../../components/CourseEditModal';
 import { useToast } from '../../context/ToastContext';
-import { useSyncService } from '../../services/syncService';
+import { useSyncService } from '../../dal/sync';
 import { slugify } from '../../utils/courseNormalization';
+import Breadcrumbs from '../../components/ui/Breadcrumbs';
+import EmptyState from '../../components/ui/EmptyState';
+import Button from '../../components/ui/Button';
+import Input from '../../components/ui/Input';
 
 
 const AdminCourses = () => {
@@ -61,7 +65,7 @@ const AdminCourses = () => {
           : inputCourse.publishedDate,
     };
 
-    const snapshot = await CourseService.syncCourseToDatabase(prepared);
+  const snapshot = await syncCourseToDatabase(prepared);
     const finalCourse = (snapshot ?? prepared) as Course;
     courseStore.saveCourse(finalCourse, { skipRemoteSync: true });
     return finalCourse;
@@ -362,25 +366,27 @@ const AdminCourses = () => {
   };
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
+    <div className="container mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
       {/* Header */}
+      <div className="mb-6">
+        <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Courses', to: '/admin/courses' }]} />
+      </div>
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900 mb-2">Course Management</h1>
         <p className="text-gray-600">Create, edit, and manage training modules and learning paths</p>
       </div>
 
       {/* Search and Filter Bar */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
+      <div className="card-lg card-hover mb-8">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
           <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4 flex-1">
             <div className="relative flex-1 max-w-md">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
-              <input
-                type="text"
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate/60" />
+              <Input
+                className="pl-9"
                 placeholder="Search courses..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
               />
             </div>
             <div className="flex items-center space-x-2">
@@ -388,7 +394,7 @@ const AdminCourses = () => {
               <select
                 value={filterStatus}
                 onChange={(e) => setFilterStatus(e.target.value)}
-                className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-[var(--hud-orange)] focus:border-transparent"
               >
                 <option value="all">All Status</option>
                 <option value="published">Published</option>
@@ -401,22 +407,17 @@ const AdminCourses = () => {
             <div className="flex items-center space-x-4">
             {selectedCourses.length > 0 && (
               <div className="flex items-center space-x-2">
-                <button onClick={() => navigate(`/admin/courses/bulk?ids=${selectedCourses.join(',')}`)} className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors duration-200">
+                <Button variant="outline" size="sm" onClick={() => navigate(`/admin/courses/bulk?ids=${selectedCourses.join(',')}`)}>
                   Bulk Assign ({selectedCourses.length})
-                </button>
-                <button onClick={publishSelected} className="bg-green-500 text-white px-4 py-2 rounded-lg hover:bg-green-600 transition-colors duration-200">
+                </Button>
+                <Button size="sm" onClick={publishSelected} data-test="admin-publish-selected">
                   Publish Selected
-                </button>
+                </Button>
               </div>
             )}
-            <LoadingButton
-              onClick={handleCreateCourse}
-              variant="primary"
-              size="md"
-              icon={Plus}
-            >
+            <Button size="md" onClick={handleCreateCourse} leadingIcon={<Plus className="h-4 w-4" />} data-test="admin-new-course">
               New Course
-            </LoadingButton>
+            </Button>
             <LoadingButton
               onClick={() => navigate('/admin/courses/new')}
               variant="secondary"
@@ -436,10 +437,40 @@ const AdminCourses = () => {
         </div>
       </div>
 
+      {/* Empty state */}
+      {filteredCourses.length === 0 && (
+        <div className="mb-8">
+          <EmptyState
+            title="No courses found"
+            description={
+              searchTerm || filterStatus !== 'all'
+                ? 'Try adjusting your search or filters to find courses.'
+                : "You haven't created any courses yet. Get started by creating your first course."
+            }
+            action={
+              <Button
+                variant={searchTerm || filterStatus !== 'all' ? 'outline' : 'primary'}
+                onClick={() => {
+                  if (searchTerm || filterStatus !== 'all') {
+                    setSearchTerm('');
+                    setFilterStatus('all');
+                  } else {
+                    handleCreateCourse();
+                  }
+                }}
+              >
+                {searchTerm || filterStatus !== 'all' ? 'Reset filters' : 'Create course'}
+              </Button>
+            }
+          />
+        </div>
+      )}
+
       {/* Course Grid */}
+      {filteredCourses.length > 0 && (
       <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 mb-8">
         {filteredCourses.map((course: Course) => (
-          <div key={course.id} className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow duration-200">
+          <div key={course.id} className="card-lg card-hover overflow-hidden" data-test="admin-course-card">
             <div className="relative">
               <img 
                 src={course.thumbnail} 
@@ -456,7 +487,7 @@ const AdminCourses = () => {
                   type="checkbox"
                   checked={selectedCourses.includes(course.id)}
                   onChange={() => handleSelectCourse(course.id)}
-                  className="h-4 w-4 text-orange-500 focus:ring-orange-500 border-gray-300 rounded"
+                  className="h-4 w-4 border-gray-300 rounded focus:ring-[var(--hud-orange)]"
                 />
               </div>
               <div className="absolute bottom-4 left-4">
@@ -494,8 +525,8 @@ const AdminCourses = () => {
                   </div>
                   <div className="w-full bg-gray-200 rounded-full h-2">
                     <div 
-                      className="bg-gradient-to-r from-green-400 to-green-500 h-2 rounded-full"
-                      style={{ width: `${course.completionRate}%` }}
+                      className="h-2 rounded-full"
+                      style={{ width: `${course.completionRate}%`, background: 'var(--gradient-blue-green)' }}
                     ></div>
                   </div>
                 </div>
@@ -559,10 +590,11 @@ const AdminCourses = () => {
             </div>
           </div>
         ))}
-      </div>
+  </div>
+  )}
 
       {/* Course Table */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+      <div className="card-lg overflow-hidden">
         <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
           <h2 className="text-lg font-bold text-gray-900">Course Details</h2>
           <div className="flex items-center space-x-2">
@@ -592,7 +624,7 @@ const AdminCourses = () => {
                     type="checkbox"
                     checked={selectedCourses.length === filteredCourses.length && filteredCourses.length > 0}
                     onChange={handleSelectAll}
-                    className="h-4 w-4 text-orange-500 focus:ring-orange-500 border-gray-300 rounded"
+                    className="h-4 w-4 border-gray-300 rounded focus:ring-[var(--hud-orange)]"
                   />
                 </th>
                 <th className="text-left py-3 px-6 font-semibold text-gray-900">Course</th>
@@ -612,7 +644,7 @@ const AdminCourses = () => {
                       type="checkbox"
                       checked={selectedCourses.includes(course.id)}
                       onChange={() => handleSelectCourse(course.id)}
-                      className="h-4 w-4 text-orange-500 focus:ring-orange-500 border-gray-300 rounded"
+                      className="h-4 w-4 border-gray-300 rounded focus:ring-[var(--hud-orange)]"
                     />
                   </td>
                   <td className="py-4 px-6">
@@ -642,8 +674,8 @@ const AdminCourses = () => {
                     <div className="font-medium text-gray-900">{course.completionRate}%</div>
                     <div className="w-16 bg-gray-200 rounded-full h-1 mt-1 mx-auto">
                       <div 
-                        className="bg-gradient-to-r from-green-400 to-green-500 h-1 rounded-full"
-                        style={{ width: `${course.completionRate}%` }}
+                        className="h-1 rounded-full"
+                        style={{ width: `${course.completionRate}%`, background: 'var(--gradient-blue-green)' }}
                       ></div>
                     </div>
                   </td>
@@ -710,23 +742,23 @@ const AdminCourses = () => {
 
       {/* Summary Stats */}
       <div className="mt-8 grid grid-cols-1 md:grid-cols-4 gap-6">
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 text-center">
+        <div className="card-lg text-center">
           <div className="text-2xl font-bold text-blue-600">{courses.length}</div>
           <div className="text-sm text-gray-600">Total Courses</div>
         </div>
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 text-center">
+        <div className="card-lg text-center">
           <div className="text-2xl font-bold text-green-600">
             {courses.filter((c: Course) => c.status === 'published').length}
           </div>
           <div className="text-sm text-gray-600">Published</div>
         </div>
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 text-center">
+        <div className="card-lg text-center">
           <div className="text-2xl font-bold text-orange-600">
             {courses.reduce((acc: number, course: Course) => acc + (course.enrollments || 0), 0)}
           </div>
           <div className="text-sm text-gray-600">Total Enrollments</div>
         </div>
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 text-center">
+        <div className="card-lg text-center">
           <div className="text-2xl font-bold text-purple-600">
             {Math.round(courses.filter((c: Course) => (c.avgRating || 0) > 0).reduce((acc: number, course: Course) => acc + (course.avgRating || 0), 0) / courses.filter((c: Course) => (c.avgRating || 0) > 0).length * 10) / 10 || 0}
           </div>

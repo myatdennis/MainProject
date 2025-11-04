@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { BarChart3, TrendingUp, Download, Calendar, Filter, RefreshCw, Eye, Share } from 'lucide-react';
+import Breadcrumbs from '../../components/ui/Breadcrumbs';
 
 const AdminReports = () => {
   const [dateRange, setDateRange] = useState('last-30-days');
@@ -132,15 +133,18 @@ const AdminReports = () => {
   };
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
+    <div className="container mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
       {/* Header */}
+      <div className="mb-6">
+        <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Reports', to: '/admin/reports' }]} />
+      </div>
       <div className="mb-8">
         <h1 className="text-3xl font-bold text-gray-900 mb-2">Reports & Analytics</h1>
         <p className="text-gray-600">Comprehensive insights into learner progress, engagement, and course effectiveness</p>
       </div>
 
       {/* Filters */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
+      <div className="card-lg card-hover mb-8">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
           <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4">
             <div className="flex items-center space-x-2">
@@ -148,7 +152,7 @@ const AdminReports = () => {
               <select
                 value={dateRange}
                 onChange={(e) => setDateRange(e.target.value)}
-                className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-[var(--hud-orange)] focus:border-transparent"
               >
                 <option value="last-7-days">Last 7 Days</option>
                 <option value="last-30-days">Last 30 Days</option>
@@ -162,7 +166,7 @@ const AdminReports = () => {
               <select
                 value={reportType}
                 onChange={(e) => setReportType(e.target.value)}
-                className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-[var(--hud-orange)] focus:border-transparent"
               >
                 <option value="overview">Overview</option>
                 <option value="learners">Learner Progress</option>
@@ -178,7 +182,7 @@ const AdminReports = () => {
               <RefreshCw className="h-4 w-4" />
               <span>Refresh</span>
             </button>
-            <button onClick={exportReport} className="bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-2">
+            <button onClick={exportReport} className="btn-cta px-4 py-2 rounded-lg flex items-center space-x-2">
               <Download className="h-4 w-4" />
               <span>Export Report</span>
             </button>
@@ -189,7 +193,7 @@ const AdminReports = () => {
       {/* Overview Stats */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
         {overviewStats.map((stat, index) => (
-          <div key={index} className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+          <div key={index} className="card-lg">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-600">{stat.label}</p>
@@ -213,7 +217,7 @@ const AdminReports = () => {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
         {/* Module Performance */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        <div className="card-lg">
           <h2 className="text-xl font-bold text-gray-900 mb-6">Module Performance</h2>
           <div className="space-y-4">
             {modulePerformance.map((module, index) => (
@@ -234,8 +238,8 @@ const AdminReports = () => {
                 </div>
                 <div className="w-full bg-gray-200 rounded-full h-2">
                   <div 
-                    className="bg-gradient-to-r from-orange-400 to-red-500 h-2 rounded-full"
-                    style={{ width: `${module.rate}%` }}
+                    className="h-2 rounded-full"
+                    style={{ width: `${module.rate}%`, background: 'var(--gradient-blue-green)'}}
                   ></div>
                 </div>
               </div>
@@ -244,7 +248,7 @@ const AdminReports = () => {
         </div>
 
         {/* Weekly Engagement */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        <div className="card-lg">
           <h2 className="text-xl font-bold text-gray-900 mb-6">Weekly Engagement</h2>
           <div className="space-y-4">
             {engagementData.map((day, index) => (
@@ -273,7 +277,7 @@ const AdminReports = () => {
       </div>
 
       {/* Organization Performance */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
+      <div className="card-lg mb-8">
         <h2 className="text-xl font-bold text-gray-900 mb-6">Organization Performance</h2>
         <div className="overflow-x-auto">
           <table className="w-full">
@@ -301,8 +305,8 @@ const AdminReports = () => {
                       <div className="font-bold text-gray-900">{org.completion}%</div>
                       <div className="w-16 bg-gray-200 rounded-full h-1 mt-1">
                         <div 
-                          className="bg-gradient-to-r from-green-400 to-green-500 h-1 rounded-full"
-                          style={{ width: `${org.completion}%` }}
+                          className="h-1 rounded-full"
+                          style={{ width: `${org.completion}%`, background: 'var(--gradient-blue-green)'}}
                         ></div>
                       </div>
                     </div>
@@ -328,7 +332,7 @@ const AdminReports = () => {
       </div>
 
       {/* Feedback Summary */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
+      <div className="card-lg mb-8">
         <h2 className="text-xl font-bold text-gray-900 mb-6">Feedback Summary</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
           {feedbackSummary.map((feedback, index) => (
@@ -343,17 +347,17 @@ const AdminReports = () => {
       </div>
 
       {/* Generated Reports */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+      <div className="card-lg">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-xl font-bold text-gray-900">Generated Reports</h2>
-          <button onClick={generateNewReport} className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors duration-200 flex items-center space-x-2">
+          <button onClick={generateNewReport} className="btn-cta px-4 py-2 rounded-lg flex items-center space-x-2">
             <BarChart3 className="h-4 w-4" />
             <span>Generate New Report</span>
           </button>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           {reports.map((report, index) => (
-            <div key={index} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow duration-200">
+            <div key={index} className="card-lg hover:shadow-md transition-shadow duration-200">
               <div className="flex items-start justify-between mb-3">
                 <div>
                   <h3 className="font-medium text-gray-900">{report.name}</h3>

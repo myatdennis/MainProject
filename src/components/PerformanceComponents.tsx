@@ -109,8 +109,8 @@ export const ImageSkeleton: React.FC<ImageSkeletonProps> = ({
           <circle cx="10" cy="10" r="8" fill="url(#huddle-gradient)" />
           <defs>
             <linearGradient id="huddle-gradient" x1="0" y1="0" x2="20" y2="20" gradientUnits="userSpaceOnUse">
-              <stop stopColor={darkMode ? '#2B84C6' : '#F28C1A'} />
-              <stop offset="1" stopColor={darkMode ? '#F28C1A' : '#2B84C6'} />
+              <stop stopColor={darkMode ? '#3A7DFF' : '#3A7DFF'} />
+              <stop offset="1" stopColor={darkMode ? '#228B22' : '#228B22'} />
             </linearGradient>
           </defs>
         </svg>

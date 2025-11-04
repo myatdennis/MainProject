@@ -1,9 +1,9 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { 
   ArrowLeft,
   BarChart3,
-  Users,
+  
   TrendingUp,
   Download,
   Filter,
@@ -14,17 +14,18 @@ import {
   AlertTriangle,
   CheckCircle,
   Brain,
-  Zap,
+  
   FileText,
   Share,
   RefreshCw
 } from 'lucide-react';
+import Breadcrumbs from '../../components/ui/Breadcrumbs';
 
 const AdminSurveyAnalytics = () => {
   const { surveyId } = useParams();
   const [dateRange, setDateRange] = useState('all-time');
   const [filterDemographic, setFilterDemographic] = useState('all');
-  const [selectedMetric, setSelectedMetric] = useState('overview');
+  // reserved for future metric selection controls
 
   // Sample survey data
   const surveyData = {
@@ -217,12 +218,15 @@ const AdminSurveyAnalytics = () => {
   };
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
+    <div className="container mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
+      <div className="mb-6">
+        <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Surveys', to: '/admin/surveys' }, { label: 'Analytics' }]} />
+      </div>
       {/* Header */}
       <div className="mb-8">
         <Link 
           to="/admin/surveys" 
-          className="inline-flex items-center text-orange-500 hover:text-orange-600 mb-4 font-medium"
+          className="inline-flex items-center text-[var(--hud-orange)] hover:opacity-80 mb-4 font-medium"
         >
           <ArrowLeft className="h-4 w-4 mr-2" />
           Back to Surveys
@@ -240,15 +244,15 @@ const AdminSurveyAnalytics = () => {
           </div>
           
           <div className="flex items-center space-x-3">
-            <button className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2">
+            <button className="btn-outline flex items-center space-x-2">
               <RefreshCw className="h-4 w-4" />
               <span>Refresh</span>
             </button>
-            <button className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2">
+            <button className="btn-outline flex items-center space-x-2">
               <Share className="h-4 w-4" />
               <span>Share</span>
             </button>
-            <button className="bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-2">
+            <button className="btn-cta flex items-center space-x-2">
               <Download className="h-4 w-4" />
               <span>Export Report</span>
             </button>
@@ -257,7 +261,7 @@ const AdminSurveyAnalytics = () => {
       </div>
 
       {/* Filters */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
+      <div className="card-lg card-hover mb-8">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
           <div className="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4">
             <div className="flex items-center space-x-2">
@@ -265,7 +269,7 @@ const AdminSurveyAnalytics = () => {
               <select
                 value={dateRange}
                 onChange={(e) => setDateRange(e.target.value)}
-                className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-[var(--hud-orange)] focus:border-transparent"
               >
                 <option value="all-time">All Time</option>
                 <option value="last-7-days">Last 7 Days</option>
@@ -278,7 +282,7 @@ const AdminSurveyAnalytics = () => {
               <select
                 value={filterDemographic}
                 onChange={(e) => setFilterDemographic(e.target.value)}
-                className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-[var(--hud-orange)] focus:border-transparent"
               >
                 <option value="all">All Participants</option>
                 <option value="department">By Department</option>
@@ -293,7 +297,7 @@ const AdminSurveyAnalytics = () => {
       {/* Key Metrics */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
         {keyMetrics.map((metric, index) => (
-          <div key={index} className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+          <div key={index} className="card-lg">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm font-medium text-gray-600">{metric.label}</p>
@@ -317,7 +321,7 @@ const AdminSurveyAnalytics = () => {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
         {/* Response Demographics */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        <div className="card-lg">
           <h2 className="text-xl font-bold text-gray-900 mb-6">Response Demographics</h2>
           <div className="space-y-6">
             {responsesByDemographic.map((category, index) => (
@@ -330,8 +334,8 @@ const AdminSurveyAnalytics = () => {
                         <span className="text-sm text-gray-700 w-24">{item.label}</span>
                         <div className="flex-1 bg-gray-200 rounded-full h-2">
                           <div 
-                            className="bg-gradient-to-r from-orange-400 to-red-500 h-2 rounded-full"
-                            style={{ width: `${item.percentage}%` }}
+                            className="h-2 rounded-full"
+                            style={{ width: `${item.percentage}%`, background: 'var(--gradient-blue-green)' }}
                           ></div>
                         </div>
                       </div>
@@ -347,7 +351,7 @@ const AdminSurveyAnalytics = () => {
         </div>
 
         {/* AI Insights */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        <div className="card-lg">
           <div className="flex items-center space-x-2 mb-6">
             <Brain className="h-6 w-6 text-purple-500" />
             <h2 className="text-xl font-bold text-gray-900">AI-Powered Insights</h2>
@@ -378,7 +382,7 @@ const AdminSurveyAnalytics = () => {
       </div>
 
       {/* Question-by-Question Analysis */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
+      <div className="card-lg mb-8">
         <h2 className="text-xl font-bold text-gray-900 mb-6">Question Analysis</h2>
         <div className="space-y-6">
           {questionAnalytics.map((question, index) => (
@@ -462,7 +466,7 @@ const AdminSurveyAnalytics = () => {
       </div>
 
       {/* Huddle Report Preview */}
-      <div className="bg-gradient-to-r from-blue-50 to-green-50 rounded-xl p-8 mb-8">
+      <div className="rounded-xl p-8 mb-8" style={{ background: 'var(--gradient-banner)' }}>
         <div className="flex items-center space-x-3 mb-6">
           <div className="bg-orange-500 p-3 rounded-lg">
             <FileText className="h-6 w-6 text-white" />
@@ -559,15 +563,15 @@ const AdminSurveyAnalytics = () => {
         </div>
         <div className="mt-6 text-center">
           <div className="flex flex-col sm:flex-row justify-center space-y-3 sm:space-y-0 sm:space-x-3">
-            <button className="bg-white text-orange-500 px-6 py-3 rounded-lg hover:bg-gray-50 transition-colors duration-200 border border-orange-500 font-medium flex items-center space-x-2">
+            <button className="btn-outline px-6 py-3 font-medium flex items-center space-x-2">
               <Brain className="h-5 w-5" />
               <span>Generate Full AI Report</span>
             </button>
-            <button className="bg-purple-500 text-white px-6 py-3 rounded-lg hover:bg-purple-600 transition-colors duration-200 font-medium flex items-center space-x-2">
+            <button className="btn-cta px-6 py-3 font-medium flex items-center space-x-2">
               <Brain className="h-5 w-5" />
               <span>Generate Full Huddle Report</span>
             </button>
-            <button className="bg-orange-500 text-white px-6 py-3 rounded-lg hover:bg-orange-600 transition-colors duration-200 font-medium flex items-center space-x-2">
+            <button className="btn-outline px-6 py-3 font-medium flex items-center space-x-2">
               <Download className="h-5 w-5" />
               <span>Download Executive Summary</span>
             </button>
@@ -576,7 +580,7 @@ const AdminSurveyAnalytics = () => {
       </div>
 
       {/* Advanced AI Analytics */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
+      <div className="card-lg mb-8">
         <div className="flex items-center space-x-3 mb-6">
           <Brain className="h-6 w-6 text-purple-500" />
           <h2 className="text-xl font-bold text-gray-900">Advanced AI Analytics</h2>
@@ -643,10 +647,10 @@ const AdminSurveyAnalytics = () => {
       </div>
 
       {/* AI-Generated Reports */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
+      <div className="card-lg mb-8">
         <div className="flex items-center justify-between mb-6">
           <h2 className="text-xl font-bold text-gray-900">AI-Generated Reports</h2>
-          <button className="bg-purple-500 text-white px-4 py-2 rounded-lg hover:bg-purple-600 transition-colors duration-200 flex items-center space-x-2">
+          <button className="btn-cta flex items-center space-x-2">
             <Brain className="h-4 w-4" />
             <span>Generate New Report</span>
           </button>
@@ -692,7 +696,7 @@ const AdminSurveyAnalytics = () => {
       </div>
 
       {/* Benchmarking & Comparison */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
+      <div className="card-lg mb-8">
         <h2 className="text-xl font-bold text-gray-900 mb-6">Benchmarking & Comparison</h2>
         
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -754,7 +758,7 @@ const AdminSurveyAnalytics = () => {
       </div>
 
       {/* Export Options */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+      <div className="card-lg">
         <h2 className="text-xl font-bold text-gray-900 mb-6">Export & Sharing</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           <button className="p-6 border border-gray-200 rounded-lg hover:shadow-md transition-shadow duration-200 text-center">

@@ -1,13 +1,10 @@
 import { useState } from 'react';
 import { useParams, Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { courseStore } from '../../store/courseStore';
-import { CourseService, CourseValidationError } from '../../services/courseService';
+import { syncCourseToDatabase, CourseValidationError } from '../../dal/courses';
 import type { Course } from '../../types/courseTypes';
 import { useToast } from '../../context/ToastContext';
-import Card from '../../components/ui/Card';
-import Button from '../../components/ui/Button';
-import Badge from '../../components/ui/Badge';
-import ProgressBar from '../../components/ui/ProgressBar';
+// Removed unused UI imports to satisfy lints
 import {
   ArrowLeft,
   Edit,
@@ -30,7 +27,7 @@ import {
   Target,
   AlertTriangle,
   Info,
-  LayoutPanelLeft,
+  
 } from 'lucide-react';
 
 const AdminCourseDetail = () => {
@@ -56,7 +53,7 @@ const AdminCourseDetail = () => {
           : inputCourse.publishedDate,
     };
 
-    const snapshot = await CourseService.syncCourseToDatabase(prepared);
+  const snapshot = await syncCourseToDatabase(prepared);
     const finalCourse = (snapshot ?? prepared) as Course;
     courseStore.saveCourse(finalCourse, { skipRemoteSync: true });
     return finalCourse;
@@ -150,22 +147,23 @@ const AdminCourseDetail = () => {
 
   
 
-  const totalLessons = course.modules.reduce((acc, module) => acc + module.lessons.length, 0);
-  const totalDuration = course.modules.reduce((acc, module) => {
-    const moduleDuration = module.lessons.reduce((lessonAcc, lesson) => {
-      const minutes = parseInt(lesson.duration.split(' ')[0]);
-      return lessonAcc + minutes;
+  const totalLessons = (course.modules ?? []).reduce((acc, module) => acc + (module.lessons?.length ?? 0), 0);
+  const totalDuration = (course.modules ?? []).reduce((acc, module) => {
+    const moduleDuration = (module.lessons ?? []).reduce((lessonAcc, lesson) => {
+      const minutesStr = (lesson.duration ?? '0').toString().split(' ')[0];
+      const minutes = parseInt(minutesStr || '0');
+      return lessonAcc + (isNaN(minutes) ? 0 : minutes);
     }, 0);
     return acc + moduleDuration;
   }, 0);
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
+    <div className="container mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
       {/* Header */}
       <div className="mb-8">
         <Link 
           to="/admin/courses" 
-          className="inline-flex items-center text-orange-500 hover:text-orange-600 mb-4 font-medium"
+          className="inline-flex items-center mb-4 font-medium text-[var(--hud-orange)] hover:opacity-80"
         >
           <ArrowLeft className="h-4 w-4 mr-2" />
           Back to Course Management
@@ -217,12 +215,12 @@ const AdminCourseDetail = () => {
           <div className="flex items-center space-x-3">
             <Link
               to={`/admin/course-builder/${course.id}`}
-              className="bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-2"
+              className="btn-cta px-4 py-2 rounded-lg flex items-center space-x-2"
             >
               <Edit className="h-4 w-4" />
               <span>Edit Course</span>
             </Link>
-            <button onClick={() => void handleDuplicateCourse()} className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2">
+            <button onClick={() => void handleDuplicateCourse()} className="btn-outline px-4 py-2 rounded-lg flex items-center space-x-2">
               <Copy className="h-4 w-4" />
               <span>Duplicate</span>
             </button>
@@ -231,7 +229,7 @@ const AdminCourseDetail = () => {
                   const link = `${window.location.origin}/courses/${course.id}`;
                   navigator.clipboard?.writeText(link).then(() => console.log('Link copied:', link)).catch(() => console.log('Copy not supported'));
                 } catch (err) { console.warn('Share failed', err); }
-              }} className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2">
+              }} className="btn-outline px-4 py-2 rounded-lg flex items-center space-x-2">
               <Share className="h-4 w-4" />
               <span>Copy Link</span>
             </button>
@@ -243,7 +241,7 @@ const AdminCourseDetail = () => {
         {/* Main Content */}
         <div className="lg:col-span-2 space-y-8">
           {/* Course Overview */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+          <div className="card-lg overflow-hidden">
             <img 
               src={course.thumbnail} 
               alt={course.title}
@@ -282,11 +280,11 @@ const AdminCourseDetail = () => {
                     </div>
                     <div>
                       <span className="text-blue-700">Created:</span>
-                      <span className="font-medium text-blue-900 ml-2">{new Date(course.createdDate).toLocaleDateString()}</span>
+                      <span className="font-medium text-blue-900 ml-2">{new Date(course.createdDate ?? new Date().toISOString()).toLocaleDateString()}</span>
                     </div>
                     <div>
                       <span className="text-blue-700">Last Updated:</span>
-                      <span className="font-medium text-blue-900 ml-2">{new Date(course.lastUpdated).toLocaleDateString()}</span>
+                      <span className="font-medium text-blue-900 ml-2">{new Date(course.lastUpdated ?? new Date().toISOString()).toLocaleDateString()}</span>
                     </div>
                     {course.publishedDate && (
                       <div>
@@ -299,7 +297,7 @@ const AdminCourseDetail = () => {
               )}
 
               <div className="flex flex-wrap gap-2">
-                {course.tags.map((tag, index) => (
+                {(course.tags ?? []).map((tag, index) => (
                   <span key={index} className="bg-gray-100 text-gray-700 px-3 py-1 rounded-full text-sm">
                     {tag}
                   </span>
@@ -309,10 +307,10 @@ const AdminCourseDetail = () => {
           </div>
 
           {/* Learning Objectives */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <div className="card-lg">
             <h2 className="text-xl font-bold text-gray-900 mb-4">Learning Objectives</h2>
             <ul className="space-y-3">
-              {course.learningObjectives.map((objective, index) => (
+              {(course.learningObjectives ?? []).map((objective, index) => (
                 <li key={index} className="flex items-start space-x-3">
                   <Target className="h-5 w-5 text-orange-500 mt-0.5 flex-shrink-0" />
                   <span className="text-gray-700">{objective}</span>
@@ -322,10 +320,10 @@ const AdminCourseDetail = () => {
           </div>
 
           {/* Course Modules */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <div className="card-lg">
             <h2 className="text-xl font-bold text-gray-900 mb-6">Course Content</h2>
             <div className="space-y-6">
-              {course.modules.map((module, _moduleIndex) => (
+              {(course.modules ?? []).map((module, _moduleIndex) => (
                 <div key={module.id} className="border border-gray-200 rounded-lg p-4">
                   <div className="flex items-center justify-between mb-4">
                     <div>
@@ -402,7 +400,7 @@ const AdminCourseDetail = () => {
                                 console.warn('Start failed', err);
                               }
                             }}
-                            className="bg-orange-500 text-white px-4 py-2 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-2"
+                            className="btn-cta px-4 py-2 rounded-lg flex items-center space-x-2"
                           >
                             <Play className="h-4 w-4" />
                             <span>Start</span>
@@ -418,7 +416,7 @@ const AdminCourseDetail = () => {
 
           {/* Prerequisites */}
           {course.prerequisites && course.prerequisites.length > 0 && (
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+            <div className="card-lg">
               <h2 className="text-xl font-bold text-gray-900 mb-4">Prerequisites</h2>
               <ul className="space-y-2">
                 {course.prerequisites.map((prerequisite, index) => (
@@ -435,7 +433,7 @@ const AdminCourseDetail = () => {
         {/* Sidebar */}
         <div className="space-y-6">
           {/* Course Info */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <div className="card-lg">
             <h3 className="text-lg font-bold text-gray-900 mb-4">Course Information</h3>
             <div className="space-y-4">
               <div className="flex items-center justify-between">
@@ -476,7 +474,7 @@ const AdminCourseDetail = () => {
 
           {/* Certification Info */}
           {course.certification && course.certification.available && (
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+            <div className="card-lg">
               <div className="flex items-center space-x-2 mb-4">
                 <Award className="h-5 w-5 text-orange-500" />
                 <h3 className="text-lg font-bold text-gray-900">Certification</h3>
@@ -507,7 +505,7 @@ const AdminCourseDetail = () => {
 
           {/* Admin Analytics */}
           {viewMode === 'admin' && (
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+            <div className="card-lg">
               <div className="flex items-center space-x-2 mb-4">
                 <BarChart3 className="h-5 w-5 text-blue-500" />
                 <h3 className="text-lg font-bold text-gray-900">Performance Analytics</h3>
@@ -520,8 +518,8 @@ const AdminCourseDetail = () => {
                   </div>
                   <div className="w-full bg-gray-200 rounded-full h-2">
                     <div 
-                      className="bg-gradient-to-r from-green-400 to-green-500 h-2 rounded-full"
-                      style={{ width: `${course.completionRate}%` }}
+                      className="h-2 rounded-full"
+                      style={{ width: `${course.completionRate}%`, background: 'var(--gradient-blue-green)' }}
                     ></div>
                   </div>
                 </div>
@@ -532,12 +530,12 @@ const AdminCourseDetail = () => {
                     <div className="text-xs text-green-700">Completed</div>
                   </div>
                   <div className="bg-blue-50 p-3 rounded-lg">
-                    <div className="text-lg font-bold text-blue-600">{course.enrollments - course.completions}</div>
+                    <div className="text-lg font-bold text-blue-600">{(course.enrollments ?? 0) - (course.completions ?? 0)}</div>
                     <div className="text-xs text-blue-700">In Progress</div>
                   </div>
                 </div>
 
-                <button className="w-full bg-blue-500 text-white py-2 rounded-lg hover:bg-blue-600 transition-colors duration-200 text-sm">
+                <button className="w-full btn-outline py-2 rounded-lg text-sm">
                   View Detailed Analytics
                 </button>
               </div>
@@ -546,13 +544,13 @@ const AdminCourseDetail = () => {
 
           {/* Learner Actions */}
           {viewMode === 'learner' && (
-            <div className="bg-gradient-to-r from-orange-50 to-red-50 rounded-xl p-6">
+            <div className="rounded-xl p-6" style={{ background: 'var(--gradient-banner)' }}>
               <h3 className="text-lg font-bold text-gray-900 mb-4">Ready to Start Learning?</h3>
               <p className="text-gray-600 mb-6">
                 This course will help you develop essential inclusive leadership skills through interactive lessons, real-world scenarios, and practical exercises.
               </p>
               <div className="flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-3">
-                <button className="bg-gradient-to-r from-orange-400 to-red-500 text-white px-6 py-3 rounded-lg hover:from-orange-500 hover:to-red-600 transition-all duration-200 flex items-center justify-center space-x-2">
+                <button className="btn-cta px-6 py-3 rounded-lg flex items-center justify-center space-x-2">
                   <Play className="h-5 w-5" />
                   <span>Start Course</span>
                 </button>

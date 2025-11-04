@@ -1,5 +1,46 @@
 import buildAuthHeaders from './requestContext';
 
+// Key transform utilities to normalize wire format (snake_case) <-> client (camelCase)
+const isObject = (val: any) => Object.prototype.toString.call(val) === '[object Object]';
+
+const toSnake = (str: string) =>
+  str
+    .replace(/([A-Z])/g, '_$1')
+    .replace(/[-\s]+/g, '_')
+    .toLowerCase();
+
+const toCamel = (str: string) => str.replace(/[_-](\w)/g, (_, c) => (c ? c.toUpperCase() : ''));
+
+// Avoid transforming arbitrary nested JSON blobs (e.g., lesson content bodies)
+// When skip is true, we avoid transforming BOTH the key and its nested children.
+const shouldSkipKeyTransform = (parentKey: string | null, key: string): boolean => {
+  // Do not transform content bodies or any *_json blobs (and do not recurse into them)
+  if (key === 'body') return true;
+  if (key.endsWith('_json')) return true;
+  if (parentKey && (parentKey.endsWith('_json') || parentKey === 'content' || parentKey === 'metadata')) return true;
+  return false;
+};
+
+const transformKeysDeep = (
+  input: any,
+  direction: 'toSnake' | 'toCamel',
+  parentKey: string | null = null,
+): any => {
+  if (Array.isArray(input)) {
+    return input.map((v) => transformKeysDeep(v, direction, parentKey));
+  }
+  if (!isObject(input)) return input;
+
+  const out: Record<string, any> = {};
+  for (const [k, v] of Object.entries(input)) {
+    const skip = shouldSkipKeyTransform(parentKey, k);
+    const nextKey = skip ? k : direction === 'toSnake' ? toSnake(k) : toCamel(k);
+    // If this key should be skipped, assign value as-is without recursing
+    out[nextKey] = skip ? v : transformKeysDeep(v, direction, nextKey);
+  }
+  return out;
+};
+
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
 
 if (!API_BASE_URL) {
@@ -33,6 +74,10 @@ export interface ApiRequestOptions extends RequestInit {
    * Skip JSON parsing even if content-type is application/json.
    */
   rawResponse?: boolean;
+  /**
+   * Disable automatic camel/snake case transformation.
+   */
+  noTransform?: boolean;
 }
 
 const buildUrl = (path: string) => {
@@ -66,9 +111,21 @@ export const apiRequest = async <T = any>(path: string, options: ApiRequestOptio
     headers.set('Content-Type', 'application/json');
   }
 
+  // Normalize outgoing JSON body to snake_case unless disabled
+  let body = options.body as any;
+  if (!options.noTransform && body && typeof body === 'string' && headers.get('Content-Type')?.includes('application/json')) {
+    try {
+      const parsed = JSON.parse(body);
+      body = JSON.stringify(transformKeysDeep(parsed, 'toSnake'));
+    } catch {
+      // leave as-is if parsing fails
+    }
+  }
+
   const requestInit: RequestInit = {
     ...options,
     headers,
+    body,
   };
 
   const url = buildUrl(path);
@@ -82,7 +139,8 @@ export const apiRequest = async <T = any>(path: string, options: ApiRequestOptio
 
   if (parseJson) {
     try {
-      responseBody = await response.json();
+      const raw = await response.json();
+      responseBody = options.noTransform ? raw : transformKeysDeep(raw, 'toCamel');
     } catch (error) {
       if (okStatus) {
         throw new ApiError(response.status, 'Failed to parse JSON response', null);

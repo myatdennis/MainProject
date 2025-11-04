@@ -16,6 +16,7 @@ import {
   TrendingUp,
   Settings,
   ClipboardList,
+  FileText,
 } from 'lucide-react';
 import Card from '../ui/Card';
 import Button from '../ui/Button';
@@ -32,6 +33,7 @@ const navigation = [
   { name: 'Courses', href: '/admin/courses', icon: BookOpen },
   { name: 'Analytics', href: '/admin/analytics', icon: BarChart3 },
   { name: 'Surveys', href: '/admin/surveys', icon: ClipboardList },
+  { name: 'Documents', href: '/admin/documents', icon: FileText },
   { name: 'Performance', href: '/admin/performance', icon: TrendingUp },
   { name: 'Settings', href: '/admin/settings', icon: Settings },
 ];
@@ -145,11 +147,14 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
 
             <Card tone="muted" className="space-y-3">
               <p className="font-heading text-sm font-semibold text-charcoal">Quick actions</p>
-              <Button size="sm" variant="secondary" leadingIcon={<Plus className="h-4 w-4" />}>
-                Create course
+              <Button asChild size="sm" variant="secondary" leadingIcon={<Plus className="h-4 w-4" />}>
+                <Link to="/admin/courses/new">Create course</Link>
               </Button>
-              <Button size="sm" variant="ghost" leadingIcon={<Bell className="h-4 w-4" />}>
-                View alerts
+              <Button asChild size="sm" variant="ghost" leadingIcon={<ClipboardList className="h-4 w-4" />}>
+                <Link to="/admin/courses/import">Import courses</Link>
+              </Button>
+              <Button asChild size="sm" variant="ghost" leadingIcon={<Bell className="h-4 w-4" />}>
+                <Link to="/admin/surveys/queue">Survey queue</Link>
               </Button>
             </Card>
           </div>

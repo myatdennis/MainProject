@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
+import Button from '../../components/ui/Button';
 import { Building2 } from 'lucide-react';
-import documentService from '../../services/documentService';
+import documentService from '../../dal/documents';
 // clientWorkspaceService is dynamically imported where used so it can be bundled with the org-workspace chunk
-import notificationService from '../../services/notificationService';
-import orgService from '../../services/orgService';
+import notificationService from '../../dal/notifications';
+import orgService from '../../dal/orgs';
 
 const tabs = [
   { key: 'overview', label: 'Overview' },
@@ -168,7 +169,11 @@ const AdminOrganizationProfile: React.FC = () => {
         <div>
           <h2 className="text-2xl font-bold">Organization {orgId}</h2>
           <p className="text-gray-600 mt-2">Basic organization information and contact details will appear here.</p>
-          <Link to="/admin/organizations" className="text-sm text-blue-600 mt-3 inline-block">Back to Organizations</Link>
+          <div className="mt-3">
+            <Button asChild variant="ghost" size="sm" aria-label="Back to Organizations">
+              <Link to="/admin/organizations">Back to Organizations</Link>
+            </Button>
+          </div>
         </div>
       </div>
     </div>

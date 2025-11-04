@@ -8,6 +8,7 @@ import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
 import ProgressBar from '../../components/ui/ProgressBar';
+import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import { courseStore } from '../../store/courseStore';
 import { normalizeCourse, type NormalizedCourse, type NormalizedLesson } from '../../utils/courseNormalization';
 import {
@@ -27,11 +28,10 @@ type LessonSidebarProps = {
   index: number;
   progress: LessonProgressState;
   isActive: boolean;
-  moduleId: string;
   onSelect: (lessonId: string) => void;
 };
 
-const LessonSidebarButton = memo(({ lesson, index, progress, isActive, moduleId, onSelect }: LessonSidebarProps) => {
+const LessonSidebarButton = memo(({ lesson, index, progress, isActive, onSelect }: LessonSidebarProps) => {
   const statusStyles = isActive
     ? 'bg-skyblue/10 border border-skyblue text-skyblue'
     : progress.completed
@@ -121,7 +121,7 @@ const LMSModule = () => {
           return;
         }
 
-        const lessons = context.module.lessons ?? [];
+  const lessons = (context.module.lessons ?? []) as unknown as NormalizedLesson[];
 
         if (lessons.length === 0) {
           setCourseContext({ ...context, lessons: [] });
@@ -230,7 +230,7 @@ const LMSModule = () => {
   if (isLoading) {
     return (
       <div className="py-24">
-        <LoadingSpinner size="lg" text="Loading module…" />
+  <LoadingSpinner size="lg" />
       </div>
     );
   }
@@ -256,8 +256,9 @@ const LMSModule = () => {
 
   return (
     <ClientErrorBoundary>
-      <div className="min-h-screen bg-softwhite pb-16">
-        <div className="mx-auto max-w-7xl px-6 py-10 lg:px-12">
+      <div className="min-h-screen bg-softwhite">
+        <div className="container-page section">
+          <Breadcrumbs items={[{ label: 'Courses', to: '/lms/courses' }, { label: 'Module' }]} />
           <div className="flex flex-col gap-6 lg:flex-row lg:items-start">
             <div className="flex-1 space-y-4">
               <Badge tone="info" className="bg-skyblue/10 text-skyblue">
@@ -317,7 +318,6 @@ const LMSModule = () => {
                       key={lesson.id}
                       lesson={lesson}
                       index={index}
-                      moduleId={module.id}
                       isActive={lesson.id === (currentLessonId ?? activeLesson?.id)}
                       progress={{ percent, completed: percent >= 100 }}
                       onSelect={(lessonId) => setCurrentLessonId(lessonId)}

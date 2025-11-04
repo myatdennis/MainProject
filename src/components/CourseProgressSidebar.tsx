@@ -207,8 +207,8 @@ const CourseProgressSidebar: React.FC<CourseProgressSidebarProps> = ({
         <div className="px-2">
           <div className="w-full bg-gray-200 rounded-full h-2 mb-2">
             <div 
-              className="bg-gradient-to-r from-orange-400 to-red-500 h-2 rounded-full transition-all duration-300"
-              style={{ width: `${overallProgress}%` }}
+              className="h-2 rounded-full transition-all duration-300"
+              style={{ width: `${overallProgress}%`, background: 'var(--gradient-blue-green)' }}
             />
           </div>
           <div className="text-xs text-center text-gray-600 font-medium">
@@ -270,8 +270,8 @@ const CourseProgressSidebar: React.FC<CourseProgressSidebarProps> = ({
           </div>
           <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
             <div 
-              className="bg-gradient-to-r from-orange-400 to-red-500 h-3 rounded-full transition-all duration-500 relative"
-              style={{ width: `${overallProgress}%` }}
+              className="h-3 rounded-full transition-all duration-500 relative"
+              style={{ width: `${overallProgress}%`, background: 'var(--gradient-blue-green)' }}
             >
               {overallProgress > 20 && (
                 <div className="absolute inset-0 bg-white bg-opacity-20 animate-pulse" />
@@ -339,10 +339,8 @@ const CourseProgressSidebar: React.FC<CourseProgressSidebarProps> = ({
                       </div>
                       <div className="w-12 bg-gray-200 rounded-full h-2">
                         <div 
-                          className={`h-2 rounded-full transition-all duration-300 ${
-                            moduleProgress === 100 ? 'bg-green-500' : 'bg-orange-500'
-                          }`}
-                          style={{ width: `${moduleProgress}%` }}
+                          className="h-2 rounded-full transition-all duration-300"
+                          style={{ width: `${moduleProgress}%`, background: moduleProgress === 100 ? 'var(--hud-green)' : 'var(--gradient-blue-green)' }}
                         />
                       </div>
                     </div>

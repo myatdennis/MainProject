@@ -5,6 +5,7 @@ import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
 import ProgressBar from '../../components/ui/ProgressBar';
+import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import {
   Users,
   Building2,
@@ -141,7 +142,9 @@ const AdminDashboard = () => {
   return (
     <>
       <SEO title="Admin Dashboard" description="Monitor learner progress and organizational impact." />
-      <section className="space-y-10">
+      <div className="container-page section">
+        <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Dashboard', to: '/admin/dashboard' }]} />
+        <section className="space-y-10">
         <Card tone="gradient" withBorder={false} className="overflow-hidden">
           <div className="relative z-10 flex flex-col gap-4 text-charcoal md:flex-row md:items-center md:justify-between">
             <div>
@@ -278,7 +281,8 @@ const AdminDashboard = () => {
             </div>
           </Card>
         </div>
-      </section>
+        </section>
+      </div>
     </>
   );
 };

@@ -929,14 +929,57 @@ ${content.type === 'quiz' && 'questions' in content.content ? `\nQuestions: ${co
   };
 
   const handlePublish = () => {
-    const publishedCourse = {
-      ...formData,
-      status: 'published' as const,
-      publishedDate: new Date().toISOString(),
-      lastUpdated: new Date().toISOString(),
-      slug: slugify(formData.slug || formData.title || formData.id)
+    // Validate before publishing
+    const errors: string[] = [];
+    if (!formData.title || formData.title.trim().length < 5) errors.push('Course title must be at least 5 characters');
+    if (!formData.description || formData.description.trim().length < 50) errors.push('Course description must be at least 50 characters');
+    if (lessonContents.length === 0) errors.push('Add at least one lesson before publishing');
+
+    if (errors.length > 0) {
+      alert(`Cannot publish course. Please fix the following:\n\n${errors.map((e, i) => `${i + 1}. ${e}`).join('\n')}`);
+      return;
+    }
+
+    if (!confirm('Are you sure you want to publish this course? This will make it visible to learners.')) return;
+
+    // Prepare payload and bump version if present
+    const nextVersion = (formData as any).version ? Number((formData as any).version) + 1 : 1;
+    const payload = {
+      version: nextVersion
     };
-    onSave(publishedCourse);
+
+    // Call server publish endpoint so server records published_at and broadcasts updates
+    (async () => {
+      try {
+        setAutosaveStatus('saving');
+        const res = await fetch(`/api/admin/courses/${encodeURIComponent(formData.id)}/publish`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-user-role': 'admin' },
+          body: JSON.stringify(payload)
+        });
+
+        if (!res.ok) {
+          const errBody = await res.json().catch(() => ({}));
+          throw new Error(errBody?.error || `Publish failed: ${res.status}`);
+        }
+
+        const result = await res.json();
+        const saved = result?.data || null;
+        if (!saved) throw new Error('Publish returned no course data');
+
+        // Inform parent and update UI
+        onSave(saved);
+        setSuccessMessage('✅ Course published successfully');
+        setAutosaveStatus('saved');
+        setTimeout(() => setAutosaveStatus('idle'), 2000);
+        setTimeout(() => setSuccessMessage(null), 5000);
+      } catch (err: any) {
+        console.error('Publish error:', err);
+        setAutosaveStatus('error');
+        alert(`Publish failed: ${err?.message || String(err)}`);
+        setTimeout(() => setAutosaveStatus('idle'), 3000);
+      }
+    })();
   };
 
   // Calculate content counts by type

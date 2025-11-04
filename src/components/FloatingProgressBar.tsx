@@ -75,13 +75,7 @@ const FloatingProgressBar: React.FC<FloatingProgressBarProps> = ({
     return "";
   };
 
-  const getProgressColor = () => {
-    if (currentProgress >= 100) return 'from-green-400 to-emerald-500';
-    if (currentProgress >= 75) return 'from-blue-400 to-indigo-500';
-    if (currentProgress >= 50) return 'from-purple-400 to-pink-500';
-    if (currentProgress >= 25) return 'from-yellow-400 to-orange-500';
-    return 'from-orange-400 to-red-500';
-  };
+  // Progress visuals are standardized to the design token gradient (Blue→Green)
 
   if (!visible) return null;
 
@@ -98,7 +92,7 @@ const FloatingProgressBar: React.FC<FloatingProgressBarProps> = ({
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center space-x-3">
               <div className="flex items-center space-x-2">
-                <div className={`w-3 h-3 rounded-full bg-gradient-to-r ${getProgressColor()}`} />
+                <div className="w-3 h-3 rounded-full" style={{ background: 'var(--gradient-blue-green)' }} />
                 <span className="text-sm font-semibold text-gray-900">
                   {completedLessons} of {totalLessons} lessons
                 </span>
@@ -127,8 +121,8 @@ const FloatingProgressBar: React.FC<FloatingProgressBarProps> = ({
           <div className="relative mb-3">
             <div className="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
               <div 
-                className={`h-3 rounded-full bg-gradient-to-r ${getProgressColor()} transition-all duration-500 relative`}
-                style={{ width: `${currentProgress}%` }}
+                className={`h-3 rounded-full transition-all duration-500 relative`}
+                style={{ width: `${currentProgress}%`, background: 'var(--gradient-blue-green)' }}
               >
                 {/* Animated shine effect */}
                 <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white to-transparent opacity-30 animate-pulse" />
@@ -184,7 +178,7 @@ const FloatingProgressBar: React.FC<FloatingProgressBarProps> = ({
                 disabled={!hasNext}
                 className={`p-2 rounded-lg transition-all duration-200 ${
                   hasNext 
-                    ? 'text-white bg-gradient-to-r from-orange-500 to-red-500 hover:from-orange-600 hover:to-red-600 shadow-lg' 
+                    ? 'btn-cta shadow-lg' 
                     : 'text-gray-300 cursor-not-allowed bg-gray-200'
                 }`}
                 title={hasNext ? 'Next lesson' : 'Course complete'}
@@ -217,7 +211,7 @@ const FloatingProgressBar: React.FC<FloatingProgressBarProps> = ({
             </p>
 
             <div className="flex items-center justify-center space-x-4">
-              <button className="bg-gradient-to-r from-green-500 to-emerald-600 text-white px-6 py-3 rounded-xl font-semibold hover:from-green-600 hover:to-emerald-700 transition-all duration-200 shadow-lg">
+              <button className="btn-cta px-6 py-3 rounded-xl font-semibold transition-all duration-200 shadow-lg">
                 Download Certificate
               </button>
               
@@ -235,8 +229,8 @@ const FloatingProgressBar: React.FC<FloatingProgressBarProps> = ({
       {/* Mini Progress Indicator (Top of page when scrolled) */}
       {isSticky && (
         <div className="fixed top-0 left-0 right-0 z-40">
-          <div className={`h-1 bg-gradient-to-r ${getProgressColor()} transition-all duration-300`} 
-               style={{ width: `${currentProgress}%` }} />
+          <div className={`h-1 transition-all duration-300`} 
+               style={{ width: `${currentProgress}%`, background: 'var(--gradient-blue-green)' }} />
         </div>
       )}
 

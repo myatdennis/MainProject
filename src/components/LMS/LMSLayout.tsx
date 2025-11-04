@@ -97,7 +97,7 @@ const LMSLayout = ({ children }: LMSLayoutProps) => {
       >
         <div className="flex items-center justify-between border-b border-mist/70 px-6 py-6">
           <Link to="/" className="flex items-center gap-3 no-underline">
-            <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-sunrise via-skyblue to-forest text-white">
+            <span className="flex h-10 w-10 items-center justify-center rounded-2xl text-white" style={{ background: 'var(--gradient-brand)' }}>
               <Users className="h-5 w-5" />
             </span>
             <div>
@@ -133,9 +133,10 @@ const LMSLayout = ({ children }: LMSLayoutProps) => {
                     onClick={() => setSidebarOpen(false)}
                     className={`flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-semibold transition ${
                       active
-                        ? 'bg-gradient-to-r from-sunrise/90 to-skyblue/90 text-white shadow-card-sm'
+                        ? 'text-white shadow-card-sm'
                         : 'text-slate/80 hover:bg-cloud hover:text-skyblue'
                     }`}
+                    style={active ? { background: 'var(--gradient-blue-green)' } : undefined}
                   >
                     <span
                       className={`flex h-8 w-8 items-center justify-center rounded-lg ${

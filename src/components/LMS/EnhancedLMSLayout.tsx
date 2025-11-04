@@ -96,7 +96,7 @@ const EnhancedLMSLayout: React.FC<EnhancedLMSLayoutProps> = ({ children }) => {
           {/* Logo and Close Button */}
           <div className="flex items-center justify-between h-16 px-6 border-b border-gray-200">
             <Link to="/lms/dashboard" className="flex items-center space-x-2">
-              <div className="bg-gradient-to-r from-orange-400 to-red-500 p-2 rounded-lg">
+              <div className="p-2 rounded-lg" style={{ background: 'var(--gradient-orange-red)' }}>
                 <Users className="h-6 w-6 text-white" />
               </div>
               <span className="font-bold text-lg text-gray-900">The Huddle Co.</span>
@@ -114,7 +114,7 @@ const EnhancedLMSLayout: React.FC<EnhancedLMSLayoutProps> = ({ children }) => {
               
               {/* User Cohort Info */}
               <div className="mb-6">
-                <div className="bg-gradient-to-r from-blue-50 to-green-50 p-4 rounded-lg border border-blue-100">
+                <div className="p-4 rounded-lg border border-blue-100" style={{ background: 'var(--gradient-banner)' }}>
                   <div className="flex items-center justify-between mb-2">
                     <h3 className="font-semibold text-gray-900">Spring 2025 Leadership Cohort</h3>
                     <Zap className="w-4 h-4 text-blue-600" />
@@ -231,7 +231,7 @@ const EnhancedLMSLayout: React.FC<EnhancedLMSLayoutProps> = ({ children }) => {
                 {/* Mobile menu button and breadcrumb */}
                 <div className="flex items-center">
                   <button
-                    className="lg:hidden p-2 rounded-md text-gray-400 hover:text-gray-500 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-blue-500"
+                    className="lg:hidden p-2 rounded-md text-gray-400 hover:text-gray-500 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-inset focus:ring-[var(--hud-orange)]"
                     onClick={() => setSidebarOpen(true)}
                   >
                     <Menu className="h-6 w-6" />
@@ -283,7 +283,7 @@ const EnhancedLMSLayout: React.FC<EnhancedLMSLayoutProps> = ({ children }) => {
                   {/* User Profile Menu */}
                   <div className="relative">
                     <div className="flex items-center space-x-3">
-                      <div className="w-8 h-8 bg-gradient-to-r from-blue-400 to-purple-500 rounded-full flex items-center justify-center">
+                      <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: 'var(--gradient-blue-green)' }}>
                         <span className="text-white text-sm font-medium">
                           {(user?.name || 'U').charAt(0).toUpperCase()}
                         </span>

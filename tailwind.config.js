@@ -4,16 +4,19 @@ export default {
   theme: {
     extend: {
       colors: {
-        sunrise: '#F28C1A', // Sunrise Orange
-        deepred: '#E6473A', // Deep Red Accent
-        skyblue: '#2B84C6', // Signature Blue
-        forest: '#3BAA66', // Forest Green
+        // Huddle Co. exact brand tokens
+        sunrise: '#de7b12', // Sunrise Orange (updated per spec)
+        deepred: '#D72638', // Deep Red Accent
+        skyblue: '#3A7DFF', // Sky Blue
+        forest: '#228B22', // Forest Green
         charcoal: '#1E1E1E', // Charcoal Block
         softwhite: '#F9F9F1', // Soft White
         slate: '#3F3F3F', // Slate text
         mist: '#E4E7EB', // Mist border
         cloud: '#F4F5F7', // Soft surface
-        ink: '#10172A', // Deep Ink
+  ink: '#222222', // Ink / Headlines
+  navy: '#1E1E22', // Dark Navy
+  hudbg: '#FFFDF9', // Soft site background
         gold: '#F6C87B', // Accent gold
         blue: {
           50: '#E7F1F8',
@@ -21,7 +24,7 @@ export default {
           200: '#9BC7E1',
           300: '#6AACD3',
           400: '#3A90C7',
-          500: '#2B84C6',
+          500: '#3A7DFF',
           600: '#206AA3',
           700: '#15507C',
           800: '#0F3856',
@@ -33,7 +36,7 @@ export default {
           200: '#8BD7AD',
           300: '#58C386',
           400: '#3FB870',
-          500: '#3BAA66',
+          500: '#228B22',
           600: '#2F8B53',
           700: '#236A40',
           800: '#16472C',
@@ -45,7 +48,7 @@ export default {
           200: '#EE9F9D',
           300: '#E5716E',
           400: '#DF524F',
-          500: '#E6473A',
+          500: '#D72638',
           600: '#BF382D',
           700: '#962A22',
           800: '#6C1C17',
@@ -57,7 +60,8 @@ export default {
           200: '#FFB973',
           300: '#FF9433',
           400: '#FA7E15',
-          500: '#F28C1A',
+          // Align mid-scale to brand orange
+          500: '#de7b12',
           600: '#D67111',
           700: '#AF570C',
           800: '#7E3C07',
@@ -65,12 +69,14 @@ export default {
         },
       },
       fontFamily: {
-        heading: ['Montserrat', 'sans-serif'],
-        body: ['Lato', 'Quicksand', 'sans-serif'],
+        heading: ['Inter', 'system-ui', 'sans-serif'],
+        body: ['Inter', 'system-ui', 'sans-serif'],
       },
       borderRadius: {
         lg: '12px',
         xl: '16px',
+        surface: '24px',
+        btn: '14px',
       },
       boxShadow: {
         card: '0 4px 12px rgba(0,0,0,0.08)',

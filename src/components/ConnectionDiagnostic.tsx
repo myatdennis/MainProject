@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Wifi, WifiOff, CheckCircle, AlertTriangle, Info } from 'lucide-react';
-import { api } from '@/lib/api';
+import { api } from '../lib/api';
 
 interface ConnectionStatus {
   isOnline: boolean;

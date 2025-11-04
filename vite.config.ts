@@ -19,12 +19,27 @@ export default defineConfig({
     exclude: ['tests/**'],
   },
   server: {
+    host: true,
+    port: 5174,
+    strictPort: true,
     headers: {
       'X-Content-Type-Options': 'nosniff',
       'X-Frame-Options': 'DENY',
       'X-XSS-Protection': '1; mode=block',
       'Referrer-Policy': 'strict-origin-when-cross-origin',
       'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), interest-cohort=()',
+    },
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8888',
+        changeOrigin: true,
+        // Ensure Vite forwards cookies/headers correctly to the API server
+        secure: false,
+      },
+      '/ws': {
+        target: 'ws://localhost:8888',
+        ws: true,
+      },
     },
   },
   optimizeDeps: {
@@ -35,8 +50,8 @@ export default defineConfig({
       output: {
         manualChunks(id: string) {
           if (id.includes('node_modules')) {
-            if (id.includes('react-dom')) return 'vendor-react-dom';
-            if (id.includes('react')) return 'vendor-react';
+            // Avoid splitting React and ReactDOM into separate manual chunks to prevent
+            // cross-chunk ordering/linking issues in production builds.
             if (id.includes('lucide-react')) return 'vendor-icons';
             if (id.includes('@dnd-kit') || id.includes('dnd-kit')) return 'dnd-kit';
             if (id.includes('@supabase') || id.includes('supabase')) return 'supabase';

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import documentService, { DocumentMeta } from '../../services/documentService';
+import documentService, { DocumentMeta } from '../../dal/documents';
 import { useParams } from 'react-router-dom';
 
 const DocumentsPage: React.FC = () => {

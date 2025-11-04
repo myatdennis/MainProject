@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import Skeleton from '../ui/Skeleton';
 import { 
   BarChart, 
   Bar, 
@@ -70,7 +71,7 @@ interface SurveyAnalyticsProps {
   surveyId: string;
 }
 
-const COLORS = ['#F28C1A', '#2B84C6', '#3BAA66', '#E6473A', '#F6C87B', '#1E1E1E', '#F28C1A', '#2B84C6'];
+const COLORS = ['#de7b12', '#3A7DFF', '#228B22', '#D72638', '#F6C87B', '#1E1E1E', '#de7b12', '#3A7DFF'];
 
 const SurveyAnalyticsDashboard: React.FC<SurveyAnalyticsProps> = ({ surveyId }) => {
   const [analytics, setAnalytics] = useState<SurveyAnalytics | null>(null);
@@ -202,8 +203,23 @@ const SurveyAnalyticsDashboard: React.FC<SurveyAnalyticsProps> = ({ surveyId }) 
 
   if (loading || !analytics) {
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+      <div className="p-6 space-y-6">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="bg-white border border-gray-200 rounded-lg p-6">
+              <div className="flex items-center space-x-3">
+                <Skeleton className="w-8 h-8 rounded-lg" />
+                <div className="flex-1 space-y-2">
+                  <Skeleton variant="text" className="h-6 w-20" />
+                  <Skeleton variant="text" className="h-3 w-28" />
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="bg-white border border-gray-200 rounded-lg p-6">
+          <Skeleton className="h-80 w-full rounded-lg" />
+        </div>
       </div>
     );
   }
@@ -268,8 +284,8 @@ const SurveyAnalyticsDashboard: React.FC<SurveyAnalyticsProps> = ({ surveyId }) 
               <YAxis />
               <Tooltip />
               <Legend />
-              <Line type="monotone" dataKey="responses" stroke="#2B84C6" strokeWidth={2} name="Started" />
-              <Line type="monotone" dataKey="completions" stroke="#3BAA66" strokeWidth={2} name="Completed" />
+              <Line type="monotone" dataKey="responses" stroke="#3A7DFF" strokeWidth={2} name="Started" />
+              <Line type="monotone" dataKey="completions" stroke="#228B22" strokeWidth={2} name="Completed" />
             </LineChart>
           </ResponsiveContainer>
         </div>
@@ -285,7 +301,7 @@ const SurveyAnalyticsDashboard: React.FC<SurveyAnalyticsProps> = ({ surveyId }) 
                 <XAxis dataKey="hour" />
                 <YAxis />
                 <Tooltip />
-                <Bar dataKey="responses" fill="#2B84C6" />
+                <Bar dataKey="responses" fill="#3A7DFF" />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -326,7 +342,7 @@ const SurveyAnalyticsDashboard: React.FC<SurveyAnalyticsProps> = ({ surveyId }) 
                 <YAxis />
                 <Tooltip />
                 <Legend />
-                <Bar dataKey="responses" fill="#2B84C6" name="Responses" />
+                <Bar dataKey="responses" fill="#3A7DFF" name="Responses" />
                 <Bar dataKey="invited" fill="#E4E7EB" name="Invited" />
               </BarChart>
             </ResponsiveContainer>
@@ -346,7 +362,7 @@ const SurveyAnalyticsDashboard: React.FC<SurveyAnalyticsProps> = ({ surveyId }) 
                   cx="50%"
                   cy="50%"
                   outerRadius={100}
-                  fill="#2B84C6"
+                  fill="#3A7DFF"
                   label
                 >
                   {analytics.demographics.byRole.map((_, index) => (
@@ -395,7 +411,7 @@ const SurveyAnalyticsDashboard: React.FC<SurveyAnalyticsProps> = ({ surveyId }) 
                 <XAxis type="number" />
                 <YAxis dataKey="name" type="category" width={80} />
                 <Tooltip />
-                <Bar dataKey="responses" fill="#3BAA66" />
+                <Bar dataKey="responses" fill="#228B22" />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -504,7 +520,7 @@ const SurveyAnalyticsDashboard: React.FC<SurveyAnalyticsProps> = ({ surveyId }) 
               }))}
               dataKey="size"
               stroke="#fff"
-              fill="#2B84C6"
+              fill="#3A7DFF"
             />
           </ResponsiveContainer>
         </div>

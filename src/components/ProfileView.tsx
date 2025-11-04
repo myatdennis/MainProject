@@ -22,7 +22,7 @@ import {
   Circle
 } from 'lucide-react';
 import { UserProfile, OrganizationProfile, BaseResource } from '../models/Profile';
-import profileService from '../services/ProfileService';
+import { getUserProfile, getOrganizationProfile, updateResourceStatus } from '../dal/profile';
 
 interface ProfileViewProps {
   profileType: 'user' | 'organization';
@@ -52,13 +52,13 @@ const ProfileView: React.FC<ProfileViewProps> = ({
     try {
       setLoading(true);
       if (profileType === 'user') {
-        const profile = await profileService.getUserProfile(profileId);
+        const profile = await getUserProfile(profileId);
         setUserProfile(profile);
         if (profile) {
           setResources(profile.resources);
         }
       } else {
-        const profile = await profileService.getOrganizationProfile(profileId);
+        const profile = await getOrganizationProfile(profileId);
         setOrgProfile(profile);
         if (profile) {
           setResources(profile.resources);
@@ -73,7 +73,7 @@ const ProfileView: React.FC<ProfileViewProps> = ({
 
   const handleResourceStatusChange = async (resourceId: string, status: BaseResource['status']) => {
     try {
-      await profileService.updateResourceStatus(profileType, profileId, resourceId, status);
+      await updateResourceStatus(profileType, profileId, resourceId, status);
       setResources(prev => 
         prev.map(r => r.id === resourceId ? { ...r, status } : r)
       );

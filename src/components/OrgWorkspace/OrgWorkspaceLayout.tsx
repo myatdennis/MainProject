@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { Link, Outlet, useParams } from 'react-router-dom';
-import notificationService from '../../services/notificationService';
+import notificationService from '../../dal/notifications';
 import { useAuth } from '../../context/AuthContext';
 
 const OrgWorkspaceLayout: React.FC = () => {
@@ -69,7 +69,7 @@ const OrgWorkspaceLayout: React.FC = () => {
               aria-label="Organization logo for The Huddle Co."
             />
           <div>
-              <h1 className={`text-2xl font-bold ${darkMode ? 'text-sunrise' : 'text-orange-600'}`}>{orgName} Workspace</h1>
+              <h1 className={`text-2xl font-bold ${darkMode ? 'text-sunrise' : 'text-sunrise'}`}>{orgName} Workspace</h1>
               <div className={`text-sm ${darkMode ? 'text-mutedgrey' : 'text-gray-600'}`}>Private workspace for your organization</div>
           </div>
         </div>
@@ -84,7 +84,7 @@ const OrgWorkspaceLayout: React.FC = () => {
             <h3 className="text-lg font-semibold mb-2">Access Restricted</h3>
             <p className={`text-sm mb-4 ${darkMode ? 'text-mutedgrey' : 'text-gray-600'}`}>You must be a member of this organization or a Huddle Co. admin to view this workspace.</p>
             <div className="space-x-2">
-              <button onClick={() => alert('Request access (mock)')} className={`px-4 py-2 rounded ${darkMode ? 'bg-sunrise text-ivorywhite' : 'bg-orange-500 text-white'}`}>Request Access</button>
+              <button onClick={() => alert('Request access (mock)')} className={`px-4 py-2 rounded font-heading btn-cta`}>Request Access</button>
             </div>
           </div>
         )}

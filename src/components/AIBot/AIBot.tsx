@@ -11,7 +11,7 @@ import {
   RotateCcw,
   Lightbulb
 } from 'lucide-react';
-import { getAnalytics } from '../../services/surveyService';
+import { getAnalytics } from '../../dal/surveys';
 
 const AIBot = () => {
   const [isOpen, setIsOpen] = useState(false);

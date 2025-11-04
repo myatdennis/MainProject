@@ -1,7 +1,9 @@
 import apiRequest, { type ApiRequestOptions } from '../utils/apiClient';
 
+// Workspace APIs use mixed casing on the wire. We disable auto-transforms here
+// to preserve expected request/response shapes and rely on explicit mappers.
 const apiFetch = async <T>(path: string, options: ApiRequestOptions = {}) =>
-  apiRequest<T>(path, options);
+  apiRequest<T>(path, { noTransform: true, ...options });
 
 export type StrategicPlanVersion = {
   id: string;

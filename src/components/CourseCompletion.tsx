@@ -17,8 +17,8 @@ import {
   ExternalLink
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
-import { certificateService } from '../services/certificateService';
-import { analyticsService } from '../services/analyticsService';
+import { generateFromCompletion } from '../dal/certificates';
+import { trackCourseCompletion } from '../dal/analytics';
 
 interface CourseCompletionProps {
   course: {
@@ -204,7 +204,7 @@ const CourseCompletion: React.FC<CourseCompletionProps> = ({
   const handleGenerateCertificate = useCallback(async () => {
     setIsGeneratingCertificate(true);
     try {
-      const generated = await certificateService.generateFromCompletion({
+      const generated = await generateFromCompletion({
         userId: learnerId,
         userName: learnerName,
         userEmail: learnerEmail,
@@ -222,7 +222,7 @@ const CourseCompletion: React.FC<CourseCompletionProps> = ({
       setActiveTab('certificate');
       toast.success('Certificate generated successfully!');
 
-      analyticsService.trackCourseCompletion(learnerId, course.id, {
+      trackCourseCompletion(learnerId, course.id, {
         totalTimeSpent: completionData.timeSpent,
         finalScore: completionData.score,
         modulesCompleted: totalModules,
@@ -240,7 +240,7 @@ const CourseCompletion: React.FC<CourseCompletionProps> = ({
 
   const [darkMode, setDarkMode] = useState(false);
   return (
-    <div className={`min-h-screen bg-gradient-to-br from-orange-50 via-red-50 to-pink-50 ${className} ${darkMode ? 'dark' : ''}`}>
+  <div className={`min-h-screen bg-gradient-to-br from-orange-50 to-red-50 ${className} ${darkMode ? 'dark' : ''}`}>
       {/* Confetti Animation */}
       {showConfetti && (
         <div className="fixed inset-0 pointer-events-none z-10">
@@ -252,7 +252,7 @@ const CourseCompletion: React.FC<CourseCompletionProps> = ({
                 style={{
                   left: `${Math.random() * 100}%`,
                   animationDelay: `${Math.random() * 3}s`,
-                  backgroundColor: ['#F28C1A', '#E6473A', '#2B84C6', '#3BAA66'][Math.floor(Math.random() * 4)]
+                  backgroundColor: ['#de7b12', '#D72638', '#3A7DFF', '#228B22'][Math.floor(Math.random() * 4)]
                 }}
               />
             ))}

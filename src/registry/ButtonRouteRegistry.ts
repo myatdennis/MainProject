@@ -65,7 +65,7 @@ export const ADMIN_ROUTES: ButtonRouteEntry[] = [
 
   // Admin Dashboard Quick Actions
   { id: 'admin-dash-users-mgmt', label: 'User Management', roles: ['admin'], location: 'Admin Dashboard', targetRoute: '/admin/users', created: true, status: 'working' },
-  { id: 'admin-dash-course-builder', label: 'Course Builder', roles: ['admin'], location: 'Admin Dashboard', targetRoute: '/admin/course-builder/new', created: false, status: 'missing' },
+  { id: 'admin-dash-course-builder', label: 'Course Builder', roles: ['admin'], location: 'Admin Dashboard', targetRoute: '/admin/course-builder/new', created: true, status: 'working' },
   { id: 'admin-dash-analytics', label: 'Analytics', roles: ['admin'], location: 'Admin Dashboard', targetRoute: '/admin/analytics', created: true, status: 'working' },
   { id: 'admin-quick-create-org', label: 'Create New Organization', roles: ['admin'], location: 'Admin Header', targetRoute: '/admin/organizations/new', created: false, status: 'missing' },
 
@@ -89,14 +89,14 @@ export const ADMIN_ROUTES: ButtonRouteEntry[] = [
   { id: 'admin-org-delete', label: 'Delete Organization', roles: ['admin'], location: 'Admin Organizations Table', action: 'delete-org', created: false, status: 'stub' },
 
   // Admin Course Management
-  { id: 'admin-courses-create', label: 'Create Course', roles: ['admin'], location: 'Admin Courses', targetRoute: '/admin/course-builder/new', created: false, status: 'missing' },
+  { id: 'admin-courses-create', label: 'Create Course', roles: ['admin'], location: 'Admin Courses', targetRoute: '/admin/course-builder/new', created: true, status: 'working' },
   { id: 'admin-courses-import', label: 'Import Courses', roles: ['admin'], location: 'Admin Courses', targetRoute: '/admin/courses/import', created: true, status: 'working' },
   { id: 'admin-courses-bulk-assign', label: 'Bulk Assign', roles: ['admin'], location: 'Admin Courses', targetRoute: '/admin/courses/bulk', params: { ids: 'selected' }, created: false, status: 'missing' },
   { id: 'admin-courses-bulk-publish', label: 'Bulk Publish', roles: ['admin'], location: 'Admin Courses', action: 'bulk-publish', created: true, status: 'working' },
   { id: 'admin-courses-select-all', label: 'Select All', roles: ['admin'], location: 'Admin Courses', action: 'select-all', created: true, status: 'working' },
   { id: 'admin-courses-export', label: 'Export Selected', roles: ['admin'], location: 'Admin Courses', action: 'export-courses', created: false, status: 'stub' },
   { id: 'admin-course-view', label: 'View Course', roles: ['admin'], location: 'Admin Courses Table', targetRoute: '/admin/courses/:courseId/details', params: { courseId: '{id}' }, created: true, status: 'working' },
-  { id: 'admin-course-edit', label: 'Edit Course', roles: ['admin'], location: 'Admin Courses Table', targetRoute: '/admin/course-builder/:courseId', params: { courseId: '{id}' }, created: false, status: 'missing' },
+  { id: 'admin-course-edit', label: 'Edit Course', roles: ['admin'], location: 'Admin Courses Table', targetRoute: '/admin/course-builder/:courseId', params: { courseId: '{id}' }, created: true, status: 'working' },
   { id: 'admin-course-duplicate', label: 'Duplicate Course', roles: ['admin'], location: 'Admin Courses Table', action: 'duplicate-course', created: false, status: 'stub' },
   { id: 'admin-course-analytics', label: 'Course Analytics', roles: ['admin'], location: 'Admin Courses Table', targetRoute: '/admin/reports?courseId=:courseId', params: { courseId: '{id}' }, created: false, status: 'missing' },
   { id: 'admin-course-delete', label: 'Delete Course', roles: ['admin'], location: 'Admin Courses Table', action: 'delete-course', created: false, status: 'stub' },
@@ -166,8 +166,8 @@ export const CLIENT_WORKSPACE_ROUTES: ButtonRouteEntry[] = [
  */
 export const MISSING_PAGES: RouteStatus[] = [
   // Admin Missing Pages
-  { route: '/admin/course-builder/new', exists: false, requiredRoles: ['admin'], status: 'missing', component: 'AdminCourseBuilder' },
-  { route: '/admin/course-builder/:courseId', exists: false, requiredRoles: ['admin'], status: 'missing', component: 'AdminCourseBuilder' },
+  { route: '/admin/course-builder/new', exists: true, requiredRoles: ['admin'], status: 'working', component: 'AdminCourseBuilder' },
+  { route: '/admin/course-builder/:courseId', exists: true, requiredRoles: ['admin'], status: 'working', component: 'AdminCourseBuilder' },
   { route: '/admin/organizations/new', exists: false, requiredRoles: ['admin'], status: 'missing', component: 'AdminOrganizationCreate' },
   { route: '/admin/courses/bulk', exists: false, requiredRoles: ['admin'], status: 'missing', component: 'AdminCoursesBulk' },
   { route: '/admin/courses/import', exists: true, requiredRoles: ['admin'], status: 'working', component: 'AdminCoursesImport' },

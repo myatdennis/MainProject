@@ -1,8 +1,21 @@
+// (Removed initial lightweight dev server stub in favor of the full server below)
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createClient } from '@supabase/supabase-js';
 import { WebSocketServer } from 'ws';
+import {
+  moduleCreateSchema,
+  modulePatchSchema as modulePatchValidator,
+  lessonCreateSchema,
+  lessonPatchSchema as lessonPatchValidator,
+  moduleReorderSchema,
+  lessonReorderSchema,
+  pickId,
+  pickOrder,
+  validateOr400,
+  courseUpsertSchema,
+} from './validators.js';
 
 // Resolve __dirname in ESM
 const __filename = fileURLToPath(import.meta.url);
@@ -13,12 +26,121 @@ const port = process.env.PORT || 8787;
 
 app.use(express.json({ limit: '10mb' }));
 
+// Dev fallback: allow in-memory server behavior when Supabase isn't configured.
+// Enabled by default in non-production unless DEV_FALLBACK=false is set.
+const DEV_FALLBACK = (process.env.DEV_FALLBACK || '').toLowerCase() !== 'false' && (process.env.NODE_ENV || '').toLowerCase() !== 'production';
+
+// In E2E/dev mode, enable permissive CORS so the Vite dev origin (5174) can call the API (8787)
+if (process.env.E2E_TEST_MODE === 'true' || DEV_FALLBACK) {
+  app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-User-Id, X-User-Role, X-Org-Id');
+    if (req.method === 'OPTIONS') return res.status(204).end();
+    next();
+  });
+}
+
+// Basic request logging with request_id and timing
+app.use((req, res, next) => {
+  const requestId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  const start = Date.now();
+  res.setHeader('x-request-id', requestId);
+  req.requestId = requestId;
+  res.on('finish', () => {
+    const ms = Date.now() - start;
+    console.log(`${req.method} ${req.path} ${res.statusCode} - ${ms}ms [${requestId}]`);
+  });
+  next();
+});
+
+// Text content endpoints used by the content editor (local file-backed)
+import fs from 'fs';
+const contentPath = path.join(__dirname, '../src/content/textContent.json');
+
+app.get('/api/text-content', (_req, res) => {
+  fs.readFile(contentPath, 'utf8', (err, data) => {
+    if (err) {
+      res.status(500).send('Failed to load content');
+      return;
+    }
+    try {
+      const obj = JSON.parse(data);
+      const items = Object.entries(obj).map(([key, value]) => ({ key, value }));
+      res.json(items);
+    } catch (e) {
+      res.status(500).send('Invalid content JSON');
+    }
+  });
+});
+
+app.put('/api/text-content', (req, res) => {
+  const items = Array.isArray(req.body) ? req.body : [];
+  const contentJson = {};
+  for (const item of items) {
+    if (item && typeof item.key === 'string') {
+      contentJson[item.key] = item.value;
+    }
+  }
+  fs.writeFile(contentPath, JSON.stringify(contentJson, null, 2), (err) => {
+    if (err) {
+      res.status(500).send('Failed to save content');
+      return;
+    }
+    res.json({ success: true });
+  });
+});
+
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
 const supabase = supabaseUrl && supabaseServiceRoleKey ? createClient(supabaseUrl, supabaseServiceRoleKey) : null;
 
+// Lightweight in-memory fallback used for local E2E runs when Supabase is not configured.
+const E2E_TEST_MODE = process.env.E2E_TEST_MODE === 'true';
+const e2eStore = {
+  courses: new Map(), // id -> { id, slug, title, description, status, version, published_at, meta_json, modules: [{ id, title, description, order_index, lessons: [...] }] }
+  assignments: [],
+  courseProgress: new Map(), // key `${user_id}:${course_id}` -> { user_id, course_id, percent, status, time_spent_s, updated_at }
+  lessonProgress: new Map(), // key `${user_id}:${lesson_id}` -> { user_id, lesson_id, percent, status, time_spent_s, resume_at_s, updated_at }
+  progressEvents: new Set(), // idempotency keys (client_event_id)
+};
+
+// E2E helpers
+const e2eFindCourse = (identifier) => {
+  if (!identifier) return null;
+  const byId = e2eStore.courses.get(identifier);
+  if (byId) return byId;
+  const lower = String(identifier).toLowerCase();
+  for (const course of e2eStore.courses.values()) {
+    if ((course.slug && String(course.slug).toLowerCase() === lower) || String(course.id).toLowerCase() === lower) {
+      return course;
+    }
+  }
+  return null;
+};
+
+const e2eFindModule = (moduleId) => {
+  for (const course of e2eStore.courses.values()) {
+    const mod = (course.modules || []).find((m) => String(m.id) === String(moduleId));
+    if (mod) return { course, module: mod };
+  }
+  return null;
+};
+
+const e2eFindLesson = (lessonId) => {
+  for (const course of e2eStore.courses.values()) {
+    for (const mod of course.modules || []) {
+      const lesson = (mod.lessons || []).find((l) => String(l.id) === String(lessonId));
+      if (lesson) return { course, module: mod, lesson };
+    }
+  }
+  return null;
+};
+
 const ensureSupabase = (res) => {
   if (!supabase) {
+    // Allow tests to run with an in-memory fallback when explicitly enabled
+    if (E2E_TEST_MODE || DEV_FALLBACK) return true;
     res.status(500).json({ error: 'Supabase service credentials not configured on server' });
     return false;
   }
@@ -74,6 +196,65 @@ const requireOrgAccess = async (req, res, orgId, { write = false } = {}) => {
   }
 
   try {
+    // E2E in-memory fallback: when Supabase isn't configured but tests enabled,
+    // operate against the in-memory e2eStore instead of calling Supabase.
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+      const existingAssignments = [];
+      const toInsert = [];
+
+      for (const item of desired) {
+        const found = e2eStore.assignments.find((a) => {
+          if (!a) return false;
+          if (String(a.organization_id) !== String(item.organization_id)) return false;
+          if (String(a.course_id) !== String(item.course_id)) return false;
+          if (!a.active) return false;
+          if (a.user_id === null && item.user_id === null) return true;
+          if (a.user_id === null || item.user_id === null) return false;
+          return String(a.user_id) === String(item.user_id);
+        });
+
+        if (found) {
+          existingAssignments.push(found);
+        } else {
+          toInsert.push(item);
+        }
+      }
+
+      const inserted = [];
+      for (const it of toInsert) {
+        const newAsn = Object.assign({}, it, {
+          id: `e2e-asn-${Date.now()}-${Math.floor(Math.random() * 100000)}`,
+          created_at: new Date().toISOString()
+        });
+        e2eStore.assignments.push(newAsn);
+        inserted.push(newAsn);
+      }
+
+      const assignments = [...existingAssignments, ...inserted];
+
+      // Broadcast assignment events for newly created assignments only
+      try {
+        for (const asn of inserted) {
+          const orgId = asn.organization_id || asn.org_id || organization_id || null;
+          const topicOrg = orgId ? `assignment:org:${orgId}` : 'assignment:org:global';
+          const payload = { type: 'assignment_created', data: asn, timestamp: Date.now() };
+          broadcastToTopic(topicOrg, payload);
+          if (asn.user_id) {
+            broadcastToTopic(`assignment:user:${String(asn.user_id).toLowerCase()}`, payload);
+          }
+        }
+      } catch (bErr) {
+        console.warn('Failed to broadcast assignment events', bErr);
+      }
+
+      res.status(201).json({ data: assignments });
+      return;
+    }
+    // If running in E2E test mode without Supabase, assume org access for convenience
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+      return { userId: context.userId, role: 'admin' };
+    }
+
     const membership = await fetchMembership(orgId, context.userId);
     if (!membership) {
       res.status(403).json({ error: 'Organization membership required' });
@@ -161,7 +342,12 @@ const sortActionItems = (items) =>
   });
 
 app.get('/api/health', (_req, res) => {
-  res.json({ status: 'ok', supabaseConfigured: Boolean(supabase) });
+  res.json({
+    status: 'ok',
+    supabaseConfigured: Boolean(supabase),
+    timestamp: new Date().toISOString(),
+    uptime_s: Math.round(process.uptime()),
+  });
 });
 
 // Simple in-memory topic subscriptions for WS clients
@@ -190,13 +376,56 @@ function broadcastToTopic(topic, payload) {
   }
 }
 
-// HTTP endpoint to broadcast events (secured: require admin header)
+// Simple in-memory token bucket limiter per key
+const createRateLimiter = ({ tokensPerInterval = 10, intervalMs = 1000 } = {}) => {
+  const buckets = new Map();
+  return (key) => {
+    const now = Date.now();
+    let bucket = buckets.get(key);
+    if (!bucket) {
+      bucket = { tokens: tokensPerInterval, last: now };
+      buckets.set(key, bucket);
+    }
+    const elapsed = now - bucket.last;
+    const refill = Math.floor((elapsed / intervalMs) * tokensPerInterval);
+    if (refill > 0) {
+      bucket.tokens = Math.min(tokensPerInterval, bucket.tokens + refill);
+      bucket.last = now;
+    }
+    if (bucket.tokens > 0) {
+      bucket.tokens -= 1;
+      return true;
+    }
+    return false;
+  };
+};
+
+const checkProgressLimit = createRateLimiter({ tokensPerInterval: 8, intervalMs: 1000 });
+
+// HTTP endpoint to broadcast events. Secured by a server-only API key (BROADCAST_API_KEY).
+// If BROADCAST_API_KEY is not set (dev), fallback to the previous x-user-role=admin header check.
 app.post('/api/broadcast', (req, res) => {
   const { type, topic, data } = req.body || {};
-  const userRole = (req.get('x-user-role') || '').toLowerCase();
-  if (userRole !== 'admin') {
-    res.status(403).json({ error: 'Admin role required to broadcast' });
-    return;
+
+  const broadcastApiKey = process.env.BROADCAST_API_KEY || null;
+
+  // If a server broadcast API key is configured, require it via Authorization: Bearer <key>
+  // or the x-broadcast-api-key header. This keeps the endpoint callable only from trusted
+  // backend services. If not set, fall back to the legacy admin header check (dev convenience).
+  if (broadcastApiKey) {
+    const auth = (req.get('authorization') || '').trim();
+    const headerKey = (req.get('x-broadcast-api-key') || '').trim();
+    const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : auth;
+    if (token !== broadcastApiKey && headerKey !== broadcastApiKey) {
+      res.status(403).json({ error: 'Invalid broadcast API key' });
+      return;
+    }
+  } else {
+    const userRole = (req.get('x-user-role') || '').toLowerCase();
+    if (userRole !== 'admin') {
+      res.status(403).json({ error: 'Admin role required to broadcast' });
+      return;
+    }
   }
 
   if (!type) {
@@ -218,8 +447,46 @@ app.post('/api/broadcast', (req, res) => {
 app.locals.broadcastToTopic = broadcastToTopic;
 
 app.get('/api/admin/courses', async (_req, res) => {
-  if (!ensureSupabase(res)) return;
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    try {
+      const data = Array.from(e2eStore.courses.values()).map((c) => ({
+        id: c.id,
+        slug: c.slug ?? c.id,
+        title: c.title,
+        description: c.description ?? null,
+        status: c.status ?? 'draft',
+        version: c.version ?? 1,
+        meta_json: c.meta_json ?? {},
+        published_at: c.published_at ?? null,
+        modules: (c.modules || []).map((m) => ({
+          id: m.id,
+          course_id: c.id,
+          title: m.title,
+          description: m.description ?? null,
+          order_index: m.order_index ?? m.order ?? 0,
+          lessons: (m.lessons || []).map((l) => ({
+            id: l.id,
+            module_id: m.id,
+            title: l.title,
+            description: l.description ?? null,
+            type: l.type,
+            order_index: l.order_index ?? l.order ?? 0,
+            duration_s: l.duration_s ?? null,
+            content_json: l.content_json ?? l.content ?? {},
+            completion_rule_json: l.completion_rule_json ?? l.completionRule ?? null,
+          })),
+        })),
+      }));
+      res.json({ data });
+      return;
+    } catch (err) {
+      console.error('E2E fetch courses failed', err);
+      res.status(500).json({ error: 'Unable to fetch courses' });
+      return;
+    }
+  }
 
+  if (!ensureSupabase(res)) return;
   try {
     const { data, error } = await supabase
       .from('courses')
@@ -229,6 +496,33 @@ app.get('/api/admin/courses', async (_req, res) => {
       .order('order_index', { ascending: true, foreignTable: 'modules.lessons' });
 
     if (error) throw error;
+
+    // Prefer transactional RPC if available
+    try {
+      const rpcPayload = {
+        id: course.id ?? null,
+        slug: course.slug ?? null,
+        title: course.title || course.name,
+        description: course.description ?? null,
+        status: course.status ?? 'draft',
+        version: course.version ?? 1,
+        org_id: course.org_id ?? course.organizationId ?? null,
+        meta_json: meta,
+      };
+      const rpcRes = await supabase.rpc('upsert_course_full', { p_course: rpcPayload, p_modules: modules });
+      if (!rpcRes.error && rpcRes.data) {
+        const sel = await supabase
+          .from('courses')
+          .select('*, modules(*, lessons(*))')
+          .eq('id', rpcRes.data)
+          .single();
+        if (sel.error) throw sel.error;
+        res.status(201).json({ data: sel.data });
+        return;
+      }
+    } catch (rpcErr) {
+      console.warn('RPC upsert_course_full failed, falling back to client-side sequence:', rpcErr);
+    }
     res.json({ data });
   } catch (error) {
     console.error('Failed to fetch courses:', error);
@@ -237,6 +531,67 @@ app.get('/api/admin/courses', async (_req, res) => {
 });
 
 app.post('/api/admin/courses', async (req, res) => {
+  // Validate incoming payload (accepting existing client shape)
+  const valid = validateOr400(courseUpsertSchema, req, res);
+  if (!valid) return;
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    const { course, modules = [] } = req.body || {};
+    if (!course?.title) {
+      res.status(400).json({ error: 'Course title is required' });
+      return;
+    }
+    try {
+      const id = course.id ?? `e2e-course-${Date.now()}`;
+      const courseObj = {
+        id,
+        slug: course.slug ?? id,
+        title: course.title,
+        description: course.description ?? null,
+        status: course.status ?? 'draft',
+        version: course.version ?? 1,
+        meta_json: course.meta ?? {},
+        published_at: null,
+        modules: [],
+      };
+      const modulesArr = modules || [];
+      for (const [moduleIndex, module] of modulesArr.entries()) {
+        const moduleId = module.id ?? `e2e-mod-${Date.now()}-${moduleIndex}`;
+        const moduleObj = {
+          id: moduleId,
+          course_id: id,
+          title: module.title,
+          description: module.description ?? null,
+          order_index: module.order_index ?? moduleIndex,
+          lessons: [],
+        };
+        const lessons = module.lessons || [];
+        for (const [lessonIndex, lesson] of lessons.entries()) {
+          const lessonId = lesson.id ?? `e2e-less-${Date.now()}-${moduleIndex}-${lessonIndex}`;
+          const lessonObj = {
+            id: lessonId,
+            module_id: moduleId,
+            title: lesson.title,
+            description: lesson.description ?? null,
+            type: lesson.type,
+            order_index: lesson.order_index ?? lessonIndex,
+            duration_s: lesson.duration_s ?? null,
+            content_json: lesson.content_json ?? lesson.content ?? {},
+            completion_rule_json: lesson.completion_rule_json ?? lesson.completionRule ?? null,
+          };
+          moduleObj.lessons.push(lessonObj);
+        }
+        courseObj.modules.push(moduleObj);
+      }
+      e2eStore.courses.set(id, courseObj);
+      res.status(201).json({ data: courseObj });
+      return;
+    } catch (error) {
+      console.error('E2E upsert course failed:', error);
+      res.status(500).json({ error: 'Unable to save course' });
+      return;
+    }
+  }
+
   if (!ensureSupabase(res)) return;
 
   const { course, modules = [] } = req.body || {};
@@ -247,27 +602,95 @@ app.post('/api/admin/courses', async (req, res) => {
 
   try {
     const meta = course.meta ?? {};
+    // Optional optimistic version check to avoid overwriting newer versions
+    if (course.id) {
+      const existing = await supabase.from('courses').select('id, version').eq('id', course.id).maybeSingle();
+      if (existing.error) throw existing.error;
+      const currVersion = existing.data?.version ?? null;
+      if (currVersion !== null && typeof course.version === 'number' && course.version < currVersion) {
+        res.status(409).json({ error: 'version_conflict', message: `Course has newer version ${currVersion}` });
+        return;
+      }
+    }
 
-    const { data: courseRow, error: upsertError } = await supabase
+    // Upsert course row first to obtain courseRow.id
+    const organizationId = course.org_id ?? course.organizationId ?? null;
+    const upsertPayload = {
+      id: course.id ?? undefined,
+      slug: course.slug ?? undefined,
+      title: course.title || course.name,
+      description: course.description ?? null,
+      status: course.status ?? 'draft',
+      version: course.version ?? 1,
+      organization_id: organizationId,
+      meta_json: meta,
+    };
+
+    const courseRes = await supabase
       .from('courses')
-      .upsert({
-        id: course.id,
+      .upsert(upsertPayload)
+      .select('*')
+      .single();
+
+    if (courseRes.error) throw courseRes.error;
+    const courseRow = courseRes.data;
+
+    // E2E fallback when Supabase isn't configured: keep an in-memory course store
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+      const id = course.id ?? `e2e-course-${Date.now()}`;
+      const courseObj = {
+        id,
         organization_id: course.organizationId ?? null,
-        slug: course.slug ?? null,
+        slug: course.slug ?? id,
         title: course.title,
         description: course.description ?? null,
         status: course.status ?? 'draft',
         version: course.version ?? 1,
         meta_json: meta,
         published_at: meta.published_at ?? null,
-        due_date: meta.due_date ?? null
-      })
-      .select('*')
-      .single();
+        due_date: meta.due_date ?? null,
+        modules: []
+      };
 
-    if (upsertError) throw upsertError;
+      const modulesArr = modules || [];
+      for (const [moduleIndex, module] of modulesArr.entries()) {
+        const moduleId = module.id ?? `e2e-mod-${Date.now()}-${moduleIndex}`;
+        const moduleObj = {
+          id: moduleId,
+          course_id: id,
+          order_index: module.order_index ?? moduleIndex,
+          title: module.title,
+          description: module.description ?? null,
+          lessons: []
+        };
 
-    const incomingModuleIds = modules.map((module) => module.id);
+        const lessons = module.lessons || [];
+        for (const [lessonIndex, lesson] of lessons.entries()) {
+          const lessonId = lesson.id ?? `e2e-less-${Date.now()}-${moduleIndex}-${lessonIndex}`;
+          const lessonObj = {
+            id: lessonId,
+            module_id: moduleId,
+            order_index: lesson.order_index ?? lessonIndex,
+            type: lesson.type,
+            title: lesson.title,
+            description: lesson.description ?? null,
+            duration_s: lesson.duration_s ?? null,
+            content_json: lesson.content_json ?? {},
+            completion_rule_json: lesson.completion_rule_json ?? null
+          };
+          moduleObj.lessons.push(lessonObj);
+        }
+
+        courseObj.modules.push(moduleObj);
+      }
+
+      e2eStore.courses.set(id, courseObj);
+
+      res.status(201).json({ data: courseObj });
+      return;
+    }
+
+    const incomingModuleIds = modules.map((module) => module.id).filter(Boolean);
     if (incomingModuleIds.length > 0) {
       const { data: existingModules } = await supabase
         .from('modules')
@@ -336,13 +759,13 @@ app.post('/api/admin/courses', async (req, res) => {
         }
       }
     } else {
-      await supabase.from('modules').delete().eq('course_id', courseRow.id);
+  await supabase.from('modules').delete().eq('course_id', courseRow.id);
     }
 
     const refreshed = await supabase
       .from('courses')
       .select('*, modules(*, lessons(*))')
-      .eq('id', courseRow.id)
+  .eq('id', courseRow.id)
       .single();
 
     if (refreshed.error) throw refreshed.error;
@@ -359,15 +782,69 @@ app.post('/api/admin/courses/:id/publish', async (req, res) => {
   const { id } = req.params;
 
   try {
-    const { data, error } = await supabase
+    // E2E fallback when Supabase isn't configured
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+      const existing = e2eStore.courses.get(id);
+      if (!existing) {
+        res.status(404).json({ error: 'Course not found' });
+        return;
+      }
+      existing.status = 'published';
+      existing.version = req.body?.version ?? existing.version ?? 1;
+      existing.published_at = new Date().toISOString();
+
+      // Broadcast publish event to org and global listeners
+      try {
+        const orgId = existing.organization_id || existing.org_id || null;
+        const payload = { type: 'course_updated', data: existing, timestamp: Date.now() };
+        if (orgId) broadcastToTopic(`course:updates:${orgId}`, payload);
+        broadcastToTopic('course:updates', payload);
+      } catch (bErr) {
+        console.warn('Failed to broadcast course publish event', bErr);
+      }
+
+      res.json({ data: existing });
+      return;
+    }
+
+    // Normal Supabase-backed path
+    // 1) Fetch existing course
+    const existing = await supabase
       .from('courses')
-      .update({ status: 'published', version: (req.body?.version ?? 1), published_at: new Date().toISOString() })
+      .select('*, organization_id, org_id')
       .eq('id', id)
-      .select('*')
+      .maybeSingle();
+
+    if (existing.error) throw existing.error;
+    if (!existing.data) {
+      res.status(404).json({ error: 'Course not found' });
+      return;
+    }
+
+    const nextVersion = req.body?.version ?? existing.data.version ?? 1;
+    const publishedAt = new Date().toISOString();
+
+    // 2) Update status -> published
+    const updated = await supabase
+      .from('courses')
+      .update({ status: 'published', published_at: publishedAt, version: nextVersion })
+      .eq('id', id)
+      .select('*, modules(*, lessons(*))')
       .single();
 
-    if (error) throw error;
-    res.json({ data });
+    if (updated.error) throw updated.error;
+
+    // 3) Broadcast publish event to org and global listeners
+    try {
+      const orgId = updated.data?.organization_id || updated.data?.org_id || null;
+      const payload = { type: 'course_updated', data: updated.data, timestamp: Date.now() };
+      if (orgId) broadcastToTopic(`course:updates:${orgId}`, payload);
+      broadcastToTopic('course:updates', payload);
+    } catch (bErr) {
+      console.warn('Failed to broadcast course publish event', bErr);
+    }
+
+    res.json({ data: updated.data });
   } catch (error) {
     console.error(`Failed to publish course ${id}:`, error);
     res.status(500).json({ error: 'Unable to publish course' });
@@ -375,6 +852,7 @@ app.post('/api/admin/courses/:id/publish', async (req, res) => {
 });
 
 app.post('/api/admin/courses/:id/assign', async (req, res) => {
+  console.log('Assign handler called - supabase present?', Boolean(supabase), 'E2E_TEST_MODE=', E2E_TEST_MODE, 'body=', JSON.stringify(req.body));
   if (!ensureSupabase(res)) return;
   const { id } = req.params;
   const { organization_id, user_ids = [], due_at } = req.body || {};
@@ -385,7 +863,8 @@ app.post('/api/admin/courses/:id/assign', async (req, res) => {
   }
 
   try {
-    const assignmentsPayload = (user_ids.length > 0 ? user_ids : [null]).map((userId) => ({
+    // Build desired payloads (one per target user or org-wide if no user_ids)
+    const desired = (user_ids.length > 0 ? user_ids : [null]).map((userId) => ({
       organization_id,
       course_id: id,
       user_id: userId,
@@ -393,13 +872,110 @@ app.post('/api/admin/courses/:id/assign', async (req, res) => {
       active: true
     }));
 
-    const { data, error } = await supabase
-      .from('assignments')
-      .insert(assignmentsPayload)
-      .select('*');
+    // E2E in-memory fallback branch will run before any Supabase queries
+    // when Supabase isn't configured but E2E_TEST_MODE is enabled.
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+      const existingAssignments = [];
+      const toInsert = [];
 
-    if (error) throw error;
-    res.status(201).json({ data });
+      for (const item of desired) {
+        const found = e2eStore.assignments.find((a) => {
+          if (!a) return false;
+          if (String(a.organization_id) !== String(item.organization_id)) return false;
+          if (String(a.course_id) !== String(item.course_id)) return false;
+          if (!a.active) return false;
+          if (a.user_id === null && item.user_id === null) return true;
+          if (a.user_id === null || item.user_id === null) return false;
+          return String(a.user_id) === String(item.user_id);
+        });
+
+        if (found) {
+          existingAssignments.push(found);
+        } else {
+          toInsert.push(item);
+        }
+      }
+
+      const inserted = [];
+      for (const it of toInsert) {
+        const newAsn = Object.assign({}, it, {
+          id: `e2e-asn-${Date.now()}-${Math.floor(Math.random() * 100000)}`,
+          created_at: new Date().toISOString()
+        });
+        e2eStore.assignments.push(newAsn);
+        inserted.push(newAsn);
+      }
+
+      const assignments = [...existingAssignments, ...inserted];
+
+      try {
+        for (const asn of inserted) {
+          const orgId = asn.organization_id || asn.org_id || organization_id || null;
+          const topicOrg = orgId ? `assignment:org:${orgId}` : 'assignment:org:global';
+          const payload = { type: 'assignment_created', data: asn, timestamp: Date.now() };
+          broadcastToTopic(topicOrg, payload);
+          if (asn.user_id) {
+            broadcastToTopic(`assignment:user:${String(asn.user_id).toLowerCase()}`, payload);
+          }
+        }
+      } catch (bErr) {
+        console.warn('Failed to broadcast assignment events', bErr);
+      }
+
+      res.status(201).json({ data: assignments });
+      return;
+    }
+
+    const existingAssignments = [];
+    const toInsert = [];
+
+    // Check for existing active assignments to avoid duplicates
+    for (const item of desired) {
+      let query = supabase.from('assignments').select('*').eq('organization_id', item.organization_id).eq('course_id', item.course_id).eq('active', true).limit(1);
+      if (item.user_id === null) {
+        query = query.is('user_id', null);
+      } else {
+        query = query.eq('user_id', item.user_id);
+      }
+
+      const { data: existing, error: fetchErr } = await query.maybeSingle();
+      if (fetchErr) throw fetchErr;
+
+      if (existing) {
+        existingAssignments.push(existing);
+      } else {
+        toInsert.push(item);
+      }
+    }
+
+    let inserted = [];
+    if (toInsert.length > 0) {
+      const { data: insData, error: insErr } = await supabase
+        .from('assignments')
+        .insert(toInsert)
+        .select('*');
+      if (insErr) throw insErr;
+      inserted = insData || [];
+    }
+
+    const assignments = [...existingAssignments, ...inserted];
+
+    // Broadcast assignment events for newly created assignments only
+    try {
+      for (const asn of inserted) {
+        const orgId = asn.organization_id || asn.org_id || organization_id || null;
+        const topicOrg = orgId ? `assignment:org:${orgId}` : 'assignment:org:global';
+        const payload = { type: 'assignment_created', data: asn, timestamp: Date.now() };
+        broadcastToTopic(topicOrg, payload);
+        if (asn.user_id) {
+          broadcastToTopic(`assignment:user:${String(asn.user_id).toLowerCase()}`, payload);
+        }
+      }
+    } catch (bErr) {
+      console.warn('Failed to broadcast assignment events', bErr);
+    }
+
+    res.status(201).json({ data: assignments });
   } catch (error) {
     console.error('Failed to assign course:', error);
     res.status(500).json({ error: 'Unable to assign course' });
@@ -407,9 +983,21 @@ app.post('/api/admin/courses/:id/assign', async (req, res) => {
 });
 
 app.delete('/api/admin/courses/:id', async (req, res) => {
-  if (!ensureSupabase(res)) return;
   const { id } = req.params;
 
+  // Dev/E2E fallback
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    try {
+      e2eStore.courses.delete(id);
+      res.status(204).end();
+    } catch (error) {
+      console.error('E2E: Failed to delete course:', error);
+      res.status(500).json({ error: 'Unable to delete course' });
+    }
+    return;
+  }
+
+  if (!ensureSupabase(res)) return;
   try {
     const { error } = await supabase.from('courses').delete().eq('id', id);
     if (error) throw error;
@@ -421,8 +1009,42 @@ app.delete('/api/admin/courses/:id', async (req, res) => {
 });
 
 app.get('/api/client/courses', async (_req, res) => {
-  if (!ensureSupabase(res)) return;
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    const data = Array.from(e2eStore.courses.values())
+      .filter((c) => (c.status || 'draft') === 'published')
+      .map((c) => ({
+        id: c.id,
+        slug: c.slug ?? c.id,
+        title: c.title,
+        description: c.description ?? null,
+        status: c.status ?? 'draft',
+        version: c.version ?? 1,
+        meta_json: c.meta_json ?? {},
+        published_at: c.published_at ?? null,
+        modules: (c.modules || []).map((m) => ({
+          id: m.id,
+          course_id: c.id,
+          title: m.title,
+          description: m.description ?? null,
+          order_index: m.order_index ?? m.order ?? 0,
+          lessons: (m.lessons || []).map((l) => ({
+            id: l.id,
+            module_id: m.id,
+            title: l.title,
+            description: l.description ?? null,
+            type: l.type,
+            order_index: l.order_index ?? l.order ?? 0,
+            duration_s: l.duration_s ?? null,
+            content_json: l.content_json ?? l.content ?? {},
+            completion_rule_json: l.completion_rule_json ?? l.completionRule ?? null,
+          })),
+        })),
+      }));
+    res.json({ data });
+    return;
+  }
 
+  if (!ensureSupabase(res)) return;
   try {
     const { data, error } = await supabase
       .from('courses')
@@ -441,10 +1063,59 @@ app.get('/api/client/courses', async (_req, res) => {
 });
 
 app.get('/api/client/courses/:identifier', async (req, res) => {
-  if (!ensureSupabase(res)) return;
   const { identifier } = req.params;
-  const { includeDrafts } = req.query;
+  const includeDrafts = String(req.query.includeDrafts || '').toLowerCase() === 'true';
 
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    try {
+      const course = e2eFindCourse(identifier);
+      if (!course) {
+        res.json({ data: null });
+        return;
+      }
+      if (!includeDrafts && (course.status || 'draft') !== 'published') {
+        res.json({ data: null });
+        return;
+      }
+
+      const data = {
+        id: course.id,
+        slug: course.slug ?? course.id,
+        title: course.title,
+        description: course.description ?? null,
+        status: course.status ?? 'draft',
+        version: course.version ?? 1,
+        meta_json: course.meta_json ?? {},
+        published_at: course.published_at ?? null,
+        modules: (course.modules || []).map((m) => ({
+          id: m.id,
+          course_id: course.id,
+          title: m.title,
+          description: m.description ?? null,
+          order_index: m.order_index ?? m.order ?? 0,
+          lessons: (m.lessons || []).map((l) => ({
+            id: l.id,
+            module_id: m.id,
+            title: l.title,
+            description: l.description ?? null,
+            type: l.type,
+            order_index: l.order_index ?? l.order ?? 0,
+            duration_s: l.duration_s ?? null,
+            content_json: l.content_json ?? l.content ?? {},
+            completion_rule_json: l.completion_rule_json ?? l.completionRule ?? null,
+          })),
+        })),
+      };
+      res.json({ data });
+      return;
+    } catch (error) {
+      console.error(`E2E fetch course ${identifier} failed:`, error);
+      res.status(500).json({ error: 'Unable to load course' });
+      return;
+    }
+  }
+
+  if (!ensureSupabase(res)) return;
   const buildQuery = (column, value) => {
     let query = supabase
       .from('courses')
@@ -453,24 +1124,16 @@ app.get('/api/client/courses/:identifier', async (req, res) => {
       .order('order_index', { ascending: true, foreignTable: 'modules' })
       .order('order_index', { ascending: true, foreignTable: 'modules.lessons' })
       .maybeSingle();
-
-    if (!includeDrafts) {
-      query = query.eq('status', 'published');
-    }
-
+    if (!includeDrafts) query = query.eq('status', 'published');
     return query;
   };
-
   try {
     let { data, error } = await buildQuery('id', identifier);
-
     if (error && error.code !== 'PGRST116') throw error;
-
     if (!data) {
       ({ data, error } = await buildQuery('slug', identifier));
       if (error && error.code !== 'PGRST116') throw error;
     }
-
     res.json({ data: data ?? null });
   } catch (error) {
     console.error(`Failed to fetch course ${identifier}:`, error);
@@ -478,16 +1141,483 @@ app.get('/api/client/courses/:identifier', async (req, res) => {
   }
 });
 
+// Admin Modules (E2E fallback)
+app.post('/api/admin/modules', async (req, res) => {
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    const parsed = validateOr400(moduleCreateSchema, req, res);
+    if (!parsed) return;
+    const courseId = pickId(parsed, 'course_id', 'courseId');
+    const title = parsed.title;
+    const description = parsed.description ?? null;
+    const orderIndex = pickOrder(parsed);
+    const metadata = parsed.metadata ?? {};
+    if (!courseId || !title) {
+      res.status(400).json({ error: 'courseId and title are required' });
+      return;
+    }
+    const course = e2eFindCourse(courseId);
+    if (!course) {
+      res.status(404).json({ error: 'Course not found' });
+      return;
+    }
+    const id = `e2e-mod-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+    const mod = { id, course_id: course.id, title, description, order_index: orderIndex, lessons: [], metadata: metadata ?? {} };
+    course.modules = course.modules || [];
+    course.modules.push(mod);
+    res.status(201).json({ data: { id, course_id: course.id, title, description, order_index: orderIndex } });
+    return;
+  }
+  if (!ensureSupabase(res)) return;
+  try {
+    const parsed = validateOr400(moduleCreateSchema, req, res);
+    if (!parsed) return;
+    const courseId = pickId(parsed, 'course_id', 'courseId');
+    const title = parsed.title;
+    const description = parsed.description ?? null;
+    const orderIndex = pickOrder(parsed);
+    if (!courseId || !title) {
+      res.status(400).json({ error: 'courseId and title are required' });
+      return;
+    }
+    const { data, error } = await supabase
+      .from('modules')
+      .insert({ course_id: courseId, title, description, order_index: orderIndex })
+      .select('*')
+      .single();
+    if (error) throw error;
+    res.status(201).json({ data: { id: data.id, course_id: data.course_id, title: data.title, description: data.description, order_index: data.order_index ?? 0 } });
+  } catch (error) {
+    console.error('Failed to create module:', error);
+    res.status(500).json({ error: 'Unable to create module' });
+  }
+});
+
+app.patch('/api/admin/modules/:id', async (req, res) => {
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    const { id } = req.params;
+    const parsed = validateOr400(modulePatchValidator, req, res);
+    if (!parsed) return;
+    const title = parsed.title;
+    const description = parsed.description ?? null;
+    const orderIndex = pickOrder(parsed);
+    const found = e2eFindModule(id);
+    if (!found) {
+      res.status(404).json({ error: 'Module not found' });
+      return;
+    }
+    if (typeof title === 'string') found.module.title = title;
+    if (description !== undefined) found.module.description = description;
+    if (typeof orderIndex === 'number') found.module.order_index = orderIndex;
+    res.json({ data: { id: found.module.id, course_id: found.course.id, title: found.module.title, description: found.module.description, order_index: found.module.order_index ?? 0 } });
+    return;
+  }
+  if (!ensureSupabase(res)) return;
+  try {
+    const { id } = req.params;
+    const parsed = validateOr400(modulePatchValidator, req, res);
+    if (!parsed) return;
+    const title = parsed.title;
+    const description = parsed.description ?? null;
+    const orderIndex = pickOrder(parsed);
+    const patch = {};
+    if (typeof title === 'string') patch.title = title;
+    if (description !== undefined) patch.description = description;
+    if (typeof orderIndex === 'number') patch.order_index = orderIndex;
+    if (Object.keys(patch).length === 0) {
+      res.status(400).json({ error: 'No fields to update' });
+      return;
+    }
+    const { data, error } = await supabase
+      .from('modules')
+      .update(patch)
+      .eq('id', id)
+      .select('*')
+      .single();
+    if (error) throw error;
+    res.json({ data: { id: data.id, course_id: data.course_id, title: data.title, description: data.description, order_index: data.order_index ?? 0 } });
+  } catch (error) {
+    console.error('Failed to update module:', error);
+    res.status(500).json({ error: 'Unable to update module' });
+  }
+});
+
+app.delete('/api/admin/modules/:id', async (req, res) => {
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    const { id } = req.params;
+    const found = e2eFindModule(id);
+    if (!found) {
+      res.status(204).end();
+      return;
+    }
+    found.course.modules = (found.course.modules || []).filter((m) => String(m.id) !== String(id));
+    res.status(204).end();
+    return;
+  }
+  if (!ensureSupabase(res)) return;
+  try {
+    const { id } = req.params;
+    // Delete lessons first (in case FK cascade not set)
+    await supabase.from('lessons').delete().eq('module_id', id);
+    await supabase.from('modules').delete().eq('id', id);
+    res.status(204).end();
+  } catch (error) {
+    console.error('Failed to delete module:', error);
+    res.status(500).json({ error: 'Unable to delete module' });
+  }
+});
+
+app.post('/api/admin/modules/reorder', async (req, res) => {
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    const parsed = validateOr400(moduleReorderSchema, req, res);
+    if (!parsed) return;
+    const courseId = pickId(parsed, 'course_id', 'courseId');
+    const modules = parsed.modules;
+    const course = e2eFindCourse(courseId);
+    if (!course) {
+      res.status(404).json({ error: 'Course not found' });
+      return;
+    }
+    const orderMap = new Map((modules || []).map((m) => [String(m.id), pickOrder(m)]));
+    (course.modules || []).forEach((m) => {
+      const idx = orderMap.get(String(m.id));
+      if (typeof idx === 'number') m.order_index = idx;
+    });
+    const sorted = (course.modules || []).slice().sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
+    course.modules = sorted;
+    const response = sorted.map((m) => ({ id: m.id, order_index: m.order_index ?? 0 }));
+    res.json({ data: response });
+    return;
+  }
+  if (!ensureSupabase(res)) return;
+  try {
+    const parsed = validateOr400(moduleReorderSchema, req, res);
+    if (!parsed) return;
+    const courseId = pickId(parsed, 'course_id', 'courseId');
+    const modules = parsed.modules;
+    if (!courseId || !Array.isArray(modules)) {
+      res.status(400).json({ error: 'courseId and modules are required' });
+      return;
+    }
+    const updates = (modules || []).map((m) => {
+      return supabase.from('modules').update({ order_index: pickOrder(m) }).eq('id', m.id);
+    });
+    await Promise.all(updates);
+    const order = modules.map((m) => ({ id: m.id, order_index: pickOrder(m) }));
+    res.json({ data: order });
+  } catch (error) {
+    console.error('Failed to reorder modules:', error);
+    res.status(500).json({ error: 'Unable to reorder modules' });
+  }
+});
+
+// Admin Lessons (E2E fallback)
+app.post('/api/admin/lessons', async (req, res) => {
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    const parsed = validateOr400(lessonCreateSchema, req, res);
+    if (!parsed) return;
+    const moduleId = pickId(parsed, 'module_id', 'moduleId');
+    const title = parsed.title;
+    const type = parsed.type;
+    const description = parsed.description ?? null;
+    const orderIndex = pickOrder(parsed);
+    const durationSeconds = parsed.duration_s ?? parsed.durationSeconds ?? null;
+    const content = parsed.content ?? {};
+    const completionRule = parsed.completion_rule_json ?? parsed.completionRule ?? null;
+    if (!moduleId || !title || !type) {
+      res.status(400).json({ error: 'moduleId, title and type are required' });
+      return;
+    }
+    const found = e2eFindModule(moduleId);
+    if (!found) {
+      res.status(404).json({ error: 'Module not found' });
+      return;
+    }
+    const id = `e2e-less-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+    const lesson = {
+      id,
+      module_id: moduleId,
+      title,
+      description,
+      type,
+      order_index: orderIndex,
+      duration_s: durationSeconds,
+      content_json: (content && typeof content === 'object') ? (content.body ?? content) : {},
+      completion_rule_json: completionRule ?? null,
+    };
+    found.module.lessons = found.module.lessons || [];
+    found.module.lessons.push(lesson);
+    res.status(201).json({ data: { id, module_id: moduleId, title, type, order_index: orderIndex } });
+    return;
+  }
+  if (!ensureSupabase(res)) return;
+  try {
+    const parsed = validateOr400(lessonCreateSchema, req, res);
+    if (!parsed) return;
+    const moduleId = pickId(parsed, 'module_id', 'moduleId');
+    const title = parsed.title;
+    const type = parsed.type;
+    const description = parsed.description ?? null;
+    const orderIndex = pickOrder(parsed);
+    const durationSeconds = parsed.duration_s ?? parsed.durationSeconds ?? null;
+    const content = parsed.content ?? {};
+    const completionRule = parsed.completion_rule_json ?? parsed.completionRule ?? null;
+    if (!moduleId || !title || !type) {
+      res.status(400).json({ error: 'moduleId, title and type are required' });
+      return;
+    }
+    const payload = {
+      module_id: moduleId,
+      title,
+      type,
+      description,
+      order_index: orderIndex,
+      duration_s: durationSeconds,
+      content_json: content && typeof content === 'object' ? content.body ?? content : {},
+      completion_rule_json: completionRule ?? null,
+    };
+    const { data, error } = await supabase
+      .from('lessons')
+      .insert(payload)
+      .select('*')
+      .single();
+    if (error) throw error;
+    res.status(201).json({ data: { id: data.id, module_id: data.module_id, title: data.title, type: data.type, order_index: data.order_index ?? 0 } });
+  } catch (error) {
+    console.error('Failed to create lesson:', error);
+    res.status(500).json({ error: 'Unable to create lesson' });
+  }
+});
+
+app.patch('/api/admin/lessons/:id', async (req, res) => {
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    const { id } = req.params;
+    const parsed = validateOr400(lessonPatchValidator, req, res);
+    if (!parsed) return;
+    const title = parsed.title;
+    const type = parsed.type;
+    const description = parsed.description ?? null;
+    const orderIndex = pickOrder(parsed);
+    const durationSeconds = parsed.duration_s ?? parsed.durationSeconds ?? null;
+    const content = parsed.content ?? {};
+    const completionRule = parsed.completion_rule_json ?? parsed.completionRule ?? null;
+    const found = e2eFindLesson(id);
+    if (!found) {
+      res.status(404).json({ error: 'Lesson not found' });
+      return;
+    }
+    if (typeof title === 'string') found.lesson.title = title;
+    if (typeof type === 'string') found.lesson.type = type;
+    if (description !== undefined) found.lesson.description = description;
+    if (typeof orderIndex === 'number') found.lesson.order_index = orderIndex;
+    if (typeof durationSeconds === 'number') found.lesson.duration_s = durationSeconds;
+    if (content !== undefined) found.lesson.content_json = (content && typeof content === 'object') ? (content.body ?? content) : {};
+    if (completionRule !== undefined) found.lesson.completion_rule_json = completionRule;
+    res.json({ data: { id: found.lesson.id, module_id: found.module.id, title: found.lesson.title, type: found.lesson.type, order_index: found.lesson.order_index ?? 0 } });
+    return;
+  }
+  if (!ensureSupabase(res)) return;
+  try {
+    const { id } = req.params;
+    const parsed = validateOr400(lessonPatchValidator, req, res);
+    if (!parsed) return;
+    const title = parsed.title;
+    const type = parsed.type;
+    const description = parsed.description ?? null;
+    const orderIndex = pickOrder(parsed);
+    const durationSeconds = parsed.duration_s ?? parsed.durationSeconds ?? null;
+    const content = parsed.content ?? {};
+    const completionRule = parsed.completion_rule_json ?? parsed.completionRule ?? null;
+    const patch = {};
+    if (typeof title === 'string') patch.title = title;
+    if (typeof type === 'string') patch.type = type;
+    if (description !== undefined) patch.description = description;
+    if (typeof orderIndex === 'number') patch.order_index = orderIndex;
+    if (typeof durationSeconds === 'number') patch.duration_s = durationSeconds;
+    if (content !== undefined) patch.content_json = content && typeof content === 'object' ? content.body ?? content : {};
+    if (completionRule !== undefined) patch.completion_rule_json = completionRule;
+    if (Object.keys(patch).length === 0) {
+      res.status(400).json({ error: 'No fields to update' });
+      return;
+    }
+    const { data, error } = await supabase
+      .from('lessons')
+      .update(patch)
+      .eq('id', id)
+      .select('*')
+      .single();
+    if (error) throw error;
+    res.json({ data: { id: data.id, module_id: data.module_id, title: data.title, type: data.type, order_index: data.order_index ?? 0 } });
+  } catch (error) {
+    console.error('Failed to update lesson:', error);
+    res.status(500).json({ error: 'Unable to update lesson' });
+  }
+});
+
+app.delete('/api/admin/lessons/:id', async (req, res) => {
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    const { id } = req.params;
+    for (const course of e2eStore.courses.values()) {
+      for (const mod of course.modules || []) {
+        const before = (mod.lessons || []).length;
+        mod.lessons = (mod.lessons || []).filter((l) => String(l.id) !== String(id));
+        if (mod.lessons.length !== before) {
+          res.status(204).end();
+          return;
+        }
+      }
+    }
+    res.status(204).end();
+    return;
+  }
+  if (!ensureSupabase(res)) return;
+  try {
+    const { id } = req.params;
+    await supabase.from('lessons').delete().eq('id', id);
+    res.status(204).end();
+  } catch (error) {
+    console.error('Failed to delete lesson:', error);
+    res.status(500).json({ error: 'Unable to delete lesson' });
+  }
+});
+
+app.post('/api/admin/lessons/reorder', async (req, res) => {
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    const parsed = validateOr400(lessonReorderSchema, req, res);
+    if (!parsed) return;
+    const moduleId = pickId(parsed, 'module_id', 'moduleId');
+    const lessons = parsed.lessons;
+    const found = e2eFindModule(moduleId);
+    if (!found) {
+      res.status(404).json({ error: 'Module not found' });
+      return;
+    }
+    const orderMap = new Map((lessons || []).map((l) => [String(l.id), pickOrder(l)]));
+    (found.module.lessons || []).forEach((l) => {
+      const idx = orderMap.get(String(l.id));
+      if (typeof idx === 'number') l.order_index = idx;
+    });
+    found.module.lessons = (found.module.lessons || []).slice().sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
+    const response = (found.module.lessons || []).map((l) => ({ id: l.id, order_index: l.order_index ?? 0 }));
+    res.json({ data: response });
+    return;
+  }
+  if (!ensureSupabase(res)) return;
+  try {
+    const parsed = validateOr400(lessonReorderSchema, req, res);
+    if (!parsed) return;
+    const moduleId = pickId(parsed, 'module_id', 'moduleId');
+    const lessons = parsed.lessons;
+    if (!moduleId || !Array.isArray(lessons)) {
+      res.status(400).json({ error: 'moduleId and lessons are required' });
+      return;
+    }
+    const updates = (lessons || []).map((l) => {
+      return supabase.from('lessons').update({ order_index: pickOrder(l) }).eq('id', l.id);
+    });
+    await Promise.all(updates);
+    const order = lessons.map((l) => ({ id: l.id, order_index: pickOrder(l) }));
+    res.json({ data: order });
+  } catch (error) {
+    console.error('Failed to reorder lessons:', error);
+    res.status(500).json({ error: 'Unable to reorder lessons' });
+  }
+});
+
 app.post('/api/client/progress/course', async (req, res) => {
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    const { user_id, course_id, percent, status, time_spent_s } = req.body || {};
+    const clientEventId = req.body?.client_event_id ?? null;
+
+    if (!user_id || !course_id) {
+      res.status(400).json({ error: 'user_id and course_id are required' });
+      return;
+    }
+
+    // Rate limit per user to avoid abuse
+    const rlKey = `course:${String(user_id).toLowerCase()}`;
+    if (!checkProgressLimit(rlKey)) {
+      res.status(429).json({ error: 'Too many progress updates, please slow down' });
+      return;
+    }
+
+    try {
+      if (clientEventId) {
+        if (e2eStore.progressEvents.has(clientEventId)) {
+          const key = `${user_id}:${course_id}`;
+          const existing = e2eStore.courseProgress.get(key) || null;
+          res.json({ data: existing, idempotent: true });
+          return;
+        }
+        e2eStore.progressEvents.add(clientEventId);
+      }
+
+      const key = `${user_id}:${course_id}`;
+      const now = new Date().toISOString();
+      const record = {
+        user_id,
+        course_id,
+        percent: typeof percent === 'number' ? percent : 0,
+        status: status || 'in_progress',
+        time_spent_s: typeof time_spent_s === 'number' ? time_spent_s : 0,
+        updated_at: now,
+      };
+      e2eStore.courseProgress.set(key, record);
+
+      try {
+        const payload = { type: 'course_progress', data: record, timestamp: Date.now() };
+        broadcastToTopic(`progress:user:${String(user_id).toLowerCase()}`, payload);
+        broadcastToTopic(`progress:course:${course_id}`, payload);
+        broadcastToTopic('progress:all', payload);
+      } catch (bErr) {
+        console.warn('E2E: Failed to broadcast course progress', bErr);
+      }
+
+      res.json({ data: record });
+    } catch (error) {
+      console.error('E2E: Failed to upsert course progress:', error);
+      res.status(500).json({ error: 'Unable to save course progress' });
+    }
+    return;
+  }
+
   if (!ensureSupabase(res)) return;
   const { user_id, course_id, percent, status, time_spent_s } = req.body || {};
+  const clientEventId = req.body?.client_event_id ?? null;
 
   if (!user_id || !course_id) {
     res.status(400).json({ error: 'user_id and course_id are required' });
     return;
   }
 
+  const rlKey = `course:${String(user_id).toLowerCase()}`;
+  if (!checkProgressLimit(rlKey)) {
+    res.status(429).json({ error: 'Too many progress updates, please slow down' });
+    return;
+  }
+
   try {
+    // If client provided an idempotency key, record the event first to avoid double-processing
+    if (clientEventId) {
+      try {
+        await supabase.from('progress_events').insert({ id: clientEventId, user_id, course_id, lesson_id: null, payload: req.body });
+      } catch (evErr) {
+        // If the event already exists, treat as idempotent and return current progress
+        try {
+          const existing = await supabase
+            .from('user_course_progress')
+            .select('*')
+            .eq('user_id', user_id)
+            .eq('course_id', course_id)
+            .maybeSingle();
+          if (existing && !existing.error && existing.data) {
+            res.json({ data: existing.data, idempotent: true });
+            return;
+          }
+        } catch (fetchErr) {
+          // fall through to normal processing
+        }
+      }
+    }
     const { data, error } = await supabase
       .from('user_course_progress')
       .upsert({
@@ -501,6 +1631,17 @@ app.post('/api/client/progress/course', async (req, res) => {
       .single();
 
     if (error) throw error;
+    try {
+      const userId = data?.user_id || user_id;
+      const courseId = data?.course_id || course_id;
+      const payload = { type: 'course_progress', data, timestamp: Date.now() };
+      if (userId) broadcastToTopic(`progress:user:${String(userId).toLowerCase()}`, payload);
+      if (courseId) broadcastToTopic(`progress:course:${courseId}`, payload);
+      broadcastToTopic('progress:all', payload);
+    } catch (bErr) {
+      console.warn('Failed to broadcast course progress', bErr);
+    }
+
     res.json({ data });
   } catch (error) {
     console.error('Failed to upsert course progress:', error);
@@ -509,15 +1650,96 @@ app.post('/api/client/progress/course', async (req, res) => {
 });
 
 app.post('/api/client/progress/lesson', async (req, res) => {
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    const { user_id, lesson_id, percent, status, time_spent_s, resume_at_s } = req.body || {};
+    const clientEventId = req.body?.client_event_id ?? null;
+
+    if (!user_id || !lesson_id) {
+      res.status(400).json({ error: 'user_id and lesson_id are required' });
+      return;
+    }
+
+    const rlKey = `lesson:${String(user_id).toLowerCase()}`;
+    if (!checkProgressLimit(rlKey)) {
+      res.status(429).json({ error: 'Too many progress updates, please slow down' });
+      return;
+    }
+
+    try {
+      if (clientEventId) {
+        if (e2eStore.progressEvents.has(clientEventId)) {
+          const key = `${user_id}:${lesson_id}`;
+          const existing = e2eStore.lessonProgress.get(key) || null;
+          res.json({ data: existing, idempotent: true });
+          return;
+        }
+        e2eStore.progressEvents.add(clientEventId);
+      }
+
+      const key = `${user_id}:${lesson_id}`;
+      const now = new Date().toISOString();
+      const record = {
+        user_id,
+        lesson_id,
+        percent: typeof percent === 'number' ? percent : 0,
+        status: status || 'in_progress',
+        time_spent_s: typeof time_spent_s === 'number' ? time_spent_s : 0,
+        resume_at_s: typeof resume_at_s === 'number' ? resume_at_s : null,
+        updated_at: now,
+      };
+      e2eStore.lessonProgress.set(key, record);
+
+      try {
+        const payload = { type: 'lesson_progress', data: record, timestamp: Date.now() };
+        broadcastToTopic(`progress:user:${String(user_id).toLowerCase()}`, payload);
+        broadcastToTopic(`progress:lesson:${lesson_id}`, payload);
+        broadcastToTopic('progress:all', payload);
+      } catch (bErr) {
+        console.warn('E2E: Failed to broadcast lesson progress', bErr);
+      }
+
+      res.json({ data: record });
+    } catch (error) {
+      console.error('E2E: Failed to upsert lesson progress:', error);
+      res.status(500).json({ error: 'Unable to save lesson progress' });
+    }
+    return;
+  }
+
   if (!ensureSupabase(res)) return;
   const { user_id, lesson_id, percent, status, time_spent_s, resume_at_s } = req.body || {};
+  const clientEventId = req.body?.client_event_id ?? null;
 
   if (!user_id || !lesson_id) {
     res.status(400).json({ error: 'user_id and lesson_id are required' });
     return;
   }
 
+  const rlKey = `lesson:${String(user_id).toLowerCase()}`;
+  if (!checkProgressLimit(rlKey)) {
+    res.status(429).json({ error: 'Too many progress updates, please slow down' });
+    return;
+  }
+
   try {
+    if (clientEventId) {
+      try {
+        await supabase.from('progress_events').insert({ id: clientEventId, user_id, course_id: null, lesson_id, payload: req.body });
+      } catch (evErr) {
+        try {
+          const existing = await supabase
+            .from('user_lesson_progress')
+            .select('*')
+            .eq('user_id', user_id)
+            .eq('lesson_id', lesson_id)
+            .maybeSingle();
+          if (existing && !existing.error && existing.data) {
+            res.json({ data: existing.data, idempotent: true });
+            return;
+          }
+        } catch (fetchErr) {}
+      }
+    }
     const { data, error } = await supabase
       .from('user_lesson_progress')
       .upsert({
@@ -532,6 +1754,17 @@ app.post('/api/client/progress/lesson', async (req, res) => {
       .single();
 
     if (error) throw error;
+    try {
+      const userId = data?.user_id || user_id;
+      const lessonId = data?.lesson_id || lesson_id;
+      const payload = { type: 'lesson_progress', data, timestamp: Date.now() };
+      if (userId) broadcastToTopic(`progress:user:${String(userId).toLowerCase()}`, payload);
+      if (lessonId) broadcastToTopic(`progress:lesson:${lessonId}`, payload);
+      broadcastToTopic('progress:all', payload);
+    } catch (bErr) {
+      console.warn('Failed to broadcast lesson progress', bErr);
+    }
+
     res.json({ data });
   } catch (error) {
     console.error('Failed to upsert lesson progress:', error);
@@ -1833,8 +3066,18 @@ const distPath = path.resolve(__dirname, '../dist');
 app.use(express.static(distPath));
 
 // For SPA client-side routing — serve index.html for unknown routes
-app.get('*', (req, res) => {
-  res.sendFile(path.join(distPath, 'index.html'));
+// Use a non-wildcard param pattern to avoid path-to-regexp parsing issues on some Node/express versions.
+// Serve index.html for SPA routes that aren't API or WS. Use a middleware to avoid
+// registering a path pattern that trips path-to-regexp in some environments.
+app.use((req, res, next) => {
+  // Only handle GET requests that are not API or WS paths
+  if (req.method !== 'GET') return next();
+  if (req.path.startsWith('/api') || req.path.startsWith('/ws') || req.path.startsWith('/_next')) return next();
+
+  const indexFile = path.join(distPath, 'index.html');
+  res.sendFile(indexFile, (err) => {
+    if (err) return next(err);
+  });
 });
 
 const server = app.listen(port, () => {

@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Bell, X, CheckCircle, AlertTriangle, Info, BookOpen, Award, TrendingUp } from 'lucide-react';
 
@@ -56,10 +56,21 @@ const formatTimestamp = (timestamp: Date) => {
   return 'Just now';
 };
 
-const RealtimeNotifications: React.FC = () => {
+interface RealtimeNotificationsProps {
+  userId?: string;
+  enabled?: boolean;
+}
+
+const RealtimeNotifications: React.FC<RealtimeNotificationsProps> = ({ userId = 'demo-user', enabled = true }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
+
+  useEffect(() => {
+    if (!enabled) return;
+    // Placeholder init: we may subscribe to realtime topics here using the userId
+    console.log('[RealtimeNotifications] initialized for user', userId);
+  }, [enabled, userId]);
 
   const markAllAsRead = useCallback(() => {
     setNotifications(prev => prev.map(n => ({ ...n, read: true })));

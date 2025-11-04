@@ -8,7 +8,7 @@ const footerLinks = [
 
 const Footer = () => {
   return (
-    <footer className="mt-16 border-t border-mist/60 bg-softwhite">
+  <footer className="mt-16 border-t border-mist/60 bg-[var(--hud-bg)]">
       <div className="mx-auto flex max-w-7xl flex-col gap-8 px-6 py-10 lg:flex-row lg:items-center lg:justify-between lg:px-12">
         <a href="/" aria-label="Return to home" className="flex items-center gap-3 no-underline">
           <img src="/logo.svg" alt="Huddle Co." className="h-12 w-12 rounded-2xl shadow-card-sm" />
@@ -40,6 +40,14 @@ const Footer = () => {
             className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-mist text-slate/80 transition hover:text-sunrise focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-skyblue focus-visible:ring-offset-2 focus-visible:ring-offset-softwhite"
           >
             <Twitter className="h-5 w-5" aria-hidden="true" />
+          </a>
+        </div>
+      </div>
+      <div className="px-6 lg:px-12 pb-6">
+        <div className="mx-auto max-w-7xl flex flex-col items-center gap-3">
+          <img src="/logo.svg" alt="Huddle Co." className="h-10 w-10 rounded-2xl shadow-card-sm" />
+          <a href="/brand-guidelines" className="text-sm font-semibold text-slate/80 hover:text-charcoal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-skyblue focus-visible:ring-offset-2 focus-visible:ring-offset-softwhite">
+            Brand Guidelines
           </a>
         </div>
       </div>

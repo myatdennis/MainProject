@@ -7,7 +7,6 @@ import {
   Target,
   Award,
   Calendar,
-  ArrowLeft,
   Play,
 } from 'lucide-react';
 
@@ -17,13 +16,14 @@ import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
 import ProgressBar from '../../components/ui/ProgressBar';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
+import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import { courseStore } from '../../store/courseStore';
 import { normalizeCourse, parseDurationToMinutes } from '../../utils/courseNormalization';
 import {
   loadStoredCourseProgress,
   syncCourseProgressWithRemote,
 } from '../../utils/courseProgress';
-import learnerMetricsService from '../../services/learnerMetricsService';
+import { isEnabled as lmIsEnabled, fetchGoals, fetchAchievements, upsertGoals, upsertAchievements } from '../../dal/learnerMetrics';
 
 interface ProgressData {
   overallProgress: {
@@ -283,19 +283,20 @@ const LMSProgress: React.FC = () => {
       let goalsToUse = derivedGoals;
       let achievementsToUse = derivedAchievements;
 
-      if (learnerMetricsService.isEnabled()) {
+      if (lmIsEnabled()) {
         const [remoteGoals, remoteAchievements] = await Promise.all([
-          learnerMetricsService.fetchGoals(learnerId),
-          learnerMetricsService.fetchAchievements(learnerId),
+          fetchGoals(learnerId),
+          fetchAchievements(learnerId),
         ]);
 
         if (remoteGoals.length > 0) {
           goalsToUse = remoteGoals.map((goal) => ({
             id: goal.id,
             title: goal.title,
-            description: goal.description,
-            targetDate: goal.targetDate,
-            progress: goal.progress,
+            description: goal.description || '',
+            targetDate:
+              goal.targetDate || new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+            progress: goal.progress ?? 0,
             status: goal.status,
           }));
         } else {
@@ -308,16 +309,16 @@ const LMSProgress: React.FC = () => {
             progress: goal.progress,
             status: goal.status,
           }));
-          await learnerMetricsService.upsertGoals(learnerId, persistableGoals);
+          await upsertGoals(learnerId, persistableGoals);
         }
 
         if (remoteAchievements.length > 0) {
           achievementsToUse = remoteAchievements.map((item) => ({
             id: item.id,
             title: item.title,
-            description: item.description,
-            earnedDate: item.earnedDate,
-            icon: item.icon,
+            description: item.description || '',
+            earnedDate: item.earnedDate || new Date().toISOString().split('T')[0],
+            icon: item.icon || '🏆',
             rarity: item.rarity,
           }));
         } else {
@@ -330,7 +331,7 @@ const LMSProgress: React.FC = () => {
             icon: item.icon,
             rarity: item.rarity,
           }));
-          await learnerMetricsService.upsertAchievements(learnerId, persistableAchievements);
+          await upsertAchievements(learnerId, persistableAchievements);
         }
       }
 
@@ -355,8 +356,9 @@ const LMSProgress: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="py-24">
-        <LoadingSpinner size="lg" text="Collecting your progress..." />
+      <div className="py-24 flex flex-col items-center gap-3">
+        <LoadingSpinner size="lg" />
+        <p className="text-sm text-slate/80">Collecting your progress…</p>
       </div>
     );
   }
@@ -381,19 +383,8 @@ const LMSProgress: React.FC = () => {
     <>
       <SEO title="Progress Dashboard" description="Track your learning progress across all courses." />
       <div className="min-h-screen bg-softwhite">
-        <div className="mx-auto max-w-7xl px-6 py-10 lg:px-12">
-          <div className="flex items-center gap-3 text-sm text-slate/70">
-            <button
-              type="button"
-              onClick={() => navigate('/lms/dashboard')}
-              className="inline-flex items-center gap-2 rounded-full border border-mist px-4 py-2 text-slate/80 transition hover:text-charcoal"
-            >
-              <ArrowLeft className="h-4 w-4" />
-              Back to dashboard
-            </button>
-            <span>/</span>
-            <span>Progress</span>
-          </div>
+        <div className="container-page section">
+          <Breadcrumbs items={[{ label: 'Dashboard', to: '/lms/dashboard' }, { label: 'Progress', to: '/lms/progress' }]} />
 
           <div className="mt-6 grid gap-6 lg:grid-cols-[2fr,1fr]">
             <Card tone="gradient" withBorder={false} className="overflow-hidden">
@@ -540,7 +531,7 @@ const LMSProgress: React.FC = () => {
                         <h3 className="font-heading text-lg font-semibold text-charcoal">{course.title}</h3>
                         <p className="text-xs uppercase tracking-wide text-slate/60">{course.category}</p>
                       </div>
-                      <Badge tone={course.progress >= 100 ? 'success' : 'info'}>
+                      <Badge tone={course.progress >= 100 ? 'positive' : 'info'}>
                         {course.progress >= 100 ? 'Completed' : `${course.progress}% complete`}
                       </Badge>
                     </div>
@@ -557,7 +548,7 @@ const LMSProgress: React.FC = () => {
                         <span>·</span>
                         <span>{course.nextLesson.duration} min</span>
                         <Button
-                          size="xs"
+                          size="sm"
                           variant="ghost"
                           onClick={() => navigate(`/lms/course/${course.courseId}/lesson/${course.nextLesson?.id}`)}
                         >
@@ -611,7 +602,7 @@ const LMSProgress: React.FC = () => {
                         <p className="font-heading text-base font-semibold text-charcoal">{goal.title}</p>
                         <p className="text-xs text-slate/60">Target: {formatDate(goal.targetDate)}</p>
                       </div>
-                      <Badge tone={goal.progress >= 100 ? 'success' : goal.status === 'overdue' ? 'danger' : 'info'}>
+                      <Badge tone={goal.progress >= 100 ? 'positive' : goal.status === 'overdue' ? 'danger' : 'info'}>
                         {goal.status === 'completed' ? 'Completed' : `${goal.progress}%`}
                       </Badge>
                     </div>

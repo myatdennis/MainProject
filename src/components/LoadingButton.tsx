@@ -37,39 +37,44 @@ const LoadingButton: React.FC<LoadingButtonProps> = ({
     switch (variant) {
       case 'primary':
         return {
-          background: 'linear-gradient(90deg, var(--primary) 0%, var(--secondary) 100%)',
-          color: '#fff',
-          boxShadow: 'var(--elevation-card)'
+          background: 'var(--cta-gradient)',
+          color: 'var(--cta-text)',
+          boxShadow: 'var(--cta-shadow)',
+          border: 'none',
         };
       case 'secondary':
         return {
-          background: 'transparent',
-          color: 'var(--secondary)',
-          border: '1px solid var(--secondary)'
+          background: 'var(--hud-navy)',
+          color: '#fff',
+          border: 'none',
         };
       case 'success':
         return {
           background: 'var(--accent-success)',
-          color: '#fff',
-          boxShadow: 'var(--elevation-card)'
+          color: 'var(--on-secondary)',
+          boxShadow: 'var(--shadow-card)',
+          border: 'none',
         };
       case 'danger':
         return {
-          background: 'var(--danger, #E6473A)',
-          color: '#fff',
-          boxShadow: 'var(--elevation-card)'
+          background: 'var(--accent-danger)',
+          color: 'var(--on-accent)',
+          boxShadow: 'var(--shadow-card)',
+          border: 'none',
         };
       case 'warning':
         return {
           background: 'var(--subtext-muted)',
-          color: '#fff',
-          boxShadow: 'var(--elevation-card)'
+          color: 'var(--on-surface)',
+          boxShadow: 'var(--shadow-card)',
+          border: 'none',
         };
       default:
         return {
-          background: 'linear-gradient(90deg, var(--primary) 0%, var(--secondary) 100%)',
-          color: '#fff',
-          boxShadow: 'var(--elevation-card)'
+          background: 'var(--cta-gradient)',
+          color: 'var(--cta-text)',
+          boxShadow: 'var(--cta-shadow)',
+          border: 'none',
         };
     }
   };
@@ -118,7 +123,7 @@ const LoadingButton: React.FC<LoadingButtonProps> = ({
         fontSize: sStyle.fontSize,
         transition: 'transform var(--motion-duration-base), box-shadow var(--motion-duration-base)'
       }}
-      whileHover={!isDisabled && window.matchMedia('(prefers-reduced-motion: no-preference)').matches ? { scale: 1.03, boxShadow: 'var(--shadow-soft)' } : {}}
+      whileHover={!isDisabled && window.matchMedia('(prefers-reduced-motion: no-preference)').matches ? { scale: 1.03, boxShadow: 'var(--shadow-card-sm)' } : {}}
       whileTap={!isDisabled && window.matchMedia('(prefers-reduced-motion: no-preference)').matches ? { scale: 0.98 } : {}}
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}

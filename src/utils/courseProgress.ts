@@ -84,12 +84,14 @@ const deriveStoredProgressFromRemote = (
     completedLessonIds: orderedLessons,
     lessonProgress,
     lessonPositions,
-    lastLessonId: latestLesson?.id,
+    lastLessonId: (latestLesson as any)?.id ?? undefined,
   };
 };
 
-export const loadStoredCourseProgress = (courseSlug: string): StoredCourseProgress =>
-  readLocalProgress(courseSlug);
+export const loadStoredCourseProgress = (courseSlug?: string): StoredCourseProgress => {
+  if (!courseSlug) return { completedLessonIds: [], lessonProgress: {}, lessonPositions: {} };
+  return readLocalProgress(courseSlug);
+};
 
 export const syncCourseProgressWithRemote = async (options: {
   courseSlug: string;

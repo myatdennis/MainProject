@@ -7,12 +7,6 @@ export interface ProgressBarProps {
   srLabel?: string;
 }
 
-const toneMap = {
-  default: 'bg-sunrise',
-  success: 'bg-forest',
-  info: 'bg-skyblue',
-};
-
 const ProgressBar = ({
   value,
   className,
@@ -21,20 +15,29 @@ const ProgressBar = ({
 }: ProgressBarProps) => {
   const width = Math.max(0, Math.min(100, value));
 
+  // Use design tokens for color/gradient per brand rules
+  const trackClass = 'w-full rounded-full bg-mist/60 p-[3px]';
+  const barBaseClass = 'h-2 rounded-full transition-all duration-300 ease-out';
+  const barStyle: React.CSSProperties = { width: `${width}%` };
+
+  if (tone === 'info') {
+    // Info tone: brand blue
+    barStyle.background = 'var(--hud-blue)';
+  } else {
+    // Default/success: Blue→Green gradient
+    barStyle.backgroundImage = 'var(--gradient-blue-green)';
+  }
+
   return (
-    <div className={cn('w-full rounded-full bg-mist/60 p-[3px]', className)}>
+    <div className={cn(trackClass, className)}>
       <div
         role="progressbar"
         aria-label={srLabel}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={Math.round(width)}
-        className={cn(
-          'h-2 rounded-full transition-all duration-300 ease-out',
-          toneMap[tone],
-          tone === 'default' && 'bg-gradient-to-r from-sunrise to-skyblue'
-        )}
-        style={{ width: `${width}%` }}
+        className={barBaseClass}
+        style={barStyle}
       />
     </div>
   );

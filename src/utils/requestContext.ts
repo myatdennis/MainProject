@@ -8,6 +8,10 @@ export const buildAuthHeaders = async (): Promise<Record<string, string>> => {
       const stored = window.localStorage.getItem('huddle_user');
       if (stored) {
         const parsed = JSON.parse(stored);
+        // Provide a stable demo-mode user id when Supabase isn't configured
+        if (parsed?.id || parsed?.email) {
+          headers['X-User-Id'] = String(parsed.id || parsed.email).toLowerCase();
+        }
         if (parsed?.role) {
           headers['X-User-Role'] = String(parsed.role);
         }

@@ -8,7 +8,8 @@ import CourseEditModal from '../../components/CourseEditModal';
 import { courseStore } from '../../store/courseStore';
 import { Course } from '../../types/courseTypes';
 import { useToast } from '../../context/ToastContext';
-import { useSyncService } from '../../services/syncService';
+import { useSyncService } from '../../dal/sync';
+import { syncCourseToDatabase, CourseValidationError } from '../../dal/courses';
 
 const AdminCourseEdit = () => {
   const { courseId } = useParams();
@@ -24,21 +25,32 @@ const AdminCourseEdit = () => {
     setCourse(courseStore.getCourse(courseId) || null);
   }, [courseId]);
 
-  const handleSave = (updatedCourse: Course) => {
-    courseStore.saveCourse({
-      ...updatedCourse,
-      lastUpdated: new Date().toISOString(),
-    });
+  const handleSave = async (updatedCourse: Course) => {
+    try {
+      const snapshot = await syncCourseToDatabase({
+        ...updatedCourse,
+        lastUpdated: new Date().toISOString(),
+      });
+      const finalCourse = (snapshot ?? updatedCourse) as Course;
+      courseStore.saveCourse(finalCourse, { skipRemoteSync: true });
 
-    syncService.logEvent({
-      type: 'course_updated',
-      data: updatedCourse,
-      timestamp: Date.now(),
-    });
+      syncService.logEvent({
+        type: 'course_updated',
+        data: finalCourse,
+        timestamp: Date.now(),
+      });
 
-    showToast('Course updated', 'success');
-    setBuilderOpen(false);
-    setCourse(courseStore.getCourse(updatedCourse.id) || null);
+      showToast('Course updated', 'success');
+      setBuilderOpen(false);
+      setCourse(courseStore.getCourse(finalCourse.id) || null);
+    } catch (err) {
+      if (err instanceof CourseValidationError) {
+        showToast(`Update failed: ${err.issues.join(' • ')}`, 'error');
+      } else {
+        console.error('Failed to update course', err);
+        showToast('Could not update course. Please try again.', 'error');
+      }
+    }
   };
 
   if (!course) {

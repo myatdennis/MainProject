@@ -113,11 +113,11 @@ const LMSDashboard = () => {
   };
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
+    <div className="container-page section">
       {/* Welcome Section */}
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">Welcome back, {user?.name || 'Learner'}!</h1>
-        <p className="text-gray-600">Continue your inclusive leadership journey. You're making great progress!</p>
+        <h1 className="h1">Welcome back, {user?.name || 'Learner'}!</h1>
+        <p className="lead">Continue your inclusive leadership journey. You're making great progress!</p>
       </div>
 
       {/* Stats Grid */}
@@ -125,13 +125,13 @@ const LMSDashboard = () => {
         {stats.map((stat, index) => {
           const Icon = stat.icon;
           return (
-            <div key={index} className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+            <div key={index} className="card-lg hover-lift">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm font-medium text-gray-600">{stat.label}</p>
-                  <p className="text-2xl font-bold text-gray-900 mt-1">{stat.value}</p>
+                  <p className="text-sm font-medium text-slate/80">{stat.label}</p>
+                  <p className="text-2xl font-bold text-charcoal mt-1">{stat.value}</p>
                 </div>
-                <div className={`p-3 rounded-lg bg-gray-50`}>
+                <div className={`p-3 rounded-lg bg-white/8`}> 
                   <Icon className={`h-6 w-6 ${stat.color}`} />
                 </div>
               </div>
@@ -143,12 +143,12 @@ const LMSDashboard = () => {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Course Progress */}
         <div className="lg:col-span-2">
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <div className="card-lg card-hover">
             <div className="flex items-center justify-between mb-6">
-              <h2 className="text-xl font-bold text-gray-900">Your Learning Path</h2>
+              <h2 className="h2">Your Learning Path</h2>
               <Link 
                 to="/lms/courses" 
-                className="text-orange-500 hover:text-orange-600 font-medium text-sm"
+                className="nav-link"
               >
                 View All Courses →
               </Link>
@@ -156,11 +156,11 @@ const LMSDashboard = () => {
             
             <div className="space-y-4">
               {modules.map((module) => (
-                <div key={module.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition-shadow duration-200">
+                <div key={module.id} className="border border-gray-200 rounded-lg p-4 hover-lift transition-shadow duration-200">
                   <div className="flex items-center justify-between mb-3">
                     <div className="flex-1">
-                      <h3 className="font-semibold text-gray-900 mb-1">{module.title}</h3>
-                      <div className="flex items-center space-x-4 text-sm text-gray-600">
+                      <h3 className="h3 mb-1">{module.title}</h3>
+                      <div className="flex items-center space-x-4 text-sm text-slate/80">
                         <span className="flex items-center">
                           <Clock className="h-4 w-4 mr-1" />
                           {module.duration}
@@ -174,20 +174,20 @@ const LMSDashboard = () => {
                       </span>
                       <Link
                         to={`/lms/module/${module.id}`}
-                        className="bg-orange-500 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-orange-600 transition-colors duration-200"
+                        className="btn-cta px-4 py-2 rounded-lg text-sm font-medium"
                       >
                         {module.status === 'completed' ? 'Review' : module.status === 'in-progress' ? 'Continue' : 'Start'}
                       </Link>
                     </div>
                   </div>
                   
-                  <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div className="w-full bg-mist/60 rounded-full h-2">
                     <div 
-                      className="bg-gradient-to-r from-orange-400 to-red-500 h-2 rounded-full transition-all duration-300"
-                      style={{ width: `${module.progress}%` }}
-                    ></div>
+                      className="h-2 rounded-full transition-all duration-300"
+                      style={{ width: `${module.progress}%`, backgroundImage: 'var(--gradient-blue-green)' }}
+                    />
                   </div>
-                  <div className="text-right text-sm text-gray-600 mt-1">
+                  <div className="text-right text-sm text-slate/80 mt-1">
                     {module.progress}% complete
                   </div>
                 </div>
@@ -199,7 +199,7 @@ const LMSDashboard = () => {
         {/* Sidebar */}
         <div className="space-y-6">
           {/* Quick Actions */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <div className="card-lg card-hover">
             <h3 className="text-lg font-bold text-gray-900 mb-4">Quick Actions</h3>
             <div className="space-y-3">
               <Link
@@ -227,7 +227,7 @@ const LMSDashboard = () => {
           </div>
 
           {/* Recent Activity */}
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+          <div className="card-lg card-hover">
             <h3 className="text-lg font-bold text-gray-900 mb-4">Recent Activity</h3>
             <div className="space-y-4">
               {recentActivity.map((activity, index) => {
@@ -250,12 +250,12 @@ const LMSDashboard = () => {
           </div>
 
           {/* Upcoming */}
-            <div className="bg-gradient-to-r from-blue-50 to-green-50 rounded-xl p-6">
+            <div className="rounded-xl p-6" style={{ background: 'linear-gradient(90deg, color-mix(in srgb, var(--hud-blue) 10%, transparent), color-mix(in srgb, var(--hud-green) 10%, transparent))' }}>
             <h3 className="text-lg font-bold text-gray-900 mb-2">Next Coaching Session</h3>
             <p className="text-sm text-gray-600 mb-4">
               Scheduled for March 15, 2025 at 2:00 PM EST
             </p>
-            <a href="/lms/meeting" className="bg-white text-blue-600 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors duration-200">Join Meeting</a>
+            <a href="/lms/meeting" className="btn-outline">Join Meeting</a>
           </div>
         </div>
       </div>

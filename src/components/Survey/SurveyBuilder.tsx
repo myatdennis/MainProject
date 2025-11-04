@@ -126,8 +126,8 @@ const SurveyBuilder: React.FC<SurveyBuilderProps> = ({
       randomizeOptions: false,
     },
     branding: {
-      primaryColor: '#2B84C6',
-      secondaryColor: '#3BAA66',
+      primaryColor: '#3A7DFF',
+      secondaryColor: '#228B22',
     },
     defaultLanguage: 'en',
     supportedLanguages: ['en'],

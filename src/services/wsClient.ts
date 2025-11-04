@@ -1,13 +1,43 @@
-import { EventEmitter } from 'events';
-
 type WSMessage = {
   topic?: string;
   type: string;
   data?: any;
   timestamp?: number;
 };
+// Lightweight browser-friendly event emitter (avoid Node 'events' polyfills)
+class SimpleEmitter {
+  private listeners: Map<string, Set<(...args: unknown[]) => void>> = new Map();
 
-class WSClient extends EventEmitter {
+  on(event: string, cb: (...args: unknown[]) => void) {
+    if (!this.listeners.has(event)) this.listeners.set(event, new Set());
+    this.listeners.get(event)!.add(cb);
+  }
+
+  off(event: string, cb?: (...args: unknown[]) => void) {
+    if (!cb) {
+      this.listeners.delete(event);
+      return;
+    }
+    const set = this.listeners.get(event);
+    set?.delete(cb);
+    if (set && set.size === 0) this.listeners.delete(event);
+  }
+
+  emit(event: string, ...args: any[]) {
+    const set = this.listeners.get(event);
+    if (!set) return;
+    for (const cb of Array.from(set)) {
+      try {
+        cb(...args);
+      } catch (e) {
+        // swallow listener errors to avoid breaking others
+        console.error('[SimpleEmitter] listener error', e);
+      }
+    }
+  }
+}
+
+class WSClient extends SimpleEmitter {
   private url: string;
   private socket: WebSocket | null = null;
   private reconnectDelay = 1000;

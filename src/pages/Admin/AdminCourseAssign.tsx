@@ -1,13 +1,13 @@
 import { useState, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Users, Calendar, Send, AlertTriangle } from 'lucide-react';
+import { Users, Send, AlertTriangle } from 'lucide-react';
 import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
 import Input from '../../components/ui/Input';
 import { courseStore } from '../../store/courseStore';
 import { useToast } from '../../context/ToastContext';
-import { useSyncService } from '../../services/syncService';
+import { useSyncService } from '../../dal/sync';
 import { addAssignments } from '../../utils/assignmentStorage';
 import type { CourseAssignment } from '../../types/assignment';
 
@@ -74,7 +74,8 @@ const AdminCourseAssign = () => {
           userId: record.userId,
           source: 'admin',
         });
-        syncService.logEvent({
+        // Log a secondary event for UX hooks; cast to any to allow custom event type without widening core union
+        (syncService.logEvent as any)({
           type: 'course_assigned',
           data: record,
           timestamp: Date.now(),

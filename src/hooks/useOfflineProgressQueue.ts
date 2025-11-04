@@ -10,7 +10,7 @@ import {
   setStorageErrorHandler,
   removeOfflineItem,
   type OfflineQueueItem,
-} from '../services/offlineQueue';
+} from '../dal/offlineQueue';
 
 export interface QueuedProgress {
   id: string;
@@ -49,7 +49,6 @@ const mapToQueuedProgress = (item: OfflineQueueItem): QueuedProgress => ({
 export const useOfflineProgressQueue = (options: UseOfflineQueueOptions = {}) => {
   const {
     maxRetries = 3,
-    retryDelay = 2000,
     onSync,
     onSyncError,
     onQueueFull,
@@ -105,9 +104,10 @@ export const useOfflineProgressQueue = (options: UseOfflineQueueOptions = {}) =>
   useEffect(() => {
     const handleOnline = () => {
       setIsOnline(true);
-      toast.success('Connection restored. Syncing progress...', {
-        duration: 3000,
-        id: 'connection-restored',
+      toast.success('Back online. Syncing queued progress…', {
+        duration: 2500,
+        id: 'back-online',
+        icon: '🌐',
       });
       setTimeout(() => {
         void processQueue();
@@ -117,9 +117,9 @@ export const useOfflineProgressQueue = (options: UseOfflineQueueOptions = {}) =>
     const handleOffline = () => {
       setIsOnline(false);
       toast('You\'re offline. Progress will be saved locally.', {
-        icon: '💾',
-        duration: 4000,
-        id: 'connection-lost',
+        icon: '�',
+        duration: 3000,
+        id: 'offline-mode',
       });
     };
 
@@ -134,8 +134,9 @@ export const useOfflineProgressQueue = (options: UseOfflineQueueOptions = {}) =>
 
   const addToQueue = useCallback(
     (item: Omit<QueuedProgress, 'id' | 'timestamp' | 'attempts'>) => {
+      const generatedId = `queue_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
       const queuedItem: OfflineQueueItem = {
-        id: item.id ?? `queue_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+        id: generatedId,
         type: 'progress-event',
         userId: item.userId,
         courseId: item.courseId,

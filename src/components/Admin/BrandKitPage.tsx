@@ -1,12 +1,12 @@
 import React from 'react';
 
 const brandColors = [
-  { name: 'Sunrise Orange', value: '#F28C1A' },
-  { name: 'Deep Red', value: '#E6473A' },
-  { name: 'Sky Blue', value: '#2B84C6' },
-  { name: 'Forest Green', value: '#3BAA66' },
-  { name: 'Charcoal Block', value: '#1E1E1E' },
-  { name: 'Soft White', value: '#F9F9F1' }
+  { name: 'Sunrise Orange', value: '#de7b12' },
+  { name: 'Deep Red', value: '#D72638' },
+  { name: 'Sky Blue', value: '#3A7DFF' },
+  { name: 'Forest Green', value: '#228B22' },
+  { name: 'Dark Navy', value: '#1E1E22' },
+  { name: 'Soft White', value: '#F8F9FB' }
 ];
 
 const brandFonts = [
@@ -62,7 +62,7 @@ const BrandKitPage: React.FC = () => {
         <h2 className="text-xl font-semibold mb-4">Logo</h2>
         <div className="flex items-center space-x-6">
           <img src="/logo192.png" alt="The Huddle Co. Logo" className="h-20 w-20 rounded-full border shadow-lg" />
-          <a href="/logo192.png" download className="px-4 py-2 bg-sunrise text-white rounded-xl font-heading hover:bg-sunrise/90 transition-colors">Download Logo</a>
+          <a href="/logo192.png" download className="px-4 py-2 rounded-xl font-heading transition-colors btn-cta">Download Logo</a>
         </div>
       </section>
       <section>

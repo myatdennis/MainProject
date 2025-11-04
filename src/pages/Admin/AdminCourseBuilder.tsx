@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { courseStore, generateId, calculateCourseDuration, countTotalLessons } from '../../store/courseStore';
-import { CourseService, CourseValidationError } from '../../services/courseService';
+import { syncCourseToDatabase, CourseValidationError, loadCourseFromDatabase } from '../../dal/courses';
 import { computeCourseDiff } from '../../utils/courseDiff';
 import type { NormalizedCourse } from '../../utils/courseNormalization';
+import { mergePersistedCourse, formatMinutesLabel } from '../../utils/adminCourseMerge';
 import type { Course, Module, Lesson } from '../../types/courseTypes';
 import { supabase } from '../../lib/supabase';
 import { getVideoEmbedUrl } from '../../utils/videoUtils';
@@ -39,98 +40,17 @@ import AIContentAssistant from '../../components/AIContentAssistant';
 // import DragDropItem from '../../components/DragDropItem'; // TODO: Implement drag drop functionality
 import VersionControl from '../../components/VersionControl';
 
-const formatMinutesLabel = (minutes: number): string => {
-  if (!Number.isFinite(minutes) || minutes <= 0) {
-    return '0 min';
-  }
-
-  if (minutes < 60) {
-    return `${minutes} min`;
-  }
-
-  const hours = Math.floor(minutes / 60);
-  const remaining = minutes % 60;
-  return remaining > 0 ? `${hours}h ${remaining}m` : `${hours}h`;
-};
-
-const mapPersistedLessonType = (persistedType: string, fallback?: Lesson['type']): Lesson['type'] => {
-  if (fallback) return fallback;
-  switch (persistedType) {
-    case 'resource':
-      return 'interactive';
-    case 'reflection':
-      return 'text';
-    default:
-      return persistedType as Lesson['type'];
-  }
-};
-
-const mergePersistedCourse = (local: Course, persisted: NormalizedCourse): Course => {
-  const localModules = new Map((local.modules || []).map((module) => [module.id, module]));
-
-  const mergedModules: Module[] = (persisted.modules || []).map((pModule, moduleIndex) => {
-    const existingModule = localModules.get(pModule.id) || (local.modules || [])[moduleIndex];
-    const localLessons = new Map((existingModule?.lessons || []).map((lesson) => [lesson.id, lesson]));
-
-    const mergedLessons: Lesson[] = (pModule.lessons || []).map((pLesson, lessonIndex) => {
-      const existingLesson = localLessons.get(pLesson.id) || (existingModule?.lessons || [])[lessonIndex];
-      const estimatedMinutes =
-        existingLesson?.estimatedDuration ??
-        (typeof pLesson.durationSeconds === 'number'
-          ? Math.max(0, Math.round(pLesson.durationSeconds / 60))
-          : undefined);
-
-      return {
-        ...existingLesson,
-        id: pLesson.id,
-        title: pLesson.title,
-        description: existingLesson?.description ?? '',
-        type: mapPersistedLessonType(pLesson.type, existingLesson?.type),
-        duration: existingLesson?.duration ?? formatMinutesLabel(estimatedMinutes ?? 0),
-        estimatedDuration: estimatedMinutes,
-        content: existingLesson?.content ?? ((pLesson.content as any)?.body ?? {}),
-        order: pLesson.orderIndex ?? lessonIndex + 1,
-        resources: existingLesson?.resources ?? [],
-        completed: existingLesson?.completed ?? false,
-      } as Lesson;
-    });
-
-    const moduleMinutes = mergedLessons.reduce((total, lesson) => total + (lesson.estimatedDuration ?? 0), 0);
-
-    return {
-      ...existingModule,
-      id: pModule.id,
-      title: pModule.title,
-      description: pModule.description ?? existingModule?.description ?? '',
-      duration: existingModule?.duration ?? formatMinutesLabel(moduleMinutes),
-      order: pModule.orderIndex ?? moduleIndex + 1,
-      lessons: mergedLessons,
-      resources: existingModule?.resources ?? [],
-    } as Module;
-  });
-
-  return {
-    ...local,
-    id: persisted.id,
-    slug: persisted.slug ?? local.slug,
-    title: persisted.name ?? local.title,
-    status: persisted.status,
-    modules: mergedModules,
-    duration: calculateCourseDuration(mergedModules),
-    lessons: countTotalLessons(mergedModules),
-    lastUpdated: new Date().toISOString(),
-  };
-};
 
 const AdminCourseBuilder = () => {
   const { courseId } = useParams();
   const navigate = useNavigate();
-  const isEditing = courseId !== 'new';
+  const isNewCourseRoute = !courseId || courseId === 'new';
+  const isEditing = !isNewCourseRoute;
   
   const [course, setCourse] = useState<Course>(() => {
     if (isEditing && courseId) {
       const existingCourse = courseStore.getCourse(courseId);
-      return existingCourse || createEmptyCourse();
+      return existingCourse || createEmptyCourse(courseId);
     }
     return createEmptyCourse();
   });
@@ -143,6 +63,9 @@ const AdminCourseBuilder = () => {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [showAssignmentModal, setShowAssignmentModal] = useState(false);
   const lastPersistedRef = useRef<Course | null>(null);
+  const [initializing, setInitializing] = useState(isEditing);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const lastLoadedCourseIdRef = useRef<string | null>(null);
 
   const [searchParams] = useSearchParams();
   const [highlightLessonId, setHighlightLessonId] = useState<string | null>(null);
@@ -172,6 +95,71 @@ const AdminCourseBuilder = () => {
       }, 200);
     }
   }, [searchParams, course.modules]);
+
+  useEffect(() => {
+    if (!isEditing || !courseId) {
+      setLoadError(prev => (prev ? null : prev));
+      if (initializing) {
+        setInitializing(false);
+      }
+      return;
+    }
+
+    if (lastLoadedCourseIdRef.current === courseId) {
+      if (initializing) {
+        setInitializing(false);
+      }
+      return;
+    }
+
+    let cancelled = false;
+
+    const hydrateCourse = async () => {
+      setInitializing(true);
+      try {
+        const existing = courseStore.getCourse(courseId);
+        if (existing) {
+          if (cancelled) return;
+          setCourse(existing);
+          lastPersistedRef.current = existing;
+          lastLoadedCourseIdRef.current = courseId;
+          setLoadError(null);
+          return;
+        }
+
+        const remote = await loadCourseFromDatabase(courseId, { includeDrafts: true });
+        if (cancelled) return;
+
+        if (remote) {
+          setCourse(prev => {
+            const merged = mergePersistedCourse(prev, remote);
+            courseStore.saveCourse(merged, { skipRemoteSync: true });
+            lastPersistedRef.current = merged;
+            return merged;
+          });
+          lastLoadedCourseIdRef.current = courseId;
+          setLoadError(null);
+        } else {
+          setLoadError('Unable to locate this course in the database. Editing local draft only.');
+        }
+      } catch (error) {
+        if (cancelled) return;
+        console.error('Failed to load course details:', error);
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        setLoadError(`Failed to load course details: ${message}`);
+      } finally {
+        if (!cancelled) {
+          setInitializing(false);
+        }
+      }
+    };
+
+    hydrateCourse();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isEditing, courseId]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -234,6 +222,48 @@ const AdminCourseBuilder = () => {
     }
   }, [course]);
 
+  // Debounced remote auto-sync (single upsert). Runs only when there are real changes vs lastPersistedRef.
+  useEffect(() => {
+    if (!course.id || !course.title?.trim()) return;
+    // Avoid overlapping autosaves
+    if (autoSaveLockRef.current) return;
+    // Check if there are changes since last persist
+    const diff = computeCourseDiff(lastPersistedRef.current, course);
+    if (!diff.hasChanges) return;
+
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(async () => {
+      autoSaveLockRef.current = true;
+      setSaveStatus((s) => (s === 'saving' ? s : 'saving'));
+      try {
+        const preparedCourse = {
+          ...course,
+          duration: calculateCourseDuration(course.modules || []),
+          lessons: countTotalLessons(course.modules || []),
+          lastUpdated: new Date().toISOString(),
+        };
+  const persisted = await syncCourseToDatabase(preparedCourse);
+        const merged = persisted ? mergePersistedCourse(preparedCourse, persisted) : preparedCourse;
+        courseStore.saveCourse(merged, { skipRemoteSync: true });
+        setCourse(merged);
+        lastPersistedRef.current = merged;
+        setSaveStatus('saved');
+        setLastSaveTime(new Date());
+        setTimeout(() => setSaveStatus('idle'), 2000);
+      } catch (err) {
+        console.error('❌ Remote auto-sync failed:', err);
+        setSaveStatus('error');
+        setTimeout(() => setSaveStatus('idle'), 4000);
+      } finally {
+        autoSaveLockRef.current = false;
+      }
+    }, 1000);
+
+    return () => {
+      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    };
+  }, [course]);
+
   // Course validation function
   const validateCourse = (course: Course) => {
     const issues: string[] = [];
@@ -284,13 +314,14 @@ const AdminCourseBuilder = () => {
     return { isValid: issues.length === 0, issues };
   };
 
-  function createEmptyCourse(): Course {
+  function createEmptyCourse(initialCourseId?: string): Course {
     // Smart defaults based on common course patterns
     const currentDate = new Date().toISOString();
     const suggestedTags = ['Professional Development', 'Leadership', 'Skills Training'];
+    const resolvedCourseId = initialCourseId && initialCourseId !== 'new' ? initialCourseId : generateId('course');
     
     return {
-      id: courseId === 'new' ? generateId('course') : courseId || generateId('course'),
+      id: resolvedCourseId,
       title: 'New Course',
       description: 'Enter your course description here. What will learners achieve after completing this course?',
       status: 'draft',
@@ -358,6 +389,8 @@ const AdminCourseBuilder = () => {
 
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
   const [lastSaveTime, setLastSaveTime] = useState<Date | null>(null);
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoSaveLockRef = useRef<boolean>(false);
   
   // Inline editing state
   const [inlineEditing, setInlineEditing] = useState<{moduleId: string, lessonId: string} | null>(null);
@@ -494,7 +527,7 @@ const AdminCourseBuilder = () => {
       return preparedCourse;
     }
 
-    const persisted = await CourseService.syncCourseToDatabase(preparedCourse);
+  const persisted = await syncCourseToDatabase(preparedCourse);
     const merged = persisted ? mergePersistedCourse(preparedCourse, persisted) : preparedCourse;
 
     courseStore.saveCourse(merged, { skipRemoteSync: true });
@@ -524,7 +557,7 @@ const AdminCourseBuilder = () => {
       // Reset to idle after 3 seconds
       setTimeout(() => setSaveStatus('idle'), 3000);
       
-      if (courseId === 'new') {
+      if (isNewCourseRoute) {
         navigate(`/admin/course-builder/${updatedCourse.id}`);
       }
     } catch (error) {
@@ -667,7 +700,7 @@ const AdminCourseBuilder = () => {
 
       // Create unique filename
       const fileExt = file.name.split('.').pop();
-      const fileName = `${courseId}/${moduleId}/${lessonId}.${fileExt}`;
+  const fileName = `${course.id}/${moduleId}/${lessonId}.${fileExt}`;
 
       // Upload to Supabase Storage
       const { error } = await supabase.storage
@@ -716,7 +749,7 @@ const AdminCourseBuilder = () => {
 
       // Create unique filename
       const fileExt = file.name.split('.').pop();
-      const fileName = `${courseId}/${moduleId}/${lessonId}-resource.${fileExt}`;
+  const fileName = `${course.id}/${moduleId}/${lessonId}-resource.${fileExt}`;
 
       // Upload to Supabase Storage
       const { error } = await supabase.storage
@@ -1813,6 +1846,20 @@ const AdminCourseBuilder = () => {
     { id: 'history', name: 'History', icon: Clock }
   ];
 
+  if (initializing && isEditing) {
+    return (
+      <div className="p-6 max-w-4xl mx-auto">
+        <div className="flex items-center space-x-3 rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+          <Loader className="h-5 w-5 animate-spin text-orange-500" />
+          <div>
+            <p className="text-sm font-medium text-gray-900">Loading course builder…</p>
+            <p className="text-xs text-gray-500">Fetching the latest course data.</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="p-6 max-w-7xl mx-auto">
       {/* Header */}
@@ -1824,6 +1871,12 @@ const AdminCourseBuilder = () => {
           <ArrowLeft className="h-4 w-4 mr-2" />
           Back to Course Management
         </Link>
+
+        {loadError && (
+          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+            {loadError}
+          </div>
+        )}
         
         <div className="flex items-center justify-between">
           <div>

@@ -27,7 +27,15 @@ import {
   UserPlus,
   Trash2
 } from 'lucide-react';
-import orgService, { Org, OrgMember } from '../../services/orgService';
+import {
+  getOrg,
+  getOrgStats,
+  listOrgMembers,
+  addOrgMember,
+  removeOrgMember,
+  type Org,
+  type OrgMember,
+} from '../../dal/orgs';
 import LoadingButton from '../../components/LoadingButton';
 import EditOrganizationModal from '../../components/EditOrganizationModal';
 import { useToast } from '../../context/ToastContext';
@@ -51,7 +59,7 @@ const OrganizationDetails: React.FC = () => {
     if (!id) return;
     setMembersLoading(true);
     try {
-      const data = await orgService.listOrgMembers(id);
+  const data = await listOrgMembers(id);
       setMembers(data);
     } catch (error) {
       console.error('Failed to load organization members:', error);
@@ -68,8 +76,8 @@ const OrganizationDetails: React.FC = () => {
       setLoading(true);
       try {
         const [orgData, statsData] = await Promise.all([
-          orgService.getOrg(id),
-          orgService.getOrgStats(id)
+          getOrg(id),
+          getOrgStats(id)
         ]);
         
         setOrganization(orgData);
@@ -103,7 +111,7 @@ const OrganizationDetails: React.FC = () => {
 
     setMemberSubmitting(true);
     try {
-      const member = await orgService.addOrgMember(id, { userId, role: memberForm.role });
+  const member = await addOrgMember(id, { userId, role: memberForm.role });
       setMembers((prev) => {
         const exists = prev.find((m) => m.id === member.id);
         if (exists) {
@@ -124,7 +132,7 @@ const OrganizationDetails: React.FC = () => {
   const handleRemoveMember = async (membershipId: string) => {
     if (!id) return;
     try {
-      await orgService.removeOrgMember(id, membershipId);
+  await removeOrgMember(id, membershipId);
       setMembers((prev) => prev.filter((member) => member.id !== membershipId));
       showToast('Member removed successfully', 'success');
     } catch (error) {
@@ -178,7 +186,7 @@ const OrganizationDetails: React.FC = () => {
     }
   };
 
-  const COLORS = ['#2B84C6', '#3BAA66', '#F6C87B', '#E6473A', '#F28C1A'];
+  const COLORS = ['#3A7DFF', '#228B22', '#F6C87B', '#D72638', '#de7b12'];
 
   const tabs = [
     { id: 'overview', label: 'Overview', icon: BarChart3 },
@@ -218,7 +226,7 @@ const OrganizationDetails: React.FC = () => {
                     {getStatusIcon(organization.status)}
                     <span className="ml-1 capitalize">{organization.status}</span>
                   </div>
-                  {organization.tags && organization.tags.map((tag) => (
+                  {organization.tags && organization.tags.map((tag: string) => (
                     <span key={tag} className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
                       {tag}
                     </span>
@@ -426,7 +434,7 @@ const OrganizationDetails: React.FC = () => {
                             <YAxis fontSize={12} />
                             <CartesianGrid strokeDasharray="3 3" />
                             <Tooltip />
-                            <Line type="monotone" dataKey="users" stroke="#2B84C6" strokeWidth={2} />
+                            <Line type="monotone" dataKey="users" stroke="#3A7DFF" strokeWidth={2} />
                           </LineChart>
                         </ResponsiveContainer>
                       </div>
@@ -443,10 +451,10 @@ const OrganizationDetails: React.FC = () => {
                               <div className="w-16 h-2 bg-gray-200 rounded-full">
                                 <div 
                                   className="h-2 bg-blue-500 rounded-full"
-                                  style={{ width: `${progress}%` }}
+                                  style={{ width: `${Number(progress)}%` }}
                                 />
                               </div>
-                              <span className="text-sm text-gray-600">{progress}%</span>
+                              <span className="text-sm text-gray-600">{Number(progress)}%</span>
                             </div>
                           </div>
                         ))}
@@ -634,7 +642,7 @@ const OrganizationDetails: React.FC = () => {
               <div>
                 <h4 className="font-medium text-gray-900 mb-3">Active Cohorts</h4>
                 <div className="space-y-2">
-                  {organization.cohorts.map((cohort, index) => (
+                  {organization.cohorts.map((cohort: string, index: number) => (
                     <div key={index} className="flex items-center justify-between p-3 border border-gray-200 rounded-lg">
                       <span className="font-medium text-gray-900">{cohort}</span>
                       <span className="text-sm text-gray-600">Active</span>
@@ -659,7 +667,7 @@ const OrganizationDetails: React.FC = () => {
                       <YAxis fontSize={12} />
                       <CartesianGrid strokeDasharray="3 3" />
                       <Tooltip />
-                      <Bar dataKey="completions" fill="#3BAA66" />
+                      <Bar dataKey="completions" fill="#228B22" />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -751,7 +759,7 @@ const OrganizationDetails: React.FC = () => {
                           {setting.replace(/([A-Z])/g, ' $1').trim()}
                         </span>
                         <span className="text-gray-600">
-                          {typeof value === 'boolean' ? (value ? 'Enabled' : 'Disabled') : value}
+                          {typeof value === 'boolean' ? (value ? 'Enabled' : 'Disabled') : String(value)}
                         </span>
                       </div>
                     ))}

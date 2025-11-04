@@ -535,8 +535,8 @@ Certificate Verification: Visit our verification portal and enter code ${certifi
         name: 'Professional Template A',
         type: 'professional',
         design: {
-          primaryColor: '#F28C1A',
-          secondaryColor: '#E6473A',
+            primaryColor: '#de7b12',
+            secondaryColor: '#D72638',
           logo: 'huddle-co-logo.png',
           background: 'certificate-bg-professional.jpg',
           font: 'serif'
@@ -558,8 +558,8 @@ Certificate Verification: Visit our verification portal and enter code ${certifi
         name: 'Modern Template B',
         type: 'modern',
         design: {
-          primaryColor: '#2B84C6',
-          secondaryColor: '#3BAA66',
+            primaryColor: '#3A7DFF',
+          secondaryColor: '#228B22',
           logo: 'huddle-co-logo.png',
           background: 'certificate-bg-modern.jpg',
           font: 'sans-serif'

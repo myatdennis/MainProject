@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { FilePlus, UploadCloud, Trash } from 'lucide-react';
-import documentService, { DocumentMeta, Visibility } from '../../services/documentService';
-import notificationService from '../../services/notificationService';
+import documentService, { DocumentMeta, Visibility } from '../../dal/documents';
+import notificationService from '../../dal/notifications';
 
 const AdminDocuments: React.FC = () => {
   const [docs, setDocs] = useState<DocumentMeta[]>([]);

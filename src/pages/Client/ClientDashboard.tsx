@@ -14,7 +14,7 @@ import {
   buildLearnerProgressSnapshot,
 } from '../../utils/courseProgress';
 import { getPreferredLessonId, getFirstLessonId } from '../../utils/courseNavigation';
-import syncService from '../../services/syncService';
+import { syncService } from '../../dal/sync';
 import type { CourseAssignment } from '../../types/assignment';
 
 const ClientDashboard = () => {

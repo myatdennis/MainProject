@@ -28,8 +28,8 @@ import Modal from '../../components/Modal';
 import { useToast } from '../../context/ToastContext';
 import { courseStore } from '../../store/courseStore';
 import { formatMinutes, slugify, parseDurationToMinutes } from '../../utils/courseNormalization';
-import { clearCourseCache } from '../../services/courseDataLoader';
-import { CourseService, CourseValidationError } from '../../services/courseService';
+import { clearCourseCache } from '../../dal/courseData';
+import { syncCourseToDatabase, CourseValidationError } from '../../dal/courses';
 import { computeCourseDiff } from '../../utils/courseDiff';
 
 type LessonUpdate = Partial<Lesson> & {
@@ -65,13 +65,6 @@ const writeDraftCourse = (id: string, data: Course) => {
   }
 };
 
-const removeDraftCourse = (id: string) => {
-  try {
-    localStorage.removeItem(`${DRAFT_STORAGE_PREFIX}${id}`);
-  } catch (error) {
-    console.warn('Failed to remove course draft', error);
-  }
-};
 
 const queueRemoteDraftSync = (course: Course) => {
   if (!isSupabaseReady) {
@@ -84,7 +77,7 @@ const queueRemoteDraftSync = (course: Course) => {
   }
 
   const timeoutId = window.setTimeout(() => {
-    CourseService.syncCourseToDatabase({
+    syncCourseToDatabase({
       ...course,
       status: course.status === 'published' ? 'published' : 'draft',
     })
@@ -422,7 +415,7 @@ const AdvancedCourseBuilder: React.FC = () => {
 
       let persistedSnapshot = null;
       try {
-        persistedSnapshot = await CourseService.syncCourseToDatabase(courseForStore);
+        persistedSnapshot = await syncCourseToDatabase(courseForStore);
       } catch (error) {
         if (error instanceof CourseValidationError) {
           showToast(
@@ -487,21 +480,21 @@ const AdvancedCourseBuilder: React.FC = () => {
     if (!course) return;
     setCourse((current) => {
       if (!current) return current;
-
+      const baseChapters = current.chapters || [];
       const chapterId = generateId('chapter');
       const newChapter: Chapter = {
         id: chapterId,
         courseId: current.id,
-        title: `Chapter ${current.chapters.length + 1}`,
+        title: `Chapter ${baseChapters.length + 1}`,
         description: 'New chapter description',
-        order: current.chapters.length + 1,
+        order: baseChapters.length + 1,
         estimatedDuration: 0,
         lessons: [],
       };
 
       const nextCourse = recalculateCourseDurations({
         ...current,
-        chapters: [...current.chapters, newChapter],
+        chapters: [...baseChapters, newChapter],
       });
 
       setExpandedChapters((prev) => new Set([...prev, chapterId]));
@@ -517,8 +510,8 @@ const AdvancedCourseBuilder: React.FC = () => {
     if (!course) return;
     setCourse((current) => {
       if (!current) return current;
-
-      const chapterIndex = current.chapters.findIndex((chapter) => chapter.id === chapterId);
+      const baseChapters = current.chapters || [];
+      const chapterIndex = baseChapters.findIndex((chapter) => chapter.id === chapterId);
       if (chapterIndex === -1) return current;
 
       const lessonId = generateId('lesson');
@@ -528,18 +521,18 @@ const AdvancedCourseBuilder: React.FC = () => {
         title: `New ${lessonType.charAt(0).toUpperCase() + lessonType.slice(1)} Lesson`,
         description: `${lessonType} lesson description`,
         type: lessonType,
-        order: current.chapters[chapterIndex].lessons.length + 1,
+        order: (baseChapters[chapterIndex].lessons?.length || 0) + 1,
         estimatedDuration: lessonType === 'quiz' ? 10 : 15,
         content: {},
         isRequired: true,
         resources: [],
       };
 
-      const updatedChapters = current.chapters.map((chapter, index) => {
+      const updatedChapters = baseChapters.map((chapter, index) => {
         if (index !== chapterIndex) return chapter;
         return {
           ...chapter,
-          lessons: [...chapter.lessons, newLesson],
+          lessons: [...(chapter.lessons || []), newLesson],
         };
       });
 
@@ -580,8 +573,7 @@ const AdvancedCourseBuilder: React.FC = () => {
   ) => {
     setCourse((current) => {
       if (!current) return current;
-
-      const updatedChapters = current.chapters.map((chapter) => {
+      const updatedChapters = (current.chapters || []).map((chapter) => {
         if (chapter.id !== chapterId) return chapter;
 
         const updatedLessons = chapter.lessons.map((lesson) => {
@@ -621,8 +613,7 @@ const AdvancedCourseBuilder: React.FC = () => {
     if (!course) return;
     setCourse((current) => {
       if (!current) return current;
-
-      const updatedChapters = current.chapters.map((chapter) => {
+      const updatedChapters = (current.chapters || []).map((chapter) => {
         if (chapter.id !== chapterId) return chapter;
         const filteredLessons = chapter.lessons
           .filter((lesson) => lesson.id !== lessonId)
@@ -703,10 +694,9 @@ const AdvancedCourseBuilder: React.FC = () => {
             
             <LoadingButton
               onClick={handleSaveCourse}
-              isLoading={isLoading}
+              loading={isLoading}
               variant="secondary"
               className="flex items-center"
-              disabled={validationErrors.length > 0}
             >
               <Save className="w-4 h-4 mr-2" />
               Save
@@ -715,7 +705,7 @@ const AdvancedCourseBuilder: React.FC = () => {
             {course.status !== 'published' && (
               <LoadingButton
                 onClick={handlePublishCourse}
-                isLoading={isLoading}
+                loading={isLoading}
                 variant="success"
                 className="flex items-center"
                 disabled={validationErrors.length > 0}
@@ -729,7 +719,7 @@ const AdvancedCourseBuilder: React.FC = () => {
 
     {validationErrors.length > 0 && (
       <div className="mx-6 mt-4 rounded-lg border border-deepred/30 bg-deepred/10 px-4 py-3 text-sm text-deepred">
-        <p className="font-semibold">Resolve the following before saving:</p>
+        <p className="font-semibold">Resolve the following before publishing (draft saves are allowed):</p>
         <ul className="mt-2 space-y-1 list-disc pl-5">
           {validationErrors.slice(0, 4).map((issue) => (
             <li key={issue}>{issue}</li>
@@ -919,7 +909,7 @@ const OverviewTab: React.FC<{ course: Course; onUpdate: (field: string, value: a
             Learning Objectives
           </label>
           <LearningObjectivesEditor
-            objectives={course.learningObjectives}
+            objectives={course.learningObjectives || []}
             onChange={(objectives) => onUpdate('learningObjectives', objectives)}
           />
         </div>
@@ -929,7 +919,7 @@ const OverviewTab: React.FC<{ course: Course; onUpdate: (field: string, value: a
             Course Thumbnail
           </label>
           <ThumbnailUploader
-            currentThumbnail={course.thumbnail}
+            currentThumbnail={course.thumbnail || ''}
             onChange={(thumbnail) => onUpdate('thumbnail', thumbnail)}
           />
         </div>
@@ -976,7 +966,7 @@ const ContentTab: React.FC<{
       </div>
 
       <div className="space-y-4">
-        {course.chapters.map((chapter, chapterIndex) => (
+  {(course.chapters || []).map((chapter, chapterIndex) => (
           <ChapterEditor
             key={chapter.id}
             chapter={chapter}
@@ -992,7 +982,7 @@ const ContentTab: React.FC<{
           />
         ))}
 
-        {course.chapters.length === 0 && (
+  {(!course.chapters || course.chapters.length === 0) && (
           <div className="text-center py-12 bg-white rounded-xl border border-gray-200">
             <BookOpen className="w-12 h-12 text-gray-400 mx-auto mb-4" />
             <h3 className="text-lg font-medium text-gray-900 mb-2">No chapters yet</h3>
@@ -1025,9 +1015,9 @@ const SettingsTab: React.FC<{ course: Course; onUpdate: (field: string, value: a
           <AccessibilityOption
             title="Closed Captions"
             description="Provide text captions for video content"
-            checked={course.accessibilityFeatures.hasClosedCaptions}
+            checked={course.accessibilityFeatures?.hasClosedCaptions ?? false}
             onChange={(checked) => onUpdate('accessibilityFeatures', {
-              ...course.accessibilityFeatures,
+              ...(course.accessibilityFeatures || {}),
               hasClosedCaptions: checked
             })}
           />
@@ -1035,9 +1025,9 @@ const SettingsTab: React.FC<{ course: Course; onUpdate: (field: string, value: a
           <AccessibilityOption
             title="Transcripts"
             description="Provide full text transcripts for all media"
-            checked={course.accessibilityFeatures.hasTranscripts}
+            checked={course.accessibilityFeatures?.hasTranscripts ?? false}
             onChange={(checked) => onUpdate('accessibilityFeatures', {
-              ...course.accessibilityFeatures,
+              ...(course.accessibilityFeatures || {}),
               hasTranscripts: checked
             })}
           />
@@ -1045,9 +1035,9 @@ const SettingsTab: React.FC<{ course: Course; onUpdate: (field: string, value: a
           <AccessibilityOption
             title="Audio Descriptions"
             description="Include audio descriptions for visual content"
-            checked={course.accessibilityFeatures.hasAudioDescription}
+            checked={course.accessibilityFeatures?.hasAudioDescription ?? false}
             onChange={(checked) => onUpdate('accessibilityFeatures', {
-              ...course.accessibilityFeatures,
+              ...(course.accessibilityFeatures || {}),
               hasAudioDescription: checked
             })}
           />

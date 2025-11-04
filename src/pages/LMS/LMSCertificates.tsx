@@ -7,14 +7,15 @@ import {
   Calendar, 
   User, 
   Trophy,
-  ArrowLeft,
   Search,
   Eye,
   ExternalLink
 } from 'lucide-react';
 import SEO from '../../components/SEO/SEO';
 import { useToast } from '../../context/ToastContext';
-import { certificateService, GeneratedCertificate } from '../../services/certificateService';
+import { getCertificatesByUser, type GeneratedCertificate } from '../../dal/certificates';
+import EmptyState from '../../components/ui/EmptyState';
+import Breadcrumbs from '../../components/ui/Breadcrumbs';
 
 interface Certificate {
   id: string;
@@ -60,13 +61,12 @@ const LMSCertificates: React.FC = () => {
   
   useEffect(() => {
     loadCertificates();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [learnerId]);
 
   const loadCertificates = async () => {
     setLoading(true);
     try {
-      const generatedCertificates = await certificateService.getCertificatesByUser(learnerId);
+  const generatedCertificates = await getCertificatesByUser(learnerId);
       const normalized = generatedCertificates.map((cert: GeneratedCertificate) => {
         const completionTimeToken = cert.metadata?.completionTime ?? '';
         const completionMinutes = parseInt(String(completionTimeToken).replace(/[^0-9]/g, ''), 10);
@@ -195,77 +195,61 @@ const LMSCertificates: React.FC = () => {
         keywords={['certificates', 'achievements', 'credentials', 'learning', 'completion']}
       />
       
-      <div className="min-h-screen bg-gray-50">
-        {/* Header */}
-        <div className="bg-white border-b border-gray-200">
-          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div className="flex items-center justify-between h-16">
-              <div className="flex items-center space-x-4">
-                <button
-                  onClick={() => navigate('/lms/dashboard')}
-                  className="flex items-center text-gray-600 hover:text-gray-900"
-                >
-                  <ArrowLeft className="h-5 w-5 mr-2" />
-                  Back to Dashboard
-                </button>
-                <div className="flex items-center space-x-3">
-                  <Award className="h-6 w-6 text-orange-500" />
-                  <h1 className="text-xl font-bold text-gray-900">My Certificates</h1>
-                </div>
-              </div>
-              
-              <div className="flex items-center space-x-4">
-                <span className="text-sm text-gray-600">
-                  {certificates.length} certificate{certificates.length !== 1 ? 's' : ''}
-                </span>
-              </div>
+      <div className="min-h-screen bg-softwhite">
+        <div className="container-page section">
+          <Breadcrumbs items={[{ label: 'Certificates', to: '/lms/certificates' }]} />
+          {/* Header */}
+          <div className="mb-8 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <Award className="h-7 w-7 text-orange-500" />
+              <h1 className="h1">My Certificates</h1>
             </div>
+            <button onClick={() => navigate('/lms/dashboard')} className="nav-link">Back to Dashboard</button>
           </div>
-        </div>
 
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          <div className="">
           {/* Stats Overview */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+            <div className="card-lg card-hover">
               <div className="flex items-center">
                 <Award className="h-8 w-8 text-orange-500" />
                 <div className="ml-4">
-                  <p className="text-sm font-medium text-gray-600">Total Certificates</p>
-                  <p className="text-2xl font-bold text-gray-900">{certificates.length}</p>
+                  <p className="text-sm font-medium text-slate/80">Total Certificates</p>
+                  <p className="text-2xl font-bold text-charcoal">{certificates.length}</p>
                 </div>
               </div>
             </div>
             
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+            <div className="card-lg card-hover">
               <div className="flex items-center">
                 <Trophy className="h-8 w-8 text-green-500" />
                 <div className="ml-4">
-                  <p className="text-sm font-medium text-gray-600">Active</p>
-                  <p className="text-2xl font-bold text-gray-900">
+                  <p className="text-sm font-medium text-slate/80">Active</p>
+                  <p className="text-2xl font-bold text-charcoal">
                     {certificates.filter(c => c.status === 'active').length}
                   </p>
                 </div>
               </div>
             </div>
             
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+            <div className="card-lg card-hover">
               <div className="flex items-center">
                 <Calendar className="h-8 w-8 text-blue-500" />
                 <div className="ml-4">
-                  <p className="text-sm font-medium text-gray-600">Hours Completed</p>
-                  <p className="text-2xl font-bold text-gray-900">
+                  <p className="text-sm font-medium text-slate/80">Hours Completed</p>
+                  <p className="text-2xl font-bold text-charcoal">
                     {certificates.reduce((total, cert) => total + cert.hours, 0)}
                   </p>
                 </div>
               </div>
             </div>
             
-            <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+            <div className="card-lg card-hover">
               <div className="flex items-center">
                 <User className="h-8 w-8 text-purple-500" />
                 <div className="ml-4">
-                  <p className="text-sm font-medium text-gray-600">Skills Earned</p>
-                  <p className="text-2xl font-bold text-gray-900">
+                  <p className="text-sm font-medium text-slate/80">Skills Earned</p>
+                  <p className="text-2xl font-bold text-charcoal">
                     {new Set(certificates.flatMap(c => c.skills)).size}
                   </p>
                 </div>
@@ -274,7 +258,7 @@ const LMSCertificates: React.FC = () => {
           </div>
 
           {/* Filters and Search */}
-          <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-8">
+          <div className="card-lg card-hover mb-8">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <div className="relative">
                 <Search className="absolute left-3 top-3 h-4 w-4 text-gray-400" />
@@ -283,14 +267,14 @@ const LMSCertificates: React.FC = () => {
                   placeholder="Search certificates..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-10 pr-4 py-2 w-full border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                  className="pl-10 pr-4 py-2 w-full rounded-lg border border-mist focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                 />
               </div>
               
               <select
                 value={filterCategory}
                 onChange={(e) => setFilterCategory(e.target.value)}
-                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                className="px-3 py-2 rounded-lg border border-mist focus:ring-2 focus:ring-orange-500 focus:border-transparent"
               >
                 {categories.map(category => (
                   <option key={category} value={category}>
@@ -302,7 +286,7 @@ const LMSCertificates: React.FC = () => {
               <select
                 value={filterStatus}
                 onChange={(e) => setFilterStatus(e.target.value as any)}
-                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                className="px-3 py-2 rounded-lg border border-mist focus:ring-2 focus:ring-orange-500 focus:border-transparent"
               >
                 <option value="all">All Status</option>
                 <option value="active">Active</option>
@@ -312,7 +296,7 @@ const LMSCertificates: React.FC = () => {
               <select
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value as any)}
-                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                className="px-3 py-2 rounded-lg border border-mist focus:ring-2 focus:ring-orange-500 focus:border-transparent"
               >
                 <option value="date">Sort by Date</option>
                 <option value="course">Sort by Course</option>
@@ -328,35 +312,23 @@ const LMSCertificates: React.FC = () => {
               <p className="mt-4 text-gray-600">Loading certificates...</p>
             </div>
           ) : filteredCertificates.length === 0 ? (
-            <div className="text-center py-12 bg-white rounded-lg shadow-sm border border-gray-200">
-              <Award className="h-16 w-16 text-gray-300 mx-auto mb-4" />
-              <h3 className="text-lg font-medium text-gray-900 mb-2">
-                {searchTerm ? 'No matching certificates' : 'No certificates yet'}
-              </h3>
-              <p className="text-gray-600 mb-6">
-                {searchTerm 
-                  ? 'Try adjusting your search filters'
-                  : 'Complete courses to earn your first certificate!'
-                }
-              </p>
-              {!searchTerm && (
-                <button
-                  onClick={() => navigate('/lms/courses')}
-                  className="inline-flex items-center px-4 py-2 text-sm font-medium text-white bg-orange-600 rounded-lg hover:bg-orange-700"
-                >
-                  Browse Courses
-                </button>
-              )}
-            </div>
+            <EmptyState
+              title={searchTerm ? 'No matching certificates' : 'No certificates yet'}
+              description={searchTerm ? 'Try adjusting your search filters' : 'Complete courses to earn your first certificate!'}
+              action={!searchTerm ? (
+                <button onClick={() => navigate('/lms/courses')} className="btn-cta">Browse Courses</button>
+              ) : undefined}
+              illustrationSrc={undefined}
+            />
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6">
               {filteredCertificates.map(certificate => (
                 <div
                   key={certificate.id}
-                  className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden hover:shadow-md transition-shadow"
+                  className="card-lg card-hover overflow-hidden transition-shadow"
                 >
                   {/* Certificate Header */}
-                  <div className="bg-gradient-to-r from-orange-500 to-red-500 px-6 py-4">
+                  <div className="px-6 py-4" style={{ backgroundImage: 'var(--gradient-orange-red)' }}>
                     <div className="flex items-center justify-between">
                       <Award className="h-8 w-8 text-white" />
                       <span className={`px-2 py-1 text-xs font-medium rounded-full ${getStatusColor(certificate.status)}`}>
@@ -418,7 +390,7 @@ const LMSCertificates: React.FC = () => {
                     <div className="flex items-center space-x-2">
                       <button
                         onClick={() => viewCertificate(certificate)}
-                        className="flex-1 flex items-center justify-center px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
+                        className="flex-1 btn-outline"
                       >
                         <Eye className="h-4 w-4 mr-2" />
                         View
@@ -426,7 +398,7 @@ const LMSCertificates: React.FC = () => {
                       
                       <button
                         onClick={() => downloadCertificate(certificate)}
-                        className="flex-1 flex items-center justify-center px-3 py-2 text-sm font-medium text-white bg-orange-600 rounded-lg hover:bg-orange-700"
+                        className="flex-1 btn-cta"
                       >
                         <Download className="h-4 w-4 mr-2" />
                         Download
@@ -434,7 +406,7 @@ const LMSCertificates: React.FC = () => {
                       
                       <button
                         onClick={() => shareCertificate(certificate)}
-                        className="px-3 py-2 text-sm font-medium text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200"
+                        className="btn-outline px-3 py-2"
                       >
                         <Share2 className="h-4 w-4" />
                       </button>
@@ -457,6 +429,7 @@ const LMSCertificates: React.FC = () => {
               ))}
             </div>
           )}
+          </div>
         </div>
       </div>
     </>

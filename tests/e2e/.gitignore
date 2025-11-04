@@ -1,0 +1,4 @@
+# Ignore Playwright test artifacts
+playwright-report/
+playwright-screenshots/
+playwright-traces/

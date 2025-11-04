@@ -68,7 +68,7 @@ const LearningAnalyticsEngine: React.FC = () => {
     });
   }, [timeRange]);
 
-  const COLORS = ['#F28C1A', '#2B84C6', '#3BAA66', '#E6473A', '#1E1E1E'];
+  const COLORS = ['#de7b12', '#3A7DFF', '#228B22', '#D72638', '#1E1E1E'];
 
   const getRiskColor = (risk: string) => {
     switch (risk) {
@@ -138,14 +138,14 @@ const LearningAnalyticsEngine: React.FC = () => {
                 <Line 
                   type="monotone" 
                   dataKey="engagement" 
-                  stroke="#2B84C6" 
+                  stroke="#3A7DFF" 
                   strokeWidth={2}
                   name="Engagement %" 
                 />
                 <Line 
                   type="monotone" 
                   dataKey="completion" 
-                  stroke="#3BAA66" 
+                  stroke="#228B22" 
                   strokeWidth={2}
                   name="Completion %" 
                 />
@@ -188,7 +188,7 @@ const LearningAnalyticsEngine: React.FC = () => {
                 <XAxis dataKey="lesson" />
                 <YAxis />
                 <Tooltip />
-                <Bar dataKey="dropoff" fill="#E6473A" name="Drop-off %" />
+                <Bar dataKey="dropoff" fill="#D72638" name="Drop-off %" />
               </BarChart>
             </ResponsiveContainer>
 
@@ -230,7 +230,7 @@ const LearningAnalyticsEngine: React.FC = () => {
                       labelLine={false}
                       label={({ name, value }: any) => `${name}: ${value}%`}
                       outerRadius={80}
-                      fill="#2B84C6"
+                      fill="#3A7DFF"
                       dataKey="success"
                       nameKey="path"
                     >
@@ -279,8 +279,8 @@ const LearningAnalyticsEngine: React.FC = () => {
                 <XAxis dataKey="skill" />
                 <YAxis />
                 <Tooltip />
-                <Bar dataKey="current" fill="#2B84C6" name="Current Level" />
-                <Bar dataKey="target" fill="#3BAA66" name="Target Level" />
+                <Bar dataKey="current" fill="#3A7DFF" name="Current Level" />
+                <Bar dataKey="target" fill="#228B22" name="Target Level" />
               </BarChart>
             </ResponsiveContainer>
 

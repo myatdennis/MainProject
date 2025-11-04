@@ -7,7 +7,7 @@ import { wsClient } from './wsClient';
 
 interface SyncEvent {
   type: 'course_updated' | 'course_created' | 'course_deleted' | 
-        'user_progress' | 'user_enrolled' | 'user_completed' |
+    'user_progress' | 'user_enrolled' | 'user_completed' | 'course_completed' |
         'assignment_created' | 'assignment_updated' | 'assignment_deleted' |
         'survey_created' | 'survey_updated' | 'survey_response' | 'refresh_all';
   data: any;

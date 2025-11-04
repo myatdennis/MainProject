@@ -15,7 +15,7 @@ import {
   loadStoredCourseProgress,
 } from '../../utils/courseProgress';
 import { getPreferredLessonId, getFirstLessonId } from '../../utils/courseNavigation';
-import syncService from '../../services/syncService';
+import { syncService } from '../../dal/sync';
 import type { CourseAssignment } from '../../types/assignment';
 
 const ClientCourses = () => {
@@ -37,11 +37,26 @@ const ClientCourses = () => {
   }, []);
 
   const [assignments, setAssignments] = useState<CourseAssignment[]>([]);
+  const [storeRefresh, setStoreRefresh] = useState(0);
   const [progressRefreshToken, setProgressRefreshToken] = useState(0);
   const normalizedCourses = useMemo(
     () => courseStore.getAllCourses().map((course) => normalizeCourse(course)),
-    [assignments]
+    [assignments, storeRefresh]
   );
+
+  useEffect(() => {
+    const ensureStore = async () => {
+      try {
+        if (courseStore.getAllCourses().length === 0 && typeof (courseStore as any).init === 'function') {
+          await (courseStore as any).init();
+          setStoreRefresh((v) => v + 1);
+        }
+      } catch (err) {
+        console.warn('Failed to initialize course store:', err);
+      }
+    };
+    void ensureStore();
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -140,12 +155,15 @@ const ClientCourses = () => {
       <Card tone="muted" className="mb-8 space-y-4">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div className="flex flex-1 flex-col gap-3 md:flex-row md:items-center">
-            <Input
-              value={searchTerm}
-              onChange={(event) => setSearchTerm(event.target.value)}
-              placeholder="Search courses"
-              leadingIcon={<Search className="h-4 w-4" />}
-            />
+            <div className="relative w-full md:w-72">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate/60" />
+              <Input
+                className="pl-9"
+                value={searchTerm}
+                onChange={(event) => setSearchTerm(event.target.value)}
+                placeholder="Search courses"
+              />
+            </div>
             <div className="flex items-center gap-2">
               <Filter className="h-4 w-4 text-slate/60" />
               <select
@@ -176,7 +194,7 @@ const ClientCourses = () => {
           const progress = assignment?.progress ?? Math.round((snapshot.overallProgress || 0) * 100);
           const status = assignment?.status || (snapshot.overallProgress >= 1 ? 'completed' : snapshot.overallProgress > 0 ? 'in-progress' : 'not-started');
           return (
-            <Card key={course.id} className="flex h-full flex-col gap-4">
+            <Card key={course.id} className="flex h-full flex-col gap-4" data-test="client-course-card">
               <div className="relative overflow-hidden rounded-2xl">
                 <img src={course.thumbnail} alt={course.title} className="h-44 w-full object-cover" />
                 <Badge tone="info" className="absolute left-4 top-4 bg-white/90 text-skyblue">
@@ -205,6 +223,7 @@ const ClientCourses = () => {
                         navigate(`/client/courses/${course.slug}`);
                       }
                     }}
+                    data-test="client-course-primary"
                   >
                     {status === 'not-started' ? 'Start course' : 'Continue'}
                   </Button>

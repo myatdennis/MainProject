@@ -43,15 +43,13 @@ const Header = () => {
           />
         </Link>
 
-        <nav className="hidden lg:flex items-center gap-6" aria-label="Main navigation">
+        <nav className="hidden lg:flex items-center gap-2" aria-label="Main navigation">
           {navigation.map((item) => (
             <Link
               key={item.name}
               to={item.href}
               aria-current={isActive(item.href) ? 'page' : undefined}
-              className={`rounded-lg px-3 py-2 text-sm font-semibold transition-colors ${
-                isActive(item.href) ? 'text-sunrise' : 'text-slate/80 hover:text-charcoal'
-              }`}
+              className={`nav-link ${isActive(item.href) ? 'is-active' : ''}`}
             >
               {item.name}
             </Link>
@@ -85,7 +83,7 @@ const Header = () => {
           <button
             type="button"
             onClick={() => navigate('/admin/login')}
-            className="inline-flex h-11 items-center justify-center rounded-lg bg-sunrise px-5 text-sm font-heading font-semibold text-white shadow-card-sm transition hover:bg-sunrise/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-skyblue focus-visible:ring-offset-2 focus-visible:ring-offset-softwhite"
+            className="inline-flex h-11 items-center justify-center rounded-lg px-5 text-sm font-heading font-semibold shadow-card-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-skyblue focus-visible:ring-offset-2 focus-visible:ring-offset-softwhite btn-cta"
           >
             Admin Portal
           </button>
@@ -108,9 +106,7 @@ const Header = () => {
                 key={item.name}
                 to={item.href}
                 onClick={() => setIsMenuOpen(false)}
-                className={`rounded-lg px-3 py-2 text-sm font-semibold ${
-                  isActive(item.href) ? 'bg-sunrise/10 text-sunrise' : 'text-charcoal'
-                }`}
+                className={`nav-link ${isActive(item.href) ? 'is-active' : ''}`}
               >
                 {item.name}
               </Link>
@@ -126,7 +122,7 @@ const Header = () => {
               <Link
                 to="/admin/login"
                 onClick={() => setIsMenuOpen(false)}
-                className="inline-flex h-11 items-center justify-center rounded-lg bg-sunrise text-sm font-heading font-semibold text-white shadow-card-sm transition hover:bg-sunrise/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-skyblue focus-visible:ring-offset-2 focus-visible:ring-offset-softwhite"
+                className="inline-flex h-11 items-center justify-center rounded-lg text-sm font-heading font-semibold shadow-card-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-skyblue focus-visible:ring-offset-2 focus-visible:ring-offset-softwhite btn-cta"
               >
                 Admin
               </Link>

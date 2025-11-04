@@ -6,7 +6,6 @@ import {
   Clock,
   Filter,
   Layers3,
-  Play,
   Search,
   Sparkle,
 } from 'lucide-react';
@@ -23,6 +22,9 @@ import Badge from '../../components/ui/Badge';
 import Input from '../../components/ui/Input';
 import ProgressBar from '../../components/ui/ProgressBar';
 import { LazyImage, ImageSkeleton } from '../../components/PerformanceComponents';
+import Breadcrumbs from '../../components/ui/Breadcrumbs';
+import Skeleton from '../../components/ui/Skeleton';
+import EmptyState from '../../components/ui/EmptyState';
 
 type StatusFilter = 'all' | 'not-started' | 'in-progress' | 'completed';
 
@@ -37,6 +39,7 @@ const LMSCourses = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<StatusFilter>('all');
   const [progressRefreshToken, setProgressRefreshToken] = useState(0);
+  const [isSyncing, setIsSyncing] = useState(false);
 
   const learnerId = useMemo(() => {
     try {
@@ -74,6 +77,7 @@ const LMSCourses = () => {
   useEffect(() => {
     let isMounted = true;
     const syncProgress = async () => {
+      setIsSyncing(true);
       const results = await Promise.all(
         publishedCourses.map(async (course) => {
           const lessonIds =
@@ -92,6 +96,7 @@ const LMSCourses = () => {
       if (results.some((entry) => entry)) {
         setProgressRefreshToken((token) => token + 1);
       }
+      setIsSyncing(false);
     };
 
     void syncProgress();
@@ -120,8 +125,9 @@ const LMSCourses = () => {
   }, [publishedCourses, searchTerm, filterStatus]);
 
   return (
-    <div className="min-h-screen bg-softwhite pb-16">
-      <div className="mx-auto max-w-7xl px-6 py-10 lg:px-12">
+    <div className="min-h-screen bg-softwhite">
+      <div className="container-page section">
+        <Breadcrumbs items={[{ label: 'Courses', to: '/lms/courses' }]} />
         <div className="grid gap-6 lg:grid-cols-[2fr,1fr]">
           <Card tone="gradient" withBorder={false} className="overflow-hidden">
             <div className="relative z-10 flex flex-col gap-4 text-charcoal">
@@ -247,19 +253,36 @@ const LMSCourses = () => {
           onAction={() => {/* placeholder for deeper integration */}}
         />
 
-        {filteredCourses.length === 0 ? (
-          <Card tone="muted" className="mt-8 flex flex-col items-center gap-4 py-16 text-center">
-            <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-skyblue/10 text-skyblue">
-              <Search className="h-6 w-6" />
-            </div>
-            <h3 className="font-heading text-xl font-semibold text-charcoal">No courses match that search</h3>
-            <p className="max-w-md text-sm text-slate/80">
-              Try a different keyword or reset your filters to rediscover The Huddle Co. catalog.
-            </p>
-            <Button onClick={() => { setSearchTerm(''); setFilterStatus('all'); }} trailingIcon={<ArrowUpRight className="h-4 w-4" />}>
-              Reset search
-            </Button>
-          </Card>
+        {isSyncing ? (
+          <div className="mt-8 grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3" aria-label="Loading courses">
+            {Array.from({ length: 6 }).map((_, i) => (
+              <Card key={i} className="flex h-full flex-col">
+                <Skeleton className="h-44 w-full rounded-2xl" />
+                <div className="mt-4 flex flex-1 flex-col gap-4">
+                  <Skeleton variant="text" className="h-6 w-3/4" />
+                  <Skeleton variant="text" className="h-4 w-full" />
+                  <div className="mt-2">
+                    <Skeleton className="h-2 w-full rounded-full" />
+                    <Skeleton variant="text" className="mt-2 h-3 w-24" />
+                  </div>
+                  <div className="mt-auto flex items-center justify-between gap-3">
+                    <Skeleton className="h-9 w-28 rounded-lg" />
+                    <Skeleton className="h-9 w-20 rounded-lg" />
+                  </div>
+                </div>
+              </Card>
+            ))}
+          </div>
+        ) : filteredCourses.length === 0 ? (
+          <div className="mt-8">
+            <EmptyState
+              title="No courses match that search"
+              description="Try a different keyword or reset your filters to rediscover The Huddle Co. catalog."
+              action={(
+                <Button onClick={() => { setSearchTerm(''); setFilterStatus('all'); }} trailingIcon={<ArrowUpRight className="h-4 w-4" />}>Reset search</Button>
+              )}
+            />
+          </div>
         ) : (
           <div className="mt-8 grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
             {filteredCourses.map((course) => (
