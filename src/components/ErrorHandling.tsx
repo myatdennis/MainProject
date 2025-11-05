@@ -102,6 +102,16 @@ export class ErrorBoundary extends React.Component<
     console.error('COMPONENT STACK:', errorInfo.componentStack);
     console.error('Full error object:', error);
     console.error('Full errorInfo object:', errorInfo);
+    
+    // Log to external service in production (if needed)
+    if (import.meta.env.PROD) {
+      try {
+        // Could send to error tracking service here
+        console.log('Production error logged');
+      } catch (e) {
+        // Ignore logging errors
+      }
+    }
   }
 
   retry = () => {

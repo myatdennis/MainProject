@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Unregister Service Worker</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      max-width: 600px;
+      margin: 50px auto;
+      padding: 20px;
+      background: #f5f5f5;
+    }
+    .container {
+      background: white;
+      padding: 30px;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+    }
+    h1 {
+      color: #333;
+      margin-top: 0;
+    }
+    .status {
+      padding: 15px;
+      border-radius: 8px;
+      margin: 20px 0;
+      font-weight: 500;
+    }
+    .status.success {
+      background: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+    .status.info {
+      background: #d1ecf1;
+      color: #0c5460;
+      border: 1px solid #bee5eb;
+    }
+    button {
+      background: #007bff;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 16px;
+      margin: 5px;
+    }
+    button:hover {
+      background: #0056b3;
+    }
+    button.danger {
+      background: #dc3545;
+    }
+    button.danger:hover {
+      background: #c82333;
+    }
+    pre {
+      background: #f8f9fa;
+      padding: 15px;
+      border-radius: 6px;
+      overflow-x: auto;
+      font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🔧 Service Worker Diagnostics</h1>
+    <p>Use this page to troubleshoot service worker and cache issues that might cause blank pages.</p>
+    
+    <div id="status"></div>
+    
+    <div>
+      <button onclick="unregisterServiceWorker()">Unregister Service Worker</button>
+      <button onclick="clearAllCaches()" class="danger">Clear All Caches</button>
+      <button onclick="checkStatus()">Check Status</button>
+      <button onclick="goHome()">Go to Homepage</button>
+    </div>
+    
+    <div id="details"></div>
+  </div>
+
+  <script>
+    function showStatus(message, type = 'info') {
+      const statusDiv = document.getElementById('status');
+      statusDiv.innerHTML = `<div class="status ${type}">${message}</div>`;
+    }
+
+    function showDetails(content) {
+      const detailsDiv = document.getElementById('details');
+      detailsDiv.innerHTML = `<h3>Details:</h3><pre>${content}</pre>`;
+    }
+
+    async function unregisterServiceWorker() {
+      if ('serviceWorker' in navigator) {
+        try {
+          const registrations = await navigator.serviceWorker.getRegistrations();
+          
+          if (registrations.length === 0) {
+            showStatus('No service workers found.', 'info');
+            return;
+          }
+
+          let unregistered = 0;
+          for (const registration of registrations) {
+            const success = await registration.unregister();
+            if (success) unregistered++;
+          }
+
+          showStatus(`✅ Successfully unregistered ${unregistered} service worker(s)!`, 'success');
+          showDetails(`Unregistered ${unregistered} service worker registration(s).\\n\\nPlease refresh your main app now.`);
+        } catch (error) {
+          showStatus(`❌ Error: ${error.message}`, 'info');
+        }
+      } else {
+        showStatus('Service workers are not supported in this browser.', 'info');
+      }
+    }
+
+    async function clearAllCaches() {
+      if ('caches' in window) {
+        try {
+          const cacheNames = await caches.keys();
+          
+          if (cacheNames.length === 0) {
+            showStatus('No caches found.', 'info');
+            return;
+          }
+
+          let deleted = 0;
+          for (const cacheName of cacheNames) {
+            const success = await caches.delete(cacheName);
+            if (success) deleted++;
+          }
+
+          showStatus(`✅ Successfully cleared ${deleted} cache(s)!`, 'success');
+          showDetails(`Deleted caches:\\n${cacheNames.join('\\n')}\\n\\nTotal: ${deleted} cache(s) cleared.`);
+        } catch (error) {
+          showStatus(`❌ Error: ${error.message}`, 'info');
+        }
+      } else {
+        showStatus('Cache API is not supported in this browser.', 'info');
+      }
+    }
+
+    async function checkStatus() {
+      let info = [];
+
+      // Check service workers
+      if ('serviceWorker' in navigator) {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        info.push(`Service Workers: ${registrations.length} registered`);
+        registrations.forEach((reg, i) => {
+          info.push(`  [${i + 1}] Scope: ${reg.scope}`);
+          info.push(`      State: ${reg.active?.state || 'none'}`);
+        });
+      } else {
+        info.push('Service Workers: Not supported');
+      }
+
+      info.push('');
+
+      // Check caches
+      if ('caches' in window) {
+        const cacheNames = await caches.keys();
+        info.push(`Caches: ${cacheNames.length} total`);
+        cacheNames.forEach((name, i) => {
+          info.push(`  [${i + 1}] ${name}`);
+        });
+      } else {
+        info.push('Caches: Not supported');
+      }
+
+      info.push('');
+      info.push(`Online: ${navigator.onLine ? 'Yes' : 'No'}`);
+      info.push(`User Agent: ${navigator.userAgent}`);
+
+      showStatus('Status check complete.', 'info');
+      showDetails(info.join('\\n'));
+    }
+
+    function goHome() {
+      window.location.href = '/';
+    }
+
+    // Auto-check status on load
+    window.addEventListener('load', checkStatus);
+  </script>
+</body>
+</html>

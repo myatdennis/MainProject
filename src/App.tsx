@@ -104,6 +104,7 @@ function App() {
     // Initialize course store and sync default courses to database
     courseStore.init().catch(error => {
       console.error('Failed to initialize course store:', error);
+      // Continue rendering even if course store fails - app should still work
     });
   }, []);
 
