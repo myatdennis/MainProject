@@ -2,7 +2,8 @@ import { useEffect, Suspense, lazy } from 'react';
 // (removed duplicate import)
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
-import { AuthProvider } from './context/AuthContext';
+// New secure auth with server-side verification
+import { SecureAuthProvider, useSecureAuth } from './context/SecureAuthContext';
 import { ToastProvider } from './context/ToastContext';
 import { courseStore } from './store/courseStore';
 import { LoadingSpinner } from './components/LoadingComponents';
@@ -111,18 +112,16 @@ function App() {
   return (
     <ErrorBoundary>
       <ToastProvider>
-        <AuthProvider>
+        <SecureAuthProvider>
           <AppWithAuthRoutes />
-        </AuthProvider>
+        </SecureAuthProvider>
       </ToastProvider>
     </ErrorBoundary>
   );
 }
 
-import { useAuth } from './context/AuthContext';
-
 function AppWithAuthRoutes() {
-  const { authInitializing } = useAuth();
+  const { authInitializing } = useSecureAuth();
   if (authInitializing) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[var(--hud-bg)]">

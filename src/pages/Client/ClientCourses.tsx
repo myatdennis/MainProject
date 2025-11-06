@@ -39,10 +39,13 @@ const ClientCourses = () => {
   const [assignments, setAssignments] = useState<CourseAssignment[]>([]);
   const [storeRefresh, setStoreRefresh] = useState(0);
   const [progressRefreshToken, setProgressRefreshToken] = useState(0);
-  const normalizedCourses = useMemo(
-    () => courseStore.getAllCourses().map((course) => normalizeCourse(course)),
-    [assignments, storeRefresh]
-  );
+  // Normalize courses (convert modules to chapters if needed)
+  const normalizedCourses = courseStore
+    .getAllCourses()
+    .map((course) => normalizeCourse(course));
+  
+  console.log('[ClientCourses] courseStore.getAllCourses():', courseStore.getAllCourses());
+  console.log('[ClientCourses] normalizedCourses:', normalizedCourses);
 
   useEffect(() => {
     const ensureStore = async () => {
@@ -134,6 +137,9 @@ const ClientCourses = () => {
     };
   }), [normalizedCourses, assignments, progressRefreshToken]);
 
+  console.log('[ClientCourses] courseSnapshots:', courseSnapshots);
+  console.log('[ClientCourses] searchTerm:', searchTerm, 'filterStatus:', filterStatus);
+
   const filtered = courseSnapshots.filter(({ course, snapshot, assignment }) => {
     const searchMatch = course.title.toLowerCase().includes(searchTerm.toLowerCase());
     if (!searchMatch) return false;
@@ -144,6 +150,8 @@ const ClientCourses = () => {
     if (filterStatus === 'not-started') return status === 'not-started';
     return true;
   });
+
+  console.log('[ClientCourses] filtered:', filtered);
 
   return (
     <div className="max-w-7xl px-6 py-10 lg:px-12">

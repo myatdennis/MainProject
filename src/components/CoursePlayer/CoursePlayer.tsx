@@ -111,7 +111,10 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
   const [showTranscript, setShowTranscript] = useState(false);
   const [showNotes, setShowNotes] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
-  // Placeholder for future quiz modal; currently unused to avoid TS noUnusedLocals
+  const [showQuizModal, setShowQuizModal] = useState(false);
+  const [quizAnswers, setQuizAnswers] = useState<Record<string, string>>({});
+  const [quizSubmitted, setQuizSubmitted] = useState(false);
+  const [quizScore, setQuizScore] = useState<number | null>(null);
 
   // Note-taking state
   const [noteText, setNoteText] = useState('');
@@ -853,41 +856,130 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
                     raw.url ||
                     (raw.body && (raw.body.videoUrl || raw.body.src)) ||
                     undefined;
-                  return videoUrl ? (
-                  <video
-                    ref={videoRef}
-                    src={videoUrl}
-                    className="h-full w-full max-h-[520px] bg-black object-cover"
-                    onTimeUpdate={handleTimeUpdate}
-                    onLoadedMetadata={() => {
-                      if (!videoRef.current) return;
-                      const metaDuration = videoRef.current.duration || 0;
-                      setDuration(metaDuration);
-                      const storedPosition = lessonPositions[currentLesson.id] ?? 0;
-                      if (storedPosition > 0 && storedPosition < metaDuration) {
-                        videoRef.current.currentTime = storedPosition;
-                        setCurrentTime(storedPosition);
-                      }
-                    }}
-                    onPlay={() => setIsPlaying(true)}
-                    onPause={() => setIsPlaying(false)}
-                    data-test="video-player"
-                  />
-                  ) : (
-                  <Card tone="muted" className="h-full w-full rounded-none border-none">
-                    <p className="text-sm text-slate/80">Video source unavailable. Please contact your facilitator.</p>
-                  </Card>
+                  const videoType = raw.videoType || raw.type || '';
+                  
+                  if (!videoUrl) {
+                    return (
+                      <Card tone="muted" className="h-full w-full rounded-none border-none">
+                        <p className="text-sm text-slate/80">Video source unavailable. Please contact your facilitator.</p>
+                      </Card>
+                    );
+                  }
+                  
+                  // TED Talk videos need iframe embed
+                  if (videoType === 'ted' || videoUrl.includes('ted.com/talks')) {
+                    // Convert TED talk URL to embed URL
+                    let embedUrl = videoUrl;
+                    if (videoUrl.includes('ted.com/talks') && !videoUrl.includes('embed.ted.com')) {
+                      embedUrl = videoUrl.replace('www.ted.com/talks', 'embed.ted.com/talks');
+                    }
+                    
+                    return (
+                      <iframe
+                        src={embedUrl}
+                        className="h-full w-full max-h-[520px] bg-black"
+                        style={{ aspectRatio: '16/9' }}
+                        frameBorder="0"
+                        scrolling="no"
+                        allowFullScreen
+                        data-test="video-player"
+                      />
+                    );
+                  }
+                  
+                  // YouTube videos need iframe embed
+                  if (videoType === 'youtube' || videoUrl.includes('youtube.com') || videoUrl.includes('youtu.be')) {
+                    let videoId = '';
+                    if (videoUrl.includes('youtube.com/watch?v=')) {
+                      videoId = videoUrl.split('v=')[1]?.split('&')[0];
+                    } else if (videoUrl.includes('youtu.be/')) {
+                      videoId = videoUrl.split('youtu.be/')[1]?.split('?')[0];
+                    } else if (videoUrl.includes('youtube.com/embed/')) {
+                      videoId = videoUrl.split('embed/')[1]?.split('?')[0];
+                    }
+                    
+                    if (videoId) {
+                      return (
+                        <iframe
+                          src={`https://www.youtube.com/embed/${videoId}`}
+                          className="h-full w-full max-h-[520px] bg-black"
+                          style={{ aspectRatio: '16/9' }}
+                          frameBorder="0"
+                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                          allowFullScreen
+                          data-test="video-player"
+                        />
+                      );
+                    }
+                  }
+                  
+                  // Vimeo videos need iframe embed
+                  if (videoType === 'vimeo' || videoUrl.includes('vimeo.com')) {
+                    let videoId = '';
+                    if (videoUrl.includes('vimeo.com/')) {
+                      videoId = videoUrl.split('vimeo.com/')[1]?.split('?')[0]?.split('/')[0];
+                    }
+                    
+                    if (videoId) {
+                      return (
+                        <iframe
+                          src={`https://player.vimeo.com/video/${videoId}`}
+                          className="h-full w-full max-h-[520px] bg-black"
+                          style={{ aspectRatio: '16/9' }}
+                          frameBorder="0"
+                          allow="autoplay; fullscreen; picture-in-picture"
+                          allowFullScreen
+                          data-test="video-player"
+                        />
+                      );
+                    }
+                  }
+                  
+                  // Default: use native HTML5 video player for direct video files
+                  return (
+                    <video
+                      ref={videoRef}
+                      src={videoUrl}
+                      className="h-full w-full max-h-[520px] bg-black object-cover"
+                      onTimeUpdate={handleTimeUpdate}
+                      onLoadedMetadata={() => {
+                        if (!videoRef.current) return;
+                        const metaDuration = videoRef.current.duration || 0;
+                        setDuration(metaDuration);
+                        const storedPosition = lessonPositions[currentLesson.id] ?? 0;
+                        if (storedPosition > 0 && storedPosition < metaDuration) {
+                          videoRef.current.currentTime = storedPosition;
+                          setCurrentTime(storedPosition);
+                        }
+                      }}
+                      onPlay={() => setIsPlaying(true)}
+                      onPause={() => setIsPlaying(false)}
+                      data-test="video-player"
+                    />
                   );
                 })()}
 
                 {(() => {
                   const raw = (currentLesson as any).content || {};
-                  const hasVideo =
-                    Boolean(raw.videoUrl) ||
-                    Boolean(raw.src) ||
-                    Boolean(raw.url) ||
-                    Boolean(raw.body && (raw.body.videoUrl || raw.body.src));
-                  return hasVideo;
+                  const videoUrl =
+                    raw.videoUrl ||
+                    raw.src ||
+                    raw.url ||
+                    (raw.body && (raw.body.videoUrl || raw.body.src)) ||
+                    undefined;
+                  const videoType = raw.videoType || raw.type || '';
+                  
+                  // Only show custom controls for native HTML5 video (not iframes)
+                  const isNativeVideo = videoUrl && 
+                    videoType !== 'ted' && 
+                    videoType !== 'youtube' && 
+                    videoType !== 'vimeo' && 
+                    !videoUrl.includes('ted.com') && 
+                    !videoUrl.includes('youtube.com') && 
+                    !videoUrl.includes('youtu.be') && 
+                    !videoUrl.includes('vimeo.com');
+                  
+                  return isNativeVideo;
                 })() && (
                   <VideoControls
                     isPlaying={isPlaying}
@@ -929,7 +1021,7 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
                 <LessonContent
                   lesson={currentLesson}
                   onComplete={markLessonComplete}
-                  onShowQuizModal={() => {}}
+                  onShowQuizModal={setShowQuizModal}
                 />
 
                 {showTranscript && currentLesson.content.transcript && (
@@ -958,6 +1050,231 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
               </div>
             </div>
           </Card>
+        </div>
+      </div>
+      
+      {/* Quiz Modal */}
+      {showQuizModal && currentLesson?.type === 'quiz' && (
+        <QuizModal
+          lesson={currentLesson}
+          answers={quizAnswers}
+          submitted={quizSubmitted}
+          score={quizScore}
+          onAnswerChange={(questionId, answer) => {
+            setQuizAnswers(prev => ({ ...prev, [questionId]: answer }));
+          }}
+          onSubmit={() => {
+            // Calculate score
+            const quizData = currentLesson.content as any;
+            const questions = quizData.questions || [];
+            let correct = 0;
+            questions.forEach((q: any) => {
+              const selectedAnswer = quizAnswers[q.id];
+              const correctOption = q.options?.find((opt: any) => opt.correct);
+              if (selectedAnswer === correctOption?.id) {
+                correct++;
+              }
+            });
+            const scorePercent = questions.length > 0 ? (correct / questions.length) * 100 : 0;
+            setQuizScore(scorePercent);
+            setQuizSubmitted(true);
+            
+            // Check if passed
+            const passingScore = quizData.passingScore || 70;
+            if (scorePercent >= passingScore) {
+              // Mark lesson as complete
+              markLessonComplete();
+            }
+          }}
+          onRetry={() => {
+            setQuizAnswers({});
+            setQuizSubmitted(false);
+            setQuizScore(null);
+          }}
+          onClose={() => {
+            setShowQuizModal(false);
+            setQuizAnswers({});
+            setQuizSubmitted(false);
+            setQuizScore(null);
+          }}
+        />
+      )}
+    </div>
+  );
+};
+
+// Quiz Modal Component
+const QuizModal: React.FC<{
+  lesson: NormalizedLesson;
+  answers: Record<string, string>;
+  submitted: boolean;
+  score: number | null;
+  onAnswerChange: (questionId: string, answer: string) => void;
+  onSubmit: () => void;
+  onRetry: () => void;
+  onClose: () => void;
+}> = ({ lesson, answers, submitted, score, onAnswerChange, onSubmit, onRetry, onClose }) => {
+  const quizData = lesson.content as any;
+  const questions = quizData.questions || [];
+  const passingScore = quizData.passingScore || 70;
+  const passed = score !== null && score >= passingScore;
+  
+  // Check if all questions are answered
+  const allAnswered = questions.length > 0 && questions.every((q: any) => answers[q.id]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+      <div className="w-full max-w-3xl max-h-[90vh] overflow-y-auto bg-white rounded-2xl shadow-2xl">
+        <div className="sticky top-0 bg-white border-b border-mist px-6 py-4 rounded-t-2xl">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="font-heading text-2xl font-semibold text-charcoal">{lesson.title}</h2>
+              {lesson.description && (
+                <p className="mt-1 text-sm text-slate/80">{lesson.description}</p>
+              )}
+            </div>
+            <button
+              onClick={onClose}
+              className="text-slate/70 hover:text-charcoal transition-colors"
+              aria-label="Close quiz"
+            >
+              <span className="text-2xl">×</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="p-6 space-y-6">
+          {!submitted ? (
+            <>
+              {/* Questions */}
+              {questions.map((question: any, index: number) => (
+                <Card key={question.id} tone="muted" className="p-4">
+                  <h3 className="font-heading text-lg font-semibold text-charcoal mb-4">
+                    {index + 1}. {question.text}
+                  </h3>
+                  <div className="space-y-2">
+                    {(question.options || []).map((option: any) => (
+                      <label
+                        key={option.id}
+                        className={cn(
+                          "flex items-center gap-3 p-3 rounded-lg border cursor-pointer transition-all",
+                          answers[question.id] === option.id
+                            ? "border-skyblue bg-skyblue/10"
+                            : "border-mist bg-white hover:border-skyblue/50"
+                        )}
+                      >
+                        <input
+                          type="radio"
+                          name={question.id}
+                          value={option.id}
+                          checked={answers[question.id] === option.id}
+                          onChange={() => onAnswerChange(question.id, option.id)}
+                          className="text-skyblue focus:ring-skyblue"
+                        />
+                        <span className="text-sm text-charcoal">{option.text}</span>
+                      </label>
+                    ))}
+                  </div>
+                </Card>
+              ))}
+
+              {/* Submit Button */}
+              <div className="flex justify-end gap-3 pt-4">
+                <Button variant="ghost" onClick={onClose}>
+                  Cancel
+                </Button>
+                <Button 
+                  onClick={onSubmit} 
+                  disabled={!allAnswered}
+                  className={!allAnswered ? 'opacity-50 cursor-not-allowed' : ''}
+                >
+                  Submit Quiz
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              {/* Results */}
+              <Card tone="muted" className="p-6 text-center">
+                <div className={cn(
+                  "mx-auto w-16 h-16 rounded-full flex items-center justify-center mb-4",
+                  passed ? "bg-green-100" : "bg-yellow-100"
+                )}>
+                  {passed ? (
+                    <CheckCircle className="h-8 w-8 text-green-600" />
+                  ) : (
+                    <AlertCircle className="h-8 w-8 text-yellow-600" />
+                  )}
+                </div>
+                <h3 className="font-heading text-2xl font-semibold text-charcoal mb-2">
+                  {passed ? "Great job!" : "Keep trying!"}
+                </h3>
+                <p className="text-lg text-charcoal mb-2">
+                  Your score: <span className="font-bold">{score?.toFixed(0)}%</span>
+                </p>
+                <p className="text-sm text-slate/80">
+                  {passed 
+                    ? `You've passed! The passing score is ${passingScore}%.`
+                    : `You need ${passingScore}% to pass. Review the material and try again.`
+                  }
+                </p>
+              </Card>
+
+              {/* Answer Review */}
+              <div className="space-y-4">
+                <h3 className="font-heading text-lg font-semibold text-charcoal">Answer Review</h3>
+                {questions.map((question: any, index: number) => {
+                  const selectedAnswer = answers[question.id];
+                  const correctOption = question.options?.find((opt: any) => opt.correct);
+                  const selectedOption = question.options?.find((opt: any) => opt.id === selectedAnswer);
+                  const isCorrect = selectedAnswer === correctOption?.id;
+
+                  return (
+                    <Card key={question.id} tone="muted" className="p-4">
+                      <div className="flex items-start gap-3 mb-3">
+                        {isCorrect ? (
+                          <CheckCircle className="h-5 w-5 text-green-600 flex-shrink-0 mt-0.5" />
+                        ) : (
+                          <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+                        )}
+                        <div className="flex-1">
+                          <h4 className="font-heading text-base font-semibold text-charcoal">
+                            {index + 1}. {question.text}
+                          </h4>
+                        </div>
+                      </div>
+                      <div className="ml-8 space-y-2 text-sm">
+                        <p>
+                          <span className="font-medium">Your answer:</span>{' '}
+                          <span className={isCorrect ? 'text-green-600' : 'text-red-600'}>
+                            {selectedOption?.text || 'No answer'}
+                          </span>
+                        </p>
+                        {!isCorrect && (
+                          <p>
+                            <span className="font-medium">Correct answer:</span>{' '}
+                            <span className="text-green-600">{correctOption?.text}</span>
+                          </p>
+                        )}
+                      </div>
+                    </Card>
+                  );
+                })}
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex justify-end gap-3 pt-4">
+                {!passed && (
+                  <Button variant="outline" onClick={onRetry} leadingIcon={<RefreshCw className="h-4 w-4" />}>
+                    Try Again
+                  </Button>
+                )}
+                <Button onClick={onClose}>
+                  {passed ? 'Continue' : 'Close'}
+                </Button>
+              </div>
+            </>
+          )}
         </div>
       </div>
     </div>
@@ -1245,24 +1562,102 @@ const LessonContent: React.FC<{
 
   if (lessonType === 'resource' || lessonType === 'document') {
     const resource: any = lesson.content;
-    const downloadUrl = resource.downloadUrl || resource.url;
+    // Try multiple possible field names for the download URL
+    const downloadUrl = 
+      resource.downloadUrl || 
+      resource.url || 
+      resource.resourceUrl ||
+      resource.src ||
+      resource.link;
+    const fileSize = resource.fileSize || resource.size;
+    const resourceType = resource.resourceType || resource.type || 'file';
+    
     return (
-      <Card tone="muted" className="space-y-4">
-        <h3 className="font-heading text-lg font-semibold text-charcoal">Resource download</h3>
-        <p className="text-sm text-slate/80">{resource.description || lesson.description || 'Access the supporting material below.'}</p>
-        {downloadUrl ? (
-          <Button asChild leadingIcon={<Download className="h-4 w-4" />}>
-            <a href={downloadUrl} target="_blank" rel="noopener noreferrer">
-              Download resource
-            </a>
-          </Button>
-        ) : (
-          <p className="text-xs text-slate/70">Download link not available.</p>
-        )}
-        <Button variant="ghost" size="sm" onClick={onComplete}>
-          Mark as reviewed
-        </Button>
-      </Card>
+      <div className="space-y-6">
+        {/* Resource Download Card - Made More Prominent */}
+        <Card className="border-2 border-skyblue bg-gradient-to-br from-skyblue/5 to-indigo-50/50 p-6">
+          <div className="flex items-start gap-4">
+            <div className="flex-shrink-0 w-16 h-16 bg-skyblue/20 rounded-xl flex items-center justify-center">
+              <Download className="h-8 w-8 text-skyblue" />
+            </div>
+            <div className="flex-1 space-y-4">
+              <div>
+                <h3 className="font-heading text-xl font-bold text-charcoal mb-2">
+                  {lesson.title}
+                </h3>
+                <p className="text-sm text-slate/80">
+                  {resource.description || lesson.description || 'Download this resource to continue your learning journey.'}
+                </p>
+              </div>
+              
+              {(fileSize || resourceType) && (
+                <div className="flex items-center gap-4">
+                  {resourceType && (
+                    <Badge className="bg-skyblue/20 text-skyblue border-skyblue/30">
+                      <span className="uppercase font-semibold">{resourceType}</span>
+                    </Badge>
+                  )}
+                  {fileSize && (
+                    <span className="text-sm font-medium text-slate/70">{fileSize}</span>
+                  )}
+                </div>
+              )}
+
+              {downloadUrl ? (
+                <div className="flex gap-3">
+                  <Button 
+                    size="lg"
+                    className="bg-skyblue hover:bg-skyblue/90 text-white shadow-lg"
+                    asChild 
+                    leadingIcon={<Download className="h-5 w-5" />}
+                  >
+                    <a href={downloadUrl} target="_blank" rel="noopener noreferrer" download>
+                      Download Resource
+                    </a>
+                  </Button>
+                  <Button 
+                    variant="outline" 
+                    size="lg"
+                    onClick={onComplete}
+                    trailingIcon={<CheckCircle className="h-5 w-5" />}
+                  >
+                    Mark as Complete
+                  </Button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                    <div className="flex items-start gap-3">
+                      <AlertCircle className="h-5 w-5 text-yellow-600 flex-shrink-0 mt-0.5" />
+                      <div className="flex-1">
+                        <p className="text-sm font-medium text-yellow-800">Resource Not Available</p>
+                        <p className="text-xs text-yellow-700 mt-1">
+                          The download link for this resource is currently unavailable. Please contact your course administrator.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  <Button variant="ghost" size="sm" onClick={onComplete}>
+                    Mark as reviewed anyway
+                  </Button>
+                </div>
+              )}
+            </div>
+          </div>
+        </Card>
+
+        {/* Instructions Card */}
+        <Card tone="muted" className="p-4">
+          <h4 className="font-heading text-sm font-semibold text-charcoal mb-2">
+            📋 What to do with this resource
+          </h4>
+          <ul className="text-sm text-slate/80 space-y-1 list-disc list-inside">
+            <li>Download the file to your computer</li>
+            <li>Review the material at your own pace</li>
+            <li>Mark the lesson as complete when you're done</li>
+          </ul>
+        </Card>
+      </div>
     );
   }
 

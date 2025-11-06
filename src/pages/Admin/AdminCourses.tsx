@@ -219,12 +219,15 @@ const AdminCourses = () => {
       setVersion(v => v + 1);
       navigate(`/admin/course-builder/${persistedClone.id}`);
       showToast('Course duplicated successfully.', 'success');
-    } catch (err) {
+    } catch (err: any) {
       if (err instanceof CourseValidationError) {
         showToast(`Duplicate failed: ${err.issues.join(' • ')}`, 'error');
       } else {
         console.warn('Failed to duplicate course', err);
-        showToast('Could not duplicate course. Please try again.', 'error');
+        const errorMessage = err?.message || err?.body?.error || 'Could not duplicate course. Please try again.';
+        const errorDetails = err?.body?.details;
+        const fullMessage = errorDetails ? `${errorMessage}: ${errorDetails}` : errorMessage;
+        showToast(fullMessage, 'error');
       }
     }
   };

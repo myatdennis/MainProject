@@ -610,10 +610,14 @@ export class CourseService {
 
   static async getAllCoursesFromDatabase(): Promise<NormalizedCourse[]> {
     try {
+      console.log('[CourseService.getAllCoursesFromDatabase] Fetching from /api/admin/courses...');
       const json = await apiRequest<{ data: SupabaseCourseRecord[] }>('/api/admin/courses', { noTransform: true });
-      return (json.data || []).map(mapCourseRecord);
+      console.log('[CourseService.getAllCoursesFromDatabase] Raw response:', json);
+      const mapped = (json.data || []).map(mapCourseRecord);
+      console.log('[CourseService.getAllCoursesFromDatabase] Mapped courses:', mapped);
+      return mapped;
     } catch (error) {
-      console.error('Error loading courses from API:', error);
+      console.error('[CourseService.getAllCoursesFromDatabase] Error loading courses from API:', error);
       return [];
     }
   }

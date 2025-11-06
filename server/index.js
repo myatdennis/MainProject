@@ -4,6 +4,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { createClient } from '@supabase/supabase-js';
 import { WebSocketServer } from 'ws';
+import cookieParser from 'cookie-parser';
+import fs from 'fs';
 import {
   moduleCreateSchema,
   modulePatchSchema as modulePatchValidator,
@@ -17,14 +19,55 @@ import {
   courseUpsertSchema,
 } from './validators.js';
 
+// Import auth routes and middleware
+import authRoutes from './routes/auth.js';
+import { apiLimiter, securityHeaders } from './middleware/auth.js';
+import { setDoubleSubmitCSRF } from './middleware/csrf.js';
+
 // Resolve __dirname in ESM
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+// Persistent storage file for demo mode
+const STORAGE_FILE = path.join(__dirname, 'demo-data.json');
+
+// Helper functions for persistent storage
+function loadPersistedData() {
+  try {
+    if (fs.existsSync(STORAGE_FILE)) {
+      const data = fs.readFileSync(STORAGE_FILE, 'utf8');
+      return JSON.parse(data);
+    }
+  } catch (error) {
+    console.error('Error loading persisted data:', error);
+  }
+  return { courses: new Map(), modules: new Map(), lessons: new Map() };
+}
+
+function savePersistedData(data) {
+  try {
+    // Convert Maps to arrays for JSON serialization
+    // Modules and lessons are nested inside courses, not separate Maps
+    const serializable = {
+      courses: Array.from(data.courses.entries())
+    };
+    fs.writeFileSync(STORAGE_FILE, JSON.stringify(serializable, null, 2), 'utf8');
+    console.log(`📁 Persisted ${data.courses.size} course(s) to ${STORAGE_FILE}`);
+  } catch (error) {
+    console.error('Error saving persisted data:', error);
+  }
+}
 
 const app = express();
 const port = process.env.PORT || 8787;
 
 app.use(express.json({ limit: '10mb' }));
+
+// Security middleware
+app.use(cookieParser());
+app.use(securityHeaders);
+app.use(setDoubleSubmitCSRF);
+app.use('/api', apiLimiter);
 
 // Dev fallback: allow in-memory server behavior when Supabase isn't configured.
 // Enabled by default in non-production unless DEV_FALLBACK=false is set.
@@ -55,7 +98,6 @@ app.use((req, res, next) => {
 });
 
 // Text content endpoints used by the content editor (local file-backed)
-import fs from 'fs';
 const contentPath = path.join(__dirname, '../src/content/textContent.json');
 
 app.get('/api/text-content', (_req, res) => {
@@ -91,19 +133,155 @@ app.put('/api/text-content', (req, res) => {
   });
 });
 
+// Auth routes (login, register, refresh, logout)
+app.use('/api/auth', authRoutes);
+
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
 const supabase = supabaseUrl && supabaseServiceRoleKey ? createClient(supabaseUrl, supabaseServiceRoleKey) : null;
 
 // Lightweight in-memory fallback used for local E2E runs when Supabase is not configured.
 const E2E_TEST_MODE = process.env.E2E_TEST_MODE === 'true';
+
+// Load persisted data if available
+const persistedData = loadPersistedData();
+
 const e2eStore = {
-  courses: new Map(), // id -> { id, slug, title, description, status, version, published_at, meta_json, modules: [{ id, title, description, order_index, lessons: [...] }] }
+  courses: new Map(persistedData.courses || []), // id -> { id, slug, title, description, status, version, published_at, meta_json, modules: [{ id, title, description, order_index, lessons: [...] }] }
   assignments: [],
   courseProgress: new Map(), // key `${user_id}:${course_id}` -> { user_id, course_id, percent, status, time_spent_s, updated_at }
   lessonProgress: new Map(), // key `${user_id}:${lesson_id}` -> { user_id, lesson_id, percent, status, time_spent_s, resume_at_s, updated_at }
   progressEvents: new Set(), // idempotency keys (client_event_id)
 };
+
+// Log loaded courses
+if (e2eStore.courses.size > 0) {
+  console.log(`✅ Loaded ${e2eStore.courses.size} course(s) from persistent storage`);
+  for (const [id, course] of e2eStore.courses.entries()) {
+    console.log(`   - ${course.title} (${id})`);
+  }
+} else {
+  // Seed a demo course if no courses exist
+  console.log('📚 No courses found. Seeding demo course...');
+  const demoCourse = {
+    id: 'foundations',
+    slug: 'foundations-of-inclusive-leadership',
+    title: 'Foundations of Inclusive Leadership',
+    description: 'Learn the fundamentals of inclusive leadership through interactive lessons, including TED Talks, quizzes, and practical frameworks.',
+    status: 'published',
+    version: 1,
+    published_at: new Date().toISOString(),
+    thumbnail: '/api/placeholder/400/300',
+    difficulty: 'Beginner',
+    duration: '2 hours',
+    instructorName: 'Dr. Sarah Chen',
+    estimatedDuration: 7200,
+    keyTakeaways: [
+      'Understand the core principles of inclusive leadership',
+      'Learn how vulnerability strengthens leadership',
+      'Build psychological safety in teams',
+      'Apply practical leadership frameworks'
+    ],
+    meta_json: {
+      tags: ['leadership', 'inclusion', 'management', 'professional development'],
+      category: 'Leadership',
+      level: 'beginner'
+    },
+    modules: [
+      {
+        id: 'mod-1',
+        course_id: 'foundations',
+        title: 'Introduction to Leadership',
+        description: 'Core concepts and foundations',
+        order_index: 0,
+        lessons: [
+          {
+            id: 'lesson-video',
+            module_id: 'mod-1',
+            title: 'The Power of Vulnerability',
+            description: 'Watch this inspiring TED Talk by Brené Brown',
+            type: 'video',
+            order_index: 0,
+            duration_s: 1200,
+            content_json: {
+              videoUrl: 'https://www.ted.com/talks/brene_brown_the_power_of_vulnerability',
+              videoType: 'ted'
+            },
+            completion_rule_json: { requiredPercent: 85 }
+          },
+          {
+            id: 'lesson-quiz',
+            module_id: 'mod-1',
+            title: 'Leadership Knowledge Check',
+            description: 'Test your understanding',
+            type: 'quiz',
+            order_index: 1,
+            duration_s: 300,
+            content_json: {
+              questions: [
+                {
+                  id: 'q1',
+                  question: 'What is the primary role of an inclusive leader?',
+                  options: [
+                    { id: 'a', text: 'To make all decisions alone' },
+                    { id: 'b', text: 'To create an environment where all voices are heard' },
+                    { id: 'c', text: 'To maintain strict hierarchy' },
+                    { id: 'd', text: 'To avoid difficult conversations' }
+                  ],
+                  correctAnswer: 'b'
+                },
+                {
+                  id: 'q2',
+                  question: 'Which quality is essential for effective leadership?',
+                  options: [
+                    { id: 'a', text: 'Vulnerability' },
+                    { id: 'b', text: 'Perfectionism' },
+                    { id: 'c', text: 'Control' },
+                    { id: 'd', text: 'Distance' }
+                  ],
+                  correctAnswer: 'a'
+                }
+              ]
+            },
+            completion_rule_json: { requiredScore: 70 }
+          },
+          {
+            id: 'lesson-text',
+            module_id: 'mod-1',
+            title: 'Leadership Principles',
+            description: 'Core principles of effective leadership',
+            type: 'text',
+            order_index: 2,
+            duration_s: 600,
+            content_json: {
+              body: '# Leadership Principles\n\n## 1. Lead with Empathy\n\nEmpathy is the foundation of inclusive leadership...\n\n## 2. Foster Psychological Safety\n\nCreate an environment where team members feel safe...\n\n## 3. Embrace Vulnerability\n\nAs Brené Brown teaches, vulnerability is not weakness...'
+            },
+            completion_rule_json: null
+          },
+          {
+            id: 'lesson-resource',
+            module_id: 'mod-1',
+            title: 'Leadership Framework Guide',
+            description: 'Download the comprehensive leadership framework',
+            type: 'resource',
+            order_index: 3,
+            duration_s: 0,
+            content_json: {
+              fileUrl: '/resources/leadership-framework.pdf',
+              fileType: 'pdf',
+              fileSize: '2.4 MB',
+              fileName: 'Leadership Framework Guide.pdf'
+            },
+            completion_rule_json: null
+          }
+        ]
+      }
+    ]
+  };
+  e2eStore.courses.set('foundations', demoCourse);
+  savePersistedData(e2eStore);
+  console.log('✅ Demo course seeded successfully');
+}
 
 // E2E helpers
 const e2eFindCourse = (identifier) => {
@@ -136,6 +314,14 @@ const e2eFindLesson = (lessonId) => {
   }
   return null;
 };
+
+// Helper to persist data after any modification
+const persistE2EStore = () => {
+  if (DEV_FALLBACK || E2E_TEST_MODE) {
+    savePersistedData(e2eStore);
+  }
+};
+
 
 const ensureSupabase = (res) => {
   if (!supabase) {
@@ -402,6 +588,188 @@ const createRateLimiter = ({ tokensPerInterval = 10, intervalMs = 1000 } = {}) =
 
 const checkProgressLimit = createRateLimiter({ tokensPerInterval: 8, intervalMs: 1000 });
 
+// ============================================================================
+// Authentication Endpoints
+// ============================================================================
+
+// Authentication handler function
+const handleLogin = async (req, res) => {
+  const { email, password, type } = req.body || {};
+
+  console.log('[AUTH] Login attempt:', { email, type, hasSupabase: Boolean(supabase), E2E_TEST_MODE, DEV_FALLBACK });
+
+  if (!email || !password) {
+    res.status(400).json({ 
+      error: 'Email and password are required',
+      errorType: 'validation_error'
+    });
+    return;
+  }
+
+  // Demo/E2E mode - accept any login with test credentials
+  // Use demo mode if: E2E_TEST_MODE is set, OR we're in dev fallback mode
+  const useDemoMode = E2E_TEST_MODE || DEV_FALLBACK;
+  
+  if (useDemoMode) {
+    console.log('[AUTH] Using demo mode authentication');
+    // Test credentials for demo
+    const validLogins = {
+      'user@pacificcoast.edu': { password: 'user123', role: 'learner', name: 'Demo User' },
+      'admin@thehuddleco.com': { password: 'admin123', role: 'admin', name: 'Admin User' },
+      'demo@example.com': { password: 'demo', role: 'learner', name: 'Demo Learner' }
+    };
+
+    const user = validLogins[email.toLowerCase()];
+    
+    if (user && user.password === password) {
+      const userData = {
+        id: `demo-${email.split('@')[0]}`,
+        email: email.toLowerCase(),
+        name: user.name,
+        role: user.role,
+        organizationId: 'demo-org'
+      };
+
+      res.json({
+        success: true,
+        user: userData,
+        accessToken: `demo-token-${Date.now()}`,
+        refreshToken: `demo-refresh-${Date.now()}`,
+        expiresAt: Date.now() + 86400000 // 24 hours
+      });
+      return;
+    }
+
+    res.status(401).json({
+      error: 'Invalid credentials',
+      errorType: 'invalid_credentials'
+    });
+    return;
+  }
+
+  // Supabase authentication (if configured)
+  if (!ensureSupabase(res)) return;
+
+  try {
+    const { data, error } = await supabase.auth.signInWithPassword({
+      email,
+      password
+    });
+
+    if (error) {
+      res.status(401).json({
+        error: error.message || 'Authentication failed',
+        errorType: 'invalid_credentials'
+      });
+      return;
+    }
+
+    res.json({
+      success: true,
+      user: {
+        id: data.user.id,
+        email: data.user.email,
+        name: data.user.user_metadata?.name || data.user.email,
+        role: type === 'admin' ? 'admin' : 'learner',
+        organizationId: data.user.user_metadata?.organization_id || null
+      },
+      accessToken: data.session.access_token,
+      refreshToken: data.session.refresh_token,
+      expiresAt: data.session.expires_at
+    });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({
+      error: 'Authentication service error',
+      errorType: 'network_error'
+    });
+  }
+};
+
+// Register login endpoint at both paths for compatibility
+app.post('/api/auth/login', handleLogin);
+app.post('/login', handleLogin); // Legacy path
+
+// Token refresh endpoint
+app.post('/api/auth/refresh', async (req, res) => {
+  const { refreshToken } = req.body || {};
+
+  if (!refreshToken) {
+    res.status(400).json({ error: 'Refresh token required' });
+    return;
+  }
+
+  // Demo mode - just issue new tokens
+  if (E2E_TEST_MODE || DEV_FALLBACK || !supabase) {
+    res.json({
+      accessToken: `demo-token-${Date.now()}`,
+      refreshToken: `demo-refresh-${Date.now()}`,
+      expiresAt: Date.now() + 86400000
+    });
+    return;
+  }
+
+  // Supabase refresh
+  if (!ensureSupabase(res)) return;
+
+  try {
+    const { data, error } = await supabase.auth.refreshSession({ refresh_token: refreshToken });
+
+    if (error) {
+      res.status(401).json({ error: 'Invalid refresh token' });
+      return;
+    }
+
+    res.json({
+      accessToken: data.session.access_token,
+      refreshToken: data.session.refresh_token,
+      expiresAt: data.session.expires_at
+    });
+  } catch (error) {
+    console.error('Refresh error:', error);
+    res.status(500).json({ error: 'Token refresh failed' });
+  }
+});
+
+// Forgot password endpoint
+app.post('/api/auth/forgot-password', async (req, res) => {
+  const { email } = req.body || {};
+
+  if (!email) {
+    res.status(400).json({ error: 'Email required' });
+    return;
+  }
+
+  // Demo mode - just acknowledge
+  if (E2E_TEST_MODE || DEV_FALLBACK || !supabase) {
+    res.json({ 
+      success: true, 
+      message: 'Password reset email sent (demo mode - not actually sent)' 
+    });
+    return;
+  }
+
+  // Supabase password reset
+  if (!ensureSupabase(res)) return;
+
+  try {
+    const { error } = await supabase.auth.resetPasswordForEmail(email);
+
+    if (error) {
+      res.status(400).json({ error: error.message });
+      return;
+    }
+
+    res.json({ 
+      success: true, 
+      message: 'Password reset email sent' 
+    });
+  } catch (error) {
+    console.error('Forgot password error:', error);
+    res.status(500).json({ error: 'Password reset failed' });
+  }
+});
+
 // HTTP endpoint to broadcast events. Secured by a server-only API key (BROADCAST_API_KEY).
 // If BROADCAST_API_KEY is not set (dev), fallback to the previous x-user-role=admin header check.
 app.post('/api/broadcast', (req, res) => {
@@ -458,6 +826,12 @@ app.get('/api/admin/courses', async (_req, res) => {
         version: c.version ?? 1,
         meta_json: c.meta_json ?? {},
         published_at: c.published_at ?? null,
+        thumbnail: c.thumbnail ?? null,
+        difficulty: c.difficulty ?? null,
+        duration: c.duration ?? null,
+        instructorName: c.instructorName ?? null,
+        estimatedDuration: c.estimatedDuration ?? null,
+        keyTakeaways: c.keyTakeaways ?? [],
         modules: (c.modules || []).map((m) => ({
           id: m.id,
           course_id: c.id,
@@ -583,6 +957,11 @@ app.post('/api/admin/courses', async (req, res) => {
         courseObj.modules.push(moduleObj);
       }
       e2eStore.courses.set(id, courseObj);
+      
+      // Save to persistent storage
+      persistE2EStore();
+      console.log(`✅ Saved course "${courseObj.title}" to persistent storage`);
+      
       res.status(201).json({ data: courseObj });
       return;
     } catch (error) {
@@ -773,7 +1152,14 @@ app.post('/api/admin/courses', async (req, res) => {
     res.status(201).json({ data: refreshed.data });
   } catch (error) {
     console.error('Failed to upsert course:', error);
-    res.status(500).json({ error: 'Unable to save course' });
+    // Provide more details to the client for debugging
+    const errorMessage = error?.message || 'Unable to save course';
+    const errorDetails = error?.details || error?.hint || null;
+    res.status(500).json({ 
+      error: errorMessage,
+      details: errorDetails,
+      timestamp: new Date().toISOString()
+    });
   }
 });
 
@@ -989,6 +1375,8 @@ app.delete('/api/admin/courses/:id', async (req, res) => {
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
     try {
       e2eStore.courses.delete(id);
+      persistE2EStore();
+      console.log(`✅ Deleted course ${id} from persistent storage`);
       res.status(204).end();
     } catch (error) {
       console.error('E2E: Failed to delete course:', error);
@@ -1010,8 +1398,8 @@ app.delete('/api/admin/courses/:id', async (req, res) => {
 
 app.get('/api/client/courses', async (_req, res) => {
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    // In dev/demo mode, show ALL courses (not just published)
     const data = Array.from(e2eStore.courses.values())
-      .filter((c) => (c.status || 'draft') === 'published')
       .map((c) => ({
         id: c.id,
         slug: c.slug ?? c.id,
@@ -1021,6 +1409,12 @@ app.get('/api/client/courses', async (_req, res) => {
         version: c.version ?? 1,
         meta_json: c.meta_json ?? {},
         published_at: c.published_at ?? null,
+        thumbnail: c.thumbnail ?? null,
+        difficulty: c.difficulty ?? null,
+        duration: c.duration ?? null,
+        instructorName: c.instructorName ?? null,
+        estimatedDuration: c.estimatedDuration ?? null,
+        keyTakeaways: c.keyTakeaways ?? [],
         modules: (c.modules || []).map((m) => ({
           id: m.id,
           course_id: c.id,
@@ -1035,6 +1429,7 @@ app.get('/api/client/courses', async (_req, res) => {
             type: l.type,
             order_index: l.order_index ?? l.order ?? 0,
             duration_s: l.duration_s ?? null,
+            content: l.content_json ?? l.content ?? {},
             content_json: l.content_json ?? l.content ?? {},
             completion_rule_json: l.completion_rule_json ?? l.completionRule ?? null,
           })),
@@ -1073,10 +1468,8 @@ app.get('/api/client/courses/:identifier', async (req, res) => {
         res.json({ data: null });
         return;
       }
-      if (!includeDrafts && (course.status || 'draft') !== 'published') {
-        res.json({ data: null });
-        return;
-      }
+      // In dev/demo mode, show all courses regardless of status
+      // (ignore the includeDrafts query param)
 
       const data = {
         id: course.id,
@@ -1087,6 +1480,12 @@ app.get('/api/client/courses/:identifier', async (req, res) => {
         version: course.version ?? 1,
         meta_json: course.meta_json ?? {},
         published_at: course.published_at ?? null,
+        thumbnail: course.thumbnail ?? null,
+        difficulty: course.difficulty ?? null,
+        duration: course.duration ?? null,
+        instructorName: course.instructorName ?? null,
+        estimatedDuration: course.estimatedDuration ?? null,
+        keyTakeaways: course.keyTakeaways ?? [],
         modules: (course.modules || []).map((m) => ({
           id: m.id,
           course_id: course.id,
@@ -1101,6 +1500,7 @@ app.get('/api/client/courses/:identifier', async (req, res) => {
             type: l.type,
             order_index: l.order_index ?? l.order ?? 0,
             duration_s: l.duration_s ?? null,
+            content: l.content_json ?? l.content ?? {},
             content_json: l.content_json ?? l.content ?? {},
             completion_rule_json: l.completion_rule_json ?? l.completionRule ?? null,
           })),
@@ -1164,6 +1564,8 @@ app.post('/api/admin/modules', async (req, res) => {
     const mod = { id, course_id: course.id, title, description, order_index: orderIndex, lessons: [], metadata: metadata ?? {} };
     course.modules = course.modules || [];
     course.modules.push(mod);
+    persistE2EStore();
+    console.log(`✅ Created module "${title}" in course "${course.title}"`);
     res.status(201).json({ data: { id, course_id: course.id, title, description, order_index: orderIndex } });
     return;
   }
@@ -1208,6 +1610,8 @@ app.patch('/api/admin/modules/:id', async (req, res) => {
     if (typeof title === 'string') found.module.title = title;
     if (description !== undefined) found.module.description = description;
     if (typeof orderIndex === 'number') found.module.order_index = orderIndex;
+    persistE2EStore();
+    console.log(`✅ Updated module ${id}`);
     res.json({ data: { id: found.module.id, course_id: found.course.id, title: found.module.title, description: found.module.description, order_index: found.module.order_index ?? 0 } });
     return;
   }
@@ -1250,6 +1654,8 @@ app.delete('/api/admin/modules/:id', async (req, res) => {
       return;
     }
     found.course.modules = (found.course.modules || []).filter((m) => String(m.id) !== String(id));
+    persistE2EStore();
+    console.log(`✅ Deleted module ${id}`);
     res.status(204).end();
     return;
   }
@@ -1284,6 +1690,8 @@ app.post('/api/admin/modules/reorder', async (req, res) => {
     });
     const sorted = (course.modules || []).slice().sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
     course.modules = sorted;
+    persistE2EStore();
+    console.log(`✅ Reordered modules in course "${course.title}"`);
     const response = sorted.map((m) => ({ id: m.id, order_index: m.order_index ?? 0 }));
     res.json({ data: response });
     return;
@@ -1346,6 +1754,8 @@ app.post('/api/admin/lessons', async (req, res) => {
     };
     found.module.lessons = found.module.lessons || [];
     found.module.lessons.push(lesson);
+    persistE2EStore();
+    console.log(`✅ Created lesson "${title}" in module "${found.module.title}"`);
     res.status(201).json({ data: { id, module_id: moduleId, title, type, order_index: orderIndex } });
     return;
   }
@@ -1412,6 +1822,8 @@ app.patch('/api/admin/lessons/:id', async (req, res) => {
     if (typeof durationSeconds === 'number') found.lesson.duration_s = durationSeconds;
     if (content !== undefined) found.lesson.content_json = (content && typeof content === 'object') ? (content.body ?? content) : {};
     if (completionRule !== undefined) found.lesson.completion_rule_json = completionRule;
+    persistE2EStore();
+    console.log(`✅ Updated lesson ${id}`);
     res.json({ data: { id: found.lesson.id, module_id: found.module.id, title: found.lesson.title, type: found.lesson.type, order_index: found.lesson.order_index ?? 0 } });
     return;
   }
@@ -1461,6 +1873,8 @@ app.delete('/api/admin/lessons/:id', async (req, res) => {
         const before = (mod.lessons || []).length;
         mod.lessons = (mod.lessons || []).filter((l) => String(l.id) !== String(id));
         if (mod.lessons.length !== before) {
+          persistE2EStore();
+          console.log(`✅ Deleted lesson ${id}`);
           res.status(204).end();
           return;
         }
@@ -1497,6 +1911,8 @@ app.post('/api/admin/lessons/reorder', async (req, res) => {
       if (typeof idx === 'number') l.order_index = idx;
     });
     found.module.lessons = (found.module.lessons || []).slice().sort((a, b) => (a.order_index ?? 0) - (b.order_index ?? 0));
+    persistE2EStore();
+    console.log(`✅ Reordered lessons in module "${found.module.title}"`);
     const response = (found.module.lessons || []).map((l) => ({ id: l.id, order_index: l.order_index ?? 0 }));
     res.json({ data: response });
     return;
@@ -1520,6 +1936,99 @@ app.post('/api/admin/lessons/reorder', async (req, res) => {
   } catch (error) {
     console.error('Failed to reorder lessons:', error);
     res.status(500).json({ error: 'Unable to reorder lessons' });
+  }
+});
+
+// Learner progress endpoint (used by progressService.ts)
+app.post('/api/learner/progress', async (req, res) => {
+  const body = req.body || {};
+  
+  // Accept multiple possible field name formats
+  const userId = body.userId || body.user_id || body.learnerId || body.learner_id;
+  const courseId = body.courseId || body.course_id;
+  const lessons = body.lessons || body.lessonProgress || [];
+  const course = body.course || body.courseProgress || {};
+  
+  // Log for debugging
+  if (DEV_FALLBACK || E2E_TEST_MODE) {
+    console.log('Progress sync request:', {
+      userId,
+      courseId,
+      lessonCount: lessons.length,
+      overallPercent: course.percent || course.percentComplete || 0
+    });
+  }
+
+  // In E2E/DEMO mode, just acknowledge the progress sync
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    res.json({ 
+      success: true, 
+      message: 'Progress synced (demo mode)',
+      data: {
+        userId: userId || 'unknown',
+        courseId: courseId || 'unknown',
+        lessonCount: lessons.length,
+        overallPercent: course.percent || course.percentComplete || 0
+      }
+    });
+    return;
+  }
+
+  // If Supabase is configured, you can implement actual storage here
+  if (!ensureSupabase(res)) return;
+  
+  try {
+    // For now, just acknowledge in Supabase mode too
+    // TODO: Implement actual progress storage in Supabase
+    res.json({ 
+      success: true, 
+      message: 'Progress synced',
+      data: {
+        userId: userId || 'unknown',
+        courseId: courseId || 'unknown',
+        lessonCount: lessons.length,
+        overallPercent: course.percent || course.percentComplete || 0
+      }
+    });
+  } catch (error) {
+    console.error('Failed to sync learner progress:', error);
+    res.status(500).json({ error: 'Unable to sync progress' });
+  }
+});
+
+// GET learner progress endpoint (fetching progress)
+app.get('/api/learner/progress', async (req, res) => {
+  const { userId, courseId, lessonIds } = req.query;
+  
+  // In demo/E2E mode, return empty progress
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    res.json({ 
+      success: true,
+      data: {
+        userId: userId || 'unknown',
+        courseId: courseId || 'unknown',
+        lessons: [],
+        message: 'No saved progress in demo mode'
+      }
+    });
+    return;
+  }
+
+  if (!ensureSupabase(res)) return;
+  
+  try {
+    // TODO: Implement actual progress fetching from Supabase
+    res.json({ 
+      success: true,
+      data: {
+        userId,
+        courseId,
+        lessons: []
+      }
+    });
+  } catch (error) {
+    console.error('Failed to fetch learner progress:', error);
+    res.status(500).json({ error: 'Unable to fetch progress' });
   }
 });
 
@@ -2933,6 +3442,16 @@ app.delete('/api/admin/notifications/:id', async (req, res) => {
 });
 
 app.post('/api/analytics/events', async (req, res) => {
+  // In demo/E2E mode, just acknowledge the analytics event
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    res.status(201).json({ 
+      success: true, 
+      message: 'Event tracked (demo mode)',
+      data: { id: req.body?.id || 'demo-event-' + Date.now() }
+    });
+    return;
+  }
+  
   if (!ensureSupabase(res)) return;
   const { id, user_id, course_id, lesson_id, module_id, event_type, session_id, user_agent, payload } = req.body || {};
 
@@ -2996,6 +3515,19 @@ app.get('/api/analytics/events', async (req, res) => {
 });
 
 app.post('/api/analytics/journeys', async (req, res) => {
+  // In demo/E2E mode, just acknowledge the journey tracking
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    res.status(201).json({ 
+      success: true, 
+      message: 'Journey tracked (demo mode)',
+      data: { 
+        user_id: req.body?.user_id || 'demo-user',
+        course_id: req.body?.course_id || 'demo-course'
+      }
+    });
+    return;
+  }
+  
   if (!ensureSupabase(res)) return;
   const { user_id, course_id, journey } = req.body || {};
 

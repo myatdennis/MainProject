@@ -963,16 +963,18 @@ let courses: { [key: string]: Course } = _loadCoursesFromLocalStorage();
 export const courseStore = {
   init: async (): Promise<void> => {
     try {
+      console.log('[courseStore.init] Starting initialization...');
       const dbCourses = await CourseService.getAllCoursesFromDatabase();
+      console.log('[courseStore.init] API returned courses:', dbCourses);
 
       if (dbCourses.length > 0) {
         courses = {};
         dbCourses.forEach((course: Course) => {
           courses[course.id] = course;
         });
-        console.log(`Loaded ${dbCourses.length} courses from API`);
+        console.log(`[courseStore.init] Loaded ${dbCourses.length} courses from API`);
       } else {
-        console.log('No courses returned from API, seeding defaults...');
+        console.log('[courseStore.init] No courses returned from API, seeding defaults...');
         const defaultCourses = getDefaultCourses();
         courses = defaultCourses;
         for (const course of Object.values(defaultCourses)) {

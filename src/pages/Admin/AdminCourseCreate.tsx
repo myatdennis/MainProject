@@ -36,12 +36,16 @@ const AdminCourseCreate = () => {
 
       showToast('Course saved successfully', 'success');
       navigate(`/admin/courses/${created.id}/details`);
-    } catch (err) {
+    } catch (err: any) {
       if (err instanceof CourseValidationError) {
         showToast(`Save failed: ${err.issues.join(' • ')}`, 'error');
       } else {
         console.error('Failed to save course', err);
-        showToast('Could not save course. Please try again.', 'error');
+        // Extract detailed error message from API error
+        const errorMessage = err?.message || err?.body?.error || 'Could not save course. Please try again.';
+        const errorDetails = err?.body?.details;
+        const fullMessage = errorDetails ? `${errorMessage}: ${errorDetails}` : errorMessage;
+        showToast(fullMessage, 'error');
       }
     }
   };

@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { Users, Lock, Mail, Eye, EyeOff, AlertCircle, Info } from 'lucide-react';
+import { loginSchema, emailSchema } from '../../utils/validators';
+import { sanitizeText } from '../../utils/sanitize';
 
 const LMSLogin: React.FC = () => {
   const { login, isAuthenticated, forgotPassword } = useAuth();
@@ -12,6 +14,7 @@ const LMSLogin: React.FC = () => {
   const [message, setMessage] = useState('');
   const [messageType, setMessageType] = useState<'error' | 'success' | 'info'>('error');
   const [showTroubleshooting, setShowTroubleshooting] = useState(false);
+  const [validationErrors, setValidationErrors] = useState<{ email?: string; password?: string }>({});
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -23,8 +26,29 @@ const LMSLogin: React.FC = () => {
     setIsLoading(true);
     setMessage('');
     setShowTroubleshooting(false);
+    setValidationErrors({});
     
-    const result = await login(email, password, 'lms');
+    // Validate input
+    const validation = loginSchema.safeParse({ email, password });
+    if (!validation.success) {
+      setIsLoading(false);
+      const errors: { email?: string; password?: string } = {};
+      validation.error.errors.forEach((err) => {
+        const field = err.path[0] as 'email' | 'password';
+        if (field) {
+          errors[field] = err.message;
+        }
+      });
+      setValidationErrors(errors);
+      setMessage('Please fix the validation errors below');
+      setMessageType('error');
+      return;
+    }
+    
+    // Sanitize inputs
+    const sanitizedEmail = sanitizeText(email.toLowerCase().trim());
+    
+    const result = await login(sanitizedEmail, password, 'lms');
     setIsLoading(false);
     
     if (result.success) {
@@ -44,6 +68,14 @@ const LMSLogin: React.FC = () => {
     if (!email) {
       setMessage('Enter your email to reset password');
       setMessageType('info');
+      return;
+    }
+    
+    // Validate email
+    const emailValidation = emailSchema.safeParse(email);
+    if (!emailValidation.success) {
+      setMessage('Please enter a valid email address');
+      setMessageType('error');
       return;
     }
     
@@ -140,8 +172,22 @@ const LMSLogin: React.FC = () => {
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                   <Mail className="h-5 w-5 text-gray-400" />
                 </div>
-                <input id="email" name="email" type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className="block w-full pl-10 pr-3 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent transition-colors duration-200" placeholder="Enter your email" />
+                <input 
+                  id="email" 
+                  name="email" 
+                  type="email" 
+                  required 
+                  value={email} 
+                  onChange={(e) => setEmail(e.target.value)} 
+                  className={`block w-full pl-10 pr-3 py-3 border rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent transition-colors duration-200 ${validationErrors.email ? 'border-red-500' : 'border-gray-300'}`}
+                  placeholder="Enter your email" 
+                  aria-invalid={validationErrors.email ? 'true' : 'false'}
+                  aria-describedby={validationErrors.email ? 'email-error' : undefined}
+                />
               </div>
+              {validationErrors.email && (
+                <p id="email-error" className="mt-1 text-sm text-red-600">{validationErrors.email}</p>
+              )}
             </div>
 
             <div>
@@ -150,9 +196,23 @@ const LMSLogin: React.FC = () => {
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                   <Lock className="h-5 w-5 text-gray-400" />
                 </div>
-                <input id="password" name="password" type={showPassword ? 'text' : 'password'} required value={password} onChange={(e) => setPassword(e.target.value)} className="block w-full pl-10 pr-10 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent transition-colors duration-200" placeholder="Enter your password" />
+                <input 
+                  id="password" 
+                  name="password" 
+                  type={showPassword ? 'text' : 'password'} 
+                  required 
+                  value={password} 
+                  onChange={(e) => setPassword(e.target.value)} 
+                  className={`block w-full pl-10 pr-10 py-3 border rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent transition-colors duration-200 ${validationErrors.password ? 'border-red-500' : 'border-gray-300'}`}
+                  placeholder="Enter your password"
+                  aria-invalid={validationErrors.password ? 'true' : 'false'}
+                  aria-describedby={validationErrors.password ? 'password-error' : undefined}
+                />
                 <button type="button" className="absolute inset-y-0 right-0 pr-3 flex items-center" onClick={() => setShowPassword(!showPassword)}>{showPassword ? <EyeOff className="h-5 w-5 text-gray-400 hover:text-gray-600" /> : <Eye className="h-5 w-5 text-gray-400 hover:text-gray-600" />}</button>
               </div>
+              {validationErrors.password && (
+                <p id="password-error" className="mt-1 text-sm text-red-600">{validationErrors.password}</p>
+              )}
             </div>
 
             <div className="flex items-center justify-between">

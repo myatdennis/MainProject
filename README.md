@@ -26,6 +26,102 @@ See [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) for complete troubleshooting guid
 - **Admin**: admin@thehuddleco.com / admin123
 - **LMS User**: user@pacificcoast.edu / user123
 
+## Architecture
+
+### System Overview
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     Client (React + TypeScript)              │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐      │
+│  │   Public     │  │     LMS      │  │    Admin     │      │
+│  │   Routes     │  │   Portal     │  │   Portal     │      │
+│  └──────────────┘  └──────────────┘  └──────────────┘      │
+│         │                  │                  │              │
+│         └──────────────────┴──────────────────┘              │
+│                            │                                 │
+│                    ┌───────▼────────┐                       │
+│                    │  Auth Context  │                       │
+│                    │  Course Store  │                       │
+│                    └────────────────┘                       │
+└────────────────────────────┬────────────────────────────────┘
+                             │
+                    ┌────────▼────────┐
+                    │   API Layer     │
+                    │  (DAL Pattern)  │
+                    └────────┬────────┘
+                             │
+                    ┌────────▼────────┐
+                    │   Supabase      │
+                    │  PostgreSQL +   │
+                    │   Realtime      │
+                    └─────────────────┘
+```
+
+### Tech Stack
+
+- **Frontend**: React 18.3.1 + TypeScript + Vite 5.4.20
+- **Backend**: Supabase 2.57.4 (PostgreSQL + Realtime + Auth)
+- **Styling**: Tailwind CSS 3.4.17
+- **State**: Zustand 5.0.3 + React Context
+- **Routing**: React Router 7.9.1
+- **Animations**: Framer Motion 12.23.24
+- **Forms**: Zod validation
+- **Build**: Vite with lazy-loaded routes
+
+### Key Features
+
+- 🔐 **Role-Based Access Control** - Separate portals for Admin, LMS, and Client users
+- 📚 **Course Management** - Full-featured course builder with modules, lessons, and quizzes
+- 📊 **Analytics Dashboard** - Real-time tracking of learner progress and engagement
+- 📋 **Survey System** - Create, deploy, and analyze surveys with advanced analytics
+- 🏢 **Organization Workspace** - Strategic planning, session notes, and document management
+- 🔄 **Offline Support** - Service worker for offline course access
+- 🎨 **Responsive Design** - Mobile-first design with Tailwind CSS
+- ⚡ **Performance** - Code splitting, lazy loading, and optimized bundles
+
+### Project Structure
+
+```
+src/
+├── components/      # Reusable UI components
+│   ├── ErrorBoundary.tsx
+│   ├── Header.tsx
+│   ├── Footer.tsx
+│   └── ...
+├── pages/          # Route components
+│   ├── admin/      # Admin portal pages
+│   ├── lms/        # LMS portal pages
+│   └── public/     # Public marketing pages
+├── context/        # Global state (Auth, Theme)
+├── store/          # Zustand stores (Courses, Surveys)
+├── dal/            # Data Access Layer (Supabase abstraction)
+├── services/       # Business logic
+├── hooks/          # Custom React hooks
+├── utils/          # Utility functions
+└── types/          # TypeScript type definitions
+```
+
+### Data Flow
+
+1. **User Authentication** → Auth Context → Supabase Auth
+2. **Course Data** → Course Store → DAL → Supabase
+3. **Real-time Updates** → Supabase Realtime → React State
+4. **Offline Access** → Service Worker → IndexedDB cache
+
+### Documentation
+
+� **[Complete Documentation Index](./DOCUMENTATION_INDEX.md)** - All project documentation organized by category
+
+**Quick Links:**
+- 📊 [Comprehensive Review Summary](./COMPREHENSIVE_REVIEW_SUMMARY.md) - Latest audit overview
+- 🗺️ [Routes & Buttons Matrix](./ROUTES_BUTTONS_MATRIX.md) - All 82 routes and navigation
+- 🔒 [Security Audit & Fixes](./SECURITY_AUDIT_FIXES.md) - Security vulnerabilities and fixes
+- � [Codebase Audit Report](./CODEBASE_AUDIT_REPORT.md) - Technical analysis
+- 📖 [Troubleshooting Guide](./TROUBLESHOOTING.md) - Common issues and solutions
+
+---
+
 ## Dev notes
 - API server runs on 8787 by default (npm run start:server). If that port is busy, you can run on a different port: PORT=8888 node server/index.js.
 - Vite dev server is configured to proxy /api and /ws to the API server. Currently, proxy points to http://localhost:8888 to match the alternate port. If you switch the API back to 8787, update `vite.config.ts` proxy targets accordingly.

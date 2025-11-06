@@ -99,13 +99,22 @@ const statusMatches = (status: number, expected?: number | number[]) => {
 };
 
 export const apiRequest = async <T = any>(path: string, options: ApiRequestOptions = {}): Promise<T> => {
+  console.log('[apiRequest] Starting request to:', path);
+  
   const headers = options.headers instanceof Headers ? new Headers(options.headers) : new Headers(options.headers ?? {});
-  const authHeaders = await buildAuthHeaders();
-  Object.entries(authHeaders).forEach(([key, value]) => {
-    if (value && !headers.has(key)) {
-      headers.set(key, value);
-    }
-  });
+  
+  try {
+    const authHeaders = await buildAuthHeaders();
+    console.log('[apiRequest] Auth headers:', authHeaders);
+    Object.entries(authHeaders).forEach(([key, value]) => {
+      if (value && !headers.has(key)) {
+        headers.set(key, value);
+      }
+    });
+  } catch (error) {
+    console.error('[apiRequest] Failed to build auth headers:', error);
+    throw error;
+  }
 
   if (!headers.has('Content-Type') && options.method && options.method !== 'GET' && options.method !== 'HEAD') {
     headers.set('Content-Type', 'application/json');
@@ -129,8 +138,10 @@ export const apiRequest = async <T = any>(path: string, options: ApiRequestOptio
   };
 
   const url = buildUrl(path);
+  console.log('[apiRequest] Fetching URL:', url);
 
   const response = await fetch(url, requestInit);
+  console.log('[apiRequest] Response status:', response.status, response.statusText);
 
   const okStatus = response.ok || statusMatches(response.status, options.expectedStatus);
 
@@ -140,8 +151,11 @@ export const apiRequest = async <T = any>(path: string, options: ApiRequestOptio
   if (parseJson) {
     try {
       const raw = await response.json();
+      console.log('[apiRequest] Raw response:', raw);
       responseBody = options.noTransform ? raw : transformKeysDeep(raw, 'toCamel');
+      console.log('[apiRequest] Transformed response:', responseBody);
     } catch (error) {
+      console.error('[apiRequest] Failed to parse JSON:', error);
       if (okStatus) {
         throw new ApiError(response.status, 'Failed to parse JSON response', null);
       }
@@ -151,6 +165,7 @@ export const apiRequest = async <T = any>(path: string, options: ApiRequestOptio
   }
 
   if (!okStatus) {
+    console.error('[apiRequest] Request failed with status:', response.status);
     const errorMessage =
       typeof responseBody === 'object' && responseBody !== null && 'message' in responseBody
         ? String((responseBody as any).message)

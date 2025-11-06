@@ -43,12 +43,16 @@ const AdminCourseEdit = () => {
       showToast('Course updated', 'success');
       setBuilderOpen(false);
       setCourse(courseStore.getCourse(finalCourse.id) || null);
-    } catch (err) {
+    } catch (err: any) {
       if (err instanceof CourseValidationError) {
         showToast(`Update failed: ${err.issues.join(' • ')}`, 'error');
       } else {
         console.error('Failed to update course', err);
-        showToast('Could not update course. Please try again.', 'error');
+        // Extract detailed error message from API error
+        const errorMessage = err?.message || err?.body?.error || 'Could not update course. Please try again.';
+        const errorDetails = err?.body?.details;
+        const fullMessage = errorDetails ? `${errorMessage}: ${errorDetails}` : errorMessage;
+        showToast(fullMessage, 'error');
       }
     }
   };

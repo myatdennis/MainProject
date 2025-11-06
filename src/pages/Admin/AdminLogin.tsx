@@ -1,15 +1,18 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { useAuth } from '../../context/AuthContext';
+import { useSecureAuth } from '../../context/SecureAuthContext';
 import { Shield, Lock, Mail, Eye, EyeOff, AlertTriangle } from 'lucide-react';
+import { loginSchema, emailSchema } from '../../utils/validators';
+import { sanitizeText } from '../../utils/sanitize';
 
 const AdminLogin: React.FC = () => {
-  const { login, isAuthenticated, forgotPassword, authInitializing } = useAuth();
+  const { login, isAuthenticated, forgotPassword, authInitializing } = useSecureAuth();
   const [email, setEmail] = useState('admin@thehuddleco.com');
   const [password, setPassword] = useState('admin123');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
+  const [validationErrors, setValidationErrors] = useState<{ email?: string; password?: string }>({});
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -32,8 +35,26 @@ const AdminLogin: React.FC = () => {
     e.preventDefault();
     setIsLoading(true);
     setError('');
+    setValidationErrors({});
 
-    const result = await login(email, password, 'admin');
+    // Validate inputs
+    const validation = loginSchema.safeParse({ email, password });
+    if (!validation.success) {
+      const errors: { email?: string; password?: string } = {};
+      validation.error.errors.forEach((err) => {
+        if (err.path[0] === 'email') errors.email = err.message;
+        if (err.path[0] === 'password') errors.password = err.message;
+      });
+      setValidationErrors(errors);
+      setIsLoading(false);
+      return;
+    }
+
+    // Sanitize inputs before sending
+    const sanitizedEmail = sanitizeText(email);
+    const sanitizedPassword = sanitizeText(password);
+
+    const result = await login(sanitizedEmail, sanitizedPassword, 'admin');
     setIsLoading(false);
     if (result.success) navigate('/admin/dashboard');
     else setError(result.error || 'Authentication failed.');
@@ -41,6 +62,14 @@ const AdminLogin: React.FC = () => {
 
   const handleForgot = async () => {
     if (!email) return setError('Enter your email to reset password');
+    
+    // Validate email
+    const validation = emailSchema.safeParse(email);
+    if (!validation.success) {
+      setError(validation.error.errors[0]?.message || 'Invalid email address');
+      return;
+    }
+    
     setIsLoading(true);
     const ok = await forgotPassword(email);
     setIsLoading(false);
@@ -87,10 +116,18 @@ const AdminLogin: React.FC = () => {
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="input pl-10 pr-3"
+                  className={`input pl-10 pr-3 ${validationErrors.email ? 'border-deepred focus:ring-deepred' : ''}`}
                   placeholder="admin@thehuddleco.com"
+                  aria-invalid={!!validationErrors.email}
+                  aria-describedby={validationErrors.email ? 'email-error' : undefined}
                 />
               </div>
+              {validationErrors.email && (
+                <p id="email-error" className="mt-1 text-small text-deepred flex items-center">
+                  <AlertTriangle className="h-4 w-4 mr-1" />
+                  {validationErrors.email}
+                </p>
+              )}
             </div>
 
             <div>
@@ -106,13 +143,21 @@ const AdminLogin: React.FC = () => {
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="input pl-10 pr-10"
+                  className={`input pl-10 pr-10 ${validationErrors.password ? 'border-deepred focus:ring-deepred' : ''}`}
                   placeholder="Enter admin password"
+                  aria-invalid={!!validationErrors.password}
+                  aria-describedby={validationErrors.password ? 'password-error' : undefined}
                 />
                 <button type="button" className="absolute inset-y-0 right-0 pr-3 flex items-center" onClick={() => setShowPassword(!showPassword)}>
                   {showPassword ? <EyeOff className="h-5 w-5 text-gray hover:text-charcoal" /> : <Eye className="h-5 w-5 text-gray hover:text-charcoal" />}
                 </button>
               </div>
+              {validationErrors.password && (
+                <p id="password-error" className="mt-1 text-small text-deepred flex items-center">
+                  <AlertTriangle className="h-4 w-4 mr-1" />
+                  {validationErrors.password}
+                </p>
+              )}
             </div>
 
             <div className="bg-skyblue/10 border border-skyblue rounded-lg p-4">

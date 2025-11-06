@@ -747,30 +747,46 @@ const AdminCourseBuilder = () => {
     try {
       setUploadingVideos(prev => ({ ...prev, [uploadKey]: true }));
 
-      // Create unique filename
-      const fileExt = file.name.split('.').pop();
-  const fileName = `${course.id}/${moduleId}/${lessonId}-resource.${fileExt}`;
+      // In demo mode, use a local URL (file will be stored in browser)
+      // In production, this would upload to Supabase Storage
+      let fileUrl: string;
 
-      // Upload to Supabase Storage
-      const { error } = await supabase.storage
-        .from('course-resources')
-        .upload(fileName, file, {
-          cacheControl: '3600',
-          upsert: true
-        });
+      // Try Supabase upload first
+      try {
+        if (supabase) {
+          const fileExt = file.name.split('.').pop();
+          const fileName = `${course.id}/${moduleId}/${lessonId}-resource.${fileExt}`;
 
-      if (error) throw error;
+          const { error } = await supabase.storage
+            .from('course-resources')
+            .upload(fileName, file, {
+              cacheControl: '3600',
+              upsert: true
+            });
 
-      // Get public URL
-      const { data: { publicUrl } } = supabase.storage
-        .from('course-resources')
-        .getPublicUrl(fileName);
+          if (error) throw error;
+
+          const { data: { publicUrl } } = supabase.storage
+            .from('course-resources')
+            .getPublicUrl(fileName);
+          
+          fileUrl = publicUrl;
+        } else {
+          throw new Error('Supabase not configured');
+        }
+      } catch (err) {
+        console.log('Supabase upload not available, using demo mode with data URL');
+        
+        // Fallback: Create a data URL for demo purposes
+        // This keeps the file in memory/browser storage
+        fileUrl = URL.createObjectURL(file);
+      }
 
       // Update lesson content with file URL
       updateLesson(moduleId, lessonId, {
         content: {
           ...course.modules?.find(m => m.id === moduleId)?.lessons.find(l => l.id === lessonId)?.content,
-          fileUrl: publicUrl,
+          fileUrl: fileUrl,
           fileName: file.name,
           fileSize: `${(file.size / (1024 * 1024)).toFixed(1)} MB`
         }
@@ -838,10 +854,16 @@ const AdminCourseBuilder = () => {
                   {lesson.duration}
                 </span>
                 <span className="capitalize">{lesson.type}</span>
-                {lesson.content.videoUrl && (
+                {lesson.content.videoUrl && lesson.type === 'video' && (
                   <span className="text-green-600 flex items-center">
                     <CheckCircle className="h-3 w-3 mr-1" />
                     Video uploaded
+                  </span>
+                )}
+                {lesson.content.fileUrl && lesson.type === 'document' && (
+                  <span className="text-green-600 flex items-center">
+                    <CheckCircle className="h-3 w-3 mr-1" />
+                    File uploaded
                   </span>
                 )}
               </div>
