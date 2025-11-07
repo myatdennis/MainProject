@@ -14,17 +14,17 @@
   port = 5174
   targetPort = 5174
 
-[headers]
+[[headers]]
   for = "/index.html"
-    [headers.values]
-      Cache-Control = "no-cache"
+  [headers.values]
+    Cache-Control = "no-cache"
 
-[headers]
+[[headers]]
   for = "/*"
-    [headers.values]
-      X-Frame-Options = "SAMEORIGIN"
-      X-Content-Type-Options = "nosniff"
-      Referrer-Policy = "strict-origin-when-cross-origin"
+  [headers.values]
+    X-Frame-Options = "SAMEORIGIN"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
 
 # API proxy is intentionally omitted by default. If your backend lives on a
 # separate host, add a redirect mapping /api/* to your API, e.g.:
