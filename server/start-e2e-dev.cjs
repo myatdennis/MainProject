@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /*
-  Start both the API (Express) server on 8787 and the Vite dev server on 5174.
+  Start both the API (Express) server on 8888 and the Vite dev server on 5174.
   Keep the parent process alive while both children are running.
 */
 const { spawn } = require('node:child_process');
@@ -37,13 +37,14 @@ function spawnProc(cmd, args, opts = {}) {
 
 let api;
 // Start API server (express) in E2E mode if not already running
-waitForUrl('http://localhost:8787/api/health', 2000)
+// NOTE: We use port 8888 to match Vite's proxy target in vite.config.ts
+waitForUrl('http://localhost:8888/api/health', 2000)
   .then(() => {
-    console.log('[e2e-dev] API already running on 8787');
+    console.log('[e2e-dev] API already running on 8888');
   })
   .catch(() => {
     api = spawnProc('node', ['server/index.js'], {
-      env: { ...process.env, E2E_TEST_MODE: 'true', PORT: '8787' },
+      env: { ...process.env, E2E_TEST_MODE: 'true', PORT: '8888' },
     });
   });
 

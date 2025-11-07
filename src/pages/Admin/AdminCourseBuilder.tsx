@@ -6,7 +6,7 @@ import { computeCourseDiff } from '../../utils/courseDiff';
 import type { NormalizedCourse } from '../../utils/courseNormalization';
 import { mergePersistedCourse, formatMinutesLabel } from '../../utils/adminCourseMerge';
 import type { Course, Module, Lesson } from '../../types/courseTypes';
-import { supabase } from '../../lib/supabase';
+import { getSupabase } from '../../lib/supabase';
 import { getVideoEmbedUrl } from '../../utils/videoUtils';
 import { 
   ArrowLeft, 
@@ -702,30 +702,44 @@ const AdminCourseBuilder = () => {
       const fileExt = file.name.split('.').pop();
   const fileName = `${course.id}/${moduleId}/${lessonId}.${fileExt}`;
 
-      // Upload to Supabase Storage
-      const { error } = await supabase.storage
-        .from('course-videos')
-        .upload(fileName, file, {
-          cacheControl: '3600',
-          upsert: true
+      // Try to upload to Supabase Storage if available
+      const supabase = await getSupabase();
+      if (supabase) {
+        const { error } = await supabase.storage
+          .from('course-videos')
+          .upload(fileName, file, {
+            cacheControl: '3600',
+            upsert: true
+          });
+
+        if (error) throw error;
+
+        // Get public URL
+        const { data: { publicUrl } } = supabase.storage
+          .from('course-videos')
+          .getPublicUrl(fileName);
+
+        // Update lesson content with video URL
+        updateLesson(moduleId, lessonId, {
+          content: {
+            ...course.modules?.find(m => m.id === moduleId)?.lessons.find(l => l.id === lessonId)?.content,
+            videoUrl: publicUrl,
+            fileName: file.name,
+            fileSize: `${(file.size / (1024 * 1024)).toFixed(1)} MB`
+          }
         });
-
-      if (error) throw error;
-
-      // Get public URL
-      const { data: { publicUrl } } = supabase.storage
-        .from('course-videos')
-        .getPublicUrl(fileName);
-
-      // Update lesson content with video URL
-      updateLesson(moduleId, lessonId, {
-        content: {
-          ...course.modules?.find(m => m.id === moduleId)?.lessons.find(l => l.id === lessonId)?.content,
-          videoUrl: publicUrl,
-          fileName: file.name,
-          fileSize: `${(file.size / (1024 * 1024)).toFixed(1)} MB`
-        }
-      });
+      } else {
+        // Fallback: Use a temporary object URL in demo mode
+        const objectUrl = URL.createObjectURL(file);
+        updateLesson(moduleId, lessonId, {
+          content: {
+            ...course.modules?.find(m => m.id === moduleId)?.lessons.find(l => l.id === lessonId)?.content,
+            videoUrl: objectUrl,
+            fileName: file.name,
+            fileSize: `${(file.size / (1024 * 1024)).toFixed(1)} MB`
+          }
+        });
+      }
 
       setUploadProgress(prev => ({ ...prev, [uploadKey]: 100 }));
       
@@ -753,6 +767,7 @@ const AdminCourseBuilder = () => {
 
       // Try Supabase upload first
       try {
+        const supabase = await getSupabase();
         if (supabase) {
           const fileExt = file.name.split('.').pop();
           const fileName = `${course.id}/${moduleId}/${lessonId}-resource.${fileExt}`;

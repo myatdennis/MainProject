@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useRef } from 'react';
-import { supabase } from '../lib/supabase';
+import { getSupabase, hasSupabaseConfig } from '../lib/supabase';
 import toast from 'react-hot-toast';
 
 export interface RealtimeEvent {
@@ -27,6 +27,7 @@ export const useRealtimeSync = (options: UseRealtimeSyncOptions = {}) => {
   } = options;
 
   const subscriptionsRef = useRef<any[]>([]);
+  const supabaseRef = useRef<any>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout>();
   const reconnectAttemptsRef = useRef(0);
 
@@ -69,23 +70,29 @@ export const useRealtimeSync = (options: UseRealtimeSyncOptions = {}) => {
   }, [onEvent, userId]);
 
   const connect = useCallback(async () => {
-    if (!enabled || !supabase) {
-      console.log('[RealtimeSync] Connection disabled or Supabase not available');
+    if (!enabled || !hasSupabaseConfig) {
+      console.log('[RealtimeSync] Connection disabled or Supabase not configured');
       return;
     }
 
     try {
       console.log('[RealtimeSync] Establishing realtime connections...');
+      const client = await getSupabase();
+      if (!client) {
+        console.log('[RealtimeSync] Supabase client unavailable (lazy load failed)');
+        return;
+      }
+      supabaseRef.current = client;
       
       // Clear any existing subscriptions
       subscriptionsRef.current.forEach(sub => {
-        supabase.removeChannel(sub);
+        supabaseRef.current?.removeChannel(sub);
       });
       subscriptionsRef.current = [];
 
       // Subscribe to each channel
       for (const channelName of channels) {
-        const channel = supabase.channel(channelName)
+        const channel = supabaseRef.current.channel(channelName)
           .on('postgres_changes', 
             { 
               event: '*', 
@@ -164,7 +171,7 @@ export const useRealtimeSync = (options: UseRealtimeSyncOptions = {}) => {
     }
     
     subscriptionsRef.current.forEach(sub => {
-      supabase?.removeChannel(sub);
+      supabaseRef.current?.removeChannel(sub);
     });
     subscriptionsRef.current = [];
     
@@ -174,7 +181,7 @@ export const useRealtimeSync = (options: UseRealtimeSyncOptions = {}) => {
   }, []);
 
   const broadcastUpdate = useCallback(async (eventType: string, data: any) => {
-    if (!supabase || subscriptionsRef.current.length === 0) {
+    if (!supabaseRef.current || subscriptionsRef.current.length === 0) {
       console.warn('[RealtimeSync] Cannot broadcast - no active connections');
       return;
     }

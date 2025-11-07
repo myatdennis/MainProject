@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { supabase } from '../lib/supabase';
+import { getSupabase, hasSupabaseConfig } from '../lib/supabase';
 import { useRealtimeSync, RealtimeEvent } from './useRealtimeSync';
 import { useAutoSaveProgress } from './useAutoSaveProgress';
 import { useOfflineProgressQueue } from './useOfflineProgressQueue';
@@ -119,7 +119,13 @@ export const useEnhancedCourseProgress = (courseId: string, options: UseCoursePr
         return;
       }
 
-      // Try to get current user
+      // Try to get current user lazily
+      const supabase = await getSupabase();
+      if (!supabase) {
+        console.log('[CourseProgress] Supabase client unavailable despite env vars');
+        setLoading(false);
+        return;
+      }
       const { data: { user } } = await supabase.auth.getUser();
       const currentUserId = user?.id || userId;
 

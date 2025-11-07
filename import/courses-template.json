@@ -1,0 +1,71 @@
+{
+  "courses": [
+    {
+      "id": "leadership-foundations",
+      "slug": "leadership-foundations",
+      "title": "Leadership Foundations",
+      "description": "Core principles and practices of effective, inclusive leadership.",
+      "status": "draft",
+      "thumbnail": "https://example.com/images/leadership.jpg",
+      "difficulty": "Beginner",
+      "estimatedDuration": 5400,
+      "tags": ["leadership", "management", "inclusion"],
+      "keyTakeaways": [
+        "Understand inclusive leadership mindset",
+        "Build psychological safety",
+        "Develop active listening skills"
+      ],
+      "modules": [
+        {
+          "id": "lf-module-1",
+          "title": "Introduction",
+          "description": "Overview and orientation",
+          "order": 1,
+          "lessons": [
+            {
+              "id": "lf-lesson-video-1",
+              "type": "video",
+              "title": "Welcome & Course Overview",
+              "duration": "5 min",
+              "content": {
+                "videoUrl": "https://cdn.example.com/videos/welcome.mp4",
+                "transcript": "Transcript text..."
+              },
+              "order": 1
+            },
+            {
+              "type": "quiz",
+              "title": "Foundational Concepts Quiz",
+              "duration": "10 min",
+              "content": {
+                "questions": [
+                  {
+                    "id": "q1",
+                    "text": "What is the first step in demonstrating empathy?",
+                    "options": ["Offering solutions", "Active listening", "Sharing your experience", "Giving advice"],
+                    "correctAnswerIndex": 1,
+                    "explanation": "Active listening builds understanding."
+                  }
+                ],
+                "passingScore": 80,
+                "allowRetakes": true,
+                "showCorrectAnswers": true
+              },
+              "order": 2
+            }
+          ],
+          "resources": [
+            {
+              "id": "lf-resource-worksheet",
+              "title": "Leadership Reflection Worksheet",
+              "type": "pdf",
+              "size": "1.2 MB",
+              "downloadUrl": "https://cdn.example.com/docs/reflection.pdf",
+              "downloadable": true
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

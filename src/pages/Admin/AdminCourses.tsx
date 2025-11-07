@@ -54,6 +54,28 @@ const AdminCourses = () => {
   // Get courses from store (re-read when version changes)
   const courses = useMemo(() => courseStore.getAllCourses(), [version]);
 
+  // Ensure course store refreshes on landing (always fetch & merge latest)
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        if (typeof (courseStore as any).init === 'function') {
+          setLoading(true);
+          await (courseStore as any).init();
+          if (!active) return;
+          setVersion((v) => v + 1);
+        }
+      } catch (err) {
+        console.warn('[AdminCourses] Failed to initialize course store:', err);
+      } finally {
+        if (active) setLoading(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
   const persistCourse = async (inputCourse: Course, statusOverride?: 'draft' | 'published') => {
     const prepared: Course = {
       ...inputCourse,
@@ -339,20 +361,7 @@ const AdminCourses = () => {
   };
 
   const handleImportCourses = () => {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.json,.csv';
-    input.onchange = (e: any) => {
-      const file = e.target?.files?.[0];
-      if (file) {
-        showToast(`Importing ${file.name}...`, 'info');
-        setTimeout(() => {
-          showToast('Course import completed successfully!', 'success');
-          refresh();
-        }, 3000);
-      }
-    };
-    input.click();
+    navigate('/admin/courses/import');
   };
 
   const handleExportCourses = async () => {

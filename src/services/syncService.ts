@@ -1,6 +1,6 @@
 import { courseStore } from '../store/courseStore';
 import { Course } from '../types/courseTypes';
-import { supabase } from '../lib/supabase';
+import { getSupabase } from '../lib/supabase';
 import type { CourseAssignment } from '../types/assignment';
 import { CourseValidationError } from './courseService';
 import { wsClient } from './wsClient';
@@ -104,7 +104,7 @@ class SyncService {
   }
 
   // Initialize real-time Supabase synchronization
-  private initializeRealtimeSync() {
+  private async initializeRealtimeSync() {
     // Only set up real-time sync if Supabase is configured
     if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
       console.log('Supabase not configured - using polling sync only');
@@ -112,6 +112,11 @@ class SyncService {
     }
 
     try {
+      const supabase = await getSupabase();
+      if (!supabase) {
+        console.log('Supabase client not available for realtime sync');
+        return;
+      }
       // Listen for course changes
       supabase
         .channel('course_changes')
@@ -135,7 +140,7 @@ class SyncService {
         .subscribe();
 
       // Listen for module changes
-      supabase
+  supabase
         .channel('module_changes')
         .on('postgres_changes', {
           event: '*',
@@ -154,7 +159,7 @@ class SyncService {
         .subscribe();
 
       // Listen for lesson changes  
-      supabase
+  supabase
         .channel('lesson_changes')
         .on('postgres_changes', {
           event: '*',
@@ -179,7 +184,7 @@ class SyncService {
         .subscribe();
 
       // Listen for assignment changes
-      supabase
+  supabase
         .channel('assignment_changes')
         .on('postgres_changes', {
           event: '*',
@@ -202,7 +207,7 @@ class SyncService {
         .subscribe();
 
       // Listen for user progress changes
-      supabase
+  supabase
         .channel('progress_changes')
         .on('postgres_changes', {
           event: '*',
@@ -231,6 +236,8 @@ class SyncService {
     if (!moduleId) return null;
     
     try {
+      const supabase = await getSupabase();
+      if (!supabase) return null;
       const { data } = await supabase
         .from('modules')
         .select('course_id')
@@ -271,6 +278,8 @@ class SyncService {
       
       // If Supabase is configured, fetch from database
       if (import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY) {
+        const supabase = await getSupabase();
+        if (!supabase) throw new Error('Supabase unavailable');
         const { data: course, error } = await supabase
           .from('courses')
           .select(`

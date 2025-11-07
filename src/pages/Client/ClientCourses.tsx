@@ -40,17 +40,17 @@ const ClientCourses = () => {
   const [storeRefresh, setStoreRefresh] = useState(0);
   const [progressRefreshToken, setProgressRefreshToken] = useState(0);
   // Normalize courses (convert modules to chapters if needed)
-  const normalizedCourses = courseStore
+  const normalizedCoursesAll = courseStore
     .getAllCourses()
     .map((course) => normalizeCourse(course));
   
   console.log('[ClientCourses] courseStore.getAllCourses():', courseStore.getAllCourses());
-  console.log('[ClientCourses] normalizedCourses:', normalizedCourses);
+  console.log('[ClientCourses] normalizedCourses(all):', normalizedCoursesAll);
 
   useEffect(() => {
     const ensureStore = async () => {
       try {
-        if (courseStore.getAllCourses().length === 0 && typeof (courseStore as any).init === 'function') {
+        if (typeof (courseStore as any).init === 'function') {
           await (courseStore as any).init();
           setStoreRefresh((v) => v + 1);
         }
@@ -90,7 +90,7 @@ const ClientCourses = () => {
     return () => {
       isMounted = false;
     };
-  }, [normalizedCourses, learnerId]);
+  }, [normalizedCoursesAll, learnerId]);
 
   useEffect(() => {
     let isMounted = true;
@@ -125,6 +125,13 @@ const ClientCourses = () => {
       unsubscribeDelete?.();
     };
   }, [learnerId]);
+
+  // Learners see published + assigned only
+  const assignedSet = useMemo(() => new Set(assignments.map((a) => a.courseId)), [assignments]);
+  const normalizedCourses = useMemo(
+    () => normalizedCoursesAll.filter((c) => c.status === 'published' || assignedSet.has(c.id)),
+    [normalizedCoursesAll, assignedSet],
+  );
 
   const courseSnapshots = useMemo(() => normalizedCourses.map((course) => {
     const stored = loadStoredCourseProgress(course.slug);

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
-import { supabase } from '../lib/supabase';
+import { getSupabase, hasSupabaseConfig } from '../lib/supabase';
 import toast from 'react-hot-toast';
 
 interface ProgressData {
@@ -117,8 +117,13 @@ export const useAutoSaveProgress = (options: UseAutoSaveOptions = {}) => {
   }, [userId]);
 
   const saveToDatabase = useCallback(async (data: ProgressData): Promise<boolean> => {
+    if (!hasSupabaseConfig) {
+      console.warn('[AutoSave] Supabase not configured; skipping remote save');
+      return true; // Treat as success in demo mode
+    }
+    const supabase = await getSupabase();
     if (!supabase) {
-      console.warn('[AutoSave] Supabase not available');
+      console.warn('[AutoSave] Supabase client unavailable');
       return false;
     }
 

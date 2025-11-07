@@ -74,6 +74,29 @@ const LMSCourses = () => {
       });
   }, [progressRefreshToken]);
 
+  // Ensure course store refreshes on landing (always fetch & merge latest)
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        if (typeof (courseStore as any).init === 'function') {
+          setIsSyncing(true);
+          await (courseStore as any).init();
+          if (!active) return;
+          // Trigger recompute
+          setProgressRefreshToken((t) => t + 1);
+        }
+      } catch (err) {
+        console.warn('[LMSCourses] Failed to initialize course store:', err);
+      } finally {
+        if (active) setIsSyncing(false);
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
   useEffect(() => {
     let isMounted = true;
     const syncProgress = async () => {

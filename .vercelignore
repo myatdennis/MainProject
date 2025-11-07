@@ -1,0 +1,8 @@
+# Ignore local logs and temp files
+server.log
+server_debug.log
+server_bg.log
+*.log
+.tmp/
+.DS_Store
+node_modules/.cache/

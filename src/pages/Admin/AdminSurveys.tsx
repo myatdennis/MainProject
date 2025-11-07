@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { supabase } from '../../lib/supabase';
+import { getSupabase, hasSupabaseConfig } from '../../lib/supabase';
 import { Link, useNavigate } from 'react-router-dom';
 import { 
   Plus, 
@@ -174,9 +174,12 @@ const AdminSurveys = () => {
       assignedOrgs: organizations.filter(o => selectedOrgIds.includes(o.id)).map(o => o.name)
     } : s));
 
-    // Persist to Supabase (table: survey_assignments)
+    // Persist to Supabase (table: survey_assignments) if configured
     (async () => {
       try {
+        if (!hasSupabaseConfig) return;
+        const supabase = await getSupabase();
+        if (!supabase) return;
         const payload = {
           survey_id: assignTargetSurveyId,
           organization_ids: selectedOrgIds,

@@ -3,7 +3,7 @@
  * Implements conflict resolution, intelligent caching, and real-time analytics
  */
 
-import { supabase } from '../lib/supabase';
+import { getSupabase, hasSupabaseConfig } from '../lib/supabase';
 import { EventEmitter } from 'events';
 
 export interface SyncConflict {
@@ -77,6 +77,11 @@ class EnhancedSyncService extends EventEmitter {
     const startTime = Date.now();
 
     try {
+      const supabase = await getSupabase();
+      if (!supabase) {
+        if (hasSupabaseConfig) this.emit('syncError', { table: tableName, error: new Error('Supabase unavailable') });
+        return;
+      }
       const subscription = supabase
         .channel(`enhanced_${tableName}_changes`)
         .on(
@@ -273,6 +278,8 @@ class EnhancedSyncService extends EventEmitter {
     const results = [];
 
     try {
+      const supabase = await getSupabase();
+      if (!supabase) throw new Error('Supabase unavailable');
       for (const op of operations) {
         let result;
         switch (op.operation) {

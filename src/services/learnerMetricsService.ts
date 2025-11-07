@@ -1,6 +1,6 @@
-import { supabase } from '../lib/supabase';
+import { getSupabase, hasSupabaseConfig } from '../lib/supabase';
 
-const isSupabaseReady = Boolean(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY);
+const isSupabaseReady = hasSupabaseConfig;
 
 export interface PersistedGoal {
   id: string;
@@ -50,6 +50,8 @@ export const learnerMetricsService = {
   async fetchGoals(userId: string): Promise<PersistedGoal[]> {
     if (!isSupabaseReady || !userId) return [];
     try {
+      const supabase = await getSupabase();
+      if (!supabase) return [];
       const { data, error } = await supabase
         .from('user_learning_goals')
         .select('*')
@@ -78,6 +80,8 @@ export const learnerMetricsService = {
     }));
 
     try {
+      const supabase = await getSupabase();
+      if (!supabase) return;
       const { error } = await supabase.from('user_learning_goals').upsert(payload);
       if (error) throw error;
     } catch (error) {
@@ -88,6 +92,8 @@ export const learnerMetricsService = {
   async fetchAchievements(userId: string): Promise<PersistedAchievement[]> {
     if (!isSupabaseReady || !userId) return [];
     try {
+      const supabase = await getSupabase();
+      if (!supabase) return [];
       const { data, error } = await supabase
         .from('user_achievements')
         .select('*')
@@ -116,6 +122,8 @@ export const learnerMetricsService = {
     }));
 
     try {
+      const supabase = await getSupabase();
+      if (!supabase) return;
       const { error } = await supabase.from('user_achievements').upsert(payload);
       if (error) throw error;
     } catch (error) {

@@ -1,10 +1,9 @@
-import { supabase } from '../lib/supabase';
+import { getSupabase, hasSupabaseConfig } from '../lib/supabase';
 import { syncService } from '../dal/sync';
 import type { CourseAssignment, CourseAssignmentStatus } from '../types/assignment';
 
 const STORAGE_KEY = 'huddle_course_assignments_v1';
-const SUPABASE_READY =
-  Boolean(import.meta.env.VITE_SUPABASE_URL) && Boolean(import.meta.env.VITE_SUPABASE_ANON_KEY);
+const SUPABASE_READY = hasSupabaseConfig;
 
 type SupabaseAssignmentRow = {
   id: string;
@@ -146,6 +145,8 @@ export const addAssignments = async (
         updated_at: now,
       }));
 
+      const supabase = await getSupabase();
+      if (!supabase) throw new Error('Supabase unavailable');
       const { data, error } = await supabase
         .from('course_assignments')
         .upsert(payload, { onConflict: 'course_id,user_id' })
@@ -199,6 +200,8 @@ export const getAssignmentsForUser = async (userId: string): Promise<CourseAssig
 
   return withSupabaseFallback<CourseAssignment[]>(
     async () => {
+      const supabase = await getSupabase();
+      if (!supabase) throw new Error('Supabase unavailable');
       const { data, error } = await supabase
         .from('course_assignments')
         .select('*')
@@ -211,7 +214,35 @@ export const getAssignmentsForUser = async (userId: string): Promise<CourseAssig
 
       return (data ?? []).map(mapSupabaseAssignment);
     },
-    () => loadLocalAssignments().filter((record) => record.userId === normalized)
+    async () => {
+      // Prefer server-side assignments in demo/dev mode over localStorage
+      try {
+        const params = new URLSearchParams({ user_id: normalized });
+        const res = await fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/client/assignments?${params.toString()}`, {
+          method: 'GET',
+          headers: { 'Content-Type': 'application/json' },
+        });
+        if (res.ok) {
+          const json = await res.json();
+          const rows = Array.isArray(json?.data) ? json.data : [];
+          return rows.map((row: any) => mapSupabaseAssignment({
+            id: row.id,
+            course_id: row.course_id,
+            user_id: (row.user_id || '').toLowerCase(),
+            status: row.status ?? 'assigned',
+            progress: row.progress ?? 0,
+            due_date: row.due_at ?? row.due_date ?? null,
+            note: row.note ?? null,
+            assigned_by: row.assigned_by ?? null,
+            created_at: row.created_at ?? new Date().toISOString(),
+            updated_at: row.updated_at ?? new Date().toISOString(),
+          } as any));
+        }
+      } catch (e) {
+        // fall back to local if server unavailable
+      }
+      return loadLocalAssignments().filter((record) => record.userId === normalized);
+    }
   );
 };
 
@@ -223,6 +254,8 @@ export const getAssignment = async (
 
   return withSupabaseFallback<CourseAssignment | undefined>(
     async () => {
+      const supabase = await getSupabase();
+      if (!supabase) throw new Error('Supabase unavailable');
       const { data, error } = await supabase
         .from('course_assignments')
         .select('*')
@@ -255,6 +288,8 @@ export const updateAssignmentProgress = async (
 
   return withSupabaseFallback<CourseAssignment | undefined>(
     async () => {
+      const supabase = await getSupabase();
+      if (!supabase) throw new Error('Supabase unavailable');
       const { data, error } = await supabase
         .from('course_assignments')
         .update({

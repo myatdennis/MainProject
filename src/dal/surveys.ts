@@ -1,4 +1,4 @@
-import { supabase } from '../lib/supabase';
+import { getSupabase, hasSupabaseConfig } from '../lib/supabase';
 import { request } from './http';
 import type { Survey } from '../types/survey';
 
@@ -39,6 +39,9 @@ export interface SurveyAssignment {
 
 export async function getAssignments(surveyId: string): Promise<SurveyAssignment | null> {
   try {
+    if (!hasSupabaseConfig) return null;
+    const supabase = await getSupabase();
+    if (!supabase) return null;
     const { data, error } = await supabase
       .from('survey_assignments')
       .select('*')
@@ -58,6 +61,9 @@ export async function getAssignments(surveyId: string): Promise<SurveyAssignment
 
 export async function saveAssignments(surveyId: string, organizationIds: string[]) {
   try {
+    if (!hasSupabaseConfig) return null;
+    const supabase = await getSupabase();
+    if (!supabase) return null;
     const payload = {
       survey_id: surveyId,
       organization_ids: organizationIds,

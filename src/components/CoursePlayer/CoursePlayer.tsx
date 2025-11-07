@@ -1560,6 +1560,51 @@ const LessonContent: React.FC<{
     );
   }
 
+  if (lessonType === 'scenario') {
+    const scenarioText = lesson.content.scenarioText || lesson.content.textContent || lesson.description || '';
+    const options = lesson.content.options || [];
+    
+    return (
+      <div className="space-y-6">
+        <Card className="p-6">
+          <h3 className="font-heading text-xl font-bold text-charcoal mb-4">
+            Scenario: {lesson.title}
+          </h3>
+          
+          {scenarioText && (
+            <div className="prose max-w-none mb-6 p-4 bg-sky-50 rounded-lg border border-sky-100">
+              <div dangerouslySetInnerHTML={{ __html: scenarioText }} />
+            </div>
+          )}
+          
+          {options.length > 0 && (
+            <div className="space-y-4">
+              <h4 className="font-semibold text-charcoal">What would you do?</h4>
+              {options.map((option: any, index: number) => (
+                <Card 
+                  key={index} 
+                  tone={option.isCorrect ? 'success' : 'muted'}
+                  className="p-4 cursor-pointer hover:border-skyblue transition-colors"
+                >
+                  <p className="font-medium text-charcoal mb-2">{option.text}</p>
+                  {option.feedback && (
+                    <p className="text-sm text-slate/70 italic">{option.feedback}</p>
+                  )}
+                </Card>
+              ))}
+            </div>
+          )}
+          
+          <div className="mt-6 flex justify-end">
+            <Button onClick={onComplete} trailingIcon={<CheckCircle className="h-4 w-4" />}>
+              Complete Scenario
+            </Button>
+          </div>
+        </Card>
+      </div>
+    );
+  }
+
   if (lessonType === 'resource' || lessonType === 'document') {
     const resource: any = lesson.content;
     // Try multiple possible field names for the download URL

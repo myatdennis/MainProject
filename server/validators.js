@@ -105,6 +105,7 @@ export const courseUpsertSchema = z.object({
       version: z.number().int().positive().optional(),
       org_id: z.string().min(1).nullable().optional(),
       organizationId: z.string().min(1).nullable().optional(),
+      external_id: z.string().min(1).optional(),
       meta: z.record(z.any()).optional(),
     })
     .refine((val) => !!(val.title || val.name), { message: 'Course title is required' }),

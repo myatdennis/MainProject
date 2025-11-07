@@ -1,0 +1,4 @@
+The Huddle Co - DEI Foundations Workbook (placeholder)
+
+This is a placeholder static file served from /resources/dei-foundations-workbook.txt.
+Replace with your actual PDF/DOCX as needed.

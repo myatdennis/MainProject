@@ -127,3 +127,25 @@ src/
 - Vite dev server is configured to proxy /api and /ws to the API server. Currently, proxy points to http://localhost:8888 to match the alternate port. If you switch the API back to 8787, update `vite.config.ts` proxy targets accordingly.
 - When Supabase is not configured, the server uses a safe in-memory fallback by default in non-production (DEV_FALLBACK). To disable it, set DEV_FALLBACK=false. For test runs, you can also use E2E_TEST_MODE=true.
 
+## Scripts & API helpers
+
+- Import courses:
+    - `node scripts/import_courses.js import/courses-template.json`
+    - Flags:
+        - `--publish` — publish after import
+        - `--dedupe` | `--upsert-by=slug` — upsert by slug (reuse existing id)
+        - `--prune-duplicates` | `--prune` — after import, delete any other courses with the same slug
+        - `--dry-run` — preview actions without making changes
+        - `--wait` `--wait-timeout <ms>` — wait for `/api/health` before running
+
+- Prune duplicates (standalone):
+    - `node scripts/prune_duplicates.js --keep=first|last [--dry-run]`
+
+- API health:
+    - `GET /api/health`
+    - CSRF token for scripts: `GET /api/auth/csrf`
+
+- Server memory & demo data:
+    - Guard large demo file with `DEMO_DATA_MAX_BYTES` (default 25MB)
+    - Optional memory logs with `LOG_MEMORY=true`
+

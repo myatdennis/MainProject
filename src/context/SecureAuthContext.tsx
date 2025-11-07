@@ -18,12 +18,16 @@ import { loginSchema, emailSchema } from '../utils/validators';
 import axios from 'axios';
 
 // Configure axios with backend URL
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8787/api';
+// Prefer Vite proxy ("/api") by default so local dev works without hardcoding ports
+const API_URL = import.meta.env.VITE_API_URL || '/api';
 const api = axios.create({
   baseURL: API_URL,
   headers: {
     'Content-Type': 'application/json',
   },
+  // Allow cookies/CSRF if backend uses them
+  withCredentials: true,
+  timeout: 30000,
 });
 
 // ============================================================================

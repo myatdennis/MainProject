@@ -1,6 +1,6 @@
 export type Visibility = 'global' | 'org' | 'user';
 
-import { supabase } from '../lib/supabase';
+import { getSupabase } from '../lib/supabase';
 import apiRequest from '../utils/apiClient';
 
 export type DocumentMeta = {
@@ -123,15 +123,18 @@ export const addDocument = async (meta: Omit<DocumentMeta,'id'|'createdAt'>, fil
   let url = meta.url;
 
   // If a File is provided and supabase storage is available, upload it to 'documents' bucket
-  if (file && (supabase as any)?.storage) {
+  if (file) {
     try {
-      const path = `${docId}/${file.name}`;
-      const { error: uploadError } = await supabase.storage.from('documents').upload(path, file, { upsert: true });
-      if (uploadError) {
-        console.warn('Storage upload failed, falling back to data URL:', uploadError.message || uploadError);
-      } else {
-        const { data } = supabase.storage.from('documents').getPublicUrl(path);
-        url = data?.publicUrl || url;
+      const supabase = await getSupabase();
+      if (supabase && (supabase as any).storage) {
+        const path = `${docId}/${file.name}`;
+        const { error: uploadError } = await supabase.storage.from('documents').upload(path, file, { upsert: true });
+        if (uploadError) {
+          console.warn('Storage upload failed, falling back to data URL:', uploadError.message || uploadError);
+        } else {
+          const { data } = supabase.storage.from('documents').getPublicUrl(path);
+          url = data?.publicUrl || url;
+        }
       }
     } catch (err) {
       console.error('Upload exception:', err);

@@ -1,5 +1,5 @@
 import { request } from './http';
-import { supabase } from '../lib/supabase';
+import { getSupabase } from '../lib/supabase';
 
 export type Visibility = 'global' | 'org' | 'user';
 
@@ -121,17 +121,20 @@ export const addDocument = async (
   let url = meta.url;
 
   // Try Supabase storage if configured
-  if (file && (supabase as any)?.storage) {
+  if (file) {
     try {
-      const path = `${docId}/${file.name}`;
-      const { error: uploadError } = await supabase.storage
-        .from('documents')
-        .upload(path, file, { upsert: true });
-      if (!uploadError) {
-        const { data } = supabase.storage.from('documents').getPublicUrl(path);
-        url = data?.publicUrl || url;
-      } else {
-        console.warn('Storage upload failed, falling back to data URL:', uploadError);
+      const supabase = await getSupabase();
+      if (supabase && (supabase as any).storage) {
+        const path = `${docId}/${file.name}`;
+        const { error: uploadError } = await supabase.storage
+          .from('documents')
+          .upload(path, file, { upsert: true });
+        if (!uploadError) {
+          const { data } = supabase.storage.from('documents').getPublicUrl(path);
+          url = data?.publicUrl || url;
+        } else {
+          console.warn('Storage upload failed, falling back to data URL:', uploadError);
+        }
       }
     } catch (err) {
       console.error('Upload exception:', err);

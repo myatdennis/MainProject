@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:vercel": "vercel dev",
     "create-demo-users": "node scripts/create_demo_users.js",
     "build": "vite build",
     "lint": "eslint .",
@@ -14,8 +15,12 @@
     "test:e2e": "playwright test -c tests/e2e/playwright.config.ts",
     "test:coverage": "vitest run --coverage",
     "preview": "vite preview",
+  "deploy:vercel": "vercel",
+  "deploy:vercel:prod": "vercel --prod",
     "start:server": "node server/index.js",
     "start:server:e2e": "E2E_TEST_MODE=true node server/index.js",
+    "import:courses": "node scripts/import_courses.js import/courses-template.json",
+    "import:courses:publish": "node scripts/import_courses.js import/courses-template.json --publish",
     "audit": "npm audit --audit-level moderate",
     "audit:fix": "npm audit fix",
     "analyze": "npx vite-bundle-analyzer"

@@ -1,4 +1,4 @@
-import { supabase, hasSupabaseConfig } from '../lib/supabase';
+import { getSupabase, hasSupabaseConfig } from '../lib/supabase';
 import { getUserSession, getAccessToken } from '../lib/secureStorage';
 
 export const buildAuthHeaders = async (): Promise<Record<string, string>> => {
@@ -67,14 +67,19 @@ export const buildAuthHeaders = async (): Promise<Record<string, string>> => {
 
   if (hasSupabaseConfig) {
     try {
-      const { data } = await supabase.auth.getSession();
-      const userId = data?.session?.user?.id;
-      if (userId) {
-        headers['X-User-Id'] = userId;
-      }
-      const accessToken = data?.session?.access_token;
-      if (accessToken) {
-        headers['Authorization'] = `Bearer ${accessToken}`;
+      const supabase = await getSupabase();
+      if (supabase) {
+        const { data } = await supabase.auth.getSession();
+        const userId = data?.session?.user?.id;
+        if (userId) {
+          headers['X-User-Id'] = userId;
+        }
+        const accessToken = data?.session?.access_token;
+        if (accessToken) {
+          headers['Authorization'] = `Bearer ${accessToken}`;
+        }
+      } else {
+        console.log('[buildAuthHeaders] Supabase configured but client not available');
       }
     } catch (error) {
       console.warn('[buildAuthHeaders] Failed to resolve Supabase session:', error);

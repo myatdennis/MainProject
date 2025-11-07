@@ -1,0 +1,46 @@
+{
+  "version": 2,
+  "buildCommand": "vite build",
+  "outputDirectory": "dist",
+  "framework": "vite",
+  "devCommand": "vite",
+  "builds": [
+    {
+      "src": "server/index.js",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "package.json",
+      "use": "@vercel/static-build",
+      "config": {
+        "distDir": "dist"
+      }
+    }
+  ],
+  "routes": [
+    { "src": "/api/(.*)", "dest": "server/index.js" },
+    { "src": "/ws", "dest": "server/index.js" },
+  { "src": "/(.*)\\.js", "dest": "/dist/$1.js" },
+  { "src": "/(.*)\\.css", "dest": "/dist/$1.css" },
+  { "src": "/(.*)\\.svg", "dest": "/dist/$1.svg" },
+  { "src": "/(.*)\\.png", "dest": "/dist/$1.png" },
+  { "src": "/(.*)\\.jpg", "dest": "/dist/$1.jpg" },
+  { "src": "/(.*)\\.webp", "dest": "/dist/$1.webp" },
+    { "src": "/assets/(.*)", "dest": "/dist/assets/$1" },
+    { "src": "/(.*)", "dest": "/dist/index.html" }
+  ],
+  "headers": [
+    {
+      "source": "/(.*)",
+      "headers": [
+        { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
+        { "key": "X-Content-Type-Options", "value": "nosniff" },
+        { "key": "X-Frame-Options", "value": "SAMEORIGIN" },
+        { "key": "Strict-Transport-Security", "value": "max-age=63072000; includeSubDomains; preload" }
+      ]
+    }
+  ],
+  "env": {
+    "NODE_ENV": "production"
+  }
+}

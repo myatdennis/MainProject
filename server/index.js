@@ -22,7 +22,7 @@ import {
 // Import auth routes and middleware
 import authRoutes from './routes/auth.js';
 import { apiLimiter, securityHeaders } from './middleware/auth.js';
-import { setDoubleSubmitCSRF } from './middleware/csrf.js';
+import { setDoubleSubmitCSRF, getCSRFToken } from './middleware/csrf.js';
 
 // Resolve __dirname in ESM
 const __filename = fileURLToPath(import.meta.url);
@@ -30,11 +30,20 @@ const __dirname = path.dirname(__filename);
 
 // Persistent storage file for demo mode
 const STORAGE_FILE = path.join(__dirname, 'demo-data.json');
+// Safety guard to avoid loading extremely large demo files that could trigger OOM (exit 137)
+const MAX_DEMO_FILE_BYTES = parseInt(process.env.DEMO_DATA_MAX_BYTES || '', 10) || 25 * 1024 * 1024; // 25MB default
 
 // Helper functions for persistent storage
 function loadPersistedData() {
   try {
     if (fs.existsSync(STORAGE_FILE)) {
+      try {
+        const stat = fs.statSync(STORAGE_FILE);
+        if (stat.size > MAX_DEMO_FILE_BYTES) {
+          console.warn(`demo-data.json is too large (${(stat.size/1e6).toFixed(1)}MB). Skipping load to prevent high memory usage. Set DEMO_DATA_MAX_BYTES to adjust.`);
+          return { courses: [] };
+        }
+      } catch {}
       const data = fs.readFileSync(STORAGE_FILE, 'utf8');
       return JSON.parse(data);
     }
@@ -59,7 +68,9 @@ function savePersistedData(data) {
 }
 
 const app = express();
-const port = process.env.PORT || 8787;
+// Prefer explicit PORT (e.g. 8888) to align with Vite proxy and VITE_API_BASE_URL; default to 8888 instead of 8787
+const port = process.env.PORT || 8888;
+console.log(`[server] Using port ${port} (override via PORT env)`);
 
 app.use(express.json({ limit: '10mb' }));
 
@@ -68,6 +79,9 @@ app.use(cookieParser());
 app.use(securityHeaders);
 app.use(setDoubleSubmitCSRF);
 app.use('/api', apiLimiter);
+
+// Expose CSRF token endpoint for clients and scripts that use the double-submit cookie pattern
+app.get('/api/auth/csrf', getCSRFToken);
 
 // Dev fallback: allow in-memory server behavior when Supabase isn't configured.
 // Enabled by default in non-production unless DEV_FALLBACK=false is set.
@@ -96,6 +110,15 @@ app.use((req, res, next) => {
   });
   next();
 });
+
+// Optional periodic memory usage logging (enable with LOG_MEMORY=true)
+if ((process.env.LOG_MEMORY || '').toLowerCase() === 'true') {
+  setInterval(() => {
+    const mu = process.memoryUsage();
+    const fmt = (n) => (n / 1e6).toFixed(1);
+    console.log(`[mem] rss=${fmt(mu.rss)}MB heapUsed=${fmt(mu.heapUsed)}MB heapTotal=${fmt(mu.heapTotal)}MB ext=${fmt(mu.external)}MB`);
+  }, 30000);
+}
 
 // Text content endpoints used by the content editor (local file-backed)
 const contentPath = path.join(__dirname, '../src/content/textContent.json');
@@ -915,7 +938,25 @@ app.post('/api/admin/courses', async (req, res) => {
       return;
     }
     try {
-      const id = course.id ?? `e2e-course-${Date.now()}`;
+      // Idempotent upsert by id, slug, or external_id (stored in meta_json)
+      let existingId = null;
+      const incomingSlug = course.slug ?? null;
+      const incomingExternalId = (course.external_id ?? course.meta?.external_id ?? null) || null;
+      if (!course.id) {
+        for (const c of e2eStore.courses.values()) {
+          const cSlug = c.slug ?? c.id;
+          const cExternal = c.meta_json?.external_id ?? null;
+          if (incomingSlug && String(cSlug).toLowerCase() === String(incomingSlug).toLowerCase()) {
+            existingId = c.id;
+            break;
+          }
+          if (incomingExternalId && cExternal && String(cExternal) === String(incomingExternalId)) {
+            existingId = c.id;
+            break;
+          }
+        }
+      }
+      const id = course.id ?? existingId ?? `e2e-course-${Date.now()}`;
       const courseObj = {
         id,
         slug: course.slug ?? id,
@@ -923,7 +964,7 @@ app.post('/api/admin/courses', async (req, res) => {
         description: course.description ?? null,
         status: course.status ?? 'draft',
         version: course.version ?? 1,
-        meta_json: course.meta ?? {},
+        meta_json: { ...(course.meta ?? {}), ...(incomingExternalId ? { external_id: incomingExternalId } : {}) },
         published_at: null,
         modules: [],
       };
@@ -1160,6 +1201,193 @@ app.post('/api/admin/courses', async (req, res) => {
       details: errorDetails,
       timestamp: new Date().toISOString()
     });
+  }
+});
+
+// Batch import endpoint (best-effort transactional behavior in E2E/DEV fallback)
+app.post('/api/admin/courses/import', async (req, res) => {
+  const items = Array.isArray(req.body?.items) ? req.body.items : [];
+  if (items.length === 0) {
+    res.status(400).json({ error: 'items array is required' });
+    return;
+  }
+
+  // In demo/E2E, snapshot and rollback on failure
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    const snapshot = new Map(e2eStore.courses);
+    const results = [];
+    try {
+      for (const payload of items) {
+        const { course, modules = [] } = payload || {};
+        if (!course?.title) throw new Error('Course title is required');
+
+        // Reuse the same logic as the single upsert route: upsert by id/slug/external_id
+        let existingId = null;
+        const incomingSlug = course.slug ?? null;
+        const incomingExternalId = (course.external_id ?? course.meta?.external_id ?? null) || null;
+        if (!course.id) {
+          for (const c of e2eStore.courses.values()) {
+            const cSlug = c.slug ?? c.id;
+            const cExternal = c.meta_json?.external_id ?? null;
+            if (incomingSlug && String(cSlug).toLowerCase() === String(incomingSlug).toLowerCase()) {
+              existingId = c.id;
+              break;
+            }
+            if (incomingExternalId && cExternal && String(cExternal) === String(incomingExternalId)) {
+              existingId = c.id;
+              break;
+            }
+          }
+        }
+        const id = course.id ?? existingId ?? `e2e-course-${Date.now()}-${Math.floor(Math.random()*1000)}`;
+        const courseObj = {
+          id,
+          slug: course.slug ?? id,
+          title: course.title,
+          description: course.description ?? null,
+          status: course.status ?? 'draft',
+          version: course.version ?? 1,
+          meta_json: { ...(course.meta ?? {}), ...(incomingExternalId ? { external_id: incomingExternalId } : {}) },
+          published_at: null,
+          modules: [],
+        };
+        const modulesArr = modules || [];
+        for (const [moduleIndex, module] of modulesArr.entries()) {
+          const moduleId = module.id ?? `e2e-mod-${Date.now()}-${moduleIndex}-${Math.floor(Math.random()*1000)}`;
+          const moduleObj = {
+            id: moduleId,
+            course_id: id,
+            title: module.title,
+            description: module.description ?? null,
+            order_index: module.order_index ?? moduleIndex,
+            lessons: [],
+          };
+          const lessons = module.lessons || [];
+          for (const [lessonIndex, lesson] of lessons.entries()) {
+            const lessonId = lesson.id ?? `e2e-less-${Date.now()}-${moduleIndex}-${lessonIndex}-${Math.floor(Math.random()*1000)}`;
+            const lessonObj = {
+              id: lessonId,
+              module_id: moduleId,
+              title: lesson.title,
+              description: lesson.description ?? null,
+              type: lesson.type,
+              order_index: lesson.order_index ?? lesson.order ?? lessonIndex,
+              duration_s: lesson.duration_s ?? null,
+              content_json: lesson.content_json ?? lesson.content ?? {},
+              completion_rule_json: lesson.completion_rule_json ?? lesson.completionRule ?? null,
+            };
+            moduleObj.lessons.push(lessonObj);
+          }
+          courseObj.modules.push(moduleObj);
+        }
+        e2eStore.courses.set(id, courseObj);
+        results.push({ id, slug: courseObj.slug, title: courseObj.title });
+      }
+      persistE2EStore();
+      res.status(201).json({ data: results });
+    } catch (err) {
+      // Rollback
+      e2eStore.courses = snapshot;
+      persistE2EStore();
+      res.status(400).json({ error: 'Import failed', details: String(err?.message || err) });
+    }
+    return;
+  }
+
+  // Supabase-backed path: sequential upsert (no transaction here)
+  if (!ensureSupabase(res)) return;
+  try {
+    const results = [];
+    for (const payload of items) {
+      const { course, modules = [] } = payload || {};
+      if (!course?.title) throw new Error('Course title is required');
+      const upsertRes = await supabase
+        .from('courses')
+        .upsert({
+          id: course.id ?? undefined,
+          slug: course.slug ?? undefined,
+          title: course.title,
+          description: course.description ?? null,
+          status: course.status ?? 'draft',
+          version: course.version ?? 1,
+          organization_id: course.organizationId ?? course.org_id ?? null,
+          meta_json: { ...(course.meta ?? {}), ...(course.external_id ? { external_id: course.external_id } : {}) },
+        })
+        .select('*')
+        .single();
+      if (upsertRes.error) throw upsertRes.error;
+      const courseRow = upsertRes.data;
+      // naive: clear and reinsert modules/lessons for this course
+      await supabase.from('lessons').delete().in('module_id', (
+        (await supabase.from('modules').select('id').eq('course_id', courseRow.id)).data || []
+      ).map((r) => r.id));
+      await supabase.from('modules').delete().eq('course_id', courseRow.id);
+
+      for (const [moduleIndex, module] of (modules || []).entries()) {
+        const modIns = await supabase
+          .from('modules')
+          .insert({
+            id: module.id ?? undefined,
+            course_id: courseRow.id,
+            order_index: module.order_index ?? moduleIndex,
+            title: module.title,
+            description: module.description ?? null,
+          })
+          .select('*')
+          .single();
+        if (modIns.error) throw modIns.error;
+        const modRow = modIns.data;
+        for (const [lessonIndex, lesson] of (module.lessons || []).entries()) {
+          const lesIns = await supabase.from('lessons').insert({
+            id: lesson.id ?? undefined,
+            module_id: modRow.id,
+            order_index: lesson.order_index ?? lessonIndex,
+            type: lesson.type,
+            title: lesson.title,
+            description: lesson.description ?? null,
+            duration_s: lesson.duration_s ?? null,
+            content_json: lesson.content_json ?? lesson.content ?? {},
+            completion_rule_json: lesson.completion_rule_json ?? lesson.completionRule ?? null,
+          });
+          if (lesIns.error) throw lesIns.error;
+        }
+      }
+      results.push({ id: courseRow.id, slug: courseRow.slug, title: courseRow.title });
+    }
+    res.status(201).json({ data: results });
+  } catch (error) {
+    console.error('Import failed:', error);
+    res.status(500).json({ error: 'Import failed' });
+  }
+});
+
+// Assignments listing for client: return active assignments for a user
+app.get('/api/client/assignments', async (req, res) => {
+  const userId = (req.query.user_id || req.query.userId || '').toString().toLowerCase();
+  if (!userId) {
+    res.status(400).json({ error: 'user_id is required' });
+    return;
+  }
+
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    const rows = (e2eStore.assignments || []).filter((a) => a && a.active !== false && String(a.user_id || '').toLowerCase() === userId);
+    res.json({ data: rows });
+    return;
+  }
+
+  if (!ensureSupabase(res)) return;
+  try {
+    const { data, error } = await supabase
+      .from('assignments')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('active', true)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json({ data: data || [] });
+  } catch (err) {
+    console.error('Failed to fetch assignments:', err);
+    res.status(500).json({ error: 'Unable to fetch assignments' });
   }
 });
 

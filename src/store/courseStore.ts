@@ -964,15 +964,30 @@ export const courseStore = {
   init: async (): Promise<void> => {
     try {
       console.log('[courseStore.init] Starting initialization...');
-      const dbCourses = await CourseService.getAllCoursesFromDatabase();
-      console.log('[courseStore.init] API returned courses:', dbCourses);
+      // Prefer admin list (richer shape) but gracefully fall back to published-only
+      let dbCourses = await CourseService.getAllCoursesFromDatabase();
+      console.log('[courseStore.init] Admin API returned courses:', dbCourses);
+
+      if (!dbCourses || dbCourses.length === 0) {
+        console.log('[courseStore.init] Admin endpoint returned 0 courses. Falling back to published catalog...');
+        try {
+          dbCourses = await CourseService.getPublishedCourses();
+          console.log('[courseStore.init] Published catalog returned courses:', dbCourses);
+        } catch (fallbackErr) {
+          console.warn('[courseStore.init] Published catalog fallback failed:', fallbackErr);
+          dbCourses = [];
+        }
+      }
 
       if (dbCourses.length > 0) {
-        courses = {};
+        // Merge fetched courses with any existing locally persisted drafts instead of overwriting entirely.
+        const merged: { [key: string]: Course } = { ...courses };
         dbCourses.forEach((course: Course) => {
-          courses[course.id] = course;
+          const existing = merged[course.id];
+          merged[course.id] = existing ? { ...existing, ...course } : course;
         });
-        console.log(`[courseStore.init] Loaded ${dbCourses.length} courses from API`);
+        courses = merged;
+        console.log(`[courseStore.init] Loaded ${dbCourses.length} courses from API (merged with ${Object.keys(merged).length - dbCourses.length} existing drafts)`);
       } else {
         console.log('[courseStore.init] No courses returned from API, seeding defaults...');
         const defaultCourses = getDefaultCourses();
@@ -1166,31 +1181,30 @@ export const courseStore = {
     courses[newCourse.id] = newCourse;
     _saveCoursesToLocalStorage(courses);
 
-    if (import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY) {
-      CourseService.syncCourseToDatabase(newCourse)
-        .then((persisted) => {
-          if (!persisted) return;
-          const normalized = normalizeCourse(persisted as Course);
-          const normalizedId = normalized.id || newCourse.id;
-          courses[normalizedId] = {
-            ...courses[newCourse.id],
-            ...normalized
-          };
-          if (normalizedId !== newCourse.id) {
-            delete courses[newCourse.id];
-          }
-          _saveCoursesToLocalStorage(courses);
-        })
-        .catch((error) => {
-          if (error instanceof CourseValidationError) {
-            console.warn(
-              `New course "${newCourse.title}" failed validation when syncing: ${error.issues.join(' | ')}`,
-            );
-            return;
-          }
-          console.warn(`Failed to persist course "${newCourse.title}" to database:`, error.message || error);
-        });
-    }
+    // Always attempt to persist to backend API (DEV_FALLBACK or Supabase-backed) so courses survive reloads
+    CourseService.syncCourseToDatabase(newCourse)
+      .then((persisted) => {
+        if (!persisted) return;
+        const normalized = normalizeCourse(persisted as Course);
+        const normalizedId = normalized.id || newCourse.id;
+        courses[normalizedId] = {
+          ...courses[newCourse.id],
+          ...normalized,
+        };
+        if (normalizedId !== newCourse.id) {
+          delete courses[newCourse.id];
+        }
+        _saveCoursesToLocalStorage(courses);
+      })
+      .catch((error) => {
+        if (error instanceof CourseValidationError) {
+          console.warn(
+            `New course "${newCourse.title}" failed validation when syncing: ${error.issues.join(' | ')}`,
+          );
+          return;
+        }
+        console.warn(`Failed to persist course "${newCourse.title}" to database:`, error.message || error);
+      });
 
     return newCourse;
   },
