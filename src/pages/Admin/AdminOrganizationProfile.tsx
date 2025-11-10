@@ -6,6 +6,7 @@ import documentService from '../../dal/documents';
 // clientWorkspaceService is dynamically imported where used so it can be bundled with the org-workspace chunk
 import notificationService from '../../dal/notifications';
 import orgService from '../../dal/orgs';
+import { useToast } from '../../context/ToastContext';
 
 const tabs = [
   { key: 'overview', label: 'Overview' },
@@ -17,6 +18,7 @@ const tabs = [
 
 const AdminOrganizationProfile: React.FC = () => {
   const { orgId } = useParams();
+  const { showToast } = useToast();
   const [activeTab, setActiveTab] = useState<string>('overview');
   const [documents, setDocuments] = useState<any[]>([]);
   const [actionItems, setActionItems] = useState<any[]>([]);
@@ -98,7 +100,10 @@ const AdminOrganizationProfile: React.FC = () => {
 
   const handleUpload = async () => {
     if (!orgId) return;
-    if (!file && !docName) return alert('Provide a name or file');
+    if (!file && !docName) {
+      showToast('Provide a name or file', 'error');
+      return;
+    }
 
     let url: string | undefined = undefined;
     if (file) {
@@ -134,7 +139,10 @@ const AdminOrganizationProfile: React.FC = () => {
   };
 
   const handleAddAction = async () => {
-    if (!orgId || !newActionTitle) return alert('Provide a title for the action');
+    if (!orgId || !newActionTitle) {
+      showToast('Provide a title for the action', 'error');
+      return;
+    }
     const svc = await import('../../services/clientWorkspaceService');
     await svc.addActionItem(orgId, {
       title: newActionTitle,
@@ -146,6 +154,7 @@ const AdminOrganizationProfile: React.FC = () => {
     setNewActionTitle(''); setNewActionDue(''); setNewActionAssignee('');
     const list = await (await import('../../services/clientWorkspaceService')).listActionItems(orgId);
     setActionItems(list);
+    showToast('Action item added', 'success');
   };
 
   const toggleActionStatus = async (item: any) => {

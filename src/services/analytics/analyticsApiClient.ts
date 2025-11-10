@@ -39,4 +39,8 @@ export const analyticsApiClient = {
         },
       }),
     }),
+  fetchCourseEngagement: () =>
+    apiRequest<{ data: { course_id: string; avg_progress: number; active_users: number }[] }>(
+      '/api/analytics/course-engagement'
+    ),
 };

@@ -13,7 +13,7 @@ const ClientProfile = () => {
       <Card tone="muted" className="mt-4 space-y-3">
         <h1 className="font-heading text-2xl font-bold text-charcoal">My Profile</h1>
         <div className="text-sm text-slate/80">
-          <div><span className="font-semibold">Name:</span> {user?.name || '—'}</div>
+          <div><span className="font-semibold">Name:</span> {user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || '—' : '—'}</div>
           <div><span className="font-semibold">Email:</span> {user?.email || '—'}</div>
           <div><span className="font-semibold">Role:</span> {user?.role || '—'}</div>
         </div>

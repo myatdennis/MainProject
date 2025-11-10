@@ -25,6 +25,7 @@ import { LazyImage, ImageSkeleton } from '../../components/PerformanceComponents
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import Skeleton from '../../components/ui/Skeleton';
 import EmptyState from '../../components/ui/EmptyState';
+import { useUserProfile } from '../../hooks/useUserProfile';
 
 type StatusFilter = 'all' | 'not-started' | 'in-progress' | 'completed';
 
@@ -36,12 +37,14 @@ const statusFilters: Array<{ value: StatusFilter; label: string }> = [
 ];
 
 const LMSCourses = () => {
+  const { user } = useUserProfile();
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<StatusFilter>('all');
   const [progressRefreshToken, setProgressRefreshToken] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
 
   const learnerId = useMemo(() => {
+    if (user) return (user.email || user.id).toLowerCase();
     try {
       const raw = localStorage.getItem('huddle_user');
       if (raw) {
@@ -52,7 +55,7 @@ const LMSCourses = () => {
       console.warn('Failed to read learner identity:', error);
     }
     return 'local-user';
-  }, []);
+  }, [user]);
 
   const publishedCourses = useMemo(() => {
     return courseStore

@@ -64,7 +64,9 @@ export const formatMinutes = (minutes?: number): string | undefined => {
   return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
 };
 
-const normalizeLessons = (module: Module, courseId: string, moduleIndex: number): Lesson[] => {
+import { migrateLessonContent } from './contentMigrator';
+
+const normalizeLessons = (module: Module, _courseId: string, _moduleIndex: number): Lesson[] => {
   const lessons = module.lessons || [];
 
   return lessons
@@ -72,13 +74,16 @@ const normalizeLessons = (module: Module, courseId: string, moduleIndex: number)
       const estimatedMinutes =
         lesson.estimatedDuration ?? parseDurationToMinutes(lesson.duration);
 
+  const contentJson = migrateLessonContent((lesson as any).content_json ?? lesson.content ?? {});
+
       return {
         ...lesson,
         chapterId: lesson.chapterId || module.id,
         order: lesson.order ?? lessonIndex + 1,
         estimatedDuration: estimatedMinutes,
         duration: lesson.duration || formatMinutes(estimatedMinutes),
-        content: lesson.content || {},
+        content: contentJson,
+        content_json: contentJson,
         resources: lesson.resources || [],
         description: lesson.description || ''
       };
@@ -100,7 +105,7 @@ const normalizeModules = (course: Course): Module[] => {
         ...module,
         order: module.order ?? index + 1,
         lessons,
-        duration: module.duration || formatMinutes(moduleMinutes),
+        duration: module.duration || formatMinutes(moduleMinutes) || '',
         resources: module.resources || []
       };
     })

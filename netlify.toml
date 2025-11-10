@@ -29,13 +29,21 @@
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "strict-origin-when-cross-origin"
 
-# API proxy is intentionally omitted by default. If your backend lives on a
-# separate host, add a redirect mapping /api/* to your API, e.g.:
-# [[redirects]]
-#   from = "/api/*"
-#   to = "https://api.yourdomain.com/:splat"
-#   status = 200
-#   force = true
+# API proxy: map API and WebSocket paths to external Railway backend.
+# Replace <RAILWAY_HOST> with your deployed API host (e.g. mylms-api.up.railway.app)
+[[redirects]]
+  from = "/api/*"
+  to = "https://<RAILWAY_HOST>/api/:splat"
+  status = 200
+  force = true
+
+# WebSocket (Netlify doesn't natively proxy WS with :splat rewriting in all cases;
+# most setups work with same pattern, else use absolute VITE_WS_URL.)
+[[redirects]]
+  from = "/ws"
+  to = "https://<RAILWAY_HOST>/ws"
+  status = 200
+  force = true
 
 [[redirects]]
   from = "/*"

@@ -47,6 +47,8 @@ import {
   updateAssignmentProgress,
 } from '../../utils/assignmentStorage';
 import { trackCourseCompletion as dalTrackCourseCompletion, trackEvent as dalTrackEvent } from '../../dal/analytics';
+import { useUserProfile } from '../../hooks/useUserProfile';
+import { batchService } from '../../services/batchService';
 
 interface CoursePlayerProps {
   namespace?: 'admin' | 'client';
@@ -63,7 +65,9 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
   const coursesIndexPath = isClientNamespace ? '/client/courses' : '/lms/courses';
   const eventSource = isClientNamespace ? 'client' : 'admin';
 
+  const { user } = useUserProfile();
   const learnerId = useMemo(() => {
+    if (user) return (user.email || user.id).toLowerCase();
     try {
       const raw = localStorage.getItem('huddle_user');
       if (raw) {
@@ -71,10 +75,10 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
         return (parsed.email || parsed.id || 'local-user').toLowerCase();
       }
     } catch (error) {
-      console.warn('Failed to read learner identity:', error);
+      console.warn('[CoursePlayer] Failed legacy identity fallback:', error);
     }
     return 'local-user';
-  }, []);
+  }, [user]);
 
   const [courseData, setCourseData] = useState<{ course: NormalizedCourse; lessons: NormalizedLesson[] } | null>(null);
   const [currentLesson, setCurrentLesson] = useState<NormalizedLesson | null>(null);
@@ -94,6 +98,7 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
   const lessonIdRef = useRef<string | undefined>(lessonId);
   const hasTrackedInitialEventRef = useRef(false);
   const lastLoggedErrorRef = useRef<string | null>(null);
+  const lastAutoSavePositionRef = useRef<number>(0);
 
   // Video player state
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -453,6 +458,21 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
           nextCompleted.add(lessonId);
         }
 
+        // Enqueue batched progress event (lesson_progress or lesson_completed)
+        try {
+          batchService.enqueueProgress({
+            type: boundedProgress >= 100 ? 'lesson_completed' : 'lesson_progress',
+            courseId: course.id,
+            lessonId,
+            userId: learnerId,
+            percent: boundedProgress,
+            position,
+          });
+        } catch (e) {
+          // Non-fatal; batching service will handle retries separately
+          console.warn('[CoursePlayer] Failed to enqueue progress batch event', e);
+        }
+
         const overallPercent = calculateOverallPercent(nextProgressMap, nextCompleted);
         void updateAssignmentProgress(course.id, learnerId, overallPercent);
       }
@@ -503,6 +523,22 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
         timestamp: Date.now(),
       });
 
+      // Enqueue a lesson_completed batched event
+      if (course?.id) {
+        try {
+          batchService.enqueueProgress({
+            type: 'lesson_completed',
+            courseId: course.id,
+            lessonId: lesson.id,
+            userId: learnerId,
+            percent: 100,
+            position,
+          });
+        } catch (e) {
+          console.warn('[CoursePlayer] Failed to enqueue completion batch event', e);
+        }
+      }
+
       if (!silent) {
         showToast(`Marked "${lesson.title}" complete`, 'success');
       }
@@ -523,6 +559,70 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
       calculateOverallPercent,
     ]
   );
+
+  // Flush any queued progress events when unmounting (best-effort)
+  useEffect(() => {
+    return () => {
+      try {
+        batchService.flushProgress();
+      } catch {
+        /* ignore */
+      }
+    };
+  }, []);
+
+  // Periodically persist/flush lesson playback position to support resumable video
+  useEffect(() => {
+    if (!currentLesson) return;
+
+    let isActive = true;
+    // Tick: read current player position and enqueue a lesson_progress event if position changed
+    const tick = () => {
+      if (!isActive) return;
+      if (!videoRef.current) return;
+      const player = videoRef.current;
+      if (!player.duration || Number.isNaN(player.duration)) return;
+
+      const position = player.currentTime;
+      const previous = lastAutoSavePositionRef.current ?? 0;
+      // avoid noisy updates for very small changes
+      if (Math.abs(position - previous) < 1) return;
+      lastAutoSavePositionRef.current = position;
+
+      const progressPercent = Math.min(100, Math.round((position / player.duration) * 100));
+
+      if (course?.id) {
+        try {
+          batchService.enqueueProgress({
+            type: 'lesson_progress',
+            courseId: course.id,
+            lessonId: currentLesson.id,
+            userId: learnerId,
+            percent: progressPercent,
+            position,
+          });
+        } catch (e) {
+          console.warn('[CoursePlayer] Failed to enqueue autosave progress', e);
+        }
+      }
+
+      // Persist locally so reloads pick up the latest position even if batching/network fails
+      try {
+        persistProgress(currentLesson.id);
+      } catch (e) {
+        // non-fatal
+      }
+    };
+
+    // Do an immediate tick and then run every 10s
+    tick();
+    const id = window.setInterval(tick, 10000);
+
+    return () => {
+      isActive = false;
+      clearInterval(id);
+    };
+  }, [currentLesson?.id, course?.id, learnerId, persistProgress]);
 
   const handleTimeUpdate = () => {
     if (!videoRef.current || !currentLesson) return;
@@ -1583,8 +1683,10 @@ const LessonContent: React.FC<{
               {options.map((option: any, index: number) => (
                 <Card 
                   key={index} 
-                  tone={option.isCorrect ? 'success' : 'muted'}
-                  className="p-4 cursor-pointer hover:border-skyblue transition-colors"
+                  className={cn(
+                    'p-4 cursor-pointer transition-colors',
+                    option.isCorrect ? 'border-forest bg-forest/5 hover:bg-forest/10' : 'hover:border-skyblue'
+                  )}
                 >
                   <p className="font-medium text-charcoal mb-2">{option.text}</p>
                   {option.feedback && (

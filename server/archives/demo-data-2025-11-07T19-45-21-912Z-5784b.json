@@ -1,0 +1,155 @@
+{
+  "courses": [
+    [
+      "foundations",
+      {
+        "id": "foundations",
+        "slug": "foundations-of-inclusive-leadership",
+        "title": "Foundations of Inclusive Leadership",
+        "description": "Learn the fundamentals of inclusive leadership through interactive lessons, including TED Talks, quizzes, and practical frameworks.",
+        "status": "published",
+        "version": 1,
+        "published_at": "2025-11-07T18:13:48.441Z",
+        "thumbnail": "/api/placeholder/400/300",
+        "difficulty": "Beginner",
+        "duration": "2 hours",
+        "instructorName": "Dr. Sarah Chen",
+        "estimatedDuration": 7200,
+        "keyTakeaways": [
+          "Understand the core principles of inclusive leadership",
+          "Learn how vulnerability strengthens leadership",
+          "Build psychological safety in teams",
+          "Apply practical leadership frameworks"
+        ],
+        "meta_json": {
+          "tags": [
+            "leadership",
+            "inclusion",
+            "management",
+            "professional development"
+          ],
+          "category": "Leadership",
+          "level": "beginner"
+        },
+        "modules": [
+          {
+            "id": "mod-1",
+            "course_id": "foundations",
+            "title": "Introduction to Leadership",
+            "description": "Core concepts and foundations",
+            "order_index": 0,
+            "lessons": [
+              {
+                "id": "lesson-video",
+                "module_id": "mod-1",
+                "title": "The Power of Vulnerability",
+                "description": "Watch this inspiring TED Talk by Brené Brown",
+                "type": "video",
+                "order_index": 0,
+                "duration_s": 1200,
+                "content_json": {
+                  "videoUrl": "https://www.ted.com/talks/brene_brown_the_power_of_vulnerability",
+                  "videoType": "ted"
+                },
+                "completion_rule_json": {
+                  "requiredPercent": 85
+                }
+              },
+              {
+                "id": "lesson-quiz",
+                "module_id": "mod-1",
+                "title": "Leadership Knowledge Check",
+                "description": "Test your understanding",
+                "type": "quiz",
+                "order_index": 1,
+                "duration_s": 300,
+                "content_json": {
+                  "questions": [
+                    {
+                      "id": "q1",
+                      "question": "What is the primary role of an inclusive leader?",
+                      "options": [
+                        {
+                          "id": "a",
+                          "text": "To make all decisions alone"
+                        },
+                        {
+                          "id": "b",
+                          "text": "To create an environment where all voices are heard"
+                        },
+                        {
+                          "id": "c",
+                          "text": "To maintain strict hierarchy"
+                        },
+                        {
+                          "id": "d",
+                          "text": "To avoid difficult conversations"
+                        }
+                      ],
+                      "correctAnswer": "b"
+                    },
+                    {
+                      "id": "q2",
+                      "question": "Which quality is essential for effective leadership?",
+                      "options": [
+                        {
+                          "id": "a",
+                          "text": "Vulnerability"
+                        },
+                        {
+                          "id": "b",
+                          "text": "Perfectionism"
+                        },
+                        {
+                          "id": "c",
+                          "text": "Control"
+                        },
+                        {
+                          "id": "d",
+                          "text": "Distance"
+                        }
+                      ],
+                      "correctAnswer": "a"
+                    }
+                  ]
+                },
+                "completion_rule_json": {
+                  "requiredScore": 70
+                }
+              },
+              {
+                "id": "lesson-text",
+                "module_id": "mod-1",
+                "title": "Leadership Principles",
+                "description": "Core principles of effective leadership",
+                "type": "text",
+                "order_index": 2,
+                "duration_s": 600,
+                "content_json": {
+                  "body": "# Leadership Principles\n\n## 1. Lead with Empathy\n\nEmpathy is the foundation of inclusive leadership...\n\n## 2. Foster Psychological Safety\n\nCreate an environment where team members feel safe...\n\n## 3. Embrace Vulnerability\n\nAs Brené Brown teaches, vulnerability is not weakness..."
+                },
+                "completion_rule_json": null
+              },
+              {
+                "id": "lesson-resource",
+                "module_id": "mod-1",
+                "title": "Leadership Framework Guide",
+                "description": "Download the comprehensive leadership framework",
+                "type": "resource",
+                "order_index": 3,
+                "duration_s": 0,
+                "content_json": {
+                  "fileUrl": "/resources/leadership-framework.pdf",
+                  "fileType": "pdf",
+                  "fileSize": "2.4 MB",
+                  "fileName": "Leadership Framework Guide.pdf"
+                },
+                "completion_rule_json": null
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  ]
+}

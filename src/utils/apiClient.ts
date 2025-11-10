@@ -78,6 +78,10 @@ export interface ApiRequestOptions extends RequestInit {
    * Disable automatic camel/snake case transformation.
    */
   noTransform?: boolean;
+  /**
+   * Optional timeout in milliseconds. If exceeded, the request is aborted.
+   */
+  timeoutMs?: number;
 }
 
 const buildUrl = (path: string) => {
@@ -131,8 +135,19 @@ export const apiRequest = async <T = any>(path: string, options: ApiRequestOptio
     }
   }
 
+  // Compose AbortController for timeout and external signal
+  const controller = new AbortController();
+  const signals: AbortSignal[] = [];
+  if (options.signal) signals.push(options.signal);
+  const timeout = typeof options.timeoutMs === 'number' && options.timeoutMs > 0
+    ? setTimeout(() => controller.abort(new DOMException('Request timed out', 'AbortError')), options.timeoutMs)
+    : null;
+  const onExternalAbort = () => controller.abort(new DOMException('Aborted', 'AbortError'));
+  signals.forEach((sig) => sig.addEventListener('abort', onExternalAbort));
+
   const requestInit: RequestInit = {
     ...options,
+    signal: controller.signal,
     headers,
     body,
   };
@@ -140,7 +155,17 @@ export const apiRequest = async <T = any>(path: string, options: ApiRequestOptio
   const url = buildUrl(path);
   console.log('[apiRequest] Fetching URL:', url);
 
-  const response = await fetch(url, requestInit);
+  let response: Response;
+  try {
+    response = await fetch(url, requestInit);
+  } catch (err: any) {
+    if (timeout) clearTimeout(timeout as any);
+    signals.forEach((sig) => sig.removeEventListener('abort', onExternalAbort));
+    if (err?.name === 'AbortError') {
+      throw new ApiError(0, 'Request aborted (timeout or cancel)', null, 'timeout');
+    }
+    throw err;
+  }
   console.log('[apiRequest] Response status:', response.status, response.statusText);
 
   const okStatus = response.ok || statusMatches(response.status, options.expectedStatus);
@@ -181,6 +206,8 @@ export const apiRequest = async <T = any>(path: string, options: ApiRequestOptio
     options.validate(responseBody);
   }
 
+  if (timeout) clearTimeout(timeout as any);
+  signals.forEach((sig) => sig.removeEventListener('abort', onExternalAbort));
   return responseBody as T;
 };
 

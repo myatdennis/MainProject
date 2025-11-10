@@ -110,7 +110,7 @@ const postData = JSON.stringify(payload);
 
 const options = {
   hostname: 'localhost',
-  port: 8787,
+  port: 8888,
   path: '/api/admin/courses',
   method: 'POST',
   headers: {
@@ -146,7 +146,7 @@ const req = http.request(options, (res) => {
 
 req.on('error', (error) => {
   console.error('❌ Error:', error.message);
-  console.log('\nMake sure the server is running on localhost:8787');
+  console.log('\nMake sure the server is running on localhost:8888');
 });
 
 req.write(postData);

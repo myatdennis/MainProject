@@ -6,6 +6,7 @@ import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
 import ProgressBar from '../../components/ui/ProgressBar';
 import { courseStore } from '../../store/courseStore';
+import { useUserProfile } from '../../hooks/useUserProfile';
 import { normalizeCourse } from '../../utils/courseNormalization';
 import { getAssignmentsForUser } from '../../utils/assignmentStorage';
 import {
@@ -19,7 +20,9 @@ import type { CourseAssignment } from '../../types/assignment';
 
 const ClientDashboard = () => {
   const navigate = useNavigate();
+  const { user } = useUserProfile();
   const learnerId = useMemo(() => {
+    if (user) return (user.email || user.id).toLowerCase();
     try {
       const raw = localStorage.getItem('huddle_user');
       if (raw) {
@@ -27,10 +30,10 @@ const ClientDashboard = () => {
         return (parsed.email || parsed.id || 'local-user').toLowerCase();
       }
     } catch (error) {
-      console.warn('Failed to read learner identity:', error);
+      console.warn('Failed to read learner identity (legacy fallback):', error);
     }
     return 'local-user';
-  }, []);
+  }, [user]);
   const [assignments, setAssignments] = useState<CourseAssignment[]>([]);
   const [progressRefreshToken, setProgressRefreshToken] = useState(0);
 

@@ -1,0 +1,770 @@
+{
+  "courses": [
+    [
+      "foundations",
+      {
+        "id": "foundations",
+        "slug": "foundations-of-inclusive-leadership",
+        "title": "Foundations of Inclusive Leadership",
+        "description": "Build the fundamental skills needed to lead with empathy and create psychological safety for your team.",
+        "status": "published",
+        "version": 1,
+        "meta_json": {
+          "thumbnail": "https://images.pexels.com/photos/3184465/pexels-photo-3184465.jpeg?auto=compress&cs=tinysrgb&w=800",
+          "difficulty": "Beginner",
+          "estimated_time": "45-60 minutes",
+          "prerequisites": [
+            "Basic understanding of leadership principles",
+            "Completion of organizational onboarding"
+          ],
+          "learning_objectives": [
+            "Understand the core principles of inclusive leadership",
+            "Recognize the importance of psychological safety in teams",
+            "Develop skills for creating inclusive environments",
+            "Practice self-reflection and awareness techniques"
+          ],
+          "key_takeaways": [
+            "Psychological safety is the foundation of inclusive leadership",
+            "Vulnerability builds trust and encourages authentic communication",
+            "Self-awareness is crucial for recognizing your impact on others",
+            "Creating inclusive environments requires intentional daily actions"
+          ],
+          "tags": [
+            "Leadership",
+            "Empathy",
+            "Psychological Safety"
+          ],
+          "type": "Video + Worksheet",
+          "created_by": "Mya Dennis",
+          "published_at": "2025-01-20",
+          "due_date": "2025-04-15"
+        },
+        "published_at": null,
+        "modules": [
+          {
+            "id": "module-1",
+            "course_id": "foundations",
+            "title": "Introduction to Inclusive Leadership",
+            "description": "Explore the foundations and principles of inclusive leadership",
+            "order_index": 1,
+            "lessons": [
+              {
+                "id": "lesson-1-1",
+                "module_id": "module-1",
+                "title": "What is Inclusive Leadership?",
+                "description": "",
+                "type": "video",
+                "order_index": 1,
+                "duration_s": 480,
+                "content_json": {
+                  "type": "video",
+                  "body": {
+                    "type": "video",
+                    "body": {
+                      "videoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+                      "transcript": "Welcome to our comprehensive course on inclusive leadership...",
+                      "notes": "Key concepts: empathy, psychological safety, authentic leadership"
+                    },
+                    "videoSourceType": "external",
+                    "videoUrl": "https://www.ted.com/talks/heather_c_mcghee_racism_has_a_cost_for_everyone"
+                  }
+                },
+                "completion_rule_json": null
+              },
+              {
+                "id": "lesson-1-2",
+                "module_id": "module-1",
+                "title": "The Business Case for Inclusion",
+                "description": "",
+                "type": "resource",
+                "order_index": 2,
+                "duration_s": 420,
+                "content_json": {
+                  "type": "resource",
+                  "body": {
+                    "type": "resource",
+                    "body": {
+                      "elements": [
+                        {
+                          "id": "scenario-1",
+                          "type": "scenario",
+                          "title": "Meeting Dynamics Challenge",
+                          "order": 1,
+                          "data": [
+                            {
+                              "id": "scenario-1-start",
+                              "title": "The Situation",
+                              "text": "You notice that during team meetings, certain team members rarely speak up while others dominate the conversation. As an inclusive leader, how would you address this?",
+                              "image": "https://images.pexels.com/photos/3184465/pexels-photo-3184465.jpeg?auto=compress&cs=tinysrgb&w=800",
+                              "isStartingScenario": true,
+                              "choices": [
+                                {
+                                  "id": "choice-1",
+                                  "text": "Directly call on quiet team members to share their thoughts",
+                                  "feedback": "This approach might put people on the spot and create discomfort. Consider how this might affect psychological safety.",
+                                  "isCorrect": false,
+                                  "nextScenarioId": "scenario-1-direct",
+                                  "points": 0
+                                },
+                                {
+                                  "id": "choice-2",
+                                  "text": "Implement structured discussion formats like round-robin or small group breakouts",
+                                  "feedback": "Excellent! This creates equal opportunities for participation while maintaining psychological safety.",
+                                  "isCorrect": true,
+                                  "nextScenarioId": "scenario-1-structured",
+                                  "points": 10
+                                },
+                                {
+                                  "id": "choice-3",
+                                  "text": "Address the issue privately with the dominant speakers",
+                                  "feedback": "This is a good start, but you also need to create structures that naturally encourage balanced participation.",
+                                  "isCorrect": false,
+                                  "nextScenarioId": "scenario-1-private",
+                                  "points": 5
+                                }
+                              ]
+                            },
+                            {
+                              "id": "scenario-1-structured",
+                              "title": "Follow-up Action",
+                              "text": "Great choice! You've implemented structured discussions. Now a team member approaches you after the meeting saying they still feel hesitant to share. What's your next step?",
+                              "choices": [
+                                {
+                                  "id": "choice-4",
+                                  "text": "Schedule a one-on-one conversation to understand their concerns",
+                                  "feedback": "Perfect! Individual conversations help you understand specific barriers and build trust.",
+                                  "isCorrect": true,
+                                  "points": 10
+                                },
+                                {
+                                  "id": "choice-5",
+                                  "text": "Encourage them to speak up more in the next meeting",
+                                  "feedback": "This doesn't address the underlying concerns that make them hesitant to participate.",
+                                  "isCorrect": false,
+                                  "points": 0
+                                }
+                              ],
+                              "isEndingScenario": true
+                            },
+                            {
+                              "id": "scenario-1-direct",
+                              "title": "Unintended Consequences",
+                              "text": "You called on quiet team members directly. You notice some of them seem uncomfortable and one person hasn't attended the last two meetings. How do you recover?",
+                              "choices": [
+                                {
+                                  "id": "choice-6",
+                                  "text": "Reach out individually to apologize and understand their perspective",
+                                  "feedback": "Good recovery! Acknowledging the impact and seeking to understand shows inclusive leadership.",
+                                  "isCorrect": true,
+                                  "points": 8
+                                },
+                                {
+                                  "id": "choice-7",
+                                  "text": "Continue the same approach - they need to learn to speak up",
+                                  "feedback": "This approach ignores the impact on psychological safety and may worsen the situation.",
+                                  "isCorrect": false,
+                                  "points": 0
+                                }
+                              ],
+                              "isEndingScenario": true
+                            },
+                            {
+                              "id": "scenario-1-private",
+                              "title": "Partial Solution",
+                              "text": "You spoke privately with the dominant speakers. The meetings are less dominated, but participation is still uneven. What additional step would be most effective?",
+                              "choices": [
+                                {
+                                  "id": "choice-8",
+                                  "text": "Implement structured discussion formats to create equal opportunities",
+                                  "feedback": "Exactly! Combining individual conversations with structural changes creates lasting improvement.",
+                                  "isCorrect": true,
+                                  "points": 10
+                                },
+                                {
+                                  "id": "choice-9",
+                                  "text": "Wait and see if the situation improves naturally",
+                                  "feedback": "Passive approaches rarely create the inclusive environments we want to build.",
+                                  "isCorrect": false,
+                                  "points": 0
+                                }
+                              ],
+                              "isEndingScenario": true
+                            }
+                          ]
+                        }
+                      ],
+                      "currentScenarioId": "scenario-1-start",
+                      "userChoices": null,
+                      "completedElements": []
+                    }
+                  }
+                },
+                "completion_rule_json": null
+              }
+            ]
+          },
+          {
+            "id": "module-2",
+            "course_id": "foundations",
+            "title": "Building Psychological Safety",
+            "description": "Learn how to create environments where team members feel safe to speak up",
+            "order_index": 2,
+            "lessons": [
+              {
+                "id": "lesson-2-1",
+                "module_id": "module-2",
+                "title": "Understanding Psychological Safety",
+                "description": "",
+                "type": "video",
+                "order_index": 1,
+                "duration_s": 720,
+                "content_json": {
+                  "type": "video",
+                  "body": {
+                    "type": "video",
+                    "body": {
+                      "videoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
+                      "transcript": "Psychological safety is the belief that you can speak up...",
+                      "notes": "Key concepts about psychological safety and team dynamics"
+                    }
+                  }
+                },
+                "completion_rule_json": null
+              }
+            ]
+          },
+          {
+            "id": "module-1762394948614-sv7n8j1ge",
+            "course_id": "foundations",
+            "title": "Module 3",
+            "description": "",
+            "order_index": 3,
+            "lessons": [
+              {
+                "id": "lesson-1762394954655-zqsdk8to8",
+                "module_id": "module-1762394948614-sv7n8j1ge",
+                "title": "Lesson 1",
+                "description": "",
+                "type": "quiz",
+                "order_index": 1,
+                "duration_s": 600,
+                "content_json": {
+                  "type": "quiz",
+                  "body": {
+                    "type": "quiz",
+                    "body": {
+                      "questions": [
+                        {
+                          "id": "question-1762394965882-1dlaj9fq1",
+                          "text": "1 or 2",
+                          "options": [
+                            "1",
+                            "2"
+                          ],
+                          "correctAnswerIndex": 0,
+                          "explanation": ""
+                        }
+                      ]
+                    }
+                  }
+                },
+                "completion_rule_json": null
+              },
+              {
+                "id": "lesson-1762395018381-b3yuk1unx",
+                "module_id": "module-1762394948614-sv7n8j1ge",
+                "title": "Lesson 2",
+                "description": "",
+                "type": "resource",
+                "order_index": 2,
+                "duration_s": 600,
+                "content_json": {
+                  "type": "resource",
+                  "body": {
+                    "type": "resource",
+                    "body": {
+                      "title": "Resource",
+                      "description": "fwoenfewfnwfoweif",
+                      "fileUrl": "/resources/dei-foundations-workbook.txt",
+                      "fileName": "The Huddle Co - DEI Foundations Workbook.txt",
+                      "fileSize": "1.0 KB"
+                    }
+                  }
+                },
+                "completion_rule_json": null
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    [
+      "e2e-course-1762465356075",
+      {
+        "id": "e2e-course-1762465356075",
+        "slug": "the-huddle-co-training-series-dei-foundations",
+        "title": "The Huddle Co. Training Series: DEI Foundations",
+        "description": "Build a shared language for diversity, equity, inclusion, and belonging with practical, everyday applications and team tools.",
+        "status": "published",
+        "version": 3,
+        "meta_json": {
+          "difficulty": "Beginner",
+          "estimated_duration": null,
+          "tags": [
+            "DEI",
+            "Foundations",
+            "Belonging",
+            "Inclusive language",
+            "Equity"
+          ],
+          "key_takeaways": [],
+          "thumbnail": null
+        },
+        "published_at": null,
+        "modules": [
+          {
+            "id": "e2e-mod-1762481742901-0",
+            "course_id": "e2e-course-1762465356075",
+            "title": "Shared Language Basics",
+            "description": null,
+            "order_index": 0,
+            "lessons": [
+              {
+                "id": "e2e-less-1762481742901-0-0",
+                "module_id": "e2e-mod-1762481742901-0",
+                "title": "What DEI and Belonging Mean",
+                "description": null,
+                "type": "text",
+                "order_index": 0,
+                "duration_s": null,
+                "content_json": {
+                  "textContent": "Learn clear definitions of diversity, equity, inclusion, and belonging, why they matter for team performance, and how shared language reduces misunderstandings and builds trust."
+                },
+                "completion_rule_json": null
+              },
+              {
+                "id": "e2e-less-1762481742901-0-1",
+                "module_id": "e2e-mod-1762481742901-0",
+                "title": "Foundations Knowledge Check",
+                "description": null,
+                "type": "quiz",
+                "order_index": 1,
+                "duration_s": null,
+                "content_json": {
+                  "questions": [
+                    {
+                      "text": "Which statement best describes equity?",
+                      "options": [
+                        "Treating everyone exactly the same",
+                        "Giving people what they need to succeed",
+                        "Promoting only high performers",
+                        "Avoiding discussion of differences"
+                      ],
+                      "correctAnswerIndex": 1,
+                      "explanation": "Equity focuses on fair access, support, and outcomes based on differing needs."
+                    },
+                    {
+                      "text": "Belonging is primarily about:",
+                      "options": [
+                        "Strictly following policy",
+                        "Feeling valued, accepted, and able to contribute",
+                        "Tracking engagement metrics",
+                        "Avoiding conflict at work"
+                      ],
+                      "correctAnswerIndex": 1
+                    },
+                    {
+                      "text": "Inclusion at work looks like:",
+                      "options": [
+                        "One-way communication from leaders",
+                        "Inviting participation and acting on feedback",
+                        "Annual culture surveys only",
+                        "Scheduling more meetings"
+                      ],
+                      "correctAnswerIndex": 1
+                    },
+                    {
+                      "text": "Diversity refers to:",
+                      "options": [
+                        "Uniform backgrounds and experiences",
+                        "The presence of differences in a group",
+                        "Enforcing identical behaviors",
+                        "Avoiding identity topics"
+                      ],
+                      "correctAnswerIndex": 1
+                    }
+                  ],
+                  "passingScore": 80,
+                  "allowRetakes": true,
+                  "showCorrectAnswers": true
+                },
+                "completion_rule_json": null
+              },
+              {
+                "id": "e2e-less-1762481742901-0-2",
+                "module_id": "e2e-mod-1762481742901-0",
+                "title": "Shared Language Glossary (Printable)",
+                "description": null,
+                "type": "resource",
+                "order_index": 2,
+                "duration_s": null,
+                "content_json": {
+                  "fileUrl": "https://cdn.mysite.com/huddle/dei-foundations/shared-language-glossary.pdf",
+                  "fileName": "Shared Language Glossary.pdf",
+                  "fileType": "pdf"
+                },
+                "completion_rule_json": null
+              }
+            ]
+          },
+          {
+            "id": "e2e-mod-1762481742901-1",
+            "course_id": "e2e-course-1762465356075",
+            "title": "Equity, Equality, and Identity",
+            "description": null,
+            "order_index": 1,
+            "lessons": [
+              {
+                "id": "e2e-less-1762481742901-1-0",
+                "module_id": "e2e-mod-1762481742901-1",
+                "title": "Equity vs. Equality with Examples",
+                "description": null,
+                "type": "text",
+                "order_index": 0,
+                "duration_s": null,
+                "content_json": {
+                  "textContent": "Understand the difference between equality (same inputs) and equity (fair support) using hiring, promotion, and accessibility examples that highlight starting-point differences."
+                },
+                "completion_rule_json": null
+              },
+              {
+                "id": "e2e-less-1762481742901-1-1",
+                "module_id": "e2e-mod-1762481742901-1",
+                "title": "Equity & Identity Quiz",
+                "description": null,
+                "type": "quiz",
+                "order_index": 1,
+                "duration_s": null,
+                "content_json": {
+                  "questions": [
+                    {
+                      "text": "Equality means:",
+                      "options": [
+                        "Everyone receives identical resources",
+                        "Support is tailored to individual needs",
+                        "Leaders avoid discussing identity",
+                        "Only outcomes matter"
+                      ],
+                      "correctAnswerIndex": 0
+                    },
+                    {
+                      "text": "An equity-minded process would:",
+                      "options": [
+                        "Use identical interview questions and stop there",
+                        "Offer reasonable accommodations and structured criteria",
+                        "Rely on informal referrals only",
+                        "Skip debriefs to save time"
+                      ],
+                      "correctAnswerIndex": 1
+                    },
+                    {
+                      "text": "Intersectionality helps us understand:",
+                      "options": [
+                        "Only one identity at a time",
+                        "How overlapping identities shape experiences",
+                        "That identity topics are optional",
+                        "Why policy is better than practice"
+                      ],
+                      "correctAnswerIndex": 1
+                    },
+                    {
+                      "text": "A barrier equity can address is:",
+                      "options": [
+                        "Clear job descriptions",
+                        "Bias in access to networks",
+                        "Regular 1:1s",
+                        "Consistent meeting times"
+                      ],
+                      "correctAnswerIndex": 1
+                    }
+                  ],
+                  "passingScore": 80,
+                  "allowRetakes": true,
+                  "showCorrectAnswers": true
+                },
+                "completion_rule_json": null
+              },
+              {
+                "id": "e2e-less-1762481742901-1-2",
+                "module_id": "e2e-mod-1762481742901-1",
+                "title": "Identity Wheel Worksheet",
+                "description": null,
+                "type": "resource",
+                "order_index": 2,
+                "duration_s": null,
+                "content_json": {
+                  "fileUrl": "https://cdn.mysite.com/huddle/dei-foundations/identity-wheel.pdf",
+                  "fileName": "Identity Wheel.pdf",
+                  "fileType": "pdf"
+                },
+                "completion_rule_json": null
+              }
+            ]
+          },
+          {
+            "id": "e2e-mod-1762481742901-2",
+            "course_id": "e2e-course-1762465356075",
+            "title": "Inclusive Communication & Daily Practice",
+            "description": null,
+            "order_index": 2,
+            "lessons": [
+              {
+                "id": "e2e-less-1762481742901-2-0",
+                "module_id": "e2e-mod-1762481742901-2",
+                "title": "Inclusive Language and Meetings",
+                "description": null,
+                "type": "text",
+                "order_index": 0,
+                "duration_s": null,
+                "content_json": {
+                  "textContent": "Practical swaps and behaviors for everyday communication: person-first language, inviting perspectives, using neutral terms, and closing the loop after feedback."
+                },
+                "completion_rule_json": null
+              },
+              {
+                "id": "e2e-less-1762481742901-2-1",
+                "module_id": "e2e-mod-1762481742901-2",
+                "title": "Language & Microaggressions Quiz",
+                "description": null,
+                "type": "quiz",
+                "order_index": 1,
+                "duration_s": null,
+                "content_json": {
+                  "questions": [
+                    {
+                      "text": "Which phrase is the more inclusive default?",
+                      "options": [
+                        "You guys",
+                        "Ladies and gentlemen",
+                        "Folks or team",
+                        "Normal people"
+                      ],
+                      "correctAnswerIndex": 2
+                    },
+                    {
+                      "text": "If you cause harm with language, first:",
+                      "options": [
+                        "Defend your intent",
+                        "Ignore it to move on",
+                        "Acknowledge impact and apologize",
+                        "Ask someone else to fix it"
+                      ],
+                      "correctAnswerIndex": 2
+                    },
+                    {
+                      "text": "A microaggression is:",
+                      "options": [
+                        "Open praise of a coworker",
+                        "A brief, often unintentional slight that harms",
+                        "Formal discipline policy",
+                        "A team-building exercise"
+                      ],
+                      "correctAnswerIndex": 1
+                    },
+                    {
+                      "text": "An inclusive meeting practice is to:",
+                      "options": [
+                        "Let the loudest voice lead",
+                        "Invite input and track action items",
+                        "Skip agendas for flexibility",
+                        "Limit notes to leaders only"
+                      ],
+                      "correctAnswerIndex": 1
+                    }
+                  ],
+                  "passingScore": 80,
+                  "allowRetakes": true,
+                  "showCorrectAnswers": true
+                },
+                "completion_rule_json": null
+              },
+              {
+                "id": "e2e-less-1762481742901-2-2",
+                "module_id": "e2e-mod-1762481742901-2",
+                "title": "Inclusion Pledge & Team Charter",
+                "description": null,
+                "type": "resource",
+                "order_index": 2,
+                "duration_s": null,
+                "content_json": {
+                  "fileUrl": "https://cdn.mysite.com/huddle/dei-foundations/inclusion-pledge-and-charter.docx",
+                  "fileName": "Inclusion Pledge and Team Charter.docx",
+                  "fileType": "docx"
+                },
+                "completion_rule_json": null
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    [
+      "e2e-course-1762483157280-441",
+      {
+        "id": "e2e-course-1762483157280-441",
+        "slug": "demo-import",
+        "title": "Demo Import Course",
+        "description": null,
+        "status": "draft",
+        "version": 1,
+        "meta_json": {},
+        "published_at": null,
+        "modules": [
+          {
+            "id": "e2e-mod-1762483157280-0-531",
+            "course_id": "e2e-course-1762483157280-441",
+            "title": "Intro",
+            "description": null,
+            "order_index": 0,
+            "lessons": [
+              {
+                "id": "e2e-less-1762483157280-0-0-894",
+                "module_id": "e2e-mod-1762483157280-0-531",
+                "title": "Welcome",
+                "description": null,
+                "type": "text",
+                "order_index": 0,
+                "duration_s": null,
+                "content_json": {},
+                "completion_rule_json": null
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    [
+      "e2e-course-1762483604883-32",
+      {
+        "id": "e2e-course-1762483604883-32",
+        "slug": "e2e-import-course-1762483604758",
+        "title": "E2E Import Course 1762483604758",
+        "description": "Created via e2e import test",
+        "status": "draft",
+        "version": 1,
+        "meta_json": {
+          "difficulty": null,
+          "estimated_duration": null,
+          "tags": [],
+          "key_takeaways": [],
+          "thumbnail": null
+        },
+        "published_at": null,
+        "modules": [
+          {
+            "id": "e2e-mod-1762483604883-0-239",
+            "course_id": "e2e-course-1762483604883-32",
+            "title": "Module 1",
+            "description": null,
+            "order_index": 1,
+            "lessons": [
+              {
+                "id": "e2e-less-1762483604883-0-0-268",
+                "module_id": "e2e-mod-1762483604883-0-239",
+                "title": "Intro",
+                "description": null,
+                "type": "text",
+                "order_index": 1,
+                "duration_s": null,
+                "content_json": {},
+                "completion_rule_json": null
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    [
+      "e2e-course-1762515405401-162",
+      {
+        "id": "e2e-course-1762515405401-162",
+        "slug": "e2e-import-course-1762515405277",
+        "title": "E2E Import Course 1762515405277",
+        "description": "Created via e2e import test",
+        "status": "draft",
+        "version": 1,
+        "meta_json": {
+          "difficulty": null,
+          "estimated_duration": null,
+          "tags": [],
+          "key_takeaways": [],
+          "thumbnail": null
+        },
+        "published_at": null,
+        "modules": [
+          {
+            "id": "e2e-mod-1762515405401-0-338",
+            "course_id": "e2e-course-1762515405401-162",
+            "title": "Module 1",
+            "description": null,
+            "order_index": 1,
+            "lessons": [
+              {
+                "id": "e2e-less-1762515405401-0-0-833",
+                "module_id": "e2e-mod-1762515405401-0-338",
+                "title": "Intro",
+                "description": null,
+                "type": "text",
+                "order_index": 1,
+                "duration_s": null,
+                "content_json": {},
+                "completion_rule_json": null
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    [
+      "e2e-course-1762518374579-988",
+      {
+        "id": "e2e-course-1762518374579-988",
+        "slug": "e2e-import-course-1762518374436",
+        "title": "E2E Import Course 1762518374436",
+        "description": "Created via e2e import test",
+        "status": "draft",
+        "version": 1,
+        "meta_json": {
+          "difficulty": null,
+          "estimated_duration": null,
+          "tags": [],
+          "key_takeaways": [],
+          "thumbnail": null
+        },
+        "published_at": null,
+        "modules": [
+          {
+            "id": "e2e-mod-1762518374579-0-922",
+            "course_id": "e2e-course-1762518374579-988",
+            "title": "Module 1",
+            "description": null,
+            "order_index": 1,
+            "lessons": [
+              {
+                "id": "e2e-less-1762518374579-0-0-753",
+                "module_id": "e2e-mod-1762518374579-0-922",
+                "title": "Intro",
+                "description": null,
+                "type": "text",
+                "order_index": 1,
+                "duration_s": null,
+                "content_json": {},
+                "completion_rule_json": null
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  ]
+}

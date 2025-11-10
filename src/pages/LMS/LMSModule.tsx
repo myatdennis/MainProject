@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 
+import { useUserProfile } from '../../hooks/useUserProfile';
 import ClientErrorBoundary from '../../components/ClientErrorBoundary';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
 import Card from '../../components/ui/Card';
@@ -62,14 +63,14 @@ const LessonSidebarButton = memo(({ lesson, index, progress, isActive, onSelect 
   );
 });
 
-const buildLearnerId = () => {
+const buildLegacyLearnerId = () => {
   try {
     const raw = localStorage.getItem('huddle_user');
     if (!raw) return 'local-user';
     const parsed = JSON.parse(raw);
     return (parsed.email || parsed.id || 'local-user').toLowerCase();
   } catch (error) {
-    console.warn('Failed to parse learner identity:', error);
+    console.warn('Failed to parse learner identity (legacy fallback):', error);
     return 'local-user';
   }
 };
@@ -93,7 +94,8 @@ const deriveModuleContext = (moduleId: string | undefined): {
 const LMSModule = () => {
   const { moduleId } = useParams();
   const navigate = useNavigate();
-  const learnerId = useMemo(() => buildLearnerId(), []);
+  const { user } = useUserProfile();
+  const learnerId = useMemo(() => (user ? (user.email || user.id).toLowerCase() : buildLegacyLearnerId()), [user]);
 
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -111,7 +113,6 @@ const LMSModule = () => {
     const loadModule = async () => {
       setIsLoading(true);
       setError(null);
-
       try {
         const context = deriveModuleContext(moduleId);
         if (!context) {
@@ -121,8 +122,7 @@ const LMSModule = () => {
           return;
         }
 
-  const lessons = (context.module.lessons ?? []) as unknown as NormalizedLesson[];
-
+        const lessons = (context.module.lessons ?? []) as unknown as NormalizedLesson[];
         if (lessons.length === 0) {
           setCourseContext({ ...context, lessons: [] });
           setCompletedLessons(new Set());
@@ -152,7 +152,6 @@ const LMSModule = () => {
           (storedProgress.lastLessonId && lessons.some((lesson) => lesson.id === storedProgress.lastLessonId)
             ? storedProgress.lastLessonId
             : lessons[0]?.id) ?? null;
-
         setCurrentLessonId(resolvedLesson);
       } catch (err) {
         console.error('Failed to load module data:', err);
@@ -162,7 +161,6 @@ const LMSModule = () => {
         setIsLoading(false);
       }
     };
-
     void loadModule();
   }, [moduleId, learnerId]);
 

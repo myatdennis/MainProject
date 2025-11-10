@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-const mockApiRequest = vi.fn(() => Promise.resolve({ data: {} }));
+const mockApiRequest = vi.fn((args?: unknown[]) => Promise.resolve({ data: {} }));
 
 vi.mock('../../utils/apiClient', () => ({
   __esModule: true,
-  default: (...args: unknown[]) => mockApiRequest(...args),
+  default: (...args: unknown[]) => mockApiRequest(args),
 }));
 
 describe('analyticsService', () => {

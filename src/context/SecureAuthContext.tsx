@@ -17,9 +17,13 @@ import {
 import { loginSchema, emailSchema } from '../utils/validators';
 import axios from 'axios';
 
-// Configure axios with backend URL
-// Prefer Vite proxy ("/api") by default so local dev works without hardcoding ports
-const API_URL = import.meta.env.VITE_API_URL || '/api';
+// Configure axios base URL
+// Backwards compatibility: support legacy VITE_API_URL, prefer VITE_API_BASE_URL
+// If a full base URL is provided (e.g. https://railway-app.up.railway.app), append /api
+// Otherwise fall back to Vite dev proxy path '/api'.
+const rawApiBase = (import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || '').trim();
+const normalizedApiBase = rawApiBase.replace(/\/$/, '');
+const API_URL = normalizedApiBase ? `${normalizedApiBase}/api` : '/api';
 const api = axios.create({
   baseURL: API_URL,
   headers: {
@@ -270,6 +274,14 @@ export const SecureAuthProvider: React.FC<AuthProviderProps> = ({ children }) =>
       console.error('Login error:', error);
 
       if (axios.isAxiosError(error)) {
+        // Explicit handling for service unavailable / misconfiguration
+        if (error.response?.status === 503) {
+          return {
+            success: false,
+            error: 'Authentication service is not configured. Please try again later.',
+            errorType: 'network_error',
+          };
+        }
         if (error.response?.status === 401) {
           return {
             success: false,
@@ -297,7 +309,7 @@ export const SecureAuthProvider: React.FC<AuthProviderProps> = ({ children }) =>
 
       return {
         success: false,
-        error: error.response?.data?.message || 'Login failed. Please try again.',
+        error: (error as any).response?.data?.message || 'Login failed. Please try again.',
         errorType: 'unknown_error',
       };
     }

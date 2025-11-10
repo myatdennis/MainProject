@@ -20,9 +20,10 @@ export async function getSupabase() {
   // from static analysis and marking with @vite-ignore. This prevents the
   // supabase chunk from being modulepreload'ed and evaluated on initial load
   // when Supabase isn't configured (which caused a runtime ReferenceError).
-  const pkg = '@supabase' + '/supabase-js';
-  // @ts-ignore - dynamic import string is intentional
-  const mod = await import(/* @vite-ignore */ pkg);
+  const pkg: string = '@supabase' + '/supabase-js';
+  // Using dynamic import with concatenated string prevents static preloading.
+  // Type assertion keeps TS happy; module shape inferred at runtime.
+  const mod: any = await import(/* @vite-ignore */ pkg);
     _supabase = mod.createClient(supabaseUrl!, supabaseAnonKey!, {
       realtime: { params: { eventsPerSecond: 10 } },
     });

@@ -1,0 +1,24 @@
+name: health-monitor
+
+on:
+  schedule:
+    - cron: '*/30 * * * *' # every 30 minutes
+  workflow_dispatch: {}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Curl domain root
+        run: |
+          DOMAIN=${DOMAIN:-the-huddle.co}
+          curl -fsS https://$DOMAIN/ | head -c 200 || exit 1
+      - name: API health (Supabase Edge function proxy)
+        run: |
+          API_HOST=${API_HOST:-miqzywzuqzeffqpiupjm.supabase.co}
+          curl -fsS https://$API_HOST/functions/v1/api/health | jq '.status == "ok"' | grep true
+      - name: CORS preflight
+        run: |
+          API_HOST=${API_HOST:-miqzywzuqzeffqpiupjm.supabase.co}
+          DOMAIN=${DOMAIN:-the-huddle.co}
+          curl -i -X OPTIONS https://$API_HOST/functions/v1/api/auth/login -H "Origin: https://$DOMAIN" -H "Access-Control-Request-Method: POST" | grep -i "Access-Control-Allow-Origin" || exit 1

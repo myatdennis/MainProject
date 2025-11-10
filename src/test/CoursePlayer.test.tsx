@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, waitFor, screen, fireEvent } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
@@ -7,7 +8,7 @@ vi.mock('../context/ToastContext', () => ({
   useToast: () => ({ showToast: vi.fn() }),
 }));
 
-const mockLogEvent = vi.fn();
+const mockLogEvent = vi.hoisted(() => vi.fn());
 
 type MockSubscription = {
   unsubscribe: () => void;
@@ -20,32 +21,40 @@ vi.mock('../services/syncService', () => ({
   }),
 }));
 
-const mockUpdateAssignmentProgress = vi.fn().mockResolvedValue(undefined);
+const mockUpdateAssignmentProgress = vi.hoisted(() => vi.fn());
 vi.mock('../utils/assignmentStorage', () => ({
-  updateAssignmentProgress: (...args: unknown[]) => mockUpdateAssignmentProgress(...args),
+  updateAssignmentProgress: mockUpdateAssignmentProgress as any,
 }));
 
-const mockSaveStoredCourseProgress = vi.fn();
-const mockLoadStoredCourseProgress = vi.fn(() => ({
-  completedLessonIds: [],
-  lessonProgress: {},
-  lessonPositions: {},
-}));
-const mockSyncCourseProgressWithRemote = vi.fn().mockResolvedValue(null);
+const mockSaveStoredCourseProgress = vi.hoisted(() => vi.fn());
+const mockLoadStoredCourseProgress = vi.hoisted(() => vi.fn());
+const mockSyncCourseProgressWithRemote = vi.hoisted(() => vi.fn());
 
 vi.mock('../utils/courseProgress', () => ({
-  loadStoredCourseProgress: (...args: unknown[]) => mockLoadStoredCourseProgress(...args),
-  saveStoredCourseProgress: (...args: unknown[]) => mockSaveStoredCourseProgress(...args),
-  syncCourseProgressWithRemote: (...args: unknown[]) => mockSyncCourseProgressWithRemote(...args),
+  loadStoredCourseProgress: mockLoadStoredCourseProgress as any,
+  saveStoredCourseProgress: mockSaveStoredCourseProgress as any,
+  syncCourseProgressWithRemote: mockSyncCourseProgressWithRemote as any,
   buildLearnerProgressSnapshot: vi.fn(),
 }));
 
-const mockLoadCourse = vi.fn();
-vi.mock('../services/courseDataLoader', () => ({
-  loadCourse: (...args: unknown[]) => mockLoadCourse(...args),
+// Hoistable mock for course loader so vi.mock factory can reference it safely
+const mockLoadCourse = vi.hoisted(() => vi.fn());
+vi.mock('../dal/courseData', () => ({
+  loadCourse: (...args: any[]) => mockLoadCourse(...args),
   clearCourseCache: vi.fn(),
 }));
 
+// Mock batching service to avoid network calls during tests
+vi.mock('../services/batchService', () => ({
+  batchService: {
+    enqueueProgress: vi.fn(),
+    enqueueAnalytics: vi.fn(),
+    flushProgress: vi.fn(),
+    flushAnalytics: vi.fn(),
+  },
+}));
+
+// IMPORTANT: import tested component AFTER all mocks to avoid hoist issues
 import CoursePlayer from '../components/CoursePlayer/CoursePlayer';
 
 const mockCourse = {
@@ -96,12 +105,15 @@ const mockLoadCourseResult = {
 };
 
 const renderCoursePlayer = () => {
+  const queryClient = new QueryClient();
   return render(
-    <MemoryRouter initialEntries={['/lms/course/course-1/lesson/lesson-1']}>
-      <Routes>
-        <Route path="/lms/course/:courseId/lesson/:lessonId" element={<CoursePlayer namespace="lms" />} />
-      </Routes>
-    </MemoryRouter>
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={['/lms/course/course-1/lesson/lesson-1']}>
+        <Routes>
+          <Route path="/lms/course/:courseId/lesson/:lessonId" element={<CoursePlayer namespace="admin" />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>
   );
 };
 
@@ -114,6 +126,8 @@ describe('CoursePlayer progress integration', () => {
       lessonProgress: {},
       lessonPositions: {},
     });
+    mockSyncCourseProgressWithRemote.mockResolvedValue(null);
+    mockUpdateAssignmentProgress.mockResolvedValue(undefined);
   });
 
   afterEach(() => {

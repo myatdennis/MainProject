@@ -1,6 +1,7 @@
 import { useEffect, Suspense, lazy } from 'react';
 // (removed duplicate import)
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Toaster } from 'react-hot-toast';
 // New secure auth with server-side verification
 import { SecureAuthProvider, useSecureAuth } from './context/SecureAuthContext';
@@ -109,13 +110,27 @@ function App() {
     });
   }, []);
 
+  const queryClient = new QueryClient({
+    defaultOptions: {
+      queries: {
+        staleTime: 60_000,
+        gcTime: 5 * 60_000,
+        retry: 2,
+        refetchOnWindowFocus: false,
+        // Suspense should be configured per-hook in React Query v5; remove from defaults
+      }
+    }
+  });
+
   return (
     <ErrorBoundary>
-      <ToastProvider>
-        <SecureAuthProvider>
-          <AppWithAuthRoutes />
-        </SecureAuthProvider>
-      </ToastProvider>
+      <QueryClientProvider client={queryClient}>
+        <ToastProvider>
+          <SecureAuthProvider>
+            <AppWithAuthRoutes />
+          </SecureAuthProvider>
+        </ToastProvider>
+      </QueryClientProvider>
     </ErrorBoundary>
   );
 }

@@ -169,6 +169,8 @@ export const useCourseProgress = (courseId: string) => {
 
   const updateCourseProgress = async () => {
     try {
+      const supabase = await getSupabase();
+      if (!supabase) return;
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 

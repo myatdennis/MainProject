@@ -2,21 +2,26 @@
   "compilerOptions": {
     "target": "ES2022",
     "lib": ["ES2023"],
-    "module": "ESNext",
+    "module": "CommonJS",
     "skipLibCheck": true,
 
     /* Bundler mode */
-    "moduleResolution": "bundler",
-    "allowImportingTsExtensions": true,
+    "moduleResolution": "node",
+    "allowImportingTsExtensions": false,
     "isolatedModules": true,
     "moduleDetection": "force",
-    "noEmit": true,
+    "noEmit": false,
+    "outDir": "dist",
 
     /* Linting */
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+
+  /* Interoperability */
+  "esModuleInterop": true
   },
-  "include": ["vite.config.ts"]
+  "include": ["src/server/**/*.ts", "src/server/*.ts"],
+  "files": ["src/server/index.ts", "src/server/analyticsRoutes.ts", "src/server/testServer.ts"]
 }

@@ -21,6 +21,7 @@ import Toast, { ToastType } from '../components/Toast';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
+import ProgressBar from '../components/ui/ProgressBar';
 
 const ClientPortalPage = () => {
   const navigate = useNavigate();

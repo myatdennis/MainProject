@@ -1,0 +1,7 @@
+import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
+import { Helmet } from 'react-helmet-async';
+const SEO = ({ title = "MainProject LMS - Modern Learning Management System", description = "Comprehensive Learning Management System with course creation, survey tools, and analytics. Transform your training programs with our modern LMS platform.", keywords = "LMS, Learning Management System, Online Training, Course Creation, E-learning, Educational Technology", image = "/og-image.png", url = window.location.href, type = "website" }) => {
+    const fullTitle = title.includes('MainProject LMS') ? title : `${title} | MainProject LMS`;
+    return (_jsxs(Helmet, { children: [_jsx("title", { children: fullTitle }), _jsx("meta", { name: "description", content: description }), _jsx("meta", { name: "keywords", content: keywords }), _jsx("meta", { property: "og:type", content: type }), _jsx("meta", { property: "og:title", content: fullTitle }), _jsx("meta", { property: "og:description", content: description }), _jsx("meta", { property: "og:image", content: image }), _jsx("meta", { property: "og:url", content: url }), _jsx("meta", { name: "twitter:card", content: "summary_large_image" }), _jsx("meta", { name: "twitter:title", content: fullTitle }), _jsx("meta", { name: "twitter:description", content: description }), _jsx("meta", { name: "twitter:image", content: image }), _jsx("link", { rel: "canonical", href: url })] }));
+};
+export default SEO;

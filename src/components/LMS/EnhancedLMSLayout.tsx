@@ -119,7 +119,7 @@ const EnhancedLMSLayout: React.FC<EnhancedLMSLayoutProps> = ({ children }) => {
                     <h3 className="font-semibold text-gray-900">Spring 2025 Leadership Cohort</h3>
                     <Zap className="w-4 h-4 text-blue-600" />
                   </div>
-                  <p className="text-sm text-gray-600 mb-3">Welcome back, {user?.name || 'Learner'}!</p>
+                  <p className="text-sm text-gray-600 mb-3">Welcome back, {user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'Learner' : 'Learner'}!</p>
                   
                   {/* Enhanced Sync Status */}
                   <div className="mt-3 p-2 bg-white rounded border">
@@ -285,12 +285,12 @@ const EnhancedLMSLayout: React.FC<EnhancedLMSLayoutProps> = ({ children }) => {
                     <div className="flex items-center space-x-3">
                       <div className="w-8 h-8 rounded-full flex items-center justify-center" style={{ background: 'var(--gradient-blue-green)' }}>
                         <span className="text-white text-sm font-medium">
-                          {(user?.name || 'U').charAt(0).toUpperCase()}
+                          {((user?.firstName || user?.lastName) ? `${user.firstName || ''}${user.lastName ? ' ' + user.lastName : ''}`.trim().charAt(0).toUpperCase() : 'U')}
                         </span>
                       </div>
                       <div className="hidden sm:block text-right">
                         <p className="text-sm font-medium text-gray-900">
-                          {user?.name || 'User'}
+                          {user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'User' : 'User'}
                         </p>
                         <p className="text-xs text-gray-500">
                           {user?.role || 'Learner'}

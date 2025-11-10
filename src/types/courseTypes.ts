@@ -105,6 +105,8 @@ export interface Lesson {
   estimatedDuration?: number; // optional for backward compatibility
   duration?: string; // formatted duration string for backwards compatibility
   content: LessonContent;
+  // Raw JSON content (legacy and import compatibility). Use `migrateLessonContent` to canonicalize.
+  content_json?: any;
   completionRule?: Record<string, any>;
   isRequired?: boolean; // optional for backward compatibility
   passingScore?: number; // for quizzes

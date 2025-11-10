@@ -31,6 +31,7 @@ import Button from '../components/ui/Button';
 import Input from '../components/ui/Input';
 import Badge from '../components/ui/Badge';
 import ProgressBar from '../components/ui/ProgressBar';
+import { useUserProfile } from '../hooks/useUserProfile';
 
 const filterOptions: Array<{ value: 'all' | 'in-progress' | 'not-started' | 'completed'; label: string }> = [
   { value: 'all', label: 'All' },
@@ -58,7 +59,9 @@ const LearnerDashboard = () => {
   const [assignments, setAssignments] = useState<CourseAssignment[]>([]);
   const [progressRefreshToken, setProgressRefreshToken] = useState(0);
 
+  const { user } = useUserProfile();
   const learnerId = useMemo(() => {
+    if (user) return (user.email || user.id).toLowerCase();
     try {
       const raw = localStorage.getItem('huddle_user');
       if (raw) {
@@ -66,10 +69,10 @@ const LearnerDashboard = () => {
         return (parsed.email || parsed.id || 'local-user').toLowerCase();
       }
     } catch (error) {
-      console.warn('Failed to read learner identity:', error);
+      console.warn('Failed to read learner identity (legacy fallback):', error);
     }
     return 'local-user';
-  }, []);
+  }, [user]);
 
   useEffect(() => {
     let isMounted = true;

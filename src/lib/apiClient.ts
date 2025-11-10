@@ -4,6 +4,8 @@
  */
 
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosError } from 'axios';
+import { ApiError as ApiClientError } from '../utils/apiClient';
+import buildAuthHeaders from '../utils/requestContext';
 import { getAccessToken, getAuthTokens } from '../lib/secureStorage';
 import { getCSRFToken } from '../hooks/useCSRFToken';
 
@@ -11,7 +13,8 @@ import { getCSRFToken } from '../hooks/useCSRFToken';
 // API Client Configuration
 // ============================================================================
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';
+// Prefer VITE_API_BASE_URL for consistency; fall back to VITE_API_URL and then '/api'
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '');
 
 /**
  * Create secure axios instance
@@ -31,10 +34,16 @@ export const apiClient: AxiosInstance = axios.create({
 
 apiClient.interceptors.request.use(
   async (config) => {
-    // Add authentication token
-    const token = getAccessToken();
-    if (token) {
-      config.headers.Authorization = `Bearer ${token}`;
+    // Merge unified auth headers built from secure storage / supabase / legacy fallbacks
+    try {
+      const headers = await buildAuthHeaders();
+      config.headers = { ...(config.headers || {}), ...headers } as any;
+    } catch (err) {
+      // fallback: best-effort bearer from secure storage
+      const token = getAccessToken();
+      if (token) {
+        (config.headers as any) = { ...(config.headers || {}), Authorization: `Bearer ${token}` };
+      }
     }
 
     // Add CSRF token for state-changing requests
@@ -156,7 +165,16 @@ apiClient.interceptors.response.use(
       }
     }
 
-    return Promise.reject(error);
+    // Normalize remaining errors to ApiClientError so callers can handle consistently
+    try {
+      const status = error.response?.status ?? 0;
+      const data: any = error.response?.data;
+      const message = (data?.message || data?.error || error.message || 'Request failed') as string;
+      const code = (error.code === 'ECONNABORTED' ? 'timeout' : data?.code) as string | undefined;
+      return Promise.reject(new ApiClientError(status, message, data, code));
+    } catch (wrapErr) {
+      return Promise.reject(error);
+    }
   }
 );
 

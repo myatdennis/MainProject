@@ -1,0 +1,89 @@
+import { jsx as _jsx, jsxs as _jsxs } from "react/jsx-runtime";
+import { Loader2 } from 'lucide-react';
+import { motion } from 'framer-motion';
+const LoadingButton = ({ onClick, disabled = false, loading = false, variant = 'primary', size = 'md', children, className = '', type = 'button', title, icon: Icon }) => {
+    const handleClick = async () => {
+        if (onClick && !disabled && !loading) {
+            await onClick();
+        }
+    };
+    const getVariantClasses = () => {
+        switch (variant) {
+            case 'primary':
+                return {
+                    background: 'var(--cta-gradient)',
+                    color: 'var(--cta-text)',
+                    boxShadow: 'var(--cta-shadow)',
+                    border: 'none',
+                };
+            case 'secondary':
+                return {
+                    background: 'var(--hud-navy)',
+                    color: '#fff',
+                    border: 'none',
+                };
+            case 'success':
+                return {
+                    background: 'var(--accent-success)',
+                    color: 'var(--on-secondary)',
+                    boxShadow: 'var(--shadow-card)',
+                    border: 'none',
+                };
+            case 'danger':
+                return {
+                    background: 'var(--accent-danger)',
+                    color: 'var(--on-accent)',
+                    boxShadow: 'var(--shadow-card)',
+                    border: 'none',
+                };
+            case 'warning':
+                return {
+                    background: 'var(--subtext-muted)',
+                    color: 'var(--on-surface)',
+                    boxShadow: 'var(--shadow-card)',
+                    border: 'none',
+                };
+            default:
+                return {
+                    background: 'var(--cta-gradient)',
+                    color: 'var(--cta-text)',
+                    boxShadow: 'var(--cta-shadow)',
+                    border: 'none',
+                };
+        }
+    };
+    const sizeStyles = () => {
+        switch (size) {
+            case 'sm':
+                return { padding: '6px 10px', fontSize: 14 };
+            case 'md':
+                return { padding: '10px 14px', fontSize: 15 };
+            case 'lg':
+                return { padding: '14px 20px', fontSize: 16 };
+            default:
+                return { padding: '10px 14px', fontSize: 15 };
+        }
+    };
+    const isDisabled = disabled || loading;
+    const variantStyle = getVariantClasses();
+    const sStyle = sizeStyles();
+    return (_jsxs(motion.button, { type: type, onClick: handleClick, disabled: isDisabled, "aria-busy": loading, title: title, style: {
+            display: 'inline-flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 8,
+            borderRadius: 'var(--radius-btn)',
+            cursor: isDisabled ? 'not-allowed' : 'pointer',
+            opacity: isDisabled ? 0.6 : 1,
+            border: variantStyle.border || 'none',
+            background: variantStyle.background,
+            color: variantStyle.color,
+            boxShadow: variantStyle.boxShadow,
+            padding: sStyle.padding,
+            fontFamily: 'var(--font-heading)',
+            fontWeight: 700,
+            fontSize: sStyle.fontSize,
+            transition: 'transform var(--motion-duration-base), box-shadow var(--motion-duration-base)'
+        }, whileHover: !isDisabled && window.matchMedia('(prefers-reduced-motion: no-preference)').matches ? { scale: 1.03, boxShadow: 'var(--shadow-card-sm)' } : {}, whileTap: !isDisabled && window.matchMedia('(prefers-reduced-motion: no-preference)').matches ? { scale: 0.98 } : {}, initial: { opacity: 0, y: 8 }, animate: { opacity: 1, y: 0 }, transition: { duration: 0.25 }, className: className, children: [loading ? (_jsx(Loader2, { className: "icon-16 animate-spin", role: "progressbar", "aria-label": "Loading" })) : Icon ? (_jsx(Icon, { className: "icon-16" })) : null, _jsx("span", { children: children })] }));
+};
+export default LoadingButton;

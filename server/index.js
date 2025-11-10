@@ -1,4 +1,5 @@
 // (Removed initial lightweight dev server stub in favor of the full server below)
+import 'dotenv/config';
 import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -21,6 +22,9 @@ import {
 
 // Import auth routes and middleware
 import authRoutes from './routes/auth.js';
+import adminAnalyticsRoutes from './routes/admin-analytics.js';
+import adminAnalyticsExport from './routes/admin-analytics-export.js';
+import adminAnalyticsSummary from './routes/admin-analytics-summary.js';
 import { apiLimiter, securityHeaders } from './middleware/auth.js';
 import { setDoubleSubmitCSRF, getCSRFToken } from './middleware/csrf.js';
 
@@ -90,12 +94,49 @@ const DEV_FALLBACK = (process.env.DEV_FALLBACK || '').toLowerCase() !== 'false' 
 // In E2E/dev mode, enable permissive CORS so the Vite dev origin (5174) can call the API (8787)
 if (process.env.E2E_TEST_MODE === 'true' || DEV_FALLBACK) {
   app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Origin', '*');
+    const origin = req.headers.origin || '*';
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Access-Control-Allow-Credentials', 'true');
     res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-User-Id, X-User-Role, X-Org-Id');
+    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-User-Id, X-User-Role, X-Org-Id, x-csrf-token');
+    res.header('Access-Control-Expose-Headers', 'x-request-id');
     if (req.method === 'OPTIONS') return res.status(204).end();
     next();
   });
+}
+
+// In production, restrict CORS to an allowlist provided via CORS_ALLOWED_ORIGINS
+// Example: CORS_ALLOWED_ORIGINS="https://your-site.netlify.app,https://www.yourdomain.com"
+if (!(process.env.E2E_TEST_MODE === 'true' || DEV_FALLBACK)) {
+  const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  // If not configured, default to no special handling (no wildcard) to be conservative
+  if (allowedOrigins.length > 0) {
+    app.use((req, res, next) => {
+      const origin = req.headers.origin;
+      const isAllowed = origin && allowedOrigins.includes(origin);
+
+      if (isAllowed) {
+        res.header('Access-Control-Allow-Origin', origin);
+        res.header('Vary', 'Origin');
+        res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+        res.header(
+          'Access-Control-Allow-Headers',
+          'Content-Type, Authorization, X-User-Id, X-User-Role, X-Org-Id, x-csrf-token'
+        );
+        res.header('Access-Control-Expose-Headers', 'x-request-id');
+      }
+
+      if (req.method === 'OPTIONS') {
+        // If origin not allowed, return 403 to make it explicit during setup
+        return res.status(isAllowed ? 204 : 403).end();
+      }
+      next();
+    });
+  }
 }
 
 // Basic request logging with request_id and timing
@@ -159,6 +200,11 @@ app.put('/api/text-content', (req, res) => {
 // Auth routes (login, register, refresh, logout)
 app.use('/api/auth', authRoutes);
 
+// Admin analytics endpoints (aggregates, exports, AI summary)
+app.use('/api/admin/analytics', adminAnalyticsRoutes);
+app.use('/api/admin/analytics/export', adminAnalyticsExport);
+app.use('/api/admin/analytics/summary', adminAnalyticsSummary);
+
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
 const supabase = supabaseUrl && supabaseServiceRoleKey ? createClient(supabaseUrl, supabaseServiceRoleKey) : null;
@@ -175,6 +221,10 @@ const e2eStore = {
   courseProgress: new Map(), // key `${user_id}:${course_id}` -> { user_id, course_id, percent, status, time_spent_s, updated_at }
   lessonProgress: new Map(), // key `${user_id}:${lesson_id}` -> { user_id, lesson_id, percent, status, time_spent_s, resume_at_s, updated_at }
   progressEvents: new Set(), // idempotency keys (client_event_id)
+  // generic idempotency keys for demo mode: map of id -> resourceId|null
+  // null indicates the key was reserved/in-flight; a string value indicates the resource id produced
+  idempotencyKeys: {},
+  analyticsEvents: [], // stored analytics events in demo/E2E mode
 };
 
 // Log loaded courses
@@ -914,6 +964,14 @@ app.get('/api/admin/courses', async (_req, res) => {
           .eq('id', rpcRes.data)
           .single();
         if (sel.error) throw sel.error;
+        // If an idempotency key was provided, record the resulting resource id
+        if (idempotencyKey) {
+          try {
+            await supabase.from('idempotency_keys').update({ resource_id: sel.data?.id }).eq('id', idempotencyKey);
+          } catch (updErr) {
+            console.warn('Failed to update idempotency_keys with resource id', updErr);
+          }
+        }
         res.status(201).json({ data: sel.data });
         return;
       }
@@ -938,6 +996,25 @@ app.post('/api/admin/courses', async (req, res) => {
       return;
     }
     try {
+      // Demo-mode idempotency: respect client-provided idempotency keys in E2E/demo fallback
+      const demoIdempotencyKey = req.body?.idempotency_key ?? req.body?.client_event_id ?? null;
+      if (demoIdempotencyKey) {
+        // If we've already seen this idempotency key, return the previously-created resource if available
+        const existingResourceId = e2eStore.idempotencyKeys[demoIdempotencyKey];
+        if (existingResourceId) {
+          const existingCourse = e2eStore.courses.get(existingResourceId);
+          if (existingCourse) {
+            res.json({ data: existingCourse, idempotent: true });
+            return;
+          }
+          // Key exists but no resource recorded yet: indicate conflict/processing
+          res.status(409).json({ error: 'idempotency_conflict', message: 'Duplicate idempotency key (processing)' });
+          return;
+        }
+        // Reserve the idempotency key (null = in-flight)
+        e2eStore.idempotencyKeys[demoIdempotencyKey] = null;
+      }
+
       // Idempotent upsert by id, slug, or external_id (stored in meta_json)
       let existingId = null;
       const incomingSlug = course.slug ?? null;
@@ -998,11 +1075,20 @@ app.post('/api/admin/courses', async (req, res) => {
         courseObj.modules.push(moduleObj);
       }
       e2eStore.courses.set(id, courseObj);
-      
+
+      // If an idempotency key was provided in demo mode, record the resulting resource id
+      if (demoIdempotencyKey) {
+        try {
+          e2eStore.idempotencyKeys[demoIdempotencyKey] = id;
+        } catch (err) {
+          console.warn('Failed to record demo idempotency mapping', err);
+        }
+      }
+
       // Save to persistent storage
       persistE2EStore();
       console.log(`✅ Saved course "${courseObj.title}" to persistent storage`);
-      
+
       res.status(201).json({ data: courseObj });
       return;
     } catch (error) {
@@ -1031,6 +1117,75 @@ app.post('/api/admin/courses', async (req, res) => {
         res.status(409).json({ error: 'version_conflict', message: `Course has newer version ${currVersion}` });
         return;
       }
+    }
+
+    // Optional idempotency: if the client provided an idempotency key (or client_event_id),
+    // record it in the `idempotency_keys` table to avoid duplicate processing on retries.
+    // If the key already exists, treat as idempotent and return a 409 indicating duplicate.
+    const idempotencyKey = req.body?.idempotency_key ?? req.body?.client_event_id ?? null;
+    if (idempotencyKey) {
+      try {
+        await supabase.from('idempotency_keys').insert({ id: idempotencyKey, key_type: 'course_upsert', resource_id: null, payload: { course: course, modules: modules } });
+      } catch (ikErr) {
+        // Duplicate idempotency key: try to fetch the recorded idempotency row and return
+        console.warn(`Idempotency key ${idempotencyKey} already exists`);
+        try {
+          const { data: existing, error: fetchErr } = await supabase.from('idempotency_keys').select('*').eq('id', idempotencyKey).maybeSingle();
+          if (!fetchErr && existing) {
+            if (existing.resource_id) {
+              // If we have a resource_id, try to fetch and return the created resource
+              const { data: courseRow, error: courseFetchErr } = await supabase
+                .from('courses')
+                .select('*, modules(*, lessons(*))')
+                .eq('id', existing.resource_id)
+                .maybeSingle();
+              if (!courseFetchErr && courseRow) {
+                res.status(200).json({ data: courseRow, idempotent: true });
+                return;
+              }
+              // Resource id present but resource not yet queryable
+              res.status(409).json({ error: 'idempotency_conflict', message: 'Duplicate idempotency key (resource not available yet)' });
+              return;
+            }
+            // Key exists but resource_id not set yet; indicate conflict/processing
+            res.status(409).json({ error: 'idempotency_conflict', message: 'Duplicate idempotency key (processing)' });
+            return;
+          }
+        } catch (fetchErr) {
+          console.warn('Failed to lookup existing idempotency key row', fetchErr);
+        }
+        // Fallback response
+        res.status(409).json({ error: 'idempotency_conflict', message: 'Duplicate idempotency key' });
+        return;
+      }
+    }
+
+    // If Supabase supports the upsert_course_full RPC, try a single transactional upsert
+    try {
+      const organizationId = course.org_id ?? course.organizationId ?? null;
+      const rpcPayload = {
+        id: course.id ?? undefined,
+        slug: course.slug ?? undefined,
+        title: course.title || course.name,
+        description: course.description ?? null,
+        status: course.status ?? 'draft',
+        version: course.version ?? 1,
+        organization_id: organizationId,
+        meta_json: meta,
+      };
+      const rpcRes = await supabase.rpc('upsert_course_full', { p_course: rpcPayload, p_modules: modules });
+      if (!rpcRes.error && rpcRes.data) {
+        const sel = await supabase
+          .from('courses')
+          .select('*, modules(*, lessons(*))')
+          .eq('id', rpcRes.data)
+          .single();
+        if (sel.error) throw sel.error;
+        res.status(201).json({ data: sel.data });
+        return;
+      }
+    } catch (rpcErr) {
+      console.warn('RPC upsert_course_full failed, falling back to client-side sequence:', rpcErr);
     }
 
     // Upsert course row first to obtain courseRow.id
@@ -1189,6 +1344,15 @@ app.post('/api/admin/courses', async (req, res) => {
       .single();
 
     if (refreshed.error) throw refreshed.error;
+
+    // If an idempotency key was provided, record the resulting resource id
+    if (idempotencyKey) {
+      try {
+        await supabase.from('idempotency_keys').update({ resource_id: refreshed.data?.id }).eq('id', idempotencyKey);
+      } catch (updErr) {
+        console.warn('Failed to update idempotency_keys with resource id', updErr);
+      }
+    }
 
     res.status(201).json({ data: refreshed.data });
   } catch (error) {
@@ -1775,6 +1939,7 @@ app.post('/api/admin/modules', async (req, res) => {
     const parsed = validateOr400(moduleCreateSchema, req, res);
     if (!parsed) return;
     const courseId = pickId(parsed, 'course_id', 'courseId');
+    const expectedCourseVersion = parsed.course_version ?? parsed.expectedCourseVersion ?? null;
     const title = parsed.title;
     const description = parsed.description ?? null;
     const orderIndex = pickOrder(parsed);
@@ -1787,6 +1952,14 @@ app.post('/api/admin/modules', async (req, res) => {
     if (!course) {
       res.status(404).json({ error: 'Course not found' });
       return;
+    }
+    // Optional optimistic check: ensure client is targeting expected course version
+    if (typeof expectedCourseVersion === 'number') {
+      const current = course.version ?? 1;
+      if (expectedCourseVersion < current) {
+        res.status(409).json({ error: 'version_conflict', message: `Course has newer version ${current}` });
+        return;
+      }
     }
     const id = `e2e-mod-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
     const mod = { id, course_id: course.id, title, description, order_index: orderIndex, lessons: [], metadata: metadata ?? {} };
@@ -1802,12 +1975,23 @@ app.post('/api/admin/modules', async (req, res) => {
     const parsed = validateOr400(moduleCreateSchema, req, res);
     if (!parsed) return;
     const courseId = pickId(parsed, 'course_id', 'courseId');
+    const expectedCourseVersion = parsed.course_version ?? parsed.expectedCourseVersion ?? null;
     const title = parsed.title;
     const description = parsed.description ?? null;
     const orderIndex = pickOrder(parsed);
     if (!courseId || !title) {
       res.status(400).json({ error: 'courseId and title are required' });
       return;
+    }
+    // Optional optimistic check against parent course version to avoid stale edits
+    if (typeof expectedCourseVersion === 'number') {
+      const { data: courseRow, error: fetchErr } = await supabase.from('courses').select('id,version').eq('id', courseId).maybeSingle();
+      if (fetchErr) throw fetchErr;
+      const current = courseRow?.version ?? null;
+      if (current !== null && expectedCourseVersion < current) {
+        res.status(409).json({ error: 'version_conflict', message: `Course has newer version ${current}` });
+        return;
+      }
     }
     const { data, error } = await supabase
       .from('modules')
@@ -1827,6 +2011,7 @@ app.patch('/api/admin/modules/:id', async (req, res) => {
     const { id } = req.params;
     const parsed = validateOr400(modulePatchValidator, req, res);
     if (!parsed) return;
+    const expectedCourseVersion = parsed.course_version ?? parsed.expectedCourseVersion ?? null;
     const title = parsed.title;
     const description = parsed.description ?? null;
     const orderIndex = pickOrder(parsed);
@@ -1851,6 +2036,7 @@ app.patch('/api/admin/modules/:id', async (req, res) => {
     const title = parsed.title;
     const description = parsed.description ?? null;
     const orderIndex = pickOrder(parsed);
+    const expectedCourseVersion = parsed.course_version ?? parsed.expectedCourseVersion ?? null;
     const patch = {};
     if (typeof title === 'string') patch.title = title;
     if (description !== undefined) patch.description = description;
@@ -1858,6 +2044,22 @@ app.patch('/api/admin/modules/:id', async (req, res) => {
     if (Object.keys(patch).length === 0) {
       res.status(400).json({ error: 'No fields to update' });
       return;
+    }
+    // If client provided expected course version, validate against course to avoid stale updates
+    if (typeof expectedCourseVersion === 'number') {
+      // Fetch parent course id for this module
+      const { data: modRow, error: modErr } = await supabase.from('modules').select('id,course_id').eq('id', id).maybeSingle();
+      if (modErr) throw modErr;
+      const courseId = modRow?.course_id ?? null;
+      if (courseId) {
+        const { data: courseRow, error: fetchErr } = await supabase.from('courses').select('id,version').eq('id', courseId).maybeSingle();
+        if (fetchErr) throw fetchErr;
+        const current = courseRow?.version ?? null;
+        if (current !== null && expectedCourseVersion < current) {
+          res.status(409).json({ error: 'version_conflict', message: `Course has newer version ${current}` });
+          return;
+        }
+      }
     }
     const { data, error } = await supabase
       .from('modules')
@@ -1952,6 +2154,7 @@ app.post('/api/admin/lessons', async (req, res) => {
     const parsed = validateOr400(lessonCreateSchema, req, res);
     if (!parsed) return;
     const moduleId = pickId(parsed, 'module_id', 'moduleId');
+    const expectedCourseVersion = parsed.course_version ?? parsed.expectedCourseVersion ?? null;
     const title = parsed.title;
     const type = parsed.type;
     const description = parsed.description ?? null;
@@ -1967,6 +2170,15 @@ app.post('/api/admin/lessons', async (req, res) => {
     if (!found) {
       res.status(404).json({ error: 'Module not found' });
       return;
+    }
+    // Optional optimistic check: ensure client targets expected course version
+    if (typeof expectedCourseVersion === 'number') {
+      const course = found.course;
+      const current = course.version ?? 1;
+      if (expectedCourseVersion < current) {
+        res.status(409).json({ error: 'version_conflict', message: `Course has newer version ${current}` });
+        return;
+      }
     }
     const id = `e2e-less-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
     const lesson = {
@@ -1992,6 +2204,7 @@ app.post('/api/admin/lessons', async (req, res) => {
     const parsed = validateOr400(lessonCreateSchema, req, res);
     if (!parsed) return;
     const moduleId = pickId(parsed, 'module_id', 'moduleId');
+    const expectedCourseVersion = parsed.course_version ?? parsed.expectedCourseVersion ?? null;
     const title = parsed.title;
     const type = parsed.type;
     const description = parsed.description ?? null;
@@ -2002,6 +2215,22 @@ app.post('/api/admin/lessons', async (req, res) => {
     if (!moduleId || !title || !type) {
       res.status(400).json({ error: 'moduleId, title and type are required' });
       return;
+    }
+    // Optional optimistic check: if client provided expected course version, compare
+    if (typeof expectedCourseVersion === 'number') {
+      // fetch module to get parent course id
+      const { data: modRow, error: modErr } = await supabase.from('modules').select('id,course_id').eq('id', moduleId).maybeSingle();
+      if (modErr) throw modErr;
+      const courseId = modRow?.course_id ?? null;
+      if (courseId) {
+        const { data: courseRow, error: fetchErr } = await supabase.from('courses').select('id,version').eq('id', courseId).maybeSingle();
+        if (fetchErr) throw fetchErr;
+        const current = courseRow?.version ?? null;
+        if (current !== null && expectedCourseVersion < current) {
+          res.status(409).json({ error: 'version_conflict', message: `Course has newer version ${current}` });
+          return;
+        }
+      }
     }
     const payload = {
       module_id: moduleId,
@@ -2031,6 +2260,7 @@ app.patch('/api/admin/lessons/:id', async (req, res) => {
     const { id } = req.params;
     const parsed = validateOr400(lessonPatchValidator, req, res);
     if (!parsed) return;
+    const expectedCourseVersion = parsed.course_version ?? parsed.expectedCourseVersion ?? null;
     const title = parsed.title;
     const type = parsed.type;
     const description = parsed.description ?? null;
@@ -2067,6 +2297,7 @@ app.patch('/api/admin/lessons/:id', async (req, res) => {
     const durationSeconds = parsed.duration_s ?? parsed.durationSeconds ?? null;
     const content = parsed.content ?? {};
     const completionRule = parsed.completion_rule_json ?? parsed.completionRule ?? null;
+    const expectedCourseVersion = parsed.course_version ?? parsed.expectedCourseVersion ?? null;
     const patch = {};
     if (typeof title === 'string') patch.title = title;
     if (typeof type === 'string') patch.type = type;
@@ -2078,6 +2309,27 @@ app.patch('/api/admin/lessons/:id', async (req, res) => {
     if (Object.keys(patch).length === 0) {
       res.status(400).json({ error: 'No fields to update' });
       return;
+    }
+    // If client provided expected course version, validate against parent course to avoid stale edits
+    if (typeof expectedCourseVersion === 'number') {
+      // resolve parent course via module
+      const { data: lessonRow, error: lErr } = await supabase.from('lessons').select('id,module_id').eq('id', id).maybeSingle();
+      if (lErr) throw lErr;
+      const moduleId = lessonRow?.module_id ?? null;
+      if (moduleId) {
+        const { data: modRow, error: mErr } = await supabase.from('modules').select('id,course_id').eq('id', moduleId).maybeSingle();
+        if (mErr) throw mErr;
+        const courseId = modRow?.course_id ?? null;
+        if (courseId) {
+          const { data: courseRow, error: cErr } = await supabase.from('courses').select('id,version').eq('id', courseId).maybeSingle();
+          if (cErr) throw cErr;
+          const current = courseRow?.version ?? null;
+          if (current !== null && expectedCourseVersion < current) {
+            res.status(409).json({ error: 'version_conflict', message: `Course has newer version ${current}` });
+            return;
+          }
+        }
+      }
     }
     const { data, error } = await supabase
       .from('lessons')
@@ -2506,6 +2758,174 @@ app.post('/api/client/progress/lesson', async (req, res) => {
   } catch (error) {
     console.error('Failed to upsert lesson progress:', error);
     res.status(500).json({ error: 'Unable to save lesson progress' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Batch Progress Endpoint (demo/E2E + Supabase placeholder)
+// ---------------------------------------------------------------------------
+app.post('/api/client/progress/batch', async (req, res) => {
+  const payload = req.body || {};
+  const events = Array.isArray(payload.events) ? payload.events : [];
+  if (events.length === 0) {
+    res.status(400).json({ error: 'events array is required' });
+    return;
+  }
+  if (events.length > 25) {
+    res.status(400).json({ error: 'too_many_events', message: 'Max 25 events per batch' });
+    return;
+  }
+
+  // Demo/E2E mode: apply in-memory updates
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    const accepted = [];
+    const duplicates = [];
+    const failed = [];
+    for (const evt of events) {
+      try {
+        const id = evt.clientEventId || evt.client_event_id || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+        const userId = evt.userId || evt.user_id;
+        const lessonId = evt.lessonId || evt.lesson_id || null;
+        const courseId = evt.courseId || evt.course_id || null;
+        const percentRaw = evt.percent;
+        const percent = typeof percentRaw === 'number' ? Math.min(100, Math.max(0, Math.round(percentRaw))) : 0;
+
+        if (!userId) {
+          failed.push({ id, reason: 'missing_user' });
+          continue;
+        }
+        if (!courseId && !lessonId) {
+          failed.push({ id, reason: 'missing_target' });
+          continue;
+        }
+        if (e2eStore.progressEvents.has(id)) {
+          duplicates.push(id);
+          continue;
+        }
+        e2eStore.progressEvents.add(id);
+
+        const nowIso = new Date().toISOString();
+        if (lessonId) {
+          const key = `${userId}:${lessonId}`;
+          const record = {
+            user_id: userId,
+            lesson_id: lessonId,
+            percent,
+            status: evt.status || 'in_progress',
+            time_spent_s: typeof evt.time_spent_s === 'number' ? evt.time_spent_s : 0,
+            resume_at_s: typeof evt.position === 'number' ? evt.position : (typeof evt.resume_at_s === 'number' ? evt.resume_at_s : null),
+            updated_at: nowIso,
+          };
+          e2eStore.lessonProgress.set(key, record);
+          try {
+            const payload = { type: 'lesson_progress', data: record, timestamp: Date.now() };
+            broadcastToTopic(`progress:user:${String(userId).toLowerCase()}`, payload);
+            broadcastToTopic(`progress:lesson:${lessonId}`, payload);
+            broadcastToTopic('progress:all', payload);
+          } catch {}
+        } else if (courseId) {
+          const key = `${userId}:${courseId}`;
+          const record = {
+            user_id: userId,
+            course_id: courseId,
+            percent,
+            status: evt.status || 'in_progress',
+            time_spent_s: typeof evt.time_spent_s === 'number' ? evt.time_spent_s : 0,
+            updated_at: nowIso,
+          };
+            e2eStore.courseProgress.set(key, record);
+          try {
+            const payload = { type: 'course_progress', data: record, timestamp: Date.now() };
+            broadcastToTopic(`progress:user:${String(userId).toLowerCase()}`, payload);
+            broadcastToTopic(`progress:course:${courseId}`, payload);
+            broadcastToTopic('progress:all', payload);
+          } catch {}
+        }
+        accepted.push(id);
+      } catch (err) {
+        failed.push({ id: evt.clientEventId || evt.client_event_id || 'unknown', reason: 'exception' });
+      }
+    }
+    res.json({ accepted, duplicates, failed });
+    return;
+  }
+
+  // Supabase path placeholder: treat as accepted and respond (Phase 3 will persist)
+  if (!ensureSupabase(res)) return;
+  try {
+    const accepted = [];
+    const duplicates = [];
+    const failed = [];
+    for (const evt of events) {
+      const id = evt.clientEventId || evt.client_event_id || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const userId = evt.userId || evt.user_id;
+      const courseId = evt.courseId || evt.course_id || null;
+      const lessonId = evt.lessonId || evt.lesson_id || null;
+      if (!userId || (!courseId && !lessonId)) {
+        failed.push({ id, reason: 'validation' });
+        continue;
+      }
+      // Idempotency check via progress_events table (best-effort)
+      try {
+        await supabase.from('progress_events').insert({ id, user_id: userId, course_id: courseId, lesson_id: lessonId, payload: evt });
+      } catch (evErr) {
+        duplicates.push(id);
+        continue;
+      }
+      accepted.push(id);
+    }
+    res.json({ accepted, duplicates, failed });
+  } catch (error) {
+    console.error('Failed to process progress batch:', error);
+    res.status(500).json({ error: 'Unable to process batch' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Batch Analytics Events Endpoint (demo/E2E only for now)
+// ---------------------------------------------------------------------------
+app.post('/api/analytics/events/batch', async (req, res) => {
+  const payload = req.body || {};
+  const events = Array.isArray(payload.events) ? payload.events : [];
+  if (events.length === 0) {
+    res.status(400).json({ error: 'events array is required' });
+    return;
+  }
+  if (events.length > 50) {
+    res.status(400).json({ error: 'too_many_events', message: 'Max 50 events per batch' });
+    return;
+  }
+
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    const accepted = [];
+    const duplicates = [];
+    const failed = [];
+    for (const evt of events) {
+      const id = evt.clientEventId || evt.client_event_id || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      if (e2eStore.progressEvents.has(id)) { // reuse idempotency set
+        duplicates.push(id);
+        continue;
+      }
+      try {
+        e2eStore.progressEvents.add(id);
+        e2eStore.analyticsEvents.push({ ...evt, clientEventId: id, timestamp: evt.timestamp || Date.now() });
+        accepted.push(id);
+      } catch (err) {
+        failed.push({ id, reason: 'exception' });
+      }
+    }
+    res.json({ accepted, duplicates, failed });
+    return;
+  }
+
+  // Supabase placeholder: just accept (Phase 3 persistence)
+  if (!ensureSupabase(res)) return;
+  try {
+    const accepted = events.map((e) => e.clientEventId || e.client_event_id || `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    res.json({ accepted, duplicates: [], failed: [] });
+  } catch (error) {
+    console.error('Failed to process analytics batch:', error);
+    res.status(500).json({ error: 'Unable to process analytics batch' });
   }
 });
 

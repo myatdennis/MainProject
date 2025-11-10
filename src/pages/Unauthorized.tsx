@@ -7,7 +7,7 @@ const Unauthorized = () => {
 
   return (
     <div className="flex min-h-[60vh] items-center justify-center px-6 py-16">
-      <Card tone="muted" className="max-w-lg space-y-6 text-center" padding="xl">
+      <Card tone="muted" className="max-w-lg space-y-6 text-center" padding="lg">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-slate/70">Access restricted</p>
           <h1 className="mt-2 font-heading text-3xl font-bold text-charcoal">You don&apos;t have permission</h1>

@@ -105,7 +105,7 @@ const payload = {
   ]
 };
 
-fetch('http://localhost:8787/api/admin/courses', {
+fetch('http://localhost:8888/api/admin/courses', {
   method: 'POST',
   headers: {
     'Content-Type': 'application/json',

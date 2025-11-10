@@ -24,3 +24,6 @@ dist-ssr
 *.sw?
 .env
  .env.local
+
+# Ignore problematic JS file that blocks TS build
+src/components/CourseContentCreator.js

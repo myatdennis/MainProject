@@ -1,14 +1,16 @@
 import { useState } from 'react';
 import { BarChart3, TrendingUp, Download, Calendar, Filter, RefreshCw, Eye, Share } from 'lucide-react';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
+import { useToast } from '../../context/ToastContext';
 
 const AdminReports = () => {
   const [dateRange, setDateRange] = useState('last-30-days');
   const [reportType, setReportType] = useState('overview');
+  const { showToast } = useToast();
 
   const refreshReports = () => {
     console.log('Refreshing reports...');
-    alert('Reports refreshed (demo)');
+    showToast('Reports refreshed', 'success');
   };
 
   const exportReport = () => {
@@ -23,7 +25,7 @@ const AdminReports = () => {
   };
 
   const generateNewReport = () => {
-    alert('Generating report (demo)');
+    showToast('Generating report…', 'info');
   };
 
   const viewReport = (name: string) => {
@@ -45,7 +47,9 @@ const AdminReports = () => {
 
   const shareReport = (name: string) => {
     const link = `${window.location.origin}/admin/reports?shared=${encodeURIComponent(name)}`;
-    navigator.clipboard?.writeText(link).then(() => alert('Report link copied')).catch(() => alert('Copy not supported'));
+    navigator.clipboard?.writeText(link)
+      .then(() => showToast('Report link copied to clipboard', 'success'))
+      .catch(() => showToast('Copy not supported', 'error'));
   };
 
   const overviewStats = [

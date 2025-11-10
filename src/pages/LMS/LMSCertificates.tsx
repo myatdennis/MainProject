@@ -16,6 +16,7 @@ import { useToast } from '../../context/ToastContext';
 import { getCertificatesByUser, type GeneratedCertificate } from '../../dal/certificates';
 import EmptyState from '../../components/ui/EmptyState';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
+import { useUserProfile } from '../../hooks/useUserProfile';
 
 interface Certificate {
   id: string;
@@ -46,18 +47,20 @@ const LMSCertificates: React.FC = () => {
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [filterStatus, setFilterStatus] = useState<'all' | 'active' | 'expired'>('all');
   const [sortBy, setSortBy] = useState<'date' | 'course' | 'grade'>('date');
-  const learnerProfile = useMemo(() => {
+  const { user } = useUserProfile();
+  const learnerId = useMemo(() => {
+    if (user) return (user.email || user.id || 'local-user').toLowerCase();
     try {
       const raw = localStorage.getItem('huddle_user');
-      if (!raw) return null;
-      return JSON.parse(raw);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        return (parsed.email || parsed.id || 'local-user').toLowerCase();
+      }
     } catch (error) {
-      console.warn('Failed to parse learner identity for certificates:', error);
-      return null;
+      console.warn('Failed to parse learner identity for certificates (legacy fallback):', error);
     }
-  }, []);
-
-  const learnerId = learnerProfile?.id || learnerProfile?.email || 'local-user';
+    return 'local-user';
+  }, [user]);
   
   useEffect(() => {
     loadCertificates();

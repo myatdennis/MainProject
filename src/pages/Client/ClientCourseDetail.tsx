@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { ArrowLeft, BookOpen, Clock, Users, Download, Play } from 'lucide-react';
+import { ArrowLeft, ArrowRight, BookOpen, Clock, Users, Download, Play } from 'lucide-react';
 import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
@@ -10,12 +10,15 @@ import { loadStoredCourseProgress, buildLearnerProgressSnapshot, syncCourseProgr
 import { getAssignment } from '../../utils/assignmentStorage';
 import { getPreferredLessonId, getFirstLessonId } from '../../utils/courseNavigation';
 import type { CourseAssignment } from '../../types/assignment';
+import { useUserProfile } from '../../hooks/useUserProfile';
 
 const ClientCourseDetail = () => {
   const navigate = useNavigate();
   const { courseId } = useParams();
 
+  const { user } = useUserProfile();
   const learnerId = useMemo(() => {
+    if (user) return (user.email || user.id).toLowerCase();
     try {
       const raw = localStorage.getItem('huddle_user');
       if (raw) {
@@ -23,10 +26,10 @@ const ClientCourseDetail = () => {
         return (parsed.email || parsed.id || 'local-user').toLowerCase();
       }
     } catch (error) {
-      console.warn('Failed to read learner identity:', error);
+      console.warn('Failed to read learner identity (legacy fallback):', error);
     }
     return 'local-user';
-  }, []);
+  }, [user]);
 
   const course = courseId ? courseStore.resolveCourse(courseId) : null;
   const normalized = course ? normalizeCourse(course) : null;

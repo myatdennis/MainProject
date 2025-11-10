@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { FilePlus, UploadCloud, Trash } from 'lucide-react';
 import documentService, { DocumentMeta, Visibility } from '../../dal/documents';
 import notificationService from '../../dal/notifications';
+import { useToast } from '../../context/ToastContext';
 
 const AdminDocuments: React.FC = () => {
   const [docs, setDocs] = useState<DocumentMeta[]>([]);
@@ -14,6 +15,7 @@ const AdminDocuments: React.FC = () => {
   const [userId, setUserId] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const { showToast } = useToast();
 
   const load = async () => {
     const list = await documentService.listDocuments();
@@ -25,7 +27,10 @@ const AdminDocuments: React.FC = () => {
   const onFile = (f: File | null) => setFile(f);
 
   const handleUpload = async () => {
-    if (!file && !name) return alert('Provide a name or file');
+    if (!file && !name) {
+      showToast('Provide a name or file', 'error');
+      return;
+    }
 
     let url: string | undefined;
     if (file) {
@@ -67,6 +72,7 @@ const AdminDocuments: React.FC = () => {
     if (!confirm('Delete document?')) return;
     await documentService.deleteDocument(id);
     load();
+    showToast('Document deleted', 'success');
   };
 
   return (

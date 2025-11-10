@@ -55,6 +55,7 @@ export default defineConfig({
             if (id.includes('lucide-react')) return 'vendor-icons';
             if (id.includes('@dnd-kit') || id.includes('dnd-kit')) return 'dnd-kit';
             if (id.includes('@supabase') || id.includes('supabase')) return 'supabase';
+            if (id.includes('recharts')) return 'charts';
             if (id.includes('react-router')) return 'vendor-router';
             return 'vendor';
           }

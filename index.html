@@ -1,26 +1,29 @@
 <!doctype html>
 <html lang="en">
   <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Comprehensive Learning Management System with course creation, survey tools, and analytics. Transform your training programs with our modern LMS platform." />
-    <meta name="keywords" content="LMS, Learning Management System, Online Training, Course Creation, E-learning, Educational Technology" />
-    <meta name="author" content="MainProject LMS" />
-    
-    <!-- Open Graph / Facebook -->
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Huddle Co</title>
+    <meta name="description" content="The Huddle Co — Inclusive leadership training and LMS. Track completions, engagement, and survey insights." />
+    <meta property="og:title" content="The Huddle Co LMS" />
+    <meta property="og:description" content="Inclusive leadership training and learning analytics for organizations." />
     <meta property="og:type" content="website" />
-    <meta property="og:title" content="MainProject LMS - Modern Learning Management System" />
-    <meta property="og:description" content="Comprehensive Learning Management System with course creation, survey tools, and analytics." />
     <meta property="og:image" content="/og-image.png" />
-    
-    <!-- Twitter -->
-    <meta property="twitter:card" content="summary_large_image" />
-    <meta property="twitter:title" content="MainProject LMS - Modern Learning Management System" />
-    <meta property="twitter:description" content="Comprehensive Learning Management System with course creation, survey tools, and analytics." />
-    <meta property="twitter:image" content="/og-image.png" />
-    
-    <title data-default>MainProject LMS - Modern Learning Management System</title>
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#3A7FFF" />
+  </head>
+  <body>
+    <noscript>Please enable JavaScript to use this site.</noscript>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+    <script>
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/sw.js').catch((err) => console.warn('SW register failed', err));
+      }
+    </script>
+  </body>
+</html>
   </head>
   <body>
     <div id="root"></div>

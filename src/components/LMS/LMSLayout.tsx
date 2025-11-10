@@ -117,7 +117,7 @@ const LMSLayout = ({ children }: LMSLayoutProps) => {
                 Spring 2025 Cohort
               </Badge>
               <div>
-                <p className="font-heading text-base font-semibold text-charcoal">Welcome, {user?.name || 'Learner'}</p>
+                <p className="font-heading text-base font-semibold text-charcoal">Welcome, {user?.email || 'Learner'}</p>
                 <p className="text-xs text-slate/70">Keep building your inclusive leadership practice.</p>
               </div>
             </Card>

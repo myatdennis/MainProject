@@ -17,13 +17,16 @@ import {
 import { getPreferredLessonId, getFirstLessonId } from '../../utils/courseNavigation';
 import { syncService } from '../../dal/sync';
 import type { CourseAssignment } from '../../types/assignment';
+import { useUserProfile } from '../../hooks/useUserProfile';
 
 const ClientCourses = () => {
+  const { user } = useUserProfile();
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'in-progress' | 'completed' | 'not-started'>('all');
   const navigate = useNavigate();
 
   const learnerId = useMemo(() => {
+    if (user) return (user.email || user.id).toLowerCase();
     try {
       const raw = localStorage.getItem('huddle_user');
       if (raw) {
@@ -34,10 +37,9 @@ const ClientCourses = () => {
       console.warn('Failed to read learner identity:', error);
     }
     return 'local-user';
-  }, []);
+  }, [user]);
 
   const [assignments, setAssignments] = useState<CourseAssignment[]>([]);
-  const [storeRefresh, setStoreRefresh] = useState(0);
   const [progressRefreshToken, setProgressRefreshToken] = useState(0);
   // Normalize courses (convert modules to chapters if needed)
   const normalizedCoursesAll = courseStore
@@ -52,7 +54,6 @@ const ClientCourses = () => {
       try {
         if (typeof (courseStore as any).init === 'function') {
           await (courseStore as any).init();
-          setStoreRefresh((v) => v + 1);
         }
       } catch (err) {
         console.warn('Failed to initialize course store:', err);

@@ -2,7 +2,7 @@
 import process from 'node:process';
 import { setTimeout as delay } from 'node:timers/promises';
 
-const baseUrl = process.env.API_BASE_URL || 'http://localhost:8787';
+const baseUrl = process.env.API_BASE_URL || 'http://localhost:8888';
 const adminUserId = process.env.API_SMOKE_USER_ID || '00000000-0000-0000-0000-000000000000';
 
 const applyAdminHeaders = (init = {}) => {

@@ -111,14 +111,20 @@ src/
 
 ### Documentation
 
-� **[Complete Documentation Index](./DOCUMENTATION_INDEX.md)** - All project documentation organized by category
 
-**Quick Links:**
-- 📊 [Comprehensive Review Summary](./COMPREHENSIVE_REVIEW_SUMMARY.md) - Latest audit overview
-- 🗺️ [Routes & Buttons Matrix](./ROUTES_BUTTONS_MATRIX.md) - All 82 routes and navigation
-- 🔒 [Security Audit & Fixes](./SECURITY_AUDIT_FIXES.md) - Security vulnerabilities and fixes
-- � [Codebase Audit Report](./CODEBASE_AUDIT_REPORT.md) - Technical analysis
-- 📖 [Troubleshooting Guide](./TROUBLESHOOTING.md) - Common issues and solutions
+**Documentation Index:**
+- 📖 [Complete Documentation Index](./DOCUMENTATION_INDEX.md)
+- 📊 [Comprehensive Review Summary](./COMPREHENSIVE_REVIEW_SUMMARY.md)
+- 🗺️ [Routes & Buttons Matrix](./ROUTES_BUTTONS_MATRIX.md)
+- 🔒 [Security Audit & Fixes](./SECURITY_AUDIT_FIXES.md)
+- 🛡️ [Security Policy](./SECURITY.md)
+- 📚 [API Reference](./API_REFERENCE.md)
+- 🏛️ [Architecture Overview](./ARCHITECTURE.md)
+- 🤝 [Contributing Guide](./CONTRIBUTING.md)
+- 🧪 [Testing Guide](./TESTING.md)
+- 🛠️ [Deployment Guide](./DEPLOYMENT.md)
+- 📖 [Troubleshooting Guide](./TROUBLESHOOTING.md)
+- � [Codebase Audit Report](./CODEBASE_AUDIT_REPORT.md)
 
 ---
 
@@ -126,10 +132,32 @@ src/
 - API server default port is now 8888 (aligned with Vite proxy). If you need a different port: `PORT=8787 node server/index.js`.
 - Vite dev server proxies `/api` and `/ws` to `http://localhost:8888`. Adjust `vite.config.ts` if you change the API port.
 - Production builds rely on `VITE_API_BASE_URL` (and optional `VITE_WS_URL`). Set these in Netlify/Vercel to avoid runtime 404s.
-- If using Netlify proxy instead of absolute URLs, add a redirect mapping `/api/*` to your backend in `netlify.toml`.
+- If using Netlify proxy instead of absolute URLs, add a redirect mapping `/api/*` to your backend in `netlify.toml` (we've scaffolded placeholders — replace `<RAILWAY_HOST>`).
 - Service worker can be cleared at `/unregister-sw.html` if you see stale assets.
 - When Supabase is not configured, the server uses a safe in-memory fallback by default (DEV_FALLBACK). Disable with `DEV_FALLBACK=false`.
 - E2E tests use `E2E_TEST_MODE=true` and stub `VITE_API_BASE_URL` as needed.
+
+### Quick Production Checklist (Netlify + Railway)
+
+1) DNS at GoDaddy
+    - A @ → 75.2.60.5 and 99.83.190.102 (Netlify)
+    - CNAME www → <your-site>.netlify.app
+
+2) Railway env
+    - NODE_ENV=production, PORT=8888
+    - DEV_FALLBACK=true (temporary for demo logins) or configure Supabase and set DEV_FALLBACK=false
+    - SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY (server-only)
+    - CORS_ALLOWED_ORIGINS=https://the-huddle.co,https://www.the-huddle.co,https://<your-site>.netlify.app
+
+3) Frontend env (choose one mode)
+    - Absolute URL mode: set VITE_API_BASE_URL=https://<railway-app>, VITE_WS_URL=wss://<railway-app>/ws
+    - Proxy mode: edit `netlify.toml` and replace `<RAILWAY_HOST>` in redirects; then VITE_API_BASE_URL is optional
+
+4) Verify
+    - `./scripts/smoke.sh the-huddle.co <railway-host> admin@thehuddleco.com admin123`
+    - Browser Network tab: /api calls 200/204, no CORS errors
+
+Troubleshooting: see `SUPABASE_RAILWAY_ENV_GUIDE.md` (CORS, OOM, 503 auth) and `scripts/smoke.sh`.
 
 ## Scripts & API helpers
 

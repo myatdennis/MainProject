@@ -1,42 +1,42 @@
-name: E2E Tests
-
+name: e2e
 on:
-  push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
-
+  workflow_dispatch:
+    inputs:
+      browser:
+        description: 'Playwright browser (chromium|firefox|webkit)'
+        required: false
+        default: 'chromium'
 jobs:
-  build-and-e2e:
+  run:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Use Node.js
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
-
+          node-version: '20'
+          cache: 'npm'
       - name: Install dependencies
         run: npm ci
-
-      - name: Build
-        run: npm run build
-
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps
-
-      - name: Start preview server
-        run: npm run preview -- --port 5176 &
-
-      - name: Wait for preview
+        run: npx playwright install --with-deps ${{ github.event.inputs.browser }}
+      - name: Start API server (E2E mode)
         run: |
+          nohup bash -c 'PORT=8888 E2E_TEST_MODE=true node server/index.js 2>&1 | tee server_ci.log' &
           for i in {1..30}; do
-            if curl -sSf http://localhost:5176/ >/dev/null; then
-              echo 'preview running';
-              exit 0;
-            fi; sleep 1;
-          done; echo 'preview failed' && exit 1
-
-      - name: Run Playwright tests
-        run: npx playwright test --forbid-only
+            sleep 1
+            curl -fsS http://localhost:8888/api/health && break || true
+          done
+          curl -fsS http://localhost:8888/api/health
+      - name: Run E2E tests
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ~/.cache/ms-playwright
+        run: npm run -s test:e2e
+      - name: Upload server logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: server-ci-log
+          path: server_ci.log

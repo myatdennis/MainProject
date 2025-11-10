@@ -24,6 +24,7 @@ import {
   syncCourseProgressWithRemote,
 } from '../../utils/courseProgress';
 import { isEnabled as lmIsEnabled, fetchGoals, fetchAchievements, upsertGoals, upsertAchievements } from '../../dal/learnerMetrics';
+import { useUserProfile } from '../../hooks/useUserProfile';
 
 interface ProgressData {
   overallProgress: {
@@ -83,14 +84,14 @@ interface Achievement {
   rarity: 'common' | 'rare' | 'epic' | 'legendary';
 }
 
-const buildLearnerId = () => {
+const buildLegacyLearnerId = () => {
   try {
     const raw = localStorage.getItem('huddle_user');
     if (!raw) return 'local-user';
     const parsed = JSON.parse(raw);
     return (parsed.email || parsed.id || 'local-user').toLowerCase();
   } catch (error) {
-    console.warn('Failed to read learner identity:', error);
+    console.warn('Failed to read learner identity (legacy fallback):', error);
     return 'local-user';
   }
 };
@@ -110,7 +111,11 @@ const formatDate = (isoString: string) => {
 
 const LMSProgress: React.FC = () => {
   const navigate = useNavigate();
-  const learnerId = useMemo(() => buildLearnerId(), []);
+  const { user } = useUserProfile();
+  const learnerId = useMemo(() => {
+    if (user) return (user.email || user.id).toLowerCase();
+    return buildLegacyLearnerId();
+  }, [user]);
 
   const [progressData, setProgressData] = useState<ProgressData | null>(null);
   const [loading, setLoading] = useState(true);

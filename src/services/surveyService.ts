@@ -9,12 +9,38 @@ const mapSurveyRecord = (record: any): Survey => ({
   id: record.id,
   title: record.title,
   description: record.description ?? '',
-  type: record.type ?? 'custom',
   status: record.status ?? 'draft',
+  version: record.version ?? 1,
+  createdBy: record.createdBy ?? '',
+  createdAt: record.createdAt ?? new Date().toISOString(),
+  updatedAt: record.updatedAt ?? new Date().toISOString(),
+  blocks: record.blocks ?? [],
   sections: record.sections ?? [],
-  branding: record.branding ?? {},
-  settings: record.settings ?? {},
-  assignedTo: record.assigned_to ?? []
+  settings: record.settings ?? {
+    anonymityMode: 'anonymous',
+    anonymityThreshold: 1,
+    allowMultipleResponses: false,
+    showProgressBar: false,
+    consentRequired: false,
+    allowAnonymous: false,
+    allowSaveAndContinue: false,
+    randomizeQuestions: false,
+    randomizeOptions: false,
+  },
+  branding: record.branding ?? {
+    primaryColor: '',
+    secondaryColor: '',
+    logo: ''
+  },
+  defaultLanguage: record.defaultLanguage ?? 'en',
+  supportedLanguages: record.supportedLanguages ?? ['en'],
+  completionSettings: record.completionSettings ?? {
+    thankYouMessage: '',
+    showResources: false,
+    recommendedCourses: []
+  },
+  assignedTo: record.assignedTo ?? {},
+  reflectionPrompts: record.reflectionPrompts ?? []
 });
 
 export interface SurveyAssignment {
@@ -90,7 +116,7 @@ export const saveSurvey = async (survey: Survey) => {
     id: survey.id,
     title: survey.title,
     description: survey.description,
-    type: survey.type,
+  // type: survey.type,
     status: survey.status,
     sections: survey.sections,
     branding: survey.branding,

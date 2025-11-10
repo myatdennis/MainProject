@@ -5,7 +5,7 @@
  * Run with: node scripts/seed_foundations_course.js
  */
 
-const API_BASE = 'http://localhost:8787';
+const API_BASE = 'http://localhost:8888';
 
 // Simplified course data that matches the database schema
 const foundationsCourse = {

@@ -116,7 +116,7 @@ const LMSDashboard = () => {
     <div className="container-page section">
       {/* Welcome Section */}
       <div className="mb-8">
-        <h1 className="h1">Welcome back, {user?.name || 'Learner'}!</h1>
+  <h1 className="h1">Welcome back, {user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'Learner' : 'Learner'}!</h1>
         <p className="lead">Continue your inclusive leadership journey. You're making great progress!</p>
       </div>
 

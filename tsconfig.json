@@ -1,9 +1,12 @@
 {
   "compilerOptions": {
     "baseUrl": ".",
+    "esModuleInterop": true,
+    "module": "es2020",
     "paths": {
       "@/*": ["src/*"]
-    }
+    },
+    "target": "es2020"
   },
   "files": [],
   "references": [

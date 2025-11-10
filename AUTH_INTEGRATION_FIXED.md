@@ -27,7 +27,7 @@ The server-side auth routes were loading correctly, but the server process **was
 
 Added proper API base URL configuration:
 ```typescript
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8787/api';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8888/api';
 const api = axios.create({
   baseURL: API_URL,
 });
@@ -40,7 +40,7 @@ Replaced all `axios.post('/api/auth/...')` with `api.post('/auth/...')`
 
 Added:
 ```bash
-VITE_API_URL=http://localhost:8787/api
+VITE_API_URL=http://localhost:8888/api
 DEMO_MODE=true
 ```
 
@@ -93,7 +93,7 @@ DEMO_MODE=true node server/index.js
 ### 1. Test Backend API Directly
 
 ```bash
-curl -X POST http://localhost:8787/api/auth/login \
+curl -X POST http://localhost:8888/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email":"admin@thehuddleco.com","password":"admin123"}'
 ```
@@ -149,7 +149,7 @@ curl -X POST http://localhost:8787/api/auth/login \
 
 ### ✅ Frontend Authentication
 - SecureAuthContext properly configured
-- API calls go to http://localhost:8787/api
+- API calls go to http://localhost:8888/api
 - Encrypted sessionStorage for tokens
 - Auto token refresh every minute
 - CSRF protection active
@@ -172,7 +172,7 @@ curl -X POST http://localhost:8787/api/auth/login \
 **Solution:**
 ```bash
 # 1. Check if backend is running
-lsof -i :8787
+lsof -i :8888
 
 # 2. If not running, start it with env vars
 DEMO_MODE=true node server/index.js
@@ -204,7 +204,7 @@ DEMO_MODE=true node server/index.js
 **Solution:**
 Check `.env` has:
 ```bash
-VITE_API_URL=http://localhost:8787/api
+VITE_API_URL=http://localhost:8888/api
 ```
 
 Then restart Vite:

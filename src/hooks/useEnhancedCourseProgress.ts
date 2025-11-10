@@ -218,19 +218,31 @@ export const useEnhancedCourseProgress = (courseId: string, options: UseCoursePr
       const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
       
       const currentProgress = lessonProgress[lessonId] || {};
-      const updatedProgress: UserLessonProgress = {
-        ...currentProgress,
-        id: currentProgress.id || `progress_${Date.now()}`,
+      const defaultProgress: UserLessonProgress = {
+        id: `progress_${Date.now()}`,
         user_id: userId,
         lesson_id: lessonId,
         module_id: moduleId,
         course_id: courseId,
-        time_spent: currentProgress.time_spent || 0,
-        completed: currentProgress.completed || false,
-        progress_percentage: currentProgress.progress_percentage || 0,
+        time_spent: 0,
+        completed: false,
+        progress_percentage: 0,
         last_accessed_at: new Date().toISOString(),
-        completed_at: currentProgress.completed_at,
-        status: currentProgress.status || (currentProgress.completed ? 'completed' : 'in-progress'),
+        status: 'in-progress',
+      };
+      const safeProgress = (currentProgress && typeof currentProgress === 'object' && 'id' in currentProgress)
+        ? (currentProgress as Partial<UserLessonProgress>)
+        : {};
+      const updatedProgress: UserLessonProgress = {
+        ...defaultProgress,
+        ...safeProgress,
+        id: safeProgress.id ?? defaultProgress.id,
+        time_spent: safeProgress.time_spent ?? 0,
+        completed: safeProgress.completed ?? false,
+        progress_percentage: safeProgress.progress_percentage ?? 0,
+        last_accessed_at: safeProgress.last_accessed_at ?? defaultProgress.last_accessed_at,
+        completed_at: safeProgress.completed_at,
+        status: safeProgress.status ?? (safeProgress.completed ? 'completed' : 'in-progress'),
         ...updates
       };
 
@@ -385,12 +397,10 @@ export const useEnhancedCourseProgress = (courseId: string, options: UseCoursePr
   const updateLessonProgressFromSync = useCallback((syncData: any) => {
     if (syncData.lesson_id && syncData.progress !== undefined) {
       setLessonProgress(prev => {
-        const current = prev[syncData.lesson_id] || {};
-        
+        const current = (prev[syncData.lesson_id] || {}) as import('../lib/supabase').UserLessonProgress;
         // Only update if the sync data is newer
         const syncTime = new Date(syncData.timestamp || 0);
         const currentTime = new Date(current.last_accessed_at || 0);
-        
         if (syncTime > currentTime) {
           return {
             ...prev,
@@ -402,7 +412,6 @@ export const useEnhancedCourseProgress = (courseId: string, options: UseCoursePr
             }
           };
         }
-        
         return prev;
       });
     }

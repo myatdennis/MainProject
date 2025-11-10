@@ -112,7 +112,9 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
                 System Online
               </Badge>
               <div>
-                <p className="font-heading text-lg font-semibold text-charcoal">Welcome, {user?.name || 'Admin'}</p>
+                <p className="font-heading text-lg font-semibold text-charcoal">
+                  Welcome, {user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'Admin' : 'Admin'}
+                </p>
                 <p className="text-xs text-slate/70">{user?.role || 'Admin & Facilitator'}</p>
               </div>
             </Card>
