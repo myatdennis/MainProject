@@ -5,14 +5,19 @@ import { Shield, Lock, Mail, Eye, EyeOff, AlertTriangle } from 'lucide-react';
 import { loginSchema, emailSchema } from '../../utils/validators';
 import { sanitizeText } from '../../utils/sanitize';
 
+
 const AdminLogin: React.FC = () => {
-  const { login, isAuthenticated, forgotPassword, authInitializing } = useSecureAuth();
+  const { login, isAuthenticated, forgotPassword, authInitializing, verifyMfa } = useSecureAuth();
   const [email, setEmail] = useState('admin@thehuddleco.com');
   const [password, setPassword] = useState('admin123');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [validationErrors, setValidationErrors] = useState<{ email?: string; password?: string }>({});
+  const [mfaRequired, setMfaRequired] = useState(false);
+  const [mfaCode, setMfaCode] = useState('');
+  const [mfaEmail, setMfaEmail] = useState('');
+  const [mfaError, setMfaError] = useState('');
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -56,8 +61,38 @@ const AdminLogin: React.FC = () => {
 
     const result = await login(sanitizedEmail, sanitizedPassword, 'admin');
     setIsLoading(false);
-    if (result.success) navigate('/admin/dashboard');
-    else setError(result.error || 'Authentication failed.');
+    if (result.success) {
+      navigate('/admin/dashboard');
+    } else if (result.mfaRequired) {
+      setMfaRequired(true);
+      setMfaEmail(result.mfaEmail || sanitizedEmail);
+      setError('');
+    } else {
+      setError(result.error || 'Authentication failed.');
+    }
+  };
+
+  const handleMfaSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setIsLoading(true);
+    setMfaError('');
+    const ok = await verifyMfa(mfaEmail, mfaCode);
+    setIsLoading(false);
+    if (ok) {
+      // Try login again with MFA code
+      setIsLoading(true);
+      const result = await login(mfaEmail, password, 'admin', mfaCode);
+      setIsLoading(false);
+      if (result.success) {
+        setMfaRequired(false);
+        setMfaCode('');
+        navigate('/admin/dashboard');
+      } else {
+        setMfaError(result.error || 'Login failed after MFA.');
+      }
+    } else {
+      setMfaError('Invalid MFA code. Please try again.');
+    }
   };
 
   const handleForgot = async () => {
@@ -102,85 +137,120 @@ const AdminLogin: React.FC = () => {
             </div>
           )}
 
-          <form onSubmit={handleSubmit} className="space-y-6">
-            <div>
-              <label htmlFor="email" className="block text-small font-heading text-charcoal mb-2">Admin Email Address</label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Mail className="h-5 w-5 text-gray" />
+          {!mfaRequired ? (
+            <form onSubmit={handleSubmit} className="space-y-6">
+              <div>
+                <label htmlFor="email" className="block text-small font-heading text-charcoal mb-2">Admin Email Address</label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Mail className="h-5 w-5 text-gray" />
+                  </div>
+                  <input
+                    id="email"
+                    name="email"
+                    type="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    className={`input pl-10 pr-3 ${validationErrors.email ? 'border-deepred focus:ring-deepred' : ''}`}
+                    placeholder="admin@thehuddleco.com"
+                    aria-invalid={!!validationErrors.email}
+                    aria-describedby={validationErrors.email ? 'email-error' : undefined}
+                  />
                 </div>
+                {validationErrors.email && (
+                  <p id="email-error" className="mt-1 text-small text-deepred flex items-center">
+                    <AlertTriangle className="h-4 w-4 mr-1" />
+                    {validationErrors.email}
+                  </p>
+                )}
+              </div>
+
+              <div>
+                <label htmlFor="password" className="block text-small font-heading text-charcoal mb-2">Password</label>
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <Lock className="h-5 w-5 text-gray" />
+                  </div>
+                  <input
+                    id="password"
+                    name="password"
+                    type={showPassword ? 'text' : 'password'}
+                    required
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className={`input pl-10 pr-10 ${validationErrors.password ? 'border-deepred focus:ring-deepred' : ''}`}
+                    placeholder="Enter admin password"
+                    aria-invalid={!!validationErrors.password}
+                    aria-describedby={validationErrors.password ? 'password-error' : undefined}
+                  />
+                  <button type="button" className="absolute inset-y-0 right-0 pr-3 flex items-center" onClick={() => setShowPassword(!showPassword)}>
+                    {showPassword ? <EyeOff className="h-5 w-5 text-gray hover:text-charcoal" /> : <Eye className="h-5 w-5 text-gray hover:text-charcoal" />}
+                  </button>
+                </div>
+                {validationErrors.password && (
+                  <p id="password-error" className="mt-1 text-small text-deepred flex items-center">
+                    <AlertTriangle className="h-4 w-4 mr-1" />
+                    {validationErrors.password}
+                  </p>
+                )}
+              </div>
+
+              <div className="bg-skyblue/10 border border-skyblue rounded-lg p-4">
+                <div className="flex items-start space-x-2">
+                  <Shield className="h-5 w-5 text-skyblue mt-0.5" />
+                  <div>
+                    <h4 className="text-small font-heading text-skyblue">Demo Credentials</h4>
+                    <p className="text-small text-skyblue mt-1">Email: admin@thehuddleco.com<br />Password: admin123</p>
+                  </div>
+                </div>
+              </div>
+
+              <button type="submit" disabled={isLoading} className="btn-primary w-full {isLoading ? 'btn-disabled' : ''}">
+                {isLoading ? (
+                  <div className="flex items-center justify-center">
+                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
+                    Authenticating...
+                  </div>
+                ) : (
+                  'Access Admin Portal'
+                )}
+              </button>
+            </form>
+          ) : (
+            <form onSubmit={handleMfaSubmit} className="space-y-6">
+              <div>
+                <label htmlFor="mfaCode" className="block text-small font-heading text-charcoal mb-2">Multi-Factor Authentication Code</label>
                 <input
-                  id="email"
-                  name="email"
-                  type="email"
+                  id="mfaCode"
+                  name="mfaCode"
+                  type="text"
                   required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className={`input pl-10 pr-3 ${validationErrors.email ? 'border-deepred focus:ring-deepred' : ''}`}
-                  placeholder="admin@thehuddleco.com"
-                  aria-invalid={!!validationErrors.email}
-                  aria-describedby={validationErrors.email ? 'email-error' : undefined}
+                  value={mfaCode}
+                  onChange={(e) => setMfaCode(e.target.value)}
+                  className="input"
+                  placeholder="Enter the code sent to your email"
+                  autoFocus
                 />
+                {mfaError && (
+                  <p className="mt-1 text-small text-deepred flex items-center">
+                    <AlertTriangle className="h-4 w-4 mr-1" />
+                    {mfaError}
+                  </p>
+                )}
               </div>
-              {validationErrors.email && (
-                <p id="email-error" className="mt-1 text-small text-deepred flex items-center">
-                  <AlertTriangle className="h-4 w-4 mr-1" />
-                  {validationErrors.email}
-                </p>
-              )}
-            </div>
-
-            <div>
-              <label htmlFor="password" className="block text-small font-heading text-charcoal mb-2">Password</label>
-              <div className="relative">
-                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-                  <Lock className="h-5 w-5 text-gray" />
-                </div>
-                <input
-                  id="password"
-                  name="password"
-                  type={showPassword ? 'text' : 'password'}
-                  required
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className={`input pl-10 pr-10 ${validationErrors.password ? 'border-deepred focus:ring-deepred' : ''}`}
-                  placeholder="Enter admin password"
-                  aria-invalid={!!validationErrors.password}
-                  aria-describedby={validationErrors.password ? 'password-error' : undefined}
-                />
-                <button type="button" className="absolute inset-y-0 right-0 pr-3 flex items-center" onClick={() => setShowPassword(!showPassword)}>
-                  {showPassword ? <EyeOff className="h-5 w-5 text-gray hover:text-charcoal" /> : <Eye className="h-5 w-5 text-gray hover:text-charcoal" />}
-                </button>
-              </div>
-              {validationErrors.password && (
-                <p id="password-error" className="mt-1 text-small text-deepred flex items-center">
-                  <AlertTriangle className="h-4 w-4 mr-1" />
-                  {validationErrors.password}
-                </p>
-              )}
-            </div>
-
-            <div className="bg-skyblue/10 border border-skyblue rounded-lg p-4">
-              <div className="flex items-start space-x-2">
-                <Shield className="h-5 w-5 text-skyblue mt-0.5" />
-                <div>
-                  <h4 className="text-small font-heading text-skyblue">Demo Credentials</h4>
-                  <p className="text-small text-skyblue mt-1">Email: admin@thehuddleco.com<br />Password: admin123</p>
-                </div>
-              </div>
-            </div>
-
-            <button type="submit" disabled={isLoading} className="btn-primary w-full {isLoading ? 'btn-disabled' : ''}">
-              {isLoading ? (
-                <div className="flex items-center justify-center">
-                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
-                  Authenticating...
-                </div>
-              ) : (
-                'Access Admin Portal'
-              )}
-            </button>
-          </form>
+              <button type="submit" disabled={isLoading} className="btn-primary w-full {isLoading ? 'btn-disabled' : ''}">
+                {isLoading ? (
+                  <div className="flex items-center justify-center">
+                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-white mr-2"></div>
+                    Verifying...
+                  </div>
+                ) : (
+                  'Verify Code & Access Portal'
+                )}
+              </button>
+            </form>
+          )}
 
           <div className="mt-6 text-center">
             <p className="text-small text-gray">Need help accessing the admin portal?{' '}

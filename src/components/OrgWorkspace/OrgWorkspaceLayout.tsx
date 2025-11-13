@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { LazyImage } from '../PerformanceComponents';
 import { Link, Outlet, useParams } from 'react-router-dom';
 import notificationService from '../../dal/notifications';
 import { useAuth } from '../../context/AuthContext';
@@ -58,15 +59,17 @@ const OrgWorkspaceLayout: React.FC = () => {
     <div className={`p-6 max-w-7xl mx-auto ${darkMode ? 'dark' : ''}`}>
   <div className="flex items-center justify-between mb-6">
         <div className="flex items-center space-x-4">
-            <img 
-              src="/logo192.png" 
+            <LazyImage
+              src="/logo192.png"
+              webpSrc="/logo192.webp"
+              avifSrc="/logo192.avif"
+              srcSet="/logo192.png 1x, /logo192@2x.png 2x"
+              sizes="(max-width: 768px) 48px, 64px"
               alt="The Huddle Co. logo"
+              fallbackSrc="/default-org-fallback.png"
               className={`h-12 w-12 rounded-full bg-gradient-to-r ${darkMode ? 'from-indigo-900/20 via-charcoal to-ivory' : 'from-sunrise/20 via-indigo-100 to-ivory'}`}
-              onError={(e) => {
-                e.currentTarget.src = '/default-org-fallback.png';
-                e.currentTarget.className += darkMode ? ' bg-gradient-to-r from-indigo-900/20 via-charcoal to-ivory' : ' bg-gradient-to-r from-sunrise/20 via-indigo-100 to-ivory';
-              }}
               aria-label="Organization logo for The Huddle Co."
+              placeholder={<div className="w-12 h-12 rounded-full bg-mutedgrey animate-pulse" />}
             />
           <div>
               <h1 className={`text-2xl font-bold ${darkMode ? 'text-sunrise' : 'text-sunrise'}`}>{orgName} Workspace</h1>

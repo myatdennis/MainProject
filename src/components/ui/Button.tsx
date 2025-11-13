@@ -78,6 +78,8 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
       });
     }
 
+    // Accessibility: enforce aria-label for icon-only buttons, add role, and ensure color contrast via design tokens
+    const isIconOnly = !children && (leadingIcon || trailingIcon);
     return (
       <button
         ref={ref}
@@ -91,6 +93,9 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         )}
         disabled={isDisabled}
         aria-busy={loading || undefined}
+        role="button"
+        aria-label={isIconOnly && !props['aria-label'] ? 'Button' : props['aria-label']}
+        tabIndex={0}
         {...props}
       >
         {loading ? (

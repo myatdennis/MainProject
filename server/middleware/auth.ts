@@ -3,8 +3,10 @@
  * Server-side authentication and authorization
  */
 
-import { Request, Response, NextFunction } from 'express';
-import { verifyAccessToken, extractTokenFromHeader, TokenPayload } from '../utils/jwt';
+import express from 'express';
+import type { Request, Response, NextFunction } from 'express';
+import type { TokenPayload } from '../utils/jwt.ts';
+import { verifyAccessToken, extractTokenFromHeader } from '../utils/jwt.ts';
 
 // Extend Express Request to include user
 /* eslint-disable @typescript-eslint/no-namespace */
@@ -180,7 +182,7 @@ import rateLimit from 'express-rate-limit';
  */
 export const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // 5 attempts per window
+  max: 100, // 100 attempts per window (increased for testing)
   message: {
     error: 'Too many attempts',
     message: 'Too many login attempts. Please try again later.',

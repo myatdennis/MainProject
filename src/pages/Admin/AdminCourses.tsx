@@ -34,6 +34,8 @@ import EmptyState from '../../components/ui/EmptyState';
 import Button from '../../components/ui/Button';
 import Input from '../../components/ui/Input';
 
+import { LazyImage } from '../../components/PerformanceComponents';
+
 
 const AdminCourses = () => {
   const { showToast } = useToast();
@@ -484,10 +486,12 @@ const AdminCourses = () => {
         {filteredCourses.map((course: Course) => (
           <div key={course.id} className="card-lg card-hover overflow-hidden" data-test="admin-course-card">
             <div className="relative">
-              <img 
-                src={course.thumbnail} 
+              <LazyImage
+                src={course.thumbnail}
                 alt={course.title}
                 className="w-full h-48 object-cover"
+                fallbackSrc="/placeholder-image.png"
+                placeholder={<div className="w-full h-48 bg-gray-200 animate-pulse" />}
               />
               <div className="absolute top-4 left-4">
                 <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(course.status)}`}>
@@ -661,10 +665,12 @@ const AdminCourses = () => {
                   </td>
                   <td className="py-4 px-6">
                     <div className="flex items-center space-x-3">
-                      <img 
-                        src={course.thumbnail} 
+                      <LazyImage
+                        src={course.thumbnail}
                         alt={course.title}
                         className="w-12 h-12 rounded-lg object-cover"
+                        fallbackSrc="/placeholder-image.png"
+                        placeholder={<div className="w-12 h-12 bg-gray-200 animate-pulse rounded-lg" />}
                       />
                       <div>
                         <div className="font-medium text-gray-900">{course.title}</div>

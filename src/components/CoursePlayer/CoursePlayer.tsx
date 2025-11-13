@@ -48,7 +48,7 @@ import {
 } from '../../utils/assignmentStorage';
 import { trackCourseCompletion as dalTrackCourseCompletion, trackEvent as dalTrackEvent } from '../../dal/analytics';
 import { useUserProfile } from '../../hooks/useUserProfile';
-import { batchService } from '../../services/batchService';
+import { batchService } from '../../dal/batchService';
 
 interface CoursePlayerProps {
   namespace?: 'admin' | 'client';

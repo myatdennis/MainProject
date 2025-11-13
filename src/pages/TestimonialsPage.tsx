@@ -2,6 +2,8 @@ import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Star, Quote, CheckCircle, Heart, Users, TrendingUp } from 'lucide-react';
 
+import { LazyImage } from '../components/PerformanceComponents';
+
 const TestimonialsPage = () => {
   const navigate = useNavigate();
   const testimonials = [
@@ -135,10 +137,12 @@ const TestimonialsPage = () => {
             {testimonials.map((testimonial, index) => (
               <div key={index} className="bg-white p-8 rounded-2xl shadow-lg hover:shadow-xl transition-shadow duration-200">
                 <div className="flex items-center mb-6">
-                  <img 
-                    src={testimonial.image} 
+                  <LazyImage
+                    src={testimonial.image}
                     alt={testimonial.name}
                     className="w-16 h-16 rounded-full object-cover mr-4"
+                    fallbackSrc="/placeholder-image.png"
+                    placeholder={<div className="w-16 h-16 rounded-full bg-gray-200 animate-pulse mr-4" />}
                   />
                   <div>
                     <h3 className="font-bold text-gray-900">{testimonial.name}</h3>

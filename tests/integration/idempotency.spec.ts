@@ -6,7 +6,7 @@ let serverProc: any = null;
 
 async function waitForHealth(timeout = 5000) {
   const deadline = Date.now() + timeout;
-  // eslint-disable-next-line no-constant-condition
+   
   while (true) {
     try {
       // Use global fetch (Node 18+) or dynamic import fallback
@@ -18,7 +18,7 @@ async function waitForHealth(timeout = 5000) {
     }
     if (Date.now() > deadline) throw new Error('Server did not become healthy in time');
     // small sleep
-    // eslint-disable-next-line no-await-in-loop
+     
     await new Promise((r) => setTimeout(r, 150));
   }
 }
@@ -33,11 +33,11 @@ beforeAll(async () => {
 
   // Pipe server logs into test output for easier debugging if needed
   if (serverProc?.stdout) serverProc.stdout.on('data', (d: any) => {
-    // eslint-disable-next-line no-console
+     
     console.log('[srv]', d.toString().trim());
   });
   if (serverProc?.stderr) serverProc.stderr.on('data', (d: any) => {
-    // eslint-disable-next-line no-console
+     
     console.error('[srv]', d.toString().trim());
   });
 

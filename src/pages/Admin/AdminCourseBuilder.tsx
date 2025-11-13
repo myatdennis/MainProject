@@ -3,8 +3,8 @@ import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom'
 import { courseStore, generateId, calculateCourseDuration, countTotalLessons } from '../../store/courseStore';
 import { syncCourseToDatabase, CourseValidationError, loadCourseFromDatabase } from '../../dal/courses';
 import { computeCourseDiff } from '../../utils/courseDiff';
-import type { NormalizedCourse } from '../../utils/courseNormalization';
-import { mergePersistedCourse, formatMinutesLabel } from '../../utils/adminCourseMerge';
+// import type { NormalizedCourse } from '../../utils/courseNormalization';
+import { mergePersistedCourse } from '../../utils/adminCourseMerge';
 import type { Course, Module, Lesson } from '../../types/courseTypes';
 import { getSupabase } from '../../lib/supabase';
 import { getVideoEmbedUrl } from '../../utils/videoUtils';
@@ -39,6 +39,8 @@ import LivePreview from '../../components/LivePreview';
 import AIContentAssistant from '../../components/AIContentAssistant';
 // import DragDropItem from '../../components/DragDropItem'; // TODO: Implement drag drop functionality
 import VersionControl from '../../components/VersionControl';
+
+import { LazyImage } from '../../components/PerformanceComponents';
 
 
 const AdminCourseBuilder = () => {
@@ -2559,10 +2561,12 @@ const AdminCourseBuilder = () => {
         <h2 className="text-xl font-bold text-gray-900 mb-6">Course Preview</h2>
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           <div>
-            <img 
-              src={course.thumbnail} 
+            <LazyImage
+              src={course.thumbnail}
               alt={course.title}
               className="w-full h-48 object-cover rounded-lg mb-4"
+              fallbackSrc="/placeholder-image.png"
+              placeholder={<div className="w-full h-48 bg-gray-200 animate-pulse rounded-lg mb-4" />}
             />
             <h3 className="text-2xl font-bold text-gray-900 mb-2">{course.title || 'Course Title'}</h3>
             <p className="text-gray-600 mb-4">{course.description || 'Course description will appear here...'}</p>

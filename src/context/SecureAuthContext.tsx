@@ -15,6 +15,13 @@ import {
   type UserSession,
 } from '../lib/secureStorage';
 import { loginSchema, emailSchema } from '../utils/validators';
+
+// MFA helpers
+interface MfaChallenge {
+  email: string;
+  mfaRequired: boolean;
+}
+import { logAuditAction } from '../services/auditLogService';
 import axios from 'axios';
 
 // Configure axios base URL
@@ -47,13 +54,17 @@ interface LoginResult {
   success: boolean;
   error?: string;
   errorType?: 'invalid_credentials' | 'network_error' | 'validation_error' | 'unknown_error';
+  mfaRequired?: boolean;
+  mfaEmail?: string;
 }
 
 interface AuthContextType {
   isAuthenticated: AuthState;
   authInitializing: boolean;
   user: UserSession | null;
-  login: (email: string, password: string, type: 'lms' | 'admin') => Promise<LoginResult>;
+  login: (email: string, password: string, type: 'lms' | 'admin', mfaCode?: string) => Promise<LoginResult>;
+  sendMfaChallenge: (email: string) => Promise<boolean>;
+  verifyMfa: (email: string, code: string) => Promise<boolean>;
   logout: (type?: 'lms' | 'admin') => Promise<void>;
   refreshToken: () => Promise<boolean>;
   forgotPassword: (email: string) => Promise<boolean>;
@@ -222,7 +233,8 @@ export const SecureAuthProvider: React.FC<AuthProviderProps> = ({ children }) =>
   const login = useCallback(async (
     email: string,
     password: string,
-    type: 'lms' | 'admin'
+    type: 'lms' | 'admin',
+    mfaCode?: string
   ): Promise<LoginResult> => {
     try {
       // Validate input
@@ -235,22 +247,31 @@ export const SecureAuthProvider: React.FC<AuthProviderProps> = ({ children }) =>
         };
       }
 
-      // Call login API
+      // Call login API (use relative path; axios instance already points to '/api')
       const response = await api.post('/auth/login', {
         email: email.toLowerCase().trim(),
         password,
+        mfaCode,
       });
+
+      // If MFA required, backend should respond with mfaRequired
+      if (response.data.mfaRequired) {
+        return {
+          success: false,
+          mfaRequired: true,
+          mfaEmail: email,
+          error: 'Multi-factor authentication required',
+        };
+      }
 
       const { user: userData, accessToken, refreshToken: refreshTok, expiresAt } = response.data;
 
-      // Store tokens securely
       setAuthTokens({
         accessToken,
         refreshToken: refreshTok,
         expiresAt,
       });
 
-      // Store user session
       const userSession: UserSession = {
         id: userData.id,
         email: userData.email,
@@ -263,18 +284,28 @@ export const SecureAuthProvider: React.FC<AuthProviderProps> = ({ children }) =>
       setUserSession(userSession);
       setUser(userSession);
 
-      // Set auth state
       setIsAuthenticated({
         lms: type === 'lms',
         admin: type === 'admin',
       });
+
+      if (type === 'admin') {
+        logAuditAction('admin_login', { email: userData.email, id: userData.id });
+      }
 
       return { success: true };
     } catch (error: any) {
       console.error('Login error:', error);
 
       if (axios.isAxiosError(error)) {
-        // Explicit handling for service unavailable / misconfiguration
+        if (error.response?.data?.mfaRequired) {
+          return {
+            success: false,
+            mfaRequired: true,
+            mfaEmail: email,
+            error: 'Multi-factor authentication required',
+          };
+        }
         if (error.response?.status === 503) {
           return {
             success: false,
@@ -289,7 +320,6 @@ export const SecureAuthProvider: React.FC<AuthProviderProps> = ({ children }) =>
             errorType: 'invalid_credentials',
           };
         }
-
         if (error.response?.status === 429) {
           return {
             success: false,
@@ -297,7 +327,6 @@ export const SecureAuthProvider: React.FC<AuthProviderProps> = ({ children }) =>
             errorType: 'network_error',
           };
         }
-
         if (!error.response) {
           return {
             success: false,
@@ -306,12 +335,31 @@ export const SecureAuthProvider: React.FC<AuthProviderProps> = ({ children }) =>
           };
         }
       }
-
       return {
         success: false,
         error: (error as any).response?.data?.message || 'Login failed. Please try again.',
         errorType: 'unknown_error',
       };
+    }
+  }, []);
+
+  // Send MFA challenge (email code)
+  const sendMfaChallenge = useCallback(async (email: string): Promise<boolean> => {
+    try {
+      await api.post('/mfa/challenge', { email });
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }, []);
+
+  // Verify MFA code
+  const verifyMfa = useCallback(async (email: string, code: string): Promise<boolean> => {
+    try {
+      const res = await api.post('/mfa/verify', { email, code });
+      return !!res.data.success;
+    } catch (e) {
+      return false;
     }
   }, []);
 
@@ -338,6 +386,11 @@ export const SecureAuthProvider: React.FC<AuthProviderProps> = ({ children }) =>
         });
       }
     } finally {
+      // Audit log for admin logout
+      if (user?.role === 'admin') {
+        logAuditAction('admin_logout', { email: user.email, id: user.id });
+      }
+
       // Clear local state
       clearAuth();
       setUser(null);
@@ -354,7 +407,7 @@ export const SecureAuthProvider: React.FC<AuthProviderProps> = ({ children }) =>
         });
       }
     }
-  }, []);
+  }, [user]);
 
   // ============================================================================
   // Forgot Password
@@ -391,6 +444,8 @@ export const SecureAuthProvider: React.FC<AuthProviderProps> = ({ children }) =>
     logout,
     refreshToken,
     forgotPassword,
+    sendMfaChallenge,
+    verifyMfa,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

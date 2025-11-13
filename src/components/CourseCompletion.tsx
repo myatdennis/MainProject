@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { LazyImage } from './PerformanceComponents';
 import { 
   Trophy, 
   Download, 
@@ -335,15 +336,17 @@ const CourseCompletion: React.FC<CourseCompletionProps> = ({
                 <div className="space-y-6">
                   <div className="flex items-start space-x-4">
                     {course.thumbnail && (
-                      <img 
-                        src={course.thumbnail} 
+                      <LazyImage
+                        src={course.thumbnail}
+                        webpSrc={course.thumbnail.replace(/\.(png|jpg|jpeg)$/, '.webp')}
+                        avifSrc={course.thumbnail.replace(/\.(png|jpg|jpeg)$/, '.avif')}
+                        srcSet={`${course.thumbnail} 1x, ${course.thumbnail.replace(/\.(png|jpg|jpeg)$/, '@2x.$1')} 2x`}
+                        sizes="64px"
                         alt={course.title}
+                        fallbackSrc="/default-course-fallback.png"
                         className="w-16 h-16 rounded-lg object-cover bg-gradient-to-r from-sunrise/20 via-indigo-100 to-ivory"
-                        onError={(e) => {
-                          e.currentTarget.src = '/default-course-fallback.png';
-                          e.currentTarget.className += ' bg-gradient-to-r from-sunrise/20 via-indigo-100 to-ivory';
-                        }}
                         aria-label={`Course image for ${course.title}`}
+                        placeholder={<div className="w-16 h-16 rounded-lg bg-mutedgrey animate-pulse" />}
                       />
                     )}
                     <div>
@@ -553,15 +556,17 @@ const CourseCompletion: React.FC<CourseCompletionProps> = ({
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     {recommendedCourses.map((recCourse) => (
                       <div key={recCourse.id} className="border border-gray-200 rounded-xl overflow-hidden hover:shadow-md transition-shadow">
-                        <img 
-                          src={recCourse.thumbnail} 
+                        <LazyImage
+                          src={recCourse.thumbnail}
+                          webpSrc={recCourse.thumbnail.replace(/\.(png|jpg|jpeg)$/, '.webp')}
+                          avifSrc={recCourse.thumbnail.replace(/\.(png|jpg|jpeg)$/, '.avif')}
+                          srcSet={`${recCourse.thumbnail} 1x, ${recCourse.thumbnail.replace(/\.(png|jpg|jpeg)$/, '@2x.$1')} 2x`}
+                          sizes="100vw"
                           alt={recCourse.title}
+                          fallbackSrc="/default-course-fallback.png"
                           className="w-full h-32 object-cover rounded-xl bg-gradient-to-r from-sunrise/20 via-indigo-100 to-ivory"
-                          onError={(e) => {
-                            e.currentTarget.src = '/default-course-fallback.png';
-                            e.currentTarget.className += ' bg-gradient-to-r from-sunrise/20 via-indigo-100 to-ivory';
-                          }}
                           aria-label={`Course image for ${recCourse.title}`}
+                          placeholder={<div className="w-full h-32 rounded-xl bg-mutedgrey animate-pulse" />}
                         />
                         <div className="p-4">
                           <h3 className="font-semibold text-gray-900 mb-2">{recCourse.title}</h3>

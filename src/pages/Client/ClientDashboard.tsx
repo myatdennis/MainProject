@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useRoutePrefetch } from '../../hooks/useRoutePrefetch';
 import { ArrowUpRight, BookOpen, Clock, Users, Award } from 'lucide-react';
 import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
@@ -19,6 +20,13 @@ import { syncService } from '../../dal/sync';
 import type { CourseAssignment } from '../../types/assignment';
 
 const ClientDashboard = () => {
+  // Prefetch critical user flows for fast navigation
+  useRoutePrefetch([
+    '/client/courses',
+    '/lms/dashboard',
+    '/client/profile',
+    '/client/lessons',
+  ]);
   const navigate = useNavigate();
   const { user } = useUserProfile();
   const learnerId = useMemo(() => {

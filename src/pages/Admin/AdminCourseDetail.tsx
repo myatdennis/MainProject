@@ -4,6 +4,8 @@ import { courseStore } from '../../store/courseStore';
 import { syncCourseToDatabase, CourseValidationError } from '../../dal/courses';
 import type { Course } from '../../types/courseTypes';
 import { useToast } from '../../context/ToastContext';
+
+import { LazyImage } from '../../components/PerformanceComponents';
 // Removed unused UI imports to satisfy lints
 import {
   ArrowLeft,
@@ -242,10 +244,12 @@ const AdminCourseDetail = () => {
         <div className="lg:col-span-2 space-y-8">
           {/* Course Overview */}
           <div className="card-lg overflow-hidden">
-            <img 
-              src={course.thumbnail} 
+            <LazyImage
+              src={course.thumbnail}
               alt={course.title}
               className="w-full h-64 object-cover"
+              fallbackSrc="/placeholder-image.png"
+              placeholder={<div className="w-full h-64 bg-gray-200 animate-pulse" />}
             />
             <div className="p-6">
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">

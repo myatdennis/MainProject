@@ -1,3 +1,4 @@
+import { LazyImage } from '../../components/PerformanceComponents';
 import React, { useState, useEffect, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { 
@@ -39,6 +40,7 @@ import {
 import LoadingButton from '../../components/LoadingButton';
 import EditOrganizationModal from '../../components/EditOrganizationModal';
 import { useToast } from '../../context/ToastContext';
+import React from 'react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell } from 'recharts';
 
 const OrganizationDetails: React.FC = () => {
@@ -212,7 +214,15 @@ const OrganizationDetails: React.FC = () => {
             <div className="flex items-center space-x-3">
               <div className="bg-blue-100 p-3 rounded-lg">
                 {organization.logo ? (
-                  <img src={organization.logo} alt="Logo" className="w-8 h-8 rounded" />
+                  <LazyImage
+                    src={organization.logo}
+                    webpSrc={organization.logo?.replace(/\.(png|jpg|jpeg)$/i, '.webp')}
+                    avifSrc={organization.logo?.replace(/\.(png|jpg|jpeg)$/i, '.avif')}
+                    fallbackSrc="/default-org-fallback.png"
+                    alt="Logo"
+                    className="w-8 h-8 rounded"
+                    placeholder={<div className="w-8 h-8 rounded bg-mutedgrey animate-pulse" />} 
+                  />
                 ) : (
                   <Building2 className="w-8 h-8 text-blue-600" />
                 )}

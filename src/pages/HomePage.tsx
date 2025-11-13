@@ -1,7 +1,8 @@
 // React import not required with the new JSX transform
 import React from 'react';
+import { useRoutePrefetch } from '../hooks/useRoutePrefetch';
 import { Link, useNavigate } from 'react-router-dom';
-import {
+import { 
   ArrowRight,
   Users,
   Heart,
@@ -9,8 +10,9 @@ import {
   Target,
   Download,
   Calendar,
-  Sparkles,
+  Sparkles
 } from 'lucide-react';
+import { LazyImage } from '../components/PerformanceComponents';
 import BookingWidget from '../components/BookingWidget/BookingWidget';
 import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
@@ -18,6 +20,15 @@ import Badge from '../components/ui/Badge';
 
 const HomePage = () => {
   const navigate = useNavigate();
+  // Prefetch critical user paths for fast navigation
+  useRoutePrefetch([
+    '/client-portal',
+    '/admin/dashboard',
+    '/admin/courses',
+    '/admin/analytics',
+    '/client/dashboard',
+    '/client/courses',
+  ]);
   const [showBookingWidget, setShowBookingWidget] = React.useState(false);
 
   const features = [
@@ -98,10 +109,15 @@ const HomePage = () => {
             </div>
 
             <div className="relative mx-auto w-full max-w-[420px]">
-              <img
+              <LazyImage
                 src="https://images.pexels.com/photos/3184675/pexels-photo-3184675.jpeg?auto=compress&cs=tinysrgb&w=1200"
+                webpSrc="https://images.pexels.com/photos/3184675/pexels-photo-3184675.webp?auto=compress&cs=tinysrgb&w=1200"
+                avifSrc="https://images.pexels.com/photos/3184675/pexels-photo-3184675.avif?auto=compress&cs=tinysrgb&w=1200"
                 alt="Inclusive team collaboration"
                 className="w-full rounded-[28px] border border-white/60 shadow-[0_32px_60px_rgba(16,24,40,0.18)]"
+                sizes="(max-width: 600px) 100vw, 420px"
+                fallbackSrc="/placeholder-image.png"
+                placeholder={<div className="w-full h-[280px] rounded-[28px] bg-mutedgrey animate-pulse" />}
               />
               <Card tone="muted" padding="sm" className="absolute -bottom-5 left-6 flex w-[260px] items-center gap-3 rounded-2xl border border-white/80 bg-white/90 shadow-card-sm">
                 <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-sunrise/15 text-sunrise">

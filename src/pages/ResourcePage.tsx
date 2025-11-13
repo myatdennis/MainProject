@@ -3,6 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import PageWrapper from '../components/PageWrapper';
 import { Download, CheckCircle, FileText, Video, Users, Calendar, ArrowRight } from 'lucide-react';
 
+import { LazyImage } from '../components/PerformanceComponents';
+
 const ResourcePage = () => {
   const [email, setEmail] = useState('');
   const [firstName, setFirstName] = useState('');
@@ -99,7 +101,13 @@ const ResourcePage = () => {
               </div>
             </div>
             <div>
-              <img src="https://images.pexels.com/photos/3184291/pexels-photo-3184291.jpeg?auto=compress&cs=tinysrgb&w=800" alt="Inclusive leadership guide preview" className="img-rounded" />
+              <LazyImage
+                src="https://images.pexels.com/photos/3184291/pexels-photo-3184291.jpeg?auto=compress&cs=tinysrgb&w=800"
+                alt="Inclusive leadership guide preview"
+                className="img-rounded"
+                fallbackSrc="/placeholder-image.png"
+                placeholder={<div className="img-rounded bg-gray-200 animate-pulse" />}
+              />
             </div>
           </div>
         </div>

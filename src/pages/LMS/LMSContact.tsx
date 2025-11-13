@@ -1,14 +1,7 @@
 import { useState } from 'react';
-import { 
-  Calendar, 
-  Mail, 
-  Phone, 
-  Clock, 
-  MessageSquare,
-  Video,
-  CheckCircle,
-  Send
-} from 'lucide-react';
+
+import { LazyImage } from '../../components/PerformanceComponents';
+import { Calendar, Mail, Phone, Clock, MessageSquare, Video, CheckCircle, Send } from 'lucide-react';
 
 const LMSContact = () => {
   const [contactType, setContactType] = useState('coaching');
@@ -294,10 +287,12 @@ const LMSContact = () => {
           <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
             <h3 className="text-lg font-bold text-gray-900 mb-4">Your Coach</h3>
             <div className="flex items-center space-x-4 mb-4">
-              <img 
-                src={coachInfo.image} 
+              <LazyImage
+                src={coachInfo.image}
                 alt={coachInfo.name}
                 className="w-16 h-16 rounded-full object-cover"
+                fallbackSrc="/placeholder-image.png"
+                placeholder={<div className="w-16 h-16 rounded-full bg-gray-200 animate-pulse" />}
               />
               <div>
                 <h4 className="font-bold text-gray-900">{coachInfo.name}</h4>

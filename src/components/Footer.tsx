@@ -1,4 +1,5 @@
 import { Linkedin, Twitter } from 'lucide-react';
+import { LazyImage } from './PerformanceComponents';
 
 const footerLinks = [
   { label: 'Privacy', href: '/privacy' },
@@ -11,7 +12,7 @@ const Footer = () => {
   <footer className="mt-16 border-t border-mist/60 bg-[var(--hud-bg)]">
       <div className="mx-auto flex max-w-7xl flex-col gap-8 px-6 py-10 lg:flex-row lg:items-center lg:justify-between lg:px-12">
         <a href="/" aria-label="Return to home" className="flex items-center gap-3 no-underline">
-          <img src="/logo.svg" alt="Huddle Co." className="h-12 w-12 rounded-2xl shadow-card-sm" />
+          <LazyImage src="/logo.svg" webpSrc="/logo.webp" avifSrc="/logo.avif" srcSet="/logo.svg 1x, /logo@2x.svg 2x" sizes="48px" alt="Huddle Co." className="h-12 w-12 rounded-2xl shadow-card-sm" placeholder={<div className="w-12 h-12 rounded-2xl bg-mutedgrey animate-pulse" />} />
         </a>
 
         <nav className="flex flex-wrap items-center gap-4 text-sm font-semibold text-slate/80">
@@ -45,7 +46,7 @@ const Footer = () => {
       </div>
       <div className="px-6 lg:px-12 pb-6">
         <div className="mx-auto max-w-7xl flex flex-col items-center gap-3">
-          <img src="/logo.svg" alt="Huddle Co." className="h-10 w-10 rounded-2xl shadow-card-sm" />
+          <LazyImage src="/logo.svg" webpSrc="/logo.webp" avifSrc="/logo.avif" srcSet="/logo.svg 1x, /logo@2x.svg 2x" sizes="40px" alt="Huddle Co." className="h-10 w-10 rounded-2xl shadow-card-sm" placeholder={<div className="w-10 h-10 rounded-2xl bg-mutedgrey animate-pulse" />} />
           <a href="/brand-guidelines" className="text-sm font-semibold text-slate/80 hover:text-charcoal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-skyblue focus-visible:ring-offset-2 focus-visible:ring-offset-softwhite">
             Brand Guidelines
           </a>

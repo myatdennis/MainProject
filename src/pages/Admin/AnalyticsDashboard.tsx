@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react'
-import supabaseClient from '../../lib/supabaseClient'
-import CompletionChart from '../../components/Analytics/CompletionChart'
+import React, { useEffect, useState, lazy, Suspense } from 'react'
+import { getSupabase } from '../../lib/supabase'
+const CompletionChart = lazy(() => import('../../components/Analytics/CompletionChart'));
 
 type Overview = {
   total_active_learners?: number
@@ -36,33 +36,39 @@ const AnalyticsDashboard: React.FC = () => {
 
     // If Supabase client is available, use realtime subscriptions for fresh updates
     let subscription: any = null
-    if (supabaseClient) {
+    const initRealtime = async () => {
+      const supabase = await getSupabase();
+      if (!supabase) return;
       try {
-        subscription = supabaseClient
+        subscription = supabase
           .channel('public:analytics')
           .on('postgres_changes', { event: '*', schema: 'public', table: 'user_course_progress' }, () => {
-            fetchData()
+            fetchData();
           })
           .on('postgres_changes', { event: '*', schema: 'public', table: 'user_lesson_progress' }, () => {
-            fetchData()
+            fetchData();
           })
-          .subscribe()
+          .subscribe();
       } catch (err) {
-        console.warn('Realtime subscription failed, falling back to polling', err)
+        console.warn('Realtime subscription failed, falling back to polling', err);
       }
-    }
+    };
+    initRealtime();
 
     // Fallback polling every 3s if realtime not available
-    const id = setInterval(() => {
-      if (!supabaseClient) fetchData()
-    }, 3000)
+    const id = setInterval(async () => {
+      const supabase = await getSupabase();
+      if (!supabase) fetchData();
+    }, 3000);
 
     return () => {
-      clearInterval(id)
+      clearInterval(id);
       try {
-        if (subscription && subscription.unsubscribe) subscription.unsubscribe()
-      } catch (e) {}
-    }
+        if (subscription && subscription.unsubscribe) subscription.unsubscribe();
+      } catch (e) {
+        // ignore unsubscribe errors
+      }
+    };
   }, [])
 
   const exportCsv = async () => {
@@ -129,6 +135,12 @@ const AnalyticsDashboard: React.FC = () => {
           </tbody>
         </table>
       )}
+
+      <div style={{ marginTop: 24, marginBottom: 24 }}>
+        <Suspense fallback={<div>Loading chart…</div>}>
+          <CompletionChart data={courses.map((c) => ({ label: c.course_id, value: c.completion_percent }))} />
+        </Suspense>
+      </div>
 
       <h3 style={{ marginTop: 20 }}>Top lesson dropoffs</h3>
       <ul>

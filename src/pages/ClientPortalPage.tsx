@@ -22,6 +22,7 @@ import Card from '../components/ui/Card';
 import Button from '../components/ui/Button';
 import Badge from '../components/ui/Badge';
 import ProgressBar from '../components/ui/ProgressBar';
+import { LazyImage } from '../components/PerformanceComponents';
 
 const ClientPortalPage = () => {
   const navigate = useNavigate();
@@ -343,10 +344,15 @@ const ClientPortalPage = () => {
               </ul>
             </div>
             <div className="relative mx-auto w-full max-w-[420px]">
-              <img
+              <LazyImage
                 src="https://images.pexels.com/photos/3184317/pexels-photo-3184317.jpeg?auto=compress&cs=tinysrgb&w=800"
+                webpSrc="https://images.pexels.com/photos/3184317/pexels-photo-3184317.webp?auto=compress&cs=tinysrgb&w=800"
+                avifSrc="https://images.pexels.com/photos/3184317/pexels-photo-3184317.avif?auto=compress&cs=tinysrgb&w=800"
                 alt="Team collaboration"
                 className="w-full rounded-[28px] border border-white shadow-[0_32px_60px_rgba(16,24,40,0.18)]"
+                sizes="(max-width: 600px) 100vw, 420px"
+                fallbackSrc="/placeholder-image.png"
+                placeholder={<div className="w-full h-[280px] rounded-[28px] bg-mutedgrey animate-pulse" />}
               />
               <Card tone="muted" className="absolute -bottom-5 left-6 flex w-[200px] flex-col items-center gap-1 rounded-2xl border border-white/70 bg-white/90 py-3 text-center shadow-card-sm">
                 <p className="font-heading text-xl font-bold text-skyblue">24/7</p>

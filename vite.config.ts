@@ -49,6 +49,13 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks(id: string) {
+          // Further split common large libraries
+          if (id.includes('zod')) return 'zod';
+          if (id.includes('date-fns')) return 'date-fns';
+          if (id.includes('lodash')) return 'lodash';
+          if (id.includes('react-hook-form')) return 'react-hook-form';
+          if (id.includes('zustand')) return 'zustand';
+          if (id.includes('@tanstack/table') || id.includes('tanstack-table')) return 'tanstack-table';
           if (id.includes('node_modules')) {
             // Avoid splitting React and ReactDOM into separate manual chunks to prevent
             // cross-chunk ordering/linking issues in production builds.
@@ -56,6 +63,9 @@ export default defineConfig({
             if (id.includes('@dnd-kit') || id.includes('dnd-kit')) return 'dnd-kit';
             if (id.includes('@supabase') || id.includes('supabase')) return 'supabase';
             if (id.includes('recharts')) return 'charts';
+            if (id.includes('framer-motion')) return 'framer-motion';
+            if (id.includes('@tanstack/react-query')) return 'react-query';
+            if (id.includes('axios')) return 'axios';
             if (id.includes('react-router')) return 'vendor-router';
             return 'vendor';
           }

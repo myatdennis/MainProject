@@ -1,4 +1,5 @@
 import React from 'react';
+import { LazyImage } from '../PerformanceComponents';
 
 const brandColors = [
   { name: 'Sunrise Orange', value: '#de7b12' },
@@ -61,7 +62,7 @@ const BrandKitPage: React.FC = () => {
       <section className="mb-8">
         <h2 className="text-xl font-semibold mb-4">Logo</h2>
         <div className="flex items-center space-x-6">
-          <img src="/logo192.png" alt="The Huddle Co. Logo" className="h-20 w-20 rounded-full border shadow-lg" />
+          <LazyImage src="/logo192.png" webpSrc="/logo192.webp" avifSrc="/logo192.avif" srcSet="/logo192.png 1x, /logo192@2x.png 2x" sizes="80px" alt="The Huddle Co. Logo" className="h-20 w-20 rounded-full border shadow-lg" fallbackSrc="/default-org-fallback.png" placeholder={<div className="w-20 h-20 rounded-full bg-mutedgrey animate-pulse" />} />
           <a href="/logo192.png" download className="px-4 py-2 rounded-xl font-heading transition-colors btn-cta">Download Logo</a>
         </div>
       </section>

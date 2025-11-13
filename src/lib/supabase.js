@@ -16,21 +16,28 @@ export async function getSupabase() {
     if (_supabase)
         return _supabase;
     try {
-        // Avoid Vite/Rollup preloading/eager evaluation by hiding the module specifier
-        // from static analysis and marking with @vite-ignore. This prevents the
-        // supabase chunk from being modulepreload'ed and evaluated on initial load
-        // when Supabase isn't configured (which caused a runtime ReferenceError).
         const pkg = '@supabase' + '/supabase-js';
-        // Using dynamic import with concatenated string prevents static preloading.
-        // Type assertion keeps TS happy; module shape inferred at runtime.
-        const mod = await import(/* @vite-ignore */ pkg);
+        let mod = null;
+        // Always use the @vite-ignore dynamic import so bundlers don't eagerly
+        // include the supabase bundle for builds that don't set the
+        // VITE_SUPABASE_* env vars. This prevents runtime evaluation of the
+        // supabase chunk in E2E/demo scenarios.
+        mod = await import(/* @vite-ignore */ pkg);
         _supabase = mod.createClient(supabaseUrl, supabaseAnonKey, {
             realtime: { params: { eventsPerSecond: 10 } },
         });
         return _supabase;
     }
     catch (err) {
-        console.warn('[supabase] Dynamic import failed; falling back to null client:', err);
+        try {
+            // Only warn during local development. In production (or E2E/demo
+            // builds) we intentionally silence this to avoid noisy console
+            // messages that pollute Playwright captures and user telemetry.
+            if (import.meta && import.meta.env && import.meta.env.DEV) {
+                console.warn('[supabase] Dynamic import failed; falling back to null client:', err);
+            }
+        }
+        catch (_) { }
         return null;
     }
 }

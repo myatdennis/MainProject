@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { getSupabase, hasSupabaseConfig } from '../lib/supabase';
+import { getSupabase } from '../lib/supabase';
 import { useRealtimeSync, RealtimeEvent } from './useRealtimeSync';
 import { useAutoSaveProgress } from './useAutoSaveProgress';
 import { useOfflineProgressQueue } from './useOfflineProgressQueue';

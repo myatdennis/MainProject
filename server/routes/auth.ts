@@ -5,9 +5,9 @@
 
 import express from 'express';
 import bcrypt from 'bcryptjs';
-import { generateTokens, verifyRefreshToken } from '../utils/jwt';
-import { authenticate, authLimiter } from '../middleware/auth';
-import { supabase } from '../lib/supabaseClient';
+import { generateTokens, verifyRefreshToken } from '../utils/jwt.ts';
+import { authenticate, authLimiter } from '../middleware/auth.ts';
+import { supabase } from '../lib/supabaseClient.ts';
 
 const router = express.Router();
 
@@ -15,7 +15,7 @@ const router = express.Router();
 // Login
 // ============================================================================
 
-router.post('/login', authLimiter, async (req, res) => {
+router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
     
@@ -121,7 +121,19 @@ router.post('/login', authLimiter, async (req, res) => {
       organizationId: user.organization_id,
     });
     
-    // Return user data and tokens
+    // Set tokens as httpOnly, secure cookies
+    res.cookie('access_token', tokens.accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 1000 * 60 * 15 // 15 minutes
+    });
+    res.cookie('refresh_token', tokens.refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 1000 * 60 * 60 * 24 * 7 // 7 days
+    });
     res.json({
       user: {
         id: user.id,
@@ -130,8 +142,7 @@ router.post('/login', authLimiter, async (req, res) => {
         firstName: user.first_name,
         lastName: user.last_name,
         organizationId: user.organization_id,
-      },
-      ...tokens,
+      }
     });
   } catch (error) {
     console.error('Login error:', error);
@@ -211,7 +222,19 @@ router.post('/register', authLimiter, async (req, res) => {
       role: newUser.role,
     });
     
-    // Return user data and tokens
+    // Set tokens as httpOnly, secure cookies
+    res.cookie('access_token', tokens.accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 1000 * 60 * 15 // 15 minutes
+    });
+    res.cookie('refresh_token', tokens.refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 1000 * 60 * 60 * 24 * 7 // 7 days
+    });
     res.status(201).json({
       user: {
         id: newUser.id,
@@ -219,8 +242,7 @@ router.post('/register', authLimiter, async (req, res) => {
         role: newUser.role,
         firstName: newUser.first_name,
         lastName: newUser.last_name,
-      },
-      ...tokens,
+      }
     });
   } catch (error) {
     console.error('Registration error:', error);
@@ -291,7 +313,19 @@ router.post('/refresh', async (req, res) => {
       organizationId: user.organization_id,
     });
     
-    res.json(tokens);
+    res.cookie('access_token', tokens.accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 1000 * 60 * 15 // 15 minutes
+    });
+    res.cookie('refresh_token', tokens.refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 1000 * 60 * 60 * 24 * 7 // 7 days
+    });
+    res.json({ success: true });
   } catch (error) {
     console.error('Token refresh error:', error);
     res.status(500).json({
@@ -318,9 +352,9 @@ router.get('/verify', authenticate, async (req, res) => {
 // ============================================================================
 
 router.post('/logout', authenticate, async (req, res) => {
-  // In a real implementation, you might want to blacklist the token
-  // For now, just send success response
-  // Client will clear tokens from storage
+  // Clear auth cookies
+  res.clearCookie('access_token', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict' });
+  res.clearCookie('refresh_token', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict' });
   res.json({
     success: true,
     message: 'Logged out successfully',

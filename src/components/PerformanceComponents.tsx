@@ -10,13 +10,22 @@ interface LazyImageProps extends React.ImgHTMLAttributes<HTMLImageElement> {
   threshold?: number;
 }
 
-export const LazyImage: React.FC<LazyImageProps> = ({
+export const LazyImage: React.FC<LazyImageProps & {
+  webpSrc?: string;
+  avifSrc?: string;
+  srcSet?: string;
+  sizes?: string;
+}> = ({
   src,
   alt,
   fallbackSrc,
   className = '',
   placeholder,
-  threshold = 0.1
+  threshold = 0.1,
+  webpSrc,
+  avifSrc,
+  srcSet,
+  sizes
 }) => {
   const [isLoaded, setIsLoaded] = useState(false);
   const [isInView, setIsInView] = useState(false);
@@ -61,16 +70,22 @@ export const LazyImage: React.FC<LazyImageProps> = ({
         </div>
       )}
       {isInView && (
-        <motion.img
-          src={imageSrc}
-          alt={alt}
-          onLoad={handleLoad}
-          onError={handleError}
-          className={`transition-opacity duration-300 ${isLoaded ? 'opacity-100' : 'opacity-0'} rounded-2xl shadow-card ${className} ${darkMode ? 'bg-charcoal' : ''}`}
-          loading="lazy"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: isLoaded ? 1 : 0 }}
-        />
+        <picture>
+          {avifSrc && <source srcSet={avifSrc} type="image/avif" />}
+          {webpSrc && <source srcSet={webpSrc} type="image/webp" />}
+          {srcSet && <source srcSet={srcSet} />}
+          <motion.img
+            src={imageSrc}
+            alt={alt}
+            onLoad={handleLoad}
+            onError={handleError}
+            className={`transition-opacity duration-300 ${isLoaded ? 'opacity-100' : 'opacity-0'} rounded-2xl shadow-card ${className} ${darkMode ? 'bg-charcoal' : ''}`}
+            loading="lazy"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: isLoaded ? 1 : 0 }}
+            sizes={sizes}
+          />
+        </picture>
       )}
       {/* Dark mode toggle for LazyImage */}
       <div className="absolute bottom-2 right-2 z-10">

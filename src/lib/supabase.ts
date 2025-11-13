@@ -16,20 +16,32 @@ export async function getSupabase() {
   if (!hasSupabaseConfig) return null;
   if (_supabase) return _supabase;
   try {
-  // Avoid Vite/Rollup preloading/eager evaluation by hiding the module specifier
-  // from static analysis and marking with @vite-ignore. This prevents the
-  // supabase chunk from being modulepreload'ed and evaluated on initial load
-  // when Supabase isn't configured (which caused a runtime ReferenceError).
-  const pkg: string = '@supabase' + '/supabase-js';
-  // Using dynamic import with concatenated string prevents static preloading.
-  // Type assertion keeps TS happy; module shape inferred at runtime.
-  const mod: any = await import(/* @vite-ignore */ pkg);
+    // If we're building for production and Supabase is configured at build time,
+    // allow the bundler to include the supabase client so the dynamic import
+    // resolves at runtime. In dev or when we explicitly want to avoid bundling,
+    // keep the @vite-ignore strategy to prevent eager evaluation.
+    const pkg: string = '@supabase' + '/supabase-js';
+    let mod: any = null;
+    // Always use a hidden/dynamic specifier so bundlers won't eagerly include
+    // the supabase bundle in builds where it's not configured. This avoids
+    // unexpected runtime evaluation of the large supabase chunk in demo/E2E
+    // environments.
+    mod = await import(/* @vite-ignore */ pkg);
     _supabase = mod.createClient(supabaseUrl!, supabaseAnonKey!, {
       realtime: { params: { eventsPerSecond: 10 } },
     });
     return _supabase;
   } catch (err) {
-    console.warn('[supabase] Dynamic import failed; falling back to null client:', err);
+    // In production we silence this to avoid noisy warnings when the client
+    // intentionally falls back to a null client (e.g., E2E/demo mode).
+    try {
+      // Only warn during local development. In production (or E2E/demo
+      // builds) we intentionally silence this to avoid noisy console
+      // messages that pollute Playwright captures and user telemetry.
+      if ((import.meta as any).env && (import.meta as any).env.DEV) {
+        console.warn('[supabase] Dynamic import failed; falling back to null client:', err);
+      }
+    } catch (_) {}
     return null;
   }
 }

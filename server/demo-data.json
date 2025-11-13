@@ -234,6 +234,34 @@
         "published_at": null,
         "modules": []
       }
+    ],
+    [
+      "e2e-course-1762988771955",
+      {
+        "id": "e2e-course-1762988771955",
+        "slug": "e2e-course-1762988771955",
+        "title": "Integration Test Course",
+        "description": null,
+        "status": "draft",
+        "version": 1,
+        "meta_json": {},
+        "published_at": null,
+        "modules": []
+      }
+    ],
+    [
+      "e2e-course-1762989192354",
+      {
+        "id": "e2e-course-1762989192354",
+        "slug": "e2e-course-1762989192354",
+        "title": "Integration Test Course",
+        "description": null,
+        "status": "draft",
+        "version": 1,
+        "meta_json": {},
+        "published_at": null,
+        "modules": []
+      }
     ]
   ]
 }
