@@ -1422,6 +1422,7 @@ app.post('/api/admin/courses', async (req, res) => {
     res.status(201).json({ data: refreshed.data });
   } catch (error) {
     console.error('Failed to upsert course:', error);
+    try { dumpErrorContext(req, error); } catch (_) {}
     // Provide more details to the client for debugging
     const errorMessage = error?.message || 'Unable to save course';
     const errorDetails = error?.details || error?.hint || null;
@@ -1430,6 +1431,21 @@ app.post('/api/admin/courses', async (req, res) => {
       details: errorDetails,
       timestamp: new Date().toISOString()
     });
+  }
+});
+
+// Global error handler to capture unexpected errors and produce a diagnostics file
+app.use((err, req, res, _next) => {
+  try {
+    console.error('Unhandled server error:', err);
+    dumpErrorContext(req || { requestId: null, method: 'UNKNOWN', path: req ? req.path : 'UNKNOWN', headers: {} }, err);
+  } catch (e) {
+    console.warn('Failed while dumping error context', e);
+  }
+  try {
+    res.status(500).json({ error: 'Internal server error', timestamp: new Date().toISOString() });
+  } catch (e) {
+    // nothing more we can do
   }
 });
 
