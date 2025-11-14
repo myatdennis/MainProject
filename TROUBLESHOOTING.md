@@ -135,3 +135,43 @@ All features work locally with in-memory storage.
 2. Try incognito/private mode
 3. Check for browser extensions that might interfere
 4. Ensure no firewall/antivirus is blocking localhost
+
+# Troubleshooting Guide
+
+## Common Issues & Solutions
+
+### 1. Port Already in Use (8888 or 5174)
+- **Symptom:** Server fails to start, error `EADDRINUSE` or port busy.
+- **Solution:**
+  - Run `lsof -iTCP:8888 -sTCP:LISTEN -n -P` and `lsof -iTCP:5174 -sTCP:LISTEN -n -P` to find the process.
+  - Kill the process with `kill -9 <PID>`.
+  - Use `npm run start:server` or `npm run dev` again.
+
+### 2. Module Not Found (e.g. @supabase/supabase-js)
+- **Symptom:** Dynamic import failed, cannot resolve module.
+- **Solution:**
+  - Run `npm install` to ensure all dependencies are present.
+  - If you just pulled new code, always run `npm install`.
+
+### 3. Network Error / Connection Refused
+- **Symptom:** Frontend cannot reach backend, login fails, ERR_NETWORK.
+- **Solution:**
+  - Make sure the backend server is running (`npm run start:server`).
+  - Make sure the frontend dev server is running (`npm run dev`).
+  - Check `.env` for correct API URLs.
+
+### 4. Out of Memory / Exit Code 137
+- **Symptom:** Server is killed unexpectedly, exit code 137.
+- **Solution:**
+  - Close unused applications to free up RAM.
+  - Avoid running multiple heavy processes at once.
+  - Restart your dev environment if needed.
+
+### 5. General Best Practices
+- Always run `npm install` after pulling new code or switching branches.
+- Always check ports are free before starting servers.
+- Restart both backend and frontend after changing `.env` or dependencies.
+
+---
+
+For persistent issues, check logs and consult this file. If you need more help, open an issue on GitHub or contact your team lead.

@@ -1,0 +1,32 @@
+{
+  "timestamp": "2025-11-14T21:27:33.802Z",
+  "route": "/api/auth/login",
+  "requestId": "1763155653800-0qi94p",
+  "outcome": "success",
+  "headers": {
+    "host": "localhost:8888",
+    "connection": "keep-alive",
+    "content-length": "54",
+    "sec-ch-ua-platform": "\"macOS\"",
+    "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+    "accept": "application/json, text/plain, */*",
+    "sec-ch-ua": "\"Google Chrome\";v=\"141\", \"Not?A_Brand\";v=\"8\", \"Chromium\";v=\"141\"",
+    "content-type": "application/json",
+    "sec-ch-ua-mobile": "?0",
+    "origin": "http://localhost:8888",
+    "sec-fetch-site": "same-origin",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-dest": "empty",
+    "referer": "http://localhost:8888/lms/login",
+    "accept-encoding": "gzip, deflate, br, zstd",
+    "accept-language": "en-US,en;q=0.9",
+    "cookie": "csrf_token=UDrtgP_FqVwktiRE28XEKp93ZwXVdHfpMfTMjQu0WLw; access_token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiIwMTQ4YTVjZi1lMDExLTRlNGItYTkzYi00NzU0ZGRiYzc0NzkiLCJlbWFpbCI6Im15YUB0aGUtaHVkZGxlLmNvIiwicm9sZSI6InVzZXIiLCJvcmdhbml6YXRpb25JZCI6bnVsbCwiaWF0IjoxNzYzMTU1NjM4LCJleHAiOjE3NjMxNTY1MzgsImF1ZCI6Imxtcy11c2VycyIsImlzcyI6Imxtcy1wbGF0Zm9ybSJ9.-2zNQYiqwaSKcrvmsACP6PjMaqsTHPDI9yQlXVFvUCo; refresh_token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiIwMTQ4YTVjZi1lMDExLTRlNGItYTkzYi00NzU0ZGRiYzc0NzkiLCJpYXQiOjE3NjMxNTU2MzgsImV4cCI6MTc2Mzc2MDQzOCwiYXVkIjoibG1zLXVzZXJzIiwiaXNzIjoibG1zLXBsYXRmb3JtIn0.qYBy2zmVz5B_6uCt5pDBh5cDg4lTQJXJiaguO_Z7nC8"
+  },
+  "body": {
+    "email": "user@pacificcoast.edu",
+    "password": "user123"
+  },
+  "userId": "00000000-0000-0000-0000-000000000002",
+  "email": "user@pacificcoast.edu",
+  "mode": "demo"
+}

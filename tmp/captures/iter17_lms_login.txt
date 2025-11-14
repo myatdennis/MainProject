@@ -1,0 +1,32 @@
+Navigating to http://localhost:8888/lms/login
+[console:log] 🚀 MainProject App initializing...
+[console:log] 📍 Environment: production
+[console:log] 🔧 Supabase configured: true
+[console:log] ✅ Root element found, rendering app...
+[console:log] ✅ App rendered successfully
+[console:log] 📦 Production mode: Registering service worker...
+[console:log] Supabase client not available for realtime sync
+Response status: 200
+[console:log] [courseStore.init] Starting initialization...
+[console:log] [CourseService.getAllCoursesFromDatabase] Fetching from /api/admin/courses...
+[console:log] [apiRequest] Starting request to: /api/admin/courses
+[console:log] [buildAuthHeaders] Supabase configured but client not available
+[console:log] [apiRequest] Auth headers: {}
+[console:log] [apiRequest] Fetching URL: http://localhost:8888/api/admin/courses
+[console:log] [SW] Service worker registered: ServiceWorkerRegistration
+[console:log] ✅ Admin portal is ready for offline use
+[console:log] [apiRequest] Response status: 200 OK
+[console:log] [apiRequest] Raw response: {data: Array(9)}
+[console:log] [apiRequest] Transformed response: {data: Array(9)}
+[console:log] [CourseService.getAllCoursesFromDatabase] Raw response: {data: Array(9)}
+[console:log] [CourseService.getAllCoursesFromDatabase] Mapped courses: [Object, Object, Object, Object, Object, Object, Object, Object, Object]
+[console:log] [courseStore.init] Admin API returned courses: [Object, Object, Object, Object, Object, Object, Object, Object, Object]
+[console:log] [courseStore.init] Loaded 9 courses from API (merged with 0 existing drafts)
+[console:log] [apiRequest] Starting request to: /api/health
+[console:log] [buildAuthHeaders] Supabase configured but client not available
+[console:log] [apiRequest] Auth headers: {}
+[console:log] [apiRequest] Fetching URL: http://localhost:8888/api/health
+[console:log] [apiRequest] Response status: 200 OK
+[console:log] [apiRequest] Raw response: {status: ok, supabaseConfigured: false, timestamp: 2025-11-13T03:09:58.014Z, uptime_s: 13921}
+[console:log] [apiRequest] Transformed response: {status: ok, supabaseConfigured: false, timestamp: 2025-11-13T03:09:58.014Z, uptimeS: 13921}
+No console errors/warnings captured.

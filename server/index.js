@@ -217,7 +217,11 @@ const E2E_TEST_MODE = process.env.E2E_TEST_MODE === 'true';
 
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
-// Use a mutable variable so we can disable Supabase when running E2E/test mode locally.
+
+// Log Supabase configuration for diagnostics
+console.log('[Diagnostics] SUPABASE_URL:', supabaseUrl);
+console.log('[Diagnostics] SUPABASE_SERVICE_ROLE_KEY:', supabaseServiceRoleKey ? 'Present' : 'Not Set');
+
 let supabase = supabaseUrl && supabaseServiceRoleKey ? createClient(supabaseUrl, supabaseServiceRoleKey) : null;
 if (E2E_TEST_MODE) {
   console.log('[server] Running in E2E_TEST_MODE - ignoring Supabase credentials and using in-memory fallback');
@@ -711,7 +715,36 @@ const handleLogin = async (req, res) => {
 
   console.log('[AUTH] Login attempt:', { email, type, hasSupabase: Boolean(supabase), E2E_TEST_MODE, DEV_FALLBACK });
 
+  // Opt-in verbose auth diagnostics: when AUTH_DIAG_VERBOSE=true write a per-attempt
+  // JSON file under the server diagnostics directory so Playwright captures can be
+  // correlated with server-side request/response context. We use req.requestId
+  // which is set by the global middleware above.
+  const AUTH_VERBOSE = (process.env.AUTH_DIAG_VERBOSE || '').toLowerCase() === 'true';
+  const writeAuthAttempt = async (outcome, details = {}) => {
+    if (!AUTH_VERBOSE) return;
+    try {
+      if (!fs.existsSync(DIAG_DIR)) fs.mkdirSync(DIAG_DIR, { recursive: true });
+      const id = req.requestId || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
+      const payload = Object.assign({
+        timestamp: new Date().toISOString(),
+        requestId: id,
+        route: '/api/auth/login',
+        method: req.method,
+        path: req.path,
+        outcome,
+        headers: req.headers,
+        body: req.body
+      }, details);
+      const file = path.join(DIAG_DIR, `auth-attempt-${id}.json`);
+      fs.writeFileSync(file, JSON.stringify(payload, null, 2), 'utf8');
+      console.log(`[diag] Wrote auth attempt diagnostic: ${file}`);
+    } catch (e) {
+      console.warn('Failed to write auth attempt diagnostic', e);
+    }
+  };
+
   if (!email || !password) {
+    await writeAuthAttempt('missing_credentials');
     res.status(400).json({ 
       error: 'Email and password are required',
       errorType: 'validation_error'
@@ -743,6 +776,7 @@ const handleLogin = async (req, res) => {
         organizationId: 'demo-org'
       };
 
+      await writeAuthAttempt('success', { mode: 'demo', user: { id: userData.id, email: userData.email, role: userData.role } });
       res.json({
         success: true,
         user: userData,
@@ -753,6 +787,7 @@ const handleLogin = async (req, res) => {
       return;
     }
 
+    await writeAuthAttempt('invalid_credentials_demo');
     res.status(401).json({
       error: 'Invalid credentials',
       errorType: 'invalid_credentials'
@@ -770,6 +805,7 @@ const handleLogin = async (req, res) => {
     });
 
     if (error) {
+      await writeAuthAttempt('invalid_credentials_supabase', { error: error && error.message ? error.message : String(error) });
       res.status(401).json({
         error: error.message || 'Authentication failed',
         errorType: 'invalid_credentials'
@@ -777,6 +813,7 @@ const handleLogin = async (req, res) => {
       return;
     }
 
+    await writeAuthAttempt('success', { mode: 'supabase', user: { id: data.user.id, email: data.user.email } });
     res.json({
       success: true,
       user: {
@@ -792,6 +829,7 @@ const handleLogin = async (req, res) => {
     });
   } catch (error) {
     console.error('Login error:', error);
+    try { await writeAuthAttempt('exception', { error: String(error) }); } catch (_) {}
     res.status(500).json({
       error: 'Authentication service error',
       errorType: 'network_error'
@@ -1814,6 +1852,8 @@ app.post('/api/admin/courses/:id/assign', async (req, res) => {
       }
     }
 
+   
+
     let inserted = [];
     if (toInsert.length > 0) {
       const { data: insData, error: insErr } = await supabase
@@ -2368,6 +2408,14 @@ app.patch('/api/admin/lessons/:id', async (req, res) => {
       res.status(404).json({ error: 'Lesson not found' });
       return;
     }
+    // Optional optimistic check: ensure client is targeting expected course version
+    if (typeof expectedCourseVersion === 'number') {
+      const current = found.module.version ?? 1;
+      if (expectedCourseVersion < current) {
+        res.status(409).json({ error: 'version_conflict', message: `Module has newer version ${current}` });
+        return;
+      }
+    }
     if (typeof title === 'string') found.lesson.title = title;
     if (typeof type === 'string') found.lesson.type = type;
     if (description !== undefined) found.lesson.description = description;
@@ -2597,7 +2645,7 @@ app.get('/api/learner/progress', async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Failed to fetch learner progress:', error);
+    console.error(`Failed to fetch learner progress:`, error);
     res.status(500).json({ error: 'Unable to fetch progress' });
   }
 });

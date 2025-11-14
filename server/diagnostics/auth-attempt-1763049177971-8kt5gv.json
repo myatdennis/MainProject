@@ -1,0 +1,31 @@
+{
+  "timestamp": "2025-11-13T15:52:57.976Z",
+  "route": "/api/auth/login",
+  "requestId": "1763049177971-8kt5gv",
+  "outcome": "success",
+  "headers": {
+    "host": "localhost:8888",
+    "connection": "keep-alive",
+    "content-length": "54",
+    "sec-ch-ua-platform": "\"macOS\"",
+    "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/141.0.7390.37 Safari/537.36",
+    "accept": "application/json, text/plain, */*",
+    "sec-ch-ua": "\"HeadlessChrome\";v=\"141\", \"Not?A_Brand\";v=\"8\", \"Chromium\";v=\"141\"",
+    "content-type": "application/json",
+    "sec-ch-ua-mobile": "?0",
+    "origin": "http://localhost:8888",
+    "sec-fetch-site": "same-origin",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-dest": "empty",
+    "referer": "http://localhost:8888/lms/login",
+    "accept-encoding": "gzip, deflate, br, zstd",
+    "cookie": "csrf_token=CU_nTs8lmP1HLS8vMJVU8KY6eWFcJ3vMJA7pZ9iC4CY"
+  },
+  "body": {
+    "email": "user@pacificcoast.edu",
+    "password": "user123"
+  },
+  "userId": "00000000-0000-0000-0000-000000000002",
+  "email": "user@pacificcoast.edu",
+  "mode": "demo"
+}

@@ -4,6 +4,8 @@
  */
 
 import express from 'express';
+import fs from 'fs';
+import path from 'path';
 import bcrypt from 'bcryptjs';
 import { generateTokens, verifyRefreshToken } from '../utils/jwt.ts';
 import { authenticate, authLimiter } from '../middleware/auth.ts';
@@ -18,16 +20,42 @@ const router = express.Router();
 router.post('/login', async (req, res) => {
   try {
     const { email, password } = req.body;
+    // Generate a request id for correlation and expose it in responses
+    const reqId = `${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+    res.setHeader('x-request-id', reqId);
+    const VERBOSE = process.env.AUTH_DIAG_VERBOSE === 'true';
+
+    // Helper to write a verbose diagnostic for every auth attempt when enabled.
+    const writeAttempt = async (outcome: string, details: Record<string, any> = {}) => {
+      if (!VERBOSE) return;
+      try {
+  const diagDir = path.join(process.cwd(), 'server', 'diagnostics');
+        await fs.promises.mkdir(diagDir, { recursive: true });
+        const diag = Object.assign({
+          timestamp: new Date().toISOString(),
+          route: '/api/auth/login',
+          requestId: reqId,
+          outcome,
+          headers: req.headers,
+          body: req.body,
+        }, details);
+        const fileName = `auth-attempt-${reqId}.json`;
+        await fs.promises.writeFile(path.join(diagDir, fileName), JSON.stringify(diag, null, 2), 'utf8');
+      } catch (e) {
+        console.error('Failed to write auth verbose diagnostic:', e);
+      }
+    };
     
     // Validate input
     if (!email || !password) {
+      await writeAttempt('missing_credentials');
       return res.status(400).json({
         error: 'Missing credentials',
         message: 'Email and password are required',
       });
     }
     
-    // Demo mode check
+  // Demo mode check
     if (process.env.DEMO_MODE === 'true') {
       // Demo credentials
       const demoUsers = {
@@ -57,7 +85,7 @@ router.post('/login', async (req, res) => {
           email: demoUser.email,
           role: demoUser.role,
         });
-        
+        await writeAttempt('success', { userId: demoUser.id, email: demoUser.email, mode: 'demo' });
         return res.json({
           user: {
             id: demoUser.id,
@@ -66,6 +94,7 @@ router.post('/login', async (req, res) => {
             firstName: demoUser.firstName,
             lastName: demoUser.lastName,
           },
+          // Do not include raw tokens in diagnostics; return them in response as before
           ...tokens,
         });
       }
@@ -73,6 +102,27 @@ router.post('/login', async (req, res) => {
     
     // Real authentication with Supabase
     if (!supabase) {
+      // If Supabase is not configured, return 503. Also write a small
+      // diagnostic file for troubleshooting demo vs real-auth mismatches.
+      try {
+  const diagDir = path.join(process.cwd(), 'server', 'diagnostics');
+        await fs.promises.mkdir(diagDir, { recursive: true });
+        const diag = {
+          timestamp: new Date().toISOString(),
+          route: '/api/auth/login',
+          reason: 'supabase_unconfigured',
+          headers: req.headers,
+          body: req.body,
+        };
+        const fileName = `auth-unconfigured-${Date.now()}-${Math.random().toString(36).slice(2,8)}.json`;
+        await fs.promises.writeFile(path.join(diagDir, fileName), JSON.stringify(diag, null, 2), 'utf8');
+        // If verbose diagnostics enabled, also write a correlated attempt file
+        await writeAttempt('supabase_unconfigured');
+      } catch (e) {
+        // non-fatal — continue to return 503
+        console.error('Failed to write auth diagnostics:', e);
+      }
+
       return res.status(503).json({
         error: 'Service unavailable',
         message: 'Authentication service not configured',
@@ -87,6 +137,23 @@ router.post('/login', async (req, res) => {
       .limit(1);
     
     if (queryError || !users || users.length === 0) {
+      // write diagnostic for invalid credentials attempts when supabase is configured
+      try {
+  const diagDir = path.join(process.cwd(), 'server', 'diagnostics');
+        await fs.promises.mkdir(diagDir, { recursive: true });
+        const diag = {
+          timestamp: new Date().toISOString(),
+          route: '/api/auth/login',
+          reason: 'invalid_credentials',
+          headers: req.headers,
+          body: req.body,
+        };
+        const fileName = `auth-invalid-${Date.now()}-${Math.random().toString(36).slice(2,8)}.json`;
+        await fs.promises.writeFile(path.join(diagDir, fileName), JSON.stringify(diag, null, 2), 'utf8');
+      } catch (e) {
+        console.error('Failed to write invalid-credentials diagnostic:', e);
+      }
+      await writeAttempt('invalid_credentials');
       return res.status(401).json({
         error: 'Invalid credentials',
         message: 'Email or password is incorrect',
@@ -107,6 +174,7 @@ router.post('/login', async (req, res) => {
     const passwordMatch = await bcrypt.compare(password, user.password_hash);
     
     if (!passwordMatch) {
+      await writeAttempt('invalid_credentials_password_mismatch', { userId: user.id });
       return res.status(401).json({
         error: 'Invalid credentials',
         message: 'Email or password is incorrect',
@@ -144,7 +212,30 @@ router.post('/login', async (req, res) => {
         organizationId: user.organization_id,
       }
     });
+    await writeAttempt('success', { userId: user.id, email: user.email });
   } catch (error) {
+    try {
+      // Attempt to write error diagnostics if verbose mode is on
+      await (async () => {
+        if (process.env.AUTH_DIAG_VERBOSE === 'true') {
+          const diagDir = path.resolve(__dirname, '..', 'diagnostics');
+          await fs.promises.mkdir(diagDir, { recursive: true });
+          const diag = {
+            timestamp: new Date().toISOString(),
+            route: '/api/auth/login',
+            requestId: (res.getHeader && res.getHeader('x-request-id')) || null,
+            outcome: 'exception',
+            error: String(error),
+            headers: req.headers,
+            body: req.body,
+          };
+          const fileName = `auth-exception-${Date.now()}-${Math.random().toString(36).slice(2,8)}.json`;
+          await fs.promises.writeFile(path.join(diagDir, fileName), JSON.stringify(diag, null, 2), 'utf8');
+        }
+      })();
+    } catch (e) {
+      console.error('Failed to write exception diagnostic:', e);
+    }
     console.error('Login error:', error);
     res.status(500).json({
       error: 'Internal server error',
