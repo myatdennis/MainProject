@@ -1,0 +1,59 @@
+name: Deploy API to Railway
+
+on:
+  push:
+    branches: [ main, feat/ws-client ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (frontend static assets)
+        run: npm run build
+
+      # Install CLI as fallback (works if official action unavailable)
+      - name: Install Railway CLI (fallback)
+        run: npm i -g @railway/cli
+
+      - name: Login to Railway
+        env:
+          RAILWAY_API_KEY: ${{ secrets.RAILWAY_API_KEY }}
+        run: |
+          if [ -z "$RAILWAY_API_KEY" ]; then
+            echo "No Railway API key present. Please add RAILWAY_API_KEY to repository secrets.";
+            exit 1;
+          fi
+          railway login --apiKey $RAILWAY_API_KEY
+
+      - name: Deploy to Railway (api service)
+        env:
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+          RAILWAY_ENVIRONMENT: ${{ secrets.RAILWAY_ENVIRONMENT }}
+        run: |
+          # Use CLI to deploy the api service. requires RAILWAY_PROJECT_ID and RAILWAY_ENVIRONMENT
+          set -o pipefail
+          railway status --project $RAILWAY_PROJECT_ID
+          # Best-effort deployment — adjust service name if your Railway service is named differently
+          railway up --project $RAILWAY_PROJECT_ID --environment $RAILWAY_ENVIRONMENT --service api --yes || echo "railway up failed; check the logs or use railway deploy via Railway UI"
+
+      - name: Confirm health
+        run: |
+          RAILWAY_HOST=${{ secrets.RAILWAY_HOST }}
+          if [ -z "$RAILWAY_HOST" ]; then
+            echo "Set RAILWAY_HOST in repo secrets (ex: example-api.up.railway.app). Skipping health check.";
+            exit 0;
+          fi
+          echo "Testing health endpoint on $RAILWAY_HOST";
+          curl -fsS "https://$RAILWAY_HOST/api/health"
