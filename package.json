@@ -23,7 +23,7 @@
       "reset:demo": "node scripts/reset_demo_data.js",
       "deploy:vercel": "vercel",
       "deploy:vercel:prod": "vercel --prod",
-      "prestart:server": "node scripts/check_ports.js",
+  "prestart:server": "node scripts/check_ports.cjs",
       "start:server": "npm run prestart:server && node server/index.js",
     "start:server:e2e": "E2E_TEST_MODE=true node server/index.js",
     "import:courses": "node scripts/import_courses.js import/courses-template.json",
