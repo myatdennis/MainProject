@@ -1,0 +1,30 @@
+{
+  "project": "MainProject",
+  "services": [
+    {
+      "name": "api",
+      "provider": "node",
+      "start": "npm run start:server",
+      "build": "npm run build",
+      "env": [
+        "SUPABASE_URL",
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "CORS_ALLOWED_ORIGINS",
+        "PORT",
+        "DEV_FALLBACK"
+      ]
+    },
+    {
+      "name": "frontend",
+      "provider": "static",
+      "build": "npm run build",
+      "publish": "dist",
+      "env": [
+        "VITE_API_BASE_URL",
+        "VITE_WS_URL",
+        "VITE_SUPABASE_URL",
+        "VITE_SUPABASE_ANON_KEY"
+      ]
+    }
+  ]
+}
