@@ -4380,8 +4380,8 @@ app.use((req, res, next) => {
   });
 });
 
-const server = app.listen(port, () => {
-  console.log(`Serving production build from ${distPath} at http://localhost:${port}`);
+const server = app.listen(port, '0.0.0.0', () => {
+  console.log(`Serving production build from ${distPath} at http://0.0.0.0:${port}`);
 });
 
 // Initialize WebSocket server (ws) to handle realtime broadcasts at /ws
