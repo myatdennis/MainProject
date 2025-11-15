@@ -4365,6 +4365,13 @@ const distPath = path.resolve(__dirname, '../dist');
 // Serve static files from the dist directory
 app.use(express.static(distPath));
 
+// Ensure a simple root handler exists for platforms that hit the root URL for health checks
+app.get('/', (_req, res) => {
+  const indexFile = path.join(distPath, 'index.html');
+  if (fs.existsSync(indexFile)) return res.sendFile(indexFile);
+  return res.status(200).send('OK');
+});
+
 // For SPA client-side routing — serve index.html for unknown routes
 // Use a non-wildcard param pattern to avoid path-to-regexp parsing issues on some Node/express versions.
 // Serve index.html for SPA routes that aren't API or WS. Use a middleware to avoid
