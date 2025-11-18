@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import { 
   Users, 
   Send, 
@@ -766,7 +767,7 @@ const SurveyDistribution: React.FC<SurveyDistributionProps> = ({
                     Hello,<br/><br/>
                     You've been invited to participate in our survey: {surveyTitle}.<br/><br/>
                     Your feedback is valuable and will help us improve our workplace culture.<br/><br/>
-                    <a href="#" className="text-blue-600 underline">Take Survey Now</a><br/><br/>
+                    <Link to="/client/surveys" className="text-blue-600 underline">Take Survey Now</Link><br/><br/>
                     Thank you for your participation.
                   </div>
                 </div>

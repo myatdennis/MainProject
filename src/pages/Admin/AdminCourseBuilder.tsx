@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
+import { DndProvider } from 'react-dnd';
+import { HTML5Backend } from 'react-dnd-html5-backend';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { courseStore, generateId, calculateCourseDuration, countTotalLessons } from '../../store/courseStore';
 import { syncCourseToDatabase, CourseValidationError, loadCourseFromDatabase } from '../../dal/courses';
@@ -1900,7 +1902,8 @@ const AdminCourseBuilder = () => {
   }
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
+    <DndProvider backend={HTML5Backend}>
+      <div className="p-6 max-w-7xl mx-auto">
       {/* Header */}
       <div className="mb-8">
         <Link 
@@ -2629,7 +2632,8 @@ const AdminCourseBuilder = () => {
           course.modules?.find(m => m.id === editingLesson.moduleId)
             ?.lessons.find(l => l.id === editingLesson.lessonId) : undefined}
       />
-    </div>
+      </div>
+    </DndProvider>
   );
 };
 

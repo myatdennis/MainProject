@@ -255,7 +255,7 @@ const LMSDashboard = () => {
             <p className="text-sm text-gray-600 mb-4">
               Scheduled for March 15, 2025 at 2:00 PM EST
             </p>
-            <a href="/lms/meeting" className="btn-outline">Join Meeting</a>
+            <Link to="/lms/meeting" className="btn-outline">Join Meeting</Link>
           </div>
         </div>
       </div>

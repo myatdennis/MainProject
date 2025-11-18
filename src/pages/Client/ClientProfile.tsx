@@ -1,4 +1,5 @@
 import SEO from '../../components/SEO/SEO';
+import { Link } from 'react-router-dom';
 import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
@@ -19,7 +20,7 @@ const ClientProfile = () => {
         </div>
         <div className="flex gap-2 pt-2">
           <Button asChild variant="ghost" size="sm">
-            <a href="/client/dashboard">← Back to dashboard</a>
+            <Link to="/client/dashboard">← Back to dashboard</Link>
           </Button>
         </div>
       </Card>

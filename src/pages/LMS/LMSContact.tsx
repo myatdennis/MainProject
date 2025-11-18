@@ -1,6 +1,7 @@
 import { useState } from 'react';
 
 import { LazyImage } from '../../components/PerformanceComponents';
+import { Link } from 'react-router-dom';
 import { Calendar, Mail, Phone, Clock, MessageSquare, Video, CheckCircle, Send } from 'lucide-react';
 
 const LMSContact = () => {
@@ -350,10 +351,10 @@ const LMSContact = () => {
                     </div>
                   </div>
                   {session.status === 'confirmed' && (
-                    <a href="/lms/meeting" className="mt-3 w-full bg-blue-500 text-white py-2 rounded-lg text-sm hover:bg-blue-600 transition-colors duration-200 flex items-center justify-center space-x-2">
+                    <Link to="/lms/meeting" className="mt-3 w-full bg-blue-500 text-white py-2 rounded-lg text-sm hover:bg-blue-600 transition-colors duration-200 flex items-center justify-center space-x-2">
                       <Video className="h-4 w-4" />
                       <span>Join Meeting</span>
-                    </a>
+                    </Link>
                   )}
                 </div>
               ))}

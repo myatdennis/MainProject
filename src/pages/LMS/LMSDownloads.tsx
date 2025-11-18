@@ -1,7 +1,9 @@
+
 import { useState } from 'react';
 import { Download, FileText, Video, Archive, Search, Filter, Calendar, Folder } from 'lucide-react';
 import EmptyState from '../../components/ui/EmptyState';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
+import { Link } from 'react-router-dom';
 
 const LMSDownloads = () => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -362,10 +364,10 @@ const LMSDownloads = () => {
           <p className="text-gray-600 mb-6 max-w-2xl mx-auto">
             Download our complete resource package containing all course materials, videos, and worksheets in one convenient ZIP file.
           </p>
-          <a href="/lms/downloads/package" className="btn-cta px-8 py-4 rounded-full font-semibold text-lg transition-all duration-200 transform hover:scale-105 flex items-center mx-auto space-x-2">
+          <Link to="/lms/downloads/package" className="btn-cta px-8 py-4 rounded-full font-semibold text-lg transition-all duration-200 transform hover:scale-105 flex items-center mx-auto space-x-2">
             <Archive className="h-5 w-5" />
             <span>Download Complete Package (128.5 MB)</span>
-          </a>
+          </Link>
         </div>
       </div>
       </div>

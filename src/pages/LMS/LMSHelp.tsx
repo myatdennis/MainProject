@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, Link } from 'react-router-dom';
 import { 
   HelpCircle, 
   Search, 
@@ -443,18 +443,18 @@ const LMSHelp: React.FC = () => {
                   <div className="border-t border-gray-200 pt-6">
                     <h4 className="font-medium text-gray-900 mb-4">Quick Links</h4>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                      <a href="/help/system-requirements" className="text-sm text-orange-600 hover:text-orange-700">
+                      <Link to="/help/system-requirements" className="text-sm text-orange-600 hover:text-orange-700">
                         System Requirements
-                      </a>
-                      <a href="/help/accessibility" className="text-sm text-orange-600 hover:text-orange-700">
+                      </Link>
+                      <Link to="/help/accessibility" className="text-sm text-orange-600 hover:text-orange-700">
                         Accessibility Features
-                      </a>
-                      <a href="/help/privacy" className="text-sm text-orange-600 hover:text-orange-700">
+                      </Link>
+                      <Link to="/help/privacy" className="text-sm text-orange-600 hover:text-orange-700">
                         Privacy Policy
-                      </a>
-                      <a href="/help/terms" className="text-sm text-orange-600 hover:text-orange-700">
+                      </Link>
+                      <Link to="/help/terms" className="text-sm text-orange-600 hover:text-orange-700">
                         Terms of Service
-                      </a>
+                      </Link>
                     </div>
                   </div>
                 </div>
