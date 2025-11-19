@@ -40,7 +40,7 @@ import {
 import LoadingButton from '../../components/LoadingButton';
 import EditOrganizationModal from '../../components/EditOrganizationModal';
 import { useToast } from '../../context/ToastContext';
-import React from 'react';
+
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell } from 'recharts';
 
 const OrganizationDetails: React.FC = () => {

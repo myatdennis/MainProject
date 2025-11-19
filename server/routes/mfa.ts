@@ -10,6 +10,8 @@ router.post('/challenge', async (req, res) => {
   if (!email) return res.status(400).json({ error: 'Missing email' });
 
   // Get user and their MFA secret
+
+  if (!supabase) return res.status(500).json({ error: 'Supabase client not initialized' });
   const { data: user, error } = await supabase
     .from('users')
     .select('id, email, mfa_secret')
@@ -21,7 +23,7 @@ router.post('/challenge', async (req, res) => {
   if (!secret) {
     // Generate and store new secret
     const newSecret = generateTOTPSecret();
-    await supabase.from('users').update({ mfa_secret: newSecret.base32 }).eq('id', user.id);
+  await supabase.from('users').update({ mfa_secret: newSecret.base32 }).eq('id', user.id);
     secret = newSecret.base32;
   }
 
@@ -36,6 +38,8 @@ router.post('/verify', async (req, res) => {
   const { email, code } = req.body;
   if (!email || !code) return res.status(400).json({ error: 'Missing email or code' });
 
+
+  if (!supabase) return res.status(500).json({ error: 'Supabase client not initialized' });
   const { data: user, error } = await supabase
     .from('users')
     .select('id, mfa_secret')

@@ -262,6 +262,20 @@
         "published_at": null,
         "modules": []
       }
+    ],
+    [
+      "e2e-course-1763511027422",
+      {
+        "id": "e2e-course-1763511027422",
+        "slug": "e2e-course-1763511027422",
+        "title": "Integration Test Course",
+        "description": null,
+        "status": "draft",
+        "version": 1,
+        "meta_json": {},
+        "published_at": null,
+        "modules": []
+      }
     ]
   ]
 }

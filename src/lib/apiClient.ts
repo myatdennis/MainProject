@@ -14,7 +14,15 @@ import { getCSRFToken } from '../hooks/useCSRFToken';
 // ============================================================================
 
 // Prefer VITE_API_BASE_URL for consistency; fall back to VITE_API_URL and then '/api'
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || '/api').replace(/\/$/, '');
+// In development, prefer the Vite proxy ('/api') over an absolute external URL
+// to avoid making network calls to production or other hosts when running locally.
+const rawApiBase = (import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || '').trim().replace(/\/$/, '');
+let API_BASE_URL = rawApiBase || '/api';
+// If running in development and the configured API base is not a localhost address,
+// prefer using the dev proxy so calls go through Vite (:5174 -> proxy -> :8888).
+if (import.meta.env.DEV && rawApiBase && !/^https?:\/\/(localhost|127(?:\.[0-9]+){0,2}\.[0-9]+|\[::1\])(:|$)/i.test(rawApiBase)) {
+  API_BASE_URL = '/api';
+}
 
 /**
  * Create secure axios instance
@@ -48,7 +56,19 @@ apiClient.interceptors.request.use(
 
     // Add CSRF token for state-changing requests
     if (['post', 'put', 'patch', 'delete'].includes(config.method?.toLowerCase() || '')) {
-      const csrfToken = getCSRFToken();
+      let csrfToken = getCSRFToken();
+
+      // If the cookie-based token is not present, fetch it from server
+      // so state-changing requests include the required header.
+      if (!csrfToken) {
+        try {
+          await axios.get(`${API_BASE_URL}/auth/csrf`, { withCredentials: true });
+          csrfToken = getCSRFToken();
+        } catch (err) {
+          // If fetching token fails, proceed without it; server will return 403 and caller will handle
+          console.warn('Failed to fetch CSRF token before request', err);
+        }
+      }
       if (csrfToken) {
         config.headers['x-csrf-token'] = csrfToken;
       }

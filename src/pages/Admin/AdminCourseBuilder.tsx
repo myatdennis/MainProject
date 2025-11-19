@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { DndProvider } from 'react-dnd';
+import { DndProvider } from 'react-dnd/dist/core/DndProvider';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { courseStore, generateId, calculateCourseDuration, countTotalLessons } from '../../store/courseStore';

@@ -1,6 +1,6 @@
 
 
-import express, { Request, Response, NextFunction, ErrorRequestHandler } from 'express';
+import express, { Request, Response, ErrorRequestHandler } from 'express';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import csurf from 'csurf';
@@ -28,7 +28,6 @@ app.use(csurf({ cookie: true }));
 
 // CSRF token endpoint
 app.get('/api/csrf-token', (req: Request, res: Response) => {
-  // @ts-expect-error: csrfToken is added by csurf middleware
   res.json({ csrfToken: req.csrfToken() });
 });
 
@@ -38,7 +37,7 @@ app.use(analyticsRoutes);
 app.use(auditLogRoutes);
 
 // Error handler for CSRF errors
-const csrfErrorHandler: ErrorRequestHandler = (err, req, res, next) => {
+const csrfErrorHandler: ErrorRequestHandler = (err, _req, res, next) => {
   if (err.code === 'EBADCSRFTOKEN') {
     return res.status(403).json({ error: 'Invalid CSRF token' });
   }

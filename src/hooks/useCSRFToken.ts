@@ -30,8 +30,8 @@ export function useCSRFToken() {
           return;
         }
 
-        // If not in cookie, fetch from server
-        const response = await axios.get('/api/csrf-token');
+  // If not in cookie, fetch from server (server exposes '/api/auth/csrf')
+  const response = await axios.get('/api/auth/csrf');
         if (response.data.csrfToken) {
           setToken(response.data.csrfToken);
         }

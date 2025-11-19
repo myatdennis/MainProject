@@ -5,6 +5,7 @@ const router = express.Router();
 // In-memory audit log (for demo; replace with DB in production)
 const auditLog: any[] = [];
 
+
 router.post('/api/audit-log', (req, res) => {
   const { action, details, timestamp } = req.body;
   if (!action || !timestamp) {
@@ -16,7 +17,7 @@ router.post('/api/audit-log', (req, res) => {
 });
 
 // (Optional) GET endpoint for audit log (admin only)
-router.get('/api/audit-log', (req, res) => {
+router.get('/api/audit-log', (_req, res) => {
   // Add authentication/authorization in production
   res.json({ data: auditLog });
 });
