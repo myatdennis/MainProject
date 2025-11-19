@@ -14,6 +14,10 @@ const CSRF_TOKEN_LENGTH = 32;
 const CSRF_COOKIE_NAME = 'csrf_token';
 const CSRF_HEADER_NAME = 'x-csrf-token';
 
+// Cookie configuration (allow overriding via env for multi-domain deployments)
+const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || undefined; // e.g. ".the-huddle.co"
+const COOKIE_SAMESITE = process.env.COOKIE_SAMESITE || (process.env.NODE_ENV === 'production' ? 'none' : 'strict');
+
 // Store for CSRF tokens (in production, use Redis or similar)
 const tokenStore = new Map<string, { token: string; expires: number }>();
 
@@ -136,7 +140,8 @@ export function setCSRFToken(req: Request, res: Response, next: NextFunction) {
     res.cookie('session_id', sessionId, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+      sameSite: COOKIE_SAMESITE as any,
+      domain: COOKIE_DOMAIN,
       maxAge: 24 * 60 * 60 * 1000, // 24 hours
     });
   }
@@ -145,7 +150,8 @@ export function setCSRFToken(req: Request, res: Response, next: NextFunction) {
   res.cookie(CSRF_COOKIE_NAME, tokenData.token, {
     httpOnly: false,
     secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
+    sameSite: COOKIE_SAMESITE as any,
+    domain: COOKIE_DOMAIN,
     maxAge: 24 * 60 * 60 * 1000, // 24 hours
   });
   
@@ -217,7 +223,8 @@ export function setDoubleSubmitCSRF(req: Request, res: Response, next: NextFunct
     res.cookie(CSRF_COOKIE_NAME, token, {
       httpOnly: false, // Client needs to read this
       secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+      sameSite: COOKIE_SAMESITE as any,
+      domain: COOKIE_DOMAIN,
       maxAge: 24 * 60 * 60 * 1000, // 24 hours
     });
   }

@@ -218,8 +218,10 @@ export const strictLimiter = rateLimit({
  * Add security headers to response
  */
 export function securityHeaders(req, res, next) {
-  // Prevent clickjacking
-  res.setHeader('X-Frame-Options', 'DENY');
+  // Prevent clickjacking (SAMEORIGIN still protects from framing by other sites
+  // but allows same-origin frames if needed). Change via env if you need
+  // a different policy.
+  res.setHeader('X-Frame-Options', process.env.X_FRAME_OPTIONS || 'SAMEORIGIN');
   
   // Prevent MIME type sniffing
   res.setHeader('X-Content-Type-Options', 'nosniff');
@@ -232,6 +234,12 @@ export function securityHeaders(req, res, next) {
   
   // Content Security Policy - relaxed for dev mode
   if (process.env.NODE_ENV === 'production') {
+    // Allow embedding of trusted frame sources (e.g. YouTube) while keeping
+    // a sensible default for other directives. You can override via
+    // ALLOWED_FRAME_SRC env (space-separated origins) and FRAME_ANCESTORS.
+    const allowedFrameSrc = process.env.ALLOWED_FRAME_SRC || 'https://www.youtube.com https://www.youtube-nocookie.com';
+    const frameAncestors = process.env.FRAME_ANCESTORS || "'self'";
+
     res.setHeader(
       'Content-Security-Policy',
       "default-src 'self'; " +
@@ -240,7 +248,9 @@ export function securityHeaders(req, res, next) {
       "img-src 'self' data: https:; " +
       "font-src 'self' data:; " +
       "connect-src 'self' https:; " +
-      "frame-ancestors 'none';"
+      `frame-src ${allowedFrameSrc}; ` +
+      `child-src ${allowedFrameSrc}; ` +
+      `frame-ancestors ${frameAncestors};`
     );
   }
   

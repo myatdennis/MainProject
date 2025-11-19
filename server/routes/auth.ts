@@ -13,6 +13,10 @@ import { supabase } from '../lib/supabaseClient.ts';
 
 const router = express.Router();
 
+// Cookie configuration (allow overriding via env)
+const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || undefined; // e.g. ".the-huddle.co"
+const COOKIE_SAMESITE = process.env.COOKIE_SAMESITE || (process.env.NODE_ENV === 'production' ? 'none' : 'strict');
+
 // ============================================================================
 // Login
 // ============================================================================
@@ -193,13 +197,15 @@ router.post('/login', async (req, res) => {
     res.cookie('access_token', tokens.accessToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+      sameSite: COOKIE_SAMESITE as any,
+      domain: COOKIE_DOMAIN,
       maxAge: 1000 * 60 * 15 // 15 minutes
     });
     res.cookie('refresh_token', tokens.refreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+      sameSite: COOKIE_SAMESITE as any,
+      domain: COOKIE_DOMAIN,
       maxAge: 1000 * 60 * 60 * 24 * 7 // 7 days
     });
     res.json({
@@ -317,13 +323,15 @@ router.post('/register', authLimiter, async (req, res) => {
     res.cookie('access_token', tokens.accessToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+      sameSite: COOKIE_SAMESITE as any,
+      domain: COOKIE_DOMAIN,
       maxAge: 1000 * 60 * 15 // 15 minutes
     });
     res.cookie('refresh_token', tokens.refreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+      sameSite: COOKIE_SAMESITE as any,
+      domain: COOKIE_DOMAIN,
       maxAge: 1000 * 60 * 60 * 24 * 7 // 7 days
     });
     res.status(201).json({
@@ -407,13 +415,15 @@ router.post('/refresh', async (req, res) => {
     res.cookie('access_token', tokens.accessToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+      sameSite: COOKIE_SAMESITE as any,
+      domain: COOKIE_DOMAIN,
       maxAge: 1000 * 60 * 15 // 15 minutes
     });
     res.cookie('refresh_token', tokens.refreshToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+      sameSite: COOKIE_SAMESITE as any,
+      domain: COOKIE_DOMAIN,
       maxAge: 1000 * 60 * 60 * 24 * 7 // 7 days
     });
     res.json({ success: true });
@@ -444,8 +454,8 @@ router.get('/verify', authenticate, async (req, res) => {
 
 router.post('/logout', authenticate, async (req, res) => {
   // Clear auth cookies
-  res.clearCookie('access_token', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict' });
-  res.clearCookie('refresh_token', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict' });
+  res.clearCookie('access_token', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: COOKIE_SAMESITE as any, domain: COOKIE_DOMAIN });
+  res.clearCookie('refresh_token', { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: COOKIE_SAMESITE as any, domain: COOKIE_DOMAIN });
   res.json({
     success: true,
     message: 'Logged out successfully',
