@@ -16,6 +16,8 @@
     "test:ui": "vitest --ui",
     "test:run": "vitest run",
     "test:unit": "vitest run src/services/__tests__/batchService.test.ts",
+  "env:check": "node scripts/check_vite_api.cjs",
+  "env:toggle": "sh scripts/toggle_dev_env.sh",
     "test:e2e": "playwright test -c tests/e2e/playwright.config.ts",
     "test:coverage": "vitest run --coverage",
     "preview": "vite preview",
