@@ -15,6 +15,24 @@ npm run build
 
 Visit http://localhost:5174
 
+Local development: API proxy note
+---------------------------------
+
+When developing locally prefer the Vite proxy so requests go to your local backend.
+
+- Leave `VITE_API_BASE_URL` and `VITE_API_URL` blank in `.env` / `.env.local` to use the Vite proxy (`/api`).
+- If you set them to a remote/production URL your browser will call that host directly and you may see CORS errors.
+- To call a local backend directly set:
+
+```env
+VITE_API_BASE_URL=http://localhost:8888
+VITE_API_URL=http://localhost:8888/api
+```
+
+After changing `.env` files fully stop and restart both the frontend (`npm run dev`) and backend (`npm run start:server:e2e` or `npm run start:server`).
+
+If you use the Vite dev server the UI will call `/api/*` and Vite will proxy to your backend (default `http://localhost:8888`).
+
 ## Troubleshooting
 
 **Seeing a blank page?** Visit http://localhost:5174/unregister-sw.html to clear service worker cache.
