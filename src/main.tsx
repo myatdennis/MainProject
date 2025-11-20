@@ -1,4 +1,4 @@
-import { StrictMode } from 'react';
+import React, { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { HelmetProvider } from 'react-helmet-async';
 import App from './App';
@@ -8,6 +8,8 @@ import serviceWorkerManager from './utils/ServiceWorkerManager';
 console.log('🚀 MainProject App initializing...');
 console.log('📍 Environment:', import.meta.env.MODE);
 console.log('🔧 Supabase configured:', !!(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY));
+// Debug: print React version to confirm what gets bundled in production
+console.log('⚙️ React version detected:', React?.version || 'unknown');
 
 const rootElement = document.getElementById('root');
 
