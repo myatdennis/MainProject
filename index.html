@@ -1,32 +1,56 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>The Huddle Co</title>
-    <meta name="description" content="The Huddle Co — Inclusive leadership training and LMS. Track completions, engagement, and survey insights." />
-    <meta property="og:title" content="The Huddle Co LMS" />
-    <meta property="og:description" content="Inclusive leadership training and learning analytics for organizations." />
-    <meta property="og:type" content="website" />
-    <meta property="og:image" content="/og-image.png" />
-    <meta name="twitter:card" content="summary_large_image" />
-    <link rel="manifest" href="/manifest.json" />
-    <meta name="theme-color" content="#3A7FFF" />
-  </head>
-  <body>
-    <noscript>Please enable JavaScript to use this site.</noscript>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-    <script>
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.register('/sw.js').catch((err) => console.warn('SW register failed', err));
-      }
-    </script>
-  </body>
-</html>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
+<head>
+  <meta charset="UTF-8" />
+  <title>The Huddle Co.</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      background: #111827;
+      color: #f9fafb;
+    }
+    .card {
+      text-align: center;
+      padding: 2.5rem 2rem;
+      max-width: 480px;
+      border-radius: 1rem;
+      background: #020617;
+      box-shadow: 0 20px 40px rgba(0,0,0,0.5);
+      border: 1px solid rgba(148, 163, 184, 0.4);
+    }
+    h1 {
+      font-size: 1.8rem;
+      margin-bottom: 0.75rem;
+    }
+    p {
+      margin: 0.4rem 0;
+      color: #e5e7eb;
+    }
+    .tag {
+      display: inline-block;
+      margin-top: 1.5rem;
+      padding: 0.25rem 0.75rem;
+      border-radius: 999px;
+      border: 1px solid #f97316;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: #fed7aa;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>The Huddle Co.</h1>
+    <p>Our new training platform is getting set up behind the scenes.</p>
+    <p>Content, courses, and dashboards are coming soon.</p>
+    <div class="tag">Site under construction</div>
+  </div>
+</body>
 </html>
