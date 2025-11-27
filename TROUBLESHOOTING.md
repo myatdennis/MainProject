@@ -136,6 +136,24 @@ All features work locally with in-memory storage.
 3. Check for browser extensions that might interfere
 4. Ensure no firewall/antivirus is blocking localhost
 
+### SSL / TLS (ERR_SSL_PROTOCOL_ERROR)
+
+If your production site returns `ERR_SSL_PROTOCOL_ERROR` or browsers refuse to connect securely, try these steps:
+
+- Verify DNS and domain mapping:
+  ```bash
+  dig the-huddle.co
+  nslookup the-huddle.co
+  ```
+- Confirm TLS handshake:
+  ```bash
+  openssl s_client -connect the-huddle.co:443 -servername the-huddle.co
+  npm run diag:ssl -- the-huddle.co
+  ```
+- If using Cloudflare: set SSL/TLS mode to 'Full' or 'Full (strict)' and ensure the origin server has a valid certificate.
+- If using Netlify/Vercel: Verify the site status in their dashboard and re-issue or re-provision the certificate if the domain was recently changed.
+- If you want the server to enforce HTTPS automatically: set `ENFORCE_HTTPS=true` and `NODE_ENV=production`.
+
 # Troubleshooting Guide
 
 ## Common Issues & Solutions

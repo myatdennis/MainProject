@@ -17,11 +17,18 @@ import { getCSRFToken } from '../hooks/useCSRFToken';
 // In development, prefer the Vite proxy ('/api') over an absolute external URL
 // to avoid making network calls to production or other hosts when running locally.
 const rawApiBase = (import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || '').trim().replace(/\/$/, '');
-let API_BASE_URL = rawApiBase || '/api';
+// Default to Railway host in production if no API base is explicitly configured.
+const defaultRailwayHost = 'https://mainproject-production-4e66.up.railway.app';
+let API_BASE_URL = rawApiBase || (import.meta.env.MODE === 'production' ? defaultRailwayHost : '/api');
 // If running in development and the configured API base is not a localhost address,
 // prefer using the dev proxy so calls go through Vite (:5174 -> proxy -> :8888).
 if (import.meta.env.DEV && rawApiBase && !/^https?:\/\/(localhost|127(?:\.[0-9]+){0,2}\.[0-9]+|\[::1\])(:|$)/i.test(rawApiBase)) {
   API_BASE_URL = '/api';
+}
+
+// If a fallback was applied in production, log it for easier troubleshooting.
+if (!rawApiBase && import.meta.env.MODE === 'production') {
+  console.info('[apiClient] VITE_API_BASE_URL not set — defaulting to Railway host:', API_BASE_URL);
 }
 
 /**

@@ -33,7 +33,13 @@ const transformKeysDeep = (input, direction, parentKey = null) => {
     }
     return out;
 };
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+// Resolve API base URL from Vite env; fall back to Railway host in production when undefined
+const rawApiBaseEnv = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+let API_BASE_URL = rawApiBaseEnv;
+if (!API_BASE_URL && import.meta.env.MODE === 'production') {
+    API_BASE_URL = 'https://mainproject-production-4e66.up.railway.app';
+    console.info('[apiClient] VITE_API_BASE_URL not set — defaulting to Railway host:', API_BASE_URL);
+}
 if (!API_BASE_URL) {
     console.warn('[apiClient] VITE_API_BASE_URL is not set. Requests will fail until configured.');
 }

@@ -2,9 +2,23 @@
 import path from 'node:path';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+// compression is optional; dynamic import in async export
+// Note: We purposely do not declare the compression module; dynamic import below is guarded with @ts-ignore
 
-export default defineConfig({
-  plugins: [react()],
+export default async () => {
+  let compression = null;
+  try {
+    // @ts-ignore - Optional dynamic import; this plugin may not be installed in all environments
+    compression = (await import('vite-plugin-compression')).default;
+  } catch (e) {
+    compression = null;
+  }
+  return defineConfig({
+  plugins: [
+    react(),
+    // Optionally add compression plugin to reduce asset size for production builds
+    ...(process.env.NODE_ENV === 'production' && compression ? [compression({ algorithm: 'brotliCompress' })] : []),
+  ],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'src'),
@@ -93,4 +107,5 @@ export default defineConfig({
     sourcemap: false,
     chunkSizeWarningLimit: 1000,
   },
-});
+  });
+};

@@ -38,6 +38,7 @@ This guide helps you set the required environment variables on Railway using the
    - SUPABASE_SERVICE_ROLE_KEY: The server-side Supabase key (keep secret)
    - JWT_SECRET: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`
    - CORS_ALLOWED_ORIGINS: `https://mainproject-production-4e66.up.railway.app,https://your-frontend.example`
+    - ENFORCE_HTTPS (optional): Set to `true` to enable a server-side HTTP->HTTPS redirect when running behind a proxy (Netlify/Cloudflare/Vercel). Note: `app.set('trust proxy', 1)` is already added to the server to support this.
 
 7. After setting variables
 

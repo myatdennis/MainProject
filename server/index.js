@@ -75,6 +75,13 @@ function savePersistedData(data) {
 }
 
 const app = express();
+
+// When running behind a reverse proxy (Netlify, Vercel, Cloudflare, Railway),
+// Express needs to trust proxy headers so req.secure reflects X-Forwarded-Proto.
+// Enabling trust proxy ensures middleware and HSTS headers can operate correctly.
+if (process.env.NODE_ENV === 'production') {
+  app.set('trust proxy', 1);
+}
 // Prefer explicit PORT (e.g. 8888) to align with Vite proxy and VITE_API_BASE_URL; default to 8888 instead of 8787
 const port = process.env.PORT || 8888;
 console.log(`[server] Using port ${port} (override via PORT env)`);
@@ -115,6 +122,11 @@ if (!(process.env.E2E_TEST_MODE === 'true' || DEV_FALLBACK)) {
     .map((s) => s.trim())
     .filter(Boolean);
 
+  // Log CORS / cookie configuration to aid diagnostics during deployment
+  console.log('[Diagnostics] CORS_ALLOWED_ORIGINS:', allowedOrigins.length > 0 ? allowedOrigins.join(',') : '(none)');
+  console.log('[Diagnostics] COOKIE_DOMAIN:', process.env.COOKIE_DOMAIN || '(not set)');
+  console.log('[Diagnostics] COOKIE_SAMESITE:', process.env.COOKIE_SAMESITE || '(not set)');
+
   // If not configured, default to no special handling (no wildcard) to be conservative
   if (allowedOrigins.length > 0) {
     app.use((req, res, next) => {
@@ -153,6 +165,21 @@ app.use((req, res, next) => {
   });
   next();
 });
+
+// Optional: Enforce HTTPS in production when explicitly requested. This helps
+// avoid SSL errors arising from proxy or DNS misconfiguration where requests
+// arrive over HTTP on the host, but the public site expects HTTPS.
+if (process.env.ENFORCE_HTTPS === 'true' && process.env.NODE_ENV === 'production') {
+  app.use((req, res, next) => {
+    // If request was forwarded over HTTP by an upstream proxy, redirect.
+    if (!req.secure && req.headers['x-forwarded-proto'] !== 'https') {
+      const host = req.headers.host || '';
+      const url = `https://${host}${req.originalUrl}`;
+      return res.redirect(301, url);
+    }
+    next();
+  });
+}
 
 // Optional periodic memory usage logging (enable with LOG_MEMORY=true)
 if ((process.env.LOG_MEMORY || '').toLowerCase() === 'true') {
@@ -651,6 +678,62 @@ app.get('/api/health', (_req, res) => {
     timestamp: new Date().toISOString(),
     uptime_s: Math.round(process.uptime()),
   });
+});
+
+// Diagnostics endpoint (safe booleans only; no secrets returned) to help
+// identify environment and connectivity issues during deployment and support.
+app.get('/api/diagnostics', async (req, res) => {
+  // Only expose detailed diagnostics in non-production or when DEBUG_DIAG=true
+  const allowDiag = (process.env.DEBUG_DIAG || '').toLowerCase() === 'true' || (process.env.NODE_ENV || '').toLowerCase() !== 'production';
+  if (!allowDiag) {
+    res.status(403).json({ error: 'Diagnostics disabled' });
+    return;
+  }
+
+  const diagnostics = {
+    supabaseConfigured: Boolean(supabase),
+    supabaseUrlPresent: !!process.env.SUPABASE_URL || !!process.env.VITE_SUPABASE_URL,
+    supabaseServiceRoleKeyPresent: !!process.env.SUPABASE_SERVICE_ROLE_KEY || !!process.env.SUPABASE_SERVICE_KEY,
+    databaseUrlPresent: !!process.env.DATABASE_URL,
+    jwtSecretPresent: !!process.env.JWT_SECRET,
+    cookieDomain: !!process.env.COOKIE_DOMAIN,
+    corsAllowedConfigured: !!(process.env.CORS_ALLOWED_ORIGINS || '').trim(),
+    devFallbackMode: DEV_FALLBACK,
+    e2eMode: E2E_TEST_MODE
+    ,enforceHttpsEnabled: (process.env.ENFORCE_HTTPS || '').toLowerCase() === 'true'
+  };
+
+  // Optionally check DB connectivity if Database URL is configured and allowed
+  let dbReachable = null;
+  if (diagnostics.databaseUrlPresent) {
+    try {
+      // Use a minimal check: connect and run a simple query via postgres or pg
+      // But we avoid importing heavy packages here; rely on supabase client if present
+      if (supabase) {
+        // simple RPC or select call
+        const { data, error } = await supabase.rpc('pg_isready').catch(() => ({ data: null, error: null }));
+        // If RPC not present, attempt a basic select on a system function safely
+        if (error) {
+          // fallback to a minimal table query: check tables exist or version
+          try {
+            const { data: verRes, error: verErr } = await supabase.rpc('version', {}).catch(() => ({ data: null, error: null }));
+            dbReachable = !(verErr);
+          } catch {
+            dbReachable = null;
+          }
+        } else {
+          dbReachable = !!data;
+        }
+      } else {
+        dbReachable = null; // can't test without supabase client
+      }
+    } catch (err) {
+      dbReachable = false;
+    }
+  }
+
+  diagnostics.dbReachable = dbReachable;
+  res.json(diagnostics);
 });
 
 // Simple in-memory topic subscriptions for WS clients

@@ -114,6 +114,26 @@ Most platforms (Vercel, Railway, Netlify) provide automatic SSL certificates thr
 
 2. Or use **Cloudflare** for free SSL + CDN
 
+### SSL Troubleshooting (ERR_SSL_PROTOCOL_ERROR)
+
+If your browser shows "ERR_SSL_PROTOCOL_ERROR" for your domain, follow these steps:
+
+- Check DNS and domain mapping: ensure A and CNAME records point to the correct host (Netlify/Vercel/Railway). A bad DNS target can return a non-TLS response on port 443.
+- Verify TLS certificate details and handshake using OpenSSL:
+   ```bash
+   openssl s_client -connect the-huddle.co:443 -servername the-huddle.co
+   ```
+- Use our helper script to inspect TLS info:
+   ```bash
+   npm run diag:ssl -- the-huddle.co
+   ```
+- Cloudflare users: set SSL/TLS mode to Full or Full (strict). 'Flexible' will cause protocol mismatch between CDN and origin. If using Cloudflare origin certificates, ensure they are installed on the origin server.
+- Enable host-side HTTPS in the dashboard (Netlify/Vercel) and ensure the site is verified. Wait a few minutes for certificate provisioning after changing DNS.
+- If using a load balancer or reverse proxy: verify that TLS is terminated at the edge (not at a backend that returns plaintext over port 443).
+- If you want the server to auto-redirect HTTP->HTTPS when proxied, enable the server env `ENFORCE_HTTPS=true` (we added middleware to the server to support this).
+
+If the TLS handshake fails and the host returns plaintext or no certificate, re-check DNS and host settings (this typically means the target is not the correct hosting provider or the hosting provider is returning a non-TLS response).
+
 ### Build Commands
 
 Make sure your hosting platform uses:

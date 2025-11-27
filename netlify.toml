@@ -3,6 +3,30 @@
   publish = "dist"
 
 [build.environment]
+# Example: provide VITE_API_BASE_URL via Netlify UI settings, not here in repo
+# VITE_API_BASE_URL = "https://api.your-backend.example"
+  VITE_API_BASE_URL = "https://mainproject-production-4e66.up.railway.app"
+  VITE_WS_URL = "wss://mainproject-production-4e66.up.railway.app/ws"
+
+[dev]
+  port = 5174
+  command = "npm run dev"
+
+[headers]
+  # Security headers example; in production, set CSP and other headers at CDN if needed
+  /headers:
+    Content-Security-Policy: "default-src 'self' https:; img-src * data:; frame-src https:;"
+
+[redirects]
+  [[redirects]]
+    from = "/*"
+    to = "/index.html"
+    status = 200
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
   NODE_VERSION = "20"
   # Force devDependencies install in Netlify build environment
   NPM_FLAGS = "--include=dev"
@@ -33,7 +57,7 @@
 # Replace <RAILWAY_HOST> with your deployed API host (e.g. mylms-api.up.railway.app)
 [[redirects]]
   from = "/api/*"
-  to = "https://<RAILWAY_HOST>/api/:splat"
+  to = "https://mainproject-production-4e66.up.railway.app/api/:splat"
   status = 200
   force = true
 
@@ -41,7 +65,7 @@
 # most setups work with same pattern, else use absolute VITE_WS_URL.)
 [[redirects]]
   from = "/ws"
-  to = "https://<RAILWAY_HOST>/ws"
+  to = "https://mainproject-production-4e66.up.railway.app/ws"
   status = 200
   force = true
 

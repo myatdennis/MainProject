@@ -42,3 +42,6 @@ CORS_ALLOWED_ORIGINS=https://mainproject-production-4e66.up.railway.app,https://
 4. Verify your backend health endpoint: https://mainproject-production-4e66.up.railway.app/api/health
 
 If you need to automate any of these steps further, let me know!
+
+## Optional (recommended) environment variables
+- `ENFORCE_HTTPS` — set to `true` to enable HTTP->HTTPS redirects in the app (requires `NODE_ENV=production`). This helps mitigate SSL issues on proxied hosts.

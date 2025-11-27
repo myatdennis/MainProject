@@ -19,7 +19,8 @@ const readBoolean = (value: string | undefined, fallback = false) => {
 };
 
 export const getConfig = (): AppConfig => {
-  const apiBaseUrl = (import.meta as any).env?.VITE_API_BASE_URL || null;
+  const rawApiBase = (import.meta as any).env?.VITE_API_BASE_URL || null;
+  const apiBaseUrl = rawApiBase || (import.meta.env.MODE === 'production' ? 'https://mainproject-production-4e66.up.railway.app' : null);
   return {
     apiBaseUrl,
     features: {

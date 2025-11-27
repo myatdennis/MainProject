@@ -168,14 +168,16 @@ src/
     - CORS_ALLOWED_ORIGINS=https://the-huddle.co,https://www.the-huddle.co,https://<your-site>.netlify.app
 
 3) Frontend env (choose one mode)
-    - Absolute URL mode: set VITE_API_BASE_URL=https://<railway-app>, VITE_WS_URL=wss://<railway-app>/ws
+    - Absolute URL mode: set VITE_API_BASE_URL=https://mainproject-production-4e66.up.railway.app, VITE_WS_URL=wss://mainproject-production-4e66.up.railway.app/ws
     - Proxy mode: edit `netlify.toml` and replace `<RAILWAY_HOST>` in redirects; then VITE_API_BASE_URL is optional
 
 4) Verify
     - `./scripts/smoke.sh the-huddle.co <railway-host> admin@thehuddleco.com admin123`
+    - TLS / SSL check: run `npm run diag:ssl -- the-huddle.co` to confirm the certificate and TLS protocol
     - Browser Network tab: /api calls 200/204, no CORS errors
 
 Troubleshooting: see `SUPABASE_RAILWAY_ENV_GUIDE.md` (CORS, OOM, 503 auth) and `scripts/smoke.sh`.
+If the site reports `ERR_SSL_PROTOCOL_ERROR`, see `DEPLOYMENT.md` -> SSL Troubleshooting or run the above `diag:ssl` script to validate the certificate. Also ensure `ENFORCE_HTTPS=true` (optional) and `NODE_ENV=production` in your server env so Express can set `trust proxy` and redirect accordingly.
 
 ## Scripts & API helpers
 

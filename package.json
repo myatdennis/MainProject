@@ -36,6 +36,12 @@
     "ci": "npm run -s typecheck && npm run -s lint && vitest run",
     "migrate:local": "sh ./scripts/run_migration.sh supabase/migrations/20251108_add_analytics_tables_and_views.sql",
     "seed:analytics": "node ./scripts/seed_analytics.js"
+    ,
+    "diag:env": "node scripts/check_deploy_env.cjs",
+    "diag:print": "node scripts/print_vite_env.cjs"
+  ,"diag:ssl": "node scripts/check_ssl.cjs"
+    ,
+    "optimize:build": "npm ci && npm run build && npm run analyze"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -93,7 +99,7 @@
     "@types/node": "^24.10.0",
     "@types/pg": "^8.15.6",
     "@types/react": "^18.3.27",
-    "@types/react-dnd": "^2.0.36",
+    
     "@types/react-dnd-html5-backend": "^3.0.2",
     "@types/react-dom": "^18.3.7",
     "@types/react-router-dom": "^5.3.3",
@@ -107,7 +113,7 @@
     "jsdom": "^27.0.0",
     "playwright": "^1.38.0",
     "postcss": "^8.4.35",
-    "supabase": "^2.54.11",
+    
     "tailwindcss": "^3.4.1",
     "ts-node": "^10.9.1",
     "typescript": "5.5.4",
@@ -116,5 +122,10 @@
     "vite-bundle-analyzer": "^1.2.3",
     "vitest": "^3.2.4",
     "ws": "^8.13.0"
+  }
+
+  ,
+  "engines": {
+    "node": ">=18.16.0"
   }
 }
