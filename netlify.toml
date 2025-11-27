@@ -1,4 +1,47 @@
+
 [build]
   command = "npm run build"
   publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+  NPM_FLAGS = "--include=dev"
+  NPM_CONFIG_PRODUCTION = "false"
+  VITE_API_BASE_URL = "https://mainproject-production-4e66.up.railway.app"
+  VITE_WS_URL = "wss://mainproject-production-4e66.up.railway.app/ws"
+
+[dev]
+  command = "npm run dev"
+  port = 5174
+  targetPort = 5174
+
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "no-cache"
+
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "SAMEORIGIN"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+
+# API proxy: map API and WebSocket paths to external Railway backend.
+[[redirects]]
+  from = "/api/*"
+  to = "https://mainproject-production-4e66.up.railway.app/api/:splat"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/ws"
+  to = "https://mainproject-production-4e66.up.railway.app/ws"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
 
