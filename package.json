@@ -16,8 +16,8 @@
     "test:ui": "vitest --ui",
     "test:run": "vitest run",
     "test:unit": "vitest run src/services/__tests__/batchService.test.ts",
-  "env:check": "node scripts/check_vite_api.cjs",
-  "env:toggle": "sh scripts/toggle_dev_env.sh",
+    "env:check": "node scripts/check_vite_api.cjs",
+    "env:toggle": "sh scripts/toggle_dev_env.sh",
     "test:e2e": "playwright test -c tests/e2e/playwright.config.ts",
     "test:coverage": "vitest run --coverage",
     "preview": "vite preview",
@@ -35,19 +35,17 @@
     "check:bundle": "node scripts/check_bundle_size.mjs",
     "ci": "npm run -s typecheck && npm run -s lint && vitest run",
     "migrate:local": "sh ./scripts/run_migration.sh supabase/migrations/20251108_add_analytics_tables_and_views.sql",
-    "seed:analytics": "node ./scripts/seed_analytics.js"
-    ,
+    "seed:analytics": "node ./scripts/seed_analytics.js",
     "diag:env": "node scripts/check_deploy_env.cjs",
-    "diag:print": "node scripts/print_vite_env.cjs"
-  ,"diag:ssl": "node scripts/check_ssl.cjs"
-    ,
+    "diag:print": "node scripts/print_vite_env.cjs",
+    "diag:ssl": "node scripts/check_ssl.cjs",
     "optimize:build": "npm ci && npm run build && npm run analyze"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
-    "@supabase/supabase-js": "^2.81.1",
+    "@supabase/supabase-js": "^2.86.0",
     "@tanstack/react-query": "^5.90.7",
     "@types/bcryptjs": "^2.4.6",
     "@types/cookie-parser": "^1.4.10",
@@ -61,7 +59,7 @@
     "chart.js": "^4.5.1",
     "cookie-parser": "^1.4.7",
     "crypto-js": "^4.2.0",
-    "csurf": "^1.11.0",
+    "csurf": "^1.2.2",
     "dompurify": "^3.3.0",
     "dotenv": "^17.2.3",
     "express": "^4.21.2",
@@ -74,11 +72,11 @@
     "nodemailer": "^7.0.10",
     "pg": "^8.16.3",
     "postgres": "^3.4.7",
-  "react": "18.2.0",
+    "react": "18.2.0",
     "react-chartjs-2": "^5.3.1",
     "react-dnd": "^16.0.1",
     "react-dnd-html5-backend": "^16.0.1",
-  "react-dom": "18.2.0",
+    "react-dom": "18.2.0",
     "react-helmet-async": "^2.0.5",
     "react-hot-toast": "^2.6.0",
     "react-router-dom": "^7.9.5",
@@ -99,7 +97,6 @@
     "@types/node": "^24.10.0",
     "@types/pg": "^8.15.6",
     "@types/react": "^18.3.27",
-    
     "@types/react-dnd-html5-backend": "^3.0.2",
     "@types/react-dom": "^18.3.7",
     "@types/react-router-dom": "^5.3.3",
@@ -113,18 +110,15 @@
     "jsdom": "^27.0.0",
     "playwright": "^1.38.0",
     "postcss": "^8.4.35",
-    
     "tailwindcss": "^3.4.1",
     "ts-node": "^10.9.1",
     "typescript": "5.5.4",
     "typescript-eslint": "^8.3.0",
-    "vite": "^5.4.2",
+    "vite": "^7.2.4",
     "vite-bundle-analyzer": "^1.2.3",
     "vitest": "^3.2.4",
     "ws": "^8.13.0"
-  }
-
-  ,
+  },
   "engines": {
     "node": ">=18.16.0"
   }
