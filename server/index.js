@@ -41,6 +41,34 @@ const STORAGE_FILE = path.join(__dirname, 'demo-data.json');
 // Safety guard to avoid loading extremely large demo files that could trigger OOM (exit 137)
 const MAX_DEMO_FILE_BYTES = parseInt(process.env.DEMO_DATA_MAX_BYTES || '', 10) || 25 * 1024 * 1024; // 25MB default
 
+const DEV_FALLBACK = (process.env.DEV_FALLBACK || '').toLowerCase() !== 'false' && (process.env.NODE_ENV || '').toLowerCase() !== 'production';
+const E2E_TEST_MODE = process.env.E2E_TEST_MODE === 'true';
+
+const DEFAULT_ALLOWED_ORIGINS = [
+  'https://the-huddle.co',
+  'https://www.the-huddle.co',
+  'http://localhost:5173'
+];
+
+const extraAllowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((value) => value.trim())
+  .filter(Boolean);
+
+const allowedOrigins = Array.from(new Set([...DEFAULT_ALLOWED_ORIGINS, ...extraAllowedOrigins]));
+
+if (E2E_TEST_MODE || DEV_FALLBACK) {
+  ['http://localhost:5174', 'http://127.0.0.1:5173', 'http://localhost:5175'].forEach((origin) => {
+    if (!allowedOrigins.includes(origin)) {
+      allowedOrigins.push(origin);
+    }
+  });
+}
+
+const allowAllOrigins = E2E_TEST_MODE || DEV_FALLBACK;
+const ALLOWED_METHODS = 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS';
+const ALLOWED_HEADERS = 'Content-Type, Authorization, X-Requested-With, X-CSRF-Token, X-User-Id, X-User-Role, X-Org-Id';
+
 // Helper functions for persistent storage
 function loadPersistedData() {
   try {
@@ -99,80 +127,58 @@ app.get('/api/auth/csrf', getCSRFToken);
 
 // Dev fallback: allow in-memory server behavior when Supabase isn't configured.
 // Enabled by default in non-production unless DEV_FALLBACK=false is set.
-const DEV_FALLBACK = (process.env.DEV_FALLBACK || '').toLowerCase() !== 'false' && (process.env.NODE_ENV || '').toLowerCase() !== 'production';
 
-// In E2E/dev mode, enable permissive CORS so the Vite dev origin (5174) can call the API (8787)
-if (process.env.E2E_TEST_MODE === 'true' || DEV_FALLBACK) {
-  app.use((req, res, next) => {
-    const origin = req.headers.origin || '*';
+console.log('[Diagnostics] CORS_ALLOWED_ORIGINS:', allowedOrigins.join(',') || '(none)');
+console.log('[Diagnostics] COOKIE_DOMAIN:', process.env.COOKIE_DOMAIN || '(not set)');
+console.log('[Diagnostics] COOKIE_SAMESITE:', process.env.COOKIE_SAMESITE || '(not set)');
+console.log('[Diagnostics] COOKIE_DOMAIN:', process.env.COOKIE_DOMAIN || '(not set)');
+console.log('[Diagnostics] COOKIE_SAMESITE:', process.env.COOKIE_SAMESITE || '(not set)');
+
+const isAllowedOrigin = (origin) => {
+  if (!origin) return true;
+  return allowAllOrigins || allowedOrigins.includes(origin);
+};
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    const allowed = isAllowedOrigin(origin);
+    if (!allowed) {
+      console.warn('[CORS] Blocked origin:', origin);
+    }
+    callback(null, allowed);
+  },
+  credentials: true,
+  methods: ALLOWED_METHODS,
+  allowedHeaders: ALLOWED_HEADERS.split(',').map((value) => value.trim()),
+  exposedHeaders: ['x-request-id'],
+  optionsSuccessStatus: 204,
+};
+
+const applyCorsHeaders = (req, res) => {
+  const origin = req.headers.origin;
+  if (origin && isAllowedOrigin(origin)) {
     res.header('Access-Control-Allow-Origin', origin);
-    res.header('Access-Control-Allow-Credentials', 'true');
-    res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-    res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-User-Id, X-User-Role, X-Org-Id, x-csrf-token');
-    res.header('Access-Control-Expose-Headers', 'x-request-id');
-    if (req.method === 'OPTIONS') return res.status(204).end();
-    next();
-  });
-}
-
-// In production, restrict CORS to an allowlist provided via CORS_ALLOWED_ORIGINS
-// Example: CORS_ALLOWED_ORIGINS="https://your-site.netlify.app,https://www.yourdomain.com"
-if (!(process.env.E2E_TEST_MODE === 'true' || DEV_FALLBACK)) {
-  const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-
-  // Log CORS / cookie configuration to aid diagnostics during deployment
-  console.log('[Diagnostics] CORS_ALLOWED_ORIGINS:', allowedOrigins.length > 0 ? allowedOrigins.join(',') : '(none)');
-  console.log('[Diagnostics] COOKIE_DOMAIN:', process.env.COOKIE_DOMAIN || '(not set)');
-  console.log('[Diagnostics] COOKIE_SAMESITE:', process.env.COOKIE_SAMESITE || '(not set)');
-
-  // If not configured, default to no special handling (no wildcard) to be conservative
-  // Ensure known frontend origins used by the deployment are included
-  if (!allowedOrigins.includes('https://the-huddle.co')) {
-    allowedOrigins.push('https://the-huddle.co');
+    res.header('Vary', 'Origin');
   }
-  if (!allowedOrigins.includes('https://www.the-huddle.co')) {
-    allowedOrigins.push('https://www.the-huddle.co');
-  }
+  res.header('Access-Control-Allow-Credentials', 'true');
+  res.header('Access-Control-Allow-Methods', ALLOWED_METHODS);
+  res.header('Access-Control-Allow-Headers', ALLOWED_HEADERS);
+  res.header('Access-Control-Expose-Headers', 'x-request-id');
+};
 
-  if (allowedOrigins.length > 0) {
-    app.use((req, res, next) => {
-      const origin = req.headers.origin;
-      const isAllowed = origin && allowedOrigins.includes(origin);
+app.use((req, res, next) => {
+  applyCorsHeaders(req, res);
+  next();
+});
 
-      if (isAllowed) {
-        res.header('Access-Control-Allow-Origin', origin);
-        res.header('Vary', 'Origin');
-        res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-        res.header(
-          'Access-Control-Allow-Headers',
-          'Content-Type, Authorization, X-User-Id, X-User-Role, X-Org-Id, x-csrf-token'
-        );
-        res.header('Access-Control-Expose-Headers', 'x-request-id');
-      }
+app.use(cors(corsOptions));
 
-      if (req.method === 'OPTIONS') {
-        // If origin not allowed, return 403 to make it explicit during setup
-        return res.status(isAllowed ? 204 : 403).end();
-      }
-      next();
-    });
-  }
-
-  // Apply cors middleware in production using the computed allowlist
-  const corsOptions = {
-    origin: (origin, callback) => {
-      // allow requests with no origin like curl/CLI tooling
-      if (!origin) return callback(null, true);
-      callback(null, allowedOrigins.includes(origin));
-    },
-    credentials: true,
-  };
-  app.use(cors(corsOptions));
-  app.options('*', cors(corsOptions));
-}
+app.options('*', (req, res) => {
+  applyCorsHeaders(req, res);
+  res.header('Access-Control-Allow-Methods', ALLOWED_METHODS);
+  res.header('Access-Control-Allow-Headers', ALLOWED_HEADERS);
+  res.sendStatus(204);
+});
 
 // Basic request logging with request_id and timing
 app.use((req, res, next) => {
@@ -261,7 +267,6 @@ app.use('/api/admin/courses', adminCoursesRoutes);
 
 // Honor explicit E2E test mode in child processes: when E2E_TEST_MODE is set we prefer the
 // in-memory demo fallback even if Supabase credentials are present in the environment.
-const E2E_TEST_MODE = process.env.E2E_TEST_MODE === 'true';
 
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
@@ -4501,12 +4506,21 @@ try {
 
   wss.on('connection', (ws, req) => {
     const originHeader = req.headers.origin;
-    if (originHeader && !allowedOrigins.includes(originHeader)) {
-      console.warn('WS connection attempt blocked due to origin:', originHeader);
-      try { ws.close(1008, 'Origin not allowed'); } catch (e) {}
+
+    if (!isAllowedOrigin(originHeader)) {
+      console.warn('[WS] Connection attempt blocked', { origin: originHeader || '(none)' });
+      try {
+        ws.close(1008, 'Origin not allowed');
+      } catch (e) {
+        console.warn('[WS] Error closing blocked socket', e);
+      }
       return;
     }
-    console.log('WS client connected', req.socket.remoteAddress, originHeader);
+
+    console.log('[WS] Client connected', {
+      ip: req.socket.remoteAddress,
+      origin: originHeader || '(none)'
+    });
 
     ws.on('message', (message) => {
       try {
@@ -4519,12 +4533,16 @@ try {
           ws.send(JSON.stringify({ type: 'pong', timestamp: Date.now() }));
         }
       } catch (err) {
-        console.warn('Invalid WS message', err);
+        console.warn('[WS] Invalid message payload', err);
       }
     });
 
     ws.on('close', () => {
       for (const [, set] of topicSubscribers) set.delete(ws);
+    });
+
+    ws.on('error', (err) => {
+      console.warn('[WS] Client error', err);
     });
   });
 

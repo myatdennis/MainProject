@@ -58,72 +58,128 @@ self.addEventListener('fetch', event => {
   if (request.method !== 'GET') return;
 
   const url = new URL(request.url);
-  const isImage = /\.(png|jpg|jpeg|gif|webp|avif|svg)$/i.test(url.pathname);
-  const isFont = /\.(woff2?|ttf|otf|eot)$/i.test(url.pathname);
 
-  // Bypass API and WebSocket-like endpoints so service worker doesn't interfere with auth, cookies, and preflight requests
-  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/ws')) {
+  // Bypass API, websocket, and upgrade requests so we never interfere with auth flows or SSE/WS handshakes
+  if (
+    url.pathname.startsWith('/api') ||
+    url.pathname.startsWith('/ws') ||
+    url.protocol === 'ws:' ||
+    url.protocol === 'wss:'
+  ) {
     return;
   }
 
-  // Images: stale-while-revalidate, limit cache size
-  if (isImage) {
-    event.respondWith(
-      caches.open(IMAGE_CACHE).then(async cache => {
-        const cached = await cache.match(request);
-        const fetchAndCache = fetch(request)
-          .then(response => {
-            if (response && response.status === 200) {
-              cache.put(request, response.clone());
-              limitCacheEntries(cache, MAX_IMAGE_ENTRIES);
-            }
-            return response;
-          })
-          .catch(() => cached || new Response('', { status: 503 }));
-        return cached || fetchAndCache;
-      })
-    );
-    return;
-  }
-
-  // Fonts: stale-while-revalidate
-  if (isFont) {
-    event.respondWith(
-      caches.open(FONT_CACHE).then(async cache => {
-        const cached = await cache.match(request);
-        const fetchAndCache = fetch(request)
-          .then(response => {
-            if (response && response.status === 200) {
-              cache.put(request, response.clone());
-            }
-            return response;
-          })
-          .catch(() => cached || new Response('', { status: 503 }));
-        return cached || fetchAndCache;
-      })
-    );
-    return;
-  }
-
-  // Static assets: cache first, fallback to network
-  event.respondWith(
-    caches.match(request).then(cached =>
-      cached || fetch(request).then(response => {
-        const clone = response.clone();
-        caches.open(CACHE_NAME).then(cache => cache.put(request, clone));
-        return response;
-      }).catch(async () => {
-        // Offline fallback for navigation
-        if (request.mode === 'navigate') {
-          const fallback = await caches.match(OFFLINE_FALLBACK);
-          return fallback || new Response('Offline', { status: 503, statusText: 'Offline' });
-        }
-        // If not navigation, return a standard 503 response so it's a valid Response
-        return new Response('Service unavailable', { status: 503, statusText: 'Service Unavailable' });
-      })
-    )
-  );
+  event.respondWith(handleRequest(request, url));
 });
+
+const IMAGE_REGEX = /\.(png|jpg|jpeg|gif|webp|avif|svg)$/i;
+const FONT_REGEX = /\.(woff2?|ttf|otf|eot)$/i;
+
+async function handleRequest(request, url) {
+  try {
+    if (IMAGE_REGEX.test(url.pathname)) {
+      return await handleImageRequest(request);
+    }
+
+    if (FONT_REGEX.test(url.pathname)) {
+      return await handleFontRequest(request);
+    }
+
+    return await handleStaticRequest(request);
+  } catch (error) {
+    console.error('[SW] Fetch handler error', error);
+    if (request.mode === 'navigate') {
+      const fallback = await caches.match(OFFLINE_FALLBACK);
+      if (fallback) {
+        return fallback;
+      }
+    }
+    return new Response('Service unavailable', { status: 503, statusText: 'Service Unavailable' });
+  }
+}
+
+async function handleImageRequest(request) {
+  const cache = await caches.open(IMAGE_CACHE);
+  const cached = await cache.match(request);
+
+  if (cached) {
+    // Refresh in background without delaying the response.
+    fetch(request)
+      .then(response => {
+        if (response && response.status === 200) {
+          cache.put(request, response.clone());
+          limitCacheEntries(cache, MAX_IMAGE_ENTRIES);
+        }
+      })
+      .catch(err => console.warn('[SW] Background image refresh failed', err));
+    return cached;
+  }
+
+  try {
+    const response = await fetch(request);
+    if (response && response.status === 200) {
+      cache.put(request, response.clone());
+      limitCacheEntries(cache, MAX_IMAGE_ENTRIES);
+    }
+    return response;
+  } catch (error) {
+    console.warn('[SW] Image request failed', error);
+    return new Response('', { status: 503, statusText: 'Service Unavailable' });
+  }
+}
+
+async function handleFontRequest(request) {
+  const cache = await caches.open(FONT_CACHE);
+  const cached = await cache.match(request);
+
+  if (cached) {
+    fetch(request)
+      .then(response => {
+        if (response && response.status === 200) {
+          cache.put(request, response.clone());
+        }
+      })
+      .catch(err => console.warn('[SW] Background font refresh failed', err));
+    return cached;
+  }
+
+  try {
+    const response = await fetch(request);
+    if (response && response.status === 200) {
+      cache.put(request, response.clone());
+    }
+    return response;
+  } catch (error) {
+    console.warn('[SW] Font request failed', error);
+    return new Response('', { status: 503, statusText: 'Service Unavailable' });
+  }
+}
+
+async function handleStaticRequest(request) {
+  const cached = await caches.match(request);
+  if (cached) {
+    return cached;
+  }
+
+  try {
+    const response = await fetch(request);
+    if (response && response.ok) {
+      const cache = await caches.open(CACHE_NAME);
+      cache.put(request, response.clone());
+    }
+    return response;
+  } catch (error) {
+    console.warn('[SW] Static request failed', error);
+    if (request.mode === 'navigate') {
+      const fallback = await caches.match(OFFLINE_FALLBACK);
+      if (fallback) {
+        return fallback;
+      }
+      return new Response('Offline', { status: 503, statusText: 'Offline' });
+    }
+    return new Response('Service unavailable', { status: 503, statusText: 'Service Unavailable' });
+  }
+}
 
 // Helper: Limit cache entries for images
 async function limitCacheEntries(cache, maxEntries) {
