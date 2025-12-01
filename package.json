@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "check:server-no-ts": "node ./scripts/check_no_ts_in_server.mjs",
-  "remove:server-ts": "node ./scripts/remove_server_ts_files.mjs",
-  "clean:server-ts": "node ./scripts/clean_server_ts.mjs",
+    "remove:server-ts": "node ./scripts/remove_server_ts_files.mjs",
+    "clean:server-ts": "node ./scripts/clean_server_ts.mjs",
     "dev": "node scripts/generate_js_shims.mjs && npm run preclean:components && vite",
     "dev:vercel": "vercel dev",
     "create-demo-users": "node scripts/create_demo_users.js",
@@ -43,12 +43,11 @@
     "diag:env": "node scripts/check_deploy_env.cjs",
     "diag:print": "node scripts/print_vite_env.cjs",
     "diag:ssl": "node scripts/check_ssl.cjs",
-  "optimize:build": "npm ci && npm run build && npm run analyze",
+    "optimize:build": "npm ci && npm run build && npm run analyze",
     "scan:dist": "node scripts/find_hosts_in_dist.mjs",
     "check:lock": "node scripts/check_lock_sync.mjs"
   },
   "dependencies": {
-    "cors": "^2.8.5",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
@@ -65,6 +64,7 @@
     "bcryptjs": "^3.0.3",
     "chart.js": "^4.5.1",
     "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
     "crypto-js": "^4.2.0",
     "csurf": "^1.2.2",
     "dompurify": "^3.3.0",
@@ -93,13 +93,13 @@
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@types/cors": "^2.8.13",
     "@axe-core/cli": "^4.10.2",
     "@eslint/js": "^9.9.1",
     "@playwright/test": "^1.56.1",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.0",
     "@testing-library/user-event": "^14.6.1",
+    "@types/cors": "^2.8.19",
     "@types/dompurify": "^3.0.5",
     "@types/express": "^5.0.5",
     "@types/node": "^24.10.0",
