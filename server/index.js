@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import { createClient } from '@supabase/supabase-js';
 import { WebSocketServer } from 'ws';
 import cookieParser from 'cookie-parser';
+import cors from 'cors';
 import fs from 'fs';
 import {
   moduleCreateSchema,
@@ -128,6 +129,14 @@ if (!(process.env.E2E_TEST_MODE === 'true' || DEV_FALLBACK)) {
   console.log('[Diagnostics] COOKIE_SAMESITE:', process.env.COOKIE_SAMESITE || '(not set)');
 
   // If not configured, default to no special handling (no wildcard) to be conservative
+  // Ensure known frontend origins used by the deployment are included
+  if (!allowedOrigins.includes('https://the-huddle.co')) {
+    allowedOrigins.push('https://the-huddle.co');
+  }
+  if (!allowedOrigins.includes('https://www.the-huddle.co')) {
+    allowedOrigins.push('https://www.the-huddle.co');
+  }
+
   if (allowedOrigins.length > 0) {
     app.use((req, res, next) => {
       const origin = req.headers.origin;
@@ -151,6 +160,18 @@ if (!(process.env.E2E_TEST_MODE === 'true' || DEV_FALLBACK)) {
       next();
     });
   }
+
+  // Apply cors middleware in production using the computed allowlist
+  const corsOptions = {
+    origin: (origin, callback) => {
+      // allow requests with no origin like curl/CLI tooling
+      if (!origin) return callback(null, true);
+      callback(null, allowedOrigins.includes(origin));
+    },
+    credentials: true,
+  };
+  app.use(cors(corsOptions));
+  app.options('*', cors(corsOptions));
 }
 
 // Basic request logging with request_id and timing
@@ -4479,7 +4500,13 @@ try {
   const wss = new WebSocketServer({ server, path: '/ws' });
 
   wss.on('connection', (ws, req) => {
-    console.log('WS client connected', req.socket.remoteAddress);
+    const originHeader = req.headers.origin;
+    if (originHeader && !allowedOrigins.includes(originHeader)) {
+      console.warn('WS connection attempt blocked due to origin:', originHeader);
+      try { ws.close(1008, 'Origin not allowed'); } catch (e) {}
+      return;
+    }
+    console.log('WS client connected', req.socket.remoteAddress, originHeader);
 
     ws.on('message', (message) => {
       try {

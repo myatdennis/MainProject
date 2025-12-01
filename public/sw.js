@@ -1,6 +1,6 @@
 // Production Service Worker: Caching for static assets and API responses
 
-const CACHE_NAME = 'mainproject-cache-v2';
+const CACHE_NAME = 'mainproject-cache-v3';
 const IMAGE_CACHE = 'mainproject-img-cache-v1';
 const FONT_CACHE = 'mainproject-font-cache-v1';
 const STATIC_ASSETS = [
@@ -61,17 +61,8 @@ self.addEventListener('fetch', event => {
   const isImage = /\.(png|jpg|jpeg|gif|webp|avif|svg)$/i.test(url.pathname);
   const isFont = /\.(woff2?|ttf|otf|eot)$/i.test(url.pathname);
 
-  // API requests: network first, fallback to cache
-  if (request.url.includes('/api/')) {
-    event.respondWith(
-      fetch(request)
-        .then(response => {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then(cache => cache.put(request, clone));
-          return response;
-        })
-        .catch(() => caches.match(request))
-    );
+  // Bypass API and WebSocket-like endpoints so service worker doesn't interfere with auth, cookies, and preflight requests
+  if (url.pathname.startsWith('/api/') || url.pathname.startsWith('/ws')) {
     return;
   }
 
@@ -82,13 +73,13 @@ self.addEventListener('fetch', event => {
         const cached = await cache.match(request);
         const fetchAndCache = fetch(request)
           .then(response => {
-            if (response.status === 200) {
+            if (response && response.status === 200) {
               cache.put(request, response.clone());
               limitCacheEntries(cache, MAX_IMAGE_ENTRIES);
             }
             return response;
           })
-          .catch(() => cached);
+          .catch(() => cached || new Response('', { status: 503 }));
         return cached || fetchAndCache;
       })
     );
@@ -102,12 +93,12 @@ self.addEventListener('fetch', event => {
         const cached = await cache.match(request);
         const fetchAndCache = fetch(request)
           .then(response => {
-            if (response.status === 200) {
+            if (response && response.status === 200) {
               cache.put(request, response.clone());
             }
             return response;
           })
-          .catch(() => cached);
+          .catch(() => cached || new Response('', { status: 503 }));
         return cached || fetchAndCache;
       })
     );
@@ -121,11 +112,14 @@ self.addEventListener('fetch', event => {
         const clone = response.clone();
         caches.open(CACHE_NAME).then(cache => cache.put(request, clone));
         return response;
-      }).catch(() => {
+      }).catch(async () => {
         // Offline fallback for navigation
         if (request.mode === 'navigate') {
-          return caches.match(OFFLINE_FALLBACK);
+          const fallback = await caches.match(OFFLINE_FALLBACK);
+          return fallback || new Response('Offline', { status: 503, statusText: 'Offline' });
         }
+        // If not navigation, return a standard 503 response so it's a valid Response
+        return new Response('Service unavailable', { status: 503, statusText: 'Service Unavailable' });
       })
     )
   );

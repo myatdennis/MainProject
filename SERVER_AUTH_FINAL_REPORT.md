@@ -56,7 +56,7 @@ All 8 core security tasks have been successfully implemented:
 **Files Created:**
 - `server/utils/jwt.ts` - JWT generation/verification
 - `server/middleware/auth.ts` - Auth middleware & RBAC
-- `server/routes/auth.ts` - Login/register/refresh endpoints
+- `server/routes/auth.js` - Login/register/refresh endpoints
 - `server/lib/supabaseClient.ts` - Server Supabase client
 
 **Features:**
@@ -117,7 +117,7 @@ All 8 core security tasks have been successfully implemented:
 7. `server/utils/jwt.ts` - JWT utilities
 8. `server/middleware/auth.ts` - Auth middleware
 9. `server/middleware/csrf.ts` - CSRF protection
-10. `server/routes/auth.ts` - Auth endpoints
+10. `server/routes/auth.js` - Auth endpoints
 11. `server/lib/supabaseClient.ts` - Supabase client
 
 **Enhanced Forms:**

@@ -1,6 +1,7 @@
 
 
 import express, { Request, Response, ErrorRequestHandler } from 'express';
+import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import csurf from 'csurf';
@@ -22,6 +23,30 @@ app.use(rateLimit({
 }));
 app.use(cookieParser());
 app.use(express.json());
+
+// CORS: allow frontend origin(s) and enable credentials for cookie-based auth
+const allowedOrigins = [
+  'https://the-huddle.co',
+  'https://www.the-huddle.co',
+  'http://localhost:5173', // keep local dev
+];
+
+const corsOptions = {
+  origin(origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) {
+    // Allow requests with no origin like curl or mobile apps
+    if (!origin) return callback(null, true);
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    console.warn('[CORS] Blocked origin:', origin);
+    return callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+};
+
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
 // CSRF Protection (for non-GET requests)
 app.use(csurf({ cookie: true }));

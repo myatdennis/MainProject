@@ -103,7 +103,7 @@ npm install dompurify @types/dompurify crypto-js @types/crypto-js \
 - ✅ **Request Logging**: Authenticated request logging
 
 #### Authentication Routes
-**File:** `server/routes/auth.ts`
+**File:** `server/routes/auth.js`
 
 - ✅ **POST /api/auth/login**: Login with demo mode support
 - ✅ **POST /api/auth/register**: User registration with password hashing
