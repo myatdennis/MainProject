@@ -9,8 +9,9 @@ async function waitForHealth(timeout = 5000) {
    
   while (true) {
     try {
-      // Use global fetch (Node 18+) or dynamic import fallback
-      const fn = (globalThis as any).fetch ?? (await import('node-fetch')).default;
+  // Use global fetch (Node 18+) or dynamic import fallback
+  // @ts-ignore: dynamic fallback to `node-fetch` for older Node versions
+  const fn = (globalThis as any).fetch ?? (await import('node-fetch')).default;
       const res = await fn(`${API_BASE}/api/health`);
       if (res && (res.status === 200 || res.status === 201)) return;
     } catch (e) {
@@ -59,7 +60,8 @@ describe('Idempotency keys (integration)', () => {
       idempotency_key: 'itest-key-1'
     };
 
-    const fn = (globalThis as any).fetch ?? (await import('node-fetch')).default;
+  // @ts-ignore: dynamic fallback to `node-fetch` for older Node versions
+  const fn = (globalThis as any).fetch ?? (await import('node-fetch')).default;
 
     const res1 = await fn(`${API_BASE}/api/admin/courses`, {
       method: 'POST',

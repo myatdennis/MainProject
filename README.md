@@ -155,6 +155,20 @@ src/
 - When Supabase is not configured, the server uses a safe in-memory fallback by default (DEV_FALLBACK). Disable with `DEV_FALLBACK=false`.
 - E2E tests use `E2E_TEST_MODE=true` and stub `VITE_API_BASE_URL` as needed.
 
+Server runtime is JS-only
+------------------------
+
+The server runtime now uses JavaScript files (ESM) under `server/`.
+All historical server TypeScript sources are archived under `server/ts-archive/`.
+CI enforces that there are no `.ts` files under `server/` outside this archive; see `scripts/check_no_ts_in_server.mjs`.
+If you need to recover previous TypeScript logic, consult the archive or reintroduce a TypeScript -> JS build step.
+
+To clean up any remaining legacy `.ts` placeholder files under `server/` and move them into the archive, run:
+
+```bash
+npm run remove:server-ts
+```
+
 ### Quick Production Checklist (Netlify + Railway)
 
 1) DNS at GoDaddy

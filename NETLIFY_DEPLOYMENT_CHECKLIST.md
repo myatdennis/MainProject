@@ -4,6 +4,7 @@ Use this checklist to ensure a reliable production deploy of the SPA + external 
 
 ## 1. Build Settings
 - Remove UI overrides for Build command & Publish directory so `netlify.toml` is honored.
+  - Set the Build command to: `npm run build:ci` to include a post-build scan for deprecated hostnames.
 - Confirm `netlify.toml` in repo root contains:
   - `[build] command = "npm run build"`
   - `publish = "dist"`
@@ -81,7 +82,50 @@ Create a simple script to run against production:
 ```bash
 node scripts/api-smoke.mjs --base https://app.example.com --api https://api.example.com
 ```
+### Pre-deploy local checks
+Before you push or create a PR, you can run these checks locally to ensure Vite is healthy and the build is clean:
+
+1. Install deps and run Vite check:
+```bash
+npm ci
+npm run check:vite
+```
+
+2. If the check passes, run the full CI build (includes host scanning):
+```bash
+npm run build:ci
+```
+
+3. Preview the build locally and test:
+```bash
+npm run preview
+# open http://localhost:4173 and inspect the Console/Network tabs
+```
+
 (Modify script to accept flags if desired.)
+
+## 10. Local Build & Troubleshooting Quick Steps
+These commands will help you reproduce the production build locally and verify there are no stale host references or cached service worker issues:
+
+1. Install and build:
+  - npm ci
+  - npm run build:ci
+
+2. Preview the production build and verify client-side behavior:
+  - npm run preview
+  - Open http://localhost:4173/ in a browser and inspect the Console and Network tabs
+
+3. If the site shows the offline page or blank UI:
+  - Open http://localhost:4173/unregister-sw.html
+  - Click "Unregister Service Worker" and follow instructions to clear caches
+  - Reload the app
+
+4. Inspect produced `dist` for old hostnames:
+  - grep -R "api.the-huddle.co" dist || true
+  - node scripts/find_hosts_in_dist.mjs
+
+If you still see runtime errors or a blank page, collect the build logs and browser console network traces and share them.
+
 
 ---
 Checklist maintained on: 2025-11-07.

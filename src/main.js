@@ -16,8 +16,9 @@ if (!rootElement) {
 else {
     console.log('✅ Root element found, rendering app...');
     try {
-        createRoot(rootElement).render(_jsx(StrictMode, { children: _jsx(HelmetProvider, { children: _jsx(App, {}) }) }));
-        console.log('✅ App rendered successfully');
+    createRoot(rootElement).render(_jsx(StrictMode, { children: _jsx(HelmetProvider, { children: _jsx(App, {}) }) }));
+    // No app-mounted marker set by this script
+    console.log('✅ App rendered successfully');
     }
     catch (error) {
         console.error('❌ Error rendering app:', error);

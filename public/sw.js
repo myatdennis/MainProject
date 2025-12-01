@@ -15,9 +15,26 @@ const MAX_IMAGE_ENTRIES = 60;
 
 
 self.addEventListener('install', event => {
-  event.waitUntil(
-    caches.open(CACHE_NAME).then(cache => cache.addAll([...STATIC_ASSETS, OFFLINE_FALLBACK]))
-  );
+  event.waitUntil((async () => {
+    try {
+      const cache = await caches.open(CACHE_NAME);
+      // Try to add all static assets; avoid install failure if fallback is missing
+      try {
+        await cache.addAll([...STATIC_ASSETS, OFFLINE_FALLBACK]);
+      } catch (err) {
+        // If the offline fallback isn't present, still continue install and cache the rest
+        // Avoid failing the install so old SW doesn't remain active and return stale content
+        console.warn('[SW] Warning: failed to cache some assets during install:', err);
+        try {
+          await cache.addAll(STATIC_ASSETS);
+        } catch (inner) {
+          console.error('[SW] Failed to cache static assets during install:', inner);
+        }
+      }
+    } catch (e) {
+      console.error('[SW] Install error:', e);
+    }
+  })());
   self.skipWaiting();
 });
 

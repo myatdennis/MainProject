@@ -1,0 +1,38 @@
+name: Deploy to Netlify
+
+on:
+  push:
+    branches: [ main, feat/ws-client ]
+
+jobs:
+  build_and_deploy:
+    runs-on: ubuntu-latest
+    env:
+      NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+      NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Deploy to Netlify
+        if: ${{ env.NETLIFY_AUTH_TOKEN && env.NETLIFY_SITE_ID }}
+        run: |
+          npm i -g netlify-cli
+          netlify deploy --site=$NETLIFY_SITE_ID --dir=./dist --auth=$NETLIFY_AUTH_TOKEN --prod
+
+      - name: Fail if Netlify secrets missing
+        if: ${{ env.NETLIFY_AUTH_TOKEN == '' || env.NETLIFY_SITE_ID == '' }}
+        run: |
+          echo "NETLIFY_AUTH_TOKEN or NETLIFY_SITE_ID is not set. Add them to repo secrets to enable Netlify deploys.";
+          exit 1;

@@ -6,6 +6,8 @@ on:
 jobs:
   migrate-and-seed:
     runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: ${{ secrets.ANALYTICS_DATABASE_URL }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -22,13 +24,11 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libpq-dev postgresql-client
 
       - name: Run migration
-        env:
-          DATABASE_URL: ${{ secrets.ANALYTICS_DATABASE_URL }}
+        if: ${{ env.DATABASE_URL != '' }}
         run: |
           sh ./scripts/run_migration.sh supabase/migrations/20251108_add_analytics_tables_and_views.sql
 
       - name: Seed analytics data
-        env:
-          DATABASE_URL: ${{ secrets.ANALYTICS_DATABASE_URL }}
+        if: ${{ env.DATABASE_URL != '' }}
         run: |
           node ./scripts/seed_analytics.js

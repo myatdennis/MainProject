@@ -1,17 +1,6 @@
 /**
- * Supabase Client for Server
- * Server-side Supabase client configuration
+ * MOVED: server/lib/supabaseClient.ts archived to server/ts-archive/lib/supabaseClient.ts
+ * This placeholder remains in the repo to avoid compile-time errors in certain editors but the
+ * runtime uses `server/lib/supabaseClient.js`.
  */
-
-import { createClient } from '@supabase/supabase-js';
-
-const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY || '';
-
-export const supabase = supabaseUrl && supabaseKey
-  ? createClient(supabaseUrl, supabaseKey)
-  : null;
-
-export function isSupabaseConfigured(): boolean {
-  return supabase !== null;
-}
+export {};

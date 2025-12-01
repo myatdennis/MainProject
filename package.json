@@ -4,6 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "check:server-no-ts": "node ./scripts/check_no_ts_in_server.mjs",
+  "remove:server-ts": "node ./scripts/remove_server_ts_files.mjs",
+  "clean:server-ts": "node ./scripts/clean_server_ts.mjs",
     "dev": "node scripts/generate_js_shims.mjs && npm run preclean:components && vite",
     "dev:vercel": "vercel dev",
     "create-demo-users": "node scripts/create_demo_users.js",
@@ -34,12 +37,15 @@
     "analyze": "npx vite-bundle-analyzer",
     "check:bundle": "node scripts/check_bundle_size.mjs",
     "ci": "npm run -s typecheck && npm run -s lint && vitest run",
+    "archive:server-ts": "node scripts/archive_server_ts.mjs",
     "migrate:local": "sh ./scripts/run_migration.sh supabase/migrations/20251108_add_analytics_tables_and_views.sql",
     "seed:analytics": "node ./scripts/seed_analytics.js",
     "diag:env": "node scripts/check_deploy_env.cjs",
     "diag:print": "node scripts/print_vite_env.cjs",
     "diag:ssl": "node scripts/check_ssl.cjs",
-    "optimize:build": "npm ci && npm run build && npm run analyze"
+  "optimize:build": "npm ci && npm run build && npm run analyze",
+    "scan:dist": "node scripts/find_hosts_in_dist.mjs",
+    "check:lock": "node scripts/check_lock_sync.mjs"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
@@ -120,6 +126,6 @@
     "ws": "^8.13.0"
   },
   "engines": {
-    "node": ">=18.16.0"
+    "node": ">=20.0.0"
   }
 }

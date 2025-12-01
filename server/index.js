@@ -21,15 +21,15 @@ import {
 } from './validators.js';
 
 // Import auth routes and middleware
-import authRoutes from './routes/auth.ts';
+import authRoutes from './routes/auth.js';
 import adminAnalyticsRoutes from './routes/admin-analytics.js';
 import adminAnalyticsExport from './routes/admin-analytics-export.js';
 import adminAnalyticsSummary from './routes/admin-analytics-summary.js';
 import { apiLimiter, securityHeaders } from './middleware/auth.js';
 import { setDoubleSubmitCSRF, getCSRFToken } from './middleware/csrf.js';
-import adminUsersRouter from './routes/admin-users.ts';
-import adminCoursesRoutes from './routes/admin-courses.ts';
-import mfaRoutes from './routes/mfa.ts';
+import adminUsersRouter from './routes/admin-users.js';
+import adminCoursesRoutes from './routes/admin-courses.js';
+import mfaRoutes from './routes/mfa.js';
 
 // Resolve __dirname in ESM
 const __filename = fileURLToPath(import.meta.url);
