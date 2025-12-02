@@ -80,46 +80,42 @@ function savePersistedData(data) {
 
 const app = express();
 
-const rawOrigins = process.env.CORS_ALLOWED_ORIGINS || '';
-const envOrigins = rawOrigins
-  .split(',')
-  .map((origin) => origin.trim())
-  .filter(Boolean);
-
-const fallbackOrigins = [
+const allowedOrigins = [
   'https://the-huddle.co',
   'https://www.the-huddle.co',
   'http://localhost:5173',
 ];
-
-const allowedOrigins = envOrigins.length > 0 ? envOrigins : fallbackOrigins;
 
 app.use((req, res, next) => {
   const origin = req.headers.origin;
 
   if (origin && allowedOrigins.includes(origin)) {
     res.header('Access-Control-Allow-Origin', origin);
-    res.header('Access-Control-Allow-Credentials', 'true');
   }
 
+  res.header('Access-Control-Allow-Credentials', 'true');
   res.header(
     'Access-Control-Allow-Methods',
-    'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS'
+    'GET,POST,PUT,PATCH,DELETE,OPTIONS'
   );
   res.header(
     'Access-Control-Allow-Headers',
-    'Origin, X-Requested-With, Content-Type, Accept, Authorization'
+    'Content-Type, Authorization, X-Requested-With'
   );
 
   if (req.method === 'OPTIONS') {
-    return res.sendStatus(204);
+    return res.sendStatus(200);
   }
 
   next();
 });
 
 app.get('/api/health', (_req, res) => {
-  res.json({ ok: true });
+  res.json({
+    status: 'ok',
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
+  });
 });
 
 // When running behind a reverse proxy (Netlify, Vercel, Cloudflare, Railway),
