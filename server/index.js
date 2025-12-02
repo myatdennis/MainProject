@@ -44,31 +44,6 @@ const MAX_DEMO_FILE_BYTES = parseInt(process.env.DEMO_DATA_MAX_BYTES || '', 10) 
 const DEV_FALLBACK = (process.env.DEV_FALLBACK || '').toLowerCase() !== 'false' && (process.env.NODE_ENV || '').toLowerCase() !== 'production';
 const E2E_TEST_MODE = process.env.E2E_TEST_MODE === 'true';
 
-const DEFAULT_ALLOWED_ORIGINS = [
-  'https://the-huddle.co',
-  'https://www.the-huddle.co',
-  'http://localhost:5173'
-];
-
-const extraAllowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
-  .split(',')
-  .map((value) => value.trim())
-  .filter(Boolean);
-
-const allowedOrigins = Array.from(new Set([...DEFAULT_ALLOWED_ORIGINS, ...extraAllowedOrigins]));
-
-if (E2E_TEST_MODE || DEV_FALLBACK) {
-  ['http://localhost:5174', 'http://127.0.0.1:5173', 'http://localhost:5175'].forEach((origin) => {
-    if (!allowedOrigins.includes(origin)) {
-      allowedOrigins.push(origin);
-    }
-  });
-}
-
-const allowAllOrigins = E2E_TEST_MODE || DEV_FALLBACK;
-const ALLOWED_METHODS = 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS';
-const ALLOWED_HEADERS = 'Content-Type, Authorization, X-Requested-With, X-CSRF-Token, X-User-Id, X-User-Role, X-Org-Id';
-
 // Helper functions for persistent storage
 function loadPersistedData() {
   try {
@@ -105,6 +80,12 @@ function savePersistedData(data) {
 
 const app = express();
 
+const allowedOrigins = [
+  'https://the-huddle.co',
+  'https://www.the-huddle.co',
+  'http://localhost:5173',
+];
+
 // When running behind a reverse proxy (Netlify, Vercel, Cloudflare, Railway),
 // Express needs to trust proxy headers so req.secure reflects X-Forwarded-Proto.
 // Enabling trust proxy ensures middleware and HSTS headers can operate correctly.
@@ -136,48 +117,49 @@ console.log('[Diagnostics] COOKIE_SAMESITE:', process.env.COOKIE_SAMESITE || '(n
 
 const isAllowedOrigin = (origin) => {
   if (!origin) return true;
-  return allowAllOrigins || allowedOrigins.includes(origin);
+  return allowedOrigins.includes(origin);
 };
 
 const corsOptions = {
-  origin: (origin, callback) => {
-    const allowed = isAllowedOrigin(origin);
-    if (!allowed) {
-      console.warn('[CORS] Blocked origin:', origin);
+  origin(origin, callback) {
+    if (!origin) {
+      return callback(null, true);
     }
-    callback(null, allowed);
+
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+
+    console.warn('[CORS] Blocked origin:', origin);
+    return callback(new Error(`Not allowed by CORS: ${origin}`));
   },
   credentials: true,
-  methods: ALLOWED_METHODS,
-  allowedHeaders: ALLOWED_HEADERS.split(',').map((value) => value.trim()),
-  exposedHeaders: ['x-request-id'],
-  optionsSuccessStatus: 204,
+  methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+  allowedHeaders: [
+    'Content-Type',
+    'Authorization',
+    'X-Requested-With',
+    'Accept',
+    'Origin',
+  ],
 };
 
-const applyCorsHeaders = (req, res) => {
-  const origin = req.headers.origin;
-  if (origin && isAllowedOrigin(origin)) {
-    res.header('Access-Control-Allow-Origin', origin);
-    res.header('Vary', 'Origin');
-  }
-  res.header('Access-Control-Allow-Credentials', 'true');
-  res.header('Access-Control-Allow-Methods', ALLOWED_METHODS);
-  res.header('Access-Control-Allow-Headers', ALLOWED_HEADERS);
-  res.header('Access-Control-Expose-Headers', 'x-request-id');
-};
-
-app.use((req, res, next) => {
-  applyCorsHeaders(req, res);
-  next();
-});
-
+// Global CORS + preflight handling
 app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
-app.options('*', (req, res) => {
-  applyCorsHeaders(req, res);
-  res.header('Access-Control-Allow-Methods', ALLOWED_METHODS);
-  res.header('Access-Control-Allow-Headers', ALLOWED_HEADERS);
-  res.sendStatus(204);
+// Debug logging for preflight
+app.use((req, res, next) => {
+  if (req.method === 'OPTIONS') {
+    console.log(
+      '[CORS preflight]',
+      req.method,
+      req.path,
+      'origin=',
+      req.headers.origin
+    );
+  }
+  next();
 });
 
 // Basic request logging with request_id and timing
