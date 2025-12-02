@@ -11,11 +11,19 @@ import supabase from '../lib/supabaseClient.js';
 
 const router = express.Router();
 
+router.use((req, _res, next) => {
+  const { method, originalUrl, headers } = req;
+  console.log(`[AUTH ROUTER] ${method} ${originalUrl} origin=${headers.origin || 'n/a'}`);
+  next();
+});
+
 // ============================================================================
 // Login
 // ============================================================================
 
 router.post('/login', async (req, res) => {
+  const origin = req.headers.origin || 'unknown';
+  console.log(`[AUTH] Incoming ${req.method} ${req.originalUrl} from origin ${origin}`);
   try {
     const { email, password } = req.body;
     
@@ -27,6 +35,9 @@ router.post('/login', async (req, res) => {
       });
     }
     
+      const origin = req.headers.origin || 'unknown';
+      const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip;
+      console.log(`[AUTH] ${req.method} ${req.originalUrl} from origin ${origin} ip ${ip}`);
     // Demo mode check
     const DEV_FALLBACK = (process.env.DEV_FALLBACK || '').toLowerCase() !== 'false' && 
                          (process.env.NODE_ENV || '').toLowerCase() !== 'production';

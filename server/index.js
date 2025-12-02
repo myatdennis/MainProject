@@ -6,7 +6,6 @@ import { fileURLToPath } from 'url';
 import { createClient } from '@supabase/supabase-js';
 import { WebSocketServer } from 'ws';
 import cookieParser from 'cookie-parser';
-import cors from 'cors';
 import fs from 'fs';
 import {
   moduleCreateSchema,
@@ -86,6 +85,44 @@ const allowedOrigins = [
   'http://localhost:5173',
 ];
 
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+
+  // Debug logging so I can see what origin/method/path hits the server
+  console.log('[CORS] incoming', {
+    origin,
+    method: req.method,
+    path: req.path,
+  });
+
+  if (!origin || allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin || 'https://the-huddle.co');
+    res.header('Vary', 'Origin');
+    res.header('Access-Control-Allow-Credentials', 'true');
+    res.header(
+      'Access-Control-Allow-Methods',
+      'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS'
+    );
+    res.header(
+      'Access-Control-Allow-Headers',
+      'Origin, X-Requested-With, Content-Type, Accept, Authorization, Accept'
+    );
+
+    if (req.method === 'OPTIONS') {
+      console.log('[CORS preflight OK]', req.method, req.path, 'origin =', origin);
+      return res.sendStatus(204);
+    }
+  } else {
+    console.warn('[CORS BLOCKED]', req.method, req.path, 'origin =', origin);
+    if (req.method === 'OPTIONS') {
+      // Explicitly deny preflight from disallowed origins
+      return res.sendStatus(403);
+    }
+  }
+
+  next();
+});
+
 // When running behind a reverse proxy (Netlify, Vercel, Cloudflare, Railway),
 // Express needs to trust proxy headers so req.secure reflects X-Forwarded-Proto.
 // Enabling trust proxy ensures middleware and HSTS headers can operate correctly.
@@ -119,48 +156,6 @@ const isAllowedOrigin = (origin) => {
   if (!origin) return true;
   return allowedOrigins.includes(origin);
 };
-
-const corsOptions = {
-  origin(origin, callback) {
-    if (!origin) {
-      return callback(null, true);
-    }
-
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-
-    console.warn('[CORS] Blocked origin:', origin);
-    return callback(new Error(`Not allowed by CORS: ${origin}`));
-  },
-  credentials: true,
-  methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
-  allowedHeaders: [
-    'Content-Type',
-    'Authorization',
-    'X-Requested-With',
-    'Accept',
-    'Origin',
-  ],
-};
-
-// Global CORS + preflight handling
-app.use(cors(corsOptions));
-app.options('*', cors(corsOptions));
-
-// Debug logging for preflight
-app.use((req, res, next) => {
-  if (req.method === 'OPTIONS') {
-    console.log(
-      '[CORS preflight]',
-      req.method,
-      req.path,
-      'origin=',
-      req.headers.origin
-    );
-  }
-  next();
-});
 
 // Basic request logging with request_id and timing
 app.use((req, res, next) => {
@@ -682,9 +677,7 @@ const sortActionItems = (items) =>
 app.get('/api/health', (_req, res) => {
   res.json({
     status: 'ok',
-    supabaseConfigured: Boolean(supabase),
     timestamp: new Date().toISOString(),
-    uptime_s: Math.round(process.uptime()),
   });
 });
 
@@ -705,7 +698,7 @@ app.get('/api/diagnostics', async (req, res) => {
     databaseUrlPresent: !!process.env.DATABASE_URL,
     jwtSecretPresent: !!process.env.JWT_SECRET,
     cookieDomain: !!process.env.COOKIE_DOMAIN,
-    corsAllowedConfigured: !!(process.env.CORS_ALLOWED_ORIGINS || '').trim(),
+    corsAllowedConfigured: allowedOrigins.length > 0,
     devFallbackMode: DEV_FALLBACK,
     e2eMode: E2E_TEST_MODE
     ,enforceHttpsEnabled: (process.env.ENFORCE_HTTPS || '').toLowerCase() === 'true'
