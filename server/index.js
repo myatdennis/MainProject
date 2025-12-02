@@ -7,7 +7,6 @@ import { createClient } from '@supabase/supabase-js';
 import { WebSocketServer } from 'ws';
 import cookieParser from 'cookie-parser';
 import fs from 'fs';
-import cors from 'cors';
 import {
   moduleCreateSchema,
   modulePatchSchema as modulePatchValidator,
@@ -80,26 +79,47 @@ function savePersistedData(data) {
 
 const app = express();
 
-const allowedOrigins = [
+const rawOrigins = process.env.CORS_ALLOWED_ORIGINS || '';
+const envOrigins = rawOrigins
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+const fallbackOrigins = [
   'https://the-huddle.co',
   'https://www.the-huddle.co',
   'http://localhost:5173',
 ];
 
-const corsOptions = {
-  origin(origin, callback) {
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin)) {
-      return callback(null, true);
-    }
-    console.warn('[CORS BLOCKED ORIGIN]', origin);
-    return callback(new Error('Not allowed by CORS'));
-  },
-  credentials: true,
-};
+const allowedOrigins = envOrigins.length > 0 ? envOrigins : fallbackOrigins;
 
-app.use(cors(corsOptions));
-app.options('*', cors(corsOptions));
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+
+  if (origin && allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+    res.header('Access-Control-Allow-Credentials', 'true');
+  }
+
+  res.header(
+    'Access-Control-Allow-Methods',
+    'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS'
+  );
+  res.header(
+    'Access-Control-Allow-Headers',
+    'Origin, X-Requested-With, Content-Type, Accept, Authorization'
+  );
+
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+
+  next();
+});
+
+app.get('/api/health', (_req, res) => {
+  res.json({ ok: true });
+});
 
 // When running behind a reverse proxy (Netlify, Vercel, Cloudflare, Railway),
 // Express needs to trust proxy headers so req.secure reflects X-Forwarded-Proto.
@@ -107,9 +127,8 @@ app.options('*', cors(corsOptions));
 if (process.env.NODE_ENV === 'production') {
   app.set('trust proxy', 1);
 }
-// Prefer explicit PORT (e.g. 8888) to align with Vite proxy and VITE_API_BASE_URL; default to 8888 instead of 8787
-const port = process.env.PORT || 8888;
-console.log(`[server] Using port ${port} (override via PORT env)`);
+const PORT = process.env.PORT || 3000;
+console.log(`[server] Using port ${PORT} (override via PORT env)`);
 
 app.use(express.json({ limit: '10mb' }));
 
@@ -651,13 +670,6 @@ const sortActionItems = (items) =>
     const dueB = b.dueDate ? new Date(b.dueDate).getTime() : Number.MAX_SAFE_INTEGER;
     return dueA - dueB;
   });
-
-app.get('/api/health', (_req, res) => {
-  res.json({
-    status: 'ok',
-    timestamp: new Date().toISOString(),
-  });
-});
 
 // Diagnostics endpoint (safe booleans only; no secrets returned) to help
 // identify environment and connectivity issues during deployment and support.
@@ -4449,8 +4461,8 @@ app.use((req, res, next) => {
   });
 });
 
-const server = app.listen(port, '0.0.0.0', () => {
-  console.log(`Serving production build from ${distPath} at http://0.0.0.0:${port}`);
+const server = app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Serving production build from ${distPath} at http://0.0.0.0:${PORT}`);
 });
 
 // Initialize WebSocket server (ws) to handle realtime broadcasts at /ws
