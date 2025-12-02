@@ -7,6 +7,7 @@ import { createClient } from '@supabase/supabase-js';
 import { WebSocketServer } from 'ws';
 import cookieParser from 'cookie-parser';
 import fs from 'fs';
+import cors from 'cors';
 import {
   moduleCreateSchema,
   modulePatchSchema as modulePatchValidator,
@@ -85,43 +86,20 @@ const allowedOrigins = [
   'http://localhost:5173',
 ];
 
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-
-  // Debug logging so I can see what origin/method/path hits the server
-  console.log('[CORS] incoming', {
-    origin,
-    method: req.method,
-    path: req.path,
-  });
-
-  if (!origin || allowedOrigins.includes(origin)) {
-    res.header('Access-Control-Allow-Origin', origin || 'https://the-huddle.co');
-    res.header('Vary', 'Origin');
-    res.header('Access-Control-Allow-Credentials', 'true');
-    res.header(
-      'Access-Control-Allow-Methods',
-      'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS'
-    );
-    res.header(
-      'Access-Control-Allow-Headers',
-      'Origin, X-Requested-With, Content-Type, Accept, Authorization, Accept'
-    );
-
-    if (req.method === 'OPTIONS') {
-      console.log('[CORS preflight OK]', req.method, req.path, 'origin =', origin);
-      return res.sendStatus(204);
+const corsOptions = {
+  origin(origin, callback) {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
     }
-  } else {
-    console.warn('[CORS BLOCKED]', req.method, req.path, 'origin =', origin);
-    if (req.method === 'OPTIONS') {
-      // Explicitly deny preflight from disallowed origins
-      return res.sendStatus(403);
-    }
-  }
+    console.warn('[CORS BLOCKED ORIGIN]', origin);
+    return callback(new Error('Not allowed by CORS'));
+  },
+  credentials: true,
+};
 
-  next();
-});
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 
 // When running behind a reverse proxy (Netlify, Vercel, Cloudflare, Railway),
 // Express needs to trust proxy headers so req.secure reflects X-Forwarded-Proto.
