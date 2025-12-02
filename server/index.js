@@ -81,46 +81,52 @@ function savePersistedData(data) {
 
 const app = express();
 
-const allowedOrigins = [
+const rawAllowedOrigins = process.env.CORS_ALLOWED_ORIGINS || '';
+const extraAllowedOrigins = rawAllowedOrigins
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+const defaultAllowedOrigins = [
   'https://the-huddle.co',
   'https://www.the-huddle.co',
   'http://localhost:5173',
+  'http://localhost:4173',
   'http://localhost:3000',
 ];
 
-app.use(
-  cors({
-    origin(origin, callback) {
-      if (!origin) return callback(null, true);
-      if (allowedOrigins.includes(origin)) return callback(null, true);
-      return callback(new Error('Not allowed by CORS'));
-    },
-    credentials: true,
-  })
-);
+const allowedOrigins = Array.from(new Set([...defaultAllowedOrigins, ...extraAllowedOrigins]));
 
 app.use((req, res, next) => {
   const origin = req.headers.origin;
+
   if (origin && allowedOrigins.includes(origin)) {
     res.header('Access-Control-Allow-Origin', origin);
+    res.header('Vary', 'Origin');
   }
+
   res.header('Access-Control-Allow-Credentials', 'true');
+  res.header(
+    'Access-Control-Allow-Methods',
+    'GET,POST,PUT,PATCH,DELETE,OPTIONS'
+  );
   res.header(
     'Access-Control-Allow-Headers',
     'Origin, X-Requested-With, Content-Type, Accept, Authorization'
   );
-  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+
   if (req.method === 'OPTIONS') {
     return res.sendStatus(204);
   }
+
   next();
 });
 
 app.get('/api/health', (_req, res) => {
   res.json({
     status: 'ok',
-    message: 'API is running',
-    time: new Date().toISOString(),
+    uptime: process.uptime(),
+    timestamp: new Date().toISOString(),
   });
 });
 
