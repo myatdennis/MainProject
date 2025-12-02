@@ -1,6 +1,7 @@
 // (Removed initial lightweight dev server stub in favor of the full server below)
 import 'dotenv/config';
 import express from 'express';
+import cors from 'cors';
 import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
