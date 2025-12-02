@@ -84,37 +84,42 @@ const allowedOrigins = [
   'https://the-huddle.co',
   'https://www.the-huddle.co',
   'http://localhost:5173',
+  'http://localhost:3000',
 ];
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      return callback(new Error('Not allowed by CORS'));
+    },
+    credentials: true,
+  })
+);
 
 app.use((req, res, next) => {
   const origin = req.headers.origin;
-
   if (origin && allowedOrigins.includes(origin)) {
     res.header('Access-Control-Allow-Origin', origin);
   }
-
   res.header('Access-Control-Allow-Credentials', 'true');
   res.header(
-    'Access-Control-Allow-Methods',
-    'GET,POST,PUT,PATCH,DELETE,OPTIONS'
-  );
-  res.header(
     'Access-Control-Allow-Headers',
-    'Content-Type, Authorization, X-Requested-With'
+    'Origin, X-Requested-With, Content-Type, Accept, Authorization'
   );
-
+  res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
   if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
+    return res.sendStatus(204);
   }
-
   next();
 });
 
 app.get('/api/health', (_req, res) => {
   res.json({
     status: 'ok',
-    uptime: process.uptime(),
-    timestamp: new Date().toISOString(),
+    message: 'API is running',
+    time: new Date().toISOString(),
   });
 });
 
