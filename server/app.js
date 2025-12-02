@@ -5,27 +5,42 @@ import adminUsersRouter from './routes/admin-users.js'; // Import the admin-user
 // ... other imports and setup
 
 const app = express();
-app.use(express.json());
 
-// CORS configuration for the public server
 const allowedOrigins = [
 	'https://the-huddle.co',
 	'https://www.the-huddle.co',
 	'http://localhost:5173',
 ];
 
-const corsOptions = {
-	origin(origin, callback) {
-		if (!origin) return callback(null, true);
-		if (allowedOrigins.includes(origin)) return callback(null, true);
-		console.warn('[CORS] Blocked origin:', origin);
-		return callback(new Error('Not allowed by CORS'));
-	},
-	credentials: true,
-};
+app.use((req, res, next) => {
+	const origin = req.headers.origin;
+	if (origin && allowedOrigins.includes(origin)) {
+		res.header('Access-Control-Allow-Origin', origin);
+	}
+	res.header('Access-Control-Allow-Credentials', 'true');
+	res.header(
+		'Access-Control-Allow-Methods',
+		'GET,POST,PUT,PATCH,DELETE,OPTIONS'
+	);
+	res.header(
+		'Access-Control-Allow-Headers',
+		'Content-Type, Authorization, X-Requested-With'
+	);
+	if (req.method === 'OPTIONS') {
+		return res.sendStatus(200);
+	}
+	next();
+});
 
-app.use(cors(corsOptions));
-app.options('*', cors(corsOptions));
+app.use(express.json());
+
+app.get('/api/health', (_req, res) => {
+	res.json({
+		status: 'ok',
+		uptime: process.uptime(),
+		timestamp: new Date().toISOString(),
+	});
+});
 
 // ... other app.use() calls
 
