@@ -1,6 +1,7 @@
 // (Removed initial lightweight dev server stub in favor of the full server below)
 import 'dotenv/config';
 import express from 'express';
+import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createClient } from '@supabase/supabase-js';
@@ -4461,7 +4462,9 @@ app.use((req, res, next) => {
   });
 });
 
-const server = app.listen(PORT, '0.0.0.0', () => {
+const server = http.createServer(app);
+
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`Serving production build from ${distPath} at http://0.0.0.0:${PORT}`);
 });
 
