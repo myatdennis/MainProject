@@ -10,14 +10,18 @@ import { getCSRFToken } from '../hooks/useCSRFToken';
 // ============================================================================
 // API Client Configuration
 // ============================================================================
-// Prefer VITE_API_BASE_URL for consistency; fall back to VITE_API_URL and then '/api'
-// In development, prefer the Vite proxy ('/api') over an absolute external URL to
-// avoid making network calls to production or other hosts when running locally.
-const rawApiBase = (import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || '').trim().replace(/\/$/, '');
-let API_BASE_URL = rawApiBase || '/api';
-if (import.meta.env.DEV && rawApiBase && !/^https?:\/\/(localhost|127(?:\.[0-9]+){0,2}\.[0-9]+|\[::1\])(:|$)/i.test(rawApiBase)) {
-    API_BASE_URL = '/api';
+const DEV_API_ORIGIN = 'http://localhost:8888';
+const PROD_API_ORIGIN = 'https://mainproject-production-4e66.up.railway.app';
+const fallbackOrigin = import.meta.env.DEV ? DEV_API_ORIGIN : PROD_API_ORIGIN;
+const envApiOrigin = (import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || '').trim();
+const hasProtocol = /^https?:\/\//i.test(envApiOrigin);
+const normalizedEnvOrigin = hasProtocol ? envApiOrigin.replace(/\/$/, '') : '';
+let resolvedOrigin = normalizedEnvOrigin || fallbackOrigin;
+if (resolvedOrigin.toLowerCase().endsWith('/api')) {
+    resolvedOrigin = resolvedOrigin.slice(0, -4);
 }
+export const API_ORIGIN = resolvedOrigin;
+export const API_BASE_URL = `${API_ORIGIN}/api`;
 /**
  * Create secure axios instance
  */

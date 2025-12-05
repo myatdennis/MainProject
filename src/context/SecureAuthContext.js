@@ -7,22 +7,7 @@ import { createContext, useContext, useState, useEffect, useCallback } from 'rea
 import { setAuthTokens, setUserSession, getUserSession, getAuthTokens, clearAuth, isTokenExpired, migrateFromLocalStorage, } from '../lib/secureStorage';
 import { loginSchema, emailSchema } from '../utils/validators';
 import axios from 'axios';
-// Configure axios base URL
-// Backwards compatibility: support legacy VITE_API_URL, prefer VITE_API_BASE_URL
-// If a full base URL is provided (e.g. https://railway-app.up.railway.app), append /api
-// Otherwise fall back to Vite dev proxy path '/api'.
-const rawApiBase = (import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || '').trim();
-const normalizedApiBase = rawApiBase.replace(/\/$/, '');
-const API_URL = normalizedApiBase ? `${normalizedApiBase}/api` : '/api';
-const api = axios.create({
-    baseURL: API_URL,
-    headers: {
-        'Content-Type': 'application/json',
-    },
-    // Allow cookies/CSRF if backend uses them
-    withCredentials: true,
-    timeout: 30000,
-});
+import { apiClient as api } from '../lib/apiClient';
 // ============================================================================
 // Context
 // ============================================================================

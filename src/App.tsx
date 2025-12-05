@@ -1,6 +1,6 @@
 import { useEffect, Suspense, lazy } from 'react';
-// Explicit extension added to help Vite resolve the TSX module during dev HMR
-const AdminDashboard = lazy(() => import('./pages/Admin/AdminDashboard.tsx'));
+// Use extension-less import so Vite resolves the compiled module in all environments
+const AdminDashboard = lazy(() => import('./pages/Admin/AdminDashboard'));
 // (removed duplicate import)
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { courseStore } from './store/courseStore';

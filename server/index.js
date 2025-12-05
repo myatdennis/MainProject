@@ -1,7 +1,6 @@
 // (Removed initial lightweight dev server stub in favor of the full server below)
 import 'dotenv/config';
 import express from 'express';
-import cors from 'cors';
 import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -90,29 +89,35 @@ const extraAllowedOrigins = rawAllowedOrigins
 const defaultAllowedOrigins = [
   'https://the-huddle.co',
   'https://www.the-huddle.co',
-  'http://localhost:5173',
+  'http://localhost:5174',
+  'http://127.0.0.1:5174',
   'http://localhost:4173',
+  'http://127.0.0.1:4173',
   'http://localhost:3000',
+  'http://127.0.0.1:3000',
 ];
 
 const allowedOrigins = Array.from(new Set([...defaultAllowedOrigins, ...extraAllowedOrigins]));
+const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production';
 
 app.use((req, res, next) => {
   const origin = req.headers.origin;
+  const isLocalDevOrigin = origin && origin.startsWith('http://localhost');
+  const isLoopback = origin && origin.startsWith('http://127.');
+  const isAllowed = origin && allowedOrigins.includes(origin);
 
-  if (origin && allowedOrigins.includes(origin)) {
+  if (origin && (isAllowed || (!isProduction && (isLocalDevOrigin || isLoopback)))) {
     res.header('Access-Control-Allow-Origin', origin);
     res.header('Vary', 'Origin');
+  } else if (!origin && !isProduction) {
+    res.header('Access-Control-Allow-Origin', '*');
   }
 
   res.header('Access-Control-Allow-Credentials', 'true');
-  res.header(
-    'Access-Control-Allow-Methods',
-    'GET,POST,PUT,PATCH,DELETE,OPTIONS'
-  );
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
   res.header(
     'Access-Control-Allow-Headers',
-    'Origin, X-Requested-With, Content-Type, Accept, Authorization'
+    'Content-Type, Authorization, X-Requested-With, X-User-Id, X-User-Role, X-Org-Id, X-CSRF-Token, Accept'
   );
 
   if (req.method === 'OPTIONS') {
@@ -133,10 +138,10 @@ app.get('/api/health', (_req, res) => {
 // When running behind a reverse proxy (Netlify, Vercel, Cloudflare, Railway),
 // Express needs to trust proxy headers so req.secure reflects X-Forwarded-Proto.
 // Enabling trust proxy ensures middleware and HSTS headers can operate correctly.
-if (process.env.NODE_ENV === 'production') {
+if (isProduction) {
   app.set('trust proxy', 1);
 }
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 8888;
 console.log(`[server] Using port ${PORT} (override via PORT env)`);
 
 app.use(express.json({ limit: '10mb' }));
@@ -159,8 +164,12 @@ console.log('[Diagnostics] COOKIE_DOMAIN:', process.env.COOKIE_DOMAIN || '(not s
 console.log('[Diagnostics] COOKIE_SAMESITE:', process.env.COOKIE_SAMESITE || '(not set)');
 
 const isAllowedOrigin = (origin) => {
-  if (!origin) return true;
-  return allowedOrigins.includes(origin);
+  if (!origin) return !isProduction;
+  if (allowedOrigins.includes(origin)) return true;
+  if (!isProduction && (origin.startsWith('http://localhost') || origin.startsWith('http://127.'))) {
+    return true;
+  }
+  return false;
 };
 
 // Basic request logging with request_id and timing
@@ -1104,41 +1113,6 @@ app.get('/api/admin/courses', async (_req, res) => {
       .order('order_index', { ascending: true, foreignTable: 'modules.lessons' });
 
     if (error) throw error;
-
-    // Prefer transactional RPC if available
-    try {
-      const rpcPayload = {
-        id: course.id ?? null,
-        slug: course.slug ?? null,
-        title: course.title || course.name,
-        description: course.description ?? null,
-        status: course.status ?? 'draft',
-        version: course.version ?? 1,
-        org_id: course.org_id ?? course.organizationId ?? null,
-        meta_json: meta,
-      };
-      const rpcRes = await supabase.rpc('upsert_course_full', { p_course: rpcPayload, p_modules: modules });
-      if (!rpcRes.error && rpcRes.data) {
-        const sel = await supabase
-          .from('courses')
-          .select('*, modules(*, lessons(*))')
-          .eq('id', rpcRes.data)
-          .single();
-        if (sel.error) throw sel.error;
-        // If an idempotency key was provided, record the resulting resource id
-        if (idempotencyKey) {
-          try {
-            await supabase.from('idempotency_keys').update({ resource_id: sel.data?.id }).eq('id', idempotencyKey);
-          } catch (updErr) {
-            console.warn('Failed to update idempotency_keys with resource id', updErr);
-          }
-        }
-        res.status(201).json({ data: sel.data });
-        return;
-      }
-    } catch (rpcErr) {
-      console.warn('RPC upsert_course_full failed, falling back to client-side sequence:', rpcErr);
-    }
     res.json({ data });
   } catch (error) {
     console.error('Failed to fetch courses:', error);
@@ -1684,10 +1658,26 @@ app.post('/api/admin/courses/import', async (req, res) => {
       if (upsertRes.error) throw upsertRes.error;
       const courseRow = upsertRes.data;
       // naive: clear and reinsert modules/lessons for this course
-      await supabase.from('lessons').delete().in('module_id', (
-        (await supabase.from('modules').select('id').eq('course_id', courseRow.id)).data || []
-      ).map((r) => r.id));
-      await supabase.from('modules').delete().eq('course_id', courseRow.id);
+      const existingModulesRes = await supabase
+        .from('modules')
+        .select('id')
+        .eq('course_id', courseRow.id);
+      if (existingModulesRes.error) throw existingModulesRes.error;
+      const existingModuleIds = (existingModulesRes.data || []).map((row) => row.id);
+
+      if (existingModuleIds.length > 0) {
+        const deleteLessonsRes = await supabase
+          .from('lessons')
+          .delete()
+          .in('module_id', existingModuleIds);
+        if (deleteLessonsRes.error) throw deleteLessonsRes.error;
+      }
+
+      const deleteModulesRes = await supabase
+        .from('modules')
+        .delete()
+        .eq('course_id', courseRow.id);
+      if (deleteModulesRes.error) throw deleteModulesRes.error;
 
       for (const [moduleIndex, module] of (modules || []).entries()) {
         const modIns = await supabase
@@ -1723,7 +1713,10 @@ app.post('/api/admin/courses/import', async (req, res) => {
     res.status(201).json({ data: results });
   } catch (error) {
     console.error('Import failed:', error);
-    res.status(500).json({ error: 'Import failed' });
+    res.status(500).json({
+      error: 'Import failed',
+      details: error?.message || error?.hint || null,
+    });
   }
 });
 

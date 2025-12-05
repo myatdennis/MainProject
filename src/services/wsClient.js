@@ -1,3 +1,4 @@
+import { API_ORIGIN } from '../lib/apiClient';
 // Lightweight browser-friendly event emitter (avoid Node 'events' polyfills)
 class SimpleEmitter {
     constructor() {
@@ -33,6 +34,14 @@ class SimpleEmitter {
         }
     }
 }
+const deriveDefaultWsUrl = () => {
+    const explicit = (import.meta.env.VITE_WS_URL || '').trim();
+    if (explicit) {
+        return explicit;
+    }
+    const proto = API_ORIGIN.startsWith('https') ? 'wss' : 'ws';
+    return `${API_ORIGIN.replace(/^https?/, proto)}/ws`;
+};
 class WSClient extends SimpleEmitter {
     constructor(url) {
         super();
@@ -41,7 +50,7 @@ class WSClient extends SimpleEmitter {
         this.maxDelay = 30000;
         this.shouldReconnect = true;
         this.connected = false;
-        this.url = url || import.meta.env.VITE_WS_URL || `${location.origin.replace(/^http/, 'ws')}/ws`;
+        this.url = url || deriveDefaultWsUrl();
     }
     connect() {
         if (this.socket)

@@ -50,8 +50,8 @@ const ClientCourseCompletion = lazy(() => import('./pages/Client/ClientCourseCom
 const ClientSurveys = lazy(() => import('./pages/Client/ClientSurveys'));
 const ClientProfile = lazy(() => import('./pages/Client/ClientProfile'));
 // Lazy load Admin components
-// Explicit extension added to help Vite resolve the TSX module during dev HMR
-const AdminDashboard = lazy(() => import('./pages/Admin/AdminDashboard.tsx'));
+// Use extension-less import so Vite resolves the compiled module in all environments
+const AdminDashboard = lazy(() => import('./pages/Admin/AdminDashboard'));
 const AdminUsers = lazy(() => import('./pages/Admin/AdminUsers'));
 const AdminOrganizations = lazy(() => import('./pages/Admin/AdminOrganizations'));
 const AdminOrganizationNew = lazy(() => import('./pages/Admin/AdminOrganizationNew'));

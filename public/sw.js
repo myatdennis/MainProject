@@ -59,6 +59,11 @@ self.addEventListener('fetch', event => {
 
   const url = new URL(request.url);
 
+  // Never intercept service worker script updates or manifest requests
+  if (url.pathname === '/sw.js' || url.pathname === '/service-worker.js') {
+    return;
+  }
+
   // Bypass API, websocket, and upgrade requests so we never interfere with auth flows or SSE/WS handshakes
   if (
     url.pathname.startsWith('/api') ||
