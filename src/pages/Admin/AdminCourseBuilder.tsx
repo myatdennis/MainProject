@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { DndProvider } from 'react-dnd/dist/core/DndProvider';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
@@ -34,15 +34,25 @@ import {
   ChevronUp,
   ChevronDown,
   Copy,
-  Loader
+  Loader,
+  GripVertical
 } from 'lucide-react';
 import CourseAssignmentModal from '../../components/CourseAssignmentModal';
 import LivePreview from '../../components/LivePreview';
+import CoursePreviewDock from '../../components/preview/CoursePreviewDock';
 import AIContentAssistant from '../../components/AIContentAssistant';
-// import DragDropItem from '../../components/DragDropItem'; // TODO: Implement drag drop functionality
+import MobileCourseToolbar from '../../components/Admin/MobileCourseToolbar';
+import MobileModuleNavigator from '../../components/Admin/MobileModuleNavigator';
+import useIsMobile from '../../hooks/useIsMobile';
+import DragDropItem from '../../components/DragDropItem';
 import VersionControl from '../../components/VersionControl';
 
-import { LazyImage } from '../../components/PerformanceComponents';
+const buildUploadKey = (moduleId: string, lessonId: string) => `${moduleId}::${lessonId}`;
+const parseUploadKey = (key: string) => {
+  const [moduleId, lessonId] = key.split('::');
+  return { moduleId, lessonId };
+};
+
 
 
 const AdminCourseBuilder = () => {
@@ -70,9 +80,32 @@ const AdminCourseBuilder = () => {
   const [initializing, setInitializing] = useState(isEditing);
   const [loadError, setLoadError] = useState<string | null>(null);
   const lastLoadedCourseIdRef = useRef<string | null>(null);
+  const isMobile = useIsMobile();
+  const [activeMobileModuleId, setActiveMobileModuleId] = useState<string | null>(null);
 
   const [searchParams] = useSearchParams();
   const [highlightLessonId, setHighlightLessonId] = useState<string | null>(null);
+  const modules = course.modules || [];
+  const hasModules = modules.length > 0;
+  const modulesToRender = isMobile && activeMobileModuleId
+    ? modules.filter(module => module.id === activeMobileModuleId)
+    : modules;
+  const activeUploads = useMemo(() => {
+    if (!course.modules) return [];
+    return Object.entries(uploadingVideos)
+      .filter(([, isActive]) => isActive)
+      .map(([key]) => {
+        const { moduleId, lessonId } = parseUploadKey(key);
+        const module = course.modules?.find((m) => m.id === moduleId);
+        const lesson = module?.lessons.find((l) => l.id === lessonId);
+        return {
+          key,
+          moduleTitle: module?.title || 'Untitled module',
+          lessonTitle: lesson?.title || 'Untitled lesson',
+          progress: Math.round(uploadProgress[key] ?? 0)
+        };
+      });
+  }, [course.modules, uploadingVideos, uploadProgress]);
 
   useEffect(() => {
     const moduleQ = searchParams.get('module');
@@ -99,6 +132,46 @@ const AdminCourseBuilder = () => {
       }, 200);
     }
   }, [searchParams, course.modules]);
+
+  useEffect(() => {
+    const currentModules = course.modules || [];
+    if (currentModules.length === 0) {
+      if (activeMobileModuleId !== null) {
+        setActiveMobileModuleId(null);
+      }
+      return;
+    }
+
+    if (!activeMobileModuleId || !currentModules.some(module => module.id === activeMobileModuleId)) {
+      setActiveMobileModuleId(currentModules[0].id);
+    }
+  }, [course.modules, activeMobileModuleId]);
+
+  useEffect(() => {
+    if (!isMobile || !activeMobileModuleId) return;
+    const element = typeof document !== 'undefined'
+      ? document.getElementById(`module-${activeMobileModuleId}`)
+      : null;
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }, [activeMobileModuleId, isMobile]);
+
+  const handleMobileModuleSelect = useCallback((moduleId: string) => {
+    setActiveMobileModuleId(moduleId);
+    setExpandedModules(prev =>
+      isMobile
+        ? { [moduleId]: true }
+        : { ...prev, [moduleId]: true }
+    );
+  }, [isMobile]);
+
+  useEffect(() => {
+    if (editingLesson?.moduleId) {
+      setActiveMobileModuleId(editingLesson.moduleId);
+      setExpandedModules(prev => ({ ...prev, [editingLesson.moduleId!]: true }));
+    }
+  }, [editingLesson]);
 
   useEffect(() => {
     if (!isEditing || !courseId) {
@@ -448,51 +521,68 @@ const AdminCourseBuilder = () => {
     console.log('Dismissed suggestion:', suggestionId);
   };
 
-  // Drag and drop handlers - TODO: Implement drag and drop functionality
-  /*
-  const reorderModules = (dragIndex: number, hoverIndex: number) => {
-    const modules = [...(course.modules || [])];
-    const draggedModule = modules[dragIndex];
-    
-    modules.splice(dragIndex, 1);
-    modules.splice(hoverIndex, 0, draggedModule);
-    
-    // Update order properties
-    const reorderedModules = modules.map((module, index) => ({
-      ...module,
-      order: index + 1
-    }));
-    
-    setCourse(prev => ({
-      ...prev,
-      modules: reorderedModules
-    }));
-  };
+  const reorderModules = useCallback((dragIndex: number, hoverIndex: number) => {
+    setCourse((prev) => {
+      const existingModules = [...(prev.modules || [])];
+      if (
+        dragIndex === hoverIndex ||
+        dragIndex < 0 ||
+        hoverIndex < 0 ||
+        dragIndex >= existingModules.length ||
+        hoverIndex >= existingModules.length
+      ) {
+        return prev;
+      }
 
-  const reorderLessons = (moduleId: string, dragIndex: number, hoverIndex: number) => {
-    setCourse(prev => ({
-      ...prev,
-      modules: prev.modules?.map(module => {
-        if (module.id === moduleId) {
-          const lessons = [...module.lessons];
-          const draggedLesson = lessons[dragIndex];
-          
-          lessons.splice(dragIndex, 1);
-          lessons.splice(hoverIndex, 0, draggedLesson);
-          
-          // Update order properties
-          const reorderedLessons = lessons.map((lesson, index) => ({
-            ...lesson,
-            order: index + 1
-          }));
-          
-          return { ...module, lessons: reorderedLessons };
-        }
-        return module;
-      }) || []
-    }));
-  };
-  */
+      const [draggedModule] = existingModules.splice(dragIndex, 1);
+      existingModules.splice(hoverIndex, 0, draggedModule);
+
+      const reorderedModules = existingModules.map((module, index) => ({
+        ...module,
+        order: index + 1,
+      }));
+
+      return {
+        ...prev,
+        modules: reorderedModules,
+      };
+    });
+  }, []);
+
+  const reorderLessons = useCallback((moduleId: string, dragIndex: number, hoverIndex: number) => {
+    setCourse((prev) => {
+      return {
+        ...prev,
+        modules:
+          prev.modules?.map((module) => {
+            if (module.id !== moduleId) {
+              return module;
+            }
+
+            const lessons = [...(module.lessons || [])];
+            if (
+              dragIndex === hoverIndex ||
+              dragIndex < 0 ||
+              hoverIndex < 0 ||
+              dragIndex >= lessons.length ||
+              hoverIndex >= lessons.length
+            ) {
+              return module;
+            }
+
+            const [draggedLesson] = lessons.splice(dragIndex, 1);
+            lessons.splice(hoverIndex, 0, draggedLesson);
+
+            const reorderedLessons = lessons.map((lesson, index) => ({
+              ...lesson,
+              order: index + 1,
+            }));
+
+            return { ...module, lessons: reorderedLessons };
+          }) || [],
+      };
+    });
+  }, []);
 
   // Version control handler
   const handleRestoreVersion = (version: any) => {
@@ -696,11 +786,11 @@ const AdminCourseBuilder = () => {
       return;
     }
 
-    const uploadKey = `${moduleId}-${lessonId}`;
+  const uploadKey = buildUploadKey(moduleId, lessonId);
     
     try {
       setUploadingVideos(prev => ({ ...prev, [uploadKey]: true }));
-      setUploadProgress(prev => ({ ...prev, [uploadKey]: 0 }));
+  setUploadProgress(prev => ({ ...prev, [uploadKey]: 0 }));
 
       // Create unique filename
       const fileExt = file.name.split('.').pop();
@@ -760,7 +850,7 @@ const AdminCourseBuilder = () => {
   };
 
   const handleFileUpload = async (moduleId: string, lessonId: string, file: File) => {
-    const uploadKey = `${moduleId}-${lessonId}`;
+  const uploadKey = buildUploadKey(moduleId, lessonId);
     
     try {
       setUploadingVideos(prev => ({ ...prev, [uploadKey]: true }));
@@ -824,11 +914,14 @@ const AdminCourseBuilder = () => {
       ...prev,
       [moduleId]: !prev[moduleId]
     }));
+    if (isMobile) {
+      setActiveMobileModuleId(moduleId);
+    }
   };
 
   const renderLessonEditor = (moduleId: string, lesson: Lesson) => {
     const isEditing = editingLesson?.moduleId === moduleId && editingLesson?.lessonId === lesson.id;
-    const uploadKey = `${moduleId}-${lesson.id}`;
+  const uploadKey = buildUploadKey(moduleId, lesson.id);
     const isUploading = uploadingVideos[uploadKey];
     const progress = uploadProgress[uploadKey];
 
@@ -1903,9 +1996,12 @@ const AdminCourseBuilder = () => {
 
   return (
     <DndProvider backend={HTML5Backend}>
-      <div className="p-6 max-w-7xl mx-auto">
+      <div className="p-6">
+        <div className="max-w-7xl mx-auto">
+          <div className="xl:grid xl:grid-cols-[minmax(0,1fr)_420px] gap-6 items-start">
+            <div className="order-2 xl:order-1 space-y-8">
       {/* Header */}
-      <div className="mb-8">
+      <div>
         <Link 
           to="/admin/courses" 
           className="inline-flex items-center text-orange-500 hover:text-orange-600 mb-4 font-medium"
@@ -2091,7 +2187,7 @@ const AdminCourseBuilder = () => {
       </div>
 
       {/* Tabs */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 mb-8">
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200">
         <div className="border-b border-gray-200">
           <nav className="flex space-x-8 px-6">
             {tabs.map((tab) => {
@@ -2272,7 +2368,18 @@ const AdminCourseBuilder = () => {
           )}
 
           {activeTab === 'content' && (
-            <div className="space-y-6">
+            <div className="space-y-6 pb-20">
+              {isMobile && (
+                <div className="sticky top-20 z-20 bg-white pb-2">
+                  <MobileModuleNavigator
+                    modules={modules}
+                    activeModuleId={activeMobileModuleId}
+                    onSelect={handleMobileModuleSelect}
+                    onAddModule={addModule}
+                  />
+                </div>
+              )}
+
               <div className="flex items-center justify-between">
                 <h2 className="text-xl font-bold text-gray-900">Course Modules</h2>
                 <button
@@ -2285,77 +2392,177 @@ const AdminCourseBuilder = () => {
               </div>
 
               <div className="space-y-4">
-                {(course.modules || []).map((module, _moduleIndex) => (
-                  <div key={module.id} className="border border-gray-200 rounded-lg">
-                    <div className="p-4 bg-gray-50 border-b border-gray-200">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center space-x-3 flex-1">
-                          <button
-                            onClick={() => toggleModuleExpansion(module.id)}
-                            className="text-gray-600 hover:text-gray-800"
-                          >
-                            {expandedModules[module.id] ? (
-                              <ChevronUp className="h-5 w-5" />
-                            ) : (
-                              <ChevronDown className="h-5 w-5" />
-                            )}
-                          </button>
-                          <div className="flex-1">
-                            <input
-                              type="text"
-                              value={module.title}
-                              onChange={(e) => updateModule(module.id, { title: e.target.value })}
-                              placeholder="Module title..."
-                              className="font-medium text-gray-900 bg-transparent border-none focus:outline-none focus:ring-0 p-0 w-full"
-                            />
-                            <input
-                              type="text"
-                              value={module.description}
-                              onChange={(e) => updateModule(module.id, { description: e.target.value })}
-                              placeholder="Module description..."
-                              className="text-sm text-gray-600 bg-transparent border-none focus:outline-none focus:ring-0 p-0 w-full mt-1"
-                            />
-                          </div>
-                        </div>
-                        <div className="flex items-center space-x-2">
-                          <span className="text-sm text-gray-600">{module.lessons.length} lessons</span>
-                          <button
-                            onClick={() => deleteModule(module.id)}
-                            className="text-red-600 hover:text-red-800"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        </div>
+                <div className="flex flex-col gap-4 lg:flex-row">
+                  <div className="flex-1 rounded-2xl border border-dashed border-gray-300 bg-white/80 p-4 shadow-sm">
+                    <div className="flex items-center gap-3 text-sm text-gray-600">
+                      <span className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-gray-100">
+                        <GripVertical className="h-4 w-4 text-gray-500" aria-hidden="true" />
+                      </span>
+                      <div>
+                        <p className="font-semibold text-gray-900">Drag modules or lessons to reorder</p>
+                        <p className="text-xs text-gray-500">Changes save automatically after you drop them, so you can refine structure without modal dialogs.</p>
                       </div>
                     </div>
-
-                    {expandedModules[module.id] && (
-                      <div className="p-4">
-                        <div className="space-y-3 mb-4">
-                          {module.lessons.map((lesson) => (
-                            <div
-                              key={lesson.id}
-                              id={`lesson-${lesson.id}`}
-                              className={highlightLessonId === lesson.id ? 'transition-all duration-300 ring-2 ring-orange-300 bg-orange-50 rounded-md p-1' : ''}
-                            >
-                              {renderLessonEditor(module.id, lesson)}
-                            </div>
-                          ))}
-                        </div>
-                        
-                        <button
-                          onClick={() => addLesson(module.id)}
-                          className="w-full border-2 border-dashed border-gray-300 rounded-lg p-4 text-gray-600 hover:border-gray-400 hover:text-gray-700 transition-colors duration-200"
-                        >
-                          <Plus className="h-5 w-5 mx-auto mb-2" />
-                          <span className="text-sm">Add Lesson</span>
-                        </button>
-                      </div>
-                    )}
                   </div>
-                ))}
 
-                {(course.modules || []).length === 0 && (
+                  {activeUploads.length > 0 && (
+                    <div className="flex-1 rounded-2xl border border-blue-100 bg-gradient-to-br from-blue-50 via-white to-blue-50 p-4 shadow-sm" role="status" aria-live="polite">
+                      <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-sm text-blue-900">
+                        <span className="inline-flex items-center gap-2 font-semibold">
+                          <Upload className="h-4 w-4" aria-hidden="true" />
+                          Active uploads ({activeUploads.length})
+                        </span>
+                        <span className="text-xs text-blue-600">Keep editing—videos process in the background</span>
+                      </div>
+                      <div className="space-y-3 max-h-64 overflow-y-auto pr-1">
+                        {activeUploads.map((upload) => (
+                          <div key={upload.key} className="rounded-xl bg-white/90 p-3 shadow-sm ring-1 ring-black/5">
+                            <div className="flex items-center justify-between text-xs text-gray-600">
+                              <span className="font-semibold text-gray-900" title={upload.moduleTitle}>{upload.moduleTitle}</span>
+                              <span title={upload.lessonTitle}>{upload.lessonTitle}</span>
+                            </div>
+                            <div className="mt-2 h-2 rounded-full bg-gray-100" aria-label={`Upload progress ${upload.progress}%`}>
+                              <div
+                                className="h-2 rounded-full bg-gradient-to-r from-blue-400 to-blue-600 transition-all duration-300"
+                                style={{ width: `${upload.progress}%` }}
+                                role="progressbar"
+                                aria-valuenow={upload.progress}
+                                aria-valuemin={0}
+                                aria-valuemax={100}
+                              />
+                            </div>
+                            <div className="mt-1 text-right text-xs font-semibold text-blue-700">{upload.progress}%</div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {modulesToRender.map((module) => {
+                  const canonicalIndex = (course.modules || []).findIndex((m) => m.id === module.id);
+                  const moduleCard = (
+                    <div
+                      id={`module-${module.id}`}
+                      className={`border border-gray-200 rounded-lg bg-white transition-shadow ${
+                        isMobile && module.id === activeMobileModuleId ? 'ring-2 ring-orange-200 shadow-lg' : ''
+                      }`}
+                    >
+                      <div className="p-4 bg-gray-50 border-b border-gray-200">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center space-x-3 flex-1">
+                            <button
+                              onClick={() => toggleModuleExpansion(module.id)}
+                              className="text-gray-600 hover:text-gray-800"
+                            >
+                              {expandedModules[module.id] ? (
+                                <ChevronUp className="h-5 w-5" />
+                              ) : (
+                                <ChevronDown className="h-5 w-5" />
+                              )}
+                            </button>
+                            <div className="flex-1">
+                              <input
+                                type="text"
+                                value={module.title}
+                                onChange={(e) => updateModule(module.id, { title: e.target.value })}
+                                placeholder="Module title..."
+                                className="font-medium text-gray-900 bg-transparent border-none focus:outline-none focus:ring-0 p-0 w-full"
+                              />
+                              <input
+                                type="text"
+                                value={module.description}
+                                onChange={(e) => updateModule(module.id, { description: e.target.value })}
+                                placeholder="Module description..."
+                                className="text-sm text-gray-600 bg-transparent border-none focus:outline-none focus:ring-0 p-0 w-full mt-1"
+                              />
+                            </div>
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <span className="text-sm text-gray-600">{module.lessons.length} lessons</span>
+                            <button
+                              onClick={() => deleteModule(module.id)}
+                              className="text-red-600 hover:text-red-800"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {expandedModules[module.id] && (
+                        <div className="p-4">
+                          <div className="space-y-3 mb-4">
+                            {(module.lessons || []).map((lesson, lessonIndex) => {
+                              const lessonContent = (
+                                <div
+                                  id={`lesson-${lesson.id}`}
+                                  className={
+                                    highlightLessonId === lesson.id
+                                      ? 'transition-all duration-300 ring-2 ring-orange-300 bg-orange-50 rounded-md p-1'
+                                      : ''
+                                  }
+                                >
+                                  {renderLessonEditor(module.id, lesson)}
+                                </div>
+                              );
+
+                              if (isMobile) {
+                                return (
+                                  <div key={lesson.id}>
+                                    {lessonContent}
+                                  </div>
+                                );
+                              }
+
+                              return (
+                                <DragDropItem
+                                  key={lesson.id}
+                                  id={lesson.id}
+                                  index={lessonIndex}
+                                  onReorder={(dragIndex, hoverIndex) => reorderLessons(module.id, dragIndex, hoverIndex)}
+                                  className="block"
+                                >
+                                  {lessonContent}
+                                </DragDropItem>
+                              );
+                            })}
+                          </div>
+                          
+                          <button
+                            onClick={() => addLesson(module.id)}
+                            className="w-full border-2 border-dashed border-gray-300 rounded-lg p-4 text-gray-600 hover:border-gray-400 hover:text-gray-700 transition-colors duration-200"
+                          >
+                            <Plus className="h-5 w-5 mx-auto mb-2" />
+                            <span className="text-sm">Add Lesson</span>
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+
+                  if (isMobile || canonicalIndex < 0) {
+                    return (
+                      <div key={module.id}>
+                        {moduleCard}
+                      </div>
+                    );
+                  }
+
+                  return (
+                    <DragDropItem
+                      key={module.id}
+                      id={module.id}
+                      index={canonicalIndex}
+                      onReorder={reorderModules}
+                      className="block"
+                    >
+                      {moduleCard}
+                    </DragDropItem>
+                  );
+                })}
+
+                {!hasModules && (
                   <div className="text-center py-12 border-2 border-dashed border-gray-300 rounded-lg">
                     <BookOpen className="h-12 w-12 text-gray-400 mx-auto mb-4" />
                     <h3 className="text-lg font-medium text-gray-900 mb-2">No modules yet</h3>
@@ -2558,60 +2765,27 @@ const AdminCourseBuilder = () => {
           )}
         </div>
       </div>
-
-      {/* Course Preview */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-        <h2 className="text-xl font-bold text-gray-900 mb-6">Course Preview</h2>
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          <div>
-            <LazyImage
-              src={course.thumbnail}
-              alt={course.title}
-              className="w-full h-48 object-cover rounded-lg mb-4"
-              fallbackSrc="/placeholder-image.png"
-              placeholder={<div className="w-full h-48 bg-gray-200 animate-pulse rounded-lg mb-4" />}
-            />
-            <h3 className="text-2xl font-bold text-gray-900 mb-2">{course.title || 'Course Title'}</h3>
-            <p className="text-gray-600 mb-4">{course.description || 'Course description will appear here...'}</p>
-            <div className="flex items-center space-x-4 text-sm text-gray-600">
-              <span className="flex items-center">
-                <Clock className="h-4 w-4 mr-1" />
-                {calculateCourseDuration(course.modules || [])}
-              </span>
-              <span className="flex items-center">
-                <BookOpen className="h-4 w-4 mr-1" />
-                {countTotalLessons(course.modules || [])} lessons
-              </span>
-              <span className="flex items-center">
-                <Users className="h-4 w-4 mr-1" />
-                {course.difficulty}
-              </span>
             </div>
-          </div>
-          <div>
-            <h4 className="font-semibold text-gray-900 mb-3">Learning Objectives:</h4>
-            <ul className="space-y-2 mb-6">
-              {(course.learningObjectives || []).slice(0, 3).map((objective, index) => (
-                <li key={index} className="flex items-start space-x-2">
-                  <Target className="h-4 w-4 text-orange-500 mt-0.5 flex-shrink-0" />
-                  <span className="text-gray-700 text-sm">{objective || 'Learning objective...'}</span>
-                </li>
-              ))}
-              {(course.learningObjectives || []).length > 3 && (
-                <li className="text-sm text-gray-500">+{(course.learningObjectives || []).length - 3} more objectives</li>
-              )}
-            </ul>
-            
-            <div className="flex flex-wrap gap-2">
-              {(course.tags || []).map((tag, index) => (
-                <span key={index} className="bg-gray-100 text-gray-700 px-2 py-1 rounded-full text-xs">
-                  {tag}
-                </span>
-              ))}
+            <div className="order-1 xl:order-2 w-full">
+              <CoursePreviewDock
+                course={course}
+                activeLessonId={editingLesson?.lessonId ?? null}
+                onLaunchFullPreview={() => setShowPreview(true)}
+              />
             </div>
           </div>
         </div>
       </div>
+
+      {isMobile && activeTab === 'content' && (
+        <MobileCourseToolbar
+          onAddModule={addModule}
+          onPreview={() => setShowPreview(true)}
+          onSave={handleSave}
+          saveStatus={saveStatus}
+          disabled={initializing}
+        />
+      )}
 
       {/* Course Assignment Modal */}
       <CourseAssignmentModal
@@ -2632,7 +2806,6 @@ const AdminCourseBuilder = () => {
           course.modules?.find(m => m.id === editingLesson.moduleId)
             ?.lessons.find(l => l.id === editingLesson.lessonId) : undefined}
       />
-      </div>
     </DndProvider>
   );
 };

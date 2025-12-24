@@ -3,10 +3,10 @@
  * Check SSL / TLS details for a given host and port (default: 443).
  * Usage: node scripts/check_ssl.cjs the-huddle.co [443]
  */
-import tls from 'tls';
-import { promisify } from 'util';
-import dns from 'dns';
-import { argv } from 'process';
+const tls = require('tls');
+const { promisify } = require('util');
+const dns = require('dns');
+const { argv } = require('process');
 
 async function lookup(host) {
   try {

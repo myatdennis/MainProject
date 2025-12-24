@@ -54,6 +54,7 @@ interface CourseProgressSidebarProps {
   currentLessonId?: string;
   lessonProgress: { [lessonId: string]: LessonProgress };
   onLessonSelect: (moduleId: string, lessonId: string) => void;
+  onLessonOpenInPlayer?: (lessonId: string) => void;
   collapsed?: boolean;
   onCollapsedChange?: (collapsed: boolean) => void;
   className?: string;
@@ -64,6 +65,7 @@ const CourseProgressSidebar: React.FC<CourseProgressSidebarProps> = ({
   currentLessonId,
   lessonProgress,
   onLessonSelect,
+  onLessonOpenInPlayer,
   collapsed = false,
   onCollapsedChange,
   className = ''
@@ -186,6 +188,12 @@ const CourseProgressSidebar: React.FC<CourseProgressSidebarProps> = ({
     if (isMobile && onCollapsedChange) {
       onCollapsedChange(true);
     }
+  };
+
+  const handleLessonLaunch = (event: React.MouseEvent, lesson: Lesson) => {
+    event.stopPropagation();
+    if (lesson.isLocked || !onLessonOpenInPlayer) return;
+    onLessonOpenInPlayer(lesson.id);
   };
 
   const overallProgress = calculateOverallProgress();
@@ -395,11 +403,19 @@ const CourseProgressSidebar: React.FC<CourseProgressSidebarProps> = ({
                               </div>
                             </div>
 
-                            {isCurrentLesson && (
-                              <div className="flex items-center text-orange-600">
-                                <Play className="h-4 w-4" />
-                              </div>
-                            )}
+                            <div className="flex items-center text-orange-600">
+                              <button
+                                type="button"
+                                onClick={(event) => handleLessonLaunch(event, lesson)}
+                                disabled={!onLessonOpenInPlayer}
+                                className={`rounded-full border border-orange-200 p-1 transition hover:bg-orange-50 ${
+                                  !onLessonOpenInPlayer ? 'opacity-40 cursor-not-allowed' : ''
+                                }`}
+                                title="Open lesson in Course Player"
+                              >
+                                <Play className="h-3.5 w-3.5" />
+                              </button>
+                            </div>
                           </div>
                         </button>
                       );

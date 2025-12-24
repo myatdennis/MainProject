@@ -63,16 +63,36 @@ const LMSCourses = () => {
       .filter((course) => course.status === 'published')
       .map((course) => {
         const normalized = normalizeCourse(course);
-        const storedProgress = loadStoredCourseProgress(normalized.slug);
-        const completedLessonCount = storedProgress.completedLessonIds.length;
+        const storedProgress =
+          loadStoredCourseProgress(normalized.slug) ?? {
+            completedLessonIds: [],
+            lessonProgress: {},
+            lessonPositions: {},
+            lastLessonId: undefined,
+          };
+        const completedLessonIds = new Set(storedProgress.completedLessonIds ?? []);
+        const allLessons =
+          normalized.modules?.flatMap((module) =>
+            (module.lessons ?? []).map((lesson) => ({
+              lessonId: lesson.id,
+            }))
+          ) ?? [];
+        const completedLessonCount = completedLessonIds.size;
         const progressPercent =
           normalized.lessons > 0
             ? Math.round((completedLessonCount / normalized.lessons) * 100)
             : 0;
 
+        const lastLessonId = storedProgress.lastLessonId;
+        const nextLessonEntry =
+          (lastLessonId && allLessons.find((entry) => entry.lessonId === lastLessonId)) ||
+          allLessons.find((entry) => !completedLessonIds.has(entry.lessonId)) ||
+          allLessons[0];
+
         return {
           ...normalized,
           progress: progressPercent,
+          resumeLessonId: nextLessonEntry?.lessonId ?? null,
         };
       });
   }, [progressRefreshToken]);
@@ -362,7 +382,7 @@ const SectionHeading = ({ title, helper, actionLabel, onAction }: SectionHeading
 );
 
 interface CourseCardProps {
-  course: ReturnType<typeof normalizeCourse> & { progress: number };
+  course: ReturnType<typeof normalizeCourse> & { progress: number; resumeLessonId?: string | null };
 }
 
 const CourseCard = ({ course }: CourseCardProps) => {
@@ -371,6 +391,10 @@ const CourseCard = ({ course }: CourseCardProps) => {
     : course.progress > 0
       ? `${course.progress}% complete`
       : 'Ready to start';
+  const courseBasePath = `/lms/courses/${course.slug || course.id}`;
+  const lessonPath = course.resumeLessonId ? `${courseBasePath}/lesson/${course.resumeLessonId}` : courseBasePath;
+  const primaryHref = course.progress >= 100 ? courseBasePath : lessonPath;
+  const primaryLabel = course.progress >= 100 ? 'Review course' : course.progress > 0 ? 'Continue' : 'Start course';
 
   return (
     <Card className="flex h-full flex-col">
@@ -418,12 +442,10 @@ const CourseCard = ({ course }: CourseCardProps) => {
 
         <div className="mt-auto flex items-center justify-between gap-3">
           <Button size="sm" className="flex-1" asChild>
-            <Link to={`/lms/course/${course.slug || course.id}`}>
-              {course.progress >= 100 ? 'Review course' : course.progress > 0 ? 'Continue' : 'Start course'}
-            </Link>
+            <Link to={primaryHref}>{primaryLabel}</Link>
           </Button>
           <Button variant="ghost" size="sm" asChild>
-            <Link to={`/lms/course/${course.slug || course.id}`}>Details</Link>
+            <Link to={courseBasePath}>Details</Link>
           </Button>
         </div>
       </div>

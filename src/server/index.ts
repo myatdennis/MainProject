@@ -9,6 +9,11 @@ import cookieParser from 'cookie-parser';
 
 import analyticsRoutes from './analyticsRoutes';
 import auditLogRoutes from './auditLogRoutes';
+import authRoutes from './routes/authRoutes';
+import mfaRoutes from './routes/mfaRoutes';
+import courseRoutes from './routes/courseRoutes';
+import surveyRoutes from './routes/surveyRoutes';
+import progressRoutes from './routes/progressRoutes';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -25,18 +30,34 @@ app.use(cookieParser());
 app.use(express.json());
 
 // CORS: allow frontend origin(s) and enable credentials for cookie-based auth
-const allowedOrigins = [
+const defaultOrigins = [
   'https://the-huddle.co',
   'https://www.the-huddle.co',
-  'http://localhost:5173', // keep local dev
+  'http://localhost:5173',
+  'http://localhost:4173', // Vite preview
+  'http://localhost:8888', // Netlify dev server
 ];
+
+const envOrigins = process.env.CORS_ALLOWED_ORIGINS
+  ?.split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+
+const allowedOrigins = Array.from(new Set([...(envOrigins ?? []), ...defaultOrigins]));
+const wildcardOriginMatchers = [/\.netlify\.app$/i];
+
+if (allowedOrigins.length === 0) {
+  console.warn('[CORS] No explicit origins configured; falling back to localhost only.');
+}
+
+console.info('[CORS] Allowed origins:', allowedOrigins);
 
 const corsOptions = {
   origin(origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) {
     // Allow requests with no origin like curl or mobile apps
     if (!origin) return callback(null, true);
 
-    if (allowedOrigins.includes(origin)) {
+    if (allowedOrigins.includes(origin) || wildcardOriginMatchers.some((regex) => regex.test(origin))) {
       return callback(null, true);
     }
     console.warn('[CORS] Blocked origin:', origin);
@@ -58,6 +79,11 @@ app.get('/api/csrf-token', (req: Request, res: Response) => {
 
 
 // Routes
+app.use('/api/auth', authRoutes);
+app.use('/api/mfa', mfaRoutes);
+app.use('/api', courseRoutes);
+app.use('/api', surveyRoutes);
+app.use('/api', progressRoutes);
 app.use(analyticsRoutes);
 app.use(auditLogRoutes);
 

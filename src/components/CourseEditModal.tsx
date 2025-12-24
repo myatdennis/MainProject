@@ -1192,6 +1192,7 @@ ${content.type === 'quiz' && 'questions' in content.content ? `\nQuestions: ${co
                     onChange={(e) => handleInputChange('title', e.target.value)}
                     className="w-full border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                     placeholder="Enter course title"
+                    data-test="course-modal-title"
                   />
                 </div>
 
@@ -2693,12 +2694,14 @@ ${content.type === 'quiz' && 'questions' in content.content ? `\nQuestions: ${co
             <button
               onClick={onClose}
               className="px-4 py-2 text-gray-700 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
+              data-test="course-modal-cancel"
             >
               Cancel
             </button>
             <button
               onClick={handleSave}
               className="flex items-center space-x-2 px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600 transition-colors"
+              data-test="course-modal-save"
             >
               <Save className="h-4 w-4" />
               <span>Save as Draft</span>

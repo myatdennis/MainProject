@@ -1,4 +1,5 @@
 import React, { useEffect, useState, lazy, Suspense } from 'react'
+import { Users, TrendingUp, Activity as ActivityIcon, Clock, BarChart3, BookOpen } from 'lucide-react'
 import { getSupabase } from '../../lib/supabase'
 const CompletionChart = lazy(() => import('../../components/Analytics/CompletionChart'));
 
@@ -10,20 +11,63 @@ type Overview = {
   platform_avg_completion?: number
 }
 
+type ActivityItem = {
+  id: string
+  title: string
+  detail: string
+  timestamp: string
+  type: 'progress' | 'completion' | 'login'
+}
+
+const toActivityFeed = (activityPayload: any, fallbackCourses: any[]): ActivityItem[] => {
+  if (Array.isArray(activityPayload) && activityPayload.length > 0) {
+    return activityPayload.slice(0, 10).map((event: any, idx: number) => ({
+      id: event.id || `activity-${idx}`,
+      title: event.title || event.action || 'Learner activity',
+      detail: event.detail || event.course_id || 'Course update',
+      timestamp: event.timestamp || new Date().toISOString(),
+      type: event.type || 'progress'
+    }))
+  }
+
+  return fallbackCourses.slice(0, 5).map((course, idx) => ({
+    id: `course-${course.course_id}-${idx}`,
+    title: `${course.course_id} milestone`,
+    detail: `${Math.round(course.completion_percent ?? 0)}% completion • ${Math.round(course.avg_progress ?? 0)}% avg progress`,
+    timestamp: new Date(Date.now() - idx * 60000).toISOString(),
+    type: 'completion'
+  }))
+}
+
+const formatNumber = (value?: number) => {
+  if (value === undefined || value === null) return '—'
+  return value.toLocaleString()
+}
+
+const formatPercent = (value?: number) => {
+  if (value === undefined || value === null) return '—'
+  return `${Math.round(value)}%`
+}
+
 const AnalyticsDashboard: React.FC = () => {
   const [overview, setOverview] = useState<Overview>({})
   const [courses, setCourses] = useState<any[]>([])
   const [dropoffs, setDropoffs] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
+  const [activityFeed, setActivityFeed] = useState<ActivityItem[]>([])
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
 
   const fetchData = async () => {
     setLoading(true)
     try {
       const res = await fetch('/api/admin/analytics')
       const json = await res.json()
-      setOverview(json.overview || {})
-      setCourses(Array.isArray(json.courses) ? json.courses : [])
-      setDropoffs(Array.isArray(json.dropoffs) ? json.dropoffs : [])
+  const nextCourses = Array.isArray(json.courses) ? json.courses : []
+  setOverview(json.overview || {})
+  setCourses(nextCourses)
+  setDropoffs(Array.isArray(json.dropoffs) ? json.dropoffs : [])
+  setActivityFeed(toActivityFeed(json.activity, nextCourses))
+  setLastUpdated(new Date())
     } catch (err) {
       console.error('Failed to load analytics', err)
     } finally {
@@ -91,63 +135,171 @@ const AnalyticsDashboard: React.FC = () => {
     }
   }
 
+  const metrics = [
+    { label: 'Active learners', value: formatNumber(overview.total_active_learners), helper: 'Live seats', icon: Users },
+    { label: 'Organizations', value: formatNumber(overview.total_orgs), helper: 'Connected accounts', icon: BarChart3 },
+    { label: 'Published courses', value: formatNumber(overview.total_courses), helper: 'Catalog', icon: BookOpen },
+    { label: 'Avg completion', value: formatPercent(overview.platform_avg_completion), helper: `Avg progress ${formatPercent(overview.platform_avg_progress)}`, icon: TrendingUp }
+  ]
+
+  const lastUpdatedLabel = lastUpdated
+    ? `Live • updated ${lastUpdated.toLocaleTimeString()}`
+    : 'Waiting for realtime sync'
+
+  const chartData = courses.map((course) => ({ label: course.course_id, value: Number(course.completion_percent ?? 0) }))
+
   return (
-    <div style={{ padding: 20 }}>
-      <h2>Admin Analytics</h2>
-      <div style={{ display: 'flex', gap: 16, marginBottom: 16 }}>
-        <div style={{ padding: 12, border: '1px solid #eee', borderRadius: 8 }}>
-          <div style={{ fontSize: 12, color: '#666' }}>Active learners</div>
-          <div style={{ fontSize: 20 }}>{overview.total_active_learners ?? '—'}</div>
+    <div className="space-y-8 p-6">
+      <header className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-orange-600">Live analytics</p>
+          <h2 className="mt-1 text-2xl font-semibold text-gray-900">Admin Analytics</h2>
+          <div className="mt-3 inline-flex items-center gap-2 rounded-full bg-green-50 px-3 py-1 text-xs font-medium text-green-700">
+            <span className="h-2 w-2 animate-pulse rounded-full bg-green-500" />
+            {lastUpdatedLabel}
+          </div>
         </div>
-        <div style={{ padding: 12, border: '1px solid #eee', borderRadius: 8 }}>
-          <div style={{ fontSize: 12, color: '#666' }}>Orgs</div>
-          <div style={{ fontSize: 20 }}>{overview.total_orgs ?? '—'}</div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={exportCsv}
+            className="inline-flex items-center gap-2 rounded-2xl border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 transition hover:bg-gray-50"
+          >
+            Export CSV
+          </button>
+          <button
+            onClick={requestSummary}
+            className="inline-flex items-center gap-2 rounded-2xl bg-gradient-to-r from-orange-500 to-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:brightness-110"
+          >
+            AI Summary
+          </button>
         </div>
-        <div style={{ padding: 12, border: '1px solid #eee', borderRadius: 8 }}>
-          <div style={{ fontSize: 12, color: '#666' }}>Courses</div>
-          <div style={{ fontSize: 20 }}>{overview.total_courses ?? '—'}</div>
-        </div>
-      </div>
+      </header>
 
-      <div style={{ marginBottom: 12 }}>
-        <button onClick={exportCsv} style={{ marginRight: 8 }}>Export CSV</button>
-        <button onClick={requestSummary}>AI Summary</button>
-      </div>
-
-      <h3>Top courses (by completion %)</h3>
-      {loading ? <div>Loading…</div> : (
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-          <thead>
-            <tr>
-              <th style={{ textAlign: 'left', padding: 8 }}>Course</th>
-              <th style={{ textAlign: 'right', padding: 8 }}>Completion %</th>
-              <th style={{ textAlign: 'right', padding: 8 }}>Avg progress</th>
-            </tr>
-          </thead>
-          <tbody>
-            {courses.map((c) => (
-              <tr key={c.course_id}>
-                <td style={{ padding: 8 }}>{c.course_id}</td>
-                <td style={{ padding: 8, textAlign: 'right' }}>{c.completion_percent ?? '—'}</td>
-                <td style={{ padding: 8, textAlign: 'right' }}>{c.avg_progress ?? '—'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-
-      <div style={{ marginTop: 24, marginBottom: 24 }}>
-        <Suspense fallback={<div>Loading chart…</div>}>
-          <CompletionChart data={courses.map((c) => ({ label: c.course_id, value: c.completion_percent }))} />
-        </Suspense>
-      </div>
-
-      <h3 style={{ marginTop: 20 }}>Top lesson dropoffs</h3>
-      <ul>
-        {dropoffs.map((d) => (
-          <li key={`${d.course_id}_${d.lesson_id}`}>{d.course_id} / {d.lesson_id} — dropoff {d.dropoff_percent}%</li>
+      <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        {metrics.map(({ label, value, helper, icon: Icon }) => (
+          <article key={label} className="rounded-3xl border border-gray-100 bg-white p-5 shadow-sm transition hover:shadow-md">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm text-gray-500">{label}</p>
+                <p className="mt-2 text-2xl font-semibold text-gray-900">{value}</p>
+                {helper && <p className="text-xs text-gray-400">{helper}</p>}
+              </div>
+              <div className="rounded-2xl bg-orange-50 p-3 text-orange-500">
+                <Icon className="h-5 w-5" />
+              </div>
+            </div>
+          </article>
         ))}
-      </ul>
+      </section>
+
+      <section className="grid gap-6 lg:grid-cols-3">
+        <div className="space-y-6 lg:col-span-2">
+          <div className="rounded-3xl border border-gray-100 bg-white p-6 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Completion trends</h3>
+                <p className="text-sm text-gray-500">Top courses ranked by completion rate</p>
+              </div>
+              <span className="inline-flex items-center gap-1 text-xs font-medium text-green-600">
+                <ActivityIcon className="h-4 w-4" /> Realtime
+              </span>
+            </div>
+            <div className="mt-6">
+              <Suspense fallback={<div className="text-sm text-gray-500">Loading chart…</div>}>
+                <CompletionChart data={chartData} />
+              </Suspense>
+            </div>
+            <div className="mt-6 divide-y divide-gray-100">
+              {(loading ? Array.from({ length: 3 }) : courses.slice(0, 5)).map((course, idx) => {
+                if (loading) {
+                  return (
+                    <div key={`skeleton-${idx}`} className="flex items-center justify-between py-3 animate-pulse">
+                      <div className="h-4 w-40 rounded bg-gray-100" />
+                      <div className="h-4 w-16 rounded bg-gray-100" />
+                    </div>
+                  )
+                }
+                const completion = formatPercent(course?.completion_percent)
+                const avg = formatPercent(course?.avg_progress)
+                const completionValue = Number(course?.completion_percent ?? 0)
+                const progressWidth = Math.min(100, Number.isNaN(completionValue) ? 0 : completionValue)
+                return (
+                  <div key={course.course_id} className="flex items-center justify-between py-3">
+                    <div>
+                      <p className="font-semibold text-gray-900">{course.course_id}</p>
+                      <p className="text-xs text-gray-500">Avg progress {avg}</p>
+                    </div>
+                    <div className="flex flex-col items-end">
+                      <span className="text-sm font-semibold text-gray-900">{completion}</span>
+                      <div className="mt-2 h-2 w-32 rounded-full bg-gray-100">
+                        <div className="h-2 rounded-full bg-gradient-to-r from-orange-400 to-orange-600" style={{ width: `${progressWidth}%` }} />
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
+
+          <div className="rounded-3xl border border-gray-100 bg-white p-6 shadow-sm">
+            <h3 className="text-lg font-semibold text-gray-900">Drop-off hotspots</h3>
+            <p className="text-sm text-gray-500">Lessons with the highest exit rate</p>
+            <div className="mt-4 space-y-4">
+              {dropoffs.slice(0, 6).map((drop) => {
+                const percentValue = Number(drop?.dropoff_percent ?? 0)
+                const percent = Math.min(100, Number.isNaN(percentValue) ? 0 : percentValue)
+                return (
+                  <div key={`${drop.course_id}_${drop.lesson_id}`}>
+                    <div className="flex items-center justify-between text-sm text-gray-700">
+                      <span>{drop.course_id} / {drop.lesson_id}</span>
+                      <span className="font-semibold text-orange-600">{formatPercent(drop.dropoff_percent)}</span>
+                    </div>
+                    <div className="mt-2 h-2 rounded-full bg-gray-100">
+                      <div className="h-2 rounded-full bg-gradient-to-r from-orange-400 via-orange-500 to-red-500" style={{ width: `${percent}%` }} />
+                    </div>
+                  </div>
+                )
+              })}
+              {!dropoffs.length && <p className="text-sm text-gray-500">No drop-off data yet.</p>}
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-3xl border border-gray-100 bg-white p-6 shadow-sm">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-lg font-semibold text-gray-900">Activity feed</h3>
+              <p className="text-sm text-gray-500">Recent learner events</p>
+            </div>
+            <Clock className="h-4 w-4 text-gray-400" />
+          </div>
+          <div className="mt-4 max-h-[480px] space-y-4 overflow-y-auto pr-1">
+            {activityFeed.map((event) => (
+              <div key={event.id} className="rounded-2xl border border-gray-100 p-4">
+                <div className="flex items-center justify-between">
+                  <p className="font-semibold text-gray-900">{event.title}</p>
+                  <span className="text-xs text-gray-400">{new Date(event.timestamp).toLocaleTimeString()}</span>
+                </div>
+                <p className="mt-2 text-sm text-gray-600">{event.detail}</p>
+                <span
+                  className={`mt-3 inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-medium ${
+                    event.type === 'completion'
+                      ? 'bg-green-50 text-green-700'
+                      : event.type === 'login'
+                        ? 'bg-blue-50 text-blue-700'
+                        : 'bg-orange-50 text-orange-700'
+                  }`}
+                >
+                  {event.type}
+                </span>
+              </div>
+            ))}
+            {!activityFeed.length && (
+              <p className="text-sm text-gray-500">No realtime events to display yet.</p>
+            )}
+          </div>
+        </div>
+      </section>
     </div>
   )
 }

@@ -33,6 +33,14 @@ After changing `.env` files fully stop and restart both the frontend (`npm run d
 
 If you use the Vite dev server the UI will call `/api/*` and Vite will proxy to your backend (default `http://localhost:8888`).
 
+### Environment modes
+
+- Copy `.env.example` to `.env` (server) and `.env.local` (frontend) to keep the contracts in sync.
+- **Demo / re-entry mode** (default for local): keep `DEV_FALLBACK=true` and `DEMO_MODE=true`. The API will serve in-memory courses, allow the demo logins listed below, and ignore missing Supabase credentials.
+- **Supabase mode** (staging/prod): set `DEV_FALLBACK=false` and `DEMO_MODE=false`, then provide `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `VITE_SUPABASE_URL`, and `VITE_SUPABASE_ANON_KEY`.
+- Always keep `SUPABASE_SERVICE_ROLE_KEY` and `JWT_SECRET` on the server only. Never expose them in the Vite bundle.
+- `VITE_API_BASE_URL` and `VITE_WS_URL` should point to your deployed Express host when not using the Vite proxy.
+
 ## Troubleshooting
 
 **Seeing a blank page?** Visit http://localhost:5174/unregister-sw.html to clear service worker cache.

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import { 
   Play, 
   Pause, 
@@ -10,7 +10,8 @@ import {
   SkipBack,
   Settings,
   Subtitles,
-  RotateCcw
+  RotateCcw,
+  Activity
 } from 'lucide-react';
 
 interface EnhancedVideoPlayerProps {
@@ -29,6 +30,14 @@ interface EnhancedVideoPlayerProps {
     end: number;
     text: string;
   }>;
+  sources?: Array<{
+    quality: string;
+    label?: string;
+    src: string;
+  }>;
+  defaultQuality?: string;
+  onWatchTimeUpdate?: (secondsWatched: number) => void;
+  onTimeUpdate?: (currentTime: number) => void;
 }
 
 const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
@@ -42,11 +51,41 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
   autoPlay = false,
   showTranscript = false,
   transcript = '',
-  captions = []
+  captions = [],
+  sources = [],
+  defaultQuality,
+  onWatchTimeUpdate,
+  onTimeUpdate
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const progressBarRef = useRef<HTMLDivElement>(null);
+  const pendingQualityTimeRef = useRef<number | null>(null);
+  const resumeAfterQualityChangeRef = useRef(false);
+  const normalizedSources = useMemo(() => {
+    const baseSources = (sources?.length ? sources : [{ quality: 'auto', label: 'Auto', src }]).filter(Boolean);
+    return baseSources.map((item, index) => ({
+      quality: item.quality || `source-${index}`,
+      label: item.label || item.quality?.toUpperCase() || `Source ${index + 1}`,
+      src: item.src || src
+    }));
+  }, [sources, src]);
+  const [selectedQuality, setSelectedQuality] = useState(() => {
+    if (defaultQuality && normalizedSources.some(option => option.quality === defaultQuality)) {
+      return defaultQuality;
+    }
+    return normalizedSources[0]?.quality || 'default';
+  });
+  useEffect(() => {
+    if (!normalizedSources.length) return;
+    if (!normalizedSources.some(option => option.quality === selectedQuality)) {
+      setSelectedQuality(normalizedSources[0].quality);
+    }
+  }, [normalizedSources, selectedQuality]);
+  const currentSource = useMemo(() => {
+    const match = normalizedSources.find(option => option.quality === selectedQuality);
+    return match?.src || normalizedSources[0]?.src || src;
+  }, [normalizedSources, selectedQuality, src]);
   
   // Player state
   const [isPlaying, setIsPlaying] = useState(false);
@@ -63,9 +102,9 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
   // const [quality, setQuality] = useState('auto'); // TODO: Implement quality selector
   
   // Advanced features
-  const [isDragging] = useState(false); // TODO: Implement drag functionality
+  const [isDragging, setIsDragging] = useState(false);
   const [hasStarted, setHasStarted] = useState(false);
-  const [watchTime] = useState(0); // TODO: Implement watch time tracking
+  const [watchTime, setWatchTime] = useState(0);
   const [buffered, setBuffered] = useState(0);
   const [currentCaption, setCurrentCaption] = useState('');
   
@@ -95,6 +134,10 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
       
       if (!isDragging && onProgress) {
         onProgress((time / video.duration) * 100);
+      }
+
+      if (onTimeUpdate) {
+        onTimeUpdate(time);
       }
 
       // Update captions
@@ -151,7 +194,7 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
       video.removeEventListener('play', handlePlay);
       video.removeEventListener('pause', handlePause);
     };
-  }, [src, initialTime, onProgress, onComplete, isDragging, duration, captions, showCaptions]);
+  }, [src, initialTime, onProgress, onComplete, isDragging, duration, captions, showCaptions, onTimeUpdate]);
 
   // Load saved progress
   useEffect(() => {
@@ -163,19 +206,48 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
     }
   }, [src]);
 
+  useEffect(() => {
+    if (pendingQualityTimeRef.current === null) return;
+    const video = videoRef.current;
+    if (!video) return;
+
+    const seekTime = pendingQualityTimeRef.current;
+    const shouldResume = resumeAfterQualityChangeRef.current;
+
+    const handleLoaded = () => {
+      video.currentTime = seekTime;
+      if (shouldResume) {
+        video.play().catch(() => undefined);
+      }
+      pendingQualityTimeRef.current = null;
+      resumeAfterQualityChangeRef.current = false;
+      video.removeEventListener('loadeddata', handleLoaded);
+    };
+
+    video.addEventListener('loadeddata', handleLoaded);
+    video.load();
+
+    return () => video.removeEventListener('loadeddata', handleLoaded);
+  }, [currentSource]);
+
   // Watch time tracking
   useEffect(() => {
-    let interval: NodeJS.Timeout;
+    let interval: NodeJS.Timeout | undefined;
     if (isPlaying && !isDragging) {
       interval = setInterval(() => {
-        // TODO: Implement watch time tracking
-        console.log(`Watch time: ${watchTime + 1}s`);
+        setWatchTime(prev => {
+          const next = prev + 1;
+          if (onWatchTimeUpdate) {
+            onWatchTimeUpdate(next);
+          }
+          return next;
+        });
       }, 1000);
     }
     return () => {
       if (interval) clearInterval(interval);
     };
-  }, [isPlaying, isDragging]);
+  }, [isPlaying, isDragging, onWatchTimeUpdate]);
 
   // Auto-hide controls
   const resetControlsTimeout = useCallback(() => {
@@ -203,14 +275,14 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
     }
   };
 
-  const handleSeek = (percentage: number) => {
+  const handleSeek = useCallback((percentage: number) => {
     const video = videoRef.current;
     if (!video || !duration) return;
 
     const time = (percentage / 100) * duration;
     video.currentTime = time;
     setCurrentTime(time);
-  };
+  }, [duration]);
 
   const skip = (seconds: number) => {
     const video = videoRef.current;
@@ -250,6 +322,22 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
     setShowSettings(false);
   };
 
+  const handleQualityChange = (quality: string) => {
+    if (quality === selectedQuality) {
+      setShowSettings(false);
+      return;
+    }
+
+    const video = videoRef.current;
+    if (video) {
+      pendingQualityTimeRef.current = video.currentTime;
+      resumeAfterQualityChangeRef.current = !video.paused;
+    }
+
+    setSelectedQuality(quality);
+    setShowSettings(false);
+  };
+
   const toggleFullscreen = async () => {
     const container = containerRef.current;
     if (!container) return;
@@ -276,14 +364,61 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
   }, []);
 
   // Progress bar interaction
-  const handleProgressClick = (e: React.MouseEvent) => {
+  const calculatePercentageFromClientX = useCallback((clientX: number | undefined) => {
+    if (clientX == null) return 0;
     const progressBar = progressBarRef.current;
-    if (!progressBar || !duration) return;
+    if (!progressBar || !duration) return 0;
 
     const rect = progressBar.getBoundingClientRect();
-    const percentage = ((e.clientX - rect.left) / rect.width) * 100;
-    handleSeek(Math.max(0, Math.min(100, percentage)));
+    const percentage = ((clientX - rect.left) / rect.width) * 100;
+    return Math.max(0, Math.min(100, percentage));
+  }, [duration]);
+
+  const handleProgressClick = (e: React.MouseEvent) => {
+    handleSeek(calculatePercentageFromClientX(e.clientX));
   };
+
+  const handleProgressPointerDown = (e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const clientX = 'touches' in e ? e.touches[0]?.clientX : e.clientX;
+    setIsDragging(true);
+    handleSeek(calculatePercentageFromClientX(clientX));
+  };
+
+  const handleProgressKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!duration) return;
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      e.preventDefault();
+      const delta = e.key === 'ArrowLeft' ? -5 : 5;
+      const nextTime = Math.max(0, Math.min(duration, currentTime + delta));
+      handleSeek((nextTime / duration) * 100);
+    }
+  };
+
+  useEffect(() => {
+    if (!isDragging) return;
+
+    const handlePointerMove = (event: MouseEvent | TouchEvent) => {
+      const clientX = 'touches' in event ? event.touches[0]?.clientX : event.clientX;
+      handleSeek(calculatePercentageFromClientX(clientX));
+    };
+
+    const stopDragging = () => setIsDragging(false);
+
+    window.addEventListener('mousemove', handlePointerMove);
+    window.addEventListener('touchmove', handlePointerMove);
+    window.addEventListener('mouseup', stopDragging);
+    window.addEventListener('touchend', stopDragging);
+    window.addEventListener('touchcancel', stopDragging);
+
+    return () => {
+      window.removeEventListener('mousemove', handlePointerMove);
+      window.removeEventListener('touchmove', handlePointerMove);
+      window.removeEventListener('mouseup', stopDragging);
+      window.removeEventListener('touchend', stopDragging);
+      window.removeEventListener('touchcancel', stopDragging);
+    };
+  }, [isDragging, calculatePercentageFromClientX, handleSeek]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -337,6 +472,9 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
     return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
   };
 
+  const progressPercent = duration ? (currentTime / duration) * 100 : 0;
+  const selectedQualityLabel = normalizedSources.find(option => option.quality === selectedQuality)?.label || 'Auto';
+
   return (
     <div 
       ref={containerRef}
@@ -347,13 +485,15 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
       {/* Video Element */}
       <video
         ref={videoRef}
-        src={src}
+        src={currentSource}
         poster={thumbnail}
         className="w-full h-full"
         autoPlay={autoPlay}
         playsInline
         preload="metadata"
         onClick={togglePlay}
+        aria-label={title ? `Video player for ${title}` : 'Course video player'}
+        data-quality={selectedQuality}
       />
 
       {/* Loading Overlay */}
@@ -377,7 +517,7 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
 
       {/* Captions */}
       {showCaptions && currentCaption && (
-        <div className="absolute bottom-20 left-1/2 transform -translate-x-1/2 bg-black bg-opacity-75 text-white px-4 py-2 rounded max-w-md text-center">
+        <div className="absolute bottom-20 left-1/2 transform -translate-x-1/2 bg-black bg-opacity-75 text-white px-4 py-2 rounded max-w-md text-center" aria-live="assertive">
           {currentCaption}
         </div>
       )}
@@ -392,6 +532,16 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
             ref={progressBarRef}
             className="w-full h-2 bg-gray-600 rounded-full cursor-pointer relative overflow-hidden"
             onClick={handleProgressClick}
+            onMouseDown={handleProgressPointerDown}
+            onTouchStart={handleProgressPointerDown}
+            onKeyDown={handleProgressKeyDown}
+            role="slider"
+            tabIndex={0}
+            aria-label="Video progress"
+            aria-valuemin={0}
+            aria-valuemax={Math.floor(duration) || 0}
+            aria-valuenow={Math.floor(currentTime)}
+            aria-valuetext={`${formatTime(currentTime)} elapsed`}
           >
             {/* Buffered Progress */}
             <div 
@@ -402,13 +552,13 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
             {/* Current Progress */}
             <div 
               className="absolute top-0 left-0 h-full bg-orange-500 rounded-full transition-all duration-100"
-              style={{ width: `${(currentTime / duration) * 100}%` }}
+              style={{ width: `${progressPercent}%` }}
             />
             
             {/* Progress Thumb */}
             <div 
               className="absolute top-1/2 transform -translate-y-1/2 w-4 h-4 bg-orange-500 rounded-full border-2 border-white shadow-lg transition-all duration-100"
-              style={{ left: `${(currentTime / duration) * 100}%`, marginLeft: '-8px' }}
+              style={{ left: `${progressPercent}%`, marginLeft: '-8px' }}
             />
           </div>
         </div>
@@ -418,6 +568,7 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
           <div className="flex items-center space-x-4">
             <button
               onClick={togglePlay}
+              aria-label={isPlaying ? 'Pause video' : 'Play video'}
               className="text-white hover:text-orange-400 transition-colors duration-200"
             >
               {isPlaying ? (
@@ -429,6 +580,7 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
 
             <button
               onClick={() => skip(-10)}
+              aria-label="Skip backward 10 seconds"
               className="text-white hover:text-orange-400 transition-colors duration-200"
             >
               <SkipBack className="h-5 w-5" />
@@ -436,6 +588,7 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
 
             <button
               onClick={() => skip(10)}
+              aria-label="Skip forward 10 seconds"
               className="text-white hover:text-orange-400 transition-colors duration-200"
             >
               <SkipForward className="h-5 w-5" />
@@ -445,6 +598,7 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
             <div className="flex items-center space-x-2">
               <button
                 onClick={toggleMute}
+                aria-label={isMuted || volume === 0 ? 'Unmute' : 'Mute'}
                 className="text-white hover:text-orange-400 transition-colors duration-200"
               >
                 {isMuted || volume === 0 ? (
@@ -469,6 +623,10 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
             <div className="text-white text-sm font-medium">
               {formatTime(currentTime)} / {formatTime(duration)}
             </div>
+            <div className="hidden md:flex items-center space-x-1 text-xs text-white/70" aria-live="polite">
+              <Activity className="h-3 w-3" />
+              <span>Watched {formatTime(watchTime)}</span>
+            </div>
           </div>
 
           <div className="flex items-center space-x-4">
@@ -476,6 +634,8 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
             {captions.length > 0 && (
               <button
                 onClick={() => setShowCaptions(!showCaptions)}
+                aria-pressed={showCaptions}
+                aria-label={showCaptions ? 'Hide captions' : 'Show captions'}
                 className={`transition-colors duration-200 ${
                   showCaptions ? 'text-orange-400' : 'text-white hover:text-orange-400'
                 }`}
@@ -484,18 +644,42 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
               </button>
             )}
 
+            <span className="hidden sm:inline-block text-xs text-white/70" aria-live="polite">
+              {selectedQualityLabel}
+            </span>
             {/* Settings */}
             <div className="relative">
               <button
                 onClick={() => setShowSettings(!showSettings)}
+                aria-expanded={showSettings}
+                aria-label="Playback settings"
                 className="text-white hover:text-orange-400 transition-colors duration-200"
               >
                 <Settings className="h-5 w-5" />
               </button>
 
               {showSettings && (
-                <div className="absolute bottom-8 right-0 bg-black bg-opacity-90 rounded-lg p-3 min-w-[120px]">
-                  <div className="text-white text-sm font-medium mb-2">Playback Speed</div>
+                <div className="absolute bottom-8 right-0 bg-black bg-opacity-90 rounded-lg p-3 min-w-[160px] shadow-2xl">
+                  {normalizedSources.length > 1 && (
+                    <div className="mb-3">
+                      <div className="text-white text-sm font-medium mb-1">Quality</div>
+                      {normalizedSources.map(option => (
+                        <button
+                          key={option.quality}
+                          onClick={() => handleQualityChange(option.quality)}
+                          className={`flex w-full items-center justify-between rounded px-2 py-1 text-left text-sm transition-colors ${
+                            selectedQuality === option.quality
+                              ? 'bg-orange-500 text-white'
+                              : 'text-gray-300 hover:bg-gray-700'
+                          }`}
+                        >
+                          <span>{option.label}</span>
+                          {selectedQuality === option.quality && <span className="text-[10px] uppercase tracking-wide">Selected</span>}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <div className="text-white text-sm font-medium mb-1">Playback Speed</div>
                   {[0.5, 0.75, 1, 1.25, 1.5, 2].map(speed => (
                     <button
                       key={speed}
@@ -516,6 +700,7 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
             {/* Fullscreen */}
             <button
               onClick={toggleFullscreen}
+              aria-label={isFullscreen ? 'Exit fullscreen' : 'Enter fullscreen'}
               className="text-white hover:text-orange-400 transition-colors duration-200"
             >
               {isFullscreen ? (
@@ -540,6 +725,7 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
         <div className="absolute top-4 right-4">
           <button
             onClick={() => handleSeek(0)}
+            aria-label="Restart video"
             className="bg-orange-500 bg-opacity-90 hover:bg-opacity-100 text-white px-4 py-2 rounded-lg flex items-center space-x-2 transition-all duration-200"
           >
             <RotateCcw className="h-4 w-4" />

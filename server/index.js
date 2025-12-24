@@ -127,12 +127,32 @@ app.use((req, res, next) => {
   next();
 });
 
-app.get('/api/health', (_req, res) => {
-  res.json({
+const healthPayload = async () => {
+  const supabaseStatus = await checkSupabaseHealth();
+  return {
     status: 'ok',
     uptime: process.uptime(),
     timestamp: new Date().toISOString(),
-  });
+    supabase: supabaseStatus,
+    nodeEnv: process.env.NODE_ENV || 'development',
+    version: process.env.VERCEL_GIT_COMMIT_SHA || process.env.RAILWAY_GIT_COMMIT_SHA || null,
+  };
+};
+
+app.get('/api/health', async (_req, res) => {
+  try {
+    res.json(await healthPayload());
+  } catch (error) {
+    res.status(500).json({ status: 'error', error: error instanceof Error ? error.message : 'Unknown error' });
+  }
+});
+
+app.get('/healthz', async (_req, res) => {
+  try {
+    res.json(await healthPayload());
+  } catch (error) {
+    res.status(500).json({ status: 'error', error: error instanceof Error ? error.message : 'Unknown error' });
+  }
 });
 
 // When running behind a reverse proxy (Netlify, Vercel, Cloudflare, Railway),
@@ -273,6 +293,27 @@ if (E2E_TEST_MODE) {
   supabase = null;
 }
 
+const checkSupabaseHealth = async () => {
+  if (!supabase) return { status: 'disabled' };
+  const start = Date.now();
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 2000);
+  try {
+    const { error } = await supabase
+      .from('courses')
+      .select('id', { head: true, count: 'exact' })
+      .limit(1)
+      .abortSignal(controller.signal);
+    if (error) throw error;
+    return { status: 'ok', latencyMs: Date.now() - start };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown Supabase error';
+    return { status: 'error', latencyMs: Date.now() - start, message };
+  } finally {
+    clearTimeout(timeout);
+  }
+};
+
 // Load persisted data if available
 const persistedData = loadPersistedData();
 
@@ -286,7 +327,114 @@ const e2eStore = {
   // null indicates the key was reserved/in-flight; a string value indicates the resource id produced
   idempotencyKeys: {},
   analyticsEvents: [], // stored analytics events in demo/E2E mode
+  learnerJourneys: new Map(), // key `${user_id}:${course_id}` -> snapshot for demo mode
 };
+
+const clampPercent = (value) => {
+  if (typeof value !== 'number' || Number.isNaN(value)) return 0;
+  return Math.min(100, Math.max(0, Math.round(value)));
+};
+
+const coerceString = (...values) => {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+  return undefined;
+};
+
+const coerceNumber = (...values) => {
+  for (const value of values) {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+    if (typeof value === 'string' && value.trim() !== '') {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) {
+        return parsed;
+      }
+    }
+  }
+  return undefined;
+};
+
+const parseLessonIdsParam = (raw) => {
+  if (!raw) return [];
+  if (Array.isArray(raw)) {
+    return raw.map((value) => String(value)).filter(Boolean);
+  }
+  return String(raw)
+    .split(',')
+    .map((id) => id.trim())
+    .filter(Boolean);
+};
+
+const normalizeLessonSnapshot = (input) => {
+  if (!input) return null;
+  const lessonId = coerceString(input.lessonId, input.lesson_id, input.id);
+  if (!lessonId) return null;
+
+  const percent = coerceNumber(input.progressPercent, input.progress_percent, input.percent) ?? 0;
+
+  return {
+    lessonId,
+    progressPercent: clampPercent(percent),
+    completed: typeof input.completed === 'boolean' ? input.completed : percent >= 100,
+    positionSeconds: coerceNumber(input.positionSeconds, input.position_seconds, input.resume_at_s) ?? 0,
+    lastAccessedAt: coerceString(input.lastAccessedAt, input.last_accessed_at),
+  };
+};
+
+const normalizeSnapshotPayload = (body = {}, fallbackUserId) => {
+  const userId = coerceString(body.userId, body.user_id, body.learnerId, body.learner_id, fallbackUserId);
+  const courseId = coerceString(body.courseId, body.course_id, body.course?.courseId, body.course?.course_id);
+
+  if (!userId || !courseId) {
+    return null;
+  }
+
+  const rawLessons = Array.isArray(body.lessons)
+    ? body.lessons
+    : Array.isArray(body.lesson_progress)
+    ? body.lesson_progress
+    : [];
+
+  const lessons = rawLessons.reduce((acc, item) => {
+    const normalized = normalizeLessonSnapshot(item);
+    if (normalized) acc.push(normalized);
+    return acc;
+  }, []);
+
+  const courseBlock = body.course ?? body.course_progress ?? {};
+
+  return {
+    userId,
+    courseId,
+    lessons,
+    course: {
+      percent:
+        coerceNumber(
+          courseBlock.percent,
+          courseBlock.progress_percent,
+          courseBlock.progressPercent,
+          body.overallPercent,
+          body.overall_percent,
+        ) ?? 0,
+      completedAt: coerceString(courseBlock.completedAt, courseBlock.completed_at, body.completedAt, body.completed_at) ?? null,
+      totalTimeSeconds: coerceNumber(courseBlock.totalTimeSeconds, courseBlock.total_time_seconds),
+      lastLessonId: coerceString(courseBlock.lastLessonId, courseBlock.last_lesson_id),
+    },
+  };
+};
+
+const buildLessonRow = (lessonId, record) => ({
+  lesson_id: lessonId,
+  progress_percentage: clampPercent(record?.percent ?? record?.progressPercent ?? 0),
+  completed: Boolean(record?.completed) || (record?.status ? record.status === 'completed' : (record?.percent ?? 0) >= 100),
+  time_spent: record?.time_spent_s ?? record?.timeSpentSeconds ?? record?.positionSeconds ?? 0,
+  last_accessed_at: record?.last_accessed_at || record?.updated_at || record?.lastAccessedAt || null,
+});
 
 // Log loaded courses
 if (e2eStore.courses.size > 0) {
@@ -2635,93 +2783,230 @@ app.post('/api/admin/lessons/reorder', async (req, res) => {
 
 // Learner progress endpoint (used by progressService.ts)
 app.post('/api/learner/progress', async (req, res) => {
-  const body = req.body || {};
-  
-  // Accept multiple possible field name formats
-  const userId = body.userId || body.user_id || body.learnerId || body.learner_id;
-  const courseId = body.courseId || body.course_id;
-  const lessons = body.lessons || body.lessonProgress || [];
-  const course = body.course || body.courseProgress || {};
-  
-  // Log for debugging
+  const snapshot = normalizeSnapshotPayload(req.body || {});
+
+  if (!snapshot) {
+    res.status(400).json({ error: 'Invalid progress snapshot payload' });
+    return;
+  }
+
+  const { userId, courseId, lessons, course } = snapshot;
+  const nowIso = new Date().toISOString();
+
   if (DEV_FALLBACK || E2E_TEST_MODE) {
     console.log('Progress sync request:', {
       userId,
       courseId,
       lessonCount: lessons.length,
-      overallPercent: course.percent || course.percentComplete || 0
+      overallPercent: course.percent,
     });
   }
 
-  // In E2E/DEMO mode, just acknowledge the progress sync
+  // Demo/E2E path: persist to in-memory store
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
-    res.json({ 
-      success: true, 
-      message: 'Progress synced (demo mode)',
-      data: {
-        userId: userId || 'unknown',
-        courseId: courseId || 'unknown',
-        lessonCount: lessons.length,
-        overallPercent: course.percent || course.percentComplete || 0
+    try {
+      lessons.forEach((lesson) => {
+        const key = `${userId}:${lesson.lessonId}`;
+        const record = {
+          user_id: userId,
+          lesson_id: lesson.lessonId,
+          percent: clampPercent(lesson.progressPercent),
+          status: lesson.completed ? 'completed' : 'in_progress',
+          time_spent_s: Math.max(0, Math.round(lesson.positionSeconds ?? 0)),
+          resume_at_s: Math.max(0, Math.round(lesson.positionSeconds ?? 0)),
+          updated_at: lesson.lastAccessedAt || nowIso,
+        };
+        e2eStore.lessonProgress.set(key, record);
+        try {
+          const payload = { type: 'lesson_progress', data: record, timestamp: Date.now() };
+          broadcastToTopic(`progress:user:${String(userId).toLowerCase()}`, payload);
+          broadcastToTopic(`progress:lesson:${lesson.lessonId}`, payload);
+          broadcastToTopic('progress:all', payload);
+        } catch (err) {
+          console.warn('Failed to broadcast demo lesson progress', err);
+        }
+      });
+
+      const courseRecord = {
+        user_id: userId,
+        course_id: courseId,
+        percent: clampPercent(course.percent),
+        status: course.percent >= 100 ? 'completed' : 'in_progress',
+        time_spent_s: Math.max(0, Math.round(course.totalTimeSeconds ?? 0)),
+        updated_at: nowIso,
+        last_lesson_id: course.lastLessonId ?? null,
+        completed_at: course.completedAt ?? null,
+      };
+      e2eStore.courseProgress.set(`${userId}:${courseId}`, courseRecord);
+      persistE2EStore();
+
+      try {
+        const payload = { type: 'course_progress', data: courseRecord, timestamp: Date.now() };
+        broadcastToTopic(`progress:user:${String(userId).toLowerCase()}`, payload);
+        broadcastToTopic(`progress:course:${courseId}`, payload);
+        broadcastToTopic('progress:all', payload);
+      } catch (err) {
+        console.warn('Failed to broadcast demo course progress', err);
       }
-    });
+
+      res.status(202).json({
+        success: true,
+        mode: 'demo',
+        data: {
+          userId,
+          courseId,
+          updatedLessons: lessons.length,
+        },
+      });
+    } catch (error) {
+      console.error('E2E: Failed to sync learner progress snapshot:', error);
+      res.status(500).json({ error: 'Unable to sync progress in demo mode' });
+    }
     return;
   }
 
-  // If Supabase is configured, you can implement actual storage here
   if (!ensureSupabase(res)) return;
-  
+
   try {
-    // For now, just acknowledge in Supabase mode too
-    // TODO: Implement actual progress storage in Supabase
-    res.json({ 
-      success: true, 
-      message: 'Progress synced',
-      data: {
-        userId: userId || 'unknown',
-        courseId: courseId || 'unknown',
-        lessonCount: lessons.length,
-        overallPercent: course.percent || course.percentComplete || 0
+    let lessonRows = [];
+    if (lessons.length > 0) {
+      const payload = lessons.map((lesson) => ({
+        user_id: userId,
+        lesson_id: lesson.lessonId,
+        percent: clampPercent(lesson.progressPercent),
+        status: lesson.completed ? 'completed' : 'in_progress',
+        time_spent_s: Math.max(0, Math.round(lesson.positionSeconds ?? 0)),
+        resume_at_s: Math.max(0, Math.round(lesson.positionSeconds ?? 0)),
+        last_accessed_at: lesson.lastAccessedAt || nowIso,
+      }));
+
+      const { data, error } = await supabase
+        .from('user_lesson_progress')
+        .upsert(payload, { onConflict: 'user_id,lesson_id' })
+        .select('*');
+
+      if (error) throw error;
+      lessonRows = data || [];
+    }
+
+    const { data: courseRow, error: courseError } = await supabase
+      .from('user_course_progress')
+      .upsert(
+        {
+          user_id: userId,
+          course_id: courseId,
+          percent: clampPercent(course.percent),
+          status: course.percent >= 100 ? 'completed' : 'in_progress',
+          time_spent_s: Math.max(0, Math.round(course.totalTimeSeconds ?? 0)),
+        },
+        { onConflict: 'user_id,course_id' },
+      )
+      .select('*')
+      .single();
+
+    if (courseError) throw courseError;
+
+    try {
+      const userTopic = `progress:user:${String(userId).toLowerCase()}`;
+      lessonRows.forEach((record) => {
+        const payload = { type: 'lesson_progress', data: record, timestamp: Date.now() };
+        broadcastToTopic(userTopic, payload);
+        if (record.lesson_id) {
+          broadcastToTopic(`progress:lesson:${record.lesson_id}`, payload);
+        }
+        broadcastToTopic('progress:all', payload);
+      });
+
+      if (courseRow) {
+        const payload = { type: 'course_progress', data: courseRow, timestamp: Date.now() };
+        broadcastToTopic(userTopic, payload);
+        if (courseRow.course_id) {
+          broadcastToTopic(`progress:course:${courseRow.course_id}`, payload);
+        }
+        broadcastToTopic('progress:all', payload);
       }
+    } catch (err) {
+      console.warn('Failed to broadcast persisted progress snapshot', err);
+    }
+
+    res.status(202).json({
+      success: true,
+      mode: 'supabase',
+      data: {
+        userId,
+        courseId,
+        updatedLessons: lessonRows.length,
+      },
     });
   } catch (error) {
     console.error('Failed to sync learner progress:', error);
+    dumpErrorContext(req, error);
     res.status(500).json({ error: 'Unable to sync progress' });
   }
 });
 
 // GET learner progress endpoint (fetching progress)
 app.get('/api/learner/progress', async (req, res) => {
-  const { userId, courseId, lessonIds } = req.query;
-  
-  // In demo/E2E mode, return empty progress
+  const lessonIds = parseLessonIdsParam(req.query.lessonIds || req.query.lesson_ids);
+  const userId = coerceString(req.query.userId, req.query.user_id, req.query.learnerId, req.query.learner_id);
+
+  if (!userId) {
+    res.status(400).json({ error: 'userId is required' });
+    return;
+  }
+  if (lessonIds.length === 0) {
+    res.status(400).json({ error: 'lessonIds is required' });
+    return;
+  }
+
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
-    res.json({ 
-      success: true,
+    const lessons = lessonIds.map((lessonId) => {
+      const record = e2eStore.lessonProgress.get(`${userId}:${lessonId}`) || null;
+      return buildLessonRow(lessonId, record);
+    });
+
+    res.json({
       data: {
-        userId: userId || 'unknown',
-        courseId: courseId || 'unknown',
-        lessons: [],
-        message: 'No saved progress in demo mode'
-      }
+        lessons,
+      },
     });
     return;
   }
 
   if (!ensureSupabase(res)) return;
-  
+
   try {
-    // TODO: Implement actual progress fetching from Supabase
-    res.json({ 
-      success: true,
+    const { data, error } = await supabase
+      .from('user_lesson_progress')
+      .select('lesson_id, percent, status, time_spent_s, last_accessed_at, updated_at')
+      .eq('user_id', userId)
+      .in('lesson_id', lessonIds);
+
+    if (error) throw error;
+
+    const byLessonId = new Map();
+    (data || []).forEach((row) => {
+      const lessonId = row.lesson_id || row.lessonId;
+      if (!lessonId) return;
+      byLessonId.set(String(lessonId), buildLessonRow(String(lessonId), {
+        percent: row.percent,
+        status: row.status,
+        time_spent_s: row.time_spent_s,
+        last_accessed_at: row.last_accessed_at,
+        updated_at: row.updated_at,
+      }));
+    });
+
+    const lessons = lessonIds.map((lessonId) => byLessonId.get(lessonId) || buildLessonRow(lessonId, null));
+
+    res.json({
       data: {
-        userId,
-        courseId,
-        lessons: []
-      }
+        lessons,
+      },
     });
   } catch (error) {
-    console.error(`Failed to fetch learner progress:`, error);
+    console.error('Failed to fetch learner progress:', error);
+    dumpErrorContext(req, error);
     res.status(500).json({ error: 'Unable to fetch progress' });
   }
 });
@@ -4286,23 +4571,37 @@ app.delete('/api/admin/notifications/:id', async (req, res) => {
 });
 
 app.post('/api/analytics/events', async (req, res) => {
-  // In demo/E2E mode, just acknowledge the analytics event
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
-    res.status(201).json({ 
-      success: true, 
-      message: 'Event tracked (demo mode)',
-      data: { id: req.body?.id || 'demo-event-' + Date.now() }
-    });
-    return;
-  }
-  
-  if (!ensureSupabase(res)) return;
   const { id, user_id, course_id, lesson_id, module_id, event_type, session_id, user_agent, payload } = req.body || {};
 
   if (!event_type) {
     res.status(400).json({ error: 'event_type is required' });
     return;
   }
+
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    const eventId = id || `demo-event-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const record = {
+      id: eventId,
+      user_id: user_id ?? null,
+      course_id: course_id ?? null,
+      lesson_id: lesson_id ?? null,
+      module_id: module_id ?? null,
+      event_type,
+      session_id: session_id ?? null,
+      user_agent: user_agent ?? null,
+      payload: payload ?? {},
+      created_at: new Date().toISOString(),
+    };
+    e2eStore.analyticsEvents.unshift(record);
+    if (e2eStore.analyticsEvents.length > 500) {
+      e2eStore.analyticsEvents.length = 500;
+    }
+    persistE2EStore();
+    res.status(201).json({ data: record, demo: true });
+    return;
+  }
+
+  if (!ensureSupabase(res)) return;
 
   try {
     const { data, error } = await supabase
@@ -4330,15 +4629,29 @@ app.post('/api/analytics/events', async (req, res) => {
 });
 
 app.get('/api/analytics/events', async (req, res) => {
-  if (!ensureSupabase(res)) return;
   const { user_id, course_id, limit = 200 } = req.query;
+  const parsedLimit = Math.max(1, Math.min(500, parseInt(limit, 10) || 200));
+
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    let data = [...e2eStore.analyticsEvents];
+    if (user_id) {
+      data = data.filter((evt) => evt.user_id === user_id);
+    }
+    if (course_id) {
+      data = data.filter((evt) => evt.course_id === course_id);
+    }
+    res.json({ data: data.slice(0, parsedLimit), demo: true });
+    return;
+  }
+
+  if (!ensureSupabase(res)) return;
 
   try {
     let query = supabase
       .from('analytics_events')
       .select('*')
       .order('created_at', { ascending: false })
-      .limit(parseInt(limit, 10));
+      .limit(parsedLimit);
 
     if (user_id) {
       query = query.eq('user_id', user_id);
@@ -4359,20 +4672,6 @@ app.get('/api/analytics/events', async (req, res) => {
 });
 
 app.post('/api/analytics/journeys', async (req, res) => {
-  // In demo/E2E mode, just acknowledge the journey tracking
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
-    res.status(201).json({ 
-      success: true, 
-      message: 'Journey tracked (demo mode)',
-      data: { 
-        user_id: req.body?.user_id || 'demo-user',
-        course_id: req.body?.course_id || 'demo-course'
-      }
-    });
-    return;
-  }
-  
-  if (!ensureSupabase(res)) return;
   const { user_id, course_id, journey } = req.body || {};
 
   if (!user_id || !course_id) {
@@ -4380,22 +4679,33 @@ app.post('/api/analytics/journeys', async (req, res) => {
     return;
   }
 
-  try {
-    const payload = {
-      user_id,
-      course_id,
-      started_at: journey?.startedAt ?? new Date().toISOString(),
-      last_active_at: journey?.lastActiveAt ?? new Date().toISOString(),
-      completed_at: journey?.completedAt ?? null,
-      total_time_spent: journey?.totalTimeSpent ?? 0,
-      sessions_count: journey?.sessionsCount ?? 0,
-      progress_percentage: journey?.progressPercentage ?? 0,
-      engagement_score: journey?.engagementScore ?? 0,
-      milestones: journey?.milestones ?? [],
-      drop_off_points: journey?.dropOffPoints ?? [],
-      path_taken: journey?.pathTaken ?? []
-    };
+  const payload = {
+    user_id,
+    course_id,
+    started_at: journey?.startedAt ?? new Date().toISOString(),
+    last_active_at: journey?.lastActiveAt ?? new Date().toISOString(),
+    completed_at: journey?.completedAt ?? null,
+    total_time_spent: journey?.totalTimeSpent ?? 0,
+    sessions_count: journey?.sessionsCount ?? 0,
+    progress_percentage: journey?.progressPercentage ?? 0,
+    engagement_score: journey?.engagementScore ?? 0,
+    milestones: journey?.milestones ?? [],
+    drop_off_points: journey?.dropOffPoints ?? [],
+    path_taken: journey?.pathTaken ?? [],
+    updated_at: new Date().toISOString(),
+  };
 
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    const key = `${user_id}:${course_id}`;
+    e2eStore.learnerJourneys.set(key, { id: key, ...payload });
+    persistE2EStore();
+    res.status(201).json({ data: e2eStore.learnerJourneys.get(key), demo: true });
+    return;
+  }
+  
+  if (!ensureSupabase(res)) return;
+
+  try {
     const { data, error } = await supabase
       .from('learner_journeys')
       .upsert(payload, { onConflict: 'user_id,course_id' })
@@ -4411,8 +4721,21 @@ app.post('/api/analytics/journeys', async (req, res) => {
 });
 
 app.get('/api/analytics/journeys', async (req, res) => {
-  if (!ensureSupabase(res)) return;
   const { user_id, course_id } = req.query;
+
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    let data = Array.from(e2eStore.learnerJourneys.values());
+    if (user_id) {
+      data = data.filter((journey) => journey.user_id === user_id);
+    }
+    if (course_id) {
+      data = data.filter((journey) => journey.course_id === course_id);
+    }
+    res.json({ data, demo: true });
+    return;
+  }
+
+  if (!ensureSupabase(res)) return;
 
   try {
     let query = supabase

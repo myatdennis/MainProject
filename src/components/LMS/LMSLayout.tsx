@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
   BookOpen,
@@ -22,7 +22,7 @@ import Badge from '../ui/Badge';
 import LoadingSpinner from '../ui/LoadingSpinner';
 
 interface LMSLayoutProps {
-  children: ReactNode;
+  children?: ReactNode;
 }
 
 const navigation = [
@@ -42,37 +42,39 @@ const LMSLayout = ({ children }: LMSLayoutProps) => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
+  const supabaseConfigured = Boolean(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY);
 
   useEffect(() => {
-    const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
-    const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
-
-    if (!supabaseUrl || !supabaseAnonKey) {
-      if (!isAuthenticated.lms) {
-        localStorage.setItem('huddle_lms_auth', 'true');
-        localStorage.setItem(
-          'huddle_user',
-          JSON.stringify({
-            name: 'Sarah Chen',
-            email: 'demo@thehuddleco.com',
-            role: 'Learner',
-            id: `demo-lms-${Date.now()}`,
-          })
-        );
-        window.location.reload();
-      }
+    if (!supabaseConfigured) {
       return;
     }
 
     if (!isAuthenticated.lms) {
       navigate('/lms/login');
     }
-  }, [isAuthenticated.lms, navigate]);
+  }, [isAuthenticated.lms, navigate, supabaseConfigured]);
 
   if (isAuthenticated.lms === undefined) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-softwhite">
         <LoadingSpinner size="lg" />
+      </div>
+    );
+  }
+
+  if (!supabaseConfigured) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-softwhite px-6 text-center">
+        <Card tone="muted" className="max-w-xl space-y-4">
+          <Badge tone="info" className="bg-sunrise/10 text-sunrise">
+            LMS configuration required
+          </Badge>
+          <h1 className="font-heading text-2xl font-bold text-charcoal">Connect Supabase to enable the learner portal</h1>
+          <p className="text-sm text-slate/80">
+            Set <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code> in your environment before accessing the LMS. Once configured,
+            redeploy and sign in with your learner credentials.
+          </p>
+        </Card>
       </div>
     );
   }
@@ -176,7 +178,7 @@ const LMSLayout = ({ children }: LMSLayoutProps) => {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto bg-softwhite px-6 py-8 lg:px-12">{children}</main>
+        <main className="flex-1 overflow-y-auto bg-softwhite px-6 py-8 lg:px-12">{children ?? <Outlet />}</main>
       </div>
     </div>
   );

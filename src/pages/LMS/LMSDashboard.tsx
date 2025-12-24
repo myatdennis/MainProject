@@ -1,4 +1,4 @@
-// React import not required with the new JSX transform
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import { 
@@ -12,52 +12,76 @@ import {
   Download,
   MessageSquare
 } from 'lucide-react';
+import { courseStore } from '../../store/courseStore';
+import { normalizeCourse } from '../../utils/courseNormalization';
+import { loadStoredCourseProgress } from '../../utils/courseProgress';
 
 const LMSDashboard = () => {
   const { user } = useAuth();
+  const [progressRefreshToken, setProgressRefreshToken] = useState(0);
+  const [isLoadingCourses, setIsLoadingCourses] = useState(true);
 
-  const modules = [
-    {
-      id: 'foundations',
-      title: 'Foundations of Inclusive Leadership',
-      progress: 100,
-      status: 'completed',
-      duration: '45 min',
-      type: 'Video + Worksheet'
-    },
-    {
-      id: 'bias',
-      title: 'Recognizing and Mitigating Bias',
-      progress: 75,
-      status: 'in-progress',
-      duration: '60 min',
-      type: 'Interactive + Quiz'
-    },
-    {
-      id: 'empathy',
-      title: 'Empathy in Action',
-      progress: 50,
-      status: 'in-progress',
-      duration: '40 min',
-      type: 'Case Study'
-    },
-    {
-      id: 'conversations',
-      title: 'Courageous Conversations at Work',
-      progress: 0,
-      status: 'not-started',
-      duration: '55 min',
-      type: 'Video + Template'
-    },
-    {
-      id: 'action-planning',
-      title: 'Personal & Team Action Planning',
-      progress: 0,
-      status: 'not-started',
-      duration: '30 min',
-      type: 'Worksheet + Coaching'
-    }
-  ];
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        if (typeof (courseStore as any).init === 'function') {
+          await (courseStore as any).init();
+        }
+        if (active) {
+          setProgressRefreshToken((token) => token + 1);
+        }
+      } catch (error) {
+        console.warn('[LMSDashboard] Failed to initialize course store:', error);
+      } finally {
+        if (active) {
+          setIsLoadingCourses(false);
+        }
+      }
+    })();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  const learningPathCourses = useMemo(() => {
+    return courseStore
+      .getAllCourses()
+      .filter((course) => course.status === 'published')
+      .map((course) => {
+        const normalized = normalizeCourse(course);
+        const storedProgress =
+          loadStoredCourseProgress(normalized.slug) ?? {
+            completedLessonIds: [],
+            lessonProgress: {},
+            lessonPositions: {},
+            lastLessonId: undefined,
+          };
+        const completedLessonIds = new Set(storedProgress.completedLessonIds ?? []);
+        const lessonIds =
+          normalized.modules?.flatMap((module) =>
+            (module.lessons ?? []).map((lesson) => lesson.id)
+          ) ?? [];
+        const completedLessonCount = completedLessonIds.size;
+        const progressPercent =
+          normalized.lessons > 0
+            ? Math.round((completedLessonCount / normalized.lessons) * 100)
+            : 0;
+
+        const resumeLessonId =
+          (storedProgress.lastLessonId &&
+            lessonIds.find((lessonId) => lessonId === storedProgress.lastLessonId)) ||
+          lessonIds.find((lessonId) => !completedLessonIds.has(lessonId)) ||
+          lessonIds[0] ||
+          null;
+
+        return {
+          ...normalized,
+          progress: progressPercent,
+          resumeLessonId,
+        };
+      });
+  }, [progressRefreshToken]);
 
   const stats = [
     { label: 'Modules Completed', value: '1/5', icon: BookOpen, color: 'text-blue-500' },
@@ -155,43 +179,58 @@ const LMSDashboard = () => {
             </div>
             
             <div className="space-y-4">
-              {modules.map((module) => (
-                <div key={module.id} className="border border-gray-200 rounded-lg p-4 hover-lift transition-shadow duration-200">
-                  <div className="flex items-center justify-between mb-3">
-                    <div className="flex-1">
-                      <h3 className="h3 mb-1">{module.title}</h3>
-                      <div className="flex items-center space-x-4 text-sm text-slate/80">
-                        <span className="flex items-center">
-                          <Clock className="h-4 w-4 mr-1" />
-                          {module.duration}
-                        </span>
-                        <span>{module.type}</span>
+              {isLoadingCourses ? (
+                <div className="rounded-lg border border-mist bg-white/60 p-4 text-sm text-slate/70">
+                  Syncing your assigned courses...
+                </div>
+              ) : learningPathCourses.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-mist bg-white/40 p-6 text-center text-sm text-slate/70">
+                  New learning paths will appear here once courses are published for your cohort.
+                </div>
+              ) : (
+                learningPathCourses.map((course) => {
+                  const status = course.progress >= 100 ? 'completed' : course.progress > 0 ? 'in-progress' : 'not-started';
+                  const baseCoursePath = `/lms/courses/${course.slug || course.id}`;
+                  const resumeLessonHref = course.resumeLessonId ? `${baseCoursePath}/lesson/${course.resumeLessonId}` : baseCoursePath;
+                  const ctaHref = status === 'completed' ? baseCoursePath : resumeLessonHref;
+                  const ctaLabel = status === 'completed' ? 'Review' : status === 'in-progress' ? 'Continue' : 'Start';
+
+                  return (
+                    <div key={course.id} className="border border-gray-200 rounded-lg p-4 hover-lift transition-shadow duration-200">
+                      <div className="flex items-center justify-between mb-3">
+                        <div className="flex-1">
+                          <h3 className="h3 mb-1">{course.title}</h3>
+                          <div className="flex items-center space-x-4 text-sm text-slate/80">
+                            <span className="flex items-center">
+                              <Clock className="h-4 w-4 mr-1" />
+                              {course.duration || 'Self-paced'}
+                            </span>
+                            <span>{course.type || 'Program'}</span>
+                          </div>
+                        </div>
+                        <div className="flex items-center space-x-3">
+                          <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(status)}`}>
+                            {getStatusText(status)}
+                          </span>
+                          <Link to={ctaHref} className="btn-cta px-4 py-2 rounded-lg text-sm font-medium">
+                            {ctaLabel}
+                          </Link>
+                        </div>
+                      </div>
+
+                      <div className="w-full bg-mist/60 rounded-full h-2">
+                        <div
+                          className="h-2 rounded-full transition-all duration-300"
+                          style={{ width: `${course.progress}%`, backgroundImage: 'var(--gradient-blue-green)' }}
+                        />
+                      </div>
+                      <div className="text-right text-sm text-slate/80 mt-1">
+                        {course.progress}% complete
                       </div>
                     </div>
-                    <div className="flex items-center space-x-3">
-                      <span className={`px-2 py-1 rounded-full text-xs font-medium ${getStatusColor(module.status)}`}>
-                        {getStatusText(module.status)}
-                      </span>
-                      <Link
-                        to={`/lms/module/${module.id}`}
-                        className="btn-cta px-4 py-2 rounded-lg text-sm font-medium"
-                      >
-                        {module.status === 'completed' ? 'Review' : module.status === 'in-progress' ? 'Continue' : 'Start'}
-                      </Link>
-                    </div>
-                  </div>
-                  
-                  <div className="w-full bg-mist/60 rounded-full h-2">
-                    <div 
-                      className="h-2 rounded-full transition-all duration-300"
-                      style={{ width: `${module.progress}%`, backgroundImage: 'var(--gradient-blue-green)' }}
-                    />
-                  </div>
-                  <div className="text-right text-sm text-slate/80 mt-1">
-                    {module.progress}% complete
-                  </div>
-                </div>
-              ))}
+                  );
+                })
+              )}
             </div>
           </div>
         </div>

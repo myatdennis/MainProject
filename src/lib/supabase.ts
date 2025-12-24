@@ -34,14 +34,13 @@ export async function getSupabase() {
   } catch (err) {
     // In production we silence this to avoid noisy warnings when the client
     // intentionally falls back to a null client (e.g., E2E/demo mode).
-    try {
+    const isDevEnv = Boolean((import.meta as any)?.env?.DEV);
+    if (isDevEnv) {
       // Only warn during local development. In production (or E2E/demo
       // builds) we intentionally silence this to avoid noisy console
       // messages that pollute Playwright captures and user telemetry.
-      if ((import.meta as any).env && (import.meta as any).env.DEV) {
-        console.warn('[supabase] Dynamic import failed; falling back to null client:', err);
-      }
-    } catch (_) {}
+      console.warn('[supabase] Dynamic import failed; falling back to null client:', err);
+    }
     return null;
   }
 }

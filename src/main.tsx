@@ -4,6 +4,8 @@ import { HelmetProvider } from 'react-helmet-async';
 import App from './App';
 import './index.css';
 import serviceWorkerManager from './utils/ServiceWorkerManager';
+import { SecureAuthProvider } from './context/SecureAuthContext';
+import { ToastProvider } from './context/ToastContext';
 
 console.log('🚀 MainProject App initializing...');
 console.log('📍 Environment:', import.meta.env.MODE);
@@ -20,9 +22,13 @@ if (!rootElement) {
   try {
     createRoot(rootElement).render(
       <StrictMode>
-        <HelmetProvider>
-          <App />
-        </HelmetProvider>
+        <SecureAuthProvider>
+          <ToastProvider>
+            <HelmetProvider>
+              <App />
+            </HelmetProvider>
+          </ToastProvider>
+        </SecureAuthProvider>
       </StrictMode>
     );
     console.log('✅ App rendered successfully');

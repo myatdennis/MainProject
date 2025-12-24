@@ -4,14 +4,27 @@ import { beforeAll, afterAll, describe, it, expect } from 'vitest';
 const API_BASE = 'http://localhost:8888';
 let serverProc: any = null;
 
+type FetchLike = (input: string, init?: Record<string, any>) => Promise<any>;
+let cachedFetch: FetchLike | null = null;
+
+async function resolveFetch(): Promise<FetchLike> {
+  if (cachedFetch) return cachedFetch;
+  if (typeof globalThis.fetch === 'function') {
+    cachedFetch = globalThis.fetch.bind(globalThis) as FetchLike;
+    return cachedFetch;
+  }
+  const mod = await import('node-fetch');
+  const impl = (mod as any).default ?? mod;
+  cachedFetch = impl as FetchLike;
+  return cachedFetch;
+}
+
 async function waitForHealth(timeout = 5000) {
   const deadline = Date.now() + timeout;
    
   while (true) {
     try {
-  // Use global fetch (Node 18+) or dynamic import fallback
-  // @ts-ignore: dynamic fallback to `node-fetch` for older Node versions in CI
-  const fn = (globalThis as any).fetch ?? (await import('node-fetch')).default;
+      const fn = await resolveFetch();
       const res = await fn(`${API_BASE}/api/health`);
       if (res && (res.status === 200 || res.status === 201)) return;
     } catch (e) {
@@ -59,8 +72,7 @@ describe('Idempotency keys (integration)', () => {
       idempotency_key: 'itest-key-1'
     };
 
-  // @ts-ignore: dynamic fallback to `node-fetch` for older Node versions in CI
-  const fn = (globalThis as any).fetch ?? (await import('node-fetch')).default;
+    const fn = await resolveFetch();
 
     const res1 = await fn(`${API_BASE}/api/admin/courses`, {
       method: 'POST',

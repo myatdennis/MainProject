@@ -8,8 +8,8 @@ import react from '@vitejs/plugin-react';
 export default async () => {
   let compression = null;
   try {
-    // @ts-ignore - Optional dynamic import; this plugin may not be installed in all environments
-    compression = (await import('vite-plugin-compression')).default;
+    const compressionPackage = 'vite-plugin-compression';
+    compression = (await import(compressionPackage)).default;
   } catch (e) {
     compression = null;
   }
