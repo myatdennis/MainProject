@@ -7,14 +7,27 @@
 
 const mode = process.env.API_MODE || 'absolute'; // 'absolute' or 'proxy'
 
+const parseFlag = (value, defaultValue = false) => {
+  if (value === undefined || value === null || value === '') return defaultValue;
+  const normalized = String(value).trim().toLowerCase();
+  if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+  if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+  return defaultValue;
+};
+
+const websocketsEnabled = parseFlag(process.env.VITE_ENABLE_WS, mode !== 'proxy');
+
 const requiredFrontendAbsolute = [
-  'VITE_API_BASE_URL',
-  'VITE_WS_URL'
+  'VITE_API_BASE_URL'
 ];
 const requiredFrontendProxy = [
-  // Using Netlify proxy, omit VITE_API_BASE_URL; allow optional VITE_WS_URL if relying on /ws redirect
-  'VITE_WS_URL'
+  // Using Netlify proxy, omit VITE_API_BASE_URL entirely; WS URL optional unless flag enabled
 ];
+
+if (websocketsEnabled) {
+  requiredFrontendAbsolute.push('VITE_WS_URL');
+  requiredFrontendProxy.push('VITE_WS_URL');
+}
 
 const requiredBackend = [
   'CORS_ALLOWED_ORIGINS'

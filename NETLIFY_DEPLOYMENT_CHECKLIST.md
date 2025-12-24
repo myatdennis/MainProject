@@ -15,6 +15,7 @@ Use this checklist to ensure a reliable production deploy of the SPA + external 
 Set BEFORE redeploy to avoid runtime 404s:
 ```
 VITE_API_BASE_URL=https://api.example.com   # full origin of your backend API (no trailing slash)
+VITE_ENABLE_WS=true                         # enable realtime socket client (set false if backend lacks WS)
 VITE_WS_URL=wss://api.example.com/ws        # websocket endpoint (if using realtime)
 SUPABASE_URL=                                # if using Supabase features
 SUPABASE_ANON_KEY=                           # public client key
@@ -24,7 +25,7 @@ If you proxy `/api/*` through Netlify instead of using absolute URLs, you may om
 
 ## 3. Optional API Proxy (Choose ONE approach)
 A. External API via absolute env vars (simpler)
-- Keep `VITE_API_BASE_URL` + `VITE_WS_URL` variables.
+- Keep `VITE_API_BASE_URL` and `VITE_ENABLE_WS=true` (plus `VITE_WS_URL`) variables.
 - Do NOT add `/api/*` redirect.
 
 B. Netlify proxy to backend (backend must allow CORS / accept same-origin)
@@ -36,7 +37,7 @@ Uncomment and adapt inside `netlify.toml`:
   status = 200
   force = true
 ```
-If using WebSockets on same host & path `/ws`, add (only if upgrade issues appear):
+If using WebSockets on same host & path `/ws`, keep `VITE_ENABLE_WS=true` and add (only if upgrade issues appear):
 ```
 [[headers]]
   for = "/ws"
@@ -62,7 +63,7 @@ In deployed site:
 |-------|---------|-----|
 | UI overrides still active | Build ignores `netlify.toml` | Clear build & publish fields in UI |
 | Missing `VITE_API_BASE_URL` | 404s to relative `/api/*` | Set env var OR add proxy redirect |
-| Wrong protocol for WS | Mixed content / failure | Use `wss://` in `VITE_WS_URL` |
+| Wrong protocol for WS | Mixed content / failure | Use `wss://` in `VITE_WS_URL` and ensure `VITE_ENABLE_WS` matches deployment |
 | CORS errors | 403/blocked responses | Configure backend CORS allow Netlify domain |
 | Large initial payload | Slow first paint | Enable code splitting (already partly done); consider preloading critical chunks |
 

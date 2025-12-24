@@ -1,9 +1,21 @@
+import toast from 'react-hot-toast';
+
 type WSMessage = {
   topic?: string;
   type: string;
   data?: any;
   timestamp?: number;
 };
+
+const parseFlag = (value?: string, defaultValue = false) => {
+  if (value === undefined || value === null || value === '') return defaultValue;
+  const normalized = String(value).trim().toLowerCase();
+  if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+  if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+  return defaultValue;
+};
+
+const isBrowser = typeof window !== 'undefined';
 // Lightweight browser-friendly event emitter (avoid Node 'events' polyfills)
 class SimpleEmitter {
   private listeners: Map<string, Set<(...args: unknown[]) => void>> = new Map();
@@ -38,23 +50,42 @@ class SimpleEmitter {
 }
 
 class WSClient extends SimpleEmitter {
-  private url: string;
+  private url?: string;
   private socket: WebSocket | null = null;
   private reconnectDelay = 1000;
   private maxDelay = 30000;
-  private shouldReconnect = true;
+  private shouldReconnect = false;
   private connected = false;
+  private enabled: boolean;
+  private notified = false;
+  private readonly toastId = 'ws-client-status';
 
   constructor(url?: string) {
     super();
-    this.url = url || (import.meta.env.VITE_WS_URL as string) || `${location.origin.replace(/^http/, 'ws')}/ws`;
+    const envUrl = (import.meta.env.VITE_WS_URL as string | undefined)?.trim();
+    const fallbackUrl = isBrowser ? `${window.location.origin.replace(/^http/, 'ws')}/ws` : undefined;
+    this.url = url || envUrl || fallbackUrl;
+    this.enabled = parseFlag(import.meta.env.VITE_ENABLE_WS as string | undefined, false);
+    this.shouldReconnect = this.enabled;
   }
 
   connect() {
+    if (!this.enabled) {
+      this.notifyOnce('WebSocket client disabled (VITE_ENABLE_WS=false).', 'info');
+      return;
+    }
+
+    if (!this.hasValidUrl()) {
+      this.enabled = false;
+      this.shouldReconnect = false;
+      this.notifyOnce('WebSocket URL missing or invalid; realtime updates disabled.', 'error');
+      return;
+    }
+
     if (this.socket) return;
 
     try {
-      this.socket = new WebSocket(this.url);
+      this.socket = new WebSocket(this.url!);
 
       this.socket.addEventListener('open', () => {
         this.reconnectDelay = 1000;
@@ -78,7 +109,7 @@ class WSClient extends SimpleEmitter {
         this.connected = false;
         this.socket = null;
         this.emit('close');
-        if (this.shouldReconnect) this.scheduleReconnect();
+        if (this.shouldReconnect && this.enabled) this.scheduleReconnect();
       });
 
       this.socket.addEventListener('error', (err) => {
@@ -87,7 +118,11 @@ class WSClient extends SimpleEmitter {
       });
     } catch (err) {
       this.emit('error', err);
-      this.scheduleReconnect();
+      if (this.shouldReconnect && this.enabled) {
+        this.scheduleReconnect();
+      } else {
+        this.notifyOnce('WebSocket connection failed and will not retry (disabled).', 'error');
+      }
     }
   }
 
@@ -101,13 +136,18 @@ class WSClient extends SimpleEmitter {
 
   private scheduleReconnect() {
     setTimeout(() => {
-      if (!this.shouldReconnect) return;
+      if (!this.shouldReconnect || !this.enabled) return;
       this.reconnectDelay = Math.min(this.reconnectDelay * 1.5, this.maxDelay);
       this.connect();
     }, this.reconnectDelay + Math.floor(Math.random() * 500));
   }
 
   send(msg: WSMessage) {
+    if (!this.enabled) {
+      this.emit('send_failed', msg);
+      return false;
+    }
+
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
       // queueing could be added here
       this.emit('send_failed', msg);
@@ -132,6 +172,30 @@ class WSClient extends SimpleEmitter {
 
   isConnected() {
     return this.connected;
+  }
+
+  isEnabled() {
+    return this.enabled;
+  }
+
+  private hasValidUrl() {
+    return typeof this.url === 'string' && /^wss?:\/\//.test(this.url);
+  }
+
+  private notifyOnce(message: string, severity: 'info' | 'warn' | 'error' = 'warn') {
+    if (this.notified) return;
+    this.notified = true;
+    const log = severity === 'error' ? console.error : console.warn;
+    log(`[WSClient] ${message}`);
+
+    if (!isBrowser) return;
+
+    const toastFn = severity === 'error' ? toast.error : toast;
+    try {
+      toastFn(message, { id: this.toastId, duration: 5000 });
+    } catch (error) {
+      console.debug('[WSClient] Unable to display toast notification', error);
+    }
   }
 }
 

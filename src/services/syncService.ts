@@ -64,7 +64,7 @@ class SyncService {
 
     // Initialize WebSocket client if configured (fast realtime fallback)
     try {
-      if (import.meta.env.VITE_WS_URL) {
+      if (wsClient.isEnabled()) {
         wsClient.connect();
 
         // Map incoming WS events to local emitters
@@ -97,6 +97,8 @@ class SyncService {
         });
 
         wsClient.on('close', () => this.emit('ws_disconnected', { timestamp: Date.now() }));
+      } else {
+        console.info('[SyncService] WebSocket client disabled; relying on Supabase realtime/polling.');
       }
     } catch (err) {
       console.warn('WS client initialization failed', err);

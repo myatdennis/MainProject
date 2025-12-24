@@ -39,7 +39,9 @@ If you use the Vite dev server the UI will call `/api/*` and Vite will proxy to 
 - **Demo / re-entry mode** (default for local): keep `DEV_FALLBACK=true` and `DEMO_MODE=true`. The API will serve in-memory courses, allow the demo logins listed below, and ignore missing Supabase credentials.
 - **Supabase mode** (staging/prod): set `DEV_FALLBACK=false` and `DEMO_MODE=false`, then provide `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `VITE_SUPABASE_URL`, and `VITE_SUPABASE_ANON_KEY`.
 - Always keep `SUPABASE_SERVICE_ROLE_KEY` and `JWT_SECRET` on the server only. Never expose them in the Vite bundle.
-- `VITE_API_BASE_URL` and `VITE_WS_URL` should point to your deployed Express host when not using the Vite proxy.
+- `VITE_API_BASE_URL` should point to your deployed Express host when not using the Vite proxy.
+- Set `VITE_ENABLE_WS=true` when your backend WebSocket endpoint is reachable; leave it `false` to fall back to Supabase realtime + polling.
+- When WebSockets are enabled, ensure `VITE_WS_URL` matches your backend (wss:// in prod, ws:// in local) or rely on the default `/ws` proxy path.
 
 ## Troubleshooting
 
@@ -157,7 +159,7 @@ src/
 ## Dev & Deploy Notes
 - API server default port is now 8888 (aligned with Vite proxy). If you need a different port: `PORT=8787 node server/index.js`.
 - Vite dev server proxies `/api` and `/ws` to `http://localhost:8888`. Adjust `vite.config.ts` if you change the API port.
-- Production builds rely on `VITE_API_BASE_URL` (and optional `VITE_WS_URL`). Set these in Netlify/Vercel to avoid runtime 404s.
+- Production builds rely on `VITE_API_BASE_URL` and, when `VITE_ENABLE_WS=true`, `VITE_WS_URL`. Set these in Netlify/Vercel to avoid runtime 404s.
 - If using Netlify proxy instead of absolute URLs, add a redirect mapping `/api/*` to your backend in `netlify.toml` (we've scaffolded placeholders — replace `<RAILWAY_HOST>`).
 - Service worker can be cleared at `/unregister-sw.html` if you see stale assets.
 - When Supabase is not configured, the server uses a safe in-memory fallback by default (DEV_FALLBACK). Disable with `DEV_FALLBACK=false`.
@@ -190,8 +192,8 @@ npm run remove:server-ts
     - CORS_ALLOWED_ORIGINS=https://the-huddle.co,https://www.the-huddle.co,https://<your-site>.netlify.app
 
 3) Frontend env (choose one mode)
-    - Absolute URL mode: set VITE_API_BASE_URL=https://mainproject-production-4e66.up.railway.app, VITE_WS_URL=wss://mainproject-production-4e66.up.railway.app/ws
-    - Proxy mode: edit `netlify.toml` and replace `<RAILWAY_HOST>` in redirects; then VITE_API_BASE_URL is optional
+    - Absolute URL mode: set VITE_API_BASE_URL=https://mainproject-production-4e66.up.railway.app, VITE_ENABLE_WS=true, VITE_WS_URL=wss://mainproject-production-4e66.up.railway.app/ws
+    - Proxy mode: edit `netlify.toml` and replace `<RAILWAY_HOST>` in redirects; then VITE_API_BASE_URL is optional. Set VITE_ENABLE_WS=true if your `/ws` proxy is wired up, or leave it false to skip the connection entirely.
 
 4) Verify
     - `./scripts/smoke.sh the-huddle.co <railway-host> admin@thehuddleco.com admin123`
