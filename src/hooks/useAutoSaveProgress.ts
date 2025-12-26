@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
-import { getSupabase, hasSupabaseConfig } from '../lib/supabase';
+import { getSupabase, hasSupabaseConfig } from '../lib/supabaseClient';
 import toast from 'react-hot-toast';
 
 interface ProgressData {

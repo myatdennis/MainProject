@@ -1,5 +1,5 @@
 import { request } from './http';
-import { getSupabase } from '../lib/supabase';
+import { getSupabase } from '../lib/supabaseClient';
 
 export type Visibility = 'global' | 'org' | 'user';
 

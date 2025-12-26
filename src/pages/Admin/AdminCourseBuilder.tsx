@@ -8,7 +8,7 @@ import { computeCourseDiff } from '../../utils/courseDiff';
 // import type { NormalizedCourse } from '../../utils/courseNormalization';
 import { mergePersistedCourse } from '../../utils/adminCourseMerge';
 import type { Course, Module, Lesson } from '../../types/courseTypes';
-import { getSupabase } from '../../lib/supabase';
+import { getSupabase } from '../../lib/supabaseClient';
 import { getVideoEmbedUrl } from '../../utils/videoUtils';
 import { 
   ArrowLeft, 

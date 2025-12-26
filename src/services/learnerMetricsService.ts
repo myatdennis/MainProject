@@ -1,4 +1,4 @@
-import { getSupabase, hasSupabaseConfig } from '../lib/supabase';
+import { getSupabase, hasSupabaseConfig } from '../lib/supabaseClient';
 
 const isSupabaseReady = hasSupabaseConfig;
 

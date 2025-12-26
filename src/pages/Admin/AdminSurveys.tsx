@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { getSupabase, hasSupabaseConfig } from '../../lib/supabase';
+import { getSupabase, hasSupabaseConfig } from '../../lib/supabaseClient';
 import { Link, useNavigate } from 'react-router-dom';
 import { 
   Plus, 

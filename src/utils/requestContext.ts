@@ -1,4 +1,4 @@
-import { getSupabase, hasSupabaseConfig } from '../lib/supabase';
+import { getSupabase, hasSupabaseConfig } from '../lib/supabaseClient';
 import { getUserSession, getAccessToken } from '../lib/secureStorage';
 
 export const buildAuthHeaders = async (): Promise<Record<string, string>> => {

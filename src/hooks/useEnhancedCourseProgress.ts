@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { getSupabase } from '../lib/supabase';
+import { getSupabase } from '../lib/supabaseClient';
 import { useRealtimeSync, RealtimeEvent } from './useRealtimeSync';
 import { useAutoSaveProgress } from './useAutoSaveProgress';
 import { useOfflineProgressQueue } from './useOfflineProgressQueue';
 import toast from 'react-hot-toast';
-import type { UserLessonProgress, UserCourseEnrollment, UserReflection } from '../lib/supabase';
+import type { UserLessonProgress, UserCourseEnrollment, UserReflection } from '../lib/supabaseClient';
 
 interface UseCourseProgressOptions {
   userId?: string;
@@ -397,7 +397,7 @@ export const useEnhancedCourseProgress = (courseId: string, options: UseCoursePr
   const updateLessonProgressFromSync = useCallback((syncData: any) => {
     if (syncData.lesson_id && syncData.progress !== undefined) {
       setLessonProgress(prev => {
-        const current = (prev[syncData.lesson_id] || {}) as import('../lib/supabase').UserLessonProgress;
+  const current = (prev[syncData.lesson_id] || {}) as import('../lib/supabaseClient').UserLessonProgress;
         // Only update if the sync data is newer
         const syncTime = new Date(syncData.timestamp || 0);
         const currentTime = new Date(current.last_accessed_at || 0);

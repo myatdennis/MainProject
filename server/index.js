@@ -283,6 +283,10 @@ app.use('/api/admin/courses', adminCoursesRoutes);
 const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
 
+const missingSupabaseEnvVars = [];
+if (!supabaseUrl) missingSupabaseEnvVars.push('SUPABASE_URL or VITE_SUPABASE_URL');
+if (!supabaseServiceRoleKey) missingSupabaseEnvVars.push('SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SERVICE_KEY');
+
 // Log Supabase configuration for diagnostics
 console.log('[Diagnostics] SUPABASE_URL:', supabaseUrl);
 console.log('[Diagnostics] SUPABASE_SERVICE_ROLE_KEY:', supabaseServiceRoleKey ? 'Present' : 'Not Set');
@@ -292,6 +296,7 @@ if (E2E_TEST_MODE) {
   console.log('[server] Running in E2E_TEST_MODE - ignoring Supabase credentials and using in-memory fallback');
   supabase = null;
 }
+let loggedMissingSupabaseConfig = false;
 
 const checkSupabaseHealth = async () => {
   if (!supabase) return { status: 'disabled' };
@@ -633,11 +638,58 @@ function dumpErrorContext(req, err) {
 }
 
 
+const summarizeRequestBody = (body) => {
+  if (body === null || body === undefined) return null;
+  if (typeof body !== 'object') return typeof body;
+  const summary = {};
+  const keys = Object.keys(body);
+  for (const key of keys) {
+    const value = body[key];
+    if (value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      summary[key] = value;
+    } else if (Array.isArray(value)) {
+      summary[key] = `Array(${value.length})`;
+    } else if (typeof value === 'object') {
+      summary[key] = `Object(${Object.keys(value).length})`;
+    } else {
+      summary[key] = typeof value;
+    }
+  }
+  return summary;
+};
+
+const logAdminCoursesError = (req, err, label) => {
+  const endpoint = req?.method && req?.originalUrl ? `${req.method} ${req.originalUrl}` : req?.path || 'unknown';
+  const meta = {
+    endpoint,
+    requestId: req?.requestId ?? null,
+    params: req?.params ?? null,
+    query: req?.query ?? null,
+    bodySummary: summarizeRequestBody(req?.body ?? null),
+  };
+  console.error(`[admin-courses] ${label}`, meta, err);
+  try {
+    dumpErrorContext(req, err);
+  } catch (_) {
+    // swallow diagnostics errors
+  }
+};
+
+
 const ensureSupabase = (res) => {
   if (!supabase) {
     // Allow tests to run with an in-memory fallback when explicitly enabled
     if (E2E_TEST_MODE || DEV_FALLBACK) return true;
-    res.status(500).json({ error: 'Supabase service credentials not configured on server' });
+    const missingEnv = missingSupabaseEnvVars.length > 0 ? missingSupabaseEnvVars : ['Unknown Supabase configuration'];
+    if (!loggedMissingSupabaseConfig) {
+      console.error('[Supabase] Missing required environment variables:', missingEnv.join(', '));
+      loggedMissingSupabaseConfig = true;
+    }
+    res.status(503).json({
+      error: 'Supabase service credentials not configured on server',
+      missingEnv,
+      hint: 'Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (or disable via DEV_FALLBACK=true for demo mode).'
+    });
     return false;
   }
   return true;
@@ -1205,7 +1257,7 @@ app.post('/api/broadcast', (req, res) => {
 // Expose broadcast helper to other server modules
 app.locals.broadcastToTopic = broadcastToTopic;
 
-app.get('/api/admin/courses', async (_req, res) => {
+app.get('/api/admin/courses', async (req, res) => {
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
     try {
       const data = Array.from(e2eStore.courses.values()).map((c) => ({
@@ -1245,7 +1297,7 @@ app.get('/api/admin/courses', async (_req, res) => {
       res.json({ data });
       return;
     } catch (err) {
-      console.error('E2E fetch courses failed', err);
+      logAdminCoursesError(req, err, 'E2E fetch courses failed');
       res.status(500).json({ error: 'Unable to fetch courses' });
       return;
     }
@@ -1263,7 +1315,7 @@ app.get('/api/admin/courses', async (_req, res) => {
     if (error) throw error;
     res.json({ data });
   } catch (error) {
-    console.error('Failed to fetch courses:', error);
+    logAdminCoursesError(req, error, 'Failed to fetch courses');
     res.status(500).json({ error: 'Unable to fetch courses' });
   }
 });
@@ -1375,7 +1427,7 @@ app.post('/api/admin/courses', async (req, res) => {
       res.status(201).json({ data: courseObj });
       return;
     } catch (error) {
-      console.error('E2E upsert course failed:', error);
+      logAdminCoursesError(req, error, 'E2E upsert course failed');
       res.status(500).json({ error: 'Unable to save course' });
       return;
     }
@@ -1664,8 +1716,7 @@ app.post('/api/admin/courses', async (req, res) => {
 
     res.status(201).json({ data: refreshed.data });
   } catch (error) {
-    console.error('Failed to upsert course:', error);
-    try { dumpErrorContext(req, error); } catch (_) {}
+    logAdminCoursesError(req, error, 'Failed to upsert course');
     // Provide more details to the client for debugging
     const errorMessage = error?.message || 'Unable to save course';
     const errorDetails = error?.details || error?.hint || null;
@@ -1777,6 +1828,7 @@ app.post('/api/admin/courses/import', async (req, res) => {
       // Rollback
       e2eStore.courses = snapshot;
       persistE2EStore();
+      logAdminCoursesError(req, err, 'E2E import failed');
       res.status(400).json({ error: 'Import failed', details: String(err?.message || err) });
     }
     return;
@@ -1860,7 +1912,7 @@ app.post('/api/admin/courses/import', async (req, res) => {
     }
     res.status(201).json({ data: results });
   } catch (error) {
-    console.error('Import failed:', error);
+    logAdminCoursesError(req, error, 'Import failed');
     res.status(500).json({
       error: 'Import failed',
       details: error?.message || error?.hint || null,
@@ -1967,7 +2019,7 @@ app.post('/api/admin/courses/:id/publish', async (req, res) => {
 
     res.json({ data: updated.data });
   } catch (error) {
-    console.error(`Failed to publish course ${id}:`, error);
+    logAdminCoursesError(req, error, `Failed to publish course ${id}`);
     res.status(500).json({ error: 'Unable to publish course' });
   }
 });
@@ -2107,7 +2159,7 @@ app.post('/api/admin/courses/:id/assign', async (req, res) => {
 
     res.status(201).json({ data: assignments });
   } catch (error) {
-    console.error('Failed to assign course:', error);
+    logAdminCoursesError(req, error, `Failed to assign course ${id}`);
     res.status(500).json({ error: 'Unable to assign course' });
   }
 });
@@ -2123,7 +2175,7 @@ app.delete('/api/admin/courses/:id', async (req, res) => {
       console.log(`✅ Deleted course ${id} from persistent storage`);
       res.status(204).end();
     } catch (error) {
-      console.error('E2E: Failed to delete course:', error);
+      logAdminCoursesError(req, error, `E2E delete course ${id} failed`);
       res.status(500).json({ error: 'Unable to delete course' });
     }
     return;
@@ -2135,7 +2187,7 @@ app.delete('/api/admin/courses/:id', async (req, res) => {
     if (error) throw error;
     res.status(204).end();
   } catch (error) {
-    console.error('Failed to delete course:', error);
+    logAdminCoursesError(req, error, `Failed to delete course ${id}`);
     res.status(500).json({ error: 'Unable to delete course' });
   }
 });

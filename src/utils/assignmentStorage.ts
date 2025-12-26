@@ -1,4 +1,4 @@
-import { getSupabase, hasSupabaseConfig } from '../lib/supabase';
+import { getSupabase, hasSupabaseConfig } from '../lib/supabaseClient';
 import { syncService } from '../dal/sync';
 import type { CourseAssignment, CourseAssignmentStatus } from '../types/assignment';
 

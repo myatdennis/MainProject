@@ -3,7 +3,7 @@
  * Implements conflict resolution, intelligent caching, and real-time analytics
  */
 
-import { getSupabase, hasSupabaseConfig } from '../lib/supabase';
+import { getSupabase, hasSupabaseConfig } from '../lib/supabaseClient';
 import { EventEmitter } from 'events';
 
 export interface SyncConflict {

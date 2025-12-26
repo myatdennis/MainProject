@@ -1,6 +1,6 @@
 export type Visibility = 'global' | 'org' | 'user';
 
-import { getSupabase } from '../lib/supabase';
+import { getSupabase } from '../lib/supabaseClient';
 import apiRequest from '../utils/apiClient';
 
 export type DocumentMeta = {

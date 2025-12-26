@@ -1,6 +1,6 @@
 import React, { useEffect, useState, lazy, Suspense } from 'react'
 import { Users, TrendingUp, Activity as ActivityIcon, Clock, BarChart3, BookOpen } from 'lucide-react'
-import { getSupabase } from '../../lib/supabase'
+import { getSupabase } from '../../lib/supabaseClient'
 const CompletionChart = lazy(() => import('../../components/Analytics/CompletionChart'));
 
 type Overview = {

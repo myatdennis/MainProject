@@ -1,5 +1,5 @@
 import { useEffect, useCallback, useRef } from 'react';
-import { getSupabase, hasSupabaseConfig } from '../lib/supabase';
+import { getSupabase, hasSupabaseConfig } from '../lib/supabaseClient';
 import toast from 'react-hot-toast';
 
 export interface RealtimeEvent {

@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { getSupabase, hasSupabaseConfig } from '../lib/supabase';
-import type { UserLessonProgress, UserCourseEnrollment, UserReflection } from '../lib/supabase';
+import { getSupabase, hasSupabaseConfig } from '../lib/supabaseClient';
+import type { UserLessonProgress, UserCourseEnrollment, UserReflection } from '../lib/supabaseClient';
 
 export const useCourseProgress = (courseId: string) => {
   const [enrollmentData, setEnrollmentData] = useState<UserCourseEnrollment | null>(null);

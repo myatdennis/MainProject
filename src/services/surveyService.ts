@@ -1,4 +1,4 @@
-import { getSupabase, hasSupabaseConfig } from '../lib/supabase';
+import { getSupabase, hasSupabaseConfig } from '../lib/supabaseClient';
 import type { Survey } from '../types/survey';
 import apiRequest, { type ApiRequestOptions } from '../utils/apiClient';
 
