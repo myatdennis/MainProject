@@ -1,4 +1,5 @@
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+type SupabaseClient = import('@supabase/supabase-js').SupabaseClient;
+type CreateClient = typeof import('@supabase/supabase-js').createClient;
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
@@ -7,6 +8,8 @@ export const hasSupabaseConfig = Boolean(supabaseUrl && supabaseAnonKey);
 
 let supabaseClient: SupabaseClient | null = null;
 let initError: Error | null = null;
+let createClientLoader: Promise<CreateClient> | null = null;
+let createClientFn: CreateClient | null = null;
 
 const realtimeDefaults = {
   params: {
@@ -14,15 +17,39 @@ const realtimeDefaults = {
   },
 };
 
-function hydrateClient(): SupabaseClient | null {
+async function importCreateClient(): Promise<CreateClient> {
+  if (createClientFn) return createClientFn;
+  if (!createClientLoader) {
+    createClientLoader = import('@supabase/supabase-js')
+      .then((mod) => mod.createClient)
+      .catch((error) => {
+        initError = error instanceof Error ? error : new Error(String(error));
+        if (import.meta.env.DEV) {
+          console.error('[supabaseClient] Failed to load @supabase/supabase-js:', initError.message);
+          console.info('👉 Run "npm install @supabase/supabase-js" to add the dependency or check your lockfile.');
+        }
+        createClientLoader = null;
+        throw initError;
+      });
+  }
+  createClientFn = await createClientLoader;
+  return createClientFn;
+}
+
+async function hydrateClient(): Promise<SupabaseClient | null> {
   if (!hasSupabaseConfig) {
     if (import.meta.env.DEV) {
       console.info('[supabaseClient] Supabase not configured – falling back to demo data.');
     }
+    supabaseClient = null;
+    initError = null;
     return null;
   }
+
   if (supabaseClient) return supabaseClient;
+
   try {
+    const createClient = await importCreateClient();
     supabaseClient = createClient(supabaseUrl, supabaseAnonKey, {
       auth: {
         persistSession: true,
@@ -38,7 +65,9 @@ function hydrateClient(): SupabaseClient | null {
   } catch (error) {
     initError = error instanceof Error ? error : new Error(String(error));
     supabaseClient = null;
-    console.error('[supabaseClient] Failed to initialize client:', initError.message);
+    if (import.meta.env.DEV) {
+      console.error('[supabaseClient] Failed to initialize client:', initError.message);
+    }
   }
   return supabaseClient;
 }
@@ -52,7 +81,7 @@ export async function getSupabaseClient(): Promise<SupabaseClient | null> {
 }
 
 export function getSupabaseSync(): SupabaseClient | null {
-  return hydrateClient();
+  return supabaseClient;
 }
 
 export function getSupabaseStatus() {

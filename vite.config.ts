@@ -13,6 +13,13 @@ export default async () => {
   } catch (e) {
     compression = null;
   }
+  // Allow developers to override HMR connection details for remote-dev or tunnel
+  // scenarios, but fall back to Vite defaults when no env vars are set so we
+  // don't accidentally point the websocket at an unreachable host.
+  const hmrHost = process.env.VITE_HMR_HOST || process.env.HMR_HOST;
+  const hmrProtocol = process.env.VITE_HMR_PROTOCOL || process.env.HMR_PROTOCOL;
+  const hmrClientPort = process.env.VITE_HMR_CLIENT_PORT || process.env.HMR_CLIENT_PORT;
+
   return defineConfig({
   plugins: [
     react(),
@@ -22,7 +29,16 @@ export default async () => {
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'src'),
+      // Hard-pin React packages to a single physical path so Vite never bundles
+      // multiple copies, which would trigger "Invalid hook call" errors when
+      // navigating to admin routes that are code-split into secondary chunks.
+      react: path.resolve(__dirname, 'node_modules/react'),
+      'react-dom': path.resolve(__dirname, 'node_modules/react-dom'),
+      'react-dom/client': path.resolve(__dirname, 'node_modules/react-dom/client')
     },
+    // Ensure any linked packages (e.g., local component libraries or the admin
+    // backup bundle) reuse this project's single React instance during dev.
+    dedupe: ['react', 'react-dom', 'react-router', 'react-router-dom'],
   },
   test: {
     globals: true,
@@ -36,6 +52,11 @@ export default async () => {
     host: true,
     port: 5174,
     strictPort: true,
+    hmr: {
+      ...(hmrHost ? { host: hmrHost } : {}),
+      ...(hmrProtocol ? { protocol: hmrProtocol } : {}),
+      ...(hmrClientPort ? { clientPort: Number(hmrClientPort) } : {}),
+    },
     headers: {
       'X-Content-Type-Options': 'nosniff',
       'X-Frame-Options': 'DENY',
