@@ -1,12 +1,13 @@
 import express from 'express'
 import sql from '../db.js'
 import fetch from 'node-fetch'
+import { withHttpError } from '../middleware/apiErrorHandler.js'
 
 const router = express.Router()
 
 // POST /api/admin/analytics/summary
 // Body: { course_id?, timeframe: { since, until }, provider: 'openai' }
-router.post('/', async (req, res) => {
+router.post('/', async (req, res, next) => {
   try {
     const { course_id, timeframe = {} } = req.body || {}
 
@@ -67,7 +68,7 @@ router.post('/', async (req, res) => {
     res.json({ ai: aiText, payload })
   } catch (err) {
     console.error('[admin-analytics-summary] error', err)
-    res.status(500).json({ error: 'summary_failed' })
+    next(withHttpError(err, 500, 'analytics_summary_failed'))
   }
 })
 

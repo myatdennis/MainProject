@@ -126,6 +126,7 @@ export interface Survey {
   id: string;
   title: string;
   description?: string;
+  type?: string;
   status: SurveyStatus;
   version?: number;
   createdBy: string;

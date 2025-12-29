@@ -6,29 +6,42 @@
 import axios, { AxiosInstance, AxiosRequestConfig, AxiosError } from 'axios';
 import { ApiError as ApiClientError } from '../utils/apiClient';
 import buildAuthHeaders from '../utils/requestContext';
-import { getAccessToken, getAuthTokens } from '../lib/secureStorage';
+import { setSessionMetadata, clearAuth, getRefreshToken, setAccessToken, setRefreshToken } from '../lib/secureStorage';
 import { getCSRFToken } from '../hooks/useCSRFToken';
 
 // ============================================================================
 // API Client Configuration
 // ============================================================================
 
-// Prefer VITE_API_BASE_URL for consistency; fall back to VITE_API_URL and then '/api'
-// In development, prefer the Vite proxy ('/api') over an absolute external URL
-// to avoid making network calls to production or other hosts when running locally.
+// Prefer explicit configuration via VITE_API_BASE_URL.
 const rawApiBase = (import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || '').trim().replace(/\/$/, '');
-// Default to Railway host in production if no API base is explicitly configured.
+const allowProdFallback = String(import.meta.env.VITE_ALLOW_PROD_FALLBACK || import.meta.env.ALLOW_PROD_FALLBACK || '').toLowerCase() === 'true';
 const defaultRailwayHost = 'https://mainproject-production-4e66.up.railway.app';
-let API_BASE_URL = rawApiBase || (import.meta.env.MODE === 'production' ? defaultRailwayHost : '/api');
-// If running in development and the configured API base is not a localhost address,
-// prefer using the dev proxy so calls go through Vite (:5174 -> proxy -> :8888).
-if (import.meta.env.DEV && rawApiBase && !/^https?:\/\/(localhost|127(?:\.[0-9]+){0,2}\.[0-9]+|\[::1\])(:|$)/i.test(rawApiBase)) {
-  API_BASE_URL = '/api';
+
+if (import.meta.env.DEV && !rawApiBase) {
+  const hint = 'Set VITE_API_BASE_URL in your .env (e.g. VITE_API_BASE_URL=/api for the Vite proxy).';
+  throw new Error(`[apiClient] VITE_API_BASE_URL is required in development. ${hint}`);
 }
 
-// If a fallback was applied in production, log it for easier troubleshooting.
-if (!rawApiBase && import.meta.env.MODE === 'production') {
-  console.info('[apiClient] VITE_API_BASE_URL not set — defaulting to Railway host:', API_BASE_URL);
+let API_BASE_URL = rawApiBase;
+
+if (!API_BASE_URL) {
+  if (import.meta.env.MODE === 'production') {
+    if (!allowProdFallback) {
+      throw new Error('[apiClient] VITE_API_BASE_URL is not set and ALLOW_PROD_FALLBACK is not true. Refusing to hit the default Railway host.');
+    }
+    API_BASE_URL = defaultRailwayHost;
+    console.warn('[apiClient] Using production fallback host because ALLOW_PROD_FALLBACK=true:', API_BASE_URL);
+  } else {
+    API_BASE_URL = '/api';
+  }
+} else if (
+  import.meta.env.DEV &&
+  /^https?:\/\//i.test(API_BASE_URL) &&
+  !/^https?:\/\/(localhost|127(?:\.[0-9]+){0,2}\.[0-9]+|\[::1\])(:|$)/i.test(API_BASE_URL)
+) {
+  console.warn('[apiClient] VITE_API_BASE_URL points to a non-local host in development:', API_BASE_URL);
+  console.warn('Consider using the local proxy (/api) to avoid writing to production by accident.');
 }
 
 /**
@@ -54,11 +67,7 @@ apiClient.interceptors.request.use(
       const headers = await buildAuthHeaders();
       config.headers = { ...(config.headers || {}), ...headers } as any;
     } catch (err) {
-      // fallback: best-effort bearer from secure storage
-      const token = getAccessToken();
-      if (token) {
-        (config.headers as any) = { ...(config.headers || {}), Authorization: `Bearer ${token}` };
-      }
+      console.warn('[apiClient] Failed to build auth headers. Proceeding without enrichment.', err);
     }
 
     // Add CSRF token for state-changing requests
@@ -94,16 +103,16 @@ apiClient.interceptors.request.use(
 
 let isRefreshing = false;
 let failedQueue: Array<{
-  resolve: (value?: any) => void;
+  resolve: (value?: unknown) => void;
   reject: (reason?: any) => void;
 }> = [];
 
-const processQueue = (error: Error | null, token: string | null = null) => {
+const processQueue = (error: Error | null = null) => {
   failedQueue.forEach((prom) => {
     if (error) {
       prom.reject(error);
     } else {
-      prom.resolve(token);
+      prom.resolve();
     }
   });
 
@@ -122,54 +131,50 @@ apiClient.interceptors.response.use(
         return new Promise((resolve, reject) => {
           failedQueue.push({ resolve, reject });
         })
-          .then((token) => {
-            if (originalRequest.headers) {
-              originalRequest.headers.Authorization = `Bearer ${token}`;
-            }
-            return apiClient(originalRequest);
-          })
-          .catch((err) => {
-            return Promise.reject(err);
-          });
+          .then(() => apiClient(originalRequest))
+          .catch((err) => Promise.reject(err));
       }
 
       originalRequest._retry = true;
       isRefreshing = true;
 
       try {
-        const tokens = getAuthTokens();
-        if (!tokens?.refreshToken) {
-          throw new Error('No refresh token');
+        const storedRefreshToken = getRefreshToken();
+        if (!storedRefreshToken) {
+          throw new Error('No refresh token available for session refresh.');
         }
 
-        // Attempt to refresh token
-        const response = await axios.post(`${API_BASE_URL}/auth/refresh`, {
-          refreshToken: tokens.refreshToken,
-        });
+        // Attempt to refresh session using stored tokens
+        const response = await axios.post(
+          `${API_BASE_URL}/auth/refresh`,
+          { refreshToken: storedRefreshToken },
+          { withCredentials: true }
+        );
 
-        const { accessToken } = response.data;
+        if (response.data?.accessToken) {
+          setAccessToken(response.data.accessToken);
+        }
 
-        // Update stored token
-        const { setAuthTokens } = await import('../lib/secureStorage');
-        setAuthTokens({
-          accessToken,
-          refreshToken: response.data.refreshToken || tokens.refreshToken,
-          expiresAt: response.data.expiresAt,
-        });
+        if (response.data?.refreshToken) {
+          setRefreshToken(response.data.refreshToken);
+        }
+
+        if (response.data?.expiresAt || response.data?.refreshExpiresAt) {
+          setSessionMetadata({
+            accessExpiresAt: response.data.expiresAt,
+            refreshExpiresAt: response.data.refreshExpiresAt,
+          });
+        }
 
         // Process queued requests
-        processQueue(null, accessToken);
+        processQueue(null);
 
         // Retry original request
-        if (originalRequest.headers) {
-          originalRequest.headers.Authorization = `Bearer ${accessToken}`;
-        }
         return apiClient(originalRequest);
       } catch (refreshError) {
-        processQueue(refreshError as Error, null);
+        processQueue(refreshError as Error);
 
         // Clear auth and redirect to login
-        const { clearAuth } = await import('../lib/secureStorage');
         clearAuth();
 
         // Redirect to login page

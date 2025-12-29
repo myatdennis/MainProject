@@ -32,40 +32,34 @@ const AdminDocuments: React.FC = () => {
       return;
     }
 
-    let url: string | undefined;
-    if (file) {
-      // read as data URL for local dev (replace with real upload in production)
-      url = await new Promise<string>((res, rej) => {
-        const r = new FileReader();
-        r.onload = () => res(String(r.result));
-        r.onerror = rej;
-        r.readAsDataURL(file);
-      });
-    }
+    try {
+      const doc = await documentService.addDocument({
+        name: name || file?.name || 'Untitled Document',
+        filename: file?.name,
+        category,
+        subcategory: subcategory || undefined,
+        tags: tags ? tags.split(',').map(t => t.trim()).filter(Boolean) : [],
+        fileType: file?.type,
+        visibility,
+        orgId: visibility === 'org' ? orgId : undefined,
+        userId: visibility === 'user' ? userId : undefined,
+        createdBy: 'Admin'
+      }, file || undefined);
 
-    const doc = await documentService.addDocument({
-      name: name || file!.name,
-      filename: file?.name,
-      url,
-      category,
-      subcategory: subcategory || undefined,
-      tags: tags ? tags.split(',').map(t => t.trim()).filter(Boolean) : [],
-      fileType: file?.type,
-      visibility,
-      orgId: visibility === 'org' ? orgId : undefined,
-      userId: visibility === 'user' ? userId : undefined,
-      createdBy: 'Admin'
-    }, file || undefined);
+      if (visibility === 'org' && orgId) {
+        await notificationService.addNotification({ title: 'New Document Shared', body: `A document "${doc.name}" was shared with your organization.`, orgId });
+      }
+      if (visibility === 'user' && userId) {
+        await notificationService.addNotification({ title: 'New Document Shared', body: `A document "${doc.name}" was shared with you.`, userId });
+      }
 
-    if (visibility === 'org' && orgId) {
-      await notificationService.addNotification({ title: 'New Document Shared', body: `A document \"${doc.name}\" was shared with your organization.`, orgId });
+      setName(''); setFile(null); setTags(''); setOrgId(''); setUserId('');
+      load();
+      showToast('Document uploaded', 'success');
+    } catch (error: any) {
+      console.error('Failed to upload document:', error);
+      showToast(error?.message || 'Unable to upload document', 'error');
     }
-    if (visibility === 'user' && userId) {
-      await notificationService.addNotification({ title: 'New Document Shared', body: `A document \"${doc.name}\" was shared with you.`, userId });
-    }
-
-    setName(''); setFile(null); setTags(''); setOrgId(''); setUserId('');
-    load();
   };
 
   const handleDelete = async (id: string) => {

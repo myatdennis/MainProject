@@ -5,6 +5,7 @@
 
 import rateLimit from 'express-rate-limit';
 import { verifyAccessToken, extractTokenFromHeader } from '../utils/jwt.js';
+import { getAccessTokenFromRequest } from '../utils/authCookies.js';
 
 // ============================================================================
 // Authentication Middleware
@@ -14,7 +15,10 @@ import { verifyAccessToken, extractTokenFromHeader } from '../utils/jwt.js';
  * Verify JWT token and attach user to request
  */
 export function authenticate(req, res, next) {
-  const token = extractTokenFromHeader(req.headers.authorization);
+  let token = extractTokenFromHeader(req.headers.authorization);
+  if (!token) {
+    token = getAccessTokenFromRequest(req);
+  }
   
   if (!token) {
     return res.status(401).json({
@@ -41,7 +45,10 @@ export function authenticate(req, res, next) {
  * Optional authentication - doesn't fail if no token
  */
 export function optionalAuthenticate(req, res, next) {
-  const token = extractTokenFromHeader(req.headers.authorization);
+  let token = extractTokenFromHeader(req.headers.authorization);
+  if (!token) {
+    token = getAccessTokenFromRequest(req);
+  }
   
   if (token) {
     const payload = verifyAccessToken(token);

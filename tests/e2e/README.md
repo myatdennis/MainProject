@@ -16,6 +16,7 @@ Quick start (local):
    npx playwright test tests/e2e --config=tests/e2e/playwright.config.ts
 
 Notes:
-- The test uses lightweight selectors and will create demo entities. It expects the app running at VITE_API_BASE_URL (default localhost:5173 when using Vite).
+- The shared helpers default to `E2E_BASE_URL=http://localhost:5174` (Vite) and `E2E_API_BASE_URL=http://localhost:8888` (Express via `server/start-e2e-dev.cjs`). Override those env vars if your dev server runs elsewhere.
+- Use the provided `loginAsAdmin` helper instead of copy/pasting form filling logic—it's SecureAuth-aware and waits for the `#email` bootstrap to complete.
 - Adjust credentials and selectors to match your app (the test includes a few conservative fallbacks).
 - These are smoke/integration tests and not a complete replacement for manual QA.

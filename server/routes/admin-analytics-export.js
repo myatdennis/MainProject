@@ -1,10 +1,11 @@
 import express from 'express'
 import sql from '../db.js'
+import { withHttpError } from '../middleware/apiErrorHandler.js'
 
 const router = express.Router()
 
 // GET /api/admin/analytics/export?course_id=&org_id=
-router.get('/', async (req, res) => {
+router.get('/', async (req, res, next) => {
   try {
     const { course_id } = req.query
 
@@ -54,7 +55,7 @@ router.get('/', async (req, res) => {
     res.send(csv)
   } catch (err) {
     console.error('[admin-analytics-export] error', err)
-    res.status(500).json({ error: 'export_failed' })
+    next(withHttpError(err, 500, 'analytics_export_failed'))
   }
 })
 

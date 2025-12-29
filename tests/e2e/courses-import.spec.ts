@@ -1,10 +1,11 @@
 import { test, expect } from '@playwright/test';
+import { getFrontendBaseUrl } from './helpers/env';
 
 test.describe('Courses import UI', () => {
   test.setTimeout(120_000);
 
   test('JSON upload → summary → import → appears in Admin list', async ({ page }) => {
-    const base = process.env.E2E_BASE_URL || 'http://localhost:5174';
+  const base = getFrontendBaseUrl();
 
     // Login via Admin UI (demo credentials are pre-filled)
     await page.goto(`${base}/admin/login`);

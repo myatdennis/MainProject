@@ -5,12 +5,15 @@
 
 import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
 import {
-  setAuthTokens,
+  setSessionMetadata,
   setUserSession,
   getUserSession,
-  getAuthTokens,
+  getSessionMetadata,
+  setAccessToken,
+  getAccessToken,
+  setRefreshToken,
+  getRefreshToken,
   clearAuth,
-  isTokenExpired,
   migrateFromLocalStorage,
   type UserSession,
 } from '../lib/secureStorage';
@@ -41,6 +44,37 @@ const api = axios.create({
   // Allow cookies/CSRF if backend uses them
   withCredentials: true,
   timeout: 30000,
+});
+
+// Automatically attach secure storage tokens + user metadata to auth requests
+api.interceptors.request.use(config => {
+  try {
+    const accessToken = getAccessToken();
+    if (accessToken) {
+      config.headers = config.headers ?? {};
+      if (!config.headers.Authorization && !config.headers.authorization) {
+        config.headers.Authorization = `Bearer ${accessToken}`;
+      }
+    }
+
+    const session = getUserSession();
+    if (session) {
+      config.headers = config.headers ?? {};
+      if (session.id && !config.headers['X-User-Id']) {
+        config.headers['X-User-Id'] = session.id;
+      }
+      if (session.role && !config.headers['X-User-Role']) {
+        config.headers['X-User-Role'] = session.role;
+      }
+      if (session.organizationId && !config.headers['X-Org-Id']) {
+        config.headers['X-Org-Id'] = session.organizationId;
+      }
+    }
+  } catch (error) {
+    console.warn('[SecureAuth] Failed to attach auth headers:', error);
+  }
+
+  return config;
 });
 
 // ============================================================================
@@ -76,7 +110,36 @@ interface AuthContextType {
 // Context
 // ============================================================================
 
+const defaultAuthContext: AuthContextType = {
+  isAuthenticated: { lms: false, admin: false },
+  authInitializing: true,
+  user: null,
+  async login() {
+    return {
+      success: false,
+      error: 'Authentication provider not initialized. Please refresh the page.',
+      errorType: 'unknown_error',
+    };
+  },
+  async sendMfaChallenge() {
+    return false;
+  },
+  async verifyMfa() {
+    return false;
+  },
+  async logout() {
+    console.warn('[SecureAuth] logout called before provider mounted.');
+  },
+  async refreshToken() {
+    return false;
+  },
+  async forgotPassword() {
+    return false;
+  },
+};
+
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+let warnedMissingProvider = false;
 
 // ============================================================================
 // Provider
@@ -100,30 +163,69 @@ export const SecureAuthProvider: React.FC<AuthProviderProps> = ({ children }) =>
 
   const refreshToken = useCallback(async (): Promise<boolean> => {
     try {
-      const tokens = getAuthTokens();
-      if (!tokens?.refreshToken) {
+      const storedRefreshToken = getRefreshToken();
+      if (!storedRefreshToken) {
+        console.warn('Refresh requested but no refresh token stored. Aborting.');
         return false;
       }
 
       const response = await api.post('/auth/refresh', {
-        refreshToken: tokens.refreshToken,
+        refreshToken: storedRefreshToken,
       });
 
-      if (response.data.accessToken) {
-        setAuthTokens({
-          accessToken: response.data.accessToken,
-          refreshToken: response.data.refreshToken || tokens.refreshToken,
-          expiresAt: response.data.expiresAt,
-        });
-        return true;
+      if (response.data?.accessToken) {
+        setAccessToken(response.data.accessToken);
       }
 
-      return false;
+      if (response.data?.refreshToken) {
+        setRefreshToken(response.data.refreshToken);
+      }
+      if (response.data?.expiresAt || response.data?.refreshExpiresAt) {
+        setSessionMetadata({
+          accessExpiresAt: response.data.expiresAt,
+          refreshExpiresAt: response.data.refreshExpiresAt,
+        });
+      }
+      return true;
     } catch (error) {
       console.error('Token refresh failed:', error);
       return false;
     }
   }, []);
+
+  // ============================================================================
+  // Logout
+  // ============================================================================
+
+  const logout = useCallback(async (type?: 'lms' | 'admin'): Promise<void> => {
+    try {
+      const refreshTokenPayload = getRefreshToken();
+      await api.post('/auth/logout', refreshTokenPayload ? { refreshToken: refreshTokenPayload } : {}).catch(() => {
+        // Ignore errors, clear local state anyway
+      });
+    } finally {
+      // Audit log for admin logout
+      if (user?.role === 'admin') {
+        logAuditAction('admin_logout', { email: user.email, id: user.id });
+      }
+
+      // Clear local state
+      clearAuth();
+      setUser(null);
+
+      if (type) {
+        setIsAuthenticated(prev => ({
+          ...prev,
+          [type]: false,
+        }));
+      } else {
+        setIsAuthenticated({
+          lms: false,
+          admin: false,
+        });
+      }
+    }
+  }, [user]);
 
   // ============================================================================
   // Initialize Auth
@@ -139,18 +241,16 @@ export const SecureAuthProvider: React.FC<AuthProviderProps> = ({ children }) =>
 
         // Get stored session
         const storedUser = getUserSession();
-        const tokens = getAuthTokens();
-
-        if (!storedUser || !tokens) {
+        if (!storedUser) {
           if (isMounted) {
             setAuthInitializing(false);
           }
           return;
         }
 
-        // Check if token is expired
-        if (isTokenExpired()) {
-          console.log('Token expired, attempting refresh...');
+        const metadata = getSessionMetadata();
+        if (metadata?.accessExpiresAt && metadata.accessExpiresAt <= Date.now()) {
+          console.log('Session metadata expired, attempting refresh...');
           const refreshed = await refreshToken();
 
           if (!refreshed) {
@@ -163,13 +263,9 @@ export const SecureAuthProvider: React.FC<AuthProviderProps> = ({ children }) =>
           }
         }
 
-        // Verify token with server
+        // Verify token with server (cookies carry the credentials)
         try {
-          const response = await api.get('/auth/verify', {
-            headers: {
-              Authorization: `Bearer ${tokens.accessToken}`,
-            },
-          });
+          const response = await api.get('/auth/verify');
 
           if (response.data.valid) {
             setUser(storedUser);
@@ -200,23 +296,22 @@ export const SecureAuthProvider: React.FC<AuthProviderProps> = ({ children }) =>
     };
   }, [refreshToken]);
 
-  // ============================================================================
+  // =========================================================================
   // Auto Token Refresh
-  // ============================================================================
+  // =========================================================================
 
   useEffect(() => {
     if (!user) return;
 
     // Check token expiration every minute
     const interval = setInterval(async () => {
-      const tokens = getAuthTokens();
-      if (!tokens) {
-        await logout();
+      const metadata = getSessionMetadata();
+      if (!metadata?.accessExpiresAt) {
         return;
       }
 
       // Refresh 2 minutes before expiration
-      if (tokens.expiresAt - Date.now() < 2 * 60 * 1000) {
+      if (metadata.accessExpiresAt - Date.now() < 2 * 60 * 1000) {
         const refreshed = await refreshToken();
         if (!refreshed) {
           console.warn('Auto-refresh failed, logging out');
@@ -226,7 +321,7 @@ export const SecureAuthProvider: React.FC<AuthProviderProps> = ({ children }) =>
     }, 60 * 1000); // Every minute
 
     return () => clearInterval(interval);
-  }, [user, refreshToken]);
+  }, [user, refreshToken, logout]);
 
   // ============================================================================
   // Login
@@ -266,12 +361,11 @@ export const SecureAuthProvider: React.FC<AuthProviderProps> = ({ children }) =>
         };
       }
 
-      const { user: userData, accessToken, refreshToken: refreshTok, expiresAt } = response.data;
+      const { user: userData, accessToken, refreshToken: newRefreshToken, expiresAt, refreshExpiresAt } = response.data;
 
-      setAuthTokens({
-        accessToken,
-        refreshToken: refreshTok,
-        expiresAt,
+      setSessionMetadata({
+        accessExpiresAt: expiresAt,
+        refreshExpiresAt,
       });
 
       const userSession: UserSession = {
@@ -294,6 +388,9 @@ export const SecureAuthProvider: React.FC<AuthProviderProps> = ({ children }) =>
       if (type === 'admin') {
         logAuditAction('admin_login', { email: userData.email, id: userData.id });
       }
+
+      setAccessToken(accessToken ?? null);
+      setRefreshToken(newRefreshToken ?? null);
 
       return { success: true };
     } catch (error: any) {
@@ -366,52 +463,6 @@ export const SecureAuthProvider: React.FC<AuthProviderProps> = ({ children }) =>
   }, []);
 
   // ============================================================================
-  // Logout
-  // ============================================================================
-
-  const logout = useCallback(async (type?: 'lms' | 'admin'): Promise<void> => {
-    try {
-      const tokens = getAuthTokens();
-
-      // Call logout API
-      if (tokens?.accessToken) {
-        await api.post(
-          '/auth/logout',
-          {},
-          {
-            headers: {
-              Authorization: `Bearer ${tokens.accessToken}`,
-            },
-          }
-        ).catch(() => {
-          // Ignore errors, clear local state anyway
-        });
-      }
-    } finally {
-      // Audit log for admin logout
-      if (user?.role === 'admin') {
-        logAuditAction('admin_logout', { email: user.email, id: user.id });
-      }
-
-      // Clear local state
-      clearAuth();
-      setUser(null);
-
-      if (type) {
-        setIsAuthenticated(prev => ({
-          ...prev,
-          [type]: false,
-        }));
-      } else {
-        setIsAuthenticated({
-          lms: false,
-          admin: false,
-        });
-      }
-    }
-  }, [user]);
-
-  // ============================================================================
   // Forgot Password
   // ============================================================================
 
@@ -460,7 +511,14 @@ export const SecureAuthProvider: React.FC<AuthProviderProps> = ({ children }) =>
 export function useSecureAuth(): AuthContextType {
   const context = useContext(AuthContext);
   if (context === undefined) {
-    throw new Error('useSecureAuth must be used within SecureAuthProvider');
+    if (!warnedMissingProvider) {
+      warnedMissingProvider = true;
+      console.error('[SecureAuth] Provider not found in React tree. Falling back to guest session.');
+      if (import.meta.env.DEV) {
+        console.info('💡 Restart the dev server (npm run dev:full) to clear duplicate React bundles causing this context drift.', new Error().stack);
+      }
+    }
+    return defaultAuthContext;
   }
   return context;
 }

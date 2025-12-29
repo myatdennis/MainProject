@@ -1,9 +1,10 @@
 import { test, expect } from '@playwright/test';
+import { getFrontendBaseUrl } from './helpers/env';
 
 test.describe('Surveys import smoke', () => {
 	test('loads admin surveys import placeholder', async ({ page, context }) => {
 		// Use E2E_BASE_URL (Vite dev) for consistency across CI and local
-		const base = process.env.E2E_BASE_URL || process.env.TEST_BASE_URL || 'http://localhost:5174';
+		const base = process.env.E2E_BASE_URL || process.env.TEST_BASE_URL || getFrontendBaseUrl();
 
 		// Seed admin auth before app scripts run so guarded routes allow access
 			await context.addInitScript(({ user }) => {

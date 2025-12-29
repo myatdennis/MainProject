@@ -1,43 +1,13 @@
 import { test, expect, Page } from '@playwright/test';
-
-const waitForOk = async (request: Page['request'], url: string, timeoutMs = 30_000, intervalMs = 500) => {
-  const deadline = Date.now() + timeoutMs;
-  let lastError: unknown = null;
-  while (Date.now() < deadline) {
-    try {
-      const res = await request.get(url, { failOnStatusCode: false });
-      if (res.status() >= 200 && res.status() < 500) {
-        return;
-      }
-    } catch (err) {
-      lastError = err;
-    }
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
-  }
-  if (lastError) {
-    throw lastError;
-  }
-  throw new Error(`Timeout waiting for ${url}`);
-};
+import { loginAsAdmin } from './helpers/auth';
 
 test.describe('Admin course modal validation', () => {
   test.setTimeout(90_000);
 
   test('prevents saving a course without a title', async ({ page }: { page: Page }) => {
-    const base = process.env.E2E_BASE_URL || 'http://localhost:5174';
-    const apiBase = process.env.E2E_API_BASE_URL || 'http://localhost:8787';
+    const { baseUrl } = await loginAsAdmin(page);
 
-    await waitForOk(page.request, `${apiBase}/api/health`);
-    await waitForOk(page.request, `${base}/`);
-
-  await page.goto(`${base}/admin/login`, { waitUntil: 'domcontentloaded' });
-  await page.waitForSelector('#email', { timeout: 20_000 });
-  await page.fill('#email', 'admin@thehuddleco.com');
-  await page.fill('#password', 'admin123');
-    await page.click('button:has-text("Access Admin Portal")');
-    await page.waitForURL('**/admin/dashboard', { timeout: 20_000 });
-
-    await page.goto(`${base}/admin/courses`, { waitUntil: 'domcontentloaded' });
+    await page.goto(`${baseUrl}/admin/courses`, { waitUntil: 'domcontentloaded' });
     await page.waitForSelector('[data-test="admin-new-course"]', { timeout: 20_000 });
 
     // Stub window.alert so we can capture validation copy without relying on browser dialogs

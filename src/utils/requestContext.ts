@@ -1,4 +1,4 @@
-import { getSupabase, hasSupabaseConfig } from '../lib/supabaseClient';
+import { getSupabase, hasSupabaseConfig, SUPABASE_MISSING_CONFIG_MESSAGE } from '../lib/supabaseClient';
 import { getUserSession, getAccessToken } from '../lib/secureStorage';
 
 export const buildAuthHeaders = async (): Promise<Record<string, string>> => {
@@ -84,6 +84,11 @@ export const buildAuthHeaders = async (): Promise<Record<string, string>> => {
     } catch (error) {
       console.warn('[buildAuthHeaders] Failed to resolve Supabase session:', error);
     }
+  }
+
+  if (!hasSupabaseConfig) {
+    headers['X-Supabase-Disabled'] = 'true';
+    headers['X-Supabase-Reason'] = SUPABASE_MISSING_CONFIG_MESSAGE;
   }
 
   return headers;

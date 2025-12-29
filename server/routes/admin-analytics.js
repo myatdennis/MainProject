@@ -3,22 +3,39 @@
 
 import express from 'express'
 import sql from '../db.js'
+import { withHttpError } from '../middleware/apiErrorHandler.js'
 
 const router = express.Router()
 
-router.get('/', async (req, res) => {
+router.get('/', async (req, res, next) => {
   try {
-    const { course_id, org_id, since, until } = req.query
+    const { course_id, organization_id, since, until } = req.query
 
-    // Basic filters - expand with secure RLS checks later
-    const whereClauses = []
-    const params = {}
+    const surveyFilters = []
     if (course_id) {
-      whereClauses.push(sql`course_id = ${course_id}`)
+      surveyFilters.push(sql`course_id = ${course_id}`)
     }
-    if (org_id) {
-      whereClauses.push(sql`org_id = ${org_id}`)
+    if (organization_id) {
+      surveyFilters.push(sql`organization_id = ${organization_id}`)
     }
+
+    const sinceDate = since ? new Date(since) : null
+    const untilDate = until ? new Date(until) : null
+
+    if ((since && Number.isNaN(sinceDate.getTime())) || (until && Number.isNaN(untilDate.getTime()))) {
+      return res.status(400).json({ error: 'invalid_date_range' })
+    }
+
+    if (sinceDate) {
+      surveyFilters.push(sql`created_at >= ${sinceDate.toISOString()}`)
+    }
+    if (untilDate) {
+      surveyFilters.push(sql`created_at <= ${untilDate.toISOString()}`)
+    }
+
+    const surveyWhereClause = surveyFilters.length
+      ? sql`where ${sql.join(surveyFilters, sql` and `)}`
+      : sql``
 
     // Admin overview
     const overview = await sql`select * from public.view_admin_overview limit 1`
@@ -42,9 +59,10 @@ router.get('/', async (req, res) => {
 
     // Survey summary (counts and average ratings)
     const surveySummary = await sql`
-      select course_id, count(*) as responses, avg(rating) as avg_rating
+      select course_id, organization_id, count(*) as responses, avg(rating) as avg_rating
       from public.survey_responses
-      group by course_id
+      ${surveyWhereClause}
+      group by course_id, organization_id
       order by responses desc
       limit 50
     `
@@ -52,7 +70,7 @@ router.get('/', async (req, res) => {
     res.json({ overview: overview[0] || {}, courses: courseAggs, dropoffs, surveySummary })
   } catch (err) {
     console.error('[admin-analytics] error', err)
-    res.status(500).json({ error: 'internal_error' })
+    next(withHttpError(err, 500, 'admin_analytics_failed'))
   }
 })
 

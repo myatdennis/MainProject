@@ -50,10 +50,9 @@ function decrypt(ciphertext: string): string | null {
 // Secure Storage Interface
 // ============================================================================
 
-export interface AuthTokens {
-  accessToken: string;
-  refreshToken?: string;
-  expiresAt: number;
+export interface SessionMetadata {
+  accessExpiresAt?: number;
+  refreshExpiresAt?: number;
 }
 
 export interface UserSession {
@@ -120,47 +119,58 @@ export function secureClear(): void {
 // Auth-Specific Storage
 // ============================================================================
 
-const AUTH_TOKENS_KEY = 'auth_tokens';
+const SESSION_METADATA_KEY = 'session_metadata';
 const USER_SESSION_KEY = 'user_session';
+const ACCESS_TOKEN_KEY = 'access_token';
+const REFRESH_TOKEN_KEY = 'refresh_token';
 
-/**
- * Store authentication tokens
- */
-export function setAuthTokens(tokens: AuthTokens): void {
-  secureSet(AUTH_TOKENS_KEY, tokens);
+// ============================================================================
+// Token Helpers
+// ============================================================================
+
+export function setAccessToken(token: string | null): void {
+  if (!token) {
+    secureRemove(ACCESS_TOKEN_KEY);
+    return;
+  }
+  secureSet(ACCESS_TOKEN_KEY, token);
 }
 
-/**
- * Get authentication tokens
- */
-export function getAuthTokens(): AuthTokens | null {
-  return secureGet<AuthTokens>(AUTH_TOKENS_KEY);
-}
-
-/**
- * Get access token
- */
 export function getAccessToken(): string | null {
-  const tokens = getAuthTokens();
-  return tokens?.accessToken || null;
+  return secureGet<string>(ACCESS_TOKEN_KEY);
 }
 
-/**
- * Check if access token is expired
- */
-export function isTokenExpired(): boolean {
-  const tokens = getAuthTokens();
-  if (!tokens) return true;
-  
-  // Add 1 minute buffer
-  return Date.now() >= (tokens.expiresAt - 60000);
+export function clearAccessToken(): void {
+  secureRemove(ACCESS_TOKEN_KEY);
 }
 
-/**
- * Clear authentication tokens
- */
-export function clearAuthTokens(): void {
-  secureRemove(AUTH_TOKENS_KEY);
+export function setRefreshToken(token: string | null): void {
+  if (!token) {
+    secureRemove(REFRESH_TOKEN_KEY);
+    return;
+  }
+  secureSet(REFRESH_TOKEN_KEY, token);
+}
+
+export function getRefreshToken(): string | null {
+  return secureGet<string>(REFRESH_TOKEN_KEY);
+}
+
+export function clearRefreshToken(): void {
+  secureRemove(REFRESH_TOKEN_KEY);
+}
+
+export function setSessionMetadata(metadata: SessionMetadata): void {
+  const existing = getSessionMetadata() || {};
+  secureSet(SESSION_METADATA_KEY, { ...existing, ...metadata });
+}
+
+export function getSessionMetadata(): SessionMetadata | null {
+  return secureGet<SessionMetadata>(SESSION_METADATA_KEY);
+}
+
+export function clearSessionMetadata(): void {
+  secureRemove(SESSION_METADATA_KEY);
 }
 
 /**
@@ -188,8 +198,10 @@ export function clearUserSession(): void {
  * Clear all auth data
  */
 export function clearAuth(): void {
-  clearAuthTokens();
+  clearSessionMetadata();
   clearUserSession();
+  clearAccessToken();
+  clearRefreshToken();
 }
 
 // ============================================================================
@@ -210,16 +222,19 @@ export function migrateFromLocalStorage(): void {
       console.log('✅ Migrated user data to secure storage');
     }
     
-    // Migrate auth token
+    // Remove legacy auth token storage entirely
     const oldToken = localStorage.getItem('authToken');
     if (oldToken) {
-      const tokens: AuthTokens = {
-        accessToken: oldToken,
-        expiresAt: Date.now() + (24 * 60 * 60 * 1000), // Default 24 hours
-      };
-      setAuthTokens(tokens);
+      setAccessToken(oldToken);
       localStorage.removeItem('authToken');
-      console.log('✅ Migrated auth token to secure storage');
+      console.log('✅ Migrated legacy auth token to secure storage');
+    }
+
+    const oldRefreshToken = localStorage.getItem('refreshToken');
+    if (oldRefreshToken) {
+      setRefreshToken(oldRefreshToken);
+      localStorage.removeItem('refreshToken');
+      console.log('✅ Migrated legacy refresh token to secure storage');
     }
     
     // Clear any other sensitive data patterns

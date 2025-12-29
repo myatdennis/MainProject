@@ -29,7 +29,7 @@ import { useToast } from '../../context/ToastContext';
 import { courseStore } from '../../store/courseStore';
 import { formatMinutes, slugify, parseDurationToMinutes } from '../../utils/courseNormalization';
 import { clearCourseCache } from '../../dal/courseData';
-import { syncCourseToDatabase, CourseValidationError } from '../../dal/courses';
+import { syncCourseToDatabase, CourseValidationError } from '../../dal/adminCourses';
 import { computeCourseDiff } from '../../utils/courseDiff';
 
 type LessonUpdate = Partial<Lesson> & {

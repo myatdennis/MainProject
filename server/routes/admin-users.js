@@ -1,12 +1,16 @@
 import express from 'express';
 import supabase from '../lib/supabaseClient.js';
+import { authenticate, requireAdmin } from '../middleware/auth.js';
+import { createHttpError, withHttpError } from '../middleware/apiErrorHandler.js';
 
 const router = express.Router();
 
+router.use(authenticate, requireAdmin);
+
 // POST /api/admin/users/import
-router.post('/import', async (req, res) => {
+router.post('/import', async (req, res, next) => {
 	try {
-		if (!supabase) return res.status(500).json({ error: 'Supabase not configured' });
+		if (!supabase) return next(createHttpError(503, 'supabase_not_configured', 'Supabase not configured'));
 		const users = req.body.users;
 		if (!Array.isArray(users)) {
 			return res.status(400).json({ error: 'Invalid users array' });
@@ -25,21 +29,19 @@ router.post('/import', async (req, res) => {
 		}
 		res.json({ results });
 	} catch (err) {
-		const message = err instanceof Error ? err.message : String(err);
-		res.status(500).json({ error: 'Import failed', details: message });
+		return next(withHttpError(err, 500, 'admin_users_import_failed'));
 	}
 });
 
 // GET /api/admin/users/export
-router.get('/export', async (req, res) => {
+router.get('/export', async (req, res, next) => {
 	try {
-		if (!supabase) return res.status(500).json({ error: 'Supabase not configured' });
+		if (!supabase) return next(createHttpError(503, 'supabase_not_configured', 'Supabase not configured'));
 		const { data, error } = await supabase.from('users').select('*');
-		if (error) return res.status(500).json({ error: error.message });
+		if (error) return next(createHttpError(500, 'admin_users_export_failed', error.message));
 		res.json({ users: data });
 	} catch (err) {
-		const message = err instanceof Error ? err.message : String(err);
-		res.status(500).json({ error: 'Export failed', details: message });
+		return next(withHttpError(err, 500, 'admin_users_export_failed'));
 	}
 });
 

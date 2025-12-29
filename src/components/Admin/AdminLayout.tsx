@@ -23,6 +23,7 @@ import Button from '../ui/Button';
 import Input from '../ui/Input';
 import Badge from '../ui/Badge';
 import LoadingSpinner from '../ui/LoadingSpinner';
+import SurveyQueueStatus from '../Survey/SurveyQueueStatus';
 
 interface AdminLayoutProps {
   children?: ReactNode;
@@ -196,6 +197,9 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
                 New survey
               </Button>
             </div>
+          </div>
+          <div className="px-6 pb-4 pt-0 lg:px-10">
+            <SurveyQueueStatus />
           </div>
         </header>
 

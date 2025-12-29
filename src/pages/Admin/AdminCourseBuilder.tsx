@@ -3,7 +3,7 @@ import { DndProvider } from 'react-dnd/dist/core/DndProvider';
 import { HTML5Backend } from 'react-dnd-html5-backend';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { courseStore, generateId, calculateCourseDuration, countTotalLessons } from '../../store/courseStore';
-import { syncCourseToDatabase, CourseValidationError, loadCourseFromDatabase } from '../../dal/courses';
+import { syncCourseToDatabase, CourseValidationError, loadCourseFromDatabase } from '../../dal/adminCourses';
 import { computeCourseDiff } from '../../utils/courseDiff';
 // import type { NormalizedCourse } from '../../utils/courseNormalization';
 import { mergePersistedCourse } from '../../utils/adminCourseMerge';

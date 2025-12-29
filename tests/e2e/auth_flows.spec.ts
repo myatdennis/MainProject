@@ -1,42 +1,13 @@
 import { test, expect, Page } from '@playwright/test';
-
-const waitForOk = async (request: Page['request'], url: string, timeoutMs = 30_000, intervalMs = 500) => {
-  const deadline = Date.now() + timeoutMs;
-  let lastError: unknown = null;
-  while (Date.now() < deadline) {
-    try {
-      const res = await request.get(url, { failOnStatusCode: false });
-      if (res.status() >= 200 && res.status() < 500) {
-        return;
-      }
-    } catch (err) {
-      lastError = err;
-    }
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
-  }
-  if (lastError) {
-    throw lastError;
-  }
-  throw new Error(`Timeout waiting for ${url}`);
-};
+import { loginAsAdmin } from './helpers/auth';
+import { getFrontendBaseUrl } from './helpers/env';
 
 test.describe('Portal authentication flows', () => {
   test.setTimeout(90_000);
 
   test('admin and LMS demo users can sign in', async ({ page }: { page: Page }) => {
-    const base = process.env.E2E_BASE_URL || 'http://localhost:5174';
-    const apiBase = process.env.E2E_API_BASE_URL || 'http://localhost:8787';
-
-    await waitForOk(page.request, `${apiBase}/api/health`);
-    await waitForOk(page.request, `${base}/`);
-
-    // Admin login flow
-    await page.goto(`${base}/admin/login`, { waitUntil: 'domcontentloaded' });
-    await page.fill('#email', 'admin@thehuddleco.com');
-    await page.fill('#password', 'admin123');
-    await page.click('button:has-text("Access Admin Portal")');
-    await page.waitForURL('**/admin/dashboard', { timeout: 20_000 });
-  await expect(page.getByText('Executive Overview')).toBeVisible({ timeout: 20_000 });
+  const { baseUrl } = await loginAsAdmin(page);
+    const base = baseUrl ?? getFrontendBaseUrl();
 
     // Reset session storage/cookies before LMS login
     await page.context().clearCookies();

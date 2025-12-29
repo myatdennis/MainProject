@@ -26,7 +26,7 @@ import type {
 } from '../types/apiSchemas';
 import { ZodError } from 'zod';
 
-type SupabaseCourseRecord = {
+export type SupabaseCourseRecord = {
   id: string;
   slug?: string | null;
   title: string;
@@ -51,7 +51,7 @@ type SupabaseCourseRecord = {
   modules?: SupabaseModuleRecord[];
 };
 
-type SupabaseModuleRecord = {
+export type SupabaseModuleRecord = {
   id: string;
   course_id?: string;
   title: string;
@@ -62,7 +62,7 @@ type SupabaseModuleRecord = {
   lessons?: SupabaseLessonRecord[];
 };
 
-type SupabaseLessonRecord = {
+export type SupabaseLessonRecord = {
   id: string;
   module_id?: string;
   title: string;
@@ -169,7 +169,7 @@ const mapModuleRecord = (module: SupabaseModuleRecord): Module => {
   };
 };
 
-const mapCourseRecord = (course: SupabaseCourseRecord): NormalizedCourse => {
+export const mapCourseRecord = (course: SupabaseCourseRecord): NormalizedCourse => {
   const modules = (course.modules || []).map(mapModuleRecord);
   const meta = course.meta_json || {};
   const resolvedTitle = course.title || course.name || 'Untitled Course';
@@ -598,9 +598,23 @@ export class CourseService {
     }
   }
 
-  static async getPublishedCourses(): Promise<NormalizedCourse[]> {
+  static async getPublishedCourses(options: { orgId?: string; assignedOnly?: boolean } = {}): Promise<NormalizedCourse[]> {
+    const { orgId, assignedOnly = false } = options;
+    const params = new URLSearchParams();
+
+    if (assignedOnly) {
+      if (!orgId) {
+        console.warn('[CourseService.getPublishedCourses] orgId is required when assignedOnly=true');
+        return [];
+      }
+      params.set('assigned', 'true');
+      params.set('orgId', orgId);
+    }
+
+    const path = params.toString() ? `/api/client/courses?${params.toString()}` : '/api/client/courses';
+
     try {
-      const json = await apiRequest<{ data: SupabaseCourseRecord[] }>('/api/client/courses', { noTransform: true });
+      const json = await apiRequest<{ data: SupabaseCourseRecord[] }>(path, { noTransform: true });
       return (json.data || []).map(mapCourseRecord);
     } catch (error) {
       console.error('Error loading published courses:', error);

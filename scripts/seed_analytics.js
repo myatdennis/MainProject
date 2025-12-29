@@ -21,21 +21,29 @@ async function run() {
     const courseB = randomUUID()
     const user1 = randomUUID()
     const user2 = randomUUID()
+    const organizationId = randomUUID()
+
+    await client.query(
+      `INSERT INTO public.organizations (id, name, contact_email, subscription)
+       VALUES ($1, 'Seed Org', 'seed@example.com', 'trial')
+       ON CONFLICT (id) DO NOTHING;`,
+      [organizationId]
+    )
 
     await client.query(`INSERT INTO public.user_course_progress (id,user_id,course_id,progress,completed,org_id) VALUES
       ($1,$2,$3,95,true,$4),
       ($5,$6,$7,40,false,$4)
-    ON CONFLICT DO NOTHING;`, [randomUUID(), user1, courseA, null, randomUUID(), user2, courseB])
+    ON CONFLICT DO NOTHING;`, [randomUUID(), user1, courseA, organizationId, randomUUID(), user2, courseB])
 
     // Insert lesson progress
     await client.query(`INSERT INTO public.user_lesson_progress (id,user_id,course_id,lesson_id,progress,time_spent_seconds,completed,org_id)
       VALUES ($1,$2,$3,$4,100,600,true,$5), ($6,$7,$3,$8,20,120,false,$5)
-    ON CONFLICT DO NOTHING;`, [randomUUID(), user1, courseA, randomUUID(), null, randomUUID(), user2, randomUUID()])
+    ON CONFLICT DO NOTHING;`, [randomUUID(), user1, courseA, randomUUID(), organizationId, randomUUID(), user2, randomUUID()])
 
     // Insert survey responses
-    await client.query(`INSERT INTO public.survey_responses (id,user_id,course_id,question_id,response_text,rating)
-      VALUES ($1,$2,$3,'q1','Great course',5)
-    ON CONFLICT DO NOTHING;`, [randomUUID(), user1, courseA])
+    await client.query(`INSERT INTO public.survey_responses (id,user_id,course_id,question_id,response_text,rating,organization_id)
+      VALUES ($1,$2,$3,'q1','Great course',5,$4)
+    ON CONFLICT DO NOTHING;`, [randomUUID(), user1, courseA, organizationId])
 
     // Insert assignment
     await client.query(`INSERT INTO public.assignments (id,user_id,course_id,status,grade)

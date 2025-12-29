@@ -2,7 +2,7 @@ import { courseStore } from '../store/courseStore';
 import { Course } from '../types/courseTypes';
 import { getSupabase } from '../lib/supabaseClient';
 import type { CourseAssignment } from '../types/assignment';
-import { CourseValidationError } from './courseService';
+import { CourseValidationError } from '../dal/adminCourses';
 import { wsClient } from './wsClient';
 
 interface SyncEvent {

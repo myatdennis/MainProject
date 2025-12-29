@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Monitor, Smartphone, Tablet, RefreshCw, ExternalLink } from 'lucide-react';
 import { Course, Module, Lesson } from '../types/courseTypes';
+import SurveyQueueStatus from './Survey/SurveyQueueStatus';
 
 interface LivePreviewProps {
   course: Course;
@@ -138,6 +139,15 @@ const LivePreview: React.FC<LivePreviewProps> = ({
               ✕
             </button>
           </div>
+        </div>
+
+        <div className="px-4 py-2 border-b border-gray-200 bg-gray-50">
+          <SurveyQueueStatus
+            variant="inline"
+            showFlushButton
+            dataTestId="live-preview-queue-status"
+            className="text-gray-600"
+          />
         </div>
 
         {/* Preview Content */}

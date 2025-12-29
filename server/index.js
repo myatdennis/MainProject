@@ -8,6 +8,8 @@ import { createClient } from '@supabase/supabase-js';
 import { WebSocketServer } from 'ws';
 import cookieParser from 'cookie-parser';
 import fs from 'fs';
+import multer from 'multer';
+import { randomUUID } from 'crypto';
 import {
   moduleCreateSchema,
   modulePatchSchema as modulePatchValidator,
@@ -26,11 +28,12 @@ import authRoutes from './routes/auth.js';
 import adminAnalyticsRoutes from './routes/admin-analytics.js';
 import adminAnalyticsExport from './routes/admin-analytics-export.js';
 import adminAnalyticsSummary from './routes/admin-analytics-summary.js';
-import { apiLimiter, securityHeaders } from './middleware/auth.js';
+import { apiLimiter, securityHeaders, authenticate, requireAdmin } from './middleware/auth.js';
 import { setDoubleSubmitCSRF, getCSRFToken } from './middleware/csrf.js';
 import adminUsersRouter from './routes/admin-users.js';
 import adminCoursesRoutes from './routes/admin-courses.js';
 import mfaRoutes from './routes/mfa.js';
+import { attachRequestId, apiErrorHandler, createHttpError, withHttpError } from './middleware/apiErrorHandler.js';
 
 // Resolve __dirname in ESM
 const __filename = fileURLToPath(import.meta.url);
@@ -41,8 +44,25 @@ const STORAGE_FILE = path.join(__dirname, 'demo-data.json');
 // Safety guard to avoid loading extremely large demo files that could trigger OOM (exit 137)
 const MAX_DEMO_FILE_BYTES = parseInt(process.env.DEMO_DATA_MAX_BYTES || '', 10) || 25 * 1024 * 1024; // 25MB default
 
-const DEV_FALLBACK = (process.env.DEV_FALLBACK || '').toLowerCase() !== 'false' && (process.env.NODE_ENV || '').toLowerCase() !== 'production';
+const NODE_ENV = (process.env.NODE_ENV || '').toLowerCase();
+const isProduction = NODE_ENV === 'production';
+const allowDemoRaw = (process.env.ALLOW_DEMO ?? process.env.DEMO_MODE ?? process.env.DEV_FALLBACK ?? '').toString().trim().toLowerCase();
+const truthyValues = new Set(['true', '1', 'yes', 'y', 'on']);
+const DEV_FALLBACK = !isProduction && truthyValues.has(allowDemoRaw);
 const E2E_TEST_MODE = process.env.E2E_TEST_MODE === 'true';
+
+const DOCUMENTS_BUCKET = process.env.SUPABASE_DOCUMENTS_BUCKET || 'documents';
+const DOCUMENT_UPLOAD_MAX_BYTES = Number(process.env.DOCUMENT_UPLOAD_MAX_BYTES || 25 * 1024 * 1024);
+const DOCUMENT_URL_TTL_SECONDS = Number(process.env.DOCUMENT_SIGN_TTL_SECONDS || 60 * 60 * 24 * 7);
+const DOCUMENT_URL_REFRESH_BUFFER_SECONDS = Number(process.env.DOCUMENT_URL_REFRESH_BUFFER_SECONDS || 60 * 5);
+const DOCUMENT_URL_REFRESH_BUFFER_MS = DOCUMENT_URL_REFRESH_BUFFER_SECONDS * 1000;
+
+const documentUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: Number.isFinite(DOCUMENT_UPLOAD_MAX_BYTES) ? DOCUMENT_UPLOAD_MAX_BYTES : 25 * 1024 * 1024,
+  },
+});
 
 // Helper functions for persistent storage
 function loadPersistedData() {
@@ -52,7 +72,7 @@ function loadPersistedData() {
         const stat = fs.statSync(STORAGE_FILE);
         if (stat.size > MAX_DEMO_FILE_BYTES) {
           console.warn(`demo-data.json is too large (${(stat.size/1e6).toFixed(1)}MB). Skipping load to prevent high memory usage. Set DEMO_DATA_MAX_BYTES to adjust.`);
-          return { courses: [] };
+          return { courses: [], surveys: [], surveyAssignments: [] };
         }
       } catch {}
       const data = fs.readFileSync(STORAGE_FILE, 'utf8');
@@ -61,7 +81,7 @@ function loadPersistedData() {
   } catch (error) {
     console.error('Error loading persisted data:', error);
   }
-  return { courses: new Map(), modules: new Map(), lessons: new Map() };
+  return { courses: new Map(), modules: new Map(), lessons: new Map(), surveys: new Map(), surveyAssignments: new Map() };
 }
 
 function savePersistedData(data) {
@@ -69,7 +89,9 @@ function savePersistedData(data) {
     // Convert Maps to arrays for JSON serialization
     // Modules and lessons are nested inside courses, not separate Maps
     const serializable = {
-      courses: Array.from(data.courses.entries())
+      courses: Array.from(data.courses.entries()),
+      surveys: Array.from((data.surveys || new Map()).entries()),
+      surveyAssignments: Array.from((data.surveyAssignments || new Map()).entries()),
     };
     fs.writeFileSync(STORAGE_FILE, JSON.stringify(serializable, null, 2), 'utf8');
     console.log(`📁 Persisted ${data.courses.size} course(s) to ${STORAGE_FILE}`);
@@ -98,7 +120,6 @@ const defaultAllowedOrigins = [
 ];
 
 const allowedOrigins = Array.from(new Set([...defaultAllowedOrigins, ...extraAllowedOrigins]));
-const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production';
 
 app.use((req, res, next) => {
   const origin = req.headers.origin;
@@ -127,31 +148,125 @@ app.use((req, res, next) => {
   next();
 });
 
-const healthPayload = async () => {
-  const supabaseStatus = await checkSupabaseHealth();
+const OFFLINE_QUEUE_STATE_FILE = process.env.OFFLINE_QUEUE_STATE_FILE
+  ? path.resolve(process.env.OFFLINE_QUEUE_STATE_FILE)
+  : path.join(__dirname, 'diagnostics', 'offline-queue.json');
+const OFFLINE_QUEUE_WARN_AT = Number(process.env.OFFLINE_QUEUE_WARN_AT || 50);
+
+const readOfflineQueueBacklog = () => {
+  try {
+    if (process.env.OFFLINE_QUEUE_BACKLOG) {
+      const envValue = Number(process.env.OFFLINE_QUEUE_BACKLOG);
+      if (!Number.isNaN(envValue)) {
+        return envValue;
+      }
+    }
+
+    if (!fs.existsSync(OFFLINE_QUEUE_STATE_FILE)) {
+      return 0;
+    }
+
+    const raw = JSON.parse(fs.readFileSync(OFFLINE_QUEUE_STATE_FILE, 'utf8'));
+    if (typeof raw?.backlog === 'number') {
+      return raw.backlog;
+    }
+    if (Array.isArray(raw?.items)) {
+      return raw.items.length;
+    }
+    if (Array.isArray(raw?.queue)) {
+      return raw.queue.length;
+    }
+    return 0;
+  } catch (error) {
+    console.warn('[health] Failed to read offline queue snapshot:', error);
+    return -1;
+  }
+};
+
+const getOfflineQueueHealth = () => {
+  const backlog = readOfflineQueueBacklog();
+  if (backlog < 0) {
+    return { status: 'warn', backlog: null, message: 'Unable to read offline queue snapshot' };
+  }
   return {
-    status: 'ok',
-    uptime: process.uptime(),
-    timestamp: new Date().toISOString(),
-    supabase: supabaseStatus,
-    nodeEnv: process.env.NODE_ENV || 'development',
-    version: process.env.VERCEL_GIT_COMMIT_SHA || process.env.RAILWAY_GIT_COMMIT_SHA || null,
+    status: backlog > OFFLINE_QUEUE_WARN_AT ? 'warn' : 'ok',
+    backlog,
   };
 };
 
-app.get('/api/health', async (_req, res) => {
+const getStorageHealth = () => {
+  const bucket = process.env.S3_BUCKET || process.env.AWS_S3_BUCKET || process.env.SUPABASE_STORAGE_BUCKET || null;
+  const hasKeys = Boolean(
+    (process.env.AWS_ACCESS_KEY_ID || process.env.R2_ACCESS_KEY_ID || process.env.CLOUDFLARE_ACCESS_KEY_ID) &&
+      (process.env.AWS_SECRET_ACCESS_KEY || process.env.R2_SECRET_ACCESS_KEY || process.env.CLOUDFLARE_SECRET_ACCESS_KEY)
+  );
+
+  if (!bucket && !hasKeys) {
+    return { status: 'disabled', message: 'Storage provider not configured' };
+  }
+
+  const missing = [];
+  if (!bucket) missing.push('bucket');
+  if (!hasKeys) missing.push('credentials');
+
+  if (missing.length > 0) {
+    return { status: 'warn', missing, bucket: bucket ?? undefined };
+  }
+
+  return { status: 'ok', bucket };
+};
+
+const buildHealthPayload = async () => {
+  const supabaseStatus = await checkSupabaseHealth();
+  const offlineQueue = getOfflineQueueHealth();
+  const storage = getStorageHealth();
+  const supabaseDisabled = supabaseStatus.status === 'disabled' || missingSupabaseEnvVars.length > 0;
+  const supabaseOk = supabaseStatus.status === 'ok';
+  const offlineQueueOk = offlineQueue.status === 'ok';
+  const storageOk = storage.status === 'ok' || storage.status === 'disabled';
+
+  const baseHealthy = supabaseOk && offlineQueueOk && storageOk && !supabaseDisabled;
+  const demoModeHealthOverride = (!supabase || supabaseDisabled) && DEV_FALLBACK;
+  const healthy = baseHealthy || demoModeHealthOverride;
+  const httpStatus = healthy ? 200 : 503;
+  const statusLabel = healthy ? 'ok' : 'degraded';
+
+  return {
+    httpStatus,
+    body: {
+      healthy,
+      status: statusLabel,
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString(),
+      nodeEnv: process.env.NODE_ENV || 'development',
+      version: process.env.VERCEL_GIT_COMMIT_SHA || process.env.RAILWAY_GIT_COMMIT_SHA || null,
+      supabase: {
+        ...supabaseStatus,
+        missingEnvVars: missingSupabaseEnvVars,
+        disabled: supabaseDisabled,
+      },
+      offlineQueue,
+      storage,
+      demoModeHealthOverride,
+    },
+  };
+};
+
+app.get('/api/health', async (req, res, next) => {
   try {
-    res.json(await healthPayload());
+    const payload = await buildHealthPayload();
+    res.status(payload.httpStatus).json({ ...payload.body, requestId: req.requestId });
   } catch (error) {
-    res.status(500).json({ status: 'error', error: error instanceof Error ? error.message : 'Unknown error' });
+    next(withHttpError(error, 500, 'health_check_failed'));
   }
 });
 
-app.get('/healthz', async (_req, res) => {
+app.get('/healthz', async (req, res, next) => {
   try {
-    res.json(await healthPayload());
+    const payload = await buildHealthPayload();
+    res.status(payload.httpStatus).json({ ...payload.body, requestId: req.requestId });
   } catch (error) {
-    res.status(500).json({ status: 'error', error: error instanceof Error ? error.message : 'Unknown error' });
+    next(withHttpError(error, 500, 'health_check_failed'));
   }
 });
 
@@ -170,6 +285,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser());
 app.use(securityHeaders);
 app.use(setDoubleSubmitCSRF);
+app.use(attachRequestId);
 
 // Expose CSRF token endpoint for clients and scripts that use the double-submit cookie pattern
 app.get('/api/auth/csrf', getCSRFToken);
@@ -194,14 +310,27 @@ const isAllowedOrigin = (origin) => {
 
 // Basic request logging with request_id and timing
 app.use((req, res, next) => {
-  const requestId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
   const start = Date.now();
-  res.setHeader('x-request-id', requestId);
-  req.requestId = requestId;
   res.on('finish', () => {
     const ms = Date.now() - start;
+    const requestId = req.requestId || '-';
     console.log(`${req.method} ${req.path} ${res.statusCode} - ${ms}ms [${requestId}]`);
   });
+  next();
+});
+
+// Normalize server errors so they flow through the centralized handler
+app.use((req, res, next) => {
+  const originalJson = res.json.bind(res);
+  res.json = (body) => {
+    if (res.statusCode >= 500 && !res.headersSent) {
+      const code = body && typeof body.error === 'string' ? body.error : 'server_error';
+      const message = body && typeof body.message === 'string' ? body.message : undefined;
+      const err = createHttpError(res.statusCode, code, message);
+      return next(err);
+    }
+    return originalJson(body);
+  };
   next();
 });
 
@@ -232,23 +361,22 @@ if ((process.env.LOG_MEMORY || '').toLowerCase() === 'true') {
 // Text content endpoints used by the content editor (local file-backed)
 const contentPath = path.join(__dirname, '../src/content/textContent.json');
 
-app.get('/api/text-content', (_req, res) => {
+app.get('/api/text-content', (_req, res, next) => {
   fs.readFile(contentPath, 'utf8', (err, data) => {
     if (err) {
-      res.status(500).send('Failed to load content');
-      return;
+      return next(createHttpError(500, 'text_content_load_failed', 'Failed to load content'));
     }
     try {
       const obj = JSON.parse(data);
       const items = Object.entries(obj).map(([key, value]) => ({ key, value }));
       res.json(items);
     } catch (e) {
-      res.status(500).send('Invalid content JSON');
+      next(createHttpError(500, 'text_content_invalid', 'Invalid content JSON'));
     }
   });
 });
 
-app.put('/api/text-content', (req, res) => {
+app.put('/api/text-content', (req, res, next) => {
   const items = Array.isArray(req.body) ? req.body : [];
   const contentJson = {};
   for (const item of items) {
@@ -258,8 +386,7 @@ app.put('/api/text-content', (req, res) => {
   }
   fs.writeFile(contentPath, JSON.stringify(contentJson, null, 2), (err) => {
     if (err) {
-      res.status(500).send('Failed to save content');
-      return;
+      return next(createHttpError(500, 'text_content_save_failed', 'Failed to save content'));
     }
     res.json({ success: true });
   });
@@ -269,6 +396,9 @@ app.put('/api/text-content', (req, res) => {
 app.use('/api/auth', authRoutes);
 // MFA routes
 app.use('/api/mfa', mfaRoutes);
+
+// Enforce authentication + admin role on every /api/admin/* route before specific routers/handlers
+app.use('/api/admin', authenticate, requireAdmin);
 
 // Admin analytics endpoints (aggregates, exports, AI summary)
 app.use('/api/admin/analytics', adminAnalyticsRoutes);
@@ -333,6 +463,8 @@ const e2eStore = {
   idempotencyKeys: {},
   analyticsEvents: [], // stored analytics events in demo/E2E mode
   learnerJourneys: new Map(), // key `${user_id}:${course_id}` -> snapshot for demo mode
+  surveys: new Map(persistedData.surveys || []),
+  surveyAssignments: new Map(persistedData.surveyAssignments || []),
 };
 
 const clampPercent = (value) => {
@@ -362,6 +494,391 @@ const coerceNumber = (...values) => {
     }
   }
   return undefined;
+};
+
+const deepClone = (value) => {
+  if (value === null || value === undefined) return value;
+  return JSON.parse(JSON.stringify(value));
+};
+
+const coerceIdArray = (raw) => {
+  if (raw === null || raw === undefined) return [];
+  const list = Array.isArray(raw)
+    ? raw
+    : typeof raw === 'string'
+    ? raw.split(',')
+    : [raw];
+  const normalized = list
+    .map((item) => {
+      if (typeof item === 'string') return item.trim();
+      if (typeof item === 'number') return String(item);
+      if (item && typeof item === 'object') {
+        return coerceString(item.id, item.value, item.code) ?? undefined;
+      }
+      return undefined;
+    })
+    .filter((item) => typeof item === 'string' && item.length > 0);
+  return Array.from(new Set(normalized));
+};
+
+const createEmptyAssignedTo = () => ({
+  organizationIds: [],
+  userIds: [],
+  cohortIds: [],
+  departmentIds: [],
+});
+
+const normalizeAssignedTargets = (payload = {}) => {
+  const source =
+    payload && typeof payload.assignedTo === 'object'
+      ? payload.assignedTo
+      : payload && typeof payload.assigned_to === 'object'
+      ? payload.assigned_to
+      : payload;
+
+  const assignedTo = createEmptyAssignedTo();
+  assignedTo.organizationIds = coerceIdArray(
+    payload.organizationIds ?? payload.organization_ids ?? source?.organizationIds ?? source?.organization_ids,
+  );
+  assignedTo.userIds = coerceIdArray(source?.userIds ?? source?.user_ids);
+  assignedTo.cohortIds = coerceIdArray(source?.cohortIds ?? source?.cohort_ids);
+  assignedTo.departmentIds = coerceIdArray(
+    payload.departmentIds ?? payload.department_ids ?? source?.departmentIds ?? source?.department_ids,
+  );
+
+  return {
+    assignedTo,
+    organizationIds: assignedTo.organizationIds,
+    userIds: assignedTo.userIds,
+    cohortIds: assignedTo.cohortIds,
+    departmentIds: assignedTo.departmentIds,
+  };
+};
+
+const applyAssignmentToSurvey = (survey, assignmentRecord) => {
+  if (!survey) return survey;
+  const fallback = normalizeAssignedTargets({ assignedTo: survey.assignedTo ?? survey.assigned_to }).assignedTo;
+  const normalized = {
+    ...createEmptyAssignedTo(),
+    ...fallback,
+  };
+
+  if (assignmentRecord) {
+    normalized.organizationIds = coerceIdArray(assignmentRecord.organization_ids);
+    normalized.userIds = coerceIdArray(assignmentRecord.user_ids);
+    normalized.cohortIds = coerceIdArray(assignmentRecord.cohort_ids);
+    normalized.departmentIds = coerceIdArray(assignmentRecord.department_ids);
+  }
+
+  return {
+    ...survey,
+    assignedTo: normalized,
+    assigned_to: normalized,
+  };
+};
+
+const buildDefaultSurveyCompletionSettings = () => ({
+  thankYouMessage: 'Thank you for completing our survey!',
+  showResources: false,
+  recommendedCourses: [],
+});
+
+const hasAssignmentPayload = (payload = {}) =>
+  Object.prototype.hasOwnProperty.call(payload, 'assignedTo') ||
+  Object.prototype.hasOwnProperty.call(payload, 'assigned_to') ||
+  Object.prototype.hasOwnProperty.call(payload, 'organizationIds') ||
+  Object.prototype.hasOwnProperty.call(payload, 'organization_ids') ||
+  Object.prototype.hasOwnProperty.call(payload, 'userIds') ||
+  Object.prototype.hasOwnProperty.call(payload, 'user_ids') ||
+  Object.prototype.hasOwnProperty.call(payload, 'cohortIds') ||
+  Object.prototype.hasOwnProperty.call(payload, 'cohort_ids') ||
+  Object.prototype.hasOwnProperty.call(payload, 'departmentIds') ||
+  Object.prototype.hasOwnProperty.call(payload, 'department_ids');
+
+const buildSurveyPersistencePayload = (payload = {}) => {
+  const shaped = {
+    id: payload.id ?? undefined,
+    title: payload.title,
+    description: payload.description ?? null,
+    type: payload.type ?? null,
+    status: payload.status ?? 'draft',
+    sections: payload.sections ?? [],
+    blocks: payload.blocks ?? [],
+    branding: payload.branding ?? {},
+    settings: payload.settings ?? {},
+    default_language: payload.defaultLanguage ?? payload.default_language ?? 'en',
+    supported_languages: payload.supportedLanguages ?? payload.supported_languages ?? ['en'],
+    completion_settings: payload.completionSettings ?? payload.completion_settings ?? buildDefaultSurveyCompletionSettings(),
+    reflection_prompts: payload.reflectionPrompts ?? payload.reflection_prompts ?? [],
+    updated_at: new Date().toISOString(),
+  };
+
+  return shaped;
+};
+
+const DEMO_SURVEY_SEED = [
+  {
+    id: 'pulse-2025',
+    title: '2025 DEI Pulse Check',
+    description: 'Quick quarterly sentiment survey for the leadership cohort.',
+    type: 'pulse-check',
+    status: 'published',
+    organizationIds: ['org-huddle'],
+  },
+  {
+    id: 'climate-2025-q1',
+    title: 'Q1 2025 Climate Assessment',
+    description: 'Quarterly organizational climate and culture assessment',
+    type: 'climate-assessment',
+    status: 'active',
+    organizationIds: ['1', '4', '5'],
+  },
+  {
+    id: 'inclusion-index-2025',
+    title: 'Annual Inclusion Index',
+    description: 'Comprehensive inclusion measurement with benchmarking',
+    type: 'inclusion-index',
+    status: 'draft',
+    organizationIds: [],
+  },
+  {
+    id: 'equity-lens-pilot',
+    title: 'Equity Lens Pilot Study',
+    description: 'Pilot assessment of equity in organizational practices',
+    type: 'equity-lens',
+    status: 'completed',
+    organizationIds: ['3', '2'],
+  },
+  {
+    id: 'leadership-360',
+    title: 'Leadership 360 Assessment',
+    description: 'Multi-rater feedback for inclusive leadership development',
+    type: 'custom',
+    status: 'paused',
+    organizationIds: ['1'],
+  },
+];
+
+const ensureDemoSurveysSeeded = () => {
+  let changed = false;
+  for (const seed of DEMO_SURVEY_SEED) {
+    if (e2eStore.surveys.has(seed.id)) continue;
+    const assignedTo = createEmptyAssignedTo();
+    assignedTo.organizationIds = [...(seed.organizationIds || [])];
+    const now = new Date().toISOString();
+    const record = {
+      id: seed.id,
+      title: seed.title,
+      description: seed.description,
+      type: seed.type,
+      status: seed.status,
+      sections: [],
+      blocks: [],
+      branding: {},
+      settings: {
+        allowAnonymous: false,
+        allowSaveAndContinue: true,
+        showProgressBar: true,
+        randomizeQuestions: false,
+        randomizeOptions: false,
+      },
+      completion_settings: buildDefaultSurveyCompletionSettings(),
+      reflection_prompts: [],
+      default_language: 'en',
+      supported_languages: ['en'],
+      assigned_to: assignedTo,
+      created_at: now,
+      updated_at: now,
+    };
+    e2eStore.surveys.set(record.id, record);
+    updateDemoSurveyAssignments(record.id, assignedTo);
+    changed = true;
+  }
+  if (changed) {
+    persistE2EStore();
+  }
+};
+
+const listDemoSurveys = () => {
+  ensureDemoSurveysSeeded();
+  return Array.from(e2eStore.surveys.values())
+    .map((survey) => applyAssignmentToSurvey(deepClone(survey), e2eStore.surveyAssignments.get(survey.id)))
+    .sort((a, b) => {
+      const left = new Date(a.updated_at || a.updatedAt || 0).getTime();
+      const right = new Date(b.updated_at || b.updatedAt || 0).getTime();
+      return right - left;
+    });
+};
+
+const getDemoSurveyById = (id) => {
+  if (!id) return null;
+  ensureDemoSurveysSeeded();
+  const survey = e2eStore.surveys.get(id);
+  if (!survey) return null;
+  return applyAssignmentToSurvey(deepClone(survey), e2eStore.surveyAssignments.get(id));
+};
+
+const updateDemoSurveyAssignments = (surveyId, assignedTo = createEmptyAssignedTo()) => {
+  if (!surveyId) return;
+  const payload = {
+    survey_id: surveyId,
+    organization_ids: [...(assignedTo.organizationIds || [])],
+    user_ids: [...(assignedTo.userIds || [])],
+    cohort_ids: [...(assignedTo.cohortIds || [])],
+    department_ids: [...(assignedTo.departmentIds || [])],
+    updated_at: new Date().toISOString(),
+  };
+
+  const hasAssignments =
+    payload.organization_ids.length > 0 ||
+    payload.user_ids.length > 0 ||
+    payload.cohort_ids.length > 0 ||
+    payload.department_ids.length > 0;
+
+  if (!hasAssignments) {
+    e2eStore.surveyAssignments.delete(surveyId);
+  } else {
+    e2eStore.surveyAssignments.set(surveyId, payload);
+  }
+};
+
+const upsertDemoSurvey = (payload = {}) => {
+  ensureDemoSurveysSeeded();
+  const now = new Date().toISOString();
+  const id = coerceString(payload.id) || `survey-${Date.now().toString(36)}`;
+  const existing = e2eStore.surveys.get(id) || {};
+  const assignmentUpdateRequested = hasAssignmentPayload(payload);
+  let assignedTo;
+
+  if (assignmentUpdateRequested) {
+    ({ assignedTo } = normalizeAssignedTargets(payload));
+  } else if (existing.assigned_to) {
+    assignedTo = deepClone(existing.assigned_to);
+  } else {
+    assignedTo = createEmptyAssignedTo();
+  }
+
+  if (!assignmentUpdateRequested && e2eStore.surveyAssignments.has(id)) {
+    const stored = e2eStore.surveyAssignments.get(id);
+    assignedTo = {
+      ...assignedTo,
+      organizationIds: coerceIdArray(stored.organization_ids),
+      userIds: coerceIdArray(stored.user_ids),
+      cohortIds: coerceIdArray(stored.cohort_ids),
+      departmentIds: coerceIdArray(stored.department_ids),
+    };
+  }
+
+  const surveyRecord = {
+    ...existing,
+    id,
+    title: payload.title ?? existing.title ?? 'Untitled Survey',
+    description: payload.description ?? existing.description ?? '',
+    type: payload.type ?? existing.type ?? 'custom',
+    status: payload.status ?? existing.status ?? 'draft',
+    sections: Array.isArray(payload.sections) ? payload.sections : existing.sections ?? [],
+    blocks: Array.isArray(payload.blocks) ? payload.blocks : existing.blocks ?? [],
+    branding: payload.branding ?? existing.branding ?? {},
+    settings: payload.settings ?? existing.settings ?? {
+      allowAnonymous: false,
+      allowSaveAndContinue: true,
+      showProgressBar: true,
+      randomizeQuestions: false,
+      randomizeOptions: false,
+    },
+    completion_settings: payload.completionSettings ?? existing.completion_settings ?? buildDefaultSurveyCompletionSettings(),
+    reflection_prompts: payload.reflectionPrompts ?? existing.reflection_prompts ?? [],
+    default_language: payload.defaultLanguage ?? existing.default_language ?? 'en',
+    supported_languages: payload.supportedLanguages ?? existing.supported_languages ?? ['en'],
+    assigned_to: assignedTo,
+    created_at: existing.created_at ?? now,
+    updated_at: now,
+  };
+
+  e2eStore.surveys.set(id, surveyRecord);
+  if (assignmentUpdateRequested) {
+    updateDemoSurveyAssignments(id, assignedTo);
+  }
+  persistE2EStore();
+  return applyAssignmentToSurvey(deepClone(surveyRecord), e2eStore.surveyAssignments.get(id));
+};
+
+const removeDemoSurvey = (id) => {
+  if (!id) return false;
+  const deleted = e2eStore.surveys.delete(id);
+  e2eStore.surveyAssignments.delete(id);
+  if (deleted) {
+    persistE2EStore();
+  }
+  return deleted;
+};
+
+const fetchSurveyAssignmentsMap = async (surveyIds = []) => {
+  if (!Array.isArray(surveyIds) || surveyIds.length === 0) {
+    return new Map();
+  }
+
+  if (!supabase) {
+    const map = new Map();
+    for (const id of surveyIds) {
+      if (e2eStore.surveyAssignments.has(id)) {
+        map.set(id, e2eStore.surveyAssignments.get(id));
+      }
+    }
+    return map;
+  }
+
+  const { data, error } = await supabase
+    .from('survey_assignments')
+    .select('*')
+    .in('survey_id', surveyIds.filter(Boolean));
+  if (error) throw error;
+  const map = new Map();
+  (data || []).forEach((row) => {
+    if (row?.survey_id) {
+      map.set(row.survey_id, row);
+    }
+  });
+  return map;
+};
+
+const loadSurveyWithAssignments = async (id) => {
+  if (!id) return null;
+  if (!supabase) {
+    return getDemoSurveyById(id);
+  }
+  const { data, error } = await supabase.from('surveys').select('*').eq('id', id).single();
+  if (error) throw error;
+  const assignments = await fetchSurveyAssignmentsMap([id]);
+  return applyAssignmentToSurvey({ ...data }, assignments.get(id));
+};
+
+const syncSurveyAssignments = async (surveyId, assignedTo = createEmptyAssignedTo()) => {
+  if (!surveyId || !supabase) return;
+  const normalized = assignedTo ?? createEmptyAssignedTo();
+  const payload = {
+    survey_id: surveyId,
+    organization_ids: coerceIdArray(normalized.organizationIds),
+    user_ids: coerceIdArray(normalized.userIds),
+    cohort_ids: coerceIdArray(normalized.cohortIds),
+    department_ids: coerceIdArray(normalized.departmentIds),
+    updated_at: new Date().toISOString(),
+  };
+
+  const hasAssignments =
+    payload.organization_ids.length > 0 ||
+    payload.user_ids.length > 0 ||
+    payload.cohort_ids.length > 0 ||
+    payload.department_ids.length > 0;
+
+  if (!hasAssignments) {
+    const { error } = await supabase.from('survey_assignments').delete().eq('survey_id', surveyId);
+    if (error) throw error;
+    return;
+  }
+
+  const { error } = await supabase.from('survey_assignments').upsert(payload);
+  if (error) throw error;
 };
 
 const parseLessonIdsParam = (raw) => {
@@ -744,60 +1261,6 @@ const requireOrgAccess = async (req, res, orgId, { write = false } = {}) => {
   }
 
   try {
-    // E2E in-memory fallback: when Supabase isn't configured but tests enabled,
-    // operate against the in-memory e2eStore instead of calling Supabase.
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
-      const existingAssignments = [];
-      const toInsert = [];
-
-      for (const item of desired) {
-        const found = e2eStore.assignments.find((a) => {
-          if (!a) return false;
-          if (String(a.organization_id) !== String(item.organization_id)) return false;
-          if (String(a.course_id) !== String(item.course_id)) return false;
-          if (!a.active) return false;
-          if (a.user_id === null && item.user_id === null) return true;
-          if (a.user_id === null || item.user_id === null) return false;
-          return String(a.user_id) === String(item.user_id);
-        });
-
-        if (found) {
-          existingAssignments.push(found);
-        } else {
-          toInsert.push(item);
-        }
-      }
-
-      const inserted = [];
-      for (const it of toInsert) {
-        const newAsn = Object.assign({}, it, {
-          id: `e2e-asn-${Date.now()}-${Math.floor(Math.random() * 100000)}`,
-          created_at: new Date().toISOString()
-        });
-        e2eStore.assignments.push(newAsn);
-        inserted.push(newAsn);
-      }
-
-      const assignments = [...existingAssignments, ...inserted];
-
-      // Broadcast assignment events for newly created assignments only
-      try {
-        for (const asn of inserted) {
-          const orgId = asn.organization_id || asn.org_id || organization_id || null;
-          const topicOrg = orgId ? `assignment:org:${orgId}` : 'assignment:org:global';
-          const payload = { type: 'assignment_created', data: asn, timestamp: Date.now() };
-          broadcastToTopic(topicOrg, payload);
-          if (asn.user_id) {
-            broadcastToTopic(`assignment:user:${String(asn.user_id).toLowerCase()}`, payload);
-          }
-        }
-      } catch (bErr) {
-        console.warn('Failed to broadcast assignment events', bErr);
-      }
-
-      res.status(201).json({ data: assignments });
-      return;
-    }
     // If running in E2E test mode without Supabase, assume org access for convenience
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
       return { userId: context.userId, role: 'admin' };
@@ -1950,6 +2413,71 @@ app.get('/api/client/assignments', async (req, res) => {
   }
 });
 
+app.get('/api/client/surveys', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const rawStatus = typeof req.query.status === 'string' ? req.query.status.trim().toLowerCase() : '';
+  const statusFilter = rawStatus && rawStatus !== 'all' ? rawStatus : null;
+  const wantsAllStatuses = rawStatus === 'all';
+  const fallbackStatus = statusFilter ?? (wantsAllStatuses ? null : 'published');
+  const orgHeader = req.get('x-org-id');
+  const orgQuery = (req.query.orgId || req.query.organizationId || '').toString().trim();
+  const orgFilter = orgHeader?.trim() || (orgQuery.length > 0 ? orgQuery : null);
+
+  try {
+    if (!supabase) {
+      let records = listDemoSurveys();
+      if (fallbackStatus) {
+        records = records.filter((survey) => {
+          const normalized = String(survey.status || '').toLowerCase();
+          return normalized === fallbackStatus;
+        });
+      }
+
+      if (orgFilter) {
+        records = records.filter((survey) => {
+          const orgIds =
+            survey.assignedTo?.organizationIds ||
+            survey.assigned_to?.organizationIds ||
+            [];
+          if (!Array.isArray(orgIds) || orgIds.length === 0) return true;
+          return orgIds.map(String).includes(orgFilter);
+        });
+      }
+
+      res.json({ data: records });
+      return;
+    }
+
+    let query = supabase
+      .from('surveys')
+      .select('*')
+      .order('updated_at', { ascending: false });
+    if (fallbackStatus) {
+      query = query.eq('status', fallbackStatus);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    const ids = (data || []).map((survey) => survey.id).filter(Boolean);
+    const assignmentMap = await fetchSurveyAssignmentsMap(ids);
+    let shaped = (data || []).map((survey) => applyAssignmentToSurvey({ ...survey }, assignmentMap.get(survey.id)));
+
+    if (orgFilter) {
+      shaped = shaped.filter((survey) => {
+        const orgIds = survey.assignedTo?.organizationIds ?? survey.assigned_to?.organizationIds ?? [];
+        if (!Array.isArray(orgIds) || orgIds.length === 0) return true;
+        return orgIds.map(String).includes(orgFilter);
+      });
+    }
+
+    res.json({ data: shaped });
+  } catch (error) {
+    console.error('Failed to fetch client surveys:', error);
+    res.status(500).json({ error: 'Unable to fetch client surveys' });
+  }
+});
+
 app.post('/api/admin/courses/:id/publish', async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { id } = req.params;
@@ -2192,10 +2720,37 @@ app.delete('/api/admin/courses/:id', async (req, res) => {
   }
 });
 
-app.get('/api/client/courses', async (_req, res) => {
+app.get('/api/client/courses', async (req, res) => {
+  const assignedOnly = String(req.query.assigned || 'false').toLowerCase() === 'true';
+  const orgIdRaw = typeof req.query.orgId === 'string' ? req.query.orgId.trim() : null;
+
+  if (assignedOnly && !orgIdRaw) {
+    res.status(400).json({ error: 'orgId is required when assigned=true' });
+    return;
+  }
+
+  const orgId = orgIdRaw;
+
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
     // In dev/demo mode, show ALL courses (not just published)
-    const data = Array.from(e2eStore.courses.values())
+    let courses = Array.from(e2eStore.courses.values());
+
+    if (assignedOnly && orgId) {
+      const assignedIds = new Set(
+        (e2eStore.assignments || [])
+          .filter(
+            (asn) =>
+              asn &&
+              asn.active !== false &&
+              String(asn.organization_id || asn.org_id || '').trim() === orgId &&
+              (asn.user_id === null || typeof asn.user_id === 'undefined')
+          )
+          .map((asn) => String(asn.course_id))
+      );
+      courses = courses.filter((course) => assignedIds.has(String(course.id)) || assignedIds.has(String(course.slug)));
+    }
+
+    const data = courses
       .map((c) => ({
         id: c.id,
         slug: c.slug ?? c.id,
@@ -2236,13 +2791,32 @@ app.get('/api/client/courses', async (_req, res) => {
 
   if (!ensureSupabase(res)) return;
   try {
-    const { data, error } = await supabase
+    let courseQuery = supabase
       .from('courses')
       .select('*, modules(*, lessons(*))')
       .eq('status', 'published')
       .order('created_at', { ascending: false })
       .order('order_index', { ascending: true, foreignTable: 'modules' })
       .order('order_index', { ascending: true, foreignTable: 'modules.lessons' });
+
+    if (assignedOnly && orgId) {
+      const { data: assignmentRows, error: assignmentError } = await supabase
+        .from('assignments')
+        .select('course_id')
+        .eq('organization_id', orgId)
+        .eq('active', true)
+        .is('user_id', null);
+
+      if (assignmentError) throw assignmentError;
+      const courseIds = Array.from(new Set((assignmentRows || []).map((row) => row.course_id).filter(Boolean)));
+      if (courseIds.length === 0) {
+        res.json({ data: [] });
+        return;
+      }
+      courseQuery = courseQuery.in('id', courseIds);
+    }
+
+    const { data, error } = await courseQuery;
 
     if (error) throw error;
     res.json({ data });
@@ -3509,10 +4083,11 @@ app.get('/api/client/certificates', async (req, res) => {
       query = query.eq('course_id', course_id);
     }
 
-    const { data, error } = await query;
+  const { data, error } = await query;
 
-    if (error) throw error;
-    res.json({ data });
+  if (error) throw error;
+  await refreshDocumentSignedUrls(data || []);
+  res.json({ data });
   } catch (error) {
     console.error('Failed to fetch certificates:', error);
     res.status(500).json({ error: 'Unable to fetch certificates' });
@@ -4147,7 +4722,142 @@ app.delete('/api/orgs/:orgId/workspace/action-items/:id', async (req, res) => {
   }
 });
 
+const sanitizeDocumentFilename = (name = '') => {
+  const normalized = String(name || 'document')
+    .trim()
+    .replace(/[^A-Za-z0-9._-]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
+  return normalized.length > 0 ? normalized : 'document';
+};
+
+const buildDocumentStoragePath = ({ orgId, documentId, filename }) => {
+  const ownerSegment = orgId ? `org-${orgId}` : 'global';
+  const safeName = sanitizeDocumentFilename(filename);
+  return [ownerSegment, documentId || randomUUID(), safeName].join('/');
+};
+
+const createSignedDocumentUrl = async (storagePath, ttlSeconds = DOCUMENT_URL_TTL_SECONDS) => {
+  if (!supabase || !storagePath) return null;
+  try {
+    const { data, error } = await supabase.storage
+      .from(DOCUMENTS_BUCKET)
+      .createSignedUrl(storagePath, ttlSeconds);
+    if (error) throw error;
+    if (!data?.signedUrl) return null;
+    return {
+      url: data.signedUrl,
+      expiresAt: new Date(Date.now() + ttlSeconds * 1000).toISOString(),
+    };
+  } catch (error) {
+    console.error(`[documents] Failed to create signed URL for ${storagePath}:`, error);
+    return null;
+  }
+};
+
+const needsSignedUrlRefresh = (record) => {
+  const storagePath = record?.storage_path ?? record?.storagePath;
+  if (!storagePath) return false;
+  const expiresAtRaw = record?.url_expires_at ?? record?.urlExpiresAt;
+  if (!expiresAtRaw || !record?.url) return true;
+  const expiresAt = Date.parse(expiresAtRaw);
+  if (Number.isNaN(expiresAt)) return true;
+  return expiresAt - Date.now() <= DOCUMENT_URL_REFRESH_BUFFER_MS;
+};
+
+const refreshDocumentSignedUrls = async (records = []) => {
+  if (!supabase) return records;
+  const updates = [];
+
+  await Promise.all(
+    records.map(async (record) => {
+      if (!needsSignedUrlRefresh(record)) return;
+      const storagePath = record?.storage_path ?? record?.storagePath;
+      const signed = await createSignedDocumentUrl(storagePath);
+      if (!signed) return;
+      record.url = signed.url;
+      record.url_expires_at = signed.expiresAt;
+      updates.push({ id: record.id, url: signed.url, url_expires_at: signed.expiresAt });
+    }),
+  );
+
+  if (updates.length > 0) {
+    await Promise.all(
+      updates.map(async ({ id, url, url_expires_at }) => {
+        const { error } = await supabase
+          .from('documents')
+          .update({ url, url_expires_at })
+          .eq('id', id);
+        if (error) {
+          console.warn(`[documents] Failed to persist refreshed URL for ${id}:`, error);
+        }
+      }),
+    );
+  }
+
+  return records;
+};
+
 // Document library
+app.post(
+  '/api/admin/documents/upload',
+  authenticate,
+  requireAdmin,
+  documentUpload.single('file'),
+  async (req, res) => {
+    if (!ensureSupabase(res)) return;
+    const file = req.file;
+    if (!file) {
+      res.status(400).json({ error: 'file is required' });
+      return;
+    }
+
+    try {
+      const rawDocumentId = req.body?.documentId;
+      const documentId = typeof rawDocumentId === 'string' && rawDocumentId.trim().length > 0
+        ? rawDocumentId
+        : rawDocumentId
+        ? String(rawDocumentId)
+        : `doc_${Date.now()}`;
+      const rawOrgId = req.body?.orgId;
+      const orgId = typeof rawOrgId === 'string' && rawOrgId.trim().length > 0 ? rawOrgId : rawOrgId ? String(rawOrgId) : null;
+      const storagePath = buildDocumentStoragePath({
+        orgId,
+        documentId,
+        filename: file.originalname || file.fieldname || 'upload.bin',
+      });
+
+      const { error: uploadError } = await supabase.storage
+        .from(DOCUMENTS_BUCKET)
+        .upload(storagePath, file.buffer, {
+          contentType: file.mimetype || 'application/octet-stream',
+          upsert: true,
+        });
+
+      if (uploadError) throw uploadError;
+
+      const signed = await createSignedDocumentUrl(storagePath);
+      if (!signed) {
+        res.status(500).json({ error: 'Unable to generate signed URL' });
+        return;
+      }
+
+      res.status(201).json({
+        data: {
+          documentId,
+          storagePath,
+          signedUrl: signed.url,
+          urlExpiresAt: signed.expiresAt,
+          fileType: file.mimetype,
+          fileSize: file.size,
+        },
+      });
+    } catch (error) {
+      console.error('[documents] Failed to upload file:', error);
+      res.status(500).json({ error: 'Unable to upload document file' });
+    }
+  },
+);
 app.get('/api/admin/documents', async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { org_id, user_id, tag, category, search, visibility } = req.query;
@@ -4197,15 +4907,30 @@ app.post('/api/admin/documents', async (req, res) => {
   }
 
   try {
+    let storagePath = payload.storagePath ?? null;
+    let url = payload.url ?? null;
+    let urlExpiresAt = payload.urlExpiresAt ?? null;
+
+    if (storagePath && (!url || !urlExpiresAt)) {
+      const signed = await createSignedDocumentUrl(storagePath);
+      if (signed) {
+        url = signed.url;
+        urlExpiresAt = signed.expiresAt;
+      }
+    }
+
     const insertPayload = {
       id: payload.id ?? undefined,
       name: payload.name,
       filename: payload.filename ?? null,
-      url: payload.url ?? null,
+      url,
       category: payload.category,
       subcategory: payload.subcategory ?? null,
-      tags: payload.tags ?? [],
+      tags: Array.isArray(payload.tags) ? payload.tags : [],
       file_type: payload.fileType ?? null,
+      file_size: typeof payload.fileSize === 'number' ? payload.fileSize : null,
+      storage_path: storagePath,
+      url_expires_at: urlExpiresAt,
       visibility: payload.visibility ?? 'global',
       org_id: payload.orgId ?? null,
       user_id: payload.userId ?? null,
@@ -4242,6 +4967,9 @@ app.put('/api/admin/documents/:id', async (req, res) => {
       subcategory: 'subcategory',
       tags: 'tags',
       fileType: 'file_type',
+      fileSize: 'file_size',
+      storagePath: 'storage_path',
+      urlExpiresAt: 'url_expires_at',
       visibility: 'visibility',
       orgId: 'org_id',
       userId: 'user_id',
@@ -4283,6 +5011,7 @@ app.post('/api/admin/documents/:id/download', async (req, res) => {
   try {
     const { data, error } = await supabase.rpc('increment_document_download', { doc_id: id });
     if (error) throw error;
+    await refreshDocumentSignedUrls(data ? [data] : []);
     res.json({ data });
   } catch (error) {
     console.error('Failed to record document download:', error);
@@ -4295,8 +5024,24 @@ app.delete('/api/admin/documents/:id', async (req, res) => {
   const { id } = req.params;
 
   try {
+    const { data: existing } = await supabase
+      .from('documents')
+      .select('storage_path')
+      .eq('id', id)
+      .single();
+
     const { error } = await supabase.from('documents').delete().eq('id', id);
     if (error) throw error;
+
+    if (existing?.storage_path) {
+      const { error: storageError } = await supabase.storage
+        .from(DOCUMENTS_BUCKET)
+        .remove([existing.storage_path]);
+      if (storageError) {
+        console.warn(`[documents] Failed to delete storage object ${existing.storage_path}:`, storageError);
+      }
+    }
+
     res.status(204).end();
   } catch (error) {
     console.error('Failed to delete document:', error);
@@ -4309,13 +5054,22 @@ app.get('/api/admin/surveys', async (_req, res) => {
   if (!ensureSupabase(res)) return;
 
   try {
+    if (!supabase) {
+      res.json({ data: listDemoSurveys() });
+      return;
+    }
+
     const { data, error } = await supabase
       .from('surveys')
       .select('*')
       .order('updated_at', { ascending: false });
 
     if (error) throw error;
-    res.json({ data });
+
+    const ids = (data || []).map((survey) => survey.id).filter(Boolean);
+    const assignmentMap = await fetchSurveyAssignmentsMap(ids);
+    const shaped = (data || []).map((survey) => applyAssignmentToSurvey({ ...survey }, assignmentMap.get(survey.id)));
+    res.json({ data: shaped });
   } catch (error) {
     console.error('Failed to fetch surveys:', error);
     res.status(500).json({ error: 'Unable to fetch surveys' });
@@ -4327,14 +5081,18 @@ app.get('/api/admin/surveys/:id', async (req, res) => {
   const { id } = req.params;
 
   try {
-    const { data, error } = await supabase
-      .from('surveys')
-      .select('*')
-      .eq('id', id)
-      .single();
+    if (!supabase) {
+      const survey = getDemoSurveyById(id);
+      if (!survey) {
+        res.status(404).json({ error: 'Survey not found' });
+        return;
+      }
+      res.json({ data: survey });
+      return;
+    }
 
-    if (error) throw error;
-    res.json({ data });
+    const survey = await loadSurveyWithAssignments(id);
+    res.json({ data: survey });
   } catch (error) {
     console.error(`Failed to fetch survey ${id}:`, error);
     res.status(500).json({ error: 'Unable to fetch survey' });
@@ -4351,18 +5109,14 @@ app.post('/api/admin/surveys', async (req, res) => {
   }
 
   try {
-    const insertPayload = {
-      id: payload.id ?? undefined,
-      title: payload.title,
-      description: payload.description ?? null,
-      type: payload.type ?? null,
-      status: payload.status ?? 'draft',
-      sections: payload.sections ?? [],
-      branding: payload.branding ?? {},
-      settings: payload.settings ?? {},
-      assigned_to: payload.assignedTo ?? [],
-      updated_at: new Date().toISOString()
-    };
+    if (!supabase) {
+      const survey = upsertDemoSurvey(payload);
+      res.status(201).json({ data: survey });
+      return;
+    }
+
+    const { assignedTo } = normalizeAssignedTargets(payload);
+    const insertPayload = buildSurveyPersistencePayload(payload);
 
     const { data, error } = await supabase
       .from('surveys')
@@ -4371,7 +5125,10 @@ app.post('/api/admin/surveys', async (req, res) => {
       .single();
 
     if (error) throw error;
-    res.status(201).json({ data });
+
+    await syncSurveyAssignments(data.id, assignedTo);
+    const survey = await loadSurveyWithAssignments(data.id);
+    res.status(201).json({ data: survey });
   } catch (error) {
     console.error('Failed to save survey:', error);
     res.status(500).json({ error: 'Unable to save survey' });
@@ -4384,17 +5141,19 @@ app.put('/api/admin/surveys/:id', async (req, res) => {
   const patch = req.body || {};
 
   try {
-    const updatePayload = {
-      title: patch.title,
-      description: patch.description,
-      type: patch.type,
-      status: patch.status,
-      sections: patch.sections,
-      branding: patch.branding,
-      settings: patch.settings,
-      assigned_to: patch.assignedTo,
-      updated_at: new Date().toISOString()
-    };
+    if (!supabase) {
+      const survey = upsertDemoSurvey({ ...patch, id });
+      res.json({ data: survey });
+      return;
+    }
+
+    const assignmentUpdateRequested = hasAssignmentPayload(patch);
+    const { assignedTo } = assignmentUpdateRequested
+      ? normalizeAssignedTargets(patch)
+      : { assignedTo: undefined };
+
+    const updatePayload = buildSurveyPersistencePayload({ ...patch, id });
+    delete updatePayload.id;
 
     const { data, error } = await supabase
       .from('surveys')
@@ -4404,7 +5163,12 @@ app.put('/api/admin/surveys/:id', async (req, res) => {
       .single();
 
     if (error) throw error;
-    res.json({ data });
+
+    if (assignmentUpdateRequested) {
+      await syncSurveyAssignments(id, assignedTo);
+    }
+    const survey = await loadSurveyWithAssignments(id);
+    res.json({ data: survey });
   } catch (error) {
     console.error('Failed to update survey:', error);
     res.status(500).json({ error: 'Unable to update survey' });
@@ -4416,6 +5180,13 @@ app.delete('/api/admin/surveys/:id', async (req, res) => {
   const { id } = req.params;
 
   try {
+    if (!supabase) {
+      const deleted = removeDemoSurvey(id);
+      res.status(deleted ? 204 : 404).end();
+      return;
+    }
+
+    await supabase.from('survey_assignments').delete().eq('survey_id', id);
     const { error } = await supabase.from('surveys').delete().eq('id', id);
     if (error) throw error;
     res.status(204).end();
@@ -4837,6 +5608,8 @@ app.use((req, res, next) => {
     if (err) return next(err);
   });
 });
+
+app.use(apiErrorHandler);
 
 const server = http.createServer(app);
 

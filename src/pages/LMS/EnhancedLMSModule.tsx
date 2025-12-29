@@ -24,6 +24,7 @@ import {
   RefreshCw
 } from 'lucide-react';
 import toast from 'react-hot-toast';
+import { progressService } from '../../services/progressService';
 
 const EnhancedLMSModule = () => {
   const { moduleId, lessonId } = useParams();
@@ -34,6 +35,8 @@ const EnhancedLMSModule = () => {
   const [quizAnswers, setQuizAnswers] = useState<{ [questionId: string]: number }>({});
   const [quizSubmitted, setQuizSubmitted] = useState(false);
   const [quizScore, setQuizScore] = useState<{ score: number; maxScore: number; passed: boolean } | null>(null);
+  const progressAvailability = progressService.getAvailability();
+  const progressDisabled = !progressAvailability.enabled;
   // Removed unused videoProgress state
   
   // Get course from store
@@ -569,13 +572,23 @@ const EnhancedLMSModule = () => {
                   
                   <div className="flex items-center space-x-4">
                     {!currentLessonProgress?.completed && (
-                      <button
-                        onClick={handleMarkComplete}
-                        className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700"
-                      >
-                        <Award className="w-4 h-4 inline mr-2" />
-                        Mark Complete
-                      </button>
+                      <div className="flex flex-col gap-2">
+                        <button
+                          onClick={handleMarkComplete}
+                          disabled={progressDisabled}
+                          title={progressDisabled ? progressAvailability.message : undefined}
+                          className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-60"
+                        >
+                          <Award className="w-4 h-4 inline mr-2" />
+                          Mark Complete
+                        </button>
+                        {progressDisabled && progressAvailability.message && (
+                          <p className="flex items-center gap-2 rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">
+                            <AlertTriangle className="h-4 w-4" aria-hidden />
+                            {progressAvailability.message}
+                          </p>
+                        )}
+                      </div>
                     )}
                     
                     <button

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useParams, Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { courseStore } from '../../store/courseStore';
-import { syncCourseToDatabase, CourseValidationError } from '../../dal/courses';
+import { syncCourseToDatabase, CourseValidationError } from '../../dal/adminCourses';
 import type { Course } from '../../types/courseTypes';
 import { useToast } from '../../context/ToastContext';
 

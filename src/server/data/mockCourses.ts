@@ -51,8 +51,23 @@ seedCourses.forEach((course) => {
   courseStore.set(record.id, record);
 });
 
-export const listPublishedCourses = (): NormalizedCourse[] => {
-  return serializeCourses(Array.from(courseStore.values()).filter((course) => course.status === 'published'));
+interface CourseListOptions {
+  assignedOnly?: boolean;
+  orgId?: string;
+}
+
+export const listPublishedCourses = (options: CourseListOptions = {}): NormalizedCourse[] => {
+  const { assignedOnly = false, orgId } = options;
+  let records = Array.from(courseStore.values()).filter((course) => course.status === 'published');
+
+  if (assignedOnly) {
+    if (!orgId) {
+      return [];
+    }
+    records = records.filter((course) => course.assignments.has(orgId));
+  }
+
+  return serializeCourses(records);
 };
 
 export const listAllCourses = (): NormalizedCourse[] => serializeCourses(Array.from(courseStore.values()));

@@ -105,21 +105,9 @@ const AdminOrganizationProfile: React.FC = () => {
       return;
     }
 
-    let url: string | undefined = undefined;
-    if (file) {
-      // read as data URL for local dev (documentService will also attempt storage upload)
-      url = await new Promise<string>((res, rej) => {
-        const r = new FileReader();
-        r.onload = () => res(String(r.result));
-        r.onerror = rej;
-        r.readAsDataURL(file);
-      });
-    }
-
     const doc = await documentService.addDocument({
-      name: docName || file!.name,
+      name: docName || file?.name || 'Untitled Document',
       filename: file?.name,
-      url,
       category: docCategory,
       subcategory: undefined,
       tags: docTags ? docTags.split(',').map(t => t.trim()).filter(Boolean) : [],

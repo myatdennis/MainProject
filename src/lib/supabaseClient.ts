@@ -1,15 +1,30 @@
 type SupabaseClient = import('@supabase/supabase-js').SupabaseClient;
 type CreateClient = typeof import('@supabase/supabase-js').createClient;
 
+type SupabaseModule = typeof import('@supabase/supabase-js');
+
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
 export const hasSupabaseConfig = Boolean(supabaseUrl && supabaseAnonKey);
 
+export class SupabaseConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'SupabaseConfigError';
+  }
+}
+
+const missingConfigMessage = 'Supabase credentials are missing. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to enable syncing.';
+let missingConfigLogged = false;
+
 let supabaseClient: SupabaseClient | null = null;
 let initError: Error | null = null;
 let createClientLoader: Promise<CreateClient> | null = null;
 let createClientFn: CreateClient | null = null;
+let warnedAboutCdnFallback = false;
+
+const SUPABASE_CDN_FALLBACK = 'https://esm.sh/@supabase/supabase-js@2.86.0?bundle&target=es2022';
 
 const realtimeDefaults = {
   params: {
@@ -20,7 +35,7 @@ const realtimeDefaults = {
 async function importCreateClient(): Promise<CreateClient> {
   if (createClientFn) return createClientFn;
   if (!createClientLoader) {
-    createClientLoader = import('@supabase/supabase-js')
+    createClientLoader = loadSupabaseModule()
       .then((mod) => mod.createClient)
       .catch((error) => {
         initError = error instanceof Error ? error : new Error(String(error));
@@ -36,14 +51,66 @@ async function importCreateClient(): Promise<CreateClient> {
   return createClientFn;
 }
 
+async function loadSupabaseModule(): Promise<SupabaseModule> {
+  try {
+    return await import('@supabase/supabase-js');
+  } catch (error) {
+    if (shouldAttemptCdnFallback(error)) {
+      return loadFromCdn(error as Error);
+    }
+    throw error;
+  }
+}
+
+function shouldAttemptCdnFallback(error: unknown): boolean {
+  if (!(error instanceof Error) || typeof error.message !== 'string') return false;
+  const message = error.message;
+  return (
+    message.includes('Failed to resolve module specifier') ||
+    message.includes('import call expects a relative or absolute URL') ||
+    message.includes('Cannot find package') ||
+    message.includes('Cannot find module')
+  );
+}
+
+async function loadFromCdn(originalError: Error): Promise<SupabaseModule> {
+  if (!warnedAboutCdnFallback) {
+    console.warn('[supabaseClient] Falling back to CDN import for @supabase/supabase-js:', originalError.message);
+    warnedAboutCdnFallback = true;
+  }
+
+  try {
+    const module = await import(/* @vite-ignore */ SUPABASE_CDN_FALLBACK);
+    console.info('[supabaseClient] Loaded @supabase/supabase-js via CDN fallback');
+    return module as SupabaseModule;
+  } catch (cdnError) {
+    const reason = cdnError instanceof Error ? cdnError.message : String(cdnError);
+    console.error('[supabaseClient] CDN fallback failed:', reason);
+    // Re-throw the original error to preserve the root-cause stack for upstream handlers.
+    throw originalError;
+  }
+}
+
+function throwMissingSupabase(action?: string): never {
+  const context = action ? ` (attempted ${action})` : '';
+  const errorMessage = `${missingConfigMessage}${context}`;
+  const error = new SupabaseConfigError(errorMessage);
+  initError = error;
+  if (!missingConfigLogged) {
+    console.error('[supabaseClient] ' + errorMessage);
+    missingConfigLogged = true;
+  }
+  throw error;
+}
+
+export function ensureSupabaseConfigured(action?: string): void {
+  if (hasSupabaseConfig) return;
+  throwMissingSupabase(action);
+}
+
 async function hydrateClient(): Promise<SupabaseClient | null> {
   if (!hasSupabaseConfig) {
-    if (import.meta.env.DEV) {
-      console.info('[supabaseClient] Supabase not configured – falling back to demo data.');
-    }
-    supabaseClient = null;
-    initError = null;
-    return null;
+    throwMissingSupabase('initializing Supabase client');
   }
 
   if (supabaseClient) return supabaseClient;
@@ -86,13 +153,15 @@ export function getSupabaseSync(): SupabaseClient | null {
 
 export function getSupabaseStatus() {
   if (!hasSupabaseConfig) {
-    return { status: 'disabled', reason: 'missing-env' } as const;
+    return { status: 'disabled', reason: 'missing-env', message: missingConfigMessage } as const;
   }
   if (initError) {
     return { status: 'error', message: initError.message } as const;
   }
   return { status: supabaseClient ? 'ready' : 'idle' } as const;
 }
+
+export { missingConfigMessage as SUPABASE_MISSING_CONFIG_MESSAGE };
 
 export { supabaseClient };
 

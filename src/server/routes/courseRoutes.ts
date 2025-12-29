@@ -13,8 +13,15 @@ import { requireAdmin } from '../middleware/authMiddleware';
 
 const router = express.Router();
 
-router.get('/client/courses', (_req, res) => {
-  res.json({ data: listPublishedCourses() });
+router.get('/client/courses', (req, res) => {
+  const assignedOnly = String(req.query.assigned || 'false').toLowerCase() === 'true';
+  const orgId = typeof req.query.orgId === 'string' ? req.query.orgId.trim() : undefined;
+
+  if (assignedOnly && !orgId) {
+    return res.status(400).json({ error: 'orgId is required when assigned=true' });
+  }
+
+  res.json({ data: listPublishedCourses({ assignedOnly, orgId }) });
 });
 
 router.get('/client/courses/:identifier', (req, res) => {

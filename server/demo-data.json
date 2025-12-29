@@ -9,7 +9,7 @@
         "description": "Learn the fundamentals of inclusive leadership through interactive lessons, including TED Talks, quizzes, and practical frameworks.",
         "status": "published",
         "version": 1,
-        "published_at": "2025-11-07T19:54:09.084Z",
+        "published_at": "2025-12-29T22:29:15.743Z",
         "thumbnail": "/api/placeholder/400/300",
         "difficulty": "Beginner",
         "duration": "2 hours",
@@ -152,11 +152,11 @@
       }
     ],
     [
-      "e2e-course-1762556844527",
+      "e2e-course-1767047355892",
       {
-        "id": "e2e-course-1762556844527",
-        "slug": "e2e-course-1762556844527",
-        "title": "Integration Test Course",
+        "id": "e2e-course-1767047355892",
+        "slug": "demo-6c7a8e28-f9fb-43ae-bc14-606d7dd80237",
+        "title": "Integration Course demo-6c7a8e28-f9fb-43ae-bc14-606d7dd80237",
         "description": null,
         "status": "draft",
         "version": 1,
@@ -166,11 +166,11 @@
       }
     ],
     [
-      "e2e-course-1762556844531",
+      "e2e-course-1767047355906",
       {
-        "id": "e2e-course-1762556844531",
-        "slug": "e2e-course-1762556844531",
-        "title": "Integration Test Course",
+        "id": "e2e-course-1767047355906",
+        "slug": "org-a-27bb449d-0a1f-4832-93b9-37c62621e78d",
+        "title": "org-a-27bb449d-0a1f-4832-93b9-37c62621e78d",
         "description": null,
         "status": "draft",
         "version": 1,
@@ -180,95 +180,11 @@
       }
     ],
     [
-      "e2e-course-1762556894553",
+      "e2e-course-1767047355909",
       {
-        "id": "e2e-course-1762556894553",
-        "slug": "e2e-course-1762556894553",
-        "title": "Integration Test Course",
-        "description": null,
-        "status": "draft",
-        "version": 1,
-        "meta_json": {},
-        "published_at": null,
-        "modules": []
-      }
-    ],
-    [
-      "e2e-course-1762557019775",
-      {
-        "id": "e2e-course-1762557019775",
-        "slug": "e2e-course-1762557019775",
-        "title": "Integration Test Course",
-        "description": null,
-        "status": "draft",
-        "version": 1,
-        "meta_json": {},
-        "published_at": null,
-        "modules": []
-      }
-    ],
-    [
-      "e2e-course-1762557259883",
-      {
-        "id": "e2e-course-1762557259883",
-        "slug": "e2e-course-1762557259883",
-        "title": "Integration Test Course",
-        "description": null,
-        "status": "draft",
-        "version": 1,
-        "meta_json": {},
-        "published_at": null,
-        "modules": []
-      }
-    ],
-    [
-      "e2e-course-1762558772194",
-      {
-        "id": "e2e-course-1762558772194",
-        "slug": "e2e-course-1762558772194",
-        "title": "Integration Test Course",
-        "description": null,
-        "status": "draft",
-        "version": 1,
-        "meta_json": {},
-        "published_at": null,
-        "modules": []
-      }
-    ],
-    [
-      "e2e-course-1762988771955",
-      {
-        "id": "e2e-course-1762988771955",
-        "slug": "e2e-course-1762988771955",
-        "title": "Integration Test Course",
-        "description": null,
-        "status": "draft",
-        "version": 1,
-        "meta_json": {},
-        "published_at": null,
-        "modules": []
-      }
-    ],
-    [
-      "e2e-course-1762989192354",
-      {
-        "id": "e2e-course-1762989192354",
-        "slug": "e2e-course-1762989192354",
-        "title": "Integration Test Course",
-        "description": null,
-        "status": "draft",
-        "version": 1,
-        "meta_json": {},
-        "published_at": null,
-        "modules": []
-      }
-    ],
-    [
-      "e2e-course-1763511027422",
-      {
-        "id": "e2e-course-1763511027422",
-        "slug": "e2e-course-1763511027422",
-        "title": "Integration Test Course",
+        "id": "e2e-course-1767047355909",
+        "slug": "org-b-b18a3eb9-348a-4611-9a46-d2dc63ee8196",
+        "title": "org-b-b18a3eb9-348a-4611-9a46-d2dc63ee8196",
         "description": null,
         "status": "draft",
         "version": 1,
@@ -277,5 +193,7 @@
         "modules": []
       }
     ]
-  ]
+  ],
+  "surveys": [],
+  "surveyAssignments": []
 }

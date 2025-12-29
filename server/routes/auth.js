@@ -8,6 +8,165 @@ import bcrypt from 'bcryptjs';
 import { generateTokens, verifyRefreshToken } from '../utils/jwt.js';
 import { authenticate, authLimiter } from '../middleware/auth.js';
 import supabase from '../lib/supabaseClient.js';
+import {
+  attachAuthCookies,
+  clearAuthCookies,
+  getRefreshTokenFromRequest,
+} from '../utils/authCookies.js';
+
+const parseBoolean = (value, fallback = false) => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) return fallback;
+    if (['true', '1', 'yes', 'y', 'on'].includes(normalized)) return true;
+    if (['false', '0', 'no', 'n', 'off'].includes(normalized)) return false;
+  }
+  if (typeof value === 'number') {
+    return value !== 0;
+  }
+  return fallback;
+};
+
+const isE2ETestMode = parseBoolean(process.env.E2E_TEST_MODE);
+const isDemoModeExplicit = parseBoolean(process.env.DEMO_MODE);
+const allowLegacyDemoUsers = parseBoolean(process.env.ALLOW_LEGACY_DEMO_USERS, isE2ETestMode);
+
+const legacyDemoUsers = [
+  {
+    id: '00000000-0000-0000-0000-000000000001',
+    email: 'admin@thehuddleco.com',
+    role: 'admin',
+    firstName: 'Admin',
+    lastName: 'User',
+    password: 'admin123',
+    organizationId: undefined,
+  },
+  {
+    id: '00000000-0000-0000-0000-000000000002',
+    email: 'user@pacificcoast.edu',
+    role: 'user',
+    firstName: 'Demo',
+    lastName: 'User',
+    password: 'user123',
+    organizationId: undefined,
+  },
+];
+
+const normalizeEmail = (value = '') => value.trim().toLowerCase();
+
+const buildConfiguredDemoUsers = () => {
+  const users = [];
+
+  const fromEnv = (prefix, defaults) => {
+    const email = process.env[`${prefix}_EMAIL`] || defaults.email;
+    const password = process.env[`${prefix}_PASSWORD`];
+    const passwordHash = process.env[`${prefix}_PASSWORD_HASH`];
+
+    if (!email || (!password && !passwordHash)) {
+      return;
+    }
+
+    users.push({
+      id: process.env[`${prefix}_ID`] || defaults.id,
+      email: email.trim(),
+      emailLower: normalizeEmail(email),
+      role: process.env[`${prefix}_ROLE`] || defaults.role,
+      firstName: process.env[`${prefix}_FIRST_NAME`] || defaults.firstName,
+      lastName: process.env[`${prefix}_LAST_NAME`] || defaults.lastName,
+      organizationId: process.env[`${prefix}_ORG_ID`] || defaults.organizationId,
+      password,
+      passwordHash,
+    });
+  };
+
+  fromEnv('DEMO_ADMIN', {
+    id: '00000000-0000-0000-0000-000000000001',
+    email: 'admin@thehuddleco.com',
+    role: 'admin',
+    firstName: 'Admin',
+    lastName: 'User',
+    organizationId: undefined,
+  });
+
+  fromEnv('DEMO_USER', {
+    id: '00000000-0000-0000-0000-000000000002',
+    email: 'user@pacificcoast.edu',
+    role: 'user',
+    firstName: 'Demo',
+    lastName: 'User',
+    organizationId: undefined,
+  });
+
+  const rawJson = process.env.DEMO_USERS_JSON;
+  if (rawJson) {
+    try {
+      const parsed = JSON.parse(rawJson);
+      if (Array.isArray(parsed)) {
+        parsed.forEach((entry) => {
+          if (!entry?.email || (!entry.password && !entry.passwordHash)) {
+            return;
+          }
+          users.push({
+            id: entry.id || `demo-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
+            email: entry.email,
+            emailLower: normalizeEmail(entry.email),
+            role: entry.role || 'user',
+            firstName: entry.firstName || 'Demo',
+            lastName: entry.lastName || 'User',
+            organizationId: entry.organizationId,
+            password: entry.password,
+            passwordHash: entry.passwordHash,
+          });
+        });
+      }
+    } catch (error) {
+      console.error('[AUTH ROUTES] Failed to parse DEMO_USERS_JSON:', error);
+    }
+  }
+
+  return users;
+};
+
+const configuredDemoUsers = buildConfiguredDemoUsers();
+
+if (isDemoModeExplicit && configuredDemoUsers.length === 0 && !allowLegacyDemoUsers) {
+  console.warn(
+    '[AUTH ROUTES] DEMO_MODE is enabled but no demo users are configured. Set DEMO_USERS_JSON or DEMO_ADMIN_PASSWORD / DEMO_ADMIN_PASSWORD_HASH to enable demo logins.'
+  );
+}
+
+const matchLegacyDemoUser = async (email, password) => {
+  const legacyUser = legacyDemoUsers.find((user) => normalizeEmail(user.email) === normalizeEmail(email));
+  if (!legacyUser) return null;
+  if (legacyUser.password && legacyUser.password === password) {
+    return legacyUser;
+  }
+  return null;
+};
+
+const matchConfiguredDemoUser = async (email, password) => {
+  const target = normalizeEmail(email);
+  for (const user of configuredDemoUsers) {
+    if (user.emailLower !== target) continue;
+    if (user.passwordHash) {
+      const match = await bcrypt.compare(password, user.passwordHash);
+      if (match) return user;
+    } else if (user.password && user.password === password) {
+      return user;
+    }
+  }
+  return null;
+};
+
+const resolveDemoUser = async (email, password) => {
+  const configured = await matchConfiguredDemoUser(email, password);
+  if (configured) return configured;
+  if (allowLegacyDemoUsers) {
+    return matchLegacyDemoUser(email, password);
+  }
+  return null;
+};
 
 const router = express.Router();
 
@@ -35,46 +194,24 @@ router.post('/login', async (req, res) => {
       });
     }
     
-      const origin = req.headers.origin || 'unknown';
-      const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip;
-      console.log(`[AUTH] ${req.method} ${req.originalUrl} from origin ${origin} ip ${ip}`);
+    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip;
+    console.log(`[AUTH] ${req.method} ${req.originalUrl} from origin ${origin} ip ${ip}`);
     // Demo mode check
-    const DEV_FALLBACK = (process.env.DEV_FALLBACK || '').toLowerCase() !== 'false' && 
-                         (process.env.NODE_ENV || '').toLowerCase() !== 'production';
-    const useDemoMode = process.env.DEMO_MODE === 'true' || 
-                        process.env.E2E_TEST_MODE === 'true' || 
-                        DEV_FALLBACK;
-                        
+    const useDemoMode = isDemoModeExplicit || isE2ETestMode;
+    
     if (useDemoMode) {
       console.log('[AUTH ROUTES] Using demo mode authentication');
-      // Demo credentials
-      const demoUsers = {
-        'admin@thehuddleco.com': {
-          id: '00000000-0000-0000-0000-000000000001',
-          email: 'admin@thehuddleco.com',
-          role: 'admin',
-          firstName: 'Admin',
-          lastName: 'User',
-          password: 'admin123',
-        },
-        'user@pacificcoast.edu': {
-          id: '00000000-0000-0000-0000-000000000002',
-          email: 'user@pacificcoast.edu',
-          role: 'user',
-          firstName: 'Demo',
-          lastName: 'User',
-          password: 'user123',
-        },
-      };
+      const demoUser = await resolveDemoUser(email, password);
       
-      const demoUser = demoUsers[email];
-      
-      if (demoUser && password === demoUser.password) {
+      if (demoUser) {
         const tokens = generateTokens({
           userId: demoUser.id,
           email: demoUser.email,
           role: demoUser.role,
+          organizationId: demoUser.organizationId,
         });
+
+        attachAuthCookies(res, tokens);
         
         return res.json({
           user: {
@@ -83,6 +220,7 @@ router.post('/login', async (req, res) => {
             role: demoUser.role,
             firstName: demoUser.firstName,
             lastName: demoUser.lastName,
+            organizationId: demoUser.organizationId,
           },
           ...tokens,
         });
@@ -140,6 +278,7 @@ router.post('/login', async (req, res) => {
     });
     
     // Return user data and tokens
+    attachAuthCookies(res, tokens);
     res.json({
       user: {
         id: user.id,
@@ -230,6 +369,7 @@ router.post('/register', authLimiter, async (req, res) => {
     });
     
     // Return user data and tokens
+    attachAuthCookies(res, tokens);
     res.status(201).json({
       user: {
         id: newUser.id,
@@ -255,7 +395,10 @@ router.post('/register', authLimiter, async (req, res) => {
 
 router.post('/refresh', async (req, res) => {
   try {
-    const { refreshToken } = req.body;
+    let { refreshToken } = req.body || {};
+    if (!refreshToken) {
+      refreshToken = getRefreshTokenFromRequest(req);
+    }
     
     if (!refreshToken) {
       return res.status(400).json({
@@ -275,12 +418,13 @@ router.post('/refresh', async (req, res) => {
     }
     
     // Demo mode - skip database check
-    if (process.env.DEMO_MODE === 'true' || process.env.E2E_TEST_MODE === 'true') {
+    if (isDemoModeExplicit || isE2ETestMode) {
       const tokens = generateTokens({
         userId: payload.userId,
         email: payload.email,
         role: payload.role,
       });
+      attachAuthCookies(res, tokens);
       return res.json(tokens);
     }
     
@@ -319,6 +463,7 @@ router.post('/refresh', async (req, res) => {
       organizationId: user.organization_id,
     });
     
+    attachAuthCookies(res, tokens);
     res.json(tokens);
   } catch (error) {
     console.error('Token refresh error:', error);
@@ -349,6 +494,7 @@ router.post('/logout', authenticate, async (req, res) => {
   // In a real implementation, you might want to blacklist the token
   // For now, just send success response
   // Client will clear tokens from storage
+  clearAuthCookies(res);
   res.json({
     success: true,
     message: 'Logged out successfully',
@@ -367,7 +513,7 @@ router.get('/me', authenticate, async (req, res) => {
       });
     }
     
-    if (!supabase || process.env.DEMO_MODE === 'true' || process.env.E2E_TEST_MODE === 'true') {
+    if (!supabase || isDemoModeExplicit || isE2ETestMode) {
       // Return token data in demo mode
       return res.json({
         user: req.user,

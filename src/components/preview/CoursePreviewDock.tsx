@@ -2,6 +2,7 @@ import { useMemo, useState, useEffect } from 'react';
 import { Monitor, Tablet, Smartphone, ExternalLink, Maximize2, Sparkles, Clock, Users, BookOpen, Zap } from 'lucide-react';
 import type { Course, Lesson, Module } from '../../types/courseTypes';
 import { calculateCourseDuration, countTotalLessons } from '../../store/courseStore';
+import SurveyQueueStatus from '../Survey/SurveyQueueStatus';
 
 interface CoursePreviewDockProps {
   course: Course;
@@ -109,6 +110,14 @@ const CoursePreviewDock = ({ course, activeLessonId, onLaunchFullPreview }: Cour
               Instructor
             </button>
           </div>
+        </div>
+
+        <div className="px-5 py-3 border-b border-gray-100 bg-gray-50/60">
+          <SurveyQueueStatus
+            variant="inline"
+            dataTestId="survey-preview-queue-status"
+            showFlushButton
+          />
         </div>
 
         <div className="px-5 py-4 flex items-center justify-between">

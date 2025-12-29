@@ -3,9 +3,11 @@
    Ensure the dev server is running and accessible via E2E_BASE_URL or default http://localhost:5173
 */
 
-const FRONTEND_BASE = process.env.E2E_BASE_URL || 'http://localhost:8787';
+import { getFrontendBaseUrl, getApiBaseUrl } from './env';
+
+const FRONTEND_BASE = getFrontendBaseUrl();
 // Allow tests to call the backend API directly; default to API server port used by webServer
-const API_BASE = process.env.E2E_API_BASE_URL || 'http://localhost:8787';
+const API_BASE = getApiBaseUrl();
 
 const buildUrl = (path: string) => `${API_BASE}${path.startsWith('/') ? path : `/${path}`}`;
 

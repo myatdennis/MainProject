@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ComponentProps } from 'react';
+import { AlertTriangle } from 'lucide-react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 
@@ -21,6 +22,7 @@ import {
 import EnhancedVideoPlayer from '../../components/EnhancedVideoPlayer';
 import CourseProgressSidebar from '../../components/CourseProgressSidebar';
 import FloatingProgressBar from '../../components/FloatingProgressBar';
+import { progressService } from '../../services/progressService';
 
 const supportedSidebarLessonTypes = ['video', 'interactive', 'quiz', 'resource', 'text'] as const;
 type SidebarLessonType = (typeof supportedSidebarLessonTypes)[number];
@@ -75,6 +77,9 @@ const LMSModule = () => {
   const [lessonPositions, setLessonPositions] = useState<Record<string, number>>({});
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [completionRedirected, setCompletionRedirected] = useState(false);
+  const progressAvailability = useMemo(() => progressService.getAvailability(), []);
+  const progressDisabled = !progressAvailability.enabled;
+  const progressDisabledMessage = progressAvailability.message;
   useEffect(() => {
     const storageKey = `lms:sidebar-collapsed:${learnerId}`;
     try {
@@ -593,7 +598,13 @@ const LMSModule = () => {
                         </div>
 
                         <div className="flex flex-wrap gap-3">
-                          <Button size="sm" onClick={() => markLessonComplete(activeLesson.id)}>
+                          <Button
+                            size="sm"
+                            onClick={() => markLessonComplete(activeLesson.id)}
+                            disabled={progressDisabled}
+                            title={progressDisabled ? progressDisabledMessage : undefined}
+                            aria-disabled={progressDisabled}
+                          >
                             {completedLessons.has(activeLesson.id) ? 'Completed' : 'Mark Complete'}
                           </Button>
                           <Button
@@ -603,6 +614,12 @@ const LMSModule = () => {
                           >
                             Resume in Player
                           </Button>
+                          {progressDisabled && progressDisabledMessage && (
+                            <div className="flex w-full items-center gap-2 rounded-md bg-red-50 px-3 py-2 text-xs text-red-700">
+                              <AlertTriangle className="h-4 w-4 flex-shrink-0" aria-hidden />
+                              <span>{progressDisabledMessage}</span>
+                            </div>
+                          )}
                         </div>
                       </>
                     ) : (

@@ -26,7 +26,8 @@ import {
 const AssignmentModal = lazy(() => import('../../components/Survey/AssignmentModal'));
 const SurveySettingsModal = lazy(() => import('../../components/Survey/SurveySettingsModal'));
 import { surveyTemplates, questionTypes, defaultBranding, aiGeneratedQuestions, censusDemographicOptions } from '../../data/surveyTemplates';
-import { getAssignments, saveAssignments, getSurveyById, queueSaveSurvey } from '../../dal/surveys';
+import SurveyQueueStatus from '../../components/Survey/SurveyQueueStatus';
+import { getSurveyById, queueSaveSurvey } from '../../dal/surveys';
 import type { Survey, SurveyQuestion, SurveySection, AnonymityMode } from '../../types/survey';
 
 const AdminSurveyBuilder = () => {
@@ -45,8 +46,6 @@ const AdminSurveyBuilder = () => {
   const [lastSavedAt, setLastSavedAt] = useState<string>('');
   const saveDebounceRef = React.useRef<number | null>(null);
   const initialLoadRef = React.useRef(true);
-  const [queueLength, setQueueLength] = useState<number>(0);
-  const [lastFlush, setLastFlush] = useState<string | null>(null);
 
   // Organizations data (in a real app, this would come from an API)
   const organizations = [
@@ -132,21 +131,6 @@ const AdminSurveyBuilder = () => {
       setActiveSection(sampleSurvey.sections[0].id);
     }
 
-    // Load assignments from backend if available
-    (async () => {
-      const assignment = await getAssignments(id);
-      if (assignment && assignment.organization_ids) {
-        setSurvey(prev => prev ? { 
-          ...prev, 
-          assignedTo: { 
-            organizationIds: assignment.organization_ids,
-            userIds: prev.assignedTo?.userIds || [],
-            departmentIds: prev.assignedTo?.departmentIds || [],
-            cohortIds: prev.assignedTo?.cohortIds || []
-          } 
-        } : prev);
-      }
-    })();
   };
 
   const createFromTemplate = (templateId: string) => {
@@ -424,15 +408,6 @@ const AdminSurveyBuilder = () => {
 
     setIsSaving(true);
     try {
-      // Persist assignments if present
-      if (survey.assignedTo?.organizationIds && survey.assignedTo.organizationIds.length > 0) {
-        try {
-          await saveAssignments(survey.id, survey.assignedTo.organizationIds);
-        } catch (err) {
-          console.warn('Failed to save assignments during survey save', err);
-        }
-      }
-
       // Simulate saving other survey data (replace with real save API)
       // persist locally for now
       try {
@@ -480,22 +455,7 @@ const AdminSurveyBuilder = () => {
   }, [survey]);
 
   // Subscribe to queue events
-  useEffect(() => {
-    import('../../dal/surveys').then(mod => {
-      setQueueLength(mod.getQueueLength());
-      setLastFlush(mod.getLastFlushTime());
-      const handler = () => {
-        setQueueLength(mod.getQueueLength());
-        setLastFlush(mod.getLastFlushTime());
-      };
-      mod.surveyQueueEvents.addEventListener('queuechange', handler);
-      mod.surveyQueueEvents.addEventListener('flush', handler);
-      return () => {
-        mod.surveyQueueEvents.removeEventListener('queuechange', handler);
-        mod.surveyQueueEvents.removeEventListener('flush', handler);
-      };
-    });
-  }, []);
+  // Queue telemetry handled via shared SurveyQueueStatus component.
 
   const getQuestionIcon = (type: string) => {
     switch (type) {
@@ -1111,10 +1071,9 @@ const AdminSurveyBuilder = () => {
               <Save className="h-4 w-4" />
               <span>{isSaving ? 'Saving...' : 'Save'}</span>
             </button>
-            <div className="text-xs text-gray-500 ml-2">
-              {lastSavedAt ? `Last saved ${lastSavedAt}` : 'Not saved yet'}
-              <div>{queueLength > 0 ? ` • ${queueLength} pending sync` : ' • synced'}</div>
-              {lastFlush && <div className="text-xs text-gray-400">Last flush: {new Date(lastFlush).toLocaleTimeString()}</div>}
+            <div className="ml-2 flex flex-col gap-1 text-xs text-gray-500">
+              <span>{lastSavedAt ? `Last saved ${lastSavedAt}` : 'Not saved yet'}</span>
+              <SurveyQueueStatus variant="inline" showFlushButton={false} />
             </div>
           </div>
         </div>

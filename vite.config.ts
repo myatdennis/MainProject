@@ -34,11 +34,14 @@ export default async () => {
       // navigating to admin routes that are code-split into secondary chunks.
       react: path.resolve(__dirname, 'node_modules/react'),
       'react-dom': path.resolve(__dirname, 'node_modules/react-dom'),
-      'react-dom/client': path.resolve(__dirname, 'node_modules/react-dom/client')
+      'react-dom/client': path.resolve(__dirname, 'node_modules/react-dom/client'),
+      'react/jsx-runtime': path.resolve(__dirname, 'node_modules/react/jsx-runtime.js'),
+      'react/jsx-dev-runtime': path.resolve(__dirname, 'node_modules/react/jsx-dev-runtime.js')
     },
+    extensions: ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.json'],
     // Ensure any linked packages (e.g., local component libraries or the admin
     // backup bundle) reuse this project's single React instance during dev.
-    dedupe: ['react', 'react-dom', 'react-router', 'react-router-dom'],
+    dedupe: ['react', 'react-dom', 'react-router', 'react-router-dom', 'react/jsx-runtime', 'react/jsx-dev-runtime'],
   },
   test: {
     globals: true,

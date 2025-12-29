@@ -9,7 +9,7 @@ import { courseStore } from '../../store/courseStore';
 import { Course } from '../../types/courseTypes';
 import { useToast } from '../../context/ToastContext';
 import { useSyncService } from '../../dal/sync';
-import { syncCourseToDatabase, CourseValidationError } from '../../dal/courses';
+import { syncCourseToDatabase, CourseValidationError } from '../../dal/adminCourses';
 
 const AdminCourseEdit = () => {
   const { courseId } = useParams();

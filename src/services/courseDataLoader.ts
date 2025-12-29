@@ -1,4 +1,4 @@
-import { CourseService } from './courseService';
+import { fetchCourse } from '../dal/clientCourses';
 import { courseStore } from '../store/courseStore';
 import type { Course, Module } from '../types/courseTypes';
 import { normalizeCourse, flattenLessons, slugify } from '../utils/courseNormalization';
@@ -112,7 +112,7 @@ export const loadCourse = async (
 
   if (supabaseAvailable && preferRemote) {
     try {
-      const remoteCourse = await CourseService.loadCourseFromDatabase(normalizedIdentifier, {
+      const remoteCourse = await fetchCourse(normalizedIdentifier, {
         includeDrafts
       });
 
@@ -145,7 +145,7 @@ export const loadCourse = async (
   }
 
   if (supabaseAvailable && !preferRemote) {
-    const remoteCourse = await CourseService.loadCourseFromDatabase(normalizedIdentifier, {
+          const remoteCourse = await fetchCourse(normalizedIdentifier, {
       includeDrafts
     });
 

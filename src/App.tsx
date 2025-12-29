@@ -1,8 +1,10 @@
 import { useEffect, Suspense, lazy } from 'react';
-// Use extension-less import so Vite resolves the compiled module in all environments
-const AdminDashboard = lazy(() => import('./pages/Admin/AdminDashboard'));
-const AdminHealth = lazy(() => import('./pages/Admin/AdminHealth'));
-const AdminCourses = lazy(() => import('./pages/Admin/AdminCourses'));
+// Load admin routes eagerly so they always share the main React instance in dev/prod.
+import AdminDashboard from './pages/Admin/AdminDashboard';
+import AdminHealth from './pages/Admin/AdminHealth';
+import AdminCourses from './pages/Admin/AdminCourses';
+import AdminCourseBuilder from './pages/Admin/AdminCourseBuilder';
+import AdminSurveys from './pages/Admin/AdminSurveys';
 // (removed duplicate import)
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { courseStore } from './store/courseStore';
@@ -12,9 +14,11 @@ import Header from './components/Header';
 import Footer from './components/Footer';
 import DemoModeBanner from './components/DemoModeBanner';
 import ConnectivityBanner from './components/ConnectivityBanner';
+import SupabaseStatusBanner from './components/SupabaseStatusBanner';
 import ConnectionDiagnostic from './components/ConnectionDiagnostic';
 import TroubleshootingGuide from './components/TroubleshootingGuide';
 import RequireAuth from './components/routing/RequireAuth';
+import DevDebugPanel from './components/DevDebugPanel';
 
 // Import components used in routes/layout
 import OrgWorkspaceLayout from './components/OrgWorkspace/OrgWorkspaceLayout';
@@ -67,9 +71,10 @@ function App() {
   return (
     <Router>
       <div className="flex min-h-[calc(var(--app-vh,1vh)*100)] flex-col bg-[var(--hud-bg)]" style={{ paddingBottom: 'var(--safe-area-bottom, 0px)' }}>
-        <Header />
-        <DemoModeBanner />
-  <ConnectivityBanner />
+    <Header />
+    <DemoModeBanner />
+    <SupabaseStatusBanner />
+    <ConnectivityBanner />
         <main className="flex-grow">
           <Suspense fallback={<LoadingSpinner size="lg" className="py-20" text="Loading..." />}>
             <ErrorBoundary>
@@ -121,27 +126,54 @@ function App() {
                 </Route>
                 <Route path="/admin/login" element={<AdminLogin />} />
                 <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
-                <Route path="/admin/dashboard" element={
-                  <RequireAuth mode="admin">
-                    <Suspense fallback={<LoadingSpinner size="lg" text="Loading..." />}>
+                <Route
+                  path="/admin/dashboard"
+                  element={(
+                    <RequireAuth mode="admin">
                       <AdminDashboard />
-                    </Suspense>
-                  </RequireAuth>
-                } />
-                <Route path="/admin/courses" element={
-                  <RequireAuth mode="admin">
-                    <Suspense fallback={<LoadingSpinner size="lg" text="Loading courses..." />}>
+                    </RequireAuth>
+                  )}
+                />
+                <Route
+                  path="/admin/courses"
+                  element={(
+                    <RequireAuth mode="admin">
                       <AdminCourses />
-                    </Suspense>
-                  </RequireAuth>
-                } />
-                <Route path="/admin/health" element={
-                  <RequireAuth mode="admin">
-                    <Suspense fallback={<LoadingSpinner size="lg" text="Loading health checks..." />}>
+                    </RequireAuth>
+                  )}
+                />
+                <Route
+                  path="/admin/surveys"
+                  element={(
+                    <RequireAuth mode="admin">
+                      <AdminSurveys />
+                    </RequireAuth>
+                  )}
+                />
+                <Route
+                  path="/admin/course-builder/new"
+                  element={(
+                    <RequireAuth mode="admin">
+                      <AdminCourseBuilder />
+                    </RequireAuth>
+                  )}
+                />
+                <Route
+                  path="/admin/course-builder/:courseId"
+                  element={(
+                    <RequireAuth mode="admin">
+                      <AdminCourseBuilder />
+                    </RequireAuth>
+                  )}
+                />
+                <Route
+                  path="/admin/health"
+                  element={(
+                    <RequireAuth mode="admin">
                       <AdminHealth />
-                    </Suspense>
-                  </RequireAuth>
-                } />
+                    </RequireAuth>
+                  )}
+                />
                 {/* ...admin routes... */}
                 <Route path="*" element={<NotFound />} />
               </Routes>
@@ -152,6 +184,7 @@ function App() {
         <AIBot />
         <ConnectionDiagnostic />
         <TroubleshootingGuide />
+        <DevDebugPanel />
       </div>
     </Router>
   );

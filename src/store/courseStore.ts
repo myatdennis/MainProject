@@ -1,6 +1,13 @@
-import { CourseService, CourseValidationError } from '../services/courseService';
+import {
+  CourseValidationError,
+  deleteCourseFromDatabase,
+  getAllCoursesFromDatabase,
+  syncCourseToDatabase
+} from '../dal/adminCourses';
+import { fetchPublishedCourses } from '../dal/clientCourses';
 import { Course, Module } from '../types/courseTypes';
 import { slugify, normalizeCourse } from '../utils/courseNormalization';
+import { getUserSession } from '../lib/secureStorage';
 
 // Course data types
 export interface ScenarioChoice {
@@ -959,19 +966,63 @@ const getDefaultCourses = (): { [key: string]: Course } => ({
 // Initialize courses from localStorage or defaults
 let courses: { [key: string]: Course } = _loadCoursesFromLocalStorage();
 
+const resolveOrgContext = (): { orgId: string | null; role: string | null } => {
+  if (typeof window === 'undefined') {
+    return { orgId: null, role: null };
+  }
+  try {
+    const session = getUserSession();
+    if (session) {
+      return {
+        orgId: session.organizationId ?? null,
+        role: session.role ?? null,
+      };
+    }
+  } catch (error) {
+    console.warn('[courseStore] Failed to read secure session for org context:', error);
+  }
+
+  try {
+    const raw = localStorage.getItem('huddle_user');
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      return {
+        orgId: parsed?.activeOrgId ?? parsed?.organizationId ?? null,
+        role: parsed?.role ?? null,
+      };
+    }
+  } catch (error) {
+    console.warn('[courseStore] Failed to parse legacy user for org context:', error);
+  }
+
+  return { orgId: null, role: null };
+};
+
 // Store management functions
 export const courseStore = {
   init: async (): Promise<void> => {
     try {
       console.log('[courseStore.init] Starting initialization...');
+      const orgContext = resolveOrgContext();
+      const normalizedRole = orgContext.role ? orgContext.role.toLowerCase() : null;
+      const restrictToOrg = normalizedRole !== 'admin';
       // Prefer admin list (richer shape) but gracefully fall back to published-only
-      let dbCourses = await CourseService.getAllCoursesFromDatabase();
+  let dbCourses = await getAllCoursesFromDatabase();
       console.log('[courseStore.init] Admin API returned courses:', dbCourses);
 
       if (!dbCourses || dbCourses.length === 0) {
         console.log('[courseStore.init] Admin endpoint returned 0 courses. Falling back to published catalog...');
         try {
-          dbCourses = await CourseService.getPublishedCourses();
+          if (restrictToOrg) {
+            if (orgContext.orgId) {
+              dbCourses = await fetchPublishedCourses({ orgId: orgContext.orgId, assignedOnly: true });
+            } else {
+              console.warn('[courseStore.init] Missing organizationId; unable to load assigned courses.');
+              dbCourses = [];
+            }
+          } else {
+            dbCourses = await fetchPublishedCourses();
+          }
           console.log('[courseStore.init] Published catalog returned courses:', dbCourses);
         } catch (fallbackErr) {
           console.warn('[courseStore.init] Published catalog fallback failed:', fallbackErr);
@@ -994,7 +1045,7 @@ export const courseStore = {
         courses = defaultCourses;
         for (const course of Object.values(defaultCourses)) {
           try {
-            const persisted = await CourseService.syncCourseToDatabase(course);
+            const persisted = await syncCourseToDatabase(course);
             if (persisted) {
               const normalized = normalizeCourse(persisted as Course);
               courses[normalized.id] = {
@@ -1025,7 +1076,7 @@ export const courseStore = {
       courses = defaultCourses;
       for (const course of Object.values(defaultCourses)) {
         try {
-          const persisted = await CourseService.syncCourseToDatabase(course);
+          const persisted = await syncCourseToDatabase(course);
           if (!persisted) continue;
           const normalized = normalizeCourse(persisted as Course);
           courses[normalized.id] = {
@@ -1093,7 +1144,7 @@ export const courseStore = {
       import.meta.env.VITE_SUPABASE_URL &&
       import.meta.env.VITE_SUPABASE_ANON_KEY
     ) {
-      CourseService.syncCourseToDatabase(course)
+  syncCourseToDatabase(course)
         .then((persisted) => {
           if (!persisted) return;
           const normalized = normalizeCourse(persisted as Course);
@@ -1128,7 +1179,7 @@ export const courseStore = {
       delete courses[id];
       _saveCoursesToLocalStorage(courses);
       if (import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY) {
-        CourseService.deleteCourseFromDatabase(id).catch((error) => {
+  deleteCourseFromDatabase(id).catch((error) => {
           console.warn(`Failed to delete course "${id}" from database:`, error.message || error);
         });
       }
@@ -1182,7 +1233,7 @@ export const courseStore = {
     _saveCoursesToLocalStorage(courses);
 
     // Always attempt to persist to backend API (DEV_FALLBACK or Supabase-backed) so courses survive reloads
-    CourseService.syncCourseToDatabase(newCourse)
+  syncCourseToDatabase(newCourse)
       .then((persisted) => {
         if (!persisted) return;
         const normalized = normalizeCourse(persisted as Course);

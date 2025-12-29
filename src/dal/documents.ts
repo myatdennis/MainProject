@@ -1,5 +1,5 @@
 import { request } from './http';
-import { getSupabase } from '../lib/supabaseClient';
+import apiRequest from '../utils/apiClient';
 
 export type Visibility = 'global' | 'org' | 'user';
 
@@ -12,6 +12,9 @@ export type DocumentMeta = {
   subcategory?: string;
   tags: string[];
   fileType?: string;
+  storagePath?: string;
+  urlExpiresAt?: string;
+  fileSize?: number;
   visibility: Visibility;
   orgId?: string;
   userId?: string;
@@ -29,6 +32,9 @@ const mapDocumentRecord = (record: any): DocumentMeta => ({
   subcategory: record.subcategory ?? undefined,
   tags: record.tags ?? [],
   fileType: record.file_type ?? record.fileType ?? undefined,
+  storagePath: record.storage_path ?? record.storagePath ?? undefined,
+  urlExpiresAt: record.url_expires_at ?? record.urlExpiresAt ?? undefined,
+  fileSize: typeof record.file_size === 'number' ? record.file_size : record.fileSize,
   visibility: record.visibility ?? 'global',
   orgId: record.org_id ?? record.orgId ?? undefined,
   userId: record.user_id ?? record.userId ?? undefined,
@@ -36,6 +42,41 @@ const mapDocumentRecord = (record: any): DocumentMeta => ({
   createdBy: record.created_by ?? record.createdBy ?? undefined,
   downloadCount: record.download_count ?? record.downloadCount ?? 0,
 });
+
+type DocumentUploadResponse = {
+  documentId: string;
+  storagePath: string;
+  signedUrl: string;
+  urlExpiresAt: string;
+  fileType?: string;
+  fileSize?: number;
+};
+
+const uploadDocumentFile = async (
+  file: File,
+  opts: { documentId: string; orgId?: string; visibility?: Visibility },
+): Promise<DocumentUploadResponse> => {
+  const form = new FormData();
+  form.append('file', file);
+  form.append('documentId', opts.documentId);
+  if (opts.orgId) form.append('orgId', opts.orgId);
+  if (opts.visibility) form.append('visibility', opts.visibility);
+
+  const response = await apiRequest<{ data: DocumentUploadResponse }>(
+    '/api/admin/documents/upload',
+    {
+      method: 'POST',
+      body: form,
+      noTransform: false,
+    },
+  );
+
+  if (!response?.data) {
+    throw new Error('Document upload failed: missing response payload');
+  }
+
+  return response.data;
+};
 
 export const listDocuments = async (opts?: {
   orgId?: string;
@@ -119,36 +160,27 @@ export const addDocument = async (
 ) => {
   const docId = `doc-${Date.now()}`;
   let url = meta.url;
+  let storagePath = meta.storagePath;
+  let urlExpiresAt = meta.urlExpiresAt;
+  let fileType = meta.fileType;
+  let fileSize = meta.fileSize;
 
-  // Try Supabase storage if configured
   if (file) {
-    try {
-      const supabase = await getSupabase();
-      if (supabase && (supabase as any).storage) {
-        const path = `${docId}/${file.name}`;
-        const { error: uploadError } = await supabase.storage
-          .from('documents')
-          .upload(path, file, { upsert: true });
-        if (!uploadError) {
-          const { data } = supabase.storage.from('documents').getPublicUrl(path);
-          url = data?.publicUrl || url;
-        } else {
-          console.warn('Storage upload failed, falling back to data URL:', uploadError);
-        }
-      }
-    } catch (err) {
-      console.error('Upload exception:', err);
-    }
+    const uploadResult = await uploadDocumentFile(file, {
+      documentId: docId,
+      orgId: meta.orgId,
+      visibility: meta.visibility,
+    });
+
+    storagePath = uploadResult.storagePath;
+    url = uploadResult.signedUrl;
+    urlExpiresAt = uploadResult.urlExpiresAt;
+    fileType = uploadResult.fileType || fileType || file.type;
+    fileSize = typeof uploadResult.fileSize === 'number' ? uploadResult.fileSize : file.size;
   }
 
-  // Fallback to data URL in dev/demo
-  if (!url && file) {
-    url = await new Promise<string>((res, rej) => {
-      const r = new FileReader();
-      r.onload = () => res(String(r.result));
-      r.onerror = rej;
-      r.readAsDataURL(file);
-    });
+  if (!url && !storagePath) {
+    throw new Error('Document uploads require an external URL or a successful storage upload.');
   }
 
   const payload = {
@@ -156,10 +188,13 @@ export const addDocument = async (
     name: meta.name,
     filename: meta.filename,
     url,
+    storagePath,
+    urlExpiresAt,
+    fileSize,
     category: meta.category,
     subcategory: meta.subcategory,
     tags: meta.tags ?? [],
-    fileType: meta.fileType,
+    fileType,
     visibility: meta.visibility,
     orgId: meta.orgId,
     userId: meta.userId,

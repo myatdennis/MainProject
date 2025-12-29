@@ -1,5 +1,6 @@
 import { test, expect, Page, BrowserContext } from '@playwright/test';
 import { createAndPublishCourse, assignCourseToAll } from './helpers/api';
+import { getFrontendBaseUrl, getApiBaseUrl, waitForOk } from './helpers/env';
 
 // This test is a high-level smoke test that drives the UI to create a course, publish it, assign it, then
 // switches to a learner view to confirm the assignment is visible and the player can start.
@@ -7,25 +8,9 @@ import { createAndPublishCourse, assignCourseToAll } from './helpers/api';
 test.describe('Admin publish & assign -> Learner sees assignment and plays', () => {
   test.setTimeout(120_000);
   
-  async function waitForOk(request: Page['request'], url: string, timeoutMs = 30_000, intervalMs = 500) {
-    const deadline = Date.now() + timeoutMs;
-    let lastError: any = null;
-    while (Date.now() < deadline) {
-      try {
-        const res = await request.get(url, { failOnStatusCode: false });
-        if (res.status() >= 200 && res.status() < 500) return true;
-      } catch (err) {
-        lastError = err;
-      }
-      await new Promise((r) => setTimeout(r, intervalMs));
-    }
-    if (lastError) throw lastError;
-    throw new Error(`Timeout waiting for ${url}`);
-  }
-
   test('admin creates, publishes and assigns a course; learner sees it and plays', async ({ page, context }: { page: Page; context: BrowserContext }) => {
-  const base = process.env.E2E_BASE_URL || 'http://localhost:8787';
-  const apiBase = process.env.E2E_API_BASE_URL || 'http://localhost:8787';
+    const base = getFrontendBaseUrl();
+    const apiBase = getApiBaseUrl();
 
     // Ensure servers are up before starting
     await waitForOk(page.request, `${apiBase}/api/health`);

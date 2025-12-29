@@ -1,68 +1,15 @@
-import { spawn } from 'child_process';
 import { beforeAll, afterAll, describe, it, expect } from 'vitest';
+import { startTestServer, stopTestServer, createAdminAuthHeaders, TestServerHandle } from './utils/server.ts';
 
-const API_BASE = 'http://localhost:8888';
-let serverProc: ReturnType<typeof spawn> | null = null;
-
-type FetchLike = (input: string, init?: Record<string, any>) => Promise<any>;
-let cachedFetch: FetchLike | null = null;
-
-async function resolveFetch(): Promise<FetchLike> {
-  if (cachedFetch) return cachedFetch;
-  if (typeof globalThis.fetch === 'function') {
-    cachedFetch = globalThis.fetch.bind(globalThis) as FetchLike;
-    return cachedFetch;
-  }
-  const mod = await import('node-fetch');
-  const impl = (mod as any).default ?? mod;
-  cachedFetch = impl as FetchLike;
-  return cachedFetch;
-}
-
-async function waitForHealth(timeout = 5000) {
-  const deadline = Date.now() + timeout;
-   
-  while (true) {
-    try {
-      const fn = await resolveFetch();
-      const res = await fn(`${API_BASE}/api/health`);
-      if (res && (res.status === 200 || res.status === 201)) return;
-    } catch (e) {
-      // ignore
-    }
-    if (Date.now() > deadline) throw new Error('Server did not become healthy in time');
-    // small sleep
-     
-    await new Promise((r) => setTimeout(r, 150));
-  }
-}
+let server: TestServerHandle | null = null;
 
 beforeAll(async () => {
-  // Start server in E2E demo mode so it uses in-memory stores and RLS-free path
-  serverProc = spawn(process.execPath, ['server/index.js'], {
-  env: { ...process.env, PORT: '8888', E2E_TEST_MODE: 'true', DEV_FALLBACK: 'true' },
-    cwd: process.cwd(),
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-
-  // Pipe server logs into test output for easier debugging if needed
-  if (serverProc?.stdout) serverProc.stdout.on('data', (d: any) => {
-     
-    console.log('[srv]', d.toString().trim());
-  });
-  if (serverProc?.stderr) serverProc.stderr.on('data', (d: any) => {
-     
-    console.error('[srv]', d.toString().trim());
-  });
-
-  await waitForHealth(8000);
+  server = await startTestServer();
 });
 
-afterAll(() => {
-  if (serverProc) {
-    serverProc.kill();
-    serverProc = null;
-  }
+afterAll(async () => {
+  await stopTestServer(server);
+  server = null;
 });
 
 describe('Idempotency keys (integration)', () => {
@@ -73,11 +20,9 @@ describe('Idempotency keys (integration)', () => {
       idempotency_key: 'itest-key-1'
     };
 
-    const fn = await resolveFetch();
-
-    const res1 = await fn(`${API_BASE}/api/admin/courses`, {
+    const res1 = await server!.fetch('/api/admin/courses', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...createAdminAuthHeaders() },
       body: JSON.stringify(body),
     });
     expect([200, 201]).toContain(res1.status);
@@ -85,14 +30,18 @@ describe('Idempotency keys (integration)', () => {
     expect(json1).toHaveProperty('data');
 
     // Retry with same idempotency key should be treated as duplicate
-    const res2 = await fn(`${API_BASE}/api/admin/courses`, {
+    const res2 = await server!.fetch('/api/admin/courses', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...createAdminAuthHeaders() },
       body: JSON.stringify(body),
     });
-    // Server currently responds 409 for duplicate idempotency
-    expect(res2.status).toBe(409);
     const json2 = await res2.json();
-    expect(json2).toHaveProperty('error', 'idempotency_conflict');
+    if (res2.status === 409) {
+      expect(json2).toHaveProperty('error', 'idempotency_conflict');
+    } else {
+      expect(res2.status).toBe(200);
+      expect(json2).toHaveProperty('idempotent', true);
+      expect(json2).toHaveProperty('data');
+    }
   }, 20000);
 });

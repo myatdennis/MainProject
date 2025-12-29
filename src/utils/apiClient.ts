@@ -1,5 +1,11 @@
 import buildAuthHeaders from './requestContext';
 
+const logApiDebug = (meta: Record<string, unknown>) => {
+  if (import.meta.env.DEV) {
+    console.debug('apiRequest', meta);
+  }
+};
+
 // Key transform utilities to normalize wire format (snake_case) <-> client (camelCase)
 const isObject = (val: any) => Object.prototype.toString.call(val) === '[object Object]';
 
@@ -42,17 +48,18 @@ const transformKeysDeep = (
 };
 
 // Resolve API base URL from Vite env, and fall back to a Railway host in production when undefined.
-const rawApiBaseEnv = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+const rawApiBaseEnv = (import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\/$/, '');
 let API_BASE_URL = rawApiBaseEnv;
 // When not set, prefer an explicit Railway host for production builds to avoid broken /api references
 // (This improves resilience for deployments that don't configure VITE_API_BASE_URL in the hosting UI.)
-if (!API_BASE_URL && import.meta.env.MODE === 'production') {
-  API_BASE_URL = 'https://mainproject-production-4e66.up.railway.app';
-  console.info('[apiClient] VITE_API_BASE_URL not set — defaulting to Railway host:', API_BASE_URL);
-}
-
 if (!API_BASE_URL) {
-  console.warn('[apiClient] VITE_API_BASE_URL is not set. Requests will fail until configured.');
+  if (import.meta.env.MODE === 'production') {
+    API_BASE_URL = 'https://mainproject-production-4e66.up.railway.app';
+    console.info('[apiClient] VITE_API_BASE_URL not set — defaulting to Railway host:', API_BASE_URL);
+  } else {
+    API_BASE_URL = '/api';
+    console.info('[apiClient] VITE_API_BASE_URL not set — using Vite proxy (/api).');
+  }
 }
 
 export class ApiError extends Error {
@@ -95,7 +102,15 @@ export interface ApiRequestOptions extends RequestInit {
 const buildUrl = (path: string) => {
   if (path.startsWith('http')) return path;
   if (!API_BASE_URL) return path;
-  return `${API_BASE_URL}${path.startsWith('/') ? path : `/${path}`}`;
+
+  const normalizedBase = API_BASE_URL.endsWith('/') ? API_BASE_URL.slice(0, -1) : API_BASE_URL;
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
+
+  if (normalizedBase.startsWith('/') && normalizedPath.startsWith(normalizedBase)) {
+    return normalizedPath;
+  }
+
+  return `${normalizedBase}${normalizedPath}`;
 };
 
 const shouldParseJson = (response: Response, options: ApiRequestOptions) => {
@@ -111,13 +126,11 @@ const statusMatches = (status: number, expected?: number | number[]) => {
 };
 
 export const apiRequest = async <T = any>(path: string, options: ApiRequestOptions = {}): Promise<T> => {
-  console.log('[apiRequest] Starting request to:', path);
-  
   const headers = options.headers instanceof Headers ? new Headers(options.headers) : new Headers(options.headers ?? {});
+  const bodyIsFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
   
   try {
     const authHeaders = await buildAuthHeaders();
-    console.log('[apiRequest] Auth headers:', authHeaders);
     Object.entries(authHeaders).forEach(([key, value]) => {
       if (value && !headers.has(key)) {
         headers.set(key, value);
@@ -128,7 +141,7 @@ export const apiRequest = async <T = any>(path: string, options: ApiRequestOptio
     throw error;
   }
 
-  if (!headers.has('Content-Type') && options.method && options.method !== 'GET' && options.method !== 'HEAD') {
+  if (!bodyIsFormData && !headers.has('Content-Type') && options.method && options.method !== 'GET' && options.method !== 'HEAD') {
     headers.set('Content-Type', 'application/json');
   }
 
@@ -161,7 +174,6 @@ export const apiRequest = async <T = any>(path: string, options: ApiRequestOptio
   };
 
   const url = buildUrl(path);
-  console.log('[apiRequest] Fetching URL:', url);
 
   let response: Response;
   try {
@@ -174,7 +186,7 @@ export const apiRequest = async <T = any>(path: string, options: ApiRequestOptio
     }
     throw err;
   }
-  console.log('[apiRequest] Response status:', response.status, response.statusText);
+  logApiDebug({ url, status: response.status, ok: response.ok });
 
   const okStatus = response.ok || statusMatches(response.status, options.expectedStatus);
 
@@ -183,10 +195,8 @@ export const apiRequest = async <T = any>(path: string, options: ApiRequestOptio
 
   if (parseJson) {
     try {
-      const raw = await response.json();
-      console.log('[apiRequest] Raw response:', raw);
-      responseBody = options.noTransform ? raw : transformKeysDeep(raw, 'toCamel');
-      console.log('[apiRequest] Transformed response:', responseBody);
+  const raw = await response.json();
+  responseBody = options.noTransform ? raw : transformKeysDeep(raw, 'toCamel');
     } catch (error) {
       console.error('[apiRequest] Failed to parse JSON:', error);
       if (okStatus) {

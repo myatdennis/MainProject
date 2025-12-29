@@ -1,28 +1,54 @@
 import express from 'express';
-import fs from 'fs';
+import fs from 'fs/promises';
 import path from 'path';
+import { fileURLToPath } from 'url';
+import { createHttpError, withHttpError } from '../middleware/apiErrorHandler.js';
 
 const router = express.Router();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 const contentPath = path.join(__dirname, '../../src/content/textContent.json');
 
+const readContent = async () => {
+  const data = await fs.readFile(contentPath, 'utf8');
+  return JSON.parse(data);
+};
+
+const writeContent = async (items) => {
+  await fs.writeFile(contentPath, JSON.stringify(items, null, 2), 'utf8');
+};
+
 // GET all text content
-router.get('/', (req, res) => {
-  fs.readFile(contentPath, 'utf8', (err, data) => {
-    if (err) return res.status(500).send('Failed to load content');
-    const items = Object.entries(JSON.parse(data)).map(([key, value]) => ({ key, value }));
+router.get('/', async (req, res, next) => {
+  try {
+    const data = await readContent();
+    const items = Object.entries(data).map(([key, value]) => ({ key, value }));
     res.json(items);
-  });
+  } catch (error) {
+    next(withHttpError(error, 500, 'text_content_load_failed'));
+  }
 });
 
 // PUT to update all text content
-router.put('/', (req, res) => {
-  const items = req.body; // [{ key, value }]
-  const contentJson = {};
-  items.forEach(item => { contentJson[item.key] = item.value; });
-  fs.writeFile(contentPath, JSON.stringify(contentJson, null, 2), err => {
-    if (err) return res.status(500).send('Failed to save content');
-    res.send('ok');
-  });
+router.put('/', async (req, res, next) => {
+  try {
+    const items = req.body;
+    if (!Array.isArray(items)) {
+      return next(createHttpError(400, 'invalid_payload', 'Expected an array of content entries'));
+    }
+
+    const contentJson = {};
+    items.forEach((item) => {
+      if (item && typeof item.key === 'string') {
+        contentJson[item.key] = item.value;
+      }
+    });
+
+    await writeContent(contentJson);
+    res.json({ success: true });
+  } catch (error) {
+    next(withHttpError(error, 500, 'text_content_save_failed'));
+  }
 });
 
 export default router;

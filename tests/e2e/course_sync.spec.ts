@@ -1,10 +1,9 @@
 import { test, expect, APIRequestContext } from '@playwright/test';
 import { createAndPublishCourse } from './helpers/api';
-
-const getApiBase = () => process.env.E2E_API_BASE_URL || 'http://localhost:8787';
+import { getApiBaseUrl } from './helpers/env';
 
 const getClientCourses = async (request: APIRequestContext) => {
-  const res = await request.get(`${getApiBase()}/api/client/courses`, { failOnStatusCode: false });
+  const res = await request.get(`${getApiBaseUrl()}/api/client/courses`, { failOnStatusCode: false });
   if (!res.ok()) {
     throw new Error(`Failed to fetch client courses: ${res.status()}`);
   }
@@ -26,7 +25,7 @@ test.describe('Admin → Client course sync', () => {
     expect(match?.status).toBe('published');
 
     // Cleanup best-effort to keep the demo store tidy
-    await request.delete(`${getApiBase()}/api/admin/courses/${courseId}`, {
+  await request.delete(`${getApiBaseUrl()}/api/admin/courses/${courseId}`, {
       headers: { 'x-user-role': 'admin' },
     });
   });

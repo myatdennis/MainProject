@@ -10,8 +10,12 @@ import jwt from 'jsonwebtoken';
 // ============================================================================
 
 const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-key-change-in-production-min-32-chars';
-const JWT_EXPIRES_IN = '15m'; // Access token expires in 15 minutes
-const REFRESH_TOKEN_EXPIRES_IN = '7d'; // Refresh token expires in 7 days
+export const ACCESS_TOKEN_TTL_SECONDS = Number(process.env.JWT_ACCESS_TTL_SECONDS || 15 * 60); // default 15 minutes
+export const REFRESH_TOKEN_TTL_SECONDS = Number(
+  process.env.JWT_REFRESH_TTL_SECONDS || 7 * 24 * 60 * 60
+); // default 7 days
+const JWT_EXPIRES_IN = ACCESS_TOKEN_TTL_SECONDS;
+const REFRESH_TOKEN_EXPIRES_IN = REFRESH_TOKEN_TTL_SECONDS;
 
 // ============================================================================
 // Token Generation
@@ -50,13 +54,14 @@ export function generateTokens(payload) {
   const accessToken = generateAccessToken(payload);
   const refreshToken = generateRefreshToken(payload);
   
-  // Calculate expiration time (15 minutes from now)
-  const expiresAt = Date.now() + (15 * 60 * 1000);
+  const expiresAt = Date.now() + ACCESS_TOKEN_TTL_SECONDS * 1000;
+  const refreshExpiresAt = Date.now() + REFRESH_TOKEN_TTL_SECONDS * 1000;
   
   return {
     accessToken,
     refreshToken,
     expiresAt,
+    refreshExpiresAt,
   };
 }
 

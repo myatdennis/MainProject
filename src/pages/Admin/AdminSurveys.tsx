@@ -1,5 +1,4 @@
-import { useState } from 'react';
-import { getSupabase, hasSupabaseConfig } from '../../lib/supabaseClient';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { 
   Plus, 
@@ -20,107 +19,175 @@ import {
   Target,
   TrendingUp,
   MessageSquare,
-  Brain
+  Brain,
+  Loader2,
+  RefreshCcw,
+  AlertTriangle
 } from 'lucide-react';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import EmptyState from '../../components/ui/EmptyState';
+import SurveyQueueStatus from '../../components/Survey/SurveyQueueStatus';
+import type { Survey } from '../../types/survey';
+import {
+  listSurveys,
+  saveSurvey as persistSurvey,
+  updateSurveyAssignments,
+  getSurveyById,
+  surveyQueueEvents,
+  getQueueLength,
+} from '../../dal/surveys';
+
+type AdminSurveyCard = {
+  id: string;
+  title: string;
+  description: string;
+  status: string;
+  type: string;
+  createdAt?: string | Date;
+  updatedAt?: string | Date;
+  lastActivity: string;
+  totalResponses: number;
+  totalInvites: number;
+  completionRate: number;
+  assignedOrgIds: string[];
+  assignedOrgs: string[];
+};
 
 const AdminSurveys = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterType, setFilterType] = useState('all');
   const [selectedSurveys, setSelectedSurveys] = useState<string[]>([]);
-
-  const [surveys, setSurveys] = useState<any[]>([
-    {
-      id: 'climate-2025-q1',
-      title: 'Q1 2025 Climate Assessment',
-      description: 'Quarterly organizational climate and culture assessment',
-      type: 'climate-assessment',
-      status: 'active',
-      createdAt: '2025-03-01',
-      launchedAt: '2025-03-05',
-      closedAt: null,
-      totalInvites: 247,
-      totalResponses: 189,
-      completionRate: 77,
-      avgCompletionTime: 12,
-      assignedOrgs: ['Pacific Coast University', 'Regional Fire Department', 'TechForward Solutions'],
-      assignedOrgIds: ['1', '4', '5'],
-      lastActivity: '2025-03-11'
-    },
-    {
-      id: 'inclusion-index-2025',
-      title: 'Annual Inclusion Index',
-      description: 'Comprehensive inclusion measurement with benchmarking',
-      type: 'inclusion-index',
-      status: 'draft',
-      createdAt: '2025-02-28',
-      launchedAt: null,
-      closedAt: null,
-      totalInvites: 0,
-      totalResponses: 0,
-      completionRate: 0,
-      avgCompletionTime: 0,
-      assignedOrgs: [],
-      assignedOrgIds: [],
-      lastActivity: '2025-03-10'
-    },
-    {
-      id: 'equity-lens-pilot',
-      title: 'Equity Lens Pilot Study',
-      description: 'Pilot assessment of equity in organizational practices',
-      type: 'equity-lens',
-      status: 'completed',
-      createdAt: '2025-01-15',
-      launchedAt: '2025-01-20',
-      closedAt: '2025-02-20',
-      totalInvites: 156,
-      totalResponses: 142,
-      completionRate: 91,
-      avgCompletionTime: 15,
-      assignedOrgs: ['Community Impact Network', 'Mountain View High School'],
-      assignedOrgIds: ['3', '2'],
-      lastActivity: '2025-02-20'
-    },
-    {
-      id: 'leadership-360',
-      title: 'Leadership 360 Assessment',
-      description: 'Multi-rater feedback for inclusive leadership development',
-      type: 'custom',
-      status: 'paused',
-      createdAt: '2025-02-10',
-      launchedAt: '2025-02-15',
-      closedAt: null,
-      totalInvites: 89,
-      totalResponses: 34,
-      completionRate: 38,
-      avgCompletionTime: 18,
-      assignedOrgs: ['Pacific Coast University'],
-      assignedOrgIds: ['1'],
-      lastActivity: '2025-03-08'
-    }
-  ]);
-
-  // Organizations (same sample set used across admin pages)
-  const organizations = [
-    { id: '1', name: 'Pacific Coast University' },
-    { id: '2', name: 'Mountain View High School' },
-    { id: '3', name: 'Community Impact Network' },
-    { id: '4', name: 'Regional Fire Department' },
-    { id: '5', name: 'TechForward Solutions' },
-    { id: '6', name: 'Regional Medical Center' },
-    { id: '7', name: 'Unity Community Church' }
-  ];
-
+  const [surveys, setSurveys] = useState<AdminSurveyCard[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [queueLength, setQueueLength] = useState(0);
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [assignTargetSurveyId, setAssignTargetSurveyId] = useState<string | null>(null);
   const [selectedOrgIds, setSelectedOrgIds] = useState<string[]>([]);
+  const [assignError, setAssignError] = useState<string | null>(null);
+  const [isAssignSaving, setIsAssignSaving] = useState(false);
+  const [duplicateTarget, setDuplicateTarget] = useState<string | null>(null);
+  const MIN_ASSIGN_SAVING_MS = 400;
+
+  const organizations = useMemo(
+    () => [
+      { id: '1', name: 'Pacific Coast University' },
+      { id: '2', name: 'Mountain View High School' },
+      { id: '3', name: 'Community Impact Network' },
+      { id: '4', name: 'Regional Fire Department' },
+      { id: '5', name: 'TechForward Solutions' },
+      { id: '6', name: 'Regional Medical Center' },
+      { id: '7', name: 'Unity Community Church' }
+    ],
+    []
+  );
+
+  const organizationMap = useMemo(() => {
+    const map = new Map<string, string>();
+    organizations.forEach((org) => map.set(org.id, org.name));
+    return map;
+  }, [organizations]);
+
+  const shapeSurveyRecord = useCallback(
+    (record: Survey): AdminSurveyCard => {
+      const orgIds = record.assignedTo?.organizationIds ?? [];
+      const assignedOrgIds = orgIds.map((id) => String(id));
+      const assignedOrgs = assignedOrgIds.map((id) => organizationMap.get(id) ?? `Org ${id}`);
+      const metrics = (record as any).metrics ?? (record as any).analytics ?? {};
+      const totalResponses =
+        typeof (record as any).totalResponses === 'number'
+          ? (record as any).totalResponses
+          : typeof metrics.totalResponses === 'number'
+          ? metrics.totalResponses
+          : 0;
+      const totalInvites =
+        typeof (record as any).totalInvites === 'number'
+          ? (record as any).totalInvites
+          : typeof metrics.totalInvites === 'number'
+          ? metrics.totalInvites
+          : 0;
+      const completionInput =
+        typeof (record as any).completionRate === 'number'
+          ? (record as any).completionRate
+          : typeof metrics.completionRate === 'number'
+          ? metrics.completionRate
+          : totalInvites > 0
+          ? Math.round((totalResponses / totalInvites) * 100)
+          : 0;
+      const timestamp = record.updatedAt || record.createdAt || new Date().toISOString();
+      const parsed = new Date(timestamp as any);
+      const lastActivity = Number.isNaN(parsed.getTime()) ? new Date().toISOString() : parsed.toISOString();
+
+      return {
+        id: record.id,
+        title: record.title || 'Untitled Survey',
+        description: record.description || '',
+        status: record.status ?? 'draft',
+        type: record.type ?? 'custom',
+        createdAt: record.createdAt,
+        updatedAt: record.updatedAt,
+        lastActivity,
+        totalResponses,
+        totalInvites,
+        completionRate: Number.isFinite(completionInput)
+          ? Math.max(0, Math.min(100, Math.round(completionInput)))
+          : 0,
+        assignedOrgIds,
+        assignedOrgs,
+      };
+    },
+    [organizationMap]
+  );
+
+  const fetchSurveys = useCallback(
+    async (options: { showLoader?: boolean } = {}) => {
+      const { showLoader = false } = options;
+      if (showLoader) setIsLoading(true);
+      setIsRefreshing(true);
+      setErrorMessage(null);
+      try {
+        const data = await listSurveys();
+        setSurveys(data.map(shapeSurveyRecord));
+      } catch (err) {
+        console.warn('Failed to load surveys', err);
+        const message = err instanceof Error ? err.message : 'Unable to load surveys';
+        setErrorMessage(message);
+      } finally {
+        setIsLoading(false);
+        setIsRefreshing(false);
+      }
+    },
+    [shapeSurveyRecord]
+  );
+
+  useEffect(() => {
+    fetchSurveys({ showLoader: true });
+  }, [fetchSurveys]);
+
+  useEffect(() => {
+    const updateTelemetry = () => {
+      setQueueLength(getQueueLength());
+    };
+    updateTelemetry();
+    surveyQueueEvents.addEventListener('queuechange', updateTelemetry);
+    surveyQueueEvents.addEventListener('flush', updateTelemetry);
+    return () => {
+      surveyQueueEvents.removeEventListener('queuechange', updateTelemetry);
+      surveyQueueEvents.removeEventListener('flush', updateTelemetry);
+    };
+  }, []);
+
+  useEffect(() => {
+    setSelectedSurveys((prev) => prev.filter((id) => surveys.some((survey) => survey.id === id)));
+  }, [surveys]);
 
   const openAssignModal = (surveyId: string) => {
     const survey = surveys.find(s => s.id === surveyId);
     setAssignTargetSurveyId(surveyId);
     setSelectedOrgIds(survey?.assignedOrgIds ?? []);
+    setAssignError(null);
     setShowAssignModal(true);
   };
 
@@ -146,67 +213,89 @@ const AdminSurveys = () => {
     navigate('/admin/surveys/queue');
   };
 
-  const duplicateSurvey = (surveyId: string) => {
-    const s = surveys.find(s => s.id === surveyId);
-    if (!s) return;
-    const copy = { ...s, id: `${s.id}-copy-${Date.now()}`, title: `Copy of ${s.title}`, createdAt: new Date().toISOString(), lastActivity: new Date().toISOString() };
-    setSurveys(prev => [copy, ...prev]);
-    // Navigate to builder for the new copy
-    navigate(`/admin/surveys/builder/${copy.id}`);
+  const duplicateSurvey = async (surveyId: string) => {
+    setDuplicateTarget(surveyId);
+    try {
+      const existing = await getSurveyById(surveyId);
+      if (!existing) {
+        setErrorMessage('Survey not found for duplication');
+        return;
+      }
+      const copy: Survey = {
+        ...existing,
+        id: `survey-${Date.now().toString(36)}`,
+        title: `Copy of ${existing.title || 'Survey'}`,
+        status: 'draft',
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      const saved = await persistSurvey(copy);
+      setSurveys(prev => [shapeSurveyRecord(saved), ...prev]);
+      navigate(`/admin/surveys/builder/${saved.id}`);
+    } catch (err) {
+      console.warn('Failed to duplicate survey', err);
+      const message = err instanceof Error ? err.message : 'Unable to duplicate survey';
+      setErrorMessage(message);
+    } finally {
+      setDuplicateTarget(null);
+    }
   };
 
   const closeAssignModal = () => {
     setShowAssignModal(false);
     setAssignTargetSurveyId(null);
     setSelectedOrgIds([]);
+    setAssignError(null);
+    setIsAssignSaving(false);
   };
 
   const toggleSelectOrg = (orgId: string) => {
     setSelectedOrgIds(prev => prev.includes(orgId) ? prev.filter(id => id !== orgId) : [...prev, orgId]);
   };
 
-  const saveAssignment = () => {
+  const saveAssignment = async () => {
     if (!assignTargetSurveyId) return;
-    // Optimistic update locally
+  setAssignError(null);
+  setIsAssignSaving(true);
+  const savingStartedAt = Date.now();
+
+    const assignedOrgNames = organizations
+      .filter((org) => selectedOrgIds.includes(org.id))
+      .map((org) => org.name);
+
     setSurveys(prev => prev.map(s => s.id === assignTargetSurveyId ? {
       ...s,
-      assignedOrgIds: selectedOrgIds,
-      assignedOrgs: organizations.filter(o => selectedOrgIds.includes(o.id)).map(o => o.name)
+      assignedOrgIds: [...selectedOrgIds],
+      assignedOrgs: assignedOrgNames
     } : s));
 
-    // Persist to Supabase (table: survey_assignments) if configured
-    (async () => {
-      try {
-        if (!hasSupabaseConfig) return;
-        const supabase = await getSupabase();
-        if (!supabase) return;
-        const payload = {
-          survey_id: assignTargetSurveyId,
-          organization_ids: selectedOrgIds,
-          updated_at: new Date().toISOString()
-        };
-
-        const { data, error } = await supabase.from('survey_assignments').upsert(payload).select();
-        if (error) {
-          console.warn('Failed to save assignment to Supabase:', error.message || error);
-        } else {
-          console.log('Saved survey assignment to Supabase:', data);
-        }
-      } catch (err) {
-        console.warn('Supabase error saving assignment:', err);
+    try {
+      const updated = await updateSurveyAssignments(assignTargetSurveyId, selectedOrgIds);
+      const elapsed = Date.now() - savingStartedAt;
+      if (elapsed < MIN_ASSIGN_SAVING_MS) {
+        await new Promise((resolve) => setTimeout(resolve, MIN_ASSIGN_SAVING_MS - elapsed));
       }
-    })();
-
-    closeAssignModal();
+      setSurveys(prev => prev.map(s => s.id === assignTargetSurveyId ? shapeSurveyRecord(updated) : s));
+      closeAssignModal();
+    } catch (err) {
+      console.warn('Failed to save assignment', err);
+      const message = err instanceof Error ? err.message : 'Unable to save assignment';
+      setAssignError(message);
+      await fetchSurveys();
+    } finally {
+      setIsAssignSaving(false);
+    }
   };
 
-  const filteredSurveys = surveys.filter(survey => {
-    const matchesSearch = survey.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         survey.description.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesStatus = filterStatus === 'all' || survey.status === filterStatus;
-    const matchesType = filterType === 'all' || survey.type === filterType;
-    return matchesSearch && matchesStatus && matchesType;
-  });
+  const filteredSurveys = useMemo(() => {
+    return surveys.filter(survey => {
+      const matchesSearch = survey.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                           survey.description.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesStatus = filterStatus === 'all' || survey.status === filterStatus;
+      const matchesType = filterType === 'all' || survey.type === filterType;
+      return matchesSearch && matchesStatus && matchesType;
+    });
+  }, [surveys, searchTerm, filterStatus, filterType]);
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -277,6 +366,18 @@ const AdminSurveys = () => {
         <h1 className="text-3xl font-bold text-gray-900 mb-2">DEI Survey Platform</h1>
         <p className="text-gray-600">Create, manage, and analyze DEI surveys with advanced analytics and insights</p>
       </div>
+
+      {errorMessage && (
+        <div className="mb-6 flex items-start space-x-3 rounded-lg border border-red-200 bg-red-50 p-4">
+          <AlertTriangle className="h-5 w-5 text-red-500 mt-0.5" />
+          <div>
+            <p className="text-sm font-medium text-red-700">{errorMessage}</p>
+            <p className="text-xs text-red-600">
+              Verify the admin API is running (or DEV_FALLBACK is enabled) and then refresh the surveys list.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Quick Stats */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
@@ -384,6 +485,14 @@ const AdminSurveys = () => {
                 </button>
               </div>
             )}
+            <button
+              onClick={() => fetchSurveys()}
+              className="btn-outline px-4 py-2 rounded-lg flex items-center space-x-2"
+              disabled={isRefreshing}
+            >
+              <RefreshCcw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
+              <span>{isRefreshing ? 'Refreshing…' : 'Refresh'}</span>
+            </button>
             <button onClick={handleAICreator} className="btn-outline px-4 py-2 rounded-lg flex items-center space-x-2">
               <Brain className="h-4 w-4" />
               <span>AI Survey Creator</span>
@@ -401,16 +510,28 @@ const AdminSurveys = () => {
             </button>
             <button onClick={handleQueue} className="btn-outline px-4 py-2 rounded-lg flex items-center space-x-2">
               <Clock className="h-4 w-4" />
-              <span>Queue</span>
+              <span>{queueLength > 0 ? `Queue (${queueLength})` : 'Queue'}</span>
             </button>
+          </div>
+          <div className="w-full pt-2">
+            <SurveyQueueStatus variant="inline" showFlushButton={false} />
           </div>
         </div>
       </div>
 
       {/* Surveys Grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 mb-8">
-        {filteredSurveys.map((survey) => (
-          <div key={survey.id} className="card-lg card-hover overflow-hidden">
+      {isLoading ? (
+        <div className="py-20 flex justify-center">
+          <Loader2 className="h-8 w-8 animate-spin text-gray-400" />
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 mb-8">
+          {filteredSurveys.map((survey) => (
+            <div
+              key={survey.id}
+              className="card-lg card-hover overflow-hidden"
+              data-testid={`survey-card-${survey.id}`}
+            >
             <div className="p-6">
               <div className="flex items-start justify-between mb-4">
                 <div className="flex-1">
@@ -474,18 +595,13 @@ const AdminSurveys = () => {
                 <div className="text-sm text-gray-600 mb-2">Assigned Organizations:</div>
                 <div className="flex flex-wrap gap-1">
                   {survey.assignedOrgs.length > 0 ? (
-                    survey.assignedOrgs.slice(0, 2).map((org: string, index: number) => (
+                    survey.assignedOrgs.map((org: string, index: number) => (
                       <span key={index} className="bg-gray-100 text-gray-700 px-2 py-1 rounded-full text-xs">
                         {org}
                       </span>
                     ))
                   ) : (
                     <span className="text-xs text-gray-500 italic">No assignments</span>
-                  )}
-                  {survey.assignedOrgs.length > 2 && (
-                    <span className="bg-gray-100 text-gray-700 px-2 py-1 rounded-full text-xs">
-                      +{survey.assignedOrgs.length - 2} more
-                    </span>
                   )}
                 </div>
               </div>
@@ -512,6 +628,7 @@ const AdminSurveys = () => {
                     onClick={() => openAssignModal(survey.id)}
                     className="p-2 text-green-600 hover:text-green-800 hover:bg-green-50 rounded-lg"
                     title="Assign to Organizations"
+                    data-testid={`survey-assign-${survey.id}`}
                   >
                     <Users className="h-4 w-4" />
                   </button>
@@ -529,17 +646,27 @@ const AdminSurveys = () => {
                   >
                     <Edit className="h-4 w-4" />
                   </Link>
-                  <button onClick={() => duplicateSurvey(survey.id)} className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-50 rounded-lg" title="Duplicate">
-                    <Copy className="h-4 w-4" />
+                  <button
+                    onClick={() => duplicateSurvey(survey.id)}
+                    className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-50 rounded-lg disabled:opacity-50"
+                    title="Duplicate"
+                    disabled={duplicateTarget === survey.id}
+                  >
+                    {duplicateTarget === survey.id ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Copy className="h-4 w-4" />
+                    )}
                   </button>
                 </div>
               </div>
             </div>
           </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
 
-      {filteredSurveys.length === 0 && (
+      {!isLoading && filteredSurveys.length === 0 && (
         <div className="mb-8">
           <EmptyState
             title="No surveys found"
@@ -630,9 +757,21 @@ const AdminSurveys = () => {
               ))}
             </div>
 
+            {assignError && (
+              <div className="mb-3 text-sm text-red-600">{assignError}</div>
+            )}
+
             <div className="flex items-center justify-end space-x-3">
               <button onClick={closeAssignModal} className="btn-outline">Cancel</button>
-              <button onClick={saveAssignment} className="btn-cta">Save Assignment</button>
+              <button
+                onClick={saveAssignment}
+                className="btn-cta flex items-center space-x-2"
+                disabled={isAssignSaving}
+                aria-label="Save Assignment"
+              >
+                {isAssignSaving && <Loader2 className="h-4 w-4 animate-spin" />}
+                <span>{isAssignSaving ? 'Saving…' : 'Save Assignment'}</span>
+              </button>
             </div>
           </div>
         </div>

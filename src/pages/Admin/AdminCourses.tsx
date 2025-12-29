@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { courseStore } from '../../store/courseStore';
 import { Course } from '../../types/courseTypes';
-import { syncCourseToDatabase, CourseValidationError } from '../../dal/courses';
+import { syncCourseToDatabase, CourseValidationError } from '../../dal/adminCourses';
 import { 
   BookOpen, 
   Plus, 

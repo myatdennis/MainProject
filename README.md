@@ -165,6 +165,31 @@ src/
 - When Supabase is not configured, the server uses a safe in-memory fallback by default (DEV_FALLBACK). Disable with `DEV_FALLBACK=false`.
 - E2E tests use `E2E_TEST_MODE=true` and stub `VITE_API_BASE_URL` as needed.
 
+## E2E Testing
+
+### E2E API base URL
+
+Our Playwright suite expects the API to be reachable at the URL provided via `E2E_API_BASE_URL`.
+
+- **Default:** `http://localhost:8888` (the port started by `server/start-e2e-dev.cjs`).
+- **Override:** Set the env var if your API runs elsewhere (e.g., Railway tunnel, Docker).
+
+Example:
+
+```bash
+export E2E_API_BASE_URL=http://localhost:8888
+npx playwright test
+```
+
+The Playwright auth helpers consume this value to drive the SecureAuth login flow. If the API is not reachable at `E2E_API_BASE_URL` you may see connection refusals or the login page staying in the "Initializing authentication" state before the `#email` field renders.
+
+#### SecureAuth tips
+
+- Always start the dev helper (`npx playwright test` or `npm run test:e2e`) so the API (8888) and Vite (5174) boot together.
+- The shared `loginAsAdmin` helper waits for `#email`, fills the demo credentials, and handles redirects automatically—no manual clicks needed.
+- If you override the base URLs, export both `E2E_API_BASE_URL` and `E2E_BASE_URL` to keep the frontend + API in sync.
+- Clearing cookies between roles is handled inside the helper, but when writing new specs prefer the helper over bespoke login code to keep SecureAuth happy.
+
 Server runtime is JS-only
 ------------------------
 

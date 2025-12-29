@@ -142,6 +142,38 @@ class ServiceWorkerManager {
     return false;
   }
 
+  async forceCleanup(): Promise<void> {
+    if (typeof window === 'undefined' || typeof navigator === 'undefined') {
+      return;
+    }
+
+    if ('serviceWorker' in navigator) {
+      try {
+        const registrations = await navigator.serviceWorker.getRegistrations();
+        await Promise.all(
+          registrations.map(async (registration) => {
+            const didUnregister = await registration.unregister();
+            if (didUnregister) {
+              console.log('[SW] Unregistered dev service worker:', registration.scope);
+            }
+          })
+        );
+      } catch (error) {
+        console.warn('[SW] Failed to unregister service workers during dev cleanup:', error);
+      }
+    }
+
+    if ('caches' in window) {
+      try {
+        const cacheNames = await caches.keys();
+        await Promise.all(cacheNames.map((cacheName) => caches.delete(cacheName)));
+        console.log('[SW] Cleared caches during dev cleanup');
+      } catch (error) {
+        console.warn('[SW] Failed to clear caches during dev cleanup:', error);
+      }
+    }
+  }
+
   // Cache management utilities
   async clearCache(): Promise<void> {
     if ('caches' in window) {

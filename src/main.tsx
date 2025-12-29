@@ -1,6 +1,7 @@
 import React, { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { HelmetProvider } from 'react-helmet-async';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import App from './App';
 import './index.css';
 import serviceWorkerManager from './utils/ServiceWorkerManager';
@@ -12,6 +13,15 @@ console.log('📍 Environment:', import.meta.env.MODE);
 console.log('🔧 Supabase configured:', !!(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY));
 console.log('⚙️ React version detected:', React?.version || 'unknown');
 
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 1,
+      staleTime: 60 * 1000,
+    },
+  },
+});
+
 const rootElement = document.getElementById('root');
 
 if (!rootElement) {
@@ -22,13 +32,15 @@ if (!rootElement) {
   try {
     createRoot(rootElement).render(
       <StrictMode>
-        <SecureAuthProvider>
-          <ToastProvider>
-            <HelmetProvider>
-              <App />
-            </HelmetProvider>
-          </ToastProvider>
-        </SecureAuthProvider>
+        <QueryClientProvider client={queryClient}>
+          <SecureAuthProvider>
+            <ToastProvider>
+              <HelmetProvider>
+                <App />
+              </HelmetProvider>
+            </ToastProvider>
+          </SecureAuthProvider>
+        </QueryClientProvider>
       </StrictMode>
     );
     console.log('✅ App rendered successfully');
@@ -56,4 +68,7 @@ if (import.meta.env.PROD) {
   serviceWorkerManager.setupNetworkMonitoring();
 } else {
   console.log('🛠️ Development mode: Service worker disabled');
+  serviceWorkerManager.forceCleanup().catch((error) => {
+    console.warn('[SW] Failed to perform dev cleanup:', error);
+  });
 }
