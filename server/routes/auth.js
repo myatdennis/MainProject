@@ -13,6 +13,13 @@ import {
   clearAuthCookies,
   getRefreshTokenFromRequest,
 } from '../utils/authCookies.js';
+import {
+  demoLoginEnabled,
+  E2E_TEST_MODE as e2eTestMode,
+  allowLegacyDemoUsers as allowLegacyDemoUsersFlag,
+  allowDemoExplicit,
+  demoModeExplicit,
+} from '../config/runtimeFlags.js';
 
 const parseBoolean = (value, fallback = false) => {
   if (typeof value === 'boolean') return value;
@@ -28,9 +35,10 @@ const parseBoolean = (value, fallback = false) => {
   return fallback;
 };
 
-const isE2ETestMode = parseBoolean(process.env.E2E_TEST_MODE);
-const isDemoModeExplicit = parseBoolean(process.env.DEMO_MODE);
-const allowLegacyDemoUsers = parseBoolean(process.env.ALLOW_LEGACY_DEMO_USERS, isE2ETestMode);
+const isE2ETestMode = e2eTestMode;
+const isDemoModeExplicit = demoModeExplicit || allowDemoExplicit;
+const allowLegacyDemoUsers = allowLegacyDemoUsersFlag || isE2ETestMode;
+const canUseDemoMode = demoLoginEnabled;
 
 const legacyDemoUsers = [
   {
@@ -197,7 +205,7 @@ router.post('/login', async (req, res) => {
     const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip;
     console.log(`[AUTH] ${req.method} ${req.originalUrl} from origin ${origin} ip ${ip}`);
     // Demo mode check
-    const useDemoMode = isDemoModeExplicit || isE2ETestMode;
+  const useDemoMode = canUseDemoMode;
     
     if (useDemoMode) {
       console.log('[AUTH ROUTES] Using demo mode authentication');
@@ -231,7 +239,8 @@ router.post('/login', async (req, res) => {
     if (!supabase) {
       return res.status(503).json({
         error: 'Service unavailable',
-        message: 'Authentication service not configured',
+        message:
+          'Authentication service not configured. Configure Supabase credentials or set ALLOW_DEMO=true / DEMO_MODE=true to enable demo logins.',
       });
     }
     

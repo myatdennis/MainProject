@@ -110,7 +110,14 @@ export function ensureSupabaseConfigured(action?: string): void {
 
 async function hydrateClient(): Promise<SupabaseClient | null> {
   if (!hasSupabaseConfig) {
-    throwMissingSupabase('initializing Supabase client');
+    if (!missingConfigLogged) {
+      console.warn('[supabaseClient] ' + missingConfigMessage + ' (skipping initialization)');
+      missingConfigLogged = true;
+    }
+    if (!(initError instanceof SupabaseConfigError)) {
+      initError = new SupabaseConfigError(missingConfigMessage);
+    }
+    return null;
   }
 
   if (supabaseClient) return supabaseClient;

@@ -1,6 +1,7 @@
 import React, { useEffect, useState, lazy, Suspense } from 'react'
-import { Users, TrendingUp, Activity as ActivityIcon, Clock, BarChart3, BookOpen } from 'lucide-react'
+import { Users, TrendingUp, Activity as ActivityIcon, Clock, BarChart3, BookOpen, X } from 'lucide-react'
 import { getSupabase } from '../../lib/supabaseClient'
+import { useToast } from '../../context/ToastContext'
 const CompletionChart = lazy(() => import('../../components/Analytics/CompletionChart'));
 
 type Overview = {
@@ -50,12 +51,15 @@ const formatPercent = (value?: number) => {
 }
 
 const AnalyticsDashboard: React.FC = () => {
+  const { showToast } = useToast();
   const [overview, setOverview] = useState<Overview>({})
   const [courses, setCourses] = useState<any[]>([])
   const [dropoffs, setDropoffs] = useState<any[]>([])
   const [loading, setLoading] = useState(false)
   const [activityFeed, setActivityFeed] = useState<ActivityItem[]>([])
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+  const [summaryPreview, setSummaryPreview] = useState<string | null>(null)
+  const [summaryError, setSummaryError] = useState<string | null>(null)
 
   const fetchData = async () => {
     setLoading(true)
@@ -126,12 +130,17 @@ const AnalyticsDashboard: React.FC = () => {
 
   const requestSummary = async () => {
     try {
+      setSummaryError(null)
+      setSummaryPreview(null)
       const res = await fetch('/api/admin/analytics/summary', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) })
       const json = await res.json()
-      alert(JSON.stringify(json.sample || json.ai || json.prompt, null, 2))
+      const preview = JSON.stringify(json.sample || json.ai || json.prompt, null, 2)
+      setSummaryPreview(preview)
+      showToast('AI summary generated successfully.', 'success')
     } catch (err) {
       console.error('Summary request failed', err)
-      alert('Failed to generate summary')
+      setSummaryError('We could not generate a summary right now. Please try again in a moment.')
+      showToast('AI summary failed', 'error')
     }
   }
 
@@ -174,6 +183,30 @@ const AnalyticsDashboard: React.FC = () => {
           </button>
         </div>
       </header>
+
+      {summaryPreview && (
+        <div className="rounded-3xl border border-orange-100 bg-orange-50 p-4 text-sm text-orange-900">
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex-1">
+              <p className="text-sm font-semibold">AI summary preview</p>
+              <pre className="mt-3 max-h-48 overflow-auto whitespace-pre-wrap font-mono text-xs text-orange-900">{summaryPreview}</pre>
+            </div>
+            <button
+              aria-label="Dismiss AI summary"
+              className="rounded-full p-1 text-orange-700 hover:bg-orange-100"
+              onClick={() => setSummaryPreview(null)}
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {summaryError && (
+        <div className="rounded-3xl border border-red-100 bg-red-50 p-4 text-sm text-red-800">
+          {summaryError}
+        </div>
+      )}
 
       <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
         {metrics.map(({ label, value, helper, icon: Icon }) => (

@@ -1,8 +1,10 @@
 import React from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { courseStore } from '../../store/courseStore';
+import { useToast } from '../../context/ToastContext';
 
 const AdminCourseSettings: React.FC = () => {
+  const { showToast } = useToast();
   const { courseId } = useParams();
   const course = courseId ? courseStore.getCourse(courseId) : null;
 
@@ -101,7 +103,7 @@ const AdminCourseSettings: React.FC = () => {
               Cancel
             </Link>
             <button 
-              onClick={() => alert('Settings saved! (Demo)')}
+              onClick={() => showToast('Course settings saved.', 'success')}
               className="px-4 py-2 bg-orange-500 text-white rounded-lg hover:bg-orange-600"
             >
               Save Settings

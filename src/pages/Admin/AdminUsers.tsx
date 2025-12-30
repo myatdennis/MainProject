@@ -21,6 +21,7 @@ import CourseAssignmentModal from '../../components/CourseAssignmentModal';
 import LoadingButton from '../../components/LoadingButton';
 import { useToast } from '../../context/ToastContext';
 import { User } from '../../types/user';
+import type { CourseAssignment } from '../../types/assignment';
 import PageWrapper from '../../components/PageWrapper';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import EmptyState from '../../components/ui/EmptyState';
@@ -234,9 +235,14 @@ const AdminUsers = () => {
     setShowCourseAssignModal(true);
   };
 
-  const handleCourseAssignComplete = () => {
+  const handleCourseAssignComplete = (assignments?: CourseAssignment[]) => {
     setSelectedUsers([]);
     setShowCourseAssignModal(false);
+    const count = assignments?.length ?? 0;
+    const message = count > 0
+      ? `Assignments sent to ${count} team member${count === 1 ? '' : 's'}.`
+      : 'Assignments queued successfully.';
+    showToast(`${message} Huddle notifications are on the way.`, 'success');
   };
 
   const handleImportCSV = () => {

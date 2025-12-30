@@ -43,12 +43,14 @@
     "archive:server-ts": "node scripts/archive_server_ts.mjs",
     "migrate:local": "sh ./scripts/run_migration.sh supabase/migrations/20251108_add_analytics_tables_and_views.sql",
     "seed:analytics": "node ./scripts/seed_analytics.js",
+  "seed:supabase": "node ./scripts/seed_supabase_sample_data.mjs",
     "diag:env": "node scripts/check_deploy_env.cjs",
     "diag:print": "node scripts/print_vite_env.cjs",
     "diag:ssl": "node scripts/check_ssl.cjs",
     "optimize:build": "npm ci && npm run build && npm run analyze",
     "scan:dist": "node scripts/find_hosts_in_dist.mjs",
-    "check:lock": "node scripts/check_lock_sync.mjs"
+    "check:lock": "node scripts/check_lock_sync.mjs",
+    "check:design": "ts-node scripts/design-consistency-checker.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

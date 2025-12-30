@@ -1,27 +1,55 @@
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 
-// Canonical brand palette (lowercased for normalization)
-const BRAND_COLORS = [
-  '#de7b12', // Sunrise Orange
-  '#d72638', // Deep Red Accent
-  '#3a7dff', // Sky Blue
-  '#228b22', // Forest Green
-  '#1e1e1e', // Charcoal Block
-  '#f9f9f1', // Soft White
-  '#3f3f3f', // Slate text
-  '#e4e7eb', // Mist border
-  '#f4f5f7', // Cloud surface
-  '#f6c87b', // Accent gold
-];
-const BRAND_FONTS = ['Inter', 'system-ui', 'sans-serif'];
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const TOKENS_FILE = path.join(__dirname, '../src/styles/design-tokens.css');
+
+function extractBrandColors(): string[] {
+  try {
+    const css = fs.readFileSync(TOKENS_FILE, 'utf8');
+    const matches = css.match(/#[0-9A-Fa-f]{6}/g) ?? [];
+    const unique = Array.from(new Set(matches.map(color => color.toLowerCase())));
+    // Always allow black/white even if omitted from tokens for contrast helpers
+    return Array.from(new Set([...unique, '#ffffff', '#000000']));
+  } catch (error) {
+    console.warn('Unable to read design tokens for color extraction:', error);
+    return ['#ffffff', '#000000'];
+  }
+}
+
+function extractFonts(): string[] {
+  try {
+    const css = fs.readFileSync(TOKENS_FILE, 'utf8');
+    const fontRegex = /--font-[\w-]+:\s*([^;]+);/g;
+    const fonts = new Set<string>();
+    let match: RegExpExecArray | null;
+    while ((match = fontRegex.exec(css))) {
+      match[1]
+        .split(',')
+        .map(token => token.replace(/['"]/g, '').trim())
+        .filter(Boolean)
+        .forEach(font => fonts.add(font));
+    }
+    ['Inter', 'Montserrat', 'Lato', 'Quicksand', 'system-ui', 'sans-serif'].forEach(font => fonts.add(font));
+    return Array.from(fonts);
+  } catch (error) {
+    console.warn('Unable to read design tokens for font extraction:', error);
+    return ['Inter', 'system-ui', 'sans-serif'];
+  }
+}
+
+const BRAND_COLORS = extractBrandColors();
+const BRAND_FONTS = extractFonts();
 
 function scanFile(filePath: string) {
   const content = fs.readFileSync(filePath, 'utf8');
   const colorRegex = /#[0-9A-Fa-f]{6}/g;
-  const fontRegex = /(font-family:\s*['\"]?([\w\s,-]+)['\"]?)/g;
+  const fontRegex = /font-family:\s*([^;]+);?/g;
   const colors = Array.from(content.matchAll(colorRegex)).map(m => m[0]);
-  const fonts = Array.from(content.matchAll(fontRegex)).map(m => m[2]);
+  const fonts = Array.from(content.matchAll(fontRegex)).map(m => m[1].trim());
   return { colors, fonts };
 }
 
@@ -41,6 +69,9 @@ function checkConsistency(rootDir: string) {
           }
         }
         for (const font of fonts) {
+          if (!font || font.startsWith('var(')) {
+            continue;
+          }
           if (!BRAND_FONTS.some(f => font.includes(f))) {
             results.fontIssues.push({ file: fullPath, font });
           }
@@ -52,7 +83,9 @@ function checkConsistency(rootDir: string) {
   return results;
 }
 
-if (require.main === module) {
+const isDirectRun = process.argv[1] && path.resolve(process.argv[1]) === __filename;
+
+if (isDirectRun) {
   const root = process.argv[2] || path.join(__dirname, '../src');
   const report = checkConsistency(root);
   fs.writeFileSync(path.join(__dirname, 'design-consistency-report.json'), JSON.stringify(report, null, 2));

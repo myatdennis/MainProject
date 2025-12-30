@@ -1,7 +1,7 @@
 import React, { useEffect } from 'react';
 import { CheckCircle, X, AlertCircle, Info } from 'lucide-react';
 
-export type ToastType = 'success' | 'error' | 'info';
+export type ToastType = 'success' | 'error' | 'info' | 'warning';
 
 interface ToastProps {
   message: string;
@@ -10,6 +10,29 @@ interface ToastProps {
   onClose: () => void;
   duration?: number;
 }
+
+const toneConfig: Record<ToastType, { icon: React.ReactNode; title: string; tone: ToastType }> = {
+  success: {
+    icon: <CheckCircle className="h-5 w-5" aria-hidden="true" />,
+    title: 'Success',
+    tone: 'success',
+  },
+  error: {
+    icon: <AlertCircle className="h-5 w-5" aria-hidden="true" />,
+    title: 'Something went wrong',
+    tone: 'error',
+  },
+  warning: {
+    icon: <AlertCircle className="h-5 w-5" aria-hidden="true" />,
+    title: 'Heads up',
+    tone: 'warning',
+  },
+  info: {
+    icon: <Info className="h-5 w-5" aria-hidden="true" />,
+    title: 'FYI',
+    tone: 'info',
+  },
+};
 
 const Toast: React.FC<ToastProps> = ({ message, type, isVisible, onClose, duration = 3000 }) => {
   useEffect(() => {
@@ -23,53 +46,31 @@ const Toast: React.FC<ToastProps> = ({ message, type, isVisible, onClose, durati
 
   if (!isVisible) return null;
 
-  const getToastConfig = () => {
-    switch (type) {
-      case 'success':
-        return {
-          bgColor: 'bg-green-50 border-green-200',
-          textColor: 'text-green-800',
-          icon: <CheckCircle className="h-5 w-5 text-green-500" />
-        };
-      case 'error':
-        return {
-          bgColor: 'bg-red-50 border-red-200',
-          textColor: 'text-red-800',
-          icon: <AlertCircle className="h-5 w-5 text-red-500" />
-        };
-      case 'info':
-      default:
-        return {
-          bgColor: 'bg-blue-50 border-blue-200',
-          textColor: 'text-blue-800',
-          icon: <Info className="h-5 w-5 text-blue-500" />
-        };
-    }
-  };
-
-  const config = getToastConfig();
+  const config = toneConfig[type] ?? toneConfig.info;
 
   return (
     <div className="fixed top-4 right-4 z-50 animate-in slide-in-from-right duration-300">
-      <div className={`max-w-sm w-full ${config.bgColor} border border-l-4 rounded-lg p-4 shadow-lg`}>
-        <div className="flex items-center">
-          <div className="flex-shrink-0">
-            {config.icon}
-          </div>
-          <div className="ml-3 flex-1">
-            <p className={`text-sm font-medium ${config.textColor}`}>
-              {message}
-            </p>
-          </div>
-          <div className="ml-4 flex-shrink-0">
-            <button
-              onClick={onClose}
-              className={`inline-flex rounded-md p-1.5 ${config.textColor} hover:bg-opacity-20 hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-gray-500`}
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
+      <div
+        className="hud-toast"
+        data-tone={config.tone}
+        role="status"
+        aria-live={type === 'error' ? 'assertive' : 'polite'}
+      >
+        <div className="hud-toast__icon">
+          {config.icon}
         </div>
+        <div className="hud-toast__body">
+          <p className="hud-toast__title">{config.title}</p>
+          <p className="hud-toast__message">{message}</p>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="hud-toast__close"
+          aria-label="Dismiss notification"
+        >
+          <X className="h-4 w-4" aria-hidden="true" />
+        </button>
       </div>
     </div>
   );

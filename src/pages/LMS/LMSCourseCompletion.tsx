@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 
 import ClientErrorBoundary from '../../components/ClientErrorBoundary';
@@ -10,6 +10,25 @@ import CourseCompletion from '../../components/CourseCompletion';
 import { courseStore } from '../../store/courseStore';
 import { normalizeCourse, type NormalizedCourse } from '../../utils/courseNormalization';
 import { loadStoredCourseProgress } from '../../utils/courseProgress';
+import { trackEvent } from '../../dal/analytics';
+
+const resolveLearnerIdentity = () => {
+  try {
+    const raw = localStorage.getItem('huddle_user');
+    if (!raw) {
+      return { id: 'local-user', email: 'demo@learner.com', name: 'Learner' };
+    }
+    const parsed = JSON.parse(raw);
+    return {
+      id: (parsed.email || parsed.id || 'local-user').toLowerCase(),
+      email: parsed.email || 'demo@learner.com',
+      name: parsed.name || parsed.fullName || parsed.email || 'Learner',
+    };
+  } catch (error) {
+    console.warn('Failed to derive learner identity for completion share tracking:', error);
+    return { id: 'local-user', email: 'demo@learner.com', name: 'Learner' };
+  }
+};
 
 const LMSCourseCompletion = () => {
   const { courseId } = useParams();
@@ -17,6 +36,8 @@ const LMSCourseCompletion = () => {
   const [course, setCourse] = useState<NormalizedCourse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
+  const learnerIdentity = useMemo(() => resolveLearnerIdentity(), []);
+  const learnerId = learnerIdentity.id;
 
   useEffect(() => {
     const resolveCourse = () => {
@@ -128,6 +149,28 @@ const LMSCourseCompletion = () => {
     },
   ], [navigate]);
 
+  const handleCompletionClose = useCallback(() => {
+    trackEvent('navigation_click', learnerId, { context: 'completion-exit' }, course?.id);
+    navigate('/lms/courses');
+  }, [course?.id, learnerId, navigate]);
+
+  const handleCertificateDownload = useCallback(() => {
+    trackEvent('download_resource', learnerId, { resource: 'certificate', courseTitle: course?.title }, course?.id);
+    navigate('/lms/certificates');
+  }, [course?.id, course?.title, learnerId, navigate]);
+
+  const handleShareComplete = useCallback(
+    (platform: string) => {
+      trackEvent(
+        'external_link_click',
+        learnerId,
+        { context: 'completion-share', platform },
+        course?.id,
+      );
+    },
+    [course?.id, learnerId],
+  );
+
   if (isLoading) {
     return (
       <div className="py-24">
@@ -213,8 +256,9 @@ const LMSCourseCompletion = () => {
             keyTakeaways={keyTakeaways}
             nextSteps={nextSteps}
             recommendedCourses={recommendedCourses}
-            onClose={() => navigate('/lms/courses')}
-            onCertificateDownload={() => navigate('/lms/certificates')}
+            onClose={handleCompletionClose}
+            onCertificateDownload={handleCertificateDownload}
+            onShareComplete={handleShareComplete}
             className="mt-10"
           />
         </div>

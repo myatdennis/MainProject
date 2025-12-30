@@ -4,6 +4,9 @@ import AdminDashboard from './pages/Admin/AdminDashboard';
 import AdminHealth from './pages/Admin/AdminHealth';
 import AdminCourses from './pages/Admin/AdminCourses';
 import AdminCourseBuilder from './pages/Admin/AdminCourseBuilder';
+import AdminCourseDetail from './pages/Admin/AdminCourseDetail';
+import AdminCourseAssign from './pages/Admin/AdminCourseAssign';
+import AdminCourseSettings from './pages/Admin/AdminCourseSettings';
 import AdminSurveys from './pages/Admin/AdminSurveys';
 // (removed duplicate import)
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
@@ -29,6 +32,7 @@ import ClientLessonView from './pages/Client/ClientLessonView';
 import ClientCourseCompletion from './pages/Client/ClientCourseCompletion';
 import ClientSurveys from './pages/Client/ClientSurveys';
 import ClientProfile from './pages/Client/ClientProfile';
+import ClientLayout from './pages/Client/ClientLayout';
 import LMSLayout from './components/LMS/LMSLayout';
 import LMSDashboard from './pages/LMS/LMSDashboard';
 import LMSCourses from './pages/LMS/LMSCourses';
@@ -45,6 +49,9 @@ import LMSCourseCompletion from './pages/LMS/LMSCourseCompletion';
 import LMSLessonView from './pages/LMS/LMSLessonView';
 import NotFound from './pages/NotFound';
 import AIBot from './components/AIBot/AIBot';
+import AdminCourseImportPlaceholder from './pages/Admin/Course/AdminCourseImportPlaceholder';
+import AdminCourseBulkPlaceholder from './pages/Admin/Course/AdminCourseBulkPlaceholder';
+import AdminCourseNewPlaceholder from './pages/Admin/Course/AdminCourseNewPlaceholder';
 
 import HomePage from './pages/HomePage';
 import LMSLogin from './pages/LMS/LMSLogin';
@@ -87,14 +94,24 @@ function App() {
                 <Route path="/contact" element={<ContactPage />} />
                 <Route path="/client-portal" element={<ClientPortalPage />} />
                 <Route path="/client-portal/org/:orgId/*" element={<RequireAuth mode="lms"><OrgWorkspaceLayout /></RequireAuth>} />
-                <Route path="/client" element={<Navigate to="/client/dashboard" replace />} />
-                <Route path="/client/dashboard" element={<RequireAuth mode="lms"><ClientDashboard /></RequireAuth>} />
-                <Route path="/client/courses" element={<RequireAuth mode="lms"><ClientCourses /></RequireAuth>} />
-                <Route path="/client/courses/:courseId" element={<RequireAuth mode="lms"><ClientCourseDetail /></RequireAuth>} />
-                <Route path="/client/courses/:courseId/lessons/:lessonId" element={<RequireAuth mode="lms"><ClientLessonView /></RequireAuth>} />
-                <Route path="/client/courses/:courseId/completion" element={<RequireAuth mode="lms"><ClientCourseCompletion /></RequireAuth>} />
-                <Route path="/client/surveys" element={<RequireAuth mode="lms"><ClientSurveys /></RequireAuth>} />
-                <Route path="/client/profile" element={<RequireAuth mode="lms"><ClientProfile /></RequireAuth>} />
+                <Route
+                  path="/client/*"
+                  element={(
+                    <RequireAuth mode="lms">
+                      <ClientLayout />
+                    </RequireAuth>
+                  )}
+                >
+                  <Route index element={<Navigate to="dashboard" replace />} />
+                  <Route path="dashboard" element={<ClientDashboard />} />
+                  <Route path="courses" element={<ClientCourses />} />
+                  <Route path="courses/:courseId" element={<ClientCourseDetail />} />
+                  <Route path="courses/:courseId/lessons/:lessonId" element={<ClientLessonView />} />
+                  <Route path="courses/:courseId/completion" element={<ClientCourseCompletion />} />
+                  <Route path="surveys" element={<ClientSurveys />} />
+                  <Route path="profile" element={<ClientProfile />} />
+                  <Route path="*" element={<Navigate to="dashboard" replace />} />
+                </Route>
                 <Route path="/lms/login" element={<LMSLogin />} />
                 <Route path="/lms" element={<Navigate to="/lms/dashboard" replace />} />
                 <Route
@@ -139,6 +156,54 @@ function App() {
                   element={(
                     <RequireAuth mode="admin">
                       <AdminCourses />
+                    </RequireAuth>
+                  )}
+                />
+                <Route
+                  path="/admin/courses/new"
+                  element={(
+                    <RequireAuth mode="admin">
+                      <AdminCourseNewPlaceholder />
+                    </RequireAuth>
+                  )}
+                />
+                <Route
+                  path="/admin/courses/import"
+                  element={(
+                    <RequireAuth mode="admin">
+                      <AdminCourseImportPlaceholder />
+                    </RequireAuth>
+                  )}
+                />
+                <Route
+                  path="/admin/courses/bulk"
+                  element={(
+                    <RequireAuth mode="admin">
+                      <AdminCourseBulkPlaceholder />
+                    </RequireAuth>
+                  )}
+                />
+                <Route
+                  path="/admin/courses/:courseId/details"
+                  element={(
+                    <RequireAuth mode="admin">
+                      <AdminCourseDetail />
+                    </RequireAuth>
+                  )}
+                />
+                <Route
+                  path="/admin/courses/:courseId/assign"
+                  element={(
+                    <RequireAuth mode="admin">
+                      <AdminCourseAssign />
+                    </RequireAuth>
+                  )}
+                />
+                <Route
+                  path="/admin/courses/:courseId/settings"
+                  element={(
+                    <RequireAuth mode="admin">
+                      <AdminCourseSettings />
                     </RequireAuth>
                   )}
                 />

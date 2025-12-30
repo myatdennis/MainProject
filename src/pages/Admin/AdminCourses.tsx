@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { courseStore } from '../../store/courseStore';
 import { Course } from '../../types/courseTypes';
+import type { CourseAssignment } from '../../types/assignment';
 import { syncCourseToDatabase, CourseValidationError } from '../../dal/adminCourses';
 import { 
   BookOpen, 
@@ -21,7 +22,8 @@ import {
   Settings,
   Upload,
   Download,
-  UserPlus
+  UserPlus,
+  Archive
 } from 'lucide-react';
 import LoadingButton from '../../components/LoadingButton';
 import ConfirmationModal from '../../components/ConfirmationModal';
@@ -35,6 +37,7 @@ import Button from '../../components/ui/Button';
 import Input from '../../components/ui/Input';
 
 import { LazyImage } from '../../components/PerformanceComponents';
+import CourseAssignmentModal from '../../components/CourseAssignmentModal';
 
 
 const AdminCourses = () => {
@@ -50,6 +53,10 @@ const AdminCourses = () => {
   const [loading, setLoading] = useState(false);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [searchParams, setSearchParams] = useSearchParams();
+  const [courseForAssignment, setCourseForAssignment] = useState<Course | null>(null);
+  const [showAssignmentModal, setShowAssignmentModal] = useState(false);
+  const [courseToArchive, setCourseToArchive] = useState<Course | null>(null);
+  const [showArchiveModal, setShowArchiveModal] = useState(false);
 
   const navigate = useNavigate();
 
@@ -78,7 +85,10 @@ const AdminCourses = () => {
     };
   }, []);
 
-  const persistCourse = async (inputCourse: Course, statusOverride?: 'draft' | 'published') => {
+  const persistCourse = async (
+    inputCourse: Course,
+    statusOverride?: 'draft' | 'published' | 'archived'
+  ) => {
     const prepared: Course = {
       ...inputCourse,
       status: statusOverride ?? inputCourse.status ?? 'draft',
@@ -133,7 +143,52 @@ const AdminCourses = () => {
   };
 
   const handleAssignCourse = (course: Course) => {
-    navigate(`/admin/courses/${course.id}/assign`);
+    setCourseForAssignment(course);
+    setShowAssignmentModal(true);
+  };
+
+  const handleAssignmentComplete = (assignments?: CourseAssignment[]) => {
+    setShowAssignmentModal(false);
+    setCourseForAssignment(null);
+    refresh();
+    const count = assignments?.length ?? 0;
+    const message = count > 0
+      ? `Assignments sent to ${count} learner${count === 1 ? '' : 's'}.`
+      : 'Assignments queued successfully.';
+    showToast(`${message} Learners will be notified via Huddle.`, 'success');
+  };
+
+  const openArchiveModal = (course: Course) => {
+    setCourseToArchive(course);
+    setShowArchiveModal(true);
+  };
+
+  const confirmArchiveCourse = async () => {
+    if (!courseToArchive) return;
+    setLoading(true);
+    try {
+      const archived = await persistCourse(
+        {
+          ...courseToArchive,
+          status: 'archived',
+        },
+        'archived'
+      );
+      syncService.logEvent({
+        type: 'course_updated',
+        data: archived,
+        timestamp: Date.now(),
+      });
+      showToast('Course archived successfully.', 'success');
+      refresh();
+    } catch (error) {
+      console.error('[AdminCourses] Failed to archive course:', error);
+      showToast('Failed to archive course', 'error');
+    } finally {
+      setLoading(false);
+      setShowArchiveModal(false);
+      setCourseToArchive(null);
+    }
   };
 
   const handleCreateCourseSave = (course: Course) => {
@@ -328,9 +383,10 @@ const AdminCourses = () => {
       document.body.appendChild(dlAnchor);
       dlAnchor.click();
       dlAnchor.remove();
+      showToast('Courses exported successfully.', 'success');
     } catch (err) {
       console.warn('Export failed', err);
-      alert('Failed to export courses');
+      showToast('Failed to export courses.', 'error');
     }
   };
 
@@ -586,6 +642,13 @@ const AdminCourses = () => {
                   >
                     <UserPlus className="h-4 w-4" />
                   </button>
+                  <button
+                    onClick={() => openArchiveModal(course)}
+                    className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-50 rounded-lg"
+                    title="Archive course"
+                  >
+                    <Archive className="h-4 w-4" />
+                  </button>
                   
                   <button onClick={() => navigate(`/admin/reports?courseId=${course.id}`)} className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-50 rounded-lg" title="Analytics">
                     <BarChart3 className="h-4 w-4" />
@@ -731,6 +794,13 @@ const AdminCourses = () => {
                       <button onClick={() => void duplicateCourse(course.id)} className="p-1 text-gray-600 hover:text-gray-800" title="Duplicate">
                         <Copy className="h-4 w-4" />
                       </button>
+                      <button
+                        onClick={() => openArchiveModal(course)}
+                        className="p-1 text-gray-600 hover:text-gray-800"
+                        title="Archive course"
+                      >
+                        <Archive className="h-4 w-4" />
+                      </button>
                       <button 
                         onClick={() => navigate(`/admin/courses/${course.id}/settings`)}
                         className="p-1 text-gray-600 hover:text-gray-800" 
@@ -804,6 +874,35 @@ const AdminCourses = () => {
         onClose={closeCreateModal}
         onSave={handleCreateCourseSave}
         mode="create"
+      />
+
+      <CourseAssignmentModal
+        isOpen={showAssignmentModal}
+        onClose={() => {
+          setShowAssignmentModal(false);
+          setCourseForAssignment(null);
+        }}
+        selectedUsers={[]}
+        course={courseForAssignment ? {
+          id: courseForAssignment.id,
+          title: courseForAssignment.title,
+          duration: courseForAssignment.duration,
+        } : undefined}
+        onAssignComplete={handleAssignmentComplete}
+      />
+
+      <ConfirmationModal
+        isOpen={showArchiveModal}
+        onClose={() => {
+          setShowArchiveModal(false);
+          setCourseToArchive(null);
+        }}
+        onConfirm={confirmArchiveCourse}
+        title="Archive course"
+        message="Archiving hides this course from learners but keeps analytics intact. You can restore it at any time by switching the status back to Draft or Published."
+        confirmText="Archive course"
+        type="warning"
+        loading={loading}
       />
 
     </div>

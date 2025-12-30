@@ -39,6 +39,9 @@ jobs:
       - name: Lint
         run: npm run -s lint
 
+      - name: Design consistency
+        run: npm run -s check:design
+
       - name: Unit tests
         run: npm run -s test:run
 

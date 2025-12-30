@@ -27,10 +27,15 @@ import LoadingButton from '../../components/LoadingButton';
 import Modal from '../../components/Modal';
 import { useToast } from '../../context/ToastContext';
 import { courseStore } from '../../store/courseStore';
-import { formatMinutes, slugify, parseDurationToMinutes } from '../../utils/courseNormalization';
+import { slugify } from '../../utils/courseNormalization';
 import { clearCourseCache } from '../../dal/courseData';
 import { syncCourseToDatabase, CourseValidationError } from '../../dal/adminCourses';
 import { computeCourseDiff } from '../../utils/courseDiff';
+import {
+  convertModulesToChapters,
+  buildModulesFromChapters,
+  recalculateCourseDurations,
+} from '../../utils/courseStructure';
 
 type LessonUpdate = Partial<Lesson> & {
   content?: Partial<LessonContent>;
@@ -96,49 +101,6 @@ const queueRemoteDraftSync = (course: Course) => {
   remoteDraftTimers.set(course.id, timeoutId);
 };
 
-const convertModulesToChapters = (course: Course): Course => {
-  if (course.chapters && course.chapters.length > 0) {
-    return recalculateCourseDurations(course);
-  }
-
-  const modules = course.modules || [];
-  const chapters: Chapter[] = modules.map((module, moduleIndex) => {
-    const lessons = (module.lessons || []).map((lesson, lessonIndex) => {
-      const estimated =
-        lesson.estimatedDuration ??
-        parseDurationToMinutes(lesson.duration) ??
-        (lesson.content?.videoDuration ? Math.round(lesson.content.videoDuration / 60) : 0);
-
-      return {
-        ...lesson,
-        chapterId: module.id,
-        order: lesson.order ?? lessonIndex + 1,
-        estimatedDuration: Number.isFinite(estimated) ? estimated : 0,
-        content: {
-          ...(lesson.content || {}),
-        },
-      };
-    });
-
-    const estimatedDuration = lessons.reduce((total, l) => total + (l.estimatedDuration || 0), 0);
-
-    return {
-      id: module.id,
-      courseId: course.id,
-      title: module.title,
-      description: module.description,
-      order: module.order ?? moduleIndex + 1,
-      estimatedDuration,
-      lessons,
-    };
-  });
-
-  return recalculateCourseDurations({
-    ...course,
-    chapters,
-  });
-};
-
 const mergeDraft = (base: Course, draft: Course): Course => {
   if (base.id !== draft.id) {
     return base;
@@ -152,84 +114,6 @@ const mergeDraft = (base: Course, draft: Course): Course => {
   };
 
   return recalculateCourseDurations(merged);
-};
-
-const recalculateCourseDurations = (course: Course): Course => {
-  const chapters = (course.chapters || []).map((chapter, chapterIndex) => {
-    const lessons = (chapter.lessons || []).map((lesson, lessonIndex) => ({
-      ...lesson,
-      order: lesson.order ?? lessonIndex + 1,
-      estimatedDuration: lesson.estimatedDuration ?? 0,
-      content: {
-        ...(lesson.content || {}),
-      },
-    }));
-
-    const estimatedDuration = lessons.reduce((sum, lesson) => {
-      return sum + (lesson.estimatedDuration || 0);
-    }, 0);
-
-    return {
-      ...chapter,
-      order: chapter.order ?? chapterIndex + 1,
-      lessons,
-      estimatedDuration,
-    };
-  });
-
-  const totalMinutes = chapters.reduce((sum, chapter) => {
-    return sum + (chapter.estimatedDuration || 0);
-  }, 0);
-
-  return {
-    ...course,
-    chapters,
-    estimatedDuration: totalMinutes,
-    duration: formatMinutes(totalMinutes) || `${totalMinutes} min`,
-  };
-};
-
-const buildModulesFromChapters = (course: Course): Course => {
-  const chapters = course.chapters || [];
-  const modules = chapters.map((chapter, chapterIndex) => {
-    const lessons = (chapter.lessons || []).map((lesson, lessonIndex) => {
-      const estimated = lesson.estimatedDuration ?? 0;
-      return {
-        ...lesson,
-        order: lesson.order ?? lessonIndex + 1,
-        chapterId: chapter.id,
-        duration: lesson.duration || formatMinutes(estimated) || `${estimated} min`,
-        content: {
-          ...(lesson.content || {}),
-        },
-      };
-    });
-
-    const chapterMinutes = chapter.estimatedDuration ?? lessons.reduce((sum, item) => {
-      return sum + (item.estimatedDuration || 0);
-    }, 0);
-
-    return {
-      id: chapter.id,
-      title: chapter.title,
-      description: chapter.description,
-      order: chapter.order ?? chapterIndex + 1,
-      lessons,
-      duration: formatMinutes(chapterMinutes) || `${chapterMinutes} min`,
-    };
-  });
-
-  const totalMinutes = chapters.reduce((sum, chapter) => sum + (chapter.estimatedDuration || 0), 0);
-  const totalLessons = modules.reduce((sum, module) => sum + (module.lessons?.length || 0), 0);
-
-  return {
-    ...course,
-    modules,
-    chapters,
-    estimatedDuration: totalMinutes,
-    duration: formatMinutes(totalMinutes) || `${totalMinutes} min`,
-    lessons: totalLessons,
-  };
 };
 
 const validateCourse = (course: Course): string[] => {
@@ -283,48 +167,62 @@ const AdvancedCourseBuilder: React.FC = () => {
   const lastPersistedRef = useRef<Course | null>(null);
 
   useEffect(() => {
-    if (isEditing && courseId) {
-      const existingCourse = courseManagementStore.getCourse(courseId);
-      if (existingCourse) {
-        const normalized = recalculateCourseDurations(existingCourse);
-        const draft = readDraftCourse(courseId);
-        setCourse(draft ? mergeDraft(normalized, draft) : normalized);
-        return;
-      }
+    let isMounted = true;
+    const initialize = async () => {
+      await courseManagementStore.ready();
+      if (!isMounted) return;
 
-      const resolved =
-        typeof courseStore.resolveCourse === 'function'
-          ? courseStore.resolveCourse(courseId) || courseStore.getCourse(courseId)
-          : courseStore.getCourse(courseId);
+      if (isEditing && courseId) {
+        const existingCourse = courseManagementStore.getCourse(courseId);
+        if (existingCourse) {
+          const normalized = recalculateCourseDurations(existingCourse);
+          const draft = readDraftCourse(courseId);
+          if (!isMounted) return;
+          setCourse(draft ? mergeDraft(normalized, draft) : normalized);
+          return;
+        }
 
-      if (resolved) {
-        const editableCourse = convertModulesToChapters(resolved);
-        courseManagementStore.setCourse(editableCourse);
-        const draft = readDraftCourse(resolved.id);
-        const initialCourse = draft ? mergeDraft(editableCourse, draft) : editableCourse;
-        setCourse(initialCourse);
-        lastPersistedRef.current = initialCourse;
+        const resolved =
+          typeof courseStore.resolveCourse === 'function'
+            ? courseStore.resolveCourse(courseId) || courseStore.getCourse(courseId)
+            : courseStore.getCourse(courseId);
+
+        if (resolved) {
+          const editableCourse = convertModulesToChapters(resolved);
+          courseManagementStore.setCourse(editableCourse);
+          const draft = readDraftCourse(resolved.id);
+          const initialCourse = draft ? mergeDraft(editableCourse, draft) : editableCourse;
+          if (!isMounted) return;
+          setCourse(initialCourse);
+          lastPersistedRef.current = initialCourse;
+        } else {
+          showToast('We could not find that course. Redirecting back to the course list.', 'error');
+          navigate('/admin/courses');
+        }
       } else {
-        showToast('We could not find that course. Redirecting back to the course list.', 'error');
-        navigate('/admin/courses');
+        const newCourse = courseManagementStore.createCourse({
+          title: 'New Course',
+          description: 'Add a compelling course description to help learners prepare.',
+        });
+        const normalized = recalculateCourseDurations(newCourse);
+        const initialDraft = buildModulesFromChapters({
+          ...normalized,
+          status: 'draft',
+          updatedAt: new Date().toISOString(),
+        });
+        courseManagementStore.setCourse(initialDraft);
+        if (!isMounted) return;
+        setCourse(initialDraft);
+        lastPersistedRef.current = initialDraft;
+        writeDraftCourse(initialDraft.id, initialDraft);
+        queueRemoteDraftSync(initialDraft);
       }
-    } else {
-      const newCourse = courseManagementStore.createCourse({
-        title: 'New Course',
-        description: 'Add a compelling course description to help learners prepare.',
-      });
-      const normalized = recalculateCourseDurations(newCourse);
-      const initialDraft = buildModulesFromChapters({
-        ...normalized,
-        status: 'draft',
-        updatedAt: new Date().toISOString(),
-      });
-      courseManagementStore.setCourse(initialDraft);
-      setCourse(initialDraft);
-      lastPersistedRef.current = initialDraft;
-      writeDraftCourse(initialDraft.id, initialDraft);
-      queueRemoteDraftSync(initialDraft);
-    }
+    };
+
+    void initialize();
+    return () => {
+      isMounted = false;
+    };
   }, [courseId, isEditing, navigate, showToast]);
 
   useEffect(() => {

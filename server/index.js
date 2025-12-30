@@ -22,6 +22,13 @@ import {
   validateOr400,
   courseUpsertSchema,
 } from './validators.js';
+import { logger } from './lib/logger.js';
+import {
+  recordCourseProgress,
+  recordLessonProgress,
+  recordSupabaseHealth,
+  getMetricsSnapshot,
+} from './diagnostics/metrics.js';
 
 // Import auth routes and middleware
 import authRoutes from './routes/auth.js';
@@ -34,6 +41,14 @@ import adminUsersRouter from './routes/admin-users.js';
 import adminCoursesRoutes from './routes/admin-courses.js';
 import mfaRoutes from './routes/mfa.js';
 import { attachRequestId, apiErrorHandler, createHttpError, withHttpError } from './middleware/apiErrorHandler.js';
+import {
+  NODE_ENV,
+  isProduction,
+  DEV_FALLBACK,
+  E2E_TEST_MODE,
+  demoLoginEnabled,
+  describeDemoMode,
+} from './config/runtimeFlags.js';
 
 // Resolve __dirname in ESM
 const __filename = fileURLToPath(import.meta.url);
@@ -44,12 +59,8 @@ const STORAGE_FILE = path.join(__dirname, 'demo-data.json');
 // Safety guard to avoid loading extremely large demo files that could trigger OOM (exit 137)
 const MAX_DEMO_FILE_BYTES = parseInt(process.env.DEMO_DATA_MAX_BYTES || '', 10) || 25 * 1024 * 1024; // 25MB default
 
-const NODE_ENV = (process.env.NODE_ENV || '').toLowerCase();
-const isProduction = NODE_ENV === 'production';
-const allowDemoRaw = (process.env.ALLOW_DEMO ?? process.env.DEMO_MODE ?? process.env.DEV_FALLBACK ?? '').toString().trim().toLowerCase();
-const truthyValues = new Set(['true', '1', 'yes', 'y', 'on']);
-const DEV_FALLBACK = !isProduction && truthyValues.has(allowDemoRaw);
-const E2E_TEST_MODE = process.env.E2E_TEST_MODE === 'true';
+const initialDemoModeMetadata = describeDemoMode();
+logger.info('demo_mode_configuration', { metadata: initialDemoModeMetadata });
 
 const DOCUMENTS_BUCKET = process.env.SUPABASE_DOCUMENTS_BUCKET || 'documents';
 const DOCUMENT_UPLOAD_MAX_BYTES = Number(process.env.DOCUMENT_UPLOAD_MAX_BYTES || 25 * 1024 * 1024);
@@ -71,7 +82,7 @@ function loadPersistedData() {
       try {
         const stat = fs.statSync(STORAGE_FILE);
         if (stat.size > MAX_DEMO_FILE_BYTES) {
-          console.warn(`demo-data.json is too large (${(stat.size/1e6).toFixed(1)}MB). Skipping load to prevent high memory usage. Set DEMO_DATA_MAX_BYTES to adjust.`);
+          logger.warn('demo_data_file_too_large', { bytes: stat.size, maxBytes: MAX_DEMO_FILE_BYTES });
           return { courses: [], surveys: [], surveyAssignments: [] };
         }
       } catch {}
@@ -79,7 +90,7 @@ function loadPersistedData() {
       return JSON.parse(data);
     }
   } catch (error) {
-    console.error('Error loading persisted data:', error);
+    logger.error('demo_data_load_failed', { error: error instanceof Error ? error.message : error });
   }
   return { courses: new Map(), modules: new Map(), lessons: new Map(), surveys: new Map(), surveyAssignments: new Map() };
 }
@@ -94,9 +105,9 @@ function savePersistedData(data) {
       surveyAssignments: Array.from((data.surveyAssignments || new Map()).entries()),
     };
     fs.writeFileSync(STORAGE_FILE, JSON.stringify(serializable, null, 2), 'utf8');
-    console.log(`📁 Persisted ${data.courses.size} course(s) to ${STORAGE_FILE}`);
+    logger.info('demo_data_persisted', { courseCount: data.courses.size, storageFile: STORAGE_FILE });
   } catch (error) {
-    console.error('Error saving persisted data:', error);
+    logger.error('demo_data_save_failed', { error: error instanceof Error ? error.message : error });
   }
 }
 
@@ -220,16 +231,18 @@ const buildHealthPayload = async () => {
   const supabaseStatus = await checkSupabaseHealth();
   const offlineQueue = getOfflineQueueHealth();
   const storage = getStorageHealth();
+  const metrics = getMetricsSnapshot({ offlineQueue, storage });
+  const demoModeMetadata = describeDemoMode();
   const supabaseDisabled = supabaseStatus.status === 'disabled' || missingSupabaseEnvVars.length > 0;
   const supabaseOk = supabaseStatus.status === 'ok';
   const offlineQueueOk = offlineQueue.status === 'ok';
   const storageOk = storage.status === 'ok' || storage.status === 'disabled';
 
   const baseHealthy = supabaseOk && offlineQueueOk && storageOk && !supabaseDisabled;
-  const demoModeHealthOverride = (!supabase || supabaseDisabled) && DEV_FALLBACK;
+  const demoModeHealthOverride = (!supabase || supabaseDisabled) && demoLoginEnabled;
   const healthy = baseHealthy || demoModeHealthOverride;
   const httpStatus = healthy ? 200 : 503;
-  const statusLabel = healthy ? 'ok' : 'degraded';
+  const statusLabel = baseHealthy ? 'ok' : demoModeHealthOverride ? 'demo-fallback' : 'degraded';
 
   return {
     httpStatus,
@@ -247,7 +260,9 @@ const buildHealthPayload = async () => {
       },
       offlineQueue,
       storage,
+      metrics,
       demoModeHealthOverride,
+      demoMode: demoModeMetadata,
     },
   };
 };
@@ -270,6 +285,18 @@ app.get('/healthz', async (req, res, next) => {
   }
 });
 
+app.get('/api/diagnostics/metrics', async (req, res, next) => {
+  try {
+    const snapshot = getMetricsSnapshot({
+      offlineQueue: getOfflineQueueHealth(),
+      storage: getStorageHealth(),
+    });
+    res.json({ data: snapshot, requestId: req.requestId });
+  } catch (error) {
+    next(withHttpError(error, 500, 'metrics_snapshot_failed'));
+  }
+});
+
 // When running behind a reverse proxy (Netlify, Vercel, Cloudflare, Railway),
 // Express needs to trust proxy headers so req.secure reflects X-Forwarded-Proto.
 // Enabling trust proxy ensures middleware and HSTS headers can operate correctly.
@@ -277,7 +304,7 @@ if (isProduction) {
   app.set('trust proxy', 1);
 }
 const PORT = process.env.PORT || 8888;
-console.log(`[server] Using port ${PORT} (override via PORT env)`);
+logger.info('server_port', { port: PORT });
 
 app.use(express.json({ limit: '10mb' }));
 
@@ -293,11 +320,11 @@ app.get('/api/auth/csrf', getCSRFToken);
 // Dev fallback: allow in-memory server behavior when Supabase isn't configured.
 // Enabled by default in non-production unless DEV_FALLBACK=false is set.
 
-console.log('[Diagnostics] CORS_ALLOWED_ORIGINS:', allowedOrigins.join(',') || '(none)');
-console.log('[Diagnostics] COOKIE_DOMAIN:', process.env.COOKIE_DOMAIN || '(not set)');
-console.log('[Diagnostics] COOKIE_SAMESITE:', process.env.COOKIE_SAMESITE || '(not set)');
-console.log('[Diagnostics] COOKIE_DOMAIN:', process.env.COOKIE_DOMAIN || '(not set)');
-console.log('[Diagnostics] COOKIE_SAMESITE:', process.env.COOKIE_SAMESITE || '(not set)');
+logger.info('diagnostics_cookies_and_cors', {
+  allowedOrigins,
+  cookieDomain: process.env.COOKIE_DOMAIN || null,
+  cookieSameSite: process.env.COOKIE_SAMESITE || null,
+});
 
 const isAllowedOrigin = (origin) => {
   if (!origin) return !isProduction;
@@ -314,7 +341,13 @@ app.use((req, res, next) => {
   res.on('finish', () => {
     const ms = Date.now() - start;
     const requestId = req.requestId || '-';
-    console.log(`${req.method} ${req.path} ${res.statusCode} - ${ms}ms [${requestId}]`);
+    logger.info('http_request_completed', {
+      method: req.method,
+      path: req.originalUrl || req.path,
+      statusCode: res.statusCode,
+      durationMs: ms,
+      requestId,
+    });
   });
   next();
 });
@@ -418,8 +451,10 @@ if (!supabaseUrl) missingSupabaseEnvVars.push('SUPABASE_URL or VITE_SUPABASE_URL
 if (!supabaseServiceRoleKey) missingSupabaseEnvVars.push('SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SERVICE_KEY');
 
 // Log Supabase configuration for diagnostics
-console.log('[Diagnostics] SUPABASE_URL:', supabaseUrl);
-console.log('[Diagnostics] SUPABASE_SERVICE_ROLE_KEY:', supabaseServiceRoleKey ? 'Present' : 'Not Set');
+logger.info('diagnostics_supabase_env', {
+  supabaseUrl: supabaseUrl || null,
+  hasServiceRoleKey: Boolean(supabaseServiceRoleKey),
+});
 
 let supabase = supabaseUrl && supabaseServiceRoleKey ? createClient(supabaseUrl, supabaseServiceRoleKey) : null;
 if (E2E_TEST_MODE) {
@@ -429,7 +464,10 @@ if (E2E_TEST_MODE) {
 let loggedMissingSupabaseConfig = false;
 
 const checkSupabaseHealth = async () => {
-  if (!supabase) return { status: 'disabled' };
+  if (!supabase) {
+    recordSupabaseHealth('disabled');
+    return { status: 'disabled' };
+  }
   const start = Date.now();
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 2000);
@@ -440,10 +478,15 @@ const checkSupabaseHealth = async () => {
       .limit(1)
       .abortSignal(controller.signal);
     if (error) throw error;
-    return { status: 'ok', latencyMs: Date.now() - start };
+    const latencyMs = Date.now() - start;
+    recordSupabaseHealth('ok', latencyMs);
+    return { status: 'ok', latencyMs };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown Supabase error';
-    return { status: 'error', latencyMs: Date.now() - start, message };
+    const latencyMs = Date.now() - start;
+    recordSupabaseHealth('error', latencyMs, message);
+    logger.warn('supabase_health_failed', { message, latencyMs });
+    return { status: 'error', latencyMs, message };
   } finally {
     clearTimeout(timeout);
   }
@@ -3654,6 +3697,7 @@ app.post('/api/client/progress/course', async (req, res) => {
       return;
     }
 
+    const opStart = Date.now();
     try {
       if (clientEventId) {
         if (e2eStore.progressEvents.has(clientEventId)) {
@@ -3683,12 +3727,28 @@ app.post('/api/client/progress/course', async (req, res) => {
         broadcastToTopic(`progress:course:${course_id}`, payload);
         broadcastToTopic('progress:all', payload);
       } catch (bErr) {
-        console.warn('E2E: Failed to broadcast course progress', bErr);
+        logger.warn('progress_broadcast_failed', {
+          mode: 'demo-store',
+          scope: 'course',
+          error: bErr instanceof Error ? bErr.message : bErr,
+        });
       }
 
+      recordCourseProgress('demo-store', Date.now() - opStart, {
+        status: 'success',
+        userId: user_id,
+        courseId: course_id,
+        percent: record.percent,
+      });
       res.json({ data: record });
     } catch (error) {
-      console.error('E2E: Failed to upsert course progress:', error);
+      recordCourseProgress('demo-store', Date.now() - opStart, {
+        status: 'error',
+        userId: user_id,
+        courseId: course_id,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      logger.error('course_progress_e2e_failed', { error: error instanceof Error ? error.message : error });
       res.status(500).json({ error: 'Unable to save course progress' });
     }
     return;
@@ -3753,12 +3813,28 @@ app.post('/api/client/progress/course', async (req, res) => {
       if (courseId) broadcastToTopic(`progress:course:${courseId}`, payload);
       broadcastToTopic('progress:all', payload);
     } catch (bErr) {
-      console.warn('Failed to broadcast course progress', bErr);
+      logger.warn('progress_broadcast_failed', {
+        scope: 'course',
+        mode: 'supabase',
+        error: bErr instanceof Error ? bErr.message : bErr,
+      });
     }
+    recordCourseProgress('supabase', Date.now() - opStart, {
+      status: 'success',
+      userId: user_id,
+      courseId: course_id,
+      percent: data?.percent ?? percent ?? 0,
+    });
 
     res.json({ data });
   } catch (error) {
-    console.error('Failed to upsert course progress:', error);
+    recordCourseProgress('supabase', Date.now() - opStart, {
+      status: 'error',
+      userId: user_id,
+      courseId: course_id,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    logger.error('course_progress_supabase_failed', { error: error instanceof Error ? error.message : error });
     res.status(500).json({ error: 'Unable to save course progress' });
   }
 });
@@ -3779,6 +3855,7 @@ app.post('/api/client/progress/lesson', async (req, res) => {
       return;
     }
 
+    const opStart = Date.now();
     try {
       if (clientEventId) {
         if (e2eStore.progressEvents.has(clientEventId)) {
@@ -3809,12 +3886,28 @@ app.post('/api/client/progress/lesson', async (req, res) => {
         broadcastToTopic(`progress:lesson:${lesson_id}`, payload);
         broadcastToTopic('progress:all', payload);
       } catch (bErr) {
-        console.warn('E2E: Failed to broadcast lesson progress', bErr);
+        logger.warn('progress_broadcast_failed', {
+          mode: 'demo-store',
+          scope: 'lesson',
+          error: bErr instanceof Error ? bErr.message : bErr,
+        });
       }
 
+      recordLessonProgress('demo-store', Date.now() - opStart, {
+        status: 'success',
+        userId: user_id,
+        lessonId: lesson_id,
+        percent: record.percent,
+      });
       res.json({ data: record });
     } catch (error) {
-      console.error('E2E: Failed to upsert lesson progress:', error);
+      recordLessonProgress('demo-store', Date.now() - opStart, {
+        status: 'error',
+        userId: user_id,
+        lessonId: lesson_id,
+        message: error instanceof Error ? error.message : String(error),
+      });
+      logger.error('lesson_progress_e2e_failed', { error: error instanceof Error ? error.message : error });
       res.status(500).json({ error: 'Unable to save lesson progress' });
     }
     return;
@@ -3876,12 +3969,28 @@ app.post('/api/client/progress/lesson', async (req, res) => {
       if (lessonId) broadcastToTopic(`progress:lesson:${lessonId}`, payload);
       broadcastToTopic('progress:all', payload);
     } catch (bErr) {
-      console.warn('Failed to broadcast lesson progress', bErr);
+      logger.warn('progress_broadcast_failed', {
+        scope: 'lesson',
+        mode: 'supabase',
+        error: bErr instanceof Error ? bErr.message : bErr,
+      });
     }
+    recordLessonProgress('supabase', Date.now() - opStart, {
+      status: 'success',
+      userId: user_id,
+      lessonId: lesson_id,
+      percent: data?.percent ?? percent ?? 0,
+    });
 
     res.json({ data });
   } catch (error) {
-    console.error('Failed to upsert lesson progress:', error);
+    recordLessonProgress('supabase', Date.now() - opStart, {
+      status: 'error',
+      userId: user_id,
+      lessonId: lesson_id,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    logger.error('lesson_progress_supabase_failed', { error: error instanceof Error ? error.message : error });
     res.status(500).json({ error: 'Unable to save lesson progress' });
   }
 });

@@ -14,10 +14,23 @@ export default {
         slate: '#3F3F3F', // Slate text
         mist: '#E4E7EB', // Mist border
         cloud: '#F4F5F7', // Soft surface
-  ink: '#222222', // Ink / Headlines
-  navy: '#1E1E22', // Dark Navy
-  hudbg: '#FFFDF9', // Soft site background
+        ink: '#222222', // Ink / Headlines
+        navy: '#1E1E22', // Dark Navy
+        hudbg: '#FFFDF9', // Soft site background
         gold: '#F6C87B', // Accent gold
+        mutedgrey: '#9CA3AF',
+        gray: {
+          50: '#F8F9FB',
+          100: '#F4F5F7',
+          200: '#E4E7EB',
+          300: '#C8CDD5',
+          400: '#A0A6B1',
+          500: '#7E8694',
+          600: '#545454',
+          700: '#3A3D45',
+          800: '#1E1E22',
+          900: '#0E1016',
+        },
         blue: {
           50: '#E7F1F8',
           100: '#CDE3F0',
@@ -66,6 +79,18 @@ export default {
           700: '#AF570C',
           800: '#7E3C07',
           900: '#4C2103',
+        },
+        amber: {
+          50: '#FFF7EC',
+          100: '#FFEFD6',
+          200: '#FFD9A8',
+          300: '#FFC070',
+          400: '#FFAA3F',
+          500: '#de7b12',
+          600: '#C7670A',
+          700: '#A25107',
+          800: '#723604',
+          900: '#432002',
         },
       },
       fontFamily: {

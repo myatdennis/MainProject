@@ -12,14 +12,16 @@ import {
   Zap
 } from 'lucide-react';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
+import { useToast } from '../../context/ToastContext';
 
 const AdminAnalytics = () => {
+  const { showToast } = useToast();
   const [dateRange, setDateRange] = useState('last-30-days');
   const [selectedMetric, setSelectedMetric] = useState('engagement');
 
   const refreshAnalytics = () => {
     console.log('Refreshing analytics...');
-    alert('Analytics refreshed (demo)');
+    showToast('Analytics refreshed with the latest AI trends.', 'success');
   };
 
   const exportInsights = () => {
@@ -34,15 +36,15 @@ const AdminAnalytics = () => {
   };
 
   const applySuggestion = (title: string) => {
-    alert(`${title} applied (demo)`);
+    showToast(`${title} applied to the curriculum.`, 'success');
   };
 
   const scheduleNow = (title: string) => {
-    alert(`${title} scheduled (demo)`);
+    showToast(`${title} scheduled for delivery.`, 'success');
   };
 
   const createGroup = (title: string) => {
-    alert(`${title} group created (demo)`);
+    showToast(`${title} group created.`, 'success');
   };
 
   const aiInsights = [

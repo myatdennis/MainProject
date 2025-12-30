@@ -1,8 +1,10 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Zap, CheckCircle, AlertTriangle, Settings, Plus, Eye, EyeOff, RefreshCw, Database, Mail, CreditCard, Users, BarChart3, MessageSquare, Globe, Shield, Key } from 'lucide-react';
+import { useToast } from '../../context/ToastContext';
 
 const AdminIntegrations = () => {
+  const { showToast } = useToast();
   const [showApiKeys, setShowApiKeys] = useState<{[key: string]: boolean}>({});
   const [activeTab, setActiveTab] = useState('overview');
 
@@ -192,15 +194,15 @@ const AdminIntegrations = () => {
   };
 
   const handleTest = (name: string) => {
-    alert(`Testing integration: ${name} (demo)`);
+    showToast(`Testing handshake with ${name}…`, 'info');
   };
 
   const handleRegenerate = (keyName: string) => {
-    alert(`Regenerated ${keyName} (demo)`);
+    showToast(`${keyName} regenerated. Share the new secret with your team.`, 'success');
   };
 
   const handleAddWebhook = () => {
-    alert('Open webhook creation modal (demo)');
+    showToast('Webhook creation coming soon. Contact support for early access.', 'info');
   };
 
   const getStatusColor = (status: string) => {

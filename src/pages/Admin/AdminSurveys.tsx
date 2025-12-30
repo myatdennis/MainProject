@@ -25,6 +25,7 @@ import {
   AlertTriangle
 } from 'lucide-react';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
+import { useToast } from '../../context/ToastContext';
 import EmptyState from '../../components/ui/EmptyState';
 import SurveyQueueStatus from '../../components/Survey/SurveyQueueStatus';
 import type { Survey } from '../../types/survey';
@@ -54,6 +55,7 @@ type AdminSurveyCard = {
 };
 
 const AdminSurveys = () => {
+  const { showToast } = useToast();
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [filterType, setFilterType] = useState('all');
@@ -195,7 +197,7 @@ const AdminSurveys = () => {
 
   const handleBulkActions = () => {
     if (selectedSurveys.length === 0) {
-      alert('Select at least one survey to perform bulk actions');
+      showToast('Select at least one survey to perform bulk actions.', 'error');
       return;
     }
     navigate(`/admin/surveys/bulk?ids=${selectedSurveys.join(',')}`);

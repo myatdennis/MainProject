@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useRoutePrefetch } from '../../hooks/useRoutePrefetch';
-import { ArrowUpRight, BookOpen, Clock, Users, Award } from 'lucide-react';
+import { ArrowUpRight, BookOpen, Clock, Users, Award, Inbox, Sparkles } from 'lucide-react';
 import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
@@ -18,14 +18,14 @@ import {
 import { getPreferredLessonId, getFirstLessonId } from '../../utils/courseNavigation';
 import { syncService } from '../../dal/sync';
 import type { CourseAssignment } from '../../types/assignment';
+import { isSupabaseOperational, subscribeRuntimeStatus } from '../../state/runtimeStatus';
 
 const ClientDashboard = () => {
   // Prefetch critical user flows for fast navigation
   useRoutePrefetch([
     '/client/courses',
-    '/lms/dashboard',
     '/client/profile',
-    '/client/lessons',
+    '/lms/dashboard',
   ]);
   const navigate = useNavigate();
   const { user } = useUserProfile();
@@ -43,10 +43,12 @@ const ClientDashboard = () => {
     return 'local-user';
   }, [user]);
   const [assignments, setAssignments] = useState<CourseAssignment[]>([]);
+  const [assignmentsLoading, setAssignmentsLoading] = useState(true);
   const [progressRefreshToken, setProgressRefreshToken] = useState(0);
 
   useEffect(() => {
     let isMounted = true;
+    let pollHandle: number | null = null;
 
     const refreshAssignments = async () => {
       try {
@@ -56,10 +58,37 @@ const ClientDashboard = () => {
         }
       } catch (error) {
         console.error('Failed to load assignments:', error);
+      } finally {
+        if (isMounted) {
+          setAssignmentsLoading(false);
+        }
       }
     };
 
+    const ensurePolling = (shouldPoll: boolean) => {
+      if (shouldPoll && pollHandle === null) {
+        pollHandle = window.setInterval(() => {
+          void refreshAssignments();
+        }, 2500);
+      } else if (!shouldPoll && pollHandle !== null) {
+        window.clearInterval(pollHandle);
+        pollHandle = null;
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (!document.hidden) {
+        void refreshAssignments();
+      }
+    };
+
+    setAssignmentsLoading(true);
     void refreshAssignments();
+    ensurePolling(!isSupabaseOperational());
+    const runtimeUnsub = subscribeRuntimeStatus((status) => {
+      ensurePolling(!(status.supabaseConfigured && status.supabaseHealthy));
+    });
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     const unsubscribeCreate = syncService.subscribe('assignment_created', () => {
       void refreshAssignments();
@@ -73,6 +102,12 @@ const ClientDashboard = () => {
 
     return () => {
       isMounted = false;
+      if (pollHandle !== null) {
+        window.clearInterval(pollHandle);
+        pollHandle = null;
+      }
+  runtimeUnsub?.();
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       unsubscribeCreate?.();
       unsubscribeUpdate?.();
       unsubscribeDelete?.();
@@ -150,7 +185,8 @@ const ClientDashboard = () => {
       <Card tone="gradient" withBorder={false} className="overflow-hidden">
         <div className="relative z-10 flex flex-col gap-4 text-charcoal md:flex-row md:items-center md:justify-between">
           <div>
-            <Badge tone="info" className="bg-white/80 text-skyblue">
+            <Badge tone="info" className="flex items-center gap-2 bg-white/80 text-skyblue">
+              <Sparkles className="h-3.5 w-3.5" />
               Client Portal
             </Badge>
             <h1 className="mt-4 font-heading text-3xl font-bold md:text-4xl">Welcome back</h1>
@@ -201,35 +237,53 @@ const ClientDashboard = () => {
             <h2 className="font-heading text-lg font-semibold text-charcoal">Assigned courses</h2>
             <Badge tone="info" className="bg-skyblue/10 text-skyblue">{assignments.length}</Badge>
           </div>
-          {assignments.length === 0 ? (
-            <p className="text-sm text-slate/70">No assignments yet. Your facilitator will share programs here soon.</p>
+          {assignmentsLoading ? (
+            <div className="flex items-center justify-center py-8 text-sm text-slate/60">
+              Checking for assignments…
+            </div>
+          ) : assignments.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-mist bg-cloud/60 p-6 text-center">
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-white text-skyblue">
+                <Inbox className="h-6 w-6" />
+              </div>
+              <h3 className="mt-4 font-heading text-base font-semibold text-charcoal">No assignments yet</h3>
+              <p className="mt-2 text-sm text-slate/70">
+                Your facilitator will share programs here soon. In the meantime, explore the catalog to keep learning.
+              </p>
+              <div className="mt-4 flex flex-wrap justify-center gap-3">
+                <Button size="sm" onClick={() => navigate('/client/courses')}>
+                  Browse courses
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => navigate('/lms/dashboard')}>
+                  Visit full LMS
+                </Button>
+              </div>
+            </div>
           ) : (
             <div className="space-y-3">
-              {courseDetails.map(({ course, assignment, progressPercent, preferredLessonId }) => {
-                return (
-                  <Card key={course.id} tone="muted" className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <p className="font-heading text-sm font-semibold text-charcoal">{course.title}</p>
-                        <p className="text-xs text-slate/70">Due {assignment?.dueDate ? new Date(assignment.dueDate).toLocaleDateString() : '—'}</p>
-                      </div>
-                      <Button
-                        size="sm"
-                        onClick={() => {
-                          if (preferredLessonId) {
-                            navigate(`/client/courses/${course.slug}/lessons/${preferredLessonId}`);
-                          } else {
-                            navigate(`/client/courses/${course.slug}`);
-                          }
-                        }}
-                      >
-                        Open
-                      </Button>
+              {courseDetails.map(({ course, assignment, progressPercent, preferredLessonId }) => (
+                <Card key={course.id} tone="muted" className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="font-heading text-sm font-semibold text-charcoal">{course.title}</p>
+                      <p className="text-xs text-slate/70">Due {assignment?.dueDate ? new Date(assignment.dueDate).toLocaleDateString() : '—'}</p>
                     </div>
-                    <ProgressBar value={progressPercent} srLabel={`${course.title} completion`} />
-                  </Card>
-                );
-              })}
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        if (preferredLessonId) {
+                          navigate(`/client/courses/${course.slug}/lessons/${preferredLessonId}`);
+                        } else {
+                          navigate(`/client/courses/${course.slug}`);
+                        }
+                      }}
+                    >
+                      {progressPercent > 0 ? 'Continue' : 'Start'}
+                    </Button>
+                  </div>
+                  <ProgressBar value={progressPercent} srLabel={`${course.title} completion`} />
+                </Card>
+              ))}
             </div>
           )}
         </Card>

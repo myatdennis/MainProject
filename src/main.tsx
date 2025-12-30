@@ -7,6 +7,7 @@ import './index.css';
 import serviceWorkerManager from './utils/ServiceWorkerManager';
 import { SecureAuthProvider } from './context/SecureAuthContext';
 import { ToastProvider } from './context/ToastContext';
+import { ensureRuntimeStatusPolling } from './state/runtimeStatus';
 
 console.log('🚀 MainProject App initializing...');
 console.log('📍 Environment:', import.meta.env.MODE);
@@ -24,9 +25,11 @@ const queryClient = new QueryClient({
 
 const rootElement = document.getElementById('root');
 
+ensureRuntimeStatusPolling();
+
 if (!rootElement) {
   console.error('❌ Root element not found! Cannot render app.');
-  document.body.innerHTML = '<div style="padding: 40px; font-family: system-ui; color: #dc3545;"><h1>Error: Root Element Missing</h1><p>The #root div is missing from index.html</p></div>';
+  document.body.innerHTML = '<div style="padding: 40px; font-family: system-ui; color: #D72638;"><h1>Error: Root Element Missing</h1><p>The #root div is missing from index.html</p></div>';
 } else {
   console.log('✅ Root element found, rendering app...');
   try {
@@ -46,7 +49,7 @@ if (!rootElement) {
     console.log('✅ App rendered successfully');
   } catch (error) {
     console.error('❌ Error rendering app:', error);
-    rootElement.innerHTML = `<div style="padding: 40px; font-family: system-ui; color: #dc3545;"><h1>Error Rendering App</h1><pre>${error}</pre></div>`;
+  rootElement.innerHTML = `<div style="padding: 40px; font-family: system-ui; color: #D72638;"><h1>Error Rendering App</h1><pre>${error}</pre></div>`;
   }
 }
 

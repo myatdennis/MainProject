@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ComponentProps } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
@@ -25,6 +25,7 @@ import FloatingProgressBar from '../../components/FloatingProgressBar';
 import { progressService } from '../../services/progressService';
 
 const supportedSidebarLessonTypes = ['video', 'interactive', 'quiz', 'resource', 'text'] as const;
+const PROGRESS_MILESTONES = [25, 50, 75, 100] as const;
 type SidebarLessonType = (typeof supportedSidebarLessonTypes)[number];
 
 const buildLegacyLearnerId = () => {
@@ -77,6 +78,7 @@ const LMSModule = () => {
   const [lessonPositions, setLessonPositions] = useState<Record<string, number>>({});
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [completionRedirected, setCompletionRedirected] = useState(false);
+  const lastCelebratedMilestoneRef = useRef(0);
   const progressAvailability = useMemo(() => progressService.getAvailability(), []);
   const progressDisabled = !progressAvailability.enabled;
   const progressDisabledMessage = progressAvailability.message;
@@ -289,6 +291,28 @@ const LMSModule = () => {
       setCurrentLessonId(requestedLessonId);
     }
   }, [requestedLessonId, courseContext?.lessons, currentLessonId]);
+
+  useEffect(() => {
+    if (!courseContext?.course) return;
+    const milestone = PROGRESS_MILESTONES.find(
+      (threshold) => courseProgressPercent >= threshold && lastCelebratedMilestoneRef.current < threshold,
+    );
+    if (!milestone) return;
+
+    lastCelebratedMilestoneRef.current = milestone;
+    const courseTitle = courseContext.course.title || 'this course';
+    const messages: Record<number, string> = {
+      25: `Nice momentum! You're 25% through ${courseTitle}.`,
+      50: `Halfway there! ${courseTitle} is 50% complete.`,
+      75: `Home stretch—75% of ${courseTitle} is wrapped.`,
+      100: `Course complete! Head to the celebration screen for ${courseTitle}.`,
+    };
+
+    toast.success(messages[milestone] ?? `Great progress—${milestone}% done!`, {
+      id: `progress-milestone-${milestone}`,
+      duration: 4000,
+    });
+  }, [courseContext?.course, courseProgressPercent]);
 
   const persistProgress = useCallback(
     (lastLessonId?: string) => {

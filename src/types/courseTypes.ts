@@ -1,3 +1,5 @@
+import type { CourseAssignmentStatus } from './assignment';
+
 // Core types for the Course Management System
 
 export interface Course {
@@ -71,6 +73,9 @@ export interface Course {
   lessons?: number;
   progress?: number;
   isPublished?: boolean; // for backwards compatibility
+  assignmentStatus?: CourseAssignmentStatus;
+  assignmentDueDate?: string | null;
+  assignmentProgress?: number;
 }
 
 export interface Module {

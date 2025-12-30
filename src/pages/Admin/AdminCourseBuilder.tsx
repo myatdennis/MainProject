@@ -35,8 +35,13 @@ import {
   ChevronDown,
   Copy,
   Loader,
-  GripVertical
+  GripVertical,
+  Undo2,
+  RefreshCcw,
+  AlertTriangle,
+  WifiOff
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import CourseAssignmentModal from '../../components/CourseAssignmentModal';
 import LivePreview from '../../components/LivePreview';
 import CoursePreviewDock from '../../components/preview/CoursePreviewDock';
@@ -46,12 +51,62 @@ import MobileModuleNavigator from '../../components/Admin/MobileModuleNavigator'
 import useIsMobile from '../../hooks/useIsMobile';
 import DragDropItem from '../../components/DragDropItem';
 import VersionControl from '../../components/VersionControl';
+import { useToast } from '../../context/ToastContext';
+import type { CourseAssignment } from '../../types/assignment';
 
 const buildUploadKey = (moduleId: string, lessonId: string) => `${moduleId}::${lessonId}`;
 const parseUploadKey = (key: string) => {
   const [moduleId, lessonId] = key.split('::');
   return { moduleId, lessonId };
 };
+
+type BuilderConfirmAction = 'discard' | 'reset' | 'delete';
+type ConfirmTone = 'info' | 'warning' | 'danger';
+
+type BannerTone = 'warning' | 'danger';
+
+interface BuilderBanner {
+  tone: BannerTone;
+  title: string;
+  description: string;
+  icon: LucideIcon;
+  actionLabel?: string;
+  onAction?: () => void;
+}
+
+interface ConfirmDialogConfig {
+  title: string;
+  description: string;
+  confirmLabel: string;
+  tone: ConfirmTone;
+}
+
+const confirmToneIconClasses: Record<ConfirmTone, string> = {
+  info: 'bg-blue-50 text-blue-600',
+  warning: 'bg-amber-50 text-amber-600',
+  danger: 'bg-red-50 text-red-600'
+};
+
+const confirmToneButtonClasses: Record<ConfirmTone, string> = {
+  info: 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500',
+  warning: 'bg-amber-600 hover:bg-amber-700 focus:ring-amber-500',
+  danger: 'bg-red-600 hover:bg-red-700 focus:ring-red-500'
+};
+
+const bannerToneClasses: Record<BannerTone, { container: string; icon: string; cta: string }> = {
+  warning: {
+    container: 'border-amber-200 bg-amber-50 text-amber-900',
+    icon: 'text-amber-600',
+    cta: 'border border-amber-200 text-amber-900 hover:bg-amber-100'
+  },
+  danger: {
+    container: 'border-red-200 bg-red-50 text-red-900',
+    icon: 'text-red-600',
+    cta: 'border border-red-200 text-red-900 hover:bg-red-100'
+  }
+};
+
+const deepClone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 
 
 
@@ -76,17 +131,30 @@ const AdminCourseBuilder = () => {
   const [uploadProgress, setUploadProgress] = useState<{ [key: string]: number }>({});
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [showAssignmentModal, setShowAssignmentModal] = useState(false);
+  const [hasPendingChanges, setHasPendingChanges] = useState(false);
   const lastPersistedRef = useRef<Course | null>(null);
   const [initializing, setInitializing] = useState(isEditing);
-  const [loadError, setLoadError] = useState<string | null>(null);
   const lastLoadedCourseIdRef = useRef<string | null>(null);
   const isMobile = useIsMobile();
+  const { showToast } = useToast();
   const [activeMobileModuleId, setActiveMobileModuleId] = useState<string | null>(null);
+  const [statusBanner, setStatusBanner] = useState<BuilderBanner | null>(null);
+  const [reloadNonce, setReloadNonce] = useState(0);
+  const requestCourseReload = useCallback(() => {
+    lastLoadedCourseIdRef.current = null;
+    setReloadNonce((prev) => prev + 1);
+  }, []);
+  const isOffline = () => typeof navigator !== 'undefined' && navigator.onLine === false;
+  const networkFallback = (message: string) =>
+    isOffline()
+      ? 'Huddle can’t reach the network right now. Your draft stays safe locally until you reconnect.'
+      : message;
 
   const [searchParams] = useSearchParams();
   const [highlightLessonId, setHighlightLessonId] = useState<string | null>(null);
   const modules = course.modules || [];
   const hasModules = modules.length > 0;
+  const canDiscardChanges = hasPendingChanges || Boolean(lastPersistedRef.current);
   const modulesToRender = isMobile && activeMobileModuleId
     ? modules.filter(module => module.id === activeMobileModuleId)
     : modules;
@@ -175,7 +243,7 @@ const AdminCourseBuilder = () => {
 
   useEffect(() => {
     if (!isEditing || !courseId) {
-      setLoadError(prev => (prev ? null : prev));
+      setStatusBanner(null);
       if (initializing) {
         setInitializing(false);
       }
@@ -193,6 +261,7 @@ const AdminCourseBuilder = () => {
 
     const hydrateCourse = async () => {
       setInitializing(true);
+      setStatusBanner(null);
       try {
         const existing = courseStore.getCourse(courseId);
         if (existing) {
@@ -200,7 +269,7 @@ const AdminCourseBuilder = () => {
           setCourse(existing);
           lastPersistedRef.current = existing;
           lastLoadedCourseIdRef.current = courseId;
-          setLoadError(null);
+          setStatusBanner(null);
           return;
         }
 
@@ -208,22 +277,40 @@ const AdminCourseBuilder = () => {
         if (cancelled) return;
 
         if (remote) {
-          setCourse(prev => {
+          setCourse((prev) => {
             const merged = mergePersistedCourse(prev, remote);
             courseStore.saveCourse(merged, { skipRemoteSync: true });
             lastPersistedRef.current = merged;
             return merged;
           });
           lastLoadedCourseIdRef.current = courseId;
-          setLoadError(null);
+          setStatusBanner(null);
         } else {
-          setLoadError('Unable to locate this course in the database. Editing local draft only.');
+          const message = 'Unable to locate this course in Supabase. We’ll keep editing your local draft.';
+          setStatusBanner({
+            tone: 'warning',
+            title: 'Course not found',
+            description: message,
+            icon: AlertTriangle,
+            actionLabel: 'Retry lookup',
+            onAction: requestCourseReload,
+          });
         }
       } catch (error) {
         if (cancelled) return;
         console.error('Failed to load course details:', error);
-        const message = error instanceof Error ? error.message : 'Unknown error';
-        setLoadError(`Failed to load course details: ${message}`);
+        const rawMessage = error instanceof Error ? error.message : 'Unknown error';
+        const descriptiveMessage = isOffline()
+          ? 'You appear to be offline. We’ll sync again once you reconnect.'
+          : `Failed to load course details: ${rawMessage}`;
+        setStatusBanner({
+          tone: 'danger',
+          title: isOffline() ? 'Offline mode' : 'Unable to reach Supabase',
+          description: descriptiveMessage,
+          icon: isOffline() ? WifiOff : AlertTriangle,
+          actionLabel: 'Try again',
+          onAction: requestCourseReload,
+        });
       } finally {
         if (!cancelled) {
           setInitializing(false);
@@ -236,7 +323,7 @@ const AdminCourseBuilder = () => {
     return () => {
       cancelled = true;
     };
-  }, [isEditing, courseId]);
+  }, [isEditing, courseId, reloadNonce, requestCourseReload]);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -339,6 +426,11 @@ const AdminCourseBuilder = () => {
     return () => {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     };
+  }, [course]);
+
+  useEffect(() => {
+    const diff = computeCourseDiff(lastPersistedRef.current, course);
+    setHasPendingChanges(diff.hasChanges);
   }, [course]);
 
   // Course validation function
@@ -468,6 +560,55 @@ const AdminCourseBuilder = () => {
   const [lastSaveTime, setLastSaveTime] = useState<Date | null>(null);
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoSaveLockRef = useRef<boolean>(false);
+  const [confirmDialog, setConfirmDialog] = useState<BuilderConfirmAction | null>(null);
+
+  const confirmDialogContent = useMemo<ConfirmDialogConfig | null>(() => {
+    if (!confirmDialog) return null;
+    const savedDescriptor = lastSaveTime
+      ? `saved at ${lastSaveTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`
+      : course.lastUpdated
+        ? `updated on ${new Date(course.lastUpdated).toLocaleString()}`
+        : null;
+
+    switch (confirmDialog) {
+      case 'discard':
+        return {
+          title: 'Discard local changes?',
+          description: savedDescriptor
+            ? `Revert to the draft ${savedDescriptor}. Any unsaved edits will be lost.`
+            : 'Revert to the starter template. Any unsaved edits will be lost.',
+          confirmLabel: 'Discard changes',
+          tone: 'warning'
+        };
+      case 'reset':
+        return {
+          title: 'Reset course to starter template?',
+          description: 'All modules, lessons, and settings will be replaced with the default template until you save new changes.',
+          confirmLabel: 'Reset to template',
+          tone: 'warning'
+        };
+      case 'delete':
+        return {
+          title: `Delete "${course.title || 'this course'}"?`,
+          description: 'This permanently removes the course and its analytics. Learners will immediately lose access.',
+          confirmLabel: 'Delete course',
+          tone: 'danger'
+        };
+      default:
+        return null;
+    }
+  }, [confirmDialog, course.lastUpdated, course.title, lastSaveTime]);
+
+  useEffect(() => {
+    if (!confirmDialog) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setConfirmDialog(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [confirmDialog]);
   
   // Inline editing state
   const [inlineEditing, setInlineEditing] = useState<{moduleId: string, lessonId: string} | null>(null);
@@ -643,10 +784,12 @@ const AdminCourseBuilder = () => {
       };
       
       await new Promise(resolve => setTimeout(resolve, 300)); // Simulate save delay
-      await persistCourse(updatedCourse);
+    await persistCourse(updatedCourse);
 
       setSaveStatus('saved');
       setLastSaveTime(new Date());
+    setHasPendingChanges(false);
+    showToast('Draft synced to your Huddle workspace.', 'success');
       
       // Reset to idle after 3 seconds
       setTimeout(() => setSaveStatus('idle'), 3000);
@@ -657,8 +800,10 @@ const AdminCourseBuilder = () => {
     } catch (error) {
       if (error instanceof CourseValidationError) {
         console.warn('⚠️ Course validation issues:', error.issues);
+        showToast('Validation failed. Resolve highlighted issues before saving.', 'warning', 5000);
       } else {
         console.error('❌ Error saving course:', error);
+        showToast(networkFallback('Unable to save course. Please try again.'), isOffline() ? 'warning' : 'error', 5000);
       }
       setSaveStatus('error');
       setTimeout(() => setSaveStatus('idle'), 5000);
@@ -682,21 +827,83 @@ const AdminCourseBuilder = () => {
 
       setSaveStatus('saved');
       setLastSaveTime(new Date());
+      showToast('Course published to learners via Huddle.', 'success');
       setTimeout(() => setSaveStatus('idle'), 3000);
     } catch (error) {
       if (error instanceof CourseValidationError) {
         console.warn('⚠️ Course validation issues:', error.issues);
+        showToast('Validation failed. Please resolve issues before publishing.', 'warning', 5000);
       } else {
         console.error('❌ Error publishing course:', error);
+        showToast(networkFallback('Unable to publish course. Please try again.'), isOffline() ? 'warning' : 'error', 5000);
       }
       setSaveStatus('error');
       setTimeout(() => setSaveStatus('idle'), 5000);
     }
   };
 
-  const handleAssignmentComplete = () => {
+  const revertToLastSaved = () => {
+    const sourceCourse = lastPersistedRef.current;
+    const restored = sourceCourse ? deepClone(sourceCourse) : createEmptyCourse(course.id);
+    setCourse(restored);
+    courseStore.saveCourse(restored, { skipRemoteSync: true });
+    setEditingLesson(null);
+    setHasPendingChanges(false);
+    setSaveStatus('idle');
+    showToast(
+      sourceCourse ? 'Reverted to last saved draft.' : 'Reset to starter template.',
+      sourceCourse ? 'info' : 'warning'
+    );
+  };
+
+  const handleConfirmDiscard = () => {
+    revertToLastSaved();
+    setConfirmDialog(null);
+  };
+
+  const handleResetCourseTemplate = () => {
+    const template = deepClone(createEmptyCourse(course.id));
+    setCourse(template);
+    courseStore.saveCourse(template, { skipRemoteSync: true });
+    setEditingLesson(null);
+    setHasPendingChanges(true);
+    setSaveStatus('idle');
+    showToast('Course reset to template. Save to apply changes.', 'warning');
+    setConfirmDialog(null);
+  };
+
+  const handleConfirmDeleteCourse = () => {
+    try {
+      courseStore.deleteCourse(course.id);
+      showToast('Course deleted successfully.', 'success');
+      navigate('/admin/courses');
+    } catch (error) {
+      console.warn('Delete failed', error);
+      showToast('Failed to delete course. Please try again.', 'error');
+    } finally {
+      setConfirmDialog(null);
+    }
+  };
+
+  const confirmActionHandlers: Record<BuilderConfirmAction, () => void> = {
+    discard: handleConfirmDiscard,
+    reset: handleResetCourseTemplate,
+    delete: handleConfirmDeleteCourse
+  };
+
+  const handleConfirmAction = () => {
+    if (!confirmDialog) return;
+    const action = confirmActionHandlers[confirmDialog];
+    if (action) action();
+  };
+
+  const handleAssignmentComplete = (assignments?: CourseAssignment[]) => {
     setShowAssignmentModal(false);
-    // Optionally refresh course data or show success message
+    const count = assignments?.length ?? 0;
+    const baseMessage = count > 0
+      ? `Assignments sent to ${count} learner${count === 1 ? '' : 's'}.`
+      : 'Assignments queued successfully.';
+    showToast(`${baseMessage} Learners will see Huddle notifications shortly.`, 'success');
   };
 
   const addModule = () => {
@@ -903,7 +1110,8 @@ const AdminCourseBuilder = () => {
       
     } catch (error) {
       console.error('Error uploading file:', error);
-      alert('Failed to upload file. Please try again.');
+      setUploadError('Failed to upload file. Please try again.');
+      showToast('Failed to upload file. Please try again.', 'error');
     } finally {
       setUploadingVideos(prev => ({ ...prev, [uploadKey]: false }));
     }
@@ -2009,10 +2217,25 @@ const AdminCourseBuilder = () => {
           <ArrowLeft className="h-4 w-4 mr-2" />
           Back to Course Management
         </Link>
-
-        {loadError && (
-          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
-            {loadError}
+        {statusBanner && (
+          <div className={`mb-4 rounded-2xl p-4 text-sm ${bannerToneClasses[statusBanner.tone].container}`}>
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div className="flex items-start gap-3">
+                <statusBanner.icon className={`h-5 w-5 mt-0.5 ${bannerToneClasses[statusBanner.tone].icon}`} />
+                <div>
+                  <p className="font-semibold">{statusBanner.title}</p>
+                  <p className="mt-1 leading-relaxed">{statusBanner.description}</p>
+                </div>
+              </div>
+              {statusBanner.onAction && (
+                <button
+                  onClick={statusBanner.onAction}
+                  className={`inline-flex items-center justify-center rounded-lg px-4 py-2 text-sm font-semibold transition ${bannerToneClasses[statusBanner.tone].cta}`}
+                >
+                  {statusBanner.actionLabel || 'Retry'}
+                </button>
+              )}
+            </div>
           </div>
         )}
         
@@ -2052,60 +2275,74 @@ const AdminCourseBuilder = () => {
             })()}
           </div>
           
-          <div className="flex items-center space-x-3">
-            <button
-              onClick={() => setShowPreview(true)}
-              className="bg-purple-500 text-white px-6 py-3 rounded-lg hover:bg-purple-600 transition-colors duration-200 flex items-center space-x-2 font-medium"
-              title="Preview course as learner"
-            >
-              <Eye className="h-4 w-4" />
-              <span>Live Preview</span>
-            </button>
-            
-            <button
-              onClick={handleSave}
-              data-save-button
-              disabled={saveStatus === 'saving'}
-              className={`px-6 py-3 rounded-lg transition-all duration-200 flex items-center space-x-2 font-medium ${
-                saveStatus === 'saved' 
-                  ? 'bg-green-500 text-white hover:bg-green-600' 
-                  : saveStatus === 'error'
-                  ? 'bg-red-500 text-white hover:bg-red-600'
-                  : 'bg-blue-500 text-white hover:bg-blue-600'
-              } ${saveStatus === 'saving' ? 'opacity-75 cursor-not-allowed' : ''}`}
-            >
-              {saveStatus === 'saving' ? (
-                <>
-                  <Loader className="h-4 w-4 animate-spin" />
-                  <span>Saving...</span>
-                </>
-              ) : saveStatus === 'saved' ? (
-                <>
-                  <CheckCircle className="h-4 w-4" />
-                  <span>Saved!</span>
-                </>
-              ) : saveStatus === 'error' ? (
-                <>
-                  <X className="h-4 w-4" />
-                  <span>Retry Save</span>
-                </>
-              ) : (
-                <>
-                  <Save className="h-4 w-4" />
-                  <span>Save Draft</span>
-                  <span className="hidden md:inline text-xs opacity-75">⌘S</span>
-                </>
-              )}
-            </button>
-            
-            {/* Auto-save status indicator */}
-            {lastSaveTime && saveStatus === 'idle' && (
-              <span className="text-sm text-gray-500 flex items-center">
-                <CheckCircle className="h-3 w-3 mr-1 text-green-500" />
-                Auto-saved at {lastSaveTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-              </span>
-            )}
-            {course.status === 'draft' && (
+          <div className="flex w-full flex-col items-end gap-3">
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <button
+                onClick={() => setConfirmDialog('discard')}
+                disabled={!canDiscardChanges}
+                className={`flex items-center gap-2 rounded-lg border px-4 py-2 text-sm font-medium transition-colors ${
+                  canDiscardChanges
+                    ? 'border-gray-200 text-gray-700 hover:bg-gray-50'
+                    : 'border-gray-100 text-gray-400 cursor-not-allowed opacity-60'
+                }`}
+                title={canDiscardChanges ? 'Revert to the last saved draft' : 'No saved draft to revert to yet'}
+              >
+                <Undo2 className="h-4 w-4" />
+                <span>Discard</span>
+              </button>
+              <button
+                onClick={() => setConfirmDialog('reset')}
+                className="flex items-center gap-2 rounded-lg border border-orange-200 px-4 py-2 text-sm font-medium text-orange-700 transition-colors hover:bg-orange-50"
+                title="Replace everything with the starter template"
+              >
+                <RefreshCcw className="h-4 w-4" />
+                <span>Reset Template</span>
+              </button>
+              <button
+                onClick={() => setShowPreview(true)}
+                className="bg-purple-500 text-white px-6 py-3 rounded-lg hover:bg-purple-600 transition-colors duration-200 flex items-center space-x-2 font-medium"
+                title="Preview course as learner"
+              >
+                <Eye className="h-4 w-4" />
+                <span>Live Preview</span>
+              </button>
+              
+              <button
+                onClick={handleSave}
+                data-save-button
+                disabled={saveStatus === 'saving'}
+                className={`px-6 py-3 rounded-lg transition-all duration-200 flex items-center space-x-2 font-medium ${
+                  saveStatus === 'saved' 
+                    ? 'bg-green-500 text-white hover:bg-green-600' 
+                    : saveStatus === 'error'
+                    ? 'bg-red-500 text-white hover:bg-red-600'
+                    : 'bg-blue-500 text-white hover:bg-blue-600'
+                } ${saveStatus === 'saving' ? 'opacity-75 cursor-not-allowed' : ''}`}
+              >
+                {saveStatus === 'saving' ? (
+                  <>
+                    <Loader className="h-4 w-4 animate-spin" />
+                    <span>Saving...</span>
+                  </>
+                ) : saveStatus === 'saved' ? (
+                  <>
+                    <CheckCircle className="h-4 w-4" />
+                    <span>Saved!</span>
+                  </>
+                ) : saveStatus === 'error' ? (
+                  <>
+                    <X className="h-4 w-4" />
+                    <span>Retry Save</span>
+                  </>
+                ) : (
+                  <>
+                    <Save className="h-4 w-4" />
+                    <span>Save Draft</span>
+                    <span className="hidden md:inline text-xs opacity-75">⌘S</span>
+                  </>
+                )}
+              </button>
+              {course.status === 'draft' && (
               <button
                 onClick={() => setShowAssignmentModal(true)}
                 className="bg-orange-500 text-white px-6 py-3 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-2"
@@ -2168,20 +2405,27 @@ const AdminCourseBuilder = () => {
               <span>Export</span>
             </button>
             <button
-              onClick={() => {
-                if (!confirm('Delete this course? This action cannot be undone.')) return;
-                try {
-                  courseStore.deleteCourse(course.id);
-                  navigate('/admin/courses');
-                } catch (err) {
-                  console.warn('Delete failed', err);
-                }
-              }}
+              onClick={() => setConfirmDialog('delete')}
               className="border border-red-200 text-red-600 px-4 py-2 rounded-lg hover:bg-red-50 transition-colors duration-200 flex items-center space-x-2"
             >
               <Trash2 className="h-4 w-4" />
               <span>Delete</span>
             </button>
+            </div>
+
+            {/* Auto-save status indicator */}
+            <div className="flex flex-col text-sm text-right">
+              <span className={`flex items-center justify-end ${hasPendingChanges ? 'text-amber-600' : 'text-green-600'}`}>
+                <span className={`mr-2 h-2 w-2 rounded-full ${hasPendingChanges ? 'bg-amber-500' : 'bg-green-500'}`}></span>
+                {hasPendingChanges ? 'Local changes pending sync…' : 'Draft synced to Supabase'}
+              </span>
+              {lastSaveTime && saveStatus === 'idle' && (
+                <span className="text-gray-500 flex items-center justify-end">
+                  <CheckCircle className="h-3 w-3 mr-1 text-green-500" />
+                  Auto-saved at {lastSaveTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -2806,6 +3050,36 @@ const AdminCourseBuilder = () => {
           course.modules?.find(m => m.id === editingLesson.moduleId)
             ?.lessons.find(l => l.id === editingLesson.lessonId) : undefined}
       />
+
+      {confirmDialog && confirmDialogContent && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="flex items-start gap-4">
+              <div className={`flex h-12 w-12 items-center justify-center rounded-full ${confirmToneIconClasses[confirmDialogContent.tone]}`}>
+                <AlertTriangle className="h-6 w-6" />
+              </div>
+              <div className="flex-1">
+                <h3 className="text-lg font-semibold text-gray-900">{confirmDialogContent.title}</h3>
+                <p className="mt-2 text-sm text-gray-600">{confirmDialogContent.description}</p>
+              </div>
+            </div>
+            <div className="mt-6 flex justify-end gap-3">
+              <button
+                onClick={() => setConfirmDialog(null)}
+                className="rounded-lg border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleConfirmAction}
+                className={`rounded-lg px-4 py-2 text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-offset-2 ${confirmToneButtonClasses[confirmDialogContent.tone]}`}
+              >
+                {confirmDialogContent.confirmLabel}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </DndProvider>
   );
 };

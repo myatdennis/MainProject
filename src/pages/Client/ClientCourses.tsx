@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { LazyImage } from '../../components/PerformanceComponents';
 import { Link, useNavigate } from 'react-router-dom';
-import { BookOpen, Clock, Search, Filter, ArrowRight } from 'lucide-react';
+import { BookOpen, Clock, Search, Filter, ArrowRight, Inbox } from 'lucide-react';
 import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import Input from '../../components/ui/Input';
@@ -27,7 +27,6 @@ const ClientCourses = () => {
     '/client/dashboard',
     '/lms/dashboard',
     '/client/profile',
-    '/client/lessons',
   ]);
   const { user } = useUserProfile();
   const [searchTerm, setSearchTerm] = useState('');
@@ -200,6 +199,7 @@ const ClientCourses = () => {
   });
 
   console.log('[ClientCourses] filtered:', filtered);
+  const noCoursesAvailable = !coursesLoading && normalizedCourses.length === 0;
 
   return (
     <div className="max-w-7xl px-6 py-10 lg:px-12">
@@ -249,67 +249,86 @@ const ClientCourses = () => {
               </Button>
             </div>
           </Card>
-          <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
-            {filtered.map(({ course, snapshot, assignment, preferredLessonId }) => {
-              const progress = assignment?.progress ?? Math.round((snapshot.overallProgress || 0) * 100);
-              const status = assignment?.status || (snapshot.overallProgress >= 1 ? 'completed' : snapshot.overallProgress > 0 ? 'in-progress' : 'not-started');
-              return (
-                <Card key={course.id} className="flex h-full flex-col gap-4" data-test="client-course-card">
-                  <div className="relative overflow-hidden rounded-2xl">
-                    {/* Use LazyImage for optimized loading and formats */}
-                    <LazyImage
-                      src={course.thumbnail}
-                      webpSrc={course.thumbnail?.replace(/\.(png|jpg|jpeg)$/i, '.webp')}
-                      avifSrc={course.thumbnail?.replace(/\.(png|jpg|jpeg)$/i, '.avif')}
-                      fallbackSrc="/placeholder-course.jpg"
-                      alt={course.title}
-                      className="h-44 w-full object-cover"
-                      placeholder={<div className="h-44 w-full bg-mutedgrey animate-pulse" />} 
-                    />
-                    <Badge tone="info" className="absolute left-4 top-4 bg-white/90 text-skyblue">
-                      {status === 'completed' ? 'Completed' : status === 'in-progress' ? 'In progress' : 'Assigned'}
-                    </Badge>
-                  </div>
-                  <div className="space-y-3">
-                    <div>
-                      <h3 className="font-heading text-xl font-semibold text-charcoal">{course.title}</h3>
-                      <p className="mt-1 line-clamp-2 text-sm text-slate/80">{course.description}</p>
-                    </div>
-                    <ProgressBar value={progress} srLabel={`${course.title} progress`} />
-                    <div className="flex items-center gap-3 text-xs text-slate/70">
-                      <span className="flex items-center gap-1"><BookOpen className="h-4 w-4" />
-                        {(course.chapters || []).reduce((total, chapter) => total + chapter.lessons.length, 0)} lessons
-                      </span>
-                      <span className="flex items-center gap-1"><Clock className="h-4 w-4" /> {course.duration}</span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <Button
-                        size="sm"
-                        onClick={() => {
-                          if (preferredLessonId) {
-                            navigate(`/client/courses/${course.slug}/lessons/${preferredLessonId}`);
-                          } else {
-                            navigate(`/client/courses/${course.slug}`);
-                          }
-                        }}
-                        data-test="client-course-primary"
-                      >
-                        {status === 'not-started' ? 'Start course' : 'Continue'}
-                      </Button>
-                      <Button variant="ghost" size="sm" asChild>
-                        <Link to={`/client/courses/${course.slug}`}>Details</Link>
-                      </Button>
-                    </div>
-                  </div>
-                </Card>
-              );
-            })}
-          </div>
-          {filtered.length === 0 && (
+          {noCoursesAvailable ? (
             <Card tone="muted" className="mt-6 text-center" padding="lg">
-              <h3 className="font-heading text-lg font-semibold text-charcoal">No courses match your filters.</h3>
-              <p className="mt-2 text-sm text-slate/80">Clear the filters or explore the LMS dashboard for more content.</p>
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-cloud text-skyblue">
+                <Inbox className="h-6 w-6" />
+              </div>
+              <h3 className="mt-4 font-heading text-lg font-semibold text-charcoal">No programs assigned yet</h3>
+              <p className="mt-2 text-sm text-slate/80">
+                When your facilitator assigns a course, it will appear here automatically. You can still open the full LMS to browse optional content.
+              </p>
+              <div className="mt-4 flex flex-wrap justify-center gap-3">
+                <Button size="sm" onClick={() => navigate('/lms/dashboard')}>Open LMS</Button>
+                <Button variant="ghost" size="sm" onClick={() => navigate('/client/dashboard')}>
+                  Back to dashboard
+                </Button>
+              </div>
             </Card>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3">
+                {filtered.map(({ course, snapshot, assignment, preferredLessonId }) => {
+                  const progress = assignment?.progress ?? Math.round((snapshot.overallProgress || 0) * 100);
+                  const status = assignment?.status || (snapshot.overallProgress >= 1 ? 'completed' : snapshot.overallProgress > 0 ? 'in-progress' : 'not-started');
+                  return (
+                    <Card key={course.id} className="flex h-full flex-col gap-4" data-test="client-course-card">
+                      <div className="relative overflow-hidden rounded-2xl">
+                        <LazyImage
+                          src={course.thumbnail}
+                          webpSrc={course.thumbnail?.replace(/\.(png|jpg|jpeg)$/i, '.webp')}
+                          avifSrc={course.thumbnail?.replace(/\.(png|jpg|jpeg)$/i, '.avif')}
+                          fallbackSrc="/placeholder-course.jpg"
+                          alt={course.title}
+                          className="h-44 w-full object-cover"
+                          placeholder={<div className="h-44 w-full bg-mutedgrey animate-pulse" />} 
+                        />
+                        <Badge tone="info" className="absolute left-4 top-4 bg-white/90 text-skyblue">
+                          {status === 'completed' ? 'Completed' : status === 'in-progress' ? 'In progress' : 'Assigned'}
+                        </Badge>
+                      </div>
+                      <div className="space-y-3">
+                        <div>
+                          <h3 className="font-heading text-xl font-semibold text-charcoal">{course.title}</h3>
+                          <p className="mt-1 line-clamp-2 text-sm text-slate/80">{course.description}</p>
+                        </div>
+                        <ProgressBar value={progress} srLabel={`${course.title} progress`} />
+                        <div className="flex items-center gap-3 text-xs text-slate/70">
+                          <span className="flex items-center gap-1"><BookOpen className="h-4 w-4" />
+                            {(course.chapters || []).reduce((total, chapter) => total + chapter.lessons.length, 0)} lessons
+                          </span>
+                          <span className="flex items-center gap-1"><Clock className="h-4 w-4" /> {course.duration}</span>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <Button
+                            size="sm"
+                            onClick={() => {
+                              if (preferredLessonId) {
+                                navigate(`/client/courses/${course.slug}/lessons/${preferredLessonId}`);
+                              } else {
+                                navigate(`/client/courses/${course.slug}`);
+                              }
+                            }}
+                            data-test="client-course-primary"
+                          >
+                            {status === 'not-started' ? 'Start course' : 'Continue'}
+                          </Button>
+                          <Button variant="ghost" size="sm" asChild>
+                            <Link to={`/client/courses/${course.slug}`}>Details</Link>
+                          </Button>
+                        </div>
+                      </div>
+                    </Card>
+                  );
+                })}
+              </div>
+              {filtered.length === 0 && (
+                <Card tone="muted" className="mt-6 text-center" padding="lg">
+                  <h3 className="font-heading text-lg font-semibold text-charcoal">No courses match your filters.</h3>
+                  <p className="mt-2 text-sm text-slate/80">Clear the filters or explore the LMS dashboard for more content.</p>
+                </Card>
+              )}
+            </>
           )}
         </>
       )}

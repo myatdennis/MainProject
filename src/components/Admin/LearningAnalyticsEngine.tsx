@@ -1,358 +1,470 @@
-import React, { useState, useEffect } from 'react';
-import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { TrendingUp, Users, BookOpen, Clock, Target, Brain, AlertTriangle } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import {
+  LineChart,
+  Line,
+  CartesianGrid,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+} from 'recharts';
+import { RefreshCw, AlertTriangle, Brain, Target, Users, Clock, TrendingUp, Zap } from 'lucide-react';
+import Skeleton from '../ui/Skeleton';
+import { useAnalyticsDashboard, type AnalyticsDateRange } from '../../hooks/useAnalyticsDashboard';
 
-interface AnalyticsData {
-  engagement: Array<{ date: string; engagement: number; completion: number }>;
-  dropoffPoints: Array<{ lesson: string; dropoff: number; difficulty: string }>;
-  learningPaths: Array<{ path: string; success: number; avgTime: number; satisfaction: number }>;
-  skillGaps: Array<{ skill: string; current: number; target: number; gap: number }>;
-  predictions: Array<{ user: string; likelihood: number; risk: 'low' | 'medium' | 'high' }>;
-}
+const DATE_RANGE_OPTIONS: { label: string; value: AnalyticsDateRange }[] = [
+  { label: 'Last 7 days', value: 'last-7-days' },
+  { label: 'Last 30 days', value: 'last-30-days' },
+  { label: 'Last 90 days', value: 'last-90-days' },
+  { label: 'Last year', value: 'last-year' },
+];
+
+const HEATMAP_LABELS = ['12a', '2a', '4a', '6a', '8a', '10a', '12p', '2p', '4p', '6p', '8p', '10p'];
+
+const getRiskTone = (risk: 'low' | 'medium' | 'high') => {
+  switch (risk) {
+    case 'low':
+      return 'bg-emerald-50 text-emerald-700';
+    case 'medium':
+      return 'bg-amber-50 text-amber-700';
+    case 'high':
+    default:
+      return 'bg-rose-50 text-rose-700';
+  }
+};
+
+const HeatmapLegend = () => (
+  <div className="flex items-center justify-between text-xs text-slate/70 mt-3">
+    <span>Less active</span>
+    <div className="flex space-x-1">
+      <span className="w-3 h-3 rounded bg-slate-100" />
+      <span className="w-3 h-3 rounded bg-blue-100" />
+      <span className="w-3 h-3 rounded bg-blue-300" />
+      <span className="w-3 h-3 rounded bg-blue-500" />
+      <span className="w-3 h-3 rounded bg-blue-700" />
+    </div>
+    <span>Most active</span>
+  </div>
+);
+
+const Heatmap = ({
+  data,
+}: {
+  data: ReturnType<typeof useAnalyticsDashboard>['data']['heatmap'];
+}) => (
+  <div className="space-y-2">
+    <div className="grid grid-cols-13 gap-1 text-xs text-slate/70">
+      <div />
+      {HEATMAP_LABELS.map((label) => (
+        <div key={label} className="text-center">
+          {label}
+        </div>
+      ))}
+    </div>
+    {data.map((day) => (
+      <div key={day.day} className="grid grid-cols-13 gap-1 items-center">
+        <div className="text-xs text-slate/70">{day.day}</div>
+        {day.hours.map((value, index) => {
+          const intensity = Math.min(value, 4);
+          const color =
+            intensity === 0
+              ? 'bg-slate-100'
+              : intensity === 1
+              ? 'bg-blue-100'
+              : intensity === 2
+              ? 'bg-blue-300'
+              : intensity === 3
+              ? 'bg-blue-500'
+              : 'bg-blue-700';
+          return <div key={index} className={`h-4 rounded ${color}`} title={`${value} sessions`} />;
+        })}
+      </div>
+    ))}
+    <HeatmapLegend />
+  </div>
+);
+
+const LoadingState = () => (
+  <div className="space-y-6">
+    <Skeleton className="h-32 w-full rounded-xl" />
+    <div className="grid gap-4 md:grid-cols-2">
+      <Skeleton className="h-64 rounded-xl" />
+      <Skeleton className="h-64 rounded-xl" />
+    </div>
+    <Skeleton className="h-80 rounded-xl" />
+  </div>
+);
+
+const EmptyState = () => (
+  <div className="text-center py-16 border border-dashed rounded-xl">
+    <div className="inline-flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate/70 mb-4">
+      <Brain className="h-6 w-6" />
+    </div>
+    <h3 className="text-lg font-semibold text-charcoal mb-1">No analytics yet</h3>
+    <p className="text-sm text-slate/70 max-w-lg mx-auto">
+      We’ll start surfacing AI-powered insights as soon as learners interact with your courses. Try assigning a course or
+      encouraging learners to resume progress.
+    </p>
+  </div>
+);
+
+const formatPercent = (value?: number | null, precision = 0) =>
+  typeof value === 'number' && !Number.isNaN(value) ? `${value.toFixed(precision)}%` : '—';
 
 const LearningAnalyticsEngine: React.FC = () => {
-  const [activeTab, setActiveTab] = useState<'engagement' | 'dropoff' | 'paths' | 'gaps' | 'predictions'>('engagement');
-  const [timeRange, setTimeRange] = useState<'7d' | '30d' | '90d'>('30d');
-  const [data, setData] = useState<AnalyticsData>({
-    engagement: [],
-    dropoffPoints: [],
-    learningPaths: [],
-    skillGaps: [],
-    predictions: []
+  const [dateRange, setDateRange] = useState<AnalyticsDateRange>('last-30-days');
+  const [courseFilter, setCourseFilter] = useState<string>('all');
+  const { data, loading, error, refresh } = useAnalyticsDashboard({
+    dateRange,
+    courseId: courseFilter === 'all' ? undefined : courseFilter,
   });
 
-  // Generate mock data
-  useEffect(() => {
-    const generateEngagementData = () => {
-      const days = timeRange === '7d' ? 7 : timeRange === '30d' ? 30 : 90;
-      return Array.from({ length: days }, (_, i) => {
-        const date = new Date();
-        date.setDate(date.getDate() - (days - i));
-        return {
-          date: date.toLocaleDateString(),
-          engagement: Math.floor(Math.random() * 40) + 60,
-          completion: Math.floor(Math.random() * 30) + 70
-        };
+  const hasData = useMemo(() => {
+    return (
+      data.engagementTrend.length > 0 ||
+      data.heatmap.length > 0 ||
+      data.predictions.length > 0 ||
+      data.dropoffs.length > 0 ||
+      Boolean(data.courseAnalytics)
+    );
+  }, [data]);
+
+  const selectedCourse = useMemo(() => {
+    if (courseFilter === 'all') return undefined;
+    return data.courses.find((entry) => entry.courseId === courseFilter);
+  }, [courseFilter, data.courses]);
+
+  const aiInsights = useMemo(() => {
+    const insights = [] as Array<{
+      icon: React.ComponentType<any>;
+      tone: string;
+      title: string;
+      description: string;
+      action: string;
+    }>;
+
+    const courseStats = data.courseAnalytics;
+    if (courseStats) {
+      const completionChange = selectedCourse?.completionPercent ?? courseStats.completionRate;
+      insights.push({
+        icon: TrendingUp,
+        tone: 'text-emerald-600',
+        title: 'Completion momentum detected',
+        description: `Completion is holding at ${completionChange.toFixed(1)}%. Encourage learners to finish within this window.`,
+        action: 'Nudge learners',
       });
-    };
-
-    setData({
-      engagement: generateEngagementData(),
-      dropoffPoints: [
-        { lesson: 'Module 1: Introduction', dropoff: 15, difficulty: 'Easy' },
-        { lesson: 'Module 2: Bias Recognition', dropoff: 35, difficulty: 'Medium' },
-        { lesson: 'Module 3: Inclusive Communication', dropoff: 25, difficulty: 'Medium' },
-        { lesson: 'Module 4: Advanced Scenarios', dropoff: 45, difficulty: 'Hard' },
-        { lesson: 'Module 5: Assessment', dropoff: 55, difficulty: 'Hard' }
-      ],
-      learningPaths: [
-        { path: 'Leadership Track', success: 85, avgTime: 120, satisfaction: 4.2 },
-        { path: 'Manager Essentials', success: 78, avgTime: 95, satisfaction: 4.0 },
-        { path: 'Individual Contributor', success: 92, avgTime: 80, satisfaction: 4.5 },
-        { path: 'Executive Program', success: 68, avgTime: 200, satisfaction: 3.8 }
-      ],
-      skillGaps: [
-        { skill: 'Inclusive Communication', current: 65, target: 85, gap: 20 },
-        { skill: 'Bias Awareness', current: 72, target: 90, gap: 18 },
-        { skill: 'Cultural Intelligence', current: 58, target: 80, gap: 22 },
-        { skill: 'Conflict Resolution', current: 70, target: 85, gap: 15 },
-        { skill: 'Team Leadership', current: 75, target: 88, gap: 13 }
-      ],
-      predictions: [
-        { user: 'Sarah Chen', likelihood: 85, risk: 'low' },
-        { user: 'Mike Johnson', likelihood: 45, risk: 'high' },
-        { user: 'Emma Davis', likelihood: 70, risk: 'medium' },
-        { user: 'Alex Rodriguez', likelihood: 90, risk: 'low' },
-        { user: 'Lisa Thompson', likelihood: 35, risk: 'high' }
-      ]
-    });
-  }, [timeRange]);
-
-  const COLORS = ['#de7b12', '#3A7DFF', '#228B22', '#D72638', '#1E1E1E'];
-
-  const getRiskColor = (risk: string) => {
-    switch (risk) {
-      case 'low': return 'text-forest bg-forest/10';
-      case 'medium': return 'text-gold bg-gold/10';
-      case 'high': return 'text-deepred bg-deepred/10';
-      default: return 'text-slate/80 bg-cloud';
+      if (courseStats.dropOffRate > 30) {
+        insights.push({
+          icon: AlertTriangle,
+          tone: 'text-rose-600',
+          title: 'High drop-off pattern',
+          description: 'Drop-offs concentrate in the middle of the journey. Consider trimming lessons or adding live touchpoints.',
+          action: 'Review lessons',
+        });
+      }
     }
-  };
 
-  const tabs = [
-    { id: 'engagement', label: 'Engagement Trends', icon: TrendingUp },
-    { id: 'dropoff', label: 'Drop-off Analysis', icon: AlertTriangle },
-    { id: 'paths', label: 'Learning Paths', icon: Target },
-    { id: 'gaps', label: 'Skill Gaps', icon: Brain },
-    { id: 'predictions', label: 'Predictions', icon: Users }
-  ];
+    if (data.strugglingLearners.length > 0) {
+      insights.push({
+        icon: Users,
+        tone: 'text-amber-600',
+        title: `${data.strugglingLearners.length} learners need attention`,
+        description: 'These learners show multiple risk signals (quiz failures, inactivity, or low engagement).',
+        action: 'Open learner list',
+      });
+    }
+
+    if (insights.length === 0) {
+      insights.push({
+        icon: Brain,
+        tone: 'text-slate/70',
+        title: 'AI is watching for patterns',
+        description: 'We’ll suggest interventions as soon as enough signals come in.',
+        action: 'Check later',
+      });
+    }
+
+    return insights.slice(0, 3);
+  }, [data.courseAnalytics, data.strugglingLearners, selectedCourse]);
+
+  const courseOptions = useMemo(() => {
+    const options = data.courses.map((course) => ({
+      label: course.courseId,
+      value: course.courseId,
+    }));
+    return [{ label: 'All courses', value: 'all' }, ...options];
+  }, [data.courses]);
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold text-charcoal">Learning Analytics Engine</h2>
-        <div className="flex items-center space-x-4">
+    <div className="space-y-8">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <h2 className="text-2xl font-bold text-charcoal">Learning Analytics Engine</h2>
+          <p className="text-sm text-slate/70">Live learner signals, AI predictions, and course performance diagnostics.</p>
+        </div>
+        <div className="flex flex-wrap gap-3">
           <select
-            value={timeRange}
-            onChange={(e) => setTimeRange(e.target.value as any)}
-            className="border border-mist rounded-lg px-3 py-2 text-sm bg-softwhite text-charcoal focus:ring-2 focus:ring-skyblue focus:outline-none"
+            value={courseFilter}
+            onChange={(event) => setCourseFilter(event.target.value)}
+            className="border border-mist rounded-lg px-3 py-2 text-sm"
           >
-            <option value="7d">Last 7 days</option>
-            <option value="30d">Last 30 days</option>
-            <option value="90d">Last 90 days</option>
+            {courseOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
           </select>
+          <select
+            value={dateRange}
+            onChange={(event) => setDateRange(event.target.value as AnalyticsDateRange)}
+            className="border border-mist rounded-lg px-3 py-2 text-sm"
+          >
+            {DATE_RANGE_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+          <button
+            onClick={() => refresh()}
+            className="inline-flex items-center gap-2 rounded-lg border border-mist px-3 py-2 text-sm font-medium text-charcoal hover:bg-slate-50"
+          >
+            <RefreshCw className="h-4 w-4" /> Refresh
+          </button>
         </div>
       </div>
 
-      {/* Tab Navigation */}
-      <div className="border-b border-mist">
-        <nav className="-mb-px flex space-x-8">
-          {tabs.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
-              className={`py-2 px-1 border-b-2 font-medium text-sm flex items-center space-x-2 transition-colors ${
-                activeTab === tab.id
-                  ? 'border-skyblue text-skyblue'
-                  : 'border-transparent text-slate/70 hover:text-skyblue/80 hover:border-skyblue/40'
-              }`}
-            >
-              <tab.icon className="w-4 h-4" />
-              <span>{tab.label}</span>
-            </button>
-          ))}
-        </nav>
-      </div>
+      {error && (
+        <div className="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+          Unable to load analytics right now. {error.message}
+        </div>
+      )}
 
-      {/* Content */}
-      <div className="bg-softwhite rounded-lg border border-mist p-6 shadow-card-sm">
-        {activeTab === 'engagement' && (
-          <div>
-            <h3 className="text-lg font-semibold text-charcoal mb-4">Engagement & Completion Trends</h3>
-            <ResponsiveContainer width="100%" height={400}>
-              <LineChart data={data.engagement}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="date" />
-                <YAxis />
-                <Tooltip />
-                <Line 
-                  type="monotone" 
-                  dataKey="engagement" 
-                  stroke="#3A7DFF" 
-                  strokeWidth={2}
-                  name="Engagement %" 
-                />
-                <Line 
-                  type="monotone" 
-                  dataKey="completion" 
-                  stroke="#228B22" 
-                  strokeWidth={2}
-                  name="Completion %" 
-                />
-              </LineChart>
-            </ResponsiveContainer>
-            
-            {/* Key Insights */}
-            <div className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="bg-skyblue/10 p-4 rounded-lg">
-                <div className="flex items-center">
-                  <TrendingUp className="w-5 h-5 text-skyblue mr-2" />
-                  <span className="font-medium text-charcoal">Engagement Up</span>
-                </div>
-                <p className="text-sm text-skyblue mt-1">+12% increase in last 7 days</p>
+      {loading ? (
+        <LoadingState />
+      ) : !hasData ? (
+        <EmptyState />
+      ) : (
+        <>
+          <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+            <div className="rounded-xl border border-mist bg-softwhite p-4">
+              <div className="flex items-center justify-between text-sm text-slate/70">
+                <span>Engagement score</span>
+                <Brain className="h-4 w-4 text-slate/60" />
               </div>
-              <div className="bg-forest/10 p-4 rounded-lg">
-                <div className="flex items-center">
-                  <BookOpen className="w-5 h-5 text-forest mr-2" />
-                  <span className="font-medium text-charcoal">Peak Hours</span>
-                </div>
-                <p className="text-sm text-forest mt-1">Most active: 10-11 AM</p>
+              <div className="mt-2 text-2xl font-semibold text-charcoal">
+                {formatPercent(data.courseAnalytics?.engagementScore)}
               </div>
-              <div className="bg-sunrise/10 p-4 rounded-lg">
-                <div className="flex items-center">
-                  <Clock className="w-5 h-5 text-sunrise mr-2" />
-                  <span className="font-medium text-charcoal">Avg Session</span>
-                </div>
-                <p className="text-sm text-sunrise mt-1">25 minutes (+3 min)</p>
+              <p className="text-xs text-slate/60">Weighted mix of activity and depth</p>
+            </div>
+            <div className="rounded-xl border border-mist bg-softwhite p-4">
+              <div className="flex items-center justify-between text-sm text-slate/70">
+                <span>Completion rate</span>
+                <Target className="h-4 w-4 text-slate/60" />
               </div>
+              <div className="mt-2 text-2xl font-semibold text-charcoal">
+                {formatPercent(data.courseAnalytics?.completionRate)}
+              </div>
+              <p className="text-xs text-slate/60">Across assigned learners</p>
+            </div>
+            <div className="rounded-xl border border-mist bg-softwhite p-4">
+              <div className="flex items-center justify-between text-sm text-slate/70">
+                <span>Active last 7 days</span>
+                <Users className="h-4 w-4 text-slate/60" />
+              </div>
+              <div className="mt-2 text-2xl font-semibold text-charcoal">
+                {data.courseAnalytics?.activeLastWeek ?? '—'}
+              </div>
+              <p className="text-xs text-slate/60">Unique learners</p>
+            </div>
+            <div className="rounded-xl border border-mist bg-softwhite p-4">
+              <div className="flex items-center justify-between text-sm text-slate/70">
+                <span>Avg session length</span>
+                <Clock className="h-4 w-4 text-slate/60" />
+              </div>
+              <div className="mt-2 text-2xl font-semibold text-charcoal">
+                {data.courseAnalytics?.averageTimeSpent
+                  ? `${Math.round(data.courseAnalytics.averageTimeSpent / 60)} min`
+                  : '—'}
+              </div>
+              <p className="text-xs text-slate/60">Across tracked lessons</p>
             </div>
           </div>
-        )}
 
-        {activeTab === 'dropoff' && (
           <div>
-            <h3 className="text-lg font-semibold text-charcoal mb-4">Learning Drop-off Points</h3>
-            <ResponsiveContainer width="100%" height={400}>
-              <BarChart data={data.dropoffPoints}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="lesson" />
-                <YAxis />
-                <Tooltip />
-                <Bar dataKey="dropoff" fill="#D72638" name="Drop-off %" />
-              </BarChart>
-            </ResponsiveContainer>
-
-            {/* Recommendations */}
-            <div className="mt-6">
-              <h4 className="font-medium text-charcoal mb-3">Optimization Recommendations</h4>
-              <div className="space-y-2">
-                <div className="flex items-start space-x-3 p-3 bg-deepred/10 rounded-lg">
-                  <AlertTriangle className="w-5 h-5 text-deepred mt-0.5" />
-                  <div>
-                    <p className="font-medium text-deepred">High Drop-off Alert</p>
-                    <p className="text-sm text-deepred/80">Module 5: Assessment has 55% drop-off rate. Consider breaking into smaller segments.</p>
+            <div className="flex items-center gap-2 mb-4">
+              <Zap className="h-5 w-5 text-purple-500" />
+              <h3 className="text-lg font-semibold text-charcoal">AI-powered insights</h3>
+            </div>
+            <div className="grid gap-4 md:grid-cols-3">
+              {aiInsights.map((insight, index) => {
+                const Icon = insight.icon;
+                return (
+                  <div key={`${insight.title}-${index}`} className="rounded-xl border border-mist bg-white p-4 shadow-sm">
+                    <div className={`flex items-center gap-2 text-sm font-medium ${insight.tone}`}>
+                      <Icon className="h-4 w-4" />
+                      {insight.title}
+                    </div>
+                    <p className="mt-2 text-sm text-slate/70">{insight.description}</p>
+                    <button className="mt-3 text-sm font-medium text-skyblue hover:underline">{insight.action}</button>
                   </div>
-                </div>
-                <div className="flex items-start space-x-3 p-3 bg-gold/10 rounded-lg">
-                  <Brain className="w-5 h-5 text-gold mt-0.5" />
-                  <div>
-                    <p className="font-medium text-gold">Content Difficulty</p>
-                    <p className="text-sm text-gold/80">Modules 2 & 4 show high correlation between difficulty and drop-off. Add more interactive elements.</p>
-                  </div>
-                </div>
-              </div>
+                );
+              })}
             </div>
           </div>
-        )}
 
-        {activeTab === 'paths' && (
-          <div>
-            <h3 className="text-lg font-semibold text-charcoal mb-4">Learning Path Performance</h3>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <div>
-                <h4 className="font-medium text-slate mb-3">Success Rates</h4>
-                <ResponsiveContainer width="100%" height={300}>
-                  <PieChart>
-                    <Pie
-                      data={data.learningPaths}
-                      cx="50%"
-                      cy="50%"
-                      labelLine={false}
-                      label={({ name, value }: any) => `${name}: ${value}%`}
-                      outerRadius={80}
-                      fill="#3A7DFF"
-                      dataKey="success"
-                      nameKey="path"
-                    >
-                      {data.learningPaths.map((_, index) => (
-                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                      ))}
-                    </Pie>
+          <div className="grid gap-6 lg:grid-cols-2">
+            <div className="rounded-xl border border-mist bg-white p-6 shadow-sm">
+              <div className="flex items-center justify-between mb-4">
+                <h3 className="text-lg font-semibold text-charcoal">Engagement vs completion</h3>
+                <span className="text-xs text-slate/60">Normalized to 100%</span>
+              </div>
+              <div className="h-72">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={data.engagementTrend}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="date" tick={{ fontSize: 12 }} />
+                    <YAxis tick={{ fontSize: 12 }} domain={[0, 100]} />
                     <Tooltip />
-                  </PieChart>
+                    <Line type="monotone" dataKey="engagement" stroke="#3A7DFF" strokeWidth={2} name="Engagement" />
+                    <Line type="monotone" dataKey="completion" stroke="#228B22" strokeWidth={2} name="Completions" />
+                  </LineChart>
                 </ResponsiveContainer>
               </div>
+            </div>
 
-              <div>
-                <h4 className="font-medium text-slate mb-3">Detailed Metrics</h4>
+            <div className="rounded-xl border border-mist bg-white p-6 shadow-sm">
+              <h3 className="text-lg font-semibold text-charcoal mb-4">Peak usage by hour</h3>
+              <div className="h-72">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={data.hourlyUsage}>
+                    <CartesianGrid strokeDasharray="3 3" />
+                    <XAxis dataKey="hour" tick={{ fontSize: 12 }} />
+                    <YAxis tick={{ fontSize: 12 }} />
+                    <Tooltip />
+                    <Bar dataKey="usage" fill="#3A7DFF" name="Sessions" />
+                    <Bar dataKey="engagement" fill="#228B22" name="Engaged actions" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid gap-6 lg:grid-cols-2">
+            <div className="rounded-xl border border-mist bg-white p-6 shadow-sm">
+              <h3 className="text-lg font-semibold text-charcoal mb-4">Engagement heatmap</h3>
+              <Heatmap data={data.heatmap} />
+            </div>
+            <div className="rounded-xl border border-mist bg-white p-6 shadow-sm">
+              <h3 className="text-lg font-semibold text-charcoal mb-4">Top drop-off locations</h3>
+              {data.dropoffs.length === 0 ? (
+                <p className="text-sm text-slate/70">No drop-off data yet.</p>
+              ) : (
+                <div className="space-y-3">
+                  {data.dropoffs.slice(0, 5).map((dropoff) => (
+                    <div key={`${dropoff.courseId}-${dropoff.lessonId}`} className="rounded-lg border border-mist p-3">
+                      <div className="flex justify-between text-sm text-charcoal">
+                        <span>{dropoff.lessonTitle}</span>
+                        <span className="font-medium text-rose-600">{dropoff.dropoffPercent.toFixed(1)}%</span>
+                      </div>
+                      <p className="text-xs text-slate/60">
+                        {dropoff.completedCount}/{dropoff.startedCount} completed • Course {dropoff.courseId.slice(0, 6)}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="grid gap-6 lg:grid-cols-2">
+            <div className="rounded-xl border border-mist bg-white p-6 shadow-sm">
+              <div className="flex items-center gap-2 mb-4">
+                <Target className="h-5 w-5 text-purple-500" />
+                <h3 className="text-lg font-semibold text-charcoal">Learning path performance</h3>
+              </div>
+              {data.learningPaths.length === 0 ? (
+                <p className="text-sm text-slate/70">Not enough course assignments to evaluate learning paths.</p>
+              ) : (
                 <div className="space-y-3">
                   {data.learningPaths.map((path) => (
-                    <div key={path.path} className="border border-mist rounded-lg p-4 bg-softwhite shadow-card-sm">
-                      <div className="flex items-center justify-between mb-2">
-                        <h5 className="font-medium text-charcoal">{path.path}</h5>
-                        <span className={`px-2 py-1 rounded text-xs font-medium ${
-                          path.success >= 85 ? 'bg-forest/15 text-forest' :
-                          path.success >= 70 ? 'bg-gold/15 text-gold' :
-                          'bg-deepred/15 text-deepred'
-                        }`}>
-                          {path.success}% Success
-                        </span>
-                      </div>
-                      <div className="text-sm text-slate/80">
-                        <p>Avg Time: {path.avgTime} minutes</p>
-                        <p>Satisfaction: {path.satisfaction}/5.0</p>
+                    <div key={path.courseId} className="rounded-lg border border-mist p-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <p className="text-sm font-semibold text-charcoal">{path.path}</p>
+                          <p className="text-xs text-slate/60">Avg time {path.avgTime} mins • Satisfaction {path.satisfaction}/5</p>
+                        </div>
+                        <span className="text-sm font-medium text-skyblue">{path.success}% success</span>
                       </div>
                     </div>
                   ))}
                 </div>
+              )}
+            </div>
+
+            <div className="rounded-xl border border-mist bg-white p-6 shadow-sm">
+              <div className="flex items-center gap-2 mb-4">
+                <AlertTriangle className="h-5 w-5 text-amber-500" />
+                <h3 className="text-lg font-semibold text-charcoal">Struggling learners</h3>
               </div>
+              {data.strugglingLearners.length === 0 ? (
+                <p className="text-sm text-slate/70">No risk alerts at the moment.</p>
+              ) : (
+                <div className="space-y-3">
+                  {data.strugglingLearners.slice(0, 4).map((learner) => (
+                    <div key={learner.userId} className="rounded-lg border border-mist p-4">
+                      <div className="flex items-center justify-between text-sm text-charcoal">
+                        <span>{learner.userName}</span>
+                        <span>{formatPercent(learner.currentProgress)}</span>
+                      </div>
+                      <p className="text-xs text-slate/60">Last active {new Date(learner.lastActive).toLocaleDateString()}</p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        {learner.strugglingIndicators.map((indicator) => (
+                          <span key={indicator} className="rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-medium text-rose-600">
+                            {indicator.replace('_', ' ')}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
-        )}
 
-        {activeTab === 'gaps' && (
-          <div>
-            <h3 className="text-lg font-semibold text-charcoal mb-4">Organizational Skill Gaps</h3>
-            <ResponsiveContainer width="100%" height={400}>
-              <BarChart data={data.skillGaps}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="skill" />
-                <YAxis />
-                <Tooltip />
-                <Bar dataKey="current" fill="#3A7DFF" name="Current Level" />
-                <Bar dataKey="target" fill="#228B22" name="Target Level" />
-              </BarChart>
-            </ResponsiveContainer>
-
-            <div className="mt-6">
-              <h4 className="font-medium text-charcoal mb-3">Priority Skills for Development</h4>
-              <div className="space-y-2">
-                {data.skillGaps.sort((a, b) => b.gap - a.gap).map((skill) => (
-                  <div key={skill.skill} className="flex items-center justify-between p-3 bg-cloud rounded-lg shadow-card-sm">
-                    <span className="font-medium text-charcoal">{skill.skill}</span>
-                    <div className="flex items-center space-x-4">
-                      <span className="text-sm text-slate/80">
-                        {skill.current}% → {skill.target}%
-                      </span>
-                      <span className={`px-2 py-1 rounded text-xs font-medium ${
-                        skill.gap > 20 ? 'bg-deepred/15 text-deepred' :
-                        skill.gap > 15 ? 'bg-gold/15 text-gold' :
-                        'bg-forest/15 text-forest'
-                      }`}>
-                        {skill.gap}% gap
+          <div className="rounded-xl border border-mist bg-white p-6 shadow-sm">
+            <div className="flex items-center gap-2 mb-4">
+              <Users className="h-5 w-5 text-skyblue" />
+              <h3 className="text-lg font-semibold text-charcoal">Completion predictions</h3>
+            </div>
+            {data.predictions.length === 0 ? (
+              <p className="text-sm text-slate/70">AI predictions will appear once we have at least 20 learner journeys.</p>
+            ) : (
+              <div className="space-y-3">
+                {data.predictions.map((prediction) => (
+                  <div key={prediction.user} className="flex items-center justify-between rounded-lg border border-mist p-4">
+                    <div>
+                      <p className="text-sm font-semibold text-charcoal">{prediction.user}</p>
+                      <p className="text-xs text-slate/60">Progress {formatPercent(prediction.progress)}</p>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="text-right">
+                        <p className="text-sm font-semibold text-charcoal">{formatPercent(prediction.likelihood)}</p>
+                        <p className="text-[11px] text-slate/60">Completion likelihood</p>
+                      </div>
+                      <span className={`rounded-full px-2 py-1 text-[11px] font-medium ${getRiskTone(prediction.risk)}`}>
+                        {prediction.risk} risk
                       </span>
                     </div>
                   </div>
                 ))}
               </div>
-            </div>
+            )}
           </div>
-        )}
-
-        {activeTab === 'predictions' && (
-          <div>
-            <h3 className="text-lg font-semibold text-charcoal mb-4">Completion Predictions</h3>
-            <div className="space-y-4">
-              {data.predictions.map((prediction) => (
-                <div key={prediction.user} className="flex items-center justify-between p-4 border border-mist rounded-lg bg-softwhite shadow-card-sm">
-                  <div className="flex items-center space-x-4">
-                    <div className="w-10 h-10 bg-skyblue/10 rounded-full flex items-center justify-center">
-                      <Users className="w-5 h-5 text-skyblue" />
-                    </div>
-                    <div>
-                      <h4 className="font-medium text-charcoal">{prediction.user}</h4>
-                      <p className="text-sm text-slate/80">Completion likelihood: {prediction.likelihood}%</p>
-                    </div>
-                  </div>
-                  <div className="flex items-center space-x-4">
-                    <div className="w-32 bg-mist rounded-full h-2">
-                      <div
-                        className={`h-2 rounded-full ${
-                          prediction.likelihood >= 70 ? 'bg-forest' :
-                          prediction.likelihood >= 50 ? 'bg-gold' : 'bg-deepred'
-                        }`}
-                        style={{ width: `${prediction.likelihood}%` }}
-                      />
-                    </div>
-                    <span className={`px-2 py-1 rounded text-xs font-medium ${getRiskColor(prediction.risk)}`}>
-                      {prediction.risk} risk
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-6 p-4 bg-skyblue/10 rounded-lg">
-              <h4 className="font-medium text-skyblue mb-2">AI Recommendations</h4>
-              <ul className="text-sm text-skyblue space-y-1">
-                <li>• Send personalized encouragement to high-risk learners</li>
-                <li>• Offer additional support for users below 50% completion likelihood</li>
-                <li>• Create peer mentoring groups for medium-risk learners</li>
-              </ul>
-            </div>
-          </div>
-        )}
-      </div>
+        </>
+      )}
     </div>
   );
 };

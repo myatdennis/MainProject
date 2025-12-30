@@ -1,60 +1,110 @@
-import React, { useState } from 'react';
-import { X, BookOpen, Users } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { X, BookOpen, Users, Send } from 'lucide-react';
 import LoadingButton from './LoadingButton';
 import { useToast } from '../context/ToastContext';
+import { addAssignments } from '../utils/assignmentStorage';
+import { courseStore } from '../store/courseStore';
+import type { CourseAssignment } from '../types/assignment';
 
 interface CourseAssignmentModalProps {
   isOpen: boolean;
   onClose: () => void;
   selectedUsers: string[];
-  course?: { id: string; title: string; duration: string };
-  onAssignComplete?: (assignmentData?: any) => void;
+  course?: { id: string; title: string; duration?: string };
+  onAssignComplete?: (assignmentData?: CourseAssignment[]) => void;
 }
 
-const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({ 
-  isOpen, 
-  onClose, 
+const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
+  isOpen,
+  onClose,
   selectedUsers,
-  course: _course,
-  onAssignComplete 
+  course,
+  onAssignComplete,
 }) => {
   const { showToast } = useToast();
   const [loading, setLoading] = useState(false);
-  const [selectedCourse, setSelectedCourse] = useState('');
-  const [assignmentDate, setAssignmentDate] = useState(new Date().toISOString().split('T')[0]);
+  const [selectedCourseId, setSelectedCourseId] = useState(course?.id ?? '');
   const [dueDate, setDueDate] = useState('');
+  const [note, setNote] = useState('');
+  const [emailList, setEmailList] = useState(selectedUsers.join('\n'));
 
-  const courses = [
-    { id: '1', title: 'Foundations of Inclusive Leadership', duration: '4 weeks' },
-    { id: '2', title: 'Recognizing and Mitigating Bias', duration: '3 weeks' },
-    { id: '3', title: 'Empathy in Action', duration: '3 weeks' },
-    { id: '4', title: 'Courageous Conversations at Work', duration: '5 weeks' },
-    { id: '5', title: 'Personal & Team Action Planning', duration: '2 weeks' }
-  ];
+  useEffect(() => {
+    setSelectedCourseId(course?.id ?? '');
+  }, [course?.id]);
+
+  useEffect(() => {
+    setEmailList((prev) => {
+      if (!isOpen) return prev;
+      return selectedUsers.join('\n');
+    });
+  }, [selectedUsers, isOpen]);
+
+  const availableCourses = useMemo(() => {
+    if (course) {
+      return [course];
+    }
+    return courseStore.getAllCourses().map((entry) => {
+      const durationLabel = entry.duration || (entry.estimatedDuration ? `${entry.estimatedDuration} min` : '');
+      return {
+        id: entry.id,
+        title: entry.title,
+        duration: durationLabel,
+      };
+    });
+  }, [course, isOpen]);
 
   if (!isOpen) return null;
 
-  const handleAssign = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleAssign = async (event: React.FormEvent) => {
+    event.preventDefault();
 
-    if (!selectedCourse) {
-      showToast('Please select a course to assign', 'error');
+    const targetCourseId = course?.id ?? selectedCourseId;
+    if (!targetCourseId) {
+      showToast('Pick a course before sending Huddle invites.', 'error');
+      return;
+    }
+
+    const recipients = emailList
+      .split(/\n|,|;/)
+      .map((value) => value.trim().toLowerCase())
+      .filter(Boolean);
+
+    if (recipients.length === 0) {
+      showToast('Add at least one email or user ID', 'error');
       return;
     }
 
     setLoading(true);
-
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      const assignments = await addAssignments(targetCourseId, recipients, {
+        dueDate: dueDate || undefined,
+        note: note || undefined,
+      });
 
-      const courseName = courses.find(c => c.id === selectedCourse)?.title;
-      showToast(`${courseName} assigned to ${selectedUsers.length} user(s)`, 'success');
-      
-      onAssignComplete?.();
+      if (onAssignComplete) {
+        onAssignComplete(assignments);
+      } else {
+        showToast(
+          `Assignments sent to ${assignments.length} learner${assignments.length === 1 ? '' : 's'}. Huddle notifications are on the way.`,
+          'success'
+        );
+      }
+      setEmailList('');
+      setNote('');
+      setDueDate('');
+      if (!course) {
+        setSelectedCourseId('');
+      }
       onClose();
     } catch (error) {
-      showToast('Failed to assign course', 'error');
+      console.error('[CourseAssignmentModal] Failed to assign course:', error);
+      const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+      showToast(
+        offline
+          ? 'Huddle can’t reach the network right now. We saved your request—try again when you’re back online.'
+          : 'We hit a snag assigning this course. Please try again in a moment.',
+        'error'
+      );
     } finally {
       setLoading(false);
     }
@@ -71,7 +121,11 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
             </div>
             <div>
               <h2 className="text-xl font-bold text-gray-900">Assign Course</h2>
-              <p className="text-sm text-gray-600">Assign course to {selectedUsers.length} user(s)</p>
+              <p className="text-sm text-gray-600">
+                {selectedUsers.length > 0
+                  ? `Prefilled with ${selectedUsers.length} selected user(s)`
+                  : 'Paste learner emails or IDs below'}
+              </p>
             </div>
           </div>
           <button
@@ -85,50 +139,65 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
 
         {/* Form */}
         <form onSubmit={handleAssign} className="p-6 space-y-6">
+          {!course && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Select course *</label>
+              <select
+                value={selectedCourseId}
+                onChange={(event) => setSelectedCourseId(event.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                required
+                disabled={loading}
+              >
+                <option value="">Choose a course...</option>
+                {availableCourses.map((entry) => (
+                  <option key={entry.id} value={entry.id}>
+                    {entry.title} {entry.duration ? `(${entry.duration})` : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {course && (
+            <div className="rounded-lg border border-mist bg-softwhite/60 px-4 py-3 text-sm text-slate/80">
+              Assigning <span className="font-semibold text-charcoal">{course.title}</span>
+              {course.duration && <span className="ml-1">({course.duration})</span>}
+            </div>
+          )}
+
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Select Course *
-            </label>
-            <select
-              value={selectedCourse}
-              onChange={(e) => setSelectedCourse(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+            <label className="block text-sm font-medium text-gray-700 mb-2">Learner emails or IDs *</label>
+            <textarea
+              value={emailList}
+              onChange={(event) => setEmailList(event.target.value)}
+              placeholder="team@inclusive.org\nlearner@huddle.co"
+              className="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              rows={5}
               required
               disabled={loading}
-            >
-              <option value="">Choose a course...</option>
-              {courses.map(course => (
-                <option key={course.id} value={course.id}>
-                  {course.title} ({course.duration})
-                </option>
-              ))}
-            </select>
+            />
+            <p className="mt-1 text-xs text-slate/70">Separate multiple entries with commas or line breaks.</p>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Assignment Date
-              </label>
-              <input
-                type="date"
-                value={assignmentDate}
-                onChange={(e) => setAssignmentDate(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                disabled={loading}
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Due Date (Optional)
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Due date (optional)</label>
               <input
                 type="date"
                 value={dueDate}
-                onChange={(e) => setDueDate(e.target.value)}
-                min={assignmentDate}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                onChange={(event) => setDueDate(event.target.value)}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                disabled={loading}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Note to learners</label>
+              <textarea
+                value={note}
+                onChange={(event) => setNote(event.target.value)}
+                className="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                rows={3}
                 disabled={loading}
               />
             </div>
@@ -140,7 +209,7 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
               <div>
                 <h4 className="font-medium text-blue-900">Assignment Details</h4>
                 <p className="text-sm text-blue-700 mt-1">
-                  Selected users will receive email notifications about their course assignment and can begin immediately.
+                  Learners receive notifications immediately. Progress syncs with analytics and the client portal dashboard.
                 </p>
               </div>
             </div>
@@ -156,13 +225,9 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
             >
               Cancel
             </button>
-            <LoadingButton
-              type="submit"
-              loading={loading}
-              variant="success"
-            >
-              <BookOpen className="h-4 w-4" />
-              Assign Course
+            <LoadingButton type="submit" loading={loading} variant="success">
+              <Send className="h-4 w-4" />
+              Assign course
             </LoadingButton>
           </div>
         </form>

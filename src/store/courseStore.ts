@@ -2,12 +2,15 @@ import {
   CourseValidationError,
   deleteCourseFromDatabase,
   getAllCoursesFromDatabase,
-  syncCourseToDatabase
+  syncCourseToDatabase,
 } from '../dal/adminCourses';
-import { fetchPublishedCourses } from '../dal/clientCourses';
+import { fetchPublishedCourses, fetchCourse } from '../dal/clientCourses';
 import { Course, Module } from '../types/courseTypes';
 import { slugify, normalizeCourse } from '../utils/courseNormalization';
 import { getUserSession } from '../lib/secureStorage';
+import { getAssignmentsForUser } from '../utils/assignmentStorage';
+import type { CourseAssignment } from '../types/assignment';
+import { refreshRuntimeStatus, getRuntimeStatus } from '../state/runtimeStatus';
 
 // Course data types
 export interface ScenarioChoice {
@@ -966,9 +969,9 @@ const getDefaultCourses = (): { [key: string]: Course } => ({
 // Initialize courses from localStorage or defaults
 let courses: { [key: string]: Course } = _loadCoursesFromLocalStorage();
 
-const resolveOrgContext = (): { orgId: string | null; role: string | null } => {
+const resolveOrgContext = (): { orgId: string | null; role: string | null; userId: string | null } => {
   if (typeof window === 'undefined') {
-    return { orgId: null, role: null };
+    return { orgId: null, role: null, userId: null };
   }
   try {
     const session = getUserSession();
@@ -976,6 +979,7 @@ const resolveOrgContext = (): { orgId: string | null; role: string | null } => {
       return {
         orgId: session.organizationId ?? null,
         role: session.role ?? null,
+        userId: session.id ?? null,
       };
     }
   } catch (error) {
@@ -989,26 +993,107 @@ const resolveOrgContext = (): { orgId: string | null; role: string | null } => {
       return {
         orgId: parsed?.activeOrgId ?? parsed?.organizationId ?? null,
         role: parsed?.role ?? null,
+        userId: parsed?.id ?? parsed?.userId ?? null,
       };
     }
   } catch (error) {
     console.warn('[courseStore] Failed to parse legacy user for org context:', error);
   }
 
-  return { orgId: null, role: null };
+  return { orgId: null, role: null, userId: null };
+};
+
+const ensureAssignmentScopedCatalog = async (
+  currentCourses: { [key: string]: Course },
+  userId: string | null,
+): Promise<{ [key: string]: Course }> => {
+  if (!userId) {
+    return currentCourses;
+  }
+
+  try {
+    const assignments = await getAssignmentsForUser(userId);
+    if (!assignments || assignments.length === 0) {
+      return currentCourses;
+    }
+
+    const courseMap: { [key: string]: Course } = { ...currentCourses };
+    const assignmentByCourseId = new Map<string, CourseAssignment>();
+    const missingCourseIds: string[] = [];
+
+    assignments.forEach((assignment) => {
+      assignmentByCourseId.set(assignment.courseId, assignment);
+      if (!courseMap[assignment.courseId]) {
+        missingCourseIds.push(assignment.courseId);
+      }
+    });
+
+    for (const courseId of missingCourseIds) {
+      try {
+        const fetched = await fetchCourse(courseId, { includeDrafts: true });
+        if (fetched) {
+          courseMap[fetched.id] = fetched as Course;
+        }
+      } catch (error) {
+        console.warn(`[courseStore] Failed to hydrate course ${courseId} for assignment filter`, error);
+      }
+    }
+
+    const filteredEntries = Object.entries(courseMap).filter(([id]) => assignmentByCourseId.has(id));
+    if (filteredEntries.length === 0) {
+      return currentCourses;
+    }
+
+    const filtered: { [key: string]: Course } = {};
+    filteredEntries.forEach(([id, course]) => {
+      const assignment = assignmentByCourseId.get(id);
+      if (!assignment) return;
+      filtered[id] = {
+        ...course,
+        assignmentStatus: assignment.status,
+        assignmentDueDate: assignment.dueDate ?? null,
+        assignmentProgress: assignment.progress ?? 0,
+      };
+    });
+
+    console.log('[courseStore] Assignment filter reduced catalog to', filteredEntries.length, 'course(s).');
+    return filtered;
+  } catch (error) {
+    console.warn('[courseStore] Unable to scope catalog by assignments:', error);
+    return currentCourses;
+  }
 };
 
 // Store management functions
 export const courseStore = {
   init: async (): Promise<void> => {
+    let supabaseOperational = false;
     try {
       console.log('[courseStore.init] Starting initialization...');
       const orgContext = resolveOrgContext();
       const normalizedRole = orgContext.role ? orgContext.role.toLowerCase() : null;
       const restrictToOrg = normalizedRole !== 'admin';
+      let runtimeStatus = getRuntimeStatus();
+      try {
+        runtimeStatus = await refreshRuntimeStatus();
+      } catch (statusError) {
+        console.warn('[courseStore.init] Runtime status refresh failed; using last known snapshot.', statusError);
+      }
+  supabaseOperational = runtimeStatus.supabaseConfigured && runtimeStatus.supabaseHealthy;
+      const apiHealthy = runtimeStatus.apiHealthy;
+      console.log('[courseStore.init] Runtime status snapshot:', runtimeStatus);
       // Prefer admin list (richer shape) but gracefully fall back to published-only
-  let dbCourses = await getAllCoursesFromDatabase();
-      console.log('[courseStore.init] Admin API returned courses:', dbCourses);
+      let dbCourses: Course[] = [];
+      if (apiHealthy) {
+        try {
+          dbCourses = await getAllCoursesFromDatabase();
+          console.log('[courseStore.init] Admin API returned courses:', dbCourses);
+        } catch (adminError) {
+          console.warn('[courseStore.init] Admin API load failed, will fall back to published catalog:', adminError);
+        }
+      } else {
+        console.warn('[courseStore.init] Skipping admin course load because API is marked unhealthy.');
+      }
 
       if (!dbCourses || dbCourses.length === 0) {
         console.log('[courseStore.init] Admin endpoint returned 0 courses. Falling back to published catalog...');
@@ -1044,6 +1129,9 @@ export const courseStore = {
         const defaultCourses = getDefaultCourses();
         courses = defaultCourses;
         for (const course of Object.values(defaultCourses)) {
+          if (!supabaseOperational) {
+            continue;
+          }
           try {
             const persisted = await syncCourseToDatabase(course);
             if (persisted) {
@@ -1070,11 +1158,18 @@ export const courseStore = {
         }
         console.log('Default courses synced to backend');
       }
+
+      if (restrictToOrg) {
+        courses = await ensureAssignmentScopedCatalog(courses, orgContext.userId);
+      }
     } catch (error) {
       console.error('Error initializing course store:', error);
       const defaultCourses = getDefaultCourses();
       courses = defaultCourses;
       for (const course of Object.values(defaultCourses)) {
+        if (!supabaseOperational) {
+          continue;
+        }
         try {
           const persisted = await syncCourseToDatabase(course);
           if (!persisted) continue;
@@ -1174,11 +1269,15 @@ export const courseStore = {
     return Object.values(courses);
   },
 
-  deleteCourse: (id: string): boolean => {
+  deleteCourse: (id: string, options: { skipRemote?: boolean } = {}): boolean => {
     if (courses[id]) {
       delete courses[id];
       _saveCoursesToLocalStorage(courses);
-      if (import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY) {
+      if (
+        !options.skipRemote &&
+        import.meta.env.VITE_SUPABASE_URL &&
+        import.meta.env.VITE_SUPABASE_ANON_KEY
+      ) {
   deleteCourseFromDatabase(id).catch((error) => {
           console.warn(`Failed to delete course "${id}" from database:`, error.message || error);
         });

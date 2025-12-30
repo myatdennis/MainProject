@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
-  Play, 
-  Pause, 
-  SkipForward, 
+  Play,
+  Pause,
+  SkipForward,
   SkipBack,
   Volume2,
   VolumeX,
@@ -22,7 +22,10 @@ import {
   AlertCircle,
   RefreshCw,
   BookOpen,
-  Download
+  Download,
+  Loader2,
+  AlertTriangle,
+  Subtitles,
 } from 'lucide-react';
 import { Course, Lesson, LearnerProgress, UserBookmark, UserNote } from '../../types/courseTypes';
 import type { NormalizedCourse, NormalizedLesson } from '../../utils/courseNormalization';
@@ -49,6 +52,24 @@ import {
 import { trackCourseCompletion as dalTrackCourseCompletion, trackEvent as dalTrackEvent } from '../../dal/analytics';
 import { useUserProfile } from '../../hooks/useUserProfile';
 import { batchService } from '../../dal/batchService';
+import { progressService } from '../../services/progressService';
+
+const CAPTIONS_PREF_KEY = 'courseplayer:captions-enabled';
+const PROGRESS_SYNC_DEBOUNCE_MS = 4000;
+
+type CaptionCue = {
+  start: number;
+  end: number;
+  text: string;
+};
+
+const formatDurationLabel = (seconds: number): string => {
+  if (!Number.isFinite(seconds)) return '0:00';
+  const clamped = Math.max(0, Math.floor(seconds));
+  const minutes = Math.floor(clamped / 60);
+  const remainingSeconds = clamped % 60;
+  return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+};
 
 interface CoursePlayerProps {
   namespace?: 'admin' | 'client';
@@ -91,6 +112,7 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
   const [showCompletionScreen, setShowCompletionScreen] = useState(false);
   const [completionTimestamp, setCompletionTimestamp] = useState<number | null>(null);
   const [hasLoggedCourseCompletion, setHasLoggedCourseCompletion] = useState(false);
+  const hasNavigatedToClientCompletionRef = useRef(false);
 
   const handleRetry = () => setReloadToken((token) => token + 1);
 
@@ -111,6 +133,15 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
   const [playbackSpeed, setPlaybackSpeed] = useState(1);
   const [showControls, _setShowControls] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [videoStatus, setVideoStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('loading');
+  const [videoError, setVideoError] = useState<string | null>(null);
+  const [videoSessionKey, setVideoSessionKey] = useState(0);
+  const [captionsEnabled, setCaptionsEnabled] = useState(false);
+  const [currentCaption, setCurrentCaption] = useState('');
+  const [hasCaptionTracks, setHasCaptionTracks] = useState(false);
+  const captionsRef = useRef<CaptionCue[]>([]);
+  const progressSnapshotTimerRef = useRef<number | null>(null);
+  const lastSnapshotSignatureRef = useRef<string>('');
 
   // UI state
   const [showTranscript, setShowTranscript] = useState(false);
@@ -120,6 +151,25 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
   const [quizAnswers, setQuizAnswers] = useState<Record<string, string>>({});
   const [quizSubmitted, setQuizSubmitted] = useState(false);
   const [quizScore, setQuizScore] = useState<number | null>(null);
+  const latestProgressRef = useRef({ lessonProgressMap, completedLessons, lessonPositions });
+
+  useEffect(() => {
+    latestProgressRef.current = { lessonProgressMap, completedLessons, lessonPositions };
+  }, [lessonProgressMap, completedLessons, lessonPositions]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const stored = localStorage.getItem(CAPTIONS_PREF_KEY);
+      if (stored === null) {
+        setCaptionsEnabled(false);
+      } else {
+        setCaptionsEnabled(stored === 'true');
+      }
+    } catch {
+      setCaptionsEnabled(false);
+    }
+  }, []);
 
   // Note-taking state
   const [noteText, setNoteText] = useState('');
@@ -200,6 +250,16 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
         setHasLoggedCourseCompletion(true);
       }
 
+      if (isClientNamespace && course?.slug) {
+        if (!hasNavigatedToClientCompletionRef.current) {
+          hasNavigatedToClientCompletionRef.current = true;
+          navigate(`${coursePathBase}/${course.slug}/completion`, {
+            state: { source: 'player' },
+          });
+        }
+        return;
+      }
+
       if (completionTimestamp === null) {
         setCompletionTimestamp(Date.now());
         setShowCompletionScreen(true);
@@ -214,6 +274,9 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
       if (showCompletionScreen) {
         setShowCompletionScreen(false);
       }
+      if (isClientNamespace && hasNavigatedToClientCompletionRef.current) {
+        hasNavigatedToClientCompletionRef.current = false;
+      }
     }
   }, [
     completedLessons,
@@ -225,6 +288,9 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
     syncService,
     completionTimestamp,
     showCompletionScreen,
+    isClientNamespace,
+    coursePathBase,
+    navigate,
   ]);
 
   const persistProgress = useCallback(
@@ -258,6 +324,89 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
     persistProgress(currentLesson?.id);
   }, [completedLessons, lessonProgressMap, lessonPositions, courseData, currentLesson, persistProgress]);
 
+  const scheduleProgressSnapshot = useCallback(
+    (options?: { immediate?: boolean }) => {
+      if (!course || !course.id || !learnerId || courseLessons.length === 0) return;
+      if (!progressService.isEnabled()) return;
+
+      const trigger = () => {
+        const { lessonProgressMap: latestProgressMap, completedLessons: latestCompleted, lessonPositions: latestPositions } =
+          latestProgressRef.current;
+
+        const snapshotLessons = courseLessons.map((lesson) => {
+          const progressPercent = Math.min(
+            100,
+            latestProgressMap[lesson.id] ?? (latestCompleted.has(lesson.id) ? 100 : 0)
+          );
+          return {
+            lessonId: lesson.id,
+            progressPercent,
+            completed: latestCompleted.has(lesson.id),
+            positionSeconds: Math.max(0, latestPositions[lesson.id] ?? 0),
+            lastAccessedAt: new Date().toISOString(),
+          };
+        });
+
+        const overallPercent = calculateOverallPercent(latestProgressMap, latestCompleted);
+        const signature = JSON.stringify({
+          lessons: snapshotLessons.map((lesson) => [lesson.lessonId, lesson.progressPercent, lesson.positionSeconds, lesson.completed]),
+          overallPercent,
+        });
+
+        if (signature === lastSnapshotSignatureRef.current) {
+          return;
+        }
+        lastSnapshotSignatureRef.current = signature;
+
+        const allLessonsComplete = latestCompleted.size === courseLessons.length;
+        const totalTimeSeconds = snapshotLessons.reduce((sum, lesson) => sum + lesson.positionSeconds, 0);
+
+        void progressService
+          .syncProgressSnapshot({
+            userId: learnerId,
+            courseId: course.id,
+            lessonIds: snapshotLessons.map((lesson) => lesson.lessonId),
+            lessons: snapshotLessons,
+            overallPercent,
+            completedAt: allLessonsComplete ? new Date().toISOString() : undefined,
+            totalTimeSeconds,
+            lastLessonId: currentLesson?.id ?? null,
+          })
+          .catch((error) => {
+            console.warn('[CoursePlayer] Failed to sync progress snapshot', error);
+          });
+      };
+
+      if (options?.immediate) {
+        if (progressSnapshotTimerRef.current) {
+          window.clearTimeout(progressSnapshotTimerRef.current);
+          progressSnapshotTimerRef.current = null;
+        }
+        trigger();
+        return;
+      }
+
+      if (progressSnapshotTimerRef.current) {
+        window.clearTimeout(progressSnapshotTimerRef.current);
+      }
+      progressSnapshotTimerRef.current = window.setTimeout(() => {
+        progressSnapshotTimerRef.current = null;
+        trigger();
+      }, PROGRESS_SYNC_DEBOUNCE_MS);
+    },
+    [course, learnerId, courseLessons, calculateOverallPercent, currentLesson?.id]
+  );
+
+  useEffect(() => {
+    return () => {
+      if (progressSnapshotTimerRef.current) {
+        window.clearTimeout(progressSnapshotTimerRef.current);
+        progressSnapshotTimerRef.current = null;
+      }
+      scheduleProgressSnapshot({ immediate: true });
+    };
+  }, [scheduleProgressSnapshot]);
+
   useEffect(() => {
     if (!error || !course?.id) {
       if (!error) {
@@ -287,6 +436,77 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
   useEffect(() => {
     lessonIdRef.current = lessonId;
   }, [lessonId]);
+
+  useEffect(() => {
+    if (!currentLesson || currentLesson.type !== 'video') {
+      setVideoStatus('idle');
+      setVideoError(null);
+      return;
+    }
+    setVideoStatus('loading');
+    setVideoError(null);
+    setVideoSessionKey((prev) => prev + 1);
+  }, [currentLesson?.id, currentLesson?.type]);
+
+  useEffect(() => {
+    if (!currentLesson) {
+      captionsRef.current = [];
+      setHasCaptionTracks(false);
+      setCurrentCaption('');
+      return;
+    }
+
+    const rawCaptions = (currentLesson as any)?.content?.captions;
+    if (!Array.isArray(rawCaptions)) {
+      captionsRef.current = [];
+      setHasCaptionTracks(false);
+      setCurrentCaption('');
+      return;
+    }
+
+    const parsed: CaptionCue[] = rawCaptions
+      .map((entry: any) => {
+        const start = typeof entry?.start === 'number' ? entry.start : entry?.startTime;
+        const end = typeof entry?.end === 'number' ? entry.end : entry?.endTime;
+        const text = typeof entry?.text === 'string' ? entry.text : undefined;
+        if (typeof start !== 'number' || typeof end !== 'number' || !text) {
+          return null;
+        }
+        return { start: Math.max(0, start), end: Math.max(start, end), text };
+      })
+      .filter((cue): cue is CaptionCue => Boolean(cue));
+
+    captionsRef.current = parsed;
+    setHasCaptionTracks(parsed.length > 0);
+    if (parsed.length === 0) {
+      setCurrentCaption('');
+    }
+  }, [currentLesson]);
+
+  useEffect(() => {
+    if (!hasCaptionTracks && captionsEnabled) {
+      setCaptionsEnabled(false);
+      setCurrentCaption('');
+      return;
+    }
+  }, [hasCaptionTracks, captionsEnabled]);
+
+  const handleToggleCaptions = useCallback(() => {
+    setCaptionsEnabled((prev) => {
+      const next = !prev;
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem(CAPTIONS_PREF_KEY, String(next));
+        } catch {
+          /* ignore */
+        }
+      }
+      if (!next) {
+        setCurrentCaption('');
+      }
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     if (!currentLesson) return;
@@ -547,6 +767,8 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
         const overallPercent = calculateOverallPercent(nextProgressMap, nextCompleted);
         void updateAssignmentProgress(course.id, learnerId, overallPercent);
       }
+
+      scheduleProgressSnapshot();
     },
     [
       course?.id,
@@ -557,6 +779,7 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
       lessonProgressMap,
       completedLessons,
       calculateOverallPercent,
+      scheduleProgressSnapshot,
     ]
   );
 
@@ -635,6 +858,16 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
 
     setCurrentTime(position);
 
+    if (captionsEnabled && captionsRef.current.length > 0) {
+      const cue = captionsRef.current.find((entry) => position >= entry.start && position <= entry.end);
+      const nextCaption = cue?.text ?? '';
+      if (nextCaption !== currentCaption) {
+        setCurrentCaption(nextCaption);
+      }
+    } else if (!captionsEnabled && currentCaption) {
+      setCurrentCaption('');
+    }
+
     setLessonPositions((prev) => {
       const previous = prev[currentLesson.id] ?? 0;
       if (Math.abs(previous - position) < 1) return prev;
@@ -654,6 +887,8 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
         logProgress(currentLesson.id, progressPercent, position);
       }
     }
+
+    scheduleProgressSnapshot();
   };
 
   const handleSeek = (time: number) => {
@@ -691,6 +926,32 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
       handleSeek(newTime);
     }
   };
+
+  const resumePositionSeconds = currentLesson ? Math.max(0, lessonPositions[currentLesson.id] ?? 0) : 0;
+  const canResumePlayback = resumePositionSeconds > 5;
+
+  const handleResumePlayback = useCallback(() => {
+    if (!videoRef.current || !canResumePlayback) return;
+    videoRef.current.currentTime = resumePositionSeconds;
+    videoRef.current.play().catch(() => undefined);
+    setIsPlaying(true);
+  }, [canResumePlayback, resumePositionSeconds]);
+
+  const handleRetryVideoPlayback = useCallback(() => {
+    setVideoError(null);
+    setVideoStatus('loading');
+    setVideoSessionKey((prev) => prev + 1);
+    if (videoRef.current) {
+      videoRef.current.load();
+      if (canResumePlayback) {
+        try {
+          videoRef.current.currentTime = resumePositionSeconds;
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+  }, [canResumePlayback, resumePositionSeconds]);
 
   const navigateLesson = useCallback(
     (direction: 'prev' | 'next') => {
@@ -945,162 +1206,219 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
           </Card>
 
           <Card padding="none" className="overflow-hidden">
-            {currentLesson.type === 'video' && (
-              <div className="relative bg-ink">
-                {(() => {
-                  // Support multiple content shapes for video URLs coming from different backends
-                  const raw = (currentLesson as any).content || {};
-                  const videoUrl =
-                    raw.videoUrl ||
-                    raw.src ||
-                    raw.url ||
-                    (raw.body && (raw.body.videoUrl || raw.body.src)) ||
-                    undefined;
-                  const videoType = raw.videoType || raw.type || '';
-                  
-                  if (!videoUrl) {
-                    return (
-                      <Card tone="muted" className="h-full w-full rounded-none border-none">
-                        <p className="text-sm text-slate/80">Video source unavailable. Please contact your facilitator.</p>
-                      </Card>
-                    );
-                  }
-                  
-                  // TED Talk videos need iframe embed
-                  if (videoType === 'ted' || videoUrl.includes('ted.com/talks')) {
-                    // Convert TED talk URL to embed URL
-                    let embedUrl = videoUrl;
-                    if (videoUrl.includes('ted.com/talks') && !videoUrl.includes('embed.ted.com')) {
-                      embedUrl = videoUrl.replace('www.ted.com/talks', 'embed.ted.com/talks');
-                    }
-                    
-                    return (
-                      <iframe
-                        src={embedUrl}
-                        className="h-full w-full max-h-[520px] bg-black"
-                        style={{ aspectRatio: '16/9' }}
-                        frameBorder="0"
-                        scrolling="no"
-                        allowFullScreen
-                        data-test="video-player"
-                      />
-                    );
-                  }
-                  
-                  // YouTube videos need iframe embed
-                  if (videoType === 'youtube' || videoUrl.includes('youtube.com') || videoUrl.includes('youtu.be')) {
-                    let videoId = '';
-                    if (videoUrl.includes('youtube.com/watch?v=')) {
-                      videoId = videoUrl.split('v=')[1]?.split('&')[0];
-                    } else if (videoUrl.includes('youtu.be/')) {
-                      videoId = videoUrl.split('youtu.be/')[1]?.split('?')[0];
-                    } else if (videoUrl.includes('youtube.com/embed/')) {
-                      videoId = videoUrl.split('embed/')[1]?.split('?')[0];
-                    }
-                    
-                    if (videoId) {
-                      return (
-                        <iframe
-                          src={`https://www.youtube.com/embed/${videoId}`}
-                          className="h-full w-full max-h-[520px] bg-black"
-                          style={{ aspectRatio: '16/9' }}
-                          frameBorder="0"
-                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                          allowFullScreen
-                          data-test="video-player"
-                        />
-                      );
-                    }
-                  }
-                  
-                  // Vimeo videos need iframe embed
-                  if (videoType === 'vimeo' || videoUrl.includes('vimeo.com')) {
-                    let videoId = '';
-                    if (videoUrl.includes('vimeo.com/')) {
-                      videoId = videoUrl.split('vimeo.com/')[1]?.split('?')[0]?.split('/')[0];
-                    }
-                    
-                    if (videoId) {
-                      return (
-                        <iframe
-                          src={`https://player.vimeo.com/video/${videoId}`}
-                          className="h-full w-full max-h-[520px] bg-black"
-                          style={{ aspectRatio: '16/9' }}
-                          frameBorder="0"
-                          allow="autoplay; fullscreen; picture-in-picture"
-                          allowFullScreen
-                          data-test="video-player"
-                        />
-                      );
-                    }
-                  }
-                  
-                  // Default: use native HTML5 video player for direct video files
-                  return (
-                    <video
-                      ref={videoRef}
-                      src={videoUrl}
-                      className="h-full w-full max-h-[520px] bg-black object-cover"
-                      onTimeUpdate={handleTimeUpdate}
-                      onLoadedMetadata={() => {
-                        if (!videoRef.current) return;
-                        const metaDuration = videoRef.current.duration || 0;
-                        setDuration(metaDuration);
-                        const storedPosition = lessonPositions[currentLesson.id] ?? 0;
-                        if (storedPosition > 0 && storedPosition < metaDuration) {
-                          videoRef.current.currentTime = storedPosition;
-                          setCurrentTime(storedPosition);
-                        }
-                      }}
-                      onPlay={() => setIsPlaying(true)}
-                      onPause={() => setIsPlaying(false)}
-                      data-test="video-player"
-                    />
-                  );
-                })()}
+            {currentLesson.type === 'video' && (() => {
+              const raw = (currentLesson as any).content || {};
+              const videoUrl =
+                raw.videoUrl ||
+                raw.src ||
+                raw.url ||
+                (raw.body && (raw.body.videoUrl || raw.body.src)) ||
+                undefined;
+              const videoType = (raw.videoType || raw.type || '').toLowerCase();
+              const isTed = videoType === 'ted' || (videoUrl?.includes('ted.com/talks') ?? false);
+              const isYouTube =
+                videoType === 'youtube' ||
+                (videoUrl?.includes('youtube.com') ?? false) ||
+                (videoUrl?.includes('youtu.be') ?? false);
+              const isVimeo = videoType === 'vimeo' || (videoUrl?.includes('vimeo.com') ?? false);
+              const isNativeVideo = Boolean(
+                videoUrl &&
+                  !isTed &&
+                  !isYouTube &&
+                  !isVimeo &&
+                  !videoUrl.includes('loom.com')
+              );
 
-                {(() => {
-                  const raw = (currentLesson as any).content || {};
-                  const videoUrl =
-                    raw.videoUrl ||
-                    raw.src ||
-                    raw.url ||
-                    (raw.body && (raw.body.videoUrl || raw.body.src)) ||
-                    undefined;
-                  const videoType = raw.videoType || raw.type || '';
-                  
-                  // Only show custom controls for native HTML5 video (not iframes)
-                  const isNativeVideo = videoUrl && 
-                    videoType !== 'ted' && 
-                    videoType !== 'youtube' && 
-                    videoType !== 'vimeo' && 
-                    !videoUrl.includes('ted.com') && 
-                    !videoUrl.includes('youtube.com') && 
-                    !videoUrl.includes('youtu.be') && 
-                    !videoUrl.includes('vimeo.com');
-                  
-                  return isNativeVideo;
-                })() && (
-                  <VideoControls
-                    isPlaying={isPlaying}
-                    currentTime={currentTime}
-                    duration={duration}
-                    volume={volume}
-                    isMuted={isMuted}
-                    playbackSpeed={playbackSpeed}
-                    showControls={showControls}
-                    onPlayPause={handlePlayPause}
-                    onSeek={handleSeek}
-                    onVolumeChange={handleVolumeChange}
-                    onToggleMute={toggleMute}
-                    onSpeedChange={changePlaybackSpeed}
-                    onSkip={skipTime}
-                    onFullscreen={() => setIsFullscreen(!isFullscreen)}
-                    onSettings={() => setShowSettings(!showSettings)}
+              const resumeLabel = canResumePlayback
+                ? `Resume from ${formatDurationLabel(resumePositionSeconds)}`
+                : null;
+
+              const renderIframe = (src: string, allowAttrs: string) => (
+                <iframe
+                  src={src}
+                  className="h-full w-full max-h-[520px] bg-black"
+                  style={{ aspectRatio: '16/9' }}
+                  frameBorder="0"
+                  scrolling="no"
+                  allow={allowAttrs}
+                  allowFullScreen
+                  data-test="video-player"
+                />
+              );
+
+              const renderVideo = () => {
+                if (!videoUrl) {
+                  return (
+                    <Card tone="muted" className="h-full w-full rounded-none border-none">
+                      <p className="text-sm text-slate/80">Video source unavailable. Please contact your facilitator.</p>
+                    </Card>
+                  );
+                }
+
+                if (isTed) {
+                  let embedUrl = videoUrl;
+                  if (videoUrl.includes('ted.com/talks') && !videoUrl.includes('embed.ted.com')) {
+                    embedUrl = videoUrl.replace('www.ted.com/talks', 'embed.ted.com/talks');
+                  }
+                  return renderIframe(embedUrl, 'fullscreen');
+                }
+
+                if (isYouTube) {
+                  let videoId = '';
+                  if (videoUrl.includes('watch?v=')) {
+                    videoId = videoUrl.split('v=')[1]?.split('&')[0] ?? '';
+                  } else if (videoUrl.includes('youtu.be/')) {
+                    videoId = videoUrl.split('youtu.be/')[1]?.split('?')[0] ?? '';
+                  } else if (videoUrl.includes('embed/')) {
+                    videoId = videoUrl.split('embed/')[1]?.split('?')[0] ?? '';
+                  }
+                  if (videoId) {
+                    return renderIframe(
+                      `https://www.youtube.com/embed/${videoId}`,
+                      'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture'
+                    );
+                  }
+                }
+
+                if (isVimeo && videoUrl) {
+                  const parts = videoUrl.split('vimeo.com/')[1];
+                  const videoId = parts?.split('?')[0]?.split('/')[0];
+                  if (videoId) {
+                    return renderIframe(
+                      `https://player.vimeo.com/video/${videoId}`,
+                      'autoplay; fullscreen; picture-in-picture'
+                    );
+                  }
+                }
+
+                if (!isNativeVideo) {
+                  return renderIframe(videoUrl, 'fullscreen');
+                }
+
+                return (
+                  <video
+                    key={`${currentLesson.id}-${videoSessionKey}`}
+                    ref={videoRef}
+                    src={videoUrl}
+                    className="h-full w-full max-h-[520px] bg-black object-cover"
+                    onTimeUpdate={handleTimeUpdate}
+                    onLoadedMetadata={() => {
+                      if (!videoRef.current) return;
+                      const metaDuration = videoRef.current.duration || 0;
+                      setDuration(metaDuration);
+                      const storedPosition = lessonPositions[currentLesson.id] ?? 0;
+                      if (storedPosition > 0 && storedPosition < metaDuration) {
+                        videoRef.current.currentTime = storedPosition;
+                        setCurrentTime(storedPosition);
+                      }
+                    }}
+                    onPlay={() => {
+                      setIsPlaying(true);
+                      setVideoStatus('ready');
+                      setVideoError(null);
+                    }}
+                    onPause={() => setIsPlaying(false)}
+                    onWaiting={() => setVideoStatus('loading')}
+                    onCanPlay={() => setVideoStatus('ready')}
+                    onPlaying={() => {
+                      setVideoStatus('ready');
+                      setVideoError(null);
+                    }}
+                    onStalled={() => setVideoStatus('loading')}
+                    onEnded={() => {
+                      setIsPlaying(false);
+                      scheduleProgressSnapshot({ immediate: true });
+                    }}
+                    onError={() => {
+                      const message = 'We are having trouble loading this lesson video. Please try again.';
+                      setVideoStatus('error');
+                      setVideoError(message);
+                      showToast(message, 'error', 5000);
+                    }}
+                    playsInline
+                    preload="metadata"
+                    data-test="video-player"
                   />
-                )}
-              </div>
-            )}
+                );
+              };
+
+              return (
+                <div className="relative bg-ink">
+                  {renderVideo()}
+
+                  {isNativeVideo && captionsEnabled && currentCaption && (
+                    <div className="pointer-events-none absolute bottom-24 left-1/2 w-[90%] max-w-3xl -translate-x-1/2 rounded-md bg-black/70 px-4 py-2 text-center text-sm text-white shadow-lg">
+                      {currentCaption}
+                    </div>
+                  )}
+
+                  {isNativeVideo && !isPlaying && videoStatus === 'ready' && canResumePlayback && resumeLabel && (
+                    <button
+                      onClick={handleResumePlayback}
+                      className="absolute bottom-4 left-4 rounded-full bg-white/90 px-4 py-2 text-sm font-medium text-charcoal shadow-lg transition hover:bg-white"
+                    >
+                      {resumeLabel}
+                    </button>
+                  )}
+
+                  {isNativeVideo && videoStatus === 'loading' && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-black/60 text-white">
+                      <Loader2 className="h-10 w-10 animate-spin" />
+                      <p className="text-sm font-medium">Preparing your lesson video…</p>
+                    </div>
+                  )}
+
+                  {isNativeVideo && videoStatus === 'error' && (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 bg-black/70 px-6 text-center text-white">
+                      <AlertTriangle className="h-12 w-12 text-sunrise" />
+                      <div>
+                        <p className="text-base font-semibold">We paused playback</p>
+                        <p className="mt-1 text-sm text-white/80">{videoError ?? 'Check your connection and retry the video.'}</p>
+                      </div>
+                      <div className="flex flex-wrap justify-center gap-3">
+                        <Button size="sm" onClick={handleRetryVideoPlayback}>
+                          Try again
+                        </Button>
+                        {currentLesson.content?.transcript && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => setShowTranscript(true)}
+                          >
+                            Open transcript
+                          </Button>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {isNativeVideo && (
+                    <VideoControls
+                      isPlaying={isPlaying}
+                      currentTime={currentTime}
+                      duration={duration}
+                      volume={volume}
+                      isMuted={isMuted}
+                      playbackSpeed={playbackSpeed}
+                      showControls={showControls}
+                      onPlayPause={handlePlayPause}
+                      onSeek={handleSeek}
+                      onVolumeChange={handleVolumeChange}
+                      onToggleMute={toggleMute}
+                      onSpeedChange={changePlaybackSpeed}
+                      onSkip={skipTime}
+                      onFullscreen={() => setIsFullscreen(!isFullscreen)}
+                      onSettings={() => setShowSettings(!showSettings)}
+                      captionsEnabled={captionsEnabled}
+                      canToggleCaptions={hasCaptionTracks}
+                      onToggleCaptions={handleToggleCaptions}
+                      onToggleTranscript={() => setShowTranscript((prev) => !prev)}
+                      isTranscriptOpen={showTranscript}
+                    />
+                  )}
+                </div>
+              );
+            })()}
 
             <div className="grid gap-6 p-6 lg:grid-cols-[minmax(0,1fr)_280px]">
               <div className="space-y-6">
@@ -1502,6 +1820,11 @@ const VideoControls: React.FC<{
   onSkip: (seconds: number) => void;
   onFullscreen: () => void;
   onSettings: () => void;
+  captionsEnabled: boolean;
+  canToggleCaptions: boolean;
+  onToggleCaptions: () => void;
+  onToggleTranscript: () => void;
+  isTranscriptOpen: boolean;
 }> = ({
   isPlaying,
   currentTime,
@@ -1517,7 +1840,12 @@ const VideoControls: React.FC<{
   onSpeedChange,
   onSkip,
   onFullscreen,
-  onSettings
+  onSettings,
+  captionsEnabled,
+  canToggleCaptions,
+  onToggleCaptions,
+  onToggleTranscript,
+  isTranscriptOpen,
 }) => {
   const formatTime = (timeInSeconds: number): string => {
     const minutes = Math.floor(timeInSeconds / 60);
@@ -1575,6 +1903,26 @@ const VideoControls: React.FC<{
         </div>
 
         <div className="flex items-center space-x-3">
+          {canToggleCaptions && (
+            <button
+              onClick={onToggleCaptions}
+              aria-pressed={captionsEnabled}
+              className={`text-white transition-colors ${captionsEnabled ? 'text-orange-400' : 'hover:text-orange-400'}`}
+              title={captionsEnabled ? 'Disable captions' : 'Enable captions'}
+            >
+              <Subtitles className="w-5 h-5" />
+            </button>
+          )}
+
+          <button
+            onClick={onToggleTranscript}
+            aria-pressed={isTranscriptOpen}
+            className={`text-white transition-colors ${isTranscriptOpen ? 'text-orange-400' : 'hover:text-orange-400'}`}
+            title={isTranscriptOpen ? 'Hide transcript' : 'Show transcript'}
+          >
+            <FileText className="w-5 h-5" />
+          </button>
+
           <select
             value={playbackSpeed}
             onChange={(e) => onSpeedChange(Number(e.target.value))}

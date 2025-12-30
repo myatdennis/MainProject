@@ -1,9 +1,11 @@
 import { getSupabase, hasSupabaseConfig } from '../lib/supabaseClient';
 import { syncService } from '../dal/sync';
 import type { CourseAssignment, CourseAssignmentStatus } from '../types/assignment';
+import { isSupabaseOperational, subscribeRuntimeStatus } from '../state/runtimeStatus';
 
 const STORAGE_KEY = 'huddle_course_assignments_v1';
-const SUPABASE_READY = hasSupabaseConfig;
+
+const supabaseReady = () => hasSupabaseConfig || isSupabaseOperational();
 
 type SupabaseAssignmentRow = {
   id: string;
@@ -62,11 +64,87 @@ const persistLocalAssignments = (records: CourseAssignment[]) => {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
 };
 
+const clearLocalAssignments = () => {
+  localStorage.removeItem(STORAGE_KEY);
+};
+
+let inflightLocalSync: Promise<void> | null = null;
+
+const syncLocalAssignmentsToSupabase = async () => {
+  if (!supabaseReady()) {
+    return;
+  }
+
+  if (inflightLocalSync) {
+    return inflightLocalSync;
+  }
+
+  inflightLocalSync = (async () => {
+    const pending = loadLocalAssignments();
+    if (pending.length === 0) {
+      inflightLocalSync = null;
+      return;
+    }
+
+    try {
+      const supabase = await getSupabase();
+      if (!supabase) throw new Error('Supabase unavailable');
+
+      const payload = pending.map((assignment) => ({
+        id: assignment.id,
+        course_id: assignment.courseId,
+        user_id: assignment.userId,
+        status: assignment.status,
+        progress: assignment.progress ?? 0,
+        due_date: assignment.dueDate ?? null,
+        note: assignment.note ?? null,
+        assigned_by: assignment.assignedBy ?? null,
+        created_at: assignment.createdAt ?? new Date().toISOString(),
+        updated_at: assignment.updatedAt ?? new Date().toISOString(),
+      }));
+
+      const { error } = await supabase
+        .from('course_assignments')
+        .upsert(payload, { onConflict: 'course_id,user_id' });
+
+      if (error) {
+        throw new Error(error.message);
+      }
+
+      clearLocalAssignments();
+    } catch (error) {
+      console.warn('[assignmentStorage] Failed to sync local assignments to Supabase:', error);
+    } finally {
+      inflightLocalSync = null;
+    }
+  })();
+
+  return inflightLocalSync;
+};
+
+if (typeof window !== 'undefined') {
+  if (supabaseReady()) {
+    void syncLocalAssignmentsToSupabase();
+  }
+
+  subscribeRuntimeStatus((status) => {
+    if (status.supabaseConfigured && status.supabaseHealthy) {
+      void syncLocalAssignmentsToSupabase();
+    }
+  });
+
+  window.addEventListener('online', () => {
+    if (supabaseReady()) {
+      void syncLocalAssignmentsToSupabase();
+    }
+  });
+}
+
 const emitLocalEvent = (
   type: 'assignment_created' | 'assignment_updated' | 'assignment_deleted',
   assignment: CourseAssignment
 ) => {
-  if (SUPABASE_READY) return;
+  if (supabaseReady()) return;
 
   syncService.logSyncEvent({
     type,
@@ -82,7 +160,7 @@ const withSupabaseFallback = async <T>(
   supabaseFn: () => Promise<T>,
   localFn: () => Promise<T> | T
 ): Promise<T> => {
-  if (!SUPABASE_READY) {
+  if (!supabaseReady()) {
     return await Promise.resolve(localFn());
   }
 
@@ -327,6 +405,7 @@ export const updateAssignmentProgress = async (
       assignments[index] = updated;
       persistLocalAssignments(assignments);
       emitLocalEvent('assignment_updated', updated);
+      void syncLocalAssignmentsToSupabase();
       return updated;
     }
   );

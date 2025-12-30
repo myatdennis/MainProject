@@ -6,21 +6,106 @@
 import CryptoJS from 'crypto-js';
 
 // ============================================================================
+// Storage Helpers
+// ============================================================================
+
+type StorageLike = {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+  removeItem(key: string): void;
+  clear(): void;
+  key(index: number): string | null;
+  readonly length: number;
+};
+
+const memoryStorage = new Map<string, string>();
+
+const memoryStorageAdapter: StorageLike = {
+  get length() {
+    return memoryStorage.size;
+  },
+  clear() {
+    memoryStorage.clear();
+  },
+  getItem(key) {
+    return memoryStorage.has(key) ? memoryStorage.get(key)! : null;
+  },
+  key(index) {
+    const keys = Array.from(memoryStorage.keys());
+    return keys[index] ?? null;
+  },
+  removeItem(key) {
+    memoryStorage.delete(key);
+  },
+  setItem(key, value) {
+    memoryStorage.set(key, value);
+  },
+};
+
+const warn = (message: string, error?: unknown) => {
+  if (typeof console === 'undefined') return;
+  if (error && error instanceof Error) {
+    console.warn(message, error.message);
+  } else {
+    console.warn(message);
+  }
+};
+
+let warnedFallback = false;
+let warnedSessionUnavailable = false;
+
+const getBrowserSessionStorage = (): StorageLike | null => {
+  if (typeof window === 'undefined' || typeof window.sessionStorage === 'undefined') {
+    return null;
+  }
+  try {
+    const testKey = '__secure_storage_probe__';
+    window.sessionStorage.setItem(testKey, testKey);
+    window.sessionStorage.removeItem(testKey);
+    return window.sessionStorage;
+  } catch (error) {
+    if (!warnedSessionUnavailable) {
+      warn('[secureStorage] sessionStorage is not accessible; falling back to in-memory storage.', error);
+      warnedSessionUnavailable = true;
+    }
+    return null;
+  }
+};
+
+const getStorage = (): StorageLike => {
+  const storage = getBrowserSessionStorage();
+  if (storage) {
+    return storage;
+  }
+  if (!warnedFallback) {
+    warn('[secureStorage] Using in-memory storage fallback. Data will be cleared on reload.');
+    warnedFallback = true;
+  }
+  return memoryStorageAdapter;
+};
+
+// ============================================================================
 // Configuration
 // ============================================================================
 
 // In production, this should be an environment variable
 // For now, generate a unique key per session
+const SESSION_KEY_NAME = '_sk';
+
 const getEncryptionKey = (): string => {
-  // Check if we have a session key
-  let sessionKey = sessionStorage.getItem('_sk');
-  
+  const storage = getStorage();
+  let sessionKey = storage.getItem(SESSION_KEY_NAME);
+
   if (!sessionKey) {
     // Generate a new session key
     sessionKey = CryptoJS.lib.WordArray.random(32).toString();
-    sessionStorage.setItem('_sk', sessionKey);
+    try {
+      storage.setItem(SESSION_KEY_NAME, sessionKey);
+    } catch (error) {
+      warn('[secureStorage] Failed to persist session key.', error);
+    }
   }
-  
+
   return sessionKey;
 };
 
@@ -71,7 +156,7 @@ export function secureSet(key: string, value: any): void {
   try {
     const stringified = JSON.stringify(value);
     const encrypted = encrypt(stringified);
-    sessionStorage.setItem(STORAGE_PREFIX + key, encrypted);
+    getStorage().setItem(STORAGE_PREFIX + key, encrypted);
   } catch (error) {
     console.error('Failed to securely store data:', error);
   }
@@ -82,7 +167,7 @@ export function secureSet(key: string, value: any): void {
  */
 export function secureGet<T>(key: string): T | null {
   try {
-    const encrypted = sessionStorage.getItem(STORAGE_PREFIX + key);
+    const encrypted = getStorage().getItem(STORAGE_PREFIX + key);
     if (!encrypted) return null;
     
     const decrypted = decrypt(encrypted);
@@ -99,7 +184,7 @@ export function secureGet<T>(key: string): T | null {
  * Remove data from secure storage
  */
 export function secureRemove(key: string): void {
-  sessionStorage.removeItem(STORAGE_PREFIX + key);
+  getStorage().removeItem(STORAGE_PREFIX + key);
 }
 
 /**
@@ -107,12 +192,16 @@ export function secureRemove(key: string): void {
  */
 export function secureClear(): void {
   // Only clear items with our prefix
-  const keys = Object.keys(sessionStorage);
-  keys.forEach(key => {
-    if (key.startsWith(STORAGE_PREFIX)) {
-      sessionStorage.removeItem(key);
+  const storage = getStorage();
+  const keysToRemove: string[] = [];
+  for (let i = 0; i < storage.length; i += 1) {
+    const key = storage.key(i);
+    if (key && key.startsWith(STORAGE_PREFIX)) {
+      keysToRemove.push(key);
     }
-  });
+  }
+  keysToRemove.forEach((key) => storage.removeItem(key));
+  storage.removeItem(SESSION_KEY_NAME);
 }
 
 // ============================================================================
@@ -213,36 +302,39 @@ export function clearAuth(): void {
  */
 export function migrateFromLocalStorage(): void {
   try {
+    if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') {
+      return;
+    }
     // Migrate user data
-    const oldUser = localStorage.getItem('user');
+    const oldUser = window.localStorage.getItem('user');
     if (oldUser) {
       const userData = JSON.parse(oldUser);
       setUserSession(userData);
-      localStorage.removeItem('user');
+      window.localStorage.removeItem('user');
       console.log('✅ Migrated user data to secure storage');
     }
     
     // Remove legacy auth token storage entirely
-    const oldToken = localStorage.getItem('authToken');
+    const oldToken = window.localStorage.getItem('authToken');
     if (oldToken) {
       setAccessToken(oldToken);
-      localStorage.removeItem('authToken');
+      window.localStorage.removeItem('authToken');
       console.log('✅ Migrated legacy auth token to secure storage');
     }
 
-    const oldRefreshToken = localStorage.getItem('refreshToken');
+    const oldRefreshToken = window.localStorage.getItem('refreshToken');
     if (oldRefreshToken) {
       setRefreshToken(oldRefreshToken);
-      localStorage.removeItem('refreshToken');
+      window.localStorage.removeItem('refreshToken');
       console.log('✅ Migrated legacy refresh token to secure storage');
     }
     
     // Clear any other sensitive data patterns
     const sensitivePatterns = ['token', 'auth', 'password', 'session', 'secret'];
-    Object.keys(localStorage).forEach(key => {
+    Object.keys(window.localStorage).forEach(key => {
       if (sensitivePatterns.some(pattern => key.toLowerCase().includes(pattern))) {
         console.warn(`⚠️ Removing potentially sensitive data from localStorage: ${key}`);
-        localStorage.removeItem(key);
+        window.localStorage.removeItem(key);
       }
     });
   } catch (error) {
@@ -260,13 +352,16 @@ export function migrateFromLocalStorage(): void {
 export function auditLocalStorage(): string[] {
   const warnings: string[] = [];
   const sensitivePatterns = ['token', 'auth', 'password', 'session', 'secret', 'user'];
-  
-  Object.keys(localStorage).forEach(key => {
+  if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') {
+    return warnings;
+  }
+
+  Object.keys(window.localStorage).forEach(key => {
     if (sensitivePatterns.some(pattern => key.toLowerCase().includes(pattern))) {
       warnings.push(key);
     }
   });
-  
+
   return warnings;
 }
 
@@ -289,14 +384,7 @@ export function checkStorageSecurity(): void {
  * Check if secure storage is available
  */
 export function isSecureStorageAvailable(): boolean {
-  try {
-    const test = '__storage_test__';
-    sessionStorage.setItem(test, test);
-    sessionStorage.removeItem(test);
-    return true;
-  } catch {
-    return false;
-  }
+  return getBrowserSessionStorage() !== null;
 }
 
 /**
@@ -305,17 +393,18 @@ export function isSecureStorageAvailable(): boolean {
 export function getStorageSize(): { bytes: number; items: number } {
   let bytes = 0;
   let items = 0;
-  
-  Object.keys(sessionStorage).forEach(key => {
-    if (key.startsWith(STORAGE_PREFIX)) {
-      const value = sessionStorage.getItem(key);
+  const storage = getStorage();
+  for (let i = 0; i < storage.length; i += 1) {
+    const key = storage.key(i);
+    if (key && key.startsWith(STORAGE_PREFIX)) {
+      const value = storage.getItem(key);
       if (value) {
         bytes += key.length + value.length;
-        items++;
+        items += 1;
       }
     }
-  });
-  
+  }
+
   return { bytes, items };
 }
 
@@ -331,10 +420,16 @@ export function listSecureKeys(): string[] {
     console.warn('listSecureKeys is disabled in production');
     return [];
   }
-  
-  return Object.keys(sessionStorage)
-    .filter(key => key.startsWith(STORAGE_PREFIX))
-    .map(key => key.replace(STORAGE_PREFIX, ''));
+
+  const storage = getStorage();
+  const keys: string[] = [];
+  for (let i = 0; i < storage.length; i += 1) {
+    const key = storage.key(i);
+    if (key && key.startsWith(STORAGE_PREFIX)) {
+      keys.push(key.replace(STORAGE_PREFIX, ''));
+    }
+  }
+  return keys;
 }
 
 /**
@@ -354,6 +449,28 @@ export function exportSecureData(): Record<string, any> {
   });
   
   return data;
+}
+
+// ============================================================================
+// Test Utilities (not for production use)
+// ============================================================================
+
+export function __dangerouslyResetSecureStorageStateForTests(): void {
+  memoryStorage.clear();
+  warnedFallback = false;
+  warnedSessionUnavailable = false;
+
+  const storage = getBrowserSessionStorage();
+  if (storage) {
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < storage.length; i += 1) {
+      const key = storage.key(i);
+      if (key && (key.startsWith(STORAGE_PREFIX) || key === SESSION_KEY_NAME)) {
+        keysToRemove.push(key);
+      }
+    }
+    keysToRemove.forEach((key) => storage.removeItem(key));
+  }
 }
 
 // ============================================================================

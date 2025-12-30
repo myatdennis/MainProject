@@ -1,13 +1,53 @@
 import { Course, LearnerProgress, LessonProgress, ChapterProgress, CourseAnalytics, CourseRecommendation } from '../types/courseTypes';
+import {
+  getAllCoursesFromDatabase,
+  syncCourseToDatabase,
+  deleteCourseFromDatabase,
+} from '../dal/adminCourses';
+import type { NormalizedCourse } from '../utils/courseNormalization';
+import { convertModulesToChapters, recalculateCourseDurations, buildModulesFromChapters } from '../utils/courseStructure';
 
 // Enhanced Course Store with full CMS functionality
 class CourseManagementStore {
   private courses: Map<string, Course> = new Map();
   private learnerProgress: Map<string, LearnerProgress> = new Map();
   private analytics: Map<string, CourseAnalytics> = new Map();
+  private hydrationPromise: Promise<void>;
+  private supabaseHydrated = false;
+  private hasSupabaseConfig = Boolean(import.meta.env?.VITE_SUPABASE_URL) && Boolean(import.meta.env?.VITE_SUPABASE_ANON_KEY);
   
   constructor() {
     this.initializeSampleData();
+    this.hydrationPromise = this.hydrateFromSupabase();
+  }
+
+  async ready(): Promise<void> {
+    return this.hydrationPromise.catch(() => {});
+  }
+
+  private hydrateFromSupabase(): Promise<void> {
+    if (!this.hasSupabaseConfig) {
+      return Promise.resolve();
+    }
+
+    const hydrate = async () => {
+      try {
+        const remoteCourses = await getAllCoursesFromDatabase();
+        if (!remoteCourses || remoteCourses.length === 0) {
+          return;
+        }
+
+        remoteCourses.forEach((record: NormalizedCourse) => {
+          const hydrated = convertModulesToChapters(record as unknown as Course);
+          this.courses.set(hydrated.id, hydrated);
+        });
+        this.supabaseHydrated = true;
+      } catch (error) {
+        console.warn('[courseManagementStore] Failed to hydrate from Supabase:', error);
+      }
+    };
+
+    return hydrate();
   }
 
   // Course Management
@@ -49,8 +89,9 @@ class CourseManagementStore {
       ...courseData,
     };
 
-    this.courses.set(id, course);
-    return course;
+    const normalizedCourse = recalculateCourseDurations(course);
+    this.courses.set(id, normalizedCourse);
+    return normalizedCourse;
   }
 
   getCourse(id: string): Course | null {
@@ -62,11 +103,12 @@ class CourseManagementStore {
   }
 
   setCourse(course: Course): Course {
-    this.courses.set(course.id, {
+    const normalized = recalculateCourseDurations({
       ...course,
       updatedAt: course.updatedAt || new Date().toISOString(),
     });
-    return course;
+    this.courses.set(course.id, normalized);
+    return normalized;
   }
 
   updateCourse(id: string, updates: Partial<Course>): Course | null {
@@ -83,8 +125,14 @@ class CourseManagementStore {
     return updatedCourse;
   }
 
-  deleteCourse(id: string): boolean {
-    return this.courses.delete(id);
+  deleteCourse(id: string, options: { skipRemote?: boolean } = {}): boolean {
+    const removed = this.courses.delete(id);
+    if (removed && this.hasSupabaseConfig && !options.skipRemote) {
+      deleteCourseFromDatabase(id).catch((error) => {
+        console.warn('[courseManagementStore] Failed to delete course from Supabase:', error);
+      });
+    }
+    return removed;
   }
 
   publishCourse(id: string): Course | null {
@@ -99,6 +147,12 @@ class CourseManagementStore {
     };
 
     this.courses.set(id, publishedCourse);
+    if (this.hasSupabaseConfig) {
+      const payload = buildModulesFromChapters(publishedCourse);
+      syncCourseToDatabase(payload).catch((error) => {
+        console.warn('[courseManagementStore] Failed to sync published course to Supabase:', error);
+      });
+    }
     return publishedCourse;
   }
 
@@ -401,8 +455,9 @@ class CourseManagementStore {
   }
 
   private initializeSampleData(): void {
-    // Sample course data would be loaded here
-    // For now, we'll create a few sample courses
+    if (this.hasSupabaseConfig || this.supabaseHydrated) {
+      return;
+    }
     this.createSampleCourses();
   }
 

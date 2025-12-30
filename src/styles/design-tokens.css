@@ -62,6 +62,9 @@ h1,h2,h3{ font-family: var(--font-head); }
   --background-light: var(--surface-page);
   --input-border: rgba(30, 30, 30, 0.08);
   --border-mist: rgba(30, 30, 30, 0.06);
+  --card-border: var(--border-weak);
+  --surface-glow: color-mix(in srgb, var(--hud-blue) 4%, #ffffff);
+  --surface-glass: color-mix(in srgb, rgba(255, 255, 255, 0.75) 70%, transparent);
 
   /* Typography */
   --font-heading: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
@@ -91,12 +94,35 @@ h1,h2,h3{ font-family: var(--font-head); }
   --motion-duration-base: 300ms;
 
   /* Gradients (pairing rules: Orange→Red, Blue→Green) */
-  --gradient-orange-red: linear-gradient(90deg, var(--hud-orange) 0%, var(--hud-red) 100%);
-  --gradient-blue-green: linear-gradient(90deg, var(--hud-blue) 0%, var(--hud-green) 100%);
-  --gradient-brand: linear-gradient(140deg, var(--hud-orange) 0%, var(--hud-blue) 55%, var(--hud-green) 100%);
-  --gradient-card: linear-gradient(135deg, color-mix(in srgb, var(--hud-orange) 8%, transparent), color-mix(in srgb, var(--hud-blue) 8%, transparent));
-  --primary-gradient: var(--gradient-orange-red);
-  --gradient-banner: linear-gradient(120deg, color-mix(in srgb, var(--hud-orange) 12%, transparent), color-mix(in srgb, var(--hud-blue) 10%, transparent));
+  --gradient-orange-red: linear-gradient(128deg,
+    color-mix(in srgb, var(--hud-orange) 82%, #fff3e7) 0%,
+    color-mix(in srgb, var(--hud-red) 70%, #ffe7eb) 52%,
+    color-mix(in srgb, var(--hud-red) 62%, var(--hud-blue) 18%) 100%
+  );
+  --gradient-blue-green: linear-gradient(135deg,
+    color-mix(in srgb, var(--hud-blue) 85%, #eef4ff) 0%,
+    color-mix(in srgb, var(--hud-green) 80%, #e5f7ec) 100%
+  );
+  --gradient-brand: linear-gradient(140deg,
+    color-mix(in srgb, var(--hud-orange) 90%, #fff1e7) 0%,
+    color-mix(in srgb, var(--hud-blue) 82%, #eaf1ff) 50%,
+    color-mix(in srgb, var(--hud-green) 70%, #e4f6ed) 100%
+  );
+  --gradient-card: linear-gradient(135deg,
+    color-mix(in srgb, var(--hud-orange) 6%, #ffffff) 0%,
+    color-mix(in srgb, var(--hud-blue) 7%, #ffffff) 55%,
+    color-mix(in srgb, var(--hud-green) 5%, #ffffff) 100%
+  );
+  --gradient-banner: linear-gradient(125deg,
+    color-mix(in srgb, var(--hud-orange) 18%, transparent) 0%,
+    color-mix(in srgb, var(--hud-blue) 15%, transparent) 55%,
+    color-mix(in srgb, var(--hud-green) 18%, transparent) 100%
+  );
+  --gradient-pill: linear-gradient(110deg, var(--hud-orange) 0%, color-mix(in srgb, var(--hud-red) 55%, var(--hud-blue) 20%) 52%, var(--hud-green) 100%);
+  --gradient-sunrise: linear-gradient(150deg, color-mix(in srgb, var(--hud-orange) 90%, #fff8ef) 0%, color-mix(in srgb, var(--hud-red) 60%, #ffe8ea) 100%);
+  --gradient-overlay-soft: linear-gradient(120deg, color-mix(in srgb, var(--hud-orange) 12%, transparent), color-mix(in srgb, var(--hud-blue) 10%, transparent));
+  --gradient-section: linear-gradient(145deg, color-mix(in srgb, var(--hud-orange) 10%, transparent), color-mix(in srgb, var(--hud-blue) 12%, transparent));
+  --primary-gradient: var(--gradient-pill);
 
   /* CTA & interactive (Orange→Red as primary action) */
   --cta-bg: var(--hud-orange);
@@ -117,18 +143,52 @@ h1,h2,h3{ font-family: var(--font-head); }
   --on-surface: var(--hud-ink);
 
   /* Badges */
-  --badge-info-bg: color-mix(in srgb, var(--hud-blue) 12%, transparent);
-  --badge-info-text: var(--hud-blue);
-  --badge-success-bg: color-mix(in srgb, var(--hud-green) 12%, transparent);
-  --badge-success-text: var(--hud-green);
-  --badge-warn-bg: color-mix(in srgb, var(--hud-orange) 16%, transparent);
-  --badge-warn-text: var(--hud-orange);
-  --badge-danger-bg: color-mix(in srgb, var(--hud-red) 14%, transparent);
-  --badge-danger-text: var(--hud-red);
+  --badge-info-bg: color-mix(in srgb, var(--hud-blue) 14%, #f6f8ff);
+  --badge-info-text: color-mix(in srgb, var(--hud-blue) 92%, #142447);
+  --badge-success-bg: color-mix(in srgb, var(--hud-green) 14%, #f2fcf5);
+  --badge-success-text: color-mix(in srgb, var(--hud-green) 92%, #11381c);
+  --badge-warn-bg: color-mix(in srgb, var(--hud-orange) 18%, #fff8ef);
+  --badge-warn-text: color-mix(in srgb, var(--hud-orange) 90%, #4f2600);
+  --badge-danger-bg: color-mix(in srgb, var(--hud-red) 16%, #fff5f6);
+  --badge-danger-text: color-mix(in srgb, var(--hud-red) 90%, #47090d);
+  --badge-neutral-bg: color-mix(in srgb, var(--hud-gray-100) 80%, #ffffff);
+  --badge-neutral-text: color-mix(in srgb, var(--hud-gray-600) 92%, #1f1f1f);
 
   /* Borders */
   --border-weak: rgba(30, 30, 30, 0.08);
   --border-strong: rgba(30, 30, 30, 0.16);
+  /* Toast system */
+  --toast-shadow: 0 25px 50px rgba(11, 18, 32, 0.18);
+  --toast-blur: blur(18px);
+  --toast-border: color-mix(in srgb, var(--hud-ink) 10%, transparent);
+  --toast-surface-base: color-mix(in srgb, var(--surface-card) 80%, rgba(255, 255, 255, 0.92));
+  --toast-text-base: color-mix(in srgb, var(--hud-ink) 90%, #0f141c);
+  --toast-info-bg: color-mix(in srgb, var(--hud-blue) 10%, var(--toast-surface-base));
+  --toast-info-border: color-mix(in srgb, var(--hud-blue) 35%, transparent);
+  --toast-info-icon: var(--hud-blue);
+  --toast-success-bg: color-mix(in srgb, var(--hud-green) 12%, var(--toast-surface-base));
+  --toast-success-border: color-mix(in srgb, var(--hud-green) 35%, transparent);
+  --toast-success-icon: var(--hud-green);
+  --toast-warning-bg: color-mix(in srgb, var(--hud-orange) 18%, var(--toast-surface-base));
+  --toast-warning-border: color-mix(in srgb, var(--hud-orange) 45%, transparent);
+  --toast-warning-icon: color-mix(in srgb, var(--hud-orange) 95%, var(--hud-red) 10%);
+  --toast-danger-bg: color-mix(in srgb, var(--hud-red) 18%, var(--toast-surface-base));
+  --toast-danger-border: color-mix(in srgb, var(--hud-red) 45%, transparent);
+  --toast-danger-icon: var(--hud-red);
+  --toast-info-text: color-mix(in srgb, var(--hud-blue) 60%, var(--toast-text-base));
+  --toast-success-text: color-mix(in srgb, var(--hud-green) 60%, var(--toast-text-base));
+  --toast-warning-text: color-mix(in srgb, var(--hud-orange) 62%, var(--toast-text-base));
+  --toast-danger-text: color-mix(in srgb, var(--hud-red) 65%, var(--toast-text-base));
+  --toast-close-bg: rgba(255, 255, 255, 0.16);
+  --toast-close-bg-hover: rgba(255, 255, 255, 0.26);
+  --toast-progress-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.35);
+
+  /* Elevation helpers */
+  --elevation-1: 0 4px 12px rgba(17, 24, 40, 0.08);
+  --elevation-2: 0 12px 28px rgba(17, 24, 40, 0.15);
+  --elevation-3: 0 30px 60px rgba(3, 7, 18, 0.22);
+  --elevation-card: var(--shadow-card);
+  --elevation-modal: 0 24px 48px rgba(3, 7, 18, 0.28);
 
   /* Shade mixes (runtime) */
   --hud-orange-600: color-mix(in srgb, var(--hud-orange) 85%, black);
@@ -174,6 +234,8 @@ h1,h2,h3{ font-family: var(--font-head); }
     --surface-page: #0e1016;
     --surface-card: #111827;
     --surface-muted: rgba(17, 24, 39, 0.85);
+    --surface-glow: color-mix(in srgb, var(--hud-blue) 14%, #0e1016);
+    --surface-glass: color-mix(in srgb, rgba(15, 23, 42, 0.8) 80%, transparent);
     --color-charcoal: #e5e7eb;
     --color-slate: #9ca3af;
     --color-mist: rgba(229, 231, 235, 0.18);
@@ -184,10 +246,21 @@ h1,h2,h3{ font-family: var(--font-head); }
     --button-muted-text: #d1d5db;
     --border-weak: rgba(255, 255, 255, 0.08);
     --border-strong: rgba(255, 255, 255, 0.18);
+    --card-border: rgba(255, 255, 255, 0.1);
     --badge-info-bg: color-mix(in srgb, var(--hud-blue) 22%, transparent);
     --badge-success-bg: color-mix(in srgb, var(--hud-green) 22%, transparent);
     --badge-warn-bg: color-mix(in srgb, var(--hud-orange) 24%, transparent);
     --badge-danger-bg: color-mix(in srgb, var(--hud-red) 24%, transparent);
+    --badge-neutral-bg: color-mix(in srgb, var(--hud-gray-600) 35%, #131722);
+    --badge-neutral-text: #f4f5f7;
+    --toast-surface-base: color-mix(in srgb, #0f141c 80%, rgba(15, 23, 42, 0.85));
+    --toast-text-base: color-mix(in srgb, #f8fafc 82%, var(--hud-gray-600));
+    --toast-info-bg: color-mix(in srgb, var(--hud-blue) 24%, #0f141c);
+    --toast-success-bg: color-mix(in srgb, var(--hud-green) 24%, #0f141c);
+    --toast-warning-bg: color-mix(in srgb, var(--hud-orange) 28%, #140b02);
+    --toast-danger-bg: color-mix(in srgb, var(--hud-red) 28%, #190406);
+    --toast-close-bg: rgba(255, 255, 255, 0.12);
+    --toast-close-bg-hover: rgba(255, 255, 255, 0.28);
     --cta-shadow: 0 8px 24px color-mix(in srgb, var(--hud-red) 35%, transparent);
   }
 }
