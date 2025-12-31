@@ -47,6 +47,10 @@ Quick reference guide to all project documentation.
 - **[ADMIN_PHASE8_PERFORMANCE_BATCHING_PLAN.md](./ADMIN_PHASE8_PERFORMANCE_BATCHING_PLAN.md)** – Progress + analytics batching optimizations and load-test evidence.
 - **[ADMIN_PHASE9_RESILIENCE_OFFLINE_REPORT.md](./ADMIN_PHASE9_RESILIENCE_OFFLINE_REPORT.md)** – Runtime health, offline durability, and service worker upgrades.
 - **[ADMIN_PHASE10_GO_LIVE_READINESS.md](./ADMIN_PHASE10_GO_LIVE_READINESS.md)** – Final go-live checklist, risks, and cutover plan.
+- **[ORG_ANALYTICS_RUNBOOK.md](./ORG_ANALYTICS_RUNBOOK.md)** – Step-by-step process for org-scoped analytics support.
+- **[ANALYTICS_HISTORY_IMPORT.md](./ANALYTICS_HISTORY_IMPORT.md)** – JSONL import workflow + verification steps for replaying historic analytics data.
+- **[CUSTOMER_UAT_CHECKLIST.md](./CUSTOMER_UAT_CHECKLIST.md)** – Agenda, participants, and exit criteria for the Redwood enterprise UAT session.
+- **[PAGERDUTY_ONCALL_PLAYBOOK.md](./PAGERDUTY_ONCALL_PLAYBOOK.md)** – PagerDuty/Grafana wiring, escalation policy, and runbook actions for ingestion alerts.
 
 ---
 
@@ -112,6 +116,10 @@ Quick reference guide to all project documentation.
 | Dec 30, 2025 | ADMIN_PHASE8_PERFORMANCE_BATCHING_PLAN.md | Phase 8 batching/performance plan |
 | Dec 30, 2025 | ADMIN_PHASE9_RESILIENCE_OFFLINE_REPORT.md | Phase 9 resiliency/offline report |
 | Dec 30, 2025 | ADMIN_PHASE10_GO_LIVE_READINESS.md | Phase 10 go-live readiness checklist |
+| Dec 31, 2025 | ORG_ANALYTICS_RUNBOOK.md | Org-level analytics support workflow |
+| Dec 31, 2025 | ANALYTICS_HISTORY_IMPORT.md | Backlog replay script + validation checklist |
+| Dec 31, 2025 | CUSTOMER_UAT_CHECKLIST.md | Enterprise UAT agenda and exit criteria |
+| Dec 31, 2025 | PAGERDUTY_ONCALL_PLAYBOOK.md | Alert wiring + on-call procedures |
 | Oct 2024 | TROUBLESHOOTING.md | Common issues guide |
 | Oct 2024 | COURSE_MANAGEMENT_PLAN.md | Course features roadmap |
 | Oct 2024 | README.md | Project overview |
@@ -139,4 +147,4 @@ When adding new documentation:
 
 ---
 
-**Last Updated:** December 30, 2025
+**Last Updated:** December 31, 2025

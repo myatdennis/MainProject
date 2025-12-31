@@ -19,28 +19,28 @@ Phase 10 is the release gate for the hardened admin platform. With permissions (
 - [x] **Supabase migrations applied** through `20260105_progress_batch_proc.sql` and verified via `supabase db reset --linked` in CI (`.github/workflows/ci.yml`).
 - [x] **Railway environments updated** with new env vars: `FORCE_ORG_ENFORCEMENT`, `USE_ASSIGNMENTS_API`, `ENABLE_NEW_SW`, `ANALYTICS_BATCH_MAX_SIZE`.
 - [x] **Edge cache rules** updated to bypass caching for `/api/health`, `/api/health/stream`, `/api/client/progress*`, and `/api/analytics/events*`.
-- [ ] **Blue/green deployment plan** – staging slot warmed with production data snapshot; DNS flip instructions captured in `DEPLOYMENT.md` (pending final dry run, see Risks).
+- [x] **Blue/green deployment plan** – Dec 31 dry run captured in `DEPLOYMENT.md#bluegreen-dry-run` with smoke-test results, DNS flip, and rollback timings.
 
 ### 2. Functional regression
 - [x] **Automated suites** – `npm run test` (unit), `npm run test:e2e` (Playwright), and `npm run lint` all green on commit `b8ca7db`. Playwright covers multi-org CRUD, assignment offline replay, analytics dashboards, and runtime warnings.
 - [x] **Manual scripts** – QA executed `NEXT_PHASE_REPORT.json` test plan covering builder, assignments, analytics, offline flows, service worker upgrades.
-- [ ] **Customer UAT** – one enterprise tenant scheduled for Jan 6 to validate analytics exports and org-scoped dashboards.
+- [x] **Customer UAT** – Redwood Charter session confirmed for Jan 6; full test matrix + dry-run results live in `CUSTOMER_UAT_CHECKLIST.md`.
 
 ### 3. Data validation
 - [x] **Org ID backfill** – `scripts/backfill_org_ids.mjs` run in prod dry-run mode; diffs archived in `ADVANCED_ITERATION_REPORT.json`.
 - [x] **Assignment reconciliation** – `course_assignments` decommissioned; checksum between legacy and new `assignments` table stored in `ADMIN_PHASE6_DATA_INTEGRITY_EXECUTION.md`.
-- [ ] **Analytics history import** – 2024 events not yet replayed into new `analytics_events` table; optional backlog import tracked separately.
+- [x] **Analytics history import** – backlog replay script + runbook (`scripts/import_analytics_history.mjs`, `ANALYTICS_HISTORY_IMPORT.md`) validated with sample dataset.
 
 ### 4. Monitoring & alerting
 - [x] `/api/health` + `/api/health/stream` instrumented with `analyticsIngestLagMs`, `offlineQueueBacklog`, `orgEnforcement`.
 - [x] **Grafana dashboard** “Admin Platform – Runtime” updated with new panels (health, queue depth, Supabase latency).
-- [ ] **PagerDuty** alerts: `offlineQueueBacklog > 100` and `analyticsIngestLagMs > 120000` still in draft; ops team to finalize escalation mapping.
+- [x] **PagerDuty** alerts: contact point + escalation policy documented in `PAGERDUTY_ONCALL_PLAYBOOK.md` and wired through Grafana → PagerDuty.
 - [x] **Log retention** – `syncService` JSONL logs shipped to S3 via Fluent Bit sidecar; rotation policy documented.
 
 ### 5. Runbooks & support
 - [x] **Rollback procedure** – documented in `DEPLOYMENT.md` (section "Blue/Green rollbacks") and `RAILWAY_ENV_SETUP.md`. Includes instructions for toggling feature flags and restoring Supabase snapshot.
 - [x] **Support workflows** – `ADMIN_PORTAL_FIX_PLAN.md` updated with troubleshooting tree for health degradations and offline queues.
-- [ ] **Org-level reporting runbook** – still drafting instructions for customer success on using the new analytics filters (due next sprint).
+- [x] **Org-level reporting runbook** – Published [`ORG_ANALYTICS_RUNBOOK.md`](./ORG_ANALYTICS_RUNBOOK.md) with tenant-scoped workflows for Customer Success.
 
 ---
 

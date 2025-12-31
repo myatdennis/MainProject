@@ -63,7 +63,7 @@ Phase 8 builds on the org-safe analytics stack (Phase 6/7) by tuning throughput,
 | API rate limiting | ✅ | Supertest `progressBatchRateLimit.spec.ts` ensures 429 when user sends >5 batches/second. |
 | Client adaptive timers | ✅ | Jest `batchService.adaptive.spec.ts` asserts interval adjustments based on mock latency. |
 | Queue observability | ✅ | `/api/health` exposes `offlineQueue.backlog` + `progressBatchLagMs`; Grafana panel ties to alerts. |
-| Retention policy | ⚠️ scheduled | Cron job defined but awaiting infra approval; tracked into Phase 10 readiness list. |
+| Retention policy | ✅ shipped | `scripts/prune_old_events.mjs` + `npm run retention:events` prune analytics/progress data older than 30 days; schedule via Railway cron (Dec 31 2025). |
 
 ---
 

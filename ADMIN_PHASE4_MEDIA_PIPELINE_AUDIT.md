@@ -104,7 +104,7 @@ Goal: validate that video/document ingestion, storage, and playback are reliable
 | Risk | Impact | Priority fix |
 | --- | --- | --- |
 | Video metadata discarded in lessons | Impossible to rotate URLs, audit storage, or clean up orphaned files. | Store `{bucket, storagePath, mime, bytes, uploadedBy, uploadedAt}` in `content_json`; update CourseService normalization to preserve it. |
-| Bucket naming drift (`documents` vs `course-resources`) | Uploads succeed locally but fail in production when the target bucket doesn’t exist. | Update env defaults + migrations to share the same bucket ID; add health check that verifies both `course-videos` and `course-resources` exist on startup. |
+| Bucket naming drift (`documents` vs `course-resources`) | Uploads succeed locally but fail in production when the target bucket doesn’t exist. | ✅ Default buckets now set to `course-resources`/`course-videos` and health check verifies both exist at startup (Dec 31 2025). |
 | Public read for all media | Anyone with a link can hotlink or exhaust bandwidth; no revocation path. | Flip buckets to `public=false`, serve via signed URLs, and audit existing assets for exposure. |
 | Offline fallbacks silently drop data | `blob:` URLs break after refresh; admins think the video is saved. | Persist offline uploads into IndexedDB + Background Sync, surface a “pending uploads” list, and warn clearly before leaving the page. |
 | Multer < bucket limit | Support can’t explain why 75 MB uploads fail. | Read bucket limit from Supabase metadata (via REST) and set multer limit dynamically; show config mismatch in admin diagnostics. |

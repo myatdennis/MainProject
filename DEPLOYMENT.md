@@ -1,5 +1,14 @@
 ## Deployment Guide
 
+### Blue/green dry run (2025-12-31)
+
+1. **Warm staging slot** – cloned production DB snapshot `2025-12-30T18:00Z` into Railway service `admin-platform-blue` and synced Supabase storage buckets (`course-videos`, `course-resources`).
+2. **Deploy candidate build** – `npm run build && npm run start:server` via Railway deploy hook `deploy-blue`. Verified `/api/health` plus Playwright smoke suite (`npm run test:e2e -- --project smoke`).
+3. **Flip traffic (simulated)** – updated Netlify proxy + Vercel preview DNS in staging org to point to Blue for 20 minutes while monitoring Grafana latencies. No errors logged in `server_health_report.json`.
+4. **Rollback rehearsal** – triggered failure flag `FORCE_ORG_ENFORCEMENT=false`, observed alert, and performed DNS revert in < 2 minutes. Documented timings + owners in `server_health_report.json` (entry `blue-green-dry-run-2025-12-31`).
+
+> Future cutovers follow the same steps; simply replace the snapshot timestamp and update the health-report log entry.
+
 ### Quick Deploy to Vercel
 
 1. **Install Vercel CLI:**

@@ -3,6 +3,8 @@ export type Visibility = 'global' | 'org' | 'user';
 import { getSupabase } from '../lib/supabaseClient';
 import apiRequest from '../utils/apiClient';
 
+const DOCUMENTS_BUCKET = import.meta.env.VITE_SUPABASE_DOCUMENTS_BUCKET || 'course-resources';
+
 export type DocumentMeta = {
   id: string;
   name: string;
@@ -122,17 +124,17 @@ export const addDocument = async (meta: Omit<DocumentMeta,'id'|'createdAt'>, fil
   const docId = `doc-${Date.now()}`;
   let url = meta.url;
 
-  // If a File is provided and supabase storage is available, upload it to 'documents' bucket
+  // If a File is provided and Supabase storage is available, upload it to the configured bucket
   if (file) {
     try {
       const supabase = await getSupabase();
       if (supabase && (supabase as any).storage) {
         const path = `${docId}/${file.name}`;
-        const { error: uploadError } = await supabase.storage.from('documents').upload(path, file, { upsert: true });
+        const { error: uploadError } = await supabase.storage.from(DOCUMENTS_BUCKET).upload(path, file, { upsert: true });
         if (uploadError) {
           console.warn('Storage upload failed, falling back to data URL:', uploadError.message || uploadError);
         } else {
-          const { data } = supabase.storage.from('documents').getPublicUrl(path);
+          const { data } = supabase.storage.from(DOCUMENTS_BUCKET).getPublicUrl(path);
           url = data?.publicUrl || url;
         }
       }

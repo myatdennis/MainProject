@@ -7,7 +7,7 @@
 | Step | Owner | Source files / endpoints | Storage | Notes |
 | --- | --- | --- | --- | --- |
 | Draft or import | Admin UI (`src/pages/Admin/CourseBuilderPage.tsx`, `src/pages/Admin/BrandKitPage.tsx`) | `/api/admin/courses` (server `courseUpsertSchema`), `/api/admin/modules`, `/api/admin/lessons` | `courses`, `modules`, `lessons` tables in Supabase | Rich text, video, worksheet, quiz, survey content is persisted inside `meta_json`, `content_json`, `completion_rule_json`. |
-| Media handling | Admin uploads via enhanced video/doc widgets | Server streams to Supabase Storage bucket `documents` (see `SUPABASE_DOCUMENTS_BUCKET`) | Storage object metadata stored back on lessons | Signed URLs refreshed via `DOCUMENT_URL_TTL_SECONDS` window. |
+| Media handling | Admin uploads via enhanced video/doc widgets | Server streams to Supabase Storage bucket `course-resources` (see `SUPABASE_DOCUMENTS_BUCKET`) | Storage object metadata stored back on lessons | Signed URLs refreshed via `DOCUMENT_URL_TTL_SECONDS` window. |
 | Versioning & validation | `courseUpsertSchema`, `lessonCreateSchema`, etc. in `server/validators.js` | In-memory `e2eStore` mirrors Supabase for demo/dev parity | Guarantees order indexes, slug uniqueness, and module <> lesson referential integrity before commit. |
 
 **Key behaviors**

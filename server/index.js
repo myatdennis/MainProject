@@ -62,13 +62,14 @@ const MAX_DEMO_FILE_BYTES = parseInt(process.env.DEMO_DATA_MAX_BYTES || '', 10) 
 const initialDemoModeMetadata = describeDemoMode();
 logger.info('demo_mode_configuration', { metadata: initialDemoModeMetadata });
 
-const DOCUMENTS_BUCKET = process.env.SUPABASE_DOCUMENTS_BUCKET || 'documents';
+const DOCUMENTS_BUCKET = process.env.SUPABASE_DOCUMENTS_BUCKET || 'course-resources';
 const DOCUMENT_UPLOAD_MAX_BYTES = Number(process.env.DOCUMENT_UPLOAD_MAX_BYTES || 25 * 1024 * 1024);
 const DOCUMENT_URL_TTL_SECONDS = Number(process.env.DOCUMENT_SIGN_TTL_SECONDS || 60 * 60 * 24 * 7);
 const DOCUMENT_URL_REFRESH_BUFFER_SECONDS = Number(process.env.DOCUMENT_URL_REFRESH_BUFFER_SECONDS || 60 * 5);
 const DOCUMENT_URL_REFRESH_BUFFER_MS = DOCUMENT_URL_REFRESH_BUFFER_SECONDS * 1000;
 const COURSE_VIDEOS_BUCKET = process.env.SUPABASE_VIDEOS_BUCKET || 'course-videos';
-const COURSE_VIDEO_UPLOAD_MAX_BYTES = Number(process.env.COURSE_VIDEO_UPLOAD_MAX_BYTES || 50 * 1024 * 1024);
+const COURSE_VIDEO_UPLOAD_MAX_BYTES = Number(process.env.COURSE_VIDEO_UPLOAD_MAX_BYTES || 100 * 1024 * 1024);
+const REQUIRED_SUPABASE_BUCKETS = Array.from(new Set([COURSE_VIDEOS_BUCKET, DOCUMENTS_BUCKET].filter(Boolean)));
 
 const documentUpload = multer({
   storage: multer.memoryStorage(),
@@ -214,7 +215,44 @@ const getOfflineQueueHealth = () => {
   };
 };
 
-const getStorageHealth = () => {
+const getSupabaseBucketHealth = async () => {
+  if (REQUIRED_SUPABASE_BUCKETS.length === 0) {
+    return { status: 'disabled', provider: 'supabase', message: 'No Supabase storage buckets configured' };
+  }
+  if (!supabase) {
+    return {
+      status: 'warn',
+      provider: 'supabase',
+      missingBuckets: REQUIRED_SUPABASE_BUCKETS,
+      message: 'Supabase client unavailable for bucket verification',
+    };
+  }
+  try {
+    const { data, error } = await supabase.storage.listBuckets();
+    if (error) throw error;
+    const missingBuckets = REQUIRED_SUPABASE_BUCKETS.filter(
+      (bucket) => !(data || []).some((entry) => entry.name === bucket),
+    );
+    if (missingBuckets.length > 0) {
+      return {
+        status: 'warn',
+        provider: 'supabase',
+        buckets: REQUIRED_SUPABASE_BUCKETS,
+        missingBuckets,
+      };
+    }
+    return { status: 'ok', provider: 'supabase', buckets: REQUIRED_SUPABASE_BUCKETS };
+  } catch (error) {
+    return {
+      status: 'warn',
+      provider: 'supabase',
+      buckets: REQUIRED_SUPABASE_BUCKETS,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+};
+
+const getStorageHealth = async () => {
   const bucket = process.env.S3_BUCKET || process.env.AWS_S3_BUCKET || process.env.SUPABASE_STORAGE_BUCKET || null;
   const hasKeys = Boolean(
     (process.env.AWS_ACCESS_KEY_ID || process.env.R2_ACCESS_KEY_ID || process.env.CLOUDFLARE_ACCESS_KEY_ID) &&
@@ -222,7 +260,7 @@ const getStorageHealth = () => {
   );
 
   if (!bucket && !hasKeys) {
-    return { status: 'disabled', message: 'Storage provider not configured' };
+    return getSupabaseBucketHealth();
   }
 
   const missing = [];
@@ -230,16 +268,16 @@ const getStorageHealth = () => {
   if (!hasKeys) missing.push('credentials');
 
   if (missing.length > 0) {
-    return { status: 'warn', missing, bucket: bucket ?? undefined };
+    return { status: 'warn', provider: 's3', missing, bucket: bucket ?? undefined };
   }
 
-  return { status: 'ok', bucket };
+  return { status: 'ok', provider: 's3', bucket };
 };
 
 const buildHealthPayload = async () => {
   const supabaseStatus = await checkSupabaseHealth();
   const offlineQueue = getOfflineQueueHealth();
-  const storage = getStorageHealth();
+  const storage = await getStorageHealth();
   const metrics = getMetricsSnapshot({ offlineQueue, storage });
   const demoModeMetadata = describeDemoMode();
   const supabaseDisabled = supabaseStatus.status === 'disabled' || missingSupabaseEnvVars.length > 0;
@@ -298,7 +336,7 @@ app.get('/api/diagnostics/metrics', async (req, res, next) => {
   try {
     const snapshot = getMetricsSnapshot({
       offlineQueue: getOfflineQueueHealth(),
-      storage: getStorageHealth(),
+      storage: await getStorageHealth(),
     });
     res.json({ data: snapshot, requestId: req.requestId });
   } catch (error) {

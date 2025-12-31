@@ -3,6 +3,7 @@ import { beforeAll, afterAll, describe, it, expect } from 'vitest';
 
 const API_BASE = 'http://localhost:8888';
 let serverProc: any = null;
+let adminAuthHeader: string | null = null;
 
 type FetchLike = (input: string, init?: Record<string, any>) => Promise<any>;
 let cachedFetch: FetchLike | null = null;
@@ -55,6 +56,30 @@ beforeAll(async () => {
   });
 
   await waitForHealth(8000);
+
+  // Fetch a demo admin token so admin APIs receive an Authorization header even in fallback mode
+  try {
+    const fn = await resolveFetch();
+    const loginRes = await fn(`${API_BASE}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: 'admin@thehuddleco.com',
+        password: 'admin123',
+        type: 'admin',
+      }),
+    });
+    if (loginRes.ok) {
+      const payload = await loginRes.json();
+      if (payload?.accessToken) {
+        adminAuthHeader = `Bearer ${payload.accessToken}`;
+      }
+    } else {
+      console.warn('[integration] Failed to bootstrap admin token for idempotency tests:', loginRes.status);
+    }
+  } catch (err) {
+    console.warn('[integration] Unable to login admin demo user:', err);
+  }
 });
 
 afterAll(() => {
@@ -76,7 +101,10 @@ describe('Idempotency keys (integration)', () => {
 
     const res1 = await fn(`${API_BASE}/api/admin/courses`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(adminAuthHeader ? { Authorization: adminAuthHeader } : {}),
+      },
       body: JSON.stringify(body),
     });
     expect([200, 201]).toContain(res1.status);
@@ -87,7 +115,10 @@ describe('Idempotency keys (integration)', () => {
     // Accept either a 409 conflict OR a successful idempotent response returning the existing resource.
     const res2 = await fn(`${API_BASE}/api/admin/courses`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(adminAuthHeader ? { Authorization: adminAuthHeader } : {}),
+      },
       body: JSON.stringify(body),
     });
     const json2 = await res2.json();
