@@ -3,7 +3,7 @@
  * Uses secure storage and server-side verification
  */
 
-import React, { createContext, useContext, useState, useEffect, ReactNode, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react';
 import {
   setSessionMetadata,
   setUserSession,
@@ -149,7 +149,7 @@ interface AuthProviderProps {
   children: ReactNode;
 }
 
-export const SecureAuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
+export function SecureAuthProvider({ children }: AuthProviderProps) {
   const [isAuthenticated, setIsAuthenticated] = useState<AuthState>({
     lms: false,
     admin: false,
@@ -502,7 +502,7 @@ export const SecureAuthProvider: React.FC<AuthProviderProps> = ({ children }) =>
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
-};
+}
 
 // ============================================================================
 // Hook

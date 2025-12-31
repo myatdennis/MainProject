@@ -8,9 +8,9 @@ vi.mock('../../services/auditLogService', () => ({
   logAuditAction: vi.fn(),
 }));
 
-const mockPost = vi.fn();
-const mockGet = vi.fn();
-const mockUse = vi.fn();
+const mockPost = vi.hoisted(() => vi.fn());
+const mockGet = vi.hoisted(() => vi.fn());
+const mockUse = vi.hoisted(() => vi.fn());
 
 vi.mock('axios', () => {
   const create = vi.fn(() => ({

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, waitFor, screen, fireEvent } from '@testing-library/react';
+import { render, waitFor, screen } from '@testing-library/react';
+import { act } from 'react-dom/test-utils';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
@@ -14,7 +15,7 @@ type MockSubscription = {
   unsubscribe: () => void;
 };
 
-vi.mock('../services/syncService', () => ({
+vi.mock('../dal/sync', () => ({
   useSyncService: () => ({
     logEvent: mockLogEvent,
     subscribe: vi.fn(() => ({ unsubscribe: () => {} } as MockSubscription)),
@@ -39,20 +40,57 @@ vi.mock('../utils/courseProgress', () => ({
 
 // Hoistable mock for course loader so vi.mock factory can reference it safely
 const mockLoadCourse = vi.hoisted(() => vi.fn());
+
+type TestVideoElement = HTMLVideoElement & {
+  __coursePlayerHandleTimeUpdate?: () => void;
+  __testDuration?: number;
+};
+
 vi.mock('../dal/courseData', () => ({
   loadCourse: (...args: any[]) => mockLoadCourse(...args),
   clearCourseCache: vi.fn(),
 }));
 
 // Mock batching service to avoid network calls during tests
-vi.mock('../services/batchService', () => ({
-  batchService: {
+const createBatchServiceModule = vi.hoisted(() => () => {
+  const batchServiceInstance = {
     enqueueProgress: vi.fn(),
     enqueueAnalytics: vi.fn(),
     flushProgress: vi.fn(),
     flushAnalytics: vi.fn(),
-  },
-}));
+  };
+  return { batchService: batchServiceInstance, default: batchServiceInstance };
+});
+
+vi.mock('../dal/batchService', () => createBatchServiceModule());
+vi.mock('../services/batchService', () => createBatchServiceModule());
+
+vi.mock('../dal/analytics', () => {
+  const analyticsInstance = {
+    trackEvent: vi.fn(),
+    trackCourseCompletion: vi.fn(),
+    getCourseAnalytics: vi.fn(() => ({
+      courseId: 'course-1',
+      totalLearners: 0,
+      activeLastWeek: 0,
+      averageTimeSpent: 0,
+      completionRate: 0,
+      dropOffRate: 0,
+      engagementScore: 0,
+      hottestContent: [],
+      strugglingLearners: [],
+      peakUsageHours: [],
+    })),
+    getEvents: vi.fn(() => []),
+    getLearnerJourney: vi.fn(() => null),
+    clearOldData: vi.fn(),
+  };
+
+  return {
+    ...analyticsInstance,
+    default: analyticsInstance,
+  };
+});
 
 // IMPORTANT: import tested component AFTER all mocks to avoid hoist issues
 import CoursePlayer from '../components/CoursePlayer/CoursePlayer';
@@ -181,19 +219,41 @@ describe('CoursePlayer progress integration', () => {
   it('records partial progress during video playback', async () => {
     renderCoursePlayer();
 
-    const video = await waitFor(() => {
-      const element = document.querySelector('video') as HTMLVideoElement | null;
+    const getActiveVideo = () =>
+      Array.from(document.querySelectorAll('video')).find(
+        (node) => (node as TestVideoElement).__coursePlayerHandleTimeUpdate
+      ) as TestVideoElement | undefined;
+
+    const prepareVideo = () => {
+      const element = getActiveVideo();
       if (!element) {
         throw new Error('Video element not rendered yet');
       }
+      element.__testDuration = 100;
+      let currentTimeValue = 0;
+      Object.defineProperty(element, 'currentTime', {
+        configurable: true,
+        get: () => currentTimeValue,
+        set: (val: number) => {
+          currentTimeValue = val;
+        },
+      });
+      element.currentTime = 40;
       return element;
+    };
+
+    await waitFor(() => prepareVideo());
+
+    const triggerTimeUpdate = (await waitFor(() => {
+      const handler = getActiveVideo()?.__coursePlayerHandleTimeUpdate;
+      expect(typeof handler).toBe('function');
+      return handler;
+    })) as () => void;
+
+    await act(async () => {
+      prepareVideo();
+      triggerTimeUpdate();
     });
-    expect(video).toBeTruthy();
-
-    Object.defineProperty(video, 'duration', { value: 100, configurable: true });
-    video.currentTime = 40;
-
-    fireEvent.timeUpdate(video);
 
     await waitFor(() => {
       expect(mockUpdateAssignmentProgress).toHaveBeenCalledWith('course-1', 'local-user', expect.any(Number));

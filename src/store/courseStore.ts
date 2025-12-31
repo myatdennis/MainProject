@@ -1068,31 +1068,38 @@ const ensureAssignmentScopedCatalog = async (
 export const courseStore = {
   init: async (): Promise<void> => {
     let supabaseOperational = false;
+    let restrictToOrg = true;
+    let canSyncDefaults = false;
+    let canUseAdminApi = false;
     try {
       console.log('[courseStore.init] Starting initialization...');
       const orgContext = resolveOrgContext();
       const normalizedRole = orgContext.role ? orgContext.role.toLowerCase() : null;
-      const restrictToOrg = normalizedRole !== 'admin';
+      restrictToOrg = normalizedRole !== 'admin';
       let runtimeStatus = getRuntimeStatus();
       try {
         runtimeStatus = await refreshRuntimeStatus();
       } catch (statusError) {
         console.warn('[courseStore.init] Runtime status refresh failed; using last known snapshot.', statusError);
       }
-  supabaseOperational = runtimeStatus.supabaseConfigured && runtimeStatus.supabaseHealthy;
+      supabaseOperational = runtimeStatus.supabaseConfigured && runtimeStatus.supabaseHealthy;
       const apiHealthy = runtimeStatus.apiHealthy;
+      canUseAdminApi = apiHealthy && !restrictToOrg;
+      canSyncDefaults = canUseAdminApi && supabaseOperational;
       console.log('[courseStore.init] Runtime status snapshot:', runtimeStatus);
       // Prefer admin list (richer shape) but gracefully fall back to published-only
       let dbCourses: Course[] = [];
-      if (apiHealthy) {
+      if (canUseAdminApi) {
         try {
           dbCourses = await getAllCoursesFromDatabase();
           console.log('[courseStore.init] Admin API returned courses:', dbCourses);
         } catch (adminError) {
           console.warn('[courseStore.init] Admin API load failed, will fall back to published catalog:', adminError);
         }
-      } else {
+      } else if (!apiHealthy) {
         console.warn('[courseStore.init] Skipping admin course load because API is marked unhealthy.');
+      } else if (restrictToOrg) {
+        console.warn('[courseStore.init] Skipping admin course load for non-admin role.');
       }
 
       if (!dbCourses || dbCourses.length === 0) {
@@ -1102,8 +1109,8 @@ export const courseStore = {
             if (orgContext.orgId) {
               dbCourses = await fetchPublishedCourses({ orgId: orgContext.orgId, assignedOnly: true });
             } else {
-              console.warn('[courseStore.init] Missing organizationId; unable to load assigned courses.');
-              dbCourses = [];
+              console.warn('[courseStore.init] Missing organizationId; loading full published catalog for learner context.');
+              dbCourses = await fetchPublishedCourses();
             }
           } else {
             dbCourses = await fetchPublishedCourses();
@@ -1128,8 +1135,11 @@ export const courseStore = {
         console.log('[courseStore.init] No courses returned from API, seeding defaults...');
         const defaultCourses = getDefaultCourses();
         courses = defaultCourses;
+        if (!canSyncDefaults) {
+          console.log('[courseStore.init] Default catalog loaded locally; admin sync skipped.');
+        }
         for (const course of Object.values(defaultCourses)) {
-          if (!supabaseOperational) {
+          if (!canSyncDefaults) {
             continue;
           }
           try {
@@ -1156,7 +1166,11 @@ export const courseStore = {
             }
           }
         }
-        console.log('Default courses synced to backend');
+        console.log(
+          canSyncDefaults
+            ? 'Default courses synced to backend'
+            : 'Default courses ready locally (no admin sync performed)'
+        );
       }
 
       if (restrictToOrg) {
@@ -1166,8 +1180,11 @@ export const courseStore = {
       console.error('Error initializing course store:', error);
       const defaultCourses = getDefaultCourses();
       courses = defaultCourses;
+      if (!canSyncDefaults) {
+        console.log('[courseStore.init] Default catalog loaded locally during error path; admin sync skipped.');
+      }
       for (const course of Object.values(defaultCourses)) {
-        if (!supabaseOperational) {
+        if (!canSyncDefaults) {
           continue;
         }
         try {

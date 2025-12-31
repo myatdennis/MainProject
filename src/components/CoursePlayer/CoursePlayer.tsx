@@ -142,6 +142,10 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
   const captionsRef = useRef<CaptionCue[]>([]);
   const progressSnapshotTimerRef = useRef<number | null>(null);
   const lastSnapshotSignatureRef = useRef<string>('');
+  type TestableVideoElement = HTMLVideoElement & {
+    __coursePlayerHandleTimeUpdate?: () => void;
+    __testDuration?: number;
+  };
 
   // UI state
   const [showTranscript, setShowTranscript] = useState(false);
@@ -848,15 +852,23 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
   }, [currentLesson?.id, course?.id, learnerId, persistProgress]);
 
   const handleTimeUpdate = () => {
-    if (!videoRef.current || !currentLesson) return;
+    const videoElement = videoRef.current as TestableVideoElement | null;
 
-    const player = videoRef.current;
-    if (!player.duration || Number.isNaN(player.duration)) return;
+    if (!videoElement || !currentLesson) {
+      return;
+    }
+
+    const player = videoElement;
+    const effectiveDuration = Number.isFinite(player.duration) && player.duration > 0 ? player.duration : player.__testDuration;
+
+    if (!effectiveDuration || Number.isNaN(effectiveDuration)) {
+      return;
+    }
 
     const position = player.currentTime;
-    const progressPercent = Math.min(100, Math.round((position / player.duration) * 100));
+    const progressPercent = Math.min(100, Math.round((position / effectiveDuration) * 100));
 
-    setCurrentTime(position);
+  setCurrentTime(position);
 
     if (captionsEnabled && captionsRef.current.length > 0) {
       const cue = captionsRef.current.find((entry) => position >= entry.start && position <= entry.end);
@@ -882,7 +894,7 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
       }));
 
       if (progressPercent >= 90 && !completedLessons.has(currentLesson.id)) {
-        completeLesson(currentLesson, position, player.duration, true);
+  completeLesson(currentLesson, position, effectiveDuration, true);
       } else if (progressPercent - previousProgress >= 10) {
         logProgress(currentLesson.id, progressPercent, position);
       }
@@ -890,6 +902,13 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
 
     scheduleProgressSnapshot();
   };
+
+  const registerVideoRef = useCallback((node: HTMLVideoElement | null) => {
+    (videoRef as React.MutableRefObject<HTMLVideoElement | null>).current = node;
+    if (node) {
+      (node as TestableVideoElement).__coursePlayerHandleTimeUpdate = handleTimeUpdate;
+    }
+  }, [handleTimeUpdate]);
 
   const handleSeek = (time: number) => {
     if (videoRef.current) {
@@ -1298,7 +1317,7 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
                 return (
                   <video
                     key={`${currentLesson.id}-${videoSessionKey}`}
-                    ref={videoRef}
+                    ref={registerVideoRef}
                     src={videoUrl}
                     className="h-full w-full max-h-[520px] bg-black object-cover"
                     onTimeUpdate={handleTimeUpdate}

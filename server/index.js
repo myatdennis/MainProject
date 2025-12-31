@@ -67,11 +67,20 @@ const DOCUMENT_UPLOAD_MAX_BYTES = Number(process.env.DOCUMENT_UPLOAD_MAX_BYTES |
 const DOCUMENT_URL_TTL_SECONDS = Number(process.env.DOCUMENT_SIGN_TTL_SECONDS || 60 * 60 * 24 * 7);
 const DOCUMENT_URL_REFRESH_BUFFER_SECONDS = Number(process.env.DOCUMENT_URL_REFRESH_BUFFER_SECONDS || 60 * 5);
 const DOCUMENT_URL_REFRESH_BUFFER_MS = DOCUMENT_URL_REFRESH_BUFFER_SECONDS * 1000;
+const COURSE_VIDEOS_BUCKET = process.env.SUPABASE_VIDEOS_BUCKET || 'course-videos';
+const COURSE_VIDEO_UPLOAD_MAX_BYTES = Number(process.env.COURSE_VIDEO_UPLOAD_MAX_BYTES || 50 * 1024 * 1024);
 
 const documentUpload = multer({
   storage: multer.memoryStorage(),
   limits: {
     fileSize: Number.isFinite(DOCUMENT_UPLOAD_MAX_BYTES) ? DOCUMENT_UPLOAD_MAX_BYTES : 25 * 1024 * 1024,
+  },
+});
+
+const videoUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: Number.isFinite(COURSE_VIDEO_UPLOAD_MAX_BYTES) ? COURSE_VIDEO_UPLOAD_MAX_BYTES : 50 * 1024 * 1024,
   },
 });
 
@@ -2774,7 +2783,7 @@ app.get('/api/client/courses', async (req, res) => {
 
   const orgId = orgIdRaw;
 
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+  const respondWithDemoCourses = () => {
     // In dev/demo mode, show ALL courses (not just published)
     let courses = Array.from(e2eStore.courses.values());
 
@@ -2793,42 +2802,45 @@ app.get('/api/client/courses', async (req, res) => {
       courses = courses.filter((course) => assignedIds.has(String(course.id)) || assignedIds.has(String(course.slug)));
     }
 
-    const data = courses
-      .map((c) => ({
-        id: c.id,
-        slug: c.slug ?? c.id,
-        title: c.title,
-        description: c.description ?? null,
-        status: c.status ?? 'draft',
-        version: c.version ?? 1,
-        meta_json: c.meta_json ?? {},
-        published_at: c.published_at ?? null,
-        thumbnail: c.thumbnail ?? null,
-        difficulty: c.difficulty ?? null,
-        duration: c.duration ?? null,
-        instructorName: c.instructorName ?? null,
-        estimatedDuration: c.estimatedDuration ?? null,
-        keyTakeaways: c.keyTakeaways ?? [],
-        modules: (c.modules || []).map((m) => ({
-          id: m.id,
-          course_id: c.id,
-          title: m.title,
-          description: m.description ?? null,
-          order_index: m.order_index ?? m.order ?? 0,
-          lessons: (m.lessons || []).map((l) => ({
-            id: l.id,
-            module_id: m.id,
-            title: l.title,
-            description: l.description ?? null,
-            type: l.type,
-            order_index: l.order_index ?? l.order ?? 0,
-            duration_s: l.duration_s ?? null,
-            content_json: l.content_json ?? l.content ?? {},
-            completion_rule_json: l.completion_rule_json ?? l.completionRule ?? null,
-          })),
+    const data = courses.map((c) => ({
+      id: c.id,
+      slug: c.slug ?? c.id,
+      title: c.title,
+      description: c.description ?? null,
+      status: c.status ?? 'draft',
+      version: c.version ?? 1,
+      meta_json: c.meta_json ?? {},
+      published_at: c.published_at ?? null,
+      thumbnail: c.thumbnail ?? null,
+      difficulty: c.difficulty ?? null,
+      duration: c.duration ?? null,
+      instructorName: c.instructorName ?? null,
+      estimatedDuration: c.estimatedDuration ?? null,
+      keyTakeaways: c.keyTakeaways ?? [],
+      modules: (c.modules || []).map((m) => ({
+        id: m.id,
+        course_id: c.id,
+        title: m.title,
+        description: m.description ?? null,
+        order_index: m.order_index ?? m.order ?? 0,
+        lessons: (m.lessons || []).map((l) => ({
+          id: l.id,
+          module_id: m.id,
+          title: l.title,
+          description: l.description ?? null,
+          type: l.type,
+          order_index: l.order_index ?? l.order ?? 0,
+          duration_s: l.duration_s ?? null,
+          content_json: l.content_json ?? l.content ?? {},
+          completion_rule_json: l.completion_rule_json ?? l.completionRule ?? null,
         })),
-      }));
+      })),
+    }));
     res.json({ data });
+  };
+
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    respondWithDemoCourses();
     return;
   }
 
@@ -2865,6 +2877,11 @@ app.get('/api/client/courses', async (req, res) => {
     res.json({ data });
   } catch (error) {
     console.error('Failed to fetch published courses:', error);
+    if (DEV_FALLBACK) {
+      console.warn('[client/courses] Falling back to demo dataset because Supabase query failed.');
+      respondWithDemoCourses();
+      return;
+    }
     res.status(500).json({ error: 'Unable to fetch courses' });
   }
 });
@@ -4831,19 +4848,108 @@ app.delete('/api/orgs/:orgId/workspace/action-items/:id', async (req, res) => {
   }
 });
 
-const sanitizeDocumentFilename = (name = '') => {
-  const normalized = String(name || 'document')
+app.post(
+  '/api/admin/courses/:courseId/modules/:moduleId/lessons/:lessonId/video-upload',
+  authenticate,
+  requireAdmin,
+  videoUpload.single('file'),
+  async (req, res) => {
+    if (!ensureSupabase(res)) return;
+
+    const file = req.file;
+    if (!file) {
+      res.status(400).json({ error: 'file is required' });
+      return;
+    }
+
+    if (!file.mimetype || !file.mimetype.startsWith('video/')) {
+      res.status(400).json({ error: 'Only video files can be uploaded to lessons' });
+      return;
+    }
+
+    const courseId = (req.body?.courseId || req.params.courseId || '').trim();
+    const moduleId = (req.body?.moduleId || req.params.moduleId || '').trim();
+    const lessonId = (req.body?.lessonId || req.params.lessonId || '').trim();
+
+    if (!courseId || !lessonId) {
+      res.status(400).json({ error: 'courseId and lessonId are required' });
+      return;
+    }
+
+    const storagePath = buildLessonVideoStoragePath({
+      courseId,
+      moduleId: moduleId || 'module',
+      lessonId,
+      filename: file.originalname || file.fieldname || 'video-upload',
+    });
+
+    try {
+      const { error: uploadError } = await supabase.storage
+        .from(COURSE_VIDEOS_BUCKET)
+        .upload(storagePath, file.buffer, {
+          contentType: file.mimetype || 'video/mp4',
+          upsert: true,
+        });
+
+      if (uploadError) throw uploadError;
+
+      const { data: urlData, error: urlError } = supabase.storage
+        .from(COURSE_VIDEOS_BUCKET)
+        .getPublicUrl(storagePath);
+
+      if (urlError) throw urlError;
+
+      const publicUrl = urlData?.publicUrl;
+      if (!publicUrl) {
+        res.status(500).json({ error: 'Unable to resolve uploaded video URL' });
+        return;
+      }
+
+      res.status(201).json({
+        data: {
+          courseId,
+          moduleId,
+          lessonId,
+          storagePath,
+          publicUrl,
+          fileName: file.originalname || file.fieldname,
+          fileSize: file.size,
+          mimeType: file.mimetype,
+        },
+      });
+    } catch (error) {
+      console.error('[course-videos] Failed to upload lesson video:', error);
+      res.status(500).json({ error: 'Unable to upload video file' });
+    }
+  },
+);
+
+const sanitizeFilename = (name = '', fallback = 'file') => {
+  const normalized = String(name || fallback)
     .trim()
     .replace(/[^A-Za-z0-9._-]+/g, '_')
     .replace(/_+/g, '_')
     .replace(/^_+|_+$/g, '');
-  return normalized.length > 0 ? normalized : 'document';
+  return normalized.length > 0 ? normalized : fallback;
 };
+
+const sanitizeDocumentFilename = (name = '') => sanitizeFilename(name, 'document');
+const sanitizeVideoFilename = (name = '') => sanitizeFilename(name, 'video');
+const sanitizePathSegment = (value = '', fallback = 'segment') => sanitizeFilename(value, fallback).replace(/\.+/g, '_');
 
 const buildDocumentStoragePath = ({ orgId, documentId, filename }) => {
   const ownerSegment = orgId ? `org-${orgId}` : 'global';
   const safeName = sanitizeDocumentFilename(filename);
   return [ownerSegment, documentId || randomUUID(), safeName].join('/');
+};
+
+const buildLessonVideoStoragePath = ({ courseId, moduleId, lessonId, filename }) => {
+  const safeCourse = sanitizePathSegment(courseId, 'course');
+  const safeModule = sanitizePathSegment(moduleId, 'module');
+  const safeLesson = sanitizePathSegment(lessonId, 'lesson');
+  const safeName = sanitizeVideoFilename(filename);
+  const timestamp = Date.now();
+  return ['courses', safeCourse, safeModule, `${safeLesson}-${timestamp}`, safeName].join('/');
 };
 
 const createSignedDocumentUrl = async (storagePath, ttlSeconds = DOCUMENT_URL_TTL_SECONDS) => {

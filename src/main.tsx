@@ -8,11 +8,21 @@ import serviceWorkerManager from './utils/ServiceWorkerManager';
 import { SecureAuthProvider } from './context/SecureAuthContext';
 import { ToastProvider } from './context/ToastContext';
 import { ensureRuntimeStatusPolling } from './state/runtimeStatus';
+import { migrateFromLocalStorage, checkStorageSecurity } from './lib/secureStorage';
 
 console.log('🚀 MainProject App initializing...');
 console.log('📍 Environment:', import.meta.env.MODE);
 console.log('🔧 Supabase configured:', !!(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY));
 console.log('⚙️ React version detected:', React?.version || 'unknown');
+
+if (typeof window !== 'undefined') {
+  try {
+    migrateFromLocalStorage();
+    checkStorageSecurity();
+  } catch (error) {
+    console.warn('[secureStorage] bootstrap migration failed:', error);
+  }
+}
 
 const queryClient = new QueryClient({
   defaultOptions: {

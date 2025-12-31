@@ -89,19 +89,6 @@ const ClientCourses = () => {
   }, [normalizedCoursesAll]);
 
   useEffect(() => {
-    const ensureStore = async () => {
-      try {
-        if (typeof (courseStore as any).init === 'function') {
-          await (courseStore as any).init();
-        }
-      } catch (err) {
-        console.warn('Failed to initialize course store:', err);
-      }
-    };
-    void ensureStore();
-  }, []);
-
-  useEffect(() => {
     let isMounted = true;
     const syncProgress = async () => {
       if (!normalizedCourses.length) return;

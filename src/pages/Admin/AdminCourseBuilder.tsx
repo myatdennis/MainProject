@@ -986,72 +986,150 @@ const AdminCourseBuilder = () => {
   };
 
   const handleVideoUpload = async (moduleId: string, lessonId: string, file: File) => {
-    // Check file size (limit to 50MB)
-    const maxSize = 50 * 1024 * 1024; // 50MB in bytes
-    if (file.size > maxSize) {
+    const maxSizeBytes = 50 * 1024 * 1024;
+    if (file.size > maxSizeBytes) {
       setUploadError(`File size (${(file.size / 1024 / 1024).toFixed(1)}MB) exceeds the 50MB limit. Please compress your video or use a smaller file.`);
       return;
     }
 
-  const uploadKey = buildUploadKey(moduleId, lessonId);
-    
-    try {
-      setUploadingVideos(prev => ({ ...prev, [uploadKey]: true }));
-  setUploadProgress(prev => ({ ...prev, [uploadKey]: 0 }));
+    const uploadKey = buildUploadKey(moduleId, lessonId);
+    const fileSizeLabel = `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
+    const existingContent = course.modules
+      ?.find((m) => m.id === moduleId)
+      ?.lessons.find((l) => l.id === lessonId)?.content;
 
-      // Create unique filename
-      const fileExt = file.name.split('.').pop();
-  const fileName = `${course.id}/${moduleId}/${lessonId}.${fileExt}`;
+    const persistLessonVideo = (videoUrl: string) => {
+      updateLesson(moduleId, lessonId, {
+        content: {
+          ...existingContent,
+          videoUrl,
+          fileName: file.name,
+          fileSize: fileSizeLabel,
+        },
+      });
+    };
 
-      // Try to upload to Supabase Storage if available
-      const supabase = await getSupabase();
-      if (supabase) {
-        const { error } = await supabase.storage
-          .from('course-videos')
-          .upload(fileName, file, {
-            cacheControl: '3600',
-            upsert: true
-          });
+    const uploadViaApi = async () => {
+      const endpoint = `/api/admin/courses/${encodeURIComponent(course.id)}/modules/${encodeURIComponent(moduleId)}/lessons/${encodeURIComponent(lessonId)}/video-upload`;
+      const body = new FormData();
+      body.append('file', file);
+      body.append('courseId', course.id);
+      body.append('moduleId', moduleId);
+      body.append('lessonId', lessonId);
 
-        if (error) throw error;
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        body,
+        credentials: 'include',
+      });
 
-        // Get public URL
-        const { data: { publicUrl } } = supabase.storage
-          .from('course-videos')
-          .getPublicUrl(fileName);
-
-        // Update lesson content with video URL
-        updateLesson(moduleId, lessonId, {
-          content: {
-            ...course.modules?.find(m => m.id === moduleId)?.lessons.find(l => l.id === lessonId)?.content,
-            videoUrl: publicUrl,
-            fileName: file.name,
-            fileSize: `${(file.size / (1024 * 1024)).toFixed(1)} MB`
-          }
-        });
-      } else {
-        // Fallback: Use a temporary object URL in demo mode
-        const objectUrl = URL.createObjectURL(file);
-        updateLesson(moduleId, lessonId, {
-          content: {
-            ...course.modules?.find(m => m.id === moduleId)?.lessons.find(l => l.id === lessonId)?.content,
-            videoUrl: objectUrl,
-            fileName: file.name,
-            fileSize: `${(file.size / (1024 * 1024)).toFixed(1)} MB`
-          }
-        });
+      const rawPayload = await response.text();
+      let payload: any = null;
+      if (rawPayload) {
+        try {
+          payload = JSON.parse(rawPayload);
+        } catch (parseError) {
+          console.warn('Video upload response was not valid JSON:', parseError);
+        }
       }
 
-      setUploadProgress(prev => ({ ...prev, [uploadKey]: 100 }));
-      
+      if (!response.ok) {
+        const message = payload?.error || `Upload failed with status ${response.status}`;
+        throw new Error(message);
+      }
+
+      const videoUrl = payload?.data?.publicUrl;
+      if (!videoUrl) {
+        throw new Error('Upload response missing video URL');
+      }
+
+      return {
+        videoUrl,
+        storagePath: payload?.data?.storagePath,
+      };
+    };
+
+    const uploadViaSupabaseClient = async () => {
+      const supabase = await getSupabase();
+      if (!supabase) {
+        throw new Error('Supabase client not configured in browser');
+      }
+
+      const fileExt = file.name.includes('.') ? file.name.split('.').pop() : undefined;
+      const fileName = `${course.id}/${moduleId}/${lessonId}.${fileExt || 'mp4'}`;
+
+      const { error } = await supabase.storage
+        .from('course-videos')
+        .upload(fileName, file, {
+          cacheControl: '3600',
+          upsert: true,
+        });
+
+      if (error) throw error;
+
+      const { data } = supabase.storage.from('course-videos').getPublicUrl(fileName);
+      if (!data?.publicUrl) {
+        throw new Error('Unable to resolve Supabase public URL');
+      }
+
+      return {
+        videoUrl: data.publicUrl,
+        storagePath: fileName,
+      };
+    };
+
+    try {
+      setUploadError(null);
+      setUploadingVideos((prev) => ({ ...prev, [uploadKey]: true }));
+      setUploadProgress((prev) => ({ ...prev, [uploadKey]: 10 }));
+
+      let uploadSource: 'api' | 'supabase' | 'local' = 'local';
+      let videoUrl: string | null = null;
+      let lastError: Error | null = null;
+
+      try {
+        const apiResult = await uploadViaApi();
+        videoUrl = apiResult.videoUrl;
+        uploadSource = 'api';
+      } catch (apiError) {
+        lastError = apiError instanceof Error ? apiError : new Error(String(apiError));
+        console.warn('Video upload API failed, falling back to browser Supabase client:', lastError);
+        try {
+          const supabaseResult = await uploadViaSupabaseClient();
+          videoUrl = supabaseResult.videoUrl;
+          uploadSource = 'supabase';
+        } catch (supabaseError) {
+          lastError = supabaseError instanceof Error ? supabaseError : new Error(String(supabaseError));
+          console.warn('Supabase client upload failed, falling back to local object URL:', lastError);
+          videoUrl = URL.createObjectURL(file);
+          uploadSource = 'local';
+        }
+      }
+
+      if (!videoUrl) {
+        throw lastError || new Error('Unknown upload failure');
+      }
+
+      persistLessonVideo(videoUrl);
+      setUploadProgress((prev) => ({ ...prev, [uploadKey]: uploadSource === 'local' ? 90 : 100 }));
+
+      if (uploadSource === 'local') {
+        setUploadError('Saved to your browser only. Configure Supabase to persist this video.');
+        showToast('Video stored locally. Configure Supabase and retry to persist this lesson for learners.', 'warning', 6000);
+      } else {
+        const description = uploadSource === 'api'
+          ? 'Video stored via the admin upload API.'
+          : 'Video uploaded directly with your Supabase credentials.';
+        showToast(`Video uploaded successfully. ${description}`, 'success');
+      }
     } catch (error) {
       console.error('Error uploading video:', error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       setUploadError(`Upload failed: ${errorMessage}. This could be due to network issues or file format. Please check your connection and try again.`);
     } finally {
-      setUploadingVideos(prev => ({ ...prev, [uploadKey]: false }));
+      setUploadingVideos((prev) => ({ ...prev, [uploadKey]: false }));
       setTimeout(() => {
-        setUploadProgress(prev => ({ ...prev, [uploadKey]: 0 }));
+        setUploadProgress((prev) => ({ ...prev, [uploadKey]: 0 }));
       }, 2000);
     }
   };

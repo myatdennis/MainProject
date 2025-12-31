@@ -27,33 +27,65 @@ const toAssignmentStatus = (status?: string | null): CourseAssignmentStatus => {
   return 'assigned';
 };
 
-const mapSupabaseAssignment = (row: SupabaseAssignmentRow): CourseAssignment => ({
-  id: row.id,
-  courseId: row.course_id,
-  userId: row.user_id.toLowerCase(),
-  status: toAssignmentStatus(row.status),
-  progress: Number.isFinite(row.progress) ? Number(row.progress) : 0,
-  dueDate: row.due_date || null,
-  note: row.note || null,
-  assignedBy: row.assigned_by || null,
-  createdAt: row.created_at || new Date().toISOString(),
-  updatedAt: row.updated_at || new Date().toISOString(),
-});
+const normalizeUserId = (value: unknown): string | null => {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed ? trimmed.toLowerCase() : null;
+  }
+  return null;
+};
+
+const mapSupabaseAssignment = (row: SupabaseAssignmentRow): CourseAssignment => {
+  const normalizedUserId = normalizeUserId(row.user_id);
+  if (!normalizedUserId) {
+    throw new Error('Supabase assignment row is missing user_id');
+  }
+  return {
+    id: row.id,
+    courseId: row.course_id,
+    userId: normalizedUserId,
+    status: toAssignmentStatus(row.status),
+    progress: Number.isFinite(row.progress) ? Number(row.progress) : 0,
+    dueDate: row.due_date || null,
+    note: row.note || null,
+    assignedBy: row.assigned_by || null,
+    createdAt: row.created_at || new Date().toISOString(),
+    updatedAt: row.updated_at || new Date().toISOString(),
+  };
+};
 
 const loadLocalAssignments = (): CourseAssignment[] => {
+  if (typeof localStorage === 'undefined') return [];
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return [];
     const parsed = JSON.parse(raw) as CourseAssignment[];
     if (!Array.isArray(parsed)) return [];
-    return parsed.map((record) => ({
-      ...record,
-      userId: record.userId.toLowerCase(),
-      progress: Number.isFinite(record.progress) ? record.progress : 0,
-      status: toAssignmentStatus(record.status),
-      dueDate: record.dueDate ?? null,
-      note: record.note ?? null,
-    }));
+    const sanitized: CourseAssignment[] = [];
+    parsed.forEach((record) => {
+      const normalizedUserId = normalizeUserId(record?.userId);
+      if (!normalizedUserId) {
+        console.warn('[assignmentStorage] Dropping assignment with missing userId:', record);
+        return;
+      }
+      sanitized.push({
+        ...record,
+        userId: normalizedUserId,
+        progress: Number.isFinite(record.progress) ? record.progress : 0,
+        status: toAssignmentStatus(record.status),
+        dueDate: record.dueDate ?? null,
+        note: record.note ?? null,
+      });
+    });
+
+    if (sanitized.length !== parsed.length) {
+      try {
+        persistLocalAssignments(sanitized);
+      } catch (error) {
+        console.warn('[assignmentStorage] Failed to rewrite sanitized assignments:', error);
+      }
+    }
+    return sanitized;
   } catch (error) {
     console.warn('Failed to load assignments:', error);
     return [];
@@ -61,10 +93,12 @@ const loadLocalAssignments = (): CourseAssignment[] => {
 };
 
 const persistLocalAssignments = (records: CourseAssignment[]) => {
+  if (typeof localStorage === 'undefined') return;
   localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
 };
 
 const clearLocalAssignments = () => {
+  if (typeof localStorage === 'undefined') return;
   localStorage.removeItem(STORAGE_KEY);
 };
 

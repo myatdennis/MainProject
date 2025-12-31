@@ -38,6 +38,16 @@ Quick reference guide to all project documentation.
   - 4-phase implementation plan
   - Security testing recommendations
 
+### Admin Hardening Program (Phases 5-10)
+
+- **[ADMIN_PHASE5_PERMISSIONS_AUDIT.md](./ADMIN_PHASE5_PERMISSIONS_AUDIT.md)** – Tenant scoping and permission findings leading into remediation.
+- **[ADMIN_PHASE6_DATA_INTEGRITY_PLAN.md](./ADMIN_PHASE6_DATA_INTEGRITY_PLAN.md)** – Original playbook for assignments/org metadata cleanup.
+- **[ADMIN_PHASE6_DATA_INTEGRITY_EXECUTION.md](./ADMIN_PHASE6_DATA_INTEGRITY_EXECUTION.md)** – Implementation report covering migrations, guardrails, and verification.
+- **[ADMIN_PHASE7_ANALYTICS_HARDENING_REPORT.md](./ADMIN_PHASE7_ANALYTICS_HARDENING_REPORT.md)** – Analytics ingestion, dashboard scoping, and observability fixes.
+- **[ADMIN_PHASE8_PERFORMANCE_BATCHING_PLAN.md](./ADMIN_PHASE8_PERFORMANCE_BATCHING_PLAN.md)** – Progress + analytics batching optimizations and load-test evidence.
+- **[ADMIN_PHASE9_RESILIENCE_OFFLINE_REPORT.md](./ADMIN_PHASE9_RESILIENCE_OFFLINE_REPORT.md)** – Runtime health, offline durability, and service worker upgrades.
+- **[ADMIN_PHASE10_GO_LIVE_READINESS.md](./ADMIN_PHASE10_GO_LIVE_READINESS.md)** – Final go-live checklist, risks, and cutover plan.
+
 ---
 
 ## 📚 Feature Documentation
@@ -97,6 +107,11 @@ Quick reference guide to all project documentation.
 | Nov 4, 2025 | CODEBASE_AUDIT_REPORT.md | Technical audit report |
 | Nov 4, 2025 | ROUTES_BUTTONS_MATRIX.md | Navigation matrix |
 | Nov 4, 2025 | SECURITY_AUDIT_FIXES.md | Security vulnerabilities |
+| Dec 30, 2025 | ADMIN_PHASE6_DATA_INTEGRITY_EXECUTION.md | Phase 6 remediation execution report |
+| Dec 30, 2025 | ADMIN_PHASE7_ANALYTICS_HARDENING_REPORT.md | Phase 7 analytics hardening outcomes |
+| Dec 30, 2025 | ADMIN_PHASE8_PERFORMANCE_BATCHING_PLAN.md | Phase 8 batching/performance plan |
+| Dec 30, 2025 | ADMIN_PHASE9_RESILIENCE_OFFLINE_REPORT.md | Phase 9 resiliency/offline report |
+| Dec 30, 2025 | ADMIN_PHASE10_GO_LIVE_READINESS.md | Phase 10 go-live readiness checklist |
 | Oct 2024 | TROUBLESHOOTING.md | Common issues guide |
 | Oct 2024 | COURSE_MANAGEMENT_PLAN.md | Course features roadmap |
 | Oct 2024 | README.md | Project overview |
@@ -124,4 +139,4 @@ When adding new documentation:
 
 ---
 
-**Last Updated:** November 4, 2025
+**Last Updated:** December 30, 2025

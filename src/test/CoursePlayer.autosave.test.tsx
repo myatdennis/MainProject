@@ -22,22 +22,52 @@ vi.mock('../utils/courseProgress', () => ({
 }));
 
 // Mock sync and toast
-vi.mock('../services/syncService', () => ({ useSyncService: () => ({ logEvent: vi.fn(), subscribe: vi.fn(() => ({ unsubscribe: () => {} })) }) }));
+const mockSyncLogEvent = vi.hoisted(() => vi.fn());
+vi.mock('../dal/sync', () => ({ useSyncService: () => ({ logEvent: mockSyncLogEvent, subscribe: vi.fn(() => ({ unsubscribe: () => {} })) }) }));
 vi.mock('../context/ToastContext', () => ({ useToast: () => ({ showToast: vi.fn() }) }));
 
 // Mock assignment progress util
 vi.mock('../utils/assignmentStorage', () => ({ updateAssignmentProgress: vi.fn() }));
 
+// Silence analytics DAL to avoid network fetches during tests
+vi.mock('../dal/analytics', () => {
+  const analyticsInstance = {
+    trackEvent: vi.fn(),
+    trackCourseCompletion: vi.fn(),
+    getCourseAnalytics: vi.fn(() => ({
+      courseId: 'course-auto',
+      totalLearners: 0,
+      activeLastWeek: 0,
+      averageTimeSpent: 0,
+      completionRate: 0,
+      dropOffRate: 0,
+      engagementScore: 0,
+      hottestContent: [],
+      strugglingLearners: [],
+      peakUsageHours: [],
+    })),
+    getEvents: vi.fn(() => []),
+    getLearnerJourney: vi.fn(() => null),
+    clearOldData: vi.fn(),
+  };
+
+  return {
+    ...analyticsInstance,
+    default: analyticsInstance,
+  };
+});
+
 // Mock batchService and keep a spy for enqueueProgress
 const enqueueProgressMock = vi.hoisted(() => vi.fn());
-vi.mock('../services/batchService', () => ({
-  batchService: {
-    enqueueProgress: (...args: any[]) => enqueueProgressMock(...args),
-    enqueueAnalytics: vi.fn(),
-    flushProgress: vi.fn(),
-    flushAnalytics: vi.fn(),
-  },
+const batchServiceInstance = vi.hoisted(() => ({
+  enqueueProgress: (...args: any[]) => enqueueProgressMock(...args),
+  enqueueAnalytics: vi.fn(),
+  flushProgress: vi.fn(),
+  flushAnalytics: vi.fn(),
 }));
+
+vi.mock('../dal/batchService', () => ({ batchService: batchServiceInstance, default: batchServiceInstance }));
+vi.mock('../services/batchService', () => ({ batchService: batchServiceInstance, default: batchServiceInstance }));
 
 import CoursePlayer from '../components/CoursePlayer/CoursePlayer';
 
@@ -93,9 +123,19 @@ describe('CoursePlayer autosave', () => {
   afterEach(() => {
     // ensure timers restored if any other tests used them
     vi.clearAllMocks();
+    vi.restoreAllMocks();
+    vi.useRealTimers();
   });
 
   it('enqueues progress and persists locally on autosave interval', async () => {
+    const intervalCallbacks: Array<{ cb: () => void; stack: string }> = [];
+    vi.spyOn(window, 'setInterval').mockImplementation((cb: TimerHandler) => {
+      if (typeof cb === 'function') {
+        intervalCallbacks.push({ cb: cb as () => void, stack: new Error().stack ?? '' });
+      }
+      return intervalCallbacks.length as unknown as ReturnType<typeof window.setInterval>;
+    });
+
     renderCoursePlayer();
 
     // Wait for video element to render
@@ -105,15 +145,45 @@ describe('CoursePlayer autosave', () => {
       return el;
     });
 
-    // Set duration and currentTime and trigger a timeupdate to simulate playback
-    Object.defineProperty(video, 'duration', { value: 120, configurable: true });
-    video.currentTime = 30;
-    // fire the timeupdate event which will cause the player logic to log progress and enqueue
-    video.dispatchEvent(new Event('timeupdate'));
-
-    await waitFor(() => {
-      expect(enqueueProgressMock).toHaveBeenCalledWith(expect.objectContaining({ type: 'lesson_progress', lessonId: 'lesson-auto', position: 30 }));
-      expect(mockSaveStoredCourseProgress).toHaveBeenCalledWith('course-auto', expect.any(Object), expect.any(Object));
+    // Provide duration/currentTime so the autosave interval has meaningful data
+    Object.defineProperty(video, 'duration', { configurable: true, get: () => 120 });
+    let currentTimeValue = 0;
+    Object.defineProperty(video, 'currentTime', {
+      configurable: true,
+      get: () => currentTimeValue,
+      set: (val: number) => {
+        currentTimeValue = val;
+      },
     });
+
+    expect(video.duration).toBe(120);
+
+    const initialSaveCount = mockSaveStoredCourseProgress.mock.calls.length;
+
+    // Simulate playback progress before the autosave interval fires
+    video.currentTime = 30;
+    expect(video.currentTime).toBe(30);
+
+    expect(intervalCallbacks.length).toBeGreaterThan(0);
+    const autosaveRecord = intervalCallbacks.find((record) =>
+      record.stack.includes('components/CoursePlayer/CoursePlayer.tsx')
+    ) ?? intervalCallbacks[intervalCallbacks.length - 1];
+    const autosaveTick = autosaveRecord?.cb;
+    expect(autosaveTick).toBeDefined();
+    autosaveTick?.();
+
+    expect(enqueueProgressMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'lesson_progress',
+        courseId: 'course-auto',
+        lessonId: 'lesson-auto',
+        position: 30,
+        percent: 25,
+      })
+    );
+
+    expect(mockSaveStoredCourseProgress.mock.calls.length).toBeGreaterThan(initialSaveCount);
+    const lastCall = mockSaveStoredCourseProgress.mock.calls[mockSaveStoredCourseProgress.mock.calls.length - 1];
+    expect(lastCall?.[0]).toBe('course-auto');
   });
 });

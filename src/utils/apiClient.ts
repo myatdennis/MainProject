@@ -128,6 +128,7 @@ const statusMatches = (status: number, expected?: number | number[]) => {
 export const apiRequest = async <T = any>(path: string, options: ApiRequestOptions = {}): Promise<T> => {
   const headers = options.headers instanceof Headers ? new Headers(options.headers) : new Headers(options.headers ?? {});
   const bodyIsFormData = typeof FormData !== 'undefined' && options.body instanceof FormData;
+  const method = options.method ? options.method.toUpperCase() : 'GET';
   
   try {
     const authHeaders = await buildAuthHeaders();
@@ -141,7 +142,7 @@ export const apiRequest = async <T = any>(path: string, options: ApiRequestOptio
     throw error;
   }
 
-  if (!bodyIsFormData && !headers.has('Content-Type') && options.method && options.method !== 'GET' && options.method !== 'HEAD') {
+  if (!bodyIsFormData && !headers.has('Content-Type') && method !== 'GET' && method !== 'HEAD') {
     headers.set('Content-Type', 'application/json');
   }
 
@@ -168,6 +169,7 @@ export const apiRequest = async <T = any>(path: string, options: ApiRequestOptio
 
   const requestInit: RequestInit = {
     ...options,
+    method,
     signal: controller.signal,
     headers,
     body,

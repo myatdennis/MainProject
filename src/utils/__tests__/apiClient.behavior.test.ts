@@ -20,6 +20,15 @@ const createResponse = (body: any, init?: ResponseInit) =>
     ...init,
   });
 
+const createAbortError = () => {
+  if (typeof DOMException !== 'undefined') {
+    return new DOMException('Aborted', 'AbortError');
+  }
+  const error = new Error('Aborted');
+  error.name = 'AbortError';
+  return error;
+};
+
 describe('apiClient', () => {
   const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
   const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {});
@@ -28,6 +37,7 @@ describe('apiClient', () => {
   beforeEach(() => {
     fetchSpy.mockReset();
     mockBuildAuthHeaders.mockReset();
+    mockBuildAuthHeaders.mockResolvedValue({});
     debugSpy.mockClear();
     infoSpy.mockClear();
     errorSpy.mockClear();
@@ -95,11 +105,23 @@ describe('apiClient', () => {
     vi.useFakeTimers();
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.huddle.local');
     const { apiRequest } = await loadApiClient();
-    fetchSpy.mockImplementation(() => new Promise(() => {}));
+    fetchSpy.mockImplementation((_url, init) => {
+      return new Promise((_, reject) => {
+        const signal = init?.signal;
+        if (signal) {
+          const onAbort = () => {
+            signal.removeEventListener('abort', onAbort);
+            reject(createAbortError());
+          };
+          signal.addEventListener('abort', onAbort);
+        }
+      });
+    });
 
     const promise = apiRequest('/slow', { timeoutMs: 50 });
+    const assertion = expect(promise).rejects.toMatchObject({ code: 'timeout' });
     await vi.advanceTimersByTimeAsync(60);
-    await expect(promise).rejects.toMatchObject({ code: 'timeout' });
+    await assertion;
   });
 
   it('logs request metadata without sensitive headers only in dev mode', async () => {
