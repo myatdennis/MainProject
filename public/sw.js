@@ -1,6 +1,7 @@
 // Production Service Worker: Caching for static assets and API responses
 
-const CACHE_NAME = 'mainproject-cache-v3';
+const CACHE_VERSION = 'v4';
+const CACHE_NAME = `mainproject-cache-${CACHE_VERSION}`;
 const IMAGE_CACHE = 'mainproject-img-cache-v1';
 const FONT_CACHE = 'mainproject-font-cache-v1';
 const STATIC_ASSETS = [
@@ -161,6 +162,33 @@ async function handleFontRequest(request) {
 }
 
 async function handleStaticRequest(request) {
+  const isDocumentRequest =
+    request.mode === 'navigate' ||
+    request.destination === 'document' ||
+    (request.headers.get('accept') || '').includes('text/html');
+
+  if (isDocumentRequest) {
+    try {
+      const networkResponse = await fetch(request);
+      if (networkResponse && networkResponse.ok) {
+        const cache = await caches.open(CACHE_NAME);
+        cache.put(request, networkResponse.clone());
+      }
+      return networkResponse;
+    } catch (error) {
+      console.warn('[SW] Document request failed, falling back to cache', error);
+      const cachedDocument = await caches.match(request);
+      if (cachedDocument) {
+        return cachedDocument;
+      }
+      const fallback = await caches.match(OFFLINE_FALLBACK);
+      if (fallback) {
+        return fallback;
+      }
+      return new Response('Offline', { status: 503, statusText: 'Offline' });
+    }
+  }
+
   const cached = await caches.match(request);
   if (cached) {
     return cached;
@@ -175,13 +203,6 @@ async function handleStaticRequest(request) {
     return response;
   } catch (error) {
     console.warn('[SW] Static request failed', error);
-    if (request.mode === 'navigate') {
-      const fallback = await caches.match(OFFLINE_FALLBACK);
-      if (fallback) {
-        return fallback;
-      }
-      return new Response('Offline', { status: 503, statusText: 'Offline' });
-    }
     return new Response('Service unavailable', { status: 503, statusText: 'Service Unavailable' });
   }
 }
