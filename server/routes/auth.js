@@ -7,7 +7,7 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import { generateTokens, verifyRefreshToken } from '../utils/jwt.js';
 import { authenticate, authLimiter } from '../middleware/auth.js';
-import supabase from '../lib/supabaseClient.js';
+import supabase, { supabaseAuthClient } from '../lib/supabaseClient.js';
 import {
   attachAuthCookies,
   clearAuthCookies,
@@ -253,8 +253,13 @@ router.post('/login', async (req, res) => {
       }
     }
     
+    const normalizedEmail = normalizeEmail(email);
+    const logPrefix = `[AUTH LOGIN] ${normalizedEmail}`;
+    console.log(`${logPrefix} attempt from origin=${origin} ip=${ip}`);
+
     // Real authentication with Supabase
-    if (!supabase) {
+    if (!supabase || !supabaseAuthClient) {
+      console.warn(`${logPrefix} Supabase client missing (service=${!!supabase} auth=${!!supabaseAuthClient})`);
       return res.status(503).json({
         error: 'Service unavailable',
         message:
@@ -262,61 +267,89 @@ router.post('/login', async (req, res) => {
       });
     }
     
-    // Get user from database
-    const { data: users, error: queryError } = await supabase
-      .from('users')
-      .select('*')
-      .eq('email', email.toLowerCase())
-      .limit(1);
-    
-    if (queryError || !users || users.length === 0) {
-      return res.status(401).json({
-        error: 'Invalid credentials',
-        message: 'Email or password is incorrect',
-      });
-    }
-    
-    const user = users[0];
-    
-    // Check if user is active
-    if (!user.is_active) {
-      return res.status(403).json({
-        error: 'Account disabled',
-        message: 'Your account has been disabled',
-      });
-    }
-    
-    // Verify password
-    const passwordMatch = await bcrypt.compare(password, user.password_hash);
-    
-    if (!passwordMatch) {
-      return res.status(401).json({
-        error: 'Invalid credentials',
-        message: 'Email or password is incorrect',
-      });
-    }
-    
-    // Generate tokens
-    const resolvedRole = resolveUserRole(user);
+    // Authenticate against Supabase Auth so "Last signed in" updates and Supabase role metadata applies
+    const { data: authData, error: authError } = await supabaseAuthClient.auth.signInWithPassword({
+      email: normalizedEmail,
+      password,
+    });
 
-    const tokens = generateTokens({
-      userId: user.id,
-      email: user.email,
+    if (authError || !authData?.user) {
+      const detailMessage = authError?.message || 'unknown error';
+      console.warn(`${logPrefix} Supabase auth failed: ${detailMessage}`);
+      return res.status(401).json({
+        error: 'Invalid credentials',
+        message: 'Email or password is incorrect',
+        details: detailMessage,
+      });
+    }
+
+    console.info(`${logPrefix} Supabase auth success userId=${authData.user.id}`);
+
+    // Fetch profile info from internal users table (optional)
+    let userRecord = null;
+    try {
+      const { data: users, error: queryError } = await supabase
+        .from('users')
+        .select('*')
+        .eq('email', normalizedEmail)
+        .limit(1);
+
+      if (queryError) {
+        console.warn(`${logPrefix} Failed to load profile row: ${queryError.message}`);
+      } else if (users && users.length > 0) {
+        userRecord = users[0];
+        if (userRecord && userRecord.is_active === false) {
+          console.warn(`${logPrefix} Profile marked inactive. Rejecting login.`);
+          return res.status(403).json({
+            error: 'Account disabled',
+            message: 'Your account has been disabled',
+          });
+        }
+      }
+    } catch (profileError) {
+      console.error(`${logPrefix} Unexpected profile lookup error:`, profileError);
+    }
+
+    const supabaseUser = authData.user;
+
+    const resolvedRole = resolveUserRole({
+      email: normalizedEmail,
+      role: userRecord?.role,
+      user_metadata: supabaseUser.user_metadata,
+      app_metadata: supabaseUser.app_metadata,
+    });
+
+    const responseUser = {
+      id: userRecord?.id || supabaseUser.id,
+      email: normalizedEmail,
       role: resolvedRole,
-      organizationId: user.organization_id,
+      firstName:
+        userRecord?.first_name ||
+        supabaseUser.user_metadata?.first_name ||
+        supabaseUser.user_metadata?.firstName ||
+        supabaseUser.user_metadata?.given_name ||
+        'Admin',
+      lastName:
+        userRecord?.last_name ||
+        supabaseUser.user_metadata?.last_name ||
+        supabaseUser.user_metadata?.lastName ||
+        supabaseUser.user_metadata?.family_name ||
+        '',
+      organizationId: userRecord?.organization_id,
+    };
+
+    // Generate local tokens so existing middleware continues to work
+    const tokens = generateTokens({
+      userId: responseUser.id,
+      email: responseUser.email,
+      role: responseUser.role,
+      organizationId: responseUser.organizationId,
     });
     
     // Return user data and tokens
     attachAuthCookies(res, tokens);
     res.json({
-      user: {
-        id: user.id,
-        email: user.email,
-        role: resolvedRole,
-        firstName: user.first_name,
-        lastName: user.last_name,
-        organizationId: user.organization_id,
-      },
+      user: responseUser,
       ...tokens,
     });
   } catch (error) {

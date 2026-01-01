@@ -570,6 +570,7 @@ const e2eStore = {
   learnerJourneys: new Map(), // key `${user_id}:${course_id}` -> snapshot for demo mode
   surveys: new Map(persistedData.surveys || []),
   surveyAssignments: new Map(persistedData.surveyAssignments || []),
+  auditLogs: [],
 };
 
 const clampPercent = (value) => {
@@ -2492,19 +2493,18 @@ app.post('/api/admin/courses/import', async (req, res) => {
 app.get('/api/client/assignments', async (req, res) => {
   const queryUserId = typeof req.query.user_id === 'string' ? req.query.user_id : typeof req.query.userId === 'string' ? req.query.userId : '';
   const headerUserId = (req.get('x-user-id') || '').trim();
-  const sessionUserId = (req.user && req.user.id) || '';
+  const sessionUserId = (req.user && (req.user.id || req.user.userId)) || '';
   const rawUserId = queryUserId || headerUserId || sessionUserId;
   const normalizedUserId = rawUserId ? rawUserId.toString().trim().toLowerCase() : '';
+  const orgFilter = typeof req.query.orgId === 'string' ? req.query.orgId.trim() : null;
+
+  const respond = (rows = [], meta = {}) => res.json({ data: rows, meta });
 
   if (!normalizedUserId) {
-    res.status(400).json({
-      error: 'missing_user_id',
-      message: 'Provide user_id query parameter or X-User-Id header to fetch assignments.',
-    });
+    console.warn('[client.assignments] request missing user identifier. Returning empty assignments.');
+    respond([], { warning: 'missing_user_id' });
     return;
   }
-
-  const respond = (rows = []) => res.json({ data: rows });
 
   if (!supabase) {
     if (E2E_TEST_MODE || DEV_FALLBACK) {
@@ -2520,19 +2520,23 @@ app.get('/api/client/assignments', async (req, res) => {
   }
 
   try {
-    const columns = 'id, course_id, user_id, status, progress, due_date, due_at, note, assigned_by, created_at, updated_at, active';
     const tablesToTry = ['course_assignments', 'assignments'];
-  let assignments = [];
+    let assignments = [];
 
     for (const table of tablesToTry) {
       let query = supabase
         .from(table)
-        .select(columns)
+        .select('*')
         .eq('user_id', normalizedUserId)
         .order('updated_at', { ascending: false });
 
       if (table === 'assignments') {
         query = query.eq('active', true);
+      }
+
+      if (orgFilter) {
+        const orgColumn = table === 'course_assignments' ? 'organization_id' : 'org_id';
+        query = query.or(`${orgColumn}.eq.${orgFilter},${orgColumn}.is.null`);
       }
 
       const { data, error } = await query;
@@ -2554,10 +2558,7 @@ app.get('/api/client/assignments', async (req, res) => {
       userId: normalizedUserId,
       error: err instanceof Error ? err.message : err,
     });
-    res.status(500).json({
-      error: 'AssignmentsFetchError',
-      message: 'Could not load assignments for this user.',
-    });
+    respond([], { warning: 'fetch_failed' });
   }
 });
 
@@ -2978,7 +2979,7 @@ app.get('/api/client/courses', async (req, res) => {
       respondWithDemoCourses();
       return;
     }
-    res.status(500).json({ error: 'Unable to fetch courses' });
+    res.json({ data: [], meta: { warning: 'catalog_unavailable' } });
   }
 });
 
@@ -4252,7 +4253,62 @@ app.post('/api/analytics/events/batch', async (req, res) => {
     res.json({ accepted, duplicates: [], failed: [] });
   } catch (error) {
     console.error('Failed to process analytics batch:', error);
-    res.status(500).json({ error: 'Unable to process analytics batch' });
+    res.status(200).json({ accepted: [], duplicates: [], failed: events.map((evt) => ({ id: evt.clientEventId || evt.client_event_id || 'unknown', reason: 'exception' })) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Audit log endpoint (best-effort, never blocks UX)
+// ---------------------------------------------------------------------------
+app.post('/api/audit-log', async (req, res) => {
+  const { action, details = {}, timestamp } = req.body || {};
+
+  if (!action) {
+    res.status(400).json({ error: 'action is required' });
+    return;
+  }
+
+  const entry = {
+    id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    action,
+    details,
+    timestamp: timestamp || new Date().toISOString(),
+  };
+
+  const fallback = () => res.status(200).json({ stored: false, status: 'queued' });
+
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    e2eStore.auditLogs.unshift(entry);
+    if (e2eStore.auditLogs.length > 500) {
+      e2eStore.auditLogs.length = 500;
+    }
+    persistE2EStore();
+    res.status(201).json({ data: entry, demo: true });
+    return;
+  }
+
+  if (!supabase) {
+    console.warn('[audit-log] Supabase unavailable, acknowledging without persistence');
+    fallback();
+    return;
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('audit_logs')
+      .insert({
+        action,
+        details,
+        timestamp: entry.timestamp,
+      })
+      .select('*')
+      .single();
+
+    if (error) throw error;
+    res.status(201).json({ data, stored: true });
+  } catch (error) {
+    console.error('Failed to persist audit log entry:', error);
+    fallback();
   }
 });
 
@@ -5712,6 +5768,8 @@ app.post('/api/analytics/events', async (req, res) => {
     return;
   }
 
+  const fallbackResponse = () => res.status(200).json({ status: 'queued', stored: false });
+
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
     const eventId = id || `demo-event-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const record = {
@@ -5735,7 +5793,11 @@ app.post('/api/analytics/events', async (req, res) => {
     return;
   }
 
-  if (!ensureSupabase(res)) return;
+  if (!supabase) {
+    console.warn('[analytics.events] Supabase unavailable, acknowledging event without persistence.');
+    fallbackResponse();
+    return;
+  }
 
   try {
     const { data, error } = await supabase
@@ -5749,16 +5811,16 @@ app.post('/api/analytics/events', async (req, res) => {
         event_type,
         session_id: session_id ?? null,
         user_agent: user_agent ?? null,
-        payload: payload ?? {}
+        payload: payload ?? {},
       })
       .select('*')
       .single();
 
     if (error) throw error;
-    res.status(201).json({ data });
+    res.status(201).json({ data, stored: true });
   } catch (error) {
     console.error('Failed to record analytics event:', error);
-    res.status(500).json({ error: 'Unable to record analytics event' });
+    fallbackResponse();
   }
 });
 
@@ -5778,7 +5840,11 @@ app.get('/api/analytics/events', async (req, res) => {
     return;
   }
 
-  if (!ensureSupabase(res)) return;
+  if (!supabase) {
+    console.warn('[analytics.events:get] Supabase unavailable, returning empty result set');
+    res.json({ data: [], stored: false });
+    return;
+  }
 
   try {
     let query = supabase
@@ -5801,7 +5867,7 @@ app.get('/api/analytics/events', async (req, res) => {
     res.json({ data });
   } catch (error) {
     console.error('Failed to fetch analytics events:', error);
-    res.status(500).json({ error: 'Unable to fetch analytics events' });
+    res.json({ data: [], stored: false, status: 'degraded' });
   }
 });
 
