@@ -8,6 +8,14 @@ import { verifyAccessToken, extractTokenFromHeader } from '../utils/jwt.js';
 import { getAccessTokenFromRequest } from '../utils/authCookies.js';
 import { E2E_TEST_MODE, DEV_FALLBACK } from '../config/runtimeFlags.js';
 
+const normalizeEmail = (value = '') => value.trim().toLowerCase();
+const PRIMARY_ADMIN_EMAIL = normalizeEmail(process.env.PRIMARY_ADMIN_EMAIL || 'mya@the-huddle.co');
+
+const isCanonicalAdminUser = (user = {}) => {
+  if (!user.email) return false;
+  return normalizeEmail(user.email) === PRIMARY_ADMIN_EMAIL;
+};
+
 // ============================================================================
 // Authentication Middleware
 // ============================================================================
@@ -106,7 +114,21 @@ export function requireRole(...allowedRoles) {
  * Require admin role
  */
 export function requireAdmin(req, res, next) {
-  return requireRole('admin')(req, res, next);
+  if (!req.user) {
+    return res.status(401).json({
+      error: 'Authentication required',
+      message: 'Must be logged in',
+    });
+  }
+
+  if (req.user.role === 'admin' || isCanonicalAdminUser(req.user)) {
+    return next();
+  }
+
+  return res.status(403).json({
+    error: 'Forbidden',
+    message: 'Admin access required',
+  });
 }
 
 /**

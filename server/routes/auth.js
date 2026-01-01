@@ -62,6 +62,24 @@ const legacyDemoUsers = [
 ];
 
 const normalizeEmail = (value = '') => value.trim().toLowerCase();
+const PRIMARY_ADMIN_EMAIL = normalizeEmail(process.env.PRIMARY_ADMIN_EMAIL || 'mya@the-huddle.co');
+
+const isCanonicalAdminEmail = (email) => normalizeEmail(email) === PRIMARY_ADMIN_EMAIL;
+
+const resolveUserRole = (user = {}) => {
+  const email = normalizeEmail(user.email || '');
+  if (email && isCanonicalAdminEmail(email)) {
+    return 'admin';
+  }
+
+  const metadataRole =
+    user.role ||
+    user.user_metadata?.role ||
+    user.app_metadata?.role ||
+    (user.user_metadata?.is_admin || user.app_metadata?.is_admin ? 'admin' : undefined);
+
+  return metadataRole || 'user';
+};
 
 const buildConfiguredDemoUsers = () => {
   const users = [];
@@ -279,10 +297,12 @@ router.post('/login', async (req, res) => {
     }
     
     // Generate tokens
+    const resolvedRole = resolveUserRole(user);
+
     const tokens = generateTokens({
       userId: user.id,
       email: user.email,
-      role: user.role,
+      role: resolvedRole,
       organizationId: user.organization_id,
     });
     
@@ -292,7 +312,7 @@ router.post('/login', async (req, res) => {
       user: {
         id: user.id,
         email: user.email,
-        role: user.role,
+        role: resolvedRole,
         firstName: user.first_name,
         lastName: user.last_name,
         organizationId: user.organization_id,
