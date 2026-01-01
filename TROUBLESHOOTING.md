@@ -124,7 +124,7 @@ If you need help, please provide:
 
 The application is designed to work without a database in demo mode:
 
-- **Demo Admin:** admin@thehuddleco.com / admin123
+- **Demo Admin:** mya@the-huddle.co / admin123
 - **Demo LMS User:** user@pacificcoast.edu / user123
 
 All features work locally with in-memory storage.

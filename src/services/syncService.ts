@@ -41,26 +41,31 @@ class SyncService {
   private subscribers: { [key: string]: ((data: any) => void)[] } = {};
   private syncInterval: number | null = null;
   private lastSyncTime: number = 0;
-  private isOnline: boolean = navigator.onLine;
+  private isOnline: boolean = typeof navigator !== 'undefined' ? navigator.onLine : true;
   private pendingSync: SyncEvent[] = [];
   private eventLog: SyncEvent[] = [];
+  private realtimeChannels: { name: string; channel: { unsubscribe: () => void } }[] = [];
 
   constructor() {
-    // Listen for online/offline events
-    window.addEventListener('online', () => {
-      this.isOnline = true;
-      this.processPendingSync();
-    });
-    
-    window.addEventListener('offline', () => {
-      this.isOnline = false;
-    });
+    if (typeof window !== 'undefined') {
+      // Listen for online/offline events
+      window.addEventListener('online', () => {
+        this.isOnline = true;
+        void this.initializeRealtimeSync();
+        this.processPendingSync();
+      });
+
+      window.addEventListener('offline', () => {
+        this.isOnline = false;
+        this.cleanupRealtimeChannels();
+      });
+    }
 
     // Start polling for changes every 30 seconds
     this.startSync();
 
     // Initialize real-time Supabase listeners
-    this.initializeRealtimeSync();
+    void this.initializeRealtimeSync();
 
     // Initialize WebSocket client if configured (fast realtime fallback)
     try {
@@ -110,6 +115,7 @@ class SyncService {
     // Only set up real-time sync if Supabase is configured
     if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
       console.log('Supabase not configured - using polling sync only');
+      this.cleanupRealtimeChannels();
       return;
     }
 
@@ -117,119 +123,171 @@ class SyncService {
       const supabase = await getSupabase();
       if (!supabase) {
         console.log('Supabase client not available for realtime sync');
+        this.cleanupRealtimeChannels();
         return;
       }
+      this.cleanupRealtimeChannels();
+
+      const subscribeWithGuards = (channelName: string, configure: (channel: any) => any) => {
+        const channel = configure(supabase.channel(channelName));
+        const subscribedChannel = channel.subscribe((status: string) => {
+          if (status === 'SUBSCRIBED') {
+            if (import.meta.env.DEV) {
+              console.debug(`[SyncService] realtime channel ready: ${channelName}`);
+            }
+            return;
+          }
+
+          if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
+            console.warn(`[SyncService] realtime channel ${channelName} ${status}; falling back to polling.`);
+            try {
+              subscribedChannel.unsubscribe();
+            } catch (unsubscribeError) {
+              console.warn(`[SyncService] Failed to unsubscribe channel ${channelName}:`, unsubscribeError);
+            }
+            this.realtimeChannels = this.realtimeChannels.filter((entry) => entry.channel !== subscribedChannel);
+            return;
+          }
+
+          if (status === 'CLOSED' && import.meta.env.DEV) {
+            console.debug(`[SyncService] realtime channel closed: ${channelName}`);
+          }
+          this.realtimeChannels = this.realtimeChannels.filter((entry) => entry.channel !== subscribedChannel);
+        });
+        this.realtimeChannels.push({ name: channelName, channel: subscribedChannel });
+      };
+
       // Listen for course changes
-      supabase
-        .channel('course_changes')
-        .on('postgres_changes', {
-          event: '*',
-          schema: 'public',
-          table: 'courses'
-        }, (payload: any) => {
-          console.log('Real-time course change detected:', payload);
-          
-          const eventType = payload.eventType === 'INSERT' ? 'course_created' :
-                          payload.eventType === 'UPDATE' ? 'course_updated' : 'course_deleted';
-          
-          this.emit(eventType, {
-            course: payload.new || payload.old,
-            courseId: (payload.new || payload.old)?.id,
-            timestamp: Date.now(),
-            source: 'admin'
-          });
-        })
-        .subscribe();
+      subscribeWithGuards('course_changes', (channel) =>
+        channel.on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'courses',
+          },
+          (payload: any) => {
+            console.log('Real-time course change detected:', payload);
+
+            const eventType =
+              payload.eventType === 'INSERT'
+                ? 'course_created'
+                : payload.eventType === 'UPDATE'
+                ? 'course_updated'
+                : 'course_deleted';
+
+            this.emit(eventType, {
+              course: payload.new || payload.old,
+              courseId: (payload.new || payload.old)?.id,
+              timestamp: Date.now(),
+              source: 'admin',
+            });
+          }
+        )
+      );
 
       // Listen for module changes
-  supabase
-        .channel('module_changes')
-        .on('postgres_changes', {
-          event: '*',
-          schema: 'public',
-          table: 'modules'
-        }, (payload: any) => {
-          console.log('Real-time module change detected:', payload);
-          
-          this.emit('course_updated', {
-            module: payload.new || payload.old,
-            courseId: (payload.new || payload.old)?.course_id,
-            timestamp: Date.now(),
-            source: 'admin'
-          });
-        })
-        .subscribe();
+      subscribeWithGuards('module_changes', (channel) =>
+        channel.on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'modules',
+          },
+          (payload: any) => {
+            console.log('Real-time module change detected:', payload);
 
-      // Listen for lesson changes  
-  supabase
-        .channel('lesson_changes')
-        .on('postgres_changes', {
-          event: '*',
-          schema: 'public',
-          table: 'lessons'
-        }, (payload: any) => {
-          console.log('Real-time lesson change detected:', payload);
-          
-          // Get course ID from module
-          this.getLessonCourseId((payload.new || payload.old)?.module_id)
-            .then(courseId => {
+            this.emit('course_updated', {
+              module: payload.new || payload.old,
+              courseId: (payload.new || payload.old)?.course_id,
+              timestamp: Date.now(),
+              source: 'admin',
+            });
+          }
+        )
+      );
+
+      // Listen for lesson changes
+      subscribeWithGuards('lesson_changes', (channel) =>
+        channel.on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'lessons',
+          },
+          (payload: any) => {
+            console.log('Real-time lesson change detected:', payload);
+
+            // Get course ID from module
+            this.getLessonCourseId((payload.new || payload.old)?.module_id).then((courseId) => {
               if (courseId) {
                 this.emit('course_updated', {
                   lesson: payload.new || payload.old,
                   courseId,
                   timestamp: Date.now(),
-                  source: 'admin'
+                  source: 'admin',
                 });
               }
             });
-        })
-        .subscribe();
+          }
+        )
+      );
 
       // Listen for assignment changes
-  supabase
-        .channel('assignment_changes')
-        .on('postgres_changes', {
-          event: '*',
-          schema: 'public',
-          table: 'course_assignments'
-        }, (payload: any) => {
-          console.log('Real-time assignment change detected:', payload);
-          const record = payload.new || payload.old;
-          if (!record) return;
+      subscribeWithGuards('assignment_changes', (channel) =>
+        channel.on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'course_assignments',
+          },
+          (payload: any) => {
+            console.log('Real-time assignment change detected:', payload);
+            const record = payload.new || payload.old;
+            if (!record) return;
 
-          const eventType = payload.eventType === 'DELETE'
-            ? 'assignment_deleted'
-            : payload.eventType === 'UPDATE'
-              ? 'assignment_updated'
-              : 'assignment_created';
+            const eventType =
+              payload.eventType === 'DELETE'
+                ? 'assignment_deleted'
+                : payload.eventType === 'UPDATE'
+                ? 'assignment_updated'
+                : 'assignment_created';
 
-          const assignment = mapAssignmentFromSupabase(record);
-          this.emit(eventType, assignment);
-        })
-        .subscribe();
+            const assignment = mapAssignmentFromSupabase(record);
+            this.emit(eventType, assignment);
+          }
+        )
+      );
 
       // Listen for user progress changes
-  supabase
-        .channel('progress_changes')
-        .on('postgres_changes', {
-          event: '*',
-          schema: 'public',
-          table: 'user_lesson_progress'
-        }, (payload: any) => {
-          console.log('Real-time progress change detected:', payload);
-          
-          this.emit('user_progress', {
-            progress: payload.new || payload.old,
-            userId: (payload.new || payload.old)?.user_id,
-            timestamp: Date.now(),
-            source: 'client'
-          });
-        })
-        .subscribe();
+      subscribeWithGuards('progress_changes', (channel) =>
+        channel.on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'user_lesson_progress',
+          },
+          (payload: any) => {
+            console.log('Real-time progress change detected:', payload);
+
+            this.emit('user_progress', {
+              progress: payload.new || payload.old,
+              userId: (payload.new || payload.old)?.user_id,
+              timestamp: Date.now(),
+              source: 'client',
+            });
+          }
+        )
+      );
 
       console.log('Real-time sync initialized successfully');
     } catch (error) {
       console.error('Failed to initialize real-time sync:', error);
+      this.cleanupRealtimeChannels();
     }
   }
 
@@ -358,8 +416,23 @@ class SyncService {
     return this.subscribe('refresh_all', callback);
   }
 
+  private cleanupRealtimeChannels() {
+    if (this.realtimeChannels.length === 0) {
+      return;
+    }
+    this.realtimeChannels.forEach(({ name, channel }) => {
+      try {
+        channel.unsubscribe();
+      } catch (error) {
+        console.warn(`[SyncService] Failed to unsubscribe realtime channel ${name}:`, error);
+      }
+    });
+    this.realtimeChannels = [];
+  }
+
   // Start periodic sync
   private startSync() {
+    if (typeof window === 'undefined') return;
     if (this.syncInterval) return;
 
     this.syncInterval = window.setInterval(() => {

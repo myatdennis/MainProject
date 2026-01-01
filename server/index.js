@@ -169,6 +169,10 @@ app.use((req, res, next) => {
   next();
 });
 
+// Attach request ids early so health/diagnostics endpoints can include them even before
+// the rest of the middleware stack (body parsers, auth, etc.) runs.
+app.use(attachRequestId);
+
 const OFFLINE_QUEUE_STATE_FILE = process.env.OFFLINE_QUEUE_STATE_FILE
   ? path.resolve(process.env.OFFLINE_QUEUE_STATE_FILE)
   : path.join(__dirname, 'diagnostics', 'offline-queue.json');
@@ -314,22 +318,34 @@ const buildHealthPayload = async () => {
   };
 };
 
-app.get('/api/health', async (req, res, next) => {
+const respondToHealthRequest = async (req, res) => {
   try {
     const payload = await buildHealthPayload();
     res.status(payload.httpStatus).json({ ...payload.body, requestId: req.requestId });
   } catch (error) {
-    next(withHttpError(error, 500, 'health_check_failed'));
+    const message = error instanceof Error ? error.message : 'Health check failed';
+    logger.error('health_check_failed', {
+      requestId: req.requestId,
+      message,
+      stack: error instanceof Error ? error.stack : undefined,
+    });
+    res.status(503).json({
+      healthy: false,
+      status: 'error',
+      message,
+      timestamp: new Date().toISOString(),
+      nodeEnv: process.env.NODE_ENV || 'development',
+      requestId: req.requestId,
+    });
   }
+};
+
+app.get('/api/health', (req, res) => {
+  void respondToHealthRequest(req, res);
 });
 
-app.get('/healthz', async (req, res, next) => {
-  try {
-    const payload = await buildHealthPayload();
-    res.status(payload.httpStatus).json({ ...payload.body, requestId: req.requestId });
-  } catch (error) {
-    next(withHttpError(error, 500, 'health_check_failed'));
-  }
+app.get('/healthz', (req, res) => {
+  void respondToHealthRequest(req, res);
 });
 
 app.get('/api/diagnostics/metrics', async (req, res, next) => {
@@ -359,7 +375,6 @@ app.use(express.json({ limit: '10mb' }));
 app.use(cookieParser());
 app.use(securityHeaders);
 app.use(setDoubleSubmitCSRF);
-app.use(attachRequestId);
 
 // Expose CSRF token endpoint for clients and scripts that use the double-submit cookie pattern
 app.get('/api/auth/csrf', getCSRFToken);
@@ -1606,7 +1621,7 @@ const handleLogin = async (req, res) => {
     // Test credentials for demo
     const validLogins = {
       'user@pacificcoast.edu': { password: 'user123', role: 'learner', name: 'Demo User' },
-      'admin@thehuddleco.com': { password: 'admin123', role: 'admin', name: 'Admin User' },
+  'mya@the-huddle.co': { password: 'admin123', role: 'admin', name: 'Admin User' },
       'demo@example.com': { password: 'demo', role: 'learner', name: 'Demo Learner' }
     };
 
@@ -2475,31 +2490,74 @@ app.post('/api/admin/courses/import', async (req, res) => {
 
 // Assignments listing for client: return active assignments for a user
 app.get('/api/client/assignments', async (req, res) => {
-  const userId = (req.query.user_id || req.query.userId || '').toString().toLowerCase();
-  if (!userId) {
-    res.status(400).json({ error: 'user_id is required' });
+  const queryUserId = typeof req.query.user_id === 'string' ? req.query.user_id : typeof req.query.userId === 'string' ? req.query.userId : '';
+  const headerUserId = (req.get('x-user-id') || '').trim();
+  const sessionUserId = (req.user && req.user.id) || '';
+  const rawUserId = queryUserId || headerUserId || sessionUserId;
+  const normalizedUserId = rawUserId ? rawUserId.toString().trim().toLowerCase() : '';
+
+  if (!normalizedUserId) {
+    res.status(400).json({
+      error: 'missing_user_id',
+      message: 'Provide user_id query parameter or X-User-Id header to fetch assignments.',
+    });
     return;
   }
 
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
-    const rows = (e2eStore.assignments || []).filter((a) => a && a.active !== false && String(a.user_id || '').toLowerCase() === userId);
-    res.json({ data: rows });
+  const respond = (rows = []) => res.json({ data: rows });
+
+  if (!supabase) {
+    if (E2E_TEST_MODE || DEV_FALLBACK) {
+      const rows = (e2eStore.assignments || []).filter((assignment) => {
+        if (!assignment || assignment.active === false) return false;
+        return String(assignment.user_id || '').toLowerCase() === normalizedUserId;
+      });
+      respond(rows);
+      return;
+    }
+    respond([]);
     return;
   }
 
-  if (!ensureSupabase(res)) return;
   try {
-    const { data, error } = await supabase
-      .from('assignments')
-      .select('*')
-      .eq('user_id', userId)
-      .eq('active', true)
-      .order('created_at', { ascending: false });
-    if (error) throw error;
-    res.json({ data: data || [] });
+    const columns = 'id, course_id, user_id, status, progress, due_date, due_at, note, assigned_by, created_at, updated_at, active';
+    const tablesToTry = ['course_assignments', 'assignments'];
+  let assignments = [];
+
+    for (const table of tablesToTry) {
+      let query = supabase
+        .from(table)
+        .select(columns)
+        .eq('user_id', normalizedUserId)
+        .order('updated_at', { ascending: false });
+
+      if (table === 'assignments') {
+        query = query.eq('active', true);
+      }
+
+      const { data, error } = await query;
+      if (error) {
+        const missingRelation = typeof error.message === 'string' && /relation/.test(error.message);
+        if (missingRelation) {
+          continue;
+        }
+        throw error;
+      }
+
+      assignments = data || [];
+      break;
+    }
+
+    respond(assignments);
   } catch (err) {
-    console.error('Failed to fetch assignments:', err);
-    res.status(500).json({ error: 'Unable to fetch assignments' });
+    console.error('[client.assignments] Failed to fetch assignments', {
+      userId: normalizedUserId,
+      error: err instanceof Error ? err.message : err,
+    });
+    res.status(500).json({
+      error: 'AssignmentsFetchError',
+      message: 'Could not load assignments for this user.',
+    });
   }
 });
 

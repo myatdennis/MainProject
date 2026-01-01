@@ -23,7 +23,7 @@
   - `VITE_SUPABASE_URL`: https://miqzywzuqzeffqpiupjm.supabase.co
   - `VITE_SUPABASE_ANON_KEY`: Properly configured
 - **Demo Users Created:** ✅ Admin and LMS users created in database
-  - Admin: `admin@thehuddleco.com` / `admin123`
+   - Admin: `mya@the-huddle.co` / `admin123`
   - LMS User: `user@pacificcoast.edu` / `user123`
 - **Database Schema:** ✅ Complete migration files exist (6 migrations)
 - **RLS Policies:** Configured for user profiles, courses, modules, lessons, progress tracking

@@ -33,7 +33,7 @@ npx tsc scripts/create_demo_users.ts --outDir dist && SUPABASE_URL=https://<proj
 ```
 
 2. The script will create these demo accounts:
-- admin@thehuddleco.com / admin123 (role: admin)
+- mya@the-huddle.co / admin123 (role: admin)
 - user@pacificcoast.edu / user123 (role: user)
 
 Security: Do not commit your service role key. Run this from a secure environment.

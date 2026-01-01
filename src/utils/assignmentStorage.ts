@@ -307,8 +307,60 @@ export const addAssignments = async (
   );
 };
 
-export const getAssignmentsForUser = async (userId: string): Promise<CourseAssignment[]> => {
-  const normalized = userId.toLowerCase();
+const buildAssignmentsFromApiRows = (rows: any[]): CourseAssignment[] => {
+  return rows
+    .map((row) => {
+      try {
+        return mapSupabaseAssignment({
+          id: row.id,
+          course_id: row.course_id,
+          user_id: (row.user_id || '').toLowerCase(),
+          status: row.status ?? 'assigned',
+          progress: row.progress ?? 0,
+          due_date: row.due_date ?? row.due_at ?? null,
+          note: row.note ?? null,
+          assigned_by: row.assigned_by ?? null,
+          created_at: row.created_at ?? new Date().toISOString(),
+          updated_at: row.updated_at ?? new Date().toISOString(),
+        } as SupabaseAssignmentRow);
+      } catch (error) {
+        console.warn('[assignmentStorage] Skipping malformed assignment row from API response:', error);
+        return null;
+      }
+    })
+    .filter((row): row is CourseAssignment => Boolean(row));
+};
+
+const fetchAssignmentsFromApi = async (userId: string): Promise<CourseAssignment[]> => {
+  if (typeof fetch === 'undefined') return [];
+  try {
+    const params = new URLSearchParams({ user_id: userId });
+    const base = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
+    const url = `${base}${base ? '' : ''}/api/client/assignments?${params.toString()}`;
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      console.warn('[assignmentStorage] Assignments API responded with', res.status, body || res.statusText);
+      return [];
+    }
+    const json = await res.json().catch(() => ({}));
+    const rows = Array.isArray(json?.data) ? json.data : [];
+    return buildAssignmentsFromApiRows(rows);
+  } catch (error) {
+    console.warn('[assignmentStorage] Failed to fetch assignments via API:', error);
+    return [];
+  }
+};
+
+export const getAssignmentsForUser = async (userId?: string | null): Promise<CourseAssignment[]> => {
+  const normalized = normalizeUserId(userId) ?? null;
+  if (!normalized) {
+    console.warn('[assignmentStorage] getAssignmentsForUser called without a valid user id. Returning empty assignments.');
+    return [];
+  }
 
   return withSupabaseFallback<CourseAssignment[]>(
     async () => {
@@ -327,31 +379,9 @@ export const getAssignmentsForUser = async (userId: string): Promise<CourseAssig
       return (data ?? []).map(mapSupabaseAssignment);
     },
     async () => {
-      // Prefer server-side assignments in demo/dev mode over localStorage
-      try {
-        const params = new URLSearchParams({ user_id: normalized });
-        const res = await fetch(`${import.meta.env.VITE_API_BASE_URL || ''}/api/client/assignments?${params.toString()}`, {
-          method: 'GET',
-          headers: { 'Content-Type': 'application/json' },
-        });
-        if (res.ok) {
-          const json = await res.json();
-          const rows = Array.isArray(json?.data) ? json.data : [];
-          return rows.map((row: any) => mapSupabaseAssignment({
-            id: row.id,
-            course_id: row.course_id,
-            user_id: (row.user_id || '').toLowerCase(),
-            status: row.status ?? 'assigned',
-            progress: row.progress ?? 0,
-            due_date: row.due_at ?? row.due_date ?? null,
-            note: row.note ?? null,
-            assigned_by: row.assigned_by ?? null,
-            created_at: row.created_at ?? new Date().toISOString(),
-            updated_at: row.updated_at ?? new Date().toISOString(),
-          } as any));
-        }
-      } catch (e) {
-        // fall back to local if server unavailable
+      const apiAssignments = await fetchAssignmentsFromApi(normalized);
+      if (apiAssignments.length > 0) {
+        return apiAssignments;
       }
       return loadLocalAssignments().filter((record) => record.userId === normalized);
     }

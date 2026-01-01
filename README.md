@@ -51,7 +51,7 @@ See [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) for complete troubleshooting guid
 
 ## Demo Credentials
 
-- **Admin**: admin@thehuddleco.com / admin123
+- **Admin**: mya@the-huddle.co / admin123
 - **LMS User**: user@pacificcoast.edu / user123
 
 ## Architecture
@@ -221,7 +221,7 @@ npm run remove:server-ts
     - Proxy mode: edit `netlify.toml` and replace `<RAILWAY_HOST>` in redirects; then VITE_API_BASE_URL is optional. Set VITE_ENABLE_WS=true if your `/ws` proxy is wired up, or leave it false to skip the connection entirely.
 
 4) Verify
-    - `./scripts/smoke.sh the-huddle.co <railway-host> admin@thehuddleco.com admin123`
+    - `./scripts/smoke.sh the-huddle.co <railway-host> mya@the-huddle.co admin123`
     - TLS / SSL check: run `npm run diag:ssl -- the-huddle.co` to confirm the certificate and TLS protocol
     - Browser Network tab: /api calls 200/204, no CORS errors
 

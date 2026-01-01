@@ -8,7 +8,7 @@ const AdminAuthTest = () => {
   const testLogin = async () => {
     setStatus('Attempting login...');
     try {
-      const result = await login('admin@thehuddleco.com', 'admin123', 'admin');
+  const result = await login('mya@the-huddle.co', 'admin123', 'admin');
       setStatus(`Login result: ${JSON.stringify(result)}`);
     } catch (error) {
       setStatus(`Login error: ${error}`);

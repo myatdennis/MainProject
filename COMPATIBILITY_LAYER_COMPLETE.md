@@ -97,7 +97,7 @@ All 18 components that import from `AuthContext` now work seamlessly:
 ```bash
 curl -X POST http://localhost:8787/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"admin@thehuddleco.com","password":"admin123"}'
+   -d '{"email":"mya@the-huddle.co","password":"admin123"}'
 ```
 
 **Response**: ✅ 200 OK with valid JWT tokens
@@ -113,7 +113,7 @@ curl -X POST http://localhost:8787/api/auth/login \
 
 1. **Open the application**: http://localhost:5174/admin/login
 2. **Demo Credentials**:
-   - Admin: `admin@thehuddleco.com` / `admin123`
+   - Admin: `mya@the-huddle.co` / `admin123`
    - User: `user@pacificcoast.edu` / `user123`
 3. **Expected Behavior**:
    - Login form validates input

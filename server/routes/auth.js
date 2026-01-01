@@ -43,7 +43,7 @@ const canUseDemoMode = demoLoginEnabled;
 const legacyDemoUsers = [
   {
     id: '00000000-0000-0000-0000-000000000001',
-    email: 'admin@thehuddleco.com',
+  email: 'mya@the-huddle.co',
     role: 'admin',
     firstName: 'Admin',
     lastName: 'User',
@@ -90,7 +90,7 @@ const buildConfiguredDemoUsers = () => {
 
   fromEnv('DEMO_ADMIN', {
     id: '00000000-0000-0000-0000-000000000001',
-    email: 'admin@thehuddleco.com',
+  email: 'mya@the-huddle.co',
     role: 'admin',
     firstName: 'Admin',
     lastName: 'User',

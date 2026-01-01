@@ -124,7 +124,7 @@ npm run dev
 
 The app works in demo mode without Supabase:
 
-- **Admin Portal**: admin@thehuddleco.com / admin123
+- **Admin Portal**: mya@the-huddle.co / admin123
 - **LMS User**: user@pacificcoast.edu / user123
 - **Alternative LMS**: demo@thehuddleco.com / demo123
 

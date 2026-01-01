@@ -2,7 +2,7 @@
 set -euo pipefail
 DOMAIN=${1:-the-huddle.co}
 RAILWAY_HOST=${2:-example-api.up.railway.app}
-EMAIL=${3:-admin@thehuddleco.com}
+EMAIL=${3:-mya@the-huddle.co}
 PASS=${4:-admin123}
 
 log() { printf "\n[smoke] %s\n" "$*"; }

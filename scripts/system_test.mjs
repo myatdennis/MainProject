@@ -190,7 +190,7 @@ async function testAdminPortal(page) {
   
   if (hasLoginForm && hasEmailField) {
     // Try demo admin login
-    await page.fill('input[type="email"], input[name*="email"]', 'admin@thehuddleco.com');
+  await page.fill('input[type="email"], input[name*="email"]', 'mya@the-huddle.co');
     await page.fill('input[type="password"], input[name*="password"]', 'admin123');
     await page.click('button[type="submit"], button:has-text("Sign In"), button:has-text("Login")');
     

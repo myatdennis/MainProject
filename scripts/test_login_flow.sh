@@ -2,7 +2,7 @@
 # test_login_flow.sh
 # End-to-end smoke test of the login lifecycle against local server (PORT=8888)
 # Requires: server running (DEV_FALLBACK demo mode acceptable)
-# Demo credentials exercised: admin@thehuddleco.com / admin123
+# Demo credentials exercised: mya@the-huddle.co / admin123
 # Outputs a summary with PASS/FAIL for each stage.
 set -euo pipefail
 BASE_URL="http://localhost:8888/api/auth"
@@ -22,7 +22,7 @@ check_health(){
 
 login(){
   log "Login"
-  RESP=$(curl -s -w '\n%{http_code}' -H 'Content-Type: application/json' -d '{"email":"admin@thehuddleco.com","password":"admin123"}' "$BASE_URL/login")
+  RESP=$(curl -s -w '\n%{http_code}' -H 'Content-Type: application/json' -d '{"email":"mya@the-huddle.co","password":"admin123"}' "$BASE_URL/login")
   BODY=$(echo "$RESP" | head -n1)
   CODE=$(echo "$RESP" | tail -n1)
   echo "$BODY" | jq . || true

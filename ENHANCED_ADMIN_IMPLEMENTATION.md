@@ -128,7 +128,7 @@ All features from the priority matrix have been successfully implemented! Here's
 ## 🔧 How to Access
 
 1. **Login to Admin Portal**: Visit `/admin/login` 
-   - Email: `admin@thehuddleco.com`
+   - Email: `mya@the-huddle.co`
    - Password: `admin123`
 
 2. **Access Enhanced Features**: Navigate to `/admin/enhanced` or click "Enhanced Portal" in sidebar

@@ -26,7 +26,7 @@ const testResults = {
 
 // Test configurations
 const ADMIN_CREDENTIALS = {
-  email: 'admin@thehuddleco.com',
+  email: 'mya@the-huddle.co',
   password: 'admin123'
 };
 

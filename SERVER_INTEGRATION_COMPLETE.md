@@ -83,7 +83,7 @@ npm run preview
 **Demo Credentials (DEMO_MODE=true):**
 
 Admin User:
-- Email: `admin@thehuddleco.com`
+- Email: `mya@the-huddle.co`
 - Password: `admin123`
 
 Regular User:

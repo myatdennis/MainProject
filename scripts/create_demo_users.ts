@@ -8,6 +8,8 @@
   It intentionally does minimal checks and is meant to be run locally by a developer/maintainer.
 */
 
+export {};
+
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
@@ -18,7 +20,7 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
 
 const users = [
   {
-    email: 'admin@thehuddleco.com',
+    email: 'mya@the-huddle.co',
     password: 'admin123',
     role: 'admin',
     name: 'Mya Dennis'

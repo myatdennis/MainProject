@@ -64,7 +64,7 @@ beforeAll(async () => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        email: 'admin@thehuddleco.com',
+  email: 'mya@the-huddle.co',
         password: 'admin123',
         type: 'admin',
       }),

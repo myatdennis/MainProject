@@ -21,7 +21,7 @@ export const loginAsAdmin = async (
   }
   const baseUrl = options.baseUrl ?? getFrontendBaseUrl();
   const apiBaseUrl = options.apiBaseUrl ?? getApiBaseUrl();
-  const email = options.email ?? 'admin@thehuddleco.com';
+  const email = options.email ?? 'mya@the-huddle.co';
   const password = options.password ?? 'admin123';
 
   await waitForOk(page.request, `${apiBaseUrl}/api/health`);

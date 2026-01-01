@@ -8,7 +8,7 @@ import { sanitizeText } from '../../utils/sanitize';
 
 const AdminLogin: React.FC = () => {
   const { login, isAuthenticated, forgotPassword, authInitializing, verifyMfa } = useSecureAuth();
-  const [email, setEmail] = useState('admin@thehuddleco.com');
+  const [email, setEmail] = useState('mya@the-huddle.co');
   const [password, setPassword] = useState('admin123');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -153,7 +153,7 @@ const AdminLogin: React.FC = () => {
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
                     className={`input pl-10 pr-3 ${validationErrors.email ? 'border-deepred focus:ring-deepred' : ''}`}
-                    placeholder="admin@thehuddleco.com"
+                    placeholder="mya@the-huddle.co"
                     aria-invalid={!!validationErrors.email}
                     aria-describedby={validationErrors.email ? 'email-error' : undefined}
                   />
@@ -201,7 +201,7 @@ const AdminLogin: React.FC = () => {
                   <Shield className="h-5 w-5 text-skyblue mt-0.5" />
                   <div>
                     <h4 className="text-small font-heading text-skyblue">Demo Credentials</h4>
-                    <p className="text-small text-skyblue mt-1">Email: admin@thehuddleco.com<br />Password: admin123</p>
+                    <p className="text-small text-skyblue mt-1">Email: mya@the-huddle.co<br />Password: admin123</p>
                   </div>
                 </div>
               </div>

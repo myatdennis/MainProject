@@ -25,7 +25,7 @@ lsof -i :5173
 ```javascript
 // Test sequence
 1. Navigate to /admin/login
-2. Login with admin@thehuddleco.com / admin123
+2. Login with mya@the-huddle.co / admin123
 3. Verify redirect to /admin/dashboard
 4. Test navigation to /admin/courses, /admin/users
 5. Repeat for LMS portal with user@pacificcoast.edu / user123

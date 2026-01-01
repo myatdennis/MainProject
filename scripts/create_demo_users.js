@@ -19,7 +19,7 @@ if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
 
 const users = [
   {
-    email: 'admin@thehuddleco.com',
+    email: 'mya@the-huddle.co',
     password: 'admin123',
     role: 'admin',
     name: 'Mya Dennis'

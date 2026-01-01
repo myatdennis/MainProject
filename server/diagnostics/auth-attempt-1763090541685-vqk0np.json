@@ -23,10 +23,10 @@
     "cookie": "csrf_token=UDrtgP_FqVwktiRE28XEKp93ZwXVdHfpMfTMjQu0WLw; access_token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiIwMTQ4YTVjZi1lMDExLTRlNGItYTkzYi00NzU0ZGRiYzc0NzkiLCJlbWFpbCI6Im15YUB0aGUtaHVkZGxlLmNvIiwicm9sZSI6InVzZXIiLCJvcmdhbml6YXRpb25JZCI6bnVsbCwiaWF0IjoxNzYzMDkwNTM4LCJleHAiOjE3NjMwOTE0MzgsImF1ZCI6Imxtcy11c2VycyIsImlzcyI6Imxtcy1wbGF0Zm9ybSJ9.XnIMaHiLBTfU-iICIrqbU9wwXWHmDhOYT9vi0LS-4sI; refresh_token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiIwMTQ4YTVjZi1lMDExLTRlNGItYTkzYi00NzU0ZGRiYzc0NzkiLCJpYXQiOjE3NjMwOTA1MzgsImV4cCI6MTc2MzY5NTMzOCwiYXVkIjoibG1zLXVzZXJzIiwiaXNzIjoibG1zLXBsYXRmb3JtIn0.DXoVNATzRfhI71Y-rXvdnl20YCYycX_MsugEtIPJZPo"
   },
   "body": {
-    "email": "admin@thehuddleco.com",
+    "email": "mya@the-huddle.co",
     "password": "admin123"
   },
   "userId": "00000000-0000-0000-0000-000000000001",
-  "email": "admin@thehuddleco.com",
+  "email": "mya@the-huddle.co",
   "mode": "demo"
 }

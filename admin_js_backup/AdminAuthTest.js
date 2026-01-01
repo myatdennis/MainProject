@@ -51,7 +51,7 @@ var AdminAuthTest = function () {
                     _a.label = 1;
                 case 1:
                     _a.trys.push([1, 3, , 4]);
-                    return [4 /*yield*/, login('admin@thehuddleco.com', 'admin123', 'admin')];
+                    return [4 /*yield*/, login('mya@the-huddle.co', 'admin123', 'admin')];
                 case 2:
                     result = _a.sent();
                     setStatus("Login result: ".concat(JSON.stringify(result)));

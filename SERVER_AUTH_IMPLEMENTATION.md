@@ -329,7 +329,7 @@ describe('jwt', () => {
 describe('Auth API', () => {
   it('should login with valid credentials', async () => {
     const response = await api.post('/auth/login', {
-      email: 'admin@thehuddleco.com',
+  email: 'mya@the-huddle.co',
       password: 'admin123',
     });
     expect(response.data.accessToken).toBeDefined();
@@ -338,7 +338,7 @@ describe('Auth API', () => {
   it('should reject invalid credentials', async () => {
     await expect(
       api.post('/auth/login', {
-        email: 'admin@thehuddleco.com',
+  email: 'mya@the-huddle.co',
         password: 'wrong',
       })
     ).rejects.toThrow();

@@ -95,7 +95,7 @@ DEMO_MODE=true node server/index.js
 ```bash
 curl -X POST http://localhost:8888/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"email":"admin@thehuddleco.com","password":"admin123"}'
+  -d '{"email":"mya@the-huddle.co","password":"admin123"}'
 ```
 
 **Expected Response:**
@@ -103,7 +103,7 @@ curl -X POST http://localhost:8888/api/auth/login \
 {
   "user": {
     "id": "00000000-0000-0000-0000-000000000001",
-    "email": "admin@thehuddleco.com",
+  "email": "mya@the-huddle.co",
     "role": "admin",
     "firstName": "Admin",
     "lastName": "User"
@@ -118,7 +118,7 @@ curl -X POST http://localhost:8888/api/auth/login \
 
 1. Go to: http://localhost:5174/admin/login
 2. Use demo credentials:
-   - Email: `admin@thehuddleco.com`
+  - Email: `mya@the-huddle.co`
    - Password: `admin123`
 3. Click "Access Admin Portal"
 4. Should redirect to `/admin/dashboard`
