@@ -6,7 +6,13 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import { generateTokens, verifyRefreshToken } from '../utils/jwt.js';
-import { authenticate, authLimiter } from '../middleware/auth.js';
+import {
+  authenticate,
+  authLimiter,
+  normalizeEmail,
+  isCanonicalAdminEmail,
+  resolveUserRole,
+} from '../middleware/auth.js';
 import supabase, { supabaseAuthClient } from '../lib/supabaseClient.js';
 import {
   attachAuthCookies,
@@ -47,7 +53,7 @@ const legacyDemoUsers = [
     role: 'admin',
     firstName: 'Admin',
     lastName: 'User',
-    password: 'admin123',
+    password: '3Cr0wns2014!',
     organizationId: undefined,
   },
   {
@@ -60,26 +66,6 @@ const legacyDemoUsers = [
     organizationId: undefined,
   },
 ];
-
-const normalizeEmail = (value = '') => value.trim().toLowerCase();
-const PRIMARY_ADMIN_EMAIL = normalizeEmail(process.env.PRIMARY_ADMIN_EMAIL || 'mya@the-huddle.co');
-
-const isCanonicalAdminEmail = (email) => normalizeEmail(email) === PRIMARY_ADMIN_EMAIL;
-
-const resolveUserRole = (user = {}) => {
-  const email = normalizeEmail(user.email || '');
-  if (email && isCanonicalAdminEmail(email)) {
-    return 'admin';
-  }
-
-  const metadataRole =
-    user.role ||
-    user.user_metadata?.role ||
-    user.app_metadata?.role ||
-    (user.user_metadata?.is_admin || user.app_metadata?.is_admin ? 'admin' : undefined);
-
-  return metadataRole || 'user';
-};
 
 const buildConfiguredDemoUsers = () => {
   const users = [];
@@ -230,10 +216,12 @@ router.post('/login', async (req, res) => {
       const demoUser = await resolveDemoUser(email, password);
       
       if (demoUser) {
+        const normalizedEmail = normalizeEmail(demoUser.email);
+        const resolvedRole = isCanonicalAdminEmail(normalizedEmail) ? 'admin' : demoUser.role || 'user';
         const tokens = generateTokens({
           userId: demoUser.id,
-          email: demoUser.email,
-          role: demoUser.role,
+          email: normalizedEmail,
+          role: resolvedRole,
           organizationId: demoUser.organizationId,
         });
 
@@ -242,8 +230,8 @@ router.post('/login', async (req, res) => {
         return res.json({
           user: {
             id: demoUser.id,
-            email: demoUser.email,
-            role: demoUser.role,
+            email: normalizedEmail,
+            role: resolvedRole,
             firstName: demoUser.firstName,
             lastName: demoUser.lastName,
             organizationId: demoUser.organizationId,
@@ -268,12 +256,12 @@ router.post('/login', async (req, res) => {
     }
     
     // Authenticate against Supabase Auth so "Last signed in" updates and Supabase role metadata applies
-    const { data: authData, error: authError } = await supabaseAuthClient.auth.signInWithPassword({
+    const { data, error: authError } = await supabaseAuthClient.auth.signInWithPassword({
       email: normalizedEmail,
       password,
     });
 
-    if (authError || !authData?.user) {
+    if (authError || !data?.user) {
       const detailMessage = authError?.message || 'unknown error';
       console.warn(`${logPrefix} Supabase auth failed: ${detailMessage}`);
       return res.status(401).json({
@@ -283,7 +271,7 @@ router.post('/login', async (req, res) => {
       });
     }
 
-    console.info(`${logPrefix} Supabase auth success userId=${authData.user.id}`);
+    console.info(`${logPrefix} Supabase auth success userId=${data.user.id}`);
 
     // Fetch profile info from internal users table (optional)
     let userRecord = null;
@@ -310,46 +298,32 @@ router.post('/login', async (req, res) => {
       console.error(`${logPrefix} Unexpected profile lookup error:`, profileError);
     }
 
-    const supabaseUser = authData.user;
+    const supabaseUser = data.user;
 
-    const resolvedRole = resolveUserRole({
+    const role = resolveUserRole({
       email: normalizedEmail,
-      role: userRecord?.role,
+      role: supabaseUser.role,
       user_metadata: supabaseUser.user_metadata,
       app_metadata: supabaseUser.app_metadata,
     });
 
-    const responseUser = {
-      id: userRecord?.id || supabaseUser.id,
+    const userPayload = {
+      id: supabaseUser.id,
+      userId: supabaseUser.id,
       email: normalizedEmail,
-      role: resolvedRole,
-      firstName:
-        userRecord?.first_name ||
-        supabaseUser.user_metadata?.first_name ||
-        supabaseUser.user_metadata?.firstName ||
-        supabaseUser.user_metadata?.given_name ||
-        'Admin',
-      lastName:
-        userRecord?.last_name ||
-        supabaseUser.user_metadata?.last_name ||
-        supabaseUser.user_metadata?.lastName ||
-        supabaseUser.user_metadata?.family_name ||
-        '',
-      organizationId: userRecord?.organization_id,
+      role,
+      organizationId: supabaseUser.user_metadata?.organization_id ?? null,
     };
 
-    // Generate local tokens so existing middleware continues to work
-    const tokens = generateTokens({
-      userId: responseUser.id,
-      email: responseUser.email,
-      role: responseUser.role,
-      organizationId: responseUser.organizationId,
-    });
-    
-    // Return user data and tokens
+    const tokens = generateTokens(userPayload);
+    const { accessToken, refreshToken } = tokens;
+
+    console.log('[AUTH LOGIN] issuing tokens for:', userPayload);
+
     attachAuthCookies(res, tokens);
-    res.json({
-      user: responseUser,
+
+    return res.json({
+      user: userPayload,
       ...tokens,
     });
   } catch (error) {

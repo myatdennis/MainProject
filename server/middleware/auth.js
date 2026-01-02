@@ -8,12 +8,25 @@ import { verifyAccessToken, extractTokenFromHeader } from '../utils/jwt.js';
 import { getAccessTokenFromRequest } from '../utils/authCookies.js';
 import { E2E_TEST_MODE, DEV_FALLBACK } from '../config/runtimeFlags.js';
 
-const normalizeEmail = (value = '') => value.trim().toLowerCase();
-const PRIMARY_ADMIN_EMAIL = normalizeEmail(process.env.PRIMARY_ADMIN_EMAIL || 'mya@the-huddle.co');
+export const normalizeEmail = (value = '') => value.trim().toLowerCase();
+// Make sure PRIMARY_ADMIN_EMAIL is set in .env to 'mya@the-huddle.co'
+export const PRIMARY_ADMIN_EMAIL = normalizeEmail(process.env.PRIMARY_ADMIN_EMAIL || 'mya@the-huddle.co');
 
-const isCanonicalAdminUser = (user = {}) => {
-  if (!user.email) return false;
-  return normalizeEmail(user.email) === PRIMARY_ADMIN_EMAIL;
+export const isCanonicalAdminEmail = (email) => normalizeEmail(email) === PRIMARY_ADMIN_EMAIL;
+
+export const resolveUserRole = (user = {}) => {
+  const email = normalizeEmail(user.email || '');
+  if (email && isCanonicalAdminEmail(email)) {
+    return 'admin';
+  }
+
+  const metadataRole =
+    user.role ||
+    user.user_metadata?.role ||
+    user.app_metadata?.role ||
+    (user.user_metadata?.is_admin || user.app_metadata?.is_admin ? 'admin' : undefined);
+
+  return metadataRole || 'user';
 };
 
 // ============================================================================
@@ -59,6 +72,19 @@ export function authenticate(req, res, next) {
   
   // Attach user to request
   req.user = payload;
+
+  if (req.user?.email) {
+    req.user.email = normalizeEmail(req.user.email);
+  }
+
+  if (req.user?.email && isCanonicalAdminEmail(req.user.email)) {
+    req.user.role = 'admin';
+  }
+
+  if (!req.user.userId && req.user.id) {
+    req.user.userId = req.user.id;
+  }
+
   next();
 }
 
@@ -121,15 +147,18 @@ export function requireAdmin(req, res, next) {
     });
   }
 
-  if (req.user.role === 'admin' || isCanonicalAdminUser(req.user)) {
+  if (req.user.role === 'admin' || isCanonicalAdminEmail(req.user.email)) {
     return next();
   }
+
+  console.warn('[requireAdmin] Access denied for user:', req.user);
 
   return res.status(403).json({
     error: 'Forbidden',
     message: 'Admin access required',
   });
 }
+
 
 /**
  * Require user to be authenticated (any role)

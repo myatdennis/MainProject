@@ -4,6 +4,10 @@ import { authenticate, requireAdmin } from '../middleware/auth.js';
 import { createHttpError, withHttpError } from '../middleware/apiErrorHandler.js';
 
 const router = express.Router();
+router.use((req, res, next) => {
+  console.log('[ADMIN COURSES] req.user:', req.user);
+  next();
+});
 
 router.use(authenticate, requireAdmin);
 

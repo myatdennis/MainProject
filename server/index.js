@@ -35,12 +35,18 @@ import authRoutes from './routes/auth.js';
 import adminAnalyticsRoutes from './routes/admin-analytics.js';
 import adminAnalyticsExport from './routes/admin-analytics-export.js';
 import adminAnalyticsSummary from './routes/admin-analytics-summary.js';
-import { apiLimiter, securityHeaders, authenticate, requireAdmin } from './middleware/auth.js';
+import {
+  apiLimiter,
+  securityHeaders,
+  authenticate,
+  requireAdmin,
+  optionalAuthenticate,
+} from './middleware/auth.js';
 import { setDoubleSubmitCSRF, getCSRFToken } from './middleware/csrf.js';
 import adminUsersRouter from './routes/admin-users.js';
-import adminCoursesRoutes from './routes/admin-courses.js';
 import mfaRoutes from './routes/mfa.js';
 import { attachRequestId, apiErrorHandler, createHttpError, withHttpError } from './middleware/apiErrorHandler.js';
+import adminCoursesRouter from './routes/admin-courses.js';
 import {
   NODE_ENV,
   isProduction,
@@ -500,7 +506,7 @@ app.use('/api/admin/analytics', adminAnalyticsRoutes);
 app.use('/api/admin/analytics/export', adminAnalyticsExport);
 app.use('/api/admin/analytics/summary', adminAnalyticsSummary);
 app.use('/api/admin/users', adminUsersRouter);
-app.use('/api/admin/courses', adminCoursesRoutes);
+app.use('/api/admin/courses', authenticate, requireAdmin, adminCoursesRouter);
 
 // Honor explicit E2E test mode in child processes: when E2E_TEST_MODE is set we prefer the
 // in-memory demo fallback even if Supabase credentials are present in the environment.
@@ -2490,18 +2496,26 @@ app.post('/api/admin/courses/import', async (req, res) => {
 });
 
 // Assignments listing for client: return active assignments for a user
-app.get('/api/client/assignments', async (req, res) => {
+app.get('/api/client/assignments', optionalAuthenticate, async (req, res) => {
   const queryUserId = typeof req.query.user_id === 'string' ? req.query.user_id : typeof req.query.userId === 'string' ? req.query.userId : '';
   const headerUserId = (req.get('x-user-id') || '').trim();
   const sessionUserId = (req.user && (req.user.id || req.user.userId)) || '';
   const rawUserId = queryUserId || headerUserId || sessionUserId;
   const normalizedUserId = rawUserId ? rawUserId.toString().trim().toLowerCase() : '';
   const orgFilter = typeof req.query.orgId === 'string' ? req.query.orgId.trim() : null;
+  const requestId = req.requestId;
 
-  const respond = (rows = [], meta = {}) => res.json({ data: rows, meta });
+  const respond = (rows = [], meta = {}) =>
+    res.json({
+      data: rows,
+      meta: {
+        requestId,
+        ...meta,
+      },
+    });
 
   if (!normalizedUserId) {
-    console.warn('[client.assignments] request missing user identifier. Returning empty assignments.');
+    logger.warn('client_assignments_missing_user', { requestId, query: req.query });
     respond([], { warning: 'missing_user_id' });
     return;
   }
@@ -2512,10 +2526,10 @@ app.get('/api/client/assignments', async (req, res) => {
         if (!assignment || assignment.active === false) return false;
         return String(assignment.user_id || '').toLowerCase() === normalizedUserId;
       });
-      respond(rows);
+      respond(rows, { source: 'demo' });
       return;
     }
-    respond([]);
+    respond([], { source: 'disabled' });
     return;
   }
 
@@ -2552,13 +2566,14 @@ app.get('/api/client/assignments', async (req, res) => {
       break;
     }
 
-    respond(assignments);
+    respond(assignments, { source: 'supabase' });
   } catch (err) {
-    console.error('[client.assignments] Failed to fetch assignments', {
+    logger.error('client_assignments_fetch_failed', {
+      requestId,
       userId: normalizedUserId,
       error: err instanceof Error ? err.message : err,
     });
-    respond([], { warning: 'fetch_failed' });
+    respond([], { warning: 'fetch_failed', source: 'fallback' });
   }
 });
 
@@ -5761,24 +5776,27 @@ app.delete('/api/admin/notifications/:id', async (req, res) => {
 });
 
 app.post('/api/analytics/events', async (req, res) => {
-  const { id, user_id, course_id, lesson_id, module_id, event_type, session_id, user_agent, payload } = req.body || {};
+  const { id, user_id, course_id, lesson_id, module_id, event_type, session_id, user_agent, payload, org_id } = req.body || {};
 
-  if (!event_type) {
+  const normalizedEvent = typeof event_type === 'string' ? event_type.trim() : '';
+  if (!normalizedEvent) {
     res.status(400).json({ error: 'event_type is required' });
     return;
   }
 
-  const fallbackResponse = () => res.status(200).json({ status: 'queued', stored: false });
+  const respondQueued = (meta = {}) => res.json({ status: 'queued', stored: false, ...meta });
+  const respondStored = (meta = {}) => res.json({ status: 'stored', stored: true, ...meta });
 
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
     const eventId = id || `demo-event-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const record = {
       id: eventId,
       user_id: user_id ?? null,
+      org_id: org_id ?? null,
       course_id: course_id ?? null,
       lesson_id: lesson_id ?? null,
       module_id: module_id ?? null,
-      event_type,
+      event_type: normalizedEvent,
       session_id: session_id ?? null,
       user_agent: user_agent ?? null,
       payload: payload ?? {},
@@ -5789,13 +5807,13 @@ app.post('/api/analytics/events', async (req, res) => {
       e2eStore.analyticsEvents.length = 500;
     }
     persistE2EStore();
-    res.status(201).json({ data: record, demo: true });
+    respondStored({ data: record, demo: true });
     return;
   }
 
   if (!supabase) {
     console.warn('[analytics.events] Supabase unavailable, acknowledging event without persistence.');
-    fallbackResponse();
+    respondQueued({ reason: 'supabase_disabled' });
     return;
   }
 
@@ -5805,10 +5823,11 @@ app.post('/api/analytics/events', async (req, res) => {
       .insert({
         id: id ?? undefined,
         user_id: user_id ?? null,
+        org_id: org_id ?? null,
         course_id: course_id ?? null,
         lesson_id: lesson_id ?? null,
         module_id: module_id ?? null,
-        event_type,
+        event_type: normalizedEvent,
         session_id: session_id ?? null,
         user_agent: user_agent ?? null,
         payload: payload ?? {},
@@ -5817,57 +5836,63 @@ app.post('/api/analytics/events', async (req, res) => {
       .single();
 
     if (error) throw error;
-    res.status(201).json({ data, stored: true });
+    respondStored({ data });
   } catch (error) {
     console.error('Failed to record analytics event:', error);
-    fallbackResponse();
+    respondQueued({ reason: 'persistence_failed' });
   }
 });
 
-app.get('/api/analytics/events', async (req, res) => {
-  const { user_id, course_id, limit = 200 } = req.query;
-  const parsedLimit = Math.max(1, Math.min(500, parseInt(limit, 10) || 200));
+app.post('/api/audit-log', async (req, res) => {
+  const { action, details = {}, timestamp, userId, user_id, orgId, org_id } = req.body || {};
+
+  const normalizedAction = typeof action === 'string' ? action.trim() : '';
+  if (!normalizedAction) {
+    res.status(400).json({ error: 'action is required' });
+    return;
+  }
+
+  const entry = {
+    id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    action: normalizedAction,
+    details,
+    user_id: userId ?? user_id ?? null,
+    org_id: orgId ?? org_id ?? null,
+    timestamp: timestamp || new Date().toISOString(),
+  };
+
+  const respondOk = (meta = {}) => res.json({ ok: true, ...meta });
 
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
-    let data = [...e2eStore.analyticsEvents];
-    if (user_id) {
-      data = data.filter((evt) => evt.user_id === user_id);
+    e2eStore.auditLogs.unshift(entry);
+    if (e2eStore.auditLogs.length > 500) {
+      e2eStore.auditLogs.length = 500;
     }
-    if (course_id) {
-      data = data.filter((evt) => evt.course_id === course_id);
-    }
-    res.json({ data: data.slice(0, parsedLimit), demo: true });
+    persistE2EStore();
+    respondOk({ demo: true, stored: true, entry });
     return;
   }
 
   if (!supabase) {
-    console.warn('[analytics.events:get] Supabase unavailable, returning empty result set');
-    res.json({ data: [], stored: false });
+    console.warn('[audit-log] Supabase unavailable, acknowledging without persistence');
+    respondOk({ stored: false, reason: 'supabase_disabled' });
     return;
   }
 
   try {
-    let query = supabase
-      .from('analytics_events')
-      .select('*')
-      .order('created_at', { ascending: false })
-      .limit(parsedLimit);
-
-    if (user_id) {
-      query = query.eq('user_id', user_id);
-    }
-
-    if (course_id) {
-      query = query.eq('course_id', course_id);
-    }
-
-    const { data, error } = await query;
+    const { error } = await supabase.from('audit_logs').insert({
+      action: entry.action,
+      details: entry.details,
+      user_id: entry.user_id,
+      org_id: entry.org_id,
+      timestamp: entry.timestamp,
+    });
 
     if (error) throw error;
-    res.json({ data });
+    respondOk({ stored: true });
   } catch (error) {
-    console.error('Failed to fetch analytics events:', error);
-    res.json({ data: [], stored: false, status: 'degraded' });
+    console.error('Failed to persist audit log entry:', error);
+    respondOk({ stored: false, reason: 'persistence_failed' });
   }
 });
 
@@ -5902,7 +5927,7 @@ app.post('/api/analytics/journeys', async (req, res) => {
     res.status(201).json({ data: e2eStore.learnerJourneys.get(key), demo: true });
     return;
   }
-  
+
   if (!ensureSupabase(res)) return;
 
   try {
