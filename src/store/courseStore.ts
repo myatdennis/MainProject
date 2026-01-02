@@ -1003,6 +1003,20 @@ const resolveOrgContext = (): { orgId: string | null; role: string | null; userI
   return { orgId: null, role: null, userId: null };
 };
 
+const isAdminSurface = (): boolean => {
+  if (typeof window === 'undefined' || typeof window.location === 'undefined') {
+    return false;
+  }
+
+  try {
+    const pathname = window.location.pathname ? window.location.pathname.toLowerCase() : '';
+    return pathname.startsWith('/admin');
+  } catch (error) {
+    console.warn('[courseStore] Failed to inspect route for admin surface detection:', error);
+    return false;
+  }
+};
+
 const ensureAssignmentScopedCatalog = async (
   currentCourses: { [key: string]: Course },
   userId: string | null,
@@ -1014,7 +1028,8 @@ const ensureAssignmentScopedCatalog = async (
   try {
     const assignments = await getAssignmentsForUser(userId);
     if (!assignments || assignments.length === 0) {
-      return currentCourses;
+      console.info('[courseStore] No assignments returned from API; presenting empty learner catalog.');
+      return {};
     }
 
     const courseMap: { [key: string]: Course } = { ...currentCourses };
@@ -1075,7 +1090,17 @@ export const courseStore = {
       console.log('[courseStore.init] Starting initialization...');
       const orgContext = resolveOrgContext();
       const normalizedRole = orgContext.role ? orgContext.role.toLowerCase() : null;
-      restrictToOrg = normalizedRole !== 'admin';
+      const adminSurfaceDetected = isAdminSurface();
+      const isAdminRole = Boolean(
+        normalizedRole && (normalizedRole === 'admin' || normalizedRole.endsWith('_admin') || normalizedRole.includes('admin')),
+      );
+      const treatAsAdmin = isAdminRole || adminSurfaceDetected;
+      restrictToOrg = !treatAsAdmin;
+      if (adminSurfaceDetected && !isAdminRole) {
+        console.info(
+          '[courseStore.init] Admin surface detected without explicit admin role; expanding catalog visibility for builder access.',
+        );
+      }
       let runtimeStatus = getRuntimeStatus();
       try {
         runtimeStatus = await refreshRuntimeStatus();

@@ -18,6 +18,9 @@ import {
   Clock,
   BarChart3,
   Download,
+  Wand2,
+  Layers,
+  Rocket,
 } from 'lucide-react';
 
 const stats = [
@@ -118,6 +121,30 @@ const modulePerformance = [
   { name: 'Personal & Team Action Planning', completion: 78, avgTime: '35 min' },
 ];
 
+const builderHighlights = [
+  {
+    icon: Wand2,
+    title: 'Visual authoring',
+    description: 'Drag, reorder, and preview modules without leaving the page.',
+  },
+  {
+    icon: Layers,
+    title: 'Reusable templates',
+    description: 'Start from scenario, micro-lesson, or workshop blueprints.',
+  },
+  {
+    icon: Rocket,
+    title: 'Instant launch',
+    description: 'Publish to every organization (or pilot cohorts) in minutes.',
+  },
+];
+
+const builderSnapshot = [
+  { label: 'Active drafts', value: '6', helper: '2 updated this week' },
+  { label: 'Ready templates', value: '4', helper: 'Scenario · Micro-lesson · Workshop · Quiz' },
+  { label: 'Avg. publish time', value: '12 min', helper: 'From brief to announcement' },
+];
+
 const AdminDashboard = () => {
   const navigate = useNavigate();
 
@@ -165,6 +192,60 @@ const AdminDashboard = () => {
               <Button variant="ghost" size="sm" trailingIcon={<Download className="h-4 w-4" />} onClick={handleExportReport}>
                 Export summary
               </Button>
+            </div>
+          </div>
+        </Card>
+
+        <Card tone="muted" className="border border-mist/60 bg-gradient-to-br from-white to-cloud">
+          <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_320px]">
+            <div>
+              <Badge tone="info" className="bg-skyblue/10 text-skyblue">
+                Course Builder
+              </Badge>
+              <h2 className="mt-4 font-heading text-2xl font-semibold text-charcoal md:text-3xl">
+                Design new learning journeys without leaving the dashboard.
+              </h2>
+              <p className="mt-3 max-w-2xl text-sm text-slate/80">
+                Launch the visual Course Builder to remix templates, drag-and-drop content, and publish to every organization in minutes.
+              </p>
+              <div className="mt-6 grid gap-4 sm:grid-cols-2">
+                {builderHighlights.map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <div key={item.title} className="rounded-2xl border border-mist/60 bg-white/70 p-4 shadow-card-sm">
+                      <div className="flex items-start gap-3">
+                        <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-cloud text-skyblue">
+                          <Icon className="h-5 w-5" />
+                        </span>
+                        <div>
+                          <p className="font-heading text-sm font-semibold text-charcoal">{item.title}</p>
+                          <p className="text-xs text-slate/70">{item.description}</p>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="mt-6 flex flex-wrap gap-3">
+                <Button size="lg" trailingIcon={<ArrowUpRight className="h-4 w-4" />} onClick={() => navigate('/admin/course-builder/new')}>
+                  Launch Course Builder
+                </Button>
+                <Button variant="ghost" size="lg" onClick={() => navigate('/admin/courses')}>
+                  View drafts & templates
+                </Button>
+              </div>
+            </div>
+            <div className="rounded-3xl border border-mist/70 bg-white/80 p-6 shadow-card-sm backdrop-blur">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate/70">Builder snapshot</p>
+              <div className="mt-4 space-y-4">
+                {builderSnapshot.map((item) => (
+                  <div key={item.label} className="rounded-2xl border border-mist/50 bg-cloud/60 px-4 py-3">
+                    <p className="text-xs text-slate/70">{item.label}</p>
+                    <p className="font-heading text-2xl font-semibold text-charcoal">{item.value}</p>
+                    <p className="text-xs text-slate/60">{item.helper}</p>
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </Card>

@@ -145,6 +145,7 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
   type TestableVideoElement = HTMLVideoElement & {
     __coursePlayerHandleTimeUpdate?: () => void;
     __testDuration?: number;
+    __testPosition?: number;
   };
 
   // UI state
@@ -806,17 +807,84 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
     // Tick: read current player position and enqueue a lesson_progress event if position changed
     const tick = () => {
       if (!isActive) return;
-      if (!videoRef.current) return;
-      const player = videoRef.current;
-      if (!player.duration || Number.isNaN(player.duration)) return;
+      const player = videoRef.current as TestableVideoElement | null;
+      if (!player) {
+        return;
+      }
 
-      const position = player.currentTime;
+      const rawDuration = player.duration;
+      const testDuration = typeof player.__testDuration === 'number' ? player.__testDuration : null;
+      const dataDuration = (() => {
+        const value = player.dataset?.testDuration;
+        if (typeof value !== 'string') return null;
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : null;
+      })();
+      const globalTestDuration = (() => {
+        if (typeof window === 'undefined') return null;
+        const value = (window as unknown as Record<string, unknown>).__COURSE_PLAYER_TEST_DURATION;
+        if (typeof value === 'number' && Number.isFinite(value)) return value;
+        if (typeof value === 'string' && value.trim().length > 0) {
+          const parsed = Number(value);
+          return Number.isFinite(parsed) ? parsed : null;
+        }
+        return null;
+      })();
+      const fallbackDuration =
+        typeof testDuration === 'number' && testDuration > 0
+          ? testDuration
+          : typeof dataDuration === 'number' && dataDuration > 0
+            ? dataDuration
+            : typeof globalTestDuration === 'number' && globalTestDuration > 0
+              ? globalTestDuration
+              : null;
+      const effectiveDuration =
+        Number.isFinite(rawDuration) && rawDuration > 0 ? rawDuration : fallbackDuration;
+
+      if (!effectiveDuration) {
+        return;
+      }
+
+      let position = player.currentTime;
+      if (!Number.isFinite(position) || position <= 0) {
+        const testPosition = typeof player.__testPosition === 'number' ? player.__testPosition : null;
+        const dataPosition = (() => {
+          const value = player.dataset?.testPosition;
+          if (typeof value !== 'string') return null;
+          const parsed = Number(value);
+          return Number.isFinite(parsed) ? parsed : null;
+        })();
+        const globalTestPosition = (() => {
+          if (typeof window === 'undefined') return null;
+          const value = (window as unknown as Record<string, unknown>).__COURSE_PLAYER_TEST_POSITION;
+          if (typeof value === 'number' && Number.isFinite(value)) return value;
+          if (typeof value === 'string' && value.trim().length > 0) {
+            const parsed = Number(value);
+            return Number.isFinite(parsed) ? parsed : null;
+          }
+          return null;
+        })();
+        const fallbackPosition =
+          typeof testPosition === 'number' && testPosition >= 0
+            ? testPosition
+            : typeof dataPosition === 'number' && dataPosition >= 0
+              ? dataPosition
+              : typeof globalTestPosition === 'number' && globalTestPosition >= 0
+                ? globalTestPosition
+                : null;
+        if (typeof fallbackPosition === 'number') {
+          position = fallbackPosition;
+        }
+      }
+
       const previous = lastAutoSavePositionRef.current ?? 0;
       // avoid noisy updates for very small changes
-      if (Math.abs(position - previous) < 1) return;
+      if (Math.abs(position - previous) < 1) {
+        return;
+      }
       lastAutoSavePositionRef.current = position;
 
-      const progressPercent = Math.min(100, Math.round((position / player.duration) * 100));
+      const progressPercent = Math.min(100, Math.round((position / effectiveDuration) * 100));
 
       if (course?.id) {
         try {

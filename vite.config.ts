@@ -99,7 +99,9 @@ export default async () => {
             // cross-chunk ordering/linking issues in production builds.
             if (id.includes('lucide-react')) return 'vendor-icons';
             if (id.includes('@dnd-kit') || id.includes('dnd-kit')) return 'dnd-kit';
-            if (id.includes('@supabase') || id.includes('supabase')) return 'supabase';
+            // Keep Supabase libraries in the shared vendor chunk to avoid cross-chunk
+            // circular imports that can trigger "Cannot access '<var>' before initialization"
+            // errors in production builds.
             if (id.includes('recharts')) return 'charts';
             if (id.includes('framer-motion')) return 'framer-motion';
             if (id.includes('@tanstack/react-query')) return 'react-query';

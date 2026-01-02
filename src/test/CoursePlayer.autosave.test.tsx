@@ -136,6 +136,8 @@ describe('CoursePlayer autosave', () => {
       return intervalCallbacks.length as unknown as ReturnType<typeof window.setInterval>;
     });
 
+    (window as any).__COURSE_PLAYER_TEST_DURATION = 120;
+
     renderCoursePlayer();
 
     // Wait for video element to render
@@ -147,6 +149,10 @@ describe('CoursePlayer autosave', () => {
 
     // Provide duration/currentTime so the autosave interval has meaningful data
     Object.defineProperty(video, 'duration', { configurable: true, get: () => 120 });
+    (video as any).__testDuration = 120;
+    video.dataset.testDuration = '120';
+    (video as any).__testPosition = 30;
+    video.dataset.testPosition = '30';
     let currentTimeValue = 0;
     Object.defineProperty(video, 'currentTime', {
       configurable: true,
@@ -155,6 +161,8 @@ describe('CoursePlayer autosave', () => {
         currentTimeValue = val;
       },
     });
+
+    (window as any).__COURSE_PLAYER_TEST_POSITION = 30;
 
     expect(video.duration).toBe(120);
 

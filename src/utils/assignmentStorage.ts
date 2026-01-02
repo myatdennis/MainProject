@@ -2,10 +2,26 @@ import { getSupabase, hasSupabaseConfig } from '../lib/supabaseClient';
 import { syncService } from '../dal/sync';
 import type { CourseAssignment, CourseAssignmentStatus } from '../types/assignment';
 import { isSupabaseOperational, subscribeRuntimeStatus } from '../state/runtimeStatus';
+import apiRequest from './apiClient';
 
 const STORAGE_KEY = 'huddle_course_assignments_v1';
 
 const supabaseReady = () => hasSupabaseConfig || isSupabaseOperational();
+
+const getAuthedSupabaseClient = async () => {
+  try {
+    const supabase = await getSupabase();
+    if (!supabase) return null;
+    const { data } = await supabase.auth.getSession();
+    if (!data?.session) {
+      return null;
+    }
+    return supabase;
+  } catch (error) {
+    console.warn('[assignmentStorage] Unable to resolve Supabase auth session:', error);
+    return null;
+  }
+};
 
 type SupabaseAssignmentRow = {
   id: string;
@@ -121,8 +137,11 @@ const syncLocalAssignmentsToSupabase = async () => {
     }
 
     try {
-      const supabase = await getSupabase();
-      if (!supabase) throw new Error('Supabase unavailable');
+      const supabase = await getAuthedSupabaseClient();
+      if (!supabase) {
+        console.info('[assignmentStorage] Skipping Supabase sync (no authenticated session).');
+        return;
+      }
 
       const payload = pending.map((assignment) => ({
         id: assignment.id,
@@ -311,13 +330,16 @@ const buildAssignmentsFromApiRows = (rows: any[]): CourseAssignment[] => {
   return rows
     .map((row) => {
       try {
+        const courseId = row.course_id ?? row.courseId;
+        const userIdRaw = row.user_id ?? row.userId ?? '';
+        const dueDate = row.due_date ?? row.dueAt ?? row.due_at ?? null;
         return mapSupabaseAssignment({
           id: row.id,
-          course_id: row.course_id,
-          user_id: (row.user_id || '').toLowerCase(),
+          course_id: courseId,
+          user_id: typeof userIdRaw === 'string' ? userIdRaw.toLowerCase() : '',
           status: row.status ?? 'assigned',
           progress: row.progress ?? 0,
-          due_date: row.due_date ?? row.due_at ?? null,
+          due_date: dueDate,
           note: row.note ?? null,
           assigned_by: row.assigned_by ?? null,
           created_at: row.created_at ?? new Date().toISOString(),
@@ -331,26 +353,17 @@ const buildAssignmentsFromApiRows = (rows: any[]): CourseAssignment[] => {
     .filter((row): row is CourseAssignment => Boolean(row));
 };
 
-const fetchAssignmentsFromApi = async (userId: string): Promise<CourseAssignment[]> => {
-  if (typeof fetch === 'undefined') return [];
+const fetchAssignmentsViaApi = async (userId: string): Promise<CourseAssignment[]> => {
   try {
     const params = new URLSearchParams({ user_id: userId });
-    const base = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
-    const url = `${base}${base ? '' : ''}/api/client/assignments?${params.toString()}`;
-    const res = await fetch(url, {
-      method: 'GET',
-      headers: { 'Content-Type': 'application/json' },
-    });
-    if (!res.ok) {
-      const body = await res.text().catch(() => '');
-      console.warn('[assignmentStorage] Assignments API responded with', res.status, body || res.statusText);
+    const response = await apiRequest<{ data?: any[] }>(`/api/client/assignments?${params.toString()}`);
+    const rows = Array.isArray(response?.data) ? response.data : [];
+    if (!rows.length) {
       return [];
     }
-    const json = await res.json().catch(() => ({}));
-    const rows = Array.isArray(json?.data) ? json.data : [];
     return buildAssignmentsFromApiRows(rows);
   } catch (error) {
-    console.warn('[assignmentStorage] Failed to fetch assignments via API:', error);
+    console.warn('[assignmentStorage] Failed to load assignments via API:', error);
     return [];
   }
 };
@@ -362,10 +375,14 @@ export const getAssignmentsForUser = async (userId?: string | null): Promise<Cou
     return [];
   }
 
-  return withSupabaseFallback<CourseAssignment[]>(
-    async () => {
-      const supabase = await getSupabase();
-      if (!supabase) throw new Error('Supabase unavailable');
+  const apiAssignments = await fetchAssignmentsViaApi(normalized);
+  if (apiAssignments.length > 0) {
+    return apiAssignments;
+  }
+
+  try {
+    const supabase = await getAuthedSupabaseClient();
+    if (supabase) {
       const { data, error } = await supabase
         .from('course_assignments')
         .select('*')
@@ -376,16 +393,17 @@ export const getAssignmentsForUser = async (userId?: string | null): Promise<Cou
         throw new Error(error.message);
       }
 
-      return (data ?? []).map(mapSupabaseAssignment);
-    },
-    async () => {
-      const apiAssignments = await fetchAssignmentsFromApi(normalized);
-      if (apiAssignments.length > 0) {
-        return apiAssignments;
+      if (data && data.length > 0) {
+        return data.map(mapSupabaseAssignment);
       }
-      return loadLocalAssignments().filter((record) => record.userId === normalized);
+    } else if (supabaseReady()) {
+      console.info('[assignmentStorage] Skipping direct Supabase fetch (no authenticated session).');
     }
-  );
+  } catch (error) {
+    console.warn('[assignmentStorage] Supabase fetch failed, falling back to local assignments:', error);
+  }
+
+  return loadLocalAssignments().filter((record) => record.userId === normalized);
 };
 
 export const getAssignment = async (
