@@ -112,7 +112,7 @@ const HomePage = () => {
               <LazyImage
                 src="https://images.pexels.com/photos/3184675/pexels-photo-3184675.jpeg?auto=compress&cs=tinysrgb&w=1200"
                 webpSrc="https://images.pexels.com/photos/3184675/pexels-photo-3184675.webp?auto=compress&cs=tinysrgb&w=1200"
-                avifSrc="https://images.pexels.com/photos/3184675/pexels-photo-3184675.avif?auto=compress&cs=tinysrgb&w=1200"
+                avifSrc="/pexels-photo-3184675.avif"
                 alt="Inclusive team collaboration"
                 className="w-full rounded-[28px] border border-white/60 shadow-[0_32px_60px_rgba(16,24,40,0.18)]"
                 sizes="(max-width: 600px) 100vw, 420px"
