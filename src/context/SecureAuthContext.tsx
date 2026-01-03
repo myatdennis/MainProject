@@ -23,18 +23,18 @@ import { loginSchema, emailSchema } from '../utils/validators';
 
 import { logAuditAction } from '../services/auditLogService';
 import axios from 'axios';
+import { resolveApiUrl } from '../config/apiBase';
 
-// Configure axios base URL
-// Backwards compatibility: support legacy VITE_API_URL, prefer VITE_API_BASE_URL
-// If a full base URL is provided (e.g. https://railway-app.up.railway.app), append /api
-// Otherwise fall back to Vite dev proxy path '/api'.
-const rawApiBase = (import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || '').trim().replace(/\/$/, '');
-// Prefer the dev proxy path during development unless the API is explicitly
-// configured to a local host. This prevents accidental calls to production APIs
-// when running the frontend locally.
-let API_URL = rawApiBase ? `${rawApiBase}/api` : '/api';
-if (import.meta.env.DEV && rawApiBase && !/^https?:\/\/(localhost|127(?:\.[0-9]+){0,2}\.[0-9]+|\[::1\])(:|$)/i.test(rawApiBase)) {
-  API_URL = '/api';
+// Configure axios base URL using unified API resolver so production calls
+// use https://the-huddle.co while local dev remains on the Vite proxy.
+const API_URL = resolveApiUrl('/api');
+
+if (
+  import.meta.env.DEV &&
+  /^https?:\/\//i.test(API_URL) &&
+  !/^https?:\/\/(localhost|127(?:\.[0-9]+){0,2}\.[0-9]+|\[::1\])(:|$)/i.test(API_URL)
+) {
+  console.warn('[SecureAuth] API base points to a non-local host in development:', API_URL);
 }
 const api = axios.create({
   baseURL: API_URL,

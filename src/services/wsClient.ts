@@ -1,4 +1,5 @@
 import toast from 'react-hot-toast';
+import { resolveWsUrl } from '../config/apiBase';
 
 type WSMessage = {
   topic?: string;
@@ -59,12 +60,13 @@ class WSClient extends SimpleEmitter {
   private enabled: boolean;
   private notified = false;
   private readonly toastId = 'ws-client-status';
+  private failureCount = 0;
+  private readonly maxFailuresBeforeDisable = 5;
 
   constructor(url?: string) {
     super();
-    const envUrl = (import.meta.env.VITE_WS_URL as string | undefined)?.trim();
-    const fallbackUrl = isBrowser ? `${window.location.origin.replace(/^http/, 'ws')}/ws` : undefined;
-    this.url = url || envUrl || fallbackUrl;
+    const computedUrl = url || resolveWsUrl('/ws');
+    this.url = computedUrl || undefined;
     this.enabled = parseFlag(import.meta.env.VITE_ENABLE_WS as string | undefined, false);
     this.shouldReconnect = this.enabled;
   }
@@ -78,7 +80,7 @@ class WSClient extends SimpleEmitter {
     if (!this.hasValidUrl()) {
       this.enabled = false;
       this.shouldReconnect = false;
-      this.notifyOnce('WebSocket URL missing or invalid; realtime updates disabled.', 'error');
+      this.notifyOnce('WebSocket URL missing or invalid; realtime updates disabled.', 'warn');
       return;
     }
 
@@ -90,6 +92,7 @@ class WSClient extends SimpleEmitter {
       this.socket.addEventListener('open', () => {
         this.reconnectDelay = 1000;
         this.connected = true;
+        this.failureCount = 0;
         this.emit('open');
       });
 
@@ -109,15 +112,18 @@ class WSClient extends SimpleEmitter {
         this.connected = false;
         this.socket = null;
         this.emit('close');
+        this.registerFailure();
         if (this.shouldReconnect && this.enabled) this.scheduleReconnect();
       });
 
       this.socket.addEventListener('error', (err) => {
         this.emit('error', err);
+        this.registerFailure();
         // socket will trigger close event next
       });
     } catch (err) {
       this.emit('error', err);
+      this.registerFailure();
       if (this.shouldReconnect && this.enabled) {
         this.scheduleReconnect();
       } else {
@@ -140,6 +146,16 @@ class WSClient extends SimpleEmitter {
       this.reconnectDelay = Math.min(this.reconnectDelay * 1.5, this.maxDelay);
       this.connect();
     }, this.reconnectDelay + Math.floor(Math.random() * 500));
+  }
+
+  private registerFailure() {
+    if (this.connected) return;
+    this.failureCount += 1;
+    if (this.failureCount >= this.maxFailuresBeforeDisable) {
+      this.shouldReconnect = false;
+      this.enabled = false;
+      this.notifyOnce('WebSocket connection unavailable; continuing without realtime updates.', 'warn');
+    }
   }
 
   send(msg: WSMessage) {

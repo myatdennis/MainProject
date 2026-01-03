@@ -1,3 +1,5 @@
+import { getApiBaseUrl } from './apiBase';
+
 export type AppConfig = {
   apiBaseUrl: string | null;
   features: {
@@ -19,8 +21,7 @@ const readBoolean = (value: string | undefined, fallback = false) => {
 };
 
 export const getConfig = (): AppConfig => {
-  const rawApiBase = (import.meta as any).env?.VITE_API_BASE_URL || null;
-  const apiBaseUrl = rawApiBase || (import.meta.env.MODE === 'production' ? 'https://mainproject-production-4e66.up.railway.app' : null);
+  const apiBaseUrl = getApiBaseUrl() || null;
   return {
     apiBaseUrl,
     features: {

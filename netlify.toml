@@ -9,8 +9,8 @@
   NPM_CONFIG_PRODUCTION = "false"
   API_MODE = "absolute"
   VITE_ENABLE_WS = "true"
-  VITE_API_BASE_URL = "https://mainproject-production-4e66.up.railway.app"
-  VITE_WS_URL = "wss://mainproject-production-4e66.up.railway.app/ws"
+  VITE_API_BASE_URL = "https://the-huddle.co"
+  VITE_WS_URL = "wss://the-huddle.co/ws"
 
 [context.deploy-preview.environment]
   API_MODE = "proxy"

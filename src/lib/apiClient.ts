@@ -8,35 +8,18 @@ import { ApiError as ApiClientError } from '../utils/apiClient';
 import buildAuthHeaders from '../utils/requestContext';
 import { setSessionMetadata, clearAuth, getRefreshToken, setAccessToken, setRefreshToken } from '../lib/secureStorage';
 import { getCSRFToken } from '../hooks/useCSRFToken';
+import { getApiBaseUrl, resolveApiUrl } from '../config/apiBase';
 
 // ============================================================================
 // API Client Configuration
 // ============================================================================
 
-// Prefer explicit configuration via VITE_API_BASE_URL.
-const rawApiBase = (import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || '').trim().replace(/\/$/, '');
-const allowProdFallback = String(import.meta.env.VITE_ALLOW_PROD_FALLBACK || import.meta.env.ALLOW_PROD_FALLBACK || '').toLowerCase() === 'true';
-const defaultRailwayHost = 'https://mainproject-production-4e66.up.railway.app';
+const API_BASE_URL = getApiBaseUrl();
+const API_ROOT = resolveApiUrl('/api');
 
-if (import.meta.env.DEV && !rawApiBase) {
-  const hint = 'Set VITE_API_BASE_URL in your .env (e.g. VITE_API_BASE_URL=/api for the Vite proxy).';
-  throw new Error(`[apiClient] VITE_API_BASE_URL is required in development. ${hint}`);
-}
-
-let API_BASE_URL = rawApiBase;
-
-if (!API_BASE_URL) {
-  if (import.meta.env.MODE === 'production') {
-    if (!allowProdFallback) {
-      throw new Error('[apiClient] VITE_API_BASE_URL is not set and ALLOW_PROD_FALLBACK is not true. Refusing to hit the default Railway host.');
-    }
-    API_BASE_URL = defaultRailwayHost;
-    console.warn('[apiClient] Using production fallback host because ALLOW_PROD_FALLBACK=true:', API_BASE_URL);
-  } else {
-    API_BASE_URL = '/api';
-  }
-} else if (
+if (
   import.meta.env.DEV &&
+  API_BASE_URL &&
   /^https?:\/\//i.test(API_BASE_URL) &&
   !/^https?:\/\/(localhost|127(?:\.[0-9]+){0,2}\.[0-9]+|\[::1\])(:|$)/i.test(API_BASE_URL)
 ) {
@@ -48,7 +31,7 @@ if (!API_BASE_URL) {
  * Create secure axios instance
  */
 export const apiClient: AxiosInstance = axios.create({
-  baseURL: API_BASE_URL,
+  baseURL: API_ROOT,
   timeout: 30000,
   headers: {
     'Content-Type': 'application/json',

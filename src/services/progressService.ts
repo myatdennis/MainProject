@@ -9,25 +9,10 @@ import {
   type OfflineQueueItem,
 } from './offlineQueue';
 
-const rawApiBase = (import.meta.env.VITE_API_BASE_URL || import.meta.env.VITE_API_URL || '').trim();
-const hasApiConfig = () => Boolean(rawApiBase);
-const PROGRESS_DISABLED_MESSAGE = 'Progress can’t be saved right now because the sync API is not configured.';
-const PROGRESS_DISABLED_TOAST_ID = 'progress-disabled';
-let announcedDisabled = false;
-
 const getAvailability = () => ({
-  enabled: hasApiConfig(),
-  message: hasApiConfig() ? undefined : PROGRESS_DISABLED_MESSAGE,
+  enabled: true,
+  message: undefined,
 });
-
-const notifyProgressUnavailable = () => {
-  if (announcedDisabled) return;
-  announcedDisabled = true;
-  toast.error(PROGRESS_DISABLED_MESSAGE, {
-    id: PROGRESS_DISABLED_TOAST_ID,
-    duration: 6000,
-  });
-};
 
 type LessonProgressRow = {
   lesson_id: string;
@@ -99,10 +84,6 @@ const scheduleRetry = (delayMs: number = 5000) => {
 };
 
 const postSnapshot = async (snapshot: ProgressSnapshot, { showFailureToast }: { showFailureToast: boolean }) => {
-  if (!hasApiConfig()) {
-    notifyProgressUnavailable();
-    return false;
-  }
   try {
     await NetworkErrorHandler.handleApiCall(
       () =>
@@ -251,7 +232,7 @@ if (typeof window !== 'undefined') {
 }
 
 export const progressService = {
-  isEnabled: (): boolean => hasApiConfig(),
+  isEnabled: (): boolean => true,
   getAvailability,
 
   fetchLessonProgress: async (options: {
@@ -260,10 +241,7 @@ export const progressService = {
     lessonIds: string[];
   }): Promise<LessonProgressRow[]> => {
     const { userId, courseId, lessonIds } = options;
-    if (!hasApiConfig() || !userId || !courseId || lessonIds.length === 0) {
-      if (!hasApiConfig()) {
-        console.warn('[progressService] fetchLessonProgress called without API config');
-      }
+    if (!userId || !courseId || lessonIds.length === 0) {
       return [];
     }
 
@@ -302,10 +280,7 @@ export const progressService = {
     totalTimeSeconds,
     lastLessonId,
   }: SnapshotInput): Promise<boolean> => {
-    if (!hasApiConfig() || !userId || !courseId) {
-      if (!hasApiConfig()) {
-        notifyProgressUnavailable();
-      }
+    if (!userId || !courseId) {
       return false;
     }
 

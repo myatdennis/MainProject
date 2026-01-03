@@ -327,7 +327,8 @@ const buildHealthPayload = async () => {
 const respondToHealthRequest = async (req, res) => {
   try {
     const payload = await buildHealthPayload();
-    res.status(payload.httpStatus).json({ ...payload.body, requestId: req.requestId });
+    const ok = payload.httpStatus === 200;
+    res.status(payload.httpStatus).json({ ok, ...payload.body, requestId: req.requestId });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Health check failed';
     logger.error('health_check_failed', {
@@ -336,6 +337,7 @@ const respondToHealthRequest = async (req, res) => {
       stack: error instanceof Error ? error.stack : undefined,
     });
     res.status(503).json({
+      ok: false,
       healthy: false,
       status: 'error',
       message,
@@ -490,6 +492,13 @@ app.put('/api/text-content', (req, res, next) => {
       return next(createHttpError(500, 'text_content_save_failed', 'Failed to save content'));
     }
     res.json({ success: true });
+  });
+});
+
+app.get('/api/debug/whoami', authenticate, (req, res) => {
+  res.json({
+    ok: true,
+    user: req.user || null,
   });
 });
 
@@ -2503,6 +2512,8 @@ app.get('/api/client/assignments', optionalAuthenticate, async (req, res) => {
   const rawUserId = queryUserId || headerUserId || sessionUserId;
   const normalizedUserId = rawUserId ? rawUserId.toString().trim().toLowerCase() : '';
   const orgFilter = typeof req.query.orgId === 'string' ? req.query.orgId.trim() : null;
+  const includeCompletedAssignments =
+    String(req.query.includeCompleted || req.query.include_completed || 'true').toLowerCase() === 'true';
   const requestId = req.requestId;
 
   const respond = (rows = [], meta = {}) =>
@@ -2545,7 +2556,11 @@ app.get('/api/client/assignments', optionalAuthenticate, async (req, res) => {
         .order('updated_at', { ascending: false });
 
       if (table === 'assignments') {
-        query = query.eq('active', true);
+        if (includeCompletedAssignments) {
+          query = query.or('active.eq.true,status.eq.completed,status.eq.in-progress,status.eq.assigned');
+        } else {
+          query = query.eq('active', true);
+        }
       }
 
       if (orgFilter) {

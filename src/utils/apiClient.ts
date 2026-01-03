@@ -1,4 +1,5 @@
 import buildAuthHeaders from './requestContext';
+import { resolveApiUrl } from '../config/apiBase';
 
 const logApiDebug = (meta: Record<string, unknown>) => {
   if (import.meta.env.DEV) {
@@ -47,20 +48,7 @@ const transformKeysDeep = (
   return out;
 };
 
-// Resolve API base URL from Vite env, and fall back to a Railway host in production when undefined.
-const rawApiBaseEnv = (import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\/$/, '');
-let API_BASE_URL = rawApiBaseEnv;
-// When not set, prefer an explicit Railway host for production builds to avoid broken /api references
-// (This improves resilience for deployments that don't configure VITE_API_BASE_URL in the hosting UI.)
-if (!API_BASE_URL) {
-  if (import.meta.env.MODE === 'production') {
-    API_BASE_URL = 'https://mainproject-production-4e66.up.railway.app';
-    console.info('[apiClient] VITE_API_BASE_URL not set — defaulting to Railway host:', API_BASE_URL);
-  } else {
-    API_BASE_URL = '/api';
-    console.info('[apiClient] VITE_API_BASE_URL not set — using Vite proxy (/api).');
-  }
-}
+const buildUrl = (path: string) => resolveApiUrl(path);
 
 export class ApiError extends Error {
   status: number;
@@ -99,19 +87,6 @@ export interface ApiRequestOptions extends RequestInit {
   timeoutMs?: number;
 }
 
-const buildUrl = (path: string) => {
-  if (path.startsWith('http')) return path;
-  if (!API_BASE_URL) return path;
-
-  const normalizedBase = API_BASE_URL.endsWith('/') ? API_BASE_URL.slice(0, -1) : API_BASE_URL;
-  const normalizedPath = path.startsWith('/') ? path : `/${path}`;
-
-  if (normalizedBase.startsWith('/') && normalizedPath.startsWith(normalizedBase)) {
-    return normalizedPath;
-  }
-
-  return `${normalizedBase}${normalizedPath}`;
-};
 
 const shouldParseJson = (response: Response, options: ApiRequestOptions) => {
   if (options.rawResponse) return false;
