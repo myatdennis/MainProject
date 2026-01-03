@@ -39,6 +39,7 @@ This runbook explains how to import courses reliably and have them appear on the
 - If the UI doesn’t reflect recent changes, clear the service worker cache (visit `/unregister-sw.html`) and hard-refresh.
 - Check server health at `/api/health`.
 - Inspect logs in `server_bg.log` for import details and any validation errors.
+- Error `column courses.version does not exist` → apply migration `supabase/migrations/20260103_add_course_version_column.sql` to your Supabase/Postgres instance (e.g., `supabase db push`) and restart the server; the admin import API depends on that column.
 
 ## CLI alternative
 For bulk automation, you can still run the existing script:
@@ -47,4 +48,20 @@ For bulk automation, you can still run the existing script:
 node scripts/import_courses.js import/dei-foundations.json --publish --dedupe --prune-duplicates --wait --wait-timeout 8000
 ```
 
+### Additional sample payloads
+
+- `import/tlc-retreat-camp-dei-course.json` &mdash; full youth camp curriculum (videos, interactive prompts, anonymous question box, commitments flow). Import with:
+
+  ```bash
+  node scripts/import_courses.js import/tlc-retreat-camp-dei-course.json --dedupe --wait
+  ```
+
+  Add `--publish` if you want it immediately visible in the learner catalog.
+
 This uses the same server endpoints as the UI and supports upsert-by-slug.
+
+### TLC Retreat Camp course is now preloaded
+
+- `server/demo-data.json` now ships with the `course-tlc-retreat-dei-2026` record so local/dev servers immediately show the TLC Retreat Camp DEI curriculum in Admin → Courses.
+- If you need to refresh it (for example after clearing demo data), rerun the CLI import above or drag the JSON into `/admin/courses/import`.
+- Publishing + assignment still happen through their respective admin actions; seeding only ensures the full lesson stack exists with IDs matching the import payload.
