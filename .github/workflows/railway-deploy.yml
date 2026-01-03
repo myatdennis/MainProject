@@ -27,26 +27,20 @@ jobs:
       - name: Install Railway CLI (fallback)
         run: npm i -g @railway/cli
 
-      - name: Login to Railway
-        env:
-          RAILWAY_API_KEY: ${{ secrets.RAILWAY_API_KEY }}
-        run: |
-          if [ -z "$RAILWAY_API_KEY" ]; then
-            echo "No Railway API key present. Please add RAILWAY_API_KEY to repository secrets.";
-            exit 1;
-          fi
-          railway login --apiKey $RAILWAY_API_KEY
-
       - name: Deploy to Railway (api service)
         env:
+          RAILWAY_API_KEY: ${{ secrets.RAILWAY_API_KEY }}
           RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
           RAILWAY_ENVIRONMENT: ${{ secrets.RAILWAY_ENVIRONMENT }}
         run: |
-          # Use CLI to deploy the api service. requires RAILWAY_PROJECT_ID and RAILWAY_ENVIRONMENT
-          set -o pipefail
-          railway status --project $RAILWAY_PROJECT_ID
-          # Best-effort deployment — adjust service name if your Railway service is named differently
-          railway up --project $RAILWAY_PROJECT_ID --environment $RAILWAY_ENVIRONMENT --service api --yes || echo "railway up failed; check the logs or use railway deploy via Railway UI"
+          if [ -z "$RAILWAY_API_KEY" ]; then
+            echo "RAILWAY_API_KEY is required";
+            exit 1;
+          fi
+          if [ -n "$RAILWAY_PROJECT_ID" ]; then
+            railway status --project $RAILWAY_PROJECT_ID || true
+          fi
+          railway up --service api
 
       - name: Confirm health
         run: |
