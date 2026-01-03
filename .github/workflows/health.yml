@@ -15,8 +15,7 @@ jobs:
           curl -fsS https://$DOMAIN/ | head -c 200 || exit 1
       - name: API health (Supabase Edge function proxy)
         run: |
-          API_HOST=${API_HOST:-miqzywzuqzeffqpiupjm.supabase.co}
-          curl -fsS https://$API_HOST/functions/v1/api/health | jq '.status == "ok"' | grep true
+         curl -fsS https://mainproject-production-4e66.up.railway.app/api/health | jq -e '.ok == true' >/dev/null
       - name: CORS preflight
         run: |
           API_HOST=${API_HOST:-miqzywzuqzeffqpiupjm.supabase.co}
