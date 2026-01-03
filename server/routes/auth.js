@@ -299,7 +299,6 @@ router.post('/login', async (req, res) => {
     }
 
     const supabaseUser = data.user;
-
     const role = resolveUserRole({
       email: normalizedEmail,
       role: supabaseUser.role,
@@ -315,16 +314,14 @@ router.post('/login', async (req, res) => {
       organizationId: supabaseUser.user_metadata?.organization_id ?? null,
     };
 
-    const tokens = generateTokens(userPayload);
-    const { accessToken, refreshToken } = tokens;
+    const { accessToken, refreshToken } = generateTokens(userPayload);
 
     console.log('[AUTH LOGIN] issuing tokens for:', userPayload);
 
-    attachAuthCookies(res, tokens);
-
     return res.json({
       user: userPayload,
-      ...tokens,
+      accessToken,
+      refreshToken,
     });
   } catch (error) {
     console.error('Login error:', error);

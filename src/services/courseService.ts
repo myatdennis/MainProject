@@ -7,6 +7,7 @@ import {
   formatMinutes,
 } from '../utils/courseNormalization';
 import apiRequest from '../utils/apiClient';
+import migrateLessonContent from '../utils/contentMigrator';
 import {
   moduleSchema,
   modulePatchSchema,
@@ -24,6 +25,7 @@ import type {
   ModuleReorderInput,
   LessonReorderInput,
 } from '../types/apiSchemas';
+import { CURRENT_CONTENT_SCHEMA_VERSION } from '../schema/contentSchema';
 import { ZodError } from 'zod';
 
 export type SupabaseCourseRecord = {
@@ -298,9 +300,13 @@ const buildLessonResources = (lesson: Lesson): { label: string; url: string }[] 
 
 const buildLessonContent = (lesson: Lesson, apiType: LessonDto['type']): LessonInput['content'] => {
   const sanitized = sanitizeSerializable(lesson.content ?? {}) || {};
+  const canonicalBody = migrateLessonContent({ ...sanitized });
+  if (canonicalBody.schema_version == null) {
+    canonicalBody.schema_version = CURRENT_CONTENT_SCHEMA_VERSION;
+  }
   const content: LessonInput['content'] = {
     type: apiType,
-    body: typeof sanitized === 'object' && sanitized !== null ? (sanitized as Record<string, unknown>) : {},
+    body: typeof canonicalBody === 'object' && canonicalBody !== null ? canonicalBody : {},
   };
 
   const resources = buildLessonResources(lesson);

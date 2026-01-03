@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { X, Building2, User } from 'lucide-react';
 import LoadingButton from './LoadingButton';
 import { useToast } from '../context/ToastContext';
+import orgService from '../dal/orgs';
 
 interface AddOrganizationModalProps {
   isOpen: boolean;
@@ -81,7 +82,9 @@ const AddOrganizationModal: React.FC<AddOrganizationModalProps> = ({ isOpen, onC
 
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
-  };  const handleSubmit = async (e: React.FormEvent) => {
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!validateForm()) {
@@ -91,34 +94,19 @@ const AddOrganizationModal: React.FC<AddOrganizationModalProps> = ({ isOpen, onC
     setLoading(true);
 
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 2000));
-
-      const newOrganization = {
-        id: Date.now().toString(),
-        name: formData.name,
+      const newOrganization = await orgService.createOrg({
+        name: formData.name.trim(),
         type: formData.type,
         contactPerson: formData.contactPerson,
         contactEmail: formData.contactEmail,
-        contactPhone: formData.contactPhone,
-        website: formData.website,
-        address: formData.address,
+        contact_email: formData.contactEmail,
+        contactPhone: formData.contactPhone || undefined,
+        website: formData.website || undefined,
+        address: formData.address || undefined,
         subscription: formData.subscription,
-        maxLearners: formData.maxLearners || 100,
-        activeLearners: 0,
-        totalLearners: 0,
-        completionRate: 0,
+        maxLearners: formData.maxLearners ?? undefined,
         status: 'active',
-        lastActivity: new Date().toISOString(),
-        cohorts: [],
-        modules: {
-          foundations: 0,
-          bias: 0,
-          empathy: 0,
-          conversations: 0,
-          planning: 0
-        }
-      };
+      });
 
       onOrganizationAdded?.(newOrganization);
       showToast('Organization added successfully!', 'success');

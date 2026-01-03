@@ -5,12 +5,13 @@ import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
 import { courseStore } from '../../store/courseStore';
-import { normalizeCourse } from '../../utils/courseNormalization';
+import { normalizeCourse, slugify } from '../../utils/courseNormalization';
 import { loadStoredCourseProgress, buildLearnerProgressSnapshot, syncCourseProgressWithRemote } from '../../utils/courseProgress';
 import { getAssignment } from '../../utils/assignmentStorage';
 import { getPreferredLessonId, getFirstLessonId } from '../../utils/courseNavigation';
 import type { CourseAssignment } from '../../types/assignment';
 import { useUserProfile } from '../../hooks/useUserProfile';
+import { evaluateCourseAvailability } from '../../utils/courseAvailability';
 
 const ClientCourseDetail = () => {
   const navigate = useNavigate();
@@ -36,6 +37,12 @@ const ClientCourseDetail = () => {
   const [assignment, setAssignment] = useState<CourseAssignment | undefined>();
   const normalizedId = normalized?.id;
   const [progressRefreshToken, setProgressRefreshToken] = useState(0);
+
+  const courseSlug = useMemo(() => {
+    if (normalized?.slug) return normalized.slug;
+    if (courseId) return slugify(courseId);
+    return undefined;
+  }, [normalized?.slug, courseId]);
 
   useEffect(() => {
     let isMounted = true;
@@ -89,11 +96,8 @@ const ClientCourseDetail = () => {
   }, [normalized, learnerId]);
 
   const storedProgress = useMemo(
-    () =>
-      normalized
-        ? loadStoredCourseProgress(normalized.slug)
-        : { completedLessonIds: [], lessonProgress: {}, lessonPositions: {} },
-    [normalized?.slug, progressRefreshToken]
+    () => loadStoredCourseProgress(courseSlug),
+    [courseSlug, progressRefreshToken]
   );
   const snapshot = useMemo(
     () =>
@@ -111,6 +115,16 @@ const ClientCourseDetail = () => {
     ? getPreferredLessonId(normalized, storedProgress) ?? getFirstLessonId(normalized)
     : undefined;
 
+  const availability = useMemo(
+    () =>
+      evaluateCourseAvailability({
+        course: normalized,
+        assignmentStatus: assignment?.status ?? course?.assignmentStatus ?? null,
+        storedProgress,
+      }),
+    [normalized, assignment?.status, course?.assignmentStatus, storedProgress]
+  );
+
   const handleLaunchCourse = () => {
     if (normalized && preferredLessonId) {
       navigate(`/client/courses/${normalized.slug}/lessons/${preferredLessonId}`);
@@ -119,12 +133,27 @@ const ClientCourseDetail = () => {
     }
   };
 
-  if (!normalized || !snapshot) {
+  if (!normalized || !snapshot || availability.isUnavailable) {
+    const reasonCopy: Record<string, { title: string; body: string }> = {
+      missing: {
+        title: 'Course not found',
+        body: 'The course you’re looking for might have been removed or is not published yet.',
+      },
+      unpublished: {
+        title: 'Course offline',
+        body: 'This course has been unpublished. Reach out to your facilitator if you still need access.',
+      },
+      no_history: {
+        title: 'Course not assigned',
+        body: 'This course isn’t assigned to you. Return to your catalog to pick another program.',
+      },
+    };
+    const copy = reasonCopy[availability.reason ?? 'missing'];
     return (
       <div className="max-w-3xl px-6 py-12 lg:px-12">
         <Card tone="muted" className="space-y-4">
-          <h1 className="font-heading text-2xl font-bold text-charcoal">Course not found</h1>
-          <p className="text-sm text-slate/80">The course you’re looking for might have been removed or is not published yet.</p>
+          <h1 className="font-heading text-2xl font-bold text-charcoal">{copy.title}</h1>
+          <p className="text-sm text-slate/80">{copy.body}</p>
           <Button size="sm" onClick={() => navigate('/client/courses')}>
             Back to courses
           </Button>
@@ -132,6 +161,14 @@ const ClientCourseDetail = () => {
       </div>
     );
   }
+
+  const primaryButtonLabel = availability.isReadOnly
+    ? 'Review lessons'
+    : assignment?.status === 'completed'
+    ? 'Review lessons'
+    : progressPercent > 0
+    ? 'Continue learning'
+    : 'Start course';
 
   return (
     <div className="space-y-8 px-6 py-10 lg:px-12">
@@ -158,11 +195,24 @@ const ClientCourseDetail = () => {
               <span className="text-xs text-slate/70">complete</span>
             </div>
             <Button size="sm" className="w-full" onClick={handleLaunchCourse}>
-              {assignment?.status === 'completed' ? 'Review lessons' : progressPercent > 0 ? 'Continue learning' : 'Start course'}
+              {primaryButtonLabel}
             </Button>
           </div>
         </div>
       </Card>
+
+      {availability.isReadOnly && (
+        <Card tone="muted" className="border border-emerald-100 bg-emerald-50 text-emerald-900">
+          <p className="font-semibold">
+            {availability.reason === 'unpublished' ? 'Course retired' : 'Course completed'}
+          </p>
+          <p className="text-sm text-emerald-800">
+            {availability.reason === 'unpublished'
+              ? 'This program is no longer actively assigned, but you can continue to reference all lessons whenever you want.'
+              : 'You’ve completed this course. Feel free to rewatch videos and revisit materials anytime.'}
+          </p>
+        </Card>
+      )}
 
       <Card tone="muted" className="space-y-4">
         <h2 className="font-heading text-lg font-semibold text-charcoal">Modules</h2>

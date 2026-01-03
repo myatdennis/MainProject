@@ -1,0 +1,94 @@
+{
+  "timestamp": "2026-01-02T16:48:52.975Z",
+  "requestId": "3ca68a23-a93d-4891-a9ac-574f6e8b3fe8",
+  "method": "POST",
+  "path": "/api/admin/courses",
+  "headers": {
+    "host": "localhost:8888",
+    "connection": "close",
+    "content-length": "1812",
+    "sec-ch-ua-platform": "\"macOS\"",
+    "authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjBlODBjMTYyLTA1NDYtNDQ1ZS1hOTY3LWZkM2FhOWM1ZjQ2MSIsInVzZXJJZCI6IjBlODBjMTYyLTA1NDYtNDQ1ZS1hOTY3LWZkM2FhOWM1ZjQ2MSIsImVtYWlsIjoibXlhQHRoZS1odWRkbGUuY28iLCJyb2xlIjoiYWRtaW4iLCJvcmdhbml6YXRpb25JZCI6bnVsbCwiaWF0IjoxNzY3MzcyNTIyLCJleHAiOjE3NjczNzM0MjIsImF1ZCI6Imxtcy11c2VycyIsImlzcyI6Imxtcy1wbGF0Zm9ybSJ9.kt_HRk4Xr1ZwW0PkY6Wxngp8oZKK70_EuuD2E8PEKOo",
+    "x-user-id": "0e80c162-0546-445e-a967-fd3aa9c5f461",
+    "sec-ch-ua": "\"Google Chrome\";v=\"143\", \"Chromium\";v=\"143\", \"Not A(Brand\";v=\"24\"",
+    "sec-ch-ua-mobile": "?0",
+    "x-user-role": "admin",
+    "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
+    "content-type": "application/json",
+    "accept": "*/*",
+    "origin": "http://localhost:5174",
+    "sec-fetch-site": "same-origin",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-dest": "empty",
+    "referer": "http://localhost:5174/admin/course-builder/new",
+    "accept-encoding": "gzip, deflate, br, zstd",
+    "accept-language": "en-US,en;q=0.9",
+    "cookie": "refresh_token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiIwMTQ4YTVjZi1lMDExLTRlNGItYTkzYi00NzU0ZGRiYzc0NzkiLCJlbWFpbCI6Im15YUB0aGUtaHVkZGxlLmNvIiwicm9sZSI6InVzZXIiLCJpYXQiOjE3NjczNjcxOTQsImV4cCI6MTc2Nzk3MTk5NCwiYXVkIjoibG1zLXVzZXJzIiwiaXNzIjoibG1zLXBsYXRmb3JtIn0._LjK6hmFo8vnnCle_wQXfDjeaIUqhlJ2ms5fGtjBDe4; csrf_token=TzQrhkZX0A46SV49wwb_hWPpNYExNtqDuB8s53NLTSI"
+  },
+  "body": {
+    "course": {
+      "id": "course-1767372525468-2ldsirjll",
+      "name": "New Course",
+      "title": "New Course",
+      "slug": "new-course",
+      "description": "Enter your course description here. What will learners achieve after completing this course? This course is designed to help you develop essential skills through hands-on practice, real-world examples, and interactive exercises. By the end of this course, you will have gained practical knowledge that you can immediately apply in your professional environment. This course is designed to help you develop essential skills through hands-on practice, real-world examples, and interactive exercises. By the end of this course, you will have gained practical knowledge that you can immediately apply in your professional environment.",
+      "status": "draft",
+      "version": 1,
+      "org_id": null,
+      "organization_id": null,
+      "meta": {
+        "thumbnail": "https://images.pexels.com/photos/3184465/pexels-photo-3184465.jpeg?auto=compress&cs=tinysrgb&w=800",
+        "difficulty": "Beginner",
+        "estimated_time": "30-45 minutes",
+        "prerequisites": [],
+        "learning_objectives": [
+          "Understand key concepts and terminology",
+          "Apply learned skills in practical scenarios",
+          "Demonstrate proficiency through assessments"
+        ],
+        "key_takeaways": [
+          "Key concept #1",
+          "Practical skill #2",
+          "Actionable insight #3"
+        ],
+        "tags": [
+          "Professional Development",
+          "Leadership",
+          "Skills Training"
+        ],
+        "type": "Mixed",
+        "created_by": "Mya Dennis"
+      }
+    },
+    "modules": [
+      {
+        "id": "module-1767372525468-m2gx24k55",
+        "title": "Introduction",
+        "description": "Course overview and learning objectives",
+        "order_index": 1,
+        "lessons": [
+          {
+            "id": "lesson-1767372525468-lkssot6q3",
+            "title": "Welcome & Overview",
+            "description": "",
+            "type": "video",
+            "order_index": 1,
+            "duration_s": 300,
+            "content_json": {
+              "type": "video",
+              "body": {
+                "notes": "Welcome learners and introduce the course objectives",
+                "schema_version": 1
+              }
+            },
+            "completion_rule_json": null
+          }
+        ]
+      }
+    ]
+  },
+  "error": {
+    "message": "column courses.version does not exist",
+    "stack": "Error: column courses.version does not exist\n    at createHttpError (file:///Users/myadennis/Downloads/MainProject/server/middleware/apiErrorHandler.js:19:17)\n    at res.json (file:///Users/myadennis/Downloads/MainProject/server/index.js:430:19)\n    at file:///Users/myadennis/Downloads/MainProject/server/index.js:2305:21\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)"
+  }
+}

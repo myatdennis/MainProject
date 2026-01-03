@@ -81,6 +81,80 @@ interface ConfirmDialogConfig {
   tone: ConfirmTone;
 }
 
+const canonicalizeQuizQuestions = (questions: any[] = []) =>
+  questions.map((question: any, questionIndex: number) => {
+    const questionId = question?.id || generateId('question');
+    const rawOptions = Array.isArray(question?.options) ? question.options : [''];
+
+    const normalizedOptions = rawOptions.map((option: any, optionIndex: number) => {
+      if (typeof option === 'string') {
+        return {
+          id: `${questionId}-opt-${optionIndex}`,
+          text: option,
+          correct:
+            typeof question?.correctAnswerIndex === 'number'
+              ? question.correctAnswerIndex === optionIndex
+              : false,
+          isCorrect:
+            typeof question?.correctAnswerIndex === 'number'
+              ? question.correctAnswerIndex === optionIndex
+              : false,
+        };
+      }
+
+      if (option && typeof option === 'object') {
+        const optionId = option.id || `${questionId}-opt-${optionIndex}`;
+        const isCorrect =
+          option.correct ??
+          option.isCorrect ??
+          (typeof question?.correctAnswerIndex === 'number'
+            ? question.correctAnswerIndex === optionIndex
+            : false);
+
+        return {
+          ...option,
+          id: optionId,
+          text: option.text || option.label || option.value || `Option ${optionIndex + 1}`,
+          correct: Boolean(isCorrect),
+          isCorrect: Boolean(isCorrect),
+        };
+      }
+
+      return {
+        id: `${questionId}-opt-${optionIndex}`,
+        text: '',
+        correct: false,
+        isCorrect: false,
+      };
+    });
+
+    const resolvedIndex =
+      typeof question?.correctAnswerIndex === 'number'
+        ? question.correctAnswerIndex
+        : normalizedOptions.findIndex((option) => option.correct || option.isCorrect);
+
+    return {
+      ...question,
+      id: questionId,
+      text: question?.text || question?.question || '',
+      options: normalizedOptions,
+      correctAnswerIndex: resolvedIndex >= 0 ? resolvedIndex : 0,
+    };
+  });
+
+const canonicalizeLessonContent = (content?: Lesson['content']): Lesson['content'] => {
+  if (!content) return {};
+  const next = { ...content };
+  if (Array.isArray(next.questions)) {
+    next.questions = canonicalizeQuizQuestions(next.questions);
+  }
+  if (next.video && typeof next.video === 'object' && next.video.url) {
+    next.videoUrl = next.videoUrl || next.video.url;
+    next.videoProvider = next.videoProvider || next.video.provider;
+  }
+  return next;
+};
+
 const confirmToneIconClasses: Record<ConfirmTone, string> = {
   info: 'bg-blue-50 text-blue-600',
   warning: 'bg-amber-50 text-amber-600',
@@ -969,9 +1043,17 @@ const AdminCourseBuilder = () => {
     const module = course.modules?.find(m => m.id === moduleId);
     if (!module) return;
 
-    const updatedLessons = module.lessons.map(lesson =>
-      lesson.id === lessonId ? { ...lesson, ...updates } : lesson
-    );
+    const updatedLessons = module.lessons.map(lesson => {
+      if (lesson.id !== lessonId) return lesson;
+      const merged: Lesson = {
+        ...lesson,
+        ...updates,
+      };
+      if (merged.content) {
+        merged.content = canonicalizeLessonContent(merged.content);
+      }
+      return merged;
+    });
 
     updateModule(moduleId, { lessons: updatedLessons });
   };
@@ -1775,15 +1857,35 @@ const AdminCourseBuilder = () => {
                       />
 
                       <div className="space-y-2">
-                        {(question.options || []).map((option, oIndex) => (
+                        {(question.options || []).map((option: any, oIndex: number) => {
+                          const optionId = option?.id || `${question.id}-opt-${oIndex}`;
+                          const optionText = typeof option === 'string' ? option : option?.text || '';
+                          const isCorrect =
+                            typeof question.correctAnswerIndex === 'number'
+                              ? question.correctAnswerIndex === oIndex
+                              : Boolean(option?.correct || option?.isCorrect);
+                          return (
                           <div key={oIndex} className="flex items-center space-x-2">
                             <input
                               type="radio"
                               name={`correct-${question.id}`}
-                              checked={question.correctAnswerIndex === oIndex}
+                              checked={isCorrect}
                               onChange={() => {
                                 const updatedQuestions = [...(lesson.content.questions || [])];
-                                updatedQuestions[qIndex] = { ...question, correctAnswerIndex: oIndex };
+                                const nextOptions = (question.options || []).map((opt: any, idx: number) => {
+                                  const base =
+                                    typeof opt === 'object'
+                                      ? { ...opt }
+                                      : { id: `${question.id}-opt-${idx}`, text: opt };
+                                  return idx === oIndex
+                                    ? { ...base, correct: true, isCorrect: true }
+                                    : { ...base, correct: false, isCorrect: false };
+                                });
+                                updatedQuestions[qIndex] = {
+                                  ...question,
+                                  correctAnswerIndex: oIndex,
+                                  options: nextOptions,
+                                };
                                 updateLesson(moduleId, lesson.id, {
                                   content: { ...lesson.content, questions: updatedQuestions }
                                 });
@@ -1792,11 +1894,15 @@ const AdminCourseBuilder = () => {
                             />
                             <input
                               type="text"
-                              value={option}
+                              value={optionText}
                               onChange={(e) => {
                                 const updatedQuestions = [...(lesson.content.questions || [])];
                                 const updatedOptions = [...(question.options || [])];
-                                updatedOptions[oIndex] = e.target.value;
+                                const currentOption = updatedOptions[oIndex];
+                                updatedOptions[oIndex] =
+                                  typeof currentOption === 'object'
+                                    ? { ...currentOption, text: e.target.value }
+                                    : { id: optionId, text: e.target.value };
                                 updatedQuestions[qIndex] = { ...question, options: updatedOptions };
                                 updateLesson(moduleId, lesson.id, {
                                   content: { ...lesson.content, questions: updatedQuestions }
@@ -1808,11 +1914,13 @@ const AdminCourseBuilder = () => {
                             <button
                               onClick={() => {
                                 const updatedQuestions = [...(lesson.content.questions || [])];
-                                const updatedOptions = (question.options || []).filter((_: string, i: number) => i !== oIndex);
+                                const updatedOptions = (question.options || []).filter((_: any, i: number) => i !== oIndex);
                                 updatedQuestions[qIndex] = { 
                                   ...question, 
                                   options: updatedOptions,
-                                  correctAnswerIndex: (question.correctAnswerIndex || 0) > oIndex ? (question.correctAnswerIndex || 0) - 1 : (question.correctAnswerIndex || 0)
+                                  correctAnswerIndex: (question.correctAnswerIndex || 0) > oIndex
+                                    ? (question.correctAnswerIndex || 0) - 1
+                                    : (question.correctAnswerIndex || 0)
                                 };
                                 updateLesson(moduleId, lesson.id, {
                                   content: { ...lesson.content, questions: updatedQuestions }
@@ -1823,11 +1931,14 @@ const AdminCourseBuilder = () => {
                               <X className="h-4 w-4" />
                             </button>
                           </div>
-                        ))}
+                        )})}
                         <button
                           onClick={() => {
                             const updatedQuestions = [...(lesson.content.questions || [])];
-                            const updatedOptions = [...(question.options || []), ''];
+                            const updatedOptions = [
+                              ...(question.options || []),
+                              { id: `${question.id}-opt-${Date.now()}`, text: '', correct: false, isCorrect: false },
+                            ];
                             updatedQuestions[qIndex] = { ...question, options: updatedOptions };
                             updateLesson(moduleId, lesson.id, {
                               content: { ...lesson.content, questions: updatedQuestions }
@@ -1860,14 +1971,16 @@ const AdminCourseBuilder = () => {
                   
                   <button
                     onClick={() => {
-                      const newQuestion = {
+                      const [normalizedQuestion] = canonicalizeQuizQuestions([
+                        {
                         id: generateId('question'),
                         text: '',
                         options: ['', ''],
                         correctAnswerIndex: 0,
                         explanation: ''
-                      };
-                      const updatedQuestions = [...(lesson.content.questions || []), newQuestion];
+                        }
+                      ]);
+                      const updatedQuestions = [...(lesson.content.questions || []), normalizedQuestion];
                       updateLesson(moduleId, lesson.id, {
                         content: { ...lesson.content, questions: updatedQuestions }
                       });
@@ -2092,14 +2205,16 @@ const AdminCourseBuilder = () => {
                 <label className="block text-sm font-medium text-gray-700">Knowledge Check Questions</label>
                 <button
                   onClick={() => {
-                    const newQuestion = {
-                      id: generateId('question'),
-                      text: '',
-                      options: ['', ''],
-                      correctAnswerIndex: 0,
-                      explanation: ''
-                    };
-                    const updatedQuestions = [...(lesson.content.questions || []), newQuestion];
+                    const [normalizedQuestion] = canonicalizeQuizQuestions([
+                      {
+                        id: generateId('question'),
+                        text: '',
+                        options: ['', ''],
+                        correctAnswerIndex: 0,
+                        explanation: ''
+                      }
+                    ]);
+                    const updatedQuestions = [...(lesson.content.questions || []), normalizedQuestion];
                     updateLesson(moduleId, lesson.id, {
                       content: { ...lesson.content, questions: updatedQuestions }
                     });
@@ -2145,15 +2260,35 @@ const AdminCourseBuilder = () => {
                       />
 
                       <div className="space-y-2">
-                        {(question.options || []).map((option: string, oIndex: number) => (
+                        {(question.options || []).map((option: any, oIndex: number) => {
+                          const optionId = option?.id || `${question.id}-opt-${oIndex}`;
+                          const optionText = typeof option === 'string' ? option : option?.text || '';
+                          const isCorrect =
+                            typeof question.correctAnswerIndex === 'number'
+                              ? question.correctAnswerIndex === oIndex
+                              : Boolean(option?.correct || option?.isCorrect);
+                          return (
                           <div key={oIndex} className="flex items-center space-x-2">
                             <input
                               type="radio"
                               name={`correct-${question.id}`}
-                              checked={question.correctAnswerIndex === oIndex}
+                              checked={isCorrect}
                               onChange={() => {
                                 const updatedQuestions = [...(lesson.content.questions || [])];
-                                updatedQuestions[qIndex] = { ...question, correctAnswerIndex: oIndex };
+                                const nextOptions = (question.options || []).map((opt: any, idx: number) => {
+                                  const base =
+                                    typeof opt === 'object'
+                                      ? { ...opt }
+                                      : { id: `${question.id}-opt-${idx}`, text: opt };
+                                  return idx === oIndex
+                                    ? { ...base, correct: true, isCorrect: true }
+                                    : { ...base, correct: false, isCorrect: false };
+                                });
+                                updatedQuestions[qIndex] = {
+                                  ...question,
+                                  correctAnswerIndex: oIndex,
+                                  options: nextOptions,
+                                };
                                 updateLesson(moduleId, lesson.id, {
                                   content: { ...lesson.content, questions: updatedQuestions }
                                 });
@@ -2162,11 +2297,15 @@ const AdminCourseBuilder = () => {
                             />
                             <input
                               type="text"
-                              value={option}
+                              value={optionText}
                               onChange={(e) => {
                                 const updatedQuestions = [...(lesson.content.questions || [])];
                                 const updatedOptions = [...(question.options || [])];
-                                updatedOptions[oIndex] = e.target.value;
+                                const currentOption = updatedOptions[oIndex];
+                                updatedOptions[oIndex] =
+                                  typeof currentOption === 'object'
+                                    ? { ...currentOption, text: e.target.value }
+                                    : { id: optionId, text: e.target.value };
                                 updatedQuestions[qIndex] = { ...question, options: updatedOptions };
                                 updateLesson(moduleId, lesson.id, {
                                   content: { ...lesson.content, questions: updatedQuestions }
@@ -2178,7 +2317,7 @@ const AdminCourseBuilder = () => {
                             <button
                               onClick={() => {
                                 const updatedQuestions = [...(lesson.content.questions || [])];
-                                const updatedOptions = (question.options || []).filter((_: string, i: number) => i !== oIndex);
+                                const updatedOptions = (question.options || []).filter((_: any, i: number) => i !== oIndex);
                                 updatedQuestions[qIndex] = { 
                                   ...question, 
                                   options: updatedOptions,
@@ -2193,11 +2332,14 @@ const AdminCourseBuilder = () => {
                               <X className="h-4 w-4" />
                             </button>
                           </div>
-                        ))}
+                        )})}
                         <button
                           onClick={() => {
                             const updatedQuestions = [...(lesson.content.questions || [])];
-                            const updatedOptions = [...(question.options || []), ''];
+                            const updatedOptions = [
+                              ...(question.options || []),
+                              { id: `${question.id}-opt-${Date.now()}`, text: '', correct: false, isCorrect: false },
+                            ];
                             updatedQuestions[qIndex] = { ...question, options: updatedOptions };
                             updateLesson(moduleId, lesson.id, {
                               content: { ...lesson.content, questions: updatedQuestions }

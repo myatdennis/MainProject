@@ -355,7 +355,10 @@ const buildAssignmentsFromApiRows = (rows: any[]): CourseAssignment[] => {
 
 const fetchAssignmentsViaApi = async (userId: string): Promise<CourseAssignment[]> => {
   try {
-    const params = new URLSearchParams({ user_id: userId });
+    const params = new URLSearchParams({
+      user_id: userId,
+      include_completed: 'true',
+    });
     const response = await apiRequest<{ data?: any[] }>(`/api/client/assignments?${params.toString()}`);
     const rows = Array.isArray(response?.data) ? response.data : [];
     if (!rows.length) {

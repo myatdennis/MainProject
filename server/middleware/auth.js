@@ -8,13 +8,15 @@ import { verifyAccessToken, extractTokenFromHeader } from '../utils/jwt.js';
 import { getAccessTokenFromRequest } from '../utils/authCookies.js';
 import { E2E_TEST_MODE, DEV_FALLBACK } from '../config/runtimeFlags.js';
 
-export const normalizeEmail = (value = '') => value.trim().toLowerCase();
-// Make sure PRIMARY_ADMIN_EMAIL is set in .env to 'mya@the-huddle.co'
-export const PRIMARY_ADMIN_EMAIL = normalizeEmail(process.env.PRIMARY_ADMIN_EMAIL || 'mya@the-huddle.co');
+const normalizeEmail = (value = '') => value.trim().toLowerCase();
+const PRIMARY_ADMIN_EMAIL = normalizeEmail(process.env.PRIMARY_ADMIN_EMAIL || 'mya@the-huddle.co');
 
-export const isCanonicalAdminEmail = (email) => normalizeEmail(email) === PRIMARY_ADMIN_EMAIL;
+const isCanonicalAdminEmail = (email) => {
+  if (!email) return false;
+  return normalizeEmail(email) === PRIMARY_ADMIN_EMAIL;
+};
 
-export const resolveUserRole = (user = {}) => {
+const resolveUserRole = (user = {}) => {
   const email = normalizeEmail(user.email || '');
   if (email && isCanonicalAdminEmail(email)) {
     return 'admin';
@@ -28,6 +30,8 @@ export const resolveUserRole = (user = {}) => {
 
   return metadataRole || 'user';
 };
+
+export { normalizeEmail, PRIMARY_ADMIN_EMAIL, isCanonicalAdminEmail, resolveUserRole };
 
 // ============================================================================
 // Authentication Middleware
@@ -71,13 +75,13 @@ export function authenticate(req, res, next) {
   }
   
   // Attach user to request
-  req.user = payload;
+  req.user = payload || {};
 
-  if (req.user?.email) {
+  if (req.user.email) {
     req.user.email = normalizeEmail(req.user.email);
   }
 
-  if (req.user?.email && isCanonicalAdminEmail(req.user.email)) {
+  if (isCanonicalAdminEmail(req.user.email)) {
     req.user.role = 'admin';
   }
 
@@ -85,7 +89,7 @@ export function authenticate(req, res, next) {
     req.user.userId = req.user.id;
   }
 
-  next();
+  return next();
 }
 
 /**
@@ -151,7 +155,10 @@ export function requireAdmin(req, res, next) {
     return next();
   }
 
-  console.warn('[requireAdmin] Access denied for user:', req.user);
+  console.warn('[requireAdmin] Access denied', {
+    user: req.user,
+    PRIMARY_ADMIN_EMAIL,
+  });
 
   return res.status(403).json({
     error: 'Forbidden',

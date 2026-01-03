@@ -1,5 +1,5 @@
 import { useEffect, useState, type FC, type ReactNode } from 'react';
-import { Link, useLocation, useNavigate, Outlet } from 'react-router-dom';
+import { Link, NavLink, useLocation, useNavigate, Outlet } from 'react-router-dom';
 import { ErrorBoundary } from '../ErrorHandling';
 import AdminErrorBoundary from '../ErrorBoundary/AdminErrorBoundary';
 import { useAuth } from '../../context/AuthContext';
@@ -17,6 +17,11 @@ import {
   Settings,
   ClipboardList,
   FileText,
+  LayoutDashboard,
+  PenSquare,
+  Users as UsersIcon,
+  Building2,
+  Wand2,
 } from 'lucide-react';
 import Card from '../ui/Card';
 import Button from '../ui/Button';
@@ -24,16 +29,28 @@ import Input from '../ui/Input';
 import Badge from '../ui/Badge';
 import LoadingSpinner from '../ui/LoadingSpinner';
 import SurveyQueueStatus from '../Survey/SurveyQueueStatus';
+import type { LucideIcon } from 'lucide-react';
 
 interface AdminLayoutProps {
   children?: ReactNode;
 }
 
-const navigation = [
-  { name: 'Dashboard', href: '/admin/dashboard', icon: TrendingUp },
+type AdminNavItem = {
+  name: string;
+  href: string;
+  icon: LucideIcon;
+  exact?: boolean;
+};
+
+const navigation: AdminNavItem[] = [
+  { name: 'Overview', href: '/admin/dashboard', icon: LayoutDashboard, exact: true },
   { name: 'Courses', href: '/admin/courses', icon: BookOpen },
-  { name: 'Analytics', href: '/admin/analytics', icon: BarChart3 },
+  { name: 'Course Builder', href: '/admin/course-builder/new', icon: Wand2 },
   { name: 'Surveys', href: '/admin/surveys', icon: ClipboardList },
+  { name: 'Survey Creator', href: '/admin/surveys/builder', icon: PenSquare },
+  { name: 'Organizations', href: '/admin/organizations', icon: Building2 },
+  { name: 'Users', href: '/admin/users', icon: UsersIcon },
+  { name: 'Analytics', href: '/admin/analytics', icon: BarChart3 },
   { name: 'Documents', href: '/admin/documents', icon: FileText },
   { name: 'Performance', href: '/admin/performance', icon: TrendingUp },
   { name: 'Settings', href: '/admin/settings', icon: Settings },
@@ -51,13 +68,6 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
       navigate('/admin/login');
     }
   }, [authInitializing, isAuthenticated?.admin, location.pathname, navigate]);
-
-  const isActive = (href: string) => {
-    if (href === '/admin/dashboard') {
-      return location.pathname === '/admin' || location.pathname === '/admin/dashboard';
-    }
-    return location.pathname.startsWith(href);
-  };
 
   const handleLogout = async () => {
     await logout('admin');
@@ -123,27 +133,33 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
             <nav className="space-y-2">
               {navigation.map((item) => {
                 const Icon = item.icon;
-                const active = isActive(item.href);
                 return (
-                  <Link
+                  <NavLink
                     key={item.name}
                     to={item.href}
+                    end={item.exact}
                     onClick={() => setSidebarOpen(false)}
-                    className={`flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-semibold transition ${
-                      active
-                        ? 'bg-gradient-to-r from-sunrise/90 to-skyblue/90 text-white shadow-card-sm'
-                        : 'text-slate/80 hover:bg-cloud hover:text-skyblue'
-                    }`}
+                    className={({ isActive }) =>
+                      `flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-semibold transition ${
+                        isActive
+                          ? 'bg-gradient-to-r from-sunrise/90 to-skyblue/90 text-white shadow-card-sm'
+                          : 'text-slate/80 hover:bg-cloud hover:text-skyblue'
+                      }`
+                    }
                   >
-                    <span
-                      className={`flex h-9 w-9 items-center justify-center rounded-lg ${
-                        active ? 'bg-white/20 text-white' : 'bg-cloud text-slate'
-                      }`}
-                    >
-                      <Icon className="h-4 w-4" />
-                    </span>
-                    {item.name}
-                  </Link>
+                    {({ isActive }) => (
+                      <>
+                        <span
+                          className={`flex h-9 w-9 items-center justify-center rounded-lg ${
+                            isActive ? 'bg-white/20 text-white' : 'bg-cloud text-slate'
+                          }`}
+                        >
+                          <Icon className="h-4 w-4" aria-hidden="true" />
+                        </span>
+                        <span className="truncate">{item.name}</span>
+                      </>
+                    )}
+                  </NavLink>
                 );
               })}
             </nav>

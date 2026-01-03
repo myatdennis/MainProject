@@ -6,9 +6,10 @@ import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
 import ProgressBar from '../../components/ui/ProgressBar';
 import { courseStore } from '../../store/courseStore';
-import { normalizeCourse } from '../../utils/courseNormalization';
+import { normalizeCourse, slugify } from '../../utils/courseNormalization';
 import { loadStoredCourseProgress, buildLearnerProgressSnapshot } from '../../utils/courseProgress';
 import CoursePlayer from '../../components/CoursePlayer/CoursePlayer';
+import { evaluateCourseAvailability } from '../../utils/courseAvailability';
 
 const ClientLessonView = () => {
   const navigate = useNavigate();
@@ -23,15 +24,18 @@ const ClientLessonView = () => {
     return resolvedCourse ? normalizeCourse(resolvedCourse) : null;
   }, [resolvedCourse]);
 
+  const courseSlug = useMemo(() => {
+    if (normalizedCourse?.slug) return normalizedCourse.slug;
+    if (courseId) return slugify(courseId);
+    return undefined;
+  }, [normalizedCourse?.slug, courseId]);
+
   const storedProgress = useMemo(() => {
-    if (!normalizedCourse) {
-      return null;
-    }
-    return loadStoredCourseProgress(normalizedCourse.slug);
-  }, [normalizedCourse]);
+    return loadStoredCourseProgress(courseSlug);
+  }, [courseSlug]);
 
   const learnerSnapshot = useMemo(() => {
-    if (!normalizedCourse || !storedProgress) {
+    if (!normalizedCourse) {
       return null;
     }
     return buildLearnerProgressSnapshot(
@@ -44,6 +48,16 @@ const ClientLessonView = () => {
 
   const progressPercent = learnerSnapshot ? Math.round((learnerSnapshot.overallProgress || 0) * 100) : 0;
 
+  const availability = useMemo(
+    () =>
+      evaluateCourseAvailability({
+        course: normalizedCourse,
+        assignmentStatus: resolvedCourse?.assignmentStatus ?? null,
+        storedProgress,
+      }),
+    [normalizedCourse, resolvedCourse, storedProgress]
+  );
+
   const handleBackToCourse = () => {
     if (normalizedCourse?.slug) {
       navigate(`/client/courses/${normalizedCourse.slug}`);
@@ -52,14 +66,27 @@ const ClientLessonView = () => {
     navigate('/client/courses');
   };
 
-  if (!resolvedCourse || !normalizedCourse) {
+  if (availability.isUnavailable || !normalizedCourse) {
+    const reasonCopy: Record<string, { title: string; body: string }> = {
+      missing: {
+        title: 'Course not available',
+        body: 'We couldn’t find the course you were trying to open. It may have been unpublished or reassigned.',
+      },
+      unpublished: {
+        title: 'Course offline',
+        body: 'This course is currently unpublished. Reach out to your facilitator if you still need access.',
+      },
+      no_history: {
+        title: 'Course not assigned',
+        body: 'This course isn’t assigned to you yet. Head back to your catalog to continue learning.',
+      },
+    };
+    const copy = reasonCopy[availability.reason ?? 'missing'];
     return (
       <div className="mx-auto flex min-h-[60vh] max-w-3xl flex-col justify-center px-6 py-12 lg:px-12">
         <Card tone="muted" className="space-y-4">
-          <h1 className="font-heading text-2xl font-bold text-charcoal">Course not available</h1>
-          <p className="text-sm text-slate/80">
-            We couldn’t find the course you were trying to open. It might have been unpublished or reassigned.
-          </p>
+          <h1 className="font-heading text-2xl font-bold text-charcoal">{copy.title}</h1>
+          <p className="text-sm text-slate/80">{copy.body}</p>
           <Button size="sm" onClick={() => navigate('/client/courses')}>
             Browse my courses
           </Button>
@@ -110,6 +137,19 @@ const ClientLessonView = () => {
             </p>
           </div>
         </Card>
+
+        {availability.isReadOnly && (
+          <div className="mt-4 rounded-2xl border border-emerald-100 bg-emerald-50 p-4 text-sm text-emerald-900">
+            <p className="font-semibold">
+              {availability.reason === 'unpublished' ? 'This course is no longer active' : 'Course completed'}
+            </p>
+            <p className="text-emerald-800">
+              {availability.reason === 'unpublished'
+                ? 'This course is no longer being actively assigned, but you can still revisit every lesson whenever you’d like.'
+                : 'You’ve finished this course, but the full content stays available so you can review or rewatch anything at any time.'}
+            </p>
+          </div>
+        )}
 
         <div className="mt-8 overflow-hidden rounded-3xl border border-mist bg-white shadow-card-lg">
           <CoursePlayer namespace="client" />

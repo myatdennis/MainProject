@@ -65,4 +65,43 @@ describe('migrateLessonContent', () => {
     expect(Array.isArray(out.steps)).toBe(true);
     expect(out.steps[0].title).toBe('Step A');
   });
+
+  it('flattens body wrapper content recorded by builder', () => {
+    const wrapped = {
+      type: 'video',
+      schema_version: 1,
+      body: {
+        videoUrl: 'https://example.com/video.mp4',
+        transcript: 'hello world',
+      },
+    };
+
+    const out = migrateLessonContent(wrapped);
+    expect(out.videoUrl).toBe('https://example.com/video.mp4');
+    expect(out.transcript).toBe('hello world');
+    expect(out.body).toBeUndefined();
+  });
+
+  it('normalizes builder-authored quiz options into canonical objects', () => {
+    const builderQuiz = {
+      schema_version: 1,
+      questions: [
+        {
+          id: 'q1',
+          text: 'Pick one',
+          options: ['First', 'Second'],
+          correctAnswerIndex: 1,
+        },
+      ],
+    };
+
+    const out = migrateLessonContent(builderQuiz);
+    expect(out.questions).toHaveLength(1);
+    const question = out.questions[0];
+    expect(question.options).toHaveLength(2);
+    expect(question.options[0].id).toBeDefined();
+    expect(question.options[1].text).toBe('Second');
+    expect(question.options[1].correct).toBe(true);
+    expect(question.correctOptionIds).toEqual([question.options[1].id]);
+  });
 });

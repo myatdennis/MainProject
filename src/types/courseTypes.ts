@@ -125,6 +125,7 @@ export interface LessonContent {
   videoUrl?: string;
   videoProvider?: 'youtube' | 'vimeo' | 'wistia' | 'native';
   videoSourceType?: 'internal' | 'youtube' | 'vimeo' | 'external'; // for courseStore compatibility
+  video?: LessonVideo | null;
   externalVideoId?: string; // for courseStore compatibility
   videoFile?: File; // for courseStore compatibility
   videoDuration?: number;
@@ -142,7 +143,7 @@ export interface LessonContent {
   
   // Quiz content
   questions?: QuizQuestion[];
-  
+
   // Interactive content
   interactiveUrl?: string;
   interactiveType?: 'h5p' | 'articulate' | 'custom';
@@ -187,15 +188,36 @@ export interface QuizQuestion {
   type?: 'multiple-choice' | 'true-false' | 'fill-blank' | 'essay' | 'drag-drop'; // optional for backward compatibility
   question?: string; // optional for backward compatibility
   text?: string; // alias for backwards compatibility
-  options?: string[];
+  prompt?: string;
+  options?: (string | QuizOption)[];
   correctAnswer?: string | string[]; // optional for backward compatibility
   correctAnswerIndex?: number; // alias for backwards compatibility
+  correctOptionIds?: string[];
   explanation?: string;
   points?: number; // optional for backward compatibility
   feedback?: {
     correct: string;
     incorrect: string;
   };
+}
+
+export interface QuizOption {
+  id: string;
+  text: string;
+  correct?: boolean;
+  isCorrect?: boolean;
+  feedback?: string;
+}
+
+export interface LessonVideo {
+  type: 'youtube' | 'vimeo' | 'loom' | 'native' | 'external';
+  url: string;
+  embedUrl?: string;
+  provider?: string;
+  sourceType?: LessonContent['videoSourceType'];
+  thumbnailUrl?: string;
+  durationSeconds?: number;
+  title?: string;
 }
 
 export interface Caption {

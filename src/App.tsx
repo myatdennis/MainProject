@@ -8,6 +8,19 @@ import AdminCourseDetail from './pages/Admin/AdminCourseDetail';
 import AdminCourseAssign from './pages/Admin/AdminCourseAssign';
 import AdminCourseSettings from './pages/Admin/AdminCourseSettings';
 import AdminSurveys from './pages/Admin/AdminSurveys';
+import AdminAnalytics from './pages/Admin/AdminAnalytics';
+import AdminSurveyBuilder from './pages/Admin/AdminSurveyBuilder';
+import AdminSurveyAnalytics from './pages/Admin/AdminSurveyAnalytics';
+import AdminOrganizations from './pages/Admin/AdminOrganizations';
+import AdminOrganizationProfile from './pages/Admin/AdminOrganizationProfile';
+import AdminOrganizationCreate from './pages/Admin/AdminOrganizationNew';
+import AdminUsers from './pages/Admin/AdminUsers';
+import AdminUserProfile from './pages/Admin/AdminUserProfile';
+import AdminDocuments from './pages/Admin/AdminDocuments';
+import AdminPerformanceDashboard from './pages/Admin/AdminPerformanceDashboard';
+import AdminSettings from './pages/Admin/AdminSettings';
+import AdminQueueMonitor from './pages/Admin/AdminQueueMonitor';
+import AdminLayout from './components/Admin/AdminLayout';
 // (removed duplicate import)
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { courseStore } from './store/courseStore';
@@ -49,7 +62,7 @@ import LMSCourseCompletion from './pages/LMS/LMSCourseCompletion';
 import LMSLessonView from './pages/LMS/LMSLessonView';
 import NotFound from './pages/NotFound';
 import AIBot from './components/AIBot/AIBot';
-import AdminCourseImportPlaceholder from './pages/Admin/Course/AdminCourseImportPlaceholder';
+import AdminCoursesImport from './pages/Admin/AdminCoursesImport';
 import AdminCourseBulkPlaceholder from './pages/Admin/Course/AdminCourseBulkPlaceholder';
 import AdminCourseNewPlaceholder from './pages/Admin/Course/AdminCourseNewPlaceholder';
 
@@ -142,103 +155,40 @@ function App() {
                   <Route path="meeting" element={<LMSMeeting />} />
                 </Route>
                 <Route path="/admin/login" element={<AdminLogin />} />
-                <Route path="/admin" element={<Navigate to="/admin/dashboard" replace />} />
                 <Route
-                  path="/admin/dashboard"
+                  path="/admin/*"
                   element={(
                     <RequireAuth mode="admin">
-                      <AdminDashboard />
+                      <AdminLayout />
                     </RequireAuth>
                   )}
-                />
-                <Route
-                  path="/admin/courses"
-                  element={(
-                    <RequireAuth mode="admin">
-                      <AdminCourses />
-                    </RequireAuth>
-                  )}
-                />
-                <Route
-                  path="/admin/courses/new"
-                  element={(
-                    <RequireAuth mode="admin">
-                      <AdminCourseNewPlaceholder />
-                    </RequireAuth>
-                  )}
-                />
-                <Route
-                  path="/admin/courses/import"
-                  element={(
-                    <RequireAuth mode="admin">
-                      <AdminCourseImportPlaceholder />
-                    </RequireAuth>
-                  )}
-                />
-                <Route
-                  path="/admin/courses/bulk"
-                  element={(
-                    <RequireAuth mode="admin">
-                      <AdminCourseBulkPlaceholder />
-                    </RequireAuth>
-                  )}
-                />
-                <Route
-                  path="/admin/courses/:courseId/details"
-                  element={(
-                    <RequireAuth mode="admin">
-                      <AdminCourseDetail />
-                    </RequireAuth>
-                  )}
-                />
-                <Route
-                  path="/admin/courses/:courseId/assign"
-                  element={(
-                    <RequireAuth mode="admin">
-                      <AdminCourseAssign />
-                    </RequireAuth>
-                  )}
-                />
-                <Route
-                  path="/admin/courses/:courseId/settings"
-                  element={(
-                    <RequireAuth mode="admin">
-                      <AdminCourseSettings />
-                    </RequireAuth>
-                  )}
-                />
-                <Route
-                  path="/admin/surveys"
-                  element={(
-                    <RequireAuth mode="admin">
-                      <AdminSurveys />
-                    </RequireAuth>
-                  )}
-                />
-                <Route
-                  path="/admin/course-builder/new"
-                  element={(
-                    <RequireAuth mode="admin">
-                      <AdminCourseBuilder />
-                    </RequireAuth>
-                  )}
-                />
-                <Route
-                  path="/admin/course-builder/:courseId"
-                  element={(
-                    <RequireAuth mode="admin">
-                      <AdminCourseBuilder />
-                    </RequireAuth>
-                  )}
-                />
-                <Route
-                  path="/admin/health"
-                  element={(
-                    <RequireAuth mode="admin">
-                      <AdminHealth />
-                    </RequireAuth>
-                  )}
-                />
+                >
+                  <Route index element={<Navigate to="dashboard" replace />} />
+                  <Route path="dashboard" element={<AdminDashboard />} />
+                  <Route path="health" element={<AdminHealth />} />
+                  <Route path="analytics" element={<AdminAnalytics />} />
+                  <Route path="courses" element={<AdminCourses />} />
+                  <Route path="courses/new" element={<AdminCourseNewPlaceholder />} />
+                  <Route path="courses/import" element={<AdminCoursesImport />} />
+                  <Route path="courses/bulk" element={<AdminCourseBulkPlaceholder />} />
+                  <Route path="courses/:courseId/details" element={<AdminCourseDetail />} />
+                  <Route path="courses/:courseId/assign" element={<AdminCourseAssign />} />
+                  <Route path="courses/:courseId/settings" element={<AdminCourseSettings />} />
+                  <Route path="course-builder/new" element={<AdminCourseBuilder />} />
+                  <Route path="course-builder/:courseId" element={<AdminCourseBuilder />} />
+                  <Route path="surveys" element={<AdminSurveys />} />
+                  <Route path="surveys/builder" element={<AdminSurveyBuilder />} />
+                  <Route path="surveys/analytics" element={<AdminSurveyAnalytics />} />
+                  <Route path="surveys/queue" element={<AdminQueueMonitor />} />
+                  <Route path="organizations" element={<AdminOrganizations />} />
+                  <Route path="organizations/new" element={<AdminOrganizationCreate />} />
+                  <Route path="organizations/:organizationId" element={<AdminOrganizationProfile />} />
+                  <Route path="users" element={<AdminUsers />} />
+                  <Route path="users/:userId" element={<AdminUserProfile />} />
+                  <Route path="documents" element={<AdminDocuments />} />
+                  <Route path="performance" element={<AdminPerformanceDashboard />} />
+                  <Route path="settings" element={<AdminSettings />} />
+                </Route>
                 {/* ...admin routes... */}
                 <Route path="*" element={<NotFound />} />
               </Routes>

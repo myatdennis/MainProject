@@ -8,9 +8,10 @@ import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import Badge from '../../components/ui/Badge';
 import ProgressBar from '../../components/ui/ProgressBar';
 import { courseStore } from '../../store/courseStore';
-import { normalizeCourse, type NormalizedCourse, formatMinutes } from '../../utils/courseNormalization';
+import { normalizeCourse, type NormalizedCourse, formatMinutes, slugify } from '../../utils/courseNormalization';
 import { loadStoredCourseProgress } from '../../utils/courseProgress';
 import type { Resource } from '../../types/courseTypes';
+import { evaluateCourseAvailability } from '../../utils/courseAvailability';
 
 const DEFAULT_REFLECTIONS = [
   'What is one action you will take this week based on this course?',
@@ -66,7 +67,12 @@ const ClientCourseCompletion = () => {
   }, [courseId]);
 
   const normalized = useMemo(() => (course ? normalizeCourse(course) : null), [course]);
-  const stored = useMemo(() => (normalized ? loadStoredCourseProgress(normalized.slug) : null), [normalized]);
+  const courseSlug = useMemo(() => {
+    if (normalized?.slug) return normalized.slug;
+    if (courseId) return slugify(courseId);
+    return undefined;
+  }, [normalized?.slug, courseId]);
+  const stored = useMemo(() => (courseSlug ? loadStoredCourseProgress(courseSlug) : null), [courseSlug]);
   const lessonTitleMap = useMemo(() => buildLessonTitleMap(normalized), [normalized]);
 
   const completionStats = useMemo(() => {
@@ -116,16 +122,39 @@ const ClientCourseCompletion = () => {
     ? 'Nice work! Your facilitator can now see this completion and your progress has been synced.'
     : 'Way to go! You can always review lessons or keep the momentum going with the actions below.';
 
-  if (!normalized) {
+  const availability = useMemo(
+    () =>
+      evaluateCourseAvailability({
+        course: normalized,
+        assignmentStatus: course?.assignmentStatus ?? null,
+        storedProgress: stored ?? undefined,
+      }),
+    [normalized, course?.assignmentStatus, stored]
+  );
+
+  if (!normalized || availability.isUnavailable) {
+    const reasonCopy: Record<string, { title: string; body: string }> = {
+      missing: {
+        title: 'Course unavailable',
+        body: 'The course you’re trying to view may have been unpublished or reassigned. Head back to your catalog to keep learning.',
+      },
+      unpublished: {
+        title: 'Course retired',
+        body: 'This course has been unpublished. Your completion is safe, but reach out to your facilitator if you still need access.',
+      },
+      no_history: {
+        title: 'Course not assigned',
+        body: 'This completion view is only available for courses assigned to you. Return to your catalog to keep learning.',
+      },
+    };
+    const copy = reasonCopy[availability.reason ?? 'missing'];
     return (
       <div className="mx-auto max-w-3xl px-6 py-12 lg:px-12">
         <SEO title="Course Completion" description="Congrats! You finished your course." />
         <Breadcrumbs items={[{ label: 'My Courses', to: '/client/courses' }, { label: 'Completion' }]} />
         <Card tone="muted" className="mt-6 space-y-4">
-          <h1 className="font-heading text-2xl font-bold text-charcoal">Course unavailable</h1>
-          <p className="text-sm text-slate/80">
-            The course you’re trying to view may have been unpublished or reassigned. Head back to your catalog to keep learning.
-          </p>
+          <h1 className="font-heading text-2xl font-bold text-charcoal">{copy.title}</h1>
+          <p className="text-sm text-slate/80">{copy.body}</p>
           <Button size="sm" onClick={() => navigate('/client/courses')}>
             Browse my courses
           </Button>

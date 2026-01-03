@@ -11,6 +11,8 @@ import { getUserSession } from '../lib/secureStorage';
 import { getAssignmentsForUser } from '../utils/assignmentStorage';
 import type { CourseAssignment } from '../types/assignment';
 import { refreshRuntimeStatus, getRuntimeStatus } from '../state/runtimeStatus';
+import { loadStoredCourseProgress } from '../utils/courseProgress';
+import { hasStoredProgressHistory } from '../utils/courseAvailability';
 
 // Course data types
 export interface ScenarioChoice {
@@ -1017,6 +1019,25 @@ const isAdminSurface = (): boolean => {
   }
 };
 
+const hasLocalProgressForCourse = (course: Course): boolean => {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  const slugSource = course.slug || course.title || course.id;
+  if (!slugSource) {
+    return false;
+  }
+
+  try {
+    const slug = slugify(slugSource);
+    const storedProgress = loadStoredCourseProgress(slug);
+    return hasStoredProgressHistory(storedProgress);
+  } catch (error) {
+    console.warn('[courseStore] Unable to inspect local progress for course', course.id, error);
+    return false;
+  }
+};
+
 const ensureAssignmentScopedCatalog = async (
   currentCourses: { [key: string]: Course },
   userId: string | null,
@@ -1028,8 +1049,22 @@ const ensureAssignmentScopedCatalog = async (
   try {
     const assignments = await getAssignmentsForUser(userId);
     if (!assignments || assignments.length === 0) {
-      console.info('[courseStore] No assignments returned from API; presenting empty learner catalog.');
-      return {};
+      console.info('[courseStore] No assignments returned from API; checking for locally completed courses.');
+      const fallbackEntries = Object.entries(currentCourses).filter(([, course]) => hasLocalProgressForCourse(course));
+      if (fallbackEntries.length === 0) {
+        console.info('[courseStore] No local progress detected; presenting empty learner catalog.');
+        return {};
+      }
+
+      const fallbackCatalog: { [key: string]: Course } = {};
+      fallbackEntries.forEach(([id, course]) => {
+        fallbackCatalog[id] = {
+          ...course,
+          assignmentStatus: course.assignmentStatus ?? 'completed',
+        };
+      });
+      console.info('[courseStore] Preserving', fallbackEntries.length, 'course(s) with stored progress history.');
+      return fallbackCatalog;
     }
 
     const courseMap: { [key: string]: Course } = { ...currentCourses };

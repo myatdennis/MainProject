@@ -1295,25 +1295,30 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
           <Card padding="none" className="overflow-hidden">
             {currentLesson.type === 'video' && (() => {
               const raw = (currentLesson as any).content || {};
+              const videoObj = raw.video || {};
               const videoUrl =
+                videoObj.url ||
                 raw.videoUrl ||
                 raw.src ||
                 raw.url ||
                 (raw.body && (raw.body.videoUrl || raw.body.src)) ||
                 undefined;
-              const videoType = (raw.videoType || raw.type || '').toLowerCase();
-              const isTed = videoType === 'ted' || (videoUrl?.includes('ted.com/talks') ?? false);
+              const derivedType = (videoObj.type || raw.videoType || raw.type || '').toLowerCase();
+              const embedOverride = videoObj.embedUrl;
+              const isTed = derivedType === 'ted' || (videoUrl?.includes('ted.com/talks') ?? false);
               const isYouTube =
-                videoType === 'youtube' ||
+                derivedType === 'youtube' ||
                 (videoUrl?.includes('youtube.com') ?? false) ||
                 (videoUrl?.includes('youtu.be') ?? false);
-              const isVimeo = videoType === 'vimeo' || (videoUrl?.includes('vimeo.com') ?? false);
+              const isVimeo = derivedType === 'vimeo' || (videoUrl?.includes('vimeo.com') ?? false);
               const isNativeVideo = Boolean(
                 videoUrl &&
                   !isTed &&
                   !isYouTube &&
                   !isVimeo &&
-                  !videoUrl.includes('loom.com')
+                  !videoUrl?.includes('loom.com') &&
+                  derivedType !== 'loom' &&
+                  !embedOverride
               );
 
               const resumeLabel = canResumePlayback
@@ -1340,6 +1345,10 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
                       <p className="text-sm text-slate/80">Video source unavailable. Please contact your facilitator.</p>
                     </Card>
                   );
+                }
+
+                if (embedOverride) {
+                  return renderIframe(embedOverride, 'fullscreen');
                 }
 
                 if (isTed) {
@@ -1620,7 +1629,44 @@ const QuizModal: React.FC<{
   onClose: () => void;
 }> = ({ lesson, answers, submitted, score, onAnswerChange, onSubmit, onRetry, onClose }) => {
   const quizData = lesson.content as any;
-  const questions = quizData.questions || [];
+  const questions = (quizData.questions || []).map((question: any, questionIndex: number) => {
+    const questionId = question?.id || `q_${questionIndex}`;
+    if (!Array.isArray(question?.options)) {
+      return { ...question, id: questionId };
+    }
+
+    const normalizedOptions = question.options.map((option: any, optionIndex: number) => {
+      if (typeof option === 'string') {
+        const id = `${questionId}-opt-${optionIndex}`;
+        return {
+          id,
+          text: option,
+          correct: typeof question.correctAnswerIndex === 'number'
+            ? question.correctAnswerIndex === optionIndex
+            : false,
+        };
+      }
+
+      if (option && typeof option === 'object') {
+        return {
+          ...option,
+          id: option.id || `${questionId}-opt-${optionIndex}`,
+          text: option.text || option.label || option.value || `Option ${optionIndex + 1}`,
+          correct: option.correct ?? option.isCorrect ?? false,
+          isCorrect: option.correct ?? option.isCorrect ?? false,
+        };
+      }
+
+      return option;
+    });
+
+    return {
+      ...question,
+      id: questionId,
+      text: question.text || question.question || question.prompt || '',
+      options: normalizedOptions,
+    };
+  });
   const passingScore = quizData.passingScore || 70;
   const passed = score !== null && score >= passingScore;
   
