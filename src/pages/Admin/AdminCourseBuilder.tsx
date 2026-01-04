@@ -82,7 +82,7 @@ interface ConfirmDialogConfig {
 }
 
 const canonicalizeQuizQuestions = (questions: any[] = []) =>
-  questions.map((question: any, questionIndex: number) => {
+  questions.map((question: any) => {
     const questionId = question?.id || generateId('question');
     const rawOptions = Array.isArray(question?.options) ? question.options : [''];
 
@@ -131,7 +131,9 @@ const canonicalizeQuizQuestions = (questions: any[] = []) =>
     const resolvedIndex =
       typeof question?.correctAnswerIndex === 'number'
         ? question.correctAnswerIndex
-        : normalizedOptions.findIndex((option) => option.correct || option.isCorrect);
+        : normalizedOptions.findIndex((option: { correct?: boolean; isCorrect?: boolean }) =>
+            Boolean(option.correct || option.isCorrect)
+          );
 
     return {
       ...question,
@@ -150,7 +152,13 @@ const canonicalizeLessonContent = (content?: Lesson['content']): Lesson['content
   }
   if (next.video && typeof next.video === 'object' && next.video.url) {
     next.videoUrl = next.videoUrl || next.video.url;
-    next.videoProvider = next.videoProvider || next.video.provider;
+    if (!next.videoProvider) {
+      const allowedProviders: Array<Lesson['content']['videoProvider']> = ['youtube', 'vimeo', 'wistia', 'native'];
+      const providerCandidate = next.video.provider;
+      if (allowedProviders.includes(providerCandidate as Lesson['content']['videoProvider'])) {
+        next.videoProvider = providerCandidate as Lesson['content']['videoProvider'];
+      }
+    }
   }
   return next;
 };
