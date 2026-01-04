@@ -16,6 +16,7 @@
     "build": "npm run preclean:components && vite build",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
+    "typecheck:server": "tsc --project tsconfig.server.json --noEmit",
     "scan:placeholders": "node scripts/scan_placeholders.js",
     "test": "vitest",
     "test:ui": "vitest --ui",

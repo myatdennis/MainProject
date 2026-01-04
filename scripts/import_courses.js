@@ -15,6 +15,12 @@
 import fs from 'fs';
 import path from 'path';
 
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN;
+if (!ADMIN_TOKEN) {
+  console.error('Missing ADMIN_TOKEN environment variable. Set it (e.g., ADMIN_TOKEN=your_admin_jwt) before running this script.');
+  process.exit(1);
+}
+
 const API_BASE = process.env.API_URL || 'http://localhost:8888';
 const INPUT = process.argv[2] || 'import/courses-template.json';
 const PUBLISH = process.argv.includes('--publish');
@@ -44,18 +50,25 @@ function toArray(input) {
   return [input];
 }
 
+function authHeaders(extra = {}) {
+  return {
+    Authorization: `Bearer ${ADMIN_TOKEN}`,
+    ...extra,
+  };
+}
+
 async function postJson(url, body) {
   if (DRY_RUN) {
     console.log(`[dry-run] POST ${url}`);
     return { data: { id: body?.course?.id || '(dry-run-id)' } };
   }
   // For demo/dev we attempt without CSRF first; if blocked we fetch token and retry
-  const headers = { 'Content-Type': 'application/json' };
+  const headers = authHeaders({ 'Content-Type': 'application/json' });
   let res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
   if (res.status === 403) {
     // Try to obtain CSRF token via cookie pattern endpoint (if exposed)
     try {
-      const tokenRes = await fetch(`${API_BASE}/api/auth/csrf`);
+      const tokenRes = await fetch(`${API_BASE}/api/auth/csrf`, { headers: authHeaders() });
       if (tokenRes.ok) {
         const json = await tokenRes.json().catch(() => ({}));
         if (json?.csrfToken) {
@@ -75,7 +88,7 @@ async function postJson(url, body) {
 }
 
 async function getJson(url) {
-  const res = await fetch(url);
+  const res = await fetch(url, { headers: authHeaders() });
   if (!res.ok) {
     const txt = await res.text().catch(() => '');
     throw new Error(`GET ${url} failed: ${res.status} ${res.statusText} ${txt}`);
@@ -88,7 +101,7 @@ async function deleteReq(url) {
     console.log(`[dry-run] DELETE ${url}`);
     return;
   }
-  const res = await fetch(url, { method: 'DELETE' });
+  const res = await fetch(url, { method: 'DELETE', headers: authHeaders() });
   if (!res.ok && res.status !== 204) {
     const txt = await res.text().catch(() => '');
     throw new Error(`DELETE ${url} failed: ${res.status} ${res.statusText} ${txt}`);
@@ -100,7 +113,7 @@ async function waitForHealth(timeoutMs) {
   const url = `${API_BASE}/api/health`;
   while (Date.now() - start < timeoutMs) {
     try {
-      const res = await fetch(url);
+      const res = await fetch(url, { headers: authHeaders() });
       if (res.ok) return true;
     } catch {}
     await new Promise((r) => setTimeout(r, 300));

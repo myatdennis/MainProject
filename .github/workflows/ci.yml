@@ -30,8 +30,8 @@ jobs:
       - name: Check lockfile sync
         run: npm run check:lock
 
-      - name: Ensure no TypeScript files in /server
-        run: npm run check:server-no-ts
+      - name: Server typecheck
+        run: npm run typecheck:server
 
       - name: Typecheck
         run: npx tsc --noEmit
