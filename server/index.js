@@ -581,6 +581,128 @@ const e2eStore = {
   auditLogs: [],
 };
 
+// Hardened guard for dev-only helpers so they never leak to real environments.
+const devToolsEnabled = (process.env.DEV_TOOLS_ENABLED || '').toLowerCase() === 'true';
+const requireDevToolsKey = (req) => {
+  if (!devToolsEnabled) return false;
+  const expectedKey = process.env.DEV_TOOLS_KEY || '';
+  if (!expectedKey) return false;
+  const headerKey = req.get('x-dev-tools-key') || '';
+  if (!headerKey || headerKey !== expectedKey) return false;
+
+  const remoteAddress = req.ip || req.connection?.remoteAddress || '';
+  const forwardedFor = (req.headers['x-forwarded-for'] || '').toString().split(',')[0].trim();
+  const candidateIp = forwardedFor || remoteAddress;
+  const isLoopback = candidateIp.startsWith('127.') || candidateIp === '::1' || candidateIp === '::ffff:127.0.0.1';
+  if (!isLoopback) return false;
+  return true;
+};
+
+const withDevToolsGate = (handler) => (req, res, next) => {
+  if (!requireDevToolsKey(req)) {
+    res.status(404).send('Not Found');
+    return;
+  }
+  return handler(req, res, next);
+};
+
+if (process.env.NODE_ENV !== 'production') {
+  app.get('/api/dev/diagnostics/courses', withDevToolsGate(async (req, res) => {
+    const idsParam = typeof req.query.ids === 'string' ? req.query.ids : '';
+    const targetIds = idsParam
+      ? idsParam.split(',').map((id) => id.trim()).filter(Boolean)
+      : ['course-tlc-retreat-dei-2026'];
+    const mode = supabase ? 'supabase' : 'demo';
+
+    try {
+      if (supabase) {
+        const { data, error } = await supabase
+          .from('courses')
+          .select('id,status')
+          .in('id', targetIds);
+        if (error) throw error;
+        const lookup = new Map((data || []).map((row) => [row.id, row]));
+        return res.json({
+          mode,
+          courses: targetIds.map((id) => {
+            const record = lookup.get(id) || null;
+            return {
+              id,
+              found: Boolean(record),
+              status: record?.status ?? null,
+            };
+          }),
+        });
+      }
+
+      return res.json({
+        mode,
+        courses: targetIds.map((id) => {
+          const record = e2eStore.courses.get(id) || null;
+          return {
+            id,
+            found: Boolean(record),
+            status: record?.status ?? null,
+          };
+        }),
+      });
+    } catch (error) {
+      logger.error('dev_courses_diagnostics_failed', {
+        error: error instanceof Error ? error.message : error,
+      });
+      res.status(500).json({ error: 'diagnostics_failed' });
+    }
+  }));
+
+  app.post('/api/dev/publish-course', withDevToolsGate(async (req, res) => {
+    const { id } = req.body || {};
+    if (!id) {
+      res.status(400).json({ error: 'id_required' });
+      return;
+    }
+    const mode = supabase ? 'supabase' : 'demo';
+
+    try {
+      if (supabase) {
+        const { data, error } = await supabase
+          .from('courses')
+          .update({ status: 'published', published_at: new Date().toISOString() })
+          .eq('id', id)
+          .select()
+          .maybeSingle();
+        if (error) throw error;
+        if (!data) {
+          res.status(404).json({ error: 'not_found', id });
+          return;
+        }
+        res.json({ mode, course: data });
+        return;
+      }
+
+      const existing = e2eStore.courses.get(id);
+      if (!existing) {
+        res.status(404).json({ error: 'not_found', id });
+        return;
+      }
+      const updated = {
+        ...existing,
+        status: 'published',
+        published_at: existing.published_at || new Date().toISOString(),
+        lastUpdated: new Date().toISOString(),
+      };
+      e2eStore.courses.set(id, updated);
+      persistE2EStore();
+      res.json({ mode, course: updated });
+    } catch (error) {
+      logger.error('dev_publish_course_failed', {
+        id,
+        error: error instanceof Error ? error.message : error,
+      });
+      res.status(500).json({ error: 'publish_failed' });
+    }
+  }));
+}
+
 const clampPercent = (value) => {
   if (typeof value !== 'number' || Number.isNaN(value)) return 0;
   return Math.min(100, Math.max(0, Math.round(value)));
@@ -1064,13 +1186,42 @@ const normalizeSnapshotPayload = (body = {}, fallbackUserId) => {
   };
 };
 
-const buildLessonRow = (lessonId, record) => ({
-  lesson_id: lessonId,
-  progress_percentage: clampPercent(record?.percent ?? record?.progressPercent ?? 0),
-  completed: Boolean(record?.completed) || (record?.status ? record.status === 'completed' : (record?.percent ?? 0) >= 100),
-  time_spent: record?.time_spent_s ?? record?.timeSpentSeconds ?? record?.positionSeconds ?? 0,
-  last_accessed_at: record?.last_accessed_at || record?.updated_at || record?.lastAccessedAt || null,
-});
+const buildLessonRow = (lessonId, record) => {
+  const percentValue = clampPercent(
+    record?.percent ??
+      record?.progress ??
+      record?.progress_percentage ??
+      record?.progressPercent ??
+      0,
+  );
+  const completed =
+    typeof record?.completed === 'boolean'
+      ? record.completed
+      : record?.status
+      ? record.status === 'completed'
+      : percentValue >= 100;
+  const timeSpent =
+    record?.time_spent ??
+    record?.time_spent_s ??
+    record?.time_spent_seconds ??
+    record?.timeSpentSeconds ??
+    record?.positionSeconds ??
+    0;
+  const lastAccessed =
+    record?.last_accessed_at ||
+    record?.updated_at ||
+    record?.created_at ||
+    record?.lastAccessedAt ||
+    null;
+
+  return {
+    lesson_id: lessonId,
+    progress_percentage: percentValue,
+    completed,
+    time_spent: Math.max(0, Math.round(timeSpent ?? 0)),
+    last_accessed_at: lastAccessed,
+  };
+};
 
 // Log loaded courses
 if (e2eStore.courses.size > 0) {
@@ -1287,6 +1438,22 @@ const summarizeRequestBody = (body) => {
     }
   }
   return summary;
+};
+
+const getPayloadSize = (req) => {
+  try {
+    const headerValue = req?.get ? req.get('content-length') : req?.headers?.['content-length'];
+    const parsed = headerValue ? parseInt(headerValue, 10) : NaN;
+    if (Number.isFinite(parsed) && parsed >= 0) {
+      return parsed;
+    }
+  } catch {}
+  try {
+    const serialized = JSON.stringify(req?.body ?? {});
+    return Buffer.byteLength(serialized, 'utf8');
+  } catch {
+    return 0;
+  }
 };
 
 const logAdminCoursesError = (req, err, label) => {
@@ -3592,12 +3759,35 @@ app.post('/api/learner/progress', async (req, res) => {
   const snapshot = normalizeSnapshotPayload(req.body || {});
 
   if (!snapshot) {
-    res.status(400).json({ error: 'Invalid progress snapshot payload' });
+    res.status(400).json({ error: 'invalid_progress_payload', message: 'Invalid progress snapshot payload' });
     return;
   }
 
   const { userId, courseId, lessons, course } = snapshot;
   const nowIso = new Date().toISOString();
+  const requestId = req.requestId ?? req.id ?? null;
+  const payloadBytes = getPayloadSize(req);
+  const baseLogMeta = {
+    requestId,
+    userId,
+    courseId,
+    lessonCount: lessons.length,
+    payloadBytes,
+  };
+
+  logger.info('learner_progress_snapshot_received', baseLogMeta);
+
+  const respondWithError = (status, code, message, error) => {
+    if (error) {
+      logger.error('learner_progress_snapshot_failed', {
+        ...baseLogMeta,
+        errorMessage: error instanceof Error ? error.message : error,
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+      dumpErrorContext(req, error instanceof Error ? error : new Error(String(error)));
+    }
+    res.status(status).json({ error: code, message });
+  };
 
   if (DEV_FALLBACK || E2E_TEST_MODE) {
     console.log('Progress sync request:', {
@@ -3665,8 +3855,7 @@ app.post('/api/learner/progress', async (req, res) => {
         },
       });
     } catch (error) {
-      console.error('E2E: Failed to sync learner progress snapshot:', error);
-      res.status(500).json({ error: 'Unable to sync progress in demo mode' });
+      respondWithError(500, 'progress_demo_failed', 'Unable to sync progress in demo mode', error);
     }
     return;
   }
@@ -3674,16 +3863,37 @@ app.post('/api/learner/progress', async (req, res) => {
   if (!ensureSupabase(res)) return;
 
   try {
+    const normalizeLessonRecord = (row) => ({
+      user_id: row.user_id,
+      course_id: row.course_id ?? courseId,
+      lesson_id: row.lesson_id,
+      percent: clampPercent(Number(row.progress ?? row.percent ?? 0)),
+      status: row.completed ? 'completed' : 'in_progress',
+      time_spent_s: Math.max(0, Math.round(row.time_spent_seconds ?? row.time_spent_s ?? 0)),
+      last_accessed_at: row.updated_at ?? row.created_at ?? nowIso,
+    });
+
+    const courseRecordForBroadcast = () => ({
+      user_id: userId,
+      course_id: courseId,
+      percent: clampPercent(course.percent),
+      status: course.percent >= 100 ? 'completed' : 'in_progress',
+      time_spent_s: Math.max(0, Math.round(course.totalTimeSeconds ?? 0)),
+      last_lesson_id: course.lastLessonId ?? null,
+      completed_at: course.completedAt ?? null,
+      updated_at: nowIso,
+    });
+
     let lessonRows = [];
     if (lessons.length > 0) {
       const payload = lessons.map((lesson) => ({
         user_id: userId,
+        org_id: null,
+        course_id: courseId,
         lesson_id: lesson.lessonId,
-        percent: clampPercent(lesson.progressPercent),
-        status: lesson.completed ? 'completed' : 'in_progress',
-        time_spent_s: Math.max(0, Math.round(lesson.positionSeconds ?? 0)),
-        resume_at_s: Math.max(0, Math.round(lesson.positionSeconds ?? 0)),
-        last_accessed_at: lesson.lastAccessedAt || nowIso,
+        progress: clampPercent(lesson.progressPercent),
+        completed: Boolean(lesson.completed ?? lesson.progressPercent >= 100),
+        time_spent_seconds: Math.max(0, Math.round(lesson.positionSeconds ?? 0)),
       }));
 
       const { data, error } = await supabase
@@ -3692,7 +3902,7 @@ app.post('/api/learner/progress', async (req, res) => {
         .select('*');
 
       if (error) throw error;
-      lessonRows = data || [];
+      lessonRows = (data || []).map((row) => normalizeLessonRecord(row));
     }
 
     const { data: courseRow, error: courseError } = await supabase
@@ -3701,9 +3911,8 @@ app.post('/api/learner/progress', async (req, res) => {
         {
           user_id: userId,
           course_id: courseId,
-          percent: clampPercent(course.percent),
-          status: course.percent >= 100 ? 'completed' : 'in_progress',
-          time_spent_s: Math.max(0, Math.round(course.totalTimeSeconds ?? 0)),
+          progress: clampPercent(course.percent),
+          completed: course.percent >= 100,
         },
         { onConflict: 'user_id,course_id' },
       )
@@ -3711,6 +3920,18 @@ app.post('/api/learner/progress', async (req, res) => {
       .single();
 
     if (courseError) throw courseError;
+    const courseRecord = courseRow
+      ? {
+          user_id: courseRow.user_id,
+          course_id: courseRow.course_id,
+          percent: clampPercent(Number(courseRow.progress ?? courseRow.percent ?? course.percent ?? 0)),
+          status: courseRow.completed ? 'completed' : 'in_progress',
+          time_spent_s: Math.max(0, Math.round(course.totalTimeSeconds ?? 0)),
+          last_lesson_id: course.lastLessonId ?? null,
+          completed_at: course.completedAt ?? null,
+          updated_at: courseRow.updated_at ?? nowIso,
+        }
+      : courseRecordForBroadcast();
 
     try {
       const userTopic = `progress:user:${String(userId).toLowerCase()}`;
@@ -3723,11 +3944,11 @@ app.post('/api/learner/progress', async (req, res) => {
         broadcastToTopic('progress:all', payload);
       });
 
-      if (courseRow) {
-        const payload = { type: 'course_progress', data: courseRow, timestamp: Date.now() };
+      if (courseRecord) {
+        const payload = { type: 'course_progress', data: courseRecord, timestamp: Date.now() };
         broadcastToTopic(userTopic, payload);
-        if (courseRow.course_id) {
-          broadcastToTopic(`progress:course:${courseRow.course_id}`, payload);
+        if (courseRecord.course_id) {
+          broadcastToTopic(`progress:course:${courseRecord.course_id}`, payload);
         }
         broadcastToTopic('progress:all', payload);
       }
@@ -3745,9 +3966,8 @@ app.post('/api/learner/progress', async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('Failed to sync learner progress:', error);
-    dumpErrorContext(req, error);
-    res.status(500).json({ error: 'Unable to sync progress' });
+    const message = error?.message || 'Unable to sync progress';
+    respondWithError(500, 'progress_sync_failed', message, error);
   }
 });
 
@@ -3784,7 +4004,7 @@ app.get('/api/learner/progress', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('user_lesson_progress')
-      .select('lesson_id, percent, status, time_spent_s, last_accessed_at, updated_at')
+      .select('lesson_id, progress, completed, time_spent_seconds, updated_at, created_at')
       .eq('user_id', userId)
       .in('lesson_id', lessonIds);
 
@@ -3795,11 +4015,11 @@ app.get('/api/learner/progress', async (req, res) => {
       const lessonId = row.lesson_id || row.lessonId;
       if (!lessonId) return;
       byLessonId.set(String(lessonId), buildLessonRow(String(lessonId), {
-        percent: row.percent,
-        status: row.status,
-        time_spent_s: row.time_spent_s,
-        last_accessed_at: row.last_accessed_at,
+        progress: row.progress,
+        completed: row.completed,
+        time_spent_seconds: row.time_spent_seconds,
         updated_at: row.updated_at,
+        created_at: row.created_at,
       }));
     });
 
@@ -3906,7 +4126,28 @@ app.post('/api/client/progress/course', async (req, res) => {
     return;
   }
 
+  const opStart = Date.now();
   try {
+    const toApiCourseRecord = (row, fallbackTimeSpent) => ({
+      user_id: row?.user_id ?? user_id,
+      course_id: row?.course_id ?? course_id,
+      percent: clampPercent(Number(row?.progress ?? row?.percent ?? percent ?? 0)),
+      status: row?.completed ?? (typeof status === 'string' ? status === 'completed' : (percent ?? 0) >= 100)
+        ? 'completed'
+        : 'in_progress',
+      time_spent_s: typeof row?.time_spent_s === 'number'
+        ? row.time_spent_s
+        : typeof row?.time_spent_seconds === 'number'
+        ? row.time_spent_seconds
+        : typeof fallbackTimeSpent === 'number'
+        ? fallbackTimeSpent
+        : 0,
+      updated_at: row?.updated_at ?? row?.created_at ?? new Date().toISOString(),
+    });
+
+    const normalizedPercent = clampPercent(typeof percent === 'number' ? percent : 0);
+    const normalizedCompleted = typeof status === 'string' ? status === 'completed' : normalizedPercent >= 100;
+
     // If client provided an idempotency key, record the event first to avoid double-processing
     if (clientEventId) {
       try {
@@ -3921,7 +4162,7 @@ app.post('/api/client/progress/course', async (req, res) => {
             .eq('course_id', course_id)
             .maybeSingle();
           if (existing && !existing.error && existing.data) {
-            res.json({ data: existing.data, idempotent: true });
+            res.json({ data: toApiCourseRecord(existing.data, time_spent_s), idempotent: true });
             return;
           }
         } catch (fetchErr) {
@@ -3934,18 +4175,18 @@ app.post('/api/client/progress/course', async (req, res) => {
       .upsert({
         user_id,
         course_id,
-        percent: percent ?? 0,
-        status: status ?? 'in_progress',
-        time_spent_s: time_spent_s ?? 0
+        progress: normalizedPercent,
+        completed: normalizedCompleted,
       }, { onConflict: 'user_id,course_id' })
       .select('*')
       .single();
 
     if (error) throw error;
     try {
-      const userId = data?.user_id || user_id;
-      const courseId = data?.course_id || course_id;
-      const payload = { type: 'course_progress', data, timestamp: Date.now() };
+      const apiRecord = toApiCourseRecord(data, time_spent_s);
+      const userId = apiRecord?.user_id || user_id;
+      const courseId = apiRecord?.course_id || course_id;
+      const payload = { type: 'course_progress', data: apiRecord, timestamp: Date.now() };
       if (userId) broadcastToTopic(`progress:user:${String(userId).toLowerCase()}`, payload);
       if (courseId) broadcastToTopic(`progress:course:${courseId}`, payload);
       broadcastToTopic('progress:all', payload);
@@ -3956,14 +4197,14 @@ app.post('/api/client/progress/course', async (req, res) => {
         error: bErr instanceof Error ? bErr.message : bErr,
       });
     }
-    recordCourseProgress('supabase', Date.now() - opStart, {
+  recordCourseProgress('supabase', Date.now() - opStart, {
       status: 'success',
       userId: user_id,
       courseId: course_id,
-      percent: data?.percent ?? percent ?? 0,
+      percent: normalizedPercent,
     });
 
-    res.json({ data });
+    res.json({ data: toApiCourseRecord(data, time_spent_s) });
   } catch (error) {
     recordCourseProgress('supabase', Date.now() - opStart, {
       status: 'error',
@@ -4065,7 +4306,32 @@ app.post('/api/client/progress/lesson', async (req, res) => {
     return;
   }
 
+  const opStart = Date.now();
   try {
+    const toApiLessonRecord = (row, fallbackTimeSpent, fallbackResume) => ({
+      user_id: row?.user_id ?? user_id,
+      course_id: row?.course_id ?? null,
+      lesson_id: row?.lesson_id ?? lesson_id,
+      percent: clampPercent(Number(row?.progress ?? row?.percent ?? percent ?? 0)),
+      status:
+        row?.completed ?? (typeof status === 'string' ? status === 'completed' : (percent ?? 0) >= 100)
+          ? 'completed'
+          : 'in_progress',
+      time_spent_s: Math.max(
+        0,
+        Math.round(
+          row?.time_spent_seconds ??
+            row?.time_spent_s ??
+            (typeof fallbackTimeSpent === 'number' ? fallbackTimeSpent : 0),
+        ),
+      ),
+      resume_at_s: typeof fallbackResume === 'number' ? fallbackResume : null,
+      updated_at: row?.updated_at ?? row?.created_at ?? new Date().toISOString(),
+    });
+
+    const normalizedPercent = clampPercent(typeof percent === 'number' ? percent : 0);
+    const normalizedCompleted = typeof status === 'string' ? status === 'completed' : normalizedPercent >= 100;
+
     if (clientEventId) {
       try {
         await supabase.from('progress_events').insert({ id: clientEventId, user_id, course_id: null, lesson_id, payload: req.body });
@@ -4078,7 +4344,7 @@ app.post('/api/client/progress/lesson', async (req, res) => {
             .eq('lesson_id', lesson_id)
             .maybeSingle();
           if (existing && !existing.error && existing.data) {
-            res.json({ data: existing.data, idempotent: true });
+            res.json({ data: toApiLessonRecord(existing.data, time_spent_s, resume_at_s), idempotent: true });
             return;
           }
         } catch (fetchErr) {}
@@ -4089,19 +4355,19 @@ app.post('/api/client/progress/lesson', async (req, res) => {
       .upsert({
         user_id,
         lesson_id,
-        percent: percent ?? 0,
-        status: status ?? 'in_progress',
-        time_spent_s: time_spent_s ?? 0,
-        resume_at_s: resume_at_s ?? null
+        progress: normalizedPercent,
+        completed: normalizedCompleted,
+        time_spent_seconds: Math.max(0, Math.round(typeof time_spent_s === 'number' ? time_spent_s : 0)),
       }, { onConflict: 'user_id,lesson_id' })
       .select('*')
       .single();
 
     if (error) throw error;
     try {
-      const userId = data?.user_id || user_id;
-      const lessonId = data?.lesson_id || lesson_id;
-      const payload = { type: 'lesson_progress', data, timestamp: Date.now() };
+      const apiRecord = toApiLessonRecord(data, time_spent_s, resume_at_s);
+      const userId = apiRecord?.user_id || user_id;
+      const lessonId = apiRecord?.lesson_id || lesson_id;
+      const payload = { type: 'lesson_progress', data: apiRecord, timestamp: Date.now() };
       if (userId) broadcastToTopic(`progress:user:${String(userId).toLowerCase()}`, payload);
       if (lessonId) broadcastToTopic(`progress:lesson:${lessonId}`, payload);
       broadcastToTopic('progress:all', payload);
@@ -4112,14 +4378,14 @@ app.post('/api/client/progress/lesson', async (req, res) => {
         error: bErr instanceof Error ? bErr.message : bErr,
       });
     }
-    recordLessonProgress('supabase', Date.now() - opStart, {
+  recordLessonProgress('supabase', Date.now() - opStart, {
       status: 'success',
       userId: user_id,
       lessonId: lesson_id,
-      percent: data?.percent ?? percent ?? 0,
+      percent: normalizedPercent,
     });
 
-    res.json({ data });
+    res.json({ data: toApiLessonRecord(data, time_spent_s, resume_at_s) });
   } catch (error) {
     recordLessonProgress('supabase', Date.now() - opStart, {
       status: 'error',

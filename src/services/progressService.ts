@@ -1,4 +1,4 @@
-import apiRequest from '../utils/apiClient';
+import apiRequest, { ApiError } from '../utils/apiClient';
 import { NetworkErrorHandler } from '../utils/NetworkErrorHandler';
 import { toast } from 'react-hot-toast';
 import {
@@ -28,6 +28,8 @@ let retryTimer: number | null = null;
 let isDraining = false;
 let eventRetryTimer: number | null = null;
 let isDrainingEvents = false;
+let serverErrorBackoffUntil: number | null = null;
+const SERVER_ERROR_BACKOFF_MS = 60000;
 
 interface ProgressSnapshot {
   userId: string;
@@ -108,8 +110,13 @@ const postSnapshot = async (snapshot: ProgressSnapshot, { showFailureToast }: { 
         errorMessage: 'Progress sync failed',
       }
     );
+    serverErrorBackoffUntil = null;
     return true;
   } catch (error) {
+    if (error instanceof ApiError && error.status >= 500) {
+      serverErrorBackoffUntil = Date.now() + SERVER_ERROR_BACKOFF_MS;
+      scheduleRetry(SERVER_ERROR_BACKOFF_MS);
+    }
     if (showFailureToast) {
       const message = NetworkErrorHandler.isOnline()
         ? 'We lost the connection while saving your progress. We will keep retrying automatically.'
@@ -131,6 +138,12 @@ const flushPendingSnapshots = async () => {
 
   if (!NetworkErrorHandler.isOnline()) {
     scheduleRetry(10000);
+    return;
+  }
+
+  if (serverErrorBackoffUntil && Date.now() < serverErrorBackoffUntil) {
+    const delay = Math.max(serverErrorBackoffUntil - Date.now(), 5000);
+    scheduleRetry(delay);
     return;
   }
 

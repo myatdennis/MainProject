@@ -71,5 +71,6 @@
   from = "/*"
   to = "/index.html"
   status = 200
-  force = true
+  # Allow static assets (e.g., /assets/*.js) to be served directly; only fall back to SPA when no file exists.
+  force = false
 
