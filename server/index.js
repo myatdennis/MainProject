@@ -29,6 +29,7 @@ import {
   recordSupabaseHealth,
   getMetricsSnapshot,
 } from './diagnostics/metrics.js';
+import { isAllowedWsOrigin } from './lib/wsOrigins.js';
 
 // Import auth routes and middleware
 import authRoutes from './routes/auth.js';
@@ -396,14 +397,6 @@ logger.info('diagnostics_cookies_and_cors', {
   cookieSameSite: process.env.COOKIE_SAMESITE || null,
 });
 
-const isAllowedOrigin = (origin) => {
-  if (!origin) return !isProduction;
-  if (allowedOrigins.includes(origin)) return true;
-  if (!isProduction && (origin.startsWith('http://localhost') || origin.startsWith('http://127.'))) {
-    return true;
-  }
-  return false;
-};
 
 // Basic request logging with request_id and timing
 app.use((req, res, next) => {
@@ -6041,8 +6034,8 @@ try {
   wss.on('connection', (ws, req) => {
     const originHeader = req.headers.origin;
 
-    if (!isAllowedOrigin(originHeader)) {
-      console.warn('[WS] Connection attempt blocked', { origin: originHeader || '(none)' });
+    if (!isAllowedWsOrigin(originHeader)) {
+      console.warn('[WS] Connection blocked – origin not allowed', { origin: originHeader || '(none)' });
       try {
         ws.close(1008, 'Origin not allowed');
       } catch (e) {

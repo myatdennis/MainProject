@@ -33,6 +33,9 @@ jobs:
       - name: Server typecheck
         run: npm run typecheck:server
 
+      - name: Server WS origin tests
+        run: npx vitest run --config vitest.server.config.ts
+
       - name: Typecheck
         run: npx tsc --noEmit
 
