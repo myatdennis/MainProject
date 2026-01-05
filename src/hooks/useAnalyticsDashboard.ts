@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import apiRequest from '../utils/apiClient';
-import { analyticsService, type HourlyUsage, type LearnerProgress, type EngagementMetrics } from '../services/analyticsService';
+import {
+  getEvents,
+  getCourseAnalytics,
+  getAllJourneys,
+  type HourlyUsage,
+  type LearnerProgress,
+  type EngagementMetrics,
+} from '../dal/analytics';
 import { syncService } from '../dal/sync';
 import { courseStore } from '../store/courseStore';
 
@@ -137,7 +144,7 @@ const formatDateLabel = (input: Date) =>
 
 const clampPercent = (value: number) => Math.max(0, Math.min(100, Math.round(value)));
 
-const buildHourlyUsageFallback = (events: ReturnType<typeof analyticsService.getEvents>): HourlyUsage[] => {
+const buildHourlyUsageFallback = (events: ReturnType<typeof getEvents>): HourlyUsage[] => {
   const template: HourlyUsage[] = Array.from({ length: 24 }, (_, hour) => ({
     hour,
     usage: 0,
@@ -161,7 +168,7 @@ const buildHourlyUsageFallback = (events: ReturnType<typeof analyticsService.get
 };
 
 const buildTrendPoints = (
-  events: ReturnType<typeof analyticsService.getEvents>,
+  events: ReturnType<typeof getEvents>,
   start: Date,
   end: Date,
 ): TrendPoint[] => {
@@ -207,7 +214,7 @@ const HEATMAP_BUCKETS = 12;
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
 const buildHeatmap = (
-  events: ReturnType<typeof analyticsService.getEvents>,
+  events: ReturnType<typeof getEvents>,
   start: Date,
   end: Date,
 ): HeatmapDay[] => {
@@ -299,11 +306,11 @@ export const useAnalyticsDashboard = (options: UseAnalyticsDashboardOptions = {}
 
     const courses = apiData.courses ?? [];
     const targetCourseId = courseId ?? courses[0]?.courseId ?? null;
-    const events = analyticsService.getEvents(targetCourseId ? { courseId: targetCourseId } : undefined);
+  const events = getEvents(targetCourseId ? { courseId: targetCourseId } : undefined);
     const engagementTrend = buildTrendPoints(events, start, end);
     const heatmap = buildHeatmap(events, start, end);
 
-    const courseAnalytics = targetCourseId ? analyticsService.getCourseAnalytics(targetCourseId) : null;
+  const courseAnalytics = targetCourseId ? getCourseAnalytics(targetCourseId) : null;
     const hourlyUsage = courseAnalytics?.peakUsageHours?.length
       ? courseAnalytics.peakUsageHours
       : buildHourlyUsageFallback(events);
@@ -354,7 +361,7 @@ export const useAnalyticsDashboard = (options: UseAnalyticsDashboardOptions = {}
       },
     ];
 
-    const journeys = analyticsService.getAllJourneys();
+  const journeys = getAllJourneys();
     const relevantJourneys = targetCourseId
       ? journeys.filter((journey) => journey.courseId === targetCourseId)
       : journeys;

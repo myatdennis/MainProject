@@ -1,10 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { X, BookOpen, Users, Send } from 'lucide-react';
+import { X, BookOpen, Users, Send, Building2, Loader2, ShieldCheck, WifiOff } from 'lucide-react';
 import LoadingButton from './LoadingButton';
 import { useToast } from '../context/ToastContext';
 import { addAssignments } from '../utils/assignmentStorage';
 import { courseStore } from '../store/courseStore';
 import type { CourseAssignment } from '../types/assignment';
+import orgService from '../dal/orgs';
+import { adminAssignCourse } from '../dal/adminCourses';
+import useRuntimeStatus from '../hooks/useRuntimeStatus';
 
 interface CourseAssignmentModalProps {
   isOpen: boolean;
@@ -22,11 +25,21 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
   onAssignComplete,
 }) => {
   const { showToast } = useToast();
+  const runtimeStatus = useRuntimeStatus();
+  const supabaseReady = runtimeStatus.supabaseConfigured && runtimeStatus.supabaseHealthy;
+  const runtimeLastChecked = runtimeStatus.lastChecked
+    ? new Date(runtimeStatus.lastChecked).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : 'pending';
   const [loading, setLoading] = useState(false);
   const [selectedCourseId, setSelectedCourseId] = useState(course?.id ?? '');
   const [dueDate, setDueDate] = useState('');
   const [note, setNote] = useState('');
   const [emailList, setEmailList] = useState(selectedUsers.join('\n'));
+  const [assignmentMode, setAssignmentMode] = useState<'learners' | 'organization'>('learners');
+  const [organizationOptions, setOrganizationOptions] = useState<Array<{ id: string; name: string }>>([]);
+  const [orgListLoading, setOrgListLoading] = useState(false);
+  const [orgListError, setOrgListError] = useState<string | null>(null);
+  const [selectedOrgId, setSelectedOrgId] = useState('');
 
   useEffect(() => {
     setSelectedCourseId(course?.id ?? '');
@@ -53,6 +66,45 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
     });
   }, [course, isOpen]);
 
+  useEffect(() => {
+    if (!isOpen) {
+      setAssignmentMode('learners');
+      setSelectedOrgId('');
+      return;
+    }
+
+    let active = true;
+    (async () => {
+      try {
+        setOrgListLoading(true);
+        setOrgListError(null);
+        const orgs = await orgService.listOrgs();
+        if (!active) return;
+        const normalized = orgs
+          .filter((org: any) => org?.id)
+          .map((org: any) => ({ id: String(org.id), name: org.name || `Org ${org.id}` }));
+        setOrganizationOptions(normalized);
+      } catch (error) {
+        if (!active) return;
+        console.error('[CourseAssignmentModal] Failed to load organizations:', error);
+        setOrgListError('Unable to load organizations');
+        setOrganizationOptions([]);
+      } finally {
+        if (active) {
+          setOrgListLoading(false);
+        }
+      }
+    })();
+
+    return () => {
+      active = false;
+    };
+  }, [isOpen]);
+
+  const selectedOrganization = useMemo(() => {
+    return organizationOptions.find((org) => org.id === selectedOrgId) ?? null;
+  }, [organizationOptions, selectedOrgId]);
+
   if (!isOpen) return null;
 
   const handleAssign = async (event: React.FormEvent) => {
@@ -61,6 +113,37 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
     const targetCourseId = course?.id ?? selectedCourseId;
     if (!targetCourseId) {
       showToast('Pick a course before sending Huddle invites.', 'error');
+      return;
+    }
+
+    if (assignmentMode === 'organization') {
+      if (!selectedOrgId) {
+        showToast('Choose which organization should receive this course.', 'error');
+        return;
+      }
+
+      setLoading(true);
+      try {
+        await adminAssignCourse(targetCourseId, selectedOrgId, {
+          dueAt: dueDate || undefined,
+        });
+
+        onAssignComplete?.();
+        showToast(
+          `Assignments queued for ${selectedOrganization?.name ?? 'the selected organization'}.`,
+          'success'
+        );
+        setSelectedOrgId('');
+        setNote('');
+        setDueDate('');
+        onClose();
+      } catch (error) {
+        console.error('[CourseAssignmentModal] Failed to assign course to organization:', error);
+        showToast('Unable to assign this course to the organization right now.', 'error');
+      } finally {
+        setLoading(false);
+      }
+
       return;
     }
 
@@ -139,6 +222,37 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
 
         {/* Form */}
         <form onSubmit={handleAssign} className="p-6 space-y-6">
+          <div
+            className={`rounded-xl border p-4 text-sm ${supabaseReady ? 'border-green-200 bg-green-50 text-green-900' : 'border-amber-200 bg-amber-50 text-amber-900'}`}
+          >
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div className="flex items-start gap-3">
+                {supabaseReady ? (
+                  <ShieldCheck className="h-5 w-5 mt-0.5 text-green-600" />
+                ) : (
+                  <WifiOff className="h-5 w-5 mt-0.5 text-amber-600" />
+                )}
+                <div>
+                  <p className="font-semibold">
+                    {supabaseReady ? 'Assignments deliver immediately' : runtimeStatus.demoModeEnabled ? 'Demo mode: assignments stay local' : 'Supabase offline: assignments queued'}
+                  </p>
+                  <p className="mt-1 leading-relaxed">
+                    {supabaseReady
+                      ? 'Learners and org workspaces will receive notifications and analytics updates as soon as you hit Assign.'
+                      : runtimeStatus.demoModeEnabled
+                        ? 'You can stage assignments, but they will remain local until Supabase is re-enabled. Use CSV export if sharing externally.'
+                        : 'Assignments persist locally and will auto-sync once the runtime health check returns to OK. You will also see them inside Sync Diagnostics.'}
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-col items-start gap-2 md:items-end">
+                <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide ${supabaseReady ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                  Runtime: {runtimeStatus.statusLabel}
+                </span>
+                <span className="text-xs opacity-80">Last health check {runtimeLastChecked}</span>
+              </div>
+            </div>
+          </div>
           {!course && (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Select course *</label>
@@ -167,18 +281,85 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
           )}
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Learner emails or IDs *</label>
-            <textarea
-              value={emailList}
-              onChange={(event) => setEmailList(event.target.value)}
-              placeholder="team@inclusive.org\nlearner@huddle.co"
-              className="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-green-500 focus:border-transparent"
-              rows={5}
-              required
-              disabled={loading}
-            />
-            <p className="mt-1 text-xs text-slate/70">Separate multiple entries with commas or line breaks.</p>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Assignment method</label>
+            <div className="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-1 text-sm font-medium">
+              <button
+                type="button"
+                onClick={() => setAssignmentMode('learners')}
+                className={`rounded-md px-3 py-1.5 transition ${assignmentMode === 'learners' ? 'bg-white text-charcoal shadow-sm' : 'text-gray-500'}`}
+                disabled={loading}
+              >
+                Learner emails
+              </button>
+              <button
+                type="button"
+                onClick={() => setAssignmentMode('organization')}
+                className={`rounded-md px-3 py-1.5 transition ${assignmentMode === 'organization' ? 'bg-white text-charcoal shadow-sm' : 'text-gray-500'}`}
+                disabled={loading}
+              >
+                Organization
+              </button>
+            </div>
           </div>
+
+          {assignmentMode === 'organization' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Choose organization *</label>
+              {orgListLoading ? (
+                <div className="flex items-center space-x-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Loading organizations…
+                </div>
+              ) : (
+                <select
+                  value={selectedOrgId}
+                  onChange={(event) => setSelectedOrgId(event.target.value)}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  disabled={loading || organizationOptions.length === 0}
+                  required
+                >
+                  <option value="">Select an organization…</option>
+                  {organizationOptions.map((org) => (
+                    <option key={org.id} value={org.id}>
+                      {org.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+              {orgListError && (
+                <p className="mt-1 text-xs text-red-600">{orgListError}. Refresh and try again.</p>
+              )}
+              {assignmentMode === 'organization' && !orgListLoading && organizationOptions.length === 0 && !orgListError && (
+                <p className="mt-1 text-xs text-gray-500">Add an organization first from the Admin → Organizations page.</p>
+              )}
+              {selectedOrganization && (
+                <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+                  <div className="flex items-center space-x-2">
+                    <Building2 className="h-4 w-4" />
+                    <span>
+                      {selectedOrganization.name} will receive this course via their organization workspace.
+                    </span>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {assignmentMode === 'learners' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">Learner emails or IDs *</label>
+              <textarea
+                value={emailList}
+                onChange={(event) => setEmailList(event.target.value)}
+                placeholder="team@inclusive.org\nlearner@huddle.co"
+                className="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                rows={5}
+                required
+                disabled={loading}
+              />
+              <p className="mt-1 text-xs text-slate/70">Separate multiple entries with commas or line breaks.</p>
+            </div>
+          )}
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div>
@@ -209,7 +390,9 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
               <div>
                 <h4 className="font-medium text-blue-900">Assignment Details</h4>
                 <p className="text-sm text-blue-700 mt-1">
-                  Learners receive notifications immediately. Progress syncs with analytics and the client portal dashboard.
+                  {assignmentMode === 'organization'
+                    ? 'Org members receive notifications immediately, and their progress syncs with analytics.'
+                    : 'Learners receive notifications immediately. Progress syncs with analytics and the client portal dashboard.'}
                 </p>
               </div>
             </div>

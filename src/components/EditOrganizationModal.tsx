@@ -19,6 +19,7 @@ import {
 } from 'lucide-react';
 import LoadingButton from './LoadingButton';
 import { useToast } from '../context/ToastContext';
+import orgService from '../dal/orgs';
 
 interface EditOrganizationModalProps {
   isOpen: boolean;
@@ -265,6 +266,32 @@ const EditOrganizationModal: React.FC<EditOrganizationModalProps> = ({
     return Object.keys(newErrors).length === 0;
   };
 
+  const normalizeString = (value?: string | null) => {
+    if (value === undefined || value === null) return undefined;
+    const trimmed = value.trim();
+    return trimmed.length > 0 ? trimmed : undefined;
+  };
+
+  const buildPayload = () => ({
+    ...formData,
+    description: normalizeString(formData.description),
+    logo: normalizeString(formData.logo),
+    contactPerson: normalizeString(formData.contactPerson) ?? '',
+    contactEmail: normalizeString(formData.contactEmail) ?? '',
+    contactPhone: normalizeString(formData.contactPhone),
+    website: normalizeString(formData.website),
+    address: normalizeString(formData.address),
+    city: normalizeString(formData.city),
+    state: normalizeString(formData.state),
+    country: normalizeString(formData.country),
+    postalCode: normalizeString(formData.postalCode),
+    billingEmail: normalizeString(formData.billingEmail),
+    contractStart: normalizeString(formData.contractStart),
+    contractEnd: normalizeString(formData.contractEnd),
+    notes: normalizeString(formData.notes),
+    tags: (formData.tags || []).filter(Boolean),
+  });
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -276,27 +303,20 @@ const EditOrganizationModal: React.FC<EditOrganizationModalProps> = ({
     setLoading(true);
 
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      const payload = buildPayload();
+      const savedOrganization = organization?.id
+        ? await orgService.updateOrg(organization.id, payload)
+        : await orgService.createOrg(payload);
 
-      const updatedOrganization = {
-        ...organization,
-        ...formData,
-        id: organization?.id || Date.now().toString(),
-        updatedAt: new Date().toISOString(),
-        totalLearners: organization?.totalLearners || 0,
-        activeLearners: organization?.activeLearners || 0,
-        completionRate: organization?.completionRate || 0,
-      };
-
-      if (onOrganizationUpdated) {
-        onOrganizationUpdated(updatedOrganization);
-      }
-
-      showToast('Organization updated successfully!', 'success');
+      onOrganizationUpdated?.(savedOrganization);
+      showToast(
+        organization?.id ? 'Organization updated successfully!' : 'Organization created successfully!',
+        'success',
+      );
       onClose();
     } catch (error) {
-      showToast('Failed to update organization', 'error');
+      console.error('Failed to save organization:', error);
+      showToast('Failed to save organization. Please try again.', 'error');
     } finally {
       setLoading(false);
     }

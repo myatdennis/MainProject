@@ -1,6 +1,7 @@
 import apiRequest, { ApiError } from '../utils/apiClient';
 import { NetworkErrorHandler } from '../utils/NetworkErrorHandler';
 import { toast } from 'react-hot-toast';
+import { getUserSession } from '../lib/secureStorage';
 import {
   enqueueProgressSnapshot,
   hasPendingItems,
@@ -23,6 +24,16 @@ type LessonProgressRow = {
 };
 
 const toInt = (value: number) => Math.min(100, Math.max(0, Math.round(value)));
+
+const getSessionUserId = (): string | null => {
+  try {
+    const session = getUserSession();
+    return session?.id ? session.id.toLowerCase() : null;
+  } catch (error) {
+    console.warn('[progressService] Unable to resolve authenticated session:', error);
+    return null;
+  }
+};
 
 let retryTimer: number | null = null;
 let isDraining = false;
@@ -258,10 +269,21 @@ export const progressService = {
       return [];
     }
 
+    const sessionUserId = getSessionUserId();
+    if (!sessionUserId) {
+      console.info('[progressService] Skipping remote progress fetch (no authenticated session).');
+      return [];
+    }
+
+    const normalizedUserId = userId.toLowerCase();
+    if (sessionUserId !== normalizedUserId) {
+      console.warn('[progressService] Requested user does not match authenticated session; refusing remote fetch.');
+      return [];
+    }
+
     const params = new URLSearchParams();
     params.set('courseId', courseId);
     params.set('lessonIds', lessonIds.join(','));
-    params.set('userId', userId);
 
     try {
       const response = await NetworkErrorHandler.handleApiCall(
@@ -278,6 +300,10 @@ export const progressService = {
 
       return response?.data?.lessons ?? [];
     } catch (error) {
+      if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+        console.warn('[progressService] Remote progress request rejected (unauthorized).');
+        return [];
+      }
       console.warn('Failed to fetch lesson progress snapshot:', error);
       return [];
     }

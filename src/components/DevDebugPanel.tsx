@@ -6,7 +6,7 @@ import {
   initializeOfflineQueue,
   subscribeOfflineQueue,
   type OfflineQueueItem,
-} from '../services/offlineQueue';
+} from '../dal/offlineQueue';
 import { getSessionMetadata, type SessionMetadata } from '../lib/secureStorage';
 import type { ApiError } from '../utils/apiClient';
 

@@ -43,6 +43,32 @@ If you use the Vite dev server the UI will call `/api/*` and Vite will proxy to 
 - Set `VITE_ENABLE_WS=true` when your backend WebSocket endpoint is reachable; leave it `false` to fall back to Supabase realtime + polling.
 - When WebSockets are enabled, ensure `VITE_WS_URL` matches your backend (wss:// in prod, ws:// in local) or rely on the default `/ws` proxy path.
 
+### Runtime health & registration guardrails
+
+The client polls `/api/health` (see `src/state/runtimeStatus.ts`) and stores the parsed result on `window.__APP_RUNTIME_STATUS__`. That snapshot powers the login banner, the assignment store, and any module that needs to know whether Supabase is currently safe to call.
+
+| Status label | When it appears | Login experience |
+|--------------|-----------------|------------------|
+| `demo-fallback` | `DEV_FALLBACK=true` **or** Supabase credentials missing/unhealthy | Demo credentials auto-fill, registration + password reset are disabled, and the banner explains that production accounts are locked. |
+| `ok` | Supabase configured **and** `/api/health` reports `healthy=true` | Registration tab is enabled, forgot-password calls Supabase, and the secure badge shows the last health check timestamp. |
+| `degraded` | Health endpoint fails or Supabase is reachable but unhealthy | UI stays in secure mode but warns that new network calls may fail; assignment/progress fetches fall back to cached data. |
+
+Key behaviors:
+
+- The banner on `/lms/login` flips between "Demo mode active" and "Secure mode connected" based on the runtime snapshot.
+- `assignmentStorage` and `progressService` refuse remote reads when Supabase is offline or the local session is missing. This is why demo mode only shows assignments stored locally.
+- Runtime polling pauses when the tab is hidden and refreshes immediately when focus returns, so status pills stay current without reloading the app.
+
+#### Enabling Supabase-backed registration & reset flows
+
+1. Provide the Supabase env vars (`SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`) and set `DEV_FALLBACK=false`, `DEMO_MODE=false`.
+2. Restart both the Express API and Vite dev server so `SecureAuthContext` can see the updated runtime status.
+3. From the LMS login page, switch to the **Create Account** tab. The form is backed by `SecureAuthContext.register`, which POSTs to `/api/auth/register` and creates the Supabase user + profile row.
+4. Include an `organizationId` when onboarding a real customer; it scopes the learner to the right catalog immediately after their first login.
+5. Forgot-password works only while Supabase is healthy. The UI will automatically block the flow (and explain why) whenever the runtime snapshot says otherwise.
+
+If you need to verify the backend state manually, call `/api/health` in your browser or via `curl` and confirm that `status`, `supabase.status`, and `demoMode.enabled` match the expectation shown in the UI banner.
+
 ## Troubleshooting
 
 **Seeing a blank page?** Visit http://localhost:5174/unregister-sw.html to clear service worker cache.
@@ -136,6 +162,19 @@ src/
 2. **Course Data** → Course Store → DAL → Supabase
 3. **Real-time Updates** → Supabase Realtime → React State
 4. **Offline Access** → Service Worker → IndexedDB cache
+
+## Data Access Layer contract
+
+All UI code (components, hooks, Zustand stores) must talk to APIs through the modules in `src/dal/`. Each DAL file wraps the corresponding service, applies runtime-status checks, and exposes a typed surface tailor-made for React. Directly importing anything under `src/services/` from a component will break the lint rules and bypass the new safety rails.
+
+**Guidelines when adding data access:**
+
+- Add or update a DAL module (for example `src/dal/progress.ts`) and keep all network/Supabase calls inside that file or the existing service helpers it delegates to.
+- Lean on runtime helpers such as `isSupabaseOperational()` inside the DAL so demo mode never attempts live writes.
+- Keep tests close to the behavior: `src/utils/__tests__/assignmentStorage.test.ts` and `src/services/__tests__/progressService.test.ts` show how to cover session guardrails and offline fallbacks.
+- Wire UI imports to the DAL entry point only once; re-exporting shared helpers from there makes refactors (like the recent WebSocket client proxy) transparent to the rest of the app.
+
+Following this contract gives us a single choke point for auth tokens, offline queues, and future multi-tenant checks without forcing another sweeping refactor.
 
 ### Documentation
 

@@ -82,9 +82,10 @@ Quick reference guide to all project documentation.
 
 ### For Developers
 1. Start with [README.md](./README.md) for architecture
-2. Review [ROUTES_BUTTONS_MATRIX.md](./ROUTES_BUTTONS_MATRIX.md) for navigation
-3. Check [SECURITY_AUDIT_FIXES.md](./SECURITY_AUDIT_FIXES.md) for security requirements
-4. Reference [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) when debugging
+2. Review [README.md#runtime-health--registration-guardrails](./README.md#runtime-health--registration-guardrails) to understand demo vs secure runtime expectations
+3. Review [ROUTES_BUTTONS_MATRIX.md](./ROUTES_BUTTONS_MATRIX.md) for navigation
+4. Check [SECURITY_AUDIT_FIXES.md](./SECURITY_AUDIT_FIXES.md) for security requirements
+5. Reference [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) when debugging
 
 ### For Project Managers
 1. Read [COMPREHENSIVE_REVIEW_SUMMARY.md](./COMPREHENSIVE_REVIEW_SUMMARY.md) for overview

@@ -1,7 +1,6 @@
 import type { LearnerProgress, ChapterProgress, LessonProgress } from '../types/courseTypes';
 import type { NormalizedCourse } from './courseNormalization';
-import { progressService } from '../services/progressService';
-import type { LessonProgressRow } from '../services/progressService';
+import { progressService, type LessonProgressRow } from '../dal/progress';
 
 export type StoredCourseProgress = {
   completedLessonIds: string[];

@@ -1633,6 +1633,425 @@ const sortActionItems = (items) =>
     return dueA - dueB;
   });
 
+const requireAdminAccess = (req, res) => {
+  const { userRole } = getRequestContext(req);
+  if (userRole === 'admin') {
+    return true;
+  }
+  res.status(403).json({ error: 'Admin access required' });
+  return false;
+};
+
+const defaultOrgProfileRow = (orgId) => ({
+  org_id: orgId,
+  mission: null,
+  vision: null,
+  core_values: [],
+  dei_priorities: [],
+  tone_guidelines: null,
+  accessibility_commitments: null,
+  preferred_languages: [],
+  audience_segments: [],
+  ai_context: {},
+  metadata: {},
+  last_ai_refresh_at: null,
+  created_at: new Date().toISOString(),
+  updated_at: new Date().toISOString(),
+});
+
+const defaultOrgBrandingRow = (orgId) => ({
+  org_id: orgId,
+  logo_url: null,
+  primary_color: null,
+  secondary_color: null,
+  accent_color: null,
+  typography: {},
+  media: [],
+  created_at: new Date().toISOString(),
+  updated_at: new Date().toISOString(),
+});
+
+const buildContactsMap = (rows = []) =>
+  rows.reduce((acc, contact) => {
+    const key = contact.org_id || contact.orgId;
+    if (!key) return acc;
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(contact);
+    return acc;
+  }, {});
+
+const buildOrgProfileBundle = (organization, profileRow, brandingRow, contactRows = []) => ({
+  organization,
+  profile: profileRow ?? defaultOrgProfileRow(organization.id),
+  branding: brandingRow ?? defaultOrgBrandingRow(organization.id),
+  contacts: contactRows,
+});
+
+const toArray = (value) => {
+  if (Array.isArray(value)) return value;
+  if (value === null || value === undefined) return [];
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed ? [trimmed] : [];
+  }
+  return [];
+};
+
+const toJsonValue = (value, fallback) => {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === 'object') return value;
+  if (typeof value === 'string') {
+    try {
+      const parsed = JSON.parse(value);
+      if (typeof parsed === 'object') return parsed;
+    } catch {}
+  }
+  return fallback;
+};
+
+const normalizeOrgProfileUpdatePayload = (orgId, input = {}) => {
+  const payload = { org_id: orgId };
+  let hasChanges = false;
+  const assign = (key, value) => {
+    payload[key] = value;
+    hasChanges = true;
+  };
+
+  if ('mission' in input) assign('mission', input.mission ?? null);
+  if ('vision' in input) assign('vision', input.vision ?? null);
+  if ('coreValues' in input || 'core_values' in input) assign('core_values', toArray(input.coreValues ?? input.core_values));
+  if ('deiPriorities' in input || 'dei_priorities' in input)
+    assign('dei_priorities', toArray(input.deiPriorities ?? input.dei_priorities));
+  if ('toneGuidelines' in input || 'tone_guidelines' in input)
+    assign('tone_guidelines', input.toneGuidelines ?? input.tone_guidelines ?? null);
+  if ('accessibilityCommitments' in input || 'accessibility_commitments' in input)
+    assign('accessibility_commitments', input.accessibilityCommitments ?? input.accessibility_commitments ?? null);
+  if ('preferredLanguages' in input || 'preferred_languages' in input)
+    assign('preferred_languages', toArray(input.preferredLanguages ?? input.preferred_languages));
+  if ('audienceSegments' in input || 'audience_segments' in input)
+    assign('audience_segments', toJsonValue(input.audienceSegments ?? input.audience_segments, []));
+  if ('aiContext' in input || 'ai_context' in input)
+    assign('ai_context', toJsonValue(input.aiContext ?? input.ai_context, {}));
+  if ('metadata' in input) assign('metadata', toJsonValue(input.metadata, {}));
+  if ('lastAiRefreshAt' in input || 'last_ai_refresh_at' in input)
+    assign('last_ai_refresh_at', input.lastAiRefreshAt ?? input.last_ai_refresh_at ?? null);
+
+  return hasChanges ? payload : null;
+};
+
+const normalizeOrgBrandingUpdatePayload = (orgId, input = {}) => {
+  const payload = { org_id: orgId };
+  let hasChanges = false;
+  const assign = (key, value) => {
+    payload[key] = value;
+    hasChanges = true;
+  };
+
+  if ('logoUrl' in input || 'logo_url' in input) assign('logo_url', input.logoUrl ?? input.logo_url ?? null);
+  if ('primaryColor' in input || 'primary_color' in input)
+    assign('primary_color', input.primaryColor ?? input.primary_color ?? null);
+  if ('secondaryColor' in input || 'secondary_color' in input)
+    assign('secondary_color', input.secondaryColor ?? input.secondary_color ?? null);
+  if ('accentColor' in input || 'accent_color' in input)
+    assign('accent_color', input.accentColor ?? input.accent_color ?? null);
+  if ('typography' in input) assign('typography', toJsonValue(input.typography, {}));
+  if ('media' in input) assign('media', Array.isArray(input.media) ? input.media : []);
+
+  return hasChanges ? payload : null;
+};
+
+const mapContactResponse = (row) => ({
+  id: row.id,
+  orgId: row.org_id,
+  name: row.name,
+  email: row.email,
+  role: row.role ?? null,
+  type: row.type ?? null,
+  phone: row.phone ?? null,
+  isPrimary: Boolean(row.is_primary),
+  notes: row.notes ?? null,
+  createdAt: row.created_at ?? null,
+  updatedAt: row.updated_at ?? null,
+});
+
+const extractOrgProfileInputs = (body = {}) => {
+  if (body && Object.prototype.hasOwnProperty.call(body, 'profile')) {
+    return {
+      profileInput: body.profile ?? {},
+      brandingInput: body.branding ?? {},
+    };
+  }
+
+  const { branding, ...rest } = body || {};
+  return {
+    profileInput: rest,
+    brandingInput: branding ?? {},
+  };
+};
+
+const respondWithOrgProfileBundle = (res, bundle, mode = 'bundle') => {
+  if (!bundle) {
+    res.status(404).json({ error: 'Organization not found' });
+    return;
+  }
+
+  if (mode === 'profile') {
+    res.json({ data: bundle.profile });
+    return;
+  }
+
+  if (mode === 'context') {
+    res.json({ data: buildOrgProfileContext(bundle) });
+    return;
+  }
+
+  res.json({ data: bundle });
+};
+
+const handleOrgProfileBundleRequest = async (req, res, { mode = 'bundle', write = false } = {}) => {
+  if (!ensureSupabase(res)) return;
+  const { orgId } = req.params;
+  const access = await requireOrgAccess(req, res, orgId, { write });
+  if (!access) return;
+
+  try {
+    const bundle = await fetchOrgProfileBundle(orgId);
+    respondWithOrgProfileBundle(res, bundle, mode);
+  } catch (error) {
+    console.error(`Failed to load organization profile for ${orgId}:`, error);
+    res.status(500).json({ error: 'Unable to load organization profile' });
+  }
+};
+
+const handleOrgProfileUpsert = async (req, res, transformBody) => {
+  if (!ensureSupabase(res)) return;
+  const { orgId } = req.params;
+  const access = await requireOrgAccess(req, res, orgId, { write: true });
+  if (!access) return;
+
+  const rawBody = typeof transformBody === 'function' ? transformBody(req.body || {}) : req.body || {};
+  const { profileInput, brandingInput } = extractOrgProfileInputs(rawBody);
+  const profilePayload = normalizeOrgProfileUpdatePayload(orgId, profileInput || {});
+  const brandingPayload = normalizeOrgBrandingUpdatePayload(orgId, brandingInput || {});
+
+  if (!profilePayload && !brandingPayload) {
+    res.status(400).json({ error: 'No profile or branding fields provided' });
+    return;
+  }
+
+  try {
+    if (profilePayload) {
+      const { error: profileError } = await supabase
+        .from('organization_profiles')
+        .upsert(profilePayload, { onConflict: 'org_id' });
+      if (profileError) throw profileError;
+    }
+
+    if (brandingPayload) {
+      const { error: brandingError } = await supabase
+        .from('organization_branding')
+        .upsert(brandingPayload, { onConflict: 'org_id' });
+      if (brandingError) throw brandingError;
+    }
+
+    const bundle = await fetchOrgProfileBundle(orgId);
+    respondWithOrgProfileBundle(res, bundle, 'bundle');
+  } catch (error) {
+    console.error(`Failed to upsert organization profile for ${orgId}:`, error);
+    res.status(500).json({ error: 'Unable to update organization profile' });
+  }
+};
+
+const hydrateOrgProfileBundles = async (organizations) => {
+  if (!organizations || organizations.length === 0) return [];
+  const orgIds = organizations.map((org) => org.id);
+
+  const [profilesRes, brandingRes, contactsRes] = await Promise.all([
+    supabase.from('organization_profiles').select('*').in('org_id', orgIds),
+    supabase.from('organization_branding').select('*').in('org_id', orgIds),
+    supabase
+      .from('organization_contacts')
+      .select('*')
+      .in('org_id', orgIds)
+      .order('is_primary', { ascending: false })
+      .order('created_at', { ascending: false }),
+  ]);
+
+  if (profilesRes.error) throw profilesRes.error;
+  if (brandingRes.error) throw brandingRes.error;
+  if (contactsRes.error) throw contactsRes.error;
+
+  const profilesByOrg = (profilesRes.data ?? []).reduce((acc, row) => {
+    acc[row.org_id] = row;
+    return acc;
+  }, {});
+
+  const brandingByOrg = (brandingRes.data ?? []).reduce((acc, row) => {
+    acc[row.org_id] = row;
+    return acc;
+  }, {});
+
+  const contactsByOrg = buildContactsMap(contactsRes.data ?? []);
+
+  return organizations.map((org) =>
+    buildOrgProfileBundle(org, profilesByOrg[org.id], brandingByOrg[org.id], contactsByOrg[org.id] || []),
+  );
+};
+
+const fetchOrgProfileBundle = async (orgId) => {
+  const { data: organization, error: orgError } = await supabase
+    .from('organizations')
+    .select('*')
+    .eq('id', orgId)
+    .maybeSingle();
+
+  if (orgError) throw orgError;
+  if (!organization) return null;
+
+  const [profileRes, brandingRes, contactsRes] = await Promise.all([
+    supabase.from('organization_profiles').select('*').eq('org_id', orgId).maybeSingle(),
+    supabase.from('organization_branding').select('*').eq('org_id', orgId).maybeSingle(),
+    supabase
+      .from('organization_contacts')
+      .select('*')
+      .eq('org_id', orgId)
+      .order('is_primary', { ascending: false })
+      .order('created_at', { ascending: false }),
+  ]);
+
+  if (profileRes.error) throw profileRes.error;
+  if (brandingRes.error) throw brandingRes.error;
+  if (contactsRes.error) throw contactsRes.error;
+
+  return buildOrgProfileBundle(
+    organization,
+    profileRes.data ?? undefined,
+    brandingRes.data ?? undefined,
+    contactsRes.data ?? [],
+  );
+};
+
+const buildOrgProfileContext = (bundle) => {
+  if (!bundle) return null;
+  const { organization, profile, branding, contacts } = bundle;
+
+  const context = {
+    org: {
+      id: organization.id,
+      name: organization.name,
+      type: organization.type,
+      status: organization.status,
+      total_learners: organization.total_learners ?? 0,
+      active_learners: organization.active_learners ?? 0,
+      completion_rate: organization.completion_rate ?? 0,
+      cohorts: organization.cohorts ?? [],
+      location: {
+        city: organization.city,
+        state: organization.state,
+        country: organization.country,
+      },
+    },
+    context: {
+      mission: profile.mission,
+      vision: profile.vision,
+      core_values: profile.core_values ?? [],
+      dei_priorities: profile.dei_priorities ?? [],
+      tone_guidelines: profile.tone_guidelines,
+      accessibility_commitments: profile.accessibility_commitments,
+      preferred_languages: profile.preferred_languages ?? [],
+      audience_segments: profile.audience_segments ?? [],
+      ai_context: profile.ai_context ?? {},
+      metadata: profile.metadata ?? {},
+      last_ai_refresh_at: profile.last_ai_refresh_at,
+      updated_at: profile.updated_at,
+    },
+    branding,
+    contacts,
+    prompts: {
+      surveyQuestion:
+        profile.mission
+          ? `How does this initiative advance ${organization.name}'s mission: ${profile.mission}?`
+          : `Personalize questions for ${organization.name} based on their mission and DEI priorities.`,
+      coachingTip:
+        profile.tone_guidelines
+          ? `Use ${profile.tone_guidelines} tone when coaching this organization.`
+          : 'Keep coaching tips aligned with the organization’s stated tone and values.',
+      copyGuidelines:
+        profile.tone_guidelines || branding.primary_color
+          ? `Match tone ${profile.tone_guidelines || 'professional'} and highlight brand colors ${
+              branding.primary_color || 'primary palette'
+            }.`
+          : 'Use inclusive, strengths-based language that reflects the organization values.',
+    },
+  };
+
+  return context;
+};
+
+const mapUserProfileResponse = (profileRow, userRow, organizationRow) => {
+  const orgId = profileRow?.organization_id || organizationRow?.id || userRow?.organization_id || null;
+  return {
+    id: profileRow?.id ?? null,
+    userId: profileRow?.user_id ?? userRow?.id ?? null,
+    name: profileRow?.name ?? [userRow?.first_name, userRow?.last_name].filter(Boolean).join(' ').trim(),
+    email: profileRow?.email ?? userRow?.email ?? null,
+    role: profileRow?.role ?? userRow?.role ?? null,
+    organizationId: orgId,
+    organization: organizationRow?.name ?? profileRow?.organization ?? null,
+    title: profileRow?.title ?? null,
+    department: profileRow?.department ?? null,
+    location: profileRow?.location ?? null,
+    timezone: profileRow?.timezone ?? null,
+    phone: profileRow?.phone ?? null,
+    language: profileRow?.language ?? null,
+    pronouns: profileRow?.pronouns ?? null,
+    preferences: profileRow?.preferences ?? {},
+    accessibilityPrefs: profileRow?.accessibility_prefs ?? {},
+    notificationSettings: profileRow?.notification_settings ?? {},
+    createdAt: profileRow?.created_at ?? null,
+    updatedAt: profileRow?.updated_at ?? null,
+  };
+};
+
+const normalizeUserProfileUpdatePayload = (userId, input = {}, opts = {}) => {
+  const payload = { user_id: userId };
+  let hasChanges = false;
+  const assign = (key, value) => {
+    payload[key] = value;
+    hasChanges = true;
+  };
+
+  if ('name' in input) assign('name', input.name ?? null);
+  if ('email' in input) assign('email', input.email ?? null);
+  if ('organization' in input) assign('organization', input.organization ?? null);
+  if ('role' in input) assign('role', input.role ?? null);
+  if ('cohort' in input) assign('cohort', input.cohort ?? null);
+  if ('title' in input) assign('title', input.title ?? null);
+  if ('department' in input) assign('department', input.department ?? null);
+  if ('location' in input) assign('location', input.location ?? null);
+  if ('timezone' in input) assign('timezone', input.timezone ?? null);
+  if ('phone' in input) assign('phone', input.phone ?? null);
+  if ('language' in input) assign('language', input.language ?? null);
+  if ('pronouns' in input) assign('pronouns', input.pronouns ?? null);
+
+  if ('preferences' in input) assign('preferences', toJsonValue(input.preferences, {}));
+  if ('accessibilityPrefs' in input || 'accessibility_prefs' in input)
+    assign('accessibility_prefs', toJsonValue(input.accessibilityPrefs ?? input.accessibility_prefs, {}));
+  if ('notificationSettings' in input || 'notification_settings' in input)
+    assign('notification_settings', toJsonValue(input.notificationSettings ?? input.notification_settings, {}));
+
+  if ('organizationId' in input || 'organization_id' in input) {
+    const orgId = input.organizationId ?? input.organization_id;
+    if (!orgId) {
+      assign('organization_id', null);
+    } else if (opts.allowOrgChange) {
+      assign('organization_id', orgId);
+    }
+  }
+
+  return hasChanges ? payload : null;
+};
+
 // Diagnostics endpoint (safe booleans only; no secrets returned) to help
 // identify environment and connectivity issues during deployment and support.
 app.get('/api/diagnostics', async (req, res) => {
@@ -2665,37 +3084,67 @@ app.post('/api/admin/courses/import', async (req, res) => {
 });
 
 // Assignments listing for client: return active assignments for a user
-app.get('/api/client/assignments', optionalAuthenticate, async (req, res) => {
-  const queryUserId = typeof req.query.user_id === 'string' ? req.query.user_id : typeof req.query.userId === 'string' ? req.query.userId : '';
-  const headerUserId = (req.get('x-user-id') || '').trim();
-  const sessionUserId = (req.user && (req.user.id || req.user.userId)) || '';
-  const rawUserId = queryUserId || headerUserId || sessionUserId;
-  const normalizedUserId = rawUserId ? rawUserId.toString().trim().toLowerCase() : '';
-  const orgFilter = typeof req.query.orgId === 'string' ? req.query.orgId.trim() : null;
+app.get('/api/client/assignments', authenticate, async (req, res) => {
+  const queryUserId =
+    typeof req.query.user_id === 'string'
+      ? req.query.user_id
+      : typeof req.query.userId === 'string'
+      ? req.query.userId
+      : '';
+  const normalizedQueryUserId = queryUserId ? queryUserId.toString().trim().toLowerCase() : '';
+  const sessionUserId = (req.user && (req.user.userId || req.user.id)) || '';
+  const normalizedSessionUserId = sessionUserId ? sessionUserId.toString().trim().toLowerCase() : '';
+  const isAdminUser = (req.user?.role || '').toLowerCase() === 'admin';
+  const targetUserId = isAdminUser && normalizedQueryUserId ? normalizedQueryUserId : normalizedSessionUserId;
   const includeCompletedAssignments =
     String(req.query.includeCompleted || req.query.include_completed || 'true').toLowerCase() === 'true';
   const requestId = req.requestId;
+
+  if (!targetUserId) {
+    res.status(401).json({ error: 'not_authenticated', message: 'Authentication required to fetch assignments' });
+    return;
+  }
+
+  if (!isAdminUser && normalizedQueryUserId && normalizedQueryUserId !== normalizedSessionUserId) {
+    logger.warn('client_assignments_user_override_blocked', {
+      requestId,
+      requestedUserId: normalizedQueryUserId,
+      sessionUserId: normalizedSessionUserId,
+    });
+  }
+
+  const resolvedOrgFilter = (() => {
+    if (isAdminUser) {
+      const orgParam =
+        typeof req.query.orgId === 'string'
+          ? req.query.orgId
+          : typeof req.query.organizationId === 'string'
+          ? req.query.organizationId
+          : '';
+      return orgParam ? orgParam.trim() : null;
+    }
+    if (req.user?.organizationId) {
+      return String(req.user.organizationId).trim();
+    }
+    return null;
+  })();
 
   const respond = (rows = [], meta = {}) =>
     res.json({
       data: rows,
       meta: {
         requestId,
+        userId: targetUserId,
+        orgFilter: resolvedOrgFilter,
         ...meta,
       },
     });
-
-  if (!normalizedUserId) {
-    logger.warn('client_assignments_missing_user', { requestId, query: req.query });
-    respond([], { warning: 'missing_user_id' });
-    return;
-  }
 
   if (!supabase) {
     if (E2E_TEST_MODE || DEV_FALLBACK) {
       const rows = (e2eStore.assignments || []).filter((assignment) => {
         if (!assignment || assignment.active === false) return false;
-        return String(assignment.user_id || '').toLowerCase() === normalizedUserId;
+        return String(assignment.user_id || '').toLowerCase() === targetUserId;
       });
       respond(rows, { source: 'demo' });
       return;
@@ -2712,7 +3161,7 @@ app.get('/api/client/assignments', optionalAuthenticate, async (req, res) => {
       let query = supabase
         .from(table)
         .select('*')
-        .eq('user_id', normalizedUserId)
+        .eq('user_id', targetUserId)
         .order('updated_at', { ascending: false });
 
       if (table === 'assignments') {
@@ -2723,9 +3172,9 @@ app.get('/api/client/assignments', optionalAuthenticate, async (req, res) => {
         }
       }
 
-      if (orgFilter) {
+      if (resolvedOrgFilter) {
         const orgColumn = table === 'course_assignments' ? 'organization_id' : 'org_id';
-        query = query.or(`${orgColumn}.eq.${orgFilter},${orgColumn}.is.null`);
+        query = query.or(`${orgColumn}.eq.${resolvedOrgFilter},${orgColumn}.is.null`);
       }
 
       const { data, error } = await query;
@@ -2745,7 +3194,7 @@ app.get('/api/client/assignments', optionalAuthenticate, async (req, res) => {
   } catch (err) {
     logger.error('client_assignments_fetch_failed', {
       requestId,
-      userId: normalizedUserId,
+      userId: targetUserId,
       error: err instanceof Error ? err.message : err,
     });
     respond([], { warning: 'fetch_failed', source: 'fallback' });
@@ -4003,11 +4452,14 @@ app.post('/api/learner/progress', authenticate, async (req, res) => {
 });
 
 // GET learner progress endpoint (fetching progress)
-app.get('/api/learner/progress', async (req, res) => {
+app.get('/api/learner/progress', authenticate, async (req, res) => {
   const lessonIds = parseLessonIdsParam(req.query.lessonIds || req.query.lesson_ids);
-  const userId = coerceString(req.query.userId, req.query.user_id, req.query.learnerId, req.query.learner_id);
+  const requestedUserId = coerceString(req.query.userId, req.query.user_id, req.query.learnerId, req.query.learner_id);
+  const sessionUserId = coerceString(req.user?.userId, req.user?.id);
+  const isAdminUser = (req.user?.role || '').toLowerCase() === 'admin';
+  const effectiveUserId = requestedUserId || sessionUserId;
 
-  if (!userId) {
+  if (!effectiveUserId) {
     res.status(400).json({ error: 'userId is required' });
     return;
   }
@@ -4016,9 +4468,17 @@ app.get('/api/learner/progress', async (req, res) => {
     return;
   }
 
+  const normalizedSessionUserId = sessionUserId ? sessionUserId.toLowerCase() : null;
+  const normalizedUserId = effectiveUserId.toLowerCase();
+
+  if (!isAdminUser && normalizedSessionUserId && normalizedUserId !== normalizedSessionUserId) {
+    res.status(403).json({ error: 'forbidden', message: 'You can only view your own progress.' });
+    return;
+  }
+
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
     const lessons = lessonIds.map((lessonId) => {
-      const record = e2eStore.lessonProgress.get(`${userId}:${lessonId}`) || null;
+      const record = e2eStore.lessonProgress.get(`${normalizedUserId}:${lessonId}`) || null;
       return buildLessonRow(lessonId, record);
     });
 
@@ -4036,7 +4496,7 @@ app.get('/api/learner/progress', async (req, res) => {
     const { data, error } = await supabase
       .from('user_lesson_progress')
       .select('lesson_id, progress, completed, time_spent_seconds, updated_at, created_at')
-      .eq('user_id', userId)
+      .eq('user_id', normalizedUserId)
       .in('lesson_id', lessonIds);
 
     if (error) throw error;
@@ -4693,8 +5153,9 @@ app.get('/api/client/certificates', async (req, res) => {
 });
 
 // Organization management
-app.get('/api/admin/organizations', async (_req, res) => {
+app.get('/api/admin/organizations', async (req, res) => {
   if (!ensureSupabase(res)) return;
+  if (!requireAdminAccess(req, res)) return;
 
   try {
     const { data, error } = await supabase
@@ -4712,6 +5173,7 @@ app.get('/api/admin/organizations', async (_req, res) => {
 
 app.post('/api/admin/organizations', async (req, res) => {
   if (!ensureSupabase(res)) return;
+  if (!requireAdminAccess(req, res)) return;
   const payload = req.body || {};
 
   if (!payload.name || !payload.contact_email || !payload.subscription) {
@@ -4767,6 +5229,33 @@ app.post('/api/admin/organizations', async (req, res) => {
   } catch (error) {
     console.error('Failed to create organization:', error);
     res.status(500).json({ error: 'Unable to create organization' });
+  }
+});
+
+app.get('/api/admin/organizations/:id', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const { id } = req.params;
+
+  const access = await requireOrgAccess(req, res, id, { write: false });
+  if (!access) return;
+
+  try {
+    const { data, error } = await supabase
+      .from('organizations')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data) {
+      res.status(404).json({ error: 'Organization not found' });
+      return;
+    }
+
+    res.json({ data });
+  } catch (error) {
+    console.error(`Failed to fetch organization ${id}:`, error);
+    res.status(500).json({ error: 'Unable to fetch organization' });
   }
 });
 
@@ -4949,6 +5438,275 @@ app.delete('/api/admin/organizations/:orgId/members/:membershipId', async (req, 
   } catch (error) {
     console.error(`Failed to remove organization member ${membershipId}:`, error);
     res.status(500).json({ error: 'Unable to remove organization member' });
+  }
+});
+
+// Organization profile + branding admin APIs
+app.get('/api/admin/org-profiles', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  if (!requireAdminAccess(req, res)) return;
+
+  const { search, status } = req.query || {};
+
+  try {
+    let query = supabase
+      .from('organizations')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (status) {
+      query = query.eq('status', status);
+    }
+
+    if (search && String(search).trim().length > 0) {
+      const term = `%${String(search).trim()}%`;
+      query = query.or(`name.ilike.${term},contact_person.ilike.${term},contact_email.ilike.${term}`);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    const bundles = await hydrateOrgProfileBundles(data || []);
+    res.json({ data: bundles });
+  } catch (error) {
+    console.error('Failed to list organization profiles:', error);
+    res.status(500).json({ error: 'Unable to list organization profiles' });
+  }
+});
+
+app.get('/api/admin/org-profiles/:orgId', (req, res) => handleOrgProfileBundleRequest(req, res));
+app.get('/api/admin/org-profiles/:orgId/context', (req, res) =>
+  handleOrgProfileBundleRequest(req, res, { mode: 'context' }),
+);
+app.put('/api/admin/org-profiles/:orgId', (req, res) => handleOrgProfileUpsert(req, res));
+
+app.delete('/api/admin/org-profiles/:orgId', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const { orgId } = req.params;
+  const access = await requireOrgAccess(req, res, orgId, { write: true });
+  if (!access) return;
+
+  try {
+    await Promise.all([
+      supabase.from('organization_profiles').delete().eq('org_id', orgId),
+      supabase.from('organization_branding').delete().eq('org_id', orgId),
+      supabase.from('organization_contacts').delete().eq('org_id', orgId),
+    ]);
+    res.status(204).end();
+  } catch (error) {
+    console.error(`Failed to delete organization profile for ${orgId}:`, error);
+    res.status(500).json({ error: 'Unable to delete organization profile' });
+  }
+});
+
+app.post('/api/admin/org-profiles/:orgId/contacts', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const { orgId } = req.params;
+  const access = await requireOrgAccess(req, res, orgId, { write: true });
+  if (!access) return;
+
+  const { name, email, role, type, phone, notes, isPrimary = false } = req.body || {};
+  if (!name || !email) {
+    res.status(400).json({ error: 'name and email are required' });
+    return;
+  }
+
+  try {
+    const payload = {
+      org_id: orgId,
+      name,
+      email,
+      role: role ?? null,
+      type: type ?? null,
+      phone: phone ?? null,
+      notes: notes ?? null,
+      is_primary: Boolean(isPrimary),
+    };
+
+    const { data, error } = await supabase
+      .from('organization_contacts')
+      .insert(payload)
+      .select('*')
+      .single();
+
+    if (error) throw error;
+    res.status(201).json({ data: mapContactResponse(data) });
+  } catch (error) {
+    console.error(`Failed to create contact for org ${orgId}:`, error);
+    res.status(500).json({ error: 'Unable to create contact' });
+  }
+});
+
+app.put('/api/admin/org-profiles/:orgId/contacts/:contactId', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const { orgId, contactId } = req.params;
+  const access = await requireOrgAccess(req, res, orgId, { write: true });
+  if (!access) return;
+
+  const body = req.body || {};
+  const updatePayload = {};
+
+  ['name', 'email', 'role', 'type', 'phone', 'notes'].forEach((field) => {
+    if (Object.prototype.hasOwnProperty.call(body, field)) {
+      updatePayload[field] = body[field];
+    }
+  });
+
+  if (Object.prototype.hasOwnProperty.call(body, 'isPrimary') || Object.prototype.hasOwnProperty.call(body, 'is_primary')) {
+    updatePayload.is_primary = Boolean(body.isPrimary ?? body.is_primary);
+  }
+
+  if (Object.keys(updatePayload).length === 0) {
+    res.status(400).json({ error: 'No contact fields provided' });
+    return;
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('organization_contacts')
+      .update(updatePayload)
+      .eq('org_id', orgId)
+      .eq('id', contactId)
+      .select('*')
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data) {
+      res.status(404).json({ error: 'Contact not found' });
+      return;
+    }
+
+    res.json({ data: mapContactResponse(data) });
+  } catch (error) {
+    console.error(`Failed to update contact ${contactId} for org ${orgId}:`, error);
+    res.status(500).json({ error: 'Unable to update contact' });
+  }
+});
+
+app.delete('/api/admin/org-profiles/:orgId/contacts/:contactId', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const { orgId, contactId } = req.params;
+  const access = await requireOrgAccess(req, res, orgId, { write: true });
+  if (!access) return;
+
+  try {
+    await supabase.from('organization_contacts').delete().eq('org_id', orgId).eq('id', contactId);
+    res.status(204).end();
+  } catch (error) {
+    console.error(`Failed to delete contact ${contactId} for org ${orgId}:`, error);
+    res.status(500).json({ error: 'Unable to delete contact' });
+  }
+});
+
+['/api/admin/orgs/:orgId/profile', '/api/admin/organizations/:orgId/profile'].forEach((path) => {
+  app.get(path, (req, res) => handleOrgProfileBundleRequest(req, res, { mode: 'profile' }));
+  app.put(path, (req, res) => handleOrgProfileUpsert(req, res, (body) => ({ profile: body })));
+});
+
+app.get('/api/admin/orgs/:orgId/profile/context', (req, res) =>
+  handleOrgProfileBundleRequest(req, res, { mode: 'context' }),
+);
+
+// User profile self-service endpoints
+app.get('/api/users/me', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  try {
+    const [{ data: profileRow, error: profileError }, { data: userRow, error: userError }] = await Promise.all([
+      supabase.from('user_profiles').select('*').eq('user_id', context.userId).maybeSingle(),
+      supabase
+        .from('users')
+        .select('id, email, first_name, last_name, role, organization_id, organizationId')
+        .eq('id', context.userId)
+        .maybeSingle(),
+    ]);
+
+    if (profileError) throw profileError;
+    if (userError) throw userError;
+
+    let organizationRow = null;
+    const orgId = profileRow?.organization_id || userRow?.organization_id || userRow?.organizationId;
+    if (orgId) {
+      const { data: orgData, error: orgError } = await supabase
+        .from('organizations')
+        .select('id, name')
+        .eq('id', orgId)
+        .maybeSingle();
+      if (orgError) throw orgError;
+      organizationRow = orgData;
+    }
+
+    const payload = mapUserProfileResponse(profileRow, userRow, organizationRow);
+    res.json({ data: payload });
+  } catch (error) {
+    console.error('Failed to load current user profile:', error);
+    res.status(500).json({ error: 'Unable to load profile' });
+  }
+});
+
+app.put('/api/users/me', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  const body = req.body || {};
+
+  try {
+    const { data: existingProfile, error: profileError } = await supabase
+      .from('user_profiles')
+      .select('*')
+      .eq('user_id', context.userId)
+      .maybeSingle();
+
+    if (profileError) throw profileError;
+
+    const { data: userRow, error: userError } = await supabase
+      .from('users')
+      .select('id, email, first_name, last_name, role, organization_id, organizationId')
+      .eq('id', context.userId)
+      .maybeSingle();
+
+    if (userError) throw userError;
+
+    const allowOrgChange = context.userRole === 'admin';
+    const profilePayload = normalizeUserProfileUpdatePayload(context.userId, body, { allowOrgChange });
+
+    if (!profilePayload) {
+      res.status(400).json({ error: 'No profile fields provided' });
+      return;
+    }
+
+    if (existingProfile?.id) {
+      profilePayload.id = existingProfile.id;
+    }
+
+    const { data: upsertedProfile, error: upsertError } = await supabase
+      .from('user_profiles')
+      .upsert(profilePayload, { onConflict: 'user_id' })
+      .select('*')
+      .single();
+
+    if (upsertError) throw upsertError;
+
+    let organizationRow = null;
+    const orgId = upsertedProfile.organization_id || userRow?.organization_id || userRow?.organizationId;
+    if (orgId) {
+      const { data: orgData, error: orgError } = await supabase
+        .from('organizations')
+        .select('id, name')
+        .eq('id', orgId)
+        .maybeSingle();
+      if (orgError) throw orgError;
+      organizationRow = orgData;
+    }
+
+    const payload = mapUserProfileResponse(upsertedProfile, userRow, organizationRow);
+    res.json({ data: payload });
+  } catch (error) {
+    console.error('Failed to update user profile:', error);
+    res.status(500).json({ error: 'Unable to update profile' });
   }
 });
 

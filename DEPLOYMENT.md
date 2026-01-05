@@ -112,6 +112,30 @@ Production environment variables you need to set:
 - ✅ `NODE_ENV=production`
 - ✅ `PORT=8787` (or your hosting platform's default)
 
+### Runtime health & mode switching
+
+Use this checklist whenever you flip the platform between demo mode (in-memory data for workshops) and secure Supabase mode:
+
+1. **Set the correct env toggles**
+   - Demo/local rehearsals: `DEV_FALLBACK=true`, `DEMO_MODE=true`, omit Supabase keys.
+   - Supabase/production: `DEV_FALLBACK=false`, `DEMO_MODE=false`, and provide `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`.
+2. **Restart both processes** (Express API + Vite build) so `src/state/runtimeStatus.ts` sees the new configuration and updates `window.__APP_RUNTIME_STATUS__`.
+3. **Verify `/api/health`** from the deploy target:
+   ```bash
+   curl -s https://<your-host>/api/health | jq '{status, demoMode: .demoMode.enabled, supabase: .supabase.status}'
+   ```
+   - Demo mode should return `status:"demo-fallback"` with `demoMode.enabled=true`.
+   - Secure mode should return `status:"ok"` and `supabase.status:"ok"`.
+4. **Check the LMS login banner** ( `/lms/login` ):
+   - Demo mode auto-fills the demo credentials and hides registration/forgot-password.
+   - Secure mode shows "Secure mode connected", enables the Create Account tab, and displays the last health-check timestamp.
+5. **Exercise auth flows**
+   - Registration: submit the LMS Create Account form with a real organization ID; confirm Supabase user + profile rows are created.
+   - Forgot password: attempt in secure mode only—UI should block the action if `/api/health` is degraded.
+6. **Record the runtime snapshot** by grabbing the object in your browser console: `window.__APP_RUNTIME_STATUS__`. Attach this JSON to the deployment log (e.g., `ADMIN_PORTAL_FIX_PLAN.md`) so ops can see exactly which mode shipped.
+
+These steps ensure the DAL-guarded services (`assignmentStorage`, `progressService`, analytics dashboards) behave consistently with the documented runtime state.
+
 ### SSL Certificate
 
 Most platforms (Vercel, Railway, Netlify) provide automatic SSL certificates through Let's Encrypt. If using a custom server:

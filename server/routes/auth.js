@@ -338,81 +338,126 @@ router.post('/login', async (req, res) => {
 
 router.post('/register', authLimiter, async (req, res) => {
   try {
-    const { email, password, firstName, lastName } = req.body;
-    
-    // Validate input
+    const { email, password, firstName, lastName, organizationId } = req.body || {};
+
     if (!email || !password || !firstName || !lastName) {
       return res.status(400).json({
         error: 'Missing fields',
         message: 'All fields are required',
       });
     }
-    
-    if (!supabase) {
+
+    if (!supabase || !supabaseAuthClient) {
       return res.status(503).json({
         error: 'Service unavailable',
         message: 'Authentication service not configured',
       });
     }
-    
-    // Check if user already exists
+
+    const normalizedEmail = normalizeEmail(email);
+
     const { data: existingUsers } = await supabase
       .from('users')
       .select('id')
-      .eq('email', email.toLowerCase())
+      .eq('email', normalizedEmail)
       .limit(1);
-    
+
     if (existingUsers && existingUsers.length > 0) {
       return res.status(409).json({
         error: 'User exists',
         message: 'An account with this email already exists',
       });
     }
-    
-    // Hash password
+
     const passwordHash = await bcrypt.hash(password, 12);
-    
-    // Create user
-    const { data: newUser, error: createError } = await supabase
-      .from('users')
-      .insert({
-        email: email.toLowerCase(),
-        password_hash: passwordHash,
-        first_name: firstName,
-        last_name: lastName,
-        role: 'user', // Default role
-        is_active: true,
-      })
-      .select()
-      .single();
-    
-    if (createError || !newUser) {
-      console.error('User creation error:', createError);
+
+    let createdAuthUserId = null;
+    try {
+      const { data: authData, error: createAuthError } = await supabase.auth.admin.createUser({
+        email: normalizedEmail,
+        password,
+        email_confirm: true,
+        user_metadata: {
+          first_name: firstName,
+          last_name: lastName,
+          organization_id: organizationId ?? null,
+        },
+      });
+
+      if (createAuthError) {
+        const conflict = /already registered|exists/i.test(createAuthError.message || '');
+        return res.status(conflict ? 409 : 400).json({
+          error: conflict ? 'User exists' : 'Registration failed',
+          message: createAuthError.message || 'Unable to create account',
+        });
+      }
+
+      createdAuthUserId = authData?.user?.id || null;
+      if (!createdAuthUserId) {
+        throw new Error('Supabase auth did not return a user id');
+      }
+    } catch (error) {
+      console.error('Supabase auth createUser failed:', error);
       return res.status(500).json({
         error: 'Registration failed',
-        message: 'Could not create account',
+        message: 'Unable to create account',
       });
     }
-    
-    // Generate tokens
-    const tokens = generateTokens({
-      userId: newUser.id,
-      email: newUser.email,
-      role: newUser.role,
-    });
-    
-    // Return user data and tokens
-    attachAuthCookies(res, tokens);
-    res.status(201).json({
-      user: {
-        id: newUser.id,
+
+    try {
+      const { data: newUser, error: createError } = await supabase
+        .from('users')
+        .insert({
+          id: createdAuthUserId,
+          email: normalizedEmail,
+          password_hash: passwordHash,
+          first_name: firstName,
+          last_name: lastName,
+          role: 'user',
+          is_active: true,
+          organization_id: organizationId ?? null,
+        })
+        .select()
+        .single();
+
+      if (createError || !newUser) {
+        console.error('User creation error:', createError);
+        await supabase.auth.admin.deleteUser(createdAuthUserId).catch(() => {});
+        return res.status(500).json({
+          error: 'Registration failed',
+          message: 'Could not create account',
+        });
+      }
+
+      const tokens = generateTokens({
+        userId: newUser.id,
         email: newUser.email,
         role: newUser.role,
-        firstName: newUser.first_name,
-        lastName: newUser.last_name,
-      },
-      ...tokens,
-    });
+        organizationId: newUser.organization_id,
+      });
+
+      attachAuthCookies(res, tokens);
+      res.status(201).json({
+        user: {
+          id: newUser.id,
+          email: newUser.email,
+          role: newUser.role,
+          firstName: newUser.first_name,
+          lastName: newUser.last_name,
+          organizationId: newUser.organization_id,
+        },
+        ...tokens,
+      });
+    } catch (error) {
+      console.error('Registration persistence error:', error);
+      if (createdAuthUserId) {
+        await supabase.auth.admin.deleteUser(createdAuthUserId).catch(() => {});
+      }
+      res.status(500).json({
+        error: 'Internal server error',
+        message: 'An error occurred during registration',
+      });
+    }
   } catch (error) {
     console.error('Registration error:', error);
     res.status(500).json({

@@ -36,9 +36,25 @@ export async function adminPublishCourse(courseId: string): Promise<void> {
   await apiRequest(`/api/admin/courses/${courseId}/publish`, { method: 'POST' });
 }
 
-export async function adminAssignCourse(courseId: string, orgId: string): Promise<void> {
+export async function adminAssignCourse(
+  courseId: string,
+  orgId: string,
+  options: { userIds?: string[]; dueAt?: string | null } = {}
+): Promise<void> {
+  const payload: Record<string, unknown> = {
+    organization_id: orgId,
+  };
+
+  if (Array.isArray(options.userIds) && options.userIds.length > 0) {
+    payload.user_ids = options.userIds;
+  }
+
+  if (options.dueAt) {
+    payload.due_at = options.dueAt;
+  }
+
   await apiRequest(`/api/admin/courses/${courseId}/assign`, {
     method: 'POST',
-    body: JSON.stringify({ organization_id: orgId })
+    body: JSON.stringify(payload)
   });
 }

@@ -52,7 +52,7 @@ import {
 import { trackCourseCompletion as dalTrackCourseCompletion, trackEvent as dalTrackEvent } from '../../dal/analytics';
 import { useUserProfile } from '../../hooks/useUserProfile';
 import { batchService } from '../../dal/batchService';
-import { progressService } from '../../services/progressService';
+import { progressService } from '../../dal/progress';
 
 const CAPTIONS_PREF_KEY = 'courseplayer:captions-enabled';
 const PROGRESS_SYNC_DEBOUNCE_MS = 4000;

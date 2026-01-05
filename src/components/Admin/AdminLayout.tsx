@@ -3,6 +3,7 @@ import { Link, NavLink, useLocation, useNavigate, Outlet } from 'react-router-do
 import { ErrorBoundary } from '../ErrorHandling';
 import AdminErrorBoundary from '../ErrorBoundary/AdminErrorBoundary';
 import { useAuth } from '../../context/AuthContext';
+import { useSecureAuth } from '../../context/SecureAuthContext';
 import {
   Shield,
   Menu,
@@ -59,8 +60,10 @@ const navigation: AdminNavItem[] = [
 ];
 
 const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
-  const { isAuthenticated, user, authInitializing, logout } = useAuth();
+  const { isAuthenticated, user: authUser, authInitializing, logout: legacyLogout } = useAuth();
+  const { user, logout } = useSecureAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
 
@@ -72,9 +75,18 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
   }, [authInitializing, isAuthenticated?.admin, location.pathname, navigate]);
 
   const handleLogout = async () => {
-    await logout('admin');
-    navigate('/admin/login');
+    try {
+      await logout();
+      if (typeof legacyLogout === 'function') {
+        await legacyLogout('admin');
+      }
+      navigate('/admin/login');
+    } catch (err) {
+      console.error('Logout failed', err);
+    }
   };
+
+  const activeUser = user ?? authUser;
 
   if (authInitializing || isAuthenticated?.admin === undefined) {
     return (
@@ -126,9 +138,9 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
               </Badge>
               <div>
                 <p className="font-heading text-lg font-semibold text-charcoal">
-                  Welcome, {user ? `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'Admin' : 'Admin'}
+                  Welcome, {activeUser ? `${activeUser.firstName || ''} ${activeUser.lastName || ''}`.trim() || 'Admin' : 'Admin'}
                 </p>
-                <p className="text-xs text-slate/70">{user?.role || 'Admin & Facilitator'}</p>
+                <p className="text-xs text-slate/70">{activeUser?.role || 'Admin & Facilitator'}</p>
               </div>
             </Card>
 
@@ -214,6 +226,84 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
               >
                 New survey
               </Button>
+              <div style={{ position: 'relative' }}>
+                <button
+                  type="button"
+                  onClick={() => setMenuOpen((prev) => !prev)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    background: 'transparent',
+                    border: 'none',
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                    color: '#0f172a',
+                  }}
+                >
+                  <span>{user?.email ?? authUser?.email ?? 'Admin'}</span>
+                  <span style={{ fontSize: 12 }}>▾</span>
+                </button>
+
+                {menuOpen && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      right: 0,
+                      top: '100%',
+                      marginTop: 8,
+                      background: 'white',
+                      borderRadius: 8,
+                      boxShadow: '0 8px 20px rgba(0,0,0,0.12)',
+                      minWidth: 220,
+                      zIndex: 1000,
+                    }}
+                  >
+                    <div style={{ padding: '10px 12px', borderBottom: '1px solid #eee', fontSize: 12, color: '#666' }}>
+                      Signed in as
+                      <div style={{ fontWeight: 700, fontSize: 13 }}>
+                        {user?.email ?? authUser?.email ?? 'Unknown user'}
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => {
+                        setMenuOpen(false);
+                        navigate('/admin/profile');
+                      }}
+                      style={{
+                        width: '100%',
+                        textAlign: 'left',
+                        padding: '10px 12px',
+                        border: 'none',
+                        background: 'transparent',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Profile & Settings
+                    </button>
+
+                    <button
+                      onClick={async () => {
+                        setMenuOpen(false);
+                        await handleLogout();
+                      }}
+                      style={{
+                        width: '100%',
+                        textAlign: 'left',
+                        padding: '10px 12px',
+                        borderTop: '1px solid #eee',
+                        background: 'transparent',
+                        color: '#b00020',
+                        cursor: 'pointer',
+                        fontWeight: 600,
+                      }}
+                    >
+                      Log out
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
           <div className="px-6 pb-4 pt-0 lg:px-10">

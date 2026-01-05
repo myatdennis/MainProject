@@ -17,11 +17,11 @@ import {
   migrateFromLocalStorage,
   type UserSession,
 } from '../lib/secureStorage';
-import { loginSchema, emailSchema } from '../utils/validators';
+import { loginSchema, emailSchema, registerSchema } from '../utils/validators';
 
 // MFA helpers
 
-import { logAuditAction } from '../services/auditLogService';
+import { logAuditAction } from '../dal/auditLog';
 import axios from 'axios';
 import { resolveApiUrl } from '../config/apiBase';
 
@@ -94,11 +94,27 @@ interface LoginResult {
   mfaEmail?: string;
 }
 
+type RegisterField = 'email' | 'password' | 'confirmPassword' | 'firstName' | 'lastName' | 'organizationId';
+
+interface RegisterInput {
+  email: string;
+  password: string;
+  confirmPassword: string;
+  firstName: string;
+  lastName: string;
+  organizationId?: string;
+}
+
+interface RegisterResult extends LoginResult {
+  fieldErrors?: Partial<Record<RegisterField, string>>;
+}
+
 interface AuthContextType {
   isAuthenticated: AuthState;
   authInitializing: boolean;
   user: UserSession | null;
   login: (email: string, password: string, type: 'lms' | 'admin', mfaCode?: string) => Promise<LoginResult>;
+  register: (input: RegisterInput) => Promise<RegisterResult>;
   sendMfaChallenge: (email: string) => Promise<boolean>;
   verifyMfa: (email: string, code: string) => Promise<boolean>;
   logout: (type?: 'lms' | 'admin') => Promise<void>;
@@ -123,6 +139,13 @@ const defaultAuthContext: AuthContextType = {
   },
   async sendMfaChallenge() {
     return false;
+  },
+  async register() {
+    return {
+      success: false,
+      error: 'Registration is unavailable. Please refresh and try again.',
+      errorType: 'unknown_error',
+    };
   },
   async verifyMfa() {
     return false;
@@ -442,6 +465,91 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     }
   }, []);
 
+  const register = useCallback(async (input: RegisterInput): Promise<RegisterResult> => {
+    try {
+      const validation = registerSchema.safeParse(input);
+      if (!validation.success) {
+        const fieldErrors: RegisterResult['fieldErrors'] = {};
+        validation.error.errors.forEach((err) => {
+          const field = err.path[0] as RegisterField | undefined;
+          if (field) {
+            fieldErrors[field] = err.message;
+          }
+        });
+        return {
+          success: false,
+          error: 'Please fix the highlighted fields',
+          errorType: 'validation_error',
+          fieldErrors,
+        };
+      }
+
+      const payload = {
+        ...validation.data,
+        organizationId: validation.data.organizationId ?? undefined,
+      };
+
+      const response = await api.post('/auth/register', payload);
+      const { user: userData, accessToken, refreshToken: newRefreshToken, expiresAt, refreshExpiresAt } = response.data;
+
+      setSessionMetadata({
+        accessExpiresAt: expiresAt,
+        refreshExpiresAt,
+      });
+
+      const userSession: UserSession = {
+        id: userData.id,
+        email: userData.email,
+        role: userData.role,
+        firstName: userData.firstName,
+        lastName: userData.lastName,
+        organizationId: userData.organizationId,
+      };
+
+      setUserSession(userSession);
+      setUser(userSession);
+      setAccessToken(accessToken ?? null);
+      setRefreshToken(newRefreshToken ?? null);
+      setIsAuthenticated({ lms: true, admin: userData.role === 'admin' });
+
+      return { success: true };
+    } catch (error) {
+      console.error('Registration error:', error);
+      if (axios.isAxiosError(error)) {
+        const status = error.response?.status;
+        if (status === 409) {
+          return {
+            success: false,
+            error: 'An account with this email already exists.',
+            errorType: 'invalid_credentials',
+          };
+        }
+        if (status === 503) {
+          return {
+            success: false,
+            error: 'Registration is unavailable in demo mode.',
+            errorType: 'network_error',
+          };
+        }
+        if (status === 400) {
+          const details = (error.response?.data as { details?: Record<string, string> } | undefined)?.details;
+          return {
+            success: false,
+            error: 'Please review your information.',
+            errorType: 'validation_error',
+            fieldErrors: details ?? undefined,
+          };
+        }
+      }
+
+      return {
+        success: false,
+        error: 'Registration failed. Please try again later.',
+        errorType: 'unknown_error',
+      };
+    }
+  }, []);
+
   // Send MFA challenge (email code)
   const sendMfaChallenge = useCallback(async (email: string): Promise<boolean> => {
     try {
@@ -494,6 +602,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     authInitializing,
     user,
     login,
+    register,
     logout,
     refreshToken,
     forgotPassword,

@@ -2,7 +2,8 @@ import { getSupabase, hasSupabaseConfig } from '../lib/supabaseClient';
 import { syncService } from '../dal/sync';
 import type { CourseAssignment, CourseAssignmentStatus } from '../types/assignment';
 import { isSupabaseOperational, subscribeRuntimeStatus } from '../state/runtimeStatus';
-import apiRequest from './apiClient';
+import { getUserSession } from '../lib/secureStorage';
+import apiRequest, { ApiError as RequestError } from './apiClient';
 
 const STORAGE_KEY = 'huddle_course_assignments_v1';
 
@@ -49,6 +50,16 @@ const normalizeUserId = (value: unknown): string | null => {
     return trimmed ? trimmed.toLowerCase() : null;
   }
   return null;
+};
+
+const getSessionUserId = (): string | null => {
+  try {
+    const session = getUserSession();
+    return session?.id ? session.id.toLowerCase() : null;
+  } catch (error) {
+    console.warn('[assignmentStorage] Unable to resolve authenticated session:', error);
+    return null;
+  }
 };
 
 const mapSupabaseAssignment = (row: SupabaseAssignmentRow): CourseAssignment => {
@@ -353,10 +364,14 @@ const buildAssignmentsFromApiRows = (rows: any[]): CourseAssignment[] => {
     .filter((row): row is CourseAssignment => Boolean(row));
 };
 
-const fetchAssignmentsViaApi = async (userId: string): Promise<CourseAssignment[]> => {
+const fetchAssignmentsViaApi = async (): Promise<CourseAssignment[]> => {
+  const sessionUserId = getSessionUserId();
+  if (!sessionUserId) {
+    console.info('[assignmentStorage] Cannot fetch assignments via API without an authenticated session.');
+    return [];
+  }
   try {
     const params = new URLSearchParams({
-      user_id: userId,
       include_completed: 'true',
     });
     const response = await apiRequest<{ data?: any[] }>(`/api/client/assignments?${params.toString()}`);
@@ -366,6 +381,10 @@ const fetchAssignmentsViaApi = async (userId: string): Promise<CourseAssignment[
     }
     return buildAssignmentsFromApiRows(rows);
   } catch (error) {
+    if (error instanceof RequestError && (error.status === 401 || error.status === 403)) {
+      console.warn('[assignmentStorage] Remote assignments request rejected (unauthorized).');
+      return [];
+    }
     console.warn('[assignmentStorage] Failed to load assignments via API:', error);
     return [];
   }
@@ -378,9 +397,16 @@ export const getAssignmentsForUser = async (userId?: string | null): Promise<Cou
     return [];
   }
 
-  const apiAssignments = await fetchAssignmentsViaApi(normalized);
-  if (apiAssignments.length > 0) {
-    return apiAssignments;
+  const sessionUserId = getSessionUserId();
+  if (!sessionUserId) {
+    console.info('[assignmentStorage] Skipping remote assignment fetch (no authenticated session).');
+  } else if (sessionUserId !== normalized) {
+    console.warn('[assignmentStorage] Requested user does not match authenticated session; using local fallback.');
+  } else {
+    const apiAssignments = await fetchAssignmentsViaApi();
+    if (apiAssignments.length > 0) {
+      return apiAssignments;
+    }
   }
 
   try {

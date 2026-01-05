@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Users, Send, AlertTriangle } from 'lucide-react';
+import { Users, Send, AlertTriangle, ShieldCheck, WifiOff } from 'lucide-react';
 import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
@@ -10,12 +10,18 @@ import { useToast } from '../../context/ToastContext';
 import { useSyncService } from '../../dal/sync';
 import { addAssignments } from '../../utils/assignmentStorage';
 import type { CourseAssignment } from '../../types/assignment';
+import useRuntimeStatus from '../../hooks/useRuntimeStatus';
 
 const AdminCourseAssign = () => {
   const { courseId } = useParams();
   const navigate = useNavigate();
   const { showToast } = useToast();
   const syncService = useSyncService();
+  const runtimeStatus = useRuntimeStatus();
+  const supabaseReady = runtimeStatus.supabaseConfigured && runtimeStatus.supabaseHealthy;
+  const runtimeLastChecked = runtimeStatus.lastChecked
+    ? new Date(runtimeStatus.lastChecked).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : 'pending';
 
   const course = useMemo(() => (courseId ? courseStore.getCourse(courseId) : null), [courseId]);
 
@@ -107,6 +113,45 @@ const AdminCourseAssign = () => {
             <p className="mt-2 max-w-2xl text-sm text-slate/80">
               Enter email addresses or user IDs to invite learners. Assignments sync to analytics so you can track progress.
             </p>
+          </div>
+        </div>
+
+        <div
+          className={`rounded-2xl border p-4 text-sm ${supabaseReady ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-amber-200 bg-amber-50 text-amber-900'}`}
+        >
+          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+            <div className="flex items-start gap-3">
+              {supabaseReady ? (
+                <span className="rounded-xl bg-white/70 p-2 text-emerald-600 shadow-sm">
+                  <ShieldCheck className="h-5 w-5" />
+                </span>
+              ) : (
+                <span className="rounded-xl bg-white/70 p-2 text-amber-600 shadow-sm">
+                  <WifiOff className="h-5 w-5" />
+                </span>
+              )}
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide">
+                  {supabaseReady ? 'Secure mode connected' : runtimeStatus.demoModeEnabled ? 'Demo mode active' : 'Supabase offline'}
+                </p>
+                <p className="mt-1 text-sm leading-relaxed">
+                  {supabaseReady
+                    ? 'Learners will receive notifications immediately and their progress updates in analytics.'
+                    : runtimeStatus.demoModeEnabled
+                      ? 'Assignments are stored locally until Supabase returns. Export the list if you need to share manually.'
+                      : 'We are queueing assignments and will sync them automatically once the health check succeeds again.'}
+                </p>
+                {!supabaseReady && runtimeStatus.lastError && (
+                  <p className="mt-2 text-xs opacity-80">Last error: {runtimeStatus.lastError}</p>
+                )}
+              </div>
+            </div>
+            <div className="flex flex-col items-start gap-2 md:items-end">
+              <span className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide ${supabaseReady ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'}`}>
+                Runtime: {runtimeStatus.statusLabel}
+              </span>
+              <span className="text-xs opacity-80">Last health check {runtimeLastChecked}</span>
+            </div>
           </div>
         </div>
 

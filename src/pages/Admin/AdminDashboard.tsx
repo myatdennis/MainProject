@@ -6,6 +6,7 @@ import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
 import ProgressBar from '../../components/ui/ProgressBar';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
+import useRuntimeStatus from '../../hooks/useRuntimeStatus';
 import {
   Users,
   Building2,
@@ -21,6 +22,8 @@ import {
   Wand2,
   Layers,
   Rocket,
+  ShieldCheck,
+  WifiOff,
 } from 'lucide-react';
 
 const stats = [
@@ -147,6 +150,11 @@ const builderSnapshot = [
 
 const AdminDashboard = () => {
   const navigate = useNavigate();
+  const runtimeStatus = useRuntimeStatus();
+  const supabaseReady = runtimeStatus.supabaseConfigured && runtimeStatus.supabaseHealthy;
+  const runtimeLastChecked = runtimeStatus.lastChecked
+    ? new Date(runtimeStatus.lastChecked).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : 'pending';
 
   const reportCsv = useMemo(() => {
     const header = ['Module Name,Completion Rate,Average Time'];
@@ -192,6 +200,49 @@ const AdminDashboard = () => {
               <Button variant="ghost" size="sm" trailingIcon={<Download className="h-4 w-4" />} onClick={handleExportReport}>
                 Export summary
               </Button>
+            </div>
+          </div>
+        </Card>
+
+        <Card
+          tone="muted"
+          className={`border ${supabaseReady ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-amber-200 bg-amber-50 text-amber-900'}`}
+        >
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div className="flex items-start gap-3">
+              {supabaseReady ? (
+                <span className="rounded-xl bg-white/60 p-2 text-emerald-600 shadow-sm">
+                  <ShieldCheck className="h-5 w-5" />
+                </span>
+              ) : (
+                <span className="rounded-xl bg-white/60 p-2 text-amber-600 shadow-sm">
+                  <WifiOff className="h-5 w-5" />
+                </span>
+              )}
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-wide">
+                  {supabaseReady ? 'Secure mode connected' : runtimeStatus.demoModeEnabled ? 'Demo mode active' : 'Supabase connection degraded'}
+                </p>
+                <p className="mt-1 text-sm leading-relaxed">
+                  {supabaseReady
+                    ? 'Realtime analytics, assignments, and builder autosave are fully online.'
+                    : runtimeStatus.demoModeEnabled
+                      ? 'Demo data is loaded locally. Assignments and analytics will sync after Supabase is re-enabled.'
+                      : 'We are queueing edits locally until Supabase recovers. Monitor Sync Diagnostics if you continue publishing.'}
+                </p>
+                {!supabaseReady && runtimeStatus.lastError && (
+                  <p className="mt-2 text-xs opacity-80">Last error: {runtimeStatus.lastError}</p>
+                )}
+              </div>
+            </div>
+            <div className="flex flex-col items-start gap-2 md:items-end">
+              <Badge
+                tone="info"
+                className={`${supabaseReady ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'} uppercase tracking-wide`}
+              >
+                Status: {runtimeStatus.statusLabel}
+              </Badge>
+              <span className="text-xs opacity-80">Last health check {runtimeLastChecked}</span>
             </div>
           </div>
         </Card>

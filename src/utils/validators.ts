@@ -30,12 +30,21 @@ export const loginSchema = z.object({
   password: z.string().min(1, 'Password is required'),
 });
 
+const optionalOrganizationIdSchema = z
+  .union([
+    z.string().uuid('Invalid organization ID format'),
+    z.literal('').transform(() => undefined),
+  ])
+  .optional()
+  .transform((value) => (value === '' ? undefined : value));
+
 export const registerSchema = z.object({
   email: emailSchema,
   password: passwordSchema,
   confirmPassword: z.string(),
   firstName: z.string().min(1, 'First name is required').max(100).trim(),
   lastName: z.string().min(1, 'Last name is required').max(100).trim(),
+  organizationId: optionalOrganizationIdSchema,
 }).refine((data) => data.password === data.confirmPassword, {
   message: "Passwords don't match",
   path: ['confirmPassword'],

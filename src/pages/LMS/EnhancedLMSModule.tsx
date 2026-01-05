@@ -24,7 +24,7 @@ import {
   RefreshCw
 } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { progressService } from '../../services/progressService';
+import { progressService } from '../../dal/progress';
 
 const EnhancedLMSModule = () => {
   const { moduleId, lessonId } = useParams();

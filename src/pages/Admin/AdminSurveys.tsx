@@ -37,6 +37,7 @@ import {
   surveyQueueEvents,
   getQueueLength,
 } from '../../dal/surveys';
+import orgService from '../../dal/orgs';
 
 type AdminSurveyCard = {
   id: string;
@@ -52,6 +53,11 @@ type AdminSurveyCard = {
   completionRate: number;
   assignedOrgIds: string[];
   assignedOrgs: string[];
+};
+
+type OrganizationOption = {
+  id: string;
+  name: string;
 };
 
 const AdminSurveys = () => {
@@ -71,26 +77,51 @@ const AdminSurveys = () => {
   const [assignError, setAssignError] = useState<string | null>(null);
   const [isAssignSaving, setIsAssignSaving] = useState(false);
   const [duplicateTarget, setDuplicateTarget] = useState<string | null>(null);
+  const [organizations, setOrganizations] = useState<OrganizationOption[]>([]);
+  const [isOrgLoading, setIsOrgLoading] = useState(true);
+  const [orgsError, setOrgsError] = useState<string | null>(null);
   const MIN_ASSIGN_SAVING_MS = 400;
-
-  const organizations = useMemo(
-    () => [
-      { id: '1', name: 'Pacific Coast University' },
-      { id: '2', name: 'Mountain View High School' },
-      { id: '3', name: 'Community Impact Network' },
-      { id: '4', name: 'Regional Fire Department' },
-      { id: '5', name: 'TechForward Solutions' },
-      { id: '6', name: 'Regional Medical Center' },
-      { id: '7', name: 'Unity Community Church' }
-    ],
-    []
-  );
 
   const organizationMap = useMemo(() => {
     const map = new Map<string, string>();
     organizations.forEach((org) => map.set(org.id, org.name));
     return map;
   }, [organizations]);
+
+  const missingSelectedOrgIds = useMemo(() => {
+    return selectedOrgIds.filter((orgId) => !organizationMap.has(orgId));
+  }, [selectedOrgIds, organizationMap]);
+
+  useEffect(() => {
+    let isMounted = true;
+    const loadOrganizations = async () => {
+      try {
+        setIsOrgLoading(true);
+        setOrgsError(null);
+        const fetched = await orgService.listOrgs();
+        if (!isMounted) return;
+        const formatted = fetched.map((org: any) => ({
+          id: String(org.id ?? ''),
+          name: org.name || `Org ${org.id}`,
+        }));
+        setOrganizations(formatted);
+      } catch (error) {
+        if (!isMounted) return;
+        console.error('Failed to load organizations for survey assignments:', error);
+        setOrgsError('Unable to load organizations');
+        setOrganizations([]);
+      } finally {
+        if (isMounted) {
+          setIsOrgLoading(false);
+        }
+      }
+    };
+
+    loadOrganizations();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   const shapeSurveyRecord = useCallback(
     (record: Survey): AdminSurveyCard => {
@@ -748,16 +779,46 @@ const AdminSurveys = () => {
             </div>
             <p className="text-sm text-gray-600 mb-4">Select which organizations should receive this survey. Assignments can be changed later.</p>
 
+            {orgsError && (
+              <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                {orgsError}. Try refreshing the organizations list or verifying the admin API is online.
+              </div>
+            )}
+
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4 max-h-64 overflow-y-auto">
-              {organizations.map(org => (
-                <label key={org.id} className={`flex items-center space-x-3 p-3 rounded-lg border ${selectedOrgIds.includes(org.id) ? 'border-orange-400 bg-orange-50' : 'border-gray-100 bg-white'}`}>
-                  <input type="checkbox" checked={selectedOrgIds.includes(org.id)} onChange={() => toggleSelectOrg(org.id)} className="h-4 w-4 text-orange-500" />
-                  <div>
-                    <div className="font-medium text-gray-900">{org.name}</div>
-                  </div>
-                </label>
-              ))}
+              {isOrgLoading ? (
+                <div className="col-span-1 sm:col-span-2 flex items-center justify-center py-8 text-gray-500">
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Loading organizations…
+                </div>
+              ) : organizations.length > 0 ? (
+                organizations.map(org => (
+                  <label key={org.id} className={`flex items-center space-x-3 p-3 rounded-lg border ${selectedOrgIds.includes(org.id) ? 'border-orange-400 bg-orange-50' : 'border-gray-100 bg-white'}`}>
+                    <input type="checkbox" checked={selectedOrgIds.includes(org.id)} onChange={() => toggleSelectOrg(org.id)} className="h-4 w-4 text-orange-500" />
+                    <div>
+                      <div className="font-medium text-gray-900">{org.name}</div>
+                    </div>
+                  </label>
+                ))
+              ) : (
+                <div className="col-span-1 sm:col-span-2 py-6 text-center text-sm text-gray-500">
+                  No organizations available. Create one first from the Organizations tab.
+                </div>
+              )}
             </div>
+
+            {missingSelectedOrgIds.length > 0 && (
+              <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                These assignments reference organizations that haven’t synced yet:
+                <div className="mt-2 flex flex-wrap gap-1">
+                  {missingSelectedOrgIds.map((orgId) => (
+                    <span key={orgId} className="rounded-full bg-white px-2 py-1 text-[11px] font-medium text-amber-800">
+                      {organizationMap.get(orgId) ?? `Org ${orgId}`}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {assignError && (
               <div className="mb-3 text-sm text-red-600">{assignError}</div>

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import Button from '../../components/ui/Button';
 import { Building2, Plus, Search, MoreVertical, Edit, Eye, Settings, Download, Upload, CheckCircle, Clock, AlertTriangle } from 'lucide-react';
@@ -16,6 +16,9 @@ const AdminOrganizations = () => {
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [organizations, setOrganizations] = useState<any[]>([]);
+  const [fetching, setFetching] = useState(false);
+  const [initialLoad, setInitialLoad] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showAddOrgModal, setShowAddOrgModal] = useState(false);
   const [showEditOrgModal, setShowEditOrgModal] = useState(false);
@@ -23,9 +26,25 @@ const AdminOrganizations = () => {
   const [orgToEdit, setOrgToEdit] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
 
+  const loadOrganizations = useCallback(async () => {
+    setFetching(true);
+    setLoadError(null);
+    try {
+      const data = await orgService.listOrgs();
+      setOrganizations(data);
+    } catch (error) {
+      console.error('Failed to load organizations:', error);
+      setLoadError('Unable to load organizations');
+      showToast('Unable to load organizations', 'error');
+    } finally {
+      setFetching(false);
+      setInitialLoad(false);
+    }
+  }, [showToast]);
+
   useEffect(() => {
-    orgService.listOrgs().then(setOrganizations).catch(() => setOrganizations([]));
-  }, []);
+    loadOrganizations();
+  }, [loadOrganizations]);
 
   const filteredOrgs = organizations.filter(org =>
     (org.name || '').toString().toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -73,6 +92,7 @@ const AdminOrganizations = () => {
   const handleOrganizationAdded = (newOrganization: any) => {
     setOrganizations(prev => [...prev, newOrganization]);
     showToast('Organization added successfully!', 'success');
+    loadOrganizations();
   };
 
   const handleImport = () => {
@@ -132,6 +152,7 @@ const AdminOrganizations = () => {
     ));
     setShowEditOrgModal(false);
     setOrgToEdit(null);
+    loadOrganizations();
   };
 
   const handleDeleteOrganization = (orgId: string) => {
@@ -144,13 +165,13 @@ const AdminOrganizations = () => {
     
     setLoading(true);
     try {
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
+      await orgService.deleteOrg(orgToDelete);
       setOrganizations(prev => prev.filter(org => org.id !== orgToDelete));
       showToast('Organization deleted successfully!', 'success');
       setShowDeleteModal(false);
       setOrgToDelete(null);
     } catch (error) {
+      console.error('Failed to delete organization:', error);
       showToast('Failed to delete organization', 'error');
     } finally {
       setLoading(false);
@@ -165,9 +186,14 @@ const AdminOrganizations = () => {
       <div className="mb-6">
         <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Organizations', to: '/admin/organizations' }]} />
       </div>
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">Organization Management</h1>
-        <p className="text-gray-600">Manage client organizations, track progress, and oversee cohorts</p>
+      <div className="mb-8 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900">Organization Management</h1>
+          <p className="text-gray-600">Manage client organizations, track progress, and oversee cohorts</p>
+        </div>
+        <LoadingButton onClick={loadOrganizations} loading={fetching} variant="secondary">
+          Refresh
+        </LoadingButton>
       </div>
 
       {/* Search and Actions */}
@@ -218,8 +244,29 @@ const AdminOrganizations = () => {
         </div>
       </div>
 
-      {/* Empty state */}
-      {filteredOrgs.length === 0 && (
+      {/* Empty / loading / error states */}
+      {initialLoad && fetching && (
+        <div className="py-16 flex flex-col items-center text-gray-500">
+          <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+          <p className="text-sm">Loading organizations…</p>
+        </div>
+      )}
+
+      {!initialLoad && loadError && (
+        <div className="mb-8">
+          <EmptyState
+            title="Unable to load organizations"
+            description="Check your connection and try refreshing."
+            action={
+              <LoadingButton onClick={loadOrganizations} loading={fetching}>
+                Retry
+              </LoadingButton>
+            }
+          />
+        </div>
+      )}
+
+      {!initialLoad && !loadError && filteredOrgs.length === 0 && (
         <div className="mb-8">
           <EmptyState
             title="No organizations found"
@@ -331,14 +378,25 @@ const AdminOrganizations = () => {
                 </span>
               </div>
               <div className="flex items-center space-x-2">
-                <button className="p-2 text-blue-600 hover:text-blue-800 hover:bg-blue-50 rounded-lg" title="View Details">
-                  <Eye className="h-4 w-4" />
-                </button>
-                <button className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-50 rounded-lg" title="Edit">
+                <Button asChild variant="ghost" size="sm">
+                  <Link to={`/admin/organizations/${org.id}`} className="flex items-center space-x-1">
+                    <Eye className="h-4 w-4" />
+                    <span className="text-xs">View</span>
+                  </Link>
+                </Button>
+                <button
+                  className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-50 rounded-lg"
+                  title="Edit"
+                  onClick={() => handleEditOrganization(org.id)}
+                >
                   <Edit className="h-4 w-4" />
                 </button>
-                <button className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-50 rounded-lg" title="Settings">
-                  <Settings className="h-4 w-4" />
+                <button
+                  className="p-2 text-red-600 hover:text-red-800 hover:bg-red-50 rounded-lg"
+                  title="Delete"
+                  onClick={() => handleDeleteOrganization(org.id)}
+                >
+                  <MoreVertical className="h-4 w-4" />
                 </button>
               </div>
             </div>

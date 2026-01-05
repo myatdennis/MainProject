@@ -22,7 +22,7 @@ import {
 import EnhancedVideoPlayer from '../../components/EnhancedVideoPlayer';
 import CourseProgressSidebar from '../../components/CourseProgressSidebar';
 import FloatingProgressBar from '../../components/FloatingProgressBar';
-import { progressService } from '../../services/progressService';
+import { progressService } from '../../dal/progress';
 
 const supportedSidebarLessonTypes = ['video', 'interactive', 'quiz', 'resource', 'text'] as const;
 const PROGRESS_MILESTONES = [25, 50, 75, 100] as const;

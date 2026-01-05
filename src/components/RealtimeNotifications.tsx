@@ -18,8 +18,8 @@ import {
   markLearnerNotificationRead,
   markLearnerNotificationsRead,
   type Notification as LearnerNotification,
-} from '../services/notificationService';
-import { wsClient } from '../services/wsClient';
+} from '../dal/notifications';
+import { wsClient } from '../dal/wsClient';
 
 type NotificationCategory = 'course_assigned' | 'progress_sync' | 'achievement' | 'announcement' | 'reminder' | 'generic';
 type NotificationPriority = 'low' | 'medium' | 'high';

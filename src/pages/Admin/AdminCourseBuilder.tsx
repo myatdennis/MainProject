@@ -39,7 +39,8 @@ import {
   Undo2,
   RefreshCcw,
   AlertTriangle,
-  WifiOff
+  WifiOff,
+  ShieldCheck
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import CourseAssignmentModal from '../../components/CourseAssignmentModal';
@@ -49,6 +50,7 @@ import AIContentAssistant from '../../components/AIContentAssistant';
 import MobileCourseToolbar from '../../components/Admin/MobileCourseToolbar';
 import MobileModuleNavigator from '../../components/Admin/MobileModuleNavigator';
 import useIsMobile from '../../hooks/useIsMobile';
+import useRuntimeStatus from '../../hooks/useRuntimeStatus';
 import DragDropItem from '../../components/DragDropItem';
 import VersionControl from '../../components/VersionControl';
 import { useToast } from '../../context/ToastContext';
@@ -218,6 +220,11 @@ const AdminCourseBuilder = () => {
   const [initializing, setInitializing] = useState(isEditing);
   const lastLoadedCourseIdRef = useRef<string | null>(null);
   const isMobile = useIsMobile();
+  const runtimeStatus = useRuntimeStatus();
+  const supabaseConnected = runtimeStatus.supabaseConfigured && runtimeStatus.supabaseHealthy;
+  const runtimeLastCheckedLabel = runtimeStatus.lastChecked
+    ? new Date(runtimeStatus.lastChecked).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : 'pending';
   const { showToast } = useToast();
   const [activeMobileModuleId, setActiveMobileModuleId] = useState<string | null>(null);
   const [statusBanner, setStatusBanner] = useState<BuilderBanner | null>(null);
@@ -2452,6 +2459,40 @@ const AdminCourseBuilder = () => {
                 <statusBanner.icon className={`h-5 w-5 mt-0.5 ${bannerToneClasses[statusBanner.tone].icon}`} />
                 <div>
                   <p className="font-semibold">{statusBanner.title}</p>
+              <div
+                className={`mb-6 rounded-2xl border p-4 text-sm ${supabaseConnected ? 'border-green-200 bg-green-50 text-green-900' : 'border-amber-200 bg-amber-50 text-amber-900'}`}
+              >
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div className="flex items-start gap-3">
+                    {supabaseConnected ? (
+                      <ShieldCheck className="h-5 w-5 mt-0.5 text-green-600" />
+                    ) : (
+                      <WifiOff className="h-5 w-5 mt-0.5 text-amber-600" />
+                    )}
+                    <div>
+                      <p className="font-semibold">
+                        {supabaseConnected ? 'Secure mode connected' : runtimeStatus.demoModeEnabled ? 'Demo mode active' : 'Supabase connection degraded'}
+                      </p>
+                      <p className="mt-1 leading-relaxed">
+                        {supabaseConnected
+                          ? 'Edits sync to Supabase immediately. Publishing, assignments, and analytics reflect your changes in real time.'
+                          : runtimeStatus.demoModeEnabled
+                            ? 'You are editing in demo mode. Changes stay local until Supabase is re-enabled—export drafts before sharing externally.'
+                            : 'Supabase is unreachable right now. Autosave continues locally, but publish/sync calls will retry once connectivity returns.'}
+                      </p>
+                      {!supabaseConnected && runtimeStatus.lastError && (
+                        <p className="mt-2 text-xs opacity-80">Last error: {runtimeStatus.lastError}</p>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex flex-col items-start gap-2 md:items-end">
+                    <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide ${supabaseConnected ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                      Status: {runtimeStatus.statusLabel}
+                    </span>
+                    <span className="text-xs opacity-80">Last health check {runtimeLastCheckedLabel}</span>
+                  </div>
+                </div>
+              </div>
                   <p className="mt-1 leading-relaxed">{statusBanner.description}</p>
                 </div>
               </div>
