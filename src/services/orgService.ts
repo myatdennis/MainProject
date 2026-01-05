@@ -84,6 +84,12 @@ export type OrgMember = {
 
 import apiRequest from '../utils/apiClient';
 
+const fromRecord = <T = any>(record: any, key: string): T | undefined => {
+  if (!record) return undefined;
+  const camelKey = key.replace(/_([a-z])/g, (_, c) => (c ? c.toUpperCase() : ''));
+  return record[key] ?? record[camelKey];
+};
+
 const seedOrgs = (): Org[] => ([
   {
     id: '1',
@@ -172,45 +178,50 @@ const seedOrgs = (): Org[] => ([
   }
 ]);
 
-const mapOrgRecord = (record: any): Org => ({
+export const mapOrgRecord = (record: any): Org => {
+  const features = fromRecord(record, 'features') as Org['features'] | undefined;
+  const settings = fromRecord(record, 'settings') as Org['settings'] | undefined;
+
+  return {
   id: record.id,
   name: record.name,
   type: record.type,
-  description: record.description ?? undefined,
-  logo: record.logo ?? undefined,
-  contactPerson: record.contact_person ?? '',
-  contactEmail: record.contact_email,
-  contactPhone: record.contact_phone ?? undefined,
-  website: record.website ?? undefined,
-  address: record.address ?? undefined,
-  city: record.city ?? undefined,
-  state: record.state ?? undefined,
-  country: record.country ?? undefined,
-  postalCode: record.postal_code ?? undefined,
-  subscription: record.subscription,
-  billingEmail: record.billing_email ?? undefined,
-  billingCycle: record.billing_cycle ?? undefined,
-  customPricing: record.custom_pricing ?? undefined,
-  maxLearners: record.max_learners ?? undefined,
-  maxCourses: record.max_courses ?? undefined,
-  maxStorage: record.max_storage ?? undefined,
-  features: record.features ?? {},
-  settings: record.settings ?? {},
-  status: record.status,
-  enrollmentDate: record.enrollment_date ?? undefined,
-  contractStart: record.contract_start ?? undefined,
-  contractEnd: record.contract_end ?? undefined,
-  createdAt: record.created_at ?? undefined,
-  updatedAt: record.updated_at ?? undefined,
-  totalLearners: record.total_learners ?? 0,
-  activeLearners: record.active_learners ?? 0,
-  completionRate: Number(record.completion_rate ?? 0),
-  cohorts: record.cohorts ?? [],
-  lastActivity: record.last_activity ?? undefined,
-  modules: record.modules ?? {},
-  notes: record.notes ?? undefined,
-  tags: record.tags ?? []
-});
+  description: fromRecord(record, 'description') ?? undefined,
+  logo: fromRecord(record, 'logo') ?? undefined,
+  contactPerson: fromRecord(record, 'contact_person') ?? '',
+  contactEmail: fromRecord(record, 'contact_email') ?? '',
+  contactPhone: fromRecord(record, 'contact_phone') ?? undefined,
+  website: fromRecord(record, 'website') ?? undefined,
+  address: fromRecord(record, 'address') ?? undefined,
+  city: fromRecord(record, 'city') ?? undefined,
+  state: fromRecord(record, 'state') ?? undefined,
+  country: fromRecord(record, 'country') ?? undefined,
+  postalCode: fromRecord(record, 'postal_code') ?? undefined,
+  subscription: fromRecord(record, 'subscription') ?? 'standard',
+  billingEmail: fromRecord(record, 'billing_email') ?? undefined,
+  billingCycle: fromRecord(record, 'billing_cycle') ?? undefined,
+  customPricing: fromRecord(record, 'custom_pricing') ?? undefined,
+  maxLearners: fromRecord(record, 'max_learners') ?? undefined,
+  maxCourses: fromRecord(record, 'max_courses') ?? undefined,
+  maxStorage: fromRecord(record, 'max_storage') ?? undefined,
+  features: features ?? undefined,
+  settings: settings ?? undefined,
+  status: fromRecord(record, 'status') ?? 'active',
+  enrollmentDate: fromRecord(record, 'enrollment_date') ?? undefined,
+  contractStart: fromRecord(record, 'contract_start') ?? undefined,
+  contractEnd: fromRecord(record, 'contract_end') ?? undefined,
+  createdAt: fromRecord(record, 'created_at') ?? undefined,
+  updatedAt: fromRecord(record, 'updated_at') ?? undefined,
+  totalLearners: fromRecord(record, 'total_learners') ?? 0,
+  activeLearners: fromRecord(record, 'active_learners') ?? 0,
+  completionRate: Number(fromRecord(record, 'completion_rate') ?? 0),
+  cohorts: fromRecord(record, 'cohorts') ?? [],
+  lastActivity: fromRecord(record, 'last_activity') ?? undefined,
+  modules: fromRecord(record, 'modules') ?? {},
+  notes: fromRecord(record, 'notes') ?? undefined,
+  tags: fromRecord(record, 'tags') ?? []
+};
+};
 
 const mapMemberRecord = (record: any): OrgMember => ({
   id: record.id,

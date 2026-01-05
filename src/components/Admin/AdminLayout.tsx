@@ -22,6 +22,7 @@ import {
   Users as UsersIcon,
   Building2,
   Wand2,
+  Brain,
 } from 'lucide-react';
 import Card from '../ui/Card';
 import Button from '../ui/Button';
@@ -50,6 +51,7 @@ const navigation: AdminNavItem[] = [
   { name: 'Survey Creator', href: '/admin/surveys/builder', icon: PenSquare },
   { name: 'Organizations', href: '/admin/organizations', icon: Building2 },
   { name: 'Users', href: '/admin/users', icon: UsersIcon },
+  { name: 'Leadership AI', href: '/admin/leadership', icon: Brain },
   { name: 'Analytics', href: '/admin/analytics', icon: BarChart3 },
   { name: 'Documents', href: '/admin/documents', icon: FileText },
   { name: 'Performance', href: '/admin/performance', icon: TrendingUp },

@@ -3755,15 +3755,33 @@ app.post('/api/admin/lessons/reorder', async (req, res) => {
 });
 
 // Learner progress endpoint (used by progressService.ts)
-app.post('/api/learner/progress', async (req, res) => {
-  const snapshot = normalizeSnapshotPayload(req.body || {});
+app.post('/api/learner/progress', authenticate, async (req, res) => {
+  let snapshot = normalizeSnapshotPayload(req.body || {});
 
   if (!snapshot) {
     res.status(400).json({ error: 'invalid_progress_payload', message: 'Invalid progress snapshot payload' });
     return;
   }
 
-  const { userId, courseId, lessons, course } = snapshot;
+  const authUserId = req.user?.userId || req.user?.id || null;
+  const effectiveUserId = !DEV_FALLBACK && !E2E_TEST_MODE ? authUserId : authUserId || snapshot.userId || null;
+
+  if (!effectiveUserId) {
+    res.status(401).json({
+      error: 'unauthenticated_progress',
+      message: 'Missing authenticated user id for progress update',
+    });
+    return;
+  }
+
+  snapshot = {
+    ...snapshot,
+    userId: effectiveUserId,
+  };
+
+  const { userId, courseId } = snapshot;
+  const lessonList = Array.isArray(snapshot.lessons) ? snapshot.lessons : [];
+  const courseProgress = snapshot.course || {};
   const nowIso = new Date().toISOString();
   const requestId = req.requestId ?? req.id ?? null;
   const payloadBytes = getPayloadSize(req);
@@ -3771,8 +3789,17 @@ app.post('/api/learner/progress', async (req, res) => {
     requestId,
     userId,
     courseId,
-    lessonCount: lessons.length,
+    lessonCount: lessonList.length,
     payloadBytes,
+  };
+
+  const logSnapshotSuccess = (mode) => {
+    logger.info('learner_progress_snapshot_success', {
+      ...baseLogMeta,
+      mode,
+      completedAt: courseProgress?.completed_at || courseProgress?.completedAt || null,
+      overallPercent: courseProgress?.percent ?? null,
+    });
   };
 
   logger.info('learner_progress_snapshot_received', baseLogMeta);
@@ -3793,15 +3820,15 @@ app.post('/api/learner/progress', async (req, res) => {
     console.log('Progress sync request:', {
       userId,
       courseId,
-      lessonCount: lessons.length,
-      overallPercent: course.percent,
+      lessonCount: lessonList.length,
+      overallPercent: courseProgress.percent,
     });
   }
 
   // Demo/E2E path: persist to in-memory store
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
     try {
-      lessons.forEach((lesson) => {
+      lessonList.forEach((lesson) => {
         const key = `${userId}:${lesson.lessonId}`;
         const record = {
           user_id: userId,
@@ -3826,12 +3853,12 @@ app.post('/api/learner/progress', async (req, res) => {
       const courseRecord = {
         user_id: userId,
         course_id: courseId,
-        percent: clampPercent(course.percent),
-        status: course.percent >= 100 ? 'completed' : 'in_progress',
-        time_spent_s: Math.max(0, Math.round(course.totalTimeSeconds ?? 0)),
+        percent: clampPercent(courseProgress.percent),
+        status: (courseProgress.percent ?? 0) >= 100 ? 'completed' : 'in_progress',
+        time_spent_s: Math.max(0, Math.round(courseProgress.totalTimeSeconds ?? 0)),
         updated_at: nowIso,
-        last_lesson_id: course.lastLessonId ?? null,
-        completed_at: course.completedAt ?? null,
+        last_lesson_id: courseProgress.lastLessonId ?? null,
+        completed_at: courseProgress.completedAt ?? courseProgress.completed_at ?? null,
       };
       e2eStore.courseProgress.set(`${userId}:${courseId}`, courseRecord);
       persistE2EStore();
@@ -3845,13 +3872,15 @@ app.post('/api/learner/progress', async (req, res) => {
         console.warn('Failed to broadcast demo course progress', err);
       }
 
+      logSnapshotSuccess('demo');
+
       res.status(202).json({
         success: true,
         mode: 'demo',
         data: {
           userId,
           courseId,
-          updatedLessons: lessons.length,
+          updatedLessons: lessonList.length,
         },
       });
     } catch (error) {
@@ -3876,17 +3905,17 @@ app.post('/api/learner/progress', async (req, res) => {
     const courseRecordForBroadcast = () => ({
       user_id: userId,
       course_id: courseId,
-      percent: clampPercent(course.percent),
-      status: course.percent >= 100 ? 'completed' : 'in_progress',
-      time_spent_s: Math.max(0, Math.round(course.totalTimeSeconds ?? 0)),
-      last_lesson_id: course.lastLessonId ?? null,
-      completed_at: course.completedAt ?? null,
+      percent: clampPercent(courseProgress.percent),
+      status: (courseProgress.percent ?? 0) >= 100 ? 'completed' : 'in_progress',
+      time_spent_s: Math.max(0, Math.round(courseProgress.totalTimeSeconds ?? 0)),
+      last_lesson_id: courseProgress.lastLessonId ?? null,
+      completed_at: courseProgress.completedAt ?? courseProgress.completed_at ?? null,
       updated_at: nowIso,
     });
 
     let lessonRows = [];
-    if (lessons.length > 0) {
-      const payload = lessons.map((lesson) => ({
+    if (lessonList.length > 0) {
+      const payload = lessonList.map((lesson) => ({
         user_id: userId,
         org_id: null,
         course_id: courseId,
@@ -3911,8 +3940,8 @@ app.post('/api/learner/progress', async (req, res) => {
         {
           user_id: userId,
           course_id: courseId,
-          progress: clampPercent(course.percent),
-          completed: course.percent >= 100,
+          progress: clampPercent(courseProgress.percent),
+          completed: (courseProgress.percent ?? 0) >= 100,
         },
         { onConflict: 'user_id,course_id' },
       )
@@ -3924,11 +3953,11 @@ app.post('/api/learner/progress', async (req, res) => {
       ? {
           user_id: courseRow.user_id,
           course_id: courseRow.course_id,
-          percent: clampPercent(Number(courseRow.progress ?? courseRow.percent ?? course.percent ?? 0)),
+          percent: clampPercent(Number(courseRow.progress ?? courseRow.percent ?? courseProgress.percent ?? 0)),
           status: courseRow.completed ? 'completed' : 'in_progress',
-          time_spent_s: Math.max(0, Math.round(course.totalTimeSeconds ?? 0)),
-          last_lesson_id: course.lastLessonId ?? null,
-          completed_at: course.completedAt ?? null,
+          time_spent_s: Math.max(0, Math.round(courseProgress.totalTimeSeconds ?? 0)),
+          last_lesson_id: courseProgress.lastLessonId ?? null,
+          completed_at: courseProgress.completedAt ?? courseProgress.completed_at ?? null,
           updated_at: courseRow.updated_at ?? nowIso,
         }
       : courseRecordForBroadcast();
@@ -3955,6 +3984,8 @@ app.post('/api/learner/progress', async (req, res) => {
     } catch (err) {
       console.warn('Failed to broadcast persisted progress snapshot', err);
     }
+
+    logSnapshotSuccess('supabase');
 
     res.status(202).json({
       success: true,

@@ -1,13 +1,15 @@
 // Temporary DAL facade delegating to the existing in-memory ProfileService.
 // This keeps UI layers off src/services/* while we gradually move storage/API.
 import type { UserProfile, OrganizationProfile, BaseResource, ResourceFilter, ResourceSendRequest } from '../models/Profile';
+import type { OrgProfileContext } from '../services/orgProfileService';
 import profileService, {
   getUserProfile as _getUserProfile,
   getOrganizationProfile as _getOrganizationProfile,
+  getOrganizationProfileContext as _getOrganizationProfileContext,
   updateResourceStatus as _updateResourceStatus,
 } from '../services/ProfileService';
 
-export type { UserProfile, OrganizationProfile, BaseResource, ResourceFilter, ResourceSendRequest };
+export type { UserProfile, OrganizationProfile, BaseResource, ResourceFilter, ResourceSendRequest, OrgProfileContext };
 
 export const listUserProfiles = (filter?: { organizationId?: string; search?: string }): Promise<UserProfile[]> =>
   profileService.listUserProfiles(filter);
@@ -26,6 +28,8 @@ export const getProfileResources = (
 
 export const getUserProfile = (id: string): Promise<UserProfile | null> => _getUserProfile(id);
 export const getOrganizationProfile = (id: string): Promise<OrganizationProfile | null> => _getOrganizationProfile(id);
+export const getOrganizationProfileContext = (orgId: string): Promise<OrgProfileContext> =>
+  _getOrganizationProfileContext(orgId);
 export const updateResourceStatus = (
   profileType: 'user' | 'organization',
   profileId: string,
@@ -40,5 +44,6 @@ export default {
   getProfileResources,
   getUserProfile,
   getOrganizationProfile,
+  getOrganizationProfileContext,
   updateResourceStatus,
 };

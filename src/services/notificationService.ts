@@ -4,10 +4,15 @@ export type Notification = {
   id: string;
   title: string;
   body?: string;
-  orgId?: string;
-  userId?: string;
+  type?: string;
+  orgId?: string | null;
+  userId?: string | null;
   createdAt: string;
+  updatedAt?: string | null;
+  readAt?: string | null;
   read?: boolean;
+  payload?: Record<string, unknown> | null;
+  messageId?: string | null;
 };
 
 const apiFetch = async <T>(path: string, options: ApiRequestOptions = {}) =>
@@ -17,10 +22,20 @@ const mapNotification = (record: any): Notification => ({
   id: record.id,
   title: record.title,
   body: record.body ?? undefined,
+  type: record.type ?? 'announcement',
   orgId: record.orgId ?? record.org_id ?? undefined,
   userId: record.userId ?? record.user_id ?? undefined,
   createdAt: record.createdAt ?? record.created_at ?? new Date().toISOString(),
-  read: record.read ?? false
+  updatedAt: record.updatedAt ?? record.updated_at ?? null,
+  readAt: record.readAt ?? record.read_at ?? null,
+  read:
+    typeof record.isRead === 'boolean'
+      ? record.isRead
+      : typeof record.is_read === 'boolean'
+        ? record.is_read
+        : record.read ?? Boolean(record.readAt ?? record.read_at),
+  payload: record.payload ?? null,
+  messageId: record.messageId ?? record.message_id ?? null,
 });
 
 export const listNotifications = async (opts?: { orgId?: string; userId?: string }) => {
@@ -73,10 +88,44 @@ export const clearNotifications = async (opts?: { orgId?: string; userId?: strin
   await Promise.all(existing.map(note => deleteNotification(note.id)));
 };
 
+const buildLearnerNotificationsPath = (opts?: { limit?: number; unreadOnly?: boolean }) => {
+  const params = new URLSearchParams();
+  if (opts?.limit && Number.isFinite(opts.limit)) {
+    params.set('limit', String(opts.limit));
+  }
+  if (opts?.unreadOnly) {
+    params.set('unread_only', 'true');
+  }
+  const qs = params.toString();
+  return `/api/learner/notifications${qs ? `?${qs}` : ''}`;
+};
+
+export const listLearnerNotifications = async (opts?: { limit?: number; unreadOnly?: boolean }) => {
+  const json = await apiFetch<{ data: any[] }>(buildLearnerNotificationsPath(opts));
+  return (json.data ?? []).map(mapNotification);
+};
+
+export const markLearnerNotificationRead = async (id: string) => {
+  const json = await apiFetch<{ data: any }>(`/api/learner/notifications/${id}/read`, {
+    method: 'POST',
+  });
+  return mapNotification(json.data);
+};
+
+export const markLearnerNotificationsRead = async (ids: string[]) => {
+  if (!ids?.length) return [] as Notification[];
+  return Promise.all(ids.map((id) => markLearnerNotificationRead(id).catch(() => null))).then((results) =>
+    results.filter(Boolean) as Notification[]
+  );
+};
+
 export default {
   listNotifications,
   addNotification,
   markNotificationRead,
   deleteNotification,
-  clearNotifications
+  clearNotifications,
+  listLearnerNotifications,
+  markLearnerNotificationRead,
+  markLearnerNotificationsRead
 };

@@ -1,6 +1,16 @@
 // Mock profile service for managing user and organization profiles with resources
 import { UserProfile, OrganizationProfile, BaseResource, ResourceFilter, ResourceSendRequest } from '../models/Profile';
-import orgService from './orgService';
+import {
+  listOrgProfiles as listOrgProfilesApi,
+  getOrgProfile as getOrgProfileApi,
+  upsertOrgProfile as upsertOrgProfileApi,
+  removeOrgProfile as removeOrgProfileApi,
+  getOrgProfileContext as getOrgProfileContextApi,
+  type OrgProfileBundle,
+  type OrgProfileUpdatePayload,
+  type OrgContact,
+  type OrgProfileContext,
+} from './orgProfileService';
 import notificationService from './notificationService';
 
 const USER_PROFILES_KEY = 'huddle_user_profiles_v1';
@@ -219,6 +229,167 @@ const readOrgProfiles = (): OrganizationProfile[] => {
 const writeOrgProfiles = (profiles: OrganizationProfile[]) => 
   localStorage.setItem(ORG_PROFILES_KEY, JSON.stringify(profiles));
 
+const findLegacyOrgProfile = (legacyProfiles: OrganizationProfile[] = [], orgId?: string | null) => {
+  if (!orgId) return undefined;
+  return legacyProfiles.find((profile) => profile.id === orgId || profile.orgId === orgId);
+};
+
+const attachLegacyResources = (profile: OrganizationProfile, legacyProfiles?: OrganizationProfile[]) => {
+  const legacy = findLegacyOrgProfile(legacyProfiles, profile.orgId ?? profile.id);
+  const resources = legacy?.resources?.length ? legacy.resources : profile.resources ?? [];
+  return { ...profile, resources };
+};
+
+const toContactProfile = (contact: OrgContact) => ({
+  id: contact.id,
+  orgId: contact.orgId,
+  name: contact.name,
+  email: contact.email,
+  role: contact.role ?? undefined,
+  type: contact.type ?? undefined,
+  phone: contact.phone ?? undefined,
+  isPrimary: contact.isPrimary,
+  notes: contact.notes ?? undefined,
+  createdAt: contact.createdAt ?? undefined,
+  updatedAt: contact.updatedAt ?? undefined,
+});
+
+const mapBundleToOrganizationProfile = (
+  bundle: OrgProfileBundle,
+  legacyProfiles?: OrganizationProfile[],
+): OrganizationProfile => {
+  const org = bundle.organization;
+  const profileDetails = bundle.profile ?? { orgId: org.id };
+  const branding = bundle.branding ?? { orgId: org.id };
+  const contacts = Array.isArray(bundle.contacts) ? bundle.contacts : [];
+
+  const metrics = {
+    totalLearners: org.totalLearners ?? 0,
+    activeLearners: org.activeLearners ?? 0,
+    completionRate: org.completionRate ?? 0,
+    totalDownloads: Object.values(org.modules ?? {}).reduce(
+      (sum, value) => sum + Number(value ?? 0),
+      0,
+    ),
+  };
+
+  const address = org.address || org.city || org.state || org.postalCode || org.country
+    ? {
+        street: org.address,
+        city: org.city,
+        state: org.state,
+        zip: org.postalCode,
+        country: org.country,
+      }
+    : undefined;
+
+  const organizationProfile: OrganizationProfile = {
+    id: org.id,
+    orgId: org.id,
+    name: org.name,
+    type: org.type ?? 'organization',
+    contactPerson: org.contactPerson ?? '',
+    contactEmail: org.contactEmail ?? undefined,
+    description: org.description ?? profileDetails.mission ?? undefined,
+    website: org.website ?? undefined,
+    logo: branding.logoUrl ?? org.logo ?? undefined,
+    address,
+    enrollmentDate: org.enrollmentDate ?? undefined,
+    status: (org.status as OrganizationProfile['status']) ?? 'active',
+    subscription: org.subscription ?? undefined,
+    lastActivity: org.lastActivity ?? undefined,
+    metrics,
+    cohorts: org.cohorts ?? [],
+    modules: org.modules ?? {},
+    notes: org.notes ?? undefined,
+    profileDetails,
+    branding: {
+      logoUrl: branding.logoUrl ?? null,
+      primaryColor: branding.primaryColor ?? null,
+      secondaryColor: branding.secondaryColor ?? null,
+      accentColor: branding.accentColor ?? null,
+      typography: branding.typography ?? {},
+      media: branding.media ?? [],
+    },
+    contacts: contacts.map(toContactProfile),
+    aiContext: profileDetails.aiContext ?? undefined,
+    metadata: profileDetails.metadata ?? undefined,
+    resources: [],
+    createdAt: org.createdAt ?? new Date().toISOString(),
+    updatedAt: org.updatedAt ?? new Date().toISOString(),
+  };
+
+  return attachLegacyResources(organizationProfile, legacyProfiles);
+};
+
+const upsertLegacyOrgProfile = (profile: OrganizationProfile, legacyProfiles?: OrganizationProfile[]) => {
+  const buffer = legacyProfiles ? [...legacyProfiles] : readOrgProfiles();
+  const index = buffer.findIndex((entry) => entry.id === profile.id || entry.orgId === profile.orgId);
+  if (index >= 0) {
+    buffer[index] = profile;
+  } else {
+    buffer.push(profile);
+  }
+  writeOrgProfiles(buffer);
+  return buffer;
+};
+
+const removeLegacyOrgProfile = (orgId: string) => {
+  const profiles = readOrgProfiles();
+  const next = profiles.filter((entry) => entry.id !== orgId && entry.orgId !== orgId);
+  writeOrgProfiles(next);
+};
+
+const buildOrgProfileUpdatePayload = (updates: Partial<OrganizationProfile>): OrgProfileUpdatePayload => {
+  const payload: OrgProfileUpdatePayload = {};
+  const profilePayload: Record<string, unknown> = {};
+  const brandingPayload: Record<string, unknown> = {};
+
+  if (updates.profileDetails) {
+    Object.assign(profilePayload, updates.profileDetails);
+  }
+
+  if (updates.description !== undefined && profilePayload.mission === undefined) {
+    profilePayload.mission = updates.description;
+  }
+
+  if (updates.notes !== undefined) {
+    profilePayload.metadata = {
+      ...(profilePayload.metadata as Record<string, unknown> | undefined),
+      notes: updates.notes,
+    };
+  }
+
+  if (updates.aiContext) {
+    profilePayload.aiContext = updates.aiContext;
+  }
+
+  if (updates.metadata) {
+    profilePayload.metadata = {
+      ...(profilePayload.metadata as Record<string, unknown> | undefined),
+      ...updates.metadata,
+    };
+  }
+
+  if (updates.branding) {
+    Object.assign(brandingPayload, updates.branding);
+  }
+
+  if (updates.logo !== undefined && brandingPayload.logoUrl === undefined) {
+    brandingPayload.logoUrl = updates.logo;
+  }
+
+  if (Object.keys(profilePayload).length > 0) {
+    payload.profile = profilePayload as OrgProfileUpdatePayload['profile'];
+  }
+
+  if (Object.keys(brandingPayload).length > 0) {
+    payload.branding = brandingPayload as OrgProfileUpdatePayload['branding'];
+  }
+
+  return payload;
+};
+
 // User Profile CRUD operations
 export const listUserProfiles = async (filter?: { organizationId?: string; search?: string }): Promise<UserProfile[]> => {
   let profiles = readUserProfiles();
@@ -290,79 +461,76 @@ export const deleteUserProfile = async (id: string): Promise<boolean> => {
   return true;
 };
 
-// Organization Profile CRUD operations
+// Organization Profile CRUD operations (Supabase-backed)
 export const listOrganizationProfiles = async (filter?: { search?: string; status?: string }): Promise<OrganizationProfile[]> => {
-  let profiles = readOrgProfiles();
-  
-  if (filter?.status) {
-    profiles = profiles.filter(p => p.status === filter.status);
+  const legacy = readOrgProfiles();
+  try {
+    const bundles = await listOrgProfilesApi(filter);
+    const mapped = bundles.map((bundle) => mapBundleToOrganizationProfile(bundle, legacy));
+    writeOrgProfiles(mapped);
+    return mapped;
+  } catch (error) {
+    console.warn('[ProfileService] Falling back to cached organization profiles:', error);
+    return legacy;
   }
-  
-  if (filter?.search) {
-    const searchTerm = filter.search.toLowerCase();
-    profiles = profiles.filter(p => 
-      p.name.toLowerCase().includes(searchTerm) ||
-      p.type.toLowerCase().includes(searchTerm) ||
-      p.contactPerson.toLowerCase().includes(searchTerm) ||
-      p.contactEmail?.toLowerCase().includes(searchTerm)
-    );
-  }
-  
-  return profiles.sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime());
 };
 
 export const getOrganizationProfile = async (id: string): Promise<OrganizationProfile | null> => {
-  const profiles = readOrgProfiles();
-  return profiles.find(p => p.id === id) || null;
-};
-
-export const getOrganizationProfileByOrgId = async (orgId: string): Promise<OrganizationProfile | null> => {
-  const profiles = readOrgProfiles();
-  return profiles.find(p => p.orgId === orgId) || null;
-};
-
-export const createOrganizationProfile = async (profile: Omit<OrganizationProfile, 'id' | 'createdAt' | 'updatedAt'>): Promise<OrganizationProfile> => {
-  const profiles = readOrgProfiles();
-  const newProfile: OrganizationProfile = {
-    ...profile,
-    id: `org-profile-${Date.now()}`,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  };
-  
-  profiles.push(newProfile);
-  writeOrgProfiles(profiles);
-  return newProfile;
-};
-
-export const updateOrganizationProfile = async (id: string, updates: Partial<OrganizationProfile>): Promise<OrganizationProfile> => {
-  const profiles = readOrgProfiles();
-  const index = profiles.findIndex(p => p.id === id);
-  
-  if (index === -1) {
-    throw new Error('Organization profile not found');
+  const legacy = readOrgProfiles();
+  try {
+    const bundle = await getOrgProfileApi(id);
+    const mapped = mapBundleToOrganizationProfile(bundle, legacy);
+    upsertLegacyOrgProfile(mapped, legacy);
+    return mapped;
+  } catch (error) {
+    console.warn(`[ProfileService] Falling back to cached organization profile ${id}:`, error);
+    return legacy.find(p => p.id === id || p.orgId === id) || null;
   }
-  
-  profiles[index] = {
-    ...profiles[index],
-    ...updates,
-    updatedAt: new Date().toISOString()
-  };
-  
-  writeOrgProfiles(profiles);
-  return profiles[index];
+};
+
+export const getOrganizationProfileByOrgId = async (orgId: string): Promise<OrganizationProfile | null> =>
+  getOrganizationProfile(orgId);
+
+export const getOrganizationProfileContext = async (orgId: string): Promise<OrgProfileContext> =>
+  getOrgProfileContextApi(orgId);
+
+export const createOrganizationProfile = async (
+  profile: Omit<OrganizationProfile, 'id' | 'createdAt' | 'updatedAt'>,
+): Promise<OrganizationProfile> => {
+  const targetOrgId = profile.orgId;
+  if (!targetOrgId) {
+    throw new Error('orgId is required to create an organization profile');
+  }
+  return updateOrganizationProfile(targetOrgId, profile);
+};
+
+export const updateOrganizationProfile = async (
+  id: string,
+  updates: Partial<OrganizationProfile>,
+): Promise<OrganizationProfile> => {
+  const payload = buildOrgProfileUpdatePayload(updates);
+  if (!payload.profile && !payload.branding) {
+    const existing = await getOrganizationProfile(id);
+    if (!existing) throw new Error('Organization profile not found');
+    return existing;
+  }
+
+  const legacy = readOrgProfiles();
+  const bundle = await upsertOrgProfileApi(id, payload);
+  const mapped = mapBundleToOrganizationProfile(bundle, legacy);
+  upsertLegacyOrgProfile(mapped, legacy);
+  return mapped;
 };
 
 export const deleteOrganizationProfile = async (id: string): Promise<boolean> => {
-  const profiles = readOrgProfiles();
-  const index = profiles.findIndex(p => p.id === id);
-  
-  if (index === -1) {
+  try {
+    await removeOrgProfileApi(id);
+  } catch (error) {
+    console.error(`[ProfileService] Failed to delete organization profile ${id}:`, error);
     return false;
   }
-  
-  profiles.splice(index, 1);
-  writeOrgProfiles(profiles);
+
+  removeLegacyOrgProfile(id);
   return true;
 };
 
@@ -478,7 +646,10 @@ export const getProfileResources = async (profileType: 'user' | 'organization', 
     if (filter.category) resources = resources.filter(r => r.category === filter.category);
     if (filter.priority) resources = resources.filter(r => r.priority === filter.priority);
     if (filter.status) resources = resources.filter(r => r.status === filter.status);
-    if (filter.tag) resources = resources.filter(r => r.tags.includes(filter.tag));
+    if (filter.tag) {
+      const tag = filter.tag;
+      resources = resources.filter(r => r.tags.includes(tag));
+    }
     if (filter.createdBy) resources = resources.filter(r => r.createdBy === filter.createdBy);
     if (filter.dateFrom) resources = resources.filter(r => new Date(r.createdAt) >= new Date(filter.dateFrom!));
     if (filter.dateTo) resources = resources.filter(r => new Date(r.createdAt) <= new Date(filter.dateTo!));
@@ -500,6 +671,7 @@ export default {
   listOrganizationProfiles,
   getOrganizationProfile,
   getOrganizationProfileByOrgId,
+  getOrganizationProfileContext,
   createOrganizationProfile,
   updateOrganizationProfile,
   deleteOrganizationProfile,

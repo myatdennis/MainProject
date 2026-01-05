@@ -17,6 +17,50 @@ const supabaseHealthMetrics = {
   consecutiveErrors: 0,
 };
 
+const analyticsIngestMetrics = {
+  accepted: 0,
+  duplicates: 0,
+  failed: 0,
+  lastBatch: null,
+};
+
+const progressBatchMetrics = {
+  accepted: 0,
+  duplicates: 0,
+  failed: 0,
+  lastDurationMs: null,
+  lastBatchSize: 0,
+  lastAt: null,
+};
+
+export const recordAnalyticsIngest = ({ accepted = 0, duplicates = 0, failed = 0, orgIds = [] } = {}) => {
+  analyticsIngestMetrics.accepted += accepted;
+  analyticsIngestMetrics.duplicates += duplicates;
+  analyticsIngestMetrics.failed += failed;
+  analyticsIngestMetrics.lastBatch = {
+    accepted,
+    duplicates,
+    failed,
+    orgIds,
+    at: new Date().toISOString(),
+  };
+};
+
+export const recordProgressBatch = ({
+  accepted = 0,
+  duplicates = 0,
+  failed = 0,
+  durationMs = null,
+  batchSize = 0,
+} = {}) => {
+  progressBatchMetrics.accepted += accepted;
+  progressBatchMetrics.duplicates += duplicates;
+  progressBatchMetrics.failed += failed;
+  progressBatchMetrics.lastDurationMs = typeof durationMs === 'number' ? durationMs : progressBatchMetrics.lastDurationMs;
+  progressBatchMetrics.lastBatchSize = batchSize;
+  progressBatchMetrics.lastAt = new Date().toISOString();
+};
+
 const updateProgressBucket = (bucket, source, durationMs, status, meta = {}) => {
   const totalBefore = bucket.success + bucket.error;
   const nextCount = totalBefore + 1;
@@ -67,5 +111,7 @@ export const getMetricsSnapshot = (extras = {}) => ({
   courseProgress: JSON.parse(JSON.stringify(courseProgressMetrics)),
   lessonProgress: JSON.parse(JSON.stringify(lessonProgressMetrics)),
   supabase: { ...supabaseHealthMetrics },
+  analyticsIngest: { ...analyticsIngestMetrics },
+  progressBatch: { ...progressBatchMetrics },
   ...extras,
 });

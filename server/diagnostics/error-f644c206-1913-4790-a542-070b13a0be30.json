@@ -1,0 +1,30 @@
+{
+  "timestamp": "2026-01-04T23:34:30.340Z",
+  "requestId": "f644c206-1913-4790-a542-070b13a0be30",
+  "method": "GET",
+  "path": "/api/learner/progress",
+  "headers": {
+    "host": "localhost:8888",
+    "connection": "close",
+    "sec-ch-ua-platform": "\"macOS\"",
+    "x-user-role": "admin",
+    "authorization": "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjBlODBjMTYyLTA1NDYtNDQ1ZS1hOTY3LWZkM2FhOWM1ZjQ2MSIsInVzZXJJZCI6IjBlODBjMTYyLTA1NDYtNDQ1ZS1hOTY3LWZkM2FhOWM1ZjQ2MSIsImVtYWlsIjoibXlhQHRoZS1odWRkbGUuY28iLCJyb2xlIjoiYWRtaW4iLCJvcmdhbml6YXRpb25JZCI6bnVsbCwiaWF0IjoxNzY3NTY5NjU2LCJleHAiOjE3Njc1NzA1NTYsImF1ZCI6Imxtcy11c2VycyIsImlzcyI6Imxtcy1wbGF0Zm9ybSJ9.p4iKq8ZDUd_KiJVqeB5-_GyBaCazHCM6H6Pa_tOLam4",
+    "x-user-id": "0e80c162-0546-445e-a967-fd3aa9c5f461",
+    "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
+    "sec-ch-ua": "\"Google Chrome\";v=\"143\", \"Chromium\";v=\"143\", \"Not A(Brand\";v=\"24\"",
+    "sec-ch-ua-mobile": "?0",
+    "accept": "*/*",
+    "sec-fetch-site": "same-origin",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-dest": "empty",
+    "referer": "http://localhost:5174/lms/courses",
+    "accept-encoding": "gzip, deflate, br, zstd",
+    "accept-language": "en-US,en;q=0.9",
+    "cookie": "refresh_token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiIwMTQ4YTVjZi1lMDExLTRlNGItYTkzYi00NzU0ZGRiYzc0NzkiLCJlbWFpbCI6Im15YUB0aGUtaHVkZGxlLmNvIiwicm9sZSI6InVzZXIiLCJpYXQiOjE3NjczNjcxOTQsImV4cCI6MTc2Nzk3MTk5NCwiYXVkIjoibG1zLXVzZXJzIiwiaXNzIjoibG1zLXBsYXRmb3JtIn0._LjK6hmFo8vnnCle_wQXfDjeaIUqhlJ2ms5fGtjBDe4; csrf_token=cEmNHdALevjgSRBDdfHSREAOcYm9ZjC-gZLyP1JmjHE"
+  },
+  "body": {},
+  "error": {
+    "message": "column user_lesson_progress.progress does not exist",
+    "stack": null
+  }
+}

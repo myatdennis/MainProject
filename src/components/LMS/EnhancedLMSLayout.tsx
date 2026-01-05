@@ -25,7 +25,7 @@ interface EnhancedLMSLayoutProps {
 }
 
 const EnhancedLMSLayout: React.FC<EnhancedLMSLayoutProps> = ({ children }) => {
-  const { logout, isAuthenticated, user } = useAuth();
+  const { logout, isAuthenticated, user, authInitializing } = useAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
@@ -276,8 +276,7 @@ const EnhancedLMSLayout: React.FC<EnhancedLMSLayoutProps> = ({ children }) => {
 
                   {/* Real-time Notifications */}
                   <RealtimeNotifications 
-                    userId={user?.id || 'demo-user'}
-                    enabled={true}
+                    enabled={!authInitializing && Boolean(isAuthenticated.lms)}
                   />
 
                   {/* User Profile Menu */}

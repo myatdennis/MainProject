@@ -20,6 +20,7 @@ import AdminDocuments from './pages/Admin/AdminDocuments';
 import AdminPerformanceDashboard from './pages/Admin/AdminPerformanceDashboard';
 import AdminSettings from './pages/Admin/AdminSettings';
 import AdminQueueMonitor from './pages/Admin/AdminQueueMonitor';
+import AdminLeadershipInsights from './pages/Admin/AdminLeadershipInsights';
 import AdminLayout from './components/Admin/AdminLayout';
 // (removed duplicate import)
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
@@ -183,6 +184,7 @@ function App() {
                   <Route path="organizations" element={<AdminOrganizations />} />
                   <Route path="organizations/new" element={<AdminOrganizationCreate />} />
                   <Route path="organizations/:organizationId" element={<AdminOrganizationProfile />} />
+                  <Route path="leadership" element={<AdminLeadershipInsights />} />
                   <Route path="users" element={<AdminUsers />} />
                   <Route path="users/:userId" element={<AdminUserProfile />} />
                   <Route path="documents" element={<AdminDocuments />} />

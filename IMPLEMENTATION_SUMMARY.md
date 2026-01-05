@@ -13,6 +13,17 @@ Successfully implemented **5 out of 10** top priority recommendations from the e
 
 ---
 
+## 🧠 **2026 Leadership AI Insights (Jan 4, 2026)**
+
+*New backend + UI layer for org-level leadership guidance.*
+
+- **Supabase schema**: `organization_leadership_recommendations` table and `view_org_leadership_health` now surface aggregated completion, survey, assignment, and drop-off signals per organization.
+- **Express API**: `/api/admin/analytics/leadership` exposes health snapshots, CRUD for recommendations, and an AI/heuristic generator that deduplicates suggestions and stores provenance + tags.
+- **Admin Portal UI**: New `Leadership AI` page (sidebar link) shows key metrics, AI-generated actions, and a leaderboard with refresh + status controls so admins can mark recommendations as `in_progress`/`resolved` with notes.
+- **Validation**: `npm run typecheck` + `npm run lint` (warnings unchanged from legacy imports).
+
+---
+
 ## ✅ **Completed Implementations**
 
 ### **1. Real-Time Data Sync System** 

@@ -72,6 +72,98 @@ export const lessonReorderSchema = z.object({
   lessons: z.array(reorderItemSchema).min(1),
 });
 
+const analyticsEventCoreSchema = z.object({
+  clientEventId: z.string().min(1).optional(),
+  eventName: z.string().min(1),
+  eventVersion: z.string().min(1).optional(),
+  userId: z.string().min(1).optional(),
+  orgId: z.string().min(1).optional(),
+  courseId: z.string().min(1).optional(),
+  lessonId: z.string().min(1).optional(),
+  properties: z.record(z.any()).default({}),
+  context: z.record(z.any()).default({}),
+  occurredAt: z.union([z.date(), z.string(), z.number()]).optional(),
+});
+
+export const analyticsEventSchema = analyticsEventCoreSchema.superRefine((value, ctx) => {
+  if (!value.clientEventId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'clientEventId is required',
+      path: ['clientEventId'],
+    });
+  }
+});
+
+export const analyticsBatchSchema = z.object({
+  events: z.array(analyticsEventSchema).min(1).max(50),
+});
+
+export const adminMessageSchema = z
+  .object({
+    recipientUserId: z.string().min(1).optional(),
+    recipientOrgId: z.string().min(1).optional(),
+    subject: z.string().min(1),
+    body: z.string().min(1),
+    metadata: z.record(z.any()).optional().default({}),
+  })
+  .superRefine((value, ctx) => {
+    if (!value.recipientUserId && !value.recipientOrgId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['recipientUserId'],
+        message: 'recipientUserId or recipientOrgId is required',
+      });
+    }
+  });
+
+export const notificationBatchSchema = z
+  .object({
+    type: z.string().min(1),
+    title: z.string().min(1).optional(),
+    body: z.string().min(1).optional(),
+    payload: z.record(z.any()).optional().default({}),
+    userIds: z.array(z.string().min(1)).optional().default([]),
+    orgIds: z.array(z.string().min(1)).optional().default([]),
+  })
+  .superRefine((value, ctx) => {
+    if ((value.userIds?.length ?? 0) === 0 && (value.orgIds?.length ?? 0) === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['userIds'],
+        message: 'Provide at least one userId or orgId',
+      });
+    }
+  });
+
+const progressEventCoreSchema = z.object({
+  clientEventId: z.string().min(1),
+  userId: z.string().min(1),
+  courseId: z.string().min(1).optional(),
+  lessonId: z.string().min(1).optional(),
+  orgId: z.string().min(1).nullable().optional(),
+  percent: z.number().min(0).max(100).nullable().optional(),
+  timeSpentSeconds: z.number().int().nonnegative().nullable().optional(),
+  resumeAtSeconds: z.number().int().nonnegative().nullable().optional(),
+  status: z.string().min(1).optional(),
+  eventType: z.string().min(1).optional(),
+  occurredAt: z.union([z.date(), z.string(), z.number()]),
+});
+
+export const progressEventSchema = progressEventCoreSchema.superRefine((value, ctx) => {
+  if (!value.courseId && !value.lessonId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'courseId or lessonId is required',
+      path: ['courseId'],
+    });
+  }
+});
+
+export const progressBatchSchema = z.object({
+  events: z.array(progressEventCoreSchema).min(1).max(100),
+});
+
 export function pickId(obj, keyA, keyB) {
   return obj?.[keyA] ?? obj?.[keyB] ?? null;
 }

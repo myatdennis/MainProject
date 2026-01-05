@@ -48,6 +48,43 @@ export interface UserProfile {
   updatedAt: string;
 }
 
+export interface OrganizationProfileDetails {
+  mission?: string | null;
+  vision?: string | null;
+  coreValues?: any[];
+  deiPriorities?: any[];
+  toneGuidelines?: string | null;
+  accessibilityCommitments?: string | null;
+  preferredLanguages?: string[];
+  audienceSegments?: any[];
+  aiContext?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
+  lastAiRefreshAt?: string | null;
+}
+
+export interface OrganizationBrandingProfile {
+  logoUrl?: string | null;
+  primaryColor?: string | null;
+  secondaryColor?: string | null;
+  accentColor?: string | null;
+  typography?: Record<string, unknown>;
+  media?: any[];
+}
+
+export interface OrganizationContactProfile {
+  id: string;
+  orgId: string;
+  name: string;
+  email: string;
+  role?: string | null;
+  type?: string | null;
+  phone?: string | null;
+  isPrimary: boolean;
+  notes?: string | null;
+  createdAt?: string | null;
+  updatedAt?: string | null;
+}
+
 export interface OrganizationProfile {
   id: string;
   orgId?: string; // reference to org from orgService
@@ -78,6 +115,11 @@ export interface OrganizationProfile {
   cohorts: string[];
   modules: Record<string, number>;
   notes?: string;
+  profileDetails?: OrganizationProfileDetails;
+  branding?: OrganizationBrandingProfile;
+  contacts?: OrganizationContactProfile[];
+  aiContext?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
   resources: BaseResource[];
   createdAt: string;
   updatedAt: string;

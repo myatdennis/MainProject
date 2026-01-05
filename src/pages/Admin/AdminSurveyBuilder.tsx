@@ -1,4 +1,4 @@
-import React, { useState, useEffect, lazy } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, lazy } from 'react';
 import { useParams, useSearchParams, Link } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -19,7 +19,9 @@ import {
   Target,
   Zap,
   Brain,
-  Building2
+  Building2,
+  RefreshCcw,
+  Loader2,
 } from 'lucide-react';
 
 // Lazy load heavy components
@@ -28,7 +30,105 @@ const SurveySettingsModal = lazy(() => import('../../components/Survey/SurveySet
 import { surveyTemplates, questionTypes, defaultBranding, aiGeneratedQuestions, censusDemographicOptions } from '../../data/surveyTemplates';
 import SurveyQueueStatus from '../../components/Survey/SurveyQueueStatus';
 import { getSurveyById, queueSaveSurvey } from '../../dal/surveys';
+import { listOrganizationProfiles, getOrganizationProfileContext } from '../../dal/profile';
+import type { OrganizationProfile, OrgProfileContext } from '../../dal/profile';
 import type { Survey, SurveyQuestion, SurveySection, AnonymityMode } from '../../types/survey';
+
+type AIQuestionTemplate = Omit<SurveyQuestion, 'id' | 'order' | 'required'> & {
+  category?: string;
+};
+
+const truncateText = (value?: string | null, max = 180) => {
+  if (!value) return '';
+  return value.length > max ? `${value.slice(0, max).trim()}…` : value;
+};
+
+const ensureTextList = (input?: string[] | null, fallback: string[] = []) => {
+  const list = Array.isArray(input) ? input.filter((entry) => typeof entry === 'string' && entry.trim().length) : [];
+  return list.length ? list : fallback;
+};
+
+const buildContextualQuestionTemplates = (orgContext: OrgProfileContext): AIQuestionTemplate[] => {
+  const orgName = orgContext.org?.name ?? 'our organization';
+  const missionSnippet = truncateText(orgContext.context?.mission ?? orgContext.context?.summary ?? '', 160);
+  const tone = orgContext.context?.toneGuidelines ?? 'inclusive and supportive';
+  const audience = orgContext.context?.audienceSegments?.[0] ?? 'your team';
+  const languageList = ensureTextList(orgContext.context?.preferredLanguages, []);
+  const coreValues = ensureTextList(orgContext.context?.coreValues, [
+    'Accountability',
+    'Courage',
+    'Belonging',
+    'Transparency',
+  ]);
+  const deiPriorities = ensureTextList(orgContext.context?.deiPriorities, [
+    'Removing bias in talent decisions',
+    'Expanding leadership representation',
+    'Investing in accessibility supports',
+    'Deepening community partnerships',
+  ]);
+
+  return [
+    {
+      type: 'likert-scale',
+      title: missionSnippet
+        ? `I see ${orgName}'s mission of "${missionSnippet}" in my day-to-day experience`
+        : `I see ${orgName}'s mission reflected in my day-to-day experience`,
+      description: `Measures alignment with ${orgName}'s stated purpose`,
+      scale: {
+        min: 1,
+        max: 5,
+        minLabel: 'Strongly Disagree',
+        maxLabel: 'Strongly Agree',
+        midLabel: 'Neutral',
+      },
+      category: 'Mission Alignment',
+    },
+    {
+      type: 'multiple-choice',
+      title: `Which investment would most advance ${orgName}'s equity priorities?`,
+      description: `Tailors options to ${orgName}'s current DEI focus`,
+      options: deiPriorities.slice(0, 5),
+      allowMultiple: false,
+      allowOther: true,
+      category: 'DEI Focus',
+    },
+    {
+      type: 'ranking',
+      title: `Rank these values by how consistently you experience them at ${orgName}`,
+      description: 'Connects lived experience to stated values',
+      rankingItems: coreValues.slice(0, 5),
+      maxRankings: Math.min(5, Math.max(coreValues.length, 4)),
+      category: 'Values in Action',
+    },
+    {
+      type: 'open-ended',
+      title: `In what ways could our communications feel more ${tone.toLowerCase()} for ${audience}?`,
+      description: 'Captures qualitative feedback tied to tone guidance',
+      validation: {
+        minLength: 40,
+        maxLength: 400,
+      },
+      category: 'Communication Tone',
+    },
+    {
+      type: 'multiple-choice',
+      title: `Which language support would help you engage more fully with ${orgName}'s programs?`,
+      description: 'Incorporates preferred languages and accessibility commitments',
+      options:
+        languageList.length > 0
+          ? languageList.map((lang) => `More resources in ${lang}`)
+          : [
+              'More resources in Spanish',
+              'Simplified English summaries',
+              'Live interpretation support',
+              'Captioning/transcripts for videos',
+            ],
+      allowMultiple: true,
+      allowOther: true,
+      category: 'Accessibility',
+    },
+  ];
+};
 
 const AdminSurveyBuilder = () => {
   const { surveyId } = useParams();
@@ -46,17 +146,43 @@ const AdminSurveyBuilder = () => {
   const [lastSavedAt, setLastSavedAt] = useState<string>('');
   const saveDebounceRef = React.useRef<number | null>(null);
   const initialLoadRef = React.useRef(true);
+  const [orgProfiles, setOrgProfiles] = useState<OrganizationProfile[]>([]);
+  const [orgProfilesLoading, setOrgProfilesLoading] = useState(true);
+  const [orgProfilesError, setOrgProfilesError] = useState<string | null>(null);
+  const [selectedOrgId, setSelectedOrgId] = useState<string>('');
+  const [orgContext, setOrgContext] = useState<OrgProfileContext | null>(null);
+  const [orgContextLoading, setOrgContextLoading] = useState(false);
+  const [orgContextError, setOrgContextError] = useState<string | null>(null);
 
-  // Organizations data (in a real app, this would come from an API)
-  const organizations = [
-    { id: '1', name: 'Pacific Coast University', type: 'University', learners: 45 },
-    { id: '2', name: 'Mountain View High School', type: 'K-12 Education', learners: 23 },
-    { id: '3', name: 'Community Impact Network', type: 'Nonprofit', learners: 28 },
-    { id: '4', name: 'Regional Fire Department', type: 'Government', learners: 67 },
-    { id: '5', name: 'TechForward Solutions', type: 'Corporate', learners: 34 },
-    { id: '6', name: 'Regional Medical Center', type: 'Healthcare', learners: 89 },
-    { id: '7', name: 'Unity Community Church', type: 'Religious', learners: 15 }
-  ];
+  const selectedOrg = useMemo(() => orgProfiles.find((org) => org.id === selectedOrgId) ?? null, [orgProfiles, selectedOrgId]);
+  const aiQuestionTemplates = useMemo<AIQuestionTemplate[]>(
+    () => (orgContext ? buildContextualQuestionTemplates(orgContext) : (aiGeneratedQuestions as AIQuestionTemplate[])),
+    [orgContext],
+  );
+  const assignmentModalOrganizations = useMemo(
+    () =>
+      orgProfiles.map((org) => ({
+        id: org.id,
+        name: org.name,
+        type: org.type ?? 'Organization',
+        learners: org.metrics?.totalLearners ?? org.metrics?.activeLearners ?? 0,
+      })),
+    [orgProfiles],
+  );
+  const aiSuggestionsDisabled = !activeSection || !selectedOrg || orgContextLoading || !orgContext;
+  const aiSuggestionHelperText = useMemo(() => {
+    if (!selectedOrg) {
+      return 'Select an organization so AI can match their mission, tone, and learner needs.';
+    }
+    if (orgContextLoading) {
+      return `Pulling ${selectedOrg.name}'s profile details...`;
+    }
+    if (!orgContext) {
+      return `Context for ${selectedOrg.name} is offline. Try refreshing above to continue.`;
+    }
+    const sourceLabel = orgContext.context?.source === 'cached' ? 'cached profile' : 'live profile';
+    return `Grounds prompts in ${selectedOrg.name}'s mission, tone, and learner profile (${sourceLabel}).`;
+  }, [selectedOrg, orgContext, orgContextLoading]);
 
   useEffect(() => {
     if (surveyId && surveyId !== 'new') {
@@ -70,6 +196,89 @@ const AdminSurveyBuilder = () => {
       createBlankSurvey();
     }
   }, [surveyId, templateId]);
+
+  useEffect(() => {
+    let isMounted = true;
+    (async () => {
+      try {
+        setOrgProfilesLoading(true);
+        setOrgProfilesError(null);
+        const profiles = await listOrganizationProfiles();
+        if (!isMounted) return;
+        setOrgProfiles(profiles);
+      } catch (error) {
+        if (!isMounted) return;
+        console.error('Failed to load organization profiles:', error);
+        setOrgProfilesError('Unable to load organizations');
+      } finally {
+        if (isMounted) {
+          setOrgProfilesLoading(false);
+        }
+      }
+    })();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (selectedOrgId) return;
+    const assignedOrg = survey?.assignedTo?.organizationIds?.[0];
+    if (assignedOrg) {
+      setSelectedOrgId(assignedOrg);
+      return;
+    }
+    if (orgProfiles.length > 0) {
+      setSelectedOrgId(orgProfiles[0].id);
+    }
+  }, [survey, orgProfiles, selectedOrgId]);
+
+  const fetchOrgContext = useCallback(async (orgId: string) => {
+    if (!orgId) {
+      setOrgContext(null);
+      return;
+    }
+    try {
+      setOrgContextLoading(true);
+      setOrgContextError(null);
+      const payload = await getOrganizationProfileContext(orgId);
+      setOrgContext(payload);
+    } catch (error) {
+      console.error('Failed to load organization context:', error);
+      setOrgContextError('Unable to load organization context');
+      setOrgContext(null);
+    } finally {
+      setOrgContextLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!selectedOrgId) return;
+    fetchOrgContext(selectedOrgId);
+  }, [selectedOrgId, fetchOrgContext]);
+
+  const handleOrgChange = (orgId: string) => {
+    setSelectedOrgId(orgId);
+    setSurvey((prev) => {
+      if (!prev) return prev;
+      const assignedTo = prev.assignedTo ?? { organizationIds: [], userIds: [], cohortIds: [] };
+      const nextAssigned = {
+        ...assignedTo,
+        organizationIds: [orgId],
+      };
+      return {
+        ...prev,
+        assignedTo: nextAssigned,
+        updatedAt: new Date().toISOString(),
+      };
+    });
+  };
+
+  const refreshOrgContext = () => {
+    if (selectedOrgId) {
+      fetchOrgContext(selectedOrgId);
+    }
+  };
 
   const loadSurvey = (id: string) => {
     // Try local storage first
@@ -381,25 +590,31 @@ const AdminSurveyBuilder = () => {
   };
 
   const addAIQuestions = () => {
-    if (!survey || !activeSection) return;
-    
-    // Add a selection of AI-generated questions to the active section
-    const selectedQuestions = aiGeneratedQuestions.slice(0, 3).map((template, index) => ({
-      ...template,
-      id: `ai-question-${Date.now()}-${index}`,
-      required: true,
-      order: survey.sections.find(s => s.id === activeSection)!.questions.length + index + 1
-    }) as SurveyQuestion);
+    if (!survey || !activeSection || !selectedOrg || !orgContext || orgContextLoading) return;
+    const section = survey.sections.find((s) => s.id === activeSection);
+    if (!section) return;
 
-    setSurvey(prev => prev ? {
-      ...prev,
-      sections: prev.sections.map(s => 
-        s.id === activeSection 
-          ? { ...s, questions: [...s.questions, ...selectedQuestions] }
-          : s
-      ),
-      updatedAt: new Date().toISOString()
-    } : null);
+    const selectedQuestions = aiQuestionTemplates.slice(0, 3).map((template, index) => {
+      const { category: _category, ...questionTemplate } = template;
+      return {
+        ...questionTemplate,
+        id: `ai-question-${Date.now()}-${index}`,
+        required: true,
+        order: section.questions.length + index + 1,
+      } as SurveyQuestion;
+    });
+
+    setSurvey((prev) =>
+      prev
+        ? {
+            ...prev,
+            sections: prev.sections.map((s) =>
+              s.id === activeSection ? { ...s, questions: [...s.questions, ...selectedQuestions] } : s,
+            ),
+            updatedAt: new Date().toISOString(),
+          }
+        : null,
+    );
   };
 
 
@@ -1079,6 +1294,121 @@ const AdminSurveyBuilder = () => {
         </div>
       </div>
 
+      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
+        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+          <div>
+            <h2 className="text-xl font-semibold text-gray-900">Organization Context for AI</h2>
+            <p className="text-gray-600 text-sm mt-1">
+              We personalize AI question suggestions using the selected organization's mission, tone, languages, and DEI focus.
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            {orgContext?.context?.updatedAt && (
+              <div className="text-xs text-gray-500">
+                Last updated {new Date(orgContext.context.updatedAt).toLocaleString()}
+              </div>
+            )}
+            <button
+              onClick={refreshOrgContext}
+              disabled={!selectedOrgId || orgContextLoading}
+              className="inline-flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
+            >
+              {orgContextLoading ? <Loader2 className="h-4 w-4 animate-spin text-orange-500" /> : <RefreshCcw className="h-4 w-4 text-gray-600" />}
+              <span>{orgContextLoading ? 'Refreshing...' : 'Refresh Context'}</span>
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Target Organization</label>
+            {orgProfilesLoading ? (
+              <div className="h-11 flex items-center text-sm text-gray-500">
+                <Loader2 className="h-4 w-4 animate-spin mr-2 text-orange-500" /> Loading organizations...
+              </div>
+            ) : (
+              <select
+                value={selectedOrgId}
+                onChange={(e) => handleOrgChange(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                disabled={orgProfiles.length === 0}
+              >
+                <option value="">Select an organization</option>
+                {orgProfiles.map((org) => (
+                  <option key={org.id} value={org.id}>
+                    {org.name}
+                  </option>
+                ))}
+              </select>
+            )}
+            {orgProfilesError && <p className="text-sm text-red-600 mt-2">{orgProfilesError}</p>}
+            {!orgProfilesLoading && orgProfiles.length === 0 && (
+              <p className="text-sm text-gray-500 mt-2">
+                No organizations yet. <Link to="/admin/organizations" className="text-orange-600 hover:text-orange-700 underline">Add one</Link> to unlock AI context.
+              </p>
+            )}
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">Context Status</label>
+            <div className="flex items-center gap-2 text-sm text-gray-700">
+              {orgContextLoading ? <Loader2 className="h-4 w-4 animate-spin text-orange-500" /> : <CheckCircle className={`h-4 w-4 ${orgContext ? 'text-green-500' : 'text-gray-400'}`} />}
+              <span>
+                {orgContextLoading && 'Refreshing context...'}
+                {!orgContextLoading && orgContext && `Ready (${orgContext.context.source === 'cached' ? 'Stored summary' : 'Live data'})`}
+                {!orgContextLoading && !orgContext && 'Context not available yet'}
+              </span>
+            </div>
+            {orgContextError && <p className="text-sm text-red-600 mt-2">{orgContextError}</p>}
+          </div>
+        </div>
+
+        {orgContext?.context?.summary && (
+          <p className="mt-4 text-sm text-gray-600 whitespace-pre-line border-l-2 border-orange-200 pl-4">
+            {orgContext.context.summary}
+          </p>
+        )}
+
+        {orgContext && (
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="p-4 border border-gray-200 rounded-lg bg-gray-50">
+              <p className="text-xs uppercase text-gray-500 mb-2">Mission & Vision</p>
+              <p className="text-sm text-gray-900">{orgContext.context.mission || 'No mission captured yet.'}</p>
+              {orgContext.context.vision && <p className="text-xs text-gray-600 mt-2">{orgContext.context.vision}</p>}
+            </div>
+            <div className="p-4 border border-gray-200 rounded-lg bg-gray-50">
+              <p className="text-xs uppercase text-gray-500 mb-2">DEI Priorities</p>
+              {orgContext.context.deiPriorities?.length ? (
+                <div className="flex flex-wrap gap-2">
+                  {orgContext.context.deiPriorities.slice(0, 4).map((priority) => (
+                    <span key={priority} className="px-2 py-1 bg-purple-100 text-purple-700 rounded-full text-xs font-medium">
+                      {priority}
+                    </span>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-gray-500">No priorities documented.</p>
+              )}
+              {orgContext.context.coreValues?.length ? (
+                <p className="text-xs text-gray-600 mt-3">
+                  Values: {orgContext.context.coreValues.slice(0, 3).join(', ')}
+                </p>
+              ) : null}
+            </div>
+            <div className="p-4 border border-gray-200 rounded-lg bg-gray-50">
+              <p className="text-xs uppercase text-gray-500 mb-2">Tone & Languages</p>
+              <p className="text-sm text-gray-900">{orgContext.context.toneGuidelines || 'Set tone guidance to help AI copy.'}</p>
+              <div className="flex flex-wrap gap-2 mt-3">
+                {(orgContext.context.preferredLanguages?.length ? orgContext.context.preferredLanguages : ['English']).slice(0, 4).map((lang) => (
+                  <span key={lang} className="px-2 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-medium">
+                    {lang}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
         {/* Question Types Palette */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
@@ -1109,15 +1439,55 @@ const AdminSurveyBuilder = () => {
           </div>
 
           <div className="mt-6 pt-6 border-t border-gray-200">
-            <h4 className="font-medium text-gray-900 mb-3">AI Suggestions</h4>
+            <h4 className="font-medium text-gray-900 mb-2">AI Suggestions</h4>
+            <p className="text-xs text-gray-600 mb-3">{aiSuggestionHelperText}</p>
+            {selectedOrg && orgContext && (
+              <div className="mb-4 rounded-lg border border-dashed border-purple-200 bg-purple-50/40 p-3 text-[11px] text-gray-700 space-y-2">
+
+                <div className="flex items-start justify-between gap-3">
+                  <span className="font-semibold text-gray-900">Mission</span>
+                  <span className="text-right text-gray-600">
+                    {truncateText(orgContext.context?.mission ?? orgContext.context?.summary ?? 'Mission not captured yet.', 110) ||
+                      'Mission not captured yet.'}
+                  </span>
+                </div>
+                <div className="flex items-start justify-between gap-3">
+                  <span className="font-semibold text-gray-900">Tone</span>
+                  <span className="text-right text-gray-600">
+                    {orgContext.context?.toneGuidelines ?? 'Set tone guidance in the profile to guide AI copy.'}
+                  </span>
+                </div>
+                <div className="flex items-start justify-between gap-3">
+                  <span className="font-semibold text-gray-900">Languages</span>
+                  <span className="text-right text-gray-600">
+                    {ensureTextList(orgContext.context?.preferredLanguages, ['English']).slice(0, 3).join(', ')}
+                  </span>
+                </div>
+              </div>
+            )}
+            {selectedOrg && !orgContextLoading && !orgContext && (
+              <p className="text-xs text-amber-600 mb-3">Context is missing for {selectedOrg.name}. Refresh above to sync.</p>
+            )}
             <div className="space-y-2">
-              <button 
+              <button
                 onClick={addAIQuestions}
-                disabled={!activeSection}
-                className="w-full text-left p-2 bg-purple-50 border border-purple-200 rounded-lg hover:bg-purple-100 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed">
-                <div className="flex items-center space-x-2">
-                  <Brain className="h-4 w-4 text-purple-500" />
-                  <span className="text-sm text-purple-800">Generate DEI Questions</span>
+                disabled={aiSuggestionsDisabled}
+                className="w-full text-left p-3 bg-purple-50 border border-purple-200 rounded-lg hover:bg-purple-100 transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                <div className="flex items-center space-x-3">
+                  <div className="bg-purple-100 p-2 rounded-lg">
+                    <Brain className="h-4 w-4 text-purple-600" />
+                  </div>
+                  <div className="flex flex-col">
+                    <span className="text-sm text-purple-900 font-medium">
+                      {selectedOrg ? `Generate ${selectedOrg.name} Questions` : 'Generate DEI Questions'}
+                    </span>
+                    <span className="text-[11px] text-purple-700">
+                      {orgContext?.context?.source === 'cached'
+                        ? 'Uses cached summary until refreshed'
+                        : 'Powered by the latest profile context'}
+                    </span>
+                  </div>
                 </div>
               </button>
               <button className="w-full text-left p-2 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors duration-200">
@@ -1127,6 +1497,17 @@ const AdminSurveyBuilder = () => {
                 </div>
               </button>
             </div>
+            {aiSuggestionsDisabled && (
+              <p className="mt-2 text-[11px] text-gray-500">
+                {selectedOrg
+                  ? orgContextLoading
+                    ? 'Hold tight—context is still syncing.'
+                    : !orgContext
+                      ? 'Refresh the context above to unlock tailored AI prompts.'
+                      : 'Select a section to drop the AI questions into.'
+                  : 'Choose an organization to unlock tailored AI prompts.'}
+              </p>
+            )}
           </div>
         </div>
 
@@ -1310,7 +1691,7 @@ const AdminSurveyBuilder = () => {
           <AssignmentModal
             isOpen={showAssignModal}
             onClose={() => setShowAssignModal(false)}
-            organizations={organizations}
+            organizations={assignmentModalOrganizations}
             selectedOrganizations={survey?.assignedTo?.organizationIds || []}
             onSave={async (organizationIds: any) => {
               if (!survey) return;
