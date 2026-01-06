@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import { Course } from '../types/courseTypes';
 import { slugify } from '../utils/courseNormalization';
+import { resolveApiUrl } from '../config/apiBase';
 
 const generateCourseId = () => {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -952,10 +953,11 @@ ${content.type === 'quiz' && 'questions' in content.content ? `\nQuestions: ${co
     (async () => {
       try {
         setAutosaveStatus('saving');
-        const res = await fetch(`/api/admin/courses/${encodeURIComponent(formData.id)}/publish`, {
+        const res = await fetch(resolveApiUrl(`/api/admin/courses/${encodeURIComponent(formData.id)}/publish`), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-user-role': 'admin' },
-          body: JSON.stringify(payload)
+          body: JSON.stringify(payload),
+          credentials: 'include',
         });
 
         if (!res.ok) {

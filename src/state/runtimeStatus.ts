@@ -1,4 +1,5 @@
 import { hasSupabaseConfig } from '../lib/supabaseClient';
+import { resolveApiUrl } from '../config/apiBase';
 
 export type RuntimeStatus = {
   supabaseConfigured: boolean;
@@ -98,7 +99,7 @@ const performRefresh = async (): Promise<RuntimeStatus> => {
   try {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 4000);
-    const response = await fetch('/api/health', {
+    const response = await fetch(resolveApiUrl('/api/health'), {
       method: 'GET',
       headers: { 'x-runtime-status': '1' },
       credentials: 'include',

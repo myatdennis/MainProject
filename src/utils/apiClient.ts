@@ -150,6 +150,10 @@ export const apiRequest = async <T = any>(path: string, options: ApiRequestOptio
     body,
   };
 
+  if (typeof requestInit.credentials === 'undefined') {
+    requestInit.credentials = 'include';
+  }
+
   const url = buildUrl(path);
 
   let response: Response;

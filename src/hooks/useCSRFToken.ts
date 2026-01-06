@@ -5,6 +5,7 @@
 
 import { useState, useEffect } from 'react';
 import axios from 'axios';
+import { resolveApiUrl } from '../config/apiBase';
 
 const CSRF_COOKIE_NAME = 'csrf_token';
 
@@ -31,7 +32,9 @@ export function useCSRFToken() {
         }
 
   // If not in cookie, fetch from server (server exposes '/api/auth/csrf')
-  const response = await axios.get('/api/auth/csrf');
+  const response = await axios.get(resolveApiUrl('/api/auth/csrf'), {
+    withCredentials: true,
+  });
         if (response.data.csrfToken) {
           setToken(response.data.csrfToken);
         }

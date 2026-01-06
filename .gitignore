@@ -27,3 +27,6 @@ dist-ssr
 
 # Ignore problematic JS file that blocks TS build
 src/components/CourseContentCreator.js
+
+# Local Netlify folder
+.netlify

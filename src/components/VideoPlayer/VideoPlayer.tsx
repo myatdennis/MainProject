@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { enqueueOfflineItem } from '../../dal/offlineQueue';
+import { resolveApiUrl } from '../../config/apiBase';
 
 type CaptionTrack = {
   src: string;
@@ -152,10 +153,11 @@ export default function VideoPlayer({ src, userId, lessonId, captions = [], clas
       };
 
       try {
-        await fetch('/api/analytics/events', {
+        await fetch(resolveApiUrl('/api/analytics/events'), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
+          body: JSON.stringify(payload),
+          credentials: 'include',
         });
       } catch (e) {
         // ignore network errors; offline queue handles elsewhere
@@ -184,10 +186,11 @@ export default function VideoPlayer({ src, userId, lessonId, captions = [], clas
           }
         } else {
           try {
-            const res = await fetch('/api/client/progress/lesson', {
+            const res = await fetch(resolveApiUrl('/api/client/progress/lesson'), {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(body),
+              credentials: 'include',
             });
             if (!res.ok) {
               // enqueue for retry

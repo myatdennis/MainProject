@@ -2,6 +2,7 @@ import React, { useEffect, useState, lazy, Suspense } from 'react'
 import { Users, TrendingUp, Activity as ActivityIcon, Clock, BarChart3, BookOpen, X } from 'lucide-react'
 import { getSupabase } from '../../lib/supabaseClient'
 import { useToast } from '../../context/ToastContext'
+import { resolveApiUrl } from '../../config/apiBase'
 const CompletionChart = lazy(() => import('../../components/Analytics/CompletionChart'));
 
 type Overview = {
@@ -64,7 +65,9 @@ const AnalyticsDashboard: React.FC = () => {
   const fetchData = async () => {
     setLoading(true)
     try {
-      const res = await fetch('/api/admin/analytics')
+      const res = await fetch(resolveApiUrl('/api/admin/analytics'), {
+        credentials: 'include',
+      })
       const json = await res.json()
   const nextCourses = Array.isArray(json.courses) ? json.courses : []
   setOverview(json.overview || {})
@@ -121,7 +124,7 @@ const AnalyticsDashboard: React.FC = () => {
 
   const exportCsv = async () => {
     const a = document.createElement('a')
-    a.href = '/api/admin/analytics/export'
+  a.href = resolveApiUrl('/api/admin/analytics/export')
     a.download = 'analytics.csv'
     document.body.appendChild(a)
     a.click()
@@ -132,7 +135,12 @@ const AnalyticsDashboard: React.FC = () => {
     try {
       setSummaryError(null)
       setSummaryPreview(null)
-      const res = await fetch('/api/admin/analytics/summary', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) })
+      const res = await fetch(resolveApiUrl('/api/admin/analytics/summary'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+        credentials: 'include',
+      })
       const json = await res.json()
       const preview = JSON.stringify(json.sample || json.ai || json.prompt, null, 2)
       setSummaryPreview(preview)

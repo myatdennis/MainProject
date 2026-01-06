@@ -8,14 +8,14 @@ import { ApiError as ApiClientError } from '../utils/apiClient';
 import buildAuthHeaders from '../utils/requestContext';
 import { setSessionMetadata, clearAuth, getRefreshToken, setAccessToken, setRefreshToken } from '../lib/secureStorage';
 import { getCSRFToken } from '../hooks/useCSRFToken';
-import { getApiBaseUrl, resolveApiUrl } from '../config/apiBase';
+import { getApiBaseUrl } from '../config/apiBase';
 
 // ============================================================================
 // API Client Configuration
 // ============================================================================
 
 const API_BASE_URL = getApiBaseUrl();
-const API_ROOT = resolveApiUrl('/api');
+const API_ROOT = API_BASE_URL;
 
 if (
   import.meta.env.DEV &&

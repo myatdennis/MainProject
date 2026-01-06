@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { resolveApiUrl } from '../config/apiBase';
 
 export interface ConnectivitySnapshot {
   isOnline: boolean;
@@ -53,8 +54,10 @@ export const useConnectivityCheck = ({ healthPath = '/api/health', intervalMs = 
       next.lastError = error instanceof Error ? error.message : 'Server unreachable';
     }
 
+    const targetHealthUrl = /^https?:/i.test(healthPath) ? healthPath : resolveApiUrl(healthPath);
+
     try {
-      const healthResponse = await fetch(healthPath, { method: 'GET', credentials: 'include' });
+      const healthResponse = await fetch(targetHealthUrl, { method: 'GET', credentials: 'include' });
       next.apiHealthy = healthResponse.ok;
       next.roundTripMs = Math.round(performance.now() - startedAt);
       if (!healthResponse.ok) {

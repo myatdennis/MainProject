@@ -29,6 +29,31 @@ VITE_API_BASE_URL=http://localhost:8888
 VITE_API_URL=http://localhost:8888/api
 ```
 
+### Backend base URL configuration
+
+The frontend now derives **all** HTTP and WebSocket calls from a single origin so production builds can talk to Railway without Netlify rewrites.
+
+- **Local dev (.env.local)** – leave `VITE_API_BASE_URL` unset to keep using the Vite proxy, or point it straight at your Express server:
+
+    ```env
+    # .env.local
+    VITE_API_BASE_URL=http://localhost:8888/api
+    VITE_WS_URL=ws://localhost:8888/ws
+    VITE_ENABLE_WS=true
+    ```
+
+    Restart `npm run dev` after changing these values.
+
+- **Netlify production env vars** – open *Site settings → Build & deploy → Environment* and set:
+
+    ```
+    VITE_API_BASE_URL=https://<your-railway-service>.up.railway.app/api
+    VITE_WS_URL=wss://<your-railway-service>.up.railway.app/ws   # optional; defaults to API base
+    VITE_ENABLE_WS=true                                        # only if Railway exposes /ws
+    ```
+
+    Netlify will inject those values at build time so the deployed SPA calls Railway directly (`https://the-huddle.co` will no longer attempt `/api/*`).
+
 After changing `.env` files fully stop and restart both the frontend (`npm run dev`) and backend (`npm run start:server:e2e` or `npm run start:server`).
 
 If you use the Vite dev server the UI will call `/api/*` and Vite will proxy to your backend (default `http://localhost:8888`).
