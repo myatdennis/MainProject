@@ -162,6 +162,7 @@ curl -X POST http://localhost:8888/api/auth/login \
 - CSRF double-submit cookies
 - Rate limiting (5 login attempts/15min)
 - Security headers (CSP, HSTS, X-Frame-Options)
+- Dev-bypass lockdown: demo-mode auto auth only works for localhost/127.0.0.1 (override via `DEV_FALLBACK_ALLOWED_HOSTS` for vetted sandboxes)
 
 ---
 

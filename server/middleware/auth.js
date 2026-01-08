@@ -66,7 +66,73 @@ export { normalizeEmail, PRIMARY_ADMIN_EMAIL, isCanonicalAdminEmail, resolveUser
 // Authentication Middleware
 // ============================================================================
 
-const allowDemoBypass = E2E_TEST_MODE || DEV_FALLBACK;
+const DEV_BYPASS_HOSTS = (process.env.DEV_FALLBACK_ALLOWED_HOSTS || 'localhost,127.0.0.1')
+  .split(',')
+  .map((value) => value.trim().toLowerCase())
+  .filter(Boolean);
+
+const matchesAllowedDevHost = (host) => {
+  if (!host) return false;
+  const normalized = String(host).trim().toLowerCase();
+  if (!normalized) return false;
+  return DEV_BYPASS_HOSTS.some(
+    (entry) =>
+      normalized === entry ||
+      normalized.endsWith(`.${entry}`) ||
+      normalized.startsWith(`${entry}:`) ||
+      normalized.includes(`${entry}:`) ||
+      normalized.includes(entry)
+  );
+};
+
+const isDevRequest = (req) => {
+  if (!req) return false;
+
+  const hostCandidates = [];
+  const forwardedHost = req.headers?.['x-forwarded-host'];
+  if (forwardedHost) {
+    forwardedHost.split(',').forEach((value) => hostCandidates.push(value));
+  }
+  if (req.headers?.host) {
+    hostCandidates.push(req.headers.host);
+  }
+  if (req.hostname) {
+    hostCandidates.push(req.hostname);
+  }
+
+  const originHeader = req.headers?.origin;
+  if (originHeader) {
+    try {
+      const parsedOrigin = new URL(originHeader);
+      if (parsedOrigin.host) {
+        hostCandidates.push(parsedOrigin.host);
+      }
+    } catch (_error) {
+      // Ignore malformed origin headers
+    }
+  }
+
+  if (hostCandidates.some((host) => matchesAllowedDevHost(host))) {
+    return true;
+  }
+
+  const ipCandidates = [req.ip, req.connection?.remoteAddress, req.socket?.remoteAddress].filter(Boolean);
+  if (ipCandidates.some((ip) => typeof ip === 'string' && (ip === '::1' || ip.startsWith('127.')))) {
+    return true;
+  }
+
+  return false;
+};
+
+const allowDemoBypassForRequest = (req) => {
+  if (E2E_TEST_MODE) {
+    return true;
+  }
+  if (!DEV_FALLBACK) {
+    return false;
+  }
+  return isDevRequest(req);
+};
 
 const cacheGet = (store, key) => {
   const hit = store.get(key);
@@ -208,7 +274,7 @@ async function buildAuthContext(req, { optional = false } = {}) {
     token = getAccessTokenFromRequest(req);
   }
 
-  if (!token && allowDemoBypass) {
+  if (!token && allowDemoBypassForRequest(req)) {
     const demoUser = {
       id: 'demo-admin',
       email: 'demo-admin@localhost',
