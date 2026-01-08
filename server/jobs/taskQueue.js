@@ -1,6 +1,8 @@
-import { Queue, Worker, QueueScheduler } from 'bullmq';
+import BullMQ from 'bullmq';
 import Redis from 'ioredis';
 import { logger } from '../lib/logger.js';
+
+const { Queue, Worker, QueueScheduler } = BullMQ;
 
 const REDIS_URL = process.env.REDIS_URL || process.env.JOBS_REDIS_URL || null;
 const DEFAULT_JOB_OPTIONS = {

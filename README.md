@@ -15,6 +15,21 @@ npm run build
 
 Visit http://localhost:5174
 
+### Backend API (Express on Railway)
+
+```bash
+# Build the SPA so static assets exist for the API to serve
+npm run build
+
+# Start the Express server (uses PORT env or defaults to 8787)
+npm run start:server
+
+# In a second terminal, verify the health endpoint
+curl http://localhost:8787/api/health
+```
+
+When running locally behind another port, set `PORT=5000 npm run start:server` and update `VITE_API_BASE_URL` to `http://localhost:5000/api`. The `/api/health` endpoint always responds with `{ ok: true, env: <NODE_ENV> }`, which is what Netlify uses to confirm the Railway proxy is healthy.
+
 Local development: API proxy note
 ---------------------------------
 

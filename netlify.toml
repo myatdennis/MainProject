@@ -51,19 +51,19 @@
 # API proxy: map API and WebSocket paths to external Railway backend.
 [[redirects]]
   from = "/api/*"
-  to = "https://mainproject-production-4e66.up.railway.app/api/:splat"
+  to = "https://thehuddleco.up.railway.app/api/:splat"
   status = 200
   force = true
 
 [[redirects]]
   from = "/ws"
-  to = "https://mainproject-production-4e66.up.railway.app/ws"
+  to = "https://thehuddleco.up.railway.app/ws"
   status = 200
   force = true
 
 [[redirects]]
   from = "/ws/*"
-  to = "https://mainproject-production-4e66.up.railway.app/ws/:splat"
+  to = "https://thehuddleco.up.railway.app/ws/:splat"
   status = 200
   force = true
 
@@ -77,5 +77,4 @@
   to = "/index.html"
   status = 200
   # Allow static assets (e.g., /assets/*.js) to be served directly; only fall back to SPA when no file exists.
-  force = false
 
