@@ -1,6 +1,7 @@
 export type Org = {
   id: string;
   name: string;
+  slug?: string;
   type: string;
   description?: string;
   logo?: string;
@@ -58,6 +59,8 @@ export type Org = {
   contractEnd?: string;
   createdAt?: string;
   updatedAt?: string;
+  timezone?: string;
+  onboardingStatus?: string;
   
   // Usage Statistics
   totalLearners: number;
@@ -97,6 +100,7 @@ export const mapOrgRecord = (record: any): Org => {
   return {
   id: record.id,
   name: record.name,
+  slug: fromRecord(record, 'slug') ?? undefined,
   type: record.type,
   description: fromRecord(record, 'description') ?? undefined,
   logo: fromRecord(record, 'logo') ?? undefined,
@@ -124,6 +128,8 @@ export const mapOrgRecord = (record: any): Org => {
   contractEnd: fromRecord(record, 'contract_end') ?? undefined,
   createdAt: fromRecord(record, 'created_at') ?? undefined,
   updatedAt: fromRecord(record, 'updated_at') ?? undefined,
+  timezone: fromRecord(record, 'timezone') ?? undefined,
+  onboardingStatus: fromRecord(record, 'onboarding_status') ?? undefined,
   totalLearners: fromRecord(record, 'total_learners') ?? 0,
   activeLearners: fromRecord(record, 'active_learners') ?? 0,
   completionRate: Number(fromRecord(record, 'completion_rate') ?? 0),
@@ -145,9 +151,59 @@ const mapMemberRecord = (record: any): OrgMember => ({
   updatedAt: record.updated_at ?? new Date().toISOString()
 });
 
-export const listOrgs = async (): Promise<Org[]> => {
-  const json = await apiRequest<{ data: any[] }>('/api/admin/organizations');
-  return (json.data || []).map(mapOrgRecord);
+export type OrgListParams = {
+  page?: number;
+  pageSize?: number;
+  search?: string;
+  status?: string[];
+  subscription?: string[];
+  includeProgress?: boolean;
+};
+
+export type OrgListResponse = {
+  data: Org[];
+  pagination: {
+    page: number;
+    pageSize: number;
+    total: number;
+    hasMore: boolean;
+  };
+  progress?: Record<string, any>;
+};
+
+const buildOrgQuery = (params?: OrgListParams) => {
+  if (!params) return '';
+  const query = new URLSearchParams();
+  if (params.page) query.set('page', String(params.page));
+  if (params.pageSize) query.set('pageSize', String(params.pageSize));
+  if (params.search) query.set('search', params.search.trim());
+  if (params.status?.length) query.set('status', params.status.join(','));
+  if (params.subscription?.length) query.set('subscription', params.subscription.join(','));
+  if (params.includeProgress) query.set('includeProgress', 'true');
+  const qs = query.toString();
+  return qs ? `?${qs}` : '';
+};
+
+export const listOrgPage = async (params?: OrgListParams): Promise<OrgListResponse> => {
+  const query = buildOrgQuery(params);
+  const json = await apiRequest<{ data: any[]; pagination?: any; progress?: Record<string, any> }>(
+    `/api/admin/organizations${query}`
+  );
+  return {
+    data: (json.data || []).map(mapOrgRecord),
+    pagination: {
+      page: json.pagination?.page ?? params?.page ?? 1,
+      pageSize: json.pagination?.pageSize ?? params?.pageSize ?? (json.data?.length ?? 0),
+      total: json.pagination?.total ?? json.data?.length ?? 0,
+      hasMore: Boolean(json.pagination?.hasMore),
+    },
+    progress: json.progress ?? {},
+  };
+};
+
+export const listOrgs = async (params?: OrgListParams): Promise<Org[]> => {
+  const response = await listOrgPage(params);
+  return response.data;
 };
 
 export const getOrg = async (id: string): Promise<Org | null> => {
@@ -253,6 +309,7 @@ export const removeOrgMember = async (orgId: string, membershipId: string): Prom
 };
 
 export default {
+  listOrgPage,
   listOrgs,
   getOrg,
   updateOrg,

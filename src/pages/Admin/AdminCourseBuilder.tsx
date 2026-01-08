@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
-import { DndProvider } from 'react-dnd/dist/core/DndProvider';
-import { HTML5Backend } from 'react-dnd-html5-backend';
+import { DndContext, PointerSensor, TouchSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
+import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { courseStore, generateId, calculateCourseDuration, countTotalLessons } from '../../store/courseStore';
 import { syncCourseToDatabase, CourseValidationError, loadCourseFromDatabase } from '../../dal/adminCourses';
@@ -49,9 +49,10 @@ import CoursePreviewDock from '../../components/preview/CoursePreviewDock';
 import AIContentAssistant from '../../components/AIContentAssistant';
 import MobileCourseToolbar from '../../components/Admin/MobileCourseToolbar';
 import MobileModuleNavigator from '../../components/Admin/MobileModuleNavigator';
+import SortableItem from '../../components/SortableItem';
 import useIsMobile from '../../hooks/useIsMobile';
 import useRuntimeStatus from '../../hooks/useRuntimeStatus';
-import DragDropItem from '../../components/DragDropItem';
+import useSwipeNavigation from '../../hooks/useSwipeNavigation';
 import VersionControl from '../../components/VersionControl';
 import { useToast } from '../../context/ToastContext';
 import type { CourseAssignment } from '../../types/assignment';
@@ -227,6 +228,7 @@ const AdminCourseBuilder = () => {
     : 'pending';
   const { showToast } = useToast();
   const [activeMobileModuleId, setActiveMobileModuleId] = useState<string | null>(null);
+  const [mobileFocusMode, setMobileFocusMode] = useState(true);
   const [statusBanner, setStatusBanner] = useState<BuilderBanner | null>(null);
   const [reloadNonce, setReloadNonce] = useState(0);
   const requestCourseReload = useCallback(() => {
@@ -244,7 +246,7 @@ const AdminCourseBuilder = () => {
   const modules = course.modules || [];
   const hasModules = modules.length > 0;
   const canDiscardChanges = hasPendingChanges || Boolean(lastPersistedRef.current);
-  const modulesToRender = isMobile && activeMobileModuleId
+  const modulesToRender = isMobile && mobileFocusMode && activeMobileModuleId
     ? modules.filter(module => module.id === activeMobileModuleId)
     : modules;
   const activeUploads = useMemo(() => {
@@ -263,6 +265,25 @@ const AdminCourseBuilder = () => {
         };
       });
   }, [course.modules, uploadingVideos, uploadProgress]);
+
+  const moduleSensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: isMobile ? { delay: 150, tolerance: 8 } : { distance: 6 },
+    }),
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 150, tolerance: 8 },
+    })
+  );
+
+  const lessonSensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: isMobile ? { delay: 120, tolerance: 6 } : { distance: 4 },
+    }),
+    useSensor(TouchSensor, {
+      activationConstraint: { delay: 120, tolerance: 6 },
+    })
+  );
+
 
   useEffect(() => {
     const moduleQ = searchParams.get('module');
@@ -322,6 +343,31 @@ const AdminCourseBuilder = () => {
         : { ...prev, [moduleId]: true }
     );
   }, [isMobile]);
+
+  const handleNextModule = useCallback(() => {
+    if (!modules.length || !activeMobileModuleId) return;
+    const currentIndex = modules.findIndex((module) => module.id === activeMobileModuleId);
+    const nextModule = modules[(currentIndex + 1) % modules.length];
+    if (nextModule) {
+      handleMobileModuleSelect(nextModule.id);
+    }
+  }, [modules, activeMobileModuleId, handleMobileModuleSelect]);
+
+  const handlePreviousModule = useCallback(() => {
+    if (!modules.length || !activeMobileModuleId) return;
+    const currentIndex = modules.findIndex((module) => module.id === activeMobileModuleId);
+    const prevIndex = (currentIndex - 1 + modules.length) % modules.length;
+    const prevModule = modules[prevIndex];
+    if (prevModule) {
+      handleMobileModuleSelect(prevModule.id);
+    }
+  }, [modules, activeMobileModuleId, handleMobileModuleSelect]);
+
+  const swipeHandlers = useSwipeNavigation({
+    disabled: !isMobile || modules.length <= 1,
+    onSwipeLeft: handleNextModule,
+    onSwipeRight: handlePreviousModule,
+  });
 
   useEffect(() => {
     if (editingLesson?.moduleId) {
@@ -813,6 +859,24 @@ const AdminCourseBuilder = () => {
       };
     });
   }, []);
+
+  const handleModuleDragEnd = useCallback((event: DragEndEvent) => {
+    if (!event.over || event.active.id === event.over.id) return;
+    const fromIndex = modules.findIndex((module) => module.id === event.active.id);
+    const toIndex = modules.findIndex((module) => module.id === event.over!.id);
+    if (fromIndex < 0 || toIndex < 0) return;
+    reorderModules(fromIndex, toIndex);
+  }, [modules, reorderModules]);
+
+  const handleLessonDragEnd = useCallback((moduleId: string, event: DragEndEvent) => {
+    if (!event.over || event.active.id === event.over.id) return;
+    const module = course.modules?.find((m) => m.id === moduleId);
+    if (!module) return;
+    const fromIndex = module.lessons.findIndex((lesson) => lesson.id === event.active.id);
+    const toIndex = module.lessons.findIndex((lesson) => lesson.id === event.over!.id);
+    if (fromIndex < 0 || toIndex < 0) return;
+    reorderLessons(moduleId, fromIndex, toIndex);
+  }, [course.modules, reorderLessons]);
 
   // Version control handler
   const handleRestoreVersion = (version: any) => {
@@ -2438,7 +2502,7 @@ const AdminCourseBuilder = () => {
   }
 
   return (
-    <DndProvider backend={HTML5Backend}>
+    <>
       <div className="p-6">
         <div className="max-w-7xl mx-auto">
           <div className="xl:grid xl:grid-cols-[minmax(0,1fr)_420px] gap-6 items-start">
@@ -2889,6 +2953,11 @@ const AdminCourseBuilder = () => {
                     activeModuleId={activeMobileModuleId}
                     onSelect={handleMobileModuleSelect}
                     onAddModule={addModule}
+                    focusMode={mobileFocusMode}
+                    onToggleFocusMode={() => setMobileFocusMode((prev) => !prev)}
+                    totalLessons={modules.reduce((count, current) => count + current.lessons.length, 0)}
+                    onNext={handleNextModule}
+                    onPrevious={handlePreviousModule}
                   />
                 </div>
               )}
@@ -2904,7 +2973,7 @@ const AdminCourseBuilder = () => {
                 </button>
               </div>
 
-              <div className="space-y-4">
+              <div className="space-y-4" {...swipeHandlers}>
                 <div className="flex flex-col gap-4 lg:flex-row">
                   <div className="flex-1 rounded-2xl border border-dashed border-gray-300 bg-white/80 p-4 shadow-sm">
                     <div className="flex items-center gap-3 text-sm text-gray-600">
@@ -2952,128 +3021,158 @@ const AdminCourseBuilder = () => {
                   )}
                 </div>
 
-                {modulesToRender.map((module) => {
-                  const canonicalIndex = (course.modules || []).findIndex((m) => m.id === module.id);
-                  const moduleCard = (
-                    <div
-                      id={`module-${module.id}`}
-                      className={`border border-gray-200 rounded-lg bg-white transition-shadow ${
-                        isMobile && module.id === activeMobileModuleId ? 'ring-2 ring-orange-200 shadow-lg' : ''
-                      }`}
-                    >
-                      <div className="p-4 bg-gray-50 border-b border-gray-200">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center space-x-3 flex-1">
-                            <button
-                              onClick={() => toggleModuleExpansion(module.id)}
-                              className="text-gray-600 hover:text-gray-800"
-                            >
-                              {expandedModules[module.id] ? (
-                                <ChevronUp className="h-5 w-5" />
-                              ) : (
-                                <ChevronDown className="h-5 w-5" />
-                              )}
-                            </button>
-                            <div className="flex-1">
-                              <input
-                                type="text"
-                                value={module.title}
-                                onChange={(e) => updateModule(module.id, { title: e.target.value })}
-                                placeholder="Module title..."
-                                className="font-medium text-gray-900 bg-transparent border-none focus:outline-none focus:ring-0 p-0 w-full"
-                              />
-                              <input
-                                type="text"
-                                value={module.description}
-                                onChange={(e) => updateModule(module.id, { description: e.target.value })}
-                                placeholder="Module description..."
-                                className="text-sm text-gray-600 bg-transparent border-none focus:outline-none focus:ring-0 p-0 w-full mt-1"
-                              />
-                            </div>
-                          </div>
-                          <div className="flex items-center space-x-2">
-                            <span className="text-sm text-gray-600">{module.lessons.length} lessons</span>
-                            <button
-                              onClick={() => deleteModule(module.id)}
-                              className="text-red-600 hover:text-red-800"
-                            >
-                              <Trash2 className="h-4 w-4" />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
+                <DndContext
+                  sensors={moduleSensors}
+                  collisionDetection={closestCenter}
+                  onDragEnd={handleModuleDragEnd}
+                >
+                  <SortableContext
+                    items={modulesToRender.map((module) => module.id)}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    {modulesToRender.map((module) => {
+                      const moduleLessons = module.lessons || [];
+                      const completionRate = moduleLessons.filter((lesson) => lesson.completed).length;
 
-                      {expandedModules[module.id] && (
-                        <div className="p-4">
-                          <div className="space-y-3 mb-4">
-                            {(module.lessons || []).map((lesson, lessonIndex) => {
-                              const lessonContent = (
-                                <div
-                                  id={`lesson-${lesson.id}`}
-                                  className={
-                                    highlightLessonId === lesson.id
-                                      ? 'transition-all duration-300 ring-2 ring-orange-300 bg-orange-50 rounded-md p-1'
-                                      : ''
-                                  }
-                                >
-                                  {renderLessonEditor(module.id, lesson)}
-                                </div>
-                              );
-
-                              if (isMobile) {
-                                return (
-                                  <div key={lesson.id}>
-                                    {lessonContent}
+                      return (
+                        <SortableItem key={module.id} id={module.id} className="block">
+                          {({ setActivatorNodeRef, attributes, listeners }) => (
+                            <div
+                              id={`module-${module.id}`}
+                              className={`border border-gray-200 rounded-lg bg-white transition-shadow ${
+                                isMobile && module.id === activeMobileModuleId ? 'ring-2 ring-orange-200 shadow-lg' : ''
+                              }`}
+                            >
+                              <div className="p-4 bg-gray-50 border-b border-gray-200">
+                                <div className="flex items-center justify-between gap-2">
+                                  <div className="flex items-center space-x-3 flex-1">
+                                    <button
+                                      onClick={() => toggleModuleExpansion(module.id)}
+                                      className="text-gray-600 hover:text-gray-800"
+                                      aria-label={expandedModules[module.id] ? 'Collapse module' : 'Expand module'}
+                                    >
+                                      {expandedModules[module.id] ? (
+                                        <ChevronUp className="h-5 w-5" />
+                                      ) : (
+                                        <ChevronDown className="h-5 w-5" />
+                                      )}
+                                    </button>
+                                    <div className="flex-1">
+                                      <input
+                                        type="text"
+                                        value={module.title}
+                                        onChange={(e) => updateModule(module.id, { title: e.target.value })}
+                                        placeholder="Module title..."
+                                        className="font-medium text-gray-900 bg-transparent border-none focus:outline-none focus:ring-0 p-0 w-full"
+                                      />
+                                      <input
+                                        type="text"
+                                        value={module.description}
+                                        onChange={(e) => updateModule(module.id, { description: e.target.value })}
+                                        placeholder="Module description..."
+                                        className="text-sm text-gray-600 bg-transparent border-none focus:outline-none focus:ring-0 p-0 w-full mt-1"
+                                      />
+                                      <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-gray-500 sm:grid-cols-3">
+                                        <span className="inline-flex items-center rounded-full border border-gray-200 bg-white px-2 py-1 font-semibold text-gray-700">
+                                          <BookOpen className="mr-1 h-3 w-3" /> {moduleLessons.length} lessons
+                                        </span>
+                                        <span className="inline-flex items-center rounded-full border border-gray-200 bg-white px-2 py-1 font-semibold text-gray-700">
+                                          <Clock className="mr-1 h-3 w-3" /> {module.duration || 'Set duration'}
+                                        </span>
+                                        <span className="inline-flex items-center rounded-full border border-gray-200 bg-white px-2 py-1 font-semibold text-gray-700">
+                                          <CheckCircle className="mr-1 h-3 w-3 text-green-500" /> {completionRate}/{moduleLessons.length} complete
+                                        </span>
+                                      </div>
+                                    </div>
                                   </div>
-                                );
-                              }
+                                  <div className="flex items-center space-x-2">
+                                    <button
+                                      ref={setActivatorNodeRef}
+                                      {...attributes}
+                                      {...listeners}
+                                      className="flex h-9 w-9 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-500 shadow-sm transition hover:text-gray-700"
+                                      aria-label={`Reorder ${module.title || 'module'}`}
+                                    >
+                                      <GripVertical className="h-4 w-4" />
+                                    </button>
+                                    <button
+                                      onClick={() => deleteModule(module.id)}
+                                      className="text-red-600 hover:text-red-800"
+                                    >
+                                      <Trash2 className="h-4 w-4" />
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
 
-                              return (
-                                <DragDropItem
-                                  key={lesson.id}
-                                  id={lesson.id}
-                                  index={lessonIndex}
-                                  onReorder={(dragIndex, hoverIndex) => reorderLessons(module.id, dragIndex, hoverIndex)}
-                                  className="block"
-                                >
-                                  {lessonContent}
-                                </DragDropItem>
-                              );
-                            })}
-                          </div>
-                          
-                          <button
-                            onClick={() => addLesson(module.id)}
-                            className="w-full border-2 border-dashed border-gray-300 rounded-lg p-4 text-gray-600 hover:border-gray-400 hover:text-gray-700 transition-colors duration-200"
-                          >
-                            <Plus className="h-5 w-5 mx-auto mb-2" />
-                            <span className="text-sm">Add Lesson</span>
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  );
+                              {expandedModules[module.id] && (
+                                <div className="p-4">
+                                  <DndContext
+                                    sensors={lessonSensors}
+                                    collisionDetection={closestCenter}
+                                    onDragEnd={(event) => handleLessonDragEnd(module.id, event)}
+                                  >
+                                    <SortableContext
+                                      items={moduleLessons.map((lesson) => lesson.id)}
+                                      strategy={verticalListSortingStrategy}
+                                    >
+                                      <div className="space-y-3 mb-4">
+                                        {moduleLessons.map((lesson) => {
+                                          const lessonContent = (
+                                            <div
+                                              id={`lesson-${lesson.id}`}
+                                              className={
+                                                highlightLessonId === lesson.id
+                                                  ? 'transition-all duration-300 ring-2 ring-orange-300 bg-orange-50 rounded-md p-1'
+                                                  : ''
+                                              }
+                                            >
+                                              {renderLessonEditor(module.id, lesson)}
+                                            </div>
+                                          );
+                                          const isEditingLesson = editingLesson?.moduleId === module.id && editingLesson.lessonId === lesson.id;
 
-                  if (isMobile || canonicalIndex < 0) {
-                    return (
-                      <div key={module.id}>
-                        {moduleCard}
-                      </div>
-                    );
-                  }
+                                          return (
+                                            <SortableItem key={lesson.id} id={lesson.id} disabled={isEditingLesson} className="block">
+                                              {({ setActivatorNodeRef: setLessonHandleRef, attributes: lessonAttributes, listeners: lessonListeners }) => (
+                                                <div className={`relative ${isEditingLesson ? '' : 'pl-10'}`}>
+                                                  {!isEditingLesson && (
+                                                    <button
+                                                      ref={setLessonHandleRef}
+                                                      {...lessonAttributes}
+                                                      {...lessonListeners}
+                                                      className="absolute left-0 top-4 flex h-8 w-8 items-center justify-center rounded-full border border-gray-200 bg-white text-gray-500 shadow-sm"
+                                                      aria-label={`Reorder ${lesson.title || 'lesson'}`}
+                                                    >
+                                                      <GripVertical className="h-4 w-4" />
+                                                    </button>
+                                                  )}
+                                                  {lessonContent}
+                                                </div>
+                                              )}
+                                            </SortableItem>
+                                          );
+                                        })}
+                                      </div>
+                                    </SortableContext>
+                                  </DndContext>
 
-                  return (
-                    <DragDropItem
-                      key={module.id}
-                      id={module.id}
-                      index={canonicalIndex}
-                      onReorder={reorderModules}
-                      className="block"
-                    >
-                      {moduleCard}
-                    </DragDropItem>
-                  );
-                })}
+                                  <button
+                                    onClick={() => addLesson(module.id)}
+                                    className="w-full border-2 border-dashed border-gray-300 rounded-lg p-4 text-gray-600 hover:border-gray-400 hover:text-gray-700 transition-colors duration-200"
+                                  >
+                                    <Plus className="h-5 w-5 mx-auto mb-2" />
+                                    <span className="text-sm">Add Lesson</span>
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </SortableItem>
+                      );
+                    })}
+                  </SortableContext>
+                </DndContext>
 
                 {!hasModules && (
                   <div className="text-center py-12 border-2 border-dashed border-gray-300 rounded-lg">
@@ -3295,7 +3394,11 @@ const AdminCourseBuilder = () => {
           onAddModule={addModule}
           onPreview={() => setShowPreview(true)}
           onSave={handleSave}
+          onAssign={() => setShowAssignmentModal(true)}
+          onPublish={handlePublish}
           saveStatus={saveStatus}
+          hasPendingChanges={hasPendingChanges}
+          lastSaved={lastSaveTime}
           disabled={initializing}
         />
       )}
@@ -3349,7 +3452,7 @@ const AdminCourseBuilder = () => {
           </div>
         </div>
       )}
-    </DndProvider>
+    </>
   );
 };
 

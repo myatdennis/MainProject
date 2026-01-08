@@ -72,7 +72,7 @@ export const lessonReorderSchema = z.object({
   lessons: z.array(reorderItemSchema).min(1),
 });
 
-const analyticsEventCoreSchema = z.object({
+export const analyticsEventCoreSchema = z.object({
   clientEventId: z.string().min(1).optional(),
   eventName: z.string().min(1),
   eventVersion: z.string().min(1).optional(),
@@ -97,6 +97,19 @@ export const analyticsEventSchema = analyticsEventCoreSchema.superRefine((value,
 
 export const analyticsBatchSchema = z.object({
   events: z.array(analyticsEventSchema).min(1).max(50),
+});
+
+export const analyticsEventIngestSchema = z.object({
+  id: z.string().min(1).optional(),
+  user_id: z.string().min(1).nullable().optional(),
+  org_id: z.string().min(1).nullable().optional(),
+  course_id: z.string().min(1).nullable().optional(),
+  lesson_id: z.string().min(1).nullable().optional(),
+  module_id: z.string().min(1).nullable().optional(),
+  event_type: z.string().min(1),
+  session_id: z.string().min(1).nullable().optional(),
+  user_agent: z.string().min(1).nullable().optional(),
+  payload: z.record(z.any()).optional().default({}),
 });
 
 export const adminMessageSchema = z

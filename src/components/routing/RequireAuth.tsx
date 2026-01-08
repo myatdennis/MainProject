@@ -1,4 +1,4 @@
-import { ReactNode } from 'react';
+import { ReactNode, useEffect, useMemo, useRef } from 'react';
 import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import LoadingSpinner from '../ui/LoadingSpinner';
@@ -16,8 +16,59 @@ const loginPathByMode: Record<AuthMode, string> = {
 };
 
 export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
-  const { authInitializing, isAuthenticated } = useAuth();
+  const {
+    authInitializing,
+    isAuthenticated,
+    memberships,
+    activeOrgId,
+    setActiveOrganization,
+    reloadSession,
+  } = useAuth();
   const location = useLocation();
+  const surfaceReloadRef = useRef<AuthMode | null>(null);
+
+  const requestedOrgId = useMemo(() => {
+    if (!location.search) {
+      return null;
+    }
+    try {
+      const params = new URLSearchParams(location.search);
+      return params.get('orgId') ?? params.get('organizationId');
+    } catch (error) {
+      console.warn('[RequireAuth] Failed to parse orgId from search params', error);
+      return null;
+    }
+  }, [location.search]);
+
+  useEffect(() => {
+    if (authInitializing) {
+      return;
+    }
+    if (surfaceReloadRef.current === mode) {
+      return;
+    }
+    surfaceReloadRef.current = mode;
+    reloadSession({ surface: mode }).catch((error) => {
+      console.warn(`[RequireAuth] Failed to reload session for ${mode} surface`, error);
+      surfaceReloadRef.current = null;
+    });
+  }, [authInitializing, mode, reloadSession]);
+
+  useEffect(() => {
+    if (!requestedOrgId || requestedOrgId === activeOrgId) {
+      return;
+    }
+    if (!memberships.length) {
+      return;
+    }
+    const hasMembership = memberships.some((membership) => membership.orgId === requestedOrgId);
+    if (!hasMembership) {
+      return;
+    }
+    setActiveOrganization(requestedOrgId).catch((error) => {
+      console.warn('[RequireAuth] Failed to switch active organization', error);
+    });
+  }, [requestedOrgId, memberships, activeOrgId, setActiveOrganization]);
 
   if (authInitializing) {
     return (
@@ -27,8 +78,7 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
     );
   }
 
-  const allowed =
-    mode === 'admin' ? isAuthenticated.admin : isAuthenticated.lms;
+  const allowed = mode === 'admin' ? isAuthenticated.admin : isAuthenticated.lms;
   const anyAuth = isAuthenticated.admin || isAuthenticated.lms;
 
   if (!allowed) {

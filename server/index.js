@@ -21,6 +21,8 @@ import {
   pickOrder,
   validateOr400,
   courseUpsertSchema,
+  analyticsBatchSchema,
+  analyticsEventIngestSchema,
 } from './validators.js';
 import { logger } from './lib/logger.js';
 import {
@@ -30,6 +32,9 @@ import {
   getMetricsSnapshot,
 } from './diagnostics/metrics.js';
 import { isAllowedWsOrigin } from './lib/wsOrigins.js';
+import { withCache, invalidateCacheKeys } from './services/cacheService.js';
+import { enqueueJob, registerJobProcessor, hasQueueBackend } from './jobs/taskQueue.js';
+import setupNotificationDispatcher from './services/notificationDispatcher.js';
 
 // Import auth routes and middleware
 import authRoutes from './routes/auth.js';
@@ -42,6 +47,7 @@ import {
   authenticate,
   requireAdmin,
   optionalAuthenticate,
+  resolveUserRole,
 } from './middleware/auth.js';
 import { setDoubleSubmitCSRF, getCSRFToken } from './middleware/csrf.js';
 import adminUsersRouter from './routes/admin-users.js';
@@ -56,6 +62,7 @@ import {
   demoLoginEnabled,
   describeDemoMode,
 } from './config/runtimeFlags.js';
+import { sendEmail } from './services/emailService.js';
 
 // Resolve __dirname in ESM
 const __filename = fileURLToPath(import.meta.url);
@@ -166,7 +173,7 @@ app.use((req, res, next) => {
   res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
   res.header(
     'Access-Control-Allow-Headers',
-    'Content-Type, Authorization, X-Requested-With, X-User-Id, X-User-Role, X-Org-Id, X-CSRF-Token, Accept'
+    'Content-Type, Authorization, X-Requested-With, X-CSRF-Token, Accept'
   );
 
   if (req.method === 'OPTIONS') {
@@ -397,6 +404,57 @@ logger.info('diagnostics_cookies_and_cors', {
   cookieSameSite: process.env.COOKIE_SAMESITE || null,
 });
 
+const API_AUTH_BYPASS_PREFIXES = ['/auth', '/mfa', '/health', '/diagnostics', '/broadcast'];
+const API_AUTH_BYPASS_EXACT = new Set(['/auth/csrf']);
+
+const matchesBypassPrefix = (path, prefixes) =>
+  prefixes.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
+
+const shouldBypassApiAuth = (path, method = 'GET') => {
+  if (method === 'OPTIONS') return true;
+  if (!path) return false;
+  if (API_AUTH_BYPASS_EXACT.has(path)) {
+    return true;
+  }
+  return matchesBypassPrefix(path, API_AUTH_BYPASS_PREFIXES);
+};
+
+const ensureAuthenticatedForHandler = (req, res) => {
+  if (req.user) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    let done = false;
+    const finalize = (result) => {
+      if (!done) {
+        done = true;
+        resolve(result);
+      }
+    };
+    authenticate(req, res, (err) => {
+      if (err) {
+        finalize(false);
+        return;
+      }
+      finalize(Boolean(req.user));
+    });
+    setImmediate(() => {
+      if (!done && res.headersSent) {
+        finalize(false);
+      }
+    });
+  });
+};
+
+app.use('/api', apiLimiter);
+app.use('/api', (req, res, next) => {
+  const path = req.path || '/';
+  if (shouldBypassApiAuth(path, req.method)) {
+    req.authBypassed = true;
+    return next();
+  }
+  req.authBypassed = false;
+  return authenticate(req, res, next);
+});
+
 
 // Basic request logging with request_id and timing
 app.use((req, res, next) => {
@@ -410,6 +468,10 @@ app.use((req, res, next) => {
       statusCode: res.statusCode,
       durationMs: ms,
       requestId,
+      userId: req.user?.userId ?? null,
+      organizationId: req.activeOrgId ?? req.user?.organizationId ?? null,
+      authBypassed: Boolean(req.authBypassed),
+      ip: req.ip,
     });
   });
   next();
@@ -510,6 +572,9 @@ app.use('/api/admin/analytics/summary', adminAnalyticsSummary);
 app.use('/api/admin/users', adminUsersRouter);
 app.use('/api/admin/courses', authenticate, requireAdmin, adminCoursesRouter);
 
+// All organization workspace endpoints require authentication
+app.use('/api/orgs', authenticate);
+
 // Honor explicit E2E test mode in child processes: when E2E_TEST_MODE is set we prefer the
 // in-memory demo fallback even if Supabase credentials are present in the environment.
 
@@ -532,6 +597,31 @@ if (E2E_TEST_MODE) {
   supabase = null;
 }
 let loggedMissingSupabaseConfig = false;
+
+const notificationDispatcher = setupNotificationDispatcher({ supabase, emailSender: sendEmail });
+
+registerJobProcessor('audit.write', async (payload = {}) => {
+  if (!supabase) {
+    logger.warn('audit_write_skipped_supabase_unavailable');
+    return null;
+  }
+  try {
+    await supabase.from('audit_logs').insert({
+      action: payload.action,
+      details: payload.details || {},
+      user_id: payload.user_id ?? null,
+      org_id: payload.org_id ?? null,
+      ip_address: payload.ip_address ?? null,
+      created_at: payload.created_at ?? new Date().toISOString(),
+    });
+  } catch (error) {
+    logger.warn('audit_write_failed', { message: error?.message || String(error) });
+  }
+});
+
+registerJobProcessor(INVITE_REMINDER_JOB, async (payload = {}) => runInviteReminderSweep(payload));
+
+scheduleInviteReminderRunner();
 
 const checkSupabaseHealth = async () => {
   if (!supabase) {
@@ -579,6 +669,24 @@ const e2eStore = {
   surveys: new Map(persistedData.surveys || []),
   surveyAssignments: new Map(persistedData.surveyAssignments || []),
   auditLogs: [],
+};
+const clampNumber = (value, min, max) => Math.max(min, Math.min(max, value));
+const parseBooleanParam = (value, fallback = false) => {
+  if (value === undefined || value === null) return fallback;
+  const normalized = String(value).toLowerCase().trim();
+  return ['true', '1', 'yes', 'on'].includes(normalized);
+};
+const sanitizeIlike = (value) =>
+  value
+    .replace(/%/g, '\\%')
+    .replace(/_/g, '\\_')
+    .trim();
+const parsePaginationParams = (req, { defaultSize = 25, maxSize = 100 } = {}) => {
+  const page = clampNumber(parseInt(req.query.page, 10) || 1, 1, 100000);
+  const pageSize = clampNumber(parseInt(req.query.pageSize, 10) || defaultSize, 1, maxSize);
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+  return { page, pageSize, from, to };
 };
 
 // Hardened guard for dev-only helpers so they never leak to real environments.
@@ -1494,72 +1602,89 @@ const ensureSupabase = (res) => {
 };
 
 const writableMembershipRoles = new Set(['owner', 'admin', 'editor', 'manager']);
+const inviteAssignableRoles = new Set(['owner', 'admin', 'manager', 'editor', 'instructor', 'member', 'viewer']);
+
+const normalizeOrgRole = (role, defaultRole = 'member') => {
+  const normalized = String(role || defaultRole).trim().toLowerCase();
+  if (inviteAssignableRoles.has(normalized)) {
+    return normalized;
+  }
+  return defaultRole;
+};
 
 const getRequestContext = (req) => {
-  const userIdHeader = req.get('x-user-id');
-  const userRoleHeader = req.get('x-user-role');
-  const userId = userIdHeader && userIdHeader.trim().length > 0 ? userIdHeader.trim() : null;
-  const userRole = userRoleHeader && userRoleHeader.trim().length > 0 ? userRoleHeader.trim().toLowerCase() : null;
-  return { userId, userRole };
+  if (!req.user) {
+    return { userId: null, userRole: null, memberships: [], organizationIds: [] };
+  }
+
+  return {
+    userId: req.user.userId || req.user.id || null,
+    userRole: (req.user.role || req.user.platformRole || '').toLowerCase(),
+    memberships: req.user.memberships || [],
+    organizationIds: Array.isArray(req.user.organizationIds) ? req.user.organizationIds : [],
+    isPlatformAdmin: Boolean(req.user.isPlatformAdmin),
+  };
 };
 
 const requireUserContext = (req, res) => {
-  const { userId, userRole } = getRequestContext(req);
-  if (userRole === 'admin') {
-    return { userId, userRole };
-  }
-  if (!userId) {
-    res.status(401).json({ error: 'User authentication required' });
-    return null;
-  }
-  return { userId, userRole };
-};
-
-const fetchMembership = async (orgId, userId) => {
-  const { data, error } = await supabase
-    .from('organization_memberships')
-    .select('role')
-    .eq('org_id', orgId)
-    .eq('user_id', userId)
-    .maybeSingle();
-
-  if (error) {
-    throw error;
-  }
-
-  return data;
-};
-
-const requireOrgAccess = async (req, res, orgId, { write = false } = {}) => {
   const context = getRequestContext(req);
-  if (context.userRole === 'admin') {
-    return { userId: context.userId, role: 'admin' };
-  }
-
   if (!context.userId) {
     res.status(401).json({ error: 'User authentication required' });
     return null;
   }
+  return context;
+};
+
+const resolveOrgMembership = async (req, orgId, userId) => {
+  if (!orgId || !userId) return null;
+  if (req.orgMemberships?.has(orgId)) {
+    return req.orgMemberships.get(orgId);
+  }
+
+  const { data, error } = await supabase
+    .from('organization_memberships')
+    .select('role, status, invited_by, invited_email')
+    .eq('org_id', orgId)
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (error) throw error;
+  if (!data) return null;
+  return {
+    orgId,
+    role: data.role,
+    status: data.status,
+    invitedBy: data.invited_by,
+    invitedEmail: data.invited_email,
+  };
+};
+
+const requireOrgAccess = async (req, res, orgId, { write = false, allowPlatformAdmin = true } = {}) => {
+  const context = requireUserContext(req, res);
+  if (!context) return null;
+
+  if (allowPlatformAdmin && context.isPlatformAdmin) {
+    return { userId: context.userId, role: 'platform_admin', membership: null };
+  }
 
   try {
-    // If running in E2E test mode without Supabase, assume org access for convenience
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
-      return { userId: context.userId, role: 'admin' };
+    if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+      return { userId: context.userId, role: 'owner', membership: null };
     }
 
-    const membership = await fetchMembership(orgId, context.userId);
-    if (!membership) {
+    const membership = req.orgMemberships?.get(orgId) || (await resolveOrgMembership(req, orgId, context.userId));
+    if (!membership || (membership.status && membership.status !== 'active')) {
       res.status(403).json({ error: 'Organization membership required' });
       return null;
     }
 
-    const memberRole = (membership.role || 'member').toLowerCase();
+    const memberRole = String(membership.role || 'member').toLowerCase();
     if (write && !writableMembershipRoles.has(memberRole)) {
       res.status(403).json({ error: 'Insufficient organization permissions' });
       return null;
     }
 
-    return { userId: context.userId, role: memberRole };
+    return { userId: context.userId, role: memberRole, membership };
   } catch (error) {
     console.error(`Failed to verify membership for org ${orgId}:`, error);
     res.status(500).json({ error: 'Unable to verify organization access' });
@@ -1634,11 +1759,11 @@ const sortActionItems = (items) =>
   });
 
 const requireAdminAccess = (req, res) => {
-  const { userRole } = getRequestContext(req);
-  if (userRole === 'admin') {
+  const context = getRequestContext(req);
+  if (context.isPlatformAdmin || context.userRole === 'admin') {
     return true;
   }
-  res.status(403).json({ error: 'Admin access required' });
+  res.status(403).json({ error: 'Platform admin access required' });
   return false;
 };
 
@@ -1658,6 +1783,567 @@ const defaultOrgProfileRow = (orgId) => ({
   created_at: new Date().toISOString(),
   updated_at: new Date().toISOString(),
 });
+
+const INVITE_TOKEN_TTL_HOURS = Number(process.env.CLIENT_INVITE_TTL_HOURS || process.env.ORG_INVITE_TTL_HOURS || 72);
+const INVITE_BULK_LIMIT = Number(process.env.CLIENT_INVITE_BULK_LIMIT || 50);
+const INVITE_REMINDER_JOB = 'invites.reminder';
+const INVITE_REMINDER_LOOKBACK_HOURS = Number(process.env.CLIENT_INVITE_REMINDER_HOURS || process.env.ORG_INVITE_REMINDER_HOURS || 48);
+const INVITE_REMINDER_MAX_SENDS = Number(process.env.CLIENT_INVITE_REMINDER_MAX || 3);
+const INVITE_REMINDER_INTERVAL_MS = Number(process.env.CLIENT_INVITE_REMINDER_INTERVAL_MS || 1000 * 60 * 60);
+const INVITE_REMINDER_CRON = process.env.CLIENT_INVITE_REMINDER_CRON || '0 */6 * * *';
+const INVITE_PASSWORD_MIN_CHARS = Number(process.env.CLIENT_INVITE_PASSWORD_MIN || 8);
+const INVITE_ACCEPTABLE_STATUSES = new Set(['pending', 'sent']);
+const INVITE_LINK_BASE =
+  process.env.CLIENT_PORTAL_URL ||
+  process.env.APP_BASE_URL ||
+  process.env.PUBLIC_APP_URL ||
+  process.env.VITE_SITE_URL ||
+  'https://the-huddle.co';
+const DEFAULT_ORG_PLAN = process.env.DEFAULT_ORG_PLAN || 'standard';
+const DEFAULT_ORG_TIMEZONE = process.env.DEFAULT_ORG_TIMEZONE || 'UTC';
+
+const ONBOARDING_STEP_DEFINITIONS = [
+  {
+    id: 'org_created',
+    label: 'Organization created',
+    description: 'Organization record created and sandbox enabled.',
+    autoComplete: true,
+  },
+  {
+    id: 'assign_owner',
+    label: 'Assign owner & backup admin',
+    description: 'Ensure at least one owner and backup admin are assigned.',
+  },
+  {
+    id: 'invite_team',
+    label: 'Invite teammates',
+    description: 'Send invites to core collaborators and managers.',
+  },
+  {
+    id: 'brand_workspace',
+    label: 'Configure branding',
+    description: 'Upload logos, colors, and communication preferences.',
+  },
+  {
+    id: 'launch_first_course',
+    label: 'Publish first course',
+    description: 'Publish initial content and share with learners.',
+  },
+  {
+    id: 'review_analytics',
+    label: 'Review analytics',
+    description: 'Review dashboards to confirm data is flowing.',
+  },
+];
+
+const slugify = (value) => {
+  if (!value) return '';
+  return value
+    .toString()
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 64);
+};
+
+const buildInviteLink = (token) => {
+  const base = INVITE_LINK_BASE?.replace(/\/$/, '') || 'https://the-huddle.co';
+  return `${base}/invite/${token}`;
+};
+
+const buildOnboardingStepRows = (orgId, actor) => {
+  const now = new Date().toISOString();
+  return ONBOARDING_STEP_DEFINITIONS.map((step) => ({
+    org_id: orgId,
+    step: step.id,
+    status: step.autoComplete ? 'completed' : 'pending',
+    description: step.description,
+    completed_at: step.autoComplete ? now : null,
+    actor_id: step.autoComplete ? actor?.userId ?? null : null,
+    actor_email: step.autoComplete ? actor?.email ?? null : null,
+    metadata: {},
+  }));
+};
+
+async function ensureUniqueOrgSlug(desiredSlug) {
+  if (!supabase) return desiredSlug || `org-${randomUUID().slice(0, 8)}`;
+  const baseSlug = slugify(desiredSlug) || `org-${randomUUID().slice(0, 8)}`;
+  let attempt = 1;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const candidate = attempt === 1 ? baseSlug : `${baseSlug}-${attempt}`;
+    const { data, error } = await supabase
+      .from('organizations')
+      .select('id')
+      .eq('slug', candidate)
+      .limit(1)
+      .maybeSingle();
+
+    if (error) {
+      console.warn('[onboarding] Failed to verify slug uniqueness', { candidate, error });
+      if (attempt > 5) {
+        return `${baseSlug}-${randomUUID().slice(0, 4)}`;
+      }
+    }
+
+    if (!data) {
+      return candidate;
+    }
+    attempt += 1;
+  }
+}
+
+async function initializeActivationSteps(orgId, actor) {
+  if (!supabase) return;
+  try {
+    const rows = buildOnboardingStepRows(orgId, actor);
+    await supabase.from('org_activation_steps').upsert(rows, { onConflict: 'org_id,step' });
+  } catch (error) {
+    console.warn('[onboarding] Failed to initialize activation steps', { orgId, error });
+  }
+}
+
+async function markActivationStep(orgId, stepId, { status = 'completed', actor, metadata = {} } = {}) {
+  if (!supabase) return;
+  const payload = {
+    status,
+    metadata,
+  };
+  if (status === 'completed') {
+    payload.completed_at = new Date().toISOString();
+    payload.actor_id = actor?.userId ?? null;
+    payload.actor_email = actor?.email ?? null;
+  }
+  try {
+    await supabase
+      .from('org_activation_steps')
+      .update(payload)
+      .eq('org_id', orgId)
+      .eq('step', stepId);
+  } catch (error) {
+    console.warn('[onboarding] Failed to update activation step', { orgId, stepId, error });
+  }
+}
+
+async function recordActivationEvent(orgId, eventType, metadata = {}, actor) {
+  if (!supabase) return;
+  try {
+    await supabase.from('org_activation_events').insert({
+      org_id: orgId,
+      event_type: eventType,
+      metadata,
+      actor_id: actor?.userId ?? null,
+      actor_email: actor?.email ?? null,
+    });
+  } catch (error) {
+    console.warn('[onboarding] Failed to record activation event', { orgId, eventType, error });
+  }
+}
+
+async function createAuditLogEntry(action, details = {}, { userId = null, orgId = null, ip = null } = {}) {
+  if (!supabase || !action) return;
+  const payload = {
+    action,
+    details,
+    user_id: userId,
+    org_id: orgId,
+    ip_address: ip,
+    created_at: new Date().toISOString(),
+  };
+  try {
+    await enqueueJob('audit.write', payload);
+  } catch (error) {
+    logger.warn('audit_queue_failed', { message: error?.message || String(error) });
+    try {
+      await supabase.from('audit_logs').insert(payload);
+    } catch (fallbackError) {
+      console.warn('[audit] Failed to persist audit entry', { action, orgId, error: fallbackError });
+    }
+  }
+}
+
+const buildActorFromRequest = (req) => {
+  const firstName = req.user?.userMetadata?.first_name || req.user?.appMetadata?.first_name;
+  const lastName = req.user?.userMetadata?.last_name || req.user?.appMetadata?.last_name;
+  const name = firstName ? `${firstName}${lastName ? ` ${lastName}` : ''}` : req.user?.email;
+  return {
+    userId: req.user?.userId || req.user?.id || null,
+    email: req.user?.email || null,
+    name,
+  };
+};
+
+async function deliverInviteEmail(invite, { orgName, inviterName }) {
+  const inviteLink = buildInviteLink(invite.invite_token);
+  const subject = `You have been invited to ${orgName || 'The Huddle'}`;
+  const summary = [
+    inviterName ? `${inviterName} invited you to join ${orgName}.` : `You have been invited to join ${orgName}.`,
+    'Click the button below to accept your invite. Your link expires in 72 hours.',
+  ].join('\n');
+
+  const html = `
+    <div style="font-family: Arial, sans-serif; line-height: 1.6; color: #111827;">
+      <h2 style="color:#111827;">You're invited!</h2>
+      <p>${inviterName ? `<strong>${inviterName}</strong> has invited you to join <strong>${orgName}</strong>.` : `You've been invited to join <strong>${orgName}</strong>.`}</p>
+      <p>Your invite link expires on <strong>${new Date(invite.expires_at).toUTCString()}</strong>.</p>
+      <p style="text-align:center; margin:32px 0;">
+        <a href="${inviteLink}" style="background:#f97316;color:#fff;text-decoration:none;padding:12px 24px;border-radius:999px;display:inline-block;">
+          Join ${orgName}
+        </a>
+      </p>
+      <p>If the button doesn't work, copy and paste this URL:</p>
+      <p style="word-break:break-all;">${inviteLink}</p>
+      <hr style="margin:24px 0;border:none;border-top:1px solid #e5e7eb;" />
+      <p style="color:#6b7280;font-size:0.875rem;">If you didn't expect this email, you can ignore it.</p>
+    </div>
+  `;
+
+  const text = `${summary}\n\nLink: ${inviteLink}\nExpires: ${new Date(invite.expires_at).toUTCString()}`;
+  const result = await sendEmail({ to: invite.email, subject, text, html });
+  const sentAt = new Date().toISOString();
+  const updatePayload = {
+    last_sent_at: sentAt,
+    status: result.delivered ? 'sent' : invite.status,
+    reminder_count: (invite.reminder_count || 0) + 1,
+  };
+
+  if (result.reason === 'smtp_not_configured') {
+    updatePayload.status = 'pending';
+  }
+
+  try {
+    await supabase
+      .from('org_invites')
+      .update(updatePayload)
+      .eq('id', invite.id);
+  } catch (error) {
+    console.warn('[onboarding] Failed to update invite after email send', { inviteId: invite.id, error });
+  }
+
+  return { ...invite, ...updatePayload };
+}
+
+async function createOrgInvite({
+  orgId,
+  email,
+  role = 'member',
+  inviter,
+  orgName,
+  metadata = {},
+  sendEmail: shouldSendEmail = true,
+  duplicateStrategy = 'return',
+}) {
+  if (!supabase) {
+    throw new Error('supabase_not_configured');
+  }
+  const normalizedEmail = (email || '').trim().toLowerCase();
+  if (!normalizedEmail) {
+    throw new Error('invalid_email');
+  }
+
+  const { data: existing } = await supabase
+    .from('org_invites')
+    .select('*')
+    .eq('org_id', orgId)
+    .eq('email', normalizedEmail)
+    .in('status', ['pending', 'sent'])
+    .maybeSingle();
+
+  if (existing && duplicateStrategy === 'return') {
+    if (shouldSendEmail) {
+      await deliverInviteEmail(existing, { orgName, inviterName: inviter?.name });
+    }
+    return { invite: existing, duplicate: true };
+  }
+
+  const normalizedMetadata = metadata && typeof metadata === 'object' ? metadata : {};
+  const token = randomUUID().replace(/-/g, '');
+  const expiresAt = new Date(Date.now() + INVITE_TOKEN_TTL_HOURS * 60 * 60 * 1000).toISOString();
+
+  const payload = {
+    org_id: orgId,
+    email: normalizedEmail,
+    role,
+    invite_token: token,
+    status: 'pending',
+    inviter_id: inviter?.userId ?? null,
+    inviter_email: inviter?.email ?? null,
+    invited_name: normalizedMetadata?.name ?? null,
+    metadata: normalizedMetadata,
+    expires_at: expiresAt,
+  };
+
+  const { data, error } = await supabase
+    .from('org_invites')
+    .insert(payload)
+    .select('*')
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  let inviteRecord = data;
+
+  if (shouldSendEmail) {
+    inviteRecord = await deliverInviteEmail(inviteRecord, { orgName, inviterName: inviter?.name });
+  }
+
+  await recordActivationEvent(orgId, 'invite_created', { email: normalizedEmail, role }, inviter);
+  await createAuditLogEntry('org_invite_sent', { email: normalizedEmail, role }, { userId: inviter?.userId, orgId });
+
+  return { invite: inviteRecord, duplicate: false };
+}
+
+let inviteReminderIntervalId = null;
+let inviteReminderSchedulerInitialized = false;
+
+async function runInviteReminderSweep({ limit = 50, reason = 'scheduled' } = {}) {
+  if (!supabase) {
+    logger.warn('invite_reminder_skipped_supabase_offline');
+    return { processed: 0 };
+  }
+
+  const now = new Date();
+  const threshold = new Date(now.getTime() - INVITE_REMINDER_LOOKBACK_HOURS * 60 * 60 * 1000);
+
+  try {
+    const { data, error } = await supabase
+      .from('org_invites')
+      .select('*')
+      .in('status', ['pending', 'sent'])
+      .gt('expires_at', now.toISOString())
+      .lt('reminder_count', INVITE_REMINDER_MAX_SENDS)
+      .order('last_sent_at', { ascending: true })
+      .limit(Math.max(limit * 3, limit));
+
+    if (error) {
+      logger.warn('invite_reminder_query_failed', { message: error?.message || String(error) });
+      return { processed: 0 };
+    }
+
+    const candidates = (data || [])
+      .filter((invite) => {
+        const lastTouch = invite.last_sent_at || invite.created_at;
+        if (!lastTouch) return true;
+        return new Date(lastTouch).getTime() <= threshold.getTime();
+      })
+      .slice(0, limit);
+
+    if (!candidates.length) {
+      logger.info('invite_reminder_idle', { reason, inspected: data?.length || 0 });
+      return { processed: 0 };
+    }
+
+    const orgIds = [...new Set(candidates.map((invite) => invite.org_id).filter(Boolean))];
+    let orgMap = new Map();
+    if (orgIds.length) {
+      const { data: orgRows } = await supabase
+        .from('organizations')
+        .select('id, name')
+        .in('id', orgIds);
+      orgMap = new Map((orgRows || []).map((row) => [row.id, row.name]));
+    }
+
+    let processed = 0;
+    for (const invite of candidates) {
+      try {
+        await deliverInviteEmail(invite, {
+          orgName: orgMap.get(invite.org_id) || 'Your organization',
+          inviterName: invite.inviter_email || invite.metadata?.inviter_name || null,
+        });
+        await recordActivationEvent(invite.org_id, 'invite_reminder_sent', { inviteId: invite.id }, {
+          userId: invite.inviter_id,
+          email: invite.inviter_email,
+        });
+        processed += 1;
+      } catch (error) {
+        logger.warn('invite_reminder_delivery_failed', {
+          inviteId: invite.id,
+          message: error?.message || String(error),
+        });
+      }
+    }
+
+    logger.info('invite_reminder_completed', { processed, reason });
+    return { processed };
+  } catch (error) {
+    logger.warn('invite_reminder_sweep_failed', { message: error?.message || String(error) });
+    return { processed: 0 };
+  }
+}
+
+function scheduleInviteReminderRunner() {
+  if (inviteReminderSchedulerInitialized) return;
+  inviteReminderSchedulerInitialized = true;
+
+  if (hasQueueBackend()) {
+    enqueueJob(INVITE_REMINDER_JOB, { reason: 'startup' }).catch((error) => {
+      logger.warn('invite_reminder_startup_job_failed', { message: error?.message || String(error) });
+    });
+    enqueueJob(
+      INVITE_REMINDER_JOB,
+      { reason: 'repeat' },
+      {
+        repeat: { pattern: INVITE_REMINDER_CRON },
+        jobId: `${INVITE_REMINDER_JOB}:repeat`,
+      }
+    ).catch((error) => {
+      logger.warn('invite_reminder_repeat_registration_failed', { message: error?.message || String(error) });
+    });
+    return;
+  }
+
+  inviteReminderIntervalId = setInterval(() => {
+    runInviteReminderSweep({ reason: 'interval' }).catch((error) => {
+      logger.warn('invite_reminder_interval_failed', { message: error?.message || String(error) });
+    });
+  }, INVITE_REMINDER_INTERVAL_MS);
+
+  runInviteReminderSweep({ reason: 'interval' }).catch((error) => {
+    logger.warn('invite_reminder_initial_failed', { message: error?.message || String(error) });
+  });
+
+  logger.info('invite_reminder_interval_scheduled', { intervalMs: INVITE_REMINDER_INTERVAL_MS });
+}
+
+function deriveInviteStatus(invite) {
+  if (!invite) return 'unknown';
+  if (['accepted', 'revoked', 'bounced'].includes(invite.status)) {
+    return invite.status;
+  }
+  if (invite.expires_at && new Date(invite.expires_at).getTime() <= Date.now()) {
+    return 'expired';
+  }
+  return invite.status;
+}
+
+async function loadInviteByToken(token) {
+  if (!supabase || !token) return null;
+  const { data, error } = await supabase
+    .from('org_invites')
+    .select('*')
+    .eq('invite_token', token)
+    .maybeSingle();
+  if (error) {
+    throw error;
+  }
+  if (!data) return null;
+  const derived = deriveInviteStatus(data);
+  if (derived === 'expired' && data.status !== 'expired') {
+    try {
+      await supabase
+        .from('org_invites')
+        .update({ status: 'expired' })
+        .eq('id', data.id);
+      data.status = 'expired';
+    } catch (updateError) {
+      logger.warn('invite_expire_flag_failed', {
+        inviteId: data.id,
+        message: updateError?.message || String(updateError),
+      });
+    }
+  }
+  return data;
+}
+
+const INVITE_LOGIN_URL = process.env.CLIENT_INVITE_LOGIN_URL || '/lms/login';
+
+function buildPublicInvitePayload(invite, orgSummary) {
+  return {
+    id: invite.id,
+    orgId: invite.org_id,
+    orgName: orgSummary?.name || null,
+    orgSlug: orgSummary?.slug || null,
+    email: invite.email,
+    role: invite.role,
+    status: deriveInviteStatus(invite),
+    expiresAt: invite.expires_at,
+    invitedName: invite.invited_name,
+    inviterEmail: invite.inviter_email,
+    reminderCount: invite.reminder_count,
+    lastSentAt: invite.last_sent_at,
+    acceptedAt: invite.accepted_at ?? null,
+    requiresAccount: true,
+    passwordPolicy: {
+      minLength: INVITE_PASSWORD_MIN_CHARS,
+    },
+    loginUrl: INVITE_LOGIN_URL,
+  };
+}
+
+async function upsertOrganizationMembership(orgId, userId, role, actor) {
+  if (!supabase) return null;
+  const payload = {
+    org_id: orgId,
+    user_id: userId,
+    role,
+    status: 'active',
+    invited_by: actor?.userId ?? null,
+    invited_email: actor?.email ?? null,
+    accepted_at: new Date().toISOString(),
+    last_seen_at: new Date().toISOString(),
+  };
+
+  const { data, error } = await supabase
+    .from('organization_memberships')
+    .upsert(payload, { onConflict: 'org_id,user_id' })
+    .select('*')
+    .single();
+
+  if (error) {
+    throw error;
+  }
+  await recordActivationEvent(orgId, 'membership_upserted', { userId, role }, actor);
+  return data;
+}
+
+async function fetchOnboardingProgress(orgId) {
+  if (!supabase) return null;
+  try {
+    const [{ data: progress }, { data: steps }, { data: invites }] = await Promise.all([
+      supabase
+        .from('org_onboarding_progress_vw')
+        .select('*')
+        .eq('org_id', orgId)
+        .maybeSingle(),
+      supabase
+        .from('org_activation_steps')
+        .select('*')
+        .eq('org_id', orgId)
+        .order('step'),
+      supabase
+        .from('org_invites')
+        .select('*')
+        .eq('org_id', orgId)
+        .order('created_at', { ascending: false })
+        .limit(50),
+    ]);
+    return {
+      summary: progress,
+      steps: steps || [],
+      invites: invites || [],
+    };
+  } catch (error) {
+    console.warn('[onboarding] Failed to fetch progress', { orgId, error });
+    return null;
+  }
+}
+
+async function fetchOrganizationSummary(orgId) {
+  if (!supabase) return null;
+  try {
+    const { data } = await supabase
+      .from('organizations')
+      .select('id, name, slug')
+      .eq('id', orgId)
+      .maybeSingle();
+    return data;
+  } catch (error) {
+    return null;
+  }
+}
 
 const defaultOrgBrandingRow = (orgId) => ({
   org_id: orgId,
@@ -2165,8 +2851,18 @@ const checkProgressLimit = createRateLimiter({ tokensPerInterval: 8, intervalMs:
 // ============================================================================
 
 // Authentication handler function
+const mapMembershipResponse = (row) => ({
+  organizationId: row.organization_id,
+  role: row.role,
+  status: row.status,
+  organizationName: row.organization_name,
+  organizationStatus: row.organization_status,
+  subscription: row.subscription,
+  features: row.features,
+});
+
 const handleLogin = async (req, res) => {
-  const { email, password, type } = req.body || {};
+  const { email, password } = req.body || {};
 
   console.log('[AUTH] Login attempt:', { email, type, hasSupabase: Boolean(supabase), E2E_TEST_MODE, DEV_FALLBACK });
 
@@ -2268,19 +2964,49 @@ const handleLogin = async (req, res) => {
       return;
     }
 
-    await writeAuthAttempt('success', { mode: 'supabase', user: { id: data.user.id, email: data.user.email } });
+    const { data: membershipRows, error: membershipError } = await supabase
+      .from('user_organizations_vw')
+      .select('organization_id, role, status, organization_name, organization_status, subscription, features')
+      .eq('user_id', data.user.id);
+
+    if (membershipError) {
+      throw membershipError;
+    }
+
+    const membershipPayload = (membershipRows || []).map(mapMembershipResponse);
+    const activeOrgIds = membershipPayload.filter((m) => m.status === 'active').map((m) => m.organizationId);
+
+    const derivedRole = resolveUserRole(
+      {
+        email: data.user.email,
+        user_metadata: data.user.user_metadata,
+        app_metadata: data.user.app_metadata,
+      },
+      membershipPayload,
+    );
+
+    const userPayload = {
+      id: data.user.id,
+      email: data.user.email,
+      name: data.user.user_metadata?.name || data.user.email,
+      role: derivedRole,
+      organizationId: activeOrgIds[0] || data.user.user_metadata?.organization_id || null,
+      organizationIds: activeOrgIds,
+      memberships: membershipPayload,
+      platformRole: data.user.app_metadata?.platform_role || null,
+    };
+
+    await writeAuthAttempt('success', {
+      mode: 'supabase',
+      user: { id: data.user.id, email: data.user.email, orgs: activeOrgIds },
+    });
+
     res.json({
       success: true,
-      user: {
-        id: data.user.id,
-        email: data.user.email,
-        name: data.user.user_metadata?.name || data.user.email,
-        role: type === 'admin' ? 'admin' : 'learner',
-        organizationId: data.user.user_metadata?.organization_id || null
-      },
+      user: userPayload,
       accessToken: data.session.access_token,
       refreshToken: data.session.refresh_token,
-      expiresAt: data.session.expires_at
+      expiresAt: data.session.expires_at,
     });
   } catch (error) {
     console.error('Login error:', error);
@@ -2295,6 +3021,26 @@ const handleLogin = async (req, res) => {
 // Register login endpoint at both paths for compatibility
 app.post('/api/auth/login', handleLogin);
 app.post('/login', handleLogin); // Legacy path
+
+app.get('/api/auth/verify', authenticate, (req, res) => {
+  if (!req.user) {
+    res.status(401).json({ valid: false, error: 'unauthenticated' });
+    return;
+  }
+
+  res.json({
+    valid: true,
+    user: {
+      id: req.user.userId,
+      email: req.user.email,
+      role: req.user.role,
+      platformRole: req.user.platformRole || null,
+      organizationIds: req.user.organizationIds || [],
+      activeOrgId: req.activeOrgId || req.user.organizationId || null,
+      memberships: req.user.memberships || [],
+    },
+  });
+});
 
 // Token refresh endpoint
 app.post('/api/auth/refresh', async (req, res) => {
@@ -2377,29 +3123,33 @@ app.post('/api/auth/forgot-password', async (req, res) => {
 });
 
 // HTTP endpoint to broadcast events. Secured by a server-only API key (BROADCAST_API_KEY).
-// If BROADCAST_API_KEY is not set (dev), fallback to the previous x-user-role=admin header check.
-app.post('/api/broadcast', (req, res) => {
+// If BROADCAST_API_KEY is not set (dev), fallback to an authenticated platform admin.
+app.post('/api/broadcast', async (req, res) => {
   const { type, topic, data } = req.body || {};
 
-  const broadcastApiKey = process.env.BROADCAST_API_KEY || null;
+  const requireAdminFallback = async () => {
+    const authenticated = await ensureAuthenticatedForHandler(req, res);
+    if (!authenticated) return false;
+    if (!req.user?.isPlatformAdmin) {
+      res.status(403).json({ error: 'Platform admin access required to broadcast' });
+      return false;
+    }
+    return true;
+  };
 
-  // If a server broadcast API key is configured, require it via Authorization: Bearer <key>
-  // or the x-broadcast-api-key header. This keeps the endpoint callable only from trusted
-  // backend services. If not set, fall back to the legacy admin header check (dev convenience).
+  const broadcastApiKey = process.env.BROADCAST_API_KEY || null;
   if (broadcastApiKey) {
     const auth = (req.get('authorization') || '').trim();
+    const bearerToken = auth.startsWith('Bearer ') ? auth.slice(7).trim() : auth;
     const headerKey = (req.get('x-broadcast-api-key') || '').trim();
-    const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : auth;
-    if (token !== broadcastApiKey && headerKey !== broadcastApiKey) {
-      res.status(403).json({ error: 'Invalid broadcast API key' });
-      return;
+    const providedKey = bearerToken || headerKey;
+    if (providedKey !== broadcastApiKey) {
+      const allowed = await requireAdminFallback();
+      if (!allowed) return;
     }
   } else {
-    const userRole = (req.get('x-user-role') || '').toLowerCase();
-    if (userRole !== 'admin') {
-      res.status(403).json({ error: 'Admin role required to broadcast' });
-      return;
-    }
+    const allowed = await requireAdminFallback();
+    if (!allowed) return;
   }
 
   if (!type) {
@@ -2408,8 +3158,9 @@ app.post('/api/broadcast', (req, res) => {
   }
 
   const payload = { type, data, timestamp: Date.now() };
-  if (topic) broadcastToTopic(topic, payload);
-  else {
+  if (topic) {
+    broadcastToTopic(topic, payload);
+  } else {
     // broadcast to all topics
     for (const t of topicSubscribers.keys()) broadcastToTopic(t, payload);
   }
@@ -2438,26 +3189,9 @@ app.get('/api/admin/courses', async (req, res) => {
         instructorName: c.instructorName ?? null,
         estimatedDuration: c.estimatedDuration ?? null,
         keyTakeaways: c.keyTakeaways ?? [],
-        modules: (c.modules || []).map((m) => ({
-          id: m.id,
-          course_id: c.id,
-          title: m.title,
-          description: m.description ?? null,
-          order_index: m.order_index ?? m.order ?? 0,
-          lessons: (m.lessons || []).map((l) => ({
-            id: l.id,
-            module_id: m.id,
-            title: l.title,
-            description: l.description ?? null,
-            type: l.type,
-            order_index: l.order_index ?? l.order ?? 0,
-            duration_s: l.duration_s ?? null,
-            content_json: l.content_json ?? l.content ?? {},
-            completion_rule_json: l.completion_rule_json ?? l.completionRule ?? null,
-          })),
-        })),
+        modules: c.modules || [],
       }));
-      res.json({ data });
+      res.json({ data, pagination: { page: 1, pageSize: data.length, total: data.length, hasMore: false } });
       return;
     } catch (err) {
       logAdminCoursesError(req, err, 'E2E fetch courses failed');
@@ -2467,16 +3201,72 @@ app.get('/api/admin/courses', async (req, res) => {
   }
 
   if (!ensureSupabase(res)) return;
-  try {
-    const { data, error } = await supabase
-      .from('courses')
-      .select('*, modules(*, lessons(*))')
-      .order('created_at', { ascending: false })
-      .order('order_index', { ascending: true, foreignTable: 'modules' })
-      .order('order_index', { ascending: true, foreignTable: 'modules.lessons' });
 
+  const { page, pageSize, from, to } = parsePaginationParams(req, { defaultSize: 20, maxSize: 100 });
+  const includeStructure = parseBooleanParam(req.query.includeStructure, false);
+  const includeLessons = parseBooleanParam(req.query.includeLessons, includeStructure);
+  const search = (req.query.search || '').toString().trim();
+  const statusFilter = (req.query.status || '')
+    .toString()
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const orgFilter = (req.query.orgId || req.query.org_id || '').toString().trim();
+
+  const baseFields = [
+    'id',
+    'slug',
+    'title',
+    'description',
+    'status',
+    'meta_json',
+    'published_at',
+    'thumbnail',
+    'difficulty',
+    'duration',
+    'org_id',
+    'created_at',
+    'updated_at',
+  ];
+
+  const moduleFields = includeStructure
+    ? includeLessons
+      ? ',modules(id,course_id,title,description,order_index,lessons(id,module_id,title,description,type,order_index,duration_s,content_json,completion_rule_json))'
+      : ',modules(id,course_id,title,description,order_index)'
+    : '';
+
+  try {
+    let query = supabase
+      .from('courses')
+      .select(`${baseFields.join(',')}${moduleFields}`, { count: 'exact' })
+      .order('created_at', { ascending: false })
+      .range(from, to);
+
+    if (search) {
+      const term = sanitizeIlike(search);
+      query = query.or(`title.ilike.%${term}%,description.ilike.%${term}%`);
+    }
+
+    if (statusFilter.length) {
+      query = query.in('status', statusFilter);
+    }
+
+    if (orgFilter) {
+      query = query.eq('org_id', orgFilter);
+    }
+
+    const { data, error, count } = await query;
     if (error) throw error;
-    res.json({ data });
+
+    res.json({
+      data,
+      pagination: {
+        page,
+        pageSize,
+        total: count || 0,
+        hasMore: to + 1 < (count || 0),
+      },
+    });
   } catch (error) {
     logAdminCoursesError(req, error, 'Failed to fetch courses');
     res.status(500).json({ error: 'Unable to fetch courses' });
@@ -3207,9 +3997,13 @@ app.get('/api/client/surveys', async (req, res) => {
   const statusFilter = rawStatus && rawStatus !== 'all' ? rawStatus : null;
   const wantsAllStatuses = rawStatus === 'all';
   const fallbackStatus = statusFilter ?? (wantsAllStatuses ? null : 'published');
-  const orgHeader = req.get('x-org-id');
-  const orgQuery = (req.query.orgId || req.query.organizationId || '').toString().trim();
-  const orgFilter = orgHeader?.trim() || (orgQuery.length > 0 ? orgQuery : null);
+  const rawOrgQuery =
+    typeof req.query.orgId === 'string'
+      ? req.query.orgId
+      : typeof req.query.organizationId === 'string'
+      ? req.query.organizationId
+      : '';
+  const orgFilter = rawOrgQuery.trim() || req.activeOrgId || null;
 
   try {
     if (!supabase) {
@@ -4993,16 +5787,9 @@ app.post('/api/client/progress/batch', async (req, res) => {
 // Batch Analytics Events Endpoint (demo/E2E only for now)
 // ---------------------------------------------------------------------------
 app.post('/api/analytics/events/batch', async (req, res) => {
-  const payload = req.body || {};
-  const events = Array.isArray(payload.events) ? payload.events : [];
-  if (events.length === 0) {
-    res.status(400).json({ error: 'events array is required' });
-    return;
-  }
-  if (events.length > 50) {
-    res.status(400).json({ error: 'too_many_events', message: 'Max 50 events per batch' });
-    return;
-  }
+  const parsed = validateOr400(analyticsBatchSchema, req, res);
+  if (!parsed) return;
+  const events = parsed.events;
 
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
     const accepted = [];
@@ -5157,14 +5944,85 @@ app.get('/api/admin/organizations', async (req, res) => {
   if (!ensureSupabase(res)) return;
   if (!requireAdminAccess(req, res)) return;
 
-  try {
-    const { data, error } = await supabase
-      .from('organizations')
-      .select('*')
-      .order('created_at', { ascending: false });
+  const { page, pageSize, from, to } = parsePaginationParams(req, { defaultSize: 25, maxSize: 100 });
+  const search = (req.query.search || '').toString().trim();
+  const statuses = (req.query.status || '')
+    .toString()
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const subscriptions = (req.query.subscription || '')
+    .toString()
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const includeProgress = parseBooleanParam(req.query.includeProgress);
+  const allowedSortFields = new Set(['created_at', 'updated_at', 'name']);
+  const sort = allowedSortFields.has(String(req.query.sort)) ? String(req.query.sort) : 'created_at';
+  const ascending = String(req.query.direction).toLowerCase() === 'asc';
 
+  try {
+    let query = supabase
+      .from('organizations')
+      .select(
+        'id,name,slug,type,description,logo,contact_person,contact_email,contact_phone,subscription,status,total_learners,active_learners,completion_rate,modules,timezone,onboarding_status,created_at,updated_at',
+        { count: 'exact' }
+      )
+      .order(sort, { ascending })
+      .range(from, to);
+
+    if (search) {
+      const term = sanitizeIlike(search);
+      query = query.or(
+        `name.ilike.%${term}%,contact_person.ilike.%${term}%,contact_email.ilike.%${term}%`
+      );
+    }
+
+    if (statuses.length) {
+      query = query.in('status', statuses);
+    }
+
+    if (subscriptions.length) {
+      query = query.in('subscription', subscriptions);
+    }
+
+    const { data, error, count } = await query;
     if (error) throw error;
-    res.json({ data });
+
+    let progressMap = {};
+    if (includeProgress && Array.isArray(data) && data.length > 0) {
+      const ids = data.map((org) => org.id).filter(Boolean);
+      if (ids.length) {
+        const cacheKey = `org-progress:${ids.sort().join(',')}`;
+        const rows = await withCache(
+          cacheKey,
+          async () => {
+            const { data: progressData, error: progressError } = await supabase
+              .from('org_onboarding_progress_vw')
+              .select('*')
+              .in('org_id', ids);
+            if (progressError) throw progressError;
+            return progressData || [];
+          },
+          { ttlSeconds: 60 }
+        );
+        progressMap = (rows || []).reduce((acc, row) => {
+          acc[row.org_id] = row;
+          return acc;
+        }, {});
+      }
+    }
+
+    res.json({
+      data,
+      pagination: {
+        page,
+        pageSize,
+        total: count || 0,
+        hasMore: to + 1 < (count || 0),
+      },
+      progress: progressMap,
+    });
   } catch (error) {
     console.error('Failed to fetch organizations:', error);
     res.status(500).json({ error: 'Unable to fetch organizations' });
@@ -5340,12 +6198,12 @@ app.get('/api/admin/organizations/:orgId/members', async (req, res) => {
   if (!context) return;
 
   const access = await requireOrgAccess(req, res, orgId, { write: false });
-  if (!access && context.userRole !== 'admin') return;
+  if (!access) return;
 
   try {
     const { data, error } = await supabase
       .from('organization_memberships')
-      .select('id, user_id, role, invited_by, created_at, updated_at')
+      .select('id, user_id, role, status, invited_by, invited_email, accepted_at, last_seen_at, created_at, updated_at')
       .eq('org_id', orgId)
       .order('created_at', { ascending: false });
 
@@ -5360,7 +6218,7 @@ app.get('/api/admin/organizations/:orgId/members', async (req, res) => {
 app.post('/api/admin/organizations/:orgId/members', async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { orgId } = req.params;
-  const { userId, role = 'member' } = req.body || {};
+  const { userId, role = 'member', status, inviteEmail } = req.body || {};
 
   if (!userId) {
     res.status(400).json({ error: 'userId is required' });
@@ -5371,21 +6229,32 @@ app.post('/api/admin/organizations/:orgId/members', async (req, res) => {
   if (!context) return;
 
   const access = await requireOrgAccess(req, res, orgId, { write: true });
-  if (!access && context.userRole !== 'admin') return;
+  if (!access) return;
 
   try {
     const normalizedRole = String(role || 'member').toLowerCase();
+    const normalizedStatus = (() => {
+      const candidate = String(status || '').toLowerCase();
+      if (['pending', 'active', 'revoked'].includes(candidate)) {
+        return candidate;
+      }
+      return 'pending';
+    })();
     const payload = {
       org_id: orgId,
       user_id: userId,
       role: normalizedRole,
-      invited_by: context.userId ?? null
+      invited_by: context.userId ?? null,
+      status: normalizedStatus,
+      invited_email: inviteEmail ?? null,
+      accepted_at: normalizedStatus === 'active' ? new Date().toISOString() : null,
+      last_seen_at: normalizedStatus === 'active' ? new Date().toISOString() : null,
     };
 
     const { data, error } = await supabase
       .from('organization_memberships')
-      .upsert(payload, { onConflict: 'org_id,user_id' })
-      .select('id, org_id, user_id, role, invited_by, created_at, updated_at')
+    .upsert(payload, { onConflict: 'org_id,user_id' })
+    .select('id, org_id, user_id, role, status, invited_by, invited_email, accepted_at, last_seen_at, created_at, updated_at')
       .single();
 
     if (error) throw error;
@@ -5393,6 +6262,93 @@ app.post('/api/admin/organizations/:orgId/members', async (req, res) => {
   } catch (error) {
     console.error(`Failed to add organization member for ${orgId}:`, error);
     res.status(500).json({ error: 'Unable to add organization member' });
+  }
+});
+
+app.patch('/api/admin/organizations/:orgId/members/:membershipId', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const { orgId, membershipId } = req.params;
+  const { role, status } = req.body || {};
+
+  if (!role && !status) {
+    res.status(400).json({ error: 'role or status required' });
+    return;
+  }
+
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  const access = await requireOrgAccess(req, res, orgId, { write: true });
+  if (!access) return;
+
+  try {
+    const { data: existing, error: existingError } = await supabase
+      .from('organization_memberships')
+      .select('id, org_id, role, status, user_id')
+      .eq('id', membershipId)
+      .eq('org_id', orgId)
+      .maybeSingle();
+
+    if (existingError) throw existingError;
+    if (!existing) {
+      res.status(404).json({ error: 'Membership not found' });
+      return;
+    }
+
+    const updatePayload = {};
+    if (role) {
+      updatePayload.role = String(role).toLowerCase();
+    }
+    if (status) {
+      const normalizedStatus = String(status).toLowerCase();
+      if (!['pending', 'active', 'revoked'].includes(normalizedStatus)) {
+        res.status(400).json({ error: 'Invalid status value' });
+        return;
+      }
+      updatePayload.status = normalizedStatus;
+      if (normalizedStatus === 'active') {
+        updatePayload.accepted_at = new Date().toISOString();
+        updatePayload.last_seen_at = new Date().toISOString();
+      }
+    }
+
+    const roleIsChangingFromOwner =
+      existing.role === 'owner' && updatePayload.role && updatePayload.role !== 'owner';
+    const statusRevokingOwner = existing.role === 'owner' && updatePayload.status === 'revoked';
+
+    if (roleIsChangingFromOwner || statusRevokingOwner) {
+      const { count, error: countError } = await supabase
+        .from('organization_memberships')
+        .select('id', { count: 'exact', head: true })
+        .eq('org_id', orgId)
+        .eq('role', 'owner')
+        .eq('status', 'active');
+
+      if (countError) throw countError;
+      if (!count || count <= 1) {
+        res.status(400).json({ error: 'At least one active owner is required' });
+        return;
+      }
+    }
+
+    const { data, error } = await supabase
+      .from('organization_memberships')
+      .update(updatePayload)
+      .eq('id', membershipId)
+      .eq('org_id', orgId)
+      .select('id, org_id, user_id, role, status, invited_by, invited_email, accepted_at, last_seen_at, created_at, updated_at')
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data) {
+      res.status(404).json({ error: 'Membership not found after update' });
+      return;
+    }
+
+    res.json({ data });
+  } catch (error) {
+    console.error(`Failed to update organization member ${membershipId}:`, error);
+    res.status(500).json({ error: 'Unable to update organization member' });
   }
 });
 
@@ -5438,6 +6394,595 @@ app.delete('/api/admin/organizations/:orgId/members/:membershipId', async (req, 
   } catch (error) {
     console.error(`Failed to remove organization member ${membershipId}:`, error);
     res.status(500).json({ error: 'Unable to remove organization member' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Public invite acceptance endpoints
+// ---------------------------------------------------------------------------
+
+app.get('/api/invite/:token', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const token = (req.params?.token || '').trim();
+  if (!token) {
+    res.status(400).json({ error: 'invite_token_required' });
+    return;
+  }
+
+  try {
+    const invite = await loadInviteByToken(token);
+    if (!invite) {
+      res.status(404).json({ error: 'invite_not_found' });
+      return;
+    }
+    const orgSummary = await fetchOrganizationSummary(invite.org_id);
+    res.json({ data: buildPublicInvitePayload(invite, orgSummary) });
+  } catch (error) {
+    logger.warn('invite_lookup_failed', { token: token.slice(0, 6), message: error?.message || String(error) });
+    res.status(500).json({ error: 'Unable to load invite' });
+  }
+});
+
+app.post('/api/invite/:token/accept', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const token = (req.params?.token || '').trim();
+  if (!token) {
+    res.status(400).json({ error: 'invite_token_required' });
+    return;
+  }
+
+  try {
+    const invite = await loadInviteByToken(token);
+    if (!invite) {
+      res.status(404).json({ error: 'invite_not_found' });
+      return;
+    }
+
+    const derivedStatus = deriveInviteStatus(invite);
+    if (!INVITE_ACCEPTABLE_STATUSES.has(derivedStatus)) {
+      res.status(409).json({ error: 'invite_unavailable', status: derivedStatus });
+      return;
+    }
+
+    const orgSummary = await fetchOrganizationSummary(invite.org_id);
+    const fullName = (req.body?.fullName || invite.invited_name || '').trim();
+    const password = req.body?.password ? String(req.body.password) : '';
+
+    let authUser = null;
+    try {
+      const { data, error } = await supabase.auth.admin.getUserByEmail(invite.email);
+      if (error && error.message !== 'User not found') {
+        throw error;
+      }
+      authUser = data?.user ?? null;
+    } catch (error) {
+      logger.error('invite_accept_lookup_failed', { message: error?.message || String(error) });
+      res.status(500).json({ error: 'Unable to validate invite email' });
+      return;
+    }
+
+    if (!authUser) {
+      if (!password || password.length < INVITE_PASSWORD_MIN_CHARS) {
+        res.status(400).json({
+          error: 'invalid_password',
+          message: `Password must be at least ${INVITE_PASSWORD_MIN_CHARS} characters`,
+        });
+        return;
+      }
+      const { data, error } = await supabase.auth.admin.createUser({
+        email: invite.email,
+        password,
+        email_confirm: true,
+        user_metadata: {
+          full_name: fullName || invite.invited_name || null,
+          onboarding_org_id: invite.org_id,
+        },
+      });
+      if (error) {
+        logger.error('invite_accept_user_create_failed', { message: error?.message || String(error) });
+        res.status(500).json({ error: 'Unable to create account for invite' });
+        return;
+      }
+      authUser = data?.user || null;
+    } else if (password) {
+      if (password.length < INVITE_PASSWORD_MIN_CHARS) {
+        res.status(400).json({
+          error: 'invalid_password',
+          message: `Password must be at least ${INVITE_PASSWORD_MIN_CHARS} characters`,
+        });
+        return;
+      }
+      try {
+        await supabase.auth.admin.updateUserById(authUser.id, { password });
+      } catch (error) {
+        logger.warn('invite_accept_password_update_failed', { userId: authUser.id, message: error?.message || String(error) });
+      }
+    }
+
+    if (!authUser) {
+      res.status(500).json({ error: 'Unable to resolve invite user' });
+      return;
+    }
+
+    const actor = {
+      userId: authUser.id,
+      email: authUser.email,
+      name: fullName || authUser.user_metadata?.full_name || invite.email,
+    };
+
+    await upsertOrganizationMembership(invite.org_id, authUser.id, normalizeOrgRole(invite.role), actor);
+
+    const nowIso = new Date().toISOString();
+    await supabase
+      .from('org_invites')
+      .update({ status: 'accepted', accepted_at: nowIso, accepted_user_id: authUser.id })
+      .eq('id', invite.id);
+
+    await recordActivationEvent(invite.org_id, 'invite_accepted_public', { inviteId: invite.id }, actor);
+    await createAuditLogEntry('org_invite_accepted', { inviteId: invite.id }, { userId: authUser.id, orgId: invite.org_id });
+
+    const { count: remainingInvites } = await supabase
+      .from('org_invites')
+      .select('id', { count: 'exact', head: true })
+      .eq('org_id', invite.org_id)
+      .in('status', ['pending', 'sent']);
+
+    if (!remainingInvites) {
+      await markActivationStep(invite.org_id, 'invite_team', { status: 'completed', actor });
+    } else {
+      await markActivationStep(invite.org_id, 'invite_team', { status: 'in_progress', actor });
+    }
+
+    res.json({
+      data: {
+        status: 'accepted',
+        orgId: invite.org_id,
+        orgName: orgSummary?.name || null,
+        email: invite.email,
+        loginUrl: INVITE_LOGIN_URL,
+      },
+    });
+  } catch (error) {
+    logger.error('invite_accept_failed', { message: error?.message || String(error) });
+    res.status(500).json({ error: 'Unable to accept invite' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Client onboarding orchestration
+// ---------------------------------------------------------------------------
+
+app.post('/api/admin/onboarding/orgs', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  const actor = buildActorFromRequest(req);
+  const body = req.body || {};
+  const errors = [];
+
+  const name = String(body.name || '').trim();
+  const type = body.type ?? body.orgType ?? null;
+  const contactPerson = body.contactPerson || body.contact_person || '';
+  const contactEmail = (body.contactEmail || body.contact_email || '').trim().toLowerCase();
+  const timezone = body.timezone || DEFAULT_ORG_TIMEZONE;
+  const ownerInput = body.owner || {};
+
+  if (!name) errors.push({ field: 'name', message: 'Organization name is required.' });
+  if (!contactEmail) errors.push({ field: 'contactEmail', message: 'Primary contact email is required.' });
+  if (!ownerInput.userId && !ownerInput.email) {
+    errors.push({ field: 'owner', message: 'An owner user ID or email is required.' });
+  }
+
+  if (errors.length > 0) {
+    res.status(400).json({ error: 'validation_error', details: errors });
+    return;
+  }
+
+  try {
+    const slug = await ensureUniqueOrgSlug(body.slug || name);
+    const subscription = body.subscription || DEFAULT_ORG_PLAN;
+    const orgInsert = {
+      id: body.id ?? undefined,
+      name,
+      slug,
+      type,
+      description: body.description ?? null,
+      logo: body.logo ?? null,
+      contact_person: contactPerson,
+      contact_email: contactEmail,
+      contact_phone: body.contactPhone ?? null,
+      website: body.website ?? null,
+      address: body.address ?? null,
+      city: body.city ?? null,
+      state: body.state ?? null,
+      country: body.country ?? null,
+      postal_code: body.postalCode ?? null,
+      subscription,
+      billing_email: body.billingEmail ?? contactEmail,
+      billing_cycle: body.billingCycle ?? 'annual',
+      custom_pricing: body.customPricing ?? null,
+      max_learners: body.maxLearners ?? null,
+      max_courses: body.maxCourses ?? null,
+      max_storage: body.maxStorage ?? null,
+      features: {
+        sandbox_enabled: true,
+        onboarding_checklist: true,
+        ...(body.features || {}),
+      },
+      settings: {
+        timezone,
+        autoEnrollment: true,
+        ...(body.settings || {}),
+      },
+      status: body.status || 'active',
+      tags: body.tags || [],
+      onboarding_status: 'pending',
+      timezone,
+    };
+
+    const { data: org, error } = await supabase
+      .from('organizations')
+      .insert(orgInsert)
+      .select('*')
+      .single();
+
+    if (error) throw error;
+
+    await initializeActivationSteps(org.id, actor);
+    await recordActivationEvent(org.id, 'org_created', { name }, actor);
+    await createAuditLogEntry('org_created', { slug, name }, { userId: actor.userId, orgId: org.id });
+
+    const ownerRole = normalizeOrgRole(ownerInput.role || 'owner', 'owner');
+    const inviteResults = [];
+
+    if (ownerInput.userId) {
+      await upsertOrganizationMembership(org.id, ownerInput.userId, ownerRole, actor);
+      await markActivationStep(org.id, 'assign_owner', { actor });
+    } else if (ownerInput.email) {
+      const { invite } = await createOrgInvite({
+        orgId: org.id,
+        email: ownerInput.email,
+        role: ownerRole,
+        inviter: actor,
+        orgName: org.name,
+        metadata: { type: 'owner' },
+      });
+      inviteResults.push({ email: invite.email, id: invite.id, role: invite.role });
+    }
+
+    if (body.backupAdmin?.email || body.backupAdmin?.userId) {
+      const backupRole = normalizeOrgRole(body.backupAdmin.role || 'admin', 'admin');
+      if (body.backupAdmin.userId) {
+        await upsertOrganizationMembership(org.id, body.backupAdmin.userId, backupRole, actor);
+      } else if (body.backupAdmin.email) {
+        const { invite } = await createOrgInvite({
+          orgId: org.id,
+          email: body.backupAdmin.email,
+          role: backupRole,
+          inviter: actor,
+          orgName: org.name,
+          metadata: { type: 'backup_admin' },
+        });
+        inviteResults.push({ email: invite.email, id: invite.id, role: invite.role });
+      }
+    }
+
+    const initialInvites = Array.isArray(body.invites) ? body.invites.slice(0, INVITE_BULK_LIMIT) : [];
+    for (const invite of initialInvites) {
+      if (!invite || !invite.email) continue;
+      try {
+        const normalizedRole = normalizeOrgRole(invite.role || 'member');
+        const { invite: createdInvite } = await createOrgInvite({
+          orgId: org.id,
+          email: invite.email,
+          role: normalizedRole,
+          inviter: actor,
+          orgName: org.name,
+          metadata: invite.metadata || {},
+        });
+        inviteResults.push({ email: createdInvite.email, id: createdInvite.id, role: createdInvite.role });
+      } catch (inviteError) {
+        inviteResults.push({ email: invite.email, error: inviteError.message });
+      }
+    }
+
+    if (inviteResults.length > 0) {
+      await markActivationStep(org.id, 'invite_team', { status: 'in_progress', actor });
+    }
+
+    const progress = await fetchOnboardingProgress(org.id);
+    res.status(201).json({ data: org, invites: inviteResults, progress });
+  } catch (error) {
+    console.error('Failed to create onboarding organization', error);
+    res.status(500).json({ error: 'Unable to create organization', details: error.message });
+  }
+});
+
+app.get('/api/admin/onboarding/:orgId/invites', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const { orgId } = req.params;
+  const access = await requireOrgAccess(req, res, orgId, { write: false });
+  if (!access) return;
+
+  try {
+    const { data, error } = await supabase
+      .from('org_invites')
+      .select('*')
+      .eq('org_id', orgId)
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json({ data: data || [] });
+  } catch (error) {
+    console.error('Failed to list org invites', error);
+    res.status(500).json({ error: 'Unable to fetch invites' });
+  }
+});
+
+app.post('/api/admin/onboarding/:orgId/invites', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const { orgId } = req.params;
+  const access = await requireOrgAccess(req, res, orgId, { write: true });
+  if (!access) return;
+
+  const actor = buildActorFromRequest(req);
+  const body = req.body || {};
+  const email = (body.email || '').trim().toLowerCase();
+  if (!email) {
+    res.status(400).json({ error: 'Email is required' });
+    return;
+  }
+
+  try {
+    const orgSummary = await fetchOrganizationSummary(orgId);
+    const orgName = orgSummary?.name || body.orgName || 'Your organization';
+    const normalizedRole = normalizeOrgRole(body.role || 'member');
+    const { invite, duplicate } = await createOrgInvite({
+      orgId,
+      email,
+      role: normalizedRole,
+      inviter: actor,
+      orgName,
+      metadata: body.metadata || {},
+      sendEmail: body.sendEmail !== false,
+      duplicateStrategy: body.allowDuplicate ? 'create' : 'return',
+    });
+
+    if (!duplicate) {
+      await markActivationStep(orgId, 'invite_team', { status: 'in_progress', actor });
+    }
+
+    res.status(201).json({ data: invite, duplicate });
+  } catch (error) {
+    console.error('Failed to create invite', error);
+    res.status(500).json({ error: 'Unable to create invite', details: error.message });
+  }
+});
+
+app.post('/api/admin/onboarding/:orgId/invites/bulk', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const { orgId } = req.params;
+  const access = await requireOrgAccess(req, res, orgId, { write: true });
+  if (!access) return;
+  const actor = buildActorFromRequest(req);
+  const entries = Array.isArray(req.body?.invites) ? req.body.invites : [];
+  if (entries.length === 0) {
+    res.status(400).json({ error: 'No invites provided' });
+    return;
+  }
+
+  const orgSummary = await fetchOrganizationSummary(orgId);
+  const orgName = orgSummary?.name || req.body?.orgName || 'Your organization';
+  const sliced = entries.slice(0, INVITE_BULK_LIMIT);
+  const results = [];
+  for (const entry of sliced) {
+    const email = (entry?.email || '').trim().toLowerCase();
+    if (!email) {
+      results.push({ error: 'missing_email' });
+      continue;
+    }
+    try {
+      const { invite, duplicate } = await createOrgInvite({
+        orgId,
+        email,
+        role: normalizeOrgRole(entry?.role || 'member'),
+        inviter: actor,
+        orgName,
+        metadata: entry?.metadata || {},
+        sendEmail: entry?.sendEmail !== false,
+      });
+      results.push({ email: invite.email, id: invite.id, duplicate });
+    } catch (error) {
+      results.push({ email, error: error.message });
+    }
+  }
+
+  await markActivationStep(orgId, 'invite_team', { status: 'in_progress', actor });
+  res.status(201).json({ results });
+});
+
+app.post('/api/admin/onboarding/:orgId/invites/:inviteId/resend', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const { orgId, inviteId } = req.params;
+  const access = await requireOrgAccess(req, res, orgId, { write: true });
+  if (!access) return;
+  const actor = buildActorFromRequest(req);
+
+  try {
+    const { data: invite, error } = await supabase
+      .from('org_invites')
+      .select('*')
+      .eq('id', inviteId)
+      .eq('org_id', orgId)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!invite) {
+      res.status(404).json({ error: 'Invite not found' });
+      return;
+    }
+    if (invite.status === 'accepted' || invite.status === 'revoked') {
+      res.status(400).json({ error: 'Invite can no longer be resent' });
+      return;
+    }
+
+    const orgSummary = await fetchOrganizationSummary(orgId);
+    const updated = await deliverInviteEmail(invite, { orgName: orgSummary?.name || '', inviterName: actor.name });
+    await recordActivationEvent(orgId, 'invite_resent', { inviteId }, actor);
+    res.json({ data: updated });
+  } catch (error) {
+    console.error('Failed to resend invite', error);
+    res.status(500).json({ error: 'Unable to resend invite' });
+  }
+});
+
+app.delete('/api/admin/onboarding/:orgId/invites/:inviteId', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const { orgId, inviteId } = req.params;
+  const access = await requireOrgAccess(req, res, orgId, { write: true });
+  if (!access) return;
+
+  try {
+    const { error } = await supabase
+      .from('org_invites')
+      .update({ status: 'revoked' })
+      .eq('id', inviteId)
+      .eq('org_id', orgId);
+    if (error) throw error;
+    await recordActivationEvent(orgId, 'invite_revoked', { inviteId }, buildActorFromRequest(req));
+    res.status(204).end();
+  } catch (error) {
+    console.error('Failed to revoke invite', error);
+    res.status(500).json({ error: 'Unable to revoke invite' });
+  }
+});
+
+app.get('/api/admin/onboarding/:orgId/progress', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const { orgId } = req.params;
+  const access = await requireOrgAccess(req, res, orgId, { write: false });
+  if (!access) return;
+
+  const progress = await fetchOnboardingProgress(orgId);
+  res.json({ data: progress });
+});
+
+app.patch('/api/admin/onboarding/:orgId/steps/:stepId', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const { orgId, stepId } = req.params;
+  const access = await requireOrgAccess(req, res, orgId, { write: true });
+  if (!access) return;
+
+  const status = req.body?.status;
+  if (!['pending', 'in_progress', 'completed', 'blocked'].includes(status)) {
+    res.status(400).json({ error: 'Invalid status' });
+    return;
+  }
+
+  await markActivationStep(orgId, stepId, { status, actor: buildActorFromRequest(req) });
+  const progress = await fetchOnboardingProgress(orgId);
+  res.json({ data: progress });
+});
+
+app.post('/api/orgs/:orgId/memberships/accept', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const { orgId } = req.params;
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  try {
+    const now = new Date().toISOString();
+    const { data, error } = await supabase
+      .from('organization_memberships')
+      .update({ status: 'active', accepted_at: now, last_seen_at: now })
+      .eq('org_id', orgId)
+      .eq('user_id', context.userId)
+      .select('id, org_id, user_id, role, status, invited_email, accepted_at, last_seen_at')
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!data) {
+      res.status(404).json({ error: 'Membership not found' });
+      return;
+    }
+
+    if (req.user?.email) {
+      try {
+        await supabase
+          .from('org_invites')
+          .update({ status: 'accepted' })
+          .eq('org_id', orgId)
+          .eq('email', req.user.email.toLowerCase())
+          .in('status', ['pending', 'sent']);
+      } catch (inviteError) {
+        console.warn('[onboarding] Failed to sync invite acceptance', inviteError);
+      }
+      const { count } = await supabase
+        .from('org_invites')
+        .select('id', { count: 'exact', head: true })
+        .eq('org_id', orgId)
+        .in('status', ['pending', 'sent']);
+      const actor = buildActorFromRequest(req);
+      await recordActivationEvent(orgId, 'invite_accepted', { membershipId: data.id }, actor);
+      if (!count || count === 0) {
+        await markActivationStep(orgId, 'invite_team', { status: 'completed', actor });
+      }
+    }
+
+    res.json({ data });
+  } catch (error) {
+    console.error(`Failed to accept membership for org ${orgId}:`, error);
+    res.status(500).json({ error: 'Unable to accept membership' });
+  }
+});
+
+app.post('/api/orgs/:orgId/memberships/leave', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const { orgId } = req.params;
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  try {
+    const { data: membership, error } = await supabase
+      .from('organization_memberships')
+      .select('id, role, status')
+      .eq('org_id', orgId)
+      .eq('user_id', context.userId)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!membership) {
+      res.status(404).json({ error: 'Membership not found' });
+      return;
+    }
+
+    if (membership.role === 'owner') {
+      const { count, error: countError } = await supabase
+        .from('organization_memberships')
+        .select('id', { count: 'exact', head: true })
+        .eq('org_id', orgId)
+        .eq('role', 'owner')
+        .eq('status', 'active');
+
+      if (countError) throw countError;
+      if (!count || count <= 1) {
+        res.status(400).json({ error: 'Cannot leave as the last active owner' });
+        return;
+      }
+    }
+
+    const now = new Date().toISOString();
+    const { error: updateError } = await supabase
+      .from('organization_memberships')
+      .update({ status: 'revoked', last_seen_at: now })
+      .eq('org_id', orgId)
+      .eq('user_id', context.userId);
+
+    if (updateError) throw updateError;
+    res.json({ success: true });
+  } catch (error) {
+    console.error(`Failed to leave organization ${orgId}:`, error);
+    res.status(500).json({ error: 'Unable to leave organization' });
   }
 });
 
@@ -6644,31 +8189,45 @@ app.delete('/api/admin/surveys/:id', async (req, res) => {
 // Notifications
 app.get('/api/admin/notifications', async (req, res) => {
   if (!ensureSupabase(res)) return;
-  const { org_id, user_id } = req.query;
   const context = requireUserContext(req, res);
   if (!context) return;
 
   const isAdmin = context.userRole === 'admin';
+  const requestedOrgId = (req.query.org_id || req.query.orgId || '').toString().trim();
+  const requestedUserId = (req.query.user_id || req.query.userId || '').toString().trim();
+  const { page, pageSize, from, to } = parsePaginationParams(req, { defaultSize: 25, maxSize: 200 });
+  const search = (req.query.search || '').toString().trim();
+  const dispatchStatuses = (req.query.dispatchStatus || req.query.dispatch_status || '')
+    .toString()
+    .split(',')
+    .map((status) => status.trim())
+    .filter(Boolean);
 
   try {
-    let query = supabase
-      .from('notifications')
-      .select('*')
-      .order('created_at', { ascending: false });
-
-    if (org_id) {
-      const access = await requireOrgAccess(req, res, org_id);
+    if (requestedOrgId) {
+      const access = await requireOrgAccess(req, res, requestedOrgId, { write: false });
       if (!access && !isAdmin) return;
-      query = query.eq('org_id', org_id);
     }
 
-    if (user_id) {
-      if (!isAdmin && context.userId && user_id !== context.userId) {
+    let query = supabase
+      .from('notifications')
+      .select('id,title,body,org_id,user_id,created_at,read,dispatch_status,channels,metadata,scheduled_for,delivered_at', {
+        count: 'exact',
+      })
+      .order('created_at', { ascending: false })
+      .range(from, to);
+
+    if (requestedOrgId) {
+      query = query.eq('org_id', requestedOrgId);
+    }
+
+    if (requestedUserId) {
+      if (!isAdmin && requestedUserId !== context.userId) {
         res.status(403).json({ error: 'Cannot view notifications for another user' });
         return;
       }
-      query = query.eq('user_id', user_id);
-    } else if (!isAdmin) {
+      query = query.eq('user_id', requestedUserId);
+    } else if (!isAdmin && !requestedOrgId) {
       if (!context.userId) {
         res.status(400).json({ error: 'user_id is required for non-admin queries' });
         return;
@@ -6676,18 +8235,27 @@ app.get('/api/admin/notifications', async (req, res) => {
       query = query.eq('user_id', context.userId);
     }
 
-    const { data, error } = await query;
+    if (dispatchStatuses.length) {
+      query = query.in('dispatch_status', dispatchStatuses);
+    }
+
+    if (search) {
+      const term = sanitizeIlike(search);
+      query = query.or(`title.ilike.%${term}%,body.ilike.%${term}%`);
+    }
+
+    const { data, error, count } = await query;
     if (error) throw error;
 
-    const filtered = isAdmin
-      ? data
-      : (data || []).filter((note) => {
-          if (note.user_id) return note.user_id === context.userId;
-          if (note.org_id) return true;
-          return false;
-        });
-
-    res.json({ data: filtered });
+    res.json({
+      data,
+      pagination: {
+        page,
+        pageSize,
+        total: count || 0,
+        hasMore: to + 1 < (count || 0),
+      },
+    });
   } catch (error) {
     console.error('Failed to fetch notifications:', error);
     res.status(500).json({ error: 'Unable to fetch notifications' });
@@ -6719,21 +8287,41 @@ app.post('/api/admin/notifications', async (req, res) => {
     return;
   }
 
+  const channels = Array.isArray(payload.channels) && payload.channels.length ? payload.channels : ['in_app'];
+  const scheduledFor = payload.scheduledFor || payload.scheduled_for || null;
+  const dispatchStatus = scheduledFor ? 'pending' : 'queued';
+  const sendEmailFlag = payload.sendEmail ?? payload.send_email ?? channels.includes('email');
+
   try {
+    const insertPayload = {
+      id: payload.id ?? undefined,
+      title: payload.title,
+      body: payload.body ?? null,
+      org_id: payload.orgId ?? null,
+      user_id: payload.userId ?? null,
+      read: payload.read ?? false,
+      channels,
+      scheduled_for: scheduledFor,
+      dispatch_status: dispatchStatus,
+      metadata: payload.metadata ?? {},
+    };
+
     const { data, error } = await supabase
       .from('notifications')
-      .insert({
-        id: payload.id ?? undefined,
-        title: payload.title,
-        body: payload.body ?? null,
-        org_id: payload.orgId ?? null,
-        user_id: payload.userId ?? null,
-        read: payload.read ?? false
-      })
+      .insert(insertPayload)
       .select('*')
       .single();
 
     if (error) throw error;
+
+    if (!scheduledFor && notificationDispatcher?.enqueueDispatch) {
+      notificationDispatcher.enqueueDispatch({
+        notificationId: data.id,
+        channels,
+        sendEmail: sendEmailFlag,
+      });
+    }
+
     res.status(201).json({ data });
   } catch (error) {
     console.error('Failed to create notification:', error);
@@ -6839,13 +8427,11 @@ app.delete('/api/admin/notifications/:id', async (req, res) => {
 });
 
 app.post('/api/analytics/events', async (req, res) => {
-  const { id, user_id, course_id, lesson_id, module_id, event_type, session_id, user_agent, payload, org_id } = req.body || {};
+  const parsed = validateOr400(analyticsEventIngestSchema, req, res);
+  if (!parsed) return;
+  const { id, user_id, course_id, lesson_id, module_id, event_type, session_id, user_agent, payload, org_id } = parsed;
 
-  const normalizedEvent = typeof event_type === 'string' ? event_type.trim() : '';
-  if (!normalizedEvent) {
-    res.status(400).json({ error: 'event_type is required' });
-    return;
-  }
+  const normalizedEvent = event_type.trim();
 
   const respondQueued = (meta = {}) => res.json({ status: 'queued', stored: false, ...meta });
   const respondStored = (meta = {}) => res.json({ status: 'stored', stored: true, ...meta });

@@ -206,8 +206,34 @@ const LMSLogin: React.FC = () => {
             </div>
             <span className="font-bold text-2xl text-gray-900">The Huddle Co.</span>
           </Link>
-          <h2 className="text-3xl font-bold text-gray-900 mb-2">Welcome Back</h2>
-          <p className="text-gray-600">Sign in to access your learning portal</p>
+          <h2 className="text-3xl font-bold text-gray-900 mb-2">Welcome back to your learning path</h2>
+          <p className="text-gray-600">
+            Use your organization email for assignments, reflections, and certificates curated for your cohort.
+          </p>
+          <p className="mt-3 text-sm text-gray-500">
+            Need to manage a program instead? Visit the{' '}
+            <Link to="/admin/login" className="text-orange-500 hover:text-orange-600 underline-offset-2 hover:underline">
+              Admin Portal
+            </Link>
+            .
+          </p>
+        </div>
+
+        <div className="rounded-2xl border border-white/60 bg-white/80 p-5 shadow-xl text-left">
+          <div className="flex items-start gap-3">
+            <ShieldCheck className="h-5 w-5 text-green-500 mt-0.5" />
+            <div>
+              <p className="text-sm font-semibold text-gray-900">Private learner workspace</p>
+              <p className="text-sm text-gray-600">
+                Only active cohorts and verified facilitators can sign in. Your progress, reflections, and certifications stay synced with your org lead.
+              </p>
+            </div>
+          </div>
+          <div className="mt-4 flex flex-wrap gap-2 text-xs text-gray-600">
+            <span className="rounded-full bg-gray-100 px-3 py-1">Personalized modules unlocked weekly</span>
+            <span className="rounded-full bg-gray-100 px-3 py-1">Secure Supabase storage & auto-save</span>
+            <span className="rounded-full bg-gray-100 px-3 py-1">Access from any device</span>
+          </div>
         </div>
 
         <div className="bg-white rounded-2xl shadow-xl p-8">

@@ -4,31 +4,60 @@
  */
 
 import rateLimit from 'express-rate-limit';
-import { verifyAccessToken, extractTokenFromHeader } from '../utils/jwt.js';
+import supabase from '../lib/supabaseClient.js';
+import { extractTokenFromHeader } from '../utils/jwt.js';
 import { getAccessTokenFromRequest } from '../utils/authCookies.js';
 import { E2E_TEST_MODE, DEV_FALLBACK } from '../config/runtimeFlags.js';
+import { getPermissionsForRole, mergePermissions } from '../../shared/permissions/index.js';
 
 const normalizeEmail = (value = '') => value.trim().toLowerCase();
 const PRIMARY_ADMIN_EMAIL = normalizeEmail(process.env.PRIMARY_ADMIN_EMAIL || 'mya@the-huddle.co');
+const STRICT_AUTH = String(process.env.STRICT_AUTH || 'false').toLowerCase() === 'true';
+const MEMBERSHIP_CACHE_MS = Number(process.env.AUTH_MEMBERSHIP_CACHE_MS || 60_000);
+const TOKEN_CACHE_LIMIT = Number(process.env.AUTH_TOKEN_CACHE_LIMIT || 5000);
+
+const membershipCache = new Map();
+const tokenCache = new Map();
+
+const writableOrgRoles = new Set(['owner', 'admin', 'manager', 'editor']);
 
 const isCanonicalAdminEmail = (email) => {
   if (!email) return false;
   return normalizeEmail(email) === PRIMARY_ADMIN_EMAIL;
 };
 
-const resolveUserRole = (user = {}) => {
+const derivePlatformRole = (user = {}) => {
+  const metadataRole =
+    user.app_metadata?.platform_role ||
+    user.app_metadata?.role ||
+    user.user_metadata?.platform_role ||
+    user.user_metadata?.role ||
+    null;
+
+  if (metadataRole) {
+    return String(metadataRole).toLowerCase();
+  }
+
+  return null;
+};
+
+const resolveUserRole = (user = {}, memberships = []) => {
   const email = normalizeEmail(user.email || '');
   if (email && isCanonicalAdminEmail(email)) {
     return 'admin';
   }
 
-  const metadataRole =
-    user.role ||
-    user.user_metadata?.role ||
-    user.app_metadata?.role ||
-    (user.user_metadata?.is_admin || user.app_metadata?.is_admin ? 'admin' : undefined);
+  const platformRole = derivePlatformRole(user);
+  if (platformRole === 'platform_admin' || platformRole === 'admin') {
+    return 'admin';
+  }
 
-  return metadataRole || 'user';
+  const membershipRoles = memberships.map((m) => String(m.role || '').toLowerCase());
+  if (membershipRoles.some((role) => writableOrgRoles.has(role))) {
+    return 'admin';
+  }
+
+  return 'learner';
 };
 
 export { normalizeEmail, PRIMARY_ADMIN_EMAIL, isCanonicalAdminEmail, resolveUserRole };
@@ -37,77 +66,260 @@ export { normalizeEmail, PRIMARY_ADMIN_EMAIL, isCanonicalAdminEmail, resolveUser
 // Authentication Middleware
 // ============================================================================
 
-/**
- * Verify JWT token and attach user to request
- */
-export function authenticate(req, res, next) {
+const allowDemoBypass = E2E_TEST_MODE || DEV_FALLBACK;
+
+const cacheGet = (store, key) => {
+  const hit = store.get(key);
+  if (!hit) return null;
+  if (hit.expiresAt < Date.now()) {
+    store.delete(key);
+    return null;
+  }
+  return hit.value;
+};
+
+const cacheSet = (store, key, value, ttlMs = MEMBERSHIP_CACHE_MS) => {
+  if (!ttlMs || ttlMs <= 0) return;
+  store.set(key, { value, expiresAt: Date.now() + ttlMs });
+  if (store.size > TOKEN_CACHE_LIMIT) {
+    const firstKey = store.keys().next().value;
+    if (firstKey) store.delete(firstKey);
+  }
+};
+
+export const mapMembershipRows = (rows = []) =>
+  rows.map((row) => ({
+    orgId: row.organization_id,
+    organizationId: row.organization_id,
+    role: row.role,
+    status: row.status,
+    organizationName: row.organization_name,
+    organizationStatus: row.organization_status,
+    subscription: row.subscription,
+    features: row.features,
+    acceptedAt: row.accepted_at,
+    lastSeenAt: row.last_seen_at,
+  }));
+
+const buildMembershipMap = (memberships = []) => {
+  const map = new Map();
+  memberships.forEach((membership) => {
+    if (membership && membership.orgId) {
+      map.set(membership.orgId, membership);
+    }
+  });
+  return map;
+};
+
+const getRequestedOrgId = (req) => {
+  if (!req) return null;
+  const candidates = [
+    req.query?.orgId,
+    req.query?.organizationId,
+    req.body?.orgId,
+    req.body?.organizationId,
+    req.params?.orgId,
+    req.params?.organizationId,
+  ];
+
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string') {
+      const trimmed = candidate.trim();
+      if (trimmed) return trimmed;
+    }
+  }
+
+  return null;
+};
+
+const determineActiveOrgId = (req, memberships = []) => {
+  const requested = getRequestedOrgId(req);
+  if (requested) {
+    const match = memberships.find((m) => m.orgId === requested && m.status === 'active');
+    if (match) return requested;
+  }
+
+  const firstActive = memberships.find((m) => m.status === 'active');
+  return firstActive?.orgId || null;
+};
+
+async function loadSupabaseUser(token) {
+  if (!token || !supabase) return null;
+  const cached = cacheGet(tokenCache, token);
+  if (cached) return cached;
+
+  const { data, error } = await supabase.auth.getUser(token);
+  if (error || !data?.user) {
+    return null;
+  }
+  cacheSet(tokenCache, token, data.user);
+  return data.user;
+}
+
+async function loadMemberships(userId) {
+  if (!userId || !supabase) return [];
+  const cacheKey = `org-memberships:${userId}`;
+  const cached = cacheGet(membershipCache, cacheKey);
+  if (cached) return cached;
+
+  const { data, error } = await supabase
+    .from('user_organizations_vw')
+    .select('organization_id, role, status, organization_name, organization_status, subscription, features, accepted_at, last_seen_at')
+    .eq('user_id', userId);
+
+  if (error) {
+    console.error('[auth] Failed to load memberships', { userId, error });
+    return [];
+  }
+
+  const mapped = mapMembershipRows(data || []);
+  cacheSet(membershipCache, cacheKey, mapped);
+  return mapped;
+}
+
+const buildUserPayload = (user, memberships) => {
+  const organizationIds = memberships.filter((m) => m.status === 'active').map((m) => m.orgId);
+  const platformRole = derivePlatformRole(user);
+  const inferredRole = resolveUserRole(user, memberships);
+  const rolePermissions = getPermissionsForRole(inferredRole);
+  const platformPermissions = platformRole ? getPermissionsForRole(platformRole) : new Set();
+  const mergedPermissions = mergePermissions(rolePermissions, platformPermissions);
+  const serializedPermissions = Array.from(mergedPermissions);
+
+  return {
+    id: user.id,
+    userId: user.id,
+    email: normalizeEmail(user.email || ''),
+    role: inferredRole,
+    platformRole,
+    isPlatformAdmin: platformRole === 'platform_admin' || inferredRole === 'admin',
+    organizationId: organizationIds[0] || null,
+    organizationIds,
+    memberships,
+    permissions: serializedPermissions,
+    appMetadata: user.app_metadata || {},
+    userMetadata: user.user_metadata || {},
+  };
+};
+
+async function buildAuthContext(req, { optional = false } = {}) {
   let token = extractTokenFromHeader(req.headers.authorization);
   if (!token) {
     token = getAccessTokenFromRequest(req);
   }
 
-  const allowDemoBypass = E2E_TEST_MODE || DEV_FALLBACK;
   if (!token && allowDemoBypass) {
-    req.user = {
+    const demoUser = {
       id: 'demo-admin',
-      userId: 'demo-admin',
-      role: 'admin',
       email: 'demo-admin@localhost',
-      organizationId: 'demo-org',
+      app_metadata: { platform_role: 'platform_admin' },
     };
-    return next();
+    const memberships = [
+      {
+        orgId: 'demo-org',
+        role: 'owner',
+        status: 'active',
+        organizationName: 'Demo Org',
+        organizationStatus: 'active',
+      },
+    ];
+    const payload = buildUserPayload(demoUser, memberships);
+    return {
+      user: payload,
+      membershipsMap: buildMembershipMap(memberships),
+      activeOrgId: memberships[0].orgId,
+    };
   }
-  
+
   if (!token) {
-    return res.status(401).json({
-      error: 'Authentication required',
-      message: 'No token provided',
+    if (optional) return null;
+    throw new Error('missing_token');
+  }
+
+  if (!supabase) {
+    if (optional && !STRICT_AUTH) return null;
+    throw new Error('supabase_not_configured');
+  }
+
+  const supabaseUser = await loadSupabaseUser(token);
+  if (!supabaseUser) {
+    if (optional) return null;
+    throw new Error('invalid_token');
+  }
+
+  const memberships = await loadMemberships(supabaseUser.id);
+  const userPayload = buildUserPayload(supabaseUser, memberships);
+  const membershipMap = buildMembershipMap(memberships);
+  const activeOrgId = determineActiveOrgId(req, memberships);
+
+  return { user: userPayload, membershipsMap: membershipMap, activeOrgId };
+}
+
+/**
+ * Verify Supabase token and attach user to request
+ */
+export async function authenticate(req, res, next) {
+  try {
+    const context = await buildAuthContext(req);
+    if (!context) {
+      return res.status(401).json({
+        error: 'Authentication required',
+        message: 'No valid session token',
+      });
+    }
+
+    req.user = context.user;
+    req.orgMemberships = context.membershipsMap;
+    req.activeOrgId = context.activeOrgId;
+  req.userPermissions = new Set(Array.isArray(context.user.permissions) ? context.user.permissions : []);
+    return next();
+  } catch (error) {
+    if (error.message === 'supabase_not_configured') {
+      console.error('[auth] Supabase credentials missing while STRICT_AUTH enabled');
+      return res.status(503).json({
+        error: 'auth_unavailable',
+        message: 'Authentication service not configured',
+      });
+    }
+
+    if (error.message === 'missing_token') {
+      return res.status(401).json({
+        error: 'Authentication required',
+        message: 'No token provided',
+      });
+    }
+
+    if (error.message === 'invalid_token') {
+      return res.status(401).json({
+        error: 'Invalid token',
+        message: 'Token is invalid or expired',
+      });
+    }
+
+    console.error('[auth] Unexpected authentication error', error);
+    return res.status(500).json({
+      error: 'auth_error',
+      message: 'Unable to authenticate request',
     });
   }
-  
-  const payload = verifyAccessToken(token);
-  
-  if (!payload) {
-    return res.status(401).json({
-      error: 'Invalid token',
-      message: 'Token is invalid or expired',
-    });
-  }
-  
-  // Attach user to request
-  req.user = payload || {};
-
-  if (req.user.email) {
-    req.user.email = normalizeEmail(req.user.email);
-  }
-
-  if (isCanonicalAdminEmail(req.user.email)) {
-    req.user.role = 'admin';
-  }
-
-  if (!req.user.userId && req.user.id) {
-    req.user.userId = req.user.id;
-  }
-
-  return next();
 }
 
 /**
  * Optional authentication - doesn't fail if no token
  */
-export function optionalAuthenticate(req, res, next) {
-  let token = extractTokenFromHeader(req.headers.authorization);
-  if (!token) {
-    token = getAccessTokenFromRequest(req);
-  }
-  
-  if (token) {
-    const payload = verifyAccessToken(token);
-    if (payload) {
-      req.user = payload;
+export async function optionalAuthenticate(req, res, next) {
+  try {
+    const context = await buildAuthContext(req, { optional: true });
+    if (context) {
+      req.user = context.user;
+      req.orgMemberships = context.membershipsMap;
+      req.activeOrgId = context.activeOrgId;
+  req.userPermissions = new Set(Array.isArray(context.user.permissions) ? context.user.permissions : []);
     }
+  } catch (error) {
+    console.warn('[auth] optional auth failed:', error.message);
   }
-  
+
   next();
 }
 
@@ -140,8 +352,13 @@ export function requireRole(...allowedRoles) {
   };
 }
 
+const hasWritableOrgRole = (membership) => {
+  if (!membership) return false;
+  return writableOrgRoles.has(String(membership.role || '').toLowerCase());
+};
+
 /**
- * Require admin role
+ * Require platform admin role (global)
  */
 export function requireAdmin(req, res, next) {
   if (!req.user) {
@@ -151,19 +368,52 @@ export function requireAdmin(req, res, next) {
     });
   }
 
-  if (req.user.role === 'admin' || isCanonicalAdminEmail(req.user.email)) {
+  if (req.user.isPlatformAdmin || req.user.platformRole === 'platform_admin') {
     return next();
   }
 
   console.warn('[requireAdmin] Access denied', {
-    user: req.user,
-    PRIMARY_ADMIN_EMAIL,
+    user: { id: req.user.userId, email: req.user.email, platformRole: req.user.platformRole },
   });
 
   return res.status(403).json({
     error: 'Forbidden',
-    message: 'Admin access required',
+    message: 'Platform admin access required',
   });
+}
+
+export const requirePlatformAdmin = requireAdmin;
+
+
+export function requirePermission(...permissions) {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({
+        error: 'Authentication required',
+        message: 'Must be logged in',
+      });
+    }
+
+    if (req.user.isPlatformAdmin) {
+      return next();
+    }
+
+    if (!permissions || permissions.length === 0) {
+      return next();
+    }
+
+    const permissionSet = req.userPermissions || new Set(req.user.permissions || []);
+    const allowed = permissions.some((permission) => permissionSet.has(permission));
+    if (!allowed) {
+      return res.status(403).json({
+        error: 'Forbidden',
+        message: 'Insufficient feature permissions',
+        requiredPermissions: permissions,
+      });
+    }
+
+    next();
+  };
 }
 
 
@@ -216,14 +466,19 @@ export function requireSameOrganizationOrAdmin(getOrganizationId) {
       });
     }
     
-    // Admins can access all organizations
-    if (req.user.role === 'admin') {
+    // Platform admins can access all organizations
+    if (req.user.isPlatformAdmin) {
       return next();
     }
     
     const resourceOrgId = getOrganizationId(req);
     
-    if (!resourceOrgId || resourceOrgId === req.user.organizationId) {
+    if (!resourceOrgId) {
+      return next();
+    }
+
+    const membership = req.orgMemberships?.get(resourceOrgId);
+    if (membership && membership.status === 'active') {
       return next();
     }
     
@@ -256,6 +511,19 @@ export const authLimiter = rateLimit({
 /**
  * Rate limiter for API endpoints
  */
+const RATE_LIMIT_BYPASS_PREFIXES = ['/auth', '/mfa', '/health', '/diagnostics'];
+const RATE_LIMIT_BYPASS_EXACT = new Set(['/auth/csrf']);
+
+const shouldBypassApiRateLimit = (req) => {
+  if (!req) return false;
+  if (req.method === 'OPTIONS') return true;
+  const path = req.path || '';
+  if (RATE_LIMIT_BYPASS_EXACT.has(path)) {
+    return true;
+  }
+  return RATE_LIMIT_BYPASS_PREFIXES.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
+};
+
 export const apiLimiter = rateLimit({
   windowMs: 1 * 60 * 1000, // 1 minute
   max: 500, // 500 requests per minute (increased for development)
@@ -265,13 +533,7 @@ export const apiLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
-  skip: (req) => {
-    // Skip rate limiting for auth endpoints in development
-    if (process.env.NODE_ENV !== 'production' && req.path.includes('/auth/')) {
-      return true;
-    }
-    return false;
-  },
+  skip: (req) => shouldBypassApiRateLimit(req),
 });
 
 /**

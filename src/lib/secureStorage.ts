@@ -138,6 +138,22 @@ function decrypt(ciphertext: string): string | null {
 export interface SessionMetadata {
   accessExpiresAt?: number;
   refreshExpiresAt?: number;
+  accessIssuedAt?: number;
+  refreshIssuedAt?: number;
+  sessionVersion?: string | null;
+}
+
+export interface UserMembership {
+  orgId: string;
+  organizationId?: string;
+  role?: string | null;
+  status?: string | null;
+  organizationName?: string | null;
+  organizationStatus?: string | null;
+  subscription?: string | null;
+  features?: Record<string, unknown> | null;
+  acceptedAt?: string | null;
+  lastSeenAt?: string | null;
 }
 
 export interface UserSession {
@@ -146,7 +162,14 @@ export interface UserSession {
   role: string;
   firstName?: string;
   lastName?: string;
-  organizationId?: string;
+  organizationId?: string | null;
+  organizationIds?: string[];
+  memberships?: UserMembership[];
+  activeOrgId?: string | null;
+  platformRole?: string | null;
+  isPlatformAdmin?: boolean;
+  appMetadata?: Record<string, unknown> | null;
+  userMetadata?: Record<string, unknown> | null;
 }
 
 /**

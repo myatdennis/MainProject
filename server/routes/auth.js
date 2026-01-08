@@ -12,6 +12,7 @@ import {
   normalizeEmail,
   isCanonicalAdminEmail,
   resolveUserRole,
+  mapMembershipRows,
 } from '../middleware/auth.js';
 import supabase, { supabaseAuthClient } from '../lib/supabaseClient.js';
 import {
@@ -19,6 +20,7 @@ import {
   clearAuthCookies,
   getRefreshTokenFromRequest,
 } from '../utils/authCookies.js';
+import { doubleSubmitCSRF } from '../middleware/csrf.js';
 import {
   demoLoginEnabled,
   E2E_TEST_MODE as e2eTestMode,
@@ -90,16 +92,8 @@ const buildConfiguredDemoUsers = () => {
       password,
       passwordHash,
     });
-  };
 
-  fromEnv('DEMO_ADMIN', {
-    id: '00000000-0000-0000-0000-000000000001',
-  email: 'mya@the-huddle.co',
-    role: 'admin',
-    firstName: 'Admin',
-    lastName: 'User',
-    organizationId: undefined,
-  });
+  };
 
   fromEnv('DEMO_USER', {
     id: '00000000-0000-0000-0000-000000000002',
@@ -178,6 +172,73 @@ const resolveDemoUser = async (email, password) => {
     return matchLegacyDemoUser(email, password);
   }
   return null;
+};
+
+const ORGANIZATION_VIEW_COLUMNS =
+  'organization_id, role, status, organization_name, organization_status, subscription, features, accepted_at, last_seen_at';
+
+const fetchUserMembershipRows = async (userId) => {
+  if (!supabase || !userId) return [];
+  const { data, error } = await supabase
+    .from('user_organizations_vw')
+    .select(ORGANIZATION_VIEW_COLUMNS)
+    .eq('user_id', userId);
+
+  if (error) {
+    console.error('[AUTH ROUTES] Failed to fetch memberships', { userId, error });
+    return [];
+  }
+
+  return data || [];
+};
+
+const buildTokenResponseFromSession = (session) => {
+  if (!session) {
+    return {
+      accessToken: null,
+      refreshToken: null,
+      expiresAt: null,
+      refreshExpiresAt: null,
+    };
+  }
+
+  const expiresAt = session.expires_at ? session.expires_at * 1000 : session.expires_in ? Date.now() + session.expires_in * 1000 : null;
+  const refreshExpiresAt = expiresAt ? expiresAt + 30 * 24 * 60 * 60 * 1000 : Date.now() + 30 * 24 * 60 * 60 * 1000;
+
+  return {
+    accessToken: session.access_token,
+    refreshToken: session.refresh_token,
+    expiresAt,
+    refreshExpiresAt,
+  };
+};
+
+const buildUserPayloadFromSupabase = (supabaseUser, memberships = []) => {
+  const normalizedEmail = normalizeEmail(supabaseUser?.email || '');
+  const membershipPayload = mapMembershipRows(memberships);
+  const organizationIds = membershipPayload.filter((m) => m.status === 'active').map((m) => m.orgId);
+  const role = resolveUserRole(
+    {
+      email: normalizedEmail,
+      role: supabaseUser?.role,
+      app_metadata: supabaseUser?.app_metadata,
+      user_metadata: supabaseUser?.user_metadata,
+    },
+    membershipPayload,
+  );
+
+  return {
+    id: supabaseUser.id,
+    userId: supabaseUser.id,
+    email: normalizedEmail,
+    role,
+    firstName: supabaseUser.user_metadata?.first_name ?? null,
+    lastName: supabaseUser.user_metadata?.last_name ?? null,
+    organizationId: organizationIds[0] || null,
+    organizationIds,
+    memberships: membershipPayload,
+    platformRole: supabaseUser.app_metadata?.platform_role || null,
+  };
 };
 
 const router = express.Router();
@@ -261,7 +322,7 @@ router.post('/login', async (req, res) => {
       password,
     });
 
-    if (authError || !data?.user) {
+    if (authError || !data?.user || !data.session) {
       const detailMessage = authError?.message || 'unknown error';
       console.warn(`${logPrefix} Supabase auth failed: ${detailMessage}`);
       return res.status(401).json({
@@ -299,29 +360,23 @@ router.post('/login', async (req, res) => {
     }
 
     const supabaseUser = data.user;
-    const role = resolveUserRole({
-      email: normalizedEmail,
-      role: supabaseUser.role,
-      user_metadata: supabaseUser.user_metadata,
-      app_metadata: supabaseUser.app_metadata,
+    const membershipRows = await fetchUserMembershipRows(supabaseUser.id);
+    const userPayload = buildUserPayloadFromSupabase(supabaseUser, membershipRows);
+    const tokens = buildTokenResponseFromSession(data.session);
+
+    attachAuthCookies(res, tokens);
+
+    console.log('[AUTH LOGIN] issuing supabase session for:', {
+      userId: userPayload.userId,
+      orgs: userPayload.organizationIds,
+      role: userPayload.role,
     });
-
-    const userPayload = {
-      id: supabaseUser.id,
-      userId: supabaseUser.id,
-      email: normalizedEmail,
-      role,
-      organizationId: supabaseUser.user_metadata?.organization_id ?? null,
-    };
-
-    const { accessToken, refreshToken } = generateTokens(userPayload);
-
-    console.log('[AUTH LOGIN] issuing tokens for:', userPayload);
 
     return res.json({
       user: userPayload,
-      accessToken,
-      refreshToken,
+      memberships: userPayload.memberships,
+      organizationIds: userPayload.organizationIds,
+      ...tokens,
     });
   } catch (error) {
     console.error('Login error:', error);
@@ -429,23 +484,34 @@ router.post('/register', authLimiter, async (req, res) => {
         });
       }
 
-      const tokens = generateTokens({
-        userId: newUser.id,
-        email: newUser.email,
-        role: newUser.role,
-        organizationId: newUser.organization_id,
+      const { data: sessionData, error: loginError } = await supabaseAuthClient.auth.signInWithPassword({
+        email: normalizedEmail,
+        password,
       });
+
+      if (loginError || !sessionData?.session || !sessionData.user) {
+        console.warn('[AUTH REGISTER] User created but automatic login failed, returning 201 without session');
+        return res.status(201).json({
+          user: {
+            id: newUser.id,
+            email: newUser.email,
+            role: newUser.role,
+            firstName: newUser.first_name,
+            lastName: newUser.last_name,
+            organizationId: newUser.organization_id,
+          },
+          requiresLogin: true,
+        });
+      }
+
+      const membershipRows = await fetchUserMembershipRows(sessionData.user.id);
+      const userPayload = buildUserPayloadFromSupabase(sessionData.user, membershipRows);
+      const tokens = buildTokenResponseFromSession(sessionData.session);
 
       attachAuthCookies(res, tokens);
       res.status(201).json({
-        user: {
-          id: newUser.id,
-          email: newUser.email,
-          role: newUser.role,
-          firstName: newUser.first_name,
-          lastName: newUser.last_name,
-          organizationId: newUser.organization_id,
-        },
+        user: userPayload,
+        memberships: userPayload.memberships,
         ...tokens,
       });
     } catch (error) {
@@ -473,30 +539,23 @@ router.post('/register', authLimiter, async (req, res) => {
 
 router.post('/refresh', async (req, res) => {
   try {
-    let { refreshToken } = req.body || {};
+    const refreshToken = getRefreshTokenFromRequest(req);
+
     if (!refreshToken) {
-      refreshToken = getRefreshTokenFromRequest(req);
-    }
-    
-    if (!refreshToken) {
-      return res.status(400).json({
-        error: 'Missing token',
-        message: 'Refresh token is required',
-      });
-    }
-    
-    // Verify refresh token
-    const payload = verifyRefreshToken(refreshToken);
-    
-    if (!payload) {
       return res.status(401).json({
-        error: 'Invalid token',
-        message: 'Refresh token is invalid or expired',
+        error: 'missing_refresh_token',
+        message: 'Refresh token cookie is required',
       });
     }
-    
-    // Demo mode - skip database check
+
     if (isDemoModeExplicit || isE2ETestMode) {
+      const payload = verifyRefreshToken(refreshToken);
+      if (!payload) {
+        return res.status(401).json({
+          error: 'Invalid token',
+          message: 'Refresh token is invalid or expired',
+        });
+      }
       const tokens = generateTokens({
         userId: payload.userId,
         email: payload.email,
@@ -505,44 +564,32 @@ router.post('/refresh', async (req, res) => {
       attachAuthCookies(res, tokens);
       return res.json(tokens);
     }
-    
-    // Get user from database
-    if (!supabase) {
+
+    if (!supabaseAuthClient) {
       return res.status(503).json({
         error: 'Service unavailable',
+        message: 'Authentication service not configured',
       });
     }
-    
-    const { data: user, error: userError } = await supabase
-      .from('users')
-      .select('*')
-      .eq('id', payload.userId)
-      .single();
-    
-    if (userError || !user) {
+
+    const { data, error } = await supabaseAuthClient.auth.refreshSession({ refresh_token: refreshToken });
+    if (error || !data?.session || !data.user) {
       return res.status(401).json({
-        error: 'User not found',
-        message: 'Invalid refresh token',
+        error: 'Invalid token',
+        message: error?.message || 'Unable to refresh session',
       });
     }
-    
-    // Check if user is still active
-    if (!user.is_active) {
-      return res.status(403).json({
-        error: 'Account disabled',
-      });
-    }
-    
-    // Generate new tokens
-    const tokens = generateTokens({
-      userId: user.id,
-      email: user.email,
-      role: user.role,
-      organizationId: user.organization_id,
-    });
-    
+
+    const membershipRows = await fetchUserMembershipRows(data.user.id);
+    const userPayload = buildUserPayloadFromSupabase(data.user, membershipRows);
+    const tokens = buildTokenResponseFromSession(data.session);
+
     attachAuthCookies(res, tokens);
-    res.json(tokens);
+    res.json({
+      user: userPayload,
+      memberships: userPayload.memberships,
+      ...tokens,
+    });
   } catch (error) {
     console.error('Token refresh error:', error);
     res.status(500).json({
@@ -561,6 +608,16 @@ router.get('/verify', authenticate, async (req, res) => {
   res.json({
     valid: true,
     user: req.user,
+    memberships: req.user?.memberships || [],
+    activeOrgId: req.activeOrgId || req.user?.organizationId || null,
+  });
+});
+
+router.get('/session', authenticate, (req, res) => {
+  res.json({
+    user: req.user || null,
+    memberships: req.user?.memberships || [],
+    activeOrgId: req.activeOrgId || req.user?.organizationId || null,
   });
 });
 
@@ -568,15 +625,24 @@ router.get('/verify', authenticate, async (req, res) => {
 // Logout
 // ============================================================================
 
-router.post('/logout', authenticate, async (req, res) => {
-  // In a real implementation, you might want to blacklist the token
-  // For now, just send success response
-  // Client will clear tokens from storage
-  clearAuthCookies(res);
-  res.json({
-    success: true,
-    message: 'Logged out successfully',
-  });
+router.post('/logout', doubleSubmitCSRF, async (req, res) => {
+  try {
+    const refreshToken = getRefreshTokenFromRequest(req);
+
+    if (supabaseAuthClient && refreshToken) {
+      try {
+        await supabaseAuthClient.auth.signOut(refreshToken);
+      } catch (error) {
+        console.warn('[AUTH LOGOUT] Supabase signOut failed', error?.message || error);
+      }
+    }
+  } finally {
+    clearAuthCookies(res);
+    res.json({
+      success: true,
+      message: 'Logged out successfully',
+    });
+  }
 });
 
 // ============================================================================

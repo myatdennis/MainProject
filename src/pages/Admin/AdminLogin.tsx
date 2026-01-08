@@ -1,13 +1,17 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { useSecureAuth } from '../../context/SecureAuthContext';
-import { Shield, Lock, Mail, Eye, EyeOff, AlertTriangle } from 'lucide-react';
+import { Shield, Lock, Mail, Eye, EyeOff, AlertTriangle, Info, ShieldCheck, Activity, LifeBuoy } from 'lucide-react';
 import { loginSchema, emailSchema } from '../../utils/validators';
 import { sanitizeText } from '../../utils/sanitize';
+import useRuntimeStatus from '../../hooks/useRuntimeStatus';
+import type { RuntimeStatus } from '../../state/runtimeStatus';
 
 
 const AdminLogin: React.FC = () => {
   const { login, isAuthenticated, forgotPassword, authInitializing, verifyMfa } = useSecureAuth();
+  const runtimeStatus = useRuntimeStatus();
+  const supabaseReady = runtimeStatus.supabaseConfigured && runtimeStatus.supabaseHealthy;
   const [email, setEmail] = useState('mya@the-huddle.co');
   const [password, setPassword] = useState('admin123');
   const [showPassword, setShowPassword] = useState(false);
@@ -23,6 +27,56 @@ const AdminLogin: React.FC = () => {
   useEffect(() => {
     if (isAuthenticated.admin) navigate('/admin/dashboard');
   }, [isAuthenticated.admin, navigate]);
+
+  const statusBadgeCopy: Record<RuntimeStatus['statusLabel'], { label: string; description: string }> = {
+    ok: {
+      label: 'Operational',
+      description: 'Supabase connection verified. Live production data.',
+    },
+    degraded: {
+      label: 'Degraded',
+      description: 'We detected slower connectivity. Expect brief delays during sign-in.',
+    },
+    'demo-fallback': {
+      label: 'Demo safeguards',
+      description: 'Running with limited write access while the platform is in demo mode.',
+    },
+    unknown: {
+      label: 'Status unknown',
+      description: 'Checking backend health. You can continue with demo credentials.',
+    },
+  };
+
+  const getStatusBadgeClass = (status: RuntimeStatus['statusLabel']) => {
+    switch (status) {
+      case 'ok':
+        return 'bg-emerald-50 text-emerald-700 border border-emerald-100';
+      case 'degraded':
+        return 'bg-amber-50 text-amber-700 border border-amber-100';
+      case 'demo-fallback':
+        return 'bg-skyblue/10 text-skyblue border border-skyblue/30';
+      default:
+        return 'bg-gray-100 text-gray border border-gray-200';
+    }
+  };
+
+  const trustSignals = [
+    {
+      icon: ShieldCheck,
+      title: 'Multi-factor enforced',
+      description: 'Every admin session requires a one-time verification code.',
+    },
+    {
+      icon: Activity,
+      title: 'Monitored changes',
+      description: 'Course, invite, and org updates are logged for audit readiness.',
+    },
+    {
+      icon: LifeBuoy,
+      title: 'Concierge support',
+      description: 'Need a new admin seat? We respond to access requests within 1 business day.',
+    },
+  ];
 
   if (authInitializing) {
     return (
@@ -126,16 +180,67 @@ const AdminLogin: React.FC = () => {
             </div>
           </div>
           <h2 className="text-h1 font-heading text-charcoal mb-2">Secure Access</h2>
-          <p className="text-body text-gray">Administrator and facilitator login only</p>
+          <p className="text-body text-gray">
+            Program operations, enrollment leads, and facilitators sign in here to manage org-wide learning.
+          </p>
+          <p className="mt-3 text-small text-gray">
+            Learners should continue to the{' '}
+            <Link to="/lms/login" className="text-skyblue underline-offset-2 hover:underline">
+              learning portal
+            </Link>
+            .
+          </p>
         </div>
 
         <div className="card">
           {error && (
-            <div className="mb-6 p-4 bg-deepred/10 border border-deepred rounded-lg flex items-center space-x-2">
+            <div className="mb-6 p-4 bg-deepred/10 border border-deepred rounded-lg flex items-center space-x-2" role="alert">
               <AlertTriangle className="h-5 w-5 text-deepred" />
               <span className="text-deepred text-small">{error}</span>
             </div>
           )}
+
+          <div className="mb-6 rounded-2xl border border-mist/60 bg-softwhite/60 p-4 shadow-card-sm">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <p className="text-small font-heading text-charcoal">Platform health</p>
+                <p className="text-small text-gray">
+                  {supabaseReady
+                    ? statusBadgeCopy.ok.description
+                    : runtimeStatus.demoModeEnabled
+                      ? statusBadgeCopy['demo-fallback'].description
+                      : statusBadgeCopy[runtimeStatus.statusLabel].description}
+                </p>
+                {runtimeStatus.lastChecked && (
+                  <p className="mt-1 text-xs text-gray">
+                    Last verified {new Date(runtimeStatus.lastChecked).toLocaleTimeString()}
+                  </p>
+                )}
+              </div>
+              <span className={`rounded-full px-3 py-1 text-xs font-semibold ${getStatusBadgeClass(runtimeStatus.statusLabel)}`}>
+                {statusBadgeCopy[runtimeStatus.statusLabel].label}
+              </span>
+            </div>
+
+            {!supabaseReady && !runtimeStatus.demoModeEnabled && (
+              <p className="mt-3 flex items-start gap-2 text-small text-amber-700">
+                <Info className="mt-0.5 h-4 w-4" />
+                We&apos;re reconnecting to Supabase. Stay on this page or use the demo credentials below while we finish syncing.
+              </p>
+            )}
+
+            <div className="mt-4 grid gap-3">
+              {trustSignals.map(({ icon: Icon, title, description }) => (
+                <div key={title} className="flex items-start gap-3 rounded-xl bg-white/70 px-3 py-2">
+                  <Icon className="h-4 w-4 text-sunrise" />
+                  <div>
+                    <p className="text-small font-heading text-charcoal">{title}</p>
+                    <p className="text-small text-gray">{description}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
 
           {!mfaRequired ? (
             <form onSubmit={handleSubmit} className="space-y-6">
@@ -213,7 +318,7 @@ const AdminLogin: React.FC = () => {
                     Authenticating...
                   </div>
                 ) : (
-                  'Access Admin Portal'
+                  'Sign in securely'
                 )}
               </button>
             </form>

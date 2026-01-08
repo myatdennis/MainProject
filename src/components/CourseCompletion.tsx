@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { LazyImage } from './PerformanceComponents';
 import { 
   Trophy, 
@@ -15,11 +15,13 @@ import {
   Twitter,
   Mail,
   Copy,
-  ExternalLink
+  ExternalLink,
+  AlertTriangle
 } from 'lucide-react';
 import { toast } from 'react-hot-toast';
 import { generateFromCompletion } from '../dal/certificates';
 import { trackCourseCompletion } from '../dal/analytics';
+import type { Course } from '../types/courseTypes';
 
 interface CourseCompletionProps {
   course: {
@@ -39,6 +41,7 @@ interface CourseCompletionProps {
       }>;
     }>;
   };
+  certification?: Course['certification'];
   completionData: {
     completedAt: Date;
     timeSpent: number; // in minutes
@@ -74,6 +77,7 @@ const CourseCompletion: React.FC<CourseCompletionProps> = ({
   nextSteps = [],
   recommendedCourses = [],
   onClose,
+  certification,
   onCertificateDownload,
   onShareComplete,
   className = ''
@@ -85,6 +89,9 @@ const CourseCompletion: React.FC<CourseCompletionProps> = ({
   const [certificateUrl, setCertificateUrl] = useState<string | undefined>(completionData.certificateUrl);
   const [certificateId, setCertificateId] = useState<string | undefined>(completionData.certificateId);
   const [isGeneratingCertificate, setIsGeneratingCertificate] = useState(false);
+  const [autoGenerationError, setAutoGenerationError] = useState<string | null>(null);
+  const autoGenerationAttemptedRef = useRef(false);
+  const hasLoggedCertificateAnalyticsRef = useRef(false);
 
   useEffect(() => {
     // Generate shareable URL
@@ -183,8 +190,73 @@ const CourseCompletion: React.FC<CourseCompletionProps> = ({
   const totalModules = course.modules?.length || 0;
 
   const moduleRequirements = useMemo(() => {
-    return (course.modules || []).map(module => `Completed module: ${module.title}`);
+    const modules = course.modules || [];
+    if (!modules.length) {
+      return ['Complete all course modules'];
+    }
+    return modules.map(module => `Completed module: ${module.title}`);
   }, [course.modules]);
+
+  const certificateDisplayName = certification?.name || `${course.title} Certificate`;
+
+  const requirementChecklist = useMemo(() => {
+    const sourceRequirements = certification?.requirements?.length
+      ? certification.requirements
+      : moduleRequirements;
+
+    if (!sourceRequirements.length) {
+      return [{ label: 'Complete course requirements', met: true }];
+    }
+
+    return sourceRequirements.map((label) => ({ label, met: true }));
+  }, [certification?.requirements, moduleRequirements]);
+
+  const issueCertificate = useCallback(async (source: 'auto' | 'manual') => {
+    if (!course?.id) return;
+    setIsGeneratingCertificate(true);
+    setAutoGenerationError(null);
+
+    try {
+      const generated = await generateFromCompletion({
+        userId: learnerId,
+        userName: learnerName,
+        userEmail: learnerEmail,
+        courseId: course.id,
+        courseTitle: course.title,
+        certificationName: certificateDisplayName,
+        completionDate: completionData.completedAt.toISOString(),
+        completionTimeMinutes: completionData.timeSpent,
+        finalScore: completionData.score,
+        requirementsMet: requirementChecklist.map((item) => item.label),
+      });
+
+      setCertificateUrl(generated.certificateUrl);
+      setCertificateId(generated.id);
+      setActiveTab('certificate');
+      toast.success(source === 'auto' ? 'Your certificate is ready!' : 'Certificate generated successfully!');
+
+      if (!hasLoggedCertificateAnalyticsRef.current) {
+        trackCourseCompletion(learnerId, course.id, {
+          totalTimeSpent: completionData.timeSpent,
+          finalScore: completionData.score,
+          modulesCompleted: totalModules,
+          lessonsCompleted: completedLessons,
+          quizzesPassed: 0,
+          certificateGenerated: true,
+        });
+        hasLoggedCertificateAnalyticsRef.current = true;
+      }
+    } catch (error) {
+      console.error('Failed to generate certificate:', error);
+      if (source === 'auto') {
+        setAutoGenerationError('We could not auto-issue your certificate. Please try again below.');
+      } else {
+        toast.error('Unable to generate certificate. Please try again.');
+      }
+    } finally {
+      setIsGeneratingCertificate(false);
+    }
+  }, [certificateDisplayName, completionData.completedAt, completionData.score, completionData.timeSpent, completedLessons, course?.id, course.title, learnerEmail, learnerId, learnerName, requirementChecklist, totalModules]);
 
   const handleCertificateDownloadInternal = useCallback(() => {
     if (onCertificateDownload) {
@@ -202,42 +274,18 @@ const CourseCompletion: React.FC<CourseCompletionProps> = ({
     }
   }, [certificateUrl, course.title, onCertificateDownload]);
 
-  const handleGenerateCertificate = useCallback(async () => {
-    setIsGeneratingCertificate(true);
-    try {
-      const generated = await generateFromCompletion({
-        userId: learnerId,
-        userName: learnerName,
-        userEmail: learnerEmail,
-        courseId: course.id,
-        courseTitle: course.title,
-        certificationName: `${course.title} Certificate`,
-        completionDate: completionData.completedAt.toISOString(),
-        completionTimeMinutes: completionData.timeSpent,
-        finalScore: completionData.score,
-        requirementsMet: moduleRequirements
-      });
+  const handleGenerateCertificate = useCallback(() => {
+    issueCertificate('manual');
+  }, [issueCertificate]);
 
-      setCertificateUrl(generated.certificateUrl);
-      setCertificateId(generated.id);
-      setActiveTab('certificate');
-      toast.success('Certificate generated successfully!');
+  useEffect(() => {
+    if (!certification?.available) return;
+    if (certificateUrl) return;
+    if (autoGenerationAttemptedRef.current) return;
 
-      trackCourseCompletion(learnerId, course.id, {
-        totalTimeSpent: completionData.timeSpent,
-        finalScore: completionData.score,
-        modulesCompleted: totalModules,
-        lessonsCompleted: completedLessons,
-        quizzesPassed: 0,
-        certificateGenerated: true
-      });
-    } catch (error) {
-      console.error('Failed to generate certificate:', error);
-      toast.error('Unable to generate certificate. Please try again.');
-    } finally {
-      setIsGeneratingCertificate(false);
-    }
-  }, [completionData.completedAt, completionData.score, completionData.timeSpent, completedLessons, course.id, course.title, learnerEmail, learnerId, learnerName, moduleRequirements, totalModules]);
+    autoGenerationAttemptedRef.current = true;
+    issueCertificate('auto');
+  }, [certification?.available, certificateUrl, issueCertificate]);
 
   const [darkMode, setDarkMode] = useState(false);
   return (
@@ -449,6 +497,21 @@ const CourseCompletion: React.FC<CourseCompletionProps> = ({
               <Award className="h-16 w-16 text-yellow-500 mx-auto mb-6" />
               
               <h2 className="text-2xl font-bold text-gray-900 mb-4">Your Certificate</h2>
+              {autoGenerationError && (
+                <div className="mb-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-left">
+                  <AlertTriangle className="h-5 w-5 text-amber-600" />
+                  <div>
+                    <p className="text-sm font-semibold text-amber-800">Automatic issuance failed</p>
+                    <p className="text-sm text-amber-700">{autoGenerationError}</p>
+                  </div>
+                </div>
+              )}
+              {!certificateUrl && certification?.available && !autoGenerationError && isGeneratingCertificate && (
+                <div className="mb-4 flex items-center justify-center gap-2 rounded-xl border border-sky-200 bg-sky-50 p-3 text-sky-800 text-sm">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Issuing certificate…
+                </div>
+              )}
               
               {certificateUrl ? (
                 <div className="space-y-6">
@@ -467,6 +530,20 @@ const CourseCompletion: React.FC<CourseCompletionProps> = ({
                       Certificate ID: {certificateId}
                     </div>
                   </div>
+
+                  {requirementChecklist.length > 0 && (
+                    <div className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-4 text-left">
+                      <p className="text-sm font-semibold text-emerald-800 mb-3">Requirements met</p>
+                      <ul className="space-y-2 text-sm text-emerald-900">
+                        {requirementChecklist.map((item) => (
+                          <li key={item.label} className="flex items-start gap-2">
+                            <CheckCircle className="h-4 w-4 text-emerald-500" />
+                            <span>{item.label}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
                   
                   <div className="flex justify-center space-x-4">
                     <button
@@ -493,6 +570,20 @@ const CourseCompletion: React.FC<CourseCompletionProps> = ({
                   <p className="text-gray-600">
                     Generate your certificate instantly once you are ready.
                   </p>
+
+                  {requirementChecklist.length > 0 && (
+                    <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-left">
+                      <p className="text-sm font-semibold text-gray-900 mb-3">Ready to issue</p>
+                      <ul className="space-y-2 text-sm text-gray-700">
+                        {requirementChecklist.map((item) => (
+                          <li key={item.label} className="flex items-start gap-2">
+                            <CheckCircle className="h-4 w-4 text-green-500" />
+                            <span>{item.label}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
 
                   <button
                     onClick={handleGenerateCertificate}

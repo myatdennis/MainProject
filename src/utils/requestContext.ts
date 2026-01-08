@@ -1,5 +1,5 @@
 import { getSupabase, hasSupabaseConfig, SUPABASE_MISSING_CONFIG_MESSAGE } from '../lib/supabaseClient';
-import { getUserSession, getAccessToken } from '../lib/secureStorage';
+import { getUserSession } from '../lib/secureStorage';
 
 export const buildAuthHeaders = async (): Promise<Record<string, string>> => {
   const headers: Record<string, string> = {};
@@ -20,11 +20,6 @@ export const buildAuthHeaders = async (): Promise<Record<string, string>> => {
           headers['X-Org-Id'] = String(userSession.organizationId);
         }
 
-        // Add access token if available
-        const accessToken = getAccessToken();
-        if (accessToken) {
-          headers['Authorization'] = `Bearer ${accessToken}`;
-        }
       }
     } catch (error) {
       console.warn('[buildAuthHeaders] Failed to read from secure storage:', error);
@@ -73,10 +68,6 @@ export const buildAuthHeaders = async (): Promise<Record<string, string>> => {
         const userId = data?.session?.user?.id;
         if (userId) {
           headers['X-User-Id'] = userId;
-        }
-        const accessToken = data?.session?.access_token;
-        if (accessToken) {
-          headers['Authorization'] = `Bearer ${accessToken}`;
         }
       } else {
         console.log('[buildAuthHeaders] Supabase configured but client not available');

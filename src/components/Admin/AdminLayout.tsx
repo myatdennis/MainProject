@@ -1,4 +1,4 @@
-import { useEffect, useState, type FC, type ReactNode } from 'react';
+import { useEffect, useState, type ChangeEvent, type FC, type ReactNode } from 'react';
 import { Link, NavLink, useLocation, useNavigate, Outlet } from 'react-router-dom';
 import { ErrorBoundary } from '../ErrorHandling';
 import AdminErrorBoundary from '../ErrorBoundary/AdminErrorBoundary';
@@ -24,6 +24,7 @@ import {
   Building2,
   Wand2,
   Brain,
+  RefreshCcw,
 } from 'lucide-react';
 import Card from '../ui/Card';
 import Button from '../ui/Button';
@@ -32,6 +33,7 @@ import Badge from '../ui/Badge';
 import LoadingSpinner from '../ui/LoadingSpinner';
 import SurveyQueueStatus from '../Survey/SurveyQueueStatus';
 import type { LucideIcon } from 'lucide-react';
+import { useActiveOrganization } from '../../hooks/useActiveOrganization';
 
 interface AdminLayoutProps {
   children?: ReactNode;
@@ -62,10 +64,42 @@ const navigation: AdminNavItem[] = [
 const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
   const { isAuthenticated, user: authUser, authInitializing, logout: legacyLogout } = useAuth();
   const { user, logout } = useSecureAuth();
+  const {
+    organizations: organizationOptions,
+    activeOrgId,
+    activeMembership,
+    isMultiOrg,
+    isSwitching,
+    selectOrganization,
+    refreshOrganizations,
+  } = useActiveOrganization({ surface: 'admin' });
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
+
+  const activeOrgLabel =
+    activeMembership?.organizationName ||
+    organizationOptions.find((org) => org.id === activeOrgId)?.label ||
+    organizationOptions[0]?.label ||
+    null;
+
+  const handleOrganizationChange = async (event: ChangeEvent<HTMLSelectElement>) => {
+    const nextOrgId = event.target.value || null;
+    try {
+      await selectOrganization(nextOrgId);
+    } catch (error) {
+      console.warn('[AdminLayout] Failed to select organization', error);
+    }
+  };
+
+  const handleRefreshOrganizations = async () => {
+    try {
+      await refreshOrganizations();
+    } catch (error) {
+      console.warn('[AdminLayout] Failed to refresh organizations', error);
+    }
+  };
 
   useEffect(() => {
     if (authInitializing) return;
@@ -141,6 +175,11 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
                   Welcome, {activeUser ? `${activeUser.firstName || ''} ${activeUser.lastName || ''}`.trim() || 'Admin' : 'Admin'}
                 </p>
                 <p className="text-xs text-slate/70">{activeUser?.role || 'Admin & Facilitator'}</p>
+                {activeOrgLabel && (
+                  <p className="text-xs text-slate/60">
+                    Active org: <span className="font-semibold text-slate/90">{activeOrgLabel}</span>
+                  </p>
+                )}
               </div>
             </Card>
 
@@ -215,6 +254,36 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
             </div>
 
             <div className="flex items-center gap-3">
+              <div className="hidden items-center gap-3 rounded-full border border-mist bg-white px-4 py-2 text-sm text-slate/70 shadow-sm lg:flex">
+                <div className="leading-tight">
+                  <p className="text-[11px] uppercase tracking-[0.2em] text-slate/60">Organization</p>
+                  <p className="text-sm font-semibold text-charcoal">{activeOrgLabel ?? 'No organization'}</p>
+                </div>
+                {isMultiOrg && (
+                  <select
+                    className="rounded-md border border-cloud bg-white px-2 py-1 text-sm text-charcoal focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-skyblue"
+                    value={activeOrgId ?? ''}
+                    onChange={handleOrganizationChange}
+                    disabled={isSwitching}
+                  >
+                    {organizationOptions.map((org) => (
+                      <option key={org.id} value={org.id}>
+                        {org.label}
+                        {org.status ? ` · ${org.status}` : ''}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <button
+                  type="button"
+                  onClick={handleRefreshOrganizations}
+                  disabled={isSwitching}
+                  className="inline-flex h-8 w-8 items-center justify-center rounded-full border border-cloud text-slate/70 transition hover:text-skyblue disabled:opacity-60"
+                  title="Refresh organizations"
+                >
+                  <RefreshCcw className="h-4 w-4" />
+                </button>
+              </div>
               <Button variant="ghost" size="sm" leadingIcon={<Bell className="h-4 w-4" />}>
                 Alerts
               </Button>

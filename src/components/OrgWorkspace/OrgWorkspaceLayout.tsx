@@ -1,15 +1,37 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { LazyImage } from '../PerformanceComponents';
 import { Link, Outlet, useParams } from 'react-router-dom';
 import notificationService from '../../dal/notifications';
 import { useAuth } from '../../context/AuthContext';
+import { useActiveOrganization } from '../../hooks/useActiveOrganization';
 
 const OrgWorkspaceLayout: React.FC = () => {
   const { orgId } = useParams();
   const { isAuthenticated } = useAuth();
-  const [orgName] = useState<string>(`Organization ${orgId}`);
+  const { memberships, selectOrganization } = useActiveOrganization({ surface: 'admin' });
+  const [orgName, setOrgName] = useState<string>(`Organization ${orgId}`);
   const [allowed, setAllowed] = useState<boolean>(false);
   const [notifications, setNotifications] = useState<any[]>([]);
+
+  const membershipForOrg = useMemo(() => {
+    if (!orgId) return null;
+    return memberships.find((membership) => membership.orgId === orgId) ?? null;
+  }, [memberships, orgId]);
+
+  useEffect(() => {
+    if (!orgId) return;
+    selectOrganization(orgId).catch((error) => {
+      console.warn('[OrgWorkspaceLayout] Failed to align active organization with workspace route', error);
+    });
+  }, [orgId, selectOrganization]);
+
+  useEffect(() => {
+    if (membershipForOrg?.organizationName) {
+      setOrgName(membershipForOrg.organizationName);
+    } else if (orgId) {
+      setOrgName(`Organization ${orgId}`);
+    }
+  }, [membershipForOrg, orgId]);
 
   // Basic guard: this would be replaced with a real permission check
   useEffect(() => {
@@ -19,6 +41,23 @@ const OrgWorkspaceLayout: React.FC = () => {
       if (!orgId) {
         setAllowed(false);
         setNotifications([]);
+        return;
+      }
+
+      const hasMembership = Boolean(membershipForOrg);
+      if (hasMembership || isAuthenticated.admin) {
+        setAllowed(true);
+        try {
+          const notes = await notificationService.listNotifications({ orgId });
+          if (!cancelled) {
+            setNotifications(notes.slice(0, 5));
+          }
+        } catch (error) {
+          console.warn('Failed to load workspace notifications:', error);
+          if (!cancelled) {
+            setNotifications([]);
+          }
+        }
         return;
       }
 
@@ -52,7 +91,7 @@ const OrgWorkspaceLayout: React.FC = () => {
     return () => {
       cancelled = true;
     };
-  }, [orgId, isAuthenticated.admin]);
+  }, [orgId, isAuthenticated.admin, membershipForOrg]);
 
   const [darkMode, setDarkMode] = useState(false);
   return (

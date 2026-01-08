@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import Button from '../../components/ui/Button';
 import { Building2, Plus, Search, MoreVertical, Edit, Eye, Settings, Download, Upload, CheckCircle, Clock, AlertTriangle } from 'lucide-react';
@@ -10,12 +10,18 @@ import EditOrganizationModal from '../../components/EditOrganizationModal';
 import { useToast } from '../../context/ToastContext';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import EmptyState from '../../components/ui/EmptyState';
+import { useDebounce } from '../../components/PerformanceComponents';
+
+const PAGE_SIZE = 24;
+type StatusFilterOption = 'all' | 'active' | 'inactive' | 'suspended' | 'trial';
+type SubscriptionFilterOption = 'all' | 'Standard' | 'Premium' | 'Enterprise';
 
 const AdminOrganizations = () => {
   const { showToast } = useToast();
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [organizations, setOrganizations] = useState<any[]>([]);
+  const [progressMap, setProgressMap] = useState<Record<string, any>>({});
   const [fetching, setFetching] = useState(false);
   const [initialLoad, setInitialLoad] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -25,32 +31,66 @@ const AdminOrganizations = () => {
   const [orgToDelete, setOrgToDelete] = useState<string | null>(null);
   const [orgToEdit, setOrgToEdit] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
+  const [statusFilter, setStatusFilter] = useState<StatusFilterOption>('all');
+  const [subscriptionFilter, setSubscriptionFilter] = useState<SubscriptionFilterOption>('all');
+  const [paginationMeta, setPaginationMeta] = useState({ page: 1, pageSize: PAGE_SIZE, total: 0, hasMore: false });
+  const debouncedSearch = useDebounce(searchTerm, 250);
 
-  const loadOrganizations = useCallback(async () => {
-    setFetching(true);
-    setLoadError(null);
-    try {
-      const data = await orgService.listOrgs();
-      setOrganizations(data);
-    } catch (error) {
-      console.error('Failed to load organizations:', error);
-      setLoadError('Unable to load organizations');
-      showToast('Unable to load organizations', 'error');
-    } finally {
-      setFetching(false);
-      setInitialLoad(false);
-    }
-  }, [showToast]);
+  const fetchOrganizations = useCallback(
+    async (targetPage = 1) => {
+      setFetching(true);
+      setLoadError(null);
+      try {
+        const response = await orgService.listOrgPage({
+          page: targetPage,
+          pageSize: PAGE_SIZE,
+          search: debouncedSearch || undefined,
+          includeProgress: true,
+          status: statusFilter === 'all' ? undefined : [statusFilter],
+          subscription: subscriptionFilter === 'all' ? undefined : [subscriptionFilter],
+        });
+        setOrganizations(response.data);
+        setProgressMap(response.progress ?? {});
+        setPaginationMeta(response.pagination);
+      } catch (error) {
+        console.error('Failed to load organizations:', error);
+        setLoadError('Unable to load organizations');
+        showToast('Unable to load organizations', 'error');
+      } finally {
+        setFetching(false);
+        setInitialLoad(false);
+      }
+    },
+    [debouncedSearch, statusFilter, subscriptionFilter, showToast]
+  );
 
   useEffect(() => {
-    loadOrganizations();
-  }, [loadOrganizations]);
+    fetchOrganizations(1);
+  }, [fetchOrganizations]);
 
-  const filteredOrgs = organizations.filter(org =>
-    (org.name || '').toString().toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (org.type || '').toString().toLowerCase().includes(searchTerm.toLowerCase()) ||
-    (org.contactPerson || '').toString().toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const handleRefresh = useCallback(() => {
+    fetchOrganizations(paginationMeta.page || 1);
+  }, [fetchOrganizations, paginationMeta.page]);
+
+  const handlePageChange = (direction: 'prev' | 'next') => {
+    if (direction === 'prev' && paginationMeta.page > 1) {
+      fetchOrganizations(paginationMeta.page - 1);
+      return;
+    }
+    if (direction === 'next' && paginationMeta.hasMore) {
+      fetchOrganizations(paginationMeta.page + 1);
+    }
+  };
+
+  const paginationSummary = useMemo(() => {
+    const start = organizations.length ? (paginationMeta.page - 1) * paginationMeta.pageSize + 1 : 0;
+    const end = organizations.length ? start + organizations.length - 1 : 0;
+    return {
+      start,
+      end,
+      total: paginationMeta.total,
+    };
+  }, [organizations.length, paginationMeta]);
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -89,10 +129,10 @@ const AdminOrganizations = () => {
     navigate('/admin/organizations/new');
   };
 
-  const handleOrganizationAdded = (newOrganization: any) => {
-    setOrganizations(prev => [...prev, newOrganization]);
+  const handleOrganizationAdded = () => {
     showToast('Organization added successfully!', 'success');
-    loadOrganizations();
+    setShowAddOrgModal(false);
+    fetchOrganizations(1);
   };
 
   const handleImport = () => {
@@ -116,7 +156,7 @@ const AdminOrganizations = () => {
     try {
       await new Promise(resolve => setTimeout(resolve, 1500));
       
-      const csvContent = `Name,Type,Contact Person,Contact Email,Total Learners,Active Learners,Completion Rate,Status\n${filteredOrgs.map(org => 
+      const csvContent = `Name,Type,Contact Person,Contact Email,Total Learners,Active Learners,Completion Rate,Status\n${organizations.map((org: any) => 
         `"${org.name}","${org.type}","${org.contactPerson}","${org.contactEmail}","${org.totalLearners}","${org.activeLearners}","${org.completionRate}%","${org.status}"`
       ).join('\n')}`;
       
@@ -146,13 +186,10 @@ const AdminOrganizations = () => {
     }
   };
 
-  const handleOrganizationUpdated = (updatedOrganization: any) => {
-    setOrganizations(prev => prev.map(org => 
-      org.id === updatedOrganization.id ? updatedOrganization : org
-    ));
+  const handleOrganizationUpdated = () => {
     setShowEditOrgModal(false);
     setOrgToEdit(null);
-    loadOrganizations();
+    fetchOrganizations(paginationMeta.page || 1);
   };
 
   const handleDeleteOrganization = (orgId: string) => {
@@ -191,7 +228,7 @@ const AdminOrganizations = () => {
           <h1 className="text-3xl font-bold text-gray-900">Organization Management</h1>
           <p className="text-gray-600">Manage client organizations, track progress, and oversee cohorts</p>
         </div>
-        <LoadingButton onClick={loadOrganizations} loading={fetching} variant="secondary">
+        <LoadingButton onClick={handleRefresh} loading={fetching} variant="secondary">
           Refresh
         </LoadingButton>
       </div>
@@ -210,7 +247,35 @@ const AdminOrganizations = () => {
             />
           </div>
           
-          <div className="flex items-center space-x-4">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:space-x-4 space-y-4 sm:space-y-0">
+            <div className="flex items-center space-x-2">
+              <label className="text-sm text-gray-600">Status</label>
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as StatusFilterOption)}
+                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[var(--hud-orange)] focus:border-transparent"
+              >
+                <option value="all">All</option>
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+                <option value="suspended">Suspended</option>
+                <option value="trial">Trial</option>
+              </select>
+            </div>
+            <div className="flex items-center space-x-2">
+              <label className="text-sm text-gray-600">Subscription</label>
+              <select
+                value={subscriptionFilter}
+                onChange={(e) => setSubscriptionFilter(e.target.value as SubscriptionFilterOption)}
+                className="px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-[var(--hud-orange)] focus:border-transparent"
+              >
+                <option value="all">All</option>
+                <option value="Standard">Standard</option>
+                <option value="Premium">Premium</option>
+                <option value="Enterprise">Enterprise</option>
+              </select>
+            </div>
+            <div className="flex items-center space-x-4">
             <LoadingButton
               onClick={handleAddOrganization}
               variant="primary"
@@ -240,6 +305,7 @@ const AdminOrganizations = () => {
               <Download className="h-4 w-4" />
               Export
             </LoadingButton>
+            </div>
           </div>
         </div>
       </div>
@@ -258,7 +324,7 @@ const AdminOrganizations = () => {
             title="Unable to load organizations"
             description="Check your connection and try refreshing."
             action={
-              <LoadingButton onClick={loadOrganizations} loading={fetching}>
+              <LoadingButton onClick={handleRefresh} loading={fetching}>
                 Retry
               </LoadingButton>
             }
@@ -266,7 +332,7 @@ const AdminOrganizations = () => {
         </div>
       )}
 
-      {!initialLoad && !loadError && filteredOrgs.length === 0 && (
+      {!initialLoad && !loadError && organizations.length === 0 && (
         <div className="mb-8">
           <EmptyState
             title="No organizations found"
@@ -291,9 +357,16 @@ const AdminOrganizations = () => {
       )}
 
       {/* Organizations Grid */}
-      {filteredOrgs.length > 0 && (
+      {organizations.length > 0 && (
       <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 mb-8">
-        {filteredOrgs.map((org) => (
+        {organizations.map((org: any) => {
+          const onboarding = progressMap[org.id];
+          const onboardingPct = onboarding
+            ? Math.round(
+                (onboarding.completed_steps / Math.max(onboarding.total_steps || 1, 1)) * 100
+              )
+            : null;
+          return (
           <div key={org.id} className="card-lg card-hover">
             <div className="flex items-start justify-between mb-4">
                 <div className="flex items-center space-x-3">
@@ -339,7 +412,7 @@ const AdminOrganizations = () => {
               </div>
             </div>
 
-            <div className="mb-4">
+              <div className="mb-4">
               <div className="flex items-center justify-between mb-2">
                 <span className="text-sm font-medium text-gray-700">Overall Progress</span>
                 <span className="text-sm font-bold text-gray-900">{org.completionRate}%</span>
@@ -352,10 +425,27 @@ const AdminOrganizations = () => {
               </div>
             </div>
 
+              {onboardingPct !== null && (
+                <div className="mb-4">
+                  <div className="flex items-center justify-between text-sm text-gray-600">
+                    <span>Onboarding</span>
+                    <span className="font-medium text-gray-900">
+                      {onboarding.completed_steps}/{onboarding.total_steps} steps
+                    </span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-2">
+                    <div
+                      className="h-2 rounded-full bg-orange-500"
+                      style={{ width: `${Math.min(100, onboardingPct)}%` }}
+                    ></div>
+                  </div>
+                </div>
+              )}
+
             <div className="mb-4">
               <h4 className="text-sm font-medium text-gray-700 mb-2">Module Progress</h4>
               <div className="grid grid-cols-5 gap-1">
-                {Object.entries(org.modules).map(([key, value]) => {
+                {Object.entries(org.modules || {}).map(([key, value]) => {
                   const v = Number(value || 0);
                   return (
                     <div key={key} className="text-center">
@@ -401,7 +491,8 @@ const AdminOrganizations = () => {
               </div>
             </div>
           </div>
-        ))}
+          );
+        })}
       </div>
       )}
 
@@ -419,7 +510,7 @@ const AdminOrganizations = () => {
         </div>
         <div className="card-lg text-center">
           <div className="text-2xl font-bold text-orange-600">
-            {organizations.reduce((acc, org) => acc + org.totalLearners, 0)}
+            {organizations.reduce((acc, org) => acc + (org.totalLearners || 0), 0)}
           </div>
           <div className="text-sm text-gray-600">Total Learners</div>
         </div>
@@ -450,13 +541,13 @@ const AdminOrganizations = () => {
               </tr>
             </thead>
             <tbody>
-              {filteredOrgs.map((org) => (
+              {organizations.map((org: any) => (
                 <tr key={org.id} className="border-b border-gray-100 hover:bg-gray-50">
                   <td className="py-4 px-6">
                     <div>
                       <div className="font-medium text-gray-900">{org.name}</div>
                       <div className="text-sm text-gray-600">{org.type}</div>
-                      <div className="text-xs text-gray-500">{org.cohorts?.join(', ')}</div>
+                      <div className="text-xs text-gray-500 truncate">{org.cohorts?.join(', ')}</div>
                     </div>
                   </td>
                   <td className="py-4 px-6 text-center">
@@ -487,7 +578,7 @@ const AdminOrganizations = () => {
                     </div>
                   </td>
                   <td className="py-4 px-6 text-center text-sm text-gray-600">
-                    {new Date(org.lastActivity).toLocaleDateString()}
+                    {org.lastActivity ? new Date(org.lastActivity).toLocaleDateString() : '—'}
                   </td>
                   <td className="py-4 px-6 text-center">
                     <div className="flex items-center justify-center space-x-2">
@@ -517,6 +608,30 @@ const AdminOrganizations = () => {
               ))}
             </tbody>
           </table>
+        </div>
+        <div className="px-6 py-4 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between border-t border-gray-100">
+          <p className="text-sm text-gray-600">
+            Showing {paginationSummary.start}-{paginationSummary.end} of {paginationSummary.total}
+          </p>
+          <div className="flex items-center gap-3">
+            <Button
+              variant="secondary"
+              disabled={fetching || paginationMeta.page <= 1}
+              onClick={() => handlePageChange('prev')}
+            >
+              Previous
+            </Button>
+            <span className="text-sm text-gray-600">
+              Page {paginationMeta.page}
+            </span>
+            <Button
+              variant="secondary"
+              disabled={fetching || !paginationMeta.hasMore}
+              onClick={() => handlePageChange('next')}
+            >
+              Next
+            </Button>
+          </div>
         </div>
       </div>
 

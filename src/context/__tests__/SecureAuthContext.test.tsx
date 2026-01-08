@@ -29,8 +29,6 @@ vi.mock('axios', () => {
 const storedState = {
   user: null as UserSession | null,
   metadata: null as SessionMetadata | null,
-  accessToken: null as string | null,
-  refreshToken: null as string | null,
 };
 
 const spies = {
@@ -38,10 +36,6 @@ const spies = {
   getUserSession: vi.spyOn(secureStorage, 'getUserSession'),
   setSessionMetadata: vi.spyOn(secureStorage, 'setSessionMetadata'),
   getSessionMetadata: vi.spyOn(secureStorage, 'getSessionMetadata'),
-  setAccessToken: vi.spyOn(secureStorage, 'setAccessToken'),
-  getAccessToken: vi.spyOn(secureStorage, 'getAccessToken'),
-  setRefreshToken: vi.spyOn(secureStorage, 'setRefreshToken'),
-  getRefreshToken: vi.spyOn(secureStorage, 'getRefreshToken'),
   clearAuth: vi.spyOn(secureStorage, 'clearAuth'),
   migrateFromLocalStorage: vi.spyOn(secureStorage, 'migrateFromLocalStorage'),
 };
@@ -49,8 +43,6 @@ const spies = {
 const resetSecureState = () => {
   storedState.user = null;
   storedState.metadata = null;
-  storedState.accessToken = null;
-  storedState.refreshToken = null;
 };
 
 const setupSecureStorageSpies = () => {
@@ -62,14 +54,6 @@ const setupSecureStorageSpies = () => {
     storedState.metadata = { ...(storedState.metadata ?? {}), ...metadata };
   });
   spies.getSessionMetadata.mockImplementation(() => storedState.metadata);
-  spies.setAccessToken.mockImplementation((token) => {
-    storedState.accessToken = token;
-  });
-  spies.getAccessToken.mockImplementation(() => storedState.accessToken);
-  spies.setRefreshToken.mockImplementation((token) => {
-    storedState.refreshToken = token;
-  });
-  spies.getRefreshToken.mockImplementation(() => storedState.refreshToken);
   spies.clearAuth.mockImplementation(() => {
     resetSecureState();
   });
@@ -105,8 +89,6 @@ describe('SecureAuthContext', () => {
           lastName: 'User',
           organizationId: 'org-1',
         },
-        accessToken: 'fresh-access',
-        refreshToken: 'fresh-refresh',
         expiresAt: Date.now() + 60_000,
         refreshExpiresAt: Date.now() + 120_000,
       },
@@ -120,8 +102,6 @@ describe('SecureAuthContext', () => {
     expect(loginResult!.success).toBe(true);
     await waitFor(() => expect(result.current.user?.email).toBe('admin@thehuddle.co'));
     expect(result.current.isAuthenticated.admin).toBe(true);
-    expect(storedState.accessToken).toBe('fresh-access');
-    expect(storedState.refreshToken).toBe('fresh-refresh');
     expect(spies.setUserSession).toHaveBeenCalledWith(
       expect.objectContaining({ email: 'admin@thehuddle.co', organizationId: 'org-1' }),
     );
@@ -131,13 +111,10 @@ describe('SecureAuthContext', () => {
     const { result } = renderAuth();
     await waitFor(() => expect(result.current.authInitializing).toBe(false));
 
-    storedState.refreshToken = 'existing-refresh';
     mockPost.mockImplementation((url: string) => {
       if (url === '/auth/refresh') {
         return Promise.resolve({
           data: {
-            accessToken: 'rotated-access',
-            refreshToken: 'rotated-refresh',
             expiresAt: 111,
             refreshExpiresAt: 222,
           },
@@ -152,10 +129,8 @@ describe('SecureAuthContext', () => {
     });
 
     expect(refreshResult).toBe(true);
-    expect(storedState.accessToken).toBe('rotated-access');
-    expect(storedState.refreshToken).toBe('rotated-refresh');
     expect(storedState.metadata).toMatchObject({ accessExpiresAt: 111, refreshExpiresAt: 222 });
-    expect(mockPost).toHaveBeenCalledWith('/auth/refresh', { refreshToken: 'existing-refresh' });
+    expect(mockPost).toHaveBeenCalledWith('/auth/refresh', {}, { withCredentials: true });
   });
 
   it('logout clears secure storage and resets auth booleans', async () => {

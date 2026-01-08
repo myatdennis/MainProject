@@ -2,6 +2,7 @@ import express from 'express'
 import sql from '../db.js'
 import fetch from 'node-fetch'
 import { withHttpError } from '../middleware/apiErrorHandler.js'
+import { withCache } from '../services/cacheService.js'
 
 const router = express.Router()
 
@@ -10,20 +11,27 @@ const router = express.Router()
 router.post('/', async (req, res, next) => {
   try {
     const { course_id, timeframe = {} } = req.body || {}
+    const cacheKey = `analytics-summary:${course_id || 'all'}:${timeframe.since || 'none'}:${timeframe.until || 'none'}`
+    const ttlSeconds = Number(process.env.ANALYTICS_CACHE_TTL || 120)
 
-    // Gather simple aggregates
-    const overviewRows = await sql`select * from public.view_admin_overview limit 1`
-    const courseAgg = course_id
-      ? await sql`select vc.course_id, vc.total_users, vc.completed_count, vc.completion_percent, vp.avg_progress from public.view_course_completion_rate vc left join public.view_course_avg_progress vp on vp.course_id = vc.course_id where vc.course_id = ${course_id}`
-      : []
+    const payload = await withCache(
+      cacheKey,
+      async () => {
+        const overviewRows = await sql`select * from public.view_admin_overview limit 1`
+        const courseAgg = course_id
+          ? await sql`select vc.course_id, vc.total_users, vc.completed_count, vc.completion_percent, vp.avg_progress from public.view_course_completion_rate vc left join public.view_course_avg_progress vp on vp.course_id = vc.course_id where vc.course_id = ${course_id}`
+          : []
 
-    const dropoffs = await sql`select lesson_id, course_id, started_count, completed_count, dropoff_percent from public.view_lesson_dropoff order by dropoff_percent desc limit 10`
+        const dropoffs = await sql`select lesson_id, course_id, started_count, completed_count, dropoff_percent from public.view_lesson_dropoff order by dropoff_percent desc limit 10`
 
-    const payload = {
-      overview: overviewRows[0] || {},
-      course: courseAgg[0] || null,
-      top_dropoffs: dropoffs || []
-    }
+        return {
+          overview: overviewRows[0] || {},
+          course: courseAgg[0] || null,
+          top_dropoffs: dropoffs || [],
+        }
+      },
+      { ttlSeconds }
+    )
 
     // If OPENAI_API_KEY is available, forward to OpenAI for a short summary (optional)
     const OPENAI_KEY = process.env.OPENAI_API_KEY || process.env.OPENAI_KEY || null

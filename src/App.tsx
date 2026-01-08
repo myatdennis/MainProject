@@ -67,6 +67,7 @@ import AIBot from './components/AIBot/AIBot';
 import AdminCoursesImport from './pages/Admin/AdminCoursesImport';
 import AdminCourseBulkPlaceholder from './pages/Admin/Course/AdminCourseBulkPlaceholder';
 import AdminCourseNewPlaceholder from './pages/Admin/Course/AdminCourseNewPlaceholder';
+import InviteAccept from './pages/InviteAccept';
 
 import HomePage from './pages/HomePage';
 import LMSLogin from './pages/LMS/LMSLogin';
@@ -108,6 +109,7 @@ function App() {
                 <Route path="/testimonials" element={<TestimonialsPage />} />
                 <Route path="/contact" element={<ContactPage />} />
                 <Route path="/client-portal" element={<ClientPortalPage />} />
+                <Route path="/invite/:token" element={<InviteAccept />} />
                 <Route path="/client-portal/org/:orgId/*" element={<RequireAuth mode="lms"><OrgWorkspaceLayout /></RequireAuth>} />
                 <Route
                   path="/client/*"
