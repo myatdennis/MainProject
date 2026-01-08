@@ -156,6 +156,7 @@ const defaultAllowedOrigins = [
 
 const allowedOrigins = Array.from(new Set([...defaultAllowedOrigins, ...extraAllowedOrigins]));
 
+
 app.use((req, res, next) => {
   const origin = req.headers.origin;
   const isLocalDevOrigin = origin && origin.startsWith('http://localhost');
@@ -186,6 +187,11 @@ app.use((req, res, next) => {
 // Attach request ids early so health/diagnostics endpoints can include them even before
 // the rest of the middleware stack (body parsers, auth, etc.) runs.
 app.use(attachRequestId);
+
+// Lightweight platform health check (local test: curl -i http://localhost:<PORT>/api/health)
+app.get('/api/health', (_req, res) => {
+  res.status(200).json({ ok: true });
+});
 
 const OFFLINE_QUEUE_STATE_FILE = process.env.OFFLINE_QUEUE_STATE_FILE
   ? path.resolve(process.env.OFFLINE_QUEUE_STATE_FILE)
@@ -356,10 +362,6 @@ const respondToHealthRequest = async (req, res) => {
   }
 };
 
-app.get('/api/health', (req, res) => {
-  void respondToHealthRequest(req, res);
-});
-
 app.get('/healthz', (req, res) => {
   void respondToHealthRequest(req, res);
 });
@@ -382,7 +384,7 @@ app.get('/api/diagnostics/metrics', async (req, res, next) => {
 if (isProduction) {
   app.set('trust proxy', 1);
 }
-const PORT = process.env.PORT || 8888;
+const PORT = Number(process.env.PORT) || 8787;
 logger.info('server_port', { port: PORT });
 
 app.use(express.json({ limit: '10mb' }));
@@ -599,6 +601,17 @@ if (E2E_TEST_MODE) {
 let loggedMissingSupabaseConfig = false;
 
 const notificationDispatcher = setupNotificationDispatcher({ supabase, emailSender: sendEmail });
+
+const INVITE_REMINDER_JOB = 'invites.reminder';
+const INVITE_REMINDER_LOOKBACK_HOURS = Number(
+  process.env.CLIENT_INVITE_REMINDER_HOURS || process.env.ORG_INVITE_REMINDER_HOURS || 48
+);
+const INVITE_REMINDER_MAX_SENDS = Number(process.env.CLIENT_INVITE_REMINDER_MAX || 3);
+const INVITE_REMINDER_INTERVAL_MS = Number(process.env.CLIENT_INVITE_REMINDER_INTERVAL_MS || 1000 * 60 * 60);
+const INVITE_REMINDER_CRON = process.env.CLIENT_INVITE_REMINDER_CRON || '0 */6 * * *';
+
+let inviteReminderIntervalId = null;
+let inviteReminderSchedulerInitialized = false;
 
 registerJobProcessor('audit.write', async (payload = {}) => {
   if (!supabase) {
@@ -1786,11 +1799,6 @@ const defaultOrgProfileRow = (orgId) => ({
 
 const INVITE_TOKEN_TTL_HOURS = Number(process.env.CLIENT_INVITE_TTL_HOURS || process.env.ORG_INVITE_TTL_HOURS || 72);
 const INVITE_BULK_LIMIT = Number(process.env.CLIENT_INVITE_BULK_LIMIT || 50);
-const INVITE_REMINDER_JOB = 'invites.reminder';
-const INVITE_REMINDER_LOOKBACK_HOURS = Number(process.env.CLIENT_INVITE_REMINDER_HOURS || process.env.ORG_INVITE_REMINDER_HOURS || 48);
-const INVITE_REMINDER_MAX_SENDS = Number(process.env.CLIENT_INVITE_REMINDER_MAX || 3);
-const INVITE_REMINDER_INTERVAL_MS = Number(process.env.CLIENT_INVITE_REMINDER_INTERVAL_MS || 1000 * 60 * 60);
-const INVITE_REMINDER_CRON = process.env.CLIENT_INVITE_REMINDER_CRON || '0 */6 * * *';
 const INVITE_PASSWORD_MIN_CHARS = Number(process.env.CLIENT_INVITE_PASSWORD_MIN || 8);
 const INVITE_ACCEPTABLE_STATUSES = new Set(['pending', 'sent']);
 const INVITE_LINK_BASE =
@@ -2095,9 +2103,6 @@ async function createOrgInvite({
 
   return { invite: inviteRecord, duplicate: false };
 }
-
-let inviteReminderIntervalId = null;
-let inviteReminderSchedulerInitialized = false;
 
 async function runInviteReminderSweep({ limit = 50, reason = 'scheduled' } = {}) {
   if (!supabase) {
