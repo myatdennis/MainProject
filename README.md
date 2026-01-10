@@ -21,14 +21,36 @@ Visit http://localhost:5174
 # Build the SPA so static assets exist for the API to serve
 npm run build
 
-# Start the Express server (uses PORT env or defaults to 8787)
+# Start the Express server (uses PORT env or defaults to 8888)
 npm run start:server
 
 # In a second terminal, verify the health endpoint
-curl http://localhost:8787/api/health
+curl http://localhost:8888/api/health
 ```
 
 When running locally behind another port, set `PORT=5000 npm run start:server` and update `VITE_API_BASE_URL` to `http://localhost:5000/api`. The `/api/health` endpoint always responds with `{ ok: true, env: <NODE_ENV> }`, which is what Netlify uses to confirm the Railway proxy is healthy.
+
+## Full-stack dev runbook
+
+1. **Start everything**
+    ```bash
+    npm run dev:full
+    ```
+    This script boots the Express API on port **8888** and the Vite dev server on **5174** (proxying `/api` + `/ws`).
+2. **Health via Vite proxy**
+    ```bash
+    curl -i http://localhost:5174/api/health
+    ```
+    Vite forwards this to `http://localhost:8888/api/health`, so a `200 OK` means both servers are happy.
+3. **(Optional) Direct API health**
+    ```bash
+    curl -i http://localhost:8888/api/health
+    ```
+4. **Confirm Vite UI** – open http://localhost:5174/ in your browser.
+5. **Troubleshooting**
+    - `ECONNREFUSED` in the browser console → the API is not running on 8888 or Vite's proxy target was changed.
+    - Repeated `401` logs from `/api/admin/*` → you're not logged in; hit `/admin/login` and retry.
+    - Fast Refresh/HMR feels stuck → restart `npm run dev:full` to clear the React bundle cache.
 
 Local development: API proxy note
 ---------------------------------
@@ -77,6 +99,8 @@ If you use the Vite dev server the UI will call `/api/*` and Vite will proxy to 
 
 - Copy `.env.example` to `.env` (server) and `.env.local` (frontend) to keep the contracts in sync.
 - **Demo / re-entry mode** (default for local): keep `DEV_FALLBACK=true` and `DEMO_MODE=true`. The API will serve in-memory courses, allow the demo logins listed below, and ignore missing Supabase credentials.
+- **Optional auto-auth bypass**: silent platform-admin sessions are now disabled by default, even in demo mode. If you intentionally need every localhost request to auto-authenticate (for example, when running legacy smoke suites), set `ALLOW_DEMO_AUTO_AUTH=true` and restart the server. `E2E_TEST_MODE` continues to force the bypass for automated runs.
+- **Guard & menu diagnostics**: toggle `VITE_ENABLE_ROUTE_GUARD_DEBUG=true` to watch role/org redirect decisions in the console, and `VITE_ENABLE_ADMIN_MENU_DEBUG=true` to trace when the admin avatar menu opens, closes, or locks. Both default to the noisier dev build only.
 - **Supabase mode** (staging/prod): set `DEV_FALLBACK=false` and `DEMO_MODE=false`, then provide `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `VITE_SUPABASE_URL`, and `VITE_SUPABASE_ANON_KEY`.
 - Always keep `SUPABASE_SERVICE_ROLE_KEY` and `JWT_SECRET` on the server only. Never expose them in the Vite bundle.
 - `VITE_API_BASE_URL` should point to your deployed Express host when not using the Vite proxy.
@@ -112,6 +136,14 @@ If you need to verify the backend state manually, call `/api/health` in your bro
 ## Troubleshooting
 
 **Seeing a blank page?** Visit http://localhost:5174/unregister-sw.html to clear service worker cache.
+
+### Supabase schema mismatches
+
+If you see `PGRST201` or `PGRST205` in the API logs, your database schema is behind. Apply the pending migrations:
+
+```bash
+supabase db push
+```
 
 See [TROUBLESHOOTING.md](./TROUBLESHOOTING.md) for complete troubleshooting guide.
 

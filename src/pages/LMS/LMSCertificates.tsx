@@ -49,16 +49,8 @@ const LMSCertificates: React.FC = () => {
   const [sortBy, setSortBy] = useState<'date' | 'course' | 'grade'>('date');
   const { user } = useUserProfile();
   const learnerId = useMemo(() => {
-    if (user) return (user.email || user.id || 'local-user').toLowerCase();
-    try {
-      const raw = localStorage.getItem('huddle_user');
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        return (parsed.email || parsed.id || 'local-user').toLowerCase();
-      }
-    } catch (error) {
-      console.warn('Failed to parse learner identity for certificates (legacy fallback):', error);
-    }
+    if (user?.email) return user.email.toLowerCase();
+    if (user?.id) return String(user.id).toLowerCase();
     return 'local-user';
   }, [user]);
   

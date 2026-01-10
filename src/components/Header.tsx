@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Menu, X, Search, Zap } from 'lucide-react';
+import { Menu, X, Search, Zap, ChevronDown, LogOut, LayoutDashboard } from 'lucide-react';
 import Button from './ui/Button';
 import Input from './ui/Input';
 import cn from '../utils/cn';
@@ -9,6 +9,7 @@ import { useSecureAuth } from '../context/SecureAuthContext';
 
 const Header = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
+  const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [scrolled, setScrolled] = useState(false);
   const location = useLocation();
   const navigation = [
@@ -19,7 +20,9 @@ const Header = () => {
     { name: 'Contact', href: '/contact' },
   ];
   const navigate = useNavigate();
-  const { user, isAuthenticated, authInitializing } = useSecureAuth();
+  const { user, isAuthenticated, authInitializing, logout } = useSecureAuth();
+  const userMenuRef = useRef<HTMLDivElement | null>(null);
+  const userMenuButtonRef = useRef<HTMLButtonElement | null>(null);
   const isLoggedIn = Boolean(user) && (isAuthenticated?.admin || isAuthenticated?.lms);
   const displayName = useMemo(() => {
     if (!user) return '';
@@ -37,13 +40,71 @@ const Header = () => {
     return `${first ?? ''}${last ?? ''}`.trim().toUpperCase() || fallback.toUpperCase();
   }, [user]);
 
-  const roleLabel = user?.role === 'admin' ? 'Admin' : 'Learner';
+  const isAdminRole = (user?.role ?? '').toLowerCase() === 'admin' || Boolean(user?.isPlatformAdmin);
+  const roleLabel = isAdminRole ? 'Admin' : 'Learner';
+  const canAccessAdmin = Boolean(isAuthenticated?.admin);
+  const canAccessLms = Boolean(isAuthenticated?.lms);
+  const primaryWorkspacePath = canAccessAdmin ? '/admin/dashboard' : '/lms/dashboard';
+
+  const handleToggleUserMenu = useCallback(() => {
+    if (!isLoggedIn || authInitializing) {
+      return;
+    }
+    setUserMenuOpen((prev) => !prev);
+  }, [authInitializing, isLoggedIn]);
+
+  const handleNavigateTo = useCallback(
+    (path: string) => {
+      setUserMenuOpen(false);
+      navigate(path);
+    },
+    [navigate],
+  );
+
+  const handleLogout = useCallback(async () => {
+    if (!isLoggedIn) return;
+    setUserMenuOpen(false);
+    const surface: 'admin' | 'lms' = canAccessAdmin ? 'admin' : 'lms';
+    try {
+      await logout(surface);
+    } catch (error) {
+      console.warn('[Header] logout failed (continuing)', error);
+    }
+    navigate(surface === 'admin' ? '/admin/login' : '/lms/login');
+  }, [canAccessAdmin, isLoggedIn, logout, navigate]);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 8);
     window.addEventListener('scroll', onScroll);
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
+
+  useEffect(() => {
+    if (!userMenuOpen) {
+      return;
+    }
+    const handleClickOutside = (event: MouseEvent) => {
+      if (!userMenuRef.current) return;
+      if (!userMenuRef.current.contains(event.target as Node)) {
+        setUserMenuOpen(false);
+      }
+    };
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setUserMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [userMenuOpen]);
+
+  useEffect(() => {
+    setUserMenuOpen(false);
+  }, [location.pathname]);
 
   const isActive = (href: string) => location.pathname === href;
 
@@ -116,14 +177,69 @@ const Header = () => {
             </>
           )}
           {isLoggedIn && (
-            <div className="hidden md:flex items-center gap-2 rounded-full border border-mist bg-white px-3 py-1.5 shadow-sm">
-              <div className="flex h-8 w-8 items-center justify-center rounded-full bg-skyblue/10 text-skyblue font-heading text-sm">
-                {userInitials}
-              </div>
-              <div className="leading-tight">
-                <p className="text-sm font-semibold text-charcoal">{displayName || 'Welcome'}</p>
-                <p className="text-xs text-slate/70">{roleLabel}</p>
-              </div>
+            <div className="relative hidden md:block" ref={userMenuRef}>
+              <button
+                type="button"
+                ref={userMenuButtonRef}
+                onClick={handleToggleUserMenu}
+                className="flex items-center gap-3 rounded-full border border-mist bg-white px-3 py-1.5 text-left shadow-sm transition hover:border-skyblue focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-skyblue"
+                aria-haspopup="true"
+                aria-expanded={userMenuOpen}
+                aria-controls="primary-user-menu"
+                disabled={authInitializing}
+              >
+                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-skyblue/10 text-skyblue font-heading text-sm">
+                  {userInitials}
+                </div>
+                <div className="leading-tight">
+                  <p className="text-sm font-semibold text-charcoal">{displayName || 'Welcome'}</p>
+                  <p className="text-xs text-slate/70">{roleLabel}</p>
+                </div>
+                <ChevronDown className={`h-4 w-4 text-slate/70 transition ${userMenuOpen ? 'rotate-180 text-skyblue' : ''}`} />
+              </button>
+              {userMenuOpen && (
+                <div
+                  id="primary-user-menu"
+                  role="menu"
+                  className="absolute right-0 z-50 mt-2 w-64 rounded-2xl border border-mist bg-white shadow-2xl"
+                >
+                  <div className="border-b border-mist px-4 py-3 text-xs text-slate/70">
+                    Signed in as
+                    <div className="truncate text-sm font-semibold text-charcoal">{user?.email ?? 'Unknown user'}</div>
+                  </div>
+                  {canAccessAdmin && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => handleNavigateTo('/admin/dashboard')}
+                      className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm font-semibold text-charcoal transition hover:bg-cloud/60"
+                    >
+                      <LayoutDashboard className="h-4 w-4 text-slate" />
+                      <span>Admin Dashboard</span>
+                    </button>
+                  )}
+                  {canAccessLms && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => handleNavigateTo('/lms/dashboard')}
+                      className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm font-semibold text-charcoal transition hover:bg-cloud/60"
+                    >
+                      <LayoutDashboard className="h-4 w-4 text-slate" />
+                      <span>Learner Home</span>
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    role="menuitem"
+                    onClick={handleLogout}
+                    className="flex w-full items-center gap-3 border-t border-mist px-4 py-3 text-left text-sm font-semibold text-rose-600 transition hover:bg-rose-50"
+                  >
+                    <LogOut className="h-4 w-4" />
+                    <span>Log out</span>
+                  </button>
+                </div>
+              )}
             </div>
           )}
           <button
@@ -184,19 +300,48 @@ const Header = () => {
                 </>
               ) : (
                 <>
-                  <Link
-                    to={user?.role === 'admin' ? '/admin/dashboard' : '/lms/dashboard'}
-                    onClick={() => setIsMenuOpen(false)}
-                    className="inline-flex h-11 items-center justify-center rounded-lg border border-skyblue/30 text-sm font-semibold text-skyblue transition hover:bg-skyblue/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-skyblue focus-visible:ring-offset-2 focus-visible:ring-offset-softwhite"
-                  >
-                    {user?.role === 'admin' ? 'Admin Portal' : 'Learner Home'}
-                  </Link>
                   <button
                     type="button"
-                    onClick={() => navigate(user?.role === 'admin' ? '/admin/dashboard' : '/lms/dashboard')}
-                    className="inline-flex h-11 items-center justify-center rounded-lg text-sm font-heading font-semibold shadow-card-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-skyblue focus-visible:ring-offset-2 focus-visible:ring-offset-softwhite btn-cta"
+                    onClick={() => {
+                      setIsMenuOpen(false);
+                      navigate(primaryWorkspacePath);
+                    }}
+                    className="inline-flex h-11 items-center justify-center rounded-lg border border-skyblue/30 text-sm font-semibold text-skyblue transition hover:bg-skyblue/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-skyblue focus-visible:ring-offset-2 focus-visible:ring-offset-softwhite"
                   >
-                    Continue
+                    {canAccessAdmin ? 'Admin Dashboard' : 'Learner Home'}
+                  </button>
+                  {canAccessAdmin && canAccessLms ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMenuOpen(false);
+                        navigate('/lms/dashboard');
+                      }}
+                      className="inline-flex h-11 items-center justify-center rounded-lg text-sm font-heading font-semibold shadow-card-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-skyblue focus-visible:ring-offset-2 focus-visible:ring-offset-softwhite btn-cta"
+                    >
+                      Learner Home
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsMenuOpen(false);
+                        navigate(primaryWorkspacePath);
+                      }}
+                      className="inline-flex h-11 items-center justify-center rounded-lg text-sm font-heading font-semibold shadow-card-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-skyblue focus-visible:ring-offset-2 focus-visible:ring-offset-softwhite btn-cta"
+                    >
+                      Continue
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsMenuOpen(false);
+                      void handleLogout();
+                    }}
+                    className="col-span-2 inline-flex h-11 items-center justify-center rounded-lg border border-rose-200 text-sm font-semibold text-rose-600 transition hover:bg-rose-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400 focus-visible:ring-offset-2 focus-visible:ring-offset-softwhite"
+                  >
+                    Logout
                   </button>
                 </>
               )}

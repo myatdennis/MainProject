@@ -6,6 +6,9 @@ import {
   getSessionMetadata,
   clearAuth,
   migrateFromLocalStorage,
+  getActiveOrgPreference,
+  setActiveOrgPreference,
+  clearActiveOrgPreference,
   type UserSession,
   type UserMembership,
   type SessionMetadata,
@@ -19,16 +22,15 @@ import api from '../lib/httpClient';
 import { logAuditAction } from '../dal/auditLog';
 import axios from 'axios';
 
-const REFRESH_INTERVAL_MS = 30 * 1000;
 const MIN_REFRESH_BUFFER_MS = 2 * 60 * 1000;
 const REFRESH_RATIO = 0.15;
 const SAFETY_REFRESH_FLOOR_MS = 45 * 1000;
 const MIN_REFRESH_INTERVAL_MS = 60 * 1000;
 const FOCUS_REFRESH_THRESHOLD_MS = 3 * 60 * 1000;
+const SESSION_RELOAD_THROTTLE_MS = 45 * 1000;
 
 const isNavigatorOffline = () => typeof navigator !== 'undefined' && navigator.onLine === false;
 
-const ACTIVE_ORG_STORAGE_KEY = 'huddle_active_org';
 
 type SessionSurface = 'admin' | 'lms';
 type RefreshReason = 'auto' | 'focus' | 'online' | 'manual' | 'bootstrap';
@@ -86,32 +88,6 @@ const normalizeMemberships = (rows: Array<Record<string, any>> | undefined): Use
   }, []);
 };
 
-const loadActiveOrgPreference = (): string | null => {
-  if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') {
-    return null;
-  }
-  try {
-    return window.localStorage.getItem(ACTIVE_ORG_STORAGE_KEY);
-  } catch (error) {
-    console.warn('[SecureAuth] Failed to read active org preference', error);
-    return null;
-  }
-};
-
-const persistActiveOrgPreference = (orgId: string | null) => {
-  if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') {
-    return;
-  }
-  try {
-    if (orgId) {
-      window.localStorage.setItem(ACTIVE_ORG_STORAGE_KEY, orgId);
-    } else {
-      window.localStorage.removeItem(ACTIVE_ORG_STORAGE_KEY);
-    }
-  } catch (error) {
-    console.warn('[SecureAuth] Failed to persist active org preference', error);
-  }
-};
 
 const pickValidOrgId = (candidate: string | null | undefined, memberships: UserMembership[], fallback?: string | null): string | null => {
   const isValid = (orgId: string | null | undefined) =>
@@ -154,7 +130,7 @@ const shouldRefreshToken = (
   const expiresAt = metadata?.accessExpiresAt;
   if (!expiresAt) return false;
 
-  const issuedAt = metadata.accessIssuedAt ?? expiresAt - REFRESH_INTERVAL_MS;
+  const issuedAt = metadata.accessIssuedAt ?? expiresAt - MIN_REFRESH_INTERVAL_MS;
   const ttl = Math.max(expiresAt - issuedAt, 0);
   const remaining = expiresAt - now;
   const bufferWindow = Math.max(MIN_REFRESH_BUFFER_MS, ttl * REFRESH_RATIO);
@@ -229,6 +205,7 @@ interface RegisterResult extends LoginResult {
 interface AuthContextType {
   isAuthenticated: AuthState;
   authInitializing: boolean;
+  sessionStatus: 'idle' | 'loading' | 'ready';
   user: UserSession | null;
   memberships: UserMembership[];
   organizationIds: string[];
@@ -241,7 +218,8 @@ interface AuthContextType {
   refreshToken: (options?: RefreshOptions) => Promise<boolean>;
   forgotPassword: (email: string) => Promise<boolean>;
   setActiveOrganization: (orgId: string | null) => Promise<void>;
-  reloadSession: (options?: { surface?: SessionSurface }) => Promise<boolean>;
+  reloadSession: (options?: { surface?: SessionSurface; force?: boolean }) => Promise<boolean>;
+  loadSession: (options?: { surface?: SessionSurface }) => Promise<boolean>;
 }
 
 // ============================================================================
@@ -251,6 +229,7 @@ interface AuthContextType {
 const defaultAuthContext: AuthContextType = {
   isAuthenticated: { lms: false, admin: false },
   authInitializing: true,
+  sessionStatus: 'idle',
   user: null,
   memberships: [],
   organizationIds: [],
@@ -290,6 +269,9 @@ const defaultAuthContext: AuthContextType = {
   async reloadSession() {
     return false;
   },
+  async loadSession() {
+    return false;
+  },
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -313,9 +295,13 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   const [organizationIds, setOrganizationIds] = useState<string[]>([]);
   const [activeOrgId, setActiveOrgIdState] = useState<string | null>(null);
   const [authInitializing, setAuthInitializing] = useState(true);
+  const [sessionStatus, setSessionStatus] = useState<'idle' | 'loading' | 'ready'>('idle');
+  const [sessionMetaVersion, setSessionMetaVersion] = useState(0);
   const serverTimeOffsetRef = useRef(0);
   const lastRefreshAttemptRef = useRef(0);
   const lastRefreshSuccessRef = useRef(0);
+  const refreshTimeoutRef = useRef<number | null>(null);
+  const lastSessionReloadRef = useRef(0);
 
   const syncServerClock = useCallback((serverDateHeader?: string | null) => {
     if (!serverDateHeader) {
@@ -354,6 +340,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         setIsAuthenticated({ lms: false, admin: false });
         if (persistTokens) {
           clearAuth();
+          setSessionMetaVersion((value) => value + 1);
         }
         return;
       }
@@ -385,8 +372,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         userMetadata: payload.user.userMetadata ?? payload.user.user_metadata ?? null,
       };
 
-      const preferredOrg = pickValidOrgId(session.activeOrgId, normalizedMemberships, loadActiveOrgPreference());
-      persistActiveOrgPreference(preferredOrg);
+  const storedPreference = getActiveOrgPreference();
+  const preferredOrg = pickValidOrgId(session.activeOrgId, normalizedMemberships, storedPreference);
+  setActiveOrgPreference(preferredOrg);
       session.activeOrgId = preferredOrg;
 
       setUser(session);
@@ -399,12 +387,14 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         setUserSession(session);
         if (payload.expiresAt || payload.refreshExpiresAt) {
           const issuedAt = getSkewedNow();
-          setSessionMetadata({
+          const metadata: SessionMetadata = {
             accessExpiresAt: payload.expiresAt ?? undefined,
             refreshExpiresAt: payload.refreshExpiresAt ?? undefined,
             accessIssuedAt: payload.expiresAt ? issuedAt : undefined,
             refreshIssuedAt: payload.refreshExpiresAt ? issuedAt : undefined,
-          });
+          };
+          setSessionMetadata(metadata);
+          setSessionMetaVersion((value) => value + 1);
         }
       }
     },
@@ -439,14 +429,21 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   );
 
   const reloadSession = useCallback(
-    (options?: { surface?: SessionSurface }): Promise<boolean> => fetchServerSession(options ?? {}),
+    (options?: { surface?: SessionSurface; force?: boolean }): Promise<boolean> => {
+      const now = Date.now();
+      if (!options?.force && lastSessionReloadRef.current && now - lastSessionReloadRef.current < SESSION_RELOAD_THROTTLE_MS) {
+        return Promise.resolve(false);
+      }
+      lastSessionReloadRef.current = now;
+      return fetchServerSession({ surface: options?.surface });
+    },
     [fetchServerSession],
   );
 
   const setActiveOrganization = useCallback(
     async (orgId: string | null) => {
-      const normalized = orgId && memberships.some((membership) => membership.orgId === orgId) ? orgId : null;
-      persistActiveOrgPreference(normalized);
+  const normalized = orgId && memberships.some((membership) => membership.orgId === orgId) ? orgId : null;
+  setActiveOrgPreference(normalized);
       setActiveOrgIdState(normalized);
       setUser((prev) => {
         if (!prev) return prev;
@@ -522,6 +519,50 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     [applySessionPayload, captureServerClock, fetchServerSession, getSkewedNow],
   );
 
+  const resolveSession = useCallback(
+    async ({ surface, signal, reason }: { surface?: SessionSurface; signal?: AbortSignal; reason?: RefreshReason } = {}) => {
+      try {
+        const hasUser = await fetchServerSession({ surface, signal });
+        if (hasUser) {
+          return true;
+        }
+
+        const refreshed = await refreshToken({ reason: reason ?? 'auto', force: true });
+        if (refreshed) {
+          return fetchServerSession({ surface, signal });
+        }
+
+        applySessionPayload(null, { persistTokens: true });
+        return false;
+      } catch (error) {
+        if (typeof axios.isCancel === 'function' && axios.isCancel(error)) {
+          return false;
+        }
+        console.error('[SecureAuth] resolveSession failed', error);
+        applySessionPayload(null, { persistTokens: true });
+        return false;
+      }
+    },
+    [applySessionPayload, fetchServerSession, refreshToken],
+  );
+
+  const loadSession = useCallback(
+    async (options?: { surface?: SessionSurface }): Promise<boolean> => {
+      if (sessionStatus === 'loading') {
+        return false;
+      }
+      setSessionStatus('loading');
+      try {
+        const result = await resolveSession({ surface: options?.surface, reason: 'manual' });
+        setAuthInitializing(false);
+        return result;
+      } finally {
+        setSessionStatus('ready');
+      }
+    },
+    [resolveSession, sessionStatus],
+  );
+
   // ============================================================================
   // Logout
   // ============================================================================
@@ -545,7 +586,8 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       setMemberships([]);
       setOrganizationIds([]);
       setActiveOrgIdState(null);
-      persistActiveOrgPreference(null);
+  setSessionMetaVersion((value) => value + 1);
+  clearActiveOrgPreference();
 
       if (type) {
         setIsAuthenticated(prev => ({
@@ -570,21 +612,10 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     let active = true;
 
     const initializeAuth = async () => {
+      setSessionStatus('loading');
       try {
         migrateFromLocalStorage();
-
-        const hasActiveSession = await fetchServerSession({ signal: abortController.signal });
-        if (hasActiveSession) {
-          return;
-        }
-
-        const refreshed = await refreshToken({ reason: 'bootstrap', force: true });
-        if (refreshed) {
-          await fetchServerSession({ signal: abortController.signal });
-          return;
-        }
-
-        applySessionPayload(null, { persistTokens: true });
+        await resolveSession({ signal: abortController.signal, reason: 'bootstrap' });
       } catch (error) {
         if (typeof axios.isCancel === 'function' && axios.isCancel(error)) {
           return;
@@ -594,6 +625,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       } finally {
         if (active) {
           setAuthInitializing(false);
+          setSessionStatus('ready');
         }
       }
     };
@@ -604,13 +636,17 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       active = false;
       abortController.abort();
     };
-  }, [fetchServerSession, refreshToken, applySessionPayload]);
+  }, [resolveSession, applySessionPayload]);
   // =========================================================================
   // Auto Token Refresh
   // =========================================================================
 
   useEffect(() => {
     if (!user) {
+      if (refreshTimeoutRef.current) {
+        clearTimeout(refreshTimeoutRef.current);
+        refreshTimeoutRef.current = null;
+      }
       return;
     }
 
@@ -627,6 +663,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
       if (reason === 'auto') {
         if (!shouldRefreshToken(metadata, { now })) {
+          scheduleNextRefresh();
           return;
         }
       } else if (reason === 'focus') {
@@ -636,14 +673,37 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         if (!shouldRefreshToken(metadata, { now, onFocus: true })) {
           return;
         }
+      } else if (reason === 'online') {
+        if (!shouldRefreshToken(metadata, { now })) {
+          scheduleNextRefresh();
+          return;
+        }
       }
 
       await refreshToken({ reason });
+      scheduleNextRefresh();
     };
 
-    const interval = window.setInterval(() => {
-      void triggerRefresh('auto');
-    }, REFRESH_INTERVAL_MS);
+    function scheduleNextRefresh() {
+      if (cancelled) return;
+      if (refreshTimeoutRef.current) {
+        clearTimeout(refreshTimeoutRef.current);
+        refreshTimeoutRef.current = null;
+      }
+      const metadata = getSessionMetadata();
+      if (!metadata?.accessExpiresAt) {
+        return;
+      }
+      const now = getSkewedNow();
+      const issuedAt = metadata.accessIssuedAt ?? now;
+      const ttl = Math.max(metadata.accessExpiresAt - issuedAt, 0);
+      const bufferWindow = Math.max(MIN_REFRESH_BUFFER_MS, ttl * REFRESH_RATIO);
+      const targetTime = metadata.accessExpiresAt - bufferWindow;
+      const delay = Math.max(targetTime - now, SAFETY_REFRESH_FLOOR_MS);
+      refreshTimeoutRef.current = window.setTimeout(() => {
+        void triggerRefresh('auto');
+      }, delay);
+    }
 
     const handleOnline = () => {
       void triggerRefresh('online');
@@ -656,24 +716,27 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       void triggerRefresh('focus');
     };
 
+    scheduleNextRefresh();
+
     window.addEventListener('online', handleOnline);
     window.addEventListener('focus', handleFocus);
     if (typeof document !== 'undefined') {
       document.addEventListener('visibilitychange', handleFocus);
     }
 
-    void triggerRefresh('auto');
-
     return () => {
       cancelled = true;
-      clearInterval(interval);
+      if (refreshTimeoutRef.current) {
+        clearTimeout(refreshTimeoutRef.current);
+        refreshTimeoutRef.current = null;
+      }
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('focus', handleFocus);
       if (typeof document !== 'undefined') {
         document.removeEventListener('visibilitychange', handleFocus);
       }
     };
-  }, [user, refreshToken, getSkewedNow]);
+  }, [user, refreshToken, getSkewedNow, sessionMetaVersion]);
 
   // ============================================================================
   // Login
@@ -794,8 +857,8 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         organizationId: validation.data.organizationId ?? undefined,
       };
 
-  const response = await api.post<SessionResponsePayload>('/auth/register', payload);
-  captureServerClock(response.headers as Record<string, any> | undefined);
+      const response = await api.post<SessionResponsePayload>('/auth/register', payload);
+      captureServerClock(response.headers as Record<string, any> | undefined);
       applySessionPayload(response.data ?? null, { surface: 'lms', persistTokens: true });
 
       return { success: true };
@@ -886,6 +949,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   const value: AuthContextType = {
     isAuthenticated,
     authInitializing,
+    sessionStatus,
     user,
     memberships,
     organizationIds,
@@ -899,6 +963,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     verifyMfa,
     setActiveOrganization,
     reloadSession,
+    loadSession,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
@@ -923,5 +988,3 @@ export function useSecureAuth(): AuthContextType {
   return context;
 }
 
-// Export for compatibility
-export { AuthContext };

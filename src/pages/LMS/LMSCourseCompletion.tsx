@@ -11,24 +11,7 @@ import { courseStore } from '../../store/courseStore';
 import { normalizeCourse, type NormalizedCourse } from '../../utils/courseNormalization';
 import { loadStoredCourseProgress } from '../../utils/courseProgress';
 import { trackEvent } from '../../dal/analytics';
-
-const resolveLearnerIdentity = () => {
-  try {
-    const raw = localStorage.getItem('huddle_user');
-    if (!raw) {
-      return { id: 'local-user', email: 'demo@learner.com', name: 'Learner' };
-    }
-    const parsed = JSON.parse(raw);
-    return {
-      id: (parsed.email || parsed.id || 'local-user').toLowerCase(),
-      email: parsed.email || 'demo@learner.com',
-      name: parsed.name || parsed.fullName || parsed.email || 'Learner',
-    };
-  } catch (error) {
-    console.warn('Failed to derive learner identity for completion share tracking:', error);
-    return { id: 'local-user', email: 'demo@learner.com', name: 'Learner' };
-  }
-};
+import { useUserProfile } from '../../hooks/useUserProfile';
 
 const LMSCourseCompletion = () => {
   const { courseId } = useParams();
@@ -36,7 +19,18 @@ const LMSCourseCompletion = () => {
   const [course, setCourse] = useState<NormalizedCourse | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
-  const learnerIdentity = useMemo(() => resolveLearnerIdentity(), []);
+  const { user } = useUserProfile();
+  const learnerIdentity = useMemo(() => {
+    const fallback = { id: 'local-user', email: 'demo@learner.com', name: 'Learner' };
+    if (!user) {
+      return fallback;
+    }
+    const id = (user.email || user.id || fallback.id).toLowerCase();
+    const email = user.email || fallback.email;
+    const derivedName = [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
+    const name = derivedName || user.email || fallback.name;
+    return { id, email, name };
+  }, [user]);
   const learnerId = learnerIdentity.id;
 
   useEffect(() => {

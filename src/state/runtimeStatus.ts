@@ -57,7 +57,7 @@ const parseHealthResponse = async (response: Response) => {
   const offlineQueue = json?.offlineQueue ?? {};
   const supabaseConfigured = !supabaseStatus?.disabled && (supabaseStatus?.status !== 'disabled' || hasSupabaseConfig);
   const supabaseHealthy = supabaseStatus?.status === 'ok';
-  const apiHealthy = Boolean(json?.healthy);
+  const apiHealthy = typeof json?.healthy === 'boolean' ? Boolean(json.healthy) : Boolean(json?.ok);
   const demoModeEnabled = Boolean(json?.demoMode?.enabled || json?.demoModeHealthOverride);
   const statusLabel = (json?.status as RuntimeStatus['statusLabel']) || (apiHealthy ? 'ok' : 'degraded');
 

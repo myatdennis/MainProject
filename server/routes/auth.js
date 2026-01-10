@@ -177,6 +177,66 @@ const resolveDemoUser = async (email, password) => {
 const ORGANIZATION_VIEW_COLUMNS =
   'organization_id, role, status, organization_name, organization_status, subscription, features, accepted_at, last_seen_at';
 
+const MEMBERSHIP_VIEW_NAME = 'user_organizations_vw';
+
+const isMembershipViewMissingError = (error) =>
+  Boolean(
+    error &&
+      (error.code === 'PGRST205' ||
+        error.code === '42P01' ||
+        (typeof error.message === 'string' && error.message.includes(MEMBERSHIP_VIEW_NAME))),
+  );
+
+const normalizeOrgId = (value) => {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed || null;
+};
+
+const fetchMembershipsFromBaseTables = async (userId) => {
+  if (!supabase || !userId) return [];
+  try {
+    const { data: membershipRows, error } = await supabase
+      .from('organization_memberships')
+      .select('org_id, role, created_at, updated_at')
+      .eq('user_id', userId);
+
+    if (error) throw error;
+
+    const rows = Array.isArray(membershipRows) ? membershipRows : [];
+    const orgIds = Array.from(new Set(rows.map((row) => normalizeOrgId(row?.org_id)).filter(Boolean)));
+
+    let orgMap = new Map();
+    if (orgIds.length > 0) {
+      const { data: orgs, error: orgError } = await supabase
+        .from('organizations')
+        .select('id,name,status,subscription,features')
+        .in('id', orgIds);
+
+      if (orgError) throw orgError;
+      orgMap = new Map((orgs || []).map((org) => [org.id, org]));
+    }
+
+    return rows.map((row) => {
+      const organization = orgMap.get(normalizeOrgId(row?.org_id)) || {};
+      return {
+        organization_id: normalizeOrgId(row?.org_id),
+        role: row?.role || 'member',
+        status: 'active',
+        organization_name: organization.name || null,
+        organization_status: organization.status || null,
+        subscription: organization.subscription ?? null,
+        features: organization.features ?? null,
+        accepted_at: row?.created_at || null,
+        last_seen_at: row?.updated_at || null,
+      };
+    });
+  } catch (error) {
+    console.error('[AUTH ROUTES] organization_memberships fallback failed', { userId, error });
+    return [];
+  }
+};
+
 const fetchUserMembershipRows = async (userId) => {
   if (!supabase || !userId) return [];
   const { data, error } = await supabase
@@ -185,6 +245,14 @@ const fetchUserMembershipRows = async (userId) => {
     .eq('user_id', userId);
 
   if (error) {
+    if (isMembershipViewMissingError(error)) {
+      console.warn('[AUTH ROUTES] user_organizations_vw missing, falling back to base tables', {
+        userId,
+        code: error.code,
+        message: error.message,
+      });
+      return fetchMembershipsFromBaseTables(userId);
+    }
     console.error('[AUTH ROUTES] Failed to fetch memberships', { userId, error });
     return [];
   }
@@ -217,7 +285,8 @@ const buildUserPayloadFromSupabase = (supabaseUser, memberships = []) => {
   const normalizedEmail = normalizeEmail(supabaseUser?.email || '');
   const membershipPayload = mapMembershipRows(memberships);
   const organizationIds = membershipPayload.filter((m) => m.status === 'active').map((m) => m.orgId);
-  const role = resolveUserRole(
+  const platformRole = supabaseUser.app_metadata?.platform_role || null;
+  let role = resolveUserRole(
     {
       email: normalizedEmail,
       role: supabaseUser?.role,
@@ -226,6 +295,14 @@ const buildUserPayloadFromSupabase = (supabaseUser, memberships = []) => {
     },
     membershipPayload,
   );
+
+  if (role === 'admin' && membershipPayload.length === 0 && !platformRole) {
+    console.warn('[AUTH ROUTES] Suppressing admin role due to missing memberships', {
+      userId: supabaseUser.id,
+      email: normalizedEmail,
+    });
+    role = 'learner';
+  }
 
   return {
     id: supabaseUser.id,
@@ -237,7 +314,7 @@ const buildUserPayloadFromSupabase = (supabaseUser, memberships = []) => {
     organizationId: organizationIds[0] || null,
     organizationIds,
     memberships: membershipPayload,
-    platformRole: supabaseUser.app_metadata?.platform_role || null,
+    platformRole,
   };
 };
 

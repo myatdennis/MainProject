@@ -1,5 +1,5 @@
 import { getSupabase, hasSupabaseConfig, SUPABASE_MISSING_CONFIG_MESSAGE } from '../lib/supabaseClient';
-import { getUserSession } from '../lib/secureStorage';
+import { getUserSession, getActiveOrgPreference } from '../lib/secureStorage';
 
 export const buildAuthHeaders = async (): Promise<Record<string, string>> => {
   const headers: Record<string, string> = {};
@@ -9,54 +9,24 @@ export const buildAuthHeaders = async (): Promise<Record<string, string>> => {
     try {
       const userSession = getUserSession();
       if (userSession) {
-        // Set user authentication headers
         if (userSession.id) {
           headers['X-User-Id'] = String(userSession.id);
         }
         if (userSession.role) {
           headers['X-User-Role'] = String(userSession.role);
         }
-        if (userSession.organizationId) {
-          headers['X-Org-Id'] = String(userSession.organizationId);
+        const preferredOrgId = userSession.activeOrgId || userSession.organizationId || getActiveOrgPreference();
+        if (preferredOrgId) {
+          headers['X-Org-Id'] = String(preferredOrgId);
         }
-
+      } else {
+        const fallbackOrg = getActiveOrgPreference();
+        if (fallbackOrg) {
+          headers['X-Org-Id'] = String(fallbackOrg);
+        }
       }
     } catch (error) {
       console.warn('[buildAuthHeaders] Failed to read from secure storage:', error);
-    }
-
-    // Fallback: Check localStorage for legacy 'huddle_user' (migration support)
-    if (!headers['X-User-Id'] && 'localStorage' in window) {
-      try {
-        const stored = window.localStorage.getItem('huddle_user');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          // Provide a stable demo-mode user id when Supabase isn't configured
-          if (parsed?.id || parsed?.email) {
-            headers['X-User-Id'] = String(parsed.id || parsed.email).toLowerCase();
-          }
-          if (parsed?.role) {
-            headers['X-User-Role'] = String(parsed.role);
-          }
-          if (parsed?.activeOrgId) {
-            headers['X-Org-Id'] = String(parsed.activeOrgId);
-          }
-        }
-      } catch {
-        // ignore parse errors
-      }
-    }
-
-    // Check for organization override in localStorage
-    if ('localStorage' in window) {
-      try {
-        const storedOrg = window.localStorage.getItem('huddle_active_org');
-        if (storedOrg && !headers['X-Org-Id']) {
-          headers['X-Org-Id'] = storedOrg;
-        }
-      } catch {
-        // ignore
-      }
     }
   }
 

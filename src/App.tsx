@@ -24,7 +24,7 @@ import AdminLeadershipInsights from './pages/Admin/AdminLeadershipInsights';
 import AdminProfilePage from './pages/Admin/AdminProfilePage';
 import AdminLayout from './components/Admin/AdminLayout';
 // (removed duplicate import)
-import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { courseStore } from './store/courseStore';
 import { LoadingSpinner } from './components/LoadingComponents';
 import { ErrorBoundary } from './components/ErrorHandling';
@@ -81,27 +81,64 @@ const TestimonialsPage = lazy(() => import('./pages/TestimonialsPage'));
 const ContactPage = lazy(() => import('./pages/ContactPage'));
 const ClientPortalPage = lazy(() => import('./pages/ClientPortalPage'));
 
+const AdminProtectedLayout = () => (
+  <RequireAuth mode="admin">
+    <AdminLayout />
+  </RequireAuth>
+);
+
+const LmsProtectedLayout = () => (
+  <RequireAuth mode="lms">
+    <LMSLayout />
+  </RequireAuth>
+);
+
+const ClientProtectedLayout = () => (
+  <RequireAuth mode="lms">
+    <ClientLayout />
+  </RequireAuth>
+);
+
+const OrgWorkspaceProtectedLayout = () => (
+  <RequireAuth mode="lms">
+    <OrgWorkspaceLayout />
+  </RequireAuth>
+);
+
 
 function App() {
+  return (
+    <Router>
+      <AppContent />
+    </Router>
+  );
+}
+
+function AppContent() {
   useViewportHeight();
   useEffect(() => {
-    // Initialize course store and sync default courses to database
     courseStore.init().catch(error => {
       console.error('Failed to initialize course store:', error);
     });
   }, []);
 
+  const location = useLocation();
+  const hideMarketingChrome = /^\/(admin|lms|client)(?:\/|$)/i.test(location.pathname);
+
   return (
-    <Router>
-      <div className="flex min-h-[calc(var(--app-vh,1vh)*100)] flex-col bg-[var(--hud-bg)]" style={{ paddingBottom: 'var(--safe-area-bottom, 0px)' }}>
-    <Header />
-    <DemoModeBanner />
-    <SupabaseStatusBanner />
-    <ConnectivityBanner />
-        <main className="flex-grow">
-          <Suspense fallback={<LoadingSpinner size="lg" className="py-20" text="Loading..." />}>
-            <ErrorBoundary>
-              <Routes>
+    <div className="flex min-h-[calc(var(--app-vh,1vh)*100)] flex-col bg-[var(--hud-bg)]" style={{ paddingBottom: 'var(--safe-area-bottom, 0px)' }}>
+      {!hideMarketingChrome && (
+        <>
+          <Header />
+          <DemoModeBanner />
+        </>
+      )}
+      <SupabaseStatusBanner />
+      <ConnectivityBanner />
+      <main className="flex-grow">
+        <Suspense fallback={<LoadingSpinner size="lg" className="py-20" text="Loading..." />}>
+          <ErrorBoundary>
+            <Routes>
                 <Route path="/" element={<HomePage />} />
                 <Route path="/about" element={<AboutPage />} />
                 <Route path="/services" element={<ServicesPage />} />
@@ -110,14 +147,10 @@ function App() {
                 <Route path="/contact" element={<ContactPage />} />
                 <Route path="/client-portal" element={<ClientPortalPage />} />
                 <Route path="/invite/:token" element={<InviteAccept />} />
-                <Route path="/client-portal/org/:orgId/*" element={<RequireAuth mode="lms"><OrgWorkspaceLayout /></RequireAuth>} />
+                <Route path="/client-portal/org/:orgId/*" element={<OrgWorkspaceProtectedLayout />} />
                 <Route
                   path="/client/*"
-                  element={(
-                    <RequireAuth mode="lms">
-                      <ClientLayout />
-                    </RequireAuth>
-                  )}
+                  element={<ClientProtectedLayout />}
                 >
                   <Route index element={<Navigate to="dashboard" replace />} />
                   <Route path="dashboard" element={<ClientDashboard />} />
@@ -131,14 +164,7 @@ function App() {
                 </Route>
                 <Route path="/lms/login" element={<LMSLogin />} />
                 <Route path="/lms" element={<Navigate to="/lms/dashboard" replace />} />
-                <Route
-                  path="/lms/*"
-                  element={(
-                    <RequireAuth mode="lms">
-                      <LMSLayout />
-                    </RequireAuth>
-                  )}
-                >
+                <Route path="/lms/*" element={<LmsProtectedLayout />}>
                   <Route index element={<Navigate to="dashboard" replace />} />
                   <Route path="dashboard" element={<LMSDashboard />} />
                   <Route path="courses" element={<LMSCourses />} />
@@ -159,14 +185,7 @@ function App() {
                   <Route path="meeting" element={<LMSMeeting />} />
                 </Route>
                 <Route path="/admin/login" element={<AdminLogin />} />
-                <Route
-                  path="/admin/*"
-                  element={(
-                    <RequireAuth mode="admin">
-                      <AdminLayout />
-                    </RequireAuth>
-                  )}
-                >
+                <Route path="/admin/*" element={<AdminProtectedLayout />}>
                   <Route index element={<Navigate to="dashboard" replace />} />
                   <Route path="dashboard" element={<AdminDashboard />} />
                   <Route path="health" element={<AdminHealth />} />
@@ -197,17 +216,16 @@ function App() {
                 </Route>
                 {/* ...admin routes... */}
                 <Route path="*" element={<NotFound />} />
-              </Routes>
-            </ErrorBoundary>
-          </Suspense>
-        </main>
-        <Footer />
-        <AIBot />
-        <ConnectionDiagnostic />
-        <TroubleshootingGuide />
-        <DevDebugPanel />
-      </div>
-    </Router>
+            </Routes>
+          </ErrorBoundary>
+        </Suspense>
+      </main>
+      {!hideMarketingChrome && <Footer />}
+      {!hideMarketingChrome && <AIBot />}
+      <ConnectionDiagnostic />
+      <TroubleshootingGuide />
+      <DevDebugPanel />
+    </div>
   );
 }
 

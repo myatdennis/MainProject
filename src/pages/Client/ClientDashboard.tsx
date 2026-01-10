@@ -30,16 +30,8 @@ const ClientDashboard = () => {
   const navigate = useNavigate();
   const { user } = useUserProfile();
   const learnerId = useMemo(() => {
-    if (user) return (user.email || user.id).toLowerCase();
-    try {
-      const raw = localStorage.getItem('huddle_user');
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        return (parsed.email || parsed.id || 'local-user').toLowerCase();
-      }
-    } catch (error) {
-      console.warn('Failed to read learner identity (legacy fallback):', error);
-    }
+    if (user?.email) return user.email.toLowerCase();
+    if (user?.id) return String(user.id).toLowerCase();
     return 'local-user';
   }, [user]);
   const [assignments, setAssignments] = useState<CourseAssignment[]>([]);

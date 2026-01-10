@@ -28,18 +28,6 @@ const supportedSidebarLessonTypes = ['video', 'interactive', 'quiz', 'resource',
 const PROGRESS_MILESTONES = [25, 50, 75, 100] as const;
 type SidebarLessonType = (typeof supportedSidebarLessonTypes)[number];
 
-const buildLegacyLearnerId = () => {
-  try {
-    const raw = localStorage.getItem('huddle_user');
-    if (!raw) return 'local-user';
-    const parsed = JSON.parse(raw);
-    return (parsed.email || parsed.id || 'local-user').toLowerCase();
-  } catch (error) {
-    console.warn('Failed to parse learner identity (legacy fallback):', error);
-    return 'local-user';
-  }
-};
-
 const deriveModuleContext = (moduleId: string | undefined): {
   course: NormalizedCourse;
   module: NonNullable<NormalizedCourse['modules'][number]>;
@@ -62,7 +50,11 @@ const LMSModule = () => {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const { user } = useUserProfile();
-  const learnerId = useMemo(() => (user ? (user.email || user.id).toLowerCase() : buildLegacyLearnerId()), [user]);
+  const learnerId = useMemo(() => {
+    if (user?.email) return user.email.toLowerCase();
+    if (user?.id) return String(user.id).toLowerCase();
+    return 'local-user';
+  }, [user]);
   const requestedLessonId = searchParams.get('lesson');
 
   const [isLoading, setIsLoading] = useState(true);

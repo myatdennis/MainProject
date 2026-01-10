@@ -1,4 +1,4 @@
-import { useEffect, useState, type ChangeEvent, type FC, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FC, type ReactNode } from 'react';
 import { Link, NavLink, useLocation, useNavigate, Outlet } from 'react-router-dom';
 import { ErrorBoundary } from '../ErrorHandling';
 import AdminErrorBoundary from '../ErrorBoundary/AdminErrorBoundary';
@@ -25,6 +25,8 @@ import {
   Wand2,
   Brain,
   RefreshCcw,
+  ChevronDown,
+  UserCircle2,
 } from 'lucide-react';
 import Card from '../ui/Card';
 import Button from '../ui/Button';
@@ -75,8 +77,62 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
   } = useActiveOrganization({ surface: 'admin' });
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const menuButtonRef = useRef<HTMLButtonElement | null>(null);
   const location = useLocation();
   const navigate = useNavigate();
+  const accountEmail = user?.email ?? authUser?.email ?? 'Admin';
+  const env = import.meta.env as Record<string, string | boolean | undefined>;
+  const ADMIN_MENU_DEBUG = Boolean(env?.DEV || env?.VITE_ENABLE_ADMIN_MENU_DEBUG === 'true');
+
+  const logMenuEvent = useCallback(
+    (event: string, payload: Record<string, unknown> = {}) => {
+      if (!ADMIN_MENU_DEBUG) {
+        return;
+      }
+      console.info('[AdminMenu]', event, {
+        path: location.pathname,
+        ...payload,
+      });
+    },
+    [ADMIN_MENU_DEBUG, location.pathname],
+  );
+
+  const closeMenu = useCallback(
+    (reason: string, extra: Record<string, unknown> = {}) => {
+      setMenuOpen((prev) => {
+        if (!prev) {
+          return prev;
+        }
+        logMenuEvent('close', { reason, ...extra });
+        return false;
+      });
+    },
+    [logMenuEvent],
+  );
+
+  const toggleMenu = useCallback(() => {
+    setMenuOpen((prev) => {
+      const next = !prev;
+      logMenuEvent(next ? 'open' : 'close', { reason: 'toggle_click' });
+      return next;
+    });
+  }, [logMenuEvent]);
+
+  const handleMenuButtonClick = useCallback(
+    (event: React.MouseEvent<HTMLButtonElement>) => {
+      const pointerType = 'pointerType' in event.nativeEvent ? (event.nativeEvent as PointerEvent).pointerType : 'mouse';
+      console.log('[AdminMenu] button click', {
+        pointerType,
+        defaultPrevented: event.defaultPrevented,
+        target: event.currentTarget,
+        timestamp: Date.now(),
+      });
+      logMenuEvent('button_click', { pointerType, defaultPrevented: event.defaultPrevented });
+      toggleMenu();
+    },
+    [logMenuEvent, toggleMenu],
+  );
 
   const activeOrgLabel =
     activeMembership?.organizationName ||
@@ -107,6 +163,75 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
       navigate('/admin/login');
     }
   }, [authInitializing, isAuthenticated?.admin, location.pathname, navigate]);
+
+  useEffect(() => {
+    if (!menuOpen) {
+      return;
+    }
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (!menuRef.current) return;
+      if (!menuRef.current.contains(event.target as Node)) {
+        closeMenu('click_outside');
+      }
+    };
+
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closeMenu('escape_key');
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleEscape);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleEscape);
+    };
+  }, [closeMenu, menuOpen]);
+
+  useEffect(() => {
+    closeMenu('route_change', { to: location.pathname });
+  }, [closeMenu, location.pathname]);
+
+  useEffect(() => {
+    if (!ADMIN_MENU_DEBUG) {
+      return;
+    }
+    const handleDocumentClickTrace = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      const onButton = menuButtonRef.current ? menuButtonRef.current.contains(target) : false;
+      const insideMenu = menuRef.current ? menuRef.current.contains(target) : false;
+      const pointerType = 'pointerType' in event ? (event as PointerEvent).pointerType : 'mouse';
+      const composedPath = typeof event.composedPath === 'function' ? event.composedPath() : [];
+      const formattedPath = composedPath
+        .map((node) => {
+          if (!(node instanceof HTMLElement)) return null;
+          const id = node.id ? `#${node.id}` : '';
+          const classes = node.className && typeof node.className === 'string' ? `.${node.className.split(/\s+/).filter(Boolean).join('.')}` : '';
+          return `${node.tagName}${id}${classes}`;
+        })
+        .filter(Boolean);
+      console.log('[AdminMenu] document click', {
+        pointerType,
+        target,
+        onButton,
+        insideMenu,
+        path: formattedPath,
+        timestamp: Date.now(),
+      });
+      logMenuEvent('document_click_trace', {
+        onButton,
+        insideMenu,
+        pointerType,
+        tag: target?.tagName,
+      });
+    };
+    document.addEventListener('click', handleDocumentClickTrace, true);
+    return () => {
+      document.removeEventListener('click', handleDocumentClickTrace, true);
+    };
+  }, [ADMIN_MENU_DEBUG, logMenuEvent]);
 
   const handleLogout = async () => {
     try {
@@ -238,7 +363,7 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
       </aside>
 
       <div className="flex flex-1 flex-col">
-        <header className="sticky top-0 z-30 border-b border-mist/60 bg-white/90 backdrop-blur">
+        <header className="sticky top-0 z-50 border-b border-mist/60 bg-white/90 backdrop-blur">
           <div className="flex h-20 items-center justify-between px-6 lg:px-10">
             <div className="flex items-center gap-4">
               <button className="text-slate/70 hover:text-sunrise lg:hidden" onClick={() => setSidebarOpen(true)}>
@@ -295,80 +420,58 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
               >
                 New survey
               </Button>
-              <div style={{ position: 'relative' }}>
+              <div className="relative" ref={menuRef}>
                 <button
                   type="button"
-                  onClick={() => setMenuOpen((prev) => !prev)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    background: 'transparent',
-                    border: 'none',
-                    cursor: 'pointer',
-                    fontWeight: 600,
-                    color: '#0f172a',
-                  }}
+                  ref={menuButtonRef}
+                  onClick={handleMenuButtonClick}
+                  className="flex items-center gap-2 rounded-full border border-mist bg-white px-4 py-2 text-sm font-semibold text-charcoal shadow-sm transition hover:border-skyblue focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-skyblue"
+                  aria-haspopup="menu"
+                  aria-expanded={menuOpen}
+                  aria-controls="admin-account-menu"
                 >
-                  <span>{user?.email ?? authUser?.email ?? 'Admin'}</span>
-                  <span style={{ fontSize: 12 }}>▾</span>
+                  <span className="max-w-[160px] truncate">{accountEmail}</span>
+                  <ChevronDown
+                    className={`h-4 w-4 transition ${menuOpen ? 'rotate-180 text-skyblue' : 'text-slate/80'}`}
+                    aria-hidden="true"
+                  />
                 </button>
 
                 {menuOpen && (
                   <div
-                    style={{
-                      position: 'absolute',
-                      right: 0,
-                      top: '100%',
-                      marginTop: 8,
-                      background: 'white',
-                      borderRadius: 8,
-                      boxShadow: '0 8px 20px rgba(0,0,0,0.12)',
-                      minWidth: 220,
-                      zIndex: 1000,
-                    }}
+                    id="admin-account-menu"
+                    role="menu"
+                    className="absolute right-0 z-50 mt-2 w-64 overflow-hidden rounded-2xl border border-cloud bg-white shadow-[0_20px_50px_rgba(15,23,42,0.15)]"
                   >
-                    <div style={{ padding: '10px 12px', borderBottom: '1px solid #eee', fontSize: 12, color: '#666' }}>
+                    <div className="border-b border-cloud px-4 py-3 text-[10px] font-semibold uppercase tracking-[0.25em] text-slate/60">
                       Signed in as
-                      <div style={{ fontWeight: 700, fontSize: 13 }}>
-                        {user?.email ?? authUser?.email ?? 'Unknown user'}
-                      </div>
+                      <div className="mt-1 truncate text-sm font-semibold text-charcoal">{accountEmail}</div>
                     </div>
 
                     <button
+                      type="button"
+                      role="menuitem"
+                      className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm font-semibold text-charcoal transition hover:bg-cloud/70"
                       onClick={() => {
-                        setMenuOpen(false);
+                        closeMenu('nav_profile');
                         navigate('/admin/profile');
                       }}
-                      style={{
-                        width: '100%',
-                        textAlign: 'left',
-                        padding: '10px 12px',
-                        border: 'none',
-                        background: 'transparent',
-                        cursor: 'pointer',
-                      }}
                     >
-                      Profile & Settings
+                      <UserCircle2 className="h-4 w-4 text-slate" aria-hidden="true" />
+                      <span>Profile & Settings</span>
                     </button>
 
                     <button
-                      onClick={async () => {
-                        setMenuOpen(false);
-                        await handleLogout();
-                      }}
-                      style={{
-                        width: '100%',
-                        textAlign: 'left',
-                        padding: '10px 12px',
-                        borderTop: '1px solid #eee',
-                        background: 'transparent',
-                        color: '#b00020',
-                        cursor: 'pointer',
-                        fontWeight: 600,
+                      type="button"
+                      role="menuitem"
+                      className="flex w-full items-center gap-3 border-t border-cloud px-4 py-3 text-left text-sm font-semibold text-rose-600 transition hover:bg-rose-50"
+                      onClick={() => {
+                        closeMenu('logout_click');
+                        void handleLogout();
                       }}
                     >
-                      Log out
+                      <LogOut className="h-4 w-4" aria-hidden="true" />
+                      <span>Log out</span>
                     </button>
                   </div>
                 )}

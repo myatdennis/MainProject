@@ -136,6 +136,7 @@ function savePersistedData(data) {
 }
 
 const app = express();
+app.set('etag', false);
 
 const rawAllowedOrigins = process.env.CORS_ALLOWED_ORIGINS || '';
 const extraAllowedOrigins = rawAllowedOrigins
@@ -189,8 +190,8 @@ app.use((req, res, next) => {
 app.use(attachRequestId);
 
 // Lightweight platform health check (local test: curl -i http://localhost:<PORT>/api/health)
-app.get('/api/health', (_req, res) => {
-  res.status(200).json({ ok: true });
+app.get('/api/health', (req, res) => {
+  void respondToHealthRequest(req, res);
 });
 
 const OFFLINE_QUEUE_STATE_FILE = process.env.OFFLINE_QUEUE_STATE_FILE
@@ -338,7 +339,7 @@ const buildHealthPayload = async () => {
   };
 };
 
-const respondToHealthRequest = async (req, res) => {
+async function respondToHealthRequest(req, res) {
   try {
     const payload = await buildHealthPayload();
     const ok = payload.httpStatus === 200;
@@ -360,7 +361,7 @@ const respondToHealthRequest = async (req, res) => {
       requestId: req.requestId,
     });
   }
-};
+}
 
 app.get('/healthz', (req, res) => {
   void respondToHealthRequest(req, res);
@@ -384,7 +385,7 @@ app.get('/api/diagnostics/metrics', async (req, res, next) => {
 if (isProduction) {
   app.set('trust proxy', 1);
 }
-const PORT = Number(process.env.PORT) || 8787;
+const PORT = Number(process.env.PORT) || 8888;
 logger.info('server_port', { port: PORT });
 
 app.use(express.json({ limit: '10mb' }));
@@ -683,6 +684,16 @@ const e2eStore = {
   surveyAssignments: new Map(persistedData.surveyAssignments || []),
   auditLogs: [],
 };
+const COURSE_WITH_MODULES_LESSONS_SELECT = '*, modules(*, lessons!lessons_module_org_fk(*))';
+const MODULE_LESSONS_FOREIGN_TABLE = 'modules.lessons!lessons_module_org_fk';
+const isUuid = (value) => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+const isAnalyticsClientEventDuplicate = (error) =>
+  Boolean(
+    error &&
+      error.code === '23505' &&
+      typeof error.message === 'string' &&
+      error.message.includes('analytics_events_client_event_id_key'),
+  );
 const clampNumber = (value, min, max) => Math.max(min, Math.min(max, value));
 const parseBooleanParam = (value, fallback = false) => {
   if (value === undefined || value === null) return fallback;
@@ -701,6 +712,77 @@ const parsePaginationParams = (req, { defaultSize = 25, maxSize = 100 } = {}) =>
   const to = from + pageSize - 1;
   return { page, pageSize, from, to };
 };
+
+const OPTIONAL_NOTIFICATION_COLUMNS = ['dispatch_status', 'channels', 'metadata', 'scheduled_for', 'delivered_at'];
+const OPTIONAL_NOTIFICATION_COLUMN_SET = new Set(OPTIONAL_NOTIFICATION_COLUMNS);
+const notificationColumnSuppression = new Set();
+const missingColumnPatterns = [
+  /column\s+"?([\w.]+)"?\s+does not exist/i,
+  /Could not find ['"]?([\w.]+)['"]? column/i,
+  /Could not find '([\w.]+)' column of '([\w.]+)' in the schema cache/i,
+];
+
+const normalizeColumnIdentifier = (identifier) => {
+  if (typeof identifier !== 'string') return null;
+  const cleaned = identifier.replace(/['"]/g, '');
+  const segments = cleaned.split('.');
+  return segments[segments.length - 1] || null;
+};
+
+const extractMissingColumnName = (error) => {
+  if (!error) return null;
+  const candidates = [error.message, error.details, error.hint, error.code];
+  for (const text of candidates) {
+    if (typeof text !== 'string') continue;
+    for (const pattern of missingColumnPatterns) {
+      const match = text.match(pattern);
+      if (match?.[1]) {
+        return match[1];
+      }
+    }
+  }
+  return null;
+};
+
+const isMissingColumnError = (error) =>
+  Boolean(
+    error &&
+      (error.code === '42703' ||
+        error.code === 'PGRST204' ||
+        missingColumnPatterns.some((pattern) =>
+          typeof error.message === 'string' && pattern.test(error.message)
+            ? true
+            : typeof error.details === 'string' && pattern.test(error.details),
+        )),
+  );
+
+const buildNotificationSelectColumns = () => {
+  const base = ['id', 'title', 'body', 'org_id', 'user_id', 'created_at', 'read', 'updated_at'];
+  OPTIONAL_NOTIFICATION_COLUMNS.forEach((column) => {
+    if (!notificationColumnSuppression.has(column)) {
+      base.push(column);
+    }
+  });
+  return base.join(',');
+};
+
+async function runNotificationQuery(queryFactory, attempt = 0) {
+  const selectColumns = buildNotificationSelectColumns();
+  const query = queryFactory(selectColumns);
+  const { data, error } = await query;
+
+  if (error && isMissingColumnError(error) && attempt < OPTIONAL_NOTIFICATION_COLUMNS.length) {
+    const missingColumn = normalizeColumnIdentifier(extractMissingColumnName(error));
+    if (missingColumn && OPTIONAL_NOTIFICATION_COLUMN_SET.has(missingColumn) && !notificationColumnSuppression.has(missingColumn)) {
+      notificationColumnSuppression.add(missingColumn);
+      logger.warn('notifications_optional_column_missing', { column: missingColumn, code: error.code });
+      return runNotificationQuery(queryFactory, attempt + 1);
+    }
+  }
+
+  if (error) throw error;
+  return data || [];
+}
 
 // Hardened guard for dev-only helpers so they never leak to real environments.
 const devToolsEnabled = (process.env.DEV_TOOLS_ENABLED || '').toLowerCase() === 'true';
@@ -1878,7 +1960,6 @@ async function ensureUniqueOrgSlug(desiredSlug) {
   if (!supabase) return desiredSlug || `org-${randomUUID().slice(0, 8)}`;
   const baseSlug = slugify(desiredSlug) || `org-${randomUUID().slice(0, 8)}`;
   let attempt = 1;
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     const candidate = attempt === 1 ? baseSlug : `${baseSlug}-${attempt}`;
     const { data, error } = await supabase
@@ -3445,7 +3526,7 @@ app.post('/api/admin/courses', async (req, res) => {
               // If we have a resource_id, try to fetch and return the created resource
               const { data: courseRow, error: courseFetchErr } = await supabase
                 .from('courses')
-                .select('*, modules(*, lessons(*))')
+                .select(COURSE_WITH_MODULES_LESSONS_SELECT)
                 .eq('id', existing.resource_id)
                 .maybeSingle();
               if (!courseFetchErr && courseRow) {
@@ -3492,7 +3573,7 @@ app.post('/api/admin/courses', async (req, res) => {
       if (!rpcRes.error && rpcRes.data) {
         const sel = await supabase
           .from('courses')
-          .select('*, modules(*, lessons(*))')
+          .select(COURSE_WITH_MODULES_LESSONS_SELECT)
           .eq('id', rpcRes.data)
           .single();
         if (sel.error) throw sel.error;
@@ -3657,7 +3738,7 @@ app.post('/api/admin/courses', async (req, res) => {
 
     const refreshed = await supabase
       .from('courses')
-      .select('*, modules(*, lessons(*))')
+      .select(COURSE_WITH_MODULES_LESSONS_SELECT)
   .eq('id', courseRow.id)
       .single();
 
@@ -4117,7 +4198,7 @@ app.post('/api/admin/courses/:id/publish', async (req, res) => {
       .from('courses')
       .update({ status: 'published', published_at: publishedAt, version: nextVersion })
       .eq('id', id)
-      .select('*, modules(*, lessons(*))')
+      .select(COURSE_WITH_MODULES_LESSONS_SELECT)
       .single();
 
     if (updated.error) throw updated.error;
@@ -4383,11 +4464,11 @@ app.get('/api/client/courses', async (req, res) => {
   try {
     let courseQuery = supabase
       .from('courses')
-      .select('*, modules(*, lessons(*))')
+      .select(COURSE_WITH_MODULES_LESSONS_SELECT)
       .eq('status', 'published')
       .order('created_at', { ascending: false })
       .order('order_index', { ascending: true, foreignTable: 'modules' })
-      .order('order_index', { ascending: true, foreignTable: 'modules.lessons' });
+      .order('order_index', { ascending: true, foreignTable: MODULE_LESSONS_FOREIGN_TABLE });
 
     if (assignedOnly && orgId) {
       const { data: assignmentRows, error: assignmentError } = await supabase
@@ -4483,10 +4564,10 @@ app.get('/api/client/courses/:identifier', async (req, res) => {
   const buildQuery = (column, value) => {
     let query = supabase
       .from('courses')
-      .select('*, modules(*, lessons(*))')
+      .select(COURSE_WITH_MODULES_LESSONS_SELECT)
       .eq(column, value)
       .order('order_index', { ascending: true, foreignTable: 'modules' })
-      .order('order_index', { ascending: true, foreignTable: 'modules.lessons' })
+      .order('order_index', { ascending: true, foreignTable: MODULE_LESSONS_FOREIGN_TABLE })
       .maybeSingle();
     if (!includeDrafts) query = query.eq('status', 'published');
     return query;
@@ -8191,6 +8272,107 @@ app.delete('/api/admin/surveys/:id', async (req, res) => {
   }
 });
 
+app.get('/api/learner/notifications', async (req, res) => {
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  const limit = clampNumber(parseInt(req.query.limit, 10) || 20, 1, 100);
+  const sinceIso = typeof req.query.since === 'string' ? req.query.since : null;
+  const readFilter = typeof req.query.read === 'string' ? req.query.read.trim().toLowerCase() : null;
+
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    res.json({ data: [] });
+    return;
+  }
+
+  if (!ensureSupabase(res)) return;
+
+  try {
+    const queryFactories = [];
+
+    queryFactories.push((selectColumns) =>
+      supabase
+        .from('notifications')
+        .select(selectColumns)
+        .eq('user_id', context.userId)
+        .order('created_at', { ascending: false })
+        .limit(limit),
+    );
+
+    const orgIds = Array.isArray(context.organizationIds)
+      ? context.organizationIds.filter((value) => typeof value === 'string' && value.trim())
+      : [];
+
+    if (orgIds.length) {
+      queryFactories.push((selectColumns) =>
+        supabase
+          .from('notifications')
+          .select(selectColumns)
+          .in('org_id', orgIds)
+          .is('user_id', null)
+          .order('created_at', { ascending: false })
+          .limit(limit),
+      );
+    }
+
+    queryFactories.push((selectColumns) =>
+      supabase
+        .from('notifications')
+        .select(selectColumns)
+        .is('org_id', null)
+        .is('user_id', null)
+        .order('created_at', { ascending: false })
+        .limit(Math.max(5, limit)),
+    );
+
+    const resultSets = await Promise.all(queryFactories.map((factory) => runNotificationQuery(factory)));
+
+    let merged = resultSets.flat();
+    const deduped = new Map();
+    for (const note of merged) {
+      if (note && !deduped.has(note.id)) {
+        deduped.set(note.id, note);
+      }
+    }
+    merged = Array.from(deduped.values());
+
+    if (readFilter === 'true' || readFilter === 'false') {
+      const flag = readFilter === 'true';
+      merged = merged.filter((note) => Boolean(note?.read) === flag);
+    }
+
+    if (sinceIso) {
+      const sinceTs = Date.parse(sinceIso);
+      if (!Number.isNaN(sinceTs)) {
+        merged = merged.filter((note) => {
+          const noteTs = Date.parse(note?.created_at || note?.scheduled_for || '');
+          if (Number.isNaN(noteTs)) return true;
+          return noteTs >= sinceTs;
+        });
+      }
+    }
+
+    merged.sort((a, b) => {
+      const aTs = Date.parse(a?.created_at || '') || 0;
+      const bTs = Date.parse(b?.created_at || '') || 0;
+      return bTs - aTs;
+    });
+
+    res.json({ data: merged.slice(0, limit) });
+  } catch (error) {
+    if (isMissingColumnError(error)) {
+      logger.warn('learner_notifications_schema_mismatch', {
+        code: error.code,
+        message: error.message,
+      });
+      res.json({ data: [], degraded: true });
+      return;
+    }
+    console.error('Failed to load learner notifications:', error);
+    res.status(500).json({ error: 'Unable to load notifications' });
+  }
+});
+
 // Notifications
 app.get('/api/admin/notifications', async (req, res) => {
   if (!ensureSupabase(res)) return;
@@ -8437,12 +8619,17 @@ app.post('/api/analytics/events', async (req, res) => {
   const { id, user_id, course_id, lesson_id, module_id, event_type, session_id, user_agent, payload, org_id } = parsed;
 
   const normalizedEvent = event_type.trim();
+  const rawClientEventId = typeof id === 'string' ? id.trim() : null;
+  const normalizedClientEventId = rawClientEventId || null;
+  const useCustomPrimaryKey = normalizedClientEventId ? isUuid(normalizedClientEventId) : false;
 
   const respondQueued = (meta = {}) => res.json({ status: 'queued', stored: false, ...meta });
   const respondStored = (meta = {}) => res.json({ status: 'stored', stored: true, ...meta });
 
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
-    const eventId = id || `demo-event-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const eventId = useCustomPrimaryKey
+      ? normalizedClientEventId
+      : id || `demo-event-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const record = {
       id: eventId,
       user_id: user_id ?? null,
@@ -8454,6 +8641,7 @@ app.post('/api/analytics/events', async (req, res) => {
       session_id: session_id ?? null,
       user_agent: user_agent ?? null,
       payload: payload ?? {},
+      client_event_id: normalizedClientEventId,
       created_at: new Date().toISOString(),
     };
     e2eStore.analyticsEvents.unshift(record);
@@ -8472,27 +8660,66 @@ app.post('/api/analytics/events', async (req, res) => {
   }
 
   try {
-    const { data, error } = await supabase
+    const insertPayload = {
+      user_id: user_id ?? null,
+      org_id: org_id ?? null,
+      course_id: course_id ?? null,
+      lesson_id: lesson_id ?? null,
+      module_id: module_id ?? null,
+      event_type: normalizedEvent,
+      session_id: session_id ?? null,
+      user_agent: user_agent ?? null,
+      payload: payload ?? {},
+      client_event_id: normalizedClientEventId,
+    };
+
+    if (useCustomPrimaryKey) {
+      insertPayload.id = normalizedClientEventId;
+    }
+
+    let { data, error } = await supabase
       .from('analytics_events')
-      .insert({
-        id: id ?? undefined,
-        user_id: user_id ?? null,
-        org_id: org_id ?? null,
-        course_id: course_id ?? null,
-        lesson_id: lesson_id ?? null,
-        module_id: module_id ?? null,
-        event_type: normalizedEvent,
-        session_id: session_id ?? null,
-        user_agent: user_agent ?? null,
-        payload: payload ?? {},
-      })
+      .insert(insertPayload)
       .select('*')
       .single();
 
-    if (error) throw error;
+    if (error) {
+      const missingColumn = normalizeColumnIdentifier(extractMissingColumnName(error));
+      if (missingColumn === 'client_event_id') {
+        logger.warn('analytics_events_client_event_id_missing', {
+          message: error.message,
+          code: error.code,
+        });
+        delete insertPayload.client_event_id;
+        const retry = await supabase
+          .from('analytics_events')
+          .insert(insertPayload)
+          .select('*')
+          .single();
+        data = retry.data;
+        error = retry.error;
+      }
+    }
+
+    if (error) {
+      if (isAnalyticsClientEventDuplicate(error)) {
+        logger.info('analytics_event_duplicate_client_id', {
+          clientEventId: normalizedClientEventId,
+          eventType: normalizedEvent,
+        });
+        respondStored({ duplicate: true, clientEventId: normalizedClientEventId });
+        return;
+      }
+      throw error;
+    }
+
     respondStored({ data });
   } catch (error) {
-    console.error('Failed to record analytics event:', error);
+    console.error('Failed to record analytics event:', {
+      error,
+      clientEventId: normalizedClientEventId,
+      eventType: normalizedEvent,
+    });
     respondQueued({ reason: 'persistence_failed' });
   }
 });

@@ -8,7 +8,7 @@ import serviceWorkerManager from './utils/ServiceWorkerManager';
 import { SecureAuthProvider } from './context/SecureAuthContext';
 import { ToastProvider } from './context/ToastContext';
 import { ensureRuntimeStatusPolling } from './state/runtimeStatus';
-import { migrateFromLocalStorage, checkStorageSecurity } from './lib/secureStorage';
+import { migrateFromLocalStorage, checkStorageSecurity, installLocalStorageGuards } from './lib/secureStorage';
 
 console.log('🚀 MainProject App initializing...');
 console.log('📍 Environment:', import.meta.env.MODE);
@@ -18,6 +18,7 @@ console.log('⚙️ React version detected:', React?.version || 'unknown');
 if (typeof window !== 'undefined') {
   try {
     migrateFromLocalStorage();
+    installLocalStorageGuards();
     checkStorageSecurity();
   } catch (error) {
     console.warn('[secureStorage] bootstrap migration failed:', error);

@@ -7,7 +7,7 @@ import rateLimit from 'express-rate-limit';
 import supabase from '../lib/supabaseClient.js';
 import { extractTokenFromHeader } from '../utils/jwt.js';
 import { getAccessTokenFromRequest } from '../utils/authCookies.js';
-import { E2E_TEST_MODE, DEV_FALLBACK } from '../config/runtimeFlags.js';
+import { E2E_TEST_MODE, DEV_FALLBACK, demoAutoAuthEnabled } from '../config/runtimeFlags.js';
 import { getPermissionsForRole, mergePermissions } from '../../shared/permissions/index.js';
 
 const normalizeEmail = (value = '') => value.trim().toLowerCase();
@@ -125,6 +125,9 @@ const isDevRequest = (req) => {
 };
 
 const allowDemoBypassForRequest = (req) => {
+  if (!demoAutoAuthEnabled) {
+    return false;
+  }
   if (E2E_TEST_MODE) {
     return true;
   }
@@ -166,6 +169,66 @@ export const mapMembershipRows = (rows = []) =>
     acceptedAt: row.accepted_at,
     lastSeenAt: row.last_seen_at,
   }));
+
+const MEMBERSHIP_VIEW_NAME = 'user_organizations_vw';
+
+const isMembershipViewMissingError = (error) =>
+  Boolean(
+    error &&
+      (error.code === 'PGRST205' ||
+        error.code === '42P01' ||
+        (typeof error.message === 'string' && error.message.includes(MEMBERSHIP_VIEW_NAME))),
+  );
+
+const normalizeOrgId = (value) => {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed || null;
+};
+
+async function loadMembershipsFromBaseTables(userId) {
+  if (!userId || !supabase) return [];
+  try {
+    const { data: membershipRows, error } = await supabase
+      .from('organization_memberships')
+      .select('org_id, role, created_at, updated_at')
+      .eq('user_id', userId);
+
+    if (error) throw error;
+
+    const rows = Array.isArray(membershipRows) ? membershipRows : [];
+    const orgIds = Array.from(new Set(rows.map((row) => normalizeOrgId(row?.org_id)).filter(Boolean)));
+
+    let orgMap = new Map();
+    if (orgIds.length > 0) {
+      const { data: orgs, error: orgError } = await supabase
+        .from('organizations')
+        .select('id,name,status,subscription,features')
+        .in('id', orgIds);
+
+      if (orgError) throw orgError;
+      orgMap = new Map((orgs || []).map((org) => [org.id, org]));
+    }
+
+    return rows.map((row) => {
+      const organization = orgMap.get(normalizeOrgId(row?.org_id)) || {};
+      return {
+        organization_id: normalizeOrgId(row?.org_id),
+        role: row?.role || 'member',
+        status: 'active',
+        organization_name: organization.name || null,
+        organization_status: organization.status || null,
+        subscription: organization.subscription ?? null,
+        features: organization.features ?? null,
+        accepted_at: row?.created_at || null,
+        last_seen_at: row?.updated_at || null,
+      };
+    });
+  } catch (error) {
+    console.error('[auth] organization_memberships fallback failed', { userId, error });
+    return [];
+  }
+}
 
 const buildMembershipMap = (memberships = []) => {
   const map = new Map();
@@ -234,6 +297,17 @@ async function loadMemberships(userId) {
     .eq('user_id', userId);
 
   if (error) {
+    if (isMembershipViewMissingError(error)) {
+      console.warn('[auth] user_organizations_vw missing, falling back to base tables', {
+        userId,
+        code: error.code,
+        message: error.message,
+      });
+      const fallbackRows = await loadMembershipsFromBaseTables(userId);
+      const mappedFallback = mapMembershipRows(fallbackRows);
+      cacheSet(membershipCache, cacheKey, mappedFallback);
+      return mappedFallback;
+    }
     console.error('[auth] Failed to load memberships', { userId, error });
     return [];
   }
@@ -246,7 +320,16 @@ async function loadMemberships(userId) {
 const buildUserPayload = (user, memberships) => {
   const organizationIds = memberships.filter((m) => m.status === 'active').map((m) => m.orgId);
   const platformRole = derivePlatformRole(user);
-  const inferredRole = resolveUserRole(user, memberships);
+  let inferredRole = resolveUserRole(user, memberships);
+
+  if (inferredRole === 'admin' && memberships.length === 0 && !platformRole) {
+    console.warn('[auth] Suppressing admin role due to missing memberships', {
+      userId: user?.id,
+      email: user?.email,
+    });
+    inferredRole = 'learner';
+  }
+
   const rolePermissions = getPermissionsForRole(inferredRole);
   const platformPermissions = platformRole ? getPermissionsForRole(platformRole) : new Set();
   const mergedPermissions = mergePermissions(rolePermissions, platformPermissions);
@@ -275,6 +358,11 @@ async function buildAuthContext(req, { optional = false } = {}) {
   }
 
   if (!token && allowDemoBypassForRequest(req)) {
+    console.warn('[auth] Granting demo auto-auth bypass for request', {
+      path: req.originalUrl || req.url,
+      host: req.headers?.host,
+      origin: req.headers?.origin,
+    });
     const demoUser = {
       id: 'demo-admin',
       email: 'demo-admin@localhost',

@@ -34,6 +34,10 @@ export const DEV_FALLBACK = !isProduction && (devFallbackExplicit || allowDemoEx
 export const implicitDemoFallback = !isProduction && !supabaseServerConfigured;
 export const demoLoginEnabled =
   allowDemoExplicit || demoModeExplicit || DEV_FALLBACK || E2E_TEST_MODE || implicitDemoFallback;
+const demoAutoAuthExplicit = parseFlag(
+  process.env.ALLOW_DEMO_AUTO_AUTH ?? process.env.DEMO_AUTO_AUTH ?? process.env.DEMO_AUTO_LOGIN,
+);
+export const demoAutoAuthEnabled = Boolean(E2E_TEST_MODE || (DEV_FALLBACK && demoAutoAuthExplicit));
 export const demoModeSource = (() => {
   if (E2E_TEST_MODE) return 'e2e';
   if (DEV_FALLBACK) return 'dev-fallback';

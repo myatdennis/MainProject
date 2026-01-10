@@ -1,0 +1,48 @@
+{
+  "timestamp": "2026-01-10T16:23:57.460Z",
+  "requestId": "d1c988d5-a554-4c53-90b4-a5724ca58b8c",
+  "method": "POST",
+  "path": "/api/learner/progress",
+  "headers": {
+    "host": "localhost:8888",
+    "connection": "close",
+    "content-length": "351",
+    "x-user-role": "admin",
+    "sec-ch-ua-platform": "\"macOS\"",
+    "x-user-id": "0e80c162-0546-445e-a967-fd3aa9c5f461",
+    "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
+    "sec-ch-ua": "\"Google Chrome\";v=\"143\", \"Chromium\";v=\"143\", \"Not A(Brand\";v=\"24\"",
+    "content-type": "application/json",
+    "sec-ch-ua-mobile": "?0",
+    "accept": "*/*",
+    "origin": "http://localhost:5174",
+    "sec-fetch-site": "same-origin",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-dest": "empty",
+    "referer": "http://localhost:5174/lms/course/new-course/lesson/lesson-1767501672473-jk4g7xvtm",
+    "accept-encoding": "gzip, deflate, br, zstd",
+    "accept-language": "en-US,en;q=0.9",
+    "cookie": "csrf_token=kxg6xiyGYGCt1rNJoOeXv6SOGYavbHeMdQk4Y4eV1q4; access_token=eyJhbGciOiJIUzI1NiIsImtpZCI6IjY2TVRmM0xrejhiMTJTNjQiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL21pcXp5d3p1cXplZmZxcGl1cGptLnN1cGFiYXNlLmNvL2F1dGgvdjEiLCJzdWIiOiIwZTgwYzE2Mi0wNTQ2LTQ0NWUtYTk2Ny1mZDNhYTljNWY0NjEiLCJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjoxNzY4MDY1Njc0LCJpYXQiOjE3NjgwNjIwNzQsImVtYWlsIjoibXlhQHRoZS1odWRkbGUuY28iLCJwaG9uZSI6IiIsImFwcF9tZXRhZGF0YSI6eyJwcm92aWRlciI6ImVtYWlsIiwicHJvdmlkZXJzIjpbImVtYWlsIl19LCJ1c2VyX21ldGFkYXRhIjp7ImVtYWlsX3ZlcmlmaWVkIjp0cnVlfSwicm9sZSI6ImF1dGhlbnRpY2F0ZWQiLCJhYWwiOiJhYWwxIiwiYW1yIjpbeyJtZXRob2QiOiJwYXNzd29yZCIsInRpbWVzdGFtcCI6MTc2ODA2MjA3NH1dLCJzZXNzaW9uX2lkIjoiYjZmNmFjMjMtMmRiZS00MTgxLWFlMWEtOWFmYzQ4NmQ0MWQ1IiwiaXNfYW5vbnltb3VzIjpmYWxzZX0.LZPoROc9EFJ0GFGM1qOxHUUmXcc7ypt5O48O6YTRKVU; refresh_token=rrmawj44owyl"
+  },
+  "body": {
+    "user_id": "demo@example.com",
+    "course_id": "course-1767501672473-gs6vpsghv",
+    "lesson_ids": [
+      "lesson-1767501672473-jk4g7xvtm",
+      "lesson-1767502212568-e3wpootxv",
+      "lesson-1767537747376-hwzdkzrti",
+      "lesson-1767537848861-ugi7w2rok"
+    ],
+    "lessons": [],
+    "course": {
+      "percent": 0,
+      "completed_at": null,
+      "total_time_seconds": 0,
+      "last_lesson_id": "lesson-1767501672473-jk4g7xvtm"
+    }
+  },
+  "error": {
+    "message": "[object Object]",
+    "stack": "Error: [object Object]\n    at respondWithError (file:///Users/myadennis/Downloads/MainProject/server/index.js:5072:62)\n    at file:///Users/myadennis/Downloads/MainProject/server/index.js:5259:5\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)"
+  }
+}

@@ -22,6 +22,7 @@ import { toast } from 'react-hot-toast';
 import { generateFromCompletion } from '../dal/certificates';
 import { trackCourseCompletion } from '../dal/analytics';
 import type { Course } from '../types/courseTypes';
+import { useUserProfile } from '../hooks/useUserProfile';
 
 interface CourseCompletionProps {
   course: {
@@ -108,20 +109,22 @@ const CourseCompletion: React.FC<CourseCompletionProps> = ({
     setCertificateId(completionData.certificateId);
   }, [completionData.certificateId, completionData.certificateUrl]);
 
-  const learnerProfile = useMemo(() => {
-    try {
-      const raw = localStorage.getItem('huddle_user');
-      if (!raw) return null;
-      return JSON.parse(raw);
-    } catch (error) {
-      console.warn('Failed to parse learner profile:', error);
-      return null;
+  const { user } = useUserProfile();
+  const learnerIdentity = useMemo(() => {
+    const fallback = { id: 'local-user', name: 'Learner', email: 'demo@learner.com' };
+    if (!user) {
+      return fallback;
     }
-  }, []);
+    const id = (user.email || user.id || fallback.id).toLowerCase();
+    const email = user.email || fallback.email;
+    const derivedName = [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
+    const name = derivedName || user.email || fallback.name;
+    return { id, name, email };
+  }, [user]);
 
-  const learnerId = learnerProfile?.id || learnerProfile?.email || 'local-user';
-  const learnerName = learnerProfile?.name || learnerProfile?.fullName || learnerProfile?.email || 'Learner';
-  const learnerEmail = learnerProfile?.email || 'demo@learner.com';
+  const learnerId = learnerIdentity.id;
+  const learnerName = learnerIdentity.name;
+  const learnerEmail = learnerIdentity.email;
 
   const formatTime = (minutes: number): string => {
     const hours = Math.floor(minutes / 60);

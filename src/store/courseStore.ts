@@ -7,7 +7,7 @@ import {
 import { fetchPublishedCourses, fetchCourse } from '../dal/clientCourses';
 import { Course, Module } from '../types/courseTypes';
 import { slugify, normalizeCourse } from '../utils/courseNormalization';
-import { getUserSession } from '../lib/secureStorage';
+import { getUserSession, getActiveOrgPreference } from '../lib/secureStorage';
 import { getAssignmentsForUser } from '../utils/assignmentStorage';
 import type { CourseAssignment } from '../types/assignment';
 import { refreshRuntimeStatus, getRuntimeStatus } from '../state/runtimeStatus';
@@ -978,8 +978,14 @@ const resolveOrgContext = (): { orgId: string | null; role: string | null; userI
   try {
     const session = getUserSession();
     if (session) {
+      const membershipOrgId = session.activeOrgId
+        || session.organizationId
+        || session.memberships?.find((membership) => membership.status === 'active')?.orgId
+        || session.memberships?.[0]?.orgId
+        || null;
+      const storedPreference = getActiveOrgPreference();
       return {
-        orgId: session.organizationId ?? null,
+        orgId: storedPreference ?? membershipOrgId,
         role: session.role ?? null,
         userId: session.id ?? null,
       };
@@ -988,18 +994,9 @@ const resolveOrgContext = (): { orgId: string | null; role: string | null; userI
     console.warn('[courseStore] Failed to read secure session for org context:', error);
   }
 
-  try {
-    const raw = localStorage.getItem('huddle_user');
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      return {
-        orgId: parsed?.activeOrgId ?? parsed?.organizationId ?? null,
-        role: parsed?.role ?? null,
-        userId: parsed?.id ?? parsed?.userId ?? null,
-      };
-    }
-  } catch (error) {
-    console.warn('[courseStore] Failed to parse legacy user for org context:', error);
+  const storedPreference = getActiveOrgPreference();
+  if (storedPreference) {
+    return { orgId: storedPreference, role: null, userId: null };
   }
 
   return { orgId: null, role: null, userId: null };

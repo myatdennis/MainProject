@@ -2,7 +2,7 @@ import { getSupabase, hasSupabaseConfig } from '../lib/supabaseClient';
 import { syncService } from '../dal/sync';
 import type { CourseAssignment, CourseAssignmentStatus } from '../types/assignment';
 import { isSupabaseOperational, subscribeRuntimeStatus } from '../state/runtimeStatus';
-import { getUserSession } from '../lib/secureStorage';
+import { getUserSession, secureGet, secureSet, secureRemove } from '../lib/secureStorage';
 import apiRequest, { ApiError as RequestError } from './apiClient';
 
 const STORAGE_KEY = 'huddle_course_assignments_v1';
@@ -82,11 +82,8 @@ const mapSupabaseAssignment = (row: SupabaseAssignmentRow): CourseAssignment => 
 };
 
 const loadLocalAssignments = (): CourseAssignment[] => {
-  if (typeof localStorage === 'undefined') return [];
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw) as CourseAssignment[];
+    const parsed = secureGet<CourseAssignment[]>(STORAGE_KEY) ?? [];
     if (!Array.isArray(parsed)) return [];
     const sanitized: CourseAssignment[] = [];
     parsed.forEach((record) => {
@@ -106,11 +103,7 @@ const loadLocalAssignments = (): CourseAssignment[] => {
     });
 
     if (sanitized.length !== parsed.length) {
-      try {
-        persistLocalAssignments(sanitized);
-      } catch (error) {
-        console.warn('[assignmentStorage] Failed to rewrite sanitized assignments:', error);
-      }
+      persistLocalAssignments(sanitized);
     }
     return sanitized;
   } catch (error) {
@@ -120,13 +113,11 @@ const loadLocalAssignments = (): CourseAssignment[] => {
 };
 
 const persistLocalAssignments = (records: CourseAssignment[]) => {
-  if (typeof localStorage === 'undefined') return;
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(records));
+  secureSet(STORAGE_KEY, records);
 };
 
 const clearLocalAssignments = () => {
-  if (typeof localStorage === 'undefined') return;
-  localStorage.removeItem(STORAGE_KEY);
+  secureRemove(STORAGE_KEY);
 };
 
 let inflightLocalSync: Promise<void> | null = null;

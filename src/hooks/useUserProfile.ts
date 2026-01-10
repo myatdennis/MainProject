@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import apiRequest from '../utils/apiClient';
 import { queryKeys } from '../query/queryKeys';
+import { getUserSession } from '../lib/secureStorage';
 
 export interface UserProfileLegacy {
   id: string;
@@ -15,12 +16,22 @@ interface RemoteProfileResponse {
   data?: UserProfileLegacy | null;
 }
 
-const readLegacyUser = (): UserProfileLegacy | null => {
+const readSessionUser = (): UserProfileLegacy | null => {
   try {
-    const raw = typeof window !== 'undefined' ? window.localStorage.getItem('huddle_user') : null;
-    if (!raw) return null;
-    return JSON.parse(raw);
-  } catch {
+    const session = getUserSession();
+    if (!session) {
+      return null;
+    }
+    return {
+      id: session.id,
+      email: session.email,
+      firstName: session.firstName ?? (session.userMetadata as Record<string, any> | undefined)?.first_name,
+      lastName: session.lastName ?? (session.userMetadata as Record<string, any> | undefined)?.last_name,
+      role: session.role ?? session.platformRole ?? undefined,
+      organizationId: session.activeOrgId ?? session.organizationId ?? undefined,
+    };
+  } catch (error) {
+    console.warn('[useUserProfile] Failed to read secure session:', error);
     return null;
   }
 };
@@ -34,14 +45,14 @@ const fetchUserProfile = async (): Promise<UserProfileLegacy | null> => {
   } catch (e: any) {
     // Swallow 404 / network and fallback
   }
-  return readLegacyUser();
+  return readSessionUser();
 };
 
 export const useUserProfile = () => {
   const queryClient = useQueryClient();
 
   // Seed cache from legacy storage synchronously to avoid layout shift.
-  const legacy = readLegacyUser();
+  const legacy = readSessionUser();
   if (legacy) {
     queryClient.setQueryData(queryKeys.auth.user(), legacy);
   }

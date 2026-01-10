@@ -13,8 +13,8 @@ import {
 } from './orgProfileService';
 import notificationService from './notificationService';
 
-const USER_PROFILES_KEY = 'huddle_user_profiles_v1';
-const ORG_PROFILES_KEY = 'huddle_org_profiles_v1';
+let userProfilesCache: UserProfile[] | null = null;
+let orgProfilesCache: OrganizationProfile[] | null = null;
 
 // Seed data for user profiles
 const seedUserProfiles = (): UserProfile[] => [
@@ -100,56 +100,6 @@ const seedUserProfiles = (): UserProfile[] => [
 
 // Seed data for organization profiles - sync with existing org data
 const seedOrgProfiles = (): OrganizationProfile[] => {
-  try {
-    // Try to get existing orgs from orgService to create profiles
-    const existingOrgs = localStorage.getItem('huddle_orgs_v1');
-    if (existingOrgs) {
-      const orgs = JSON.parse(existingOrgs);
-      return orgs.map((org: any) => ({
-        id: `org-profile-${org.id}`,
-        orgId: org.id,
-        name: org.name,
-        type: org.type,
-        contactPerson: org.contactPerson,
-        contactEmail: org.contactEmail,
-        description: `${org.type} organization committed to inclusive leadership development.`,
-        enrollmentDate: org.enrollmentDate,
-        status: org.status as 'active' | 'inactive' | 'pending',
-        subscription: org.subscription,
-        lastActivity: org.lastActivity,
-        metrics: {
-          totalLearners: org.totalLearners,
-          activeLearners: org.activeLearners,
-          completionRate: org.completionRate,
-          totalDownloads: Math.floor(Math.random() * 200) + 50 // Mock download count
-        },
-        cohorts: org.cohorts || [],
-        modules: org.modules || {},
-        notes: org.notes,
-        resources: org.id === '1' ? [
-          {
-            id: 'org-res-1',
-            type: 'document',
-            title: 'University Leadership Framework',
-            description: 'Customized leadership framework for university settings',
-            documentId: 'doc-456',
-            createdAt: '2025-02-15T09:00:00Z',
-            createdBy: 'Admin',
-            tags: ['university', 'framework', 'leadership'],
-            category: 'Framework',
-            priority: 'high' as const,
-            status: 'unread' as const
-          }
-        ] : [],
-        createdAt: org.enrollmentDate || '2025-01-01T08:00:00Z',
-        updatedAt: org.lastActivity || new Date().toISOString()
-      }));
-    }
-  } catch (error) {
-    console.error('Failed to sync org profiles with existing orgs:', error);
-  }
-
-  // Fallback to hardcoded seed data
   return [
     {
       id: 'org-profile-1',
@@ -204,30 +154,26 @@ const seedOrgProfiles = (): OrganizationProfile[] => {
 
 // Storage helpers
 const readUserProfiles = (): UserProfile[] => {
-  try {
-    const raw = localStorage.getItem(USER_PROFILES_KEY);
-    if (!raw) return seedUserProfiles();
-    return JSON.parse(raw) as UserProfile[];
-  } catch {
-    return seedUserProfiles();
+  if (!userProfilesCache) {
+    userProfilesCache = seedUserProfiles();
   }
+  return userProfilesCache;
 };
 
-const writeUserProfiles = (profiles: UserProfile[]) => 
-  localStorage.setItem(USER_PROFILES_KEY, JSON.stringify(profiles));
+const writeUserProfiles = (profiles: UserProfile[]) => {
+  userProfilesCache = profiles;
+};
 
 const readOrgProfiles = (): OrganizationProfile[] => {
-  try {
-    const raw = localStorage.getItem(ORG_PROFILES_KEY);
-    if (!raw) return seedOrgProfiles();
-    return JSON.parse(raw) as OrganizationProfile[];
-  } catch {
-    return seedOrgProfiles();
+  if (!orgProfilesCache) {
+    orgProfilesCache = seedOrgProfiles();
   }
+  return orgProfilesCache;
 };
 
-const writeOrgProfiles = (profiles: OrganizationProfile[]) => 
-  localStorage.setItem(ORG_PROFILES_KEY, JSON.stringify(profiles));
+const writeOrgProfiles = (profiles: OrganizationProfile[]) => {
+  orgProfilesCache = profiles;
+};
 
 const findLegacyOrgProfile = (legacyProfiles: OrganizationProfile[] = [], orgId?: string | null) => {
   if (!orgId) return undefined;

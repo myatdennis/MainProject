@@ -5,19 +5,18 @@ import { resolveApiUrl } from '../config/apiBase';
 
 export type AuditAction = 'admin_login' | 'admin_logout' | 'user_update' | 'role_change' | 'settings_change';
 
-export async function logAuditAction(action: AuditAction, details: Record<string, any> = {}) {
-  try {
-    await axios.post(
+export function logAuditAction(action: AuditAction, details: Record<string, any> = {}) {
+  axios
+    .post(
       resolveApiUrl('/api/audit-log'),
       {
         action,
         details,
         timestamp: new Date().toISOString(),
       },
-      { withCredentials: true }
-    );
-  } catch (error) {
-    // Log to console for now; in production, consider fallback logging
-    console.warn('Audit log failed:', error);
-  }
+      { withCredentials: true },
+    )
+    .catch((error) => {
+      console.warn('Audit log failed:', error);
+    });
 }

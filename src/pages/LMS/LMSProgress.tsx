@@ -84,18 +84,6 @@ interface Achievement {
   rarity: 'common' | 'rare' | 'epic' | 'legendary';
 }
 
-const buildLegacyLearnerId = () => {
-  try {
-    const raw = localStorage.getItem('huddle_user');
-    if (!raw) return 'local-user';
-    const parsed = JSON.parse(raw);
-    return (parsed.email || parsed.id || 'local-user').toLowerCase();
-  } catch (error) {
-    console.warn('Failed to read learner identity (legacy fallback):', error);
-    return 'local-user';
-  }
-};
-
 const formatDate = (isoString: string) => {
   if (!isoString) return '';
   try {
@@ -113,8 +101,9 @@ const LMSProgress: React.FC = () => {
   const navigate = useNavigate();
   const { user } = useUserProfile();
   const learnerId = useMemo(() => {
-    if (user) return (user.email || user.id).toLowerCase();
-    return buildLegacyLearnerId();
+    if (user?.email) return user.email.toLowerCase();
+    if (user?.id) return String(user.id).toLowerCase();
+    return 'local-user';
   }, [user]);
 
   const [progressData, setProgressData] = useState<ProgressData | null>(null);

@@ -67,7 +67,7 @@ export const useActiveOrganization = (options?: { surface?: SessionSurface }): U
   );
 
   const refreshOrganizations = useCallback(() => {
-    return surface ? reloadSession({ surface }) : reloadSession();
+    return surface ? reloadSession({ surface, force: true }) : reloadSession({ force: true });
   }, [reloadSession, surface]);
 
   return {
