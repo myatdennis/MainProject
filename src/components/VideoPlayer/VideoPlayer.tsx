@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { enqueueOfflineItem } from '../../dal/offlineQueue';
-import { resolveApiUrl } from '../../config/apiBase';
+import apiRequest from '../../utils/apiClient';
+import { hasAuthSession } from '../../lib/sessionGate';
 
 type CaptionTrack = {
   src: string;
@@ -139,7 +140,11 @@ export default function VideoPlayer({ src, userId, lessonId, captions = [], clas
   useEffect(() => {
     const ping = async () => {
       const video = videoRef.current;
-      if (!video) return;
+      if (!video || !userId) return;
+      if (!hasAuthSession()) {
+        return;
+      }
+
       const payload: any = {
         event_type: 'video_watch',
         user_id: userId ?? null,
@@ -153,18 +158,16 @@ export default function VideoPlayer({ src, userId, lessonId, captions = [], clas
       };
 
       try {
-        await fetch(resolveApiUrl('/api/analytics/events'), {
+        await apiRequest('/api/analytics/events', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
-          credentials: 'include',
         });
       } catch (e) {
         // ignore network errors; offline queue handles elsewhere
       }
 
       // if lessonId and userId provided, also try to update lesson progress/resume endpoint
-      if (userId && lessonId) {
+      if (lessonId) {
         const clientEventId = `${String(userId)}:${String(lessonId)}:${Date.now()}:${Math.random().toString(36).slice(2,8)}`;
         const body = { client_event_id: clientEventId, user_id: userId, lesson_id: lessonId, resume_at_s: Math.floor(video.currentTime), percent: Math.floor(((video.currentTime / (video.duration || 1)) * 100) || 0) };
 
@@ -186,25 +189,10 @@ export default function VideoPlayer({ src, userId, lessonId, captions = [], clas
           }
         } else {
           try {
-            const res = await fetch(resolveApiUrl('/api/client/progress/lesson'), {
+            await apiRequest('/api/client/progress/lesson', {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify(body),
-              credentials: 'include',
             });
-            if (!res.ok) {
-              // enqueue for retry
-              await enqueueOfflineItem({
-                type: 'progress-event',
-                userId: String(userId),
-                courseId: String(lessonId ?? ''),
-                moduleId: undefined,
-                lessonId: String(lessonId),
-                action: 'progress_update',
-                payload: body,
-                priority: 'medium',
-              });
-            }
           } catch (e) {
             try {
               await enqueueOfflineItem({

@@ -8,7 +8,8 @@ import {
 } from 'lucide-react';
 import { Course } from '../types/courseTypes';
 import { slugify } from '../utils/courseNormalization';
-import { resolveApiUrl } from '../config/apiBase';
+import apiRequest from '../utils/apiClient';
+import { validateCourse, type CourseValidationIssue } from '../validation/courseValidation';
 
 const generateCourseId = () => {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -675,49 +676,42 @@ ${content.type === 'quiz' && 'questions' in content.content ? `\nQuestions: ${co
     triggerAutosave();
   };
 
+  const formatValidationIssues = (issues: CourseValidationIssue[]): string => {
+    const blocking = issues.filter((issue) => issue.severity === 'error');
+    if (blocking.length === 0) {
+      return '';
+    }
+    return blocking.map((issue, index) => `${index + 1}. ${issue.message}`).join('\n');
+  };
+
+  const buildCoursePayload = (overrides: Partial<Course> = {}) => {
+    const convertedModules = convertLessonContentsToModules();
+    const status = overrides.status ?? formData.status ?? 'draft';
+    const normalizedSlug = slugify(
+      overrides.slug || formData.slug || formData.title || formData.id,
+    );
+
+    return {
+      ...formData,
+      ...overrides,
+      status,
+      modules: convertedModules,
+      slug: normalizedSlug,
+    } as Course;
+  };
+
   const handleSave = () => {
-    // Phase 3: Advanced validation with detailed feedback
-    const validationErrors: string[] = [];
-    
-    // Basic validation
-    if (!formData.title.trim()) {
-      validationErrors.push('Course title is required');
-    } else if (formData.title.trim().length < 5) {
-      validationErrors.push('Course title should be at least 5 characters');
-    }
-    
-    if (!formData.description.trim()) {
-      validationErrors.push('Course description is required');
-    } else if (formData.description.trim().length < 50) {
-      validationErrors.push('Course description should be at least 50 characters for better clarity');
-    }
-    
-    // Content validation
-    if (lessonContents.length === 0) {
-      validationErrors.push('Add at least one piece of content before saving');
-    } else {
-      // Check for content diversity
-      const hasVideo = contentCounts.video > 0;
-      const hasAssessment = contentCounts.quiz > 0 || contentCounts.interactive > 0;
-      
-      if (!hasVideo && !hasAssessment) {
-        validationErrors.push('Consider adding videos or assessments to improve learning experience');
-      }
-    }
-    
-    // Learning objectives validation
-    if (!formData.learningObjectives || formData.learningObjectives.length === 0) {
-      validationErrors.push('Add learning objectives to help learners understand what they will achieve');
-    }
-    
-    // Show validation results
-    if (validationErrors.length > 0) {
-      const errorMessage = `Please fix the following issues:\n\n${validationErrors.map((error, index) => `${index + 1}. ${error}`).join('\n')}`;
-      alert(errorMessage);
+    const coursePayload = buildCoursePayload();
+    const validation = validateCourse(coursePayload, {
+      intent: coursePayload.status === 'published' ? 'publish' : 'draft',
+    });
+
+    if (!validation.isValid) {
+      const message = formatValidationIssues(validation.issues);
+      alert(`Please fix the following issues:\n\n${message}`);
       return;
     }
-    
-    // Show success message for high-quality courses
+
     if (optimizationScore >= 80) {
       setSuccessMessage('🎉 Excellent! Your course meets all quality standards.');
     } else if (optimizationScore >= 60) {
@@ -725,24 +719,11 @@ ${content.type === 'quiz' && 'questions' in content.content ? `\nQuestions: ${co
     } else {
       setSuccessMessage('✅ Course saved. Check the Analytics tab for improvement suggestions.');
     }
-    
-    // Convert our lesson contents to proper course modules format
-    const convertedModules = convertLessonContentsToModules();
-    const enhancedFormData = {
-      ...formData,
-      modules: convertedModules
-    };
-
-    const normalizedSlug = slugify(enhancedFormData.slug || enhancedFormData.title || enhancedFormData.id);
-    const coursePayload = {
-      ...enhancedFormData,
-      slug: normalizedSlug
-    };
 
     console.log('💾 Saving course with enhanced data:', {
       formData: coursePayload,
-      lessonContents: lessonContents,
-      convertedModules: convertedModules
+      lessonContents,
+      convertedModules: coursePayload.modules,
     });
 
     setTimeout(() => setSuccessMessage(null), 5000);
@@ -930,46 +911,34 @@ ${content.type === 'quiz' && 'questions' in content.content ? `\nQuestions: ${co
   };
 
   const handlePublish = () => {
-    // Validate before publishing
-    const errors: string[] = [];
-    if (!formData.title || formData.title.trim().length < 5) errors.push('Course title must be at least 5 characters');
-    if (!formData.description || formData.description.trim().length < 50) errors.push('Course description must be at least 50 characters');
-    if (lessonContents.length === 0) errors.push('Add at least one lesson before publishing');
-
-    if (errors.length > 0) {
-      alert(`Cannot publish course. Please fix the following:\n\n${errors.map((e, i) => `${i + 1}. ${e}`).join('\n')}`);
+    const coursePayload = buildCoursePayload({ status: 'published' });
+    const validation = validateCourse(coursePayload, { intent: 'publish' });
+    if (!validation.isValid) {
+      const message = formatValidationIssues(validation.issues);
+      alert(`Cannot publish course. Please fix the following:\n\n${message}`);
       return;
     }
 
     if (!confirm('Are you sure you want to publish this course? This will make it visible to learners.')) return;
 
-    // Prepare payload and bump version if present
     const nextVersion = (formData as any).version ? Number((formData as any).version) + 1 : 1;
     const payload = {
-      version: nextVersion
+      version: nextVersion,
     };
 
-    // Call server publish endpoint so server records published_at and broadcasts updates
     (async () => {
       try {
         setAutosaveStatus('saving');
-        const res = await fetch(resolveApiUrl(`/api/admin/courses/${encodeURIComponent(formData.id)}/publish`), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-user-role': 'admin' },
-          body: JSON.stringify(payload),
-          credentials: 'include',
-        });
-
-        if (!res.ok) {
-          const errBody = await res.json().catch(() => ({}));
-          throw new Error(errBody?.error || `Publish failed: ${res.status}`);
-        }
-
-        const result = await res.json();
+        const result = await apiRequest<{ data: any }>(
+          `/api/admin/courses/${encodeURIComponent(formData.id)}/publish`,
+          {
+            method: 'POST',
+            body: JSON.stringify(payload),
+          },
+        );
         const saved = result?.data || null;
         if (!saved) throw new Error('Publish returned no course data');
 
-        // Inform parent and update UI
         onSave(saved);
         setSuccessMessage('✅ Course published successfully');
         setAutosaveStatus('saved');

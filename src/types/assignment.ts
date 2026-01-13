@@ -4,6 +4,7 @@ export interface CourseAssignment {
   id: string;
   courseId: string;
   userId: string;
+  organizationId?: string | null;
   status: CourseAssignmentStatus;
   progress: number;
   dueDate?: string | null;
@@ -11,4 +12,5 @@ export interface CourseAssignment {
   createdAt: string;
   updatedAt: string;
   assignedBy?: string | null;
+  active?: boolean;
 }

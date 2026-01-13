@@ -5,6 +5,7 @@ export type AppConfig = {
   features: {
     dalEnabled: boolean;
     sentryEnabled: boolean;
+    useAssignmentsApi: boolean;
   };
   timeouts: {
     requestMs: number;
@@ -27,6 +28,7 @@ export const getConfig = (): AppConfig => {
     features: {
       dalEnabled: readBoolean((import.meta as any).env?.VITE_FEATURE_DAL_ENABLED, false),
       sentryEnabled: readBoolean((import.meta as any).env?.VITE_SENTRY_ENABLED, false),
+      useAssignmentsApi: readBoolean((import.meta as any).env?.VITE_FEATURE_USE_ASSIGNMENTS_API, true),
     },
     timeouts: {
       requestMs: Number((import.meta as any).env?.VITE_REQUEST_TIMEOUT_MS || 15000),

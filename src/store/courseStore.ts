@@ -13,6 +13,7 @@ import type { CourseAssignment } from '../types/assignment';
 import { refreshRuntimeStatus, getRuntimeStatus } from '../state/runtimeStatus';
 import { loadStoredCourseProgress } from '../utils/courseProgress';
 import { hasStoredProgressHistory } from '../utils/courseAvailability';
+import { saveDraftSnapshot, markDraftSynced, deleteDraftSnapshot } from '../services/courseDraftStorage';
 
 // Course data types
 export interface ScenarioChoice {
@@ -1121,6 +1122,11 @@ export const courseStore = {
     try {
       console.log('[courseStore.init] Starting initialization...');
       const orgContext = resolveOrgContext();
+      if (!orgContext.userId) {
+        console.info('[courseStore.init] No authenticated session detected; loading local defaults without hitting API.');
+        courses = getDefaultCourses();
+        return;
+      }
       const normalizedRole = orgContext.role ? orgContext.role.toLowerCase() : null;
       const adminSurfaceDetected = isAdminSurface();
       const isAdminRole = Boolean(
@@ -1306,6 +1312,10 @@ export const courseStore = {
     course.lastUpdated = new Date().toISOString();
     courses[course.id] = { ...course };
     _saveCoursesToLocalStorage(courses);
+    void saveDraftSnapshot(course, {
+      dirty: true,
+      cause: options.skipRemoteSync ? 'local-save' : 'store-save',
+    });
     
     // Only sync to Supabase if configured
     if (
@@ -1326,6 +1336,7 @@ export const courseStore = {
             delete courses[course.id];
           }
           _saveCoursesToLocalStorage(courses);
+          void markDraftSynced(targetId, courses[targetId]);
         })
         .catch(error => {
           if (error instanceof CourseValidationError) {
@@ -1347,6 +1358,7 @@ export const courseStore = {
     if (courses[id]) {
       delete courses[id];
       _saveCoursesToLocalStorage(courses);
+      void deleteDraftSnapshot(id);
       if (
         !options.skipRemote &&
         import.meta.env.VITE_SUPABASE_URL &&
@@ -1404,6 +1416,7 @@ export const courseStore = {
     
     courses[newCourse.id] = newCourse;
     _saveCoursesToLocalStorage(courses);
+    void saveDraftSnapshot(newCourse, { dirty: true, cause: 'create-course' });
 
     // Always attempt to persist to backend API (DEV_FALLBACK or Supabase-backed) so courses survive reloads
   syncCourseToDatabase(newCourse)
@@ -1419,6 +1432,7 @@ export const courseStore = {
           delete courses[newCourse.id];
         }
         _saveCoursesToLocalStorage(courses);
+        void markDraftSynced(normalizedId, courses[normalizedId]);
       })
       .catch((error) => {
         if (error instanceof CourseValidationError) {

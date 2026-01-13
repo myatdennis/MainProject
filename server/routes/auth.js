@@ -704,7 +704,10 @@ router.get('/session', authenticate, (req, res) => {
 
 router.post('/logout', doubleSubmitCSRF, async (req, res) => {
   try {
-    const refreshToken = getRefreshTokenFromRequest(req);
+    let refreshToken = req.body?.refreshToken;
+    if (!refreshToken) {
+      refreshToken = getRefreshTokenFromRequest(req);
+    }
 
     if (supabaseAuthClient && refreshToken) {
       try {

@@ -1,9 +1,6 @@
 export type Visibility = 'global' | 'org' | 'user';
 
-import { getSupabase } from '../lib/supabaseClient';
 import apiRequest from '../utils/apiClient';
-
-const DOCUMENTS_BUCKET = import.meta.env.VITE_SUPABASE_DOCUMENTS_BUCKET || 'course-resources';
 
 export type DocumentMeta = {
   id: string;
@@ -20,6 +17,9 @@ export type DocumentMeta = {
   createdAt: string;
   createdBy?: string;
   downloadCount?: number;
+  mediaAssetId?: string;
+  storagePath?: string;
+  urlExpiresAt?: string;
 };
 
 const withQuery = (path: string, params?: Record<string, any>) => {
@@ -56,7 +56,10 @@ const mapDocumentRecord = (record: any): DocumentMeta => ({
   userId: record.user_id ?? undefined,
   createdAt: record.created_at ?? new Date().toISOString(),
   createdBy: record.created_by ?? undefined,
-  downloadCount: record.download_count ?? 0
+  downloadCount: record.download_count ?? 0,
+  mediaAssetId: record.metadata?.mediaAssetId ?? record.media_asset_id ?? undefined,
+  storagePath: record.storage_path ?? undefined,
+  urlExpiresAt: record.url_expires_at ?? undefined,
 });
 
 export const listDocuments = async (opts?: { orgId?: string; userId?: string; tag?: string; category?: string; search?: string }) => {
@@ -123,20 +126,29 @@ export const getDocument = async (id: string) => {
 export const addDocument = async (meta: Omit<DocumentMeta,'id'|'createdAt'>, file?: File | null) => {
   const docId = `doc-${Date.now()}`;
   let url = meta.url;
+  let storagePath: string | undefined;
+  let urlExpiresAt: string | undefined;
+  let mediaAssetId: string | undefined;
 
   // If a File is provided and Supabase storage is available, upload it to the configured bucket
   if (file) {
     try {
-      const supabase = await getSupabase();
-      if (supabase && (supabase as any).storage) {
-        const path = `${docId}/${file.name}`;
-        const { error: uploadError } = await supabase.storage.from(DOCUMENTS_BUCKET).upload(path, file, { upsert: true });
-        if (uploadError) {
-          console.warn('Storage upload failed, falling back to data URL:', uploadError.message || uploadError);
-        } else {
-          const { data } = supabase.storage.from(DOCUMENTS_BUCKET).getPublicUrl(path);
-          url = data?.publicUrl || url;
-        }
+      const body = new FormData();
+      body.append('file', file);
+      body.append('documentId', docId);
+      if (meta.orgId) body.append('orgId', meta.orgId);
+      if (meta.category) body.append('category', meta.category);
+      if (meta.visibility) body.append('visibility', meta.visibility);
+      const uploadJson = await apiRequest<{ data: any }>('/api/admin/documents/upload', {
+        method: 'POST',
+        body,
+        noTransform: true,
+      });
+      if (uploadJson?.data) {
+        url = uploadJson.data.signedUrl ?? url;
+        storagePath = uploadJson.data.storagePath ?? storagePath;
+        urlExpiresAt = uploadJson.data.urlExpiresAt ?? urlExpiresAt;
+  mediaAssetId = uploadJson.data.assetId ?? mediaAssetId;
       }
     } catch (err) {
       console.error('Upload exception:', err);
@@ -166,8 +178,15 @@ export const addDocument = async (meta: Omit<DocumentMeta,'id'|'createdAt'>, fil
     orgId: meta.orgId,
     userId: meta.userId,
     createdBy: meta.createdBy,
-    metadata: meta
+    metadata: { ...meta, mediaAssetId: mediaAssetId ?? meta.mediaAssetId }
   };
+
+  if (storagePath) {
+    (payload as any).storagePath = storagePath;
+  }
+  if (urlExpiresAt) {
+    (payload as any).urlExpiresAt = urlExpiresAt;
+  }
 
   const json = await apiFetch<{ data: any }>('/api/admin/documents', {
     method: 'POST',

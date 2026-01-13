@@ -117,7 +117,11 @@ const AdminHealth = () => {
   const runCheck = useCallback(async (check: HealthCheckDefinition) => {
     const startedAt = performance.now();
     try {
-      const response = await apiRequest(check.path, { method: check.method ?? 'GET' });
+      const response = await apiRequest(check.path, {
+        method: check.method ?? 'GET',
+        allowAnonymous: check.id === 'api',
+        requireAuth: check.id !== 'api',
+      });
       const interpretation = check.interpret(response);
       setResults((prev) => ({
         ...prev,

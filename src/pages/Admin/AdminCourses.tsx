@@ -130,7 +130,7 @@ const AdminCourses = () => {
   };
 
   const handleEditCourse = (course: Course) => {
-    navigate(`/admin/courses/${course.id}/edit`);
+    navigate(`/admin/course-builder/${course.id}`);
   };
 
   const handleCreateCourse = () => {

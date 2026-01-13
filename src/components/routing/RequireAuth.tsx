@@ -21,6 +21,8 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
   const {
     authInitializing,
     sessionStatus,
+    surfaceAuthStatus,
+    orgResolutionStatus,
     isAuthenticated,
     memberships,
     activeOrgId,
@@ -33,6 +35,9 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
   const sessionRequestRef = useRef(false);
   const retryRef = useRef(false);
   const hasSession = Boolean(user);
+  const surfaceState = surfaceAuthStatus?.[mode] ?? 'idle';
+  const waitingForSurface = surfaceState === 'checking';
+  const waitingForOrgContext = mode === 'admin' && hasSession && memberships.length > 0 && orgResolutionStatus !== 'ready';
 
   const logGuardEvent = useCallback(
     (event: string, payload: Record<string, unknown> = {}) => {
@@ -43,13 +48,15 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
         surface: mode,
         path: location.pathname,
         sessionStatus,
+        surfaceStatus: surfaceState,
+        orgResolutionStatus,
         hasSession,
         role: user?.role ?? null,
         ...payload,
       };
       console.info(`[RequireAuth][${mode}] ${event}`, meta);
     },
-    [ROUTE_GUARD_DEBUG, location.pathname, mode, sessionStatus, hasSession, user?.role],
+    [ROUTE_GUARD_DEBUG, location.pathname, mode, sessionStatus, surfaceState, orgResolutionStatus, hasSession, user?.role],
   );
 
   const activeMembership = useMemo(() => {
@@ -207,7 +214,7 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
     return MEMBER_ROLES.has(normalizeRole(user.role));
   }, [ADMIN_ROLES, MEMBER_ROLES, activeMembership, hasActiveMembership, user]);
 
-  if (sessionStatus !== 'ready') {
+  if (sessionStatus !== 'ready' || waitingForSurface || waitingForOrgContext) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center bg-softwhite">
         <LoadingSpinner size="lg" />

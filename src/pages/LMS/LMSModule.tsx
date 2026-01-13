@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
-import { AlertTriangle } from 'lucide-react';
+import { AlertTriangle, ShieldCheck, Download as DownloadIcon } from 'lucide-react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
 
@@ -23,6 +23,8 @@ import EnhancedVideoPlayer from '../../components/EnhancedVideoPlayer';
 import CourseProgressSidebar from '../../components/CourseProgressSidebar';
 import FloatingProgressBar from '../../components/FloatingProgressBar';
 import { progressService } from '../../dal/progress';
+import useSignedMediaUrl from '../../hooks/useSignedMediaUrl';
+import type { LessonVideoAsset } from '../../types/courseTypes';
 
 const supportedSidebarLessonTypes = ['video', 'interactive', 'quiz', 'resource', 'text'] as const;
 const PROGRESS_MILESTONES = [25, 50, 75, 100] as const;
@@ -433,6 +435,35 @@ const LMSModule = () => {
   const nextLessonEntry =
     activeLessonIndex >= 0 && activeLessonIndex < lessonSequence.length - 1 ? lessonSequence[activeLessonIndex + 1] : undefined;
 
+  const videoSourceType = (activeLesson?.content?.videoSourceType ?? 'internal').toLowerCase();
+  const usesExternalVideoSource = ['external', 'youtube', 'vimeo'].includes(videoSourceType);
+  const {
+    url: securedVideoUrl,
+    isLoading: securingVideo,
+    error: secureVideoError,
+    refresh: refreshVideoSource,
+    hasAsset: hasSecuredVideoAsset,
+  } = useSignedMediaUrl({
+    asset: !usesExternalVideoSource ? (activeLesson?.content?.videoAsset as LessonVideoAsset | undefined | null) : undefined,
+    fallbackUrl: activeLesson?.content?.videoUrl ?? null,
+  });
+
+  const {
+    url: securedDocumentUrl,
+    isLoading: securingDocument,
+    error: secureDocumentError,
+    refresh: refreshDocumentSource,
+    hasAsset: hasDocumentAsset,
+  } = useSignedMediaUrl({
+    asset: activeLesson?.content?.documentAsset ?? null,
+    fallbackUrl: activeLesson?.content?.fileUrl ?? activeLesson?.content?.documentUrl ?? null,
+    autoRefresh: false,
+  });
+
+  const handleVideoPlaybackError = useCallback(() => {
+    void refreshVideoSource(true);
+  }, [refreshVideoSource]);
+
   const moveToLessonEntry = (entry?: { moduleId: string; lesson: NormalizedLesson }) => {
     if (!entry) return;
     if (entry.moduleId === module.id) {
@@ -566,33 +597,133 @@ const LMSModule = () => {
                           </span>
                         </div>
 
-                        {activeLesson.type === 'video' && activeLesson.content?.videoUrl && (
+                        {activeLesson.type === 'video' && (
                           <div className="space-y-4">
-                            <EnhancedVideoPlayer
-                              key={activeLesson.id}
-                              src={activeLesson.content.videoUrl}
-                              title={activeLesson.title}
-                              transcript={activeLesson.content.transcript || ''}
-                              captions={activeLessonCaptions}
-                              showTranscript={Boolean(activeLesson.content.transcript)}
-                              autoPlay
-                              initialTime={activeLessonInitialTime}
-                              onProgress={(progress) => updateLessonProgress(activeLesson.id, progress)}
-                              onComplete={() => markLessonComplete(activeLesson.id)}
-                              onTimeUpdate={(seconds) =>
-                                setLessonPositions((prev) => {
-                                  const previousValue = prev[activeLesson.id] ?? 0;
-                                  if (Math.abs(previousValue - seconds) < 0.5) {
-                                    return prev;
-                                  }
-                                  return { ...prev, [activeLesson.id]: seconds };
-                                })
-                              }
-                            />
+                            {secureVideoError && (
+                              <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                                <AlertTriangle className="h-5 w-5 flex-shrink-0" aria-hidden />
+                                <div className="space-y-1">
+                                  <p className="font-medium">We couldn’t secure this video.</p>
+                                  <button
+                                    type="button"
+                                    className="text-xs font-semibold text-red-700 underline"
+                                    onClick={() => {
+                                      void refreshVideoSource(true);
+                                    }}
+                                  >
+                                    Try again
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+
+                            {securingVideo && !securedVideoUrl && (
+                              <div className="flex items-center gap-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-700">
+                                <LoadingSpinner size="sm" />
+                                <span>Securing this video for playback…</span>
+                              </div>
+                            )}
+
+                            {securedVideoUrl ? (
+                              <>
+                                {hasSecuredVideoAsset && (
+                                  <div className="flex items-center gap-2 text-xs font-semibold text-emerald-700">
+                                    <ShieldCheck className="h-4 w-4" aria-hidden />
+                                    <span>Secure streaming active</span>
+                                  </div>
+                                )}
+                              <EnhancedVideoPlayer
+                                key={`${activeLesson.id}-${securedVideoUrl}`}
+                                src={securedVideoUrl}
+                                title={activeLesson.title}
+                                transcript={activeLesson.content?.transcript || ''}
+                                captions={activeLessonCaptions}
+                                showTranscript={Boolean(activeLesson.content?.transcript)}
+                                autoPlay
+                                initialTime={activeLessonInitialTime}
+                                onProgress={(progress) => updateLessonProgress(activeLesson.id, progress)}
+                                onComplete={() => markLessonComplete(activeLesson.id)}
+                                onTimeUpdate={(seconds) =>
+                                  setLessonPositions((prev) => {
+                                    const previousValue = prev[activeLesson.id] ?? 0;
+                                    if (Math.abs(previousValue - seconds) < 0.5) {
+                                      return prev;
+                                    }
+                                    return { ...prev, [activeLesson.id]: seconds };
+                                  })
+                                }
+                                onPlaybackError={handleVideoPlaybackError}
+                              />
+                              </>
+                            ) : (
+                              !securingVideo && (
+                                <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+                                  We couldn’t load this video right now. Please try again soon.
+                                </div>
+                              )
+                            )}
                           </div>
                         )}
 
-                        {activeLesson.type !== 'video' && (
+                        {activeLesson.type === 'document' && (
+                          <div className="space-y-4 rounded-xl bg-white/60 p-4">
+                            <div>
+                              <p className="text-sm text-slate/80">
+                                {activeLesson.content?.description || 'Download the attached resource to continue.'}
+                              </p>
+                              {activeLesson.content?.instructions && (
+                                <p className="mt-2 text-xs text-slate/70">
+                                  {activeLesson.content.instructions}
+                                </p>
+                              )}
+                            </div>
+                            {secureDocumentError && (
+                              <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+                                <AlertTriangle className="h-4 w-4" aria-hidden />
+                                <div>
+                                  <p className="font-medium">We couldn’t secure this document.</p>
+                                  <button
+                                    type="button"
+                                    className="text-xs font-semibold underline"
+                                    onClick={() => refreshDocumentSource(true)}
+                                  >
+                                    Try again
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+                            {securingDocument && (
+                              <div className="flex items-center gap-2 text-xs text-blue-700">
+                                <LoadingSpinner size="sm" />
+                                <span>Fetching secure download link…</span>
+                              </div>
+                            )}
+                            {hasDocumentAsset && (
+                              <div className="flex items-center gap-2 text-xs font-semibold text-emerald-700">
+                                <ShieldCheck className="h-4 w-4" aria-hidden />
+                                <span>Secure download enabled</span>
+                              </div>
+                            )}
+                            <Button
+                              size="sm"
+                              disabled={!securedDocumentUrl || securingDocument}
+                              onClick={() => {
+                                if (securedDocumentUrl) {
+                                  window.open(securedDocumentUrl, '_blank', 'noopener,noreferrer');
+                                  updateLessonProgress(activeLesson.id, 100);
+                                } else {
+                                  refreshDocumentSource(true);
+                                }
+                              }}
+                              className="flex items-center gap-2"
+                            >
+                              <DownloadIcon className="h-4 w-4" />
+                              Download resource
+                            </Button>
+                          </div>
+                        )}
+
+                        {activeLesson.type !== 'video' && activeLesson.type !== 'document' && (
                           <div className="space-y-3 rounded-xl bg-white/60 p-4">
                             <p className="text-sm text-slate/80">This lesson includes rich interactive content.</p>
                             <Button size="sm" onClick={() => handleOpenInPlayer(activeLesson.id)}>
@@ -607,6 +738,10 @@ const LMSModule = () => {
                           ) : activeLesson.type === 'video' ? (
                             <p className="text-slate/60">
                               Video lessons include transcripts and resources inside the player above.
+                            </p>
+                          ) : activeLesson.type === 'document' ? (
+                            <p className="text-slate/60">
+                              Resource downloads open in a new tab. Keep this window open to continue when you’re ready.
                             </p>
                           ) : (
                             <p>This lesson is best experienced in the full course player.</p>

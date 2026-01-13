@@ -3,13 +3,17 @@ import { DndContext, PointerSensor, TouchSensor, closestCenter, useSensor, useSe
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { courseStore, generateId, calculateCourseDuration, countTotalLessons } from '../../store/courseStore';
-import { syncCourseToDatabase, CourseValidationError, loadCourseFromDatabase } from '../../dal/adminCourses';
+import { syncCourseToDatabase, CourseValidationError, loadCourseFromDatabase, adminPublishCourse } from '../../dal/adminCourses';
 import { computeCourseDiff } from '../../utils/courseDiff';
 // import type { NormalizedCourse } from '../../utils/courseNormalization';
 import { mergePersistedCourse } from '../../utils/adminCourseMerge';
-import type { Course, Module, Lesson } from '../../types/courseTypes';
-import { getSupabase } from '../../lib/supabaseClient';
+import type { Course, Module, Lesson, LessonVideoAsset } from '../../types/courseTypes';
+import { validateCourse, type CourseValidationIntent, type CourseValidationIssue } from '../../validation/courseValidation';
+import { getUserSession } from '../../lib/secureStorage';
+import { ApiError } from '../../utils/apiClient';
 import { getVideoEmbedUrl } from '../../utils/videoUtils';
+import { uploadLessonVideo, uploadDocumentResource } from '../../services/adminMediaUploadService';
+import { signMediaAsset, shouldRefreshSignedUrl } from '../../services/mediaClient';
 import { 
   ArrowLeft, 
   Save, 
@@ -56,6 +60,9 @@ import useSwipeNavigation from '../../hooks/useSwipeNavigation';
 import VersionControl from '../../components/VersionControl';
 import { useToast } from '../../context/ToastContext';
 import type { CourseAssignment } from '../../types/assignment';
+import { getDraftSnapshot, deleteDraftSnapshot, markDraftSynced, type DraftSnapshot } from '../../services/courseDraftStorage';
+import { evaluateRuntimeGate, type RuntimeGateResult, type GateMode, type RuntimeAction } from '../../utils/runtimeGating';
+import { createActionIdentifiers, type IdempotentAction } from '../../utils/idempotency';
 
 const buildUploadKey = (moduleId: string, lessonId: string) => `${moduleId}::${lessonId}`;
 const parseUploadKey = (key: string) => {
@@ -192,8 +199,37 @@ const bannerToneClasses: Record<BannerTone, { container: string; icon: string; c
 };
 
 const deepClone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
+const VIDEO_UPLOAD_LIMIT_BYTES = Number(import.meta.env.VITE_COURSE_VIDEO_UPLOAD_MAX_BYTES || 750 * 1024 * 1024);
+const DOCUMENT_UPLOAD_LIMIT_BYTES = Number(import.meta.env.VITE_DOCUMENT_UPLOAD_MAX_BYTES || 150 * 1024 * 1024);
+const VIDEO_UPLOAD_LIMIT_LABEL = (VIDEO_UPLOAD_LIMIT_BYTES / (1024 * 1024)).toFixed(0);
+const DOCUMENT_UPLOAD_LIMIT_LABEL = (DOCUMENT_UPLOAD_LIMIT_BYTES / (1024 * 1024)).toFixed(0);
+
+const formatFileSize = (bytes: number) => {
+  if (!bytes || Number.isNaN(bytes)) return '0 MB';
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+};
+
+const resolveUploadAuthor = (): string | null => {
+  try {
+    const session = getUserSession();
+    return session?.id ?? session?.email ?? null;
+  } catch {
+    return null;
+  }
+};
+
+const inferDocumentType = (fileName?: string): Lesson['content']['documentType'] => {
+  if (!fileName) return undefined;
+  const ext = fileName.split('.').pop()?.toLowerCase();
+  if (!ext) return undefined;
+  if (ext === 'pdf') return 'pdf';
+  if (['ppt', 'pptx', 'key', 'odp', 'pps', 'ppsx'].includes(ext)) return 'slide';
+  return 'document';
+};
 
 
+
+type UploadStatus = 'idle' | 'uploading' | 'paused' | 'error' | 'success';
 
 const AdminCourseBuilder = () => {
   const { courseId } = useParams();
@@ -212,14 +248,19 @@ const AdminCourseBuilder = () => {
   const [activeTab, setActiveTab] = useState('overview');
   const [expandedModules, setExpandedModules] = useState<{ [key: string]: boolean }>({});
   const [editingLesson, setEditingLesson] = useState<{ moduleId: string; lessonId: string } | null>(null);
-  const [uploadingVideos, setUploadingVideos] = useState<{ [key: string]: boolean }>({});
-  const [uploadProgress, setUploadProgress] = useState<{ [key: string]: number }>({});
-  const [uploadError, setUploadError] = useState<string | null>(null);
+  const [uploadingVideos, setUploadingVideos] = useState<Record<string, boolean>>({});
+  const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({});
+  const [uploadErrors, setUploadErrors] = useState<Record<string, string | null>>({});
+  const [uploadStatuses, setUploadStatuses] = useState<Record<string, { status: UploadStatus; message?: string | null }>>({});
+  const uploadControllers = useRef<Record<string, AbortController | null>>({});
+  const pendingUploadFiles = useRef<Record<string, File | null>>({});
+  const uploadChannels = useRef<Record<string, 'video' | 'document'>>({});
   const [showAssignmentModal, setShowAssignmentModal] = useState(false);
   const [hasPendingChanges, setHasPendingChanges] = useState(false);
   const lastPersistedRef = useRef<Course | null>(null);
   const [initializing, setInitializing] = useState(isEditing);
   const lastLoadedCourseIdRef = useRef<string | null>(null);
+  const draftCheckIdRef = useRef<string | null>(null);
   const isMobile = useIsMobile();
   const runtimeStatus = useRuntimeStatus();
   const supabaseConnected = runtimeStatus.supabaseConfigured && runtimeStatus.supabaseHealthy;
@@ -230,9 +271,11 @@ const AdminCourseBuilder = () => {
   const [activeMobileModuleId, setActiveMobileModuleId] = useState<string | null>(null);
   const [mobileFocusMode, setMobileFocusMode] = useState(true);
   const [statusBanner, setStatusBanner] = useState<BuilderBanner | null>(null);
+  const [draftSnapshotPrompt, setDraftSnapshotPrompt] = useState<DraftSnapshot | null>(null);
   const [reloadNonce, setReloadNonce] = useState(0);
   const requestCourseReload = useCallback(() => {
     lastLoadedCourseIdRef.current = null;
+    draftCheckIdRef.current = null;
     setReloadNonce((prev) => prev + 1);
   }, []);
   const isOffline = () => typeof navigator !== 'undefined' && navigator.onLine === false;
@@ -375,6 +418,49 @@ const AdminCourseBuilder = () => {
       setExpandedModules(prev => ({ ...prev, [editingLesson.moduleId!]: true }));
     }
   }, [editingLesson]);
+
+  useEffect(() => {
+    if (!course.id) return;
+    let cancelled = false;
+
+    if (draftCheckIdRef.current === course.id && draftSnapshotPrompt === null) {
+      return;
+    }
+
+    const inspectDraft = async () => {
+      try {
+        const snapshot = await getDraftSnapshot(course.id, { dirtyOnly: true });
+        if (!snapshot || cancelled) {
+          draftCheckIdRef.current = course.id;
+          return;
+        }
+        const lastPersisted = lastPersistedRef.current?.lastUpdated
+          ? Date.parse(lastPersistedRef.current.lastUpdated)
+          : 0;
+        if (snapshot.updatedAt > lastPersisted + 500) {
+          setDraftSnapshotPrompt(snapshot);
+          setStatusBanner((prev) =>
+            prev ?? {
+              tone: 'warning',
+              title: 'Unsynced draft detected',
+              description: 'We found local edits that never reached Supabase. Restore them or discard below.',
+              icon: AlertTriangle,
+            },
+          );
+        } else {
+          draftCheckIdRef.current = course.id;
+        }
+      } catch (error) {
+        console.warn('[AdminCourseBuilder] Failed to inspect draft snapshot', error);
+      }
+    };
+
+    inspectDraft();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [course.id, draftSnapshotPrompt]);
 
   useEffect(() => {
     if (!isEditing || !courseId) {
@@ -524,31 +610,45 @@ const AdminCourseBuilder = () => {
   // Debounced remote auto-sync (single upsert). Runs only when there are real changes vs lastPersistedRef.
   useEffect(() => {
     if (!course.id || !course.title?.trim()) return;
-    // Avoid overlapping autosaves
     if (autoSaveLockRef.current) return;
-    // Check if there are changes since last persist
     const diff = computeCourseDiff(lastPersistedRef.current, course);
     if (!diff.hasChanges) return;
+
+    const gate = evaluateRuntimeGate('course.auto-save', runtimeStatus);
+    if (gate.mode !== 'remote') {
+      if (lastAutoSaveGateModeRef.current !== gate.mode) {
+        showToast(
+          gate.reason ?? 'Drafts are stored locally until Huddle reconnects.',
+          gate.tone === 'danger' ? 'error' : 'warning',
+          6000,
+        );
+      }
+      lastAutoSaveGateModeRef.current = gate.mode;
+      return;
+    }
+
+    if (lastAutoSaveGateModeRef.current !== 'remote') {
+      showToast('Back online. Auto-sync resumed.', 'success', 3000);
+    }
+    lastAutoSaveGateModeRef.current = 'remote';
 
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     autoSaveTimerRef.current = setTimeout(async () => {
       autoSaveLockRef.current = true;
       setSaveStatus((s) => (s === 'saving' ? s : 'saving'));
       try {
-        const preparedCourse = {
-          ...course,
-          duration: calculateCourseDuration(course.modules || []),
-          lessons: countTotalLessons(course.modules || []),
-          lastUpdated: new Date().toISOString(),
-        };
-  const persisted = await syncCourseToDatabase(preparedCourse);
-        const merged = persisted ? mergePersistedCourse(preparedCourse, persisted) : preparedCourse;
-        courseStore.saveCourse(merged, { skipRemoteSync: true });
-        setCourse(merged);
-        lastPersistedRef.current = merged;
-        setSaveStatus('saved');
-        setLastSaveTime(new Date());
-        setTimeout(() => setSaveStatus('idle'), 2000);
+        const result = await persistCourse(course, {
+          action: 'course.auto-save',
+          gate,
+          skipValidation: true,
+        });
+        if (result.remoteSynced) {
+          setSaveStatus('saved');
+          setLastSaveTime(new Date());
+          setTimeout(() => setSaveStatus('idle'), 2000);
+        } else {
+          setSaveStatus('idle');
+        }
       } catch (err) {
         console.error('❌ Remote auto-sync failed:', err);
         setSaveStatus('error');
@@ -561,62 +661,12 @@ const AdminCourseBuilder = () => {
     return () => {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     };
-  }, [course]);
+  }, [course, runtimeStatus, showToast]);
 
   useEffect(() => {
     const diff = computeCourseDiff(lastPersistedRef.current, course);
     setHasPendingChanges(diff.hasChanges);
   }, [course]);
-
-  // Course validation function
-  const validateCourse = (course: Course) => {
-    const issues: string[] = [];
-    
-    // Basic course info validation
-    if (!course.title?.trim()) issues.push('Course title is required');
-    if (!course.description?.trim()) issues.push('Course description is required');
-    if (!course.modules || course.modules.length === 0) issues.push('At least one module is required');
-    
-    // Module and lesson validation
-    course.modules?.forEach((module, mIndex) => {
-      if (!module.title?.trim()) issues.push(`Module ${mIndex + 1}: Title is required`);
-      if (!module.lessons || module.lessons.length === 0) {
-        issues.push(`Module ${mIndex + 1}: At least one lesson is required`);
-      }
-      
-      module.lessons?.forEach((lesson, lIndex) => {
-        if (!lesson.title?.trim()) {
-          issues.push(`Module ${mIndex + 1}, Lesson ${lIndex + 1}: Title is required`);
-        }
-        
-        // Type-specific validation
-        switch (lesson.type) {
-          case 'video':
-            if (!lesson.content?.videoUrl?.trim()) {
-              issues.push(`Module ${mIndex + 1}, Lesson ${lIndex + 1}: Video URL is required`);
-            }
-            break;
-          case 'quiz':
-            if (!lesson.content?.questions || lesson.content.questions.length === 0) {
-              issues.push(`Module ${mIndex + 1}, Lesson ${lIndex + 1}: Quiz questions are required`);
-            }
-            break;
-          case 'document':
-            if (!lesson.content?.fileUrl?.trim()) {
-              issues.push(`Module ${mIndex + 1}, Lesson ${lIndex + 1}: Document file is required`);
-            }
-            break;
-          case 'text':
-            if (!lesson.content?.textContent?.trim()) {
-              issues.push(`Module ${mIndex + 1}, Lesson ${lIndex + 1}: Text content is required`);
-            }
-            break;
-        }
-      });
-    });
-    
-    return { isValid: issues.length === 0, issues };
-  };
 
   function createEmptyCourse(initialCourseId?: string): Course {
     // Smart defaults based on common course patterns
@@ -695,6 +745,7 @@ const AdminCourseBuilder = () => {
   const [lastSaveTime, setLastSaveTime] = useState<Date | null>(null);
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoSaveLockRef = useRef<boolean>(false);
+  const lastAutoSaveGateModeRef = useRef<GateMode>('remote');
   const [confirmDialog, setConfirmDialog] = useState<BuilderConfirmAction | null>(null);
 
   const confirmDialogContent = useMemo<ConfirmDialogConfig | null>(() => {
@@ -889,7 +940,28 @@ const AdminCourseBuilder = () => {
     }
   }, [course]);
 
-  const persistCourse = async (nextCourse: Course, statusOverride?: 'draft' | 'published') => {
+  type PersistCourseOptions = {
+    statusOverride?: 'draft' | 'published';
+    intentOverride?: CourseValidationIntent;
+    gate?: RuntimeGateResult;
+    action?: IdempotentAction;
+    skipValidation?: boolean;
+  };
+
+  type PersistCourseResult = {
+    course: Course;
+    gate: RuntimeGateResult;
+    remoteSynced: boolean;
+  };
+
+  const persistCourse = async (
+    nextCourse: Course,
+    options?: PersistCourseOptions | 'draft' | 'published'
+  ): Promise<PersistCourseResult> => {
+    const resolvedOptions: PersistCourseOptions =
+      typeof options === 'string' ? { statusOverride: options } : options ?? {};
+    const { statusOverride, intentOverride, gate: gateOverride, action, skipValidation } = resolvedOptions;
+
     const preparedCourse: Course = {
       ...nextCourse,
       status: statusOverride ?? nextCourse.status ?? 'draft',
@@ -897,58 +969,94 @@ const AdminCourseBuilder = () => {
       lessons: countTotalLessons(nextCourse.modules || []),
       lastUpdated: new Date().toISOString(),
       publishedDate:
-        statusOverride === 'published'
+        (statusOverride ?? nextCourse.status) === 'published'
           ? nextCourse.publishedDate || new Date().toISOString()
           : nextCourse.publishedDate,
     };
 
+    const derivedAction: IdempotentAction =
+      action ?? (statusOverride === 'published' ? 'course.publish' : 'course.save');
+    const runtimeAction: RuntimeAction = (() => {
+      switch (derivedAction) {
+        case 'course.publish':
+          return 'course.publish';
+        case 'course.auto-save':
+          return 'course.auto-save';
+        case 'course.assign':
+          return 'course.assign';
+        default:
+          return 'course.save';
+      }
+    })();
+    const gate = gateOverride ?? evaluateRuntimeGate(runtimeAction, runtimeStatus);
+    const allowRemoteSync = gate.mode === 'remote';
+
     const diff = computeCourseDiff(lastPersistedRef.current, preparedCourse);
 
-    const validation = validateCourse(preparedCourse);
-    if (!validation.isValid) {
-      throw new CourseValidationError('course', validation.issues);
+    if (!skipValidation) {
+      const validationIntent: CourseValidationIntent =
+        intentOverride ?? (preparedCourse.status === 'published' ? 'publish' : 'draft');
+      const validation = validateCourse(preparedCourse, {
+        intent: validationIntent,
+      });
+      if (!validation.isValid) {
+        const blockingIssues = validation.issues
+          .filter((issue) => issue.severity === 'error')
+          .map((issue) => issue.message);
+        throw new CourseValidationError('course', blockingIssues);
+      }
     }
 
     if (!diff.hasChanges) {
       courseStore.saveCourse(preparedCourse, { skipRemoteSync: true });
       setCourse(preparedCourse);
-      return preparedCourse;
+      await markDraftSynced(preparedCourse.id, preparedCourse);
+      return { course: preparedCourse, gate, remoteSynced: true };
     }
 
-  const persisted = await syncCourseToDatabase(preparedCourse);
-    const merged = persisted ? mergePersistedCourse(preparedCourse, persisted) : preparedCourse;
+    let merged = preparedCourse;
+    let remoteSynced = false;
+
+    if (allowRemoteSync) {
+      const persisted = await syncCourseToDatabase(preparedCourse, { action: derivedAction });
+      merged = persisted ? mergePersistedCourse(preparedCourse, persisted) : preparedCourse;
+      remoteSynced = true;
+    }
 
     courseStore.saveCourse(merged, { skipRemoteSync: true });
     setCourse(merged);
-    lastPersistedRef.current = merged;
-    return merged;
+    if (remoteSynced) {
+      lastPersistedRef.current = merged;
+      await markDraftSynced(merged.id, merged);
+    }
+    return { course: merged, gate, remoteSynced };
   };
 
   const handleSave = async () => {
     setSaveStatus('saving');
     
     try {
-      // Update calculated fields
-      const updatedCourse = {
-        ...course,
-        duration: calculateCourseDuration(course.modules || []),
-        lessons: countTotalLessons(course.modules || []),
-        lastUpdated: new Date().toISOString()
-      };
-      
       await new Promise(resolve => setTimeout(resolve, 300)); // Simulate save delay
-    await persistCourse(updatedCourse);
+      const gate = evaluateRuntimeGate('course.save', runtimeStatus);
+      const result = await persistCourse(course, { gate, action: 'course.save' });
 
-      setSaveStatus('saved');
-      setLastSaveTime(new Date());
-    setHasPendingChanges(false);
-    showToast('Draft synced to your Huddle workspace.', 'success');
-      
-      // Reset to idle after 3 seconds
-      setTimeout(() => setSaveStatus('idle'), 3000);
-      
+      if (result.remoteSynced) {
+        setSaveStatus('saved');
+        setLastSaveTime(new Date());
+        setHasPendingChanges(false);
+        showToast('Draft synced to your Huddle workspace.', 'success');
+        setTimeout(() => setSaveStatus('idle'), 3000);
+      } else {
+        setSaveStatus('idle');
+        showToast(
+          result.gate.reason ?? 'Draft saved locally. We’ll sync once Huddle reconnects.',
+          'warning',
+          6000,
+        );
+      }
+
       if (isNewCourseRoute) {
-        navigate(`/admin/course-builder/${updatedCourse.id}`);
+        navigate(`/admin/course-builder/${result.course.id}`);
       }
     } catch (error) {
       if (error instanceof CourseValidationError) {
@@ -965,27 +1073,104 @@ const AdminCourseBuilder = () => {
 
   const handlePublish = async () => {
     setSaveStatus('saving');
+    setStatusBanner(null);
 
     try {
-      const publishedCourse = {
+      const gate = evaluateRuntimeGate('course.publish', runtimeStatus);
+      if (gate.mode !== 'remote') {
+        setStatusBanner({
+          tone: gate.tone,
+          title: 'Publishing paused',
+          description: gate.reason ?? 'Publishing requires a healthy connection. Try again once services recover.',
+          icon: gate.offline ? WifiOff : AlertTriangle,
+        });
+        showToast(gate.reason ?? 'Publishing paused until runtime health returns.', 'warning', 6000);
+        setSaveStatus('idle');
+        return;
+      }
+
+      const preparedCourse = {
         ...course,
-        status: 'published' as const,
-        publishedDate: new Date().toISOString(),
-        duration: calculateCourseDuration(course.modules || []),
-        lessons: countTotalLessons(course.modules || []),
         lastUpdated: new Date().toISOString()
       };
 
-      await persistCourse(publishedCourse, 'published');
+      const { course: persistedCourse, remoteSynced } = await persistCourse(preparedCourse, {
+        intentOverride: 'publish',
+        statusOverride: 'published',
+        gate,
+        action: 'course.publish',
+      });
+
+      if (!remoteSynced) {
+        showToast('Unable to reach Supabase. Publishing will resume once we reconnect.', 'warning', 6000);
+        setSaveStatus('idle');
+        return;
+      }
+
+      const latestPersisted = lastPersistedRef.current || persistedCourse;
+      const publishIdentifiers = createActionIdentifiers('course.publish', { courseId: latestPersisted.id });
+      const publishVersion = typeof (latestPersisted as any)?.version === 'number'
+        ? (latestPersisted as any).version
+        : null;
+
+      await adminPublishCourse(latestPersisted.id, {
+        version: publishVersion,
+        idempotencyKey: publishIdentifiers.idempotencyKey
+      });
+
+      try {
+        const refreshed = await loadCourseFromDatabase(latestPersisted.id, { includeDrafts: true });
+        if (refreshed) {
+          courseStore.saveCourse(refreshed as Course, { skipRemoteSync: true });
+          setCourse(refreshed as Course);
+          lastPersistedRef.current = refreshed as Course;
+        }
+      } catch (refreshErr) {
+        console.warn('Failed to reload course after publish', refreshErr);
+      }
 
       setSaveStatus('saved');
       setLastSaveTime(new Date());
+      setHasPendingChanges(false);
       showToast('Course published to learners via Huddle.', 'success');
       setTimeout(() => setSaveStatus('idle'), 3000);
     } catch (error) {
       if (error instanceof CourseValidationError) {
         console.warn('⚠️ Course validation issues:', error.issues);
         showToast('Validation failed. Please resolve issues before publishing.', 'warning', 5000);
+      } else if (error instanceof ApiError) {
+        console.warn('Publish request failed', error);
+        const responseBody = (error.body || {}) as { error?: string; code?: string; issues?: CourseValidationIssue[]; currentVersion?: number };
+        const errorCode = error.code || responseBody.code || responseBody.error;
+
+        if (error.status === 409 && errorCode === 'version_conflict') {
+          setStatusBanner({
+            tone: 'danger',
+            title: 'A newer draft exists',
+            description: 'Reload the latest version before publishing again so you do not overwrite changes.',
+            icon: RefreshCcw,
+            actionLabel: 'Reload latest',
+            onAction: () => {
+              requestCourseReload();
+              setStatusBanner(null);
+            }
+          });
+          showToast('Reload the latest draft before publishing.', 'warning', 6000);
+        } else if (error.status === 422 && errorCode === 'validation_failed') {
+          const issues = Array.isArray(responseBody.issues) ? responseBody.issues : [];
+          const firstIssue = issues[0]?.message ?? 'Resolve the highlighted publish blockers and try again.';
+          setStatusBanner({
+            tone: 'danger',
+            title: 'Resolve publish blockers',
+            description: firstIssue,
+            icon: AlertTriangle
+          });
+          showToast('Fix the publish blockers and try again.', 'warning', 6000);
+        } else if (errorCode === 'idempotency_conflict') {
+          showToast('Publish request already in progress. Please wait a moment and refresh.', 'info', 4000);
+        } else {
+          showToast(networkFallback('Unable to publish course. Please try again.'), isOffline() ? 'warning' : 'error', 5000);
+        }
       } else {
         console.error('❌ Error publishing course:', error);
         showToast(networkFallback('Unable to publish course. Please try again.'), isOffline() ? 'warning' : 'error', 5000);
@@ -1049,6 +1234,38 @@ const AdminCourseBuilder = () => {
     const action = confirmActionHandlers[confirmDialog];
     if (action) action();
   };
+
+  const handleRestoreDraftSnapshot = useCallback(async () => {
+    if (!draftSnapshotPrompt) return;
+    try {
+      setCourse(draftSnapshotPrompt.course);
+      courseStore.saveCourse(draftSnapshotPrompt.course, { skipRemoteSync: true });
+      lastPersistedRef.current = draftSnapshotPrompt.course;
+      await markDraftSynced(draftSnapshotPrompt.course.id, draftSnapshotPrompt.course);
+      setHasPendingChanges(true);
+      showToast('Restored the latest local draft. Continue editing and save when ready.', 'info');
+    } catch (error) {
+      console.warn('[AdminCourseBuilder] Failed to restore draft snapshot:', error);
+      showToast('Unable to restore cached draft. Please try again.', 'error');
+    } finally {
+      setDraftSnapshotPrompt(null);
+      draftCheckIdRef.current = course.id;
+    }
+  }, [course.id, draftSnapshotPrompt, showToast]);
+
+  const handleDiscardDraftSnapshot = useCallback(async () => {
+    if (!course.id) return;
+    try {
+      await deleteDraftSnapshot(course.id);
+      setDraftSnapshotPrompt(null);
+      showToast('Discarded the local-only draft snapshot.', 'info');
+    } catch (error) {
+      console.warn('[AdminCourseBuilder] Failed to discard draft snapshot:', error);
+      showToast('Could not discard the cached draft. Please retry.', 'error');
+    } finally {
+      draftCheckIdRef.current = course.id;
+    }
+  }, [course.id, showToast]);
 
   const handleAssignmentComplete = (assignments?: CourseAssignment[]) => {
     setShowAssignmentModal(false);
@@ -1147,212 +1364,196 @@ const AdminCourseBuilder = () => {
   };
 
   const handleVideoUpload = async (moduleId: string, lessonId: string, file: File) => {
-    const maxSizeBytes = 50 * 1024 * 1024;
-    if (file.size > maxSizeBytes) {
-      setUploadError(`File size (${(file.size / 1024 / 1024).toFixed(1)}MB) exceeds the 50MB limit. Please compress your video or use a smaller file.`);
+    const uploadKey = buildUploadKey(moduleId, lessonId);
+    const limitLabel = (VIDEO_UPLOAD_LIMIT_BYTES / (1024 * 1024)).toFixed(0);
+    if (file.size > VIDEO_UPLOAD_LIMIT_BYTES) {
+      const message = `File size (${formatFileSize(file.size)}) exceeds the ${limitLabel}MB limit.`;
+      setUploadErrors((prev) => ({ ...prev, [uploadKey]: message }));
+      showToast(message, 'error');
       return;
     }
 
-    const uploadKey = buildUploadKey(moduleId, lessonId);
-    const fileSizeLabel = `${(file.size / (1024 * 1024)).toFixed(1)} MB`;
-    const existingContent = course.modules
-      ?.find((m) => m.id === moduleId)
-      ?.lessons.find((l) => l.id === lessonId)?.content;
+    pendingUploadFiles.current[uploadKey] = file;
+    uploadChannels.current[uploadKey] = 'video';
+    const controller = new AbortController();
+    uploadControllers.current[uploadKey] = controller;
 
-    const persistLessonVideo = (videoUrl: string) => {
+    setUploadErrors((prev) => ({ ...prev, [uploadKey]: null }));
+    setUploadStatuses((prev) => ({ ...prev, [uploadKey]: { status: 'uploading' } }));
+    setUploadingVideos((prev) => ({ ...prev, [uploadKey]: true }));
+    setUploadProgress((prev) => ({ ...prev, [uploadKey]: 1 }));
+
+    const uploadAuthor = resolveUploadAuthor();
+    const fileSizeLabel = formatFileSize(file.size);
+
+    try {
+      const response = await uploadLessonVideo({
+        courseId: course.id,
+        moduleId,
+        lessonId,
+        file,
+        signal: controller.signal,
+        onProgress: (percent) => {
+          setUploadProgress((prev) => ({ ...prev, [uploadKey]: percent }));
+        },
+      });
+      const payload = response?.data;
+      if (!payload?.signedUrl) {
+        throw new Error('Upload did not return a signed URL');
+      }
+
+      const existingContent = course.modules
+        ?.find((m) => m.id === moduleId)
+        ?.lessons.find((l) => l.id === lessonId)?.content;
+
+      const videoAsset: LessonVideoAsset = {
+        assetId: payload.assetId,
+        storagePath: payload.storagePath,
+        bucket: payload.bucket,
+        bytes: payload.fileSize ?? file.size,
+        mimeType: payload.mimeType || file.type || 'video/mp4',
+        uploadedAt: new Date().toISOString(),
+        uploadedBy: uploadAuthor,
+        source: 'api',
+        status: 'uploaded',
+        signedUrl: payload.signedUrl,
+        urlExpiresAt: payload.urlExpiresAt,
+      };
+
       updateLesson(moduleId, lessonId, {
         content: {
           ...existingContent,
-          videoUrl,
+          videoUrl: payload.signedUrl,
           fileName: file.name,
           fileSize: fileSizeLabel,
+          videoAsset,
+          videoSourceType: 'internal',
         },
       });
-    };
 
-    const uploadViaApi = async () => {
-      const endpoint = `/api/admin/courses/${encodeURIComponent(course.id)}/modules/${encodeURIComponent(moduleId)}/lessons/${encodeURIComponent(lessonId)}/video-upload`;
-      const body = new FormData();
-      body.append('file', file);
-      body.append('courseId', course.id);
-      body.append('moduleId', moduleId);
-      body.append('lessonId', lessonId);
-
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        body,
-        credentials: 'include',
-      });
-
-      const rawPayload = await response.text();
-      let payload: any = null;
-      if (rawPayload) {
-        try {
-          payload = JSON.parse(rawPayload);
-        } catch (parseError) {
-          console.warn('Video upload response was not valid JSON:', parseError);
-        }
-      }
-
-      if (!response.ok) {
-        const message = payload?.error || `Upload failed with status ${response.status}`;
-        throw new Error(message);
-      }
-
-      const videoUrl = payload?.data?.publicUrl;
-      if (!videoUrl) {
-        throw new Error('Upload response missing video URL');
-      }
-
-      return {
-        videoUrl,
-        storagePath: payload?.data?.storagePath,
-      };
-    };
-
-    const uploadViaSupabaseClient = async () => {
-      const supabase = await getSupabase();
-      if (!supabase) {
-        throw new Error('Supabase client not configured in browser');
-      }
-
-      const fileExt = file.name.includes('.') ? file.name.split('.').pop() : undefined;
-      const fileName = `${course.id}/${moduleId}/${lessonId}.${fileExt || 'mp4'}`;
-
-      const { error } = await supabase.storage
-        .from('course-videos')
-        .upload(fileName, file, {
-          cacheControl: '3600',
-          upsert: true,
-        });
-
-      if (error) throw error;
-
-      const { data } = supabase.storage.from('course-videos').getPublicUrl(fileName);
-      if (!data?.publicUrl) {
-        throw new Error('Unable to resolve Supabase public URL');
-      }
-
-      return {
-        videoUrl: data.publicUrl,
-        storagePath: fileName,
-      };
-    };
-
-    try {
-      setUploadError(null);
-      setUploadingVideos((prev) => ({ ...prev, [uploadKey]: true }));
-      setUploadProgress((prev) => ({ ...prev, [uploadKey]: 10 }));
-
-      let uploadSource: 'api' | 'supabase' | 'local' = 'local';
-      let videoUrl: string | null = null;
-      let lastError: Error | null = null;
-
-      try {
-        const apiResult = await uploadViaApi();
-        videoUrl = apiResult.videoUrl;
-        uploadSource = 'api';
-      } catch (apiError) {
-        lastError = apiError instanceof Error ? apiError : new Error(String(apiError));
-        console.warn('Video upload API failed, falling back to browser Supabase client:', lastError);
-        try {
-          const supabaseResult = await uploadViaSupabaseClient();
-          videoUrl = supabaseResult.videoUrl;
-          uploadSource = 'supabase';
-        } catch (supabaseError) {
-          lastError = supabaseError instanceof Error ? supabaseError : new Error(String(supabaseError));
-          console.warn('Supabase client upload failed, falling back to local object URL:', lastError);
-          videoUrl = URL.createObjectURL(file);
-          uploadSource = 'local';
-        }
-      }
-
-      if (!videoUrl) {
-        throw lastError || new Error('Unknown upload failure');
-      }
-
-      persistLessonVideo(videoUrl);
-      setUploadProgress((prev) => ({ ...prev, [uploadKey]: uploadSource === 'local' ? 90 : 100 }));
-
-      if (uploadSource === 'local') {
-        setUploadError('Saved to your browser only. Configure Supabase to persist this video.');
-        showToast('Video stored locally. Configure Supabase and retry to persist this lesson for learners.', 'warning', 6000);
+      pendingUploadFiles.current[uploadKey] = null;
+      setUploadStatuses((prev) => ({ ...prev, [uploadKey]: { status: 'success' } }));
+      setUploadProgress((prev) => ({ ...prev, [uploadKey]: 100 }));
+      showToast('Video uploaded and secured successfully.', 'success');
+    } catch (error: any) {
+      if (error?.name === 'AbortError') {
+        setUploadStatuses((prev) => ({ ...prev, [uploadKey]: { status: 'paused', message: 'Upload paused' } }));
       } else {
-        const description = uploadSource === 'api'
-          ? 'Video stored via the admin upload API.'
-          : 'Video uploaded directly with your Supabase credentials.';
-        showToast(`Video uploaded successfully. ${description}`, 'success');
+        const message =
+          error instanceof ApiError
+            ? error.message
+            : error instanceof Error
+              ? error.message
+              : 'Upload failed due to an unknown error';
+        setUploadErrors((prev) => ({ ...prev, [uploadKey]: message }));
+        setUploadStatuses((prev) => ({ ...prev, [uploadKey]: { status: 'error', message } }));
+        showToast(message, 'error');
       }
-    } catch (error) {
-      console.error('Error uploading video:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-      setUploadError(`Upload failed: ${errorMessage}. This could be due to network issues or file format. Please check your connection and try again.`);
     } finally {
       setUploadingVideos((prev) => ({ ...prev, [uploadKey]: false }));
+      uploadControllers.current[uploadKey] = null;
       setTimeout(() => {
         setUploadProgress((prev) => ({ ...prev, [uploadKey]: 0 }));
-      }, 2000);
+      }, 3000);
     }
   };
 
   const handleFileUpload = async (moduleId: string, lessonId: string, file: File) => {
-  const uploadKey = buildUploadKey(moduleId, lessonId);
-    
+    const uploadKey = buildUploadKey(moduleId, lessonId);
+    const limitLabel = (DOCUMENT_UPLOAD_LIMIT_BYTES / (1024 * 1024)).toFixed(0);
+    if (file.size > DOCUMENT_UPLOAD_LIMIT_BYTES) {
+      const message = `File size (${formatFileSize(file.size)}) exceeds the ${limitLabel}MB limit.`;
+      setUploadErrors((prev) => ({ ...prev, [uploadKey]: message }));
+      setUploadStatuses((prev) => ({ ...prev, [uploadKey]: { status: 'error', message } }));
+      showToast(message, 'error');
+      return;
+    }
+
+    pendingUploadFiles.current[uploadKey] = file;
+    uploadChannels.current[uploadKey] = 'document';
+    const controller = new AbortController();
+    uploadControllers.current[uploadKey] = controller;
+
+    setUploadErrors((prev) => ({ ...prev, [uploadKey]: null }));
+    setUploadStatuses((prev) => ({ ...prev, [uploadKey]: { status: 'uploading' } }));
+    setUploadingVideos((prev) => ({ ...prev, [uploadKey]: true }));
+    setUploadProgress((prev) => ({ ...prev, [uploadKey]: 1 }));
+
+    const uploadAuthor = resolveUploadAuthor();
+    const fileSizeLabel = formatFileSize(file.size);
+    const existingLesson = course.modules?.find((m) => m.id === moduleId)?.lessons.find((l) => l.id === lessonId);
+    const existingContent = existingLesson?.content;
+
     try {
-      setUploadingVideos(prev => ({ ...prev, [uploadKey]: true }));
+      const response = await uploadDocumentResource({
+        file,
+        documentId: existingContent?.documentId,
+        orgId: course.organizationId,
+        courseId: course.id,
+        moduleId,
+        lessonId,
+        signal: controller.signal,
+        onProgress: (percent) => {
+          setUploadProgress((prev) => ({ ...prev, [uploadKey]: percent }));
+        },
+      });
 
-      // In demo mode, use a local URL (file will be stored in browser)
-      // In production, this would upload to Supabase Storage
-      let fileUrl: string;
-
-      // Try Supabase upload first
-      try {
-        const supabase = await getSupabase();
-        if (supabase) {
-          const fileExt = file.name.split('.').pop();
-          const fileName = `${course.id}/${moduleId}/${lessonId}-resource.${fileExt}`;
-
-          const { error } = await supabase.storage
-            .from('course-resources')
-            .upload(fileName, file, {
-              cacheControl: '3600',
-              upsert: true
-            });
-
-          if (error) throw error;
-
-          const { data: { publicUrl } } = supabase.storage
-            .from('course-resources')
-            .getPublicUrl(fileName);
-          
-          fileUrl = publicUrl;
-        } else {
-          throw new Error('Supabase not configured');
-        }
-      } catch (err) {
-        console.log('Supabase upload not available, using demo mode with data URL');
-        
-        // Fallback: Create a data URL for demo purposes
-        // This keeps the file in memory/browser storage
-        fileUrl = URL.createObjectURL(file);
+      const payload = response?.data;
+      if (!payload?.signedUrl) {
+        throw new Error('Upload did not return a signed URL');
       }
 
-      // Update lesson content with file URL
+      const documentAsset: LessonVideoAsset = {
+        assetId: payload.assetId,
+        storagePath: payload.storagePath,
+        bucket: payload.bucket || 'course-documents',
+        bytes: payload.fileSize ?? file.size,
+        mimeType: payload.fileType || file.type || 'application/octet-stream',
+        uploadedAt: new Date().toISOString(),
+        uploadedBy: uploadAuthor,
+        source: 'api',
+        status: 'uploaded',
+        signedUrl: payload.signedUrl,
+        urlExpiresAt: payload.urlExpiresAt,
+      };
+
       updateLesson(moduleId, lessonId, {
         content: {
-          ...course.modules?.find(m => m.id === moduleId)?.lessons.find(l => l.id === lessonId)?.content,
-          fileUrl: fileUrl,
+          ...existingContent,
+          fileUrl: payload.signedUrl,
+          documentUrl: payload.signedUrl,
           fileName: file.name,
-          fileSize: `${(file.size / (1024 * 1024)).toFixed(1)} MB`
-        }
+          fileSize: fileSizeLabel,
+          documentAsset,
+          documentId: payload.documentId,
+          documentType: inferDocumentType(file.name),
+        },
       });
-      
-    } catch (error) {
-      console.error('Error uploading file:', error);
-      setUploadError('Failed to upload file. Please try again.');
-      showToast('Failed to upload file. Please try again.', 'error');
+
+      pendingUploadFiles.current[uploadKey] = null;
+      setUploadStatuses((prev) => ({ ...prev, [uploadKey]: { status: 'success' } }));
+      setUploadProgress((prev) => ({ ...prev, [uploadKey]: 100 }));
+      showToast('Resource uploaded and secured successfully.', 'success');
+    } catch (error: any) {
+      if (error?.name === 'AbortError') {
+        setUploadStatuses((prev) => ({ ...prev, [uploadKey]: { status: 'paused', message: 'Upload paused' } }));
+      } else {
+        const message =
+          error instanceof ApiError
+            ? error.message
+            : error instanceof Error
+              ? error.message
+              : 'Upload failed due to an unknown error';
+        setUploadErrors((prev) => ({ ...prev, [uploadKey]: message }));
+        setUploadStatuses((prev) => ({ ...prev, [uploadKey]: { status: 'error', message } }));
+        showToast(message, 'error');
+      }
     } finally {
-      setUploadingVideos(prev => ({ ...prev, [uploadKey]: false }));
+      setUploadingVideos((prev) => ({ ...prev, [uploadKey]: false }));
+      uploadControllers.current[uploadKey] = null;
+      setTimeout(() => {
+        setUploadProgress((prev) => ({ ...prev, [uploadKey]: 0 }));
+      }, 3000);
     }
   };
 
@@ -1368,9 +1569,13 @@ const AdminCourseBuilder = () => {
 
   const renderLessonEditor = (moduleId: string, lesson: Lesson) => {
     const isEditing = editingLesson?.moduleId === moduleId && editingLesson?.lessonId === lesson.id;
-  const uploadKey = buildUploadKey(moduleId, lesson.id);
-    const isUploading = uploadingVideos[uploadKey];
-    const progress = uploadProgress[uploadKey];
+    const uploadKey = buildUploadKey(moduleId, lesson.id);
+    const uploadStatus = uploadStatuses[uploadKey];
+    const uploadErrorMessage = uploadErrors[uploadKey];
+    const isUploading = Boolean(uploadingVideos[uploadKey]);
+    const progress = uploadProgress[uploadKey] ?? 0;
+  const videoInputId = `video-upload-${lesson.id}`;
+  const documentInputId = `file-upload-${lesson.id}`;
 
     if (!isEditing) {
       return (
@@ -1568,7 +1773,7 @@ const AdminCourseBuilder = () => {
                           </div>
                           <button
                             onClick={() => updateLesson(moduleId, lesson.id, {
-                              content: { ...lesson.content, videoUrl: '', fileName: '', fileSize: '' }
+                              content: { ...lesson.content, videoUrl: '', fileName: '', fileSize: '', videoAsset: undefined }
                             })}
                             className="text-red-600 hover:text-red-800"
                           >
@@ -1582,9 +1787,15 @@ const AdminCourseBuilder = () => {
                           <div className="text-center">
                             <Loader className="h-8 w-8 text-blue-500 animate-spin mx-auto mb-2" />
                             <p className="text-sm text-gray-600">
-                              {progress === 0 ? 'Preparing upload...' : 
-                               progress < 50 ? 'Uploading video...' :
-                               progress < 100 ? 'Processing video...' : 'Upload complete!'}
+                              {uploadStatus?.status === 'paused'
+                                ? uploadStatus.message || 'Upload paused'
+                                : progress === 0
+                                  ? 'Preparing upload...'
+                                  : progress < 50
+                                    ? 'Uploading video...'
+                                    : progress < 100
+                                      ? 'Processing video...'
+                                      : 'Upload complete!'}
                             </p>
                             {progress > 0 && (
                               <div className="w-full bg-gray-200 rounded-full h-2 mt-2">
@@ -1596,35 +1807,6 @@ const AdminCourseBuilder = () => {
                             )}
                             {progress > 0 && (
                               <p className="text-xs text-gray-500 mt-1">{progress}% complete</p>
-                            )}
-                            {uploadError && (
-                              <div className="mt-3 p-3 bg-red-50 rounded-lg border border-red-200">
-                                <p className="text-sm text-red-600 mb-2">{uploadError}</p>
-                                <div className="flex space-x-2">
-                                  <button
-                                    onClick={() => {
-                                      setUploadError(null);
-                                      const fileInput = document.createElement('input');
-                                      fileInput.type = 'file';
-                                      fileInput.accept = 'video/*';
-                                      fileInput.onchange = (e: any) => {
-                                        const file = e.target?.files?.[0];
-                                        if (file) handleVideoUpload(moduleId, lesson.id, file);
-                                      };
-                                      fileInput.click();
-                                    }}
-                                    className="text-xs bg-red-100 text-red-700 px-3 py-1 rounded hover:bg-red-200 transition-colors"
-                                  >
-                                    Try Again
-                                  </button>
-                                  <button
-                                    onClick={() => setUploadError(null)}
-                                    className="text-xs bg-gray-100 text-gray-700 px-3 py-1 rounded hover:bg-gray-200 transition-colors"
-                                  >
-                                    Dismiss
-                                  </button>
-                                </div>
-                              </div>
                             )}
                           </div>
                         ) : (
@@ -1641,16 +1823,44 @@ const AdminCourseBuilder = () => {
                                 }
                               }}
                               className="hidden"
-                              id={`video-upload-${lesson.id}`}
+                              id={videoInputId}
                             />
                             <label
-                              htmlFor={`video-upload-${lesson.id}`}
+                              htmlFor={videoInputId}
                               className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors duration-200 cursor-pointer inline-flex items-center space-x-2"
                             >
                               <Upload className="h-4 w-4" />
                               <span>Choose Video File</span>
                             </label>
-                            <p className="text-xs text-gray-500 mt-2">Supported formats: MP4, WebM, MOV (max 100MB)</p>
+                            <p className="text-xs text-gray-500 mt-2">Supported formats: MP4, WebM, MOV (max {VIDEO_UPLOAD_LIMIT_LABEL}MB)</p>
+                          </div>
+                        )}
+                        {uploadErrorMessage && (
+                          <div className="mt-4 p-3 bg-red-50 rounded-lg border border-red-200">
+                            <p className="text-sm text-red-600 mb-2">{uploadErrorMessage}</p>
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                onClick={() => {
+                                  setUploadErrors((prev) => ({ ...prev, [uploadKey]: null }));
+                                  if (typeof document !== 'undefined') {
+                                    const input = document.getElementById(videoInputId) as HTMLInputElement | null;
+                                    if (input) {
+                                      input.value = '';
+                                      input.click();
+                                    }
+                                  }
+                                }}
+                                className="text-xs bg-red-100 text-red-700 px-3 py-1 rounded hover:bg-red-200 transition-colors"
+                              >
+                                Try Again
+                              </button>
+                              <button
+                                onClick={() => setUploadErrors((prev) => ({ ...prev, [uploadKey]: null }))}
+                                className="text-xs bg-gray-100 text-gray-700 px-3 py-1 rounded hover:bg-gray-200 transition-colors"
+                              >
+                                Dismiss
+                              </button>
+                            </div>
                           </div>
                         )}
                       </div>
@@ -1705,7 +1915,7 @@ const AdminCourseBuilder = () => {
                           <span>Preview: Video will display like this to learners</span>
                           <button
                             onClick={() => updateLesson(moduleId, lesson.id, {
-                              content: { ...lesson.content, videoUrl: '' }
+                              content: { ...lesson.content, videoUrl: '', videoAsset: undefined }
                             })}
                             className="text-red-600 hover:text-red-800 flex items-center space-x-1"
                           >
@@ -2114,7 +2324,15 @@ const AdminCourseBuilder = () => {
                     </div>
                     <button
                       onClick={() => updateLesson(moduleId, lesson.id, {
-                        content: { ...lesson.content, fileUrl: '', fileName: '', fileSize: '' }
+                        content: {
+                          ...lesson.content,
+                          fileUrl: '',
+                          documentUrl: '',
+                          fileName: '',
+                          fileSize: '',
+                          documentAsset: undefined,
+                          documentId: undefined,
+                        }
                       })}
                       className="text-red-600 hover:text-red-800"
                     >
@@ -2125,8 +2343,27 @@ const AdminCourseBuilder = () => {
                   <div className="border-2 border-dashed border-gray-300 rounded-lg p-6">
                     {isUploading ? (
                       <div className="text-center">
-                        <Loader className="h-8 w-8 text-blue-500 animate-spin mx-auto mb-2" />
-                        <p className="text-sm text-gray-600">Uploading file...</p>
+                        <Loader className="h-8 w-8 text-purple-500 animate-spin mx-auto mb-2" />
+                        <p className="text-sm text-gray-600">
+                          {uploadStatus?.status === 'paused'
+                            ? uploadStatus.message || 'Upload paused'
+                            : progress === 0
+                              ? 'Preparing upload...'
+                              : progress < 50
+                                ? 'Uploading resource...'
+                                : progress < 100
+                                  ? 'Finalizing upload...'
+                                  : 'Upload complete!'}
+                        </p>
+                        {progress > 0 && (
+                          <div className="w-full bg-gray-200 rounded-full h-2 mt-2">
+                            <div
+                              className="bg-gradient-to-r from-purple-400 to-purple-600 h-2 rounded-full transition-all duration-300"
+                              style={{ width: `${progress}%` }}
+                            ></div>
+                          </div>
+                        )}
+                        {progress > 0 && <p className="text-xs text-gray-500 mt-1">{progress}% complete</p>}
                       </div>
                     ) : (
                       <div className="text-center">
@@ -2142,16 +2379,44 @@ const AdminCourseBuilder = () => {
                             }
                           }}
                           className="hidden"
-                          id={`file-upload-${lesson.id}`}
+                          id={documentInputId}
                         />
                         <label
-                          htmlFor={`file-upload-${lesson.id}`}
+                          htmlFor={documentInputId}
                           className="bg-purple-500 text-white px-4 py-2 rounded-lg hover:bg-purple-600 transition-colors duration-200 cursor-pointer inline-flex items-center space-x-2"
                         >
                           <Upload className="h-4 w-4" />
                           <span>Choose File</span>
                         </label>
-                        <p className="text-xs text-gray-500 mt-2">Supported: PDF, DOC, XLS, PPT (max 50MB)</p>
+                        <p className="text-xs text-gray-500 mt-2">Supported: PDF, DOC, XLS, PPT (max {DOCUMENT_UPLOAD_LIMIT_LABEL}MB)</p>
+                      </div>
+                    )}
+                    {uploadErrorMessage && (
+                      <div className="mt-4 p-3 bg-red-50 rounded-lg border border-red-200">
+                        <p className="text-sm text-red-600 mb-2">{uploadErrorMessage}</p>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            onClick={() => {
+                              setUploadErrors((prev) => ({ ...prev, [uploadKey]: null }));
+                              if (typeof document !== 'undefined') {
+                                const input = document.getElementById(documentInputId) as HTMLInputElement | null;
+                                if (input) {
+                                  input.value = '';
+                                  input.click();
+                                }
+                              }
+                            }}
+                            className="text-xs bg-red-100 text-red-700 px-3 py-1 rounded hover:bg-red-200 transition-colors"
+                          >
+                            Try Again
+                          </button>
+                          <button
+                            onClick={() => setUploadErrors((prev) => ({ ...prev, [uploadKey]: null }))}
+                            className="text-xs bg-gray-100 text-gray-700 px-3 py-1 rounded hover:bg-gray-200 transition-colors"
+                          >
+                            Dismiss
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>
@@ -2571,6 +2836,33 @@ const AdminCourseBuilder = () => {
             </div>
           </div>
         )}
+        {draftSnapshotPrompt && (
+          <div className="mb-4 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <p className="font-semibold">Unsynced local draft available</p>
+                <p className="mt-1 leading-relaxed">
+                  We saved edits on {new Date(draftSnapshotPrompt.updatedAt).toLocaleString()} when Huddle couldn’t reach Supabase.
+                  Restore them to continue where you left off or discard the local copy.
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={handleRestoreDraftSnapshot}
+                  className="inline-flex items-center rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-blue-700"
+                >
+                  Restore draft
+                </button>
+                <button
+                  onClick={handleDiscardDraftSnapshot}
+                  className="inline-flex items-center rounded-lg border border-blue-200 px-4 py-2 text-sm font-semibold text-blue-900 transition hover:bg-blue-100"
+                >
+                  Discard local copy
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         
         <div className="flex items-center justify-between">
           <div>
@@ -2581,7 +2873,10 @@ const AdminCourseBuilder = () => {
               {isEditing ? `Editing: ${course.title}` : 'Build a comprehensive learning experience'}
             </p>
             {isEditing && (() => {
-              const validation = validateCourse(course);
+              const validation = validateCourse(course, {
+                intent: course.status === 'published' ? 'publish' : 'draft',
+              });
+              const blockingIssues = validation.issues.filter((issue) => issue.severity === 'error');
               return (
                 <div className={`mt-2 px-3 py-2 rounded-lg text-sm ${
                   validation.isValid 
@@ -2592,13 +2887,13 @@ const AdminCourseBuilder = () => {
                     <span>✅ Course is valid and ready to publish</span>
                   ) : (
                     <div>
-                      <span>⚠️ {validation.issues.length} validation issue(s):</span>
+                      <span>⚠️ {blockingIssues.length} validation issue(s):</span>
                       <ul className="mt-1 text-xs">
-                        {validation.issues.slice(0, 3).map((issue, index) => (
-                          <li key={index}>• {issue}</li>
+                        {blockingIssues.slice(0, 3).map((issue, index) => (
+                          <li key={`${issue.code}-${index}`}>• {issue.message}</li>
                         ))}
-                        {validation.issues.length > 3 && (
-                          <li>• ... and {validation.issues.length - 3} more</li>
+                        {blockingIssues.length > 3 && (
+                          <li>• ... and {blockingIssues.length - 3} more</li>
                         )}
                       </ul>
                     </div>

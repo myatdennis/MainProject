@@ -1,10 +1,11 @@
-import { useEffect, Suspense, lazy } from 'react';
+import { useEffect, Suspense, lazy, useRef } from 'react';
 // Load admin routes eagerly so they always share the main React instance in dev/prod.
 import AdminDashboard from './pages/Admin/AdminDashboard';
 import AdminHealth from './pages/Admin/AdminHealth';
 import AdminCourses from './pages/Admin/AdminCourses';
 import AdminCourseBuilder from './pages/Admin/AdminCourseBuilder';
 import AdminCourseDetail from './pages/Admin/AdminCourseDetail';
+import AdminCourseEdit from './pages/Admin/AdminCourseEdit';
 import AdminCourseAssign from './pages/Admin/AdminCourseAssign';
 import AdminCourseSettings from './pages/Admin/AdminCourseSettings';
 import AdminSurveys from './pages/Admin/AdminSurveys';
@@ -37,6 +38,7 @@ import ConnectionDiagnostic from './components/ConnectionDiagnostic';
 import TroubleshootingGuide from './components/TroubleshootingGuide';
 import RequireAuth from './components/routing/RequireAuth';
 import DevDebugPanel from './components/DevDebugPanel';
+import { useSecureAuth } from './context/SecureAuthContext';
 
 // Import components used in routes/layout
 import OrgWorkspaceLayout from './components/OrgWorkspace/OrgWorkspaceLayout';
@@ -116,11 +118,36 @@ function App() {
 
 function AppContent() {
   useViewportHeight();
+  const { sessionStatus, user, activeOrgId, orgResolutionStatus } = useSecureAuth();
+  const courseInitKeyRef = useRef<string | null>(null);
+
   useEffect(() => {
-    courseStore.init().catch(error => {
-      console.error('Failed to initialize course store:', error);
-    });
-  }, []);
+    if (sessionStatus !== 'ready') {
+      return;
+    }
+    if (user && orgResolutionStatus !== 'ready') {
+      return;
+    }
+    const targetKey = user ? `${user.id}:${activeOrgId ?? 'none'}` : 'guest';
+    if (courseInitKeyRef.current === targetKey) {
+      return;
+    }
+    let cancelled = false;
+    const bootstrapCourseStore = async () => {
+      try {
+        await courseStore.init();
+        if (!cancelled) {
+          courseInitKeyRef.current = targetKey;
+        }
+      } catch (error) {
+        console.error('Failed to initialize course store:', error);
+      }
+    };
+    void bootstrapCourseStore();
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionStatus, orgResolutionStatus, user?.id, activeOrgId]);
 
   const location = useLocation();
   const hideMarketingChrome = /^\/(admin|lms|client)(?:\/|$)/i.test(location.pathname);
@@ -195,6 +222,7 @@ function AppContent() {
                   <Route path="courses/import" element={<AdminCoursesImport />} />
                   <Route path="courses/bulk" element={<AdminCourseBulkPlaceholder />} />
                   <Route path="courses/:courseId/details" element={<AdminCourseDetail />} />
+                  <Route path="courses/:courseId/edit" element={<AdminCourseEdit />} />
                   <Route path="courses/:courseId/assign" element={<AdminCourseAssign />} />
                   <Route path="courses/:courseId/settings" element={<AdminCourseSettings />} />
                   <Route path="course-builder/new" element={<AdminCourseBuilder />} />

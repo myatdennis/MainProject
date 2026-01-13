@@ -1,6 +1,7 @@
 import type { NormalizedCourse } from '../utils/courseNormalization';
 import { slugify } from '../utils/courseNormalization';
 import apiRequest from '../utils/apiClient';
+import { getUserSession } from '../lib/secureStorage';
 import { mapCourseRecord, type SupabaseCourseRecord } from '../services/courseService';
 
 export interface FetchPublishedCoursesOptions {
@@ -16,6 +17,13 @@ export async function fetchPublishedCourses(
   options: FetchPublishedCoursesOptions = {}
 ): Promise<NormalizedCourse[]> {
   const { orgId, assignedOnly = false } = options;
+  const session = typeof window === 'undefined' ? null : getUserSession();
+  if (!session) {
+    if (import.meta.env.DEV) {
+      console.info('[clientCourses.fetchPublishedCourses] Skipping API fetch because no session is present.');
+    }
+    return [];
+  }
   const params = new URLSearchParams();
 
   if (assignedOnly) {
@@ -41,6 +49,13 @@ export async function fetchCourse(
   identifier: string,
   options: FetchCourseOptions = {}
 ): Promise<NormalizedCourse | null> {
+  const session = typeof window === 'undefined' ? null : getUserSession();
+  if (!session) {
+    if (import.meta.env.DEV) {
+      console.info('[clientCourses.fetchCourse] Skipping API fetch because no session is present.');
+    }
+    return null;
+  }
   const { includeDrafts = false } = options;
   const normalizedIdentifier = identifier.trim();
   const queryParam = includeDrafts ? '?includeDrafts=true' : '';

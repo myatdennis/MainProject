@@ -24,7 +24,7 @@ const AdminCoursePreview = () => {
               <Button asChild size="sm" variant="secondary">
                 <Link to="/admin/courses">Back to Courses</Link>
               </Button>
-              <Button size="sm" onClick={() => navigate(`/admin/courses/${courseId}/edit`)}>Edit Course</Button>
+              <Button size="sm" onClick={() => navigate(`/admin/course-builder/${courseId}`)}>Edit Course</Button>
               <Button size="sm" variant="outline" onClick={() => navigate(`/admin/courses/${courseId}/assign`)}>Assign Course</Button>
             </div>
           </div>

@@ -27,6 +27,7 @@ import type {
 } from '../types/apiSchemas';
 import { CURRENT_CONTENT_SCHEMA_VERSION } from '../schema/contentSchema';
 import { ZodError } from 'zod';
+import { createActionIdentifiers, type IdempotentAction } from '../utils/idempotency';
 
 export type SupabaseCourseRecord = {
   id: string;
@@ -430,12 +431,16 @@ export class CourseService {
     return modules;
   }
 
-  private static async upsertCourse(course: NormalizedCourse): Promise<void> {
+  private static async upsertCourse(course: NormalizedCourse, options: { idempotencyKey?: string } = {}): Promise<void> {
     const payload = buildCoursePayload(course);
     const modules = CourseService.buildModulesPayloadForUpsert(course);
+    const body: Record<string, unknown> = { course: payload, modules };
+    if (options.idempotencyKey) {
+      body.idempotency_key = options.idempotencyKey;
+    }
     await apiRequest(`/api/admin/courses`, {
       method: 'POST',
-      body: JSON.stringify({ course: payload, modules }),
+      body: JSON.stringify(body),
     });
   }
 
@@ -557,10 +562,16 @@ export class CourseService {
     return response.data;
   }
 
-  static async syncCourseToDatabase(course: Course): Promise<NormalizedCourse | null> {
+  static async syncCourseToDatabase(
+    course: Course,
+    options: { idempotencyKey?: string; action?: IdempotentAction } = {},
+  ): Promise<NormalizedCourse | null> {
     const normalizedCourse = normalizeCourse(course);
+    const action = options.action ?? 'course.save';
+    const identifiers = createActionIdentifiers(action, { courseId: normalizedCourse.id });
+    const idempotencyKey = options.idempotencyKey ?? identifiers.idempotencyKey;
     // Single upsert with full graph (course + modules + lessons)
-    await CourseService.upsertCourse(normalizedCourse);
+    await CourseService.upsertCourse(normalizedCourse, { idempotencyKey });
 
     // Reload fresh graph to get server-assigned IDs and order
     const refreshed =

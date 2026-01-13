@@ -33,6 +33,7 @@ let currentStatus: RuntimeStatus = { ...DEFAULT_STATUS };
 const listeners = new Set<RuntimeListener>();
 let pollingHandle: number | null = null;
 let inflightRefresh: Promise<RuntimeStatus> | null = null;
+let connectivityHandlersInstalled = false;
 
 const updateGlobalSnapshot = () => {
   if (typeof window === 'undefined') return;
@@ -160,6 +161,32 @@ export const onResumeForeground = () => {
   });
 };
 
+const installConnectivityHandlers = () => {
+  if (typeof window === 'undefined' || connectivityHandlersInstalled) return;
+
+  const handleOffline = () => {
+    currentStatus = {
+      ...currentStatus,
+      apiHealthy: false,
+      statusLabel: 'degraded',
+      lastChecked: Date.now(),
+      lastError: 'offline',
+    };
+    notify();
+  };
+
+  const handleOnline = () => {
+    refreshRuntimeStatus().catch((error) => {
+      console.warn('[runtimeStatus] connectivity refresh failed:', error);
+    });
+  };
+
+  window.addEventListener('offline', handleOffline);
+  window.addEventListener('online', handleOnline);
+  connectivityHandlersInstalled = true;
+};
+
 ensureRuntimeStatusPolling();
 onResumeForeground();
+installConnectivityHandlers();
 updateGlobalSnapshot();

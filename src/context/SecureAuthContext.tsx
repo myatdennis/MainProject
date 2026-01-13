@@ -34,6 +34,8 @@ const isNavigatorOffline = () => typeof navigator !== 'undefined' && navigator.o
 
 type SessionSurface = 'admin' | 'lms';
 type RefreshReason = 'auto' | 'focus' | 'online' | 'manual' | 'bootstrap';
+type SurfaceAuthStatus = 'idle' | 'checking' | 'ready' | 'error';
+type OrgResolutionStatus = 'idle' | 'resolving' | 'ready' | 'error';
 
 interface RefreshOptions {
   reason?: RefreshReason;
@@ -206,6 +208,8 @@ interface AuthContextType {
   isAuthenticated: AuthState;
   authInitializing: boolean;
   sessionStatus: 'idle' | 'loading' | 'ready';
+  surfaceAuthStatus: Record<SessionSurface, SurfaceAuthStatus>;
+  orgResolutionStatus: OrgResolutionStatus;
   user: UserSession | null;
   memberships: UserMembership[];
   organizationIds: string[];
@@ -230,6 +234,8 @@ const defaultAuthContext: AuthContextType = {
   isAuthenticated: { lms: false, admin: false },
   authInitializing: true,
   sessionStatus: 'idle',
+  surfaceAuthStatus: { admin: 'idle', lms: 'idle' },
+  orgResolutionStatus: 'idle',
   user: null,
   memberships: [],
   organizationIds: [],
@@ -296,12 +302,32 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   const [activeOrgId, setActiveOrgIdState] = useState<string | null>(null);
   const [authInitializing, setAuthInitializing] = useState(true);
   const [sessionStatus, setSessionStatus] = useState<'idle' | 'loading' | 'ready'>('idle');
+  const [surfaceAuthStatus, setSurfaceAuthStatus] = useState<Record<SessionSurface, SurfaceAuthStatus>>({
+    admin: 'idle',
+    lms: 'idle',
+  });
+  const [orgResolutionStatus, setOrgResolutionStatus] = useState<OrgResolutionStatus>('idle');
   const [sessionMetaVersion, setSessionMetaVersion] = useState(0);
   const serverTimeOffsetRef = useRef(0);
   const lastRefreshAttemptRef = useRef(0);
   const lastRefreshSuccessRef = useRef(0);
   const refreshTimeoutRef = useRef<number | null>(null);
   const lastSessionReloadRef = useRef(0);
+
+  const updateSurfaceAuthStatus = useCallback((surface: SessionSurface | undefined, status: SurfaceAuthStatus) => {
+    if (!surface) {
+      return;
+    }
+    setSurfaceAuthStatus((prev) => {
+      if (prev[surface] === status) {
+        return prev;
+      }
+      return {
+        ...prev,
+        [surface]: status,
+      };
+    });
+  }, []);
 
   const syncServerClock = useCallback((serverDateHeader?: string | null) => {
     if (!serverDateHeader) {
@@ -435,9 +461,18 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         return Promise.resolve(false);
       }
       lastSessionReloadRef.current = now;
-      return fetchServerSession({ surface: options?.surface });
+      const surface = options?.surface;
+      if (surface) {
+        updateSurfaceAuthStatus(surface, 'checking');
+      }
+      return fetchServerSession({ surface })
+        .finally(() => {
+          if (surface) {
+            updateSurfaceAuthStatus(surface, 'ready');
+          }
+        });
     },
-    [fetchServerSession],
+    [fetchServerSession, updateSurfaceAuthStatus],
   );
 
   const setActiveOrganization = useCallback(
@@ -551,6 +586,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       if (sessionStatus === 'loading') {
         return false;
       }
+      if (options?.surface) {
+        updateSurfaceAuthStatus(options.surface, 'checking');
+      }
       setSessionStatus('loading');
       try {
         const result = await resolveSession({ surface: options?.surface, reason: 'manual' });
@@ -558,9 +596,12 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         return result;
       } finally {
         setSessionStatus('ready');
+        if (options?.surface) {
+          updateSurfaceAuthStatus(options.surface, 'ready');
+        }
       }
     },
-    [resolveSession, sessionStatus],
+    [resolveSession, sessionStatus, updateSurfaceAuthStatus],
   );
 
   // ============================================================================
@@ -737,6 +778,26 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       }
     };
   }, [user, refreshToken, getSkewedNow, sessionMetaVersion]);
+
+  useEffect(() => {
+    if (authInitializing) {
+      setOrgResolutionStatus('resolving');
+      return;
+    }
+    if (!user) {
+      setOrgResolutionStatus('ready');
+      return;
+    }
+    if (memberships.length === 0) {
+      setOrgResolutionStatus('ready');
+      return;
+    }
+    if (activeOrgId) {
+      setOrgResolutionStatus('ready');
+      return;
+    }
+    setOrgResolutionStatus('resolving');
+  }, [authInitializing, user, memberships, activeOrgId]);
 
   // ============================================================================
   // Login
@@ -950,6 +1011,8 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     isAuthenticated,
     authInitializing,
     sessionStatus,
+    surfaceAuthStatus,
+    orgResolutionStatus,
     user,
     memberships,
     organizationIds,

@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Users, Send, AlertTriangle, ShieldCheck, WifiOff } from 'lucide-react';
 import Card from '../../components/ui/Card';
@@ -8,9 +8,11 @@ import Input from '../../components/ui/Input';
 import { courseStore } from '../../store/courseStore';
 import { useToast } from '../../context/ToastContext';
 import { useSyncService } from '../../dal/sync';
-import { addAssignments } from '../../utils/assignmentStorage';
 import type { CourseAssignment } from '../../types/assignment';
 import useRuntimeStatus from '../../hooks/useRuntimeStatus';
+import { submitAssignmentRequest, subscribeToAssignmentQueue } from '../../utils/assignmentQueue';
+import type { AssignmentQueueItem } from '../../utils/assignmentQueue';
+import { useSecureAuth } from '../../context/SecureAuthContext';
 
 const AdminCourseAssign = () => {
   const { courseId } = useParams();
@@ -18,6 +20,7 @@ const AdminCourseAssign = () => {
   const { showToast } = useToast();
   const syncService = useSyncService();
   const runtimeStatus = useRuntimeStatus();
+  const { activeOrgId, user } = useSecureAuth();
   const supabaseReady = runtimeStatus.supabaseConfigured && runtimeStatus.supabaseHealthy;
   const runtimeLastChecked = runtimeStatus.lastChecked
     ? new Date(runtimeStatus.lastChecked).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -29,6 +32,15 @@ const AdminCourseAssign = () => {
   const [dueDate, setDueDate] = useState('');
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [queueItems, setQueueItems] = useState<AssignmentQueueItem[]>([]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToAssignmentQueue((items) => setQueueItems(items));
+    return () => unsubscribe();
+  }, []);
+
+  const hasQueuedRequests = queueItems.length > 0;
+  const queuePreview = hasQueuedRequests ? queueItems.slice(0, 4) : [];
 
   if (!course) {
     return (
@@ -61,17 +73,36 @@ const AdminCourseAssign = () => {
       return;
     }
 
+    const organizationId = course.organizationId || activeOrgId || null;
+    if (!organizationId) {
+      showToast('Set an active organization before assigning this course.','error');
+      return;
+    }
+
     setSubmitting(true);
     try {
-      const assignments = await addAssignments(course.id, assignees, { dueDate, note });
+      const result = await submitAssignmentRequest({
+        courseId: course.id,
+        organizationId,
+        userIds: assignees,
+        dueDate: dueDate || null,
+        note: note || null,
+        assignedBy: user?.id ?? user?.email ?? null,
+        mode: 'learners',
+        metadata: {
+          surface: 'admin_course_assign',
+          courseTitle: course.title,
+          manualEntryCount: assignees.length,
+        },
+      });
 
       courseStore.saveCourse({
         ...course,
-        enrollments: (course.enrollments || 0) + assignments.length,
+        enrollments: (course.enrollments || 0) + result.count,
         lastUpdated: new Date().toISOString(),
       }, { skipRemoteSync: true });
 
-      assignments.forEach((record: CourseAssignment) => {
+      (result.assignments ?? []).forEach((record: CourseAssignment) => {
         syncService.logEvent({
           type: 'assignment_created',
           data: record,
@@ -80,7 +111,6 @@ const AdminCourseAssign = () => {
           userId: record.userId,
           source: 'admin',
         });
-        // Log a secondary event for UX hooks; cast to any to allow custom event type without widening core union
         (syncService.logEvent as any)({
           type: 'course_assigned',
           data: record,
@@ -88,11 +118,18 @@ const AdminCourseAssign = () => {
         });
       });
 
-      showToast(`Assigned to ${assignments.length} learner(s)`, 'success');
+      const toastMessage = result.status === 'queued'
+        ? `Assignments queued for ${result.count} learner${result.count === 1 ? '' : 's'}. We'll sync them when the connection returns.`
+        : `Assigned to ${result.count} learner${result.count === 1 ? '' : 's'}.`;
+      showToast(toastMessage, 'success');
+      setEmails('');
+      setNote('');
+      setDueDate('');
       navigate('/admin/courses');
     } catch (error) {
       console.error(error);
-      showToast('Unable to assign course right now','error');
+      const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+      showToast(offline ? 'Assignments saved locally. We will retry once you are back online.' : 'Unable to assign course right now','error');
     } finally {
       setSubmitting(false);
     }
@@ -154,6 +191,39 @@ const AdminCourseAssign = () => {
             </div>
           </div>
         </div>
+
+          {hasQueuedRequests && (
+            <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="font-semibold">
+                    {queueItems.length} assignment request{queueItems.length === 1 ? '' : 's'} waiting to sync
+                  </p>
+                  <p className="mt-1 text-xs">We'll resend them once connectivity returns.</p>
+                </div>
+                <WifiOff className="h-5 w-5 text-amber-600" />
+              </div>
+              <ul className="mt-3 space-y-1 text-xs">
+                {queuePreview.map((item) => {
+                  const targetCount = item.userIds.length || 1;
+                  const targetLabel = item.mode === 'organization'
+                    ? 'Organization assignment'
+                    : `${targetCount} learner${targetCount === 1 ? '' : 's'}`;
+                  return (
+                    <li key={item.id} className="flex items-center justify-between text-amber-800">
+                      <span className="font-medium">{targetLabel}</span>
+                      <span className="capitalize">{item.status}</span>
+                    </li>
+                  );
+                })}
+                {queueItems.length > queuePreview.length && (
+                  <li className="text-amber-800">
+                    +{queueItems.length - queuePreview.length} more pending request{queueItems.length - queuePreview.length === 1 ? '' : 's'}
+                  </li>
+                )}
+              </ul>
+            </div>
+          )}
 
         <form onSubmit={handleAssign} className="space-y-6">
           <div>

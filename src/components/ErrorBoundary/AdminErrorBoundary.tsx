@@ -1,5 +1,6 @@
 import { Component, ErrorInfo, ReactNode } from 'react';
 import { AlertTriangle, RefreshCw, Home, Bug } from 'lucide-react';
+import { getUserSession, secureGet, secureSet } from '../../lib/secureStorage';
 
 interface Props {
   children: ReactNode;
@@ -14,6 +15,44 @@ interface State {
   errorInfo: ErrorInfo | null;
   errorId: string;
 }
+
+type StoredErrorReport = {
+  errorId: string;
+  message: string;
+  stack?: string;
+  componentStack?: string;
+  timestamp: string;
+  userAgent: string;
+  url: string;
+  userId: string;
+};
+
+const ADMIN_ERROR_BUFFER_KEY = 'admin_error_reports';
+
+const resolveCurrentUserId = () => {
+  try {
+    return getUserSession()?.id ?? 'anonymous';
+  } catch {
+    return 'anonymous';
+  }
+};
+
+const readStoredReports = (): StoredErrorReport[] => {
+  try {
+    return secureGet<StoredErrorReport[]>(ADMIN_ERROR_BUFFER_KEY) ?? [];
+  } catch (error) {
+    console.warn('[AdminErrorBoundary] Failed to read stored error reports:', error);
+    return [];
+  }
+};
+
+const persistStoredReports = (reports: StoredErrorReport[]) => {
+  try {
+    secureSet(ADMIN_ERROR_BUFFER_KEY, reports.slice(-10));
+  } catch (error) {
+    console.warn('[AdminErrorBoundary] Failed to persist error reports:', error);
+  }
+};
 
 class AdminErrorBoundary extends Component<Props, State> {
   private retryTimeouts: Set<NodeJS.Timeout> = new Set();
@@ -59,15 +98,15 @@ class AdminErrorBoundary extends Component<Props, State> {
   }
 
   private logErrorToService = (error: Error, errorInfo: ErrorInfo) => {
-    const errorReport = {
+    const errorReport: StoredErrorReport = {
       errorId: this.state.errorId,
       message: error.message,
       stack: error.stack,
-      componentStack: errorInfo.componentStack,
+  componentStack: errorInfo.componentStack ?? undefined,
       timestamp: new Date().toISOString(),
       userAgent: navigator.userAgent,
       url: window.location.href,
-      userId: localStorage.getItem('user_id') || 'anonymous'
+      userId: resolveCurrentUserId(),
     };
 
     // In production, send to error monitoring service (e.g., Sentry, LogRocket)
@@ -76,15 +115,9 @@ class AdminErrorBoundary extends Component<Props, State> {
     console.error('ERROR STACK:', error.stack);
     
     // Store locally for debugging
-    try {
-      const existingErrors = JSON.parse(localStorage.getItem('admin_errors') || '[]');
-      existingErrors.push(errorReport);
-      // Keep only last 10 errors
-      const recentErrors = existingErrors.slice(-10);
-      localStorage.setItem('admin_errors', JSON.stringify(recentErrors));
-    } catch (e) {
-      console.error('Failed to store error locally:', e);
-    }
+    const existingErrors = readStoredReports();
+    existingErrors.push(errorReport);
+    persistStoredReports(existingErrors);
   };
 
   private handleRetry = () => {

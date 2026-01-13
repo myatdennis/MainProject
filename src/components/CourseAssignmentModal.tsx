@@ -2,12 +2,13 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { X, BookOpen, Users, Send, Building2, Loader2, ShieldCheck, WifiOff } from 'lucide-react';
 import LoadingButton from './LoadingButton';
 import { useToast } from '../context/ToastContext';
-import { addAssignments } from '../utils/assignmentStorage';
 import { courseStore } from '../store/courseStore';
 import type { CourseAssignment } from '../types/assignment';
 import orgService from '../dal/orgs';
-import { adminAssignCourse } from '../dal/adminCourses';
 import useRuntimeStatus from '../hooks/useRuntimeStatus';
+import { submitAssignmentRequest, subscribeToAssignmentQueue } from '../utils/assignmentQueue';
+import type { AssignmentQueueItem } from '../utils/assignmentQueue';
+import { useSecureAuth } from '../context/SecureAuthContext';
 
 interface CourseAssignmentModalProps {
   isOpen: boolean;
@@ -26,6 +27,7 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
 }) => {
   const { showToast } = useToast();
   const runtimeStatus = useRuntimeStatus();
+  const { user, activeOrgId } = useSecureAuth();
   const supabaseReady = runtimeStatus.supabaseConfigured && runtimeStatus.supabaseHealthy;
   const runtimeLastChecked = runtimeStatus.lastChecked
     ? new Date(runtimeStatus.lastChecked).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -40,6 +42,12 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
   const [orgListLoading, setOrgListLoading] = useState(false);
   const [orgListError, setOrgListError] = useState<string | null>(null);
   const [selectedOrgId, setSelectedOrgId] = useState('');
+  const [queueItems, setQueueItems] = useState<AssignmentQueueItem[]>([]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToAssignmentQueue((items) => setQueueItems(items));
+    return () => unsubscribe();
+  }, []);
 
   useEffect(() => {
     setSelectedCourseId(course?.id ?? '');
@@ -65,6 +73,20 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
       };
     });
   }, [course, isOpen]);
+
+  const resolvedCourse = useMemo(() => {
+    if (course?.id) {
+      return courseStore.getCourse(course.id) ?? course;
+    }
+    if (selectedCourseId) {
+      return courseStore.getCourse(selectedCourseId);
+    }
+    return null;
+  }, [course, selectedCourseId]);
+
+  const resolvedCourseOrgId = resolvedCourse && 'organizationId' in resolvedCourse
+    ? resolvedCourse.organizationId ?? null
+    : null;
 
   useEffect(() => {
     if (!isOpen) {
@@ -105,6 +127,9 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
     return organizationOptions.find((org) => org.id === selectedOrgId) ?? null;
   }, [organizationOptions, selectedOrgId]);
 
+  const hasQueuedRequests = queueItems.length > 0;
+  const queuePreview = hasQueuedRequests ? queueItems.slice(0, 3) : [];
+
   if (!isOpen) return null;
 
   const handleAssign = async (event: React.FormEvent) => {
@@ -116,75 +141,76 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
       return;
     }
 
-    if (assignmentMode === 'organization') {
-      if (!selectedOrgId) {
-        showToast('Choose which organization should receive this course.', 'error');
+    let recipients: string[] = [];
+    if (assignmentMode === 'learners') {
+      recipients = emailList
+        .split(/\n|,|;/)
+        .map((value) => value.trim().toLowerCase())
+        .filter(Boolean);
+
+      if (recipients.length === 0) {
+        showToast('Add at least one email or user ID', 'error');
         return;
       }
-
-      setLoading(true);
-      try {
-        await adminAssignCourse(targetCourseId, selectedOrgId, {
-          dueAt: dueDate || undefined,
-        });
-
-        onAssignComplete?.();
-        showToast(
-          `Assignments queued for ${selectedOrganization?.name ?? 'the selected organization'}.`,
-          'success'
-        );
-        setSelectedOrgId('');
-        setNote('');
-        setDueDate('');
-        onClose();
-      } catch (error) {
-        console.error('[CourseAssignmentModal] Failed to assign course to organization:', error);
-        showToast('Unable to assign this course to the organization right now.', 'error');
-      } finally {
-        setLoading(false);
-      }
-
-      return;
     }
 
-    const recipients = emailList
-      .split(/\n|,|;/)
-      .map((value) => value.trim().toLowerCase())
-      .filter(Boolean);
+    const candidateOrgId = assignmentMode === 'organization'
+      ? selectedOrgId
+      : resolvedCourseOrgId || activeOrgId || selectedOrgId || '';
+    const resolvedOrgId = `${candidateOrgId}`.trim();
 
-    if (recipients.length === 0) {
-      showToast('Add at least one email or user ID', 'error');
+    if (!resolvedOrgId) {
+      showToast('Select an organization or set your active workspace before assigning this course.', 'error');
       return;
     }
 
     setLoading(true);
     try {
-      const assignments = await addAssignments(targetCourseId, recipients, {
-        dueDate: dueDate || undefined,
-        note: note || undefined,
+      const result = await submitAssignmentRequest({
+        courseId: targetCourseId,
+  organizationId: resolvedOrgId,
+        userIds: assignmentMode === 'organization' ? [] : recipients,
+        dueDate: dueDate || null,
+        note: note || null,
+        assignedBy: user?.id ?? user?.email ?? null,
+        mode: assignmentMode,
+        metadata: {
+          surface: 'course_assignment_modal',
+          selectedUserCount: selectedUsers.length,
+          manualEntryCount: recipients.length,
+          organizationMode: assignmentMode,
+          organizationLabel: selectedOrganization?.name ?? resolvedOrgId,
+        },
       });
 
-      if (onAssignComplete) {
-        onAssignComplete(assignments);
+      const audienceLabel = assignmentMode === 'organization'
+        ? selectedOrganization?.name ?? 'this organization'
+        : `${result.count} learner${result.count === 1 ? '' : 's'}`;
+
+      const toastMessage = result.status === 'queued'
+        ? `Assignments queued for ${audienceLabel}. We'll sync them automatically once we're back online.`
+        : `Assignments sent to ${audienceLabel}. Learners will see notifications shortly.`;
+
+      showToast(toastMessage, 'success');
+      onAssignComplete?.(result.assignments);
+
+      if (assignmentMode === 'learners') {
+        setEmailList('');
+        if (!course) {
+          setSelectedCourseId('');
+        }
       } else {
-        showToast(
-          `Assignments sent to ${assignments.length} learner${assignments.length === 1 ? '' : 's'}. Huddle notifications are on the way.`,
-          'success'
-        );
+        setSelectedOrgId('');
       }
-      setEmailList('');
       setNote('');
       setDueDate('');
-      if (!course) {
-        setSelectedCourseId('');
-      }
       onClose();
     } catch (error) {
       console.error('[CourseAssignmentModal] Failed to assign course:', error);
       const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
       showToast(
         offline
-          ? 'Huddle can’t reach the network right now. We saved your request—try again when you’re back online.'
+          ? 'Huddle can’t reach the network right now. Keep the tab open and we will retry automatically.'
           : 'We hit a snag assigning this course. Please try again in a moment.',
         'error'
       );
@@ -253,6 +279,40 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
               </div>
             </div>
           </div>
+          {hasQueuedRequests && (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="font-semibold">
+                    {queueItems.length} assignment request{queueItems.length === 1 ? '' : 's'} waiting to sync
+                  </p>
+                  <p className="mt-1 text-xs">
+                    We'll resend them automatically once connectivity returns.
+                  </p>
+                </div>
+                <WifiOff className="h-5 w-5 text-amber-600" />
+              </div>
+              <ul className="mt-3 space-y-1 text-xs">
+                {queuePreview.map((item) => {
+                  const targetCount = item.userIds.length || 1;
+                  const targetLabel = item.mode === 'organization'
+                    ? 'Organization assignment'
+                    : `${targetCount} learner${targetCount === 1 ? '' : 's'}`;
+                  return (
+                    <li key={item.id} className="flex items-center justify-between text-amber-800">
+                      <span className="font-medium">{targetLabel}</span>
+                      <span className="capitalize">{item.status}</span>
+                    </li>
+                  );
+                })}
+                {queueItems.length > queuePreview.length && (
+                  <li className="text-amber-800">
+                    +{queueItems.length - queuePreview.length} more pending request{queueItems.length - queuePreview.length === 1 ? '' : 's'}
+                  </li>
+                )}
+              </ul>
+            </div>
+          )}
           {!course && (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Select course *</label>

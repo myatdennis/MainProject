@@ -6,6 +6,8 @@ export interface Course {
   // Core identification
   id: string;
   slug?: string;
+  organizationId?: string | null;
+  organizationName?: string | null;
   title: string;
   description: string;
   
@@ -132,6 +134,7 @@ export interface LessonContent {
   videoThumbnail?: string;
   fileName?: string; // for courseStore compatibility
   fileSize?: string; // for courseStore compatibility
+  videoAsset?: LessonVideoAsset | null;
   
   // Text content
   textContent?: string;
@@ -172,10 +175,12 @@ export interface LessonContent {
   description?: string; // for courseStore compatibility
   fileUrl?: string; // for courseStore compatibility
   downloadFile?: File; // for courseStore compatibility
+  documentAsset?: LessonVideoAsset | null;
   
   // Document content
   documentUrl?: string;
   documentType?: 'pdf' | 'slide' | 'document';
+  documentId?: string;
   
   // Accessibility
   transcript?: string;
@@ -218,6 +223,22 @@ export interface LessonVideo {
   thumbnailUrl?: string;
   durationSeconds?: number;
   title?: string;
+}
+
+export interface LessonVideoAsset {
+  assetId?: string;
+  storagePath: string;
+  bucket: string;
+  bytes: number;
+  mimeType: string;
+  checksum?: string | null;
+  uploadedAt?: string;
+  uploadedBy?: string | null;
+  source?: 'api' | 'supabase' | 'local';
+  status?: 'uploaded' | 'pending' | 'failed';
+  resumableToken?: string | null;
+  signedUrl?: string | null;
+  urlExpiresAt?: string | null;
 }
 
 export interface Caption {

@@ -28,8 +28,10 @@ type SupabaseAssignmentRow = {
   id: string;
   course_id: string;
   user_id: string;
+  organization_id?: string | null;
   status?: CourseAssignmentStatus | null;
   progress?: number | null;
+  due_at?: string | null;
   due_date?: string | null;
   note?: string | null;
   assigned_by?: string | null;
@@ -71,13 +73,15 @@ const mapSupabaseAssignment = (row: SupabaseAssignmentRow): CourseAssignment => 
     id: row.id,
     courseId: row.course_id,
     userId: normalizedUserId,
+    organizationId: row.organization_id ?? null,
     status: toAssignmentStatus(row.status),
     progress: Number.isFinite(row.progress) ? Number(row.progress) : 0,
-    dueDate: row.due_date || null,
+    dueDate: row.due_at || row.due_date || null,
     note: row.note || null,
     assignedBy: row.assigned_by || null,
     createdAt: row.created_at || new Date().toISOString(),
     updatedAt: row.updated_at || new Date().toISOString(),
+    active: true,
   };
 };
 
@@ -149,17 +153,19 @@ const syncLocalAssignmentsToSupabase = async () => {
         id: assignment.id,
         course_id: assignment.courseId,
         user_id: assignment.userId,
+        organization_id: assignment.organizationId ?? null,
         status: assignment.status,
         progress: assignment.progress ?? 0,
-        due_date: assignment.dueDate ?? null,
+        due_at: assignment.dueDate ?? null,
         note: assignment.note ?? null,
         assigned_by: assignment.assignedBy ?? null,
         created_at: assignment.createdAt ?? new Date().toISOString(),
         updated_at: assignment.updatedAt ?? new Date().toISOString(),
+        active: assignment.active ?? true,
       }));
 
       const { error } = await supabase
-        .from('course_assignments')
+        .from('assignments')
         .upsert(payload, { onConflict: 'course_id,user_id' });
 
       if (error) {
@@ -237,6 +243,7 @@ const buildLocalAssignment = (
     id: overrides.id ?? `assignment-${courseId}-${userId}-${Date.now()}`,
     courseId,
     userId,
+    organizationId: overrides.organizationId ?? null,
     status: overrides.status ?? 'assigned',
     progress: overrides.progress ?? 0,
     dueDate: overrides.dueDate ?? null,
@@ -244,14 +251,15 @@ const buildLocalAssignment = (
     createdAt: overrides.createdAt ?? now,
     updatedAt: overrides.updatedAt ?? now,
     assignedBy: overrides.assignedBy ?? null,
+    active: overrides.active ?? true,
   };
 };
 
-export const addAssignments = async (
+export async function legacyAddAssignments(
   courseId: string,
   userIds: string[],
-  options: { dueDate?: string; note?: string; assignedBy?: string } = {}
-): Promise<CourseAssignment[]> => {
+  options: { dueDate?: string; note?: string; assignedBy?: string; organizationId?: string | null } = {}
+): Promise<CourseAssignment[]> {
   const normalizedIds = Array.from(
     new Set(
       userIds
@@ -269,9 +277,10 @@ export const addAssignments = async (
       const payload = normalizedIds.map((userId) => ({
         course_id: courseId,
         user_id: userId,
+        organization_id: options.organizationId ?? null,
         status: 'assigned',
         progress: 0,
-        due_date: options.dueDate ?? null,
+        due_at: options.dueDate ?? null,
         note: options.note ?? null,
         assigned_by: options.assignedBy ?? null,
         created_at: now,
@@ -281,7 +290,7 @@ export const addAssignments = async (
       const supabase = await getSupabase();
       if (!supabase) throw new Error('Supabase unavailable');
       const { data, error } = await supabase
-        .from('course_assignments')
+        .from('assignments')
         .upsert(payload, { onConflict: 'course_id,user_id' })
         .select();
 
@@ -303,6 +312,7 @@ export const addAssignments = async (
         const assignment = buildLocalAssignment(courseId, userId, {
           dueDate: options.dueDate ?? null,
           note: options.note ?? null,
+          organizationId: options.organizationId ?? null,
         });
 
         if (existingIndex !== -1) {
@@ -326,9 +336,11 @@ export const addAssignments = async (
       return results;
     }
   );
-};
+}
 
-const buildAssignmentsFromApiRows = (rows: any[]): CourseAssignment[] => {
+export { legacyAddAssignments as addAssignments };
+
+export const mapAssignmentsFromApiRows = (rows: any[]): CourseAssignment[] => {
   return rows
     .map((row) => {
       try {
@@ -370,7 +382,7 @@ const fetchAssignmentsViaApi = async (): Promise<CourseAssignment[]> => {
     if (!rows.length) {
       return [];
     }
-    return buildAssignmentsFromApiRows(rows);
+  return mapAssignmentsFromApiRows(rows);
   } catch (error) {
     if (error instanceof RequestError && (error.status === 401 || error.status === 403)) {
       console.warn('[assignmentStorage] Remote assignments request rejected (unauthorized).');
@@ -404,7 +416,7 @@ export const getAssignmentsForUser = async (userId?: string | null): Promise<Cou
     const supabase = await getAuthedSupabaseClient();
     if (supabase) {
       const { data, error } = await supabase
-        .from('course_assignments')
+        .from('assignments')
         .select('*')
         .eq('user_id', normalized)
         .order('updated_at', { ascending: false });
@@ -437,7 +449,7 @@ export const getAssignment = async (
       const supabase = await getSupabase();
       if (!supabase) throw new Error('Supabase unavailable');
       const { data, error } = await supabase
-        .from('course_assignments')
+        .from('assignments')
         .select('*')
         .eq('course_id', courseId)
         .eq('user_id', normalized);
@@ -471,7 +483,7 @@ export const updateAssignmentProgress = async (
       const supabase = await getSupabase();
       if (!supabase) throw new Error('Supabase unavailable');
       const { data, error } = await supabase
-        .from('course_assignments')
+        .from('assignments')
         .update({
           progress: clampedProgress,
           status,

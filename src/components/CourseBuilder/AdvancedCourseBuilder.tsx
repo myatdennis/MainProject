@@ -36,6 +36,7 @@ import {
   buildModulesFromChapters,
   recalculateCourseDurations,
 } from '../../utils/courseStructure';
+import { validateCourse } from '../../validation/courseValidation';
 
 type LessonUpdate = Partial<Lesson> & {
   content?: Partial<LessonContent>;
@@ -114,41 +115,6 @@ const mergeDraft = (base: Course, draft: Course): Course => {
   };
 
   return recalculateCourseDurations(merged);
-};
-
-const validateCourse = (course: Course): string[] => {
-  const issues: string[] = [];
-  if (!course.title || course.title.trim().length === 0) {
-    issues.push('Course title is required.');
-  }
-  if (!course.description || course.description.trim().length < 20) {
-    issues.push('Course description should be at least 20 characters.');
-  }
-  if (!course.chapters || course.chapters.length === 0) {
-    issues.push('Add at least one chapter before saving.');
-  } else {
-    course.chapters.forEach((chapter, chapterIndex) => {
-      if (!chapter.title || chapter.title.trim().length === 0) {
-        issues.push(`Chapter ${chapterIndex + 1} needs a title.`);
-      }
-      if (!chapter.lessons || chapter.lessons.length === 0) {
-        issues.push(`Chapter ${chapterIndex + 1} must include at least one lesson.`);
-      } else {
-        chapter.lessons.forEach((lesson, lessonIndex) => {
-          if (!lesson.title || lesson.title.trim().length === 0) {
-            issues.push(`Lesson ${lessonIndex + 1} in "${chapter.title}" needs a title.`);
-          }
-          if (lesson.type === 'video' && !lesson.content?.videoUrl) {
-            issues.push(`Lesson "${lesson.title}" requires a video URL.`);
-          }
-          if (lesson.type === 'text' && !(lesson.content?.textContent || lesson.content?.content)) {
-            issues.push(`Lesson "${lesson.title}" requires text content.`);
-          }
-        });
-      }
-    });
-  }
-  return Array.from(new Set(issues));
 };
 
 const AdvancedCourseBuilder: React.FC = () => {
@@ -257,10 +223,12 @@ const AdvancedCourseBuilder: React.FC = () => {
     scheduleAutosave(course);
   }, [course?.title, course?.description, course?.chapters]);
 
-  const validationErrors = useMemo(() => {
-    if (!course) return [];
-    return validateCourse(course);
+  const publishValidation = useMemo(() => {
+    if (!course) return null;
+    return validateCourse(course, { intent: 'publish' });
   }, [course]);
+
+  const publishBlockingIssues = publishValidation?.issues.filter((issue) => issue.severity === 'error') ?? [];
 
   useEffect(() => {
     return () => {
@@ -357,6 +325,11 @@ const AdvancedCourseBuilder: React.FC = () => {
 
   const handlePublishCourse = async () => {
     if (!course) return;
+
+    if (publishBlockingIssues.length > 0) {
+      showToast('Resolve the blocking validation issues before publishing.', 'warning');
+      return;
+    }
 
     const confirmed = confirm(
       'Publish this course? Learners assigned to it will immediately see the updated content.'
@@ -606,7 +579,7 @@ const AdvancedCourseBuilder: React.FC = () => {
                 loading={isLoading}
                 variant="success"
                 className="flex items-center"
-                disabled={validationErrors.length > 0}
+                disabled={publishBlockingIssues.length > 0}
               >
                 <Award className="w-4 h-4 mr-2" />
                 Publish
@@ -615,15 +588,15 @@ const AdvancedCourseBuilder: React.FC = () => {
       </div>
     </div>
 
-    {validationErrors.length > 0 && (
+    {publishBlockingIssues.length > 0 && (
       <div className="mx-6 mt-4 rounded-lg border border-deepred/30 bg-deepred/10 px-4 py-3 text-sm text-deepred">
         <p className="font-semibold">Resolve the following before publishing (draft saves are allowed):</p>
         <ul className="mt-2 space-y-1 list-disc pl-5">
-          {validationErrors.slice(0, 4).map((issue) => (
-            <li key={issue}>{issue}</li>
+          {publishBlockingIssues.slice(0, 4).map((issue) => (
+            <li key={issue.code}>{issue.message}</li>
           ))}
-          {validationErrors.length > 4 && (
-            <li>+ {validationErrors.length - 4} more issue(s)...</li>
+          {publishBlockingIssues.length > 4 && (
+            <li>+ {publishBlockingIssues.length - 4} more issue(s)...</li>
           )}
         </ul>
       </div>

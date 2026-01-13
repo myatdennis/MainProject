@@ -29,6 +29,9 @@ export const demoModeExplicit = parseFlag(process.env.DEMO_MODE);
 const devFallbackExplicit = parseFlag(process.env.DEV_FALLBACK);
 export const allowLegacyDemoUsers = parseFlag(process.env.ALLOW_LEGACY_DEMO_USERS);
 export const E2E_TEST_MODE = parseFlag(process.env.E2E_TEST_MODE);
+export const FORCE_ORG_ENFORCEMENT = parseFlag(
+  process.env.FORCE_ORG_ENFORCEMENT ?? process.env.ENFORCE_ORG_ENFORCEMENT ?? process.env.FORCE_ORG_GUARDS
+);
 
 export const DEV_FALLBACK = !isProduction && (devFallbackExplicit || allowDemoExplicit || demoModeExplicit);
 export const implicitDemoFallback = !isProduction && !supabaseServerConfigured;

@@ -1,5 +1,5 @@
 import { getSupabase, hasSupabaseConfig, SUPABASE_MISSING_CONFIG_MESSAGE } from '../lib/supabaseClient';
-import { getUserSession, getActiveOrgPreference } from '../lib/secureStorage';
+import { getUserSession, getActiveOrgPreference, getAccessToken } from '../lib/secureStorage';
 
 export const buildAuthHeaders = async (): Promise<Record<string, string>> => {
   const headers: Record<string, string> = {};
@@ -18,6 +18,10 @@ export const buildAuthHeaders = async (): Promise<Record<string, string>> => {
         const preferredOrgId = userSession.activeOrgId || userSession.organizationId || getActiveOrgPreference();
         if (preferredOrgId) {
           headers['X-Org-Id'] = String(preferredOrgId);
+        }
+        const token = getAccessToken();
+        if (token && !headers.Authorization) {
+          headers.Authorization = `Bearer ${token}`;
         }
       } else {
         const fallbackOrg = getActiveOrgPreference();

@@ -1,10 +1,11 @@
 import axios, { AxiosHeaders } from 'axios';
-import { resolveApiUrl } from '../config/apiBase';
+import { getApiBaseUrl, buildApiUrl, assertNoDoubleApi } from '../config/apiBase';
 import buildAuthHeaders from '../utils/requestContext';
 import { getCSRFToken } from '../hooks/useCSRFToken';
 
+const resolvedBaseUrl = getApiBaseUrl();
 const api = axios.create({
-  baseURL: resolveApiUrl('/api'),
+  baseURL: resolvedBaseUrl || buildApiUrl('/api'),
   timeout: 30000,
   withCredentials: true,
   headers: {
@@ -34,6 +35,8 @@ api.interceptors.request.use(async (config) => {
     }
   }
 
+  const finalUrl = axios.getUri(config);
+  assertNoDoubleApi(finalUrl);
   return config;
 });
 

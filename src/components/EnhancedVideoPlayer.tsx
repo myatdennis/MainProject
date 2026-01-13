@@ -38,6 +38,7 @@ interface EnhancedVideoPlayerProps {
   defaultQuality?: string;
   onWatchTimeUpdate?: (secondsWatched: number) => void;
   onTimeUpdate?: (currentTime: number) => void;
+  onPlaybackError?: (error?: MediaError | null) => void;
 }
 
 const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
@@ -55,7 +56,8 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
   sources = [],
   defaultQuality,
   onWatchTimeUpdate,
-  onTimeUpdate
+  onTimeUpdate,
+  onPlaybackError,
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -132,7 +134,7 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
       const time = video.currentTime;
       setCurrentTime(time);
       
-      if (!isDragging && onProgress) {
+      if (!isDragging && onProgress && video.duration) {
         onProgress((time / video.duration) * 100);
       }
 
@@ -183,6 +185,24 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
     video.addEventListener('ended', handleEnded);
     video.addEventListener('play', handlePlay);
     video.addEventListener('pause', handlePause);
+    if (onPlaybackError) {
+      const handleError = () => {
+        onPlaybackError(video.error ?? null);
+      };
+      video.addEventListener('error', handleError);
+
+      return () => {
+        video.removeEventListener('loadstart', handleLoadStart);
+        video.removeEventListener('canplay', handleCanPlay);
+        video.removeEventListener('loadedmetadata', handleLoadedMetadata);
+        video.removeEventListener('timeupdate', handleTimeUpdate);
+        video.removeEventListener('progress', handleProgress);
+        video.removeEventListener('ended', handleEnded);
+        video.removeEventListener('play', handlePlay);
+        video.removeEventListener('pause', handlePause);
+        video.removeEventListener('error', handleError);
+      };
+    }
 
     return () => {
       video.removeEventListener('loadstart', handleLoadStart);
@@ -194,7 +214,7 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
       video.removeEventListener('play', handlePlay);
       video.removeEventListener('pause', handlePause);
     };
-  }, [src, initialTime, onProgress, onComplete, isDragging, duration, captions, showCaptions, onTimeUpdate]);
+  }, [src, initialTime, onProgress, onComplete, isDragging, duration, captions, showCaptions, onTimeUpdate, onPlaybackError]);
 
   // Load saved progress
   useEffect(() => {
@@ -494,6 +514,7 @@ const EnhancedVideoPlayer: React.FC<EnhancedVideoPlayerProps> = ({
         onClick={togglePlay}
         aria-label={title ? `Video player for ${title}` : 'Course video player'}
         data-quality={selectedQuality}
+        onError={() => onPlaybackError?.(videoRef.current?.error ?? null)}
       />
 
       {/* Loading Overlay */}

@@ -21,6 +21,8 @@ export type DocumentMeta = {
   createdAt: string;
   createdBy?: string;
   downloadCount?: number;
+  metadata?: Record<string, any> | null;
+  mediaAssetId?: string;
 };
 
 const mapDocumentRecord = (record: any): DocumentMeta => ({
@@ -41,6 +43,8 @@ const mapDocumentRecord = (record: any): DocumentMeta => ({
   createdAt: record.created_at ?? record.createdAt ?? new Date().toISOString(),
   createdBy: record.created_by ?? record.createdBy ?? undefined,
   downloadCount: record.download_count ?? record.downloadCount ?? 0,
+  metadata: record.metadata ?? null,
+  mediaAssetId: record.media_asset_id ?? record.metadata?.mediaAssetId ?? undefined,
 });
 
 type DocumentUploadResponse = {

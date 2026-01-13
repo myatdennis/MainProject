@@ -1,5 +1,6 @@
 import buildAuthHeaders from './requestContext';
-import { resolveApiUrl } from '../config/apiBase';
+import { buildApiUrl, assertNoDoubleApi } from '../config/apiBase';
+import { guardRequest, SessionGateError } from '../lib/sessionGate';
 
 const logApiDebug = (meta: Record<string, unknown>) => {
   if (import.meta.env.DEV) {
@@ -48,7 +49,7 @@ const transformKeysDeep = (
   return out;
 };
 
-const buildUrl = (path: string) => resolveApiUrl(path);
+const buildUrl = (path: string) => buildApiUrl(path);
 
 export class ApiError extends Error {
   status: number;
@@ -85,6 +86,14 @@ export interface ApiRequestOptions extends RequestInit {
    * Optional timeout in milliseconds. If exceeded, the request is aborted.
    */
   timeoutMs?: number;
+  /**
+   * Force authentication even if the path isn't in the privileged list.
+   */
+  requireAuth?: boolean;
+  /**
+   * Allow anonymous access even when the path would normally be gated.
+   */
+  allowAnonymous?: boolean;
 }
 
 
@@ -113,8 +122,7 @@ export const apiRequest = async <T = any>(path: string, options: ApiRequestOptio
       }
     });
   } catch (error) {
-    console.error('[apiRequest] Failed to build auth headers:', error);
-    throw error;
+    console.warn('[apiRequest] Proceeding without auth headers due to error:', error);
   }
 
   if (!bodyIsFormData && !headers.has('Content-Type') && method !== 'GET' && method !== 'HEAD') {
@@ -155,6 +163,20 @@ export const apiRequest = async <T = any>(path: string, options: ApiRequestOptio
   }
 
   const url = buildUrl(path);
+  assertNoDoubleApi(url);
+
+  try {
+    guardRequest(url, {
+      requireAuth: options.requireAuth,
+      allowAnonymous: options.allowAnonymous,
+      reason: 'Blocked request with no authenticated session',
+    });
+  } catch (error) {
+    if (error instanceof SessionGateError) {
+      throw new ApiError(401, 'No authenticated session available', null, 'session_required');
+    }
+    throw error;
+  }
 
   let response: Response;
   try {

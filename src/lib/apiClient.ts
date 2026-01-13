@@ -8,7 +8,7 @@ import { ApiError as ApiClientError } from '../utils/apiClient';
 import buildAuthHeaders from '../utils/requestContext';
 import { setSessionMetadata, clearAuth, getRefreshToken, setAccessToken, setRefreshToken } from '../lib/secureStorage';
 import { getCSRFToken } from '../hooks/useCSRFToken';
-import { getApiBaseUrl } from '../config/apiBase';
+import { getApiBaseUrl, assertNoDoubleApi } from '../config/apiBase';
 
 // ============================================================================
 // API Client Configuration
@@ -73,6 +73,8 @@ apiClient.interceptors.request.use(
       }
     }
 
+    const finalUrl = axios.getUri(config);
+    assertNoDoubleApi(finalUrl);
     return config;
   },
   (error) => {

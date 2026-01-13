@@ -3,6 +3,8 @@ import { Users, TrendingUp, Activity as ActivityIcon, Clock, BarChart3, BookOpen
 import { getSupabase } from '../../lib/supabaseClient'
 import { useToast } from '../../context/ToastContext'
 import { resolveApiUrl } from '../../config/apiBase'
+import apiRequest, { ApiError } from '../../utils/apiClient'
+import { hasAuthSession } from '../../lib/sessionGate'
 const CompletionChart = lazy(() => import('../../components/Analytics/CompletionChart'));
 
 type Overview = {
@@ -63,20 +65,30 @@ const AnalyticsDashboard: React.FC = () => {
   const [summaryError, setSummaryError] = useState<string | null>(null)
 
   const fetchData = async () => {
+    if (!hasAuthSession()) {
+      setOverview({})
+      setCourses([])
+      setDropoffs([])
+      setActivityFeed([])
+      setLastUpdated(null)
+      return
+    }
+
     setLoading(true)
     try {
-      const res = await fetch(resolveApiUrl('/api/admin/analytics'), {
-        credentials: 'include',
-      })
-      const json = await res.json()
-  const nextCourses = Array.isArray(json.courses) ? json.courses : []
-  setOverview(json.overview || {})
-  setCourses(nextCourses)
-  setDropoffs(Array.isArray(json.dropoffs) ? json.dropoffs : [])
-  setActivityFeed(toActivityFeed(json.activity, nextCourses))
-  setLastUpdated(new Date())
+      const json = await apiRequest<any>('/api/admin/analytics', { noTransform: true })
+      const nextCourses = Array.isArray(json?.courses) ? json.courses : []
+      setOverview(json?.overview || {})
+      setCourses(nextCourses)
+      setDropoffs(Array.isArray(json?.dropoffs) ? json.dropoffs : [])
+      setActivityFeed(toActivityFeed(json?.activity, nextCourses))
+      setLastUpdated(new Date())
     } catch (err) {
-      console.error('Failed to load analytics', err)
+      if (err instanceof ApiError && err.status === 401) {
+        console.info('[AnalyticsDashboard] Skipping analytics fetch while logged out')
+      } else {
+        console.error('Failed to load analytics', err)
+      }
     } finally {
       setLoading(false)
     }
@@ -123,8 +135,12 @@ const AnalyticsDashboard: React.FC = () => {
   }, [])
 
   const exportCsv = async () => {
+    if (!hasAuthSession()) {
+      showToast('Please sign in to export analytics.', 'warning')
+      return
+    }
     const a = document.createElement('a')
-  a.href = resolveApiUrl('/api/admin/analytics/export')
+    a.href = resolveApiUrl('/api/admin/analytics/export')
     a.download = 'analytics.csv'
     document.body.appendChild(a)
     a.click()
@@ -132,23 +148,30 @@ const AnalyticsDashboard: React.FC = () => {
   }
 
   const requestSummary = async () => {
+    if (!hasAuthSession()) {
+      showToast('Sign in to request an AI summary.', 'warning')
+      return
+    }
     try {
       setSummaryError(null)
       setSummaryPreview(null)
-      const res = await fetch(resolveApiUrl('/api/admin/analytics/summary'), {
+      const json = await apiRequest<any>('/api/admin/analytics/summary', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({}),
-        credentials: 'include',
+        noTransform: true,
       })
-      const json = await res.json()
-      const preview = JSON.stringify(json.sample || json.ai || json.prompt, null, 2)
+      const preview = JSON.stringify(json?.sample || json?.ai || json?.prompt, null, 2)
       setSummaryPreview(preview)
       showToast('AI summary generated successfully.', 'success')
     } catch (err) {
-      console.error('Summary request failed', err)
-      setSummaryError('We could not generate a summary right now. Please try again in a moment.')
-      showToast('AI summary failed', 'error')
+      if (err instanceof ApiError && err.status === 401) {
+        setSummaryError('Session expired. Please sign in and try again.')
+        showToast('Session required for AI summary.', 'warning')
+      } else {
+        console.error('Summary request failed', err)
+        setSummaryError('We could not generate a summary right now. Please try again in a moment.')
+        showToast('AI summary failed', 'error')
+      }
     }
   }
 

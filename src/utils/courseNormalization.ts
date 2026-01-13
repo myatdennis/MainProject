@@ -182,7 +182,7 @@ export const flattenLessons = (course: NormalizedCourse): NormalizedLesson[] => 
   const lessons: NormalizedLesson[] = [];
 
   course.modules.forEach((module, moduleIndex) => {
-    (module.lessons || []).forEach((lesson, lessonIndex) => {
+    (module.lessons || []).forEach((lesson) => {
       lessons.push({
         ...lesson,
         moduleId: module.id,
