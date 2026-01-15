@@ -26,13 +26,64 @@ const sameSite = ['lax', 'strict', 'none'].includes(rawSameSite)
     ? 'none'
     : 'lax';
 
-const baseCookieOptions = {
-  httpOnly: true,
-  secure: secureByDefault,
-  sameSite,
-  domain: process.env.COOKIE_DOMAIN || undefined,
-  path: '/',
-};
+
+// Shared helper to get request host for cookie logic
+function getRequestHost(req) {
+  let host = req.headers && req.headers.host;
+  if (host && typeof host === 'string' && host.length > 0) {
+    host = host.split(',')[0].trim().split(':')[0].toLowerCase();
+    if (host) return host;
+  }
+  host = req.headers && req.headers['x-forwarded-host'];
+  if (host && typeof host === 'string' && host.length > 0) {
+    host = host.split(',')[0].trim().split(':')[0].toLowerCase();
+    if (host) return host;
+  }
+  if (req.hostname && typeof req.hostname === 'string') {
+    return req.hostname.trim().toLowerCase();
+  }
+  return '';
+}
+
+// Per-request cookie domain logic
+function resolveCookieDomain(req) {
+  if (process.env.NODE_ENV !== 'production') return undefined;
+  const host = getRequestHost(req);
+  const isHuddleDomain = host === 'the-huddle.co' || host.endsWith('.the-huddle.co');
+  if (isHuddleDomain) {
+    return process.env.COOKIE_DOMAIN || '.the-huddle.co';
+  }
+  return undefined;
+}
+function resolveCookieSameSite() {
+  return process.env.NODE_ENV === 'production' ? 'none' : 'lax';
+}
+function resolveCookieSecure() {
+  return process.env.NODE_ENV === 'production';
+}
+function getCookieOptions(req, { httpOnly = true, name } = {}) {
+  const domain = resolveCookieDomain(req);
+  const opts = {
+    httpOnly,
+    secure: resolveCookieSecure(),
+    sameSite: resolveCookieSameSite(),
+    path: '/',
+  };
+  if (domain) opts.domain = domain;
+  if (process.env.DEBUG_COOKIES === 'true') {
+    console.log('[COOKIE]', {
+      req_host: req.headers && req.headers.host,
+      x_forwarded_host: req.headers && req.headers['x-forwarded-host'],
+      req_hostname: req.hostname,
+      computed_host: getRequestHost(req),
+      computed_domain: opts.domain,
+      sameSite: opts.sameSite,
+      secure: opts.secure,
+      name: name || undefined,
+    });
+  }
+  return opts;
+}
 
 const resolveMaxAge = (fallbackMs, expiresAt) => {
   if (typeof expiresAt === 'number' && Number.isFinite(expiresAt)) {
@@ -44,34 +95,33 @@ const resolveMaxAge = (fallbackMs, expiresAt) => {
   return fallbackMs;
 };
 
-const setCookie = (res, name, value, maxAgeMs) => {
-  res.cookie(name, value, {
-    ...baseCookieOptions,
-    maxAge: Math.max(1000, maxAgeMs),
-  });
+const setCookie = (res, name, value, maxAgeMs, req, opts = {}) => {
+  const options = { ...getCookieOptions(req, { ...opts, name }), maxAge: Math.max(1000, maxAgeMs) };
+  res.cookie(name, value, options);
 };
 
-export const attachAuthCookies = (res, tokens) => {
-  setCookie(res, ACCESS_TOKEN_COOKIE, tokens.accessToken, resolveMaxAge(ACCESS_TOKEN_TTL_SECONDS * 1000, tokens.expiresAt));
+export const attachAuthCookies = (req, res, tokens) => {
+  setCookie(res, ACCESS_TOKEN_COOKIE, tokens.accessToken, resolveMaxAge(ACCESS_TOKEN_TTL_SECONDS * 1000, tokens.expiresAt), req, { name: ACCESS_TOKEN_COOKIE });
   setCookie(
     res,
     REFRESH_TOKEN_COOKIE,
     tokens.refreshToken,
-    resolveMaxAge(REFRESH_TOKEN_TTL_SECONDS * 1000, tokens.refreshExpiresAt)
+    resolveMaxAge(REFRESH_TOKEN_TTL_SECONDS * 1000, tokens.refreshExpiresAt),
+    req,
+    { name: REFRESH_TOKEN_COOKIE }
   );
 };
 
-const clearCookie = (res, name) => {
-  res.cookie(name, '', {
-    ...baseCookieOptions,
-    maxAge: 0,
-  });
+const clearCookie = (res, name, req, opts = {}) => {
+  const options = { ...getCookieOptions(req, { ...opts, name }), maxAge: 0 };
+  res.cookie(name, '', options);
 };
 
-export const clearAuthCookies = (res) => {
-  clearCookie(res, ACCESS_TOKEN_COOKIE);
-  clearCookie(res, REFRESH_TOKEN_COOKIE);
+export const clearAuthCookies = (req, res) => {
+  clearCookie(res, ACCESS_TOKEN_COOKIE, req, { name: ACCESS_TOKEN_COOKIE });
+  clearCookie(res, REFRESH_TOKEN_COOKIE, req, { name: REFRESH_TOKEN_COOKIE });
 };
+
 
 export const getAccessTokenFromRequest = (req) => req?.cookies?.[ACCESS_TOKEN_COOKIE] || null;
 export const getRefreshTokenFromRequest = (req) => req?.cookies?.[REFRESH_TOKEN_COOKIE] || null;

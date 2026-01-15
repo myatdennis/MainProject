@@ -13,9 +13,64 @@ const CSRF_TOKEN_LENGTH = 32;
 const CSRF_COOKIE_NAME = 'csrf_token';
 const CSRF_HEADER_NAME = 'x-csrf-token';
 
-// Cookie configuration (allow overriding via env for multi-domain deployments)
-const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || undefined; // e.g. ".the-huddle.co"
-const COOKIE_SAMESITE = process.env.COOKIE_SAMESITE || (process.env.NODE_ENV === 'production' ? 'none' : 'strict');
+
+// Shared helper to get request host for cookie logic
+function getRequestHost(req) {
+  let host = req.headers && req.headers.host;
+  if (host && typeof host === 'string' && host.length > 0) {
+    host = host.split(',')[0].trim().split(':')[0].toLowerCase();
+    if (host) return host;
+  }
+  host = req.headers && req.headers['x-forwarded-host'];
+  if (host && typeof host === 'string' && host.length > 0) {
+    host = host.split(',')[0].trim().split(':')[0].toLowerCase();
+    if (host) return host;
+  }
+  if (req.hostname && typeof req.hostname === 'string') {
+    return req.hostname.trim().toLowerCase();
+  }
+  return '';
+}
+
+// Per-request cookie domain logic
+function resolveCookieDomain(req) {
+  if (process.env.NODE_ENV !== 'production') return undefined;
+  const host = getRequestHost(req);
+  const isHuddleDomain = host === 'the-huddle.co' || host.endsWith('.the-huddle.co');
+  if (isHuddleDomain) {
+    return process.env.COOKIE_DOMAIN || '.the-huddle.co';
+  }
+  return undefined;
+}
+function resolveCookieSameSite() {
+  return process.env.NODE_ENV === 'production' ? 'none' : 'lax';
+}
+function resolveCookieSecure() {
+  return process.env.NODE_ENV === 'production';
+}
+function getCsrfCookieOptions(req, { httpOnly = false, name } = {}) {
+  const domain = resolveCookieDomain(req);
+  const opts = {
+    httpOnly,
+    secure: resolveCookieSecure(),
+    sameSite: resolveCookieSameSite(),
+    path: '/',
+  };
+  if (domain) opts.domain = domain;
+  if (process.env.DEBUG_COOKIES === 'true') {
+    console.log('[COOKIE]', {
+      req_host: req.headers && req.headers.host,
+      x_forwarded_host: req.headers && req.headers['x-forwarded-host'],
+      req_hostname: req.hostname,
+      computed_host: getRequestHost(req),
+      computed_domain: opts.domain,
+      sameSite: opts.sameSite,
+      secure: opts.secure,
+      name: name || undefined,
+    });
+  }
+  return opts;
+}
 
 // Store for CSRF tokens (in production, use Redis or similar)
 const tokenStore = new Map();
@@ -54,15 +109,17 @@ function createSessionToken(sessionId) {
 
 /**
  * Get session ID from request (using cookie or session)
+ * If not present, generate and set a new session_id cookie with correct options.
  */
-function getSessionId(req) {
-  // Try to get from cookie
-  if (req.cookies?.session_id) {
-    return req.cookies.session_id;
-  }
-  
-  // Generate new session ID
+function getSessionId(req, res) {
+  if (req.cookies?.session_id) return req.cookies.session_id;
   const sessionId = generateCSRFToken();
+  if (res) {
+    res.cookie('session_id', sessionId, {
+      ...getCsrfCookieOptions(req, { httpOnly: true, name: 'session_id' }),
+      maxAge: 24 * 60 * 60 * 1000,
+    });
+  }
   return sessionId;
 }
 
@@ -75,7 +132,7 @@ function getSessionId(req) {
  * Verifies CSRF token for state-changing requests (POST, PUT, DELETE, PATCH)
  */
 export function csrfProtection(req, res, next) {
-  const sessionId = getSessionId(req);
+  const sessionId = getSessionId(req, res);
   
   // Safe methods don't require CSRF protection
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
@@ -124,36 +181,18 @@ export function csrfProtection(req, res, next) {
  * Generate and set CSRF token cookie
  */
 export function setCSRFToken(req, res, next) {
-  const sessionId = getSessionId(req);
-  
+  const sessionId = getSessionId(req, res);
   // Get or create token
   let tokenData = tokenStore.get(sessionId);
-  
   if (!tokenData || tokenData.expires < Date.now()) {
     const token = createSessionToken(sessionId);
     tokenData = { token, expires: Date.now() + (24 * 60 * 60 * 1000) };
   }
-  
-  // Set session ID cookie if not exists
-  if (!req.cookies?.session_id) {
-    res.cookie('session_id', sessionId, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: COOKIE_SAMESITE,
-      domain: COOKIE_DOMAIN,
-      maxAge: 24 * 60 * 60 * 1000, // 24 hours
-    });
-  }
-  
   // Expose token to client (not httpOnly so JS can read it)
   res.cookie(CSRF_COOKIE_NAME, tokenData.token, {
-    httpOnly: false,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: COOKIE_SAMESITE,
-    domain: COOKIE_DOMAIN,
-    maxAge: 24 * 60 * 60 * 1000, // 24 hours
+    ...getCsrfCookieOptions(req, { httpOnly: false, name: CSRF_COOKIE_NAME }),
+    maxAge: 24 * 60 * 60 * 1000,
   });
-  
   next();
 }
 
@@ -165,14 +204,12 @@ export function setCSRFToken(req, res, next) {
  * Get CSRF token endpoint
  */
 export function getCSRFToken(req, res) {
-  const sessionId = getSessionId(req);
+  const sessionId = getSessionId(req, res);
   let tokenData = tokenStore.get(sessionId);
-  
   if (!tokenData || tokenData.expires < Date.now()) {
     const token = createSessionToken(sessionId);
     tokenData = { token, expires: Date.now() + (24 * 60 * 60 * 1000) };
   }
-  
   res.json({
     csrfToken: tokenData.token,
   });
@@ -188,27 +225,23 @@ export function getCSRFToken(req, res) {
  */
 export function doubleSubmitCSRF(req, res, next) {
   // Safe methods don't require CSRF protection
-  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+  if (["GET", "HEAD", "OPTIONS"].includes(req.method)) {
     return next();
   }
-  
   const cookieToken = req.cookies?.[CSRF_COOKIE_NAME];
   const headerToken = req.headers[CSRF_HEADER_NAME];
-  
   if (!cookieToken || !headerToken) {
     return res.status(403).json({
       error: 'CSRF token missing',
       message: 'CSRF protection requires both cookie and header token',
     });
   }
-  
   if (cookieToken !== headerToken) {
     return res.status(403).json({
       error: 'Invalid CSRF token',
       message: 'CSRF token mismatch',
     });
   }
-  
   next();
 }
 
@@ -218,15 +251,10 @@ export function doubleSubmitCSRF(req, res, next) {
 export function setDoubleSubmitCSRF(req, res, next) {
   if (!req.cookies?.[CSRF_COOKIE_NAME]) {
     const token = generateCSRFToken();
-    
     res.cookie(CSRF_COOKIE_NAME, token, {
-      httpOnly: false, // Client needs to read this
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: COOKIE_SAMESITE,
-      domain: COOKIE_DOMAIN,
-      maxAge: 24 * 60 * 60 * 1000, // 24 hours
+      ...getCsrfCookieOptions(req, { httpOnly: false, name: CSRF_COOKIE_NAME }),
+      maxAge: 24 * 60 * 60 * 1000,
     });
   }
-  
   next();
 }
