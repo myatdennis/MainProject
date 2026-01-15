@@ -213,19 +213,22 @@ export function buildApiUrl(path: string): string {
 
 export const resolveApiUrl = buildApiUrl;
 
+const DEFAULT_WS_PATH = '/ws';
+
 const toWsOrigin = (httpOrigin: string) => {
   if (httpOrigin.startsWith('https://')) return `wss://${httpOrigin.slice('https://'.length)}`;
   if (httpOrigin.startsWith('http://')) return `ws://${httpOrigin.slice('http://'.length)}`;
   return httpOrigin;
 };
 
-export function resolveWsUrl(path = '/ws'): string {
-  if (/^wss?:\/\//i.test(path || '')) {
-    return path as string;
-  }
-  const { normalizedPath, suffix } = normalizeResourcePath(path || '/ws');
-  const finalPath = normalizedPath || '/ws';
+const resolveWsPath = (path?: string) => {
+  const candidate = path && path.trim().length > 0 ? path : DEFAULT_WS_PATH;
+  const { normalizedPath, suffix } = normalizeResourcePath(candidate);
+  const wsPath = normalizedPath || DEFAULT_WS_PATH;
+  return { wsPath, suffix };
+};
 
+export function resolveWsUrl(path = DEFAULT_WS_PATH): string {
   const rawWsUrl = getRawWsUrl();
   if (rawWsUrl) {
     return rawWsUrl;
@@ -238,7 +241,14 @@ export function resolveWsUrl(path = '/ws'): string {
     }
   }
 
-  const wsOrigin = toWsOrigin(getApiOrigin());
-  return `${wsOrigin}${finalPath}${suffix}`;
+  if (/^wss?:\/\//i.test(path || '')) {
+    return path as string;
+  }
+
+  const envBase = getEnvBase();
+  const apiOrigin = envBase.origin || getApiOrigin();
+  const wsOrigin = toWsOrigin(apiOrigin);
+  const { wsPath, suffix } = resolveWsPath(path);
+  return `${wsOrigin}${wsPath}${suffix}`;
 }
 

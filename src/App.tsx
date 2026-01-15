@@ -213,7 +213,7 @@ function AppContent() {
                 </Route>
                 <Route path="/admin/login" element={<AdminLogin />} />
                 <Route path="/admin/*" element={<AdminProtectedLayout />}>
-                  <Route index element={<Navigate to="dashboard" replace />} />
+                  <Route index element={<Navigate to="courses" replace />} />
                   <Route path="dashboard" element={<AdminDashboard />} />
                   <Route path="health" element={<AdminHealth />} />
                   <Route path="analytics" element={<AdminAnalytics />} />

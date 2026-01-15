@@ -1,3 +1,6 @@
+// --- Org ID Compatibility Constant (must be first) ---
+// --- End Org ID Compatibility Constant ---
+
 // (Removed initial lightweight dev server stub in favor of the full server below)
 import 'dotenv/config';
 import express from 'express';
@@ -37,6 +40,7 @@ import { withCache, invalidateCacheKeys } from './services/cacheService.js';
 import { enqueueJob, registerJobProcessor, hasQueueBackend } from './jobs/taskQueue.js';
 import setupNotificationDispatcher from './services/notificationDispatcher.js';
 import { validateCourse as validatePublishableCourse } from './lib/courseValidation.js';
+import { buildHealthResponse } from './lib/healthResponse.js';
 
 // Import auth routes and middleware
 import authRoutes from './routes/auth.js';
@@ -72,6 +76,9 @@ import { createMediaService } from './services/mediaService.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const shouldLogAuthDebug =
+  NODE_ENV !== 'production' || String(process.env.ENABLE_AUTH_DEBUG || '').toLowerCase() === 'true';
+
 // Persistent storage file for demo mode
 const STORAGE_FILE = path.join(__dirname, 'demo-data.json');
 // Safety guard to avoid loading extremely large demo files that could trigger OOM (exit 137)
@@ -88,6 +95,14 @@ const DOCUMENT_URL_REFRESH_BUFFER_MS = DOCUMENT_URL_REFRESH_BUFFER_SECONDS * 100
 const COURSE_VIDEOS_BUCKET = process.env.SUPABASE_VIDEOS_BUCKET || 'course-videos';
 const COURSE_VIDEO_UPLOAD_MAX_BYTES = Number(process.env.COURSE_VIDEO_UPLOAD_MAX_BYTES || 750 * 1024 * 1024);
 const REQUIRED_SUPABASE_BUCKETS = Array.from(new Set([COURSE_VIDEOS_BUCKET, DOCUMENTS_BUCKET].filter(Boolean)));
+
+const WS_SERVER_PATH = process.env.WS_SERVER_PATH || '/ws';
+const wsHealthSnapshot = {
+  path: WS_SERVER_PATH,
+  enabled: false,
+  lastError: null,
+  lastStartedAt: null,
+};
 
 const documentUpload = multer({
   storage: multer.memoryStorage(),
@@ -106,21 +121,21 @@ const videoUpload = multer({
 // Helper functions for persistent storage
 function loadPersistedData() {
   try {
-    if (fs.existsSync(STORAGE_FILE)) {
-      try {
-        const stat = fs.statSync(STORAGE_FILE);
-        if (stat.size > MAX_DEMO_FILE_BYTES) {
-          logger.warn('demo_data_file_too_large', { bytes: stat.size, maxBytes: MAX_DEMO_FILE_BYTES });
-          return { courses: [], surveys: [], surveyAssignments: [] };
-        }
-      } catch {}
-      const data = fs.readFileSync(STORAGE_FILE, 'utf8');
-      return JSON.parse(data);
-    }
+          if (fs.existsSync(STORAGE_FILE)) {
+            try {
+              const stat = fs.statSync(STORAGE_FILE);
+              if (stat.size > MAX_DEMO_FILE_BYTES) {
+                logger.warn('demo_data_file_too_large', { bytes: stat.size, maxBytes: MAX_DEMO_FILE_BYTES });
+                return { courses: [], surveys: [], surveyAssignments: [] };
+              }
+            } catch {}
+            const data = fs.readFileSync(STORAGE_FILE, 'utf8');
+            return JSON.parse(data);
+          }
   } catch (error) {
     logger.error('demo_data_load_failed', { error: error instanceof Error ? error.message : error });
   }
-  return { courses: new Map(), modules: new Map(), lessons: new Map(), surveys: new Map(), surveyAssignments: new Map() };
+        return { courses: new Map(), modules: new Map(), lessons: new Map(), surveys: new Map(), surveyAssignments: new Map() };
 }
 
 function savePersistedData(data) {
@@ -142,24 +157,18 @@ function savePersistedData(data) {
 const app = express();
 app.set('etag', false);
 
-const rawAllowedOrigins = process.env.CORS_ALLOWED_ORIGINS || '';
-const extraAllowedOrigins = rawAllowedOrigins
-  .split(',')
-  .map((origin) => origin.trim())
-  .filter(Boolean);
+import cors from "cors";
 
-const defaultAllowedOrigins = [
-  'https://the-huddle.co',
-  'https://www.the-huddle.co',
-  'http://localhost:5174',
-  'http://127.0.0.1:5174',
-  'http://localhost:4173',
-  'http://127.0.0.1:4173',
-  'http://localhost:3000',
-  'http://127.0.0.1:3000',
-];
-
-const allowedOrigins = Array.from(new Set([...defaultAllowedOrigins, ...extraAllowedOrigins]));
+const allowedOrigins = new Set([
+  "https://the-huddle.co",
+  "https://www.the-huddle.co",
+  "http://localhost:5174",
+  "http://127.0.0.1:5174",
+  "http://localhost:4173",
+  "http://127.0.0.1:4173",
+  "http://localhost:3000",
+  "http://127.0.0.1:3000",
+]);
 
 const fsp = fs.promises;
 const PROGRESS_BATCH_MAX_SIZE = Number(process.env.PROGRESS_BATCH_MAX_SIZE || 100);
@@ -194,32 +203,19 @@ const ANALYTICS_PII_FIELDS = new Set([
 ]);
 
 
-app.use((req, res, next) => {
-  const origin = req.headers.origin;
-  const isLocalDevOrigin = origin && origin.startsWith('http://localhost');
-  const isLoopback = origin && origin.startsWith('http://127.');
-  const isAllowed = origin && allowedOrigins.includes(origin);
-
-  if (origin && (isAllowed || (!isProduction && (isLocalDevOrigin || isLoopback)))) {
-    res.header('Access-Control-Allow-Origin', origin);
-    res.header('Vary', 'Origin');
-  } else if (!origin && !isProduction) {
-    res.header('Access-Control-Allow-Origin', '*');
-  }
-
-  res.header('Access-Control-Allow-Credentials', 'true');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-  res.header(
-    'Access-Control-Allow-Headers',
-    'Content-Type, Authorization, X-Requested-With, X-CSRF-Token, Accept'
-  );
-
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(204);
-  }
-
-  next();
-});
+app.use(
+  cors({
+    origin(origin, cb) {
+      // allow same-origin, curl, server-to-server calls
+      if (!origin) return cb(null, true);
+      if (allowedOrigins.has(origin)) return cb(null, true);
+      return cb(new Error(`CORS blocked for origin: ${origin}`));
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "X-CSRF-Token", "Accept"],
+  })
+);
 
 // Attach request ids early so health/diagnostics endpoints can include them even before
 // the rest of the middleware stack (body parsers, auth, etc.) runs.
@@ -361,6 +357,27 @@ const deriveOverallStatus = (statuses = []) => {
   return 'ok';
 };
 
+const resolveAppVersion = () =>
+  process.env.APP_VERSION ||
+  process.env.VERCEL_GIT_COMMIT_SHA ||
+  process.env.RENDER_GIT_COMMIT ||
+  process.env.HEROKU_SLUG_COMMIT ||
+  process.env.COMMIT_REF ||
+  'dev';
+
+const resolveAppEnvironment = () => process.env.APP_ENV || process.env.VERCEL_ENV || NODE_ENV || process.env.NODE_ENV || 'development';
+
+const isDiagnosticsRequestAllowed = (req) => {
+  if (!isProduction) {
+    return true;
+  }
+  const origin = req.headers.origin;
+  if (origin && allowedOrigins.includes(origin)) {
+    return true;
+  }
+  return false;
+};
+
 const buildHealthPayload = async (overrides = {}) => {
   const [supabaseHealth, storageHealth] = await Promise.all([
     checkSupabaseHealth().catch((error) => {
@@ -401,24 +418,70 @@ const buildHealthPayload = async (overrides = {}) => {
       enforced: Boolean(FORCE_ORG_ENFORCEMENT),
       devFallback: Boolean(DEV_FALLBACK),
     },
+    realtime: {
+      wsEnabled: Boolean(wsHealthSnapshot.enabled),
+      wsPath: wsHealthSnapshot.path,
+      wsError: wsHealthSnapshot.lastError,
+      wsLastStartedAt: wsHealthSnapshot.lastStartedAt,
+    },
     ...overrides,
   };
 };
 
 async function respondToHealthRequest(req, res) {
+  const basePayload = {
+    ok: true,
+    version: resolveAppVersion(),
+    env: resolveAppEnvironment(),
+  };
+
+  const wantsDiagnostics = req.headers['x-runtime-status'] === '1';
+  const diagnosticsAllowed = wantsDiagnostics && isDiagnosticsRequestAllowed(req);
+
+  if (!wantsDiagnostics) {
+    res.status(200).json(
+      buildHealthResponse({
+        basePayload,
+        wantsDiagnostics,
+        diagnosticsAllowed: false,
+      })
+    );
+    return;
+  }
+
+  if (!diagnosticsAllowed) {
+    res.status(200).json(
+      buildHealthResponse({
+        basePayload,
+        wantsDiagnostics,
+        diagnosticsAllowed,
+      })
+    );
+    return;
+  }
+
   try {
-    const payload = await buildHealthPayload();
-    res.json(payload);
+    const diagnostics = await buildHealthPayload();
+    const responsePayload = buildHealthResponse({
+      basePayload,
+      wantsDiagnostics,
+      diagnosticsAllowed,
+      diagnosticsPayload: diagnostics,
+    });
+    res.status(200).json(responsePayload);
   } catch (error) {
     logger.error('health_response_failed', { error: error instanceof Error ? error.message : error });
-    res.status(500).json({ error: 'health_unavailable' });
+    res.status(200).json({ ...basePayload, ok: false, error: 'health_unavailable' });
   }
 }
 
 app.post('/api/admin/courses/:id/assign', async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { id } = req.params;
-  const body = req.body ?? {};
+  const body = normalizeLegacyOrgInput(req.body ?? {}, {
+    surface: 'admin.courses.assign',
+    requestId: req.requestId,
+  });
   const resolveOrgId = body.organization_id ?? body.organizationId;
   const organizationId = typeof resolveOrgId === 'string'
     ? resolveOrgId.trim()
@@ -519,6 +582,8 @@ app.post('/api/admin/courses/:id/assign', async (req, res) => {
   const buildRecord = (userId) => {
     const record = {
       organization_id: organizationId,
+      organizationId: organizationId,
+      org_id: organizationId,
       course_id: id,
       user_id: userId,
       assigned_by: assignedBy ?? null,
@@ -1056,6 +1121,9 @@ const checkSupabaseHealth = async () => {
 // Load persisted data if available
 const persistedData = loadPersistedData();
 
+
+
+
 const e2eStore = {
   courses: new Map(persistedData.courses || []), // id -> { id, slug, title, description, status, version, published_at, meta_json, modules: [{ id, title, description, order_index, lessons: [...] }] }
   assignments: [],
@@ -1070,6 +1138,107 @@ const e2eStore = {
   surveys: new Map(persistedData.surveys || []),
   surveyAssignments: new Map(persistedData.surveyAssignments || []),
   auditLogs: [],
+};
+
+
+
+
+// --- Org ID Compatibility Helpers (must be above all usage) ---
+const DEFAULT_SANDBOX_ORG_ID =
+  process.env.E2E_SANDBOX_ORG_ID ||
+  process.env.DEMO_SANDBOX_ORG_ID ||
+  process.env.DEFAULT_SANDBOX_ORG_ID ||
+  'demo-sandbox-org';
+
+function normalizeOrgIdValue(value) {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    if (!trimmed || trimmed.toLowerCase() === 'null') {
+      return null;
+    }
+    return trimmed;
+  }
+  if (typeof value === 'number') {
+    return String(value);
+  }
+  if (value && typeof value === 'object') {
+    const candidate = value.organization_id ?? value.org_id ?? value.id ?? null;
+    if (typeof candidate === 'string') {
+      const trimmed = candidate.trim();
+      return trimmed || null;
+    }
+  }
+  return null;
+}
+
+function pickOrgId(...candidates) {
+  for (const candidate of candidates) {
+    const normalized = normalizeOrgIdValue(candidate);
+    if (normalized) {
+      return normalized;
+    }
+  }
+  return null;
+}
+
+function hydrateSandboxOrgFields(e2eStore) {
+  for (const [courseId, course] of e2eStore.courses.entries()) {
+    e2eStore.courses.set(
+      courseId,
+      ensureOrgFieldCompatibility(course, { fallbackOrgId: DEFAULT_SANDBOX_ORG_ID }) || course,
+    );
+  }
+  if (Array.isArray(e2eStore.assignments)) {
+    for (let i = 0; i < e2eStore.assignments.length; i += 1) {
+      ensureOrgFieldCompatibility(e2eStore.assignments[i], { fallbackOrgId: DEFAULT_SANDBOX_ORG_ID });
+    }
+  }
+}
+// --- End Org ID Compatibility Helpers ---
+// Hydrate org fields after e2eStore is defined
+hydrateSandboxOrgFields(e2eStore);
+
+
+const getCourseOrgId = async (courseId) => {
+  if (!courseId) return undefined;
+  if (!supabase) {
+    if (E2E_TEST_MODE || DEV_FALLBACK) {
+      const record = e2eStore.courses.get(courseId);
+      if (!record) return undefined;
+      return pickOrgId(record.organization_id, record.org_id, record.organizationId);
+    }
+    return undefined;
+  }
+  try {
+    const { data, error } = await supabase
+      .from('courses')
+      .select('organization_id')
+      .eq('id', courseId)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return undefined;
+    return normalizeOrgIdValue(data.organization_id);
+  } catch (error) {
+    console.error('getCourseOrgId_failed', { courseId, error: error instanceof Error ? error.message : error });
+    return undefined;
+  }
+};
+
+const getDocumentOrgId = async (documentId) => {
+  if (!documentId || !supabase) return undefined;
+  try {
+    const { data, error } = await supabase
+      .from('documents')
+      .select('organization_id')
+      .eq('id', documentId)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return undefined;
+    return normalizeOrgIdValue(data.organization_id);
+  } catch (error) {
+    console.error('getDocumentOrgId_failed', { documentId, error: error instanceof Error ? error.message : error });
+    return undefined;
+  }
 };
 const COURSE_WITH_MODULES_LESSONS_SELECT = '*, modules(*, lessons!lessons_module_org_fk(*))';
 const MODULE_LESSONS_FOREIGN_TABLE = 'modules.lessons!lessons_module_org_fk';
@@ -1833,6 +2002,9 @@ if (e2eStore.courses.size > 0) {
     thumbnail: '/api/placeholder/400/300',
     difficulty: 'Beginner',
     duration: '2 hours',
+  organization_id: DEFAULT_SANDBOX_ORG_ID,
+  organizationId: DEFAULT_SANDBOX_ORG_ID,
+  org_id: DEFAULT_SANDBOX_ORG_ID,
     instructorName: 'Dr. Sarah Chen',
     estimatedDuration: 7200,
     keyTakeaways: [
@@ -2094,35 +2266,74 @@ const normalizeOrgRole = (role, defaultRole = 'member') => {
   return defaultRole;
 };
 
-const normalizeOrgIdValue = (value) => {
-  if (typeof value === 'string') {
-    const trimmed = value.trim();
-    if (!trimmed || trimmed.toLowerCase() === 'null') {
-      return null;
-    }
-    return trimmed;
-  }
-  if (typeof value === 'number') {
-    return String(value);
-  }
-  if (value && typeof value === 'object') {
-    const candidate = value.organization_id ?? value.org_id ?? value.id ?? null;
-    if (typeof candidate === 'string') {
-      const trimmed = candidate.trim();
-      return trimmed || null;
-    }
-  }
-  return null;
-};
 
-const pickOrgId = (...candidates) => {
-  for (const candidate of candidates) {
-    const normalized = normalizeOrgIdValue(candidate);
-    if (normalized) {
-      return normalized;
-    }
+
+function ensureOrgFieldCompatibility(record, { fallbackOrgId = null } = {}) {
+  if (!record || typeof record !== 'object') {
+    return record;
   }
-  return null;
+  const normalized = pickOrgId(record.organization_id, record.org_id, record.organizationId, fallbackOrgId);
+  if (!normalized) {
+    return record;
+  }
+  if (record.organization_id !== normalized) {
+    record.organization_id = normalized;
+  }
+  if (record.organizationId !== normalized) {
+    record.organizationId = normalized;
+  }
+  if (record.org_id !== normalized) {
+    record.org_id = normalized;
+  }
+  return record;
+}
+
+const shouldWarnOnLegacyOrgId = (process.env.NODE_ENV || '').toLowerCase() !== 'production';
+
+const normalizeLegacyOrgInput = (payload, { surface = 'unknown', requestId = null, path = 'body' } = {}) => {
+  if (!payload || typeof payload !== 'object') {
+    return payload;
+  }
+
+  const visited = new WeakSet();
+
+  const walk = (value, currentPath) => {
+    if (!value || typeof value !== 'object') return;
+    if (visited.has(value)) return;
+    visited.add(value);
+
+    if (Object.prototype.hasOwnProperty.call(value, 'org_id')) {
+      if (shouldWarnOnLegacyOrgId) {
+        console.warn('[org_id-deprecated] Received legacy org_id field', {
+          surface,
+          requestId,
+          path: currentPath,
+        });
+      }
+      if (value.organization_id === undefined) {
+        value.organization_id = value.org_id;
+      }
+      if (value.organizationId === undefined) {
+        value.organizationId = value.organization_id ?? value.org_id;
+      }
+      delete value.org_id;
+    }
+
+    if (Array.isArray(value)) {
+      value.forEach((child, index) => {
+        walk(child, `${currentPath}[${index}]`);
+      });
+      return;
+    }
+
+    for (const [key, child] of Object.entries(value)) {
+      const nextPath = currentPath ? `${currentPath}.${key}` : key;
+      walk(child, nextPath);
+    }
+  };
+
+  walk(payload, path);
+  return payload;
 };
 
 const getRequestContext = (req) => {
@@ -2172,7 +2383,26 @@ const resolveOrgMembership = async (req, orgId, userId) => {
   };
 };
 
-const requireOrgAccess = async (req, res, orgId, { write = false, allowPlatformAdmin = true } = {}) => {
+const logDeniedOrgAccess = (req, payload = {}) => {
+  if (!shouldLogAuthDebug) {
+    return;
+  }
+  const safePayload = payload && typeof payload === 'object' ? payload : {};
+  const meta = {
+    path: req?.originalUrl || req?.url,
+    method: req?.method,
+    requestId: req?.requestId,
+    ...safePayload,
+  };
+  console.warn('[orgAccess] denied', meta);
+};
+
+const requireOrgAccess = async (
+  req,
+  res,
+  orgId,
+  { write = false, allowPlatformAdmin = true, requireOrgAdmin = false } = {},
+) => {
   const context = requireUserContext(req, res);
   if (!context) return null;
 
@@ -2194,12 +2424,36 @@ const requireOrgAccess = async (req, res, orgId, { write = false, allowPlatformA
 
     const membership = req.orgMemberships?.get(orgId) || (await resolveOrgMembership(req, orgId, context.userId));
     if (!membership || (membership.status && membership.status !== 'active')) {
+      logDeniedOrgAccess(req, {
+        reason: 'missing_membership',
+        orgId,
+        userId: context.userId,
+        resolvedRole: context.userRole,
+      });
       res.status(403).json({ error: 'Organization membership required' });
       return null;
     }
 
     const memberRole = String(membership.role || 'member').toLowerCase();
+
+    if (requireOrgAdmin && memberRole !== 'admin') {
+      logDeniedOrgAccess(req, {
+        reason: 'org_admin_required',
+        orgId,
+        userId: context.userId,
+        membershipRole: membership.role,
+      });
+      res.status(403).json({ error: 'org_admin_required', message: 'Admin membership required for this organization' });
+      return null;
+    }
+
     if (write && !writableMembershipRoles.has(memberRole)) {
+      logDeniedOrgAccess(req, {
+        reason: 'insufficient_org_permissions',
+        orgId,
+        userId: context.userId,
+        membershipRole: membership.role,
+      });
       res.status(403).json({ error: 'Insufficient organization permissions' });
       return null;
     }
@@ -2346,12 +2600,113 @@ const sortActionItems = (items) =>
 
 const requireAdminAccess = (req, res) => {
   const context = getRequestContext(req);
-  if (context.isPlatformAdmin || context.userRole === 'admin') {
+  const isOrgAdmin = Array.isArray(context.memberships)
+    ? context.memberships.some((membership) => String(membership.role || '').toLowerCase() === 'admin')
+    : false;
+
+  if (context.isPlatformAdmin || context.userRole === 'admin' || isOrgAdmin) {
     return true;
   }
+
+  if (shouldLogAuthDebug) {
+    console.warn('[adminAccess] denied', {
+      path: req?.originalUrl,
+      userId: context.userId,
+      resolvedRole: context.userRole,
+      orgIds: context.organizationIds,
+      memberships: context.memberships?.map((m) => ({ orgId: m.orgId, role: m.role })) || [],
+    });
+  }
+
   res.status(403).json({ error: 'Platform admin access required' });
   return false;
 };
+
+const normalizeMembershipForAdminResponse = (membership = {}) => {
+  const resolveOrgId = membership.orgId || membership.organizationId || membership.org_id || membership.organization_id;
+  const role = membership.role ? String(membership.role).toLowerCase() : null;
+  const status = membership.status ? String(membership.status).toLowerCase() : null;
+  return {
+    orgId: resolveOrgId || null,
+    role,
+    status,
+    organizationName: membership.organizationName ?? membership.organization_name ?? null,
+    organizationStatus: membership.organizationStatus ?? membership.organization_status ?? null,
+    subscription: membership.subscription ?? null,
+    features: membership.features ?? null,
+    acceptedAt: membership.acceptedAt ?? membership.accepted_at ?? null,
+    lastSeenAt: membership.lastSeenAt ?? membership.last_seen_at ?? null,
+  };
+};
+
+const isActiveAdminMembership = (membership) => {
+  if (!membership) return false;
+  const role = String(membership.role || '').toLowerCase();
+  if (role !== 'admin') {
+    return false;
+  }
+  const status = String(membership.status || 'active').toLowerCase();
+  return status === 'active' || status === 'accepted';
+};
+
+app.get('/api/admin/me', (req, res) => {
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  const userPayload = req.user || {};
+  const rawMemberships = Array.isArray(userPayload.memberships) ? userPayload.memberships : context.memberships || [];
+  const memberships = rawMemberships.map((membership) => normalizeMembershipForAdminResponse(membership));
+  const adminMemberships = memberships.filter(isActiveAdminMembership);
+  const adminOrgIds = Array.from(new Set(adminMemberships.map((membership) => membership.orgId).filter(Boolean)));
+  const resolvedActiveOrgId = pickOrgId(
+    req.activeOrgId,
+    userPayload.activeOrgId,
+    userPayload.organizationId,
+    adminOrgIds[0],
+    context.organizationIds?.[0],
+  );
+
+  const permissions = Array.isArray(userPayload.permissions)
+    ? userPayload.permissions
+    : Array.from(req.userPermissions || []);
+
+  if (shouldLogAuthDebug) {
+    console.info('[adminAccess] /api/admin/me granted', {
+      userId: context.userId,
+      via: context.isPlatformAdmin ? 'platform_admin' : 'org_admin',
+      adminOrgIds,
+      activeOrgId: resolvedActiveOrgId,
+      requestId: req.requestId,
+    });
+  }
+
+  res.json({
+    user: {
+      id: context.userId,
+      email: userPayload.email || null,
+      role: userPayload.role || context.userRole || null,
+      platformRole: userPayload.platformRole || null,
+      isPlatformAdmin: Boolean(context.isPlatformAdmin || userPayload.isPlatformAdmin),
+      activeOrgId: resolvedActiveOrgId,
+      organizationIds: context.organizationIds || [],
+      memberships,
+      adminOrgIds,
+      activeMembership: memberships.find((membership) => membership.orgId === resolvedActiveOrgId) ?? null,
+      permissions,
+    },
+    access: {
+      allowed: true,
+      via: context.isPlatformAdmin ? 'platform' : 'org_admin',
+      reason: context.isPlatformAdmin ? 'platform_admin' : 'org_admin_membership',
+      orgAdminCount: adminOrgIds.length,
+      timestamp: new Date().toISOString(),
+    },
+    context: {
+      surface: 'admin',
+      requestOrgId: pickOrgId(req.query?.orgId, req.query?.organizationId, req.headers?.['x-org-id']),
+    },
+  });
+});
 
 const defaultOrgProfileRow = (orgId) => ({
   org_id: orgId,
@@ -3755,24 +4110,34 @@ app.get('/api/admin/courses', async (req, res) => {
   const requestedOrgId = pickOrgId(
     req.query?.orgId,
     req.query?.org_id,
+    req.query?.organization_id,
     req.query?.organizationId,
     req.body?.orgId,
+    req.body?.org_id,
+    req.body?.organization_id,
     req.body?.organizationId
   );
 
   const isPlatformAdmin = Boolean(context.isPlatformAdmin);
+  const allowedOrgIds = Array.isArray(context.organizationIds)
+    ? context.organizationIds.map((value) => normalizeOrgIdValue(value)).filter(Boolean)
+    : [];
+  const allowedOrgIdSet = new Set(allowedOrgIds);
 
-  if (!requestedOrgId && !isPlatformAdmin) {
-    res.status(400).json({
-      error: 'organization_id_required',
-      message: 'Provide orgId via query parameter when accessing admin courses.',
-    });
+  const restrictToAllowed = !isPlatformAdmin && !requestedOrgId;
+
+  if (!isPlatformAdmin && !requestedOrgId && allowedOrgIds.length === 0) {
+    res.json({ data: [], pagination: { page: 1, pageSize: 0, total: 0, hasMore: false } });
     return;
   }
 
   if (requestedOrgId) {
-    const access = await requireOrgAccess(req, res, requestedOrgId, { write: false });
+    const access = await requireOrgAccess(req, res, requestedOrgId, { write: false, requireOrgAdmin: true });
     if (!access) return;
+    if (!isPlatformAdmin && !allowedOrgIdSet.has(requestedOrgId)) {
+      res.status(403).json({ error: 'org_access_denied', message: 'Organization scope not permitted' });
+      return;
+    }
   }
 
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
@@ -3790,6 +4155,7 @@ app.get('/api/admin/courses', async (req, res) => {
         difficulty: c.difficulty ?? null,
         duration: c.duration ?? null,
         organization_id: c.organization_id ?? c.org_id ?? null,
+        organizationId: c.organizationId ?? c.organization_id ?? c.org_id ?? null,
         org_id: c.org_id ?? c.organization_id ?? null,
         instructorName: c.instructorName ?? null,
         estimatedDuration: c.estimatedDuration ?? null,
@@ -3797,13 +4163,27 @@ app.get('/api/admin/courses', async (req, res) => {
         modules: c.modules || [],
       }));
       const filtered = shaped.filter((course) => {
-        const courseOrgId = pickOrgId(course.organization_id, course.org_id);
+        const courseOrgId = pickOrgId(course.organization_id, course.org_id, course.organizationId);
         if (requestedOrgId) {
           return courseOrgId === requestedOrgId;
         }
-        return !courseOrgId;
+        if (!isPlatformAdmin) {
+          return courseOrgId ? allowedOrgIdSet.has(courseOrgId) : false;
+        }
+        return true;
       });
-      res.json({ data: filtered, pagination: { page: 1, pageSize: filtered.length, total: filtered.length, hasMore: false } });
+      const responseBody = {
+        data: filtered,
+        pagination: { page: 1, pageSize: filtered.length, total: filtered.length, hasMore: false },
+      };
+      if (NODE_ENV !== 'production') {
+        responseBody.debug = {
+          filterOrgId: requestedOrgId || null,
+          totalCountForOrg: filtered.length,
+          totalCountAllOrgs: shaped.length,
+        };
+      }
+      res.json(responseBody);
       return;
     } catch (err) {
       logAdminCoursesError(req, err, 'E2E fetch courses failed');
@@ -3837,7 +4217,8 @@ app.get('/api/admin/courses', async (req, res) => {
     'difficulty',
     'duration',
     'organization_id',
-    'organization_id:org_id',
+    'org_id:organization_id',
+    'organizationId:organization_id',
     'created_at',
     'updated_at',
   ];
@@ -3866,14 +4247,40 @@ app.get('/api/admin/courses', async (req, res) => {
 
     if (orgFilter) {
       query = query.eq('organization_id', orgFilter);
-    } else {
-      query = query.is('organization_id', null);
+    } else if (!isPlatformAdmin) {
+      if (!allowedOrgIds.length) {
+        res.json({
+          data: [],
+          pagination: { page, pageSize, total: 0, hasMore: false },
+        });
+        return;
+      }
+      query = query.in('organization_id', allowedOrgIds);
     }
 
     const { data, error, count } = await query;
     if (error) throw error;
 
-    res.json({
+    let debugMeta = null;
+    if (NODE_ENV !== 'production') {
+      debugMeta = {
+        filterOrgId: orgFilter || (restrictToAllowed ? '[allowed_orgs]' : null),
+        totalCountForOrg: typeof count === 'number' ? count : 0,
+        totalCountAllOrgs: typeof count === 'number' ? count : 0,
+      };
+      try {
+        const { count: globalCount } = await supabase
+          .from('courses')
+          .select('id', { count: 'exact', head: true });
+        if (typeof globalCount === 'number') {
+          debugMeta.totalCountAllOrgs = globalCount;
+        }
+      } catch (countErr) {
+        console.warn('[admin.courses] Failed to compute total course count for debug telemetry', countErr);
+      }
+    }
+
+    const responseBody = {
       data,
       pagination: {
         page,
@@ -3881,31 +4288,62 @@ app.get('/api/admin/courses', async (req, res) => {
         total: count || 0,
         hasMore: to + 1 < (count || 0),
       },
-    });
+    };
+
+    if (debugMeta) {
+      responseBody.debug = debugMeta;
+    }
+
+    res.json(responseBody);
   } catch (error) {
     logAdminCoursesError(req, error, 'Failed to fetch courses');
     res.status(500).json({ error: 'Unable to fetch courses' });
   }
 });
 
-app.post('/api/admin/courses', async (req, res) => {
+async function handleAdminCourseUpsert(req, res, options = {}) {
+  const { courseIdFromParams = null } = options;
+  req.body = req.body || {};
+  normalizeLegacyOrgInput(req.body, { surface: 'admin.courses.upsert', requestId: req.requestId });
+  let { course: courseLocal, modules: modulesLocal = [] } = req.body || {};
+  if (!courseLocal) {
+    res.status(400).json({ error: 'course_required', message: 'Missing course object in request body.' });
+    return;
+  }
+  if (courseIdFromParams) {
+    const incomingId = courseLocal?.id ?? null;
+    if (incomingId && String(incomingId) !== String(courseIdFromParams)) {
+      res.status(400).json({ error: 'course_id_mismatch', message: 'Course ID in payload must match URL parameter.' });
+      return;
+    }
+    courseLocal = { ...(courseLocal || {}), id: courseIdFromParams };
+    req.body.course = courseLocal;
+  }
+
   // Validate incoming payload (accepting existing client shape)
   const valid = validateOr400(courseUpsertSchema, req, res);
   if (!valid) return;
   const context = requireUserContext(req, res);
   if (!context) return;
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
-    const { course, modules = [] } = req.body || {};
-    const organizationId = pickOrgId(course?.org_id, course?.organizationId, req.body?.orgId, req.body?.organizationId);
+    const organizationId = pickOrgId(
+      courseLocal?.organization_id,
+      courseLocal?.org_id,
+      courseLocal?.organizationId,
+      req.body?.organization_id,
+      req.body?.org_id,
+      req.body?.orgId,
+      req.body?.organizationId
+    );
     if (!organizationId && !context.isPlatformAdmin) {
       res.status(400).json({ error: 'organization_id_required', message: 'Provide organizationId when creating or updating a course.' });
       return;
     }
     if (organizationId) {
-      const access = await requireOrgAccess(req, res, organizationId, { write: true });
+      const access = await requireOrgAccess(req, res, organizationId, { write: true, requireOrgAdmin: true });
       if (!access) return;
     }
-    if (!course?.title) {
+    if (!courseLocal?.title) {
       res.status(400).json({ error: 'Course title is required' });
       return;
     }
@@ -3931,9 +4369,9 @@ app.post('/api/admin/courses', async (req, res) => {
 
       // Idempotent upsert by id, slug, or external_id (stored in meta_json)
       let existingId = null;
-      const incomingSlug = course.slug ?? null;
-      const incomingExternalId = (course.external_id ?? course.meta?.external_id ?? null) || null;
-      if (!course.id) {
+      const incomingSlug = courseLocal.slug ?? null;
+      const incomingExternalId = (courseLocal.external_id ?? courseLocal.meta?.external_id ?? null) || null;
+      if (!courseLocal.id) {
         for (const c of e2eStore.courses.values()) {
           const cSlug = c.slug ?? c.id;
           const cExternal = c.meta_json?.external_id ?? null;
@@ -3947,21 +4385,22 @@ app.post('/api/admin/courses', async (req, res) => {
           }
         }
       }
-      const id = course.id ?? existingId ?? `e2e-course-${Date.now()}`;
+      const id = courseLocal.id ?? existingId ?? `e2e-course-${Date.now()}`;
       const courseObj = {
         id,
-        slug: course.slug ?? id,
-        title: course.title,
-        description: course.description ?? null,
-        status: course.status ?? 'draft',
-        version: course.version ?? 1,
-        meta_json: { ...(course.meta ?? {}), ...(incomingExternalId ? { external_id: incomingExternalId } : {}) },
+        slug: courseLocal.slug ?? id,
+        title: courseLocal.title,
+        description: courseLocal.description ?? null,
+        status: courseLocal.status ?? 'draft',
+        version: courseLocal.version ?? 1,
+        meta_json: { ...(courseLocal.meta ?? {}), ...(incomingExternalId ? { external_id: incomingExternalId } : {}) },
         published_at: null,
         organization_id: organizationId || null,
+        organizationId: organizationId || null,
         org_id: organizationId || null,
         modules: [],
       };
-      const modulesArr = modules || [];
+      const modulesArr = modulesLocal || [];
       for (const [moduleIndex, module] of modulesArr.entries()) {
         const moduleId = module.id ?? `e2e-mod-${Date.now()}-${moduleIndex}`;
         const moduleObj = {
@@ -4017,7 +4456,15 @@ app.post('/api/admin/courses', async (req, res) => {
   if (!ensureSupabase(res)) return;
 
   const { course, modules = [] } = req.body || {};
-  let organizationId = pickOrgId(course?.org_id, course?.organizationId, req.body?.orgId, req.body?.organizationId);
+  let organizationId = pickOrgId(
+    course?.organization_id,
+    course?.org_id,
+    course?.organizationId,
+    req.body?.organization_id,
+    req.body?.org_id,
+    req.body?.orgId,
+    req.body?.organizationId
+  );
   // Lightweight request tracing to aid debugging in CI/local runs
   try {
     console.log(
@@ -4061,7 +4508,7 @@ app.post('/api/admin/courses', async (req, res) => {
     }
 
     if (organizationId) {
-      const access = await requireOrgAccess(req, res, organizationId, { write: true });
+      const access = await requireOrgAccess(req, res, organizationId, { write: true, requireOrgAdmin: true });
       if (!access) return;
     }
 
@@ -4164,7 +4611,7 @@ app.post('/api/admin/courses', async (req, res) => {
     const courseRow = courseRes.data;
 
     // E2E fallback when Supabase isn't configured: keep an in-memory course store
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
       const id = course.id ?? `e2e-course-${Date.now()}`;
       const courseObj = {
         id,
@@ -4287,13 +4734,13 @@ app.post('/api/admin/courses', async (req, res) => {
         }
       }
     } else {
-  await supabase.from('modules').delete().eq('course_id', courseRow.id);
+      await supabase.from('modules').delete().eq('course_id', courseRow.id);
     }
 
     const refreshed = await supabase
       .from('courses')
       .select(COURSE_WITH_MODULES_LESSONS_SELECT)
-  .eq('id', courseRow.id)
+      .eq('id', courseRow.id)
       .single();
 
     if (refreshed.error) throw refreshed.error;
@@ -4319,6 +4766,14 @@ app.post('/api/admin/courses', async (req, res) => {
       timestamp: new Date().toISOString()
     });
   }
+}
+
+app.post('/api/admin/courses', async (req, res) => {
+  await handleAdminCourseUpsert(req, res);
+});
+
+app.put('/api/admin/courses/:id', async (req, res) => {
+  await handleAdminCourseUpsert(req, res, { courseIdFromParams: req.params.id });
 });
 
 // Global error handler to capture unexpected errors and produce a diagnostics file
@@ -4338,6 +4793,7 @@ app.use((err, req, res, _next) => {
 
 // Batch import endpoint (best-effort transactional behavior in E2E/DEV fallback)
 app.post('/api/admin/courses/import', async (req, res) => {
+  normalizeLegacyOrgInput(req.body, { surface: 'admin.courses.import', requestId: req.requestId });
   const items = Array.isArray(req.body?.items) ? req.body.items : [];
   if (items.length === 0) {
     res.status(400).json({ error: 'items array is required' });
@@ -4705,6 +5161,7 @@ app.post('/api/admin/courses/:id/publish', async (req, res) => {
   const { id } = req.params;
   const context = requireUserContext(req, res);
   if (!context) return;
+  normalizeLegacyOrgInput(req.body, { surface: 'admin.courses.publish', requestId: req.requestId });
 
   const idempotencyKey = req.body?.idempotency_key ?? req.body?.client_event_id ?? null;
 
@@ -4755,9 +5212,9 @@ app.post('/api/admin/courses/:id/publish', async (req, res) => {
 
     const courseOrgId = existing.data.organization_id || existing.data.org_id || null;
     if (courseOrgId) {
-      const access = await requireOrgAccess(req, res, courseOrgId, { write: true });
-      if (!access && context.userRole !== 'admin') return;
-    } else if (!context.isPlatformAdmin && context.userRole !== 'admin') {
+      const access = await requireOrgAccess(req, res, courseOrgId, { write: true, requireOrgAdmin: true });
+      if (!access) return;
+    } else if (!context.isPlatformAdmin) {
       res.status(403).json({ error: 'Organization membership required to publish', code: 'org_required' });
       return;
     }
@@ -4867,9 +5324,9 @@ app.delete('/api/admin/courses/:id', async (req, res) => {
         res.status(204).end();
         return;
       }
-      const courseOrgId = pickOrgId(course.organization_id, course.org_id);
+  const courseOrgId = pickOrgId(course.organization_id, course.org_id, course.organizationId);
       if (courseOrgId) {
-        const access = await requireOrgAccess(req, res, courseOrgId, { write: true });
+  const access = await requireOrgAccess(req, res, courseOrgId, { write: true, requireOrgAdmin: true });
         if (!access) return;
       } else if (!context.isPlatformAdmin) {
         res.status(403).json({ error: 'organization_required', message: 'Course is not scoped to an organization.' });
@@ -4888,15 +5345,13 @@ app.delete('/api/admin/courses/:id', async (req, res) => {
 
   if (!ensureSupabase(res)) return;
   try {
-    const { data: courseRow, error: fetchErr } = await supabase.from('courses').select('id, organization_id').eq('id', id).maybeSingle();
-    if (fetchErr) throw fetchErr;
-    if (!courseRow) {
+    const courseOrgId = await getCourseOrgId(id);
+    if (courseOrgId === undefined) {
       res.status(404).json({ error: 'Course not found' });
       return;
     }
-  const courseOrgId = pickOrgId(courseRow.organization_id);
     if (courseOrgId) {
-      const access = await requireOrgAccess(req, res, courseOrgId, { write: true });
+  const access = await requireOrgAccess(req, res, courseOrgId, { write: true, requireOrgAdmin: true });
       if (!access) return;
     } else if (!context.isPlatformAdmin) {
       res.status(403).json({ error: 'organization_required', message: 'Course is not scoped to an organization.' });
@@ -4941,22 +5396,27 @@ app.get('/api/client/courses', async (req, res) => {
       courses = courses.filter((course) => assignedIds.has(String(course.id)) || assignedIds.has(String(course.slug)));
     }
 
-    const data = courses.map((c) => ({
-      id: c.id,
-      slug: c.slug ?? c.id,
-      title: c.title,
-      description: c.description ?? null,
-      status: c.status ?? 'draft',
-      version: c.version ?? 1,
-      meta_json: c.meta_json ?? {},
-      published_at: c.published_at ?? null,
-      thumbnail: c.thumbnail ?? null,
-      difficulty: c.difficulty ?? null,
-      duration: c.duration ?? null,
-      instructorName: c.instructorName ?? null,
-      estimatedDuration: c.estimatedDuration ?? null,
-      keyTakeaways: c.keyTakeaways ?? [],
-      modules: (c.modules || []).map((m) => ({
+    const data = courses.map((courseRecord) => {
+      const c = ensureOrgFieldCompatibility(courseRecord, { fallbackOrgId: DEFAULT_SANDBOX_ORG_ID }) || courseRecord;
+      return {
+        id: c.id,
+        slug: c.slug ?? c.id,
+        title: c.title,
+        description: c.description ?? null,
+        status: c.status ?? 'draft',
+        version: c.version ?? 1,
+        meta_json: c.meta_json ?? {},
+        published_at: c.published_at ?? null,
+        thumbnail: c.thumbnail ?? null,
+        difficulty: c.difficulty ?? null,
+        duration: c.duration ?? null,
+        organization_id: c.organization_id ?? c.org_id ?? null,
+        organizationId: c.organizationId ?? c.organization_id ?? c.org_id ?? null,
+        org_id: c.org_id ?? c.organization_id ?? null,
+        instructorName: c.instructorName ?? null,
+        estimatedDuration: c.estimatedDuration ?? null,
+        keyTakeaways: c.keyTakeaways ?? [],
+        modules: (c.modules || []).map((m) => ({
         id: m.id,
         course_id: c.id,
         title: m.title,
@@ -4973,8 +5433,9 @@ app.get('/api/client/courses', async (req, res) => {
           content_json: l.content_json ?? l.content ?? {},
           completion_rule_json: l.completion_rule_json ?? l.completionRule ?? null,
         })),
-      })),
-    }));
+        })),
+      };
+    });
     res.json({ data });
   };
 
@@ -5039,24 +5500,29 @@ app.get('/api/client/courses/:identifier', async (req, res) => {
       // In dev/demo mode, show all courses regardless of status
       // (ignore the includeDrafts query param)
 
+      const normalizedCourse = ensureOrgFieldCompatibility(course, { fallbackOrgId: DEFAULT_SANDBOX_ORG_ID }) || course;
       const data = {
-        id: course.id,
-        slug: course.slug ?? course.id,
-        title: course.title,
-        description: course.description ?? null,
-        status: course.status ?? 'draft',
-        version: course.version ?? 1,
-        meta_json: course.meta_json ?? {},
-        published_at: course.published_at ?? null,
-        thumbnail: course.thumbnail ?? null,
-        difficulty: course.difficulty ?? null,
-        duration: course.duration ?? null,
-        instructorName: course.instructorName ?? null,
-        estimatedDuration: course.estimatedDuration ?? null,
-        keyTakeaways: course.keyTakeaways ?? [],
-        modules: (course.modules || []).map((m) => ({
+        id: normalizedCourse.id,
+        slug: normalizedCourse.slug ?? normalizedCourse.id,
+        title: normalizedCourse.title,
+        description: normalizedCourse.description ?? null,
+        status: normalizedCourse.status ?? 'draft',
+        version: normalizedCourse.version ?? 1,
+        meta_json: normalizedCourse.meta_json ?? {},
+        published_at: normalizedCourse.published_at ?? null,
+        thumbnail: normalizedCourse.thumbnail ?? null,
+        difficulty: normalizedCourse.difficulty ?? null,
+        duration: normalizedCourse.duration ?? null,
+        organization_id: normalizedCourse.organization_id ?? normalizedCourse.org_id ?? null,
+        organizationId:
+          normalizedCourse.organizationId ?? normalizedCourse.organization_id ?? normalizedCourse.org_id ?? null,
+        org_id: normalizedCourse.org_id ?? normalizedCourse.organization_id ?? null,
+        instructorName: normalizedCourse.instructorName ?? null,
+        estimatedDuration: normalizedCourse.estimatedDuration ?? null,
+        keyTakeaways: normalizedCourse.keyTakeaways ?? [],
+        modules: (normalizedCourse.modules || []).map((m) => ({
           id: m.id,
-          course_id: course.id,
+          course_id: normalizedCourse.id,
           title: m.title,
           description: m.description ?? null,
           order_index: m.order_index ?? m.order ?? 0,
@@ -8521,6 +8987,7 @@ app.post(
       return;
     }
     const file = req.file;
+    normalizeLegacyOrgInput(req.body, { surface: 'admin.documents.upload', requestId: req.requestId });
     if (!file) {
       res.status(400).json({ error: 'file is required' });
       return;
@@ -8535,8 +9002,7 @@ app.post(
         : rawDocumentId
         ? String(rawDocumentId)
         : `doc_${Date.now()}`;
-      const rawOrgId = req.body?.orgId;
-      const orgId = typeof rawOrgId === 'string' && rawOrgId.trim().length > 0 ? rawOrgId : rawOrgId ? String(rawOrgId) : null;
+      const orgId = pickOrgId(req.body?.organization_id, req.body?.organizationId, req.body?.orgId);
       if (orgId) {
         const membership = await requireOrgAccess(req, res, orgId, { write: true });
         if (!membership) return;
@@ -8585,7 +9051,30 @@ app.post(
 );
 app.get('/api/admin/documents', async (req, res) => {
   if (!ensureSupabase(res)) return;
-  const { org_id, user_id, tag, category, search, visibility } = req.query;
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  const { user_id, tag, category, search, visibility } = req.query;
+  const requestedOrgId = pickOrgId(req.query?.orgId, req.query?.org_id, req.query?.organization_id);
+  const isPlatformAdmin = Boolean(context.isPlatformAdmin);
+  const allowedOrgIds = Array.isArray(context.organizationIds)
+    ? context.organizationIds.map((value) => normalizeOrgIdValue(value)).filter(Boolean)
+    : [];
+  const allowedOrgIdSet = new Set(allowedOrgIds);
+
+  if (requestedOrgId) {
+    const access = await requireOrgAccess(req, res, requestedOrgId, { write: false });
+    if (!access) return;
+    if (!isPlatformAdmin && !allowedOrgIdSet.has(requestedOrgId)) {
+      res.status(403).json({ error: 'org_access_denied', message: 'Organization scope not permitted' });
+      return;
+    }
+  } else if (!isPlatformAdmin) {
+    if (!allowedOrgIds.length) {
+      res.json({ data: [] });
+      return;
+    }
+  }
 
   try {
     let query = supabase
@@ -8596,8 +9085,10 @@ app.get('/api/admin/documents', async (req, res) => {
     if (visibility) {
       query = query.eq('visibility', visibility);
     }
-    if (org_id) {
-      query = query.eq('org_id', org_id);
+    if (requestedOrgId) {
+      query = query.eq('organization_id', requestedOrgId);
+    } else if (!isPlatformAdmin) {
+      query = query.in('organization_id', allowedOrgIds);
     }
     if (user_id) {
       query = query.eq('user_id', user_id);
@@ -8624,6 +9115,10 @@ app.get('/api/admin/documents', async (req, res) => {
 
 app.post('/api/admin/documents', async (req, res) => {
   if (!ensureSupabase(res)) return;
+  normalizeLegacyOrgInput(req.body, { surface: 'admin.documents.create', requestId: req.requestId });
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
   const payload = req.body || {};
 
   if (!payload.name || !payload.category) {
@@ -8631,7 +9126,17 @@ app.post('/api/admin/documents', async (req, res) => {
     return;
   }
 
+  const organizationId = pickOrgId(payload.organization_id, payload.organizationId, payload.orgId);
+
   try {
+    if (organizationId) {
+      const access = await requireOrgAccess(req, res, organizationId, { write: true });
+      if (!access) return;
+    } else if (!context.isPlatformAdmin) {
+      res.status(403).json({ error: 'organization_scope_required', message: 'Document must be assigned to an organization.' });
+      return;
+    }
+
     let storagePath = payload.storagePath ?? null;
     let url = payload.url ?? null;
     let urlExpiresAt = payload.urlExpiresAt ?? null;
@@ -8657,10 +9162,10 @@ app.post('/api/admin/documents', async (req, res) => {
       storage_path: storagePath,
       url_expires_at: urlExpiresAt,
       visibility: payload.visibility ?? 'global',
-      org_id: payload.orgId ?? null,
+      organization_id: organizationId ?? null,
       user_id: payload.userId ?? null,
-      created_by: payload.createdBy ?? null,
-      metadata: payload.metadata ?? {}
+      created_by: payload.createdBy ?? context.userId ?? null,
+      metadata: payload.metadata ?? {},
     };
 
     const { data, error } = await supabase
@@ -8680,9 +9185,31 @@ app.post('/api/admin/documents', async (req, res) => {
 app.put('/api/admin/documents/:id', async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { id } = req.params;
-  const patch = req.body || {};
+  const context = requireUserContext(req, res);
+  if (!context) return;
+  const patch = normalizeLegacyOrgInput(req.body || {}, { surface: 'admin.documents.update', requestId: req.requestId });
 
   try {
+    const { data: existingDoc, error: existingError } = await supabase
+      .from('documents')
+      .select('id, organization_id')
+      .eq('id', id)
+      .maybeSingle();
+    if (existingError) throw existingError;
+    if (!existingDoc) {
+      res.status(404).json({ error: 'Document not found' });
+      return;
+    }
+
+    const currentOrgId = normalizeOrgIdValue(existingDoc.organization_id);
+    if (currentOrgId) {
+      const access = await requireOrgAccess(req, res, currentOrgId, { write: true });
+      if (!access) return;
+    } else if (!context.isPlatformAdmin) {
+      res.status(403).json({ error: 'organization_scope_required', message: 'Document is platform scoped' });
+      return;
+    }
+
     const updatePayload = {};
     const map = {
       name: 'name',
@@ -8696,9 +9223,11 @@ app.put('/api/admin/documents/:id', async (req, res) => {
       storagePath: 'storage_path',
       urlExpiresAt: 'url_expires_at',
       visibility: 'visibility',
-      orgId: 'org_id',
       userId: 'user_id',
-      metadata: 'metadata'
+      metadata: 'metadata',
+      organizationId: 'organization_id',
+      organization_id: 'organization_id',
+      orgId: 'organization_id',
     };
 
     Object.entries(map).forEach(([key, column]) => {
@@ -8706,6 +9235,19 @@ app.put('/api/admin/documents/:id', async (req, res) => {
         updatePayload[column] = patch[key];
       }
     });
+
+    if (Object.prototype.hasOwnProperty.call(updatePayload, 'organization_id')) {
+      const nextOrgId = normalizeOrgIdValue(updatePayload.organization_id);
+      if (!nextOrgId) {
+        res.status(400).json({ error: 'organization_id_required', message: 'organization_id cannot be empty.' });
+        return;
+      }
+      if (nextOrgId !== currentOrgId) {
+        const access = await requireOrgAccess(req, res, nextOrgId, { write: true });
+        if (!access) return;
+      }
+      updatePayload.organization_id = nextOrgId;
+    }
 
     if (Object.keys(updatePayload).length === 0) {
       const { data, error } = await supabase.from('documents').select('*').eq('id', id).single();
@@ -8732,6 +9274,21 @@ app.put('/api/admin/documents/:id', async (req, res) => {
 app.post('/api/admin/documents/:id/download', async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { id } = req.params;
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  const docOrgId = await getDocumentOrgId(id);
+  if (docOrgId === undefined) {
+    res.status(404).json({ error: 'Document not found' });
+    return;
+  }
+  if (docOrgId) {
+    const access = await requireOrgAccess(req, res, docOrgId, { write: false });
+    if (!access) return;
+  } else if (!context.isPlatformAdmin) {
+    res.status(403).json({ error: 'organization_scope_required', message: 'Document is platform scoped' });
+    return;
+  }
 
   try {
     const { data, error } = await supabase.rpc('increment_document_download', { doc_id: id });
@@ -8747,18 +9304,34 @@ app.post('/api/admin/documents/:id/download', async (req, res) => {
 app.delete('/api/admin/documents/:id', async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { id } = req.params;
+  const context = requireUserContext(req, res);
+  if (!context) return;
 
   try {
-    const { data: existing } = await supabase
+    const { data: existing, error: existingError } = await supabase
       .from('documents')
-      .select('storage_path')
+      .select('storage_path, organization_id')
       .eq('id', id)
-      .single();
+      .maybeSingle();
+    if (existingError) throw existingError;
+    if (!existing) {
+      res.status(204).end();
+      return;
+    }
+
+    const docOrgId = normalizeOrgIdValue(existing.organization_id);
+    if (docOrgId) {
+      const access = await requireOrgAccess(req, res, docOrgId, { write: true });
+      if (!access) return;
+    } else if (!context.isPlatformAdmin) {
+      res.status(403).json({ error: 'organization_scope_required', message: 'Document is platform scoped' });
+      return;
+    }
 
     const { error } = await supabase.from('documents').delete().eq('id', id);
     if (error) throw error;
 
-    if (existing?.storage_path) {
+    if (existing.storage_path) {
       const { error: storageError } = await supabase.storage
         .from(DOCUMENTS_BUCKET)
         .remove([existing.storage_path]);
@@ -9600,7 +10173,10 @@ server.listen(PORT, '0.0.0.0', () => {
 
 // Initialize WebSocket server (ws) to handle realtime broadcasts at /ws
 try {
-  const wss = new WebSocketServer({ server, path: '/ws' });
+  const wss = new WebSocketServer({ server, path: WS_SERVER_PATH });
+  wsHealthSnapshot.enabled = true;
+  wsHealthSnapshot.lastError = null;
+  wsHealthSnapshot.lastStartedAt = new Date().toISOString();
 
   wss.on('connection', (ws, req) => {
     const originHeader = req.headers.origin;
@@ -9644,7 +10220,14 @@ try {
     });
   });
 
-  console.log('WebSocket server initialized at /ws');
+  wss.on('error', (err) => {
+    wsHealthSnapshot.enabled = false;
+    wsHealthSnapshot.lastError = err instanceof Error ? err.message : String(err);
+  });
+
+  console.log(`WebSocket server initialized at ${WS_SERVER_PATH}`);
 } catch (err) {
+  wsHealthSnapshot.enabled = false;
+  wsHealthSnapshot.lastError = err instanceof Error ? err.message : String(err);
   console.warn('Failed to initialize WebSocket server:', err);
 }

@@ -28,6 +28,7 @@ import type {
 import { CURRENT_CONTENT_SCHEMA_VERSION } from '../schema/contentSchema';
 import { ZodError } from 'zod';
 import { createActionIdentifiers, type IdempotentAction } from '../utils/idempotency';
+import { cloneWithCanonicalOrgId, resolveOrgIdFromCarrier, stampCanonicalOrgId } from '../utils/orgFieldUtils';
 
 export type SupabaseCourseRecord = {
   id: string;
@@ -50,6 +51,9 @@ export type SupabaseCourseRecord = {
   updated_at?: string | null;
   published_at?: string | null;
   due_date?: string | null;
+  organization_id?: string | null;
+  org_id?: string | null;
+  organizationId?: string | null;
   meta_json?: Record<string, any> | null;
   modules?: SupabaseModuleRecord[];
 };
@@ -176,6 +180,12 @@ export const mapCourseRecord = (course: SupabaseCourseRecord): NormalizedCourse 
   const modules = (course.modules || []).map(mapModuleRecord);
   const meta = course.meta_json || {};
   const resolvedTitle = course.title || course.name || 'Untitled Course';
+  const resolvedOrganizationId =
+    course.organization_id ??
+    (course as any).organizationId ??
+    (course as any).org_id ??
+    (meta as any)?.organizationId ??
+    null;
 
   const normalizedCourse = normalizeCourse({
     id: course.id,
@@ -184,6 +194,7 @@ export const mapCourseRecord = (course: SupabaseCourseRecord): NormalizedCourse 
     description: course.description || meta.description || '',
     status: (course.status as Course['status']) || 'draft',
     thumbnail: meta.thumbnail || course.thumbnail || '',
+    organizationId: resolvedOrganizationId ?? undefined,
     duration:
       course.duration ||
       meta.duration ||
@@ -214,6 +225,11 @@ export const mapCourseRecord = (course: SupabaseCourseRecord): NormalizedCourse 
     avgRating: 0,
     totalRatings: 0,
   } as Course);
+
+  if (resolvedOrganizationId) {
+    (normalizedCourse as Record<string, any>).organizationId = resolvedOrganizationId;
+  }
+  stampCanonicalOrgId(normalizedCourse as Record<string, any>, resolvedOrganizationId);
 
   return normalizedCourse;
 };
@@ -355,18 +371,13 @@ const mapCompletionRule = (lesson: Lesson): LessonInput['completionRule'] => {
 // Legacy metadata builder retained for reference; module resources can be attached via metadata when needed.
 
 
-const guessOrganizationId = (course: Course | NormalizedCourse): string | null => {
-  const candidate =
-    (course as any).organizationId ??
-    (course as any).organization_id ??
-    (course as any).orgId ??
-    (course as any).org_id ??
-    null;
-  return typeof candidate === 'string' && candidate.length > 0 ? candidate : null;
+const isClientGeneratedCourseId = (value?: string | null): boolean => {
+  if (!value) return true;
+  return value.startsWith('course-');
 };
 
 const buildCoursePayload = (course: NormalizedCourse) => {
-  const organizationId = guessOrganizationId(course);
+  const organizationId = resolveOrgIdFromCarrier(course);
   return {
     id: course.id,
     name: course.title,
@@ -375,8 +386,7 @@ const buildCoursePayload = (course: NormalizedCourse) => {
     description: course.description,
     status: course.status || 'draft',
     version: (course as any).version ?? 1,
-    org_id: organizationId,
-    organizationId,
+    organization_id: organizationId ?? undefined,
     meta: {
       thumbnail: course.thumbnail,
       difficulty: course.difficulty,
@@ -438,8 +448,27 @@ export class CourseService {
     if (options.idempotencyKey) {
       body.idempotency_key = options.idempotencyKey;
     }
-    await apiRequest(`/api/admin/courses`, {
-      method: 'POST',
+
+    const { clone: sanitizedCourse, strippedKeys } = cloneWithCanonicalOrgId(body.course as Record<string, any>, {
+      removeAliases: true,
+    });
+    if (import.meta.env?.DEV && strippedKeys.length > 0) {
+      console.warn('[CourseService] Stripped organization aliases before sync', {
+        strippedKeys,
+        requestCourseId: course.id,
+      });
+    }
+    body.course = sanitizedCourse;
+    const isCreateOperation = isClientGeneratedCourseId(course.id);
+    if (isCreateOperation) {
+      delete (body.course as Record<string, unknown>).id;
+    }
+
+    const endpoint = isCreateOperation ? '/api/admin/courses' : `/api/admin/courses/${course.id}`;
+    const method = isCreateOperation ? 'POST' : 'PUT';
+
+    await apiRequest(endpoint, {
+      method,
       body: JSON.stringify(body),
     });
   }
@@ -649,7 +678,7 @@ export class CourseService {
       return mapped;
     } catch (error) {
       console.error('[CourseService.getAllCoursesFromDatabase] Error loading courses from API:', error);
-      return [];
+      throw error;
     }
   }
 

@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react';
 import type { DocumentMeta } from '../dal/documents';
 import documentsDal from '../dal/documents';
-import { shouldRefreshSignedUrl } from '../services/mediaClient';
+import { shouldRefreshSignedUrl } from '../dal/media';
 
 export type DocumentDownloadState = {
   url: string | null;

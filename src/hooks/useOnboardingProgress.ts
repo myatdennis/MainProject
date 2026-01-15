@@ -7,7 +7,7 @@ import {
   OnboardingStepId,
   OnboardingStepStatus,
 } from '../../shared/onboarding/statuses';
-import { getOnboardingProgress } from '../services/onboardingService';
+import { getOnboardingProgress } from '../dal/onboarding';
 
 export interface ActivationStepProgress extends OnboardingStepDefinition {
   status: OnboardingStepStatus;

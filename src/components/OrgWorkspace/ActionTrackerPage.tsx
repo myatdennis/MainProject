@@ -11,7 +11,7 @@ const ActionTrackerPage: React.FC = () => {
   useEffect(() => {
     if (!orgId) return;
     (async () => {
-      const svc = await import('../../services/clientWorkspaceService');
+  const svc = await import('../../dal/clientWorkspace');
       const i = await svc.listActionItems(orgId as string);
       setItems(i);
     })();
@@ -19,7 +19,7 @@ const ActionTrackerPage: React.FC = () => {
 
   const create = async () => {
     if (!orgId || !title) return;
-  const svc = await import('../../services/clientWorkspaceService');
+  const svc = await import('../../dal/clientWorkspace');
   await svc.addActionItem(orgId, { title, assignee, dueDate, status: 'Not Started' });
   const i = await svc.listActionItems(orgId as string);
     setItems(i);
@@ -44,7 +44,7 @@ const ActionTrackerPage: React.FC = () => {
   const toggleStatus = async (item: any) => {
   const next = item.status === 'Completed' ? 'Not Started' : item.status === 'Not Started' ? 'In Progress' : 'Completed';
   const updated = { ...item, status: next };
-  const svc = await import('../../services/clientWorkspaceService');
+  const svc = await import('../../dal/clientWorkspace');
   await svc.updateActionItem(orgId!, updated);
   setItems(await svc.listActionItems(orgId!));
   };

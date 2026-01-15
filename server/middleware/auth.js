@@ -522,13 +522,26 @@ export function requireAdmin(req, res, next) {
     });
   }
 
-  if (req.user.isPlatformAdmin || req.user.platformRole === 'platform_admin') {
+  const isPlatformAdmin = req.user.isPlatformAdmin || req.user.platformRole === 'platform_admin';
+  const hasOrgAdminRole = Array.isArray(req.user.memberships)
+    ? req.user.memberships.some((membership) => String(membership.role || '').toLowerCase() === 'admin')
+    : false;
+
+  if (isPlatformAdmin || hasOrgAdminRole) {
     return next();
   }
 
-  console.warn('[requireAdmin] Access denied', {
-    user: { id: req.user.userId, email: req.user.email, platformRole: req.user.platformRole },
-  });
+  const deniedMeta = {
+    userId: req.user.userId || req.user.id || null,
+    email: req.user.email || null,
+    platformRole: req.user.platformRole || null,
+    resolvedRole: req.user.role || null,
+    memberships: Array.isArray(req.user.memberships)
+      ? req.user.memberships.map((m) => ({ orgId: m.orgId, role: m.role, status: m.status }))
+      : [],
+    path: req.originalUrl,
+  };
+  console.warn('[requireAdmin] Access denied', deniedMeta);
 
   return res.status(403).json({
     error: 'Forbidden',

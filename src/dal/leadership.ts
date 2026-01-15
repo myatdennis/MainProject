@@ -1,7 +1,7 @@
 import { request } from './http';
 
 export interface LeadershipHealthRecord {
-  orgId: string;
+  organizationId: string;
   name: string;
   activeLearners: number;
   completionRate: number;
@@ -17,7 +17,9 @@ export type LeadershipRecommendationPriority = 'low' | 'medium' | 'high';
 
 export interface LeadershipRecommendation {
   id: string;
-  org_id: string;
+  organization_id: string;
+  // Add canonical field for frontend use
+  organizationId?: string;
   title: string;
   summary: string;
   category: string;
@@ -46,26 +48,32 @@ interface ApiListResponse<T> {
 
 const basePath = '/api/admin/analytics/leadership';
 
-export const fetchHealth = async (orgId?: string): Promise<LeadershipHealthRecord[]> => {
-  const query = orgId ? `?orgId=${encodeURIComponent(orgId)}` : '';
+export const fetchHealth = async (organizationId?: string): Promise<LeadershipHealthRecord[]> => {
+  const query = organizationId ? `?organization_id=${encodeURIComponent(organizationId)}` : '';
   const json = await request<ApiListResponse<LeadershipHealthRecord>>(`${basePath}/health${query}`);
-  return json.data ?? [];
+  // Map org_id to organizationId for frontend consistency
+  return (json.data ?? []).map((rec: any) => ({ ...rec, organizationId: rec.organization_id ?? rec.orgId ?? rec.organizationId }));
 };
 
-export const fetchRecommendations = async (orgId: string): Promise<LeadershipRecommendation[]> => {
-  if (!orgId) return [];
-  const json = await request<ApiListResponse<LeadershipRecommendation>>(`${basePath}/${orgId}/recommendations`);
-  return json.data ?? [];
+export const fetchRecommendations = async (organizationId: string): Promise<LeadershipRecommendation[]> => {
+  if (!organizationId) return [];
+  const json = await request<ApiListResponse<LeadershipRecommendation>>(`${basePath}/${organizationId}/recommendations`);
+  // Map org_id to organizationId for frontend consistency
+  return (json.data ?? []).map((rec: any) => ({ ...rec, organizationId: rec.organization_id ?? rec.orgId ?? rec.organizationId }));
 };
 
 export const generateRecommendations = async (
-  orgId: string,
+  organizationId: string,
   payload?: { limit?: number; instructions?: string },
 ): Promise<ApiListResponse<LeadershipRecommendation>> => {
-  const json = await request<ApiListResponse<LeadershipRecommendation>>(`${basePath}/${orgId}/recommendations`, {
+  const json = await request<ApiListResponse<LeadershipRecommendation>>(`${basePath}/${organizationId}/recommendations`, {
     method: 'POST',
     body: JSON.stringify(payload ?? {}),
   });
+  // Map org_id to organizationId for frontend consistency
+  if (json.data) {
+    json.data = json.data.map((rec: any) => ({ ...rec, organizationId: rec.organization_id ?? rec.orgId ?? rec.organizationId }));
+  }
   return json;
 };
 
@@ -77,7 +85,8 @@ export const updateRecommendation = async (
     method: 'PATCH',
     body: JSON.stringify(patch),
   });
-  return json.data;
+  // Map org_id to organizationId for frontend consistency
+  return { ...json.data, organizationId: (json.data as any).organization_id ?? (json.data as any).orgId ?? (json.data as any).organizationId };
 };
 
 export default {

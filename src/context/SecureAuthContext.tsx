@@ -9,6 +9,10 @@ import {
   getActiveOrgPreference,
   setActiveOrgPreference,
   clearActiveOrgPreference,
+  getAccessToken,
+  getRefreshToken,
+  setAccessToken,
+  setRefreshToken,
   type UserSession,
   type UserMembership,
   type SessionMetadata,
@@ -146,6 +150,27 @@ const shouldRefreshToken = (
   }
 
   return remaining <= bufferWindow;
+};
+
+const logAuthSessionState = (contextLabel: string, session: UserSession | null) => {
+  if (!(import.meta.env && import.meta.env.DEV)) {
+    return;
+  }
+
+  const summary = {
+    event: contextLabel,
+    timestamp: new Date().toISOString(),
+    sessionExists: Boolean(session),
+    accessTokenPresent: Boolean(getAccessToken()),
+    refreshTokenPresent: Boolean(getRefreshToken()),
+    userId: session?.id ?? null,
+    role: session?.role ?? null,
+    isPlatformAdmin: Boolean(session?.isPlatformAdmin || session?.role === 'admin'),
+    organizationId: session?.organizationId ?? null,
+    activeOrgId: session?.activeOrgId ?? null,
+  };
+
+  console.info('[SecureAuth][DEV:auth-session]', summary);
 };
 
 // Automatically attach user metadata to auth requests for auditing/multi-tenant routing
@@ -313,6 +338,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   const lastRefreshSuccessRef = useRef(0);
   const refreshTimeoutRef = useRef<number | null>(null);
   const lastSessionReloadRef = useRef(0);
+  const hasLoggedAppLoadRef = useRef(false);
 
   const updateSurfaceAuthStatus = useCallback((surface: SessionSurface | undefined, status: SurfaceAuthStatus) => {
     if (!surface) {
@@ -356,8 +382,13 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   const applySessionPayload = useCallback(
     (
       payload: SessionResponsePayload | null,
-      { surface, persistTokens = true }: { surface?: SessionSurface; persistTokens?: boolean } = {},
+      {
+        surface,
+        persistTokens = true,
+        reason,
+      }: { surface?: SessionSurface; persistTokens?: boolean; reason?: string } = {},
     ) => {
+      const tokenReason = reason ?? (payload?.user ? `${surface ?? 'session'}_update` : 'session_clear');
       if (!payload?.user) {
         setUser(null);
         setMemberships([]);
@@ -365,7 +396,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         setActiveOrgIdState(null);
         setIsAuthenticated({ lms: false, admin: false });
         if (persistTokens) {
-          clearAuth();
+          clearAuth(tokenReason);
           setSessionMetaVersion((value) => value + 1);
         }
         return;
@@ -408,9 +439,15 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       setOrganizationIds(orgIds);
       setActiveOrgIdState(preferredOrg);
       setIsAuthenticated(computeAuthState(session, surface));
+      setUserSession(session);
 
       if (persistTokens) {
-        setUserSession(session);
+        if (payload.accessToken !== undefined) {
+          setAccessToken(payload.accessToken, tokenReason);
+        }
+        if (payload.refreshToken !== undefined) {
+          setRefreshToken(payload.refreshToken, tokenReason);
+        }
         if (payload.expiresAt || payload.refreshExpiresAt) {
           const issuedAt = getSkewedNow();
           const metadata: SessionMetadata = {
@@ -424,7 +461,14 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         }
       }
     },
-    [getSkewedNow, setUser, setMemberships, setOrganizationIds, setActiveOrgIdState, setIsAuthenticated],
+    [
+      getSkewedNow,
+      setUser,
+      setMemberships,
+      setOrganizationIds,
+      setActiveOrgIdState,
+      setIsAuthenticated,
+    ],
   );
 
   const fetchServerSession = useCallback(
@@ -436,7 +480,11 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         });
         captureServerClock(response.headers as Record<string, any> | undefined);
         if (response.data?.user) {
-          applySessionPayload(response.data, { surface, persistTokens: false });
+          applySessionPayload(response.data, {
+            surface,
+            persistTokens: false,
+            reason: surface ? `${surface}_session_bootstrap` : 'session_bootstrap',
+          });
           return true;
         }
         return false;
@@ -525,7 +573,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           captureServerClock(response.headers as Record<string, any> | undefined);
 
           if (response.data?.user) {
-            applySessionPayload(response.data, { persistTokens: true });
+            applySessionPayload(response.data, { persistTokens: true, reason: 'refresh_success' });
           } else {
             await fetchServerSession();
           }
@@ -536,7 +584,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           if (axios.isAxiosError(error)) {
             if (error.response?.status === 401) {
               console.warn('[SecureAuth] Refresh token rejected, clearing session');
-              applySessionPayload(null, { persistTokens: true });
+              applySessionPayload(null, { persistTokens: true, reason: 'refresh_rejected' });
               return false;
             }
 
@@ -567,14 +615,14 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           return fetchServerSession({ surface, signal });
         }
 
-        applySessionPayload(null, { persistTokens: true });
+        applySessionPayload(null, { persistTokens: true, reason: 'resolve_session_empty' });
         return false;
       } catch (error) {
         if (typeof axios.isCancel === 'function' && axios.isCancel(error)) {
           return false;
         }
         console.error('[SecureAuth] resolveSession failed', error);
-        applySessionPayload(null, { persistTokens: true });
+        applySessionPayload(null, { persistTokens: true, reason: 'resolve_session_error' });
         return false;
       }
     },
@@ -622,13 +670,13 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         logAuditAction('admin_logout', { email: user.email, id: user.id });
       }
 
-      clearAuth();
-      setUser(null);
-      setMemberships([]);
-      setOrganizationIds([]);
-      setActiveOrgIdState(null);
-  setSessionMetaVersion((value) => value + 1);
-  clearActiveOrgPreference();
+    clearAuth('manual_logout');
+    setUser(null);
+    setMemberships([]);
+    setOrganizationIds([]);
+    setActiveOrgIdState(null);
+    setSessionMetaVersion((value) => value + 1);
+    clearActiveOrgPreference();
 
       if (type) {
         setIsAuthenticated(prev => ({
@@ -662,7 +710,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           return;
         }
         console.error('Auth initialization error:', error);
-        applySessionPayload(null, { persistTokens: true });
+        applySessionPayload(null, { persistTokens: true, reason: 'bootstrap_error' });
       } finally {
         if (active) {
           setAuthInitializing(false);
@@ -799,6 +847,17 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     setOrgResolutionStatus('resolving');
   }, [authInitializing, user, memberships, activeOrgId]);
 
+  useEffect(() => {
+    if (sessionStatus !== 'ready') {
+      return;
+    }
+    if (hasLoggedAppLoadRef.current) {
+      return;
+    }
+    logAuthSessionState('app_load', user);
+    hasLoggedAppLoadRef.current = true;
+  }, [sessionStatus, user]);
+
   // ============================================================================
   // Login
   // ============================================================================
@@ -838,11 +897,17 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         };
       }
 
-      applySessionPayload(response.data ?? null, { surface: type, persistTokens: true });
+      applySessionPayload(response.data ?? null, {
+        surface: type,
+        persistTokens: true,
+        reason: `${type}_login_success`,
+      });
 
       if (type === 'admin' && response.data?.user) {
         logAuditAction('admin_login', { email: response.data.user.email, id: response.data.user.id });
       }
+
+      logAuthSessionState(`${type}-login_success`, getUserSession());
 
       return { success: true };
     } catch (error: any) {
@@ -918,9 +983,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         organizationId: validation.data.organizationId ?? undefined,
       };
 
-      const response = await api.post<SessionResponsePayload>('/auth/register', payload);
-      captureServerClock(response.headers as Record<string, any> | undefined);
-      applySessionPayload(response.data ?? null, { surface: 'lms', persistTokens: true });
+  const response = await api.post<SessionResponsePayload>('/auth/register', payload);
+  captureServerClock(response.headers as Record<string, any> | undefined);
+  applySessionPayload(response.data ?? null, { surface: 'lms', persistTokens: true, reason: 'register_success' });
 
       return { success: true };
     } catch (error) {

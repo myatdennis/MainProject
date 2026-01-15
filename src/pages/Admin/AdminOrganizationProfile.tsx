@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import Button from '../../components/ui/Button';
 import { Building2 } from 'lucide-react';
 import documentService from '../../dal/documents';
-// clientWorkspaceService is dynamically imported where used so it can be bundled with the org-workspace chunk
+// client workspace DAL is dynamically imported where used so it can be bundled with the org-workspace chunk
 import notificationService from '../../dal/notifications';
 import orgService from '../../dal/orgs';
 import { useToast } from '../../context/ToastContext';
@@ -41,11 +41,11 @@ const AdminOrganizationProfile: React.FC = () => {
   useEffect(() => {
     if (!orgId) return;
     // load documents for resources tab
-    documentService.listDocuments({ orgId }).then(setDocuments).catch(() => setDocuments([]));
+  documentService.listDocuments({ organizationId: orgId }).then(setDocuments).catch(() => setDocuments([]));
     // load action items
     (async () => {
       try {
-        const svc = await import('../../services/clientWorkspaceService');
+  const svc = await import('../../dal/clientWorkspace');
         const actions = await svc.listActionItems(orgId);
         setActionItems(actions);
         const plans = await svc.listStrategicPlans(orgId);
@@ -65,7 +65,7 @@ const AdminOrganizationProfile: React.FC = () => {
       }
     }).catch(() => { setTotalLearners(null); setAvgCompletion(null); });
     // document downloads aggregate
-    documentService.listDocuments({ orgId }).then(list => setTotalDownloads(list.reduce((acc, d) => acc + (d.downloadCount || 0), 0))).catch(() => setTotalDownloads(0));
+  documentService.listDocuments({ organizationId: orgId }).then(list => setTotalDownloads(list.reduce((acc, d) => acc + (d.downloadCount || 0), 0))).catch(() => setTotalDownloads(0));
   }, [orgId]);
 
   const handleAssignDocument = async () => {
@@ -79,7 +79,7 @@ const AdminOrganizationProfile: React.FC = () => {
       tags: ['welcome'],
       fileType: 'application/pdf',
       visibility: 'org',
-      orgId: orgId!,
+  organizationId: orgId!,
       createdBy: 'Admin'
     } as any);
     if (meta && meta.id) {
@@ -88,10 +88,10 @@ const AdminOrganizationProfile: React.FC = () => {
       await notificationService.addNotification({
         title: 'Document assigned',
         body: `Assigned ${meta.name} to organization ${orgId}`,
-        orgId: orgId!
+        organizationId: orgId!
       } as any);
       // refresh
-      const list = await documentService.listDocuments({ orgId });
+  const list = await documentService.listDocuments({ organizationId: orgId });
       setDocuments(list);
     }
   };
@@ -113,15 +113,15 @@ const AdminOrganizationProfile: React.FC = () => {
       tags: docTags ? docTags.split(',').map(t => t.trim()).filter(Boolean) : [],
       fileType: file?.type,
       visibility: 'org',
-      orgId: orgId!,
+  organizationId: orgId!,
       createdBy: 'Admin'
     } as any, file || undefined);
 
     if (doc && doc.id) {
       await documentService.assignToOrg(doc.id, orgId!);
-      await notificationService.addNotification({ title: 'New Document Shared', body: `A document "${doc.name}" was shared with your organization.`, orgId: orgId! } as any);
+  await notificationService.addNotification({ title: 'New Document Shared', body: `A document "${doc.name}" was shared with your organization.`, organizationId: orgId! } as any);
       setDocName(''); setFile(null); setDocTags('');
-      const list = await documentService.listDocuments({ orgId });
+  const list = await documentService.listDocuments({ organizationId: orgId });
       setDocuments(list);
     }
   };
@@ -131,7 +131,7 @@ const AdminOrganizationProfile: React.FC = () => {
       showToast('Provide a title for the action', 'error');
       return;
     }
-    const svc = await import('../../services/clientWorkspaceService');
+  const svc = await import('../../dal/clientWorkspace');
     await svc.addActionItem(orgId, {
       title: newActionTitle,
       description: '',
@@ -140,7 +140,7 @@ const AdminOrganizationProfile: React.FC = () => {
       status: 'Not Started'
     } as any);
     setNewActionTitle(''); setNewActionDue(''); setNewActionAssignee('');
-    const list = await (await import('../../services/clientWorkspaceService')).listActionItems(orgId);
+  const list = await (await import('../../dal/clientWorkspace')).listActionItems(orgId);
     setActionItems(list);
     showToast('Action item added', 'success');
   };
@@ -151,7 +151,7 @@ const AdminOrganizationProfile: React.FC = () => {
     const idx = order.indexOf(item.status || 'Not Started');
     const next = order[(idx + 1) % order.length] as any;
     const updated = { ...item, status: next };
-    const svc2 = await import('../../services/clientWorkspaceService');
+  const svc2 = await import('../../dal/clientWorkspace');
     await svc2.updateActionItem(orgId, updated);
     const list = await svc2.listActionItems(orgId);
     setActionItems(list);

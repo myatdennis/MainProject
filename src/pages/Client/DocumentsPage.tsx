@@ -26,7 +26,7 @@ const DocumentsPage: React.FC = () => {
 
   useEffect(() => {
     const load = async () => {
-      const list = await documentService.listDocuments({ orgId });
+  const list = await documentService.listDocuments({ organizationId: orgId });
       setDocs(list);
     };
     load();

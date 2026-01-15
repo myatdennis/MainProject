@@ -41,13 +41,13 @@ const AdminDocuments: React.FC = () => {
         tags: tags ? tags.split(',').map(t => t.trim()).filter(Boolean) : [],
         fileType: file?.type,
         visibility,
-        orgId: visibility === 'org' ? orgId : undefined,
+        organizationId: visibility === 'org' ? orgId : undefined,
         userId: visibility === 'user' ? userId : undefined,
         createdBy: 'Admin'
       }, file || undefined);
 
       if (visibility === 'org' && orgId) {
-        await notificationService.addNotification({ title: 'New Document Shared', body: `A document "${doc.name}" was shared with your organization.`, orgId });
+        await notificationService.addNotification({ title: 'New Document Shared', body: `A document "${doc.name}" was shared with your organization.`, organizationId: orgId });
       }
       if (visibility === 'user' && userId) {
         await notificationService.addNotification({ title: 'New Document Shared', body: `A document "${doc.name}" was shared with you.`, userId });
@@ -140,7 +140,7 @@ const AdminDocuments: React.FC = () => {
               <div>
                 <div className="font-medium text-primary">{d.name}</div>
                 <div className="text-sm muted-text">{d.category} • {d.subcategory} • {d.tags?.join(', ')}</div>
-                <div className="text-xs muted-text">{d.visibility}{d.orgId ? ` • org:${d.orgId}` : ''}{d.userId ? ` • user:${d.userId}` : ''}</div>
+                <div className="text-xs muted-text">{d.visibility}{d.organizationId ? ` • org:${d.organizationId}` : ''}{d.userId ? ` • user:${d.userId}` : ''}</div>
               </div>
               <div className="flex items-center gap-4">
                 {d.url && <a onClick={() => documentService.recordDownload(d.id)} href={d.url} target="_blank" rel="noreferrer" className="text-sm text-primary font-medium underline">Open</a>}

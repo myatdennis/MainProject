@@ -6,7 +6,7 @@ export interface OwnerInput {
   role?: string;
 }
 
-export interface BackupAdminInput extends OwnerInput {}
+export type BackupAdminInput = OwnerInput;
 
 export interface InviteInput {
   email: string;

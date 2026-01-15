@@ -8,7 +8,7 @@ import {
   listOnboardingInvites,
   resendOnboardingInvite,
   revokeOnboardingInvite,
-} from '../../services/onboardingService';
+} from '../../dal/onboarding';
 
 interface InviteRecord {
   id: string;

@@ -386,31 +386,9 @@ const LMSModule = () => {
     },
     [courseContext, navigate]
   );
-
-  if (isLoading) {
-    return (
-      <div className="py-24">
-  <LoadingSpinner size="lg" />
-      </div>
-    );
-  }
-
-  if (error || !courseContext) {
-    return (
-      <div className="py-16">
-        <Card tone="muted" className="mx-auto max-w-xl space-y-4 text-center">
-          <h2 className="font-heading text-xl font-semibold text-charcoal">Module unavailable</h2>
-          <p className="text-sm text-slate/80">{error ?? 'We couldn’t load this module right now.'}</p>
-          <Button size="sm" onClick={() => navigate('/lms/courses')}>
-            Back to courses
-          </Button>
-        </Card>
-      </div>
-    );
-  }
-
-  const { course, module, lessons } = courseContext;
-  const activeLesson = lessons.find((lesson) => lesson.id === currentLessonId) ?? lessons[0];
+  const resolvedModule = courseContext?.module ?? null;
+  const resolvedLessons = courseContext?.lessons ?? [];
+  const activeLesson = resolvedLessons.find((lesson) => lesson.id === currentLessonId) ?? resolvedLessons[0] ?? null;
   const activeLessonPercent = activeLesson
     ? lessonProgress[activeLesson.id] ?? (completedLessons.has(activeLesson.id) ? 100 : 0)
     : 0;
@@ -444,7 +422,10 @@ const LMSModule = () => {
     refresh: refreshVideoSource,
     hasAsset: hasSecuredVideoAsset,
   } = useSignedMediaUrl({
-    asset: !usesExternalVideoSource ? (activeLesson?.content?.videoAsset as LessonVideoAsset | undefined | null) : undefined,
+    asset:
+      !usesExternalVideoSource && activeLesson
+        ? (activeLesson.content?.videoAsset as LessonVideoAsset | undefined | null)
+        : undefined,
     fallbackUrl: activeLesson?.content?.videoUrl ?? null,
   });
 
@@ -466,7 +447,7 @@ const LMSModule = () => {
 
   const moveToLessonEntry = (entry?: { moduleId: string; lesson: NormalizedLesson }) => {
     if (!entry) return;
-    if (entry.moduleId === module.id) {
+    if (resolvedModule && entry.moduleId === resolvedModule.id) {
       focusLesson(entry.lesson.id);
     } else {
       navigate(`/lms/courses/${entry.moduleId}?lesson=${entry.lesson.id}`);
@@ -474,7 +455,7 @@ const LMSModule = () => {
   };
 
   const handleSidebarLessonSelect = (targetModuleId: string, lessonId: string) => {
-    if (targetModuleId === module.id) {
+    if (resolvedModule && targetModuleId === resolvedModule.id) {
       focusLesson(lessonId);
       return;
     }
@@ -508,6 +489,30 @@ const LMSModule = () => {
     const totalMinutes = remainingEntries.reduce((sum, entry) => sum + getLessonDurationMinutes(entry.lesson), 0);
     return totalMinutes > 0 ? `${totalMinutes} min` : null;
   })();
+
+  if (isLoading) {
+    return (
+      <div className="py-24">
+	<LoadingSpinner size="lg" />
+      </div>
+    );
+  }
+
+  if (error || !courseContext) {
+    return (
+      <div className="py-16">
+        <Card tone="muted" className="mx-auto max-w-xl space-y-4 text-center">
+          <h2 className="font-heading text-xl font-semibold text-charcoal">Module unavailable</h2>
+          <p className="text-sm text-slate/80">{error ?? 'We couldn’t load this module right now.'}</p>
+          <Button size="sm" onClick={() => navigate('/lms/courses')}>
+            Back to courses
+          </Button>
+        </Card>
+      </div>
+    );
+  }
+
+  const { course, module, lessons } = courseContext;
 
   return (
     <ClientErrorBoundary>

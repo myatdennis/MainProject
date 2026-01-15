@@ -1,11 +1,28 @@
-import React, { useState, useEffect } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useNavigate, Link, useLocation } from 'react-router-dom';
 import { useSecureAuth } from '../../context/SecureAuthContext';
 import { Shield, Lock, Mail, Eye, EyeOff, AlertTriangle, Info, ShieldCheck, Activity, LifeBuoy } from 'lucide-react';
 import { loginSchema, emailSchema } from '../../utils/validators';
 import { sanitizeText } from '../../utils/sanitize';
 import useRuntimeStatus from '../../hooks/useRuntimeStatus';
 import type { RuntimeStatus } from '../../state/runtimeStatus';
+import api from '../../lib/httpClient';
+
+interface AdminCapabilityResponse {
+  user?: Record<string, any>;
+  access?: {
+    allowed?: boolean;
+    reason?: string | null;
+  };
+  error?: string;
+  message?: string;
+}
+
+interface CapabilityCheckResult {
+  allowed: boolean;
+  user?: Record<string, any>;
+  reason?: string;
+}
 
 
 const AdminLogin: React.FC = () => {
@@ -22,11 +39,87 @@ const AdminLogin: React.FC = () => {
   const [mfaCode, setMfaCode] = useState('');
   const [mfaEmail, setMfaEmail] = useState('');
   const [mfaError, setMfaError] = useState('');
+  const [authError, setAuthError] = useState('');
   const navigate = useNavigate();
+  const location = useLocation();
+  const landingLogRef = useRef(false);
+
+  const landingTarget = useMemo(() => {
+    let rawReturnTo: string | null = null;
+    let chosenTarget = '/admin/courses';
+
+    try {
+      const params = new URLSearchParams(location.search);
+      rawReturnTo = params.get('returnTo');
+    } catch (error) {
+      console.warn('[AdminLogin] failed to parse returnTo param', error);
+    }
+
+    const sanitizedReturnTo = rawReturnTo && rawReturnTo.startsWith('/admin/') && !rawReturnTo.startsWith('/admin/login')
+      ? rawReturnTo
+      : null;
+
+    if (sanitizedReturnTo) {
+      chosenTarget = sanitizedReturnTo;
+    }
+
+    return { rawReturnTo, chosenTarget };
+  }, [location.search]);
+
+  const navigateToAdminLanding = useCallback(
+    (options?: { replace?: boolean }) => {
+      if (!landingLogRef.current && import.meta.env.DEV) {
+        console.info('[AdminLogin] admin_login_landing', {
+          returnTo: landingTarget.rawReturnTo,
+          chosenTarget: landingTarget.chosenTarget,
+        });
+      }
+      landingLogRef.current = true;
+      navigate(landingTarget.chosenTarget, { replace: true, ...(options ?? {}) });
+    },
+    [landingTarget, navigate],
+  );
 
   useEffect(() => {
-    if (isAuthenticated.admin) navigate('/admin/dashboard');
-  }, [isAuthenticated.admin, navigate]);
+    if (isAuthenticated.admin) {
+      navigateToAdminLanding({ replace: true });
+    }
+  }, [isAuthenticated.admin, navigateToAdminLanding]);
+
+  const capabilityErrorMessage = (reason?: string) => {
+    switch (reason) {
+      case 'admin_capability_error':
+        return 'We could not confirm your admin access. Please try again or contact support.';
+      case 'org_admin_required':
+      case 'not_authorized':
+      default:
+        return 'Your account is not authorized for the Admin Portal.';
+    }
+  };
+
+  const verifyAdminCapability = async (): Promise<CapabilityCheckResult> => {
+    try {
+      const response = await api.get<AdminCapabilityResponse>('/admin/me', { validateStatus: () => true });
+      if (response.status === 200 && response.data?.access?.allowed) {
+        return { allowed: true, user: response.data.user };
+      }
+      const reason = response.data?.access?.reason || response.data?.error || response.data?.message || 'not_authorized';
+      return { allowed: false, reason };
+    } catch (capabilityError) {
+      console.warn('[AdminLogin] capability check failed, falling back to session endpoint', capabilityError);
+      try {
+        const fallback = await api.get('/auth/session', { validateStatus: () => true });
+        const user = fallback.data?.user;
+        if (fallback.status === 200 && user?.isPlatformAdmin) {
+          return { allowed: true, user };
+        }
+        return { allowed: false, reason: 'not_authorized' };
+      } catch (sessionError) {
+        console.error('[AdminLogin] capability fallback failed', sessionError);
+      }
+      return { allowed: false, reason: 'admin_capability_error' };
+    }
+  };
 
   const statusBadgeCopy: Record<RuntimeStatus['statusLabel'], { label: string; description: string }> = {
     ok: {
@@ -95,6 +188,7 @@ const AdminLogin: React.FC = () => {
     setIsLoading(true);
     setError('');
     setValidationErrors({});
+    setAuthError('');
 
     // Validate inputs
     const validation = loginSchema.safeParse({ email, password });
@@ -116,7 +210,12 @@ const AdminLogin: React.FC = () => {
     const result = await login(sanitizedEmail, sanitizedPassword, 'admin');
     setIsLoading(false);
     if (result.success) {
-      navigate('/admin/dashboard');
+      const capability = await verifyAdminCapability();
+        if (capability.allowed) {
+          navigateToAdminLanding({ replace: true });
+        } else {
+        setAuthError(capabilityErrorMessage(capability.reason));
+      }
     } else if (result.mfaRequired) {
       setMfaRequired(true);
       setMfaEmail(result.mfaEmail || sanitizedEmail);
@@ -138,9 +237,14 @@ const AdminLogin: React.FC = () => {
       const result = await login(mfaEmail, password, 'admin', mfaCode);
       setIsLoading(false);
       if (result.success) {
-        setMfaRequired(false);
-        setMfaCode('');
-        navigate('/admin/dashboard');
+        const capability = await verifyAdminCapability();
+        if (capability.allowed) {
+          setMfaRequired(false);
+          setMfaCode('');
+          navigateToAdminLanding({ replace: true });
+        } else {
+          setMfaError(capabilityErrorMessage(capability.reason));
+        }
       } else {
         setMfaError(result.error || 'Login failed after MFA.');
       }
@@ -193,10 +297,10 @@ const AdminLogin: React.FC = () => {
         </div>
 
         <div className="card">
-          {error && (
+          {(error || authError) && (
             <div className="mb-6 p-4 bg-deepred/10 border border-deepred rounded-lg flex items-center space-x-2" role="alert">
               <AlertTriangle className="h-5 w-5 text-deepred" />
-              <span className="text-deepred text-small">{error}</span>
+              <span className="text-deepred text-small">{authError || error}</span>
             </div>
           )}
 

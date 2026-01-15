@@ -12,7 +12,7 @@ const SessionNotesPage: React.FC = () => {
   useEffect(() => {
     if (!orgId) return;
     (async () => {
-      const svc = await import('../../services/clientWorkspaceService');
+  const svc = await import('../../dal/clientWorkspace');
       const n = await svc.listSessionNotes(orgId as string);
       setNotes(n);
     })();
@@ -24,7 +24,7 @@ const SessionNotesPage: React.FC = () => {
     if (!orgId) return;
     const attachments = [] as any[];
     // attachments are already added to files state below
-  const svc = await import('../../services/clientWorkspaceService');
+  const svc = await import('../../dal/clientWorkspace');
   await svc.addSessionNote(orgId, { title, body, date, tags: tags.split(',').map(t=>t.trim()), attachments });
   const n = await svc.listSessionNotes(orgId as string);
     setNotes(n);

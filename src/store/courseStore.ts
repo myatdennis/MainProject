@@ -13,7 +13,9 @@ import type { CourseAssignment } from '../types/assignment';
 import { refreshRuntimeStatus, getRuntimeStatus } from '../state/runtimeStatus';
 import { loadStoredCourseProgress } from '../utils/courseProgress';
 import { hasStoredProgressHistory } from '../utils/courseAvailability';
-import { saveDraftSnapshot, markDraftSynced, deleteDraftSnapshot } from '../services/courseDraftStorage';
+import { saveDraftSnapshot, markDraftSynced, deleteDraftSnapshot } from '../dal/courseDrafts';
+import { ApiError } from '../utils/apiClient';
+import { cloneWithCanonicalOrgId, resolveOrgIdFromCarrier, stampCanonicalOrgId } from '../utils/orgFieldUtils';
 
 // Course data types
 export interface ScenarioChoice {
@@ -113,6 +115,11 @@ const _loadCoursesFromLocalStorage = (): { [key: string]: Course } => ({ });
 
 const _saveCoursesToLocalStorage = (_courses: { [key: string]: Course }): void => {
   // persistence handled via CourseService / API gateway
+};
+
+const createCoursePayloadForApi = (course: Course): Course => {
+  const { clone } = cloneWithCanonicalOrgId(course, { removeAliases: true });
+  return clone as Course;
 };
 
 // Default course data
@@ -972,6 +979,61 @@ const getDefaultCourses = (): { [key: string]: Course } => ({
 // Initialize courses from localStorage or defaults
 let courses: { [key: string]: Course } = _loadCoursesFromLocalStorage();
 
+export type AdminLoadStatus = 'skipped' | 'success' | 'empty' | 'error' | 'unauthorized' | 'api_unreachable';
+type AdminCatalogPhase = 'idle' | 'loading' | 'ready';
+
+export interface AdminCatalogState {
+  phase: AdminCatalogPhase;
+  adminLoadStatus: AdminLoadStatus;
+  lastUpdatedAt: number | null;
+  lastAttemptAt: number | null;
+  lastError: string | null;
+}
+
+let adminCatalogState: AdminCatalogState = {
+  phase: 'idle',
+  adminLoadStatus: 'skipped',
+  lastUpdatedAt: null,
+  lastAttemptAt: null,
+  lastError: null,
+};
+
+let initPromise: Promise<void> | null = null;
+
+const storeSubscribers = new Set<() => void>();
+
+const shallowEqualState = (current: AdminCatalogState, next: AdminCatalogState): boolean => {
+  if (current === next) {
+    return true;
+  }
+  const keys = new Set<keyof AdminCatalogState>(['phase', 'adminLoadStatus', 'lastUpdatedAt', 'lastAttemptAt', 'lastError']);
+  for (const key of keys) {
+    if (current[key] !== next[key]) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const notifySubscribers = () => {
+  storeSubscribers.forEach((listener) => {
+    try {
+      listener();
+    } catch (error) {
+      console.error('[courseStore] subscriber error', error);
+    }
+  });
+};
+
+const setAdminCatalogState = (update: Partial<AdminCatalogState> | ((state: AdminCatalogState) => AdminCatalogState)) => {
+  const nextState = typeof update === 'function' ? update(adminCatalogState) : { ...adminCatalogState, ...update };
+  if (shallowEqualState(adminCatalogState, nextState)) {
+    return;
+  }
+  adminCatalogState = nextState;
+  notifySubscribers();
+};
+
 const resolveOrgContext = (): { orgId: string | null; role: string | null; userId: string | null } => {
   if (typeof window === 'undefined') {
     return { orgId: null, role: null, userId: null };
@@ -979,14 +1041,18 @@ const resolveOrgContext = (): { orgId: string | null; role: string | null; userI
   try {
     const session = getUserSession();
     if (session) {
-      const membershipOrgId = session.activeOrgId
-        || session.organizationId
-        || session.memberships?.find((membership) => membership.status === 'active')?.orgId
-        || session.memberships?.[0]?.orgId
-        || null;
+      const activeMembership = session.memberships?.find((membership) => membership?.status === 'active');
+      const membershipOrgId =
+        resolveOrgIdFromCarrier(
+          session.activeOrgId,
+          (session as Record<string, any>).organization_id,
+          session.organizationId,
+          activeMembership ?? null,
+          ...(session.memberships || [])
+        ) || null;
       const storedPreference = getActiveOrgPreference();
       return {
-        orgId: storedPreference ?? membershipOrgId,
+        orgId: resolveOrgIdFromCarrier(storedPreference) ?? membershipOrgId,
         role: session.role ?? null,
         userId: session.id ?? null,
       };
@@ -996,8 +1062,9 @@ const resolveOrgContext = (): { orgId: string | null; role: string | null; userI
   }
 
   const storedPreference = getActiveOrgPreference();
-  if (storedPreference) {
-    return { orgId: storedPreference, role: null, userId: null };
+  const normalizedPreference = resolveOrgIdFromCarrier(storedPreference);
+  if (normalizedPreference) {
+    return { orgId: normalizedPreference, role: null, userId: null };
   }
 
   return { orgId: null, role: null, userId: null };
@@ -1114,11 +1181,25 @@ const ensureAssignmentScopedCatalog = async (
 
 // Store management functions
 export const courseStore = {
-  init: async (): Promise<void> => {
+  init: (): Promise<void> => {
+    if (initPromise) {
+      return initPromise;
+    }
+
+    initPromise = (async () => {
     let supabaseOperational = false;
     let restrictToOrg = true;
     let canSyncDefaults = false;
     let canUseAdminApi = false;
+    let adminLoadStatus: AdminLoadStatus = 'skipped';
+    let adminLoadError: string | null = null;
+    const attemptStartedAt = Date.now();
+    setAdminCatalogState({
+      phase: 'loading',
+      adminLoadStatus: 'skipped',
+      lastError: null,
+      lastAttemptAt: attemptStartedAt,
+    });
     try {
       console.log('[courseStore.init] Starting initialization...');
       const orgContext = resolveOrgContext();
@@ -1134,6 +1215,7 @@ export const courseStore = {
       );
       const treatAsAdmin = isAdminRole || adminSurfaceDetected;
       restrictToOrg = !treatAsAdmin;
+      const adminMode = !restrictToOrg;
       if (adminSurfaceDetected && !isAdminRole) {
         console.info(
           '[courseStore.init] Admin surface detected without explicit admin role; expanding catalog visibility for builder access.',
@@ -1146,27 +1228,55 @@ export const courseStore = {
         console.warn('[courseStore.init] Runtime status refresh failed; using last known snapshot.', statusError);
       }
       supabaseOperational = runtimeStatus.supabaseConfigured && runtimeStatus.supabaseHealthy;
-      const apiHealthy = runtimeStatus.apiHealthy;
-      canUseAdminApi = apiHealthy && !restrictToOrg;
+      const apiReachable = runtimeStatus.apiReachable ?? runtimeStatus.apiHealthy;
+      const apiAuthRequired = runtimeStatus.apiAuthRequired;
+  canUseAdminApi = adminMode && apiReachable;
       canSyncDefaults = canUseAdminApi && supabaseOperational;
       console.log('[courseStore.init] Runtime status snapshot:', runtimeStatus);
       // Prefer admin list (richer shape) but gracefully fall back to published-only
       let dbCourses: Course[] = [];
       if (canUseAdminApi) {
+        if (apiAuthRequired) {
+          console.info('[courseStore.init] Health probe indicated auth required, but API is reachable. Proceeding with admin course load attempt.');
+        }
         try {
           dbCourses = await getAllCoursesFromDatabase();
           console.log('[courseStore.init] Admin API returned courses:', dbCourses);
+          adminLoadStatus = dbCourses.length === 0 ? 'empty' : 'success';
+          if (adminLoadStatus === 'empty') {
+            console.info('[courseStore.init] admin_courses_empty (0 results from /api/admin/courses).');
+          }
         } catch (adminError) {
-          console.warn('[courseStore.init] Admin API load failed, will fall back to published catalog:', adminError);
+          const status = adminError instanceof ApiError ? adminError.status : undefined;
+          if (status === 401 || status === 403) {
+            adminLoadStatus = 'unauthorized';
+            adminLoadError = 'unauthorized';
+            console.warn('[courseStore.init] admin_courses_error (unauthorized)', { status });
+          } else {
+            adminLoadStatus = 'error';
+            adminLoadError = adminError instanceof Error ? adminError.message : 'admin_courses_error';
+            console.warn('[courseStore.init] admin_courses_error', {
+              status,
+              message: adminError instanceof Error ? adminError.message : String(adminError),
+            });
+          }
+          dbCourses = [];
         }
-      } else if (!apiHealthy) {
-        console.warn('[courseStore.init] Skipping admin course load because API is marked unhealthy.');
-      } else if (restrictToOrg) {
+      } else if (adminMode && !apiReachable) {
+        adminLoadStatus = 'api_unreachable';
+        adminLoadError = runtimeStatus.lastError || 'api_unreachable';
+        console.warn('[courseStore.init] admin_courses_api_unreachable', {
+          reason: runtimeStatus.lastError || 'unknown',
+        });
+      } else if (!adminMode) {
         console.warn('[courseStore.init] Skipping admin course load for non-admin role.');
       }
 
-      if (!dbCourses || dbCourses.length === 0) {
-        console.log('[courseStore.init] Admin endpoint returned 0 courses. Falling back to published catalog...');
+      const shouldLoadPublishedCatalog =
+        restrictToOrg || (!restrictToOrg && (adminLoadStatus === 'error' || adminLoadStatus === 'api_unreachable'));
+
+      if ((!dbCourses || dbCourses.length === 0) && shouldLoadPublishedCatalog) {
+        console.log('[courseStore.init] Loading published catalog as fallback...');
         try {
           if (restrictToOrg) {
             if (orgContext.orgId) {
@@ -1185,6 +1295,9 @@ export const courseStore = {
         }
       }
 
+      const adminEmptySuccess = !restrictToOrg && adminLoadStatus === 'empty';
+      const adminUnauthorized = !restrictToOrg && adminLoadStatus === 'unauthorized';
+
       if (dbCourses.length > 0) {
         // Merge fetched courses with any existing locally persisted drafts instead of overwriting entirely.
         const merged: { [key: string]: Course } = { ...courses };
@@ -1194,6 +1307,12 @@ export const courseStore = {
         });
         courses = merged;
         console.log(`[courseStore.init] Loaded ${dbCourses.length} courses from API (merged with ${Object.keys(merged).length - dbCourses.length} existing drafts)`);
+      } else if (adminEmptySuccess) {
+        courses = {};
+        console.info('[courseStore.init] Admin catalog is empty; awaiting first course creation.');
+      } else if (adminUnauthorized) {
+        courses = {};
+        console.warn('[courseStore.init] Admin course load unauthorized; leaving local catalog empty.');
       } else {
         console.log('[courseStore.init] No courses returned from API, seeding defaults...');
         const defaultCourses = getDefaultCourses();
@@ -1241,6 +1360,8 @@ export const courseStore = {
       }
     } catch (error) {
       console.error('Error initializing course store:', error);
+      adminLoadStatus = 'error';
+      adminLoadError = error instanceof Error ? error.message : 'course_store_init_failed';
       const defaultCourses = getDefaultCourses();
       courses = defaultCourses;
       if (!canSyncDefaults) {
@@ -1271,7 +1392,21 @@ export const courseStore = {
           }
         }
       }
+    } finally {
+      setAdminCatalogState({
+        phase: 'ready',
+        adminLoadStatus,
+        lastUpdatedAt: Date.now(),
+        lastError: adminLoadError,
+      });
     }
+    })();
+
+    initPromise.finally(() => {
+      initPromise = null;
+    });
+
+    return initPromise;
   },
 
   getCourse: (id: string): Course | null => {
@@ -1323,10 +1458,11 @@ export const courseStore = {
       import.meta.env.VITE_SUPABASE_URL &&
       import.meta.env.VITE_SUPABASE_ANON_KEY
     ) {
-  syncCourseToDatabase(course)
+      const apiPayload = createCoursePayloadForApi(course);
+      syncCourseToDatabase(apiPayload)
         .then((persisted) => {
           if (!persisted) return;
-          const normalized = normalizeCourse(persisted as Course);
+    const normalized = normalizeCourse(persisted as Course);
           const targetId = normalized.id || course.id;
           courses[targetId] = {
             ...(courses[course.id] || course),
@@ -1413,16 +1549,23 @@ export const courseStore = {
       modules: [],
       ...courseData
     };
+
+    const initialOrgId = resolveOrgIdFromCarrier(courseData);
+    if (initialOrgId) {
+      newCourse.organizationId = initialOrgId;
+      stampCanonicalOrgId(newCourse as Record<string, any>, initialOrgId);
+    }
     
     courses[newCourse.id] = newCourse;
     _saveCoursesToLocalStorage(courses);
     void saveDraftSnapshot(newCourse, { dirty: true, cause: 'create-course' });
 
     // Always attempt to persist to backend API (DEV_FALLBACK or Supabase-backed) so courses survive reloads
-  syncCourseToDatabase(newCourse)
+    const apiPayload = createCoursePayloadForApi(newCourse);
+  syncCourseToDatabase(apiPayload)
       .then((persisted) => {
         if (!persisted) return;
-        const normalized = normalizeCourse(persisted as Course);
+  const normalized = normalizeCourse(persisted as Course);
         const normalizedId = normalized.id || newCourse.id;
         courses[normalizedId] = {
           ...courses[newCourse.id],
@@ -1452,7 +1595,16 @@ export const courseStore = {
       Object.assign(courses[id], stats);
       _saveCoursesToLocalStorage(courses);
     }
-  }
+  },
+
+  getAdminCatalogState: (): AdminCatalogState => adminCatalogState,
+
+  subscribe: (listener: () => void): (() => void) => {
+    storeSubscribers.add(listener);
+    return () => {
+      storeSubscribers.delete(listener);
+    };
+  },
 };
 
 // Helper function to generate unique IDs

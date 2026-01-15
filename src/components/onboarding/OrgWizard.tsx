@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { ArrowLeft, CheckCircle2, MailPlus, ShieldCheck, Users } from 'lucide-react';
 import LoadingButton from '../LoadingButton';
 import { useToast } from '../../context/ToastContext';
-import { createOnboardingOrg, InviteInput, OnboardingOrgResponse } from '../../services/onboardingService';
+import { createOnboardingOrg, InviteInput, OnboardingOrgResponse } from '../../dal/onboarding';
 
 const wizardSteps = [
   { id: 'details', title: 'Organization details', description: 'Basics, contact, and plan info.' },

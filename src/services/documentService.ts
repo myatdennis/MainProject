@@ -12,7 +12,7 @@ export type DocumentMeta = {
   tags: string[];
   fileType?: string; // mime
   visibility: Visibility;
-  orgId?: string; // if visibility === 'org'
+  organizationId?: string; // if visibility === 'org'
   userId?: string; // if visibility === 'user'
   createdAt: string;
   createdBy?: string;
@@ -52,7 +52,7 @@ const mapDocumentRecord = (record: any): DocumentMeta => ({
   tags: record.tags ?? [],
   fileType: record.file_type ?? undefined,
   visibility: record.visibility ?? 'global',
-  orgId: record.org_id ?? undefined,
+  organizationId: record.organization_id ?? record.organizationId ?? record.org_id ?? record.orgId ?? undefined,
   userId: record.user_id ?? undefined,
   createdAt: record.created_at ?? new Date().toISOString(),
   createdBy: record.created_by ?? undefined,
@@ -62,7 +62,16 @@ const mapDocumentRecord = (record: any): DocumentMeta => ({
   urlExpiresAt: record.url_expires_at ?? undefined,
 });
 
-export const listDocuments = async (opts?: { orgId?: string; userId?: string; tag?: string; category?: string; search?: string }) => {
+const buildDocumentPayload = (input: Record<string, any>): Record<string, any> => {
+  const payload = { ...input };
+  if (Object.prototype.hasOwnProperty.call(payload, 'organizationId')) {
+    payload.organization_id = payload.organizationId;
+    delete payload.organizationId;
+  }
+  return payload;
+};
+
+export const listDocuments = async (opts?: { organizationId?: string; userId?: string; tag?: string; category?: string; search?: string }) => {
   const json = await apiFetch<{ data: any[] }>('/api/admin/documents');
   let docs = (json.data || []).map(mapDocumentRecord);
 
@@ -94,8 +103,8 @@ export const listDocuments = async (opts?: { orgId?: string; userId?: string; ta
     docs = (refreshed.data || []).map(mapDocumentRecord);
   }
 
-  if (opts?.orgId) {
-    docs = docs.filter(doc => doc.visibility === 'global' || (doc.visibility === 'org' && doc.orgId === opts.orgId));
+  if (opts?.organizationId) {
+    docs = docs.filter(doc => doc.visibility === 'global' || (doc.visibility === 'org' && doc.organizationId === opts.organizationId));
   }
 
   if (opts?.userId) {
@@ -135,8 +144,8 @@ export const addDocument = async (meta: Omit<DocumentMeta,'id'|'createdAt'>, fil
     try {
       const body = new FormData();
       body.append('file', file);
-      body.append('documentId', docId);
-      if (meta.orgId) body.append('orgId', meta.orgId);
+  body.append('documentId', docId);
+  if (meta.organizationId) body.append('organization_id', meta.organizationId);
       if (meta.category) body.append('category', meta.category);
       if (meta.visibility) body.append('visibility', meta.visibility);
       const uploadJson = await apiRequest<{ data: any }>('/api/admin/documents/upload', {
@@ -147,7 +156,7 @@ export const addDocument = async (meta: Omit<DocumentMeta,'id'|'createdAt'>, fil
       if (uploadJson?.data) {
         url = uploadJson.data.signedUrl ?? url;
         storagePath = uploadJson.data.storagePath ?? storagePath;
-        urlExpiresAt = uploadJson.data.urlExpiresAt ?? urlExpiresAt;
+  urlExpiresAt = uploadJson.data.urlExpiresAt ?? urlExpiresAt;
   mediaAssetId = uploadJson.data.assetId ?? mediaAssetId;
       }
     } catch (err) {
@@ -165,7 +174,7 @@ export const addDocument = async (meta: Omit<DocumentMeta,'id'|'createdAt'>, fil
     });
   }
 
-  const payload = {
+  const payload = buildDocumentPayload({
     id: docId,
     name: meta.name,
     filename: meta.filename,
@@ -175,11 +184,11 @@ export const addDocument = async (meta: Omit<DocumentMeta,'id'|'createdAt'>, fil
     tags: meta.tags ?? [],
     fileType: meta.fileType,
     visibility: meta.visibility,
-    orgId: meta.orgId,
+    organizationId: meta.organizationId,
     userId: meta.userId,
     createdBy: meta.createdBy,
     metadata: { ...meta, mediaAssetId: mediaAssetId ?? meta.mediaAssetId }
-  };
+  });
 
   if (storagePath) {
     (payload as any).storagePath = storagePath;
@@ -206,7 +215,7 @@ export const recordDownload = async (id: string) => {
 export const updateDocument = async (id: string, patch: Partial<DocumentMeta>) => {
   const json = await apiFetch<{ data: any }>(`/api/admin/documents/${id}`, {
     method: 'PUT',
-    body: JSON.stringify(patch)
+    body: JSON.stringify(buildDocumentPayload(patch as Record<string, any>))
   });
   return mapDocumentRecord(json.data);
 };
@@ -215,7 +224,7 @@ export const deleteDocument = async (id: string) => {
   await apiFetch(`/api/admin/documents/${id}`, { method: 'DELETE' });
 };
 
-export const assignToOrg = async (id: string, orgId: string) => updateDocument(id, { visibility: 'org', orgId });
+export const assignToOrg = async (id: string, organizationId: string) => updateDocument(id, { visibility: 'org', organizationId });
 export const assignToUser = async (id: string, userId: string) => updateDocument(id, { visibility: 'user', userId });
 
 export default {

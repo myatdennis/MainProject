@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { LessonVideoAsset } from '../types/courseTypes';
-import { signMediaAsset, shouldRefreshSignedUrl } from '../services/mediaClient';
+import { signMediaAsset, shouldRefreshSignedUrl } from '../dal/media';
 
 const DEFAULT_REFRESH_BUFFER_MS = 60_000;
 

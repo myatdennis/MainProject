@@ -77,7 +77,7 @@ export type Org = {
 
 export type OrgMember = {
   id: string;
-  orgId: string;
+  organizationId: string;
   userId: string;
   role: string;
   invitedBy?: string | null;
@@ -143,7 +143,7 @@ export const mapOrgRecord = (record: any): Org => {
 
 const mapMemberRecord = (record: any): OrgMember => ({
   id: record.id,
-  orgId: record.org_id ?? record.orgId,
+  organizationId: record.organization_id ?? record.orgId ?? record.organizationId,
   userId: record.user_id ?? record.userId,
   role: record.role ?? 'member',
   invitedBy: record.invited_by ?? null,
@@ -283,16 +283,16 @@ export const getOrgStats = async (id: string): Promise<any> => {
   };
 };
 
-export const listOrgMembers = async (orgId: string): Promise<OrgMember[]> => {
-  const json = await apiRequest<{ data: any[] }>(`/api/admin/organizations/${orgId}/members`);
+export const listOrgMembers = async (organizationId: string): Promise<OrgMember[]> => {
+  const json = await apiRequest<{ data: any[] }>(`/api/admin/organizations/${organizationId}/members`);
   return (json.data ?? []).map(mapMemberRecord);
 };
 
 export const addOrgMember = async (
-  orgId: string,
+  organizationId: string,
   payload: { userId: string; role?: string }
 ): Promise<OrgMember> => {
-  const json = await apiRequest<{ data: any }>(`/api/admin/organizations/${orgId}/members`, {
+  const json = await apiRequest<{ data: any }>(`/api/admin/organizations/${organizationId}/members`, {
     method: 'POST',
     body: JSON.stringify(payload)
   });
@@ -300,8 +300,8 @@ export const addOrgMember = async (
   return mapMemberRecord(json.data);
 };
 
-export const removeOrgMember = async (orgId: string, membershipId: string): Promise<void> => {
-  await apiRequest(`/api/admin/organizations/${orgId}/members/${membershipId}`, {
+export const removeOrgMember = async (organizationId: string, membershipId: string): Promise<void> => {
+  await apiRequest(`/api/admin/organizations/${organizationId}/members/${membershipId}`, {
     method: 'DELETE',
     expectedStatus: [200, 204],
     rawResponse: true

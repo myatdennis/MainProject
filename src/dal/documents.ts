@@ -16,7 +16,7 @@ export type DocumentMeta = {
   urlExpiresAt?: string;
   fileSize?: number;
   visibility: Visibility;
-  orgId?: string;
+  organizationId?: string;
   userId?: string;
   createdAt: string;
   createdBy?: string;
@@ -38,7 +38,7 @@ const mapDocumentRecord = (record: any): DocumentMeta => ({
   urlExpiresAt: record.url_expires_at ?? record.urlExpiresAt ?? undefined,
   fileSize: typeof record.file_size === 'number' ? record.file_size : record.fileSize,
   visibility: record.visibility ?? 'global',
-  orgId: record.org_id ?? record.orgId ?? undefined,
+  organizationId: record.organization_id ?? record.organizationId ?? record.org_id ?? record.orgId ?? undefined,
   userId: record.user_id ?? record.userId ?? undefined,
   createdAt: record.created_at ?? record.createdAt ?? new Date().toISOString(),
   createdBy: record.created_by ?? record.createdBy ?? undefined,
@@ -46,6 +46,15 @@ const mapDocumentRecord = (record: any): DocumentMeta => ({
   metadata: record.metadata ?? null,
   mediaAssetId: record.media_asset_id ?? record.metadata?.mediaAssetId ?? undefined,
 });
+
+const buildDocumentPayload = (input: Record<string, any>): Record<string, any> => {
+  const payload = { ...input };
+  if (Object.prototype.hasOwnProperty.call(payload, 'organizationId')) {
+    payload.organization_id = payload.organizationId;
+    delete payload.organizationId;
+  }
+  return payload;
+};
 
 type DocumentUploadResponse = {
   documentId: string;
@@ -58,12 +67,12 @@ type DocumentUploadResponse = {
 
 const uploadDocumentFile = async (
   file: File,
-  opts: { documentId: string; orgId?: string; visibility?: Visibility },
+  opts: { documentId: string; organizationId?: string; visibility?: Visibility },
 ): Promise<DocumentUploadResponse> => {
   const form = new FormData();
   form.append('file', file);
   form.append('documentId', opts.documentId);
-  if (opts.orgId) form.append('orgId', opts.orgId);
+  if (opts.organizationId) form.append('organization_id', opts.organizationId);
   if (opts.visibility) form.append('visibility', opts.visibility);
 
   const response = await apiRequest<{ data: DocumentUploadResponse }>(
@@ -83,7 +92,7 @@ const uploadDocumentFile = async (
 };
 
 export const listDocuments = async (opts?: {
-  orgId?: string;
+  organizationId?: string;
   userId?: string;
   tag?: string;
   category?: string;
@@ -121,9 +130,9 @@ export const listDocuments = async (opts?: {
     docs = (refreshed.data || []).map(mapDocumentRecord);
   }
 
-  if (opts?.orgId) {
+  if (opts?.organizationId) {
     docs = docs.filter(
-      (doc) => doc.visibility === 'global' || (doc.visibility === 'org' && doc.orgId === opts.orgId),
+      (doc) => doc.visibility === 'global' || (doc.visibility === 'org' && doc.organizationId === opts.organizationId),
     );
   }
 
@@ -172,7 +181,7 @@ export const addDocument = async (
   if (file) {
     const uploadResult = await uploadDocumentFile(file, {
       documentId: docId,
-      orgId: meta.orgId,
+      organizationId: meta.organizationId,
       visibility: meta.visibility,
     });
 
@@ -187,7 +196,7 @@ export const addDocument = async (
     throw new Error('Document uploads require an external URL or a successful storage upload.');
   }
 
-  const payload = {
+  const payload = buildDocumentPayload({
     id: docId,
     name: meta.name,
     filename: meta.filename,
@@ -200,11 +209,11 @@ export const addDocument = async (
     tags: meta.tags ?? [],
     fileType,
     visibility: meta.visibility,
-    orgId: meta.orgId,
+    organizationId: meta.organizationId,
     userId: meta.userId,
     createdBy: meta.createdBy,
     metadata: meta,
-  } as any;
+  } as any);
 
   const json = await request<{ data: any }>('/api/admin/documents', {
     method: 'POST',
@@ -224,7 +233,7 @@ export const recordDownload = async (id: string) => {
 export const updateDocument = async (id: string, patch: Partial<DocumentMeta>) => {
   const json = await request<{ data: any }>(`/api/admin/documents/${id}`, {
     method: 'PUT',
-    body: JSON.stringify(patch),
+    body: JSON.stringify(buildDocumentPayload(patch as Record<string, any>)),
   });
   return mapDocumentRecord(json.data);
 };
@@ -233,8 +242,8 @@ export const deleteDocument = async (id: string) => {
   await request(`/api/admin/documents/${id}`, { method: 'DELETE' });
 };
 
-export const assignToOrg = async (id: string, orgId: string) =>
-  updateDocument(id, { visibility: 'org', orgId });
+export const assignToOrg = async (id: string, organizationId: string) =>
+  updateDocument(id, { visibility: 'org', organizationId });
 export const assignToUser = async (id: string, userId: string) =>
   updateDocument(id, { visibility: 'user', userId });
 

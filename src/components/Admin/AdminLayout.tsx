@@ -36,6 +36,9 @@ import LoadingSpinner from '../ui/LoadingSpinner';
 import SurveyQueueStatus from '../Survey/SurveyQueueStatus';
 import type { LucideIcon } from 'lucide-react';
 import { useActiveOrganization } from '../../hooks/useActiveOrganization';
+import useRuntimeStatus from '../../hooks/useRuntimeStatus';
+import { refreshRuntimeStatus } from '../../state/runtimeStatus';
+import ApiStatusBanner from '../system/ApiStatusBanner';
 
 interface AdminLayoutProps {
   children?: ReactNode;
@@ -66,6 +69,7 @@ const navigation: AdminNavItem[] = [
 const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
   const { isAuthenticated, user: authUser, authInitializing, logout: legacyLogout } = useAuth();
   const { user, logout } = useSecureAuth();
+  const runtimeStatus = useRuntimeStatus();
   const {
     organizations: organizationOptions,
     activeOrgId,
@@ -84,6 +88,14 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
   const accountEmail = user?.email ?? authUser?.email ?? 'Admin';
   const env = import.meta.env as Record<string, string | boolean | undefined>;
   const ADMIN_MENU_DEBUG = Boolean(env?.DEV || env?.VITE_ENABLE_ADMIN_MENU_DEBUG === 'true');
+  const apiReachable = runtimeStatus.apiReachable ?? runtimeStatus.apiHealthy;
+  const apiAuthRequired = Boolean(runtimeStatus.apiAuthRequired);
+
+  const handleRuntimeRetry = useCallback(() => {
+    refreshRuntimeStatus().catch((error) => {
+      console.warn('[AdminLayout] runtime status retry failed', error);
+    });
+  }, []);
 
   const logMenuEvent = useCallback(
     (event: string, payload: Record<string, unknown> = {}) => {
@@ -363,7 +375,15 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
       </aside>
 
       <div className="flex flex-1 flex-col">
-        <header className="sticky top-0 z-50 border-b border-mist/60 bg-white/90 backdrop-blur">
+        <ApiStatusBanner
+          surface="admin"
+          apiReachable={apiReachable}
+          apiAuthRequired={apiAuthRequired}
+          isAuthenticated={Boolean(isAuthenticated?.admin)}
+          lastCheckedAt={runtimeStatus.lastChecked}
+          onRetry={handleRuntimeRetry}
+        />
+  <header className="sticky top-0 z-20 border-b border-mist/60 bg-white/90 backdrop-blur">
           <div className="flex h-20 items-center justify-between px-6 lg:px-10">
             <div className="flex items-center gap-4">
               <button className="text-slate/70 hover:text-sunrise lg:hidden" onClick={() => setSidebarOpen(true)}>

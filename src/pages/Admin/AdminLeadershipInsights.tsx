@@ -48,7 +48,7 @@ const metricTiles = [
 const AdminLeadershipInsights = () => {
   const { showToast } = useToast();
   const [orgs, setOrgs] = useState<Org[]>([]);
-  const [selectedOrgId, setSelectedOrgId] = useState<string>('');
+  const [selectedOrganizationId, setSelectedOrganizationId] = useState<string>('');
   const [healthRows, setHealthRows] = useState<LeadershipHealthRecord[]>([]);
   const [focusedHealth, setFocusedHealth] = useState<LeadershipHealthRecord | null>(null);
   const [recommendations, setRecommendations] = useState<LeadershipRecommendation[]>([]);
@@ -65,10 +65,10 @@ const AdminLeadershipInsights = () => {
   const [orgList, aggHealth] = await Promise.all([listOrgs(), leadershipDal.fetchHealth()]);
         setOrgs(orgList);
         setHealthRows(aggHealth);
-        if (!selectedOrgId) {
-          const defaultOrgId = orgList[0]?.id ?? aggHealth[0]?.orgId ?? '';
-          if (defaultOrgId) {
-            setSelectedOrgId(defaultOrgId);
+        if (!selectedOrganizationId) {
+          const defaultOrganizationId = orgList[0]?.id ?? aggHealth[0]?.organizationId ?? '';
+          if (defaultOrganizationId) {
+            setSelectedOrganizationId(defaultOrganizationId);
           } else {
             setFocusedHealth(null);
           }
@@ -85,13 +85,13 @@ const AdminLeadershipInsights = () => {
   }, [showToast]);
 
   const fetchOrgInsights = useCallback(
-    async (orgId: string) => {
-      if (!orgId) return;
+    async (organizationId: string) => {
+      if (!organizationId) return;
       setLoadingOrgInsights(true);
       try {
-  const [health] = await leadershipDal.fetchHealth(orgId);
+        const [health] = await leadershipDal.fetchHealth(organizationId);
         setFocusedHealth(health ?? null);
-  const recs = await leadershipDal.fetchRecommendations(orgId);
+        const recs = await leadershipDal.fetchRecommendations(organizationId);
         setRecommendations(recs);
       } catch (error) {
         console.error(error);
@@ -104,16 +104,16 @@ const AdminLeadershipInsights = () => {
   );
 
   useEffect(() => {
-    if (selectedOrgId) {
-      void fetchOrgInsights(selectedOrgId);
+    if (selectedOrganizationId) {
+      void fetchOrgInsights(selectedOrganizationId);
     }
-  }, [fetchOrgInsights, selectedOrgId]);
+  }, [fetchOrgInsights, selectedOrganizationId]);
 
   const handleGenerate = async () => {
-    if (!selectedOrgId) return;
+    if (!selectedOrganizationId) return;
     setGenerating(true);
     try {
-      const response = await leadershipDal.generateRecommendations(selectedOrgId, {
+      const response = await leadershipDal.generateRecommendations(selectedOrganizationId, {
         instructions: instructions.trim() || undefined,
       });
       const newItems = response.data ?? [];
@@ -153,8 +153,8 @@ const AdminLeadershipInsights = () => {
   };
 
   const refreshOrg = () => {
-    if (selectedOrgId) {
-      void fetchOrgInsights(selectedOrgId);
+    if (selectedOrganizationId) {
+      void fetchOrgInsights(selectedOrganizationId);
     }
   };
 
@@ -172,16 +172,16 @@ const AdminLeadershipInsights = () => {
           </div>
           <div className="flex items-center gap-2">
             <select
-              value={selectedOrgId}
-              onChange={(event) => setSelectedOrgId(event.target.value)}
+              value={selectedOrganizationId}
+              onChange={(event) => setSelectedOrganizationId(event.target.value)}
               className="rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:ring-2 focus:ring-indigo-300"
             >
               <option value="">Select organization</option>
-              {orgs.map((org) => (
-                <option key={org.id} value={org.id}>
-                  {org.name}
-                </option>
-              ))}
+                {orgs.map((org) => (
+                  <option key={org.id} value={org.id}>
+                    {org.name}
+                  </option>
+                ))}
             </select>
             <button
               type="button"
@@ -338,7 +338,7 @@ const AdminLeadershipInsights = () => {
               <button
                 type="button"
                 onClick={handleGenerate}
-                disabled={generating || !selectedOrgId}
+                disabled={generating || !selectedOrganizationId}
                 className="mt-4 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-500 px-4 py-2 text-sm font-semibold text-white shadow-sm disabled:opacity-50"
               >
                 {generating ? 'Generating…' : 'Generate Recommendations'}
@@ -373,8 +373,8 @@ const AdminLeadershipInsights = () => {
               <tbody>
                 {healthRows.map((row) => (
                   <tr
-                    key={row.orgId}
-                    className={`border-t border-gray-100 ${row.orgId === selectedOrgId ? 'bg-indigo-50/50' : 'bg-white'}`}
+                    key={row.organizationId}
+                    className={`border-t border-gray-100 ${row.organizationId === selectedOrganizationId ? 'bg-indigo-50/50' : 'bg-white'}`}
                   >
                     <td className="px-4 py-3 font-medium text-gray-900">{row.name}</td>
                     <td className="px-4 py-3">{row.activeLearners}</td>

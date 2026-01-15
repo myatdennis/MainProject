@@ -51,7 +51,7 @@ type AdminSurveyCard = {
   totalResponses: number;
   totalInvites: number;
   completionRate: number;
-  assignedOrgIds: string[];
+  organizationIds: string[];
   assignedOrgs: string[];
 };
 
@@ -73,7 +73,7 @@ const AdminSurveys = () => {
   const [queueLength, setQueueLength] = useState(0);
   const [showAssignModal, setShowAssignModal] = useState(false);
   const [assignTargetSurveyId, setAssignTargetSurveyId] = useState<string | null>(null);
-  const [selectedOrgIds, setSelectedOrgIds] = useState<string[]>([]);
+  const [selectedOrganizationIds, setSelectedOrganizationIds] = useState<string[]>([]);
   const [assignError, setAssignError] = useState<string | null>(null);
   const [isAssignSaving, setIsAssignSaving] = useState(false);
   const [duplicateTarget, setDuplicateTarget] = useState<string | null>(null);
@@ -88,9 +88,9 @@ const AdminSurveys = () => {
     return map;
   }, [organizations]);
 
-  const missingSelectedOrgIds = useMemo(() => {
-    return selectedOrgIds.filter((orgId) => !organizationMap.has(orgId));
-  }, [selectedOrgIds, organizationMap]);
+  const missingSelectedOrganizationIds = useMemo(() => {
+    return selectedOrganizationIds.filter((organizationId) => !organizationMap.has(organizationId));
+  }, [selectedOrganizationIds, organizationMap]);
 
   useEffect(() => {
     let isMounted = true;
@@ -125,9 +125,8 @@ const AdminSurveys = () => {
 
   const shapeSurveyRecord = useCallback(
     (record: Survey): AdminSurveyCard => {
-      const orgIds = record.assignedTo?.organizationIds ?? [];
-      const assignedOrgIds = orgIds.map((id) => String(id));
-      const assignedOrgs = assignedOrgIds.map((id) => organizationMap.get(id) ?? `Org ${id}`);
+  const organizationIds = record.assignedTo?.organizationIds ?? [];
+  const assignedOrgs = organizationIds.map((id: string) => organizationMap.get(id) ?? `Org ${id}`);
       const metrics = (record as any).metrics ?? (record as any).analytics ?? {};
       const totalResponses =
         typeof (record as any).totalResponses === 'number'
@@ -167,7 +166,7 @@ const AdminSurveys = () => {
         completionRate: Number.isFinite(completionInput)
           ? Math.max(0, Math.min(100, Math.round(completionInput)))
           : 0,
-        assignedOrgIds,
+  organizationIds,
         assignedOrgs,
       };
     },
@@ -219,7 +218,7 @@ const AdminSurveys = () => {
   const openAssignModal = (surveyId: string) => {
     const survey = surveys.find(s => s.id === surveyId);
     setAssignTargetSurveyId(surveyId);
-    setSelectedOrgIds(survey?.assignedOrgIds ?? []);
+  setSelectedOrganizationIds(survey?.organizationIds ?? []);
     setAssignError(null);
     setShowAssignModal(true);
   };
@@ -277,13 +276,13 @@ const AdminSurveys = () => {
   const closeAssignModal = () => {
     setShowAssignModal(false);
     setAssignTargetSurveyId(null);
-    setSelectedOrgIds([]);
+  setSelectedOrganizationIds([]);
     setAssignError(null);
     setIsAssignSaving(false);
   };
 
-  const toggleSelectOrg = (orgId: string) => {
-    setSelectedOrgIds(prev => prev.includes(orgId) ? prev.filter(id => id !== orgId) : [...prev, orgId]);
+  const toggleSelectOrganization = (organizationId: string) => {
+    setSelectedOrganizationIds(prev => prev.includes(organizationId) ? prev.filter(id => id !== organizationId) : [...prev, organizationId]);
   };
 
   const saveAssignment = async () => {
@@ -293,22 +292,22 @@ const AdminSurveys = () => {
   const savingStartedAt = Date.now();
 
     const assignedOrgNames = organizations
-      .filter((org) => selectedOrgIds.includes(org.id))
+      .filter((org) => selectedOrganizationIds.includes(org.id))
       .map((org) => org.name);
 
     setSurveys(prev => prev.map(s => s.id === assignTargetSurveyId ? {
       ...s,
-      assignedOrgIds: [...selectedOrgIds],
+      organizationIds: [...selectedOrganizationIds],
       assignedOrgs: assignedOrgNames
     } : s));
 
     try {
-      const updated = await updateSurveyAssignments(assignTargetSurveyId, selectedOrgIds);
+  const updated = await updateSurveyAssignments(assignTargetSurveyId, selectedOrganizationIds);
       const elapsed = Date.now() - savingStartedAt;
       if (elapsed < MIN_ASSIGN_SAVING_MS) {
         await new Promise((resolve) => setTimeout(resolve, MIN_ASSIGN_SAVING_MS - elapsed));
       }
-      setSurveys(prev => prev.map(s => s.id === assignTargetSurveyId ? shapeSurveyRecord(updated) : s));
+  setSurveys(prev => prev.map(s => s.id === assignTargetSurveyId ? shapeSurveyRecord(updated) : s));
       closeAssignModal();
     } catch (err) {
       console.warn('Failed to save assignment', err);
@@ -793,8 +792,8 @@ const AdminSurveys = () => {
                 </div>
               ) : organizations.length > 0 ? (
                 organizations.map(org => (
-                  <label key={org.id} className={`flex items-center space-x-3 p-3 rounded-lg border ${selectedOrgIds.includes(org.id) ? 'border-orange-400 bg-orange-50' : 'border-gray-100 bg-white'}`}>
-                    <input type="checkbox" checked={selectedOrgIds.includes(org.id)} onChange={() => toggleSelectOrg(org.id)} className="h-4 w-4 text-orange-500" />
+                  <label key={org.id} className={`flex items-center space-x-3 p-3 rounded-lg border ${selectedOrganizationIds.includes(org.id) ? 'border-orange-400 bg-orange-50' : 'border-gray-100 bg-white'}`}>
+                    <input type="checkbox" checked={selectedOrganizationIds.includes(org.id)} onChange={() => toggleSelectOrganization(org.id)} className="h-4 w-4 text-orange-500" />
                     <div>
                       <div className="font-medium text-gray-900">{org.name}</div>
                     </div>
@@ -807,13 +806,13 @@ const AdminSurveys = () => {
               )}
             </div>
 
-            {missingSelectedOrgIds.length > 0 && (
+            {missingSelectedOrganizationIds.length > 0 && (
               <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
                 These assignments reference organizations that haven’t synced yet:
                 <div className="mt-2 flex flex-wrap gap-1">
-                  {missingSelectedOrgIds.map((orgId) => (
-                    <span key={orgId} className="rounded-full bg-white px-2 py-1 text-[11px] font-medium text-amber-800">
-                      {organizationMap.get(orgId) ?? `Org ${orgId}`}
+                  {missingSelectedOrganizationIds.map((organizationId) => (
+                    <span key={organizationId} className="rounded-full bg-white px-2 py-1 text-[11px] font-medium text-amber-800">
+                      {organizationMap.get(organizationId) ?? `Org ${organizationId}`}
                     </span>
                   ))}
                 </div>

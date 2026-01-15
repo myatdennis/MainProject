@@ -5,7 +5,7 @@ export type Notification = {
   title: string;
   body?: string;
   type?: string;
-  orgId?: string | null;
+  organizationId?: string | null;
   userId?: string | null;
   createdAt: string;
   updatedAt?: string | null;
@@ -23,7 +23,7 @@ const mapNotification = (record: any): Notification => ({
   title: record.title,
   body: record.body ?? undefined,
   type: record.type ?? 'announcement',
-  orgId: record.orgId ?? record.org_id ?? undefined,
+  organizationId: record.organizationId ?? record.organization_id ?? record.orgId ?? undefined,
   userId: record.userId ?? record.user_id ?? undefined,
   createdAt: record.createdAt ?? record.created_at ?? new Date().toISOString(),
   updatedAt: record.updatedAt ?? record.updated_at ?? null,
@@ -38,9 +38,9 @@ const mapNotification = (record: any): Notification => ({
   messageId: record.messageId ?? record.message_id ?? null,
 });
 
-export const listNotifications = async (opts?: { orgId?: string; userId?: string }) => {
+export const listNotifications = async (opts?: { organizationId?: string; userId?: string }) => {
   const params = new URLSearchParams();
-  if (opts?.orgId) params.set('org_id', opts.orgId);
+  if (opts?.organizationId) params.set('org_id', opts.organizationId);
   if (opts?.userId) params.set('user_id', opts.userId);
 
   const path = `/api/admin/notifications${params.toString() ? `?${params.toString()}` : ''}`;
@@ -57,7 +57,7 @@ export const addNotification = async (notification: Omit<Notification, 'id' | 'c
     body: JSON.stringify({
       title: notification.title,
       body: notification.body,
-      orgId: notification.orgId,
+      organization_id: notification.organizationId,
       userId: notification.userId,
       read: notification.read ?? false
     })
@@ -83,7 +83,7 @@ export const deleteNotification = async (id: string) => {
   });
 };
 
-export const clearNotifications = async (opts?: { orgId?: string; userId?: string }) => {
+export const clearNotifications = async (opts?: { organizationId?: string; userId?: string }) => {
   const existing = await listNotifications(opts);
   await Promise.all(existing.map(note => deleteNotification(note.id)));
 };

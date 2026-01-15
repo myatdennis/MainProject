@@ -45,6 +45,8 @@ class SyncService {
   private pendingSync: SyncEvent[] = [];
   private eventLog: SyncEvent[] = [];
   private realtimeChannels: { name: string; channel: { unsubscribe: () => void } }[] = [];
+  private wsHandlersAttached = false;
+  private lastWsEnabled: boolean | null = null;
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -69,45 +71,57 @@ class SyncService {
 
     // Initialize WebSocket client if configured (fast realtime fallback)
     try {
-      if (wsClient.isEnabled()) {
-        wsClient.connect();
-
-        // Map incoming WS events to local emitters
-        wsClient.on('event', (payload: any) => {
-          const t = payload.type;
-          const d = payload.data;
-
-          switch (t) {
-            case 'assignment_created':
-            case 'assignment_updated':
-            case 'assignment_deleted':
-              this.emit(t, d);
-              break;
-            case 'user_progress':
-              this.emit('user_progress', { progress: d, userId: d.user_id, timestamp: Date.now(), source: 'client' });
-              break;
-            case 'course_updated':
-            case 'course_created':
-            case 'course_deleted':
-              this.emit(t, { course: d, courseId: d?.id, timestamp: Date.now(), source: 'admin' });
-              break;
-            default:
-              this.emit('ws_event', payload);
-          }
-        });
-
-        wsClient.on('open', () => {
-          // optionally subscribe to org-specific channels after auth
-          this.emit('ws_connected', { timestamp: Date.now() });
-        });
-
-        wsClient.on('close', () => this.emit('ws_disconnected', { timestamp: Date.now() }));
-      } else {
+      this.installWebsocketHandlers();
+      wsClient.connect();
+      if (!wsClient.isEnabled()) {
         console.info('[SyncService] WebSocket client disabled; relying on Supabase realtime/polling.');
       }
     } catch (err) {
       console.warn('WS client initialization failed', err);
     }
+  }
+
+  private installWebsocketHandlers() {
+    if (this.wsHandlersAttached) return;
+    this.wsHandlersAttached = true;
+
+    wsClient.on('event', (payload: any) => {
+      const t = payload.type;
+      const d = payload.data;
+
+      switch (t) {
+        case 'assignment_created':
+        case 'assignment_updated':
+        case 'assignment_deleted':
+          this.emit(t, d);
+          break;
+        case 'user_progress':
+          this.emit('user_progress', { progress: d, userId: d.user_id, timestamp: Date.now(), source: 'client' });
+          break;
+        case 'course_updated':
+        case 'course_created':
+        case 'course_deleted':
+          this.emit(t, { course: d, courseId: d?.id, timestamp: Date.now(), source: 'admin' });
+          break;
+        default:
+          this.emit('ws_event', payload);
+      }
+    });
+
+    wsClient.on('open', () => {
+      this.emit('ws_connected', { timestamp: Date.now() });
+    });
+
+    wsClient.on('close', () => this.emit('ws_disconnected', { timestamp: Date.now() }));
+
+    wsClient.on('status', (state: any) => {
+      const enabled = Boolean(state?.enabled);
+      if (this.lastWsEnabled === enabled) return;
+      this.lastWsEnabled = enabled;
+      if (!enabled && import.meta.env.DEV) {
+        console.info('[SyncService] WebSocket client disabled; relying on Supabase realtime/polling.');
+      }
+    });
   }
 
   // Initialize real-time Supabase synchronization

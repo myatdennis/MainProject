@@ -532,7 +532,7 @@ export const addResourceToProfile = async (request: ResourceSendRequest): Promis
         await notificationService.addNotification({
           title: `New ${resource.type}: ${resource.title}`,
           body: request.message || `Your organization has received a new ${resource.type}`,
-          orgId: profiles[index].orgId
+          organizationId: profiles[index].orgId
         });
       } catch (error) {
         console.warn('Failed to send notification:', error);

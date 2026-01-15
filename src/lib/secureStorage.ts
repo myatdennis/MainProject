@@ -250,40 +250,84 @@ const USER_SESSION_KEY = 'user_session';
 const ACCESS_TOKEN_KEY = 'access_token';
 const REFRESH_TOKEN_KEY = 'refresh_token';
 
+type TokenTelemetryEvent =
+  | 'set_access_token'
+  | 'clear_access_token'
+  | 'set_refresh_token'
+  | 'clear_refresh_token';
+
+const shouldLogTokenTelemetry = (): boolean => {
+  try {
+    return typeof import.meta !== 'undefined' && Boolean(import.meta.env?.DEV);
+  } catch (error) {
+    return false;
+  }
+};
+
+const readTokenPresenceSnapshot = () => {
+  try {
+    const accessTokenPresent = Boolean(secureGet<string>(ACCESS_TOKEN_KEY));
+    const refreshTokenPresent = Boolean(secureGet<string>(REFRESH_TOKEN_KEY));
+    return { accessTokenPresent, refreshTokenPresent };
+  } catch (error) {
+    return { accessTokenPresent: false, refreshTokenPresent: false };
+  }
+};
+
+const logTokenTelemetry = (event: TokenTelemetryEvent, reason?: string) => {
+  if (!shouldLogTokenTelemetry()) {
+    return;
+  }
+  const snapshot = readTokenPresenceSnapshot();
+  console.info('[SecureAuth][DEV:token-state]', {
+    event,
+    reason: reason ?? 'unspecified',
+    accessTokenPresent: snapshot.accessTokenPresent,
+    refreshTokenPresent: snapshot.refreshTokenPresent,
+    timestamp: new Date().toISOString(),
+  });
+};
+
 // ============================================================================
 // Token Helpers
 // ============================================================================
 
-export function setAccessToken(token: string | null): void {
+export function setAccessToken(token: string | null, reason?: string): void {
   if (!token) {
     secureRemove(ACCESS_TOKEN_KEY);
+    logTokenTelemetry('clear_access_token', reason ?? 'set_access_token:null');
     return;
   }
   secureSet(ACCESS_TOKEN_KEY, token);
+  logTokenTelemetry('set_access_token', reason);
 }
 
 export function getAccessToken(): string | null {
   return secureGet<string>(ACCESS_TOKEN_KEY);
 }
 
-export function clearAccessToken(): void {
+export function clearAccessToken(reason?: string): void {
   secureRemove(ACCESS_TOKEN_KEY);
+  logTokenTelemetry('clear_access_token', reason ?? 'clear_access_token');
 }
 
-export function setRefreshToken(token: string | null): void {
+export function setRefreshToken(token: string | null, reason?: string): void {
   if (!token) {
     secureRemove(REFRESH_TOKEN_KEY);
+    logTokenTelemetry('clear_refresh_token', reason ?? 'set_refresh_token:null');
     return;
   }
   secureSet(REFRESH_TOKEN_KEY, token);
+  logTokenTelemetry('set_refresh_token', reason);
 }
 
 export function getRefreshToken(): string | null {
   return secureGet<string>(REFRESH_TOKEN_KEY);
 }
 
-export function clearRefreshToken(): void {
+export function clearRefreshToken(reason?: string): void {
   secureRemove(REFRESH_TOKEN_KEY);
+  logTokenTelemetry('clear_refresh_token', reason ?? 'clear_refresh_token');
 }
 
 export function setSessionMetadata(metadata: SessionMetadata): void {
@@ -323,11 +367,11 @@ export function clearUserSession(): void {
 /**
  * Clear all auth data
  */
-export function clearAuth(): void {
+export function clearAuth(reason?: string): void {
   clearSessionMetadata();
   clearUserSession();
-  clearAccessToken();
-  clearRefreshToken();
+  clearAccessToken(reason ?? 'clear_auth');
+  clearRefreshToken(reason ?? 'clear_auth');
 }
 
 export function setActiveOrgPreference(orgId: string | null): void {
@@ -405,7 +449,7 @@ export function migrateFromLocalStorage(): void {
     // Remove legacy auth token storage entirely
     const oldToken = window.localStorage.getItem('authToken');
     if (oldToken) {
-      setAccessToken(oldToken);
+      setAccessToken(oldToken, 'legacy_migration');
       window.localStorage.removeItem('authToken');
       removedKeys.push('authToken');
       console.log('✅ Migrated legacy auth token to secure storage');
@@ -413,7 +457,7 @@ export function migrateFromLocalStorage(): void {
 
     const oldRefreshToken = window.localStorage.getItem('refreshToken');
     if (oldRefreshToken) {
-      setRefreshToken(oldRefreshToken);
+      setRefreshToken(oldRefreshToken, 'legacy_migration');
       window.localStorage.removeItem('refreshToken');
       removedKeys.push('refreshToken');
       console.log('✅ Migrated legacy refresh token to secure storage');

@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import SEO from '../../components/SEO/SEO';
 import Card from '../../components/ui/Card';
@@ -6,7 +6,10 @@ import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
 import ProgressBar from '../../components/ui/ProgressBar';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
+import EmptyState from '../../components/ui/EmptyState';
+import { LoadingSpinner } from '../../components/LoadingComponents';
 import useRuntimeStatus from '../../hooks/useRuntimeStatus';
+import { courseStore, AdminCatalogState } from '../../store/courseStore';
 import {
   Users,
   Building2,
@@ -155,6 +158,72 @@ const AdminDashboard = () => {
   const runtimeLastChecked = runtimeStatus.lastChecked
     ? new Date(runtimeStatus.lastChecked).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : 'pending';
+  const [catalogState, setCatalogState] = useState<AdminCatalogState>(courseStore.getAdminCatalogState());
+  const [retrying, setRetrying] = useState(false);
+
+  useEffect(() => {
+    setCatalogState(courseStore.getAdminCatalogState());
+    const unsubscribe = courseStore.subscribe(() => {
+      setCatalogState(courseStore.getAdminCatalogState());
+    });
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    if (catalogState.phase !== 'idle') {
+      return;
+    }
+    void courseStore.init().catch((error) => {
+      console.error('[AdminDashboard] Failed to bootstrap admin catalog', error);
+    });
+  }, [catalogState.phase]);
+
+  const handleRetry = useCallback(async () => {
+    if (catalogState.phase === 'loading' || retrying) {
+      return;
+    }
+    setRetrying(true);
+    try {
+      await courseStore.init();
+    } catch (error) {
+      console.error('[AdminDashboard] Admin catalog retry failed', error);
+    } finally {
+      setRetrying(false);
+    }
+  }, [catalogState.phase, retrying]);
+
+  const handleCreateCourse = useCallback(() => {
+    navigate('/admin/courses?create=1');
+  }, [navigate]);
+
+  const handleSwitchAccount = useCallback(() => {
+    navigate('/admin/login');
+  }, [navigate]);
+
+  const breadcrumbItems = useMemo(
+    () => [
+      { label: 'Admin', to: '/admin' },
+      { label: 'Dashboard', to: '/admin/dashboard' },
+    ],
+    [],
+  );
+
+  const gateShell = useCallback(
+    (content: ReactNode) => (
+      <div className="container-page section">
+        <Breadcrumbs items={breadcrumbItems} />
+        <div className="mt-8">{content}</div>
+      </div>
+    ),
+    [breadcrumbItems],
+  );
+
+  const catalogStatus = catalogState.adminLoadStatus;
+  const isCatalogLoading = catalogState.phase === 'loading';
+  const isCatalogEmpty = catalogStatus === 'empty';
+  const isCatalogUnauthorized = catalogStatus === 'unauthorized';
+  const isCatalogError = catalogStatus === 'error' || catalogStatus === 'api_unreachable';
+  const lastSyncAttempt = catalogState.lastAttemptAt ? new Date(catalogState.lastAttemptAt).toLocaleString() : null;
 
   const reportCsv = useMemo(() => {
     const header = ['Module Name,Completion Rate,Average Time'];
@@ -174,11 +243,88 @@ const AdminDashboard = () => {
     window.URL.revokeObjectURL(url);
   };
 
+  let gateContent: ReactNode | null = null;
+  if (isCatalogLoading) {
+    gateContent = (
+      <div className="flex min-h-[50vh] flex-col items-center justify-center rounded-3xl border border-mist/40 bg-white px-8 py-16 text-center shadow-card-sm">
+        <LoadingSpinner size="lg" />
+        <p className="mt-4 text-sm text-slate/80">Syncing the admin catalog&hellip;</p>
+      </div>
+    );
+  } else if (isCatalogEmpty) {
+    gateContent = (
+      <div className="flex min-h-[50vh] flex-col justify-center">
+        <EmptyState
+          title="No courses yet"
+          description="Create your first course to start building the catalog for your organization."
+          action={
+            <Button variant="primary" onClick={handleCreateCourse}>
+              Create Course
+            </Button>
+          }
+        />
+      </div>
+    );
+  } else if (isCatalogUnauthorized) {
+    gateContent = (
+      <Card className="mx-auto max-w-3xl text-center">
+        <div className="flex flex-col items-center gap-4 p-10">
+          <ShieldCheck className="h-12 w-12 text-skyblue" />
+          <h1 className="font-heading text-2xl text-charcoal">Admin access required</h1>
+          <p className="max-w-xl text-sm text-slate/80">
+            Your session is active, but this account doesn&apos;t have admin privileges yet. Switch to an admin account or
+            contact support to request access.
+          </p>
+          <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+            <Button onClick={handleSwitchAccount} isFullWidth>
+              Switch account
+            </Button>
+            <Button variant="ghost" asChild isFullWidth>
+              <a href="mailto:help@the-huddle.co?subject=Admin%20Access%20Request">Contact support</a>
+            </Button>
+          </div>
+        </div>
+      </Card>
+    );
+  } else if (isCatalogError) {
+    const heading = catalogStatus === 'api_unreachable' ? 'Unable to reach admin services' : 'We couldn’t load the admin catalog';
+    gateContent = (
+      <Card className="mx-auto max-w-3xl text-center">
+        <div className="flex flex-col items-center gap-4 p-10">
+          <AlertTriangle className="h-12 w-12 text-deepred" />
+          <h1 className="font-heading text-2xl text-charcoal">{heading}</h1>
+          <p className="max-w-xl text-sm text-slate/80">
+            {catalogState.lastError || 'Check your connection or try again in a moment. We paused the dashboard until the admin API responds.'}
+          </p>
+          <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+            <Button onClick={handleRetry} loading={retrying} isFullWidth>
+              Retry sync
+            </Button>
+            <Button variant="ghost" onClick={() => navigate('/admin/courses')} isFullWidth>
+              Go to courses
+            </Button>
+          </div>
+          {lastSyncAttempt && (
+            <p className="mt-4 text-xs text-slate/60">Last attempt: {lastSyncAttempt}</p>
+          )}
+        </div>
+      </Card>
+    );
+  }
+
+  if (gateContent) {
+    return (
+      <>
+        <SEO title="Admin Dashboard" description="Monitor learner progress and organizational impact." />
+        {gateShell(gateContent)}
+      </>
+    );
+  }
+
   return (
     <>
       <SEO title="Admin Dashboard" description="Monitor learner progress and organizational impact." />
-      <div className="container-page section">
-        <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Dashboard', to: '/admin/dashboard' }]} />
+      {gateShell(
         <section className="space-y-10">
         <Card tone="gradient" withBorder={false} className="overflow-hidden">
           <div className="relative z-10 flex flex-col gap-4 text-charcoal md:flex-row md:items-center md:justify-between">
@@ -413,8 +559,8 @@ const AdminDashboard = () => {
             </div>
           </Card>
         </div>
-        </section>
-      </div>
+        </section>,
+      )}
     </>
   );
 };

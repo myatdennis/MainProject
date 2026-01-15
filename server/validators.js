@@ -208,6 +208,7 @@ export const courseUpsertSchema = z.object({
       description: z.string().nullable().optional(),
       status: z.enum(['draft', 'published', 'archived']).optional(),
       version: z.number().int().positive().optional(),
+      organization_id: z.string().min(1).nullable().optional(),
       org_id: z.string().min(1).nullable().optional(),
       organizationId: z.string().min(1).nullable().optional(),
       external_id: z.string().min(1).optional(),

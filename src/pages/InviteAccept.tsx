@@ -3,7 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { AlertTriangle, CheckCircle2, Lock, Mail, RefreshCw, ShieldCheck } from 'lucide-react';
 import LoadingButton from '../components/LoadingButton';
 import { useToast } from '../context/ToastContext';
-import inviteService, { InvitePreview } from '../services/inviteService';
+import { getInvite, acceptInvite, type InvitePreview } from '../dal/invites';
 
 const ACCEPTABLE_STATUSES = new Set(['pending', 'sent']);
 
@@ -36,7 +36,7 @@ const InviteAccept = () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await inviteService.getInvite(token);
+  const response = await getInvite(token);
       setInvite(response.data);
     } catch (err: any) {
       const message = err?.message || 'Unable to load invite';
@@ -68,7 +68,7 @@ const InviteAccept = () => {
     setAccepting(true);
     setError(null);
     try {
-      const response = await inviteService.acceptInvite(token, {
+  const response = await acceptInvite(token, {
         fullName,
         password,
       });

@@ -2,7 +2,40 @@ import apiRequest, { ApiError } from '../../utils/apiClient';
 import type { AnalyticsEvent, LearnerJourney } from '../analyticsService';
 import { getAccessToken, getUserSession } from '../../lib/secureStorage';
 
-const disabledStatuses = new Set([404, 501, 503]);
+const parseEnvAnalyticsFlag = (): boolean => {
+  try {
+    const raw = typeof import.meta !== 'undefined' ? import.meta.env?.VITE_ENABLE_ANALYTICS : undefined;
+    if (raw === undefined || raw === null || raw === '') {
+      return true;
+    }
+    const normalized = String(raw).trim().toLowerCase();
+    return !['false', '0', 'off', 'disabled', 'no'].includes(normalized);
+  } catch {
+    return true;
+  }
+};
+
+let analyticsEnabled = true;
+let analyticsDisabledReason: string | null = null;
+let disableLogEmitted = false;
+let authWarningLogged = false;
+let validationWarningLogged = false;
+
+const disableAnalytics = (reason: string) => {
+  if (!analyticsEnabled) {
+    analyticsDisabledReason = analyticsDisabledReason ?? reason;
+    return;
+  }
+  analyticsEnabled = false;
+  analyticsDisabledReason = reason;
+  if (import.meta.env?.DEV) {
+    console.info(`[analyticsApiClient] Analytics disabled (${reason}).`);
+  }
+};
+
+if (!parseEnvAnalyticsFlag()) {
+  disableAnalytics('env_override');
+}
 
 const hasAuthSession = () => {
   if (typeof window === 'undefined') return false;
@@ -15,27 +48,85 @@ const hasAuthSession = () => {
   }
 };
 
-const ensureAuth = () => {
+const ensureAnalyticsReady = () => {
+  if (!analyticsEnabled) {
+    if (import.meta.env?.DEV && !disableLogEmitted) {
+      const reason = analyticsDisabledReason ? ` (${analyticsDisabledReason})` : '';
+      console.info(`[analyticsApiClient] Analytics disabled${reason}. Skipping network calls.`);
+      disableLogEmitted = true;
+    }
+    return false;
+  }
   if (hasAuthSession()) return true;
-  if (import.meta.env.DEV) {
+  if (import.meta.env?.DEV) {
     console.info('[analyticsApiClient] Skipping analytics network call because no authenticated session is available.');
   }
   return false;
 };
 
-const handleAnalyticsFailure = <T>(error: unknown, fallback: T, context: string): T => {
-  if (error instanceof ApiError && disabledStatuses.has(error.status)) {
-    if (import.meta.env.DEV) {
-      console.info(`[analyticsApiClient] ${context} disabled (status ${error.status}). Using fallback.`);
+const logAuthWarning = (status: number, context: string) => {
+  if (authWarningLogged) {
+    return;
+  }
+  authWarningLogged = true;
+  console.info(
+    `[analyticsApiClient] ${context} requires authentication (status ${status}). Events will remain queued locally until a session is available.`,
+  );
+};
+
+const logValidationWarning = (context: string, payloadSummary?: string) => {
+  if (validationWarningLogged) {
+    return;
+  }
+  validationWarningLogged = true;
+  const summary = payloadSummary ? `payloadKeys=${payloadSummary}` : 'payloadKeys=none';
+  console.warn(`[analyticsApiClient] ${context} payload rejected (400). ${summary}`);
+};
+
+const handleAnalyticsFailure = <T>(
+  error: unknown,
+  fallback: T,
+  context: string,
+  options?: { payloadSummary?: string },
+): T => {
+  if (error instanceof ApiError) {
+    const status = error.status;
+    if (status === 404) {
+      disableAnalytics(`${context}:not_found`);
+      return fallback;
     }
-    return fallback;
+    if (status === 501 || status === 503) {
+      disableAnalytics(`${context}:unavailable_${status}`);
+      return fallback;
+    }
+    if (status === 401 || status === 403) {
+      logAuthWarning(status, context);
+      return fallback;
+    }
+    if (status === 400) {
+      logValidationWarning(context, options?.payloadSummary);
+      return fallback;
+    }
   }
   throw error;
 };
 
+const summarizePayloadKeys = (payload: Record<string, any> | undefined): string => {
+  if (!payload) {
+    return 'none';
+  }
+  const keys = Object.keys(payload);
+  if (!keys.length) {
+    return 'none';
+  }
+  return keys.slice(0, 10).join(',');
+};
+
+export const isAnalyticsEnabled = (): boolean => analyticsEnabled;
+
 export const analyticsApiClient = {
   fetchEvents: async () => {
-    if (!ensureAuth()) return { data: [] };
+    if (!ensureAnalyticsReady()) return { data: [] };
     try {
       return await apiRequest<{ data: any[] }>('/api/analytics/events');
     } catch (error) {
@@ -43,7 +134,7 @@ export const analyticsApiClient = {
     }
   },
   fetchJourneys: async () => {
-    if (!ensureAuth()) return { data: [] };
+    if (!ensureAnalyticsReady()) return { data: [] };
     try {
       return await apiRequest<{ data: any[] }>('/api/analytics/journeys');
     } catch (error) {
@@ -51,7 +142,7 @@ export const analyticsApiClient = {
     }
   },
   persistEvent: async (event: AnalyticsEvent) => {
-    if (!ensureAuth()) return;
+    if (!ensureAnalyticsReady()) return;
     try {
       await apiRequest('/api/analytics/events', {
         method: 'POST',
@@ -68,11 +159,13 @@ export const analyticsApiClient = {
         }),
       });
     } catch (error) {
-      handleAnalyticsFailure(error, { skipped: true }, 'persistEvent');
+      handleAnalyticsFailure(error, { skipped: true }, 'persistEvent', {
+        payloadSummary: summarizePayloadKeys(event.data),
+      });
     }
   },
   persistJourney: async (journey: LearnerJourney) => {
-    if (!ensureAuth()) return;
+    if (!ensureAnalyticsReady()) return;
     try {
       await apiRequest('/api/analytics/journeys', {
         method: 'POST',
@@ -94,11 +187,13 @@ export const analyticsApiClient = {
         }),
       });
     } catch (error) {
-      handleAnalyticsFailure(error, { skipped: true }, 'persistJourney');
+      handleAnalyticsFailure(error, { skipped: true }, 'persistJourney', {
+        payloadSummary: summarizePayloadKeys(journey ? (journey as Record<string, any>) : undefined),
+      });
     }
   },
   fetchCourseEngagement: async () => {
-    if (!ensureAuth()) return { data: [] };
+    if (!ensureAnalyticsReady()) return { data: [] };
     try {
       return await apiRequest<{ data: { course_id: string; avg_progress: number; active_users: number }[] }>(
         '/api/analytics/course-engagement'

@@ -62,7 +62,7 @@ const OrgWorkspaceLayout: React.FC = () => {
       }
 
       try {
-        const svc = await import('../../services/clientWorkspaceService');
+  const svc = await import('../../dal/clientWorkspace');
         const access = await svc.checkWorkspaceAccess(orgId);
         const canAccess = Boolean(access) || isAuthenticated.admin;
         if (!cancelled) {

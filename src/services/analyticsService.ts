@@ -5,7 +5,7 @@
  * for deep insights into course performance and learner engagement.
  */
 
-import { analyticsApiClient } from './analytics/analyticsApiClient';
+import { analyticsApiClient, isAnalyticsEnabled } from './analytics/analyticsApiClient';
 import { EventQueue } from './analytics/eventQueue';
 import { ensureJourney, recordJourneyEvent, deriveJourneyKey } from './analytics/journeyUpdater';
 
@@ -665,10 +665,16 @@ class AnalyticsService {
   }
 
   private async persistEventRemote(event: AnalyticsEvent): Promise<void> {
+    if (!isAnalyticsEnabled()) {
+      return;
+    }
     await analyticsApiClient.persistEvent(event);
   }
 
   private async persistJourneyRemote(journey: LearnerJourney): Promise<void> {
+    if (!isAnalyticsEnabled()) {
+      return;
+    }
     await analyticsApiClient.persistJourney(journey);
   }
 

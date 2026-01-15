@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Link, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard,
@@ -20,6 +20,9 @@ import Card from '../ui/Card';
 import Button from '../ui/Button';
 import Badge from '../ui/Badge';
 import LoadingSpinner from '../ui/LoadingSpinner';
+import useRuntimeStatus from '../../hooks/useRuntimeStatus';
+import { refreshRuntimeStatus } from '../../state/runtimeStatus';
+import ApiStatusBanner from '../system/ApiStatusBanner';
 
 interface LMSLayoutProps {
   children?: ReactNode;
@@ -42,7 +45,16 @@ const LMSLayout = ({ children }: LMSLayoutProps) => {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
+  const runtimeStatus = useRuntimeStatus();
   const supabaseConfigured = Boolean(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY);
+  const apiReachable = runtimeStatus.apiReachable ?? runtimeStatus.apiHealthy;
+  const apiAuthRequired = Boolean(runtimeStatus.apiAuthRequired);
+
+  const handleRuntimeRetry = useCallback(() => {
+    refreshRuntimeStatus().catch((error) => {
+      console.warn('[LMSLayout] runtime status retry failed', error);
+    });
+  }, []);
 
   useEffect(() => {
     if (!supabaseConfigured) {
@@ -161,6 +173,14 @@ const LMSLayout = ({ children }: LMSLayoutProps) => {
       </aside>
 
       <div className="flex flex-1 flex-col">
+        <ApiStatusBanner
+          surface="lms"
+          apiReachable={apiReachable}
+          apiAuthRequired={apiAuthRequired}
+          isAuthenticated={Boolean(isAuthenticated.lms)}
+          lastCheckedAt={runtimeStatus.lastChecked}
+          onRetry={handleRuntimeRetry}
+        />
         <header className="sticky top-0 z-20 border-b border-mist/60 bg-white/90 backdrop-blur">
           <div className="flex h-16 items-center justify-between px-6 lg:px-10">
             <div className="flex items-center gap-3">

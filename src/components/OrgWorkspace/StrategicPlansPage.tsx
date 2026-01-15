@@ -9,7 +9,7 @@ const StrategicPlansPage: React.FC = () => {
   useEffect(() => {
     if (!orgId) return;
     (async () => {
-      const svc = await import('../../services/clientWorkspaceService');
+  const svc = await import('../../dal/clientWorkspace');
       const list = await svc.listStrategicPlans(orgId as string);
       setVersions(list);
     })();
@@ -17,7 +17,7 @@ const StrategicPlansPage: React.FC = () => {
 
   const save = async () => {
     if (!orgId) return;
-    const svc = await import('../../services/clientWorkspaceService');
+  const svc = await import('../../dal/clientWorkspace');
     await svc.addStrategicPlanVersion(orgId, editor, 'Huddle Co.');
     const v = await svc.listStrategicPlans(orgId as string);
     setVersions(v);
@@ -26,19 +26,19 @@ const StrategicPlansPage: React.FC = () => {
 
   const remove = async (id: string) => {
     if (!orgId) return;
-    const svc = await import('../../services/clientWorkspaceService');
+  const svc = await import('../../dal/clientWorkspace');
     await svc.deleteStrategicPlanVersion(orgId, id);
     setVersions(await svc.listStrategicPlans(orgId as string));
   };
 
   const restore = async (id: string) => {
     if (!orgId) return;
-    const { getStrategicPlanVersion, addStrategicPlanVersion } = await import('../../services/clientWorkspaceService');
+  const { getStrategicPlanVersion, addStrategicPlanVersion } = await import('../../dal/clientWorkspace');
     const v = await getStrategicPlanVersion(orgId, id);
     if (v) {
       // when restoring, we create a new version from the selected content
       await addStrategicPlanVersion(orgId, v.content, 'Restored Version');
-      const svc = await import('../../services/clientWorkspaceService');
+  const svc = await import('../../dal/clientWorkspace');
       setVersions(await svc.listStrategicPlans(orgId as string));
     }
   };

@@ -30,6 +30,14 @@ const AdminOrgProfile: React.FC = () => {
     pollIntervalMs: 60000,
   });
 
+  const inviteStats = useMemo(() => {
+    const list = Array.isArray(invites) ? invites : [];
+    const pending = list.filter((invite: any) => invite.status === 'pending' || invite.status === 'sent').length;
+    const accepted = list.filter((invite: any) => invite.status === 'accepted').length;
+    const stale = list.filter((invite: any) => invite.status === 'expired' || invite.status === 'bounced').length;
+    return { pending, accepted, stale };
+  }, [invites]);
+
   if (!orgProfileId) {
     return (
       <div className="p-6">
@@ -46,13 +54,6 @@ const AdminOrgProfile: React.FC = () => {
       </div>
     );
   }
-
-  const inviteStats = useMemo(() => {
-    const pending = invites.filter((invite: any) => invite.status === 'pending' || invite.status === 'sent').length;
-    const accepted = invites.filter((invite: any) => invite.status === 'accepted').length;
-    const stale = invites.filter((invite: any) => invite.status === 'expired' || invite.status === 'bounced').length;
-    return { pending, accepted, stale };
-  }, [invites]);
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-8">

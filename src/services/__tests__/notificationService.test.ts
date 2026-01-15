@@ -39,7 +39,7 @@ describe('notificationService', () => {
 
     global.fetch = fetchMock;
 
-    const notes = await listNotifications({ orgId: 'org-1' });
+  const notes = await listNotifications({ organizationId: 'org-1' });
 
     const [requestUrl, requestInit] = fetchMock.mock.calls[0];
     expect(requestUrl).toContain('/api/admin/notifications?org_id=org-1');
@@ -47,7 +47,7 @@ describe('notificationService', () => {
     expect(headers.get('X-User-Id')).toBe('test-user');
     expect(headers.get('X-User-Role')).toBe('member');
     expect(notes).toHaveLength(1);
-    expect(notes[0]).toMatchObject({ id: 'note-1', orgId: 'org-1' });
+  expect(notes[0]).toMatchObject({ id: 'note-1', organizationId: 'org-1' });
   });
 
   it('creates notifications via POST', async () => {
@@ -67,7 +67,7 @@ describe('notificationService', () => {
     const [requestUrl, requestInit] = fetchMock.mock.calls[0];
     expect(requestUrl).toContain('/api/admin/notifications');
     expect(requestInit.method).toBe('POST');
-    expect(requestInit.body).toBe(JSON.stringify({ title: 'Reminder', body: 'Check progress', orgId: undefined, userId: undefined, read: false }));
+  expect(requestInit.body).toBe(JSON.stringify({ title: 'Reminder', body: 'Check progress', organization_id: undefined, userId: undefined, read: false }));
     const headers = requestInit.headers as Headers;
     expect(headers.get('X-User-Id')).toBe('test-user');
     expect(headers.get('X-User-Role')).toBe('member');

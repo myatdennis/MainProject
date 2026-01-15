@@ -12,8 +12,7 @@ import { validateCourse, type CourseValidationIntent, type CourseValidationIssue
 import { getUserSession } from '../../lib/secureStorage';
 import { ApiError } from '../../utils/apiClient';
 import { getVideoEmbedUrl } from '../../utils/videoUtils';
-import { uploadLessonVideo, uploadDocumentResource } from '../../services/adminMediaUploadService';
-import { signMediaAsset, shouldRefreshSignedUrl } from '../../services/mediaClient';
+import { uploadLessonVideo, uploadDocumentResource } from '../../dal/media';
 import { 
   ArrowLeft, 
   Save, 
@@ -59,10 +58,12 @@ import useRuntimeStatus from '../../hooks/useRuntimeStatus';
 import useSwipeNavigation from '../../hooks/useSwipeNavigation';
 import VersionControl from '../../components/VersionControl';
 import { useToast } from '../../context/ToastContext';
+import { useSecureAuth } from '../../context/SecureAuthContext';
 import type { CourseAssignment } from '../../types/assignment';
-import { getDraftSnapshot, deleteDraftSnapshot, markDraftSynced, type DraftSnapshot } from '../../services/courseDraftStorage';
+import { getDraftSnapshot, deleteDraftSnapshot, markDraftSynced, type DraftSnapshot } from '../../dal/courseDrafts';
 import { evaluateRuntimeGate, type RuntimeGateResult, type GateMode, type RuntimeAction } from '../../utils/runtimeGating';
 import { createActionIdentifiers, type IdempotentAction } from '../../utils/idempotency';
+import { cloneWithCanonicalOrgId, resolveOrgIdFromCarrier, stampCanonicalOrgId } from '../../utils/orgFieldUtils';
 
 const buildUploadKey = (moduleId: string, lessonId: string) => `${moduleId}::${lessonId}`;
 const parseUploadKey = (key: string) => {
@@ -233,6 +234,7 @@ type UploadStatus = 'idle' | 'uploading' | 'paused' | 'error' | 'success';
 
 const AdminCourseBuilder = () => {
   const { courseId } = useParams();
+  const { activeOrgId } = useSecureAuth();
   const navigate = useNavigate();
   const isNewCourseRoute = !courseId || courseId === 'new';
   const isEditing = !isNewCourseRoute;
@@ -386,6 +388,17 @@ const AdminCourseBuilder = () => {
         : { ...prev, [moduleId]: true }
     );
   }, [isMobile]);
+
+  const logDev = useCallback((event: string, meta?: Record<string, unknown>) => {
+    if (!import.meta.env?.DEV) {
+      return;
+    }
+    if (meta) {
+      console.info(`[AdminCourseBuilder] ${event}`, meta);
+    } else {
+      console.info(`[AdminCourseBuilder] ${event}`);
+    }
+  }, []);
 
   const handleNextModule = useCallback(() => {
     if (!modules.length || !activeMobileModuleId) return;
@@ -584,28 +597,48 @@ const AdminCourseBuilder = () => {
           };
           
           courseStore.saveCourse(updatedCourse, { skipRemoteSync: true });
-          console.log('� Auto-saved course:', course.title, {
-            id: course.id,
-            modules: course.modules?.length || 0,
-            totalLessons: updatedCourse.lessons,
-            videoLessons: course.modules?.reduce((count, module) => 
-              count + module.lessons.filter(lesson => 
-                lesson.type === 'video' && lesson.content?.videoUrl
-              ).length, 0) || 0
-          });
-          
           // Update local state with calculated fields
           if (course.duration !== updatedCourse.duration || course.lessons !== updatedCourse.lessons) {
             setCourse(updatedCourse);
           }
         } catch (error) {
           console.error('❌ Auto-save failed:', error);
+          logDev('autosave_local_failed', {
+            id: course.id,
+            message: error instanceof Error ? error.message : String(error),
+          });
         }
       }, 1500);
 
       return () => clearTimeout(timeoutId);
     }
-  }, [course]);
+  }, [course, logDev]);
+
+  const resolveOrganizationId = useCallback(
+    (nextCourse?: Course | null) => {
+      let session: Record<string, any> | null = null;
+      try {
+        session = getUserSession() as Record<string, any>;
+      } catch {
+        session = null;
+      }
+
+      const activeMembership = session?.memberships?.find((membership: any) => membership?.status === 'active');
+
+      return (
+        resolveOrgIdFromCarrier(
+          nextCourse ?? null,
+          lastPersistedRef.current ?? null,
+          activeOrgId ?? null,
+          session?.activeOrgId ?? null,
+          session,
+          activeMembership ?? null,
+          ...(session?.memberships || [])
+        ) ?? null
+      );
+    },
+    [activeOrgId, lastPersistedRef],
+  );
 
   // Debounced remote auto-sync (single upsert). Runs only when there are real changes vs lastPersistedRef.
   useEffect(() => {
@@ -615,15 +648,39 @@ const AdminCourseBuilder = () => {
     if (!diff.hasChanges) return;
 
     const gate = evaluateRuntimeGate('course.auto-save', runtimeStatus);
-    if (gate.mode !== 'remote') {
-      if (lastAutoSaveGateModeRef.current !== gate.mode) {
-        showToast(
-          gate.reason ?? 'Drafts are stored locally until Huddle reconnects.',
-          gate.tone === 'danger' ? 'error' : 'warning',
-          6000,
-        );
+    const isBrowserOnline = typeof navigator !== 'undefined' ? navigator.onLine !== false : true;
+    const apiReachable = runtimeStatus.apiReachable !== false && !runtimeStatus.apiAuthRequired;
+    const resolvedOrgId = resolveOrganizationId(course);
+    const canAttemptRemote = gate.mode === 'remote' && isBrowserOnline && apiReachable && Boolean(resolvedOrgId);
+    const derivedMode: GateMode = canAttemptRemote ? 'remote' : gate.mode === 'remote' ? 'local-only' : gate.mode;
+
+    if (!canAttemptRemote) {
+      const reason = !isBrowserOnline
+        ? 'offline'
+        : !apiReachable
+        ? runtimeStatus.apiAuthRequired
+          ? 'auth_required'
+          : 'api_unreachable'
+        : !resolvedOrgId
+        ? 'missing_org'
+        : gate.mode;
+      logDev('autosave_local_only', {
+        id: course.id,
+        reason,
+        gate: gate.mode,
+        online: isBrowserOnline,
+        apiReachable,
+        orgResolved: Boolean(resolvedOrgId),
+      });
+      lastLocalOnlyReasonRef.current = reason;
+
+      if (lastAutoSaveGateModeRef.current !== derivedMode) {
+        const toastMessage = !isBrowserOnline
+          ? 'You appear to be offline. Drafts are stored locally and will sync once you reconnect.'
+          : gate.reason ?? 'Drafts are stored locally until Huddle reconnects.';
+        showToast(toastMessage, gate.tone === 'danger' ? 'error' : 'warning', 6000);
       }
-      lastAutoSaveGateModeRef.current = gate.mode;
+      lastAutoSaveGateModeRef.current = derivedMode;
       return;
     }
 
@@ -631,6 +688,7 @@ const AdminCourseBuilder = () => {
       showToast('Back online. Auto-sync resumed.', 'success', 3000);
     }
     lastAutoSaveGateModeRef.current = 'remote';
+    lastLocalOnlyReasonRef.current = null;
 
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     autoSaveTimerRef.current = setTimeout(async () => {
@@ -661,7 +719,7 @@ const AdminCourseBuilder = () => {
     return () => {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     };
-  }, [course, runtimeStatus, showToast]);
+  }, [course, runtimeStatus, resolveOrganizationId, showToast]);
 
   useEffect(() => {
     const diff = computeCourseDiff(lastPersistedRef.current, course);
@@ -746,6 +804,7 @@ const AdminCourseBuilder = () => {
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const autoSaveLockRef = useRef<boolean>(false);
   const lastAutoSaveGateModeRef = useRef<GateMode>('remote');
+  const lastLocalOnlyReasonRef = useRef<string | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<BuilderConfirmAction | null>(null);
 
   const confirmDialogContent = useMemo<ConfirmDialogConfig | null>(() => {
@@ -954,6 +1013,11 @@ const AdminCourseBuilder = () => {
     remoteSynced: boolean;
   };
 
+  const isClientGeneratedId = (value?: string | null): boolean => {
+    if (!value) return true;
+    return value.startsWith('course-');
+  };
+
   const persistCourse = async (
     nextCourse: Course,
     options?: PersistCourseOptions | 'draft' | 'published'
@@ -961,6 +1025,8 @@ const AdminCourseBuilder = () => {
     const resolvedOptions: PersistCourseOptions =
       typeof options === 'string' ? { statusOverride: options } : options ?? {};
     const { statusOverride, intentOverride, gate: gateOverride, action, skipValidation } = resolvedOptions;
+
+    const resolvedOrgId = resolveOrganizationId(nextCourse);
 
     const preparedCourse: Course = {
       ...nextCourse,
@@ -973,6 +1039,11 @@ const AdminCourseBuilder = () => {
           ? nextCourse.publishedDate || new Date().toISOString()
           : nextCourse.publishedDate,
     };
+
+    if (resolvedOrgId) {
+      preparedCourse.organizationId = resolvedOrgId;
+    }
+    stampCanonicalOrgId(preparedCourse as Record<string, any>, resolvedOrgId);
 
     const derivedAction: IdempotentAction =
       action ?? (statusOverride === 'published' ? 'course.publish' : 'course.save');
@@ -1017,10 +1088,29 @@ const AdminCourseBuilder = () => {
     let merged = preparedCourse;
     let remoteSynced = false;
 
-    if (allowRemoteSync) {
-      const persisted = await syncCourseToDatabase(preparedCourse, { action: derivedAction });
-      merged = persisted ? mergePersistedCourse(preparedCourse, persisted) : preparedCourse;
-      remoteSynced = true;
+    if (allowRemoteSync && resolvedOrgId) {
+      const isCreateOperation = isClientGeneratedId(lastPersistedRef.current?.id) || !lastPersistedRef.current;
+      try {
+        const { clone: apiCourse } = cloneWithCanonicalOrgId(preparedCourse, { removeAliases: true });
+        const persisted = await syncCourseToDatabase(apiCourse as Course, { action: derivedAction });
+        merged = persisted ? mergePersistedCourse(preparedCourse, persisted) : preparedCourse;
+        remoteSynced = true;
+        logDev(isCreateOperation ? 'autosave_post_success' : 'autosave_put_success', {
+          id: merged.id,
+        });
+      } catch (error) {
+        const status = error instanceof ApiError ? error.status : undefined;
+        logDev(isCreateOperation ? 'autosave_post_failed' : 'autosave_put_failed', {
+          status,
+          message: error instanceof Error ? error.message : String(error),
+        });
+        throw error;
+      }
+    } else if (!resolvedOrgId) {
+      logDev('autosave_post_failed', {
+        status: 'missing_org_id',
+        id: preparedCourse.id,
+      });
     }
 
     courseStore.saveCourse(merged, { skipRemoteSync: true });

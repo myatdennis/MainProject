@@ -1,6 +1,6 @@
-import { useEffect, useState, useMemo } from 'react';
+import { ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { courseStore } from '../../store/courseStore';
+import { courseStore, AdminCatalogState } from '../../store/courseStore';
 import { Course } from '../../types/courseTypes';
 import type { CourseAssignment } from '../../types/assignment';
 import { syncCourseToDatabase, CourseValidationError } from '../../dal/adminCourses';
@@ -23,7 +23,9 @@ import {
   Upload,
   Download,
   UserPlus,
-  Archive
+  Archive,
+  AlertTriangle,
+  ShieldCheck
 } from 'lucide-react';
 import LoadingButton from '../../components/LoadingButton';
 import ConfirmationModal from '../../components/ConfirmationModal';
@@ -32,9 +34,11 @@ import { useToast } from '../../context/ToastContext';
 import { useSyncService } from '../../dal/sync';
 import { slugify } from '../../utils/courseNormalization';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
+import Card from '../../components/ui/Card';
 import EmptyState from '../../components/ui/EmptyState';
 import Button from '../../components/ui/Button';
 import Input from '../../components/ui/Input';
+import { LoadingSpinner } from '../../components/LoadingComponents';
 
 import { LazyImage } from '../../components/PerformanceComponents';
 import CourseAssignmentModal from '../../components/CourseAssignmentModal';
@@ -57,33 +61,46 @@ const AdminCourses = () => {
   const [showAssignmentModal, setShowAssignmentModal] = useState(false);
   const [courseToArchive, setCourseToArchive] = useState<Course | null>(null);
   const [showArchiveModal, setShowArchiveModal] = useState(false);
+  const [catalogState, setCatalogState] = useState<AdminCatalogState>(courseStore.getAdminCatalogState());
+  const [retrying, setRetrying] = useState(false);
 
   const navigate = useNavigate();
 
   // Get courses from store (re-read when version changes)
   const courses = useMemo(() => courseStore.getAllCourses(), [version]);
 
-  // Ensure course store refreshes on landing (always fetch & merge latest)
   useEffect(() => {
-    let active = true;
-    (async () => {
+    setCatalogState(courseStore.getAdminCatalogState());
+    const unsubscribe = courseStore.subscribe(() => {
+      setCatalogState(courseStore.getAdminCatalogState());
+    });
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    if (catalogState.phase !== 'idle') {
+      return;
+    }
+
+    let cancelled = false;
+    const bootstrap = async () => {
       try {
-        if (typeof (courseStore as any).init === 'function') {
-          setLoading(true);
-          await (courseStore as any).init();
-          if (!active) return;
-          setVersion((v) => v + 1);
-        }
+        await courseStore.init();
       } catch (err) {
         console.warn('[AdminCourses] Failed to initialize course store:', err);
       } finally {
-        if (active) setLoading(false);
+        if (!cancelled) {
+          setVersion((v) => v + 1);
+        }
       }
-    })();
-    return () => {
-      active = false;
     };
-  }, []);
+
+    void bootstrap();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [catalogState.phase]);
 
   const persistCourse = async (
     inputCourse: Course,
@@ -142,6 +159,11 @@ const AdminCourses = () => {
     setShowCreateModal(true);
   };
 
+  const handleNavigateToCreateCourse = useCallback(() => {
+    console.info('[AdminCourses] navigate_create_course');
+    navigate('/admin/course-builder/new');
+  }, [navigate]);
+
   const handleAssignCourse = (course: Course) => {
     setCourseForAssignment(course);
     setShowAssignmentModal(true);
@@ -157,6 +179,25 @@ const AdminCourses = () => {
       : 'Assignments queued successfully.';
     showToast(`${message} Learners will be notified via Huddle.`, 'success');
   };
+
+  const handleSwitchAccount = useCallback(() => {
+    navigate('/admin/login');
+  }, [navigate]);
+
+  const handleRetry = useCallback(async () => {
+    if (catalogState.phase === 'loading' || retrying) {
+      return;
+    }
+    setRetrying(true);
+    try {
+      await courseStore.init();
+      setVersion((v) => v + 1);
+    } catch (error) {
+      console.error('[AdminCourses] Admin catalog retry failed', error);
+    } finally {
+      setRetrying(false);
+    }
+  }, [catalogState.phase, retrying]);
 
   const openArchiveModal = (course: Course) => {
     setCourseToArchive(course);
@@ -435,6 +476,92 @@ const AdminCourses = () => {
     }
   };
 
+  const catalogStatus = catalogState.adminLoadStatus;
+  const isCatalogLoading = catalogState.phase === 'loading';
+  const isCatalogEmpty = catalogStatus === 'empty';
+  const isCatalogUnauthorized = catalogStatus === 'unauthorized';
+  const isCatalogError = catalogStatus === 'error' || catalogStatus === 'api_unreachable';
+  const lastSyncAttempt = catalogState.lastAttemptAt ? new Date(catalogState.lastAttemptAt).toLocaleString() : null;
+
+  let gateContent: ReactNode | null = null;
+  if (isCatalogLoading) {
+    gateContent = (
+      <div className="flex min-h-[40vh] flex-col items-center justify-center rounded-3xl border border-mist/40 bg-white px-8 py-16 text-center shadow-card-sm">
+        <LoadingSpinner size="lg" />
+        <p className="mt-4 text-sm text-slate/80">Syncing the admin catalog&hellip;</p>
+      </div>
+    );
+  } else if (isCatalogEmpty) {
+    gateContent = (
+      <div className="flex min-h-[40vh] flex-col justify-center">
+        <EmptyState
+          title="No courses yet"
+          description="Create your first course to start building the catalog for your organization."
+          action={
+            <Button variant="primary" type="button" onClick={handleNavigateToCreateCourse}>
+              Create Course
+            </Button>
+          }
+        />
+      </div>
+    );
+  } else if (isCatalogUnauthorized) {
+    gateContent = (
+      <Card className="mx-auto max-w-3xl text-center">
+        <div className="flex flex-col items-center gap-4 p-10">
+          <ShieldCheck className="h-12 w-12 text-skyblue" />
+          <h1 className="font-heading text-2xl text-charcoal">Admin access required</h1>
+          <p className="max-w-xl text-sm text-slate/80">
+            Your session is active, but this account doesn&apos;t have admin privileges yet. Switch to an admin account or contact support to request access.
+          </p>
+          <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+            <Button onClick={handleSwitchAccount} isFullWidth>
+              Switch account
+            </Button>
+            <Button variant="ghost" asChild isFullWidth>
+              <a href="mailto:help@the-huddle.co?subject=Admin%20Access%20Request">Contact support</a>
+            </Button>
+          </div>
+        </div>
+      </Card>
+    );
+  } else if (isCatalogError) {
+    const heading = catalogStatus === 'api_unreachable' ? 'Unable to reach admin services' : 'We couldn’t load the admin catalog';
+    gateContent = (
+      <Card className="mx-auto max-w-3xl text-center">
+        <div className="flex flex-col items-center gap-4 p-10">
+          <AlertTriangle className="h-12 w-12 text-deepred" />
+          <h1 className="font-heading text-2xl text-charcoal">{heading}</h1>
+          <p className="max-w-xl text-sm text-slate/80">
+            {catalogState.lastError || 'Check your connection or try again in a moment. We paused the courses tab until the admin API responds.'}
+          </p>
+          <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+            <Button onClick={handleRetry} loading={retrying} isFullWidth>
+              Retry sync
+            </Button>
+            <Button variant="ghost" onClick={() => navigate('/admin/dashboard')} isFullWidth>
+              Go to dashboard
+            </Button>
+          </div>
+          {lastSyncAttempt && (
+            <p className="mt-4 text-xs text-slate/60">Last attempt: {lastSyncAttempt}</p>
+          )}
+        </div>
+      </Card>
+    );
+  }
+
+  if (gateContent) {
+    return (
+      <div className="container mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
+        <div className="mb-6">
+          <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Courses', to: '/admin/courses' }]} />
+        </div>
+        {gateContent}
+      </div>
+    );
+  }
+
   return (
     <div className="container mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
       {/* Header */}
@@ -520,12 +647,13 @@ const AdminCourses = () => {
             action={
               <Button
                 variant={searchTerm || filterStatus !== 'all' ? 'outline' : 'primary'}
+                type="button"
                 onClick={() => {
                   if (searchTerm || filterStatus !== 'all') {
                     setSearchTerm('');
                     setFilterStatus('all');
                   } else {
-                    handleCreateCourse();
+                    handleNavigateToCreateCourse();
                   }
                 }}
               >

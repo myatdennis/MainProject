@@ -137,11 +137,11 @@ apiClient.interceptors.response.use(
         );
 
         if (response.data?.accessToken) {
-          setAccessToken(response.data.accessToken);
+          setAccessToken(response.data.accessToken, 'axios_interceptor_refresh');
         }
 
         if (response.data?.refreshToken) {
-          setRefreshToken(response.data.refreshToken);
+          setRefreshToken(response.data.refreshToken, 'axios_interceptor_refresh');
         }
 
         if (response.data?.expiresAt || response.data?.refreshExpiresAt) {
@@ -160,7 +160,7 @@ apiClient.interceptors.response.use(
         processQueue(refreshError as Error);
 
         // Clear auth and redirect to login
-        clearAuth();
+  clearAuth('axios_refresh_failed');
 
         // Redirect to login page
         if (typeof window !== 'undefined') {
