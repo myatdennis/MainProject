@@ -8,6 +8,7 @@ import bcrypt from 'bcryptjs';
 import { generateTokens, verifyRefreshToken } from '../utils/jwt.js';
 import {
   authenticate,
+  optionalAuthenticate,
   authLimiter,
   normalizeEmail,
   isCanonicalAdminEmail,
@@ -141,6 +142,56 @@ if (isDemoModeExplicit && configuredDemoUsers.length === 0 && !allowLegacyDemoUs
     '[AUTH ROUTES] DEMO_MODE is enabled but no demo users are configured. Set DEMO_USERS_JSON or DEMO_ADMIN_PASSWORD / DEMO_ADMIN_PASSWORD_HASH to enable demo logins.'
   );
 }
+
+const findAnyDemoUserByEmail = (email) => {
+  if (!email) return null;
+  const normalized = normalizeEmail(email);
+  return (
+    configuredDemoUsers.find((user) => user.emailLower === normalized) ||
+    legacyDemoUsers.find((user) => normalizeEmail(user.email) === normalized) ||
+    null
+  );
+};
+
+const buildDemoUserPayloadFromToken = (tokenPayload = {}) => {
+  const normalizedEmail = normalizeEmail(tokenPayload.email || '');
+  const demoUser = findAnyDemoUserByEmail(normalizedEmail) || {};
+  const id = demoUser.id || tokenPayload.userId || `demo-${normalizedEmail || 'user'}`;
+  const role = demoUser.role || tokenPayload.role || 'user';
+  const organizationId = demoUser.organizationId || null;
+  const memberships = organizationId
+    ? [
+        {
+          orgId: organizationId,
+          organizationId,
+          role,
+          status: 'active',
+          organizationName: demoUser.organizationName || null,
+          organizationStatus: 'active',
+          subscription: demoUser.subscription ?? null,
+          features: demoUser.features ?? null,
+          acceptedAt: null,
+          lastSeenAt: null,
+        },
+      ]
+    : [];
+
+  return {
+    id,
+    userId: id,
+    email: normalizedEmail || tokenPayload.email || `${id}@demo.local`,
+    role,
+    platformRole: role === 'admin' ? 'platform_admin' : null,
+    isPlatformAdmin: role === 'admin',
+    organizationId,
+    organizationIds: organizationId ? [organizationId] : [],
+    memberships,
+    firstName: demoUser.firstName || null,
+    lastName: demoUser.lastName || null,
+    appMetadata: {},
+    userMetadata: {},
+  };
+};
 
 const matchLegacyDemoUser = async (email, password) => {
   const legacyUser = legacyDemoUsers.find((user) => normalizeEmail(user.email) === normalizeEmail(email));
@@ -318,6 +369,83 @@ const buildUserPayloadFromSupabase = (supabaseUser, memberships = []) => {
   };
 };
 
+const buildSessionResponse = (userPayload, tokens = {}) => ({
+  user: userPayload,
+  memberships: userPayload?.memberships || [],
+  organizationIds: userPayload?.organizationIds || [],
+  activeOrgId: userPayload?.organizationId || null,
+  accessToken: tokens.accessToken ?? null,
+  refreshToken: tokens.refreshToken ?? null,
+  expiresAt: tokens.expiresAt ?? null,
+  refreshExpiresAt: tokens.refreshExpiresAt ?? null,
+});
+
+const refreshSessionFromCookies = async (req, res) => {
+  const refreshToken = getRefreshTokenFromRequest(req);
+
+  if (!refreshToken) {
+    return {
+      ok: false,
+      status: 401,
+      error: 'missing_refresh_token',
+      message: 'Refresh token cookie is required',
+    };
+  }
+
+  if (isDemoModeExplicit || isE2ETestMode) {
+    const payload = verifyRefreshToken(refreshToken);
+    if (!payload) {
+      return {
+        ok: false,
+        status: 401,
+        error: 'Invalid token',
+        message: 'Refresh token is invalid or expired',
+      };
+    }
+    const tokens = generateTokens({
+      userId: payload.userId,
+      email: payload.email,
+      role: payload.role,
+    });
+    attachAuthCookies(res, tokens, req);
+    const userPayload = buildDemoUserPayloadFromToken(payload);
+    return {
+      ok: true,
+      body: buildSessionResponse(userPayload, tokens),
+    };
+  }
+
+  if (!supabaseAuthClient) {
+    return {
+      ok: false,
+      status: 503,
+      error: 'Service unavailable',
+      message: 'Authentication service not configured',
+    };
+  }
+
+  const { data, error } = await supabaseAuthClient.auth.refreshSession({ refresh_token: refreshToken });
+  if (error || !data?.session || !data.user) {
+    return {
+      ok: false,
+      status: 401,
+      error: 'Invalid token',
+      message: error?.message || 'Unable to refresh session',
+    };
+  }
+
+  const membershipRows = await fetchUserMembershipRows(data.user.id);
+  const userPayload = buildUserPayloadFromSupabase(data.user, membershipRows);
+  const tokens = buildTokenResponseFromSession(data.session);
+
+  attachAuthCookies(res, tokens, req);
+
+  return {
+    ok: true,
+    body: buildSessionResponse(userPayload, tokens),
+  };
+};
+
 const router = express.Router();
 
 router.use((req, _res, next) => {
@@ -332,27 +460,31 @@ router.use((req, _res, next) => {
 
 router.post('/login', async (req, res) => {
   const origin = req.headers.origin || 'unknown';
-  console.log(`[AUTH] Incoming ${req.method} ${req.originalUrl} from origin ${origin}`);
+  if (process.env.DEBUG_AUTH === 'true') {
+    console.log('[DEBUG_AUTH] Entered /api/auth/login', {
+      method: req.method,
+      url: req.originalUrl,
+      host: req.headers.host,
+      x_forwarded_host: req.headers['x-forwarded-host'],
+      hostname: req.hostname
+    });
+  }
   try {
     const { email, password } = req.body;
-    
-    // Validate input
     if (!email || !password) {
       return res.status(400).json({
         error: 'Missing credentials',
         message: 'Email and password are required',
       });
     }
-    
     const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip;
-    console.log(`[AUTH] ${req.method} ${req.originalUrl} from origin ${origin} ip ${ip}`);
-    // Demo mode check
-  const useDemoMode = canUseDemoMode;
-    
+    if (process.env.DEBUG_AUTH === 'true') {
+      console.log('[DEBUG_AUTH] login input', { email, ip });
+    }
+    const useDemoMode = canUseDemoMode;
     if (useDemoMode) {
-      console.log('[AUTH ROUTES] Using demo mode authentication');
+      if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Using demo mode authentication');
       const demoUser = await resolveDemoUser(email, password);
-      
       if (demoUser) {
         const normalizedEmail = normalizeEmail(demoUser.email);
         const resolvedRole = isCanonicalAdminEmail(normalizedEmail) ? 'admin' : demoUser.role || 'user';
@@ -362,9 +494,8 @@ router.post('/login', async (req, res) => {
           role: resolvedRole,
           organizationId: demoUser.organizationId,
         });
-
-        attachAuthCookies(res, tokens);
-        
+        attachAuthCookies(req, res, tokens);
+        if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Demo tokens issued, cookies set');
         return res.json({
           user: {
             id: demoUser.id,
@@ -378,40 +509,31 @@ router.post('/login', async (req, res) => {
         });
       }
     }
-    
     const normalizedEmail = normalizeEmail(email);
     const logPrefix = `[AUTH LOGIN] ${normalizedEmail}`;
-    console.log(`${logPrefix} attempt from origin=${origin} ip=${ip}`);
-
-    // Real authentication with Supabase
+    if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Attempting Supabase login', { normalizedEmail, origin, ip });
     if (!supabase || !supabaseAuthClient) {
-      console.warn(`${logPrefix} Supabase client missing (service=${!!supabase} auth=${!!supabaseAuthClient})`);
+      if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Supabase client missing');
       return res.status(503).json({
         error: 'Service unavailable',
         message:
           'Authentication service not configured. Configure Supabase credentials or set ALLOW_DEMO=true / DEMO_MODE=true to enable demo logins.',
       });
     }
-    
-    // Authenticate against Supabase Auth so "Last signed in" updates and Supabase role metadata applies
     const { data, error: authError } = await supabaseAuthClient.auth.signInWithPassword({
       email: normalizedEmail,
       password,
     });
-
     if (authError || !data?.user || !data.session) {
       const detailMessage = authError?.message || 'unknown error';
-      console.warn(`${logPrefix} Supabase auth failed: ${detailMessage}`);
+      if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Supabase auth failed', { detailMessage });
       return res.status(401).json({
         error: 'Invalid credentials',
         message: 'Email or password is incorrect',
         details: detailMessage,
       });
     }
-
-    console.info(`${logPrefix} Supabase auth success userId=${data.user.id}`);
-
-    // Fetch profile info from internal users table (optional)
+    if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Supabase auth success', { userId: data.user.id });
     let userRecord = null;
     try {
       const { data: users, error: queryError } = await supabase
@@ -419,13 +541,12 @@ router.post('/login', async (req, res) => {
         .select('*')
         .eq('email', normalizedEmail)
         .limit(1);
-
       if (queryError) {
-        console.warn(`${logPrefix} Failed to load profile row: ${queryError.message}`);
+        if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Failed to load profile row', { queryError });
       } else if (users && users.length > 0) {
         userRecord = users[0];
         if (userRecord && userRecord.is_active === false) {
-          console.warn(`${logPrefix} Profile marked inactive. Rejecting login.`);
+          if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Profile marked inactive');
           return res.status(403).json({
             error: 'Account disabled',
             message: 'Your account has been disabled',
@@ -433,22 +554,14 @@ router.post('/login', async (req, res) => {
         }
       }
     } catch (profileError) {
-      console.error(`${logPrefix} Unexpected profile lookup error:`, profileError);
+      if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Profile lookup error', { profileError });
     }
-
     const supabaseUser = data.user;
     const membershipRows = await fetchUserMembershipRows(supabaseUser.id);
     const userPayload = buildUserPayloadFromSupabase(supabaseUser, membershipRows);
     const tokens = buildTokenResponseFromSession(data.session);
-
-    attachAuthCookies(res, tokens);
-
-    console.log('[AUTH LOGIN] issuing supabase session for:', {
-      userId: userPayload.userId,
-      orgs: userPayload.organizationIds,
-      role: userPayload.role,
-    });
-
+    attachAuthCookies(req, res, tokens);
+    if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Tokens issued, cookies set', { userId: userPayload.userId });
     return res.json({
       user: userPayload,
       memberships: userPayload.memberships,
@@ -456,10 +569,10 @@ router.post('/login', async (req, res) => {
       ...tokens,
     });
   } catch (error) {
-    console.error('Login error:', error);
+    console.error('[AUTH LOGIN ERROR]', error);
     res.status(500).json({
-      error: 'Internal server error',
-      message: 'An error occurred during login',
+      error: 'Login failed',
+      message: 'An unexpected error occurred during login. Please try again.',
     });
   }
 });
@@ -585,7 +698,7 @@ router.post('/register', authLimiter, async (req, res) => {
       const userPayload = buildUserPayloadFromSupabase(sessionData.user, membershipRows);
       const tokens = buildTokenResponseFromSession(sessionData.session);
 
-      attachAuthCookies(res, tokens);
+  attachAuthCookies(req, res, tokens);
       res.status(201).json({
         user: userPayload,
         memberships: userPayload.memberships,
@@ -615,63 +728,42 @@ router.post('/register', authLimiter, async (req, res) => {
 // ============================================================================
 
 router.post('/refresh', async (req, res) => {
+  if (process.env.DEBUG_AUTH === 'true') {
+    console.log('[DEBUG_AUTH] Entered /api/auth/refresh', {
+      method: req.method,
+      url: req.originalUrl,
+      host: req.headers.host,
+      x_forwarded_host: req.headers['x-forwarded-host'],
+      hostname: req.hostname
+    });
+  }
   try {
     const refreshToken = getRefreshTokenFromRequest(req);
-
+    if (process.env.DEBUG_AUTH === 'true') {
+      console.log('[DEBUG_AUTH] refresh_token from cookie:', refreshToken ? '[present]' : '[missing]');
+    }
     if (!refreshToken) {
+      if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] No refresh_token, rejecting');
       return res.status(401).json({
         error: 'missing_refresh_token',
         message: 'Refresh token cookie is required',
       });
     }
-
-    if (isDemoModeExplicit || isE2ETestMode) {
-      const payload = verifyRefreshToken(refreshToken);
-      if (!payload) {
-        return res.status(401).json({
-          error: 'Invalid token',
-          message: 'Refresh token is invalid or expired',
-        });
-      }
-      const tokens = generateTokens({
-        userId: payload.userId,
-        email: payload.email,
-        role: payload.role,
-      });
-      attachAuthCookies(res, tokens);
-      return res.json(tokens);
-    }
-
-    if (!supabaseAuthClient) {
-      return res.status(503).json({
-        error: 'Service unavailable',
-        message: 'Authentication service not configured',
+    const result = await refreshSessionFromCookies(req, res);
+    if (!result.ok) {
+      if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Refresh failed', { error: result.error, message: result.message });
+      return res.status(result.status || 401).json({
+        error: result.error || 'refresh_failed',
+        message: result.message || 'Unable to refresh session',
       });
     }
-
-    const { data, error } = await supabaseAuthClient.auth.refreshSession({ refresh_token: refreshToken });
-    if (error || !data?.session || !data.user) {
-      return res.status(401).json({
-        error: 'Invalid token',
-        message: error?.message || 'Unable to refresh session',
-      });
-    }
-
-    const membershipRows = await fetchUserMembershipRows(data.user.id);
-    const userPayload = buildUserPayloadFromSupabase(data.user, membershipRows);
-    const tokens = buildTokenResponseFromSession(data.session);
-
-    attachAuthCookies(res, tokens);
-    res.json({
-      user: userPayload,
-      memberships: userPayload.memberships,
-      ...tokens,
-    });
+    if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Refresh success');
+    return res.json(result.body);
   } catch (error) {
-    console.error('Token refresh error:', error);
+    console.error('[AUTH REFRESH ERROR]', error);
     res.status(500).json({
-      error: 'Internal server error',
-      message: 'An error occurred during token refresh',
+      error: 'Refresh failed',
+      message: 'An unexpected error occurred during refresh. Please try again.',
     });
   }
 });
@@ -690,12 +782,42 @@ router.get('/verify', authenticate, async (req, res) => {
   });
 });
 
-router.get('/session', authenticate, (req, res) => {
-  res.json({
-    user: req.user || null,
-    memberships: req.user?.memberships || [],
-    activeOrgId: req.activeOrgId || req.user?.organizationId || null,
-  });
+router.get('/session', optionalAuthenticate, async (req, res) => {
+  try {
+    if (req.user) {
+      return res.json({
+        user: req.user,
+        memberships: req.user?.memberships || [],
+        organizationIds: req.user?.organizationIds || [],
+        activeOrgId: req.activeOrgId || req.user?.organizationId || null,
+      });
+    }
+
+    const result = await refreshSessionFromCookies(req, res);
+    if (result.ok) {
+      return res.json(result.body);
+    }
+
+    if (result.error === 'missing_refresh_token') {
+      return res.json({
+        user: null,
+        memberships: [],
+        organizationIds: [],
+        activeOrgId: null,
+      });
+    }
+
+    return res.status(result.status || 401).json({
+      error: result.error || 'session_unavailable',
+      message: result.message || 'Unable to load session',
+    });
+  } catch (error) {
+    console.error('Session lookup error:', error);
+    res.status(500).json({
+      error: 'Internal server error',
+      message: 'Failed to load session data',
+    });
+  }
 });
 
 // ============================================================================
@@ -717,7 +839,7 @@ router.post('/logout', doubleSubmitCSRF, async (req, res) => {
       }
     }
   } finally {
-    clearAuthCookies(res);
+  clearAuthCookies(req, res);
     res.json({
       success: true,
       message: 'Logged out successfully',
