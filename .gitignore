@@ -30,3 +30,6 @@ src/components/CourseContentCreator.js
 
 # Local Netlify folder
 .netlify
+
+# Ignore server diagnostics artifacts
+server/diagnostics/
