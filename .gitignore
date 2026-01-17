@@ -33,3 +33,6 @@ src/components/CourseContentCreator.js
 
 # Ignore server diagnostics artifacts
 server/diagnostics/
+
+# Ignore server diagnostics artifacts
+server/diagnostics/
