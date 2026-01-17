@@ -380,12 +380,21 @@ const AdminOrganizations = () => {
               </div>
                 <div className="flex items-center space-x-2">
                 {getStatusIcon(org.status)}
-                <Button asChild variant="ghost" size="sm" aria-label="View organization">
+                <Button asChild variant="ghost" size="sm" aria-label="View organization" title="View organization details" data-tooltip-id={`tooltip-view-${org.id}`}>
                   <Link to={`/admin/organizations/${org.id}`}>View</Link>
                 </Button>
-                <button className="p-1 text-gray-400 hover:text-gray-600">
+                <button 
+                  className="p-1 text-gray-400 hover:text-gray-600" 
+                  aria-label="More options"
+                  tabIndex={0}
+                  role="button"
+                  title="More options"
+                  data-tooltip-id={`tooltip-more-${org.id}`}
+                >
                   <MoreVertical className="h-4 w-4" />
                 </button>
+                <span id={`tooltip-view-${org.id}`} className="sr-only">View organization details</span>
+                <span id={`tooltip-more-${org.id}`} className="sr-only">More options</span>
               </div>
             </div>
 
@@ -468,7 +477,7 @@ const AdminOrganizations = () => {
                 </span>
               </div>
               <div className="flex items-center space-x-2">
-                <Button asChild variant="ghost" size="sm">
+                <Button asChild variant="ghost" size="sm" aria-label="View organization details" title="View organization details" data-tooltip-id={`tooltip-view-details-${org.id}`}>
                   <Link to={`/admin/organizations/${org.id}`} className="flex items-center space-x-1">
                     <Eye className="h-4 w-4" />
                     <span className="text-xs">View</span>
@@ -476,18 +485,29 @@ const AdminOrganizations = () => {
                 </Button>
                 <button
                   className="p-2 text-gray-600 hover:text-gray-800 hover:bg-gray-50 rounded-lg"
-                  title="Edit"
+                  title="Edit organization"
+                  aria-label="Edit organization"
+                  tabIndex={0}
+                  role="button"
+                  data-tooltip-id={`tooltip-edit-${org.id}`}
                   onClick={() => handleEditOrganization(org.id)}
                 >
                   <Edit className="h-4 w-4" />
                 </button>
                 <button
                   className="p-2 text-red-600 hover:text-red-800 hover:bg-red-50 rounded-lg"
-                  title="Delete"
+                  title="Delete organization"
+                  aria-label="Delete organization"
+                  tabIndex={0}
+                  role="button"
+                  data-tooltip-id={`tooltip-delete-${org.id}`}
                   onClick={() => handleDeleteOrganization(org.id)}
                 >
                   <MoreVertical className="h-4 w-4" />
                 </button>
+                <span id={`tooltip-view-details-${org.id}`} className="sr-only">View organization details</span>
+                <span id={`tooltip-edit-${org.id}`} className="sr-only">Edit organization</span>
+                <span id={`tooltip-delete-${org.id}`} className="sr-only">Delete organization</span>
               </div>
             </div>
           </div>

@@ -1,3 +1,40 @@
+# Local Development Setup
+
+## Environment Variables
+
+Create a `.env` file in the project root with the following safe defaults:
+
+```
+NODE_ENV=development
+PORT=8888
+SUPABASE_URL=http://localhost:54321
+SUPABASE_KEY=REPLACE_ME
+# SUPABASE_SERVICE_ROLE_KEY=REPLACE_ME (optional, used if SUPABASE_KEY is not set)
+```
+
+**Important:** Never expose your Supabase service role key to the browser or client code. Do not prefix it with `VITE_`. Only use it in backend/server code.
+
+## Running Backend and Frontend
+
+Open two terminals:
+
+**Terminal 1 (Backend):**
+```
+npm install
+npm run start:server
+```
+
+**Terminal 2 (Frontend):**
+```
+npm run dev
+```
+
+## Health Check
+
+Test your backend health endpoint:
+```
+curl http://localhost:8888/api/health
+```
 LMSWebsite
 
 ## Quick Start

@@ -1,0 +1,34 @@
+{
+  "timestamp": "2026-01-16T01:46:42.078Z",
+  "requestId": "2270ad07-f29e-4bd4-bda5-3aedf6e11c9a",
+  "method": "POST",
+  "path": "/api/auth/refresh",
+  "headers": {
+    "host": "localhost:8888",
+    "connection": "close",
+    "content-length": "2",
+    "x-org-id": "2af9b5c7-05aa-4db3-9e45-b86f3c5bb603",
+    "x-csrf-token": "Yyl0I5DuQYT9rCd1qmj3LR5pJvJJb4gWlRwx-L3t6WI",
+    "x-user-id": "0e80c162-0546-445e-a967-fd3aa9c5f461",
+    "sec-ch-ua": "\"Google Chrome\";v=\"143\", \"Chromium\";v=\"143\", \"Not A(Brand\";v=\"24\"",
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": "\"macOS\"",
+    "x-user-role": "admin",
+    "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
+    "accept": "application/json, text/plain, */*",
+    "content-type": "application/json",
+    "origin": "http://localhost:5174",
+    "sec-fetch-site": "same-origin",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-dest": "empty",
+    "referer": "http://localhost:5174/admin/courses",
+    "accept-encoding": "gzip, deflate, br, zstd",
+    "accept-language": "en-US,en;q=0.9",
+    "cookie": "csrf_token=Yyl0I5DuQYT9rCd1qmj3LR5pJvJJb4gWlRwx-L3t6WI; access_token=eyJhbGciOiJIUzI1NiIsImtpZCI6IjY2TVRmM0xrejhiMTJTNjQiLCJ0eXAiOiJKV1QifQ.eyJpc3MiOiJodHRwczovL21pcXp5d3p1cXplZmZxcGl1cGptLnN1cGFiYXNlLmNvL2F1dGgvdjEiLCJzdWIiOiIwZTgwYzE2Mi0wNTQ2LTQ0NWUtYTk2Ny1mZDNhYTljNWY0NjEiLCJhdWQiOiJhdXRoZW50aWNhdGVkIiwiZXhwIjoxNzY4NTMwMTA4LCJpYXQiOjE3Njg1MjY1MDgsImVtYWlsIjoibXlhQHRoZS1odWRkbGUuY28iLCJwaG9uZSI6IiIsImFwcF9tZXRhZGF0YSI6eyJwcm92aWRlciI6ImVtYWlsIiwicHJvdmlkZXJzIjpbImVtYWlsIl19LCJ1c2VyX21ldGFkYXRhIjp7ImVtYWlsX3ZlcmlmaWVkIjp0cnVlfSwicm9sZSI6ImF1dGhlbnRpY2F0ZWQiLCJhYWwiOiJhYWwxIiwiYW1yIjpbeyJtZXRob2QiOiJwYXNzd29yZCIsInRpbWVzdGFtcCI6MTc2ODUyNjUwOH1dLCJzZXNzaW9uX2lkIjoiNjgxZDEzZmYtZDI2MC00MmUwLWJhYjEtZGMzZjdjZjU2YzYyIiwiaXNfYW5vbnltb3VzIjpmYWxzZX0.N69yTsHEPrsNQoKAJKk0LEh58fiOm_i_akIPpBq6m7M; refresh_token=l72nx3m4i2mw"
+  },
+  "body": {},
+  "error": {
+    "message": "An unexpected error occurred during refresh. Please try again.",
+    "stack": "Error: An unexpected error occurred during refresh. Please try again.\n    at createHttpError (file:///Users/myadennis/Downloads/MainProject/server/middleware/apiErrorHandler.js:19:17)\n    at res.json (file:///Users/myadennis/Downloads/MainProject/server/index.js:936:19)\n    at file:///Users/myadennis/Downloads/MainProject/server/routes/auth.js:764:21\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)"
+  }
+}

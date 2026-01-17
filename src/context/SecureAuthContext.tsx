@@ -911,9 +911,19 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
       return { success: true };
     } catch (error: any) {
-      console.error('Login error:', error);
-
+      // Enhanced error logging for debugging
       if (axios.isAxiosError(error)) {
+        // Print status and response data for backend errors
+        if (error.response) {
+          // eslint-disable-next-line no-console
+          console.error('Login error:', {
+            status: error.response.status,
+            data: error.response.data,
+          });
+        } else {
+          // eslint-disable-next-line no-console
+          console.error('Login error: No response', error);
+        }
         if (error.response?.data?.mfaRequired) {
           return {
             success: false,
@@ -950,6 +960,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             errorType: 'network_error',
           };
         }
+      } else {
+        // eslint-disable-next-line no-console
+        console.error('Login error (non-Axios):', error);
       }
       return {
         success: false,
@@ -983,26 +996,34 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         organizationId: validation.data.organizationId ?? undefined,
       };
 
-  const response = await api.post<SessionResponsePayload>('/auth/register', payload);
-  captureServerClock(response.headers as Record<string, any> | undefined);
-  applySessionPayload(response.data ?? null, { surface: 'lms', persistTokens: true, reason: 'register_success' });
+      // DEV log registration payload (mask password)
+      if (import.meta.env && import.meta.env.DEV) {
+        // eslint-disable-next-line no-console
+        console.log('REGISTER payload', { ...payload, password: payload?.password ? '***' : payload?.password });
+      }
+
+      const response = await api.post<SessionResponsePayload>('/auth/register', payload);
+      captureServerClock(response.headers as Record<string, any> | undefined);
+      applySessionPayload(response.data ?? null, { surface: 'lms', persistTokens: true, reason: 'register_success' });
 
       return { success: true };
     } catch (error) {
       console.error('Registration error:', error);
       if (axios.isAxiosError(error)) {
         const status = error.response?.status;
+        // Show backend error message if available
+        const backendMsg = error.response?.data?.message;
         if (status === 409) {
           return {
             success: false,
-            error: 'An account with this email already exists.',
+            error: backendMsg || 'An account with this email already exists.',
             errorType: 'invalid_credentials',
           };
         }
         if (status === 503) {
           return {
             success: false,
-            error: 'Registration is unavailable in demo mode.',
+            error: backendMsg || 'Registration is unavailable in demo mode.',
             errorType: 'network_error',
           };
         }
@@ -1010,7 +1031,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           const details = (error.response?.data as { details?: Record<string, string> } | undefined)?.details;
           return {
             success: false,
-            error: 'Please review your information.',
+            error: backendMsg || 'Please review your information.',
             errorType: 'validation_error',
             fieldErrors: details ?? undefined,
           };

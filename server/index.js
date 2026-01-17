@@ -1,8 +1,19 @@
+// Allow localhost and Vite dev origins for local development
+const allowedOrigins = new Set([
+  'http://localhost:5174',
+  'http://127.0.0.1:5174',
+  'http://localhost:8888',
+  'http://127.0.0.1:8888',
+]);
 // --- Org ID Compatibility Constant (must be first) ---
 // --- End Org ID Compatibility Constant ---
 
+// Ensure .env is loaded before any env validation
+import dotenv from 'dotenv';
+dotenv.config();
+
 // (Removed initial lightweight dev server stub in favor of the full server below)
-import 'dotenv/config';
+// import 'dotenv/config';
 import express from 'express';
 import http from 'http';
 import path from 'path';
@@ -157,18 +168,12 @@ function savePersistedData(data) {
 const app = express();
 app.set('etag', false);
 
-import cors from "cors";
-
-const allowedOrigins = new Set([
-  "https://the-huddle.co",
-  "https://www.the-huddle.co",
-  "http://localhost:5174",
-  "http://127.0.0.1:5174",
-  "http://localhost:4173",
-  "http://127.0.0.1:4173",
-  "http://localhost:3000",
-  "http://127.0.0.1:3000",
-]);
+import healthRouter from './routes/health.js';
+import corsMiddleware from './middleware/cors.js';
+import { getCookieOptions } from './middleware/cookieOptions.js';
+import { env } from '../src/utils/env.ts';
+import { log } from '../src/utils/logger.ts';
+import { handleError } from '../src/utils/errorHandler.ts';
 
 const fsp = fs.promises;
 const PROGRESS_BATCH_MAX_SIZE = Number(process.env.PROGRESS_BATCH_MAX_SIZE || 100);
@@ -203,19 +208,7 @@ const ANALYTICS_PII_FIELDS = new Set([
 ]);
 
 
-app.use(
-  cors({
-    origin(origin, cb) {
-      // allow same-origin, curl, server-to-server calls
-      if (!origin) return cb(null, true);
-      if (allowedOrigins.has(origin)) return cb(null, true);
-      return cb(new Error(`CORS blocked for origin: ${origin}`));
-    },
-    credentials: true,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "X-CSRF-Token", "Accept"],
-  })
-);
+app.use(corsMiddleware);
 
 // Attach request ids early so health/diagnostics endpoints can include them even before
 // the rest of the middleware stack (body parsers, auth, etc.) runs.
@@ -10163,6 +10156,11 @@ app.use((req, res, next) => {
   });
 });
 
+// Example usage of shared utils
+log('info', 'Server started', { env });
+
+
+// Use the structured API error handler for all errors
 app.use(apiErrorHandler);
 
 const server = http.createServer(app);

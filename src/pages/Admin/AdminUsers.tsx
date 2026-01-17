@@ -1,3 +1,9 @@
+/**
+ * AdminUsers - Admin portal page for managing users, progress, and assignments.
+ * Uses shared UI components and accessibility best practices.
+ * Features: search/filter, bulk actions, modals, progress tracking, and summary stats.
+ */
+
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { 
@@ -23,6 +29,7 @@ import { useToast } from '../../context/ToastContext';
 import { User } from '../../types/user';
 import type { CourseAssignment } from '../../types/assignment';
 import PageWrapper from '../../components/PageWrapper';
+import AdminLayout from '../../components/Admin/AdminLayout';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import EmptyState from '../../components/ui/EmptyState';
 
@@ -357,7 +364,8 @@ const AdminUsers = () => {
   };
 
   return (
-    <PageWrapper>
+    <AdminLayout>
+      <PageWrapper>
       <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Users', to: '/admin/users' }]} />
       {/* Header */}
       <div className="mb-8">
@@ -550,6 +558,9 @@ const AdminUsers = () => {
                         title="View Profile"
                         aria-label={`View profile for ${user.name}`}
                         className="icon-action secondary"
+                        tabIndex={0}
+                        role="button"
+                        data-tooltip-id={`tooltip-view-${user.id}`}
                       >
                         <Eye className="icon-16" />
                       </Link>
@@ -558,6 +569,9 @@ const AdminUsers = () => {
                         title="Edit User"
                         aria-label={`Edit ${user.name}`}
                         className="icon-action muted"
+                        tabIndex={0}
+                        role="button"
+                        data-tooltip-id={`tooltip-edit-${user.id}`}
                       >
                         <Edit className="icon-16" />
                       </button>
@@ -566,6 +580,9 @@ const AdminUsers = () => {
                         title="Delete User"
                         aria-label={`Delete ${user.name}`}
                         className="icon-action primary"
+                        tabIndex={0}
+                        role="button"
+                        data-tooltip-id={`tooltip-delete-${user.id}`}
                       >
                         <Trash2 className="icon-16" />
                       </button>
@@ -574,9 +591,17 @@ const AdminUsers = () => {
                         title="More Options"
                         aria-label={`More options for ${user.name}`}
                         className="icon-action muted"
+                        tabIndex={0}
+                        role="button"
+                        data-tooltip-id={`tooltip-more-${user.id}`}
                       >
                         <MoreVertical className="icon-16" />
                       </button>
+                      {/* Tooltips for icon-only actions */}
+                      <span id={`tooltip-view-${user.id}`} className="sr-only">View profile</span>
+                      <span id={`tooltip-edit-${user.id}`} className="sr-only">Edit user</span>
+                      <span id={`tooltip-delete-${user.id}`} className="sr-only">Delete user</span>
+                      <span id={`tooltip-more-${user.id}`} className="sr-only">More options</span>
                     </div>
                   </td>
                 </tr>
@@ -671,7 +696,8 @@ const AdminUsers = () => {
           editUser={userToEdit}
         />
       )}
-    </PageWrapper>
+      </PageWrapper>
+    </AdminLayout>
   );
 };
 

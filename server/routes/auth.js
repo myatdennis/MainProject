@@ -419,7 +419,8 @@ const refreshSessionFromCookies = async (req, res) => {
     return {
       ok: false,
       status: 503,
-      error: 'Service unavailable',
+      error: 'AUTH_NOT_CONFIGURED',
+      code: 'AUTH_NOT_CONFIGURED',
       message: 'Authentication service not configured',
     };
   }
@@ -473,7 +474,7 @@ router.post('/login', async (req, res) => {
     const { email, password } = req.body;
     if (!email || !password) {
       return res.status(400).json({
-        error: 'Missing credentials',
+        error: 'missing_credentials',
         message: 'Email and password are required',
       });
     }
@@ -515,7 +516,8 @@ router.post('/login', async (req, res) => {
     if (!supabase || !supabaseAuthClient) {
       if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Supabase client missing');
       return res.status(503).json({
-        error: 'Service unavailable',
+        error: 'AUTH_NOT_CONFIGURED',
+        code: 'AUTH_NOT_CONFIGURED',
         message:
           'Authentication service not configured. Configure Supabase credentials or set ALLOW_DEMO=true / DEMO_MODE=true to enable demo logins.',
       });
@@ -526,11 +528,17 @@ router.post('/login', async (req, res) => {
     });
     if (authError || !data?.user || !data.session) {
       const detailMessage = authError?.message || 'unknown error';
+      // Safe log for failed login (mask password)
+      console.warn('[AUTH LOGIN FAILURE]', {
+        email: normalizedEmail,
+        ip,
+        error: detailMessage,
+        at: 'supabaseAuthClient.auth.signInWithPassword',
+      });
       if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Supabase auth failed', { detailMessage });
       return res.status(401).json({
-        error: 'Invalid credentials',
+        error: 'invalid_credentials',
         message: 'Email or password is incorrect',
-        details: detailMessage,
       });
     }
     if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Supabase auth success', { userId: data.user.id });
@@ -543,18 +551,37 @@ router.post('/login', async (req, res) => {
         .limit(1);
       if (queryError) {
         if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Failed to load profile row', { queryError });
+        // Log DB error
+        console.warn('[AUTH LOGIN DB ERROR]', {
+          email: normalizedEmail,
+          ip,
+          error: queryError?.message,
+          at: 'supabase.from(users).select',
+        });
       } else if (users && users.length > 0) {
         userRecord = users[0];
         if (userRecord && userRecord.is_active === false) {
           if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Profile marked inactive');
+          console.warn('[AUTH LOGIN INACTIVE]', {
+            email: normalizedEmail,
+            ip,
+            at: 'userRecord.is_active === false',
+          });
           return res.status(403).json({
-            error: 'Account disabled',
+            error: 'account_disabled',
             message: 'Your account has been disabled',
           });
         }
       }
     } catch (profileError) {
       if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Profile lookup error', { profileError });
+      // Log unexpected DB/profile error
+      console.error('[AUTH LOGIN PROFILE ERROR]', {
+        email: normalizedEmail,
+        ip,
+        error: profileError instanceof Error ? profileError.message : profileError,
+        at: 'profile lookup',
+      });
     }
     const supabaseUser = data.user;
     const membershipRows = await fetchUserMembershipRows(supabaseUser.id);
@@ -569,9 +596,17 @@ router.post('/login', async (req, res) => {
       ...tokens,
     });
   } catch (error) {
-    console.error('[AUTH LOGIN ERROR]', error);
+    // Mask sensitive info in logs
+    const safeError = error instanceof Error ? error.message : error;
+    const safeEmail = req.body?.email ? String(req.body.email).replace(/(.{2}).+(@.*)/, '$1***$2') : undefined;
+    console.error('[AUTH LOGIN ERROR]', {
+      error: safeError,
+      email: safeEmail,
+      ip: req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip,
+      at: 'catch',
+    });
     res.status(500).json({
-      error: 'Login failed',
+      error: 'login_failed',
       message: 'An unexpected error occurred during login. Please try again.',
     });
   }
@@ -609,8 +644,9 @@ router.post('/register', authLimiter, async (req, res) => {
 
     if (existingUsers && existingUsers.length > 0) {
       return res.status(409).json({
-        error: 'User exists',
-        message: 'An account with this email already exists',
+        code: 'USER_EXISTS',
+        message: 'An account with this email already exists.',
+        errors: { email: 'An account with this email already exists.' },
       });
     }
 
@@ -632,8 +668,9 @@ router.post('/register', authLimiter, async (req, res) => {
       if (createAuthError) {
         const conflict = /already registered|exists/i.test(createAuthError.message || '');
         return res.status(conflict ? 409 : 400).json({
-          error: conflict ? 'User exists' : 'Registration failed',
+          code: conflict ? 'USER_EXISTS' : 'REGISTRATION_FAILED',
           message: createAuthError.message || 'Unable to create account',
+          errors: conflict ? { email: 'An account with this email already exists.' } : undefined,
         });
       }
 
@@ -669,7 +706,7 @@ router.post('/register', authLimiter, async (req, res) => {
         console.error('User creation error:', createError);
         await supabase.auth.admin.deleteUser(createdAuthUserId).catch(() => {});
         return res.status(500).json({
-          error: 'Registration failed',
+          code: 'REGISTRATION_FAILED',
           message: 'Could not create account',
         });
       }
@@ -682,6 +719,7 @@ router.post('/register', authLimiter, async (req, res) => {
       if (loginError || !sessionData?.session || !sessionData.user) {
         console.warn('[AUTH REGISTER] User created but automatic login failed, returning 201 without session');
         return res.status(201).json({
+          ok: true,
           user: {
             id: newUser.id,
             email: newUser.email,
@@ -700,6 +738,7 @@ router.post('/register', authLimiter, async (req, res) => {
 
   attachAuthCookies(req, res, tokens);
       res.status(201).json({
+        ok: true,
         user: userPayload,
         memberships: userPayload.memberships,
         ...tokens,
@@ -710,14 +749,14 @@ router.post('/register', authLimiter, async (req, res) => {
         await supabase.auth.admin.deleteUser(createdAuthUserId).catch(() => {});
       }
       res.status(500).json({
-        error: 'Internal server error',
+        code: 'REGISTRATION_FAILED',
         message: 'An error occurred during registration',
       });
     }
   } catch (error) {
     console.error('Registration error:', error);
     res.status(500).json({
-      error: 'Internal server error',
+      code: 'REGISTRATION_FAILED',
       message: 'An error occurred during registration',
     });
   }
@@ -744,6 +783,11 @@ router.post('/refresh', async (req, res) => {
     }
     if (!refreshToken) {
       if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] No refresh_token, rejecting');
+      // Log missing token
+      console.warn('[AUTH REFRESH FAILURE] Missing refresh token', {
+        ip: req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip,
+        at: 'getRefreshTokenFromRequest',
+      });
       return res.status(401).json({
         error: 'missing_refresh_token',
         message: 'Refresh token cookie is required',
@@ -752,17 +796,32 @@ router.post('/refresh', async (req, res) => {
     const result = await refreshSessionFromCookies(req, res);
     if (!result.ok) {
       if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Refresh failed', { error: result.error, message: result.message });
+      // Log refresh failure (mask token)
+      console.warn('[AUTH REFRESH FAILURE]', {
+        error: result.error,
+        message: result.message,
+        ip: req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip,
+        at: 'refreshSessionFromCookies',
+      });
+      // Defensive: always return a structured error
       return res.status(result.status || 401).json({
         error: result.error || 'refresh_failed',
+        code: result.code || result.error || 'refresh_failed',
         message: result.message || 'Unable to refresh session',
       });
     }
     if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Refresh success');
     return res.json(result.body);
   } catch (error) {
-    console.error('[AUTH REFRESH ERROR]', error);
+    // Mask sensitive info in logs
+    const safeError = error instanceof Error ? error.message : error;
+    console.error('[AUTH REFRESH ERROR]', {
+      error: safeError,
+      ip: req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip,
+      at: 'catch',
+    });
     res.status(500).json({
-      error: 'Refresh failed',
+      error: 'refresh_failed',
       message: 'An unexpected error occurred during refresh. Please try again.',
     });
   }

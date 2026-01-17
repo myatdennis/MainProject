@@ -45,7 +45,9 @@ export const apiErrorHandler = (err, req, res, next) => {
   const status = typeof err.status === 'number' ? err.status : 500;
   const code = typeof err.code === 'string' ? err.code : status >= 500 ? 'server_error' : 'request_failed';
   const requestId = req.requestId || createRequestId();
-  const message = status >= 500 ? 'Internal server error' : err.message || 'Request failed';
+  const isDev = process.env.NODE_ENV !== 'production';
+  // In dev, always show the real error message; in prod, only for <500
+  const message = isDev ? (err.message || code || 'Request failed') : (status >= 500 ? 'Internal server error' : err.message || 'Request failed');
 
   const logPayload = {
     requestId,
@@ -65,5 +67,11 @@ export const apiErrorHandler = (err, req, res, next) => {
     return next(err);
   }
 
-  res.status(status).json({ error: code, message, requestId });
+  res.status(status).json({
+    error: code,
+    code,
+    message,
+    requestId,
+    ...(isDev && err.stack ? { stack: err.stack } : {}),
+  });
 };

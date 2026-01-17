@@ -324,9 +324,17 @@ const AdminReports = () => {
                     {new Date(org.lastActivity).toLocaleDateString()}
                   </td>
                   <td className="py-4 px-4 text-center">
-                    <button className="p-1 text-blue-600 hover:text-blue-800" title="View Details">
+                    <button 
+                      className="p-1 text-blue-600 hover:text-blue-800" 
+                      title="View Details"
+                      aria-label="View organization details"
+                      tabIndex={0}
+                      role="button"
+                      data-tooltip-id={`tooltip-view-org-${org.name}`}
+                    >
                       <Eye className="h-4 w-4" />
                     </button>
+                    <span id={`tooltip-view-org-${org.name}`} className="sr-only">View organization details</span>
                   </td>
                 </tr>
               ))}
@@ -368,15 +376,43 @@ const AdminReports = () => {
                   <p className="text-sm text-gray-600 mt-1">{report.description}</p>
                 </div>
                 <div className="flex items-center space-x-2">
-                  <button onClick={() => viewReport(report.name)} className="p-1 text-blue-600 hover:text-blue-800" title="View">
+                  <button 
+                    onClick={() => viewReport(report.name)} 
+                    className="p-1 text-blue-600 hover:text-blue-800" 
+                    title="View"
+                    aria-label={`View report: ${report.name}`}
+                    tabIndex={0}
+                    role="button"
+                    data-tooltip-id={`tooltip-view-report-${report.name}`}
+                  >
                     <Eye className="h-4 w-4" />
                   </button>
-                  <button onClick={() => downloadReport(report.name)} className="p-1 text-gray-600 hover:text-gray-800" title="Download">
+                  <button 
+                    onClick={() => downloadReport(report.name)} 
+                    className="p-1 text-gray-600 hover:text-gray-800" 
+                    title="Download"
+                    aria-label={`Download report: ${report.name}`}
+                    tabIndex={0}
+                    role="button"
+                    data-tooltip-id={`tooltip-download-report-${report.name}`}
+                  >
                     <Download className="h-4 w-4" />
                   </button>
-                  <button onClick={() => shareReport(report.name)} className="p-1 text-gray-600 hover:text-gray-800" title="Share">
+                  <button 
+                    onClick={() => shareReport(report.name)} 
+                    className="p-1 text-gray-600 hover:text-gray-800" 
+                    title="Share"
+                    aria-label={`Share report: ${report.name}`}
+                    tabIndex={0}
+                    role="button"
+                    data-tooltip-id={`tooltip-share-report-${report.name}`}
+                  >
                     <Share className="h-4 w-4" />
                   </button>
+                  {/* Tooltips for icon-only actions */}
+                  <span id={`tooltip-view-report-${report.name}`} className="sr-only">View report</span>
+                  <span id={`tooltip-download-report-${report.name}`} className="sr-only">Download report</span>
+                  <span id={`tooltip-share-report-${report.name}`} className="sr-only">Share report</span>
                 </div>
               </div>
               <div className="flex items-center justify-between text-sm text-gray-500">

@@ -21,6 +21,9 @@ export default async () => {
   const hmrClientPort = process.env.VITE_HMR_CLIENT_PORT || process.env.HMR_CLIENT_PORT;
 
   return defineConfig({
+  define: {
+    ...(process.env.NODE_ENV === 'development' ? { 'import.meta.env.VITE_WS_URL': JSON.stringify('ws://localhost:8888/ws') } : {}),
+  },
   plugins: [
     react(),
     // Optionally add compression plugin to reduce asset size for production builds

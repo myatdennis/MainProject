@@ -1,0 +1,37 @@
+{
+  "timestamp": "2026-01-17T15:20:40.406Z",
+  "requestId": "29a22c4e-b172-476d-bb42-ade8cbc4ecfe",
+  "method": "POST",
+  "path": "/api/auth/register",
+  "headers": {
+    "host": "localhost:8888",
+    "connection": "close",
+    "content-length": "129",
+    "sec-ch-ua-platform": "\"macOS\"",
+    "x-csrf-token": "qaTPgsakw5YPPu97XPtcj_PGKywRgKOkn_KEHh8troo",
+    "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36",
+    "accept": "application/json, text/plain, */*",
+    "sec-ch-ua": "\"Google Chrome\";v=\"143\", \"Chromium\";v=\"143\", \"Not A(Brand\";v=\"24\"",
+    "content-type": "application/json",
+    "sec-ch-ua-mobile": "?0",
+    "origin": "http://localhost:5174",
+    "sec-fetch-site": "same-origin",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-dest": "empty",
+    "referer": "http://localhost:5174/lms/login",
+    "accept-encoding": "gzip, deflate, br, zstd",
+    "accept-language": "en-US,en;q=0.9",
+    "cookie": "refresh_token=g4unielrvvbq; csrf_token=qaTPgsakw5YPPu97XPtcj_PGKywRgKOkn_KEHh8troo"
+  },
+  "body": {
+    "email": "myatdennis@gmail.com",
+    "password": "3Cr0wns2014!",
+    "confirmPassword": "3Cr0wns2014!",
+    "firstName": "Mya",
+    "lastName": "Dennis"
+  },
+  "error": {
+    "message": "Authentication service not configured",
+    "stack": "Error: Authentication service not configured\n    at createHttpError (file:///Users/myadennis/Downloads/MainProject/server/middleware/apiErrorHandler.js:19:17)\n    at res.json (file:///Users/myadennis/Downloads/MainProject/server/index.js:929:19)\n    at file:///Users/myadennis/Downloads/MainProject/server/routes/auth.js:596:30\n    at Layer.handle [as handle_request] (/Users/myadennis/Downloads/MainProject/node_modules/express/lib/router/layer.js:95:5)\n    at next (/Users/myadennis/Downloads/MainProject/node_modules/express/lib/router/route.js:149:13)\n    at file:///Users/myadennis/Downloads/MainProject/node_modules/express-rate-limit/dist/index.mjs:913:7\n    at process.processTicksAndRejections (node:internal/process/task_queues:105:5)\n    at async file:///Users/myadennis/Downloads/MainProject/node_modules/express-rate-limit/dist/index.mjs:796:5"
+  }
+}

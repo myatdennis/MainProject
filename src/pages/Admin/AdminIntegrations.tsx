@@ -341,12 +341,30 @@ const AdminIntegrations = () => {
                           Configure
                         </button>
                         <div className="flex items-center space-x-2">
-                          <button onClick={() => handleTest(integration.name)} className="p-1 text-gray-400 hover:text-gray-600" title="Test">
+                          <button 
+                            onClick={() => handleTest(integration.name)} 
+                            className="p-1 text-gray-400 hover:text-gray-600" 
+                            title="Test"
+                            aria-label={`Test integration: ${integration.name}`}
+                            tabIndex={0}
+                            role="button"
+                            data-tooltip-id={`tooltip-test-integration-${integration.id}`}
+                          >
                             <Eye className="h-4 w-4" />
                           </button>
-                          <button onClick={() => handleConfigure(integration.id)} className="p-1 text-gray-400 hover:text-gray-600" title="Settings">
+                          <button 
+                            onClick={() => handleConfigure(integration.id)} 
+                            className="p-1 text-gray-400 hover:text-gray-600" 
+                            title="Settings"
+                            aria-label={`Configure integration: ${integration.name}`}
+                            tabIndex={0}
+                            role="button"
+                            data-tooltip-id={`tooltip-configure-integration-${integration.id}`}
+                          >
                             <Settings className="h-4 w-4" />
                           </button>
+                          <span id={`tooltip-test-integration-${integration.id}`} className="sr-only">Test integration</span>
+                          <span id={`tooltip-configure-integration-${integration.id}`} className="sr-only">Configure integration</span>
                         </div>
                       </div>
                     </div>
@@ -399,9 +417,33 @@ const AdminIntegrations = () => {
                         <div className="font-medium text-gray-900">{webhook.successRate}%</div>
                       </div>
                         <div className="flex items-center space-x-2">
-                        <button onClick={() => handleTest(webhook.name)} className="text-blue-600 hover:text-blue-700">Test</button>
-                        <button onClick={() => alert('Edit webhook (demo)')} className="text-gray-600 hover:text-gray-700">Edit</button>
-                        <button onClick={() => { if(confirm('Delete webhook?')) alert('Deleted (demo)'); }} className="text-red-600 hover:text-red-700">Delete</button>
+                        <button 
+                          onClick={() => handleTest(webhook.name)} 
+                          className="text-blue-600 hover:text-blue-700"
+                          aria-label={`Test webhook: ${webhook.name}`}
+                          tabIndex={0}
+                          role="button"
+                          data-tooltip-id={`tooltip-test-webhook-${webhook.id}`}
+                        >Test</button>
+                        <button 
+                          onClick={() => alert('Edit webhook (demo)')} 
+                          className="text-gray-600 hover:text-gray-700"
+                          aria-label={`Edit webhook: ${webhook.name}`}
+                          tabIndex={0}
+                          role="button"
+                          data-tooltip-id={`tooltip-edit-webhook-${webhook.id}`}
+                        >Edit</button>
+                        <button 
+                          onClick={() => { if(confirm('Delete webhook?')) alert('Deleted (demo)'); }} 
+                          className="text-red-600 hover:text-red-700"
+                          aria-label={`Delete webhook: ${webhook.name}`}
+                          tabIndex={0}
+                          role="button"
+                          data-tooltip-id={`tooltip-delete-webhook-${webhook.id}`}
+                        >Delete</button>
+                        <span id={`tooltip-test-webhook-${webhook.id}`} className="sr-only">Test webhook</span>
+                        <span id={`tooltip-edit-webhook-${webhook.id}`} className="sr-only">Edit webhook</span>
+                        <span id={`tooltip-delete-webhook-${webhook.id}`} className="sr-only">Delete webhook</span>
                       </div>
                     </div>
                   </div>

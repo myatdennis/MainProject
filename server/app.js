@@ -1,52 +1,32 @@
 import express from 'express';
-import cors from 'cors';
 import textContentRouter from './routes/textContent.js';
-import adminUsersRouter from './routes/admin-users.js'; // Import the admin-users router
-// ... other imports and setup
+import adminUsersRouter from './routes/admin-users.js';
+import healthRouter from './routes/health.js';
+import corsMiddleware from './middleware/cors.js';
+import { getCookieOptions } from './middleware/cookieOptions.js';
+import { env } from '../src/utils/env.ts';
+import { log } from '../src/utils/logger.ts';
+import { handleError } from '../src/utils/errorHandler.ts';
 
 const app = express();
 
-const allowedOrigins = [
-	'https://the-huddle.co',
-	'https://www.the-huddle.co',
-	'http://localhost:5173',
-];
-
-app.use((req, res, next) => {
-	const origin = req.headers.origin;
-	if (origin && allowedOrigins.includes(origin)) {
-		res.header('Access-Control-Allow-Origin', origin);
-	}
-	res.header('Access-Control-Allow-Credentials', 'true');
-	res.header(
-		'Access-Control-Allow-Methods',
-		'GET,POST,PUT,PATCH,DELETE,OPTIONS'
-	);
-	res.header(
-		'Access-Control-Allow-Headers',
-		'Content-Type, Authorization, X-Requested-With'
-	);
-	if (req.method === 'OPTIONS') {
-		return res.sendStatus(200);
-	}
-	next();
-});
+// Use new CORS middleware
+app.use(corsMiddleware);
 
 app.use(express.json());
 
-app.get('/api/health', (_req, res) => {
-	res.json({
-		status: 'ok',
-		uptime: process.uptime(),
-		timestamp: new Date().toISOString(),
-	});
-});
+// Use new health route
+app.use('/api', healthRouter);
 
-// ... other app.use() calls
-
+// ... other app.use() calls ...
 app.use('/api/text-content', textContentRouter);
-app.use('/api/admin/users', adminUsersRouter); // Register the admin-users router
+app.use('/api/admin/users', adminUsersRouter);
 
-// ... rest of server setup and app.listen()
+// Example usage of shared utils
+log('info', 'Server started', { env });
+app.use((err, req, res, next) => {
+  handleError(err, 'Express Middleware');
+  res.status(500).json({ error: 'Internal Server Error' });
+});
 
 export default app;

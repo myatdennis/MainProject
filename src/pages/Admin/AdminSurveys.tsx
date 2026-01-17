@@ -1,3 +1,9 @@
+/**
+ * AdminSurveys - Admin portal page for managing DEI surveys and analytics.
+ * Uses shared UI components and accessibility best practices.
+ * Features: survey queue, search/filter, bulk actions, modals, analytics, and summary stats.
+ */
+
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { 
@@ -25,6 +31,7 @@ import {
   AlertTriangle
 } from 'lucide-react';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
+import AdminLayout from '../../components/Admin/AdminLayout';
 import { useToast } from '../../context/ToastContext';
 import EmptyState from '../../components/ui/EmptyState';
 import SurveyQueueStatus from '../../components/Survey/SurveyQueueStatus';
@@ -389,7 +396,8 @@ const AdminSurveys = () => {
   // removed handleSelectAll (not used)
 
   return (
-    <div className="container mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
+    <AdminLayout>
+      <div className="container mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
       <div className="mb-6">
         <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Surveys', to: '/admin/surveys' }]} />
       </div>
@@ -838,7 +846,8 @@ const AdminSurveys = () => {
           </div>
         </div>
       )}
-    </div>
+      </div>
+    </AdminLayout>
   );
 };
 
