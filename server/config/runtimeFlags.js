@@ -24,19 +24,26 @@ const supabaseUrlEnv = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL
 const supabaseServiceEnv = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || '';
 export const supabaseServerConfigured = Boolean(supabaseUrlEnv && supabaseServiceEnv);
 
-export const allowDemoExplicit = parseFlag(process.env.ALLOW_DEMO);
-export const demoModeExplicit = parseFlag(process.env.DEMO_MODE);
-const devFallbackExplicit = parseFlag(process.env.DEV_FALLBACK);
+const allowDemoFlag = parseFlag(process.env.ALLOW_DEMO);
+const demoModeFlag = parseFlag(process.env.DEMO_MODE);
+const devFallbackFlag = parseFlag(process.env.DEV_FALLBACK);
+
+export const allowDemoExplicit = !isProduction && allowDemoFlag;
+export const demoModeExplicit = !isProduction && demoModeFlag;
+const devFallbackExplicit = !isProduction && devFallbackFlag;
 export const allowLegacyDemoUsers = parseFlag(process.env.ALLOW_LEGACY_DEMO_USERS);
 export const E2E_TEST_MODE = parseFlag(process.env.E2E_TEST_MODE);
 export const FORCE_ORG_ENFORCEMENT = parseFlag(
   process.env.FORCE_ORG_ENFORCEMENT ?? process.env.ENFORCE_ORG_ENFORCEMENT ?? process.env.FORCE_ORG_GUARDS
 );
 
-export const DEV_FALLBACK = !isProduction && (devFallbackExplicit || allowDemoExplicit || demoModeExplicit);
+export const DEV_FALLBACK = Boolean(devFallbackExplicit || allowDemoExplicit || demoModeExplicit);
 export const implicitDemoFallback = !isProduction && !supabaseServerConfigured;
 export const demoLoginEnabled =
-  allowDemoExplicit || demoModeExplicit || DEV_FALLBACK || E2E_TEST_MODE || implicitDemoFallback;
+  Boolean(
+    (E2E_TEST_MODE && !isProduction) ||
+      (!isProduction && (allowDemoExplicit || demoModeExplicit || DEV_FALLBACK || implicitDemoFallback)),
+  );
 const demoAutoAuthExplicit = parseFlag(
   process.env.ALLOW_DEMO_AUTO_AUTH ?? process.env.DEMO_AUTO_AUTH ?? process.env.DEMO_AUTO_LOGIN,
 );

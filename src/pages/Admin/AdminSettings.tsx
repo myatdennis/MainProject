@@ -20,7 +20,6 @@ import {
   Eye,
   EyeOff
 } from 'lucide-react';
-import AdminLayout from '../../components/Admin/AdminLayout';
 
 const AdminSettings = () => {
   const [activeTab, setActiveTab] = useState('profile');
@@ -595,8 +594,7 @@ const AdminSettings = () => {
   );
 
   return (
-    <AdminLayout>
-      <div className="p-6 max-w-7xl mx-auto">
+    <div className="p-6 max-w-7xl mx-auto">
         {/* Header */}
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-gray-900 mb-2">Settings</h1>
@@ -653,7 +651,7 @@ const AdminSettings = () => {
           </div>
         </div>
       </div>
-    </AdminLayout>
+    </div>
   );
 };
 

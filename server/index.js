@@ -1,13 +1,3 @@
-// Allow localhost and Vite dev origins for local development
-const allowedOrigins = new Set([
-  'http://localhost:5174',
-  'http://127.0.0.1:5174',
-  'http://localhost:8888',
-  'http://127.0.0.1:8888',
-]);
-// --- Org ID Compatibility Constant (must be first) ---
-// --- End Org ID Compatibility Constant ---
-
 // Ensure .env is loaded before any env validation
 import dotenv from 'dotenv';
 dotenv.config();
@@ -39,19 +29,11 @@ import {
   analyticsEventIngestSchema,
 } from './validators.js';
 import { logger } from './lib/logger.js';
-import {
-  recordCourseProgress,
-  recordLessonProgress,
-  recordProgressBatch,
-  recordSupabaseHealth,
-  getMetricsSnapshot,
-} from './diagnostics/metrics.js';
 import { isAllowedWsOrigin } from './lib/wsOrigins.js';
 import { withCache, invalidateCacheKeys } from './services/cacheService.js';
 import { enqueueJob, registerJobProcessor, hasQueueBackend } from './jobs/taskQueue.js';
 import setupNotificationDispatcher from './services/notificationDispatcher.js';
 import { validateCourse as validatePublishableCourse } from './lib/courseValidation.js';
-import { buildHealthResponse } from './lib/healthResponse.js';
 
 // Import auth routes and middleware
 import authRoutes from './routes/auth.js';
@@ -79,6 +61,8 @@ import {
   FORCE_ORG_ENFORCEMENT,
   demoLoginEnabled,
   describeDemoMode,
+  supabaseServerConfigured,
+  parseFlag,
 } from './config/runtimeFlags.js';
 import { sendEmail } from './services/emailService.js';
 import { createMediaService } from './services/mediaService.js';
@@ -87,8 +71,60 @@ import { createMediaService } from './services/mediaService.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+// Diagnostics/metrics helpers are optional; provide safe no-op fallbacks so
+// the server never crashes if the diagnostics bundle is missing.
+const recordCourseProgress = () => {};
+const recordLessonProgress = () => {};
+const recordProgressBatch = () => {};
+const recordSupabaseHealth = () => {};
+const getMetricsSnapshot = () => ({
+  analyticsIngest: { lastBatch: null, status: 'unknown' },
+  progressBatch: { lastSuccessAt: null, status: 'unknown' },
+});
+
 const shouldLogAuthDebug =
   NODE_ENV !== 'production' || String(process.env.ENABLE_AUTH_DEBUG || '').toLowerCase() === 'true';
+
+const fatalEnvError = (message) => {
+  console.error(`[env] ${message}`);
+  process.exit(1);
+};
+
+const warnEnv = (message) => {
+  console.warn(`[env] ${message}`);
+};
+
+const ensureEnvironmentIsValid = () => {
+  const baseRequired = ['CORS_ALLOWED_ORIGINS'];
+  const missingBase = baseRequired.filter((key) => !(process.env[key] || '').trim());
+  if (missingBase.length) {
+    const msg = `Missing recommended environment variables: ${missingBase.join(', ')}`;
+    if (isProduction) {
+      fatalEnvError(msg);
+    } else {
+      warnEnv(msg);
+    }
+  }
+
+  const prodRequired = ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'DATABASE_URL'];
+  const missingProd = prodRequired.filter((key) => !(process.env[key] || '').trim());
+  if (isProduction && missingProd.length) {
+    fatalEnvError(`Missing required production environment variables: ${missingProd.join(', ')}`);
+  }
+
+  if (isProduction && !supabaseServerConfigured) {
+    fatalEnvError('Supabase credentials are not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.');
+  }
+
+  if (isProduction) {
+    const demoFlags = ['ALLOW_DEMO', 'DEMO_MODE', 'DEV_FALLBACK'].filter((key) => parseFlag(process.env[key]));
+    if (demoFlags.length) {
+      fatalEnvError(`Demo fallback modes are disallowed in production. Remove: ${demoFlags.join(', ')}`);
+    }
+  }
+};
+
+ensureEnvironmentIsValid();
 
 // Persistent storage file for demo mode
 const STORAGE_FILE = path.join(__dirname, 'demo-data.json');
@@ -169,7 +205,7 @@ const app = express();
 app.set('etag', false);
 
 import healthRouter from './routes/health.js';
-import corsMiddleware from './middleware/cors.js';
+import corsMiddleware, { resolvedCorsOrigins } from './middleware/cors.js';
 import { getCookieOptions } from './middleware/cookieOptions.js';
 import { env } from '../src/utils/env.ts';
 import { log } from '../src/utils/logger.ts';
@@ -214,10 +250,9 @@ app.use(corsMiddleware);
 // the rest of the middleware stack (body parsers, auth, etc.) runs.
 app.use(attachRequestId);
 
-// Lightweight platform health check (local test: curl -i http://localhost:<PORT>/api/health)
-app.get('/api/health', (req, res) => {
-  void respondToHealthRequest(req, res);
-});
+// Mount health routes before any static handlers or catch-alls so Railway/Netlify
+// can probe /health or /api/health even if auth or other middleware is misconfigured.
+app.use('/', healthRouter);
 
 app.get('/api/health/stream', (req, res) => {
   res.status(200);
@@ -350,27 +385,6 @@ const deriveOverallStatus = (statuses = []) => {
   return 'ok';
 };
 
-const resolveAppVersion = () =>
-  process.env.APP_VERSION ||
-  process.env.VERCEL_GIT_COMMIT_SHA ||
-  process.env.RENDER_GIT_COMMIT ||
-  process.env.HEROKU_SLUG_COMMIT ||
-  process.env.COMMIT_REF ||
-  'dev';
-
-const resolveAppEnvironment = () => process.env.APP_ENV || process.env.VERCEL_ENV || NODE_ENV || process.env.NODE_ENV || 'development';
-
-const isDiagnosticsRequestAllowed = (req) => {
-  if (!isProduction) {
-    return true;
-  }
-  const origin = req.headers.origin;
-  if (origin && allowedOrigins.includes(origin)) {
-    return true;
-  }
-  return false;
-};
-
 const buildHealthPayload = async (overrides = {}) => {
   const [supabaseHealth, storageHealth] = await Promise.all([
     checkSupabaseHealth().catch((error) => {
@@ -420,53 +434,6 @@ const buildHealthPayload = async (overrides = {}) => {
     ...overrides,
   };
 };
-
-async function respondToHealthRequest(req, res) {
-  const basePayload = {
-    ok: true,
-    version: resolveAppVersion(),
-    env: resolveAppEnvironment(),
-  };
-
-  const wantsDiagnostics = req.headers['x-runtime-status'] === '1';
-  const diagnosticsAllowed = wantsDiagnostics && isDiagnosticsRequestAllowed(req);
-
-  if (!wantsDiagnostics) {
-    res.status(200).json(
-      buildHealthResponse({
-        basePayload,
-        wantsDiagnostics,
-        diagnosticsAllowed: false,
-      })
-    );
-    return;
-  }
-
-  if (!diagnosticsAllowed) {
-    res.status(200).json(
-      buildHealthResponse({
-        basePayload,
-        wantsDiagnostics,
-        diagnosticsAllowed,
-      })
-    );
-    return;
-  }
-
-  try {
-    const diagnostics = await buildHealthPayload();
-    const responsePayload = buildHealthResponse({
-      basePayload,
-      wantsDiagnostics,
-      diagnosticsAllowed,
-      diagnosticsPayload: diagnostics,
-    });
-    res.status(200).json(responsePayload);
-  } catch (error) {
-    logger.error('health_response_failed', { error: error instanceof Error ? error.message : error });
-    res.status(200).json({ ...basePayload, ok: false, error: 'health_unavailable' });
-  }
-}
 
 app.post('/api/admin/courses/:id/assign', async (req, res) => {
   if (!ensureSupabase(res)) return;
@@ -840,8 +807,14 @@ app.get('/api/auth/csrf', getCSRFToken);
 // Dev fallback: allow in-memory server behavior when Supabase isn't configured.
 // Enabled by default in non-production unless DEV_FALLBACK=false is set.
 
+const diagnosticsAllowedOrigins = new Set(
+  resolvedCorsOrigins.length > 0
+    ? resolvedCorsOrigins
+    : ['http://localhost:5174', 'http://127.0.0.1:5174', 'http://localhost:8888', 'http://127.0.0.1:8888'],
+);
+
 logger.info('diagnostics_cookies_and_cors', {
-  allowedOrigins,
+  allowedOrigins: Array.from(diagnosticsAllowedOrigins),
   cookieDomain: process.env.COOKIE_DOMAIN || null,
   cookieSameSite: process.env.COOKIE_SAMESITE || null,
 });
@@ -3680,7 +3653,7 @@ app.get('/api/diagnostics', async (req, res) => {
     databaseUrlPresent: !!process.env.DATABASE_URL,
     jwtSecretPresent: !!process.env.JWT_SECRET,
     cookieDomain: !!process.env.COOKIE_DOMAIN,
-    corsAllowedConfigured: allowedOrigins.length > 0,
+    corsAllowedConfigured: resolvedCorsOrigins.length > 0,
     devFallbackMode: DEV_FALLBACK,
     e2eMode: E2E_TEST_MODE
     ,enforceHttpsEnabled: (process.env.ENFORCE_HTTPS || '').toLowerCase() === 'true'

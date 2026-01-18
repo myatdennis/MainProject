@@ -48,7 +48,6 @@ import { LoadingSpinner } from '../../components/LoadingComponents';
 
 import { LazyImage } from '../../components/PerformanceComponents';
 import CourseAssignmentModal from '../../components/CourseAssignmentModal';
-import AdminLayout from '../../components/Admin/AdminLayout';
 
 
 const AdminCourses = () => {
@@ -559,7 +558,7 @@ const AdminCourses = () => {
   }
 
   return (
-    <AdminLayout>
+    <>
       <div className="container mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
         <div className="mb-6">
           <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Courses', to: '/admin/courses' }]} />
@@ -878,7 +877,7 @@ const AdminCourses = () => {
         type="warning"
         loading={loading}
       />
-    </AdminLayout>
+    </>
   );
 };
 

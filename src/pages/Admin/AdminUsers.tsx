@@ -29,7 +29,6 @@ import { useToast } from '../../context/ToastContext';
 import { User } from '../../types/user';
 import type { CourseAssignment } from '../../types/assignment';
 import PageWrapper from '../../components/PageWrapper';
-import AdminLayout from '../../components/Admin/AdminLayout';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import EmptyState from '../../components/ui/EmptyState';
 
@@ -364,8 +363,7 @@ const AdminUsers = () => {
   };
 
   return (
-    <AdminLayout>
-      <PageWrapper>
+    <PageWrapper>
       <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Users', to: '/admin/users' }]} />
       {/* Header */}
       <div className="mb-8">
@@ -696,8 +694,7 @@ const AdminUsers = () => {
           editUser={userToEdit}
         />
       )}
-      </PageWrapper>
-    </AdminLayout>
+    </PageWrapper>
   );
 };
 

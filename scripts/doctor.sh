@@ -16,6 +16,14 @@ echo "EMAIL:      $EMAIL"
 echo "COOKIE_JAR: $COOKIE_JAR"
 echo
 
+echo "0) Backend Environment Snapshot"
+if command -v node >/dev/null 2>&1; then
+  node ./scripts/env_snapshot.mjs || echo "   (failed to load snapshot)"
+else
+  echo "   node not available to print snapshot"
+fi
+echo
+
 echo "1) Health"
 HEALTH_JSON="$(curl -fsS -H "Origin: $ORIGIN" "$BASE/api/health" || true)"
 echo "$HEALTH_JSON" | grep -Eq '("ok"[[:space:]]*:[[:space:]]*true|"status"[[:space:]]*:[[:space:]]*"ok")' \
