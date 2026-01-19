@@ -8,6 +8,7 @@
     "remove:server-ts": "node ./scripts/remove_server_ts_files.mjs",
     "clean:server-ts": "node ./scripts/clean_server_ts.mjs",
     "check:env:local": "node scripts/check_env_local.cjs",
+    "check:health": "node scripts/check-health.mjs",
     "dev": "npm run preclean:components && npm run check:env:local && vite",
     "dev:server": "cross-env PORT=8888 npm run start:server",
     "dev:full": "concurrently -k -s first -n server,vite \"npm run dev:server\" \"npm run dev\"",

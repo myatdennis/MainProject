@@ -21,7 +21,8 @@ export const isProduction = NODE_ENV === 'production';
 export const isDevelopment = NODE_ENV === 'development';
 
 const supabaseUrlEnv = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
-const supabaseServiceEnv = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || '';
+const supabaseServiceEnv =
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY || '';
 export const supabaseServerConfigured = Boolean(supabaseUrlEnv && supabaseServiceEnv);
 
 const allowDemoFlag = parseFlag(process.env.ALLOW_DEMO);

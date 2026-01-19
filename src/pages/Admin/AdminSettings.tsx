@@ -595,59 +595,58 @@ const AdminSettings = () => {
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">Settings</h1>
-          <p className="text-gray-600">Manage your admin profile, system configuration, and integrations</p>
+      {/* Header */}
+      <div className="mb-8">
+        <h1 className="text-3xl font-bold text-gray-900 mb-2">Settings</h1>
+        <p className="text-gray-600">Manage your admin profile, system configuration, and integrations</p>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+        {/* Sidebar */}
+        <div className="lg:col-span-1">
+          <nav className="space-y-2">
+            {tabs.map((tab) => {
+              const Icon = tab.icon;
+              return (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveTab(tab.id)}
+                  className={`w-full flex items-center space-x-3 px-4 py-3 text-left rounded-lg transition-colors duration-200 ${
+                    activeTab === tab.id
+                      ? 'bg-orange-50 text-orange-600 border-r-2 border-orange-500'
+                      : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
+                  }`}
+                >
+                  <Icon className="h-5 w-5" />
+                  <span className="font-medium">{tab.name}</span>
+                </button>
+              );
+            })}
+          </nav>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-          {/* Sidebar */}
-          <div className="lg:col-span-1">
-            <nav className="space-y-2">
-              {tabs.map((tab) => {
-                const Icon = tab.icon;
-                return (
-                  <button
-                    key={tab.id}
-                    onClick={() => setActiveTab(tab.id)}
-                    className={`w-full flex items-center space-x-3 px-4 py-3 text-left rounded-lg transition-colors duration-200 ${
-                      activeTab === tab.id
-                        ? 'bg-orange-50 text-orange-600 border-r-2 border-orange-500'
-                        : 'text-gray-600 hover:bg-gray-50 hover:text-gray-900'
-                    }`}
-                  >
-                    <Icon className="h-5 w-5" />
-                    <span className="font-medium">{tab.name}</span>
-                  </button>
-                );
-              })}
-            </nav>
-          </div>
-
-          {/* Content */}
-          <div className="lg:col-span-3">
-            <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8">
-              <div className="flex items-center justify-between mb-8">
-                <h2 className="text-2xl font-bold text-gray-900">
-                  {tabs.find(tab => tab.id === activeTab)?.name}
-                </h2>
-                <button
-                  onClick={handleSave}
-                  className="bg-orange-500 text-white px-6 py-3 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-2"
-                >
-                  <Save className="h-4 w-4" />
-                  <span>Save Changes</span>
-                </button>
-              </div>
-
-              {activeTab === 'profile' && renderProfileTab()}
-              {activeTab === 'notifications' && renderNotificationsTab()}
-              {activeTab === 'security' && renderSecurityTab()}
-              {activeTab === 'system' && renderSystemTab()}
-              {activeTab === 'branding' && renderBrandingTab()}
-              {activeTab === 'integrations' && renderIntegrationsTab()}
+        {/* Content */}
+        <div className="lg:col-span-3">
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8">
+            <div className="flex items-center justify-between mb-8">
+              <h2 className="text-2xl font-bold text-gray-900">
+                {tabs.find(tab => tab.id === activeTab)?.name}
+              </h2>
+              <button
+                onClick={handleSave}
+                className="bg-orange-500 text-white px-6 py-3 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-2"
+              >
+                <Save className="h-4 w-4" />
+                <span>Save Changes</span>
+              </button>
             </div>
+
+            {activeTab === 'profile' && renderProfileTab()}
+            {activeTab === 'notifications' && renderNotificationsTab()}
+            {activeTab === 'security' && renderSecurityTab()}
+            {activeTab === 'system' && renderSystemTab()}
+            {activeTab === 'branding' && renderBrandingTab()}
+            {activeTab === 'integrations' && renderIntegrationsTab()}
           </div>
         </div>
       </div>

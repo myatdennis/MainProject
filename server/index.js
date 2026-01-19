@@ -34,6 +34,7 @@ import { withCache, invalidateCacheKeys } from './services/cacheService.js';
 import { enqueueJob, registerJobProcessor, hasQueueBackend } from './jobs/taskQueue.js';
 import setupNotificationDispatcher from './services/notificationDispatcher.js';
 import { validateCourse as validatePublishableCourse } from './lib/courseValidation.js';
+import { getSupabaseConfig } from './config/supabaseConfig.js';
 
 // Import auth routes and middleware
 import authRoutes from './routes/auth.js';
@@ -94,6 +95,38 @@ const warnEnv = (message) => {
   console.warn(`[env] ${message}`);
 };
 
+const placeholderPatterns = [
+  /REPLACE_ME/i,
+  /CHANGE_ME/i,
+  /your-very-secret/i,
+  /public-anon-key-here/i,
+  /service-role-secret/i,
+];
+
+const hasPlaceholderValue = (value) => {
+  if (!value || typeof value !== 'string') return false;
+  return placeholderPatterns.some((pattern) => pattern.test(value));
+};
+
+const warnOnPlaceholderSecrets = () => {
+  const sensitiveEnvVars = [
+    'SUPABASE_KEY',
+    'SUPABASE_SERVICE_ROLE_KEY',
+    'SUPABASE_SERVICE_KEY',
+    'SUPABASE_ANON_KEY',
+    'SUPABASE_URL',
+    'VITE_SUPABASE_URL',
+    'VITE_SUPABASE_ANON_KEY',
+    'JWT_SECRET',
+    'DATABASE_URL',
+    'BROADCAST_API_KEY',
+  ];
+  const flagged = sensitiveEnvVars.filter((key) => hasPlaceholderValue(process.env[key]));
+  if (flagged.length > 0) {
+    warnEnv(`Placeholder values detected for sensitive env vars: ${flagged.join(', ')}. Update them before production.`);
+  }
+};
+
 const ensureEnvironmentIsValid = () => {
   const baseRequired = ['CORS_ALLOWED_ORIGINS'];
   const missingBase = baseRequired.filter((key) => !(process.env[key] || '').trim());
@@ -122,6 +155,8 @@ const ensureEnvironmentIsValid = () => {
       fatalEnvError(`Demo fallback modes are disallowed in production. Remove: ${demoFlags.join(', ')}`);
     }
   }
+
+  warnOnPlaceholderSecrets();
 };
 
 ensureEnvironmentIsValid();
@@ -133,6 +168,11 @@ const MAX_DEMO_FILE_BYTES = parseInt(process.env.DEMO_DATA_MAX_BYTES || '', 10) 
 
 const initialDemoModeMetadata = describeDemoMode();
 logger.info('demo_mode_configuration', { metadata: initialDemoModeMetadata });
+if (supabaseEnv.configured && DEV_FALLBACK) {
+  logger.warn('dev_fallback_overrides_supabase', {
+    message: 'Supabase credentials detected but DEV_FALLBACK=true forces in-memory demo mode.',
+  });
+}
 
 const DOCUMENTS_BUCKET = process.env.SUPABASE_DOCUMENTS_BUCKET || 'course-resources';
 const DOCUMENT_UPLOAD_MAX_BYTES = Number(process.env.DOCUMENT_UPLOAD_MAX_BYTES || 150 * 1024 * 1024);
@@ -293,6 +333,27 @@ app.get('/api/health/stream', (req, res) => {
     clearInterval(interval);
     clearInterval(heartbeat);
   });
+});
+
+app.get('/api/health/db', async (_req, res) => {
+  try {
+    const result = await checkSupabaseHealth();
+    const ok = result.status === 'ok';
+    const statusCode = ok ? 200 : result.status === 'disabled' ? 503 : 502;
+    res.status(statusCode).json({
+      ok,
+      status: result.status,
+      latencyMs: result.latencyMs ?? null,
+      message: result.message ?? null,
+      demoFallback: Boolean(DEV_FALLBACK || E2E_TEST_MODE),
+    });
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      status: 'error',
+      message: error instanceof Error ? error.message : 'db_health_failed',
+    });
+  }
 });
 
 const OFFLINE_QUEUE_STATE_FILE = process.env.OFFLINE_QUEUE_STATE_FILE
@@ -812,11 +873,14 @@ const diagnosticsAllowedOrigins = new Set(
     ? resolvedCorsOrigins
     : ['http://localhost:5174', 'http://127.0.0.1:5174', 'http://localhost:8888', 'http://127.0.0.1:8888'],
 );
+const defaultCookieSameSite = (process.env.COOKIE_SAMESITE || '').trim() || (process.env.NODE_ENV === 'production' ? 'none' : 'lax');
+const defaultCookieSecure = process.env.NODE_ENV === 'production';
 
 logger.info('diagnostics_cookies_and_cors', {
   allowedOrigins: Array.from(diagnosticsAllowedOrigins),
   cookieDomain: process.env.COOKIE_DOMAIN || null,
-  cookieSameSite: process.env.COOKIE_SAMESITE || null,
+  cookieSameSite: defaultCookieSameSite,
+  cookieSecureDefault: defaultCookieSecure,
 });
 
 const API_AUTH_BYPASS_PREFIXES = ['/auth', '/mfa', '/health', '/diagnostics', '/broadcast'];
@@ -993,17 +1057,26 @@ app.use('/api/orgs', authenticate);
 // Honor explicit E2E test mode in child processes: when E2E_TEST_MODE is set we prefer the
 // in-memory demo fallback even if Supabase credentials are present in the environment.
 
-const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
-
-const missingSupabaseEnvVars = [];
-if (!supabaseUrl) missingSupabaseEnvVars.push('SUPABASE_URL or VITE_SUPABASE_URL');
-if (!supabaseServiceRoleKey) missingSupabaseEnvVars.push('SUPABASE_SERVICE_ROLE_KEY or SUPABASE_SERVICE_KEY');
+const supabaseEnv = getSupabaseConfig();
+const supabaseUrl = supabaseEnv.url;
+const supabaseServiceRoleKey = supabaseEnv.serviceRoleKey;
+const missingSupabaseEnvVars = [...supabaseEnv.missing];
 
 // Log Supabase configuration for diagnostics
+const supabaseUrlHost = (() => {
+  if (!supabaseUrl) return null;
+  try {
+    return new URL(supabaseUrl).host || null;
+  } catch (_error) {
+    return null;
+  }
+})();
+
 logger.info('diagnostics_supabase_env', {
-  supabaseUrl: supabaseUrl || null,
+  supabaseUrlConfigured: Boolean(supabaseUrl),
+  supabaseUrlHost,
   hasServiceRoleKey: Boolean(supabaseServiceRoleKey),
+  serviceKeySource: supabaseEnv.serviceKeySource || null,
 });
 
 let supabase = supabaseUrl && supabaseServiceRoleKey ? createClient(supabaseUrl, supabaseServiceRoleKey) : null;

@@ -29,6 +29,7 @@ import {
   allowDemoExplicit,
   demoModeExplicit,
 } from '../config/runtimeFlags.js';
+import { getSupabaseConfig } from '../config/supabaseConfig.js';
 
 const parseBoolean = (value, fallback = false) => {
   if (typeof value === 'boolean') return value;
@@ -190,6 +191,20 @@ const buildDemoUserPayloadFromToken = (tokenPayload = {}) => {
     lastName: demoUser.lastName || null,
     appMetadata: {},
     userMetadata: {},
+  };
+};
+
+const buildAuthConfigError = () => {
+  const config = getSupabaseConfig();
+  return {
+    status: config.error?.status || 503,
+    error: 'AUTH_NOT_CONFIGURED',
+    code: 'AUTH_NOT_CONFIGURED',
+    message:
+      config.error?.message ||
+      'Authentication service not configured. Configure Supabase credentials or enable ALLOW_DEMO/DEMO_MODE for demo logins.',
+    missingEnv: config.missing,
+    hint: 'Set SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY (or SUPABASE_KEY) and SUPABASE_ANON_KEY on the server.',
   };
 };
 
@@ -416,12 +431,14 @@ const refreshSessionFromCookies = async (req, res) => {
   }
 
   if (!supabaseAuthClient) {
+    const configError = buildAuthConfigError();
     return {
       ok: false,
-      status: 503,
-      error: 'AUTH_NOT_CONFIGURED',
-      code: 'AUTH_NOT_CONFIGURED',
-      message: 'Authentication service not configured',
+      status: configError.status,
+      error: configError.error,
+      code: configError.code,
+      message: configError.message,
+      missingEnv: configError.missingEnv,
     };
   }
 
@@ -515,12 +532,8 @@ router.post('/login', async (req, res) => {
     if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Attempting Supabase login', { normalizedEmail, origin, ip });
     if (!supabase || !supabaseAuthClient) {
       if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Supabase client missing');
-      return res.status(503).json({
-        error: 'AUTH_NOT_CONFIGURED',
-        code: 'AUTH_NOT_CONFIGURED',
-        message:
-          'Authentication service not configured. Configure Supabase credentials or set ALLOW_DEMO=true / DEMO_MODE=true to enable demo logins.',
-      });
+      const configError = buildAuthConfigError();
+      return res.status(configError.status).json(configError);
     }
     const { data, error: authError } = await supabaseAuthClient.auth.signInWithPassword({
       email: normalizedEmail,
@@ -628,10 +641,8 @@ router.post('/register', authLimiter, async (req, res) => {
     }
 
     if (!supabase || !supabaseAuthClient) {
-      return res.status(503).json({
-        error: 'Service unavailable',
-        message: 'Authentication service not configured',
-      });
+      const configError = buildAuthConfigError();
+      return res.status(configError.status).json(configError);
     }
 
     const normalizedEmail = normalizeEmail(email);

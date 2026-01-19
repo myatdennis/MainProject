@@ -11,6 +11,7 @@ node_modules
 dist
 dist-ssr
 *.local
+tmp/
 
 # Editor directories and files
 .vscode/*
@@ -23,7 +24,7 @@ dist-ssr
 *.sln
 *.sw?
 .env
- .env.local
+.env.local
 
 # Ignore problematic JS file that blocks TS build
 src/components/CourseContentCreator.js

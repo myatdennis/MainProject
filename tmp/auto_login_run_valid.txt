@@ -1,6 +1,0 @@
-Opening http://localhost:8888/lms/login
-Login response status: 401
-Login response body: {"error":"Invalid credentials","message":"Email or password is incorrect"}
-Navigating to post-login path: /lms/course/foundations
-Post-login navigation to /lms/course/foundations completed
-Saved capture to /tmp/auto_login_output.json

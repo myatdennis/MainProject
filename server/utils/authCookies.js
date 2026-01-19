@@ -48,10 +48,13 @@ function getRequestHost(req) {
 // Per-request cookie domain logic
 function resolveCookieDomain(req) {
   if (process.env.NODE_ENV !== 'production') return undefined;
+  if (process.env.COOKIE_DOMAIN) {
+    return process.env.COOKIE_DOMAIN;
+  }
   const host = getRequestHost(req);
-  const isHuddleDomain = host === 'the-huddle.co' || host.endsWith('.the-huddle.co');
-  if (isHuddleDomain) {
-    return process.env.COOKIE_DOMAIN || '.the-huddle.co';
+  if (!host) return undefined;
+  if (host === 'the-huddle.co' || host.endsWith('.the-huddle.co')) {
+    return '.the-huddle.co';
   }
   return undefined;
 }

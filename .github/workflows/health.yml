@@ -23,6 +23,11 @@ jobs:
             echo "/api/health failed, retrying /health …"
             curl -fsS "$URL/health" | jq -e '.ok == true' >/dev/null
           fi
+      - name: Database health
+        run: |
+          set -euo pipefail
+          URL="https://mainproject-production-4e66.up.railway.app"
+          curl -fsS "$URL/api/health/db" | jq -e '.ok == true' >/dev/null
       - name: CORS preflight
         run: |
           API_HOST=${API_HOST:-miqzywzuqzeffqpiupjm.supabase.co}

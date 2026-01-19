@@ -4,26 +4,22 @@
  */
 
 import { createClient } from '@supabase/supabase-js';
+import { getSupabaseConfig } from '../config/supabaseConfig.js';
 
 // Server-side Supabase credentials should use service role key for database access
 // and anon key for end-user authentication flows so Supabase records login events.
-const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || '';
-const supabaseAnonKey =
-  process.env.SUPABASE_ANON_KEY ||
-  process.env.VITE_SUPABASE_ANON_KEY ||
-  ''; // Never fall back to service key for anon client
+const supabaseEnv = getSupabaseConfig();
 
-const supabase = supabaseUrl && supabaseServiceKey
-  ? createClient(supabaseUrl, supabaseServiceKey)
+const supabase = supabaseEnv.configured
+  ? createClient(supabaseEnv.url, supabaseEnv.serviceRoleKey)
   : null;
 
-const supabaseAuthClient = supabaseUrl && supabaseAnonKey
-  ? createClient(supabaseUrl, supabaseAnonKey)
+const supabaseAuthClient = supabaseEnv.url && supabaseEnv.anonKey
+  ? createClient(supabaseEnv.url, supabaseEnv.anonKey)
   : null;
 
 export default supabase;
-export { supabaseAuthClient };
+export { supabaseAuthClient, supabaseEnv };
 
 export function isSupabaseConfigured() {
   return supabase !== null;

@@ -1,6 +1,0 @@
-Opening http://localhost:8888/lms/login
-Login response status: 200
-Login response body: {"user":{"id":"00000000-0000-0000-0000-000000000002","email":"user@pacificcoast.edu","role":"user","firstName":"Demo","lastName":"User"},"accessToken":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDIiLCJlbWFpbCI6InVzZXJAcGFjaWZpY2NvYXN0LmVkdSIsInJvbGUiOiJ1c2VyIiwiaWF0IjoxNzYzMDQ5MTc3LCJleHAiOjE3NjMwNTAwNzcsImF1ZCI6Imxtcy11c2VycyIsImlzcyI6Imxtcy1wbGF0Zm9ybSJ9.n1qTuyxqq6xWsElJ698RN8GAZVcqvwZqeVNDwuN98vY","refreshToken":"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiIwMDAwMDAwMC0wMDAwLTAwMDAtMDAwMC0wMDAwMDAwMDAwMDIiLCJpYXQiOjE3NjMwNDkxNzcsImV4cCI6MTc2MzY1Mzk3NywiYXVkIjoibG1zLXVzZXJzIiwiaXNzIjoibG1zLXBsYXRmb3JtIn0.01aBAyd1dskt6m19RKVjh8MuPxwACJxIhZvfmAu0KA4","expiresAt":1763050077973}
-Navigating to post-login path: /lms/course/foundations
-Post-login navigation to /lms/course/foundations completed
-Saved capture to /tmp/auto_login_output.json

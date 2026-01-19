@@ -1,22 +1,44 @@
 import express from 'express';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 const router = express.Router();
 
-export const buildSimpleHealthPayload = () => ({
+const startedAt = Date.now();
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const pkgPath = path.resolve(__dirname, '../../package.json');
+
+let packageVersion = '0.0.0-dev';
+try {
+  const pkgJson = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
+  if (pkgJson?.version) {
+    packageVersion = pkgJson.version;
+  }
+} catch (error) {
+  console.warn('[health] Unable to read package.json version:', error?.message || error);
+}
+
+const buildHealthPayload = (overrides = {}) => ({
   ok: true,
-  service: 'mainproject',
-  timestamp: new Date().toISOString(),
   env: process.env.NODE_ENV || 'development',
+  time: new Date().toISOString(),
+  version: packageVersion,
+  uptimeSeconds: Math.round((Date.now() - startedAt) / 1000),
+  ...overrides,
 });
 
-export const healthHandler = (_req, res) => {
-  res
-    .status(200)
-    .json(buildSimpleHealthPayload());
-};
+router.get(['/health', '/health/'], (_req, res) => {
+  res.status(200).json({ ok: true });
+});
 
-['/health', '/health/', '/api/health', '/api/health/'].forEach((path) => {
-  router.get(path, healthHandler);
+router.get(['/api/health', '/api/health/'], (req, res) => {
+  res.status(200).json(
+    buildHealthPayload({
+      requestId: req.requestId || null,
+    }),
+  );
 });
 
 export default router;
