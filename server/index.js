@@ -166,8 +166,14 @@ const STORAGE_FILE = path.join(__dirname, 'demo-data.json');
 // Safety guard to avoid loading extremely large demo files that could trigger OOM (exit 137)
 const MAX_DEMO_FILE_BYTES = parseInt(process.env.DEMO_DATA_MAX_BYTES || '', 10) || 25 * 1024 * 1024; // 25MB default
 
+const supabaseEnv = getSupabaseConfig();
 const initialDemoModeMetadata = describeDemoMode();
 logger.info('demo_mode_configuration', { metadata: initialDemoModeMetadata });
+logger.info('startup_supabase_config', {
+  supabaseConfigured: supabaseEnv.configured,
+  devFallback: Boolean(DEV_FALLBACK),
+  demoMode: initialDemoModeMetadata.enabled ? initialDemoModeMetadata.source || 'enabled' : 'disabled',
+});
 if (supabaseEnv.configured && DEV_FALLBACK) {
   logger.warn('dev_fallback_overrides_supabase', {
     message: 'Supabase credentials detected but DEV_FALLBACK=true forces in-memory demo mode.',
@@ -247,9 +253,9 @@ app.set('etag', false);
 import healthRouter from './routes/health.js';
 import corsMiddleware, { resolvedCorsOrigins } from './middleware/cors.js';
 import { getCookieOptions } from './middleware/cookieOptions.js';
-import { env } from '../src/utils/env.ts';
-import { log } from '../src/utils/logger.ts';
-import { handleError } from '../src/utils/errorHandler.ts';
+import { env } from './utils/env.js';
+import { log } from './utils/logger.js';
+import { handleError } from './utils/errorHandler.js';
 
 const fsp = fs.promises;
 const PROGRESS_BATCH_MAX_SIZE = Number(process.env.PROGRESS_BATCH_MAX_SIZE || 100);
@@ -1057,7 +1063,6 @@ app.use('/api/orgs', authenticate);
 // Honor explicit E2E test mode in child processes: when E2E_TEST_MODE is set we prefer the
 // in-memory demo fallback even if Supabase credentials are present in the environment.
 
-const supabaseEnv = getSupabaseConfig();
 const supabaseUrl = supabaseEnv.url;
 const supabaseServiceRoleKey = supabaseEnv.serviceRoleKey;
 const missingSupabaseEnvVars = [...supabaseEnv.missing];

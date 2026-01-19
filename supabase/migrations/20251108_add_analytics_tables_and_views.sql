@@ -1,33 +1,55 @@
 -- Migration: add analytics tables and aggregate views/functions
 -- Date: 2025-11-08
+-- Dependencies: assumes `public.courses(id)` and `public.lessons(id)` exist (TEXT primary keys from 20250919231840_wild_cliff.sql).
+-- This migration augments existing progress tables and can be re-run safely.
 
 -- 1) analytics tables
 CREATE TABLE IF NOT EXISTS public.user_course_progress (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id uuid NOT NULL,
-  org_id uuid,
-  course_id uuid NOT NULL,
-  progress numeric(5,2) NOT NULL DEFAULT 0, -- percentage 0-100
-  completed boolean NOT NULL DEFAULT FALSE,
-  updated_at timestamptz NOT NULL DEFAULT now(),
-  created_at timestamptz NOT NULL DEFAULT now()
+  id text PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  user_id text NOT NULL,
+  course_id text NOT NULL REFERENCES public.courses(id) ON DELETE CASCADE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE public.user_course_progress
+  ADD COLUMN IF NOT EXISTS org_id uuid,
+  ADD COLUMN IF NOT EXISTS progress numeric(5,2) NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS completed boolean NOT NULL DEFAULT FALSE;
 
 CREATE INDEX IF NOT EXISTS idx_user_course_progress_course_id ON public.user_course_progress(course_id);
 CREATE INDEX IF NOT EXISTS idx_user_course_progress_user_id ON public.user_course_progress(user_id);
 
 CREATE TABLE IF NOT EXISTS public.user_lesson_progress (
-  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id uuid NOT NULL,
-  org_id uuid,
-  course_id uuid NOT NULL,
-  lesson_id uuid NOT NULL,
-  progress numeric(5,2) NOT NULL DEFAULT 0,
-  time_spent_seconds integer NOT NULL DEFAULT 0,
-  completed boolean NOT NULL DEFAULT FALSE,
-  updated_at timestamptz NOT NULL DEFAULT now(),
-  created_at timestamptz NOT NULL DEFAULT now()
+  id text PRIMARY KEY DEFAULT gen_random_uuid()::text,
+  user_id text NOT NULL,
+  lesson_id text NOT NULL REFERENCES public.lessons(id) ON DELETE CASCADE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE public.user_lesson_progress
+  ADD COLUMN IF NOT EXISTS org_id uuid,
+  ADD COLUMN IF NOT EXISTS course_id text,
+  ADD COLUMN IF NOT EXISTS progress numeric(5,2) NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS time_spent_seconds integer NOT NULL DEFAULT 0,
+  ADD COLUMN IF NOT EXISTS completed boolean NOT NULL DEFAULT FALSE;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+    FROM information_schema.table_constraints
+    WHERE constraint_name = 'user_lesson_progress_course_fk'
+      AND table_schema = 'public'
+      AND table_name = 'user_lesson_progress'
+  ) THEN
+    ALTER TABLE public.user_lesson_progress
+      ADD CONSTRAINT user_lesson_progress_course_fk FOREIGN KEY (course_id) REFERENCES public.courses(id) ON DELETE CASCADE;
+  END IF;
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_user_lesson_progress_lesson_id ON public.user_lesson_progress(lesson_id);
 CREATE INDEX IF NOT EXISTS idx_user_lesson_progress_course_id ON public.user_lesson_progress(course_id);
@@ -36,7 +58,7 @@ CREATE TABLE IF NOT EXISTS public.survey_responses (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id uuid,
   org_id uuid,
-  course_id uuid,
+  course_id text REFERENCES public.courses(id) ON DELETE CASCADE,
   question_id text,
   response_text text,
   rating integer, -- optional numeric rating 1-5
@@ -49,7 +71,7 @@ CREATE TABLE IF NOT EXISTS public.assignments (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id uuid NOT NULL,
   org_id uuid,
-  course_id uuid NOT NULL,
+  course_id text NOT NULL REFERENCES public.courses(id) ON DELETE CASCADE,
   status text NOT NULL DEFAULT 'pending', -- pending/submitted/graded
   grade numeric(5,2),
   submitted_at timestamptz,
@@ -95,7 +117,7 @@ FROM public.user_lesson_progress
 GROUP BY course_id, lesson_id;
 
 -- Engagement score (simple heuristic): combination of avg progress and activity volume
-CREATE OR REPLACE FUNCTION public.fn_course_engagement_score(course_uuid uuid)
+CREATE OR REPLACE FUNCTION public.fn_course_engagement_score(course_identifier text)
 RETURNS numeric LANGUAGE sql STABLE AS $$
   SELECT
     ROUND(
@@ -104,15 +126,15 @@ RETURNS numeric LANGUAGE sql STABLE AS $$
       2
     ) AS score
   FROM (
-    SELECT avg_progress FROM public.view_course_avg_progress WHERE course_id = course_uuid
+    SELECT avg_progress FROM public.view_course_avg_progress WHERE course_id = course_identifier
   ) cp
   CROSS JOIN (
     SELECT COUNT(*)::numeric AS activity_count FROM (
-      SELECT id FROM public.user_course_progress WHERE course_id = course_uuid
+      SELECT id FROM public.user_course_progress WHERE course_id = course_identifier
       UNION ALL
-      SELECT id FROM public.user_lesson_progress WHERE course_id = course_uuid
+      SELECT id FROM public.user_lesson_progress WHERE course_id = course_identifier
       UNION ALL
-      SELECT id FROM public.survey_responses WHERE course_id = course_uuid
+      SELECT id FROM public.survey_responses WHERE course_id = course_identifier
     ) t
   ) activity;
 $$;
