@@ -1,0 +1,1 @@
+export function isAllowedWsOrigin(origin: string | undefined, opts: { isProduction: boolean }): boolean;
