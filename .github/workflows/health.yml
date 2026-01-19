@@ -16,7 +16,7 @@ jobs:
       - name: API health (Supabase Edge function proxy)
         run: |
           set -euo pipefail
-          URL="https://mainproject-production-4e66.up.railway.app"
+          URL="https://thehuddleco.up.railway.app"
           if curl -fsS "$URL/api/health" | jq -e '.ok == true' >/dev/null; then
             echo "API health endpoint responded OK"
           else
