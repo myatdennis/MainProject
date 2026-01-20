@@ -5,7 +5,7 @@
 
 import express from 'express';
 import bcrypt from 'bcryptjs';
-import { generateTokens, verifyRefreshToken } from '../utils/jwt.js';
+import { generateTokens, verifyRefreshToken, isJwtSecretConfigured } from '../utils/jwt.js';
 import {
   authenticate,
   optionalAuthenticate,
@@ -208,6 +208,14 @@ const buildAuthConfigError = () => {
   };
 };
 
+const buildJwtConfigError = () => ({
+  status: 500,
+  error: 'JWT_NOT_CONFIGURED',
+  code: 'JWT_NOT_CONFIGURED',
+  message: 'JWT secret is not configured. Set JWT_SECRET to a random 32+ character value on the server.',
+  missingEnv: ['JWT_SECRET'],
+});
+
 const matchLegacyDemoUser = async (email, password) => {
   const legacyUser = legacyDemoUsers.find((user) => normalizeEmail(user.email) === normalizeEmail(email));
   if (!legacyUser) return null;
@@ -396,6 +404,17 @@ const buildSessionResponse = (userPayload, tokens = {}) => ({
 });
 
 const refreshSessionFromCookies = async (req, res) => {
+  if (!isJwtSecretConfigured) {
+    const jwtError = buildJwtConfigError();
+    return {
+      ok: false,
+      status: jwtError.status,
+      error: jwtError.error,
+      code: jwtError.code,
+      message: jwtError.message,
+      missingEnv: jwtError.missingEnv,
+    };
+  }
   const refreshToken = getRefreshTokenFromRequest(req);
 
   if (!refreshToken) {
@@ -477,6 +496,10 @@ router.use((req, _res, next) => {
 // ============================================================================
 
 router.post('/login', async (req, res) => {
+  if (!isJwtSecretConfigured) {
+    const jwtError = buildJwtConfigError();
+    return res.status(jwtError.status).json(jwtError);
+  }
   const origin = req.headers.origin || 'unknown';
   if (process.env.DEBUG_AUTH === 'true') {
     console.log('[DEBUG_AUTH] Entered /api/auth/login', {

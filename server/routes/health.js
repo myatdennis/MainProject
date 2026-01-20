@@ -20,17 +20,21 @@ try {
   console.warn('[health] Unable to read package.json version:', error?.message || error);
 }
 
-const buildHealthPayload = (overrides = {}) => ({
-  ok: true,
-  env: process.env.NODE_ENV || 'development',
-  time: new Date().toISOString(),
-  version: packageVersion,
-  uptimeSeconds: Math.round((Date.now() - startedAt) / 1000),
-  ...overrides,
-});
+const buildHealthPayload = (overrides = {}) => {
+  const timestamp = new Date().toISOString();
+  return {
+    ok: true,
+    env: process.env.NODE_ENV || 'development',
+    time: timestamp,
+    timestamp,
+    version: packageVersion,
+    uptimeSeconds: Math.round((Date.now() - startedAt) / 1000),
+    ...overrides,
+  };
+};
 
 router.get(['/health', '/health/'], (_req, res) => {
-  res.status(200).json({ ok: true });
+  res.status(200).json(buildHealthPayload());
 });
 
 router.get(['/api/health', '/api/health/'], (req, res) => {

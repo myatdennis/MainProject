@@ -1,4 +1,6 @@
 import { randomUUID } from 'crypto';
+import { logger } from '../lib/logger.js';
+import { writeErrorDiagnostics } from '../utils/errorDiagnostics.js';
 
 const createRequestId = () => {
   if (typeof randomUUID === 'function') {
@@ -42,36 +44,62 @@ export const apiErrorHandler = (err, req, res, next) => {
     return next();
   }
 
-  const status = typeof err.status === 'number' ? err.status : 500;
-  const code = typeof err.code === 'string' ? err.code : status >= 500 ? 'server_error' : 'request_failed';
-  const requestId = req.requestId || createRequestId();
-  const isDev = process.env.NODE_ENV !== 'production';
-  // In dev, always show the real error message; in prod, only for <500
-  const message = isDev ? (err.message || code || 'Request failed') : (status >= 500 ? 'Internal server error' : err.message || 'Request failed');
+  const status = Number.isInteger(err?.status)
+    ? err.status
+    : Number.isInteger(err?.statusCode)
+      ? err.statusCode
+      : 500;
+  const isInternalError = status >= 500;
+  const code = typeof err?.code === 'string' ? err.code : isInternalError ? 'INTERNAL' : 'REQUEST_FAILED';
+  const requestId = req?.requestId || createRequestId();
+  if (!req.requestId) {
+    req.requestId = requestId;
+  }
+  if (!res.headersSent) {
+    res.setHeader('x-request-id', requestId);
+  }
 
+  const method = req?.method || 'UNKNOWN';
+  const path = req?.originalUrl || req?.url || req?.path || 'UNKNOWN';
   const logPayload = {
     requestId,
-    method: req.method,
-    path: req.originalUrl,
+    method,
+    path,
     status,
     code,
   };
 
-  if (status >= 500) {
-    console.error('[apiError]', logPayload, err);
+  if (isInternalError) {
+    logger.error('api_error', { ...logPayload, error: err instanceof Error ? err.message : err, stack: err?.stack });
   } else {
-    console.warn('[apiError]', logPayload, err.message);
+    logger.warn('api_error', { ...logPayload, error: err instanceof Error ? err.message : err });
+  }
+
+  if (process.env.NODE_ENV !== 'production') {
+    console.error(`[apiError] requestId=${requestId}`, err);
+  }
+
+  if (isInternalError) {
+    writeErrorDiagnostics(req, err, { code, status });
   }
 
   if (res.headersSent) {
     return next(err);
   }
 
-  res.status(status).json({
-    error: code,
+  const message = isInternalError ? 'Internal server error' : err?.message || 'Request failed';
+  const wantsJson = typeof req?.headers?.accept === 'string' && req.headers.accept.includes('application/json');
+  if (wantsJson) {
+    res.setHeader('content-type', 'application/json; charset=utf-8');
+    
+  }
+
+  const payload = JSON.stringify({
+    status: 'error',
     code,
     message,
     requestId,
-    ...(isDev && err.stack ? { stack: err.stack } : {}),
   });
+  res.statusCode = status;
+  res.end(payload);
 };

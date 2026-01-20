@@ -80,6 +80,8 @@ export default async () => {
       '/ws': {
         target: 'ws://localhost:8888',
         ws: true,
+        changeOrigin: true,
+        secure: false,
       },
     },
   },

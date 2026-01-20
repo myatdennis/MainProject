@@ -9,7 +9,24 @@ import jwt from 'jsonwebtoken';
 // Configuration
 // ============================================================================
 
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-key-change-in-production-min-32-chars';
+const normalizeSecret = (value) => (typeof value === 'string' ? value.trim() : '');
+const rawJwtSecret = normalizeSecret(process.env.JWT_SECRET);
+const MIN_JWT_SECRET_LENGTH = 32;
+const JWT_SECRET = rawJwtSecret && rawJwtSecret.length >= MIN_JWT_SECRET_LENGTH ? rawJwtSecret : null;
+export const isJwtSecretConfigured = Boolean(JWT_SECRET);
+if (!isJwtSecretConfigured) {
+  console.error(
+    '[auth] JWT_SECRET is missing or shorter than 32 characters. Set JWT_SECRET to a long random value before handling logins.',
+  );
+}
+const requireJwtSecret = () => {
+  if (!JWT_SECRET) {
+    const error = new Error('JWT secret is not configured');
+    error.code = 'JWT_NOT_CONFIGURED';
+    throw error;
+  }
+  return JWT_SECRET;
+};
 export const ACCESS_TOKEN_TTL_SECONDS = Number(process.env.JWT_ACCESS_TTL_SECONDS || 15 * 60); // default 15 minutes
 export const REFRESH_TOKEN_TTL_SECONDS = Number(
   process.env.JWT_REFRESH_TTL_SECONDS || 7 * 24 * 60 * 60
@@ -25,7 +42,8 @@ const REFRESH_TOKEN_EXPIRES_IN = REFRESH_TOKEN_TTL_SECONDS;
  * Generate access token
  */
 export function generateAccessToken(payload) {
-  return jwt.sign(payload, JWT_SECRET, {
+  const secret = requireJwtSecret();
+  return jwt.sign(payload, secret, {
     expiresIn: JWT_EXPIRES_IN,
     issuer: 'lms-platform',
     audience: 'lms-users',
@@ -36,9 +54,10 @@ export function generateAccessToken(payload) {
  * Generate refresh token
  */
 export function generateRefreshToken(payload) {
+  const secret = requireJwtSecret();
   return jwt.sign(
     { userId: payload.userId, email: payload.email, role: payload.role },
-    JWT_SECRET,
+    secret,
     {
       expiresIn: REFRESH_TOKEN_EXPIRES_IN,
       issuer: 'lms-platform',
@@ -73,8 +92,9 @@ export function generateTokens(payload) {
  * Verify and decode access token
  */
 export function verifyAccessToken(token) {
+  const secret = requireJwtSecret();
   try {
-    const decoded = jwt.verify(token, JWT_SECRET, {
+    const decoded = jwt.verify(token, secret, {
       issuer: 'lms-platform',
       audience: 'lms-users',
     });
@@ -94,8 +114,9 @@ export function verifyAccessToken(token) {
  * Verify refresh token
  */
 export function verifyRefreshToken(token) {
+  const secret = requireJwtSecret();
   try {
-    const decoded = jwt.verify(token, JWT_SECRET, {
+    const decoded = jwt.verify(token, secret, {
       issuer: 'lms-platform',
       audience: 'lms-users',
     });

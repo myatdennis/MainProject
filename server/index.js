@@ -67,6 +67,8 @@ import {
 } from './config/runtimeFlags.js';
 import { sendEmail } from './services/emailService.js';
 import { createMediaService } from './services/mediaService.js';
+import { isJwtSecretConfigured } from './utils/jwt.js';
+import { writeErrorDiagnostics, summarizeRequestBody } from './utils/errorDiagnostics.js';
 
 // Resolve __dirname in ESM
 const __filename = fileURLToPath(import.meta.url);
@@ -179,6 +181,26 @@ if (supabaseEnv.configured && DEV_FALLBACK) {
     message: 'Supabase credentials detected but DEV_FALLBACK=true forces in-memory demo mode.',
   });
 }
+
+const corsOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((value) => value.trim())
+  .filter(Boolean);
+const inferredCookieDomain = process.env.COOKIE_DOMAIN || (isProduction ? '(request hostname derived)' : null);
+const cookieSameSite = isProduction ? 'none' : 'lax';
+const cookieSecure = isProduction;
+logger.info('startup_env_diagnostics', {
+  nodeEnv: process.env.NODE_ENV || 'development',
+  port: Number(process.env.PORT) || 8888,
+  supabaseConfigured: supabaseEnv.configured,
+  jwtSecretConfigured: isJwtSecretConfigured,
+  cookie: {
+    domain: inferredCookieDomain,
+    sameSite: cookieSameSite,
+    secure: cookieSecure,
+  },
+  corsOrigins,
+});
 
 const DOCUMENTS_BUCKET = process.env.SUPABASE_DOCUMENTS_BUCKET || 'course-resources';
 const DOCUMENT_UPLOAD_MAX_BYTES = Number(process.env.DOCUMENT_UPLOAD_MAX_BYTES || 150 * 1024 * 1024);
@@ -959,21 +981,6 @@ app.use((req, res, next) => {
       ip: req.ip,
     });
   });
-  next();
-});
-
-// Normalize server errors so they flow through the centralized handler
-app.use((req, res, next) => {
-  const originalJson = res.json.bind(res);
-  res.json = (body) => {
-    if (res.statusCode >= 500 && !res.headersSent) {
-      const code = body && typeof body.error === 'string' ? body.error : 'server_error';
-      const message = body && typeof body.message === 'string' ? body.message : undefined;
-      const err = createHttpError(res.statusCode, code, message);
-      return next(err);
-    }
-    return originalJson(body);
-  };
   next();
 });
 
@@ -2197,55 +2204,6 @@ const persistE2EStore = () => {
   }
 };
 
-// Diagnostic helper: write a JSON file with request + error context when a server
-// error occurs. This lets E2E runs capture a disk artifact we can later inspect
-// and correlate with client-side x-request-id values.
-const DIAG_DIR = path.join(__dirname, 'diagnostics');
-function dumpErrorContext(req, err) {
-  try {
-    if (!fs.existsSync(DIAG_DIR)) fs.mkdirSync(DIAG_DIR, { recursive: true });
-    const id = req && req.requestId ? req.requestId : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
-    const payload = {
-      timestamp: new Date().toISOString(),
-      requestId: id,
-      method: req.method,
-      path: req.path,
-      headers: req.headers,
-      body: req.body,
-      error: {
-        message: err && err.message ? err.message : String(err),
-        stack: err && err.stack ? err.stack : null
-      }
-    };
-    const file = path.join(DIAG_DIR, `error-${id}.json`);
-    fs.writeFileSync(file, JSON.stringify(payload, null, 2), 'utf8');
-    console.log(`[diag] Wrote diagnostics file: ${file}`);
-  } catch (e) {
-    console.warn('Failed to write diagnostics file', e);
-  }
-}
-
-
-const summarizeRequestBody = (body) => {
-  if (body === null || body === undefined) return null;
-  if (typeof body !== 'object') return typeof body;
-  const summary = {};
-  const keys = Object.keys(body);
-  for (const key of keys) {
-    const value = body[key];
-    if (value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-      summary[key] = value;
-    } else if (Array.isArray(value)) {
-      summary[key] = `Array(${value.length})`;
-    } else if (typeof value === 'object') {
-      summary[key] = `Object(${Object.keys(value).length})`;
-    } else {
-      summary[key] = typeof value;
-    }
-  }
-  return summary;
-};
-
 const getPayloadSize = (req) => {
   try {
     const headerValue = req?.get ? req.get('content-length') : req?.headers?.['content-length'];
@@ -2273,7 +2231,7 @@ const logAdminCoursesError = (req, err, label) => {
   };
   console.error(`[admin-courses] ${label}`, meta, err);
   try {
-    dumpErrorContext(req, err);
+    writeErrorDiagnostics(req, err, { meta: { surface: 'admin_courses', label } });
   } catch (_) {
     // swallow diagnostics errors
   }
@@ -4820,21 +4778,6 @@ app.put('/api/admin/courses/:id', async (req, res) => {
   await handleAdminCourseUpsert(req, res, { courseIdFromParams: req.params.id });
 });
 
-// Global error handler to capture unexpected errors and produce a diagnostics file
-app.use((err, req, res, _next) => {
-  try {
-    console.error('Unhandled server error:', err);
-    dumpErrorContext(req || { requestId: null, method: 'UNKNOWN', path: req ? req.path : 'UNKNOWN', headers: {} }, err);
-  } catch (e) {
-    console.warn('Failed while dumping error context', e);
-  }
-  try {
-    res.status(500).json({ error: 'Internal server error', timestamp: new Date().toISOString() });
-  } catch (e) {
-    // nothing more we can do
-  }
-});
-
 // Batch import endpoint (best-effort transactional behavior in E2E/DEV fallback)
 app.post('/api/admin/courses/import', async (req, res) => {
   normalizeLegacyOrgInput(req.body, { surface: 'admin.courses.import', requestId: req.requestId });
@@ -6173,7 +6116,9 @@ app.post('/api/learner/progress', authenticate, async (req, res) => {
         errorMessage: error instanceof Error ? error.message : error,
         stack: error instanceof Error ? error.stack : undefined,
       });
-      dumpErrorContext(req, error instanceof Error ? error : new Error(String(error)));
+      writeErrorDiagnostics(req, error instanceof Error ? error : new Error(String(error)), {
+        meta: { surface: 'learner_progress_snapshot' },
+      });
     }
     res.status(status).json({ error: code, message });
   };
@@ -6436,7 +6381,7 @@ app.get('/api/learner/progress', authenticate, async (req, res) => {
     });
   } catch (error) {
     console.error('Failed to fetch learner progress:', error);
-    dumpErrorContext(req, error);
+    writeErrorDiagnostics(req, error, { meta: { surface: 'learner_progress_commit' } });
     res.status(500).json({ error: 'Unable to fetch progress' });
   }
 });
