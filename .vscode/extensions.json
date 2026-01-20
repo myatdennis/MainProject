@@ -1,6 +1,7 @@
 {
     "recommendations": [
         "openai.chatgpt",
-        "buildwithlayer.railway-integration-expert-x3o0c"
+        "buildwithlayer.railway-integration-expert-x3o0c",
+        "supabase.vscode-supabase-extension"
     ]
 }
