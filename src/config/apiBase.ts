@@ -37,18 +37,60 @@ const getMetaEnv = (): MetaEnv => {
   return {} as MetaEnv;
 };
 
+const DEFAULT_DEV_API_BASE = '/api';
+const DEFAULT_NODE_ORIGIN = 'http://localhost:8888';
+
+const detectDevMode = () => {
+  if (typeof import.meta !== 'undefined' && (import.meta as any)?.env) {
+    return Boolean((import.meta as any).env.DEV);
+  }
+  if (typeof process !== 'undefined' && process.env?.NODE_ENV) {
+    return process.env.NODE_ENV !== 'production';
+  }
+  return true;
+};
+
+const devMode = detectDevMode();
+
+const logMissingEnv = (() => {
+  const seen = new Set<string>();
+  return (envName: string, details?: string) => {
+    if (seen.has(envName)) return;
+    seen.add(envName);
+    const suffix = details ? ` ${details}` : '';
+    console.error(`[apiBase] Missing ${envName}.${suffix}`);
+  };
+})();
+
 const getRawApiBase = (): string => {
   const override = getRuntimeApiBaseOverride();
   if (typeof override === 'string') {
     return override;
   }
   const value = getMetaEnv().VITE_API_BASE_URL;
-  return typeof value === 'string' ? value.trim() : '';
+  const trimmed = typeof value === 'string' ? value.trim() : '';
+  if (trimmed) {
+    return trimmed;
+  }
+  const fallback = devMode ? DEFAULT_DEV_API_BASE : '';
+  logMissingEnv(
+    'VITE_API_BASE_URL',
+    fallback ? 'Falling back to /api proxy because no production value is configured.' : 'Configure it to point at https://api.the-huddle.co.',
+  );
+  return fallback;
 };
 
 const getRawWsUrl = (): string => {
   const value = getMetaEnv().VITE_WS_URL;
-  return typeof value === 'string' ? value.trim() : '';
+  const trimmed = typeof value === 'string' ? value.trim() : '';
+  if (!trimmed) {
+    if (devMode) {
+      logMissingEnv('VITE_WS_URL', 'Realtime is disabled unless VITE_WS_URL is defined. Falling back only in dev.');
+    } else {
+      logMissingEnv('VITE_WS_URL', 'Realtime will be disabled until this is set (e.g., wss://api.the-huddle.co/ws).');
+    }
+  }
+  return trimmed;
 };
 
 const getRawApiPath = (): string | undefined => {
@@ -57,7 +99,6 @@ const getRawApiPath = (): string | undefined => {
 };
 
 const isBrowser = typeof window !== 'undefined';
-const DEFAULT_NODE_ORIGIN = 'http://localhost:8888';
 
 const readNodeEnv = (key: string) => (typeof process !== 'undefined' ? process.env?.[key]?.trim() : undefined);
 const trimTrailingSlash = (value: string) => value.replace(/\/+$/, '');
@@ -234,6 +275,10 @@ export function resolveWsUrl(path = DEFAULT_WS_PATH): string {
     return rawWsUrl;
   }
 
+  if (!devMode) {
+    return '';
+  }
+
   if (!isBrowser) {
     const nodeWs = readNodeEnv('WS_URL');
     if (nodeWs) {
@@ -251,4 +296,3 @@ export function resolveWsUrl(path = DEFAULT_WS_PATH): string {
   const { wsPath, suffix } = resolveWsPath(path);
   return `${wsOrigin}${wsPath}${suffix}`;
 }
-

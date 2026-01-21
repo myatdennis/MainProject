@@ -10,8 +10,8 @@
   NPM_CONFIG_PRODUCTION = "false"
   API_MODE = "absolute"
   VITE_ENABLE_WS = "true"
-  VITE_API_BASE_URL = "https://the-huddle.co"
-  VITE_WS_URL = "wss://the-huddle.co/ws"
+  VITE_API_BASE_URL = "https://api.the-huddle.co"
+  VITE_WS_URL = "wss://api.the-huddle.co/ws"
 
 [context.deploy-preview.environment]
   API_MODE = "proxy"
@@ -51,19 +51,19 @@
 # API proxy: map API and WebSocket paths to external Railway backend.
 [[redirects]]
   from = "/api/*"
-  to = "https://thehuddleco.up.railway.app/api/:splat"
+  to = "https://api.the-huddle.co/api/:splat"
   status = 200
   force = true
 
 [[redirects]]
   from = "/ws"
-  to = "https://thehuddleco.up.railway.app/ws"
+  to = "https://api.the-huddle.co/ws"
   status = 200
   force = true
 
 [[redirects]]
   from = "/ws/*"
-  to = "https://thehuddleco.up.railway.app/ws/:splat"
+  to = "https://api.the-huddle.co/ws/:splat"
   status = 200
   force = true
 
@@ -77,4 +77,3 @@
   to = "/index.html"
   status = 200
   # Allow static assets (e.g., /assets/*.js) to be served directly; only fall back to SPA when no file exists.
-
