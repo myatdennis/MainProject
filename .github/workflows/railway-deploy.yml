@@ -8,6 +8,7 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -15,7 +16,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: "20"
 
       - name: Install dependencies
         run: npm ci
@@ -23,31 +24,50 @@ jobs:
       - name: Build (frontend static assets)
         run: npm run build
 
-      # Install CLI as fallback (works if official action unavailable)
-      - name: Install Railway CLI (fallback)
+      - name: Install Railway CLI
         run: npm i -g @railway/cli
 
       - name: Deploy to Railway (api service)
         env:
-          RAILWAY_API_KEY: ${{ secrets.RAILWAY_API_KEY }}
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
           RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
-          RAILWAY_ENVIRONMENT: ${{ secrets.RAILWAY_ENVIRONMENT }}
         run: |
-          if [ -z "$RAILWAY_API_KEY" ]; then
-            echo "RAILWAY_API_KEY is required";
-            exit 1;
+          set -euo pipefail
+
+          echo "Railway CLI version:"
+          railway --version
+
+          if [ -z "${RAILWAY_TOKEN:-}" ]; then
+            echo "❌ RAILWAY_TOKEN is required. Add it in GitHub repo Secrets."
+            exit 1
           fi
-          if [ -n "$RAILWAY_PROJECT_ID" ]; then
-            railway status --project $RAILWAY_PROJECT_ID || true
+
+          if [ -z "${RAILWAY_PROJECT_ID:-}" ]; then
+            echo "❌ RAILWAY_PROJECT_ID is required. Add it in GitHub repo Secrets."
+            exit 1
           fi
+
+          echo "Linking Railway project..."
+          railway link "${RAILWAY_PROJECT_ID}"
+
+          echo "Railway status (optional)..."
+          railway status || true
+
+          echo "Deploying service: api"
           railway up --service api
 
       - name: Confirm health
+        env:
+          RAILWAY_HOST: ${{ secrets.RAILWAY_HOST }}
         run: |
-          RAILWAY_HOST=${{ secrets.RAILWAY_HOST }}
-          if [ -z "$RAILWAY_HOST" ]; then
-            echo "Set RAILWAY_HOST in repo secrets (ex: example-api.up.railway.app). Skipping health check.";
-            exit 0;
+          set -euo pipefail
+
+          if [ -z "${RAILWAY_HOST:-}" ]; then
+            echo "⚠️  Set RAILWAY_HOST in repo secrets (example: thehuddleco.up.railway.app). Skipping health check."
+            exit 0
           fi
-          echo "Testing health endpoint on $RAILWAY_HOST";
-          curl -fsS "https://$RAILWAY_HOST/api/health"
+
+          echo "Testing health endpoint on https://${RAILWAY_HOST}/api/health"
+          curl -fsS "https://${RAILWAY_HOST}/api/health"
+          echo ""
+          echo "✅ Health check passed"
