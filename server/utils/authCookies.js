@@ -2,6 +2,7 @@ import { ACCESS_TOKEN_TTL_SECONDS, REFRESH_TOKEN_TTL_SECONDS } from './jwt.js';
 
 const ACCESS_TOKEN_COOKIE = process.env.ACCESS_TOKEN_COOKIE_NAME || 'access_token';
 const REFRESH_TOKEN_COOKIE = process.env.REFRESH_TOKEN_COOKIE_NAME || 'refresh_token';
+const DEFAULT_COOKIE_DOMAIN = process.env.COOKIE_FALLBACK_DOMAIN || '.the-huddle.co';
 
 const parseBoolean = (value, fallback = false) => {
   if (typeof value === 'boolean') return value;
@@ -19,13 +20,33 @@ const parseBoolean = (value, fallback = false) => {
 
 const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production';
 const secureByDefault = parseBoolean(process.env.COOKIE_SECURE, isProduction);
+const allowedSameSite = new Set(['lax', 'strict', 'none']);
 const rawSameSite = (process.env.COOKIE_SAMESITE || '').trim().toLowerCase();
-const sameSite = ['lax', 'strict', 'none'].includes(rawSameSite)
+const sameSite = allowedSameSite.has(rawSameSite)
   ? rawSameSite
   : secureByDefault
     ? 'none'
     : 'lax';
 
+const normalizeDomain = (value) => {
+  if (!value || typeof value !== 'string') return '';
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) return '';
+  return trimmed.startsWith('.') ? trimmed : `.${trimmed.replace(/^\.+/, '')}`;
+};
+
+const envCookieDomain = normalizeDomain(process.env.COOKIE_DOMAIN);
+const fallbackCookieDomain = normalizeDomain(DEFAULT_COOKIE_DOMAIN);
+
+const hostMatchesDomain = (host, domain) => {
+  if (!host || !domain) return false;
+  const normalizedHost = host.toLowerCase();
+  const normalizedDomain = domain.replace(/^\./, '');
+  return (
+    normalizedHost === normalizedDomain ||
+    normalizedHost.endsWith(`.${normalizedDomain}`)
+  );
+};
 
 // Shared helper to get request host for cookie logic
 function getRequestHost(req) {
@@ -48,23 +69,22 @@ function getRequestHost(req) {
 // Per-request cookie domain logic
 function resolveCookieDomain(req) {
   if (process.env.NODE_ENV !== 'production') return undefined;
-  if (process.env.COOKIE_DOMAIN) {
-    return process.env.COOKIE_DOMAIN;
-  }
   const host = getRequestHost(req);
-  if (!host) return undefined;
-  if (host === 'the-huddle.co' || host.endsWith('.the-huddle.co')) {
-    return '.the-huddle.co';
+  if (envCookieDomain) {
+    return envCookieDomain;
+  }
+  if (host && fallbackCookieDomain && hostMatchesDomain(host, fallbackCookieDomain)) {
+    return fallbackCookieDomain;
   }
   return undefined;
 }
 function resolveCookieSameSite() {
-  return process.env.NODE_ENV === 'production' ? 'none' : 'lax';
+  return sameSite;
 }
 function resolveCookieSecure() {
-  return process.env.NODE_ENV === 'production';
+  return secureByDefault;
 }
-function getCookieOptions(req, { httpOnly = true, name } = {}) {
+export function getCookieOptions(req, { httpOnly = true, name } = {}) {
   const domain = resolveCookieDomain(req);
   const opts = {
     httpOnly,
@@ -87,6 +107,14 @@ function getCookieOptions(req, { httpOnly = true, name } = {}) {
   }
   return opts;
 }
+
+export const describeCookiePolicy = () => ({
+  production: isProduction,
+  secure: resolveCookieSecure(),
+  sameSite: resolveCookieSameSite(),
+  domain: envCookieDomain || (isProduction ? fallbackCookieDomain || undefined : undefined),
+  path: '/',
+});
 
 const resolveMaxAge = (fallbackMs, expiresAt) => {
   if (typeof expiresAt === 'number' && Number.isFinite(expiresAt)) {

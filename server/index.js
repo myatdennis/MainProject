@@ -275,6 +275,7 @@ app.set('etag', false);
 import healthRouter from './routes/health.js';
 import corsMiddleware, { resolvedCorsOrigins } from './middleware/cors.js';
 import { getCookieOptions } from './middleware/cookieOptions.js';
+import { describeCookiePolicy } from './utils/authCookies.js';
 import { env } from './utils/env.js';
 import { log } from './utils/logger.js';
 import { handleError } from './utils/errorHandler.js';
@@ -313,6 +314,13 @@ const ANALYTICS_PII_FIELDS = new Set([
 
 
 app.use(corsMiddleware);
+
+const cookiePolicySnapshot = describeCookiePolicy();
+log('info', 'http_cookie_policy', cookiePolicySnapshot);
+log('info', 'http_cors_policy', {
+  allowedOrigins: resolvedCorsOrigins,
+  allowCredentials: true,
+});
 
 // Attach request ids early so health/diagnostics endpoints can include them even before
 // the rest of the middleware stack (body parsers, auth, etc.) runs.

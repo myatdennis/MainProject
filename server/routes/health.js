@@ -2,6 +2,7 @@ import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import supabase, { supabaseEnv } from '../lib/supabaseClient.js';
 
 const router = express.Router();
 
@@ -33,6 +34,46 @@ const buildHealthPayload = (overrides = {}) => {
   };
 };
 
+const HEALTH_PROBE_TABLE = process.env.HEALTH_PROBE_TABLE || 'users';
+
+const probeDatabase = async () => {
+  if (!supabase) {
+    return {
+      ok: false,
+      code: 'SUPABASE_NOT_CONFIGURED',
+      message: 'Supabase client is not configured on the server',
+      configured: supabaseEnv?.configured || false,
+    };
+  }
+
+  try {
+    const { error } = await supabase
+      .from(HEALTH_PROBE_TABLE)
+      .select('id', { count: 'exact', head: true })
+      .limit(1);
+
+    if (error) {
+      return {
+        ok: false,
+        code: 'SUPABASE_QUERY_FAILED',
+        message: error.message || 'Database query failed',
+      };
+    }
+
+    return {
+      ok: true,
+      code: 'OK',
+      table: HEALTH_PROBE_TABLE,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      code: 'SUPABASE_ERROR',
+      message: error instanceof Error ? error.message : String(error),
+    };
+  }
+};
+
 router.get(['/health', '/health/'], (_req, res) => {
   res.status(200).json(buildHealthPayload());
 });
@@ -41,6 +82,17 @@ router.get(['/api/health', '/api/health/'], (req, res) => {
   res.status(200).json(
     buildHealthPayload({
       requestId: req.requestId || null,
+    }),
+  );
+});
+
+router.get(['/api/health/db', '/api/health/db/'], async (req, res) => {
+  const dbStatus = await probeDatabase();
+  const statusCode = dbStatus.ok ? 200 : 503;
+  res.status(statusCode).json(
+    buildHealthPayload({
+      requestId: req.requestId || null,
+      database: dbStatus,
     }),
   );
 });

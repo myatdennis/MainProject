@@ -514,6 +514,7 @@ router.post('/login', async (req, res) => {
     const { email, password } = req.body;
     if (!email || !password) {
       return res.status(400).json({
+        code: 'MISSING_CREDENTIALS',
         error: 'missing_credentials',
         message: 'Email and password are required',
       });
@@ -573,6 +574,7 @@ router.post('/login', async (req, res) => {
       });
       if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Supabase auth failed', { detailMessage });
       return res.status(401).json({
+        code: 'INVALID_CREDENTIALS',
         error: 'invalid_credentials',
         message: 'Email or password is incorrect',
       });
@@ -604,6 +606,7 @@ router.post('/login', async (req, res) => {
             at: 'userRecord.is_active === false',
           });
           return res.status(403).json({
+            code: 'ACCOUNT_DISABLED',
             error: 'account_disabled',
             message: 'Your account has been disabled',
           });
@@ -642,6 +645,7 @@ router.post('/login', async (req, res) => {
       at: 'catch',
     });
     res.status(500).json({
+      code: 'LOGIN_FAILED',
       error: 'login_failed',
       message: 'An unexpected error occurred during login. Please try again.',
     });
@@ -658,7 +662,8 @@ router.post('/register', authLimiter, async (req, res) => {
 
     if (!email || !password || !firstName || !lastName) {
       return res.status(400).json({
-        error: 'Missing fields',
+        code: 'REGISTRATION_FIELDS_MISSING',
+        error: 'missing_fields',
         message: 'All fields are required',
       });
     }
@@ -679,6 +684,7 @@ router.post('/register', authLimiter, async (req, res) => {
     if (existingUsers && existingUsers.length > 0) {
       return res.status(409).json({
         code: 'USER_EXISTS',
+        error: 'user_exists',
         message: 'An account with this email already exists.',
         errors: { email: 'An account with this email already exists.' },
       });
@@ -703,6 +709,7 @@ router.post('/register', authLimiter, async (req, res) => {
         const conflict = /already registered|exists/i.test(createAuthError.message || '');
         return res.status(conflict ? 409 : 400).json({
           code: conflict ? 'USER_EXISTS' : 'REGISTRATION_FAILED',
+          error: conflict ? 'user_exists' : 'registration_failed',
           message: createAuthError.message || 'Unable to create account',
           errors: conflict ? { email: 'An account with this email already exists.' } : undefined,
         });
@@ -715,7 +722,8 @@ router.post('/register', authLimiter, async (req, res) => {
     } catch (error) {
       console.error('Supabase auth createUser failed:', error);
       return res.status(500).json({
-        error: 'Registration failed',
+        code: 'REGISTRATION_FAILED',
+        error: 'registration_failed',
         message: 'Unable to create account',
       });
     }
@@ -741,6 +749,7 @@ router.post('/register', authLimiter, async (req, res) => {
         await supabase.auth.admin.deleteUser(createdAuthUserId).catch(() => {});
         return res.status(500).json({
           code: 'REGISTRATION_FAILED',
+          error: 'registration_failed',
           message: 'Could not create account',
         });
       }
@@ -784,6 +793,7 @@ router.post('/register', authLimiter, async (req, res) => {
       }
       res.status(500).json({
         code: 'REGISTRATION_FAILED',
+        error: 'registration_failed',
         message: 'An error occurred during registration',
       });
     }
@@ -791,6 +801,7 @@ router.post('/register', authLimiter, async (req, res) => {
     console.error('Registration error:', error);
     res.status(500).json({
       code: 'REGISTRATION_FAILED',
+      error: 'registration_failed',
       message: 'An error occurred during registration',
     });
   }
@@ -823,6 +834,7 @@ router.post('/refresh', async (req, res) => {
         at: 'getRefreshTokenFromRequest',
       });
       return res.status(401).json({
+        code: 'MISSING_REFRESH_TOKEN',
         error: 'missing_refresh_token',
         message: 'Refresh token cookie is required',
       });
@@ -855,6 +867,7 @@ router.post('/refresh', async (req, res) => {
       at: 'catch',
     });
     res.status(500).json({
+      code: 'REFRESH_FAILED',
       error: 'refresh_failed',
       message: 'An unexpected error occurred during refresh. Please try again.',
     });
@@ -900,14 +913,17 @@ router.get('/session', optionalAuthenticate, async (req, res) => {
       });
     }
 
+    const derivedCode = result.code || result.error || 'session_unavailable';
     return res.status(result.status || 401).json({
+      code: typeof derivedCode === 'string' ? derivedCode.toUpperCase() : 'SESSION_UNAVAILABLE',
       error: result.error || 'session_unavailable',
       message: result.message || 'Unable to load session',
     });
   } catch (error) {
     console.error('Session lookup error:', error);
     res.status(500).json({
-      error: 'Internal server error',
+      code: 'SESSION_ERROR',
+      error: 'internal_server_error',
       message: 'Failed to load session data',
     });
   }
@@ -948,7 +964,9 @@ router.get('/me', authenticate, async (req, res) => {
   try {
     if (!req.user) {
       return res.status(401).json({
-        error: 'Not authenticated',
+        code: 'NOT_AUTHENTICATED',
+        error: 'not_authenticated',
+        message: 'You must be signed in to access this resource.',
       });
     }
     
@@ -968,7 +986,9 @@ router.get('/me', authenticate, async (req, res) => {
     
     if (error || !user) {
       return res.status(404).json({
-        error: 'User not found',
+        code: 'USER_NOT_FOUND',
+        error: 'user_not_found',
+        message: 'User profile was not found',
       });
     }
     
@@ -986,7 +1006,9 @@ router.get('/me', authenticate, async (req, res) => {
   } catch (error) {
     console.error('Get user error:', error);
     res.status(500).json({
-      error: 'Internal server error',
+      code: 'USER_LOOKUP_FAILED',
+      error: 'internal_server_error',
+      message: 'Unable to load user profile',
     });
   }
 });

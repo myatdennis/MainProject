@@ -4,6 +4,7 @@
  */
 
 import crypto from 'crypto';
+import { getCookieOptions } from '../utils/authCookies.js';
 
 // ============================================================================
 // Configuration
@@ -14,63 +15,8 @@ const CSRF_COOKIE_NAME = 'csrf_token';
 const CSRF_HEADER_NAME = 'x-csrf-token';
 
 
-// Shared helper to get request host for cookie logic
-function getRequestHost(req) {
-  let host = req.headers && req.headers.host;
-  if (host && typeof host === 'string' && host.length > 0) {
-    host = host.split(',')[0].trim().split(':')[0].toLowerCase();
-    if (host) return host;
-  }
-  host = req.headers && req.headers['x-forwarded-host'];
-  if (host && typeof host === 'string' && host.length > 0) {
-    host = host.split(',')[0].trim().split(':')[0].toLowerCase();
-    if (host) return host;
-  }
-  if (req.hostname && typeof req.hostname === 'string') {
-    return req.hostname.trim().toLowerCase();
-  }
-  return '';
-}
-
-// Per-request cookie domain logic
-function resolveCookieDomain(req) {
-  if (process.env.NODE_ENV !== 'production') return undefined;
-  const host = getRequestHost(req);
-  const isHuddleDomain = host === 'the-huddle.co' || host.endsWith('.the-huddle.co');
-  if (isHuddleDomain) {
-    return process.env.COOKIE_DOMAIN || '.the-huddle.co';
-  }
-  return undefined;
-}
-function resolveCookieSameSite() {
-  return process.env.NODE_ENV === 'production' ? 'none' : 'lax';
-}
-function resolveCookieSecure() {
-  return process.env.NODE_ENV === 'production';
-}
-function getCsrfCookieOptions(req, { httpOnly = false, name } = {}) {
-  const domain = resolveCookieDomain(req);
-  const opts = {
-    httpOnly,
-    secure: resolveCookieSecure(),
-    sameSite: resolveCookieSameSite(),
-    path: '/',
-  };
-  if (domain) opts.domain = domain;
-  if (process.env.DEBUG_COOKIES === 'true') {
-    console.log('[COOKIE]', {
-      req_host: req.headers && req.headers.host,
-      x_forwarded_host: req.headers && req.headers['x-forwarded-host'],
-      req_hostname: req.hostname,
-      computed_host: getRequestHost(req),
-      computed_domain: opts.domain,
-      sameSite: opts.sameSite,
-      secure: opts.secure,
-      name: name || undefined,
-    });
-  }
-  return opts;
-}
+const getCsrfCookieOptions = (req, overrides = {}) =>
+  getCookieOptions(req, { httpOnly: false, ...overrides });
 
 // Store for CSRF tokens (in production, use Redis or similar)
 const tokenStore = new Map();
@@ -116,7 +62,7 @@ function getSessionId(req, res) {
   const sessionId = generateCSRFToken();
   if (res) {
     res.cookie('session_id', sessionId, {
-      ...getCsrfCookieOptions(req, { httpOnly: true, name: 'session_id' }),
+      ...getCookieOptions(req, { httpOnly: true, name: 'session_id' }),
       maxAge: 24 * 60 * 60 * 1000,
     });
   }
