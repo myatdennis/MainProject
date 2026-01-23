@@ -840,6 +840,9 @@ router.post('/refresh', async (req, res) => {
     }
     const result = await refreshSessionFromCookies(req, res);
     if (!result.ok) {
+      if ((result.status || 401) === 401 && result.error !== 'missing_refresh_token') {
+        clearAuthCookies(req, res);
+      }
       if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Refresh failed', { error: result.error, message: result.message });
       // Log refresh failure (mask token)
       console.warn('[AUTH REFRESH FAILURE]', {
@@ -865,6 +868,7 @@ router.post('/refresh', async (req, res) => {
       ip: req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip,
       at: 'catch',
     });
+    clearAuthCookies(req, res);
     res.status(500).json({
       code: 'REFRESH_FAILED',
       error: 'refresh_failed',

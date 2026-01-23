@@ -357,6 +357,22 @@ npm run remove:server-ts
 Troubleshooting: see `SUPABASE_RAILWAY_ENV_GUIDE.md` (CORS, OOM, 503 auth) and `scripts/smoke.sh`.
 If the site reports `ERR_SSL_PROTOCOL_ERROR`, see `DEPLOYMENT.md` -> SSL Troubleshooting or run the above `diag:ssl` script to validate the certificate. Also ensure `ENFORCE_HTTPS=true` (optional) and `NODE_ENV=production` in your server env so Express can set `trust proxy` and redirect accordingly.
 
+## Database maintenance
+
+### Applying Supabase migrations
+1. Commit any SQL files added under `supabase/migrations/`.
+2. From the repo root, run `supabase db push --db-url "$PROD_SUPABASE_DATABASE_URL"` (or apply via the Supabase dashboard).
+3. Confirm the deploy logs show each migration succeeded before routing live traffic.
+
+### Verifying required tables
+Use `psql` (or the Supabase SQL editor) against production:
+```sql
+select id, slug from public.organizations order by created_at desc limit 5;
+select count(*) as invite_count from public.org_invites;
+select count(*) as audit_entries from public.audit_logs;
+```
+If any query fails with “relation does not exist”, rerun `supabase db push` so production picks up the latest migrations.
+
 ## Scripts & API helpers
 
 - Import courses:
@@ -378,4 +394,3 @@ If the site reports `ERR_SSL_PROTOCOL_ERROR`, see `DEPLOYMENT.md` -> SSL Trouble
 - Server memory & demo data:
     - Guard large demo file with `DEMO_DATA_MAX_BYTES` (default 25MB)
     - Optional memory logs with `LOG_MEMORY=true`
-

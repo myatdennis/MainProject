@@ -129,6 +129,17 @@ const warnOnPlaceholderSecrets = () => {
   }
 };
 
+const logRouteError = (route, error) => {
+  logger.error('api_route_error', {
+    route,
+    message: error?.message || String(error),
+    code: error?.code,
+    details: error?.details,
+    hint: error?.hint,
+    stack: error?.stack,
+  });
+};
+
 const ensureEnvironmentIsValid = () => {
   const baseRequired = ['CORS_ALLOWED_ORIGINS'];
   const missingBase = baseRequired.filter((key) => !(process.env[key] || '').trim());
@@ -7188,7 +7199,7 @@ app.get('/api/admin/organizations', async (req, res) => {
       progress: progressMap,
     });
   } catch (error) {
-    console.error('Failed to fetch organizations:', error);
+    logRouteError('GET /api/admin/organizations', error);
     res.status(500).json({ error: 'Unable to fetch organizations' });
   }
 });
@@ -7249,7 +7260,7 @@ app.post('/api/admin/organizations', async (req, res) => {
     if (error) throw error;
     res.status(201).json({ data });
   } catch (error) {
-    console.error('Failed to create organization:', error);
+    logRouteError('POST /api/admin/organizations', error);
     res.status(500).json({ error: 'Unable to create organization' });
   }
 });
@@ -7276,7 +7287,7 @@ app.get('/api/admin/organizations/:id', async (req, res) => {
 
     res.json({ data });
   } catch (error) {
-    console.error(`Failed to fetch organization ${id}:`, error);
+    logRouteError('GET /api/admin/organizations/:id', error);
     res.status(500).json({ error: 'Unable to fetch organization' });
   }
 });
@@ -7334,7 +7345,7 @@ app.put('/api/admin/organizations/:id', async (req, res) => {
     if (error) throw error;
     res.json({ data });
   } catch (error) {
-    console.error('Failed to update organization:', error);
+    logRouteError('PUT /api/admin/organizations/:id', error);
     res.status(500).json({ error: 'Unable to update organization' });
   }
 });
@@ -7348,7 +7359,7 @@ app.delete('/api/admin/organizations/:id', async (req, res) => {
     if (error) throw error;
     res.status(204).end();
   } catch (error) {
-    console.error('Failed to delete organization:', error);
+    logRouteError('DELETE /api/admin/organizations/:id', error);
     res.status(500).json({ error: 'Unable to delete organization' });
   }
 });
@@ -7374,7 +7385,7 @@ app.get('/api/admin/organizations/:orgId/members', async (req, res) => {
     if (error) throw error;
     res.json({ data: data ?? [] });
   } catch (error) {
-    console.error(`Failed to list organization members for ${orgId}:`, error);
+    logRouteError('GET /api/admin/organizations/:orgId/members', error);
     res.status(500).json({ error: 'Unable to load organization members' });
   }
 });
@@ -7424,7 +7435,7 @@ app.post('/api/admin/organizations/:orgId/members', async (req, res) => {
     if (error) throw error;
     res.status(201).json({ data });
   } catch (error) {
-    console.error(`Failed to add organization member for ${orgId}:`, error);
+    logRouteError('POST /api/admin/organizations/:orgId/members', error);
     res.status(500).json({ error: 'Unable to add organization member' });
   }
 });
@@ -7511,7 +7522,7 @@ app.patch('/api/admin/organizations/:orgId/members/:membershipId', async (req, r
 
     res.json({ data });
   } catch (error) {
-    console.error(`Failed to update organization member ${membershipId}:`, error);
+    logRouteError('PATCH /api/admin/organizations/:orgId/members/:membershipId', error);
     res.status(500).json({ error: 'Unable to update organization member' });
   }
 });
@@ -7556,7 +7567,7 @@ app.delete('/api/admin/organizations/:orgId/members/:membershipId', async (req, 
     if (error) throw error;
     res.status(204).end();
   } catch (error) {
-    console.error(`Failed to remove organization member ${membershipId}:`, error);
+    logRouteError('DELETE /api/admin/organizations/:orgId/members/:membershipId', error);
     res.status(500).json({ error: 'Unable to remove organization member' });
   }
 });
