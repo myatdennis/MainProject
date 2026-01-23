@@ -38,6 +38,7 @@ const getMetaEnv = (): MetaEnv => {
 };
 
 const DEFAULT_DEV_API_BASE = '/api';
+const DEFAULT_PROD_API_BASE = 'https://api.the-huddle.co/api';
 const DEFAULT_NODE_ORIGIN = 'http://localhost:8888';
 
 const detectDevMode = () => {
@@ -72,12 +73,13 @@ const getRawApiBase = (): string => {
   if (trimmed) {
     return trimmed;
   }
-  const fallback = devMode ? DEFAULT_DEV_API_BASE : '';
-  logMissingEnv(
-    'VITE_API_BASE_URL',
-    fallback ? 'Falling back to /api proxy because no production value is configured.' : 'Configure it to point at https://api.the-huddle.co.',
-  );
-  return fallback;
+  if (devMode) {
+    logMissingEnv('VITE_API_BASE_URL', 'Falling back to /api proxy because no production value is configured.');
+    return DEFAULT_DEV_API_BASE;
+  }
+
+  logMissingEnv('VITE_API_BASE_URL', `Falling back to ${DEFAULT_PROD_API_BASE} because no production value is configured.`);
+  return DEFAULT_PROD_API_BASE;
 };
 
 const getRawWsUrl = (): string => {

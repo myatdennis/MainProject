@@ -8,7 +8,6 @@ import bcrypt from 'bcryptjs';
 import { generateTokens, verifyRefreshToken, isJwtSecretConfigured } from '../utils/jwt.js';
 import {
   authenticate,
-  optionalAuthenticate,
   authLimiter,
   normalizeEmail,
   isCanonicalAdminEmail,
@@ -878,59 +877,8 @@ router.post('/refresh', async (req, res) => {
 // Verify Token
 // ============================================================================
 
-router.get('/verify', authenticate, async (req, res) => {
-  // If we got here, token is valid (authenticate middleware succeeded)
-  res.json({
-    valid: true,
-    user: req.user,
-    memberships: req.user?.memberships || [],
-    activeOrgId: req.activeOrgId || req.user?.organizationId || null,
-  });
-});
-
-router.get('/session', optionalAuthenticate, async (req, res) => {
-  try {
-    if (req.user) {
-      return res.json({
-        user: req.user,
-        memberships: req.user?.memberships || [],
-        organizationIds: req.user?.organizationIds || [],
-        activeOrgId: req.activeOrgId || req.user?.organizationId || null,
-      });
-    }
-
-    const result = await refreshSessionFromCookies(req, res);
-    if (result.ok) {
-      return res.json(result.body);
-    }
-
-    if (result.error === 'missing_refresh_token') {
-      return res.json({
-        user: null,
-        memberships: [],
-        organizationIds: [],
-        activeOrgId: null,
-      });
-    }
-
-    const derivedCode = result.code || result.error || 'session_unavailable';
-    return res.status(result.status || 401).json({
-      code: typeof derivedCode === 'string' ? derivedCode.toUpperCase() : 'SESSION_UNAVAILABLE',
-      error: result.error || 'session_unavailable',
-      message: result.message || 'Unable to load session',
-    });
-  } catch (error) {
-    console.error('Session lookup error:', error);
-    res.status(500).json({
-      code: 'SESSION_ERROR',
-      error: 'internal_server_error',
-      message: 'Failed to load session data',
-    });
-  }
-});
-
 // ============================================================================
-// Logout
+// Logout (public endpoint – clears cookies even without a valid session)
 // ============================================================================
 
 router.post('/logout', doubleSubmitCSRF, async (req, res) => {
@@ -948,7 +896,7 @@ router.post('/logout', doubleSubmitCSRF, async (req, res) => {
       }
     }
   } finally {
-  clearAuthCookies(req, res);
+    clearAuthCookies(req, res);
     res.json({
       success: true,
       message: 'Logged out successfully',
@@ -957,10 +905,34 @@ router.post('/logout', doubleSubmitCSRF, async (req, res) => {
 });
 
 // ============================================================================
+// Protected routes (require valid access token)
+// ============================================================================
+
+router.use(authenticate);
+
+router.get('/verify', async (req, res) => {
+  res.json({
+    valid: true,
+    user: req.user,
+    memberships: req.user?.memberships || [],
+    activeOrgId: req.activeOrgId || req.user?.organizationId || null,
+  });
+});
+
+router.get('/session', async (req, res) => {
+  res.json({
+    user: req.user,
+    memberships: req.user?.memberships || [],
+    organizationIds: req.user?.organizationIds || [],
+    activeOrgId: req.activeOrgId || req.user?.organizationId || null,
+  });
+});
+
+// ============================================================================
 // Get Current User
 // ============================================================================
 
-router.get('/me', authenticate, async (req, res) => {
+router.get('/me', async (req, res) => {
   try {
     if (!req.user) {
       return res.status(401).json({

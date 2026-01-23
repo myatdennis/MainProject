@@ -10,7 +10,7 @@
   NPM_CONFIG_PRODUCTION = "false"
   API_MODE = "absolute"
   VITE_ENABLE_WS = "true"
-  VITE_API_BASE_URL = "https://api.the-huddle.co"
+  VITE_API_BASE_URL = "https://api.the-huddle.co/api"
   VITE_WS_URL = "wss://api.the-huddle.co/ws"
 
 [context.deploy-preview.environment]
