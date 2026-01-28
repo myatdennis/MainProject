@@ -4,6 +4,7 @@
     {
       "name": "api",
       "provider": "node",
+      "rootDirectory": "./",
       "start": "npm run start:server",
       "build": "npm run build",
       "env": [
@@ -17,6 +18,7 @@
     {
       "name": "frontend",
       "provider": "static",
+      "rootDirectory": "./",
       "build": "npm run build",
       "publish": "dist",
       "env": [
