@@ -20,6 +20,7 @@ import {
 import { loginSchema, emailSchema, registerSchema } from '../utils/validators';
 import { queueRefresh } from '../lib/refreshQueue';
 import api from '../lib/httpClient';
+import apiRequest, { ApiError } from '../utils/apiClient';
 
 // MFA helpers
 
@@ -471,16 +472,27 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     ],
   );
 
+  const headersToRecord = (headers?: Headers): Record<string, string> | undefined => {
+    if (!headers) return undefined;
+    const result: Record<string, string> = {};
+    headers.forEach((value, key) => {
+      result[key] = value;
+    });
+    return result;
+  };
+
   const fetchServerSession = useCallback(
     async ({ surface, signal }: { surface?: SessionSurface; signal?: AbortSignal } = {}): Promise<boolean> => {
       try {
-        const response = await api.get<SessionResponsePayload>('/auth/session', {
-          withCredentials: true,
+        const response = await apiRequest<Response>('/api/auth/session', {
+          method: 'GET',
+          rawResponse: true,
           signal,
         });
-        captureServerClock(response.headers as Record<string, any> | undefined);
-        if (response.data?.user) {
-          applySessionPayload(response.data, {
+        captureServerClock(headersToRecord(response.headers));
+        const payload = (await response.json()) as SessionResponsePayload;
+        if (payload?.user) {
+          applySessionPayload(payload, {
             surface,
             persistTokens: false,
             reason: surface ? `${surface}_session_bootstrap` : 'session_bootstrap',
@@ -489,10 +501,15 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         }
         return false;
       } catch (error) {
-        if ((typeof axios.isCancel === 'function' && axios.isCancel(error)) || (axios.isAxiosError(error) && error.code === 'ERR_CANCELED')) {
-          return false;
+        if (error instanceof ApiError) {
+          if (error.code === 'timeout') {
+            return false;
+          }
+          if (error.status === 401) {
+            return false;
+          }
         }
-        if (axios.isAxiosError(error) && error.response?.status === 401) {
+        if (typeof axios.isCancel === 'function' && axios.isCancel(error)) {
           return false;
         }
         console.warn('[SecureAuth] Failed to reload session', error);
@@ -562,18 +579,18 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         lastRefreshAttemptRef.current = now;
 
         try {
-          const response = await api.post<SessionResponsePayload>(
-            '/auth/refresh',
-            {},
-            {
-              withCredentials: true,
-            },
-          );
+          const response = await apiRequest<Response>('/api/auth/refresh', {
+            method: 'POST',
+            body: JSON.stringify({}),
+            rawResponse: true,
+          });
 
-          captureServerClock(response.headers as Record<string, any> | undefined);
+          captureServerClock(headersToRecord(response.headers));
 
-          if (response.data?.user) {
-            applySessionPayload(response.data, { persistTokens: true, reason: 'refresh_success' });
+          const payload = (await response.json()) as SessionResponsePayload;
+
+          if (payload?.user) {
+            applySessionPayload(payload, { persistTokens: true, reason: 'refresh_success' });
           } else {
             await fetchServerSession();
           }
@@ -581,14 +598,14 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           lastRefreshSuccessRef.current = getSkewedNow();
           return true;
         } catch (error) {
-          if (axios.isAxiosError(error)) {
-            if (error.response?.status === 401) {
+          if (error instanceof ApiError) {
+            if (error.status === 401) {
               console.warn('[SecureAuth] Refresh token rejected, clearing session');
               applySessionPayload(null, { persistTokens: true, reason: 'refresh_rejected' });
               return false;
             }
 
-            if (!error.response || error.code === 'ERR_NETWORK') {
+            if (error.code === 'timeout' || error.status === 0) {
               console.warn('[SecureAuth] Refresh deferred due to network issue');
               return false;
             }
@@ -1136,4 +1153,3 @@ export function useSecureAuth(): AuthContextType {
   }
   return context;
 }
-
