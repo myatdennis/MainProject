@@ -17,10 +17,16 @@ const prodDefaults = [
 ].filter(Boolean);
 
 const envOrigins = normalizeOrigins(process.env.CORS_ALLOWED_ORIGINS || '');
-export const resolvedCorsOrigins =
-  envOrigins.length > 0
-    ? envOrigins
-    : (process.env.NODE_ENV === 'production' ? prodDefaults : devDefaults);
+const requiredProdOrigins = ['https://the-huddle.co', 'https://www.the-huddle.co'];
+const baseOrigins =
+  envOrigins.length > 0 ? envOrigins : process.env.NODE_ENV === 'production' ? prodDefaults : devDefaults;
+
+const resolved = new Set(baseOrigins);
+if (process.env.NODE_ENV === 'production') {
+  requiredProdOrigins.forEach((origin) => resolved.add(origin));
+}
+
+export const resolvedCorsOrigins = Array.from(resolved);
 
 if (!envOrigins.length) {
   console.warn(

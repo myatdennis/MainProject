@@ -351,11 +351,20 @@ const buildUserPayload = (user, memberships) => {
   };
 };
 
-async function buildAuthContext(req, { optional = false } = {}) {
-  let token = extractTokenFromHeader(req.headers.authorization);
-  if (!token) {
-    token = getAccessTokenFromRequest(req);
+const resolveAccessTokenFromRequest = (req) => {
+  const headerToken = extractTokenFromHeader(req.headers?.authorization);
+  if (headerToken) {
+    return { token: headerToken, source: 'authorization' };
   }
+  const cookieToken = getAccessTokenFromRequest(req);
+  if (cookieToken) {
+    return { token: cookieToken, source: 'cookie' };
+  }
+  return { token: null, source: null };
+};
+
+async function buildAuthContext(req, { optional = false } = {}) {
+  const { token } = resolveAccessTokenFromRequest(req);
 
   if (!token && allowDemoBypassForRequest(req)) {
     console.warn('[auth] Granting demo auto-auth bypass for request', {
@@ -439,7 +448,7 @@ export async function authenticate(req, res, next) {
     if (error.message === 'missing_token') {
       return res.status(401).json({
         error: 'Authentication required',
-        message: 'No token provided',
+        message: 'No token provided (header or cookie)',
       });
     }
 

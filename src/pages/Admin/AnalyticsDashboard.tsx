@@ -2,7 +2,6 @@ import React, { useEffect, useState, lazy, Suspense } from 'react'
 import { Users, TrendingUp, Activity as ActivityIcon, Clock, BarChart3, BookOpen, X } from 'lucide-react'
 import { getSupabase } from '../../lib/supabaseClient'
 import { useToast } from '../../context/ToastContext'
-import { resolveApiUrl } from '../../config/apiBase'
 import apiRequest, { ApiError } from '../../utils/apiClient'
 import { hasAuthSession } from '../../lib/sessionGate'
 const CompletionChart = lazy(() => import('../../components/Analytics/CompletionChart'));
@@ -139,12 +138,24 @@ const AnalyticsDashboard: React.FC = () => {
       showToast('Please sign in to export analytics.', 'warning')
       return
     }
-    const a = document.createElement('a')
-    a.href = resolveApiUrl('/api/admin/analytics/export')
-    a.download = 'analytics.csv'
-    document.body.appendChild(a)
-    a.click()
-    a.remove()
+    try {
+      const response = await apiRequest<Response>('/api/admin/analytics/export', {
+        method: 'GET',
+        rawResponse: true,
+      })
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = 'analytics.csv'
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+    } catch (error) {
+      console.error('Analytics export failed', error)
+      showToast('Unable to export analytics. Please try again.', 'error')
+    }
   }
 
   const requestSummary = async () => {

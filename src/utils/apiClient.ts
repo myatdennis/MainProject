@@ -1,6 +1,7 @@
 import buildAuthHeaders from './requestContext';
 import { buildApiUrl, assertNoDoubleApi } from '../config/apiBase';
 import { guardRequest, SessionGateError } from '../lib/sessionGate';
+import { getSupabase, hasSupabaseConfig } from '../lib/supabaseClient';
 
 const logApiDebug = (meta: Record<string, unknown>) => {
   if (import.meta.env.DEV) {
@@ -50,6 +51,69 @@ const transformKeysDeep = (
 };
 
 const buildUrl = (path: string) => buildApiUrl(path);
+
+type SupabaseAuthCache = {
+  token: string;
+  expiresAt: number;
+};
+
+const SUPABASE_TOKEN_SKEW_MS = 30 * 1000;
+let supabaseAuthCache: SupabaseAuthCache | null = null;
+const clearSupabaseAuthCache = () => {
+  supabaseAuthCache = null;
+};
+
+const resolveSupabaseAccessToken = async (): Promise<string | null> => {
+  if (!hasSupabaseConfig) return null;
+  if (supabaseAuthCache && supabaseAuthCache.expiresAt - SUPABASE_TOKEN_SKEW_MS > Date.now()) {
+    return supabaseAuthCache.token;
+  }
+
+  try {
+    const supabase = await getSupabase();
+    if (!supabase) return null;
+    const { data, error } = await supabase.auth.getSession();
+    if (error) {
+      console.warn('[apiRequest] Failed to resolve Supabase session:', error.message || error);
+      return null;
+    }
+    const session = data?.session;
+    const token = session?.access_token ?? null;
+    if (!token) {
+      clearSupabaseAuthCache();
+      return null;
+    }
+    const expiresAt = session?.expires_at ? session.expires_at * 1000 : Date.now() + 60 * 1000;
+    supabaseAuthCache = { token, expiresAt };
+    return token;
+  } catch (err) {
+    console.warn('[apiRequest] Supabase session lookup failed:', err);
+    return null;
+  }
+};
+
+const ensureSupabaseAuthHeader = async (headers: Headers) => {
+  if (headers.has('Authorization')) return;
+  const token = await resolveSupabaseAccessToken();
+  if (token) {
+    headers.set('Authorization', `Bearer ${token}`);
+  }
+};
+
+const logUnauthorized = (url: string, status: number, body: unknown) => {
+  let preview: string;
+  try {
+    preview =
+      typeof body === 'string'
+        ? body
+        : body
+        ? JSON.stringify(body)
+        : '(empty response body)';
+  } catch {
+    preview = String(body ?? '(unreadable body)');
+  }
+  console.warn('[apiRequest] 401 Unauthorized', { url, status, body: preview });
+};
 
 export class ApiError extends Error {
   status: number;
@@ -124,6 +188,7 @@ export const apiRequest = async <T = any>(path: string, options: ApiRequestOptio
   } catch (error) {
     console.warn('[apiRequest] Proceeding without auth headers due to error:', error);
   }
+  await ensureSupabaseAuthHeader(headers);
 
   if (!bodyIsFormData && !headers.has('Content-Type') && method !== 'GET' && method !== 'HEAD') {
     headers.set('Content-Type', 'application/json');
@@ -193,6 +258,30 @@ export const apiRequest = async <T = any>(path: string, options: ApiRequestOptio
 
   const okStatus = response.ok || statusMatches(response.status, options.expectedStatus);
 
+  if (options.rawResponse) {
+    if (!okStatus) {
+      let responseText: string | null = null;
+      try {
+        responseText = await response.text();
+      } catch (readError) {
+        console.warn('[apiRequest] Failed to read raw response body', {
+          url,
+          status: response.status,
+          error: readError,
+        });
+      }
+      if (response.status === 401) {
+        clearSupabaseAuthCache();
+        logUnauthorized(url, response.status, responseText);
+      }
+      const message = responseText || `Request failed with status ${response.status}`;
+      throw new ApiError(response.status, message, responseText);
+    }
+    if (timeout) clearTimeout(timeout as any);
+    signals.forEach((sig) => sig.removeEventListener('abort', onExternalAbort));
+    return response as unknown as T;
+  }
+
   const parseJson = shouldParseJson(response, options);
   let responseBody: unknown = null;
 
@@ -211,7 +300,12 @@ export const apiRequest = async <T = any>(path: string, options: ApiRequestOptio
   }
 
   if (!okStatus) {
-    console.error('[apiRequest] Request failed with status:', response.status);
+    if (response.status === 401) {
+      clearSupabaseAuthCache();
+      logUnauthorized(url, response.status, responseBody);
+    } else {
+      console.error('[apiRequest] Request failed with status:', response.status);
+    }
     const errorMessage =
       typeof responseBody === 'object' && responseBody !== null && 'message' in responseBody
         ? String((responseBody as any).message)

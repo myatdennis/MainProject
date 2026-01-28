@@ -9,11 +9,14 @@ import { SecureAuthProvider } from './context/SecureAuthContext';
 import { ToastProvider } from './context/ToastContext';
 import { ensureRuntimeStatusPolling } from './state/runtimeStatus';
 import { migrateFromLocalStorage, checkStorageSecurity, installLocalStorageGuards } from './lib/secureStorage';
+import { getApiBaseUrl } from './config/apiBase';
+import { registerApiNavigationGuard } from './utils/apiNavigationGuard';
 
 console.log('🚀 MainProject App initializing...');
 console.log('📍 Environment:', import.meta.env.MODE);
 console.log('🔧 Supabase configured:', !!(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY));
 console.log('⚙️ React version detected:', React?.version || 'unknown');
+console.info('[api] Base URL resolved:', getApiBaseUrl() || '(not set)');
 
 if (typeof window !== 'undefined') {
   try {
@@ -22,6 +25,10 @@ if (typeof window !== 'undefined') {
     checkStorageSecurity();
   } catch (error) {
     console.warn('[secureStorage] bootstrap migration failed:', error);
+  }
+
+  if (import.meta.env.DEV) {
+    registerApiNavigationGuard();
   }
 }
 

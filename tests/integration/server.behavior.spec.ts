@@ -7,6 +7,7 @@ import {
   createMemberAuthHeaders,
   TestServerHandle,
 } from './utils/server.ts';
+import { authCookieNames } from '../../server/utils/authCookies.js';
 
 const asJson = (headers: Record<string, string> = {}) => ({
   'Content-Type': 'application/json',
@@ -77,6 +78,29 @@ describe('Server demo-mode behavior', () => {
     expect(res.status).toBe(401);
     const body = await res.json();
     expect(body).toHaveProperty('error');
+  });
+
+  it('rejects admin course listing when no headers or cookies exist', async () => {
+    const res = await server!.fetch('/api/admin/courses');
+    expect(res.status).toBe(401);
+    const body = await res.json();
+    expect(body).toHaveProperty('error', 'Authentication required');
+  });
+
+  it('allows admin access when a signed cookie supplies the access token', async () => {
+    const adminAuth = createAdminAuthHeaders();
+    const token = adminAuth.Authorization?.replace(/^Bearer\s+/i, '') ?? '';
+    expect(token).not.toHaveLength(0);
+    const cookieHeader = `${authCookieNames.access || 'access_token'}=${token}`;
+    const res = await server!.fetch('/api/admin/courses', {
+      headers: {
+        Accept: 'application/json',
+        Cookie: cookieHeader,
+      },
+    });
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json).toHaveProperty('data');
   });
 
   it('rejects admin route access for authenticated non-admin users', async () => {

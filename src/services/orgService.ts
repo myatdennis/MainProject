@@ -86,6 +86,7 @@ export type OrgMember = {
 };
 
 import apiRequest, { ApiError } from '../utils/apiClient';
+import { resolveApiUrl } from '../config/apiBase';
 
 const fromRecord = <T = any>(record: any, key: string): T | undefined => {
   if (!record) return undefined;
@@ -186,6 +187,9 @@ const buildOrgQuery = (params?: OrgListParams) => {
 
 export const listOrgPage = async (params?: OrgListParams): Promise<OrgListResponse> => {
   const query = buildOrgQuery(params);
+  if (import.meta.env.DEV) {
+    console.info('[orgService] GET /api/admin/organizations →', resolveApiUrl(`/api/admin/organizations${query}`));
+  }
   const json = await apiRequest<{ data: any[]; pagination?: any; progress?: Record<string, any> }>(
     `/api/admin/organizations${query}`
   );

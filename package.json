@@ -45,7 +45,7 @@
     "audit:fix": "npm audit fix",
     "analyze": "npx vite-bundle-analyzer",
     "check:bundle": "node scripts/check_bundle_size.mjs",
-    "ci": "npm run -s typecheck && npm run -s lint && vitest run",
+    "ci": "npm run -s typecheck && npm run -s lint && npm run -s guard:api-nav && vitest run",
     "archive:server-ts": "node scripts/archive_server_ts.mjs",
     "migrate:local": "node ./scripts/run_migration.mjs supabase/migrations/20251108_add_analytics_tables_and_views.sql",
     "migrate:local:prompt": "node ./scripts/run_migration_prompt.js supabase/migrations/20251108_add_analytics_tables_and_views.sql",
@@ -59,6 +59,7 @@
     "scan:dist": "node scripts/find_hosts_in_dist.mjs",
     "check:lock": "node scripts/check_lock_sync.mjs",
     "check:design": "ts-node scripts/design-consistency-checker.ts",
+    "guard:api-nav": "node scripts/guard_api_navigation.cjs",
     "doctor": "bash ./scripts/doctor.sh"
   },
   "dependencies": {
