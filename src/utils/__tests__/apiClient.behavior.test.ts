@@ -2,8 +2,13 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { __setApiBaseUrlOverride } from '../../config/apiBase';
 
 const mockBuildAuthHeaders = vi.fn().mockResolvedValue({});
+const mockResolveSupabaseAccessToken = vi.fn().mockResolvedValue(null);
+const mockClearSupabaseAuthSnapshot = vi.fn();
 vi.mock('../requestContext', () => ({
+  __esModule: true,
   default: mockBuildAuthHeaders,
+  resolveSupabaseAccessToken: mockResolveSupabaseAccessToken,
+  clearSupabaseAuthSnapshot: mockClearSupabaseAuthSnapshot,
 }));
 
 const fetchSpy = vi.fn();
@@ -39,6 +44,9 @@ describe('apiClient', () => {
     fetchSpy.mockReset();
     mockBuildAuthHeaders.mockReset();
     mockBuildAuthHeaders.mockResolvedValue({});
+    mockResolveSupabaseAccessToken.mockReset();
+    mockResolveSupabaseAccessToken.mockResolvedValue(null);
+    mockClearSupabaseAuthSnapshot.mockReset();
     debugSpy.mockClear();
     infoSpy.mockClear();
     errorSpy.mockClear();
@@ -73,7 +81,7 @@ describe('apiClient', () => {
 
     await apiRequest('/courses');
 
-  expect(fetchSpy).toHaveBeenCalledWith('http://localhost:3000/api/courses', expect.any(Object));
+  expect(fetchSpy).toHaveBeenCalledWith('http://localhost:8888/api/courses', expect.any(Object));
   });
 
   it('attaches auth headers and normalizes payload casing', async () => {
