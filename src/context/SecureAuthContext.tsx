@@ -1334,11 +1334,11 @@ const renderAuthState = ({
     if (!isLoginRoute()) {
       if (typeof window !== 'undefined') {
         const target = resolveLoginPath();
-        window.location.replace(target);
+        window.location.assign(target);
       }
       return <BootstrapRedirecting message="Redirecting to login…" />;
     }
-    return children;
+    return <BootstrapUnauthenticated onGoToLogin={onGoToLogin} />;
   }
 
   return children;
@@ -1396,6 +1396,22 @@ const BootstrapRedirecting = ({ message }: { message: string }) => (
     <div className="flex flex-col items-center gap-4 rounded-2xl border border-mist bg-white px-10 py-8 shadow-lg">
       <span className="text-sm font-semibold uppercase tracking-wide text-slate">Redirecting</span>
       <p className="text-center text-sm text-slate/70">{message}</p>
+    </div>
+  </div>
+);
+
+const BootstrapUnauthenticated = ({ onGoToLogin }: { onGoToLogin: () => void }) => (
+  <div className="flex min-h-screen w-full items-center justify-center bg-slate-50 px-4 py-8">
+    <div className="w-full max-w-lg rounded-2xl border border-mist bg-white p-6 shadow-lg text-center">
+      <p className="text-base font-semibold text-charcoal">Please log in</p>
+      <p className="mt-2 text-sm text-slate/70">To continue, sign in again.</p>
+      <button
+        type="button"
+        className="mt-5 inline-flex items-center justify-center rounded-xl bg-charcoal px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-charcoal/90"
+        onClick={onGoToLogin}
+      >
+        Go to login
+      </button>
     </div>
   </div>
 );

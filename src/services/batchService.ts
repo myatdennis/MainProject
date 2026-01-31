@@ -1,4 +1,5 @@
 import apiRequest from '../utils/apiClient';
+import buildSessionAuditHeaders from '../utils/sessionAuditHeaders';
 
 // Types for progress and analytics events
 export type ProgressEvent = {
@@ -96,7 +97,7 @@ export async function flushProgress() {
   try {
     const res = await apiRequest<{ accepted: string[]; duplicates?: string[]; failed?: Array<{ id: string; reason: string }> }>(
       '/api/client/progress/batch',
-      { method: 'POST', body: { events: batch }, timeoutMs: 10000 }
+      { method: 'POST', headers: buildSessionAuditHeaders(), body: { events: batch }, timeoutMs: 10000 }
     );
     // On partial failure, requeue failed items with backoff
     const failed = (res.failed || []).map((f) => f.id);

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { enqueueOfflineItem } from '../../dal/offlineQueue';
 import apiRequest from '../../utils/apiClient';
+import buildSessionAuditHeaders from '../../utils/sessionAuditHeaders';
 import { hasAuthSession } from '../../lib/sessionGate';
 
 type CaptionTrack = {
@@ -191,6 +192,7 @@ export default function VideoPlayer({ src, userId, lessonId, captions = [], clas
           try {
             await apiRequest('/api/client/progress/lesson', {
               method: 'POST',
+              headers: buildSessionAuditHeaders(),
               body,
             });
           } catch (e) {

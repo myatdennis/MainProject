@@ -2,6 +2,7 @@ import apiRequest, { ApiError } from '../utils/apiClient';
 import { NetworkErrorHandler } from '../utils/NetworkErrorHandler';
 import { toast } from 'react-hot-toast';
 import { getUserSession } from '../lib/secureStorage';
+import buildSessionAuditHeaders from '../utils/sessionAuditHeaders';
 import {
   enqueueProgressSnapshot,
   hasPendingItems,
@@ -25,10 +26,17 @@ type LessonProgressRow = {
 
 const toInt = (value: number) => Math.min(100, Math.max(0, Math.round(value)));
 
-const getSessionUserId = (): string | null => {
+const getSessionContext = (): { userId: string | null; role: string | null; isPlatformAdmin: boolean } | null => {
   try {
     const session = getUserSession();
-    return session?.id ? session.id.toLowerCase() : null;
+    if (!session) return null;
+    const userId = session.id ? session.id.toLowerCase() : null;
+    const role = session.role ? String(session.role).toLowerCase() : null;
+    const isPlatformAdmin =
+      Boolean((session as { isPlatformAdmin?: boolean }).isPlatformAdmin) ||
+      role === 'platform_admin' ||
+      String((session as { platformRole?: string }).platformRole ?? '').toLowerCase() === 'platform_admin';
+    return { userId, role, isPlatformAdmin };
   } catch (error) {
     console.warn('[progressService] Unable to resolve authenticated session:', error);
     return null;
@@ -102,6 +110,7 @@ const postSnapshot = async (snapshot: ProgressSnapshot, { showFailureToast }: { 
       () =>
         apiRequest('/api/learner/progress', {
           method: 'POST',
+          headers: buildSessionAuditHeaders(),
           body: {
             userId: snapshot.userId,
             courseId: snapshot.courseId,
@@ -193,6 +202,7 @@ const postProgressEvent = async (item: OfflineQueueItem): Promise<boolean> => {
       () =>
         apiRequest(endpoint, {
           method: 'POST',
+          headers: buildSessionAuditHeaders(),
           body: payload,
         }),
       {
@@ -263,22 +273,33 @@ export const progressService = {
     userId: string;
     courseId: string;
     lessonIds: string[];
+    allowImpersonation?: boolean;
   }): Promise<LessonProgressRow[]> => {
-    const { userId, courseId, lessonIds } = options;
+    const { userId, courseId, lessonIds, allowImpersonation } = options;
     if (!userId || !courseId || lessonIds.length === 0) {
       return [];
     }
 
-    const sessionUserId = getSessionUserId();
+    const sessionContext = getSessionContext();
+    const sessionUserId = sessionContext?.userId;
     if (!sessionUserId) {
       console.info('[progressService] Skipping remote progress fetch (no authenticated session).');
       return [];
     }
 
-    const normalizedUserId = userId.toLowerCase();
-    if (sessionUserId !== normalizedUserId) {
-      console.warn('[progressService] Requested user does not match authenticated session; refusing remote fetch.');
-      return [];
+    let effectiveUserId = userId.toLowerCase();
+    const isAdminSession =
+      Boolean(sessionContext?.isPlatformAdmin) || (sessionContext?.role === 'admin' || sessionContext?.role === 'platform_admin');
+
+    if (!effectiveUserId || effectiveUserId !== sessionUserId) {
+      if (isAdminSession && allowImpersonation && effectiveUserId) {
+        // permitted impersonation; proceed with requested user id
+      } else {
+        if (import.meta.env?.DEV) {
+          console.warn('[progressService] Requested user does not match session; defaulting to authenticated user.');
+        }
+        effectiveUserId = sessionUserId;
+      }
     }
 
     const params = new URLSearchParams();
@@ -289,7 +310,10 @@ export const progressService = {
       const response = await NetworkErrorHandler.handleApiCall(
         () =>
           apiRequest<{ data: { lessons: LessonProgressRow[] } }>(
-            `/api/learner/progress?${params.toString()}`
+            `/api/learner/progress?${params.toString()}`,
+            {
+              headers: buildSessionAuditHeaders(),
+            }
           ),
         {
           retryConfig: { maxAttempts: 2, delay: 600 },

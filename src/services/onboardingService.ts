@@ -1,4 +1,5 @@
 import apiRequest from '../utils/apiClient';
+import buildSessionAuditHeaders from '../utils/sessionAuditHeaders';
 
 export interface OwnerInput {
   userId?: string;
@@ -76,7 +77,9 @@ export const revokeOnboardingInvite = async (orgId: string, inviteId: string) =>
 };
 
 export const getOnboardingProgress = async (orgId: string) => {
-  return apiRequest<{ data: any }>(`/api/admin/onboarding/${orgId}/progress`);
+  return apiRequest<{ data: any }>(`/api/admin/onboarding/${orgId}/progress`, {
+    headers: buildSessionAuditHeaders(),
+  });
 };
 
 export const updateOnboardingStep = async (orgId: string, step: string, status: 'pending' | 'in_progress' | 'completed' | 'blocked') => {
