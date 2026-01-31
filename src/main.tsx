@@ -95,6 +95,68 @@ if (typeof window !== 'undefined') {
   }
 }
 
+class SecureAuthErrorBoundary extends React.Component<{ children: React.ReactNode }, { hasError: boolean; error: Error | null }> {
+  constructor(props: { children: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, info: React.ErrorInfo) {
+    console.error('[SecureAuthErrorBoundary] Caught error', error, info);
+  }
+
+  handleReload = () => {
+    window.location.reload();
+  };
+
+  handleGoToLogin = () => {
+    window.location.assign('/admin/login');
+  };
+
+  render() {
+    if (!this.state.hasError) {
+      return this.props.children;
+    }
+
+    const isDev = Boolean(import.meta.env?.DEV);
+    return (
+      <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f8fafc', padding: '32px' }}>
+        <div style={{ maxWidth: 420, width: '100%', background: '#fff', borderRadius: 16, padding: 24, boxShadow: '0 15px 45px rgba(15,23,42,0.12)' }}>
+          <h1 style={{ fontSize: '1.25rem', fontWeight: 600, color: '#0f172a', marginBottom: 8 }}>Something went wrong</h1>
+          <p style={{ fontSize: '0.95rem', color: '#475569', marginBottom: 16 }}>
+            We couldn’t load secure session data. Please reload the page or return to the login screen.
+          </p>
+          {isDev && this.state.error && (
+            <pre style={{ background: '#f1f5f9', padding: 12, borderRadius: 8, fontSize: '0.8rem', color: '#0f172a', maxHeight: 180, overflow: 'auto', marginBottom: 16 }}>
+              {this.state.error.stack || this.state.error.message}
+            </pre>
+          )}
+          <div style={{ display: 'flex', gap: 12 }}>
+            <button
+              type="button"
+              onClick={this.handleReload}
+              style={{ flex: 1, padding: '10px 14px', borderRadius: 10, background: '#0f172a', color: '#fff', fontWeight: 600, border: 'none', cursor: 'pointer' }}
+            >
+              Reload
+            </button>
+            <button
+              type="button"
+              onClick={this.handleGoToLogin}
+              style={{ flex: 1, padding: '10px 14px', borderRadius: 10, background: '#e2e8f0', color: '#0f172a', fontWeight: 600, border: 'none', cursor: 'pointer' }}
+            >
+              Go to login
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+}
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -117,13 +179,15 @@ if (!rootElement) {
     createRoot(rootElement).render(
       <StrictMode>
         <QueryClientProvider client={queryClient}>
-          <SecureAuthProvider>
-            <ToastProvider>
-              <HelmetProvider>
-                <App />
-              </HelmetProvider>
-            </ToastProvider>
-          </SecureAuthProvider>
+          <SecureAuthErrorBoundary>
+            <SecureAuthProvider>
+              <ToastProvider>
+                <HelmetProvider>
+                  <App />
+                </HelmetProvider>
+              </ToastProvider>
+            </SecureAuthProvider>
+          </SecureAuthErrorBoundary>
         </QueryClientProvider>
       </StrictMode>
     );

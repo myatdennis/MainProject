@@ -3,7 +3,6 @@ import {
   setSessionMetadata,
   setUserSession,
   getUserSession,
-  getSessionMetadata,
   clearAuth,
   migrateFromLocalStorage,
   getActiveOrgPreference,
@@ -28,11 +27,7 @@ import { logAuditAction } from '../dal/auditLog';
 import axios from 'axios';
 import { toast } from 'react-hot-toast';
 
-const MIN_REFRESH_BUFFER_MS = 2 * 60 * 1000;
-const REFRESH_RATIO = 0.15;
-const SAFETY_REFRESH_FLOOR_MS = 45 * 1000;
 const MIN_REFRESH_INTERVAL_MS = 60 * 1000;
-const FOCUS_REFRESH_THRESHOLD_MS = 3 * 60 * 1000;
 const SESSION_RELOAD_THROTTLE_MS = 45 * 1000;
 
 const isNavigatorOffline = () => typeof navigator !== 'undefined' && navigator.onLine === false;
@@ -43,16 +38,33 @@ const resolveLoginPath = () => {
   const pathname = window.location.pathname || '';
   return pathname.startsWith('/admin') ? '/admin/login' : '/login';
 };
+const isLoginRoute = () => {
+  if (typeof window === 'undefined' || !window.location) {
+    return false;
+  }
+  const pathname = window.location.pathname || '';
+  return pathname.startsWith('/login') || pathname.startsWith('/admin/login') || pathname.startsWith('/lms/login');
+};
+const isDevEnvironment = Boolean(import.meta.env?.DEV);
+const logAuthDebug = (label: string, payload: Record<string, unknown>) => {
+  if (!isDevEnvironment) return;
+  try {
+    console.debug(label, payload);
+  } catch {
+    // ignore
+  }
+};
+const logSessionResult = (status: string) => logAuthDebug('[auth] session result', { status });
+const logRefreshResult = (status: string) => logAuthDebug('[auth] refresh result', { status });
 
 
 type SessionSurface = 'admin' | 'lms';
-type RefreshReason = 'auto' | 'focus' | 'online' | 'manual' | 'bootstrap';
+type RefreshReason = 'protected_401' | 'user_retry';
 type SurfaceAuthStatus = 'idle' | 'checking' | 'ready' | 'error';
 type OrgResolutionStatus = 'idle' | 'resolving' | 'ready' | 'error';
 
 interface RefreshOptions {
   reason?: RefreshReason;
-  force?: boolean;
 }
 
 interface SessionResponsePayload {
@@ -138,29 +150,6 @@ const computeAuthState = (user: UserSession | null, surface?: SessionSurface): A
   return { admin: isRoleAdmin, lms: !isRoleAdmin };
 };
 
-const shouldRefreshToken = (
-  metadata: SessionMetadata | null,
-  { now = Date.now(), onFocus = false }: { now?: number; onFocus?: boolean } = {},
-): boolean => {
-  const expiresAt = metadata?.accessExpiresAt;
-  if (!expiresAt) return false;
-
-  const issuedAt = metadata.accessIssuedAt ?? expiresAt - MIN_REFRESH_INTERVAL_MS;
-  const ttl = Math.max(expiresAt - issuedAt, 0);
-  const remaining = expiresAt - now;
-  const bufferWindow = Math.max(MIN_REFRESH_BUFFER_MS, ttl * REFRESH_RATIO);
-
-  if (remaining <= SAFETY_REFRESH_FLOOR_MS) {
-    return true;
-  }
-
-  if (onFocus) {
-    return remaining <= Math.max(bufferWindow, FOCUS_REFRESH_THRESHOLD_MS);
-  }
-
-  return remaining <= bufferWindow;
-};
-
 const logAuthSessionState = (contextLabel: string, session: UserSession | null) => {
   if (!(import.meta.env && import.meta.env.DEV)) {
     return;
@@ -217,6 +206,7 @@ interface RegisterResult extends LoginResult {
 interface AuthContextType {
   isAuthenticated: AuthState;
   authInitializing: boolean;
+  authStatus: 'booting' | 'authenticated' | 'unauthenticated' | 'error';
   sessionStatus: 'idle' | 'loading' | 'ready';
   surfaceAuthStatus: Record<SessionSurface, SurfaceAuthStatus>;
   orgResolutionStatus: OrgResolutionStatus;
@@ -234,6 +224,7 @@ interface AuthContextType {
   setActiveOrganization: (orgId: string | null) => Promise<void>;
   reloadSession: (options?: { surface?: SessionSurface; force?: boolean }) => Promise<boolean>;
   loadSession: (options?: { surface?: SessionSurface }) => Promise<boolean>;
+  retryBootstrap: () => void;
 }
 
 // ============================================================================
@@ -243,6 +234,7 @@ interface AuthContextType {
 const defaultAuthContext: AuthContextType = {
   isAuthenticated: { lms: false, admin: false },
   authInitializing: true,
+  authStatus: 'booting',
   sessionStatus: 'idle',
   surfaceAuthStatus: { admin: 'idle', lms: 'idle' },
   orgResolutionStatus: 'idle',
@@ -288,6 +280,7 @@ const defaultAuthContext: AuthContextType = {
   async loadSession() {
     return false;
   },
+  retryBootstrap() {},
 };
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -311,6 +304,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   const [organizationIds, setOrganizationIds] = useState<string[]>([]);
   const [activeOrgId, setActiveOrgIdState] = useState<string | null>(null);
   const [authInitializing, setAuthInitializing] = useState(true);
+  const [authStatus, setAuthStatus] = useState<'booting' | 'authenticated' | 'unauthenticated' | 'error'>('booting');
   const [sessionStatus, setSessionStatus] = useState<'idle' | 'loading' | 'ready'>('idle');
   const [surfaceAuthStatus, setSurfaceAuthStatus] = useState<Record<SessionSurface, SurfaceAuthStatus>>({
     admin: 'idle',
@@ -318,12 +312,20 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   });
   const [orgResolutionStatus, setOrgResolutionStatus] = useState<OrgResolutionStatus>('idle');
   const [sessionMetaVersion, setSessionMetaVersion] = useState(0);
+  const bootstrappedRef = useRef(false);
+  const hasAttemptedRefreshRef = useRef(false);
+  const refreshAttemptedRef = useRef(false);
   const serverTimeOffsetRef = useRef(0);
   const lastRefreshAttemptRef = useRef(0);
   const lastRefreshSuccessRef = useRef(0);
-  const refreshTimeoutRef = useRef<number | null>(null);
+  const bootstrapControllerRef = useRef<AbortController | null>(null);
   const lastSessionReloadRef = useRef(0);
   const hasLoggedAppLoadRef = useRef(false);
+  const hasAuthenticatedSessionRef = useRef(false);
+  const hadAuthenticatedSessionRef = useRef(false);
+  const lastSessionFetchResultRef = useRef<'idle' | 'authenticated' | 'unauthenticated' | 'error'>('idle');
+  const bootstrapRunCountRef = useRef(0);
+  const refreshRunCountRef = useRef(0);
 
   const updateSurfaceAuthStatus = useCallback((surface: SessionSurface | undefined, status: SurfaceAuthStatus) => {
     if (!surface) {
@@ -375,6 +377,8 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     ) => {
       const tokenReason = reason ?? (payload?.user ? `${surface ?? 'session'}_update` : 'session_clear');
       if (!payload?.user) {
+        hasAuthenticatedSessionRef.current = false;
+        lastSessionFetchResultRef.current = 'unauthenticated';
         setUser(null);
         setMemberships([]);
         setOrganizationIds([]);
@@ -387,6 +391,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         return;
       }
 
+      hasAuthenticatedSessionRef.current = true;
+      hadAuthenticatedSessionRef.current = true;
+      lastSessionFetchResultRef.current = 'authenticated';
       const normalizedMemberships = normalizeMemberships(payload.memberships);
       const orgIds =
         payload.organizationIds && payload.organizationIds.length > 0
@@ -456,6 +463,26 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     ],
   );
 
+  const handleSessionUnauthorized = useCallback(
+    ({
+      silent = false,
+      reason = 'session_unauthenticated',
+      message,
+    }: { silent?: boolean; reason?: string; message?: string } = {}) => {
+      const hadSession = hasAuthenticatedSessionRef.current;
+      applySessionPayload(null, { persistTokens: true, reason });
+      setAuthStatus('unauthenticated');
+      lastSessionFetchResultRef.current = 'unauthenticated';
+      if (!silent) {
+        setBootstrapError(null);
+      }
+      if (hadSession && !silent) {
+        toast.error(message ?? 'Your session expired. Please sign in again.', { id: 'session-expired' });
+      }
+    },
+    [applySessionPayload],
+  );
+
   const headersToRecord = (headers?: Headers): Record<string, string> | undefined => {
     if (!headers) return undefined;
     const result: Record<string, string> = {};
@@ -463,6 +490,18 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       result[key] = value;
     });
     return result;
+  };
+
+  const parseSessionPayload = async (response: Response): Promise<SessionResponsePayload | null> => {
+    const contentType = response.headers.get('content-type') || '';
+    if (!contentType.includes('application/json')) {
+      return null;
+    }
+    try {
+      return (await response.json()) as SessionResponsePayload;
+    } catch {
+      return null;
+    }
   };
 
   const requestJsonWithClock = useCallback(
@@ -511,19 +550,11 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   const [bootstrapError, setBootstrapError] = useState<string | null>(null);
 
   const fetchServerSession = useCallback(
-    async ({ surface, signal }: { surface?: SessionSurface; signal?: AbortSignal } = {}): Promise<boolean> => {
-      const safeParsePayload = async (response: Response): Promise<SessionResponsePayload | null> => {
-        const contentType = response.headers.get('content-type') || '';
-        if (!contentType.includes('application/json')) {
-          return null;
-        }
-        try {
-          return (await response.json()) as SessionResponsePayload;
-        } catch {
-          return null;
-        }
-      };
-
+    async ({
+      surface,
+      signal,
+      silent,
+    }: { surface?: SessionSurface; signal?: AbortSignal; silent?: boolean } = {}): Promise<boolean> => {
       try {
         const response = await apiRequestRaw('/api/auth/session', {
           method: 'GET',
@@ -536,68 +567,207 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           }
         }
         captureServerClock(headersToRecord(response.headers));
-        const payload = await safeParsePayload(response);
+
+        if (response.status === 401 || response.status === 403) {
+          handleSessionUnauthorized({
+            silent,
+            reason: surface ? `${surface}_session_unauthenticated` : 'session_unauthenticated',
+          });
+          return false;
+        }
+
+        const payload = await parseSessionPayload(response);
+
+        if (!response.ok) {
+          lastSessionFetchResultRef.current = 'error';
+          if (!silent) {
+            setBootstrapError(
+              'Unable to restore your session. Please refresh and try again.',
+            );
+          }
+          return false;
+        }
+
         if (payload?.user) {
           applySessionPayload(payload, {
             surface,
             persistTokens: false,
             reason: surface ? `${surface}_session_bootstrap` : 'session_bootstrap',
           });
-          setBootstrapError(null);
+          setAuthStatus('authenticated');
+          if (!silent) {
+            setBootstrapError(null);
+          }
           return true;
         }
-        setBootstrapError('Your session could not be restored. Please log in again.');
+
+        handleSessionUnauthorized({
+          silent,
+          reason: 'session_bootstrap_empty',
+        });
         return false;
       } catch (error: unknown) {
         if (error instanceof ApiError) {
+          if (error.status === 401 || error.status === 403) {
+            handleSessionUnauthorized({
+              silent,
+              reason: surface ? `${surface}_session_unauthenticated` : 'session_unauthenticated',
+            });
+            return false;
+          }
+
           if (error.code === 'timeout') {
-            setBootstrapError('Network timeout while restoring your session. Please retry.');
+            lastSessionFetchResultRef.current = 'error';
+            if (!silent) {
+              setBootstrapError('Network timeout while restoring your session. Please retry.');
+            }
             return false;
           }
-          if (error.status === 401) {
-            setBootstrapError('Your session expired. Please log in again.');
-            setIsAuthenticated({ admin: false, lms: false });
-            setUser(null);
-            return false;
+
+          lastSessionFetchResultRef.current = 'error';
+          if (!silent) {
+            const message =
+              (error.body as { message?: string } | undefined)?.message ||
+              'Unable to restore your session. Please refresh.';
+            setBootstrapError(message);
           }
-          setBootstrapError(
-            (error.body as { message?: string } | undefined)?.message ||
-              'Unable to restore your session. Please refresh.',
-          );
           return false;
         }
         if (error instanceof DOMException && error.name === 'AbortError') {
-          setBootstrapError('Session check canceled. Please retry.');
+          lastSessionFetchResultRef.current = 'error';
+          if (!silent) {
+            setBootstrapError('Session check canceled. Please retry.');
+          }
           return false;
         }
         if (typeof axios.isCancel === 'function' && axios.isCancel(error)) {
-          setBootstrapError('Session check canceled. Please retry.');
+          lastSessionFetchResultRef.current = 'error';
+          if (!silent) {
+            setBootstrapError('Session check canceled. Please retry.');
+          }
           return false;
         }
-        setBootstrapError('Network issue while restoring your session. Please check your connection and retry.');
+        if (!silent) {
+          setBootstrapError('Network issue while restoring your session. Please check your connection and retry.');
+        }
+        lastSessionFetchResultRef.current = 'error';
         console.warn('[SecureAuth] Failed to reload session', error);
         return false;
       }
     },
-    [applySessionPayload, captureServerClock],
+    [applySessionPayload, captureServerClock, handleSessionUnauthorized],
+  );
+
+  const runBootstrap = useCallback(
+    async (signal?: AbortSignal) => {
+      const bootstrapRunCount = ++bootstrapRunCountRef.current;
+      logAuthDebug('[auth] bootstrap start', { count: bootstrapRunCount });
+      setAuthStatus('booting');
+      setSessionStatus('loading');
+      setBootstrapError(null);
+      setAuthInitializing(true);
+
+      try {
+        const response = await apiRequestRaw('/api/auth/session', { method: 'GET', signal });
+        captureServerClock(headersToRecord(response.headers));
+        const payload = await parseSessionPayload(response);
+
+        if (response.status === 401 || response.status === 403) {
+          handleSessionUnauthorized({ silent: true, reason: 'bootstrap_unauthenticated' });
+          setBootstrapError(null);
+          logSessionResult('unauthenticated');
+          return;
+        }
+
+        if (!response.ok) {
+          lastSessionFetchResultRef.current = 'error';
+          setBootstrapError('Unable to restore your session. Please try again.');
+          setAuthStatus('error');
+          logSessionResult('error');
+          return;
+        }
+
+        if (payload?.user) {
+          applySessionPayload(payload, { persistTokens: false, reason: 'bootstrap_success' });
+          setAuthStatus('authenticated');
+          setBootstrapError(null);
+          logSessionResult('authenticated');
+        } else {
+          handleSessionUnauthorized({ reason: 'bootstrap_empty' });
+          logSessionResult('empty');
+        }
+      } catch (error) {
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          logSessionResult('aborted');
+          return;
+        }
+        if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+          handleSessionUnauthorized({ silent: true, reason: 'bootstrap_unauthenticated' });
+          setBootstrapError(null);
+          logSessionResult('unauthenticated');
+          return;
+        }
+        lastSessionFetchResultRef.current = 'error';
+        setBootstrapError('Network issue while restoring your session. Please retry.');
+        setAuthStatus('error');
+        logSessionResult('error');
+      } finally {
+        setSessionStatus('ready');
+        setAuthInitializing(false);
+      }
+    },
+    [applySessionPayload, captureServerClock, handleSessionUnauthorized],
+  );
+
+  const runBootstrapRef = useRef(runBootstrap);
+  useEffect(() => {
+    runBootstrapRef.current = runBootstrap;
+  }, [runBootstrap]);
+
+  const startBootstrap = useCallback(
+    ({ force = false }: { force?: boolean } = {}) => {
+      if (!force && bootstrappedRef.current) {
+        return;
+      }
+      bootstrappedRef.current = true;
+      bootstrapControllerRef.current?.abort();
+      const controller = new AbortController();
+      bootstrapControllerRef.current = controller;
+      const runner = runBootstrapRef.current;
+      if (runner) {
+        runner(controller.signal).catch((error) => {
+          console.warn('[SecureAuth] Bootstrap run failed', error);
+        });
+      }
+    },
+    [],
   );
 
   const retryBootstrap = useCallback(() => {
+    bootstrappedRef.current = false;
     setBootstrapError(null);
-    fetchServerSession({ surface: 'admin' }).catch((error) => {
-      console.warn('[SecureAuth] Retry bootstrap failed', error);
-    });
-  }, [fetchServerSession]);
+    startBootstrap({ force: true });
+  }, [startBootstrap]);
 
-  const goToLogin = useCallback(() => {
+  const onGoToLogin = useCallback(() => {
     applySessionPayload(null, { persistTokens: true, reason: 'bootstrap_error_redirect' });
     setBootstrapError(null);
-    if (typeof window !== 'undefined') {
-      const currentPath = window.location.pathname || '';
-      const redirectPath = currentPath.startsWith('/admin') ? '/admin/login' : '/login';
-      window.location.assign(redirectPath);
-    }
+    const currentPath = typeof window !== 'undefined' ? window.location.pathname || '' : '';
+    const redirectPath = currentPath.startsWith('/admin') ? '/admin/login' : '/login';
+    window.location.assign(redirectPath);
   }, [applySessionPayload]);
+
+  useEffect(() => {
+    if (bootstrappedRef.current) {
+      return () => {
+        bootstrapControllerRef.current?.abort();
+      };
+    }
+    startBootstrap();
+    return () => {
+      bootstrapControllerRef.current?.abort();
+    };
+  }, [startBootstrap]);
 
   const reloadSession = useCallback(
     (options?: { surface?: SessionSurface; force?: boolean }): Promise<boolean> => {
@@ -645,42 +815,56 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
   const refreshToken = useCallback(
     async (options: RefreshOptions = {}): Promise<boolean> => {
+      const reason: RefreshReason = options.reason ?? 'protected_401';
+
+      const allowedByReason =
+        (reason === 'protected_401' && hasAuthenticatedSessionRef.current) ||
+        (reason === 'user_retry' && hadAuthenticatedSessionRef.current);
+      if (!allowedByReason) {
+        return false;
+      }
+
+      if (hasAttemptedRefreshRef.current || refreshAttemptedRef.current) {
+        return false;
+      }
+
       return queueRefresh(async () => {
+        hasAttemptedRefreshRef.current = true;
+        refreshAttemptedRef.current = true;
+        const refreshRunCount = ++refreshRunCountRef.current;
+        logAuthDebug('[auth] refresh start', { count: refreshRunCount, reason });
+        let refreshStatus: 'success' | 'unauthenticated' | 'network_issue' | 'error' | 'skipped' = 'skipped';
         const now = getSkewedNow();
-        if (!options.force && lastRefreshAttemptRef.current && now - lastRefreshAttemptRef.current < MIN_REFRESH_INTERVAL_MS) {
+        if (lastRefreshAttemptRef.current && now - lastRefreshAttemptRef.current < MIN_REFRESH_INTERVAL_MS) {
+          refreshStatus = 'skipped';
+          logRefreshResult(refreshStatus);
           return false;
         }
 
         if (isNavigatorOffline()) {
           console.info('[SecureAuth] Skipping refresh while offline');
+          refreshStatus = 'network_issue';
+          logRefreshResult(refreshStatus);
           return false;
         }
 
         lastRefreshAttemptRef.current = now;
 
         try {
-          const response = await apiRequestRaw('/api/auth/refresh', {
+          const payload = await apiRequest<SessionResponsePayload | null>('/api/auth/refresh', {
             method: 'POST',
             allowAnonymous: true,
             headers: buildSessionAuditHeaders(),
-            body: { reason: options.reason ?? 'auto' },
+            body: { reason },
           });
-
-          captureServerClock(headersToRecord(response.headers));
-
-          const contentType = response.headers.get('content-type') || '';
-          const payload = (contentType.includes('application/json')
-            ? ((await response.json()) as SessionResponsePayload | null)
-            : null) as SessionResponsePayload | null;
-
-          if (!response.ok) {
-            throw new ApiError(`Refresh failed with status ${response.status}`, response.status, response.url, payload);
-          }
 
           if (payload?.user) {
             applySessionPayload(payload, { persistTokens: true, reason: 'refresh_success' });
+            setAuthStatus('authenticated');
+            refreshStatus = 'success';
           } else {
-            await fetchServerSession();
+            await fetchServerSession({ silent: true });
+            refreshStatus = 'success';
           }
 
           lastRefreshSuccessRef.current = getSkewedNow();
@@ -690,39 +874,40 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             if (error.status === 401 || error.status === 403) {
               console.warn('[SecureAuth] Refresh token rejected, clearing session');
               applySessionPayload(null, { persistTokens: true, reason: 'refresh_rejected' });
+              setAuthStatus('unauthenticated');
               if (typeof window !== 'undefined') {
                 toast.error('Your session expired. Please sign in again.', { id: 'session-expired' });
                 const loginPath = resolveLoginPath();
                 window.location.assign(loginPath);
               }
+              refreshStatus = 'unauthenticated';
               return false;
             }
 
             if (error.code === 'timeout' || error.status === 0) {
               console.warn('[SecureAuth] Refresh deferred due to network issue');
+              refreshStatus = 'network_issue';
               return false;
             }
           }
 
           console.error('Token refresh failed:', error);
+          refreshStatus = 'error';
           return false;
+        } finally {
+          logRefreshResult(refreshStatus);
         }
       });
     },
-    [applySessionPayload, captureServerClock, fetchServerSession, getSkewedNow],
+    [applySessionPayload, fetchServerSession, getSkewedNow],
   );
 
   const resolveSession = useCallback(
-    async ({ surface, signal, reason }: { surface?: SessionSurface; signal?: AbortSignal; reason?: RefreshReason } = {}) => {
+    async ({ surface, signal }: { surface?: SessionSurface; signal?: AbortSignal } = {}) => {
       try {
         const hasUser = await fetchServerSession({ surface, signal });
         if (hasUser) {
           return true;
-        }
-
-        const refreshed = await refreshToken({ reason: reason ?? 'auto', force: true });
-        if (refreshed) {
-          return fetchServerSession({ surface, signal });
         }
 
         applySessionPayload(null, { persistTokens: true, reason: 'resolve_session_empty' });
@@ -736,7 +921,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         return false;
       }
     },
-    [applySessionPayload, fetchServerSession, refreshToken],
+    [applySessionPayload, fetchServerSession],
   );
 
   const loadSession = useCallback(
@@ -749,7 +934,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       }
       setSessionStatus('loading');
       try {
-        const result = await resolveSession({ surface: options?.surface, reason: 'manual' });
+        const result = await resolveSession({ surface: options?.surface });
         setAuthInitializing(false);
         return result;
       } finally {
@@ -787,6 +972,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     setActiveOrgIdState(null);
     setSessionMetaVersion((value) => value + 1);
     clearActiveOrgPreference();
+    setAuthStatus('unauthenticated');
 
       if (type) {
         setIsAuthenticated(prev => ({
@@ -801,141 +987,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       }
     }
   }, [user]);
-
-  // ============================================================================
-  // Initialize Auth
-  // ============================================================================
-
-  useEffect(() => {
-    const abortController = new AbortController();
-    let active = true;
-
-    const initializeAuth = async () => {
-      setSessionStatus('loading');
-      try {
-        migrateFromLocalStorage();
-        await resolveSession({ signal: abortController.signal, reason: 'bootstrap' });
-      } catch (error) {
-        if (typeof axios.isCancel === 'function' && axios.isCancel(error)) {
-          return;
-        }
-        console.error('Auth initialization error:', error);
-        applySessionPayload(null, { persistTokens: true, reason: 'bootstrap_error' });
-      } finally {
-        if (active) {
-          setAuthInitializing(false);
-          setSessionStatus('ready');
-        }
-      }
-    };
-
-    void initializeAuth();
-
-    return () => {
-      active = false;
-      abortController.abort();
-    };
-  }, [resolveSession, applySessionPayload]);
-  // =========================================================================
-  // Auto Token Refresh
-  // =========================================================================
-
-  useEffect(() => {
-    if (!user) {
-      if (refreshTimeoutRef.current) {
-        clearTimeout(refreshTimeoutRef.current);
-        refreshTimeoutRef.current = null;
-      }
-      return;
-    }
-
-    let cancelled = false;
-
-    const triggerRefresh = async (reason: RefreshReason) => {
-      if (cancelled || isNavigatorOffline()) {
-        return;
-      }
-
-      const metadata = getSessionMetadata();
-      const now = getSkewedNow();
-      const sinceLastSuccess = lastRefreshSuccessRef.current ? now - lastRefreshSuccessRef.current : Number.POSITIVE_INFINITY;
-
-      if (reason === 'auto') {
-        if (!shouldRefreshToken(metadata, { now })) {
-          scheduleNextRefresh();
-          return;
-        }
-      } else if (reason === 'focus') {
-        if (sinceLastSuccess < FOCUS_REFRESH_THRESHOLD_MS) {
-          return;
-        }
-        if (!shouldRefreshToken(metadata, { now, onFocus: true })) {
-          return;
-        }
-      } else if (reason === 'online') {
-        if (!shouldRefreshToken(metadata, { now })) {
-          scheduleNextRefresh();
-          return;
-        }
-      }
-
-      await refreshToken({ reason });
-      scheduleNextRefresh();
-    };
-
-    function scheduleNextRefresh() {
-      if (cancelled) return;
-      if (refreshTimeoutRef.current) {
-        clearTimeout(refreshTimeoutRef.current);
-        refreshTimeoutRef.current = null;
-      }
-      const metadata = getSessionMetadata();
-      if (!metadata?.accessExpiresAt) {
-        return;
-      }
-      const now = getSkewedNow();
-      const issuedAt = metadata.accessIssuedAt ?? now;
-      const ttl = Math.max(metadata.accessExpiresAt - issuedAt, 0);
-      const bufferWindow = Math.max(MIN_REFRESH_BUFFER_MS, ttl * REFRESH_RATIO);
-      const targetTime = metadata.accessExpiresAt - bufferWindow;
-      const delay = Math.max(targetTime - now, SAFETY_REFRESH_FLOOR_MS);
-      refreshTimeoutRef.current = window.setTimeout(() => {
-        void triggerRefresh('auto');
-      }, delay);
-    }
-
-    const handleOnline = () => {
-      void triggerRefresh('online');
-    };
-
-    const handleFocus = () => {
-      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
-        return;
-      }
-      void triggerRefresh('focus');
-    };
-
-    scheduleNextRefresh();
-
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('focus', handleFocus);
-    if (typeof document !== 'undefined') {
-      document.addEventListener('visibilitychange', handleFocus);
-    }
-
-    return () => {
-      cancelled = true;
-      if (refreshTimeoutRef.current) {
-        clearTimeout(refreshTimeoutRef.current);
-        refreshTimeoutRef.current = null;
-      }
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('focus', handleFocus);
-      if (typeof document !== 'undefined') {
-        document.removeEventListener('visibilitychange', handleFocus);
-      }
-    };
-  }, [user, refreshToken, getSkewedNow, sessionMetaVersion]);
 
   useEffect(() => {
     if (authInitializing) {
@@ -1015,6 +1066,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         persistTokens: true,
         reason: `${type}_login_success`,
       });
+      setAuthStatus('authenticated');
 
       if (type === 'admin' && payload?.user) {
         logAuditAction('admin_login', { email: payload.user.email, id: payload.user.id });
@@ -1112,6 +1164,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         body: payload,
       });
       applySessionPayload(responsePayload ?? null, { surface: 'lms', persistTokens: true, reason: 'register_success' });
+      setAuthStatus('authenticated');
 
       return { success: true };
     } catch (error) {
@@ -1216,6 +1269,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   const value: AuthContextType = {
     isAuthenticated,
     authInitializing,
+    authStatus,
     sessionStatus,
     surfaceAuthStatus,
     orgResolutionStatus,
@@ -1233,18 +1287,62 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     setActiveOrganization,
     reloadSession,
     loadSession,
+    retryBootstrap,
   };
 
   return (
     <AuthContext.Provider value={value}>
-      {bootstrapError ? (
-        <BootstrapErrorOverlay message={bootstrapError} onRetry={retryBootstrap} onGoToLogin={goToLogin} />
-      ) : (
-        children
-      )}
+      {renderAuthState({
+        authStatus,
+        bootstrapError,
+        onRetry: retryBootstrap,
+        onGoToLogin,
+        children,
+      })}
     </AuthContext.Provider>
   );
 }
+
+const renderAuthState = ({
+  authStatus,
+  bootstrapError,
+  onRetry,
+  onGoToLogin,
+  children,
+}: {
+  authStatus: 'booting' | 'authenticated' | 'unauthenticated' | 'error';
+  bootstrapError: string | null;
+  onRetry: () => void;
+  onGoToLogin: () => void;
+  children: ReactNode;
+}) => {
+  if (authStatus === 'booting') {
+    return <BootstrapLoading />;
+  }
+
+  if (authStatus === 'error') {
+    return (
+      <BootstrapErrorOverlay
+        message={bootstrapError || 'We could not restore your session. Please try again.'}
+        onRetry={onRetry}
+        onGoToLogin={onGoToLogin}
+      />
+    );
+  }
+
+  if (authStatus === 'unauthenticated') {
+    if (!isLoginRoute()) {
+      if (typeof window !== 'undefined') {
+        const target = resolveLoginPath();
+        window.location.replace(target);
+      }
+      return <BootstrapRedirecting message="Redirecting to login…" />;
+    }
+    return children;
+  }
+
+  return children;
+};
 
 const BootstrapErrorOverlay = ({
   message,
@@ -1279,6 +1377,25 @@ const BootstrapErrorOverlay = ({
           Go to login
         </button>
       </div>
+    </div>
+  </div>
+);
+
+const BootstrapLoading = () => (
+  <div className="flex min-h-screen w-full items-center justify-center bg-slate-50 px-4 py-8">
+    <div className="flex flex-col items-center gap-4 rounded-2xl border border-mist bg-white px-10 py-8 shadow-lg">
+      <span className="text-sm font-semibold uppercase tracking-wide text-slate">Initializing session</span>
+      <div className="h-10 w-10 animate-spin rounded-full border-4 border-cloud border-t-sunrise" aria-label="Loading" />
+      <p className="text-center text-sm text-slate/70">Please hold while we verify your access…</p>
+    </div>
+  </div>
+);
+
+const BootstrapRedirecting = ({ message }: { message: string }) => (
+  <div className="flex min-h-screen w-full items-center justify-center bg-slate-50 px-4 py-8">
+    <div className="flex flex-col items-center gap-4 rounded-2xl border border-mist bg-white px-10 py-8 shadow-lg">
+      <span className="text-sm font-semibold uppercase tracking-wide text-slate">Redirecting</span>
+      <p className="text-center text-sm text-slate/70">{message}</p>
     </div>
   </div>
 );

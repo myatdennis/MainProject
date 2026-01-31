@@ -46,6 +46,12 @@ type InternalRequestOptions = ApiRequestOptions & {
 const isJsonResponse = (contentType: string | null) =>
   !!contentType && contentType.toLowerCase().includes('application/json');
 
+const isPlainObject = (value: unknown): value is Record<string, unknown> => {
+  if (value === null || typeof value !== 'object') return false;
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+};
+
 const safeParseJson = async (res: Response) => {
   try {
     return await res.json();
@@ -232,13 +238,14 @@ const ADMIN_PATH_PATTERN = /\/api\/admin\b/i;
 const AUTH_ENDPOINT_REGEX = /\/api\/auth\/(login|refresh|session)/i;
 const REFRESH_ENDPOINT_REGEX = /\/api\/auth\/refresh\b/i;
 const ABSOLUTE_URL_REGEX = /^https?:\/\//i;
-const REFRESH_CHANNEL_NAME = 'auth_refresh';
+const REFRESH_CHANNEL_NAME = 'auth';
 const REFRESH_WAIT_TIMEOUT = 5000;
+const REFRESH_STORAGE_KEY = '__auth_refresh_event__';
 
 type RefreshEvent = {
-  type: 'refresh_started' | 'refresh_finished';
-  ok?: boolean;
-  timestamp: number;
+  type: 'REFRESH';
+  status: 'started' | 'success' | 'failure';
+  ts: number;
   sourceId?: string;
 };
 
@@ -270,14 +277,14 @@ const notifyRefreshWaiters = (ok: boolean) => {
 
 const applyRefreshEventLocally = (event: RefreshEvent) => {
   if (!event || typeof event !== 'object') return;
-  if (event.type === 'refresh_started') {
+  if (event.type !== 'REFRESH') return;
+  if (event.status === 'started') {
     refreshInProgress = true;
     return;
   }
-  if (event.type === 'refresh_finished') {
-    refreshInProgress = false;
-    notifyRefreshWaiters(Boolean(event.ok));
-  }
+  const ok = event.status === 'success';
+  refreshInProgress = false;
+  notifyRefreshWaiters(ok);
 };
 
 const handleExternalRefreshEvent = (event: unknown) => {
@@ -289,18 +296,35 @@ const handleExternalRefreshEvent = (event: unknown) => {
   applyRefreshEventLocally(payload);
 };
 
-const broadcastRefreshEvent = (event: Omit<RefreshEvent, 'sourceId'>) => {
-  const payload: RefreshEvent = { ...event, sourceId: REFRESH_SOURCE_ID };
+const broadcastRefreshEvent = (status: RefreshEvent['status']) => {
+  const payload: RefreshEvent = { type: 'REFRESH', status, ts: Date.now(), sourceId: REFRESH_SOURCE_ID };
   applyRefreshEventLocally(payload);
   try {
     refreshChannel?.postMessage(payload);
   } catch (error) {
     console.warn('[apiRequest] Failed to broadcast refresh event via channel', error);
   }
+  if (!refreshChannel && typeof window !== 'undefined' && typeof window.localStorage !== 'undefined') {
+    try {
+      window.localStorage.setItem(REFRESH_STORAGE_KEY, JSON.stringify({ ...payload, sourceId: payload.sourceId ?? REFRESH_SOURCE_ID }));
+    } catch (error) {
+      console.warn('[apiRequest] Failed to broadcast refresh event via storage', error);
+    }
+  }
 };
 
 if (refreshChannel) {
   refreshChannel.addEventListener('message', (event) => handleExternalRefreshEvent(event.data));
+} else if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (event) => {
+    if (event.key !== REFRESH_STORAGE_KEY || !event.newValue) return;
+    try {
+      const parsed = JSON.parse(event.newValue) as RefreshEvent;
+      handleExternalRefreshEvent(parsed);
+    } catch (error) {
+      console.warn('[apiRequest] Failed to parse refresh event from storage', error);
+    }
+  });
 }
 
 const waitForRefreshCompletion = (): Promise<boolean> => {
@@ -329,11 +353,11 @@ const waitForRefreshCompletion = (): Promise<boolean> => {
 };
 
 const markRefreshStarted = () => {
-  broadcastRefreshEvent({ type: 'refresh_started', timestamp: Date.now() });
+  broadcastRefreshEvent('started');
 };
 
 const markRefreshFinished = (ok: boolean) => {
-  broadcastRefreshEvent({ type: 'refresh_finished', ok, timestamp: Date.now() });
+  broadcastRefreshEvent(ok ? 'success' : 'failure');
 };
 
 const redactHeaders = (headers?: Headers | Record<string, string> | null): Record<string, string> => {
@@ -450,21 +474,24 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
   let body: BodyInit | undefined;
   if (methodAllowsBody && options.body != null) {
     const hasContentType = Object.keys(headers).some((key) => key.toLowerCase() === 'content-type');
+    const rawBody = options.body as any;
+    const isFormData = typeof FormData !== 'undefined' && rawBody instanceof FormData;
+    const isBlob = typeof Blob !== 'undefined' && rawBody instanceof Blob;
+    const isArrayBuffer = rawBody instanceof ArrayBuffer;
+    const isArrayBufferView = typeof ArrayBuffer !== 'undefined' && ArrayBuffer.isView(rawBody);
+    const isSearchParams = typeof URLSearchParams !== 'undefined' && rawBody instanceof URLSearchParams;
 
-    if (
-      options.body instanceof FormData ||
-      options.body instanceof Blob ||
-      options.body instanceof ArrayBuffer ||
-      options.body instanceof URLSearchParams
-    ) {
-      body = options.body;
-    } else if (typeof options.body === 'string') {
-      body = options.body;
-    } else if (typeof options.body === 'object') {
+    if (isFormData || isBlob || isArrayBuffer || isArrayBufferView || isSearchParams) {
+      body = rawBody as BodyInit;
+    } else if (typeof rawBody === 'string') {
+      body = rawBody;
+    } else if (isPlainObject(rawBody)) {
       if (!hasContentType) {
         headers['Content-Type'] = 'application/json';
       }
-      body = JSON.stringify(options.body);
+      body = JSON.stringify(rawBody);
+    } else {
+      body = rawBody as BodyInit;
     }
   }
   const hasAuthorization = Boolean(headers.Authorization);
