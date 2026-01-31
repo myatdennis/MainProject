@@ -26,6 +26,7 @@ import buildSessionAuditHeaders from '../utils/sessionAuditHeaders';
 
 import { logAuditAction } from '../dal/auditLog';
 import axios from 'axios';
+import { toast } from 'react-hot-toast';
 
 const MIN_REFRESH_BUFFER_MS = 2 * 60 * 1000;
 const REFRESH_RATIO = 0.15;
@@ -35,6 +36,13 @@ const FOCUS_REFRESH_THRESHOLD_MS = 3 * 60 * 1000;
 const SESSION_RELOAD_THROTTLE_MS = 45 * 1000;
 
 const isNavigatorOffline = () => typeof navigator !== 'undefined' && navigator.onLine === false;
+const resolveLoginPath = () => {
+  if (typeof window === 'undefined' || !window.location) {
+    return '/login';
+  }
+  const pathname = window.location.pathname || '';
+  return pathname.startsWith('/admin') ? '/admin/login' : '/login';
+};
 
 
 type SessionSurface = 'admin' | 'lms';
@@ -679,9 +687,14 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           return true;
         } catch (error) {
           if (error instanceof ApiError) {
-            if (error.status === 401) {
+            if (error.status === 401 || error.status === 403) {
               console.warn('[SecureAuth] Refresh token rejected, clearing session');
               applySessionPayload(null, { persistTokens: true, reason: 'refresh_rejected' });
+              if (typeof window !== 'undefined') {
+                toast.error('Your session expired. Please sign in again.', { id: 'session-expired' });
+                const loginPath = resolveLoginPath();
+                window.location.assign(loginPath);
+              }
               return false;
             }
 

@@ -19,14 +19,16 @@ const parseBoolean = (value, fallback = false) => {
 };
 
 const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production';
-const secureByDefault = parseBoolean(process.env.COOKIE_SECURE, isProduction);
+const secureByDefault = isProduction ? true : parseBoolean(process.env.COOKIE_SECURE, false);
 const allowedSameSite = new Set(['lax', 'strict', 'none']);
 const rawSameSite = (process.env.COOKIE_SAMESITE || '').trim().toLowerCase();
-const sameSite = allowedSameSite.has(rawSameSite)
-  ? rawSameSite
-  : secureByDefault
-    ? 'none'
-    : 'lax';
+const sameSite = isProduction
+  ? 'none'
+  : allowedSameSite.has(rawSameSite)
+    ? rawSameSite
+    : secureByDefault
+      ? 'none'
+      : 'lax';
 
 const normalizeDomain = (value) => {
   if (!value || typeof value !== 'string') return '';

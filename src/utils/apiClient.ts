@@ -232,8 +232,7 @@ const ADMIN_PATH_PATTERN = /\/api\/admin\b/i;
 const AUTH_ENDPOINT_REGEX = /\/api\/auth\/(login|refresh|session)/i;
 const REFRESH_ENDPOINT_REGEX = /\/api\/auth\/refresh\b/i;
 const ABSOLUTE_URL_REGEX = /^https?:\/\//i;
-const REFRESH_CHANNEL_NAME = 'auth';
-const REFRESH_STORAGE_KEY = '__auth_refresh_event__';
+const REFRESH_CHANNEL_NAME = 'auth_refresh';
 const REFRESH_WAIT_TIMEOUT = 5000;
 
 type RefreshEvent = {
@@ -255,7 +254,6 @@ const REFRESH_SOURCE_ID =
 
 let refreshInProgress = false;
 let refreshWaiters: Array<(ok: boolean) => void> = [];
-let storageListenerRegistered = false;
 
 const notifyRefreshWaiters = (ok: boolean) => {
   if (refreshWaiters.length === 0) return;
@@ -299,41 +297,11 @@ const broadcastRefreshEvent = (event: Omit<RefreshEvent, 'sourceId'>) => {
   } catch (error) {
     console.warn('[apiRequest] Failed to broadcast refresh event via channel', error);
   }
-
-  try {
-    if (typeof window !== 'undefined' && window.localStorage) {
-      window.localStorage.setItem(REFRESH_STORAGE_KEY, JSON.stringify(payload));
-      window.localStorage.removeItem(REFRESH_STORAGE_KEY);
-    }
-  } catch (error) {
-    console.warn('[apiRequest] Failed to write refresh event to storage', error);
-  }
 };
 
 if (refreshChannel) {
   refreshChannel.addEventListener('message', (event) => handleExternalRefreshEvent(event.data));
 }
-
-const ensureRefreshStorageListener = () => {
-  if (storageListenerRegistered) return;
-  if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') {
-    return;
-  }
-  window.addEventListener('storage', (event) => {
-    if (event.key !== REFRESH_STORAGE_KEY || !event.newValue) {
-      return;
-    }
-    try {
-      const parsed = JSON.parse(event.newValue);
-      handleExternalRefreshEvent(parsed);
-    } catch (error) {
-      console.warn('[apiRequest] Failed to parse refresh storage event', error);
-    }
-  });
-  storageListenerRegistered = true;
-};
-
-ensureRefreshStorageListener();
 
 const waitForRefreshCompletion = (): Promise<boolean> => {
   if (!refreshInProgress) {

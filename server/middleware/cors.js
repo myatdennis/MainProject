@@ -9,15 +9,10 @@ const normalizeOrigins = (value = '') =>
 const NETLIFY_PREVIEW_REGEX = /^https:\/\/deploy-preview-\d+--the-huddleco\.netlify\.app$/i;
 
 const devDefaults = ['http://localhost:5174', 'http://127.0.0.1:5174', 'http://localhost:8888'];
-const prodDefaults = [
-  'https://the-huddle.co',
-  'https://www.the-huddle.co',
-  process.env.NETLIFY_SITE_URL,
-  process.env.DEPLOY_PRIME_URL,
-].filter(Boolean);
+const requiredProdOrigins = ['https://the-huddle.co', 'https://www.the-huddle.co'];
+const prodDefaults = requiredProdOrigins;
 
 const envOrigins = normalizeOrigins(process.env.CORS_ALLOWED_ORIGINS || '');
-const requiredProdOrigins = ['https://the-huddle.co', 'https://www.the-huddle.co'];
 const baseOrigins =
   envOrigins.length > 0 ? envOrigins : process.env.NODE_ENV === 'production' ? prodDefaults : devDefaults;
 
