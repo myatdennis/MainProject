@@ -458,7 +458,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   };
 
   const requestJsonWithClock = useCallback(
-    async <T>(path: string, options: Parameters<typeof apiRequestRaw>[1] = {}): Promise<T> => {
+    async <T,>(path: string, options: Parameters<typeof apiRequestRaw>[1] = {}): Promise<T> => {
       let response: Response;
       try {
         response = await apiRequestRaw(path, options);
