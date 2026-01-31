@@ -102,7 +102,7 @@ const postSnapshot = async (snapshot: ProgressSnapshot, { showFailureToast }: { 
       () =>
         apiRequest('/api/learner/progress', {
           method: 'POST',
-          body: JSON.stringify({
+          body: {
             userId: snapshot.userId,
             courseId: snapshot.courseId,
             lessonIds: snapshot.lessonIds,
@@ -113,7 +113,7 @@ const postSnapshot = async (snapshot: ProgressSnapshot, { showFailureToast }: { 
               totalTimeSeconds: snapshot.totalTimeSeconds,
               lastLessonId: snapshot.lastLessonId,
             },
-          }),
+          },
         }),
       {
         retryConfig: { maxAttempts: 3, delay: 800, backoffMultiplier: 2 },
@@ -193,7 +193,7 @@ const postProgressEvent = async (item: OfflineQueueItem): Promise<boolean> => {
       () =>
         apiRequest(endpoint, {
           method: 'POST',
-          body: JSON.stringify(payload),
+          body: payload,
         }),
       {
         retryConfig: { maxAttempts: 2, delay: 800, backoffMultiplier: 2 },

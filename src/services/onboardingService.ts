@@ -39,7 +39,7 @@ export interface OnboardingOrgResponse {
 export const createOnboardingOrg = async (payload: OnboardingOrgPayload): Promise<OnboardingOrgResponse> => {
   return apiRequest<OnboardingOrgResponse>('/api/admin/onboarding/orgs', {
     method: 'POST',
-    body: JSON.stringify(payload),
+    body: payload,
   });
 };
 
@@ -50,14 +50,14 @@ export const listOnboardingInvites = async (orgId: string) => {
 export const createOnboardingInvite = async (orgId: string, payload: InviteInput & { sendEmail?: boolean }) => {
   return apiRequest<{ data: any; duplicate?: boolean }>(`/api/admin/onboarding/${orgId}/invites`, {
     method: 'POST',
-    body: JSON.stringify(payload),
+    body: payload,
   });
 };
 
 export const bulkOnboardingInvites = async (orgId: string, invites: InviteInput[]) => {
   return apiRequest<{ results: Array<Record<string, any>> }>(`/api/admin/onboarding/${orgId}/invites/bulk`, {
     method: 'POST',
-    body: JSON.stringify({ invites }),
+    body: { invites },
   });
 };
 
@@ -82,6 +82,6 @@ export const getOnboardingProgress = async (orgId: string) => {
 export const updateOnboardingStep = async (orgId: string, step: string, status: 'pending' | 'in_progress' | 'completed' | 'blocked') => {
   return apiRequest<{ data: any }>(`/api/admin/onboarding/${orgId}/steps/${step}`, {
     method: 'PATCH',
-    body: JSON.stringify({ status }),
+    body: { status },
   });
 };

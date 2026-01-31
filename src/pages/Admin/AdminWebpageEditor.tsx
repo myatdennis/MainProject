@@ -39,7 +39,7 @@ const AdminWebpageEditor: React.FC = () => {
     api('/api/text-content', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(textItems)
+      body: textItems
     })
       .then(res => {
         if (!res.ok) throw new Error('Failed to save');

@@ -19,8 +19,8 @@ import {
 } from '../lib/secureStorage';
 import { loginSchema, emailSchema, registerSchema } from '../utils/validators';
 import { queueRefresh } from '../lib/refreshQueue';
-import api from '../lib/httpClient';
-import apiRequest, { ApiError } from '../utils/apiClient';
+import apiRequest, { ApiError, apiRequestRaw } from '../utils/apiClient';
+import buildSessionAuditHeaders from '../utils/sessionAuditHeaders';
 
 // MFA helpers
 
@@ -173,30 +173,6 @@ const logAuthSessionState = (contextLabel: string, session: UserSession | null) 
 
   console.info('[SecureAuth][DEV:auth-session]', summary);
 };
-
-// Automatically attach user metadata to auth requests for auditing/multi-tenant routing
-api.interceptors.request.use((config) => {
-  try {
-    const session = getUserSession();
-    if (session) {
-      config.headers = config.headers ?? {};
-      if (session.id && !config.headers['X-User-Id']) {
-        config.headers['X-User-Id'] = session.id;
-      }
-      if (session.role && !config.headers['X-User-Role']) {
-        config.headers['X-User-Role'] = session.role;
-      }
-      const preferredOrgId = session.activeOrgId || session.organizationId;
-      if (preferredOrgId && !config.headers['X-Org-Id']) {
-        config.headers['X-Org-Id'] = preferredOrgId;
-      }
-    }
-  } catch (error) {
-    console.warn('[SecureAuth] Failed to attach auth headers:', error);
-  }
-
-  return config;
-});
 
 // ============================================================================
 // Types
@@ -481,43 +457,139 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     return result;
   };
 
+  const requestJsonWithClock = useCallback(
+    async <T>(path: string, options: Parameters<typeof apiRequestRaw>[1] = {}): Promise<T> => {
+      let response: Response;
+      try {
+        response = await apiRequestRaw(path, options);
+      } catch (error) {
+        if (error instanceof ApiError) {
+          throw error;
+        }
+        const isAbort =
+          (error instanceof DOMException && error.name === 'AbortError') ||
+          (typeof error === 'object' && error !== null && (error as { name?: string }).name === 'AbortError');
+        if (isAbort || error instanceof TypeError) {
+          throw new ApiError('network_error', 0, typeof path === 'string' ? path : 'unknown', {
+            message: 'Network error—please try again.',
+          });
+        }
+        throw error;
+      }
+
+      captureServerClock(headersToRecord(response.headers));
+      const contentTypeHeader = response.headers.get('content-type');
+      const normalizedType = contentTypeHeader?.toLowerCase().trim() ?? '';
+      const rawBody = await response.clone().text().catch(() => '');
+      let payload: unknown = null;
+
+      if (!normalizedType || rawBody === '') {
+        payload = rawBody === '' ? null : rawBody;
+      } else if (normalizedType.includes('application/json')) {
+        try {
+          payload = JSON.parse(rawBody);
+        } catch {
+          throw new ApiError('invalid_json', response.status, response.url, rawBody || null);
+        }
+      } else {
+        payload = rawBody;
+      }
+
+      return payload as T;
+    },
+    [captureServerClock],
+  );
+
+  const [bootstrapError, setBootstrapError] = useState<string | null>(null);
+
   const fetchServerSession = useCallback(
     async ({ surface, signal }: { surface?: SessionSurface; signal?: AbortSignal } = {}): Promise<boolean> => {
+      const safeParsePayload = async (response: Response): Promise<SessionResponsePayload | null> => {
+        const contentType = response.headers.get('content-type') || '';
+        if (!contentType.includes('application/json')) {
+          return null;
+        }
+        try {
+          return (await response.json()) as SessionResponsePayload;
+        } catch {
+          return null;
+        }
+      };
+
       try {
-        const response = await apiRequest<Response>('/api/auth/session', {
+        const response = await apiRequestRaw('/api/auth/session', {
           method: 'GET',
-          rawResponse: true,
           signal,
         });
+        if (import.meta.env.DEV) {
+          const authHeader = response.headers.get('authorization') || '';
+          if (!authHeader) {
+            console.warn('[SecureAuth][dev] Session bootstrap response missing Authorization header.');
+          }
+        }
         captureServerClock(headersToRecord(response.headers));
-        const payload = (await response.json()) as SessionResponsePayload;
+        const payload = await safeParsePayload(response);
         if (payload?.user) {
           applySessionPayload(payload, {
             surface,
             persistTokens: false,
             reason: surface ? `${surface}_session_bootstrap` : 'session_bootstrap',
           });
+          setBootstrapError(null);
           return true;
         }
+        setBootstrapError('Your session could not be restored. Please log in again.');
         return false;
-      } catch (error) {
+      } catch (error: unknown) {
         if (error instanceof ApiError) {
           if (error.code === 'timeout') {
+            setBootstrapError('Network timeout while restoring your session. Please retry.');
             return false;
           }
           if (error.status === 401) {
+            setBootstrapError('Your session expired. Please log in again.');
+            setIsAuthenticated({ admin: false, lms: false });
+            setUser(null);
             return false;
           }
-        }
-        if (typeof axios.isCancel === 'function' && axios.isCancel(error)) {
+          setBootstrapError(
+            (error.body as { message?: string } | undefined)?.message ||
+              'Unable to restore your session. Please refresh.',
+          );
           return false;
         }
+        if (error instanceof DOMException && error.name === 'AbortError') {
+          setBootstrapError('Session check canceled. Please retry.');
+          return false;
+        }
+        if (typeof axios.isCancel === 'function' && axios.isCancel(error)) {
+          setBootstrapError('Session check canceled. Please retry.');
+          return false;
+        }
+        setBootstrapError('Network issue while restoring your session. Please check your connection and retry.');
         console.warn('[SecureAuth] Failed to reload session', error);
         return false;
       }
     },
     [applySessionPayload, captureServerClock],
   );
+
+  const retryBootstrap = useCallback(() => {
+    setBootstrapError(null);
+    fetchServerSession({ surface: 'admin' }).catch((error) => {
+      console.warn('[SecureAuth] Retry bootstrap failed', error);
+    });
+  }, [fetchServerSession]);
+
+  const goToLogin = useCallback(() => {
+    applySessionPayload(null, { persistTokens: true, reason: 'bootstrap_error_redirect' });
+    setBootstrapError(null);
+    if (typeof window !== 'undefined') {
+      const currentPath = window.location.pathname || '';
+      const redirectPath = currentPath.startsWith('/admin') ? '/admin/login' : '/login';
+      window.location.assign(redirectPath);
+    }
+  }, [applySessionPayload]);
 
   const reloadSession = useCallback(
     (options?: { surface?: SessionSurface; force?: boolean }): Promise<boolean> => {
@@ -579,15 +651,23 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         lastRefreshAttemptRef.current = now;
 
         try {
-          const response = await apiRequest<Response>('/api/auth/refresh', {
+          const response = await apiRequestRaw('/api/auth/refresh', {
             method: 'POST',
-            body: JSON.stringify({}),
-            rawResponse: true,
+            allowAnonymous: true,
+            headers: buildSessionAuditHeaders(),
+            body: { reason: options.reason ?? 'auto' },
           });
 
           captureServerClock(headersToRecord(response.headers));
 
-          const payload = (await response.json()) as SessionResponsePayload;
+          const contentType = response.headers.get('content-type') || '';
+          const payload = (contentType.includes('application/json')
+            ? ((await response.json()) as SessionResponsePayload | null)
+            : null) as SessionResponsePayload | null;
+
+          if (!response.ok) {
+            throw new ApiError(`Refresh failed with status ${response.status}`, response.status, response.url, payload);
+          }
 
           if (payload?.user) {
             applySessionPayload(payload, { persistTokens: true, reason: 'refresh_success' });
@@ -675,11 +755,11 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
   const logout = useCallback(async (type?: 'lms' | 'admin'): Promise<void> => {
     try {
-      await api.post(
-        '/auth/logout',
-        {},
-        { withCredentials: true },
-      );
+      await apiRequest('/api/auth/logout', {
+        method: 'POST',
+        body: {},
+        headers: buildSessionAuditHeaders(),
+      });
     } catch (error) {
       console.warn('[SecureAuth] Logout request failed (continuing with local cleanup)', error);
     } finally {
@@ -896,16 +976,19 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         };
       }
 
-      // Call login API (use relative path; axios instance already points to '/api')
-      const response = await api.post<SessionResponsePayload>('/auth/login', {
-        email: email.toLowerCase().trim(),
-        password,
-        mfaCode,
+      const payload = await requestJsonWithClock<SessionResponsePayload>('/api/auth/login', {
+        method: 'POST',
+        allowAnonymous: true,
+        headers: buildSessionAuditHeaders(),
+        body: {
+          email: email.toLowerCase().trim(),
+          password,
+          mfaCode,
+        },
       });
-      captureServerClock(response.headers as Record<string, any> | undefined);
 
       // If MFA required, backend should respond with mfaRequired
-      if (response.data.mfaRequired) {
+      if (payload?.mfaRequired) {
         return {
           success: false,
           mfaRequired: true,
@@ -914,34 +997,23 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         };
       }
 
-      applySessionPayload(response.data ?? null, {
+      applySessionPayload(payload ?? null, {
         surface: type,
         persistTokens: true,
         reason: `${type}_login_success`,
       });
 
-      if (type === 'admin' && response.data?.user) {
-        logAuditAction('admin_login', { email: response.data.user.email, id: response.data.user.id });
+      if (type === 'admin' && payload?.user) {
+        logAuditAction('admin_login', { email: payload.user.email, id: payload.user.id });
       }
 
       logAuthSessionState(`${type}-login_success`, getUserSession());
 
       return { success: true };
     } catch (error: any) {
-      // Enhanced error logging for debugging
-      if (axios.isAxiosError(error)) {
-        // Print status and response data for backend errors
-        if (error.response) {
-          // eslint-disable-next-line no-console
-          console.error('Login error:', {
-            status: error.response.status,
-            data: error.response.data,
-          });
-        } else {
-          // eslint-disable-next-line no-console
-          console.error('Login error: No response', error);
-        }
-        if (error.response?.data?.mfaRequired) {
+      if (error instanceof ApiError) {
+        const body = (error.body as { message?: string; mfaRequired?: boolean } | undefined) ?? {};
+        if (body.mfaRequired) {
           return {
             success: false,
             mfaRequired: true,
@@ -949,28 +1021,28 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             error: 'Multi-factor authentication required',
           };
         }
-        if (error.response?.status === 503) {
+        if (error.status === 503) {
           return {
             success: false,
             error: 'Authentication service is not configured. Please try again later.',
             errorType: 'network_error',
           };
         }
-        if (error.response?.status === 401) {
+        if (error.status === 401) {
           return {
             success: false,
             error: 'Invalid email or password',
             errorType: 'invalid_credentials',
           };
         }
-        if (error.response?.status === 429) {
+        if (error.status === 429) {
           return {
             success: false,
             error: 'Too many login attempts. Please try again later.',
             errorType: 'network_error',
           };
         }
-        if (!error.response) {
+        if (error.status === 0) {
           return {
             success: false,
             error: 'Network error. Please check your connection.',
@@ -978,16 +1050,17 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           };
         }
       } else {
-        // eslint-disable-next-line no-console
-        console.error('Login error (non-Axios):', error);
+        console.error('Login error (non-ApiError):', error);
       }
       return {
         success: false,
-        error: (error as any).response?.data?.message || 'Login failed. Please try again.',
+        error:
+          (error instanceof ApiError && (error.body as { message?: string } | undefined)?.message) ||
+          'Login failed. Please try again.',
         errorType: 'unknown_error',
       };
     }
-  }, [applySessionPayload]);
+  }, [applySessionPayload, requestJsonWithClock]);
 
   const register = useCallback(async (input: RegisterInput): Promise<RegisterResult> => {
     try {
@@ -1019,33 +1092,35 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         console.log('REGISTER payload', { ...payload, password: payload?.password ? '***' : payload?.password });
       }
 
-      const response = await api.post<SessionResponsePayload>('/auth/register', payload);
-      captureServerClock(response.headers as Record<string, any> | undefined);
-      applySessionPayload(response.data ?? null, { surface: 'lms', persistTokens: true, reason: 'register_success' });
+      const responsePayload = await requestJsonWithClock<SessionResponsePayload>('/api/auth/register', {
+        method: 'POST',
+        allowAnonymous: true,
+        headers: buildSessionAuditHeaders(),
+        body: payload,
+      });
+      applySessionPayload(responsePayload ?? null, { surface: 'lms', persistTokens: true, reason: 'register_success' });
 
       return { success: true };
     } catch (error) {
       console.error('Registration error:', error);
-      if (axios.isAxiosError(error)) {
-        const status = error.response?.status;
-        // Show backend error message if available
-        const backendMsg = error.response?.data?.message;
-        if (status === 409) {
+      if (error instanceof ApiError) {
+        const backendMsg = (error.body as { message?: string } | undefined)?.message;
+        if (error.status === 409) {
           return {
             success: false,
             error: backendMsg || 'An account with this email already exists.',
             errorType: 'invalid_credentials',
           };
         }
-        if (status === 503) {
+        if (error.status === 503) {
           return {
             success: false,
             error: backendMsg || 'Registration is unavailable in demo mode.',
             errorType: 'network_error',
           };
         }
-        if (status === 400) {
-          const details = (error.response?.data as { details?: Record<string, string> } | undefined)?.details;
+        if (error.status === 400) {
+          const details = (error.body as { details?: Record<string, string> } | undefined)?.details;
           return {
             success: false,
             error: backendMsg || 'Please review your information.',
@@ -1061,12 +1136,17 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         errorType: 'unknown_error',
       };
     }
-  }, [applySessionPayload]);
+  }, [applySessionPayload, requestJsonWithClock]);
 
   // Send MFA challenge (email code)
   const sendMfaChallenge = useCallback(async (email: string): Promise<boolean> => {
     try {
-      await api.post('/mfa/challenge', { email });
+      await apiRequest('/api/mfa/challenge', {
+        method: 'POST',
+        allowAnonymous: true,
+        headers: buildSessionAuditHeaders(),
+        body: { email },
+      });
       return true;
     } catch (e) {
       return false;
@@ -1076,12 +1156,17 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   // Verify MFA code
   const verifyMfa = useCallback(async (email: string, code: string): Promise<boolean> => {
     try {
-      const res = await api.post('/mfa/verify', { email, code });
-      return !!res.data.success;
+      const res = await requestJsonWithClock<{ success?: boolean }>('/api/mfa/verify', {
+        method: 'POST',
+        allowAnonymous: true,
+        headers: buildSessionAuditHeaders(),
+        body: { email, code },
+      });
+      return !!res?.success;
     } catch (e) {
       return false;
     }
-  }, []);
+  }, [requestJsonWithClock]);
 
   // ============================================================================
   // Forgot Password
@@ -1095,8 +1180,13 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         return false;
       }
 
-      await api.post('/auth/forgot-password', {
-        email: email.toLowerCase().trim(),
+      await apiRequest('/api/auth/forgot-password', {
+        method: 'POST',
+        allowAnonymous: true,
+        headers: buildSessionAuditHeaders(),
+        body: {
+          email: email.toLowerCase().trim(),
+        },
       });
 
       return true;
@@ -1132,8 +1222,53 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     loadSession,
   };
 
-  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={value}>
+      {bootstrapError ? (
+        <BootstrapErrorOverlay message={bootstrapError} onRetry={retryBootstrap} onGoToLogin={goToLogin} />
+      ) : (
+        children
+      )}
+    </AuthContext.Provider>
+  );
 }
+
+const BootstrapErrorOverlay = ({
+  message,
+  onRetry,
+  onGoToLogin,
+}: {
+  message: string;
+  onRetry: () => void;
+  onGoToLogin: () => void;
+}) => (
+  <div className="flex min-h-screen w-full items-center justify-center bg-slate-50 px-4 py-8">
+    <div className="w-full max-w-lg rounded-2xl border border-red-100 bg-white p-6 shadow-lg">
+      <div className="flex items-center gap-2 text-red-600">
+        <span className="text-base font-semibold uppercase tracking-wide">Session Error</span>
+      </div>
+      <p className="mt-4 text-sm text-gray-700" role="alert">
+        {message}
+      </p>
+      <div className="mt-6 flex flex-col gap-3 sm:flex-row">
+        <button
+          type="button"
+          className="inline-flex flex-1 items-center justify-center rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700"
+          onClick={onRetry}
+        >
+          Retry
+        </button>
+        <button
+          type="button"
+          className="inline-flex flex-1 items-center justify-center rounded-xl border border-gray-200 bg-white px-4 py-2 text-sm font-semibold text-gray-700 shadow-sm transition hover:bg-gray-50"
+          onClick={onGoToLogin}
+        >
+          Go to login
+        </button>
+      </div>
+    </div>
+  </div>
+);
 
 // ============================================================================
 // Hook

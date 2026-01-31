@@ -22,7 +22,7 @@ describe('apiClient case transforms', () => {
       await rawApiRequest('/dummy', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ moduleId: 'abc', orderIndex: 2, content: { type: 'text', body: { keepThisKey: true } } }),
+        body: { moduleId: 'abc', orderIndex: 2, content: { type: 'text', body: { keepThisKey: true } } },
       });
 
       expect(bodySeen[0]).toHaveProperty('module_id', 'abc');

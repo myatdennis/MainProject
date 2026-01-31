@@ -4,8 +4,7 @@
  */
 
 import { useState, useEffect } from 'react';
-import axios from 'axios';
-import { resolveApiUrl } from '../config/apiBase';
+import { ApiError, apiRequest } from '../utils/apiClient';
 
 const CSRF_COOKIE_NAME = 'csrf_token';
 
@@ -31,15 +30,35 @@ export function useCSRFToken() {
           return;
         }
 
-  // If not in cookie, fetch from server (server exposes '/api/auth/csrf')
-  const response = await axios.get(resolveApiUrl('/api/auth/csrf'), {
-    withCredentials: true,
-  });
-        if (response.data.csrfToken) {
-          setToken(response.data.csrfToken);
+        if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+          // Offline: keep current token/cookie and exit silently.
+          return;
+        }
+
+        try {
+          const response = await apiRequest<{ csrfToken?: string; token?: string }>('/api/auth/csrf', {
+            method: 'GET',
+            allowAnonymous: true,
+            timeoutMs: 4000,
+          });
+
+          const csrfToken = response?.csrfToken ?? response?.token ?? null;
+          if (csrfToken) {
+            setToken(csrfToken);
+          }
+        } catch (error) {
+          if (import.meta.env?.DEV) {
+            if (error instanceof ApiError) {
+              console.warn('Failed to fetch CSRF token (ApiError):', error.status, error.body);
+            } else {
+              console.warn('Failed to fetch CSRF token:', error);
+            }
+          }
         }
       } catch (error) {
-        console.error('Failed to fetch CSRF token:', error);
+        if (import.meta.env?.DEV) {
+          console.warn('Failed to fetch CSRF token:', error);
+        }
       } finally {
         setLoading(false);
       }
@@ -55,10 +74,6 @@ export function useCSRFToken() {
 
   return { token, loading };
 }
-
-// ============================================================================
-// Helper Functions
-// ============================================================================
 
 /**
  * Get CSRF token from cookie

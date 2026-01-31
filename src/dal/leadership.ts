@@ -68,7 +68,7 @@ export const generateRecommendations = async (
 ): Promise<ApiListResponse<LeadershipRecommendation>> => {
   const json = await request<ApiListResponse<LeadershipRecommendation>>(`${basePath}/${organizationId}/recommendations`, {
     method: 'POST',
-    body: JSON.stringify(payload ?? {}),
+    body: payload ?? {},
   });
   // Map org_id to organizationId for frontend consistency
   if (json.data) {
@@ -83,7 +83,7 @@ export const updateRecommendation = async (
 ): Promise<LeadershipRecommendation> => {
   const json = await request<{ data: LeadershipRecommendation }>(`${basePath}/recommendations/${recommendationId}`, {
     method: 'PATCH',
-    body: JSON.stringify(patch),
+    body: patch,
   });
   // Map org_id to organizationId for frontend consistency
   return { ...json.data, organizationId: (json.data as any).organization_id ?? (json.data as any).orgId ?? (json.data as any).organizationId };

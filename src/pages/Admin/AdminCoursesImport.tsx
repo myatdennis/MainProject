@@ -224,7 +224,7 @@ const AdminCoursesImport: React.FC = () => {
       const payload = { items };
       const res = await apiRequest<{ data: Array<{ id: string; slug?: string; title: string }> }>(
         '/api/admin/courses/import',
-        { method: 'POST', body: JSON.stringify(payload), noTransform: true }
+        { method: 'POST', body: payload, noTransform: true }
       );
       const count = Array.isArray((res as any)?.data) ? (res as any).data.length : items.length;
       showToast(`Imported ${count} course(s) successfully`, 'success');

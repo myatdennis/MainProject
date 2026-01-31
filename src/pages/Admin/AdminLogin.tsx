@@ -6,7 +6,7 @@ import { loginSchema, emailSchema } from '../../utils/validators';
 import { sanitizeText } from '../../utils/sanitize';
 import useRuntimeStatus from '../../hooks/useRuntimeStatus';
 import type { RuntimeStatus } from '../../state/runtimeStatus';
-import api from '../../lib/httpClient';
+import apiRequest, { ApiError } from '../../utils/apiClient';
 
 interface AdminCapabilityResponse {
   user?: Record<string, any>;
@@ -40,6 +40,8 @@ const AdminLogin: React.FC = () => {
   const [mfaEmail, setMfaEmail] = useState('');
   const [mfaError, setMfaError] = useState('');
   const [authError, setAuthError] = useState('');
+  const [capabilityFallbackActive, setCapabilityFallbackActive] = useState(false);
+  const [capabilityRetrying, setCapabilityRetrying] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
   const landingLogRef = useRef(false);
@@ -99,21 +101,26 @@ const AdminLogin: React.FC = () => {
 
   const verifyAdminCapability = async (): Promise<CapabilityCheckResult> => {
     try {
-      const response = await api.get<AdminCapabilityResponse>('/admin/me', { validateStatus: () => true });
-      if (response.status === 200 && response.data?.access?.allowed) {
-        return { allowed: true, user: response.data.user };
+      const response = await apiRequest<AdminCapabilityResponse>('/api/admin/me');
+      if (response?.access?.allowed) {
+        return { allowed: true, user: response.user };
       }
-      const reason = response.data?.access?.reason || response.data?.error || response.data?.message || 'not_authorized';
+      const reason = response?.access?.reason || response?.error || response?.message || 'not_authorized';
       return { allowed: false, reason };
     } catch (capabilityError) {
+      let fallbackReason = 'admin_capability_error';
+      if (capabilityError instanceof ApiError) {
+        const body = capabilityError.body as AdminCapabilityResponse | undefined;
+        fallbackReason = body?.access?.reason || body?.error || body?.message || fallbackReason;
+      }
       console.warn('[AdminLogin] capability check failed, falling back to session endpoint', capabilityError);
       try {
-        const fallback = await api.get('/auth/session', { validateStatus: () => true });
-        const user = fallback.data?.user;
-        if (fallback.status === 200 && user?.isPlatformAdmin) {
+        const fallback = await apiRequest<{ user?: Record<string, any> }>('/api/auth/session');
+        const user = fallback?.user;
+        if (user?.isPlatformAdmin) {
           return { allowed: true, user };
         }
-        return { allowed: false, reason: 'not_authorized' };
+        return { allowed: false, reason: fallbackReason };
       } catch (sessionError) {
         console.error('[AdminLogin] capability fallback failed', sessionError);
       }
@@ -183,12 +190,46 @@ const AdminLogin: React.FC = () => {
     );
   }
 
+  const handleCapabilityGate = useCallback(async () => {
+    setCapabilityFallbackActive(false);
+    const capability = await verifyAdminCapability();
+    if (capability.allowed) {
+      navigateToAdminLanding({ replace: true });
+      return true;
+    }
+    if (capability.reason === 'admin_capability_error') {
+      setAuthError('We couldn’t confirm admin access due to a network issue.');
+      setCapabilityFallbackActive(true);
+      return false;
+    }
+    setAuthError(capabilityErrorMessage(capability.reason));
+    return false;
+  }, [navigateToAdminLanding, verifyAdminCapability, capabilityErrorMessage]);
+
+  const handleRetryCapability = useCallback(async () => {
+    setCapabilityRetrying(true);
+    try {
+      await handleCapabilityGate();
+    } finally {
+      setCapabilityRetrying(false);
+    }
+  }, [handleCapabilityGate]);
+
+  const handleRefreshPage = () => {
+    window.location.reload();
+  };
+
+  const handleContinueToDashboard = () => {
+    navigateToAdminLanding({ replace: true });
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     setError('');
     setValidationErrors({});
     setAuthError('');
+    setCapabilityFallbackActive(false);
 
     // Validate inputs
     const validation = loginSchema.safeParse({ email, password });
@@ -207,15 +248,30 @@ const AdminLogin: React.FC = () => {
     const sanitizedEmail = sanitizeText(email);
     const sanitizedPassword = sanitizeText(password);
 
-    const result = await login(sanitizedEmail, sanitizedPassword, 'admin');
+    let result;
+    try {
+      result = await login(sanitizedEmail, sanitizedPassword, 'admin');
+    } catch (loginError) {
+      console.warn('[AdminLogin] login request failed', loginError);
+      if (loginError instanceof ApiError) {
+        if (loginError.status === 401) {
+          setError('Invalid email or password. Please try again.');
+        } else if (loginError.status === 403) {
+          setAuthError('Your account is not authorized for the Admin Portal.');
+        } else {
+          const friendlyMessage =
+            (loginError.body as { message?: string } | undefined)?.message || 'Unable to sign in right now.';
+          setError(friendlyMessage);
+        }
+      } else {
+        setError('Something went wrong—try again.');
+      }
+      setIsLoading(false);
+      return;
+    }
     setIsLoading(false);
     if (result.success) {
-      const capability = await verifyAdminCapability();
-        if (capability.allowed) {
-          navigateToAdminLanding({ replace: true });
-        } else {
-        setAuthError(capabilityErrorMessage(capability.reason));
-      }
+      await handleCapabilityGate();
     } else if (result.mfaRequired) {
       setMfaRequired(true);
       setMfaEmail(result.mfaEmail || sanitizedEmail);
@@ -237,13 +293,10 @@ const AdminLogin: React.FC = () => {
       const result = await login(mfaEmail, password, 'admin', mfaCode);
       setIsLoading(false);
       if (result.success) {
-        const capability = await verifyAdminCapability();
-        if (capability.allowed) {
+        const allowed = await handleCapabilityGate();
+        if (allowed) {
           setMfaRequired(false);
           setMfaCode('');
-          navigateToAdminLanding({ replace: true });
-        } else {
-          setMfaError(capabilityErrorMessage(capability.reason));
         }
       } else {
         setMfaError(result.error || 'Login failed after MFA.');
@@ -298,9 +351,40 @@ const AdminLogin: React.FC = () => {
 
         <div className="card">
           {(error || authError) && (
-            <div className="mb-6 p-4 bg-deepred/10 border border-deepred rounded-lg flex items-center space-x-2" role="alert">
-              <AlertTriangle className="h-5 w-5 text-deepred" />
-              <span className="text-deepred text-small">{authError || error}</span>
+            <div className="mb-6 p-4 bg-deepred/10 border border-deepred rounded-lg" role="alert">
+              <div className="flex items-center space-x-2">
+                <AlertTriangle className="h-5 w-5 text-deepred" />
+                <span className="text-deepred text-small">{authError || error}</span>
+              </div>
+              {capabilityFallbackActive && (
+                <div className="mt-4 flex flex-wrap gap-3">
+                  <button
+                    type="button"
+                    className="inline-flex items-center justify-center rounded-lg bg-sunrise text-charcoal font-semibold px-4 py-2 text-sm transition hover:brightness-95 disabled:opacity-70"
+                    onClick={handleRetryCapability}
+                    disabled={capabilityRetrying}
+                  >
+                    {capabilityRetrying ? 'Retrying…' : 'Retry'}
+                  </button>
+                  {isAuthenticated.admin ? (
+                    <button
+                      type="button"
+                      className="inline-flex items-center justify-center rounded-lg border border-slate text-charcoal px-4 py-2 text-sm hover:bg-slate/10"
+                      onClick={handleContinueToDashboard}
+                    >
+                      Continue to dashboard
+                    </button>
+                  ) : (
+                    <button
+                      type="button"
+                      className="inline-flex items-center justify-center rounded-lg border border-slate text-charcoal px-4 py-2 text-sm hover:bg-slate/10"
+                      onClick={handleRefreshPage}
+                    >
+                      Refresh page
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           )}
 

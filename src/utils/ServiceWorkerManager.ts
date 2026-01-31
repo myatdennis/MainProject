@@ -1,14 +1,25 @@
 import { toast } from 'react-hot-toast';
 
+const devLog = (...args: unknown[]) => {
+  if (import.meta.env?.DEV) {
+    // eslint-disable-next-line no-console
+    console.log(...args);
+  }
+};
+
 export interface ServiceWorkerConfig {
   onUpdate?: (registration: ServiceWorkerRegistration) => void;
   onSuccess?: (registration: ServiceWorkerRegistration) => void;
   onOfflineReady?: () => void;
+  onError?: (error: unknown) => void;
 }
 
 class ServiceWorkerManager {
   private registration: ServiceWorkerRegistration | null = null;
   private config: ServiceWorkerConfig = {};
+  private updateFailureCount = 0;
+  private readonly MAX_UPDATE_FAILURES = 3;
+  private updateAccepted = false;
 
   async register(config: ServiceWorkerConfig = {}): Promise<void> {
     this.config = config;
@@ -21,8 +32,9 @@ class ServiceWorkerManager {
         this.registration = await navigator.serviceWorker.register(swUrl, {
           scope: '/'
         });
+        this.updateFailureCount = 0;
 
-        console.log('[SW] Service worker registered:', this.registration);
+        devLog('[SW] Service worker registered:', this.registration);
 
         // Set up event listeners
         this.setupEventListeners();
@@ -37,14 +49,10 @@ class ServiceWorkerManager {
 
       } catch (error) {
         console.error('[SW] Service worker registration failed:', error);
-        
-        toast.error('Offline features unavailable', {
-          duration: 5000,
-          position: 'bottom-right'
-        });
+        this.handleError(error);
       }
     } else {
-      console.log('[SW] Service workers not supported');
+      devLog('[SW] Service workers not supported');
     }
   }
 
@@ -60,11 +68,11 @@ class ServiceWorkerManager {
         if (installingWorker.state === 'installed') {
           if (navigator.serviceWorker.controller) {
             // New update available
-            console.log('[SW] New content available');
+            devLog('[SW] New content available');
             this.handleUpdate();
           } else {
             // Content is cached for offline use
-            console.log('[SW] Content is cached for offline use');
+            devLog('[SW] Content is cached for offline use');
             if (this.config.onOfflineReady) {
               this.config.onOfflineReady();
             } else {
@@ -80,7 +88,7 @@ class ServiceWorkerManager {
 
     // Listen for messages from service worker
     navigator.serviceWorker.addEventListener('message', (event) => {
-      console.log('[SW] Message from service worker:', event.data);
+      devLog('[SW] Message from service worker:', event.data);
       
       if (event.data && event.data.type === 'CACHE_UPDATED') {
         toast('New data cached', {
@@ -92,35 +100,46 @@ class ServiceWorkerManager {
 
     // Listen for controlled state changes
     navigator.serviceWorker.addEventListener('controllerchange', () => {
-      console.log('[SW] Controller changed, reloading page');
-      window.location.reload();
+      devLog('[SW] Controller changed');
+      if (this.updateAccepted) {
+        window.location.reload();
+        return;
+      }
+
+      toast.custom((t) => (
+        <div className="bg-charcoal text-white px-4 py-3 rounded shadow-lg flex flex-col gap-2 w-80">
+          <div>
+            <p className="text-sm font-semibold">Update ready</p>
+            <p className="text-xs text-white/80">Refresh when you’re done editing.</p>
+          </div>
+          <div className="flex gap-2 justify-end">
+            <button
+              className="px-3 py-1 text-sm rounded bg-sunrise text-charcoal font-semibold"
+              onClick={() => {
+                toast.dismiss(t.id);
+                this.applyUpdate(this.registration);
+              }}
+            >
+              Refresh
+            </button>
+          </div>
+        </div>
+      ), { duration: 120000, position: 'bottom-right' });
     });
   }
 
   private handleUpdate(): void {
-    if (this.config.onUpdate && this.registration) {
-      this.config.onUpdate(this.registration);
-    } else {
-      // Default update handling
-      const shouldUpdate = confirm(
-        'A new version of the admin portal is available. Reload to update?'
-      );
-      
-      if (shouldUpdate) {
-        this.skipWaiting();
-      } else {
-        toast('Update available - refresh to get the latest version', {
-          duration: 10000,
-          position: 'bottom-right'
-        });
+    if (this.registration) {
+      if (this.config.onUpdate) {
+        this.config.onUpdate(this.registration);
+        return;
       }
+      this.promptUpdate(this.registration);
     }
   }
 
   async skipWaiting(): Promise<void> {
-    if (this.registration?.waiting) {
-      this.registration.waiting.postMessage({ type: 'SKIP_WAITING' });
-    }
+    await this.applyUpdate();
   }
 
   private async checkForUpdates(): Promise<void> {
@@ -129,6 +148,7 @@ class ServiceWorkerManager {
         await this.registration.update();
       } catch (error) {
         console.error('[SW] Update check failed:', error);
+        this.handleError(error);
       }
     }
   }
@@ -136,10 +156,82 @@ class ServiceWorkerManager {
   async unregister(): Promise<boolean> {
     if (this.registration) {
       const result = await this.registration.unregister();
-      console.log('[SW] Service worker unregistered:', result);
+      devLog('[SW] Service worker unregistered:', result);
       return result;
     }
     return false;
+  }
+
+  promptUpdate(registration: ServiceWorkerRegistration): void {
+    toast.custom((t) => (
+      <div className="bg-charcoal text-white px-4 py-3 rounded shadow-lg flex flex-col gap-2 w-80">
+        <div>
+          <p className="text-sm font-semibold">Update available</p>
+          <p className="text-xs text-white/80">Refresh to load the newest admin experience.</p>
+        </div>
+        <div className="flex gap-2 justify-end">
+          <button
+            className="px-3 py-1 text-sm rounded border border-white/40 text-white hover:bg-white/10"
+            onClick={() => toast.dismiss(t.id)}
+          >
+            Later
+          </button>
+          <button
+            className="px-3 py-1 text-sm rounded bg-sunrise text-charcoal font-semibold"
+            onClick={() => {
+              toast.dismiss(t.id);
+              this.applyUpdate(registration);
+            }}
+          >
+            Refresh
+          </button>
+        </div>
+      </div>
+    ), { duration: 10000, position: 'bottom-right' });
+  }
+
+  async applyUpdate(registration: ServiceWorkerRegistration | null = this.registration): Promise<void> {
+    if (!registration?.waiting) {
+      this.incrementUpdateFailure(new Error('No waiting service worker found.'));
+      return;
+    }
+
+    try {
+      this.updateAccepted = true;
+      registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+      setTimeout(() => {
+        window.location.reload();
+      }, 150);
+    } catch (error) {
+      this.incrementUpdateFailure(error);
+    }
+  }
+
+  private incrementUpdateFailure(error: unknown): void {
+    this.updateFailureCount += 1;
+    console.warn('[SW] Update attempt failed', error);
+    if (this.updateFailureCount >= this.MAX_UPDATE_FAILURES) {
+      toast.error('Offline caching disabled temporarily. Reloading…', {
+        duration: 6000,
+        position: 'bottom-right',
+      });
+      this.unregister()
+        .then(() => window.location.reload())
+        .catch((cleanupError) => console.error('[SW] Failed to unregister after repeated failures', cleanupError));
+      return;
+    }
+    this.handleError(error);
+  }
+
+  private handleError(error: unknown): void {
+    if (this.config.onError) {
+      this.config.onError(error);
+      return;
+    }
+    toast.error('Service worker issue detected. Please refresh.', {
+      duration: 5000,
+      position: 'bottom-right',
+    });
   }
 
   async forceCleanup(): Promise<void> {

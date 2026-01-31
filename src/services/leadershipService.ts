@@ -63,7 +63,7 @@ export const leadershipService = {
     if (!orgId) throw new Error('orgId required');
     const json = await apiRequest<ApiListResponse<LeadershipRecommendation>>(`${basePath}/${orgId}/recommendations`, {
       method: 'POST',
-      body: JSON.stringify(payload ?? {}),
+      body: payload ?? {},
     });
     return json;
   },
@@ -72,7 +72,7 @@ export const leadershipService = {
     if (!recommendationId) throw new Error('recommendationId required');
     const json = await apiRequest<{ data: LeadershipRecommendation }>(`${basePath}/recommendations/${recommendationId}`, {
       method: 'PATCH',
-      body: JSON.stringify(patch),
+      body: patch,
     });
     return json.data;
   },

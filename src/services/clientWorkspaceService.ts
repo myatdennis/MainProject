@@ -105,7 +105,7 @@ export const addStrategicPlanVersion = async (
 ): Promise<StrategicPlanVersion> => {
   const json = await apiFetch<{ data: any }>(`/api/orgs/${orgId}/workspace/strategic-plans`, {
     method: 'POST',
-    body: JSON.stringify({ content, createdBy, metadata })
+    body: { content, createdBy, metadata }
   });
 
   return mapStrategicPlan(json.data);
@@ -145,7 +145,7 @@ export const addSessionNote = async (
 
   const json = await apiFetch<{ data: any }>(`/api/orgs/${orgId}/workspace/session-notes`, {
     method: 'POST',
-    body: JSON.stringify(payload)
+    body: payload
   });
 
   return mapSessionNote(json.data);
@@ -168,7 +168,7 @@ export const addActionItem = async (orgId: string, item: Omit<ActionItem, 'id' |
 
   const json = await apiFetch<{ data: any }>(`/api/orgs/${orgId}/workspace/action-items`, {
     method: 'POST',
-    body: JSON.stringify(payload)
+    body: payload
   });
 
   return mapActionItem(json.data);
@@ -186,7 +186,7 @@ export const updateActionItem = async (orgId: string, item: ActionItem) => {
 
   const json = await apiFetch<{ data: any }>(`/api/orgs/${orgId}/workspace/action-items/${item.id}`, {
     method: 'PUT',
-    body: JSON.stringify(payload)
+    body: payload
   });
 
   return mapActionItem(json.data);

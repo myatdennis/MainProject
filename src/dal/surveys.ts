@@ -123,7 +123,7 @@ export async function listSurveys(): Promise<Survey[]> {
 export async function saveSurvey(survey: Survey) {
   const json = await request<{ data: SurveyApiRecord }>('/api/admin/surveys', {
     method: 'POST',
-    body: JSON.stringify(buildSurveyPayload(survey)),
+    body: buildSurveyPayload(survey),
   });
 
   return mapSurveyRecord(json.data);
@@ -139,7 +139,7 @@ export async function updateSurvey(id: string, patch: SurveyPatch) {
 
   const json = await request<{ data: SurveyApiRecord }>(`/api/admin/surveys/${id}`, {
     method: 'PUT',
-    body: JSON.stringify(payload),
+    body: payload,
   });
 
   return mapSurveyRecord(json.data);

@@ -168,7 +168,7 @@ const AnalyticsDashboard: React.FC = () => {
       setSummaryPreview(null)
       const json = await apiRequest<any>('/api/admin/analytics/summary', {
         method: 'POST',
-        body: JSON.stringify({}),
+        body: {},
         noTransform: true,
       })
       const preview = JSON.stringify(json?.sample || json?.ai || json?.prompt, null, 2)

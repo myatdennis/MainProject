@@ -41,7 +41,7 @@ const getInvite = async (token: string) => {
 const acceptInvite = async (token: string, payload: AcceptInvitePayload) => {
   return apiRequest<{ data: AcceptInviteResponse }>(`/api/invite/${token}/accept`, {
     method: 'POST',
-    body: JSON.stringify(payload),
+    body: payload,
   });
 };
 

@@ -933,7 +933,7 @@ ${content.type === 'quiz' && 'questions' in content.content ? `\nQuestions: ${co
           `/api/admin/courses/${encodeURIComponent(formData.id)}/publish`,
           {
             method: 'POST',
-            body: JSON.stringify(payload),
+            body: payload,
           },
         );
         const saved = result?.data || null;

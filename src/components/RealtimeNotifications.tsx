@@ -20,6 +20,7 @@ import {
   type Notification as LearnerNotification,
 } from '../dal/notifications';
 import { wsClient } from '../dal/wsClient';
+import { useToast } from '../context/ToastContext';
 
 type NotificationCategory = 'course_assigned' | 'progress_sync' | 'achievement' | 'announcement' | 'reminder' | 'generic';
 type NotificationPriority = 'low' | 'medium' | 'high';
@@ -181,6 +182,7 @@ const RealtimeNotifications: React.FC<RealtimeNotificationsProps> = ({
   refreshIntervalMs = DEFAULT_REFRESH_MS,
 }) => {
   const { user, authInitializing } = useSecureAuth();
+  const { showToast } = useToast();
   const normalizedOverride = useMemo(
     () => (overrideUserId ? String(overrideUserId).trim().toLowerCase() : undefined),
     [overrideUserId]
@@ -196,6 +198,8 @@ const RealtimeNotifications: React.FC<RealtimeNotificationsProps> = ({
   const [refreshing, setRefreshing] = useState(false);
   const [markingAll, setMarkingAll] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pendingDeleteNotification, setPendingDeleteNotification] = useState<DisplayNotification | null>(null);
+  const [deletingNotification, setDeletingNotification] = useState(false);
 
   const unreadCount = useMemo(() => notifications.filter(notification => !notification.read).length, [notifications]);
 
@@ -319,6 +323,25 @@ const RealtimeNotifications: React.FC<RealtimeNotificationsProps> = ({
   const dismissNotification = useCallback((id: string) => {
     setNotifications(prev => prev.filter(entry => entry.id !== id));
   }, []);
+
+  const requestNotificationDelete = useCallback((notification: DisplayNotification) => {
+    setPendingDeleteNotification(notification);
+  }, []);
+
+  const confirmNotificationDelete = useCallback(async () => {
+    if (!pendingDeleteNotification) return;
+    setDeletingNotification(true);
+    try {
+      dismissNotification(pendingDeleteNotification.id);
+      showToast('Deleted notification.', 'success');
+      setPendingDeleteNotification(null);
+    } catch (error) {
+      console.error('Failed to delete notification', error);
+      showToast('Unable to delete notification. Please try again.', 'error');
+    } finally {
+      setDeletingNotification(false);
+    }
+  }, [dismissNotification, pendingDeleteNotification, showToast]);
 
   const handleActionClick = useCallback(
     (notification: DisplayNotification) => {
@@ -473,10 +496,11 @@ const RealtimeNotifications: React.FC<RealtimeNotificationsProps> = ({
                               </button>
                             )}
                             <button
-                              onClick={() => dismissNotification(notification.id)}
-                              className="p-1 text-gray-400 hover:text-charcoal focus:outline-none focus:ring-2 focus:ring-sunrise rounded-full"
-                              title="Dismiss notification"
-                              aria-label="Dismiss notification"
+                              onClick={() => requestNotificationDelete(notification)}
+                              className="p-1 text-gray-400 hover:text-charcoal focus:outline-none focus:ring-2 focus:ring-sunrise rounded-full disabled:opacity-60 disabled:cursor-not-allowed"
+                              title="Delete notification"
+                              aria-label="Delete notification"
+                              disabled={deletingNotification && pendingDeleteNotification?.id === notification.id}
                             >
                               <X className="w-4 h-4" />
                             </button>
@@ -508,6 +532,37 @@ const RealtimeNotifications: React.FC<RealtimeNotificationsProps> = ({
           <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} aria-label="Close notifications dropdown background" />
         )}
       </div>
+      <AnimatePresence>
+        {pendingDeleteNotification && (
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-4">
+            <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
+              <h3 className="text-lg font-semibold text-gray-900">Confirm delete</h3>
+              <p className="mt-3 text-sm text-gray-600">
+                Delete “{pendingDeleteNotification.title}” for workspace{' '}
+                {user?.activeOrgId || user?.organizationId || 'this account'}? This action cannot be undone.
+              </p>
+              <div className="mt-6 flex flex-col gap-2 sm:flex-row sm:justify-end">
+                <button
+                  type="button"
+                  className="inline-flex items-center justify-center rounded-xl border border-gray-200 px-4 py-2 text-sm font-semibold text-gray-700 transition hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={() => setPendingDeleteNotification(null)}
+                  disabled={deletingNotification}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="inline-flex items-center justify-center rounded-xl bg-red-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-red-700 disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={() => void confirmNotificationDelete()}
+                  disabled={deletingNotification}
+                >
+                  {deletingNotification ? 'Deleting…' : 'Delete'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </AnimatePresence>
     </>
   );
 };

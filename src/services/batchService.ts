@@ -96,7 +96,7 @@ export async function flushProgress() {
   try {
     const res = await apiRequest<{ accepted: string[]; duplicates?: string[]; failed?: Array<{ id: string; reason: string }> }>(
       '/api/client/progress/batch',
-      { method: 'POST', body: JSON.stringify({ events: batch }), timeoutMs: 10000 }
+      { method: 'POST', body: { events: batch }, timeoutMs: 10000 }
     );
     // On partial failure, requeue failed items with backoff
     const failed = (res.failed || []).map((f) => f.id);
@@ -125,7 +125,7 @@ export async function flushAnalytics() {
   try {
     const res = await apiRequest<{ accepted: string[]; duplicates?: string[]; failed?: Array<{ id: string; reason: string }> }>(
       '/api/analytics/events/batch',
-      { method: 'POST', body: JSON.stringify({ events: batch }), timeoutMs: 10000 }
+      { method: 'POST', body: { events: batch }, timeoutMs: 10000 }
     );
     const failed = (res.failed || []).map((f) => f.id);
     if (failed.length > 0) {

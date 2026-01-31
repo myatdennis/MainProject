@@ -146,7 +146,7 @@ export const analyticsApiClient = {
     try {
       await apiRequest('/api/analytics/events', {
         method: 'POST',
-        body: JSON.stringify({
+        body: {
           id: event.id,
           user_id: event.userId && event.userId !== 'system' ? event.userId : null,
           course_id: event.courseId ?? null,
@@ -156,7 +156,7 @@ export const analyticsApiClient = {
           session_id: event.sessionId,
           user_agent: event.userAgent,
           payload: event.data,
-        }),
+        },
       });
     } catch (error) {
       handleAnalyticsFailure(error, { skipped: true }, 'persistEvent', {
@@ -169,7 +169,7 @@ export const analyticsApiClient = {
     try {
       await apiRequest('/api/analytics/journeys', {
         method: 'POST',
-        body: JSON.stringify({
+        body: {
           user_id: journey.userId,
           course_id: journey.courseId,
           journey: {
@@ -184,7 +184,7 @@ export const analyticsApiClient = {
             dropOffPoints: journey.dropOffPoints,
             pathTaken: journey.pathTaken,
           },
-        }),
+        },
       });
     } catch (error) {
       handleAnalyticsFailure(error, { skipped: true }, 'persistJourney', {

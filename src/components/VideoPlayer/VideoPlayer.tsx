@@ -160,7 +160,7 @@ export default function VideoPlayer({ src, userId, lessonId, captions = [], clas
       try {
         await apiRequest('/api/analytics/events', {
           method: 'POST',
-          body: JSON.stringify(payload),
+          body: payload,
         });
       } catch (e) {
         // ignore network errors; offline queue handles elsewhere
@@ -191,7 +191,7 @@ export default function VideoPlayer({ src, userId, lessonId, captions = [], clas
           try {
             await apiRequest('/api/client/progress/lesson', {
               method: 'POST',
-              body: JSON.stringify(body),
+              body,
             });
           } catch (e) {
             try {

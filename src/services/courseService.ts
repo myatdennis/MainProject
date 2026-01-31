@@ -469,7 +469,7 @@ export class CourseService {
 
     await apiRequest(endpoint, {
       method,
-      body: JSON.stringify(body),
+      body,
     });
   }
 
@@ -491,7 +491,7 @@ export class CourseService {
     const parsed = parseWithValidation(moduleSchema, input, 'module');
     const response = await apiRequest<{ data: ModuleDto }>('/api/admin/modules', {
       method: 'POST',
-      body: JSON.stringify(parsed),
+      body: parsed,
     });
     return response.data;
   }
@@ -500,7 +500,7 @@ export class CourseService {
     const parsed = parseWithValidation(modulePatchSchema, patch, 'module');
     const response = await apiRequest<{ data: ModuleDto }>(`/api/admin/modules/${moduleId}`, {
       method: 'PATCH',
-      body: JSON.stringify(parsed),
+      body: parsed,
     });
     return response.data;
   }
@@ -516,7 +516,7 @@ export class CourseService {
     const parsed = parseWithValidation(lessonSchema, input, 'lesson');
     const response = await apiRequest<{ data: LessonDto }>('/api/admin/lessons', {
       method: 'POST',
-      body: JSON.stringify(parsed),
+      body: parsed,
     });
     return response.data;
   }
@@ -525,7 +525,7 @@ export class CourseService {
     const parsed = parseWithValidation(lessonPatchSchema, patch, 'lesson');
     const response = await apiRequest<{ data: LessonDto }>(`/api/admin/lessons/${lessonId}`, {
       method: 'PATCH',
-      body: JSON.stringify(parsed),
+      body: parsed,
     });
     return response.data;
   }
@@ -558,7 +558,7 @@ export class CourseService {
 
     const response = await apiRequest<{ data: ModuleDto[] }>('/api/admin/modules/reorder', {
       method: 'POST',
-      body: JSON.stringify(parsed),
+      body: parsed,
     });
 
     return response.data;
@@ -585,7 +585,7 @@ export class CourseService {
 
     const response = await apiRequest<{ data: LessonDto[] }>('/api/admin/lessons/reorder', {
       method: 'POST',
-      body: JSON.stringify(parsed),
+      body: parsed,
     });
 
     return response.data;

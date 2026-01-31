@@ -22,11 +22,17 @@ import type {
 
 type Role = "admin" | "member";
 
+type MembershipContext = {
+  orgId: string;
+  role: Role;
+};
+
 interface RequestContext {
   userId: string | null;
   role: Role | null;
   orgId: string | null;
   authorization: string | null;
+  memberships: MembershipContext[];
 }
 
 const corsHeaders: Record<string, string> = {
@@ -65,39 +71,103 @@ const decodeJwt = (token: string): Record<string, unknown> | null => {
   }
 };
 
-const getContext = (req: Request): RequestContext => {
+const normalizeRole = (value: unknown): Role | null => {
+  if (typeof value !== "string") return null;
+  const lowered = value.toLowerCase();
+  if (lowered === "admin" || lowered === "member") {
+    return lowered as Role;
+  }
+  return null;
+};
+
+const fetchMemberships = async (userId: string): Promise<MembershipContext[]> => {
+  const { data, error } = await supabase
+    .from("organization_memberships")
+    .select("org_id, role")
+    .eq("user_id", userId);
+
+  if (error) {
+    console.error("Failed to load organization memberships", error);
+    return [];
+  }
+
+  return (data ?? [])
+    .map((row) => {
+      if (typeof row.org_id !== "string") return null;
+      const role = normalizeRole(row.role);
+      if (!role) return null;
+      return { orgId: row.org_id, role };
+    })
+    .filter((entry): entry is MembershipContext => Boolean(entry));
+};
+
+const getContext = async (req: Request): Promise<RequestContext> => {
   const headers = req.headers;
-  let userId = headers.get("x-user-id");
-  let role = headers.get("x-user-role")?.toLowerCase() as Role | null;
-  const orgId = headers.get("x-org-id");
   const authorization = headers.get("authorization");
+  let userId: string | null = null;
+  let roleFromToken: Role | null = null;
+  let claims: Record<string, unknown> | null = null;
 
   if (authorization?.startsWith("Bearer ")) {
-    const claims = decodeJwt(authorization.slice(7));
-    if (!userId && typeof claims?.sub === "string") {
+    claims = decodeJwt(authorization.slice(7));
+    if (typeof claims?.sub === "string") {
       userId = claims.sub;
     }
-    if (!role) {
-      const claimRole = claims?.role ?? claims?.user_role ?? (claims?.app_metadata as Record<string, unknown> | undefined)?.role;
-      if (typeof claimRole === "string") {
-        const lowered = claimRole.toLowerCase();
-        if (lowered === "admin" || lowered === "member") {
-          role = lowered;
-        }
-      }
+    const claimRole =
+      claims?.role ??
+      claims?.user_role ??
+      (claims?.app_metadata as Record<string, unknown> | undefined)?.role ??
+      (claims?.appRoles as string[] | undefined)?.[0];
+    roleFromToken = normalizeRole(claimRole);
+  }
+
+  const memberships = userId ? await fetchMemberships(userId) : [];
+  const requestedOrgId = headers.get("x-org-id");
+  let resolvedOrgId: string | null = null;
+  let membershipRole: Role | null = null;
+
+  if (requestedOrgId) {
+    const match = memberships.find((membership) => membership.orgId === requestedOrgId);
+    if (match) {
+      resolvedOrgId = match.orgId;
+      membershipRole = match.role;
     }
   }
 
-  if (role !== "admin" && role !== "member") {
-    role = null;
+  if (!resolvedOrgId && memberships.length === 1) {
+    resolvedOrgId = memberships[0].orgId;
+    membershipRole = memberships[0].role;
+  }
+
+  if (!membershipRole && resolvedOrgId) {
+    const match = memberships.find((membership) => membership.orgId === resolvedOrgId);
+    if (match) {
+      membershipRole = match.role;
+    }
   }
 
   return {
     userId: userId ?? null,
-    role,
-    orgId: orgId ?? null,
+    role: membershipRole ?? roleFromToken ?? null,
+    orgId: resolvedOrgId,
     authorization: authorization ?? null,
+    memberships,
   };
+};
+
+const ensureOrgAccess = (
+  ctx: RequestContext,
+  requestedOrgId?: string | null,
+): { orgId: string; membership: MembershipContext } | Response => {
+  const target = requestedOrgId ?? ctx.orgId;
+  if (!target) {
+    return errorJson(403, "ORG_ACCESS_REQUIRED", "You must select an organization you belong to.");
+  }
+  const membership = ctx.memberships.find((entry) => entry.orgId === target);
+  if (!membership) {
+    return errorJson(403, "ORG_ACCESS_DENIED", "You do not have access to this organization.");
+  }
+  return { orgId: membership.orgId, membership };
 };
 
 const slugify = (value: string) =>
@@ -193,16 +263,23 @@ const mapCourse = (row: Record<string, any>): CourseDto => {
 
 const requireUser = (ctx: RequestContext) => {
   if (!ctx.userId) {
-    return errorJson(401, "UNAUTHENTICATED", "Missing user context. Supply Authorization or X-User-Id header.");
+    return errorJson(401, "UNAUTHENTICATED", "Missing user context. Supply a valid Authorization header.");
   }
   return null;
 };
 
-const requireRole = (ctx: RequestContext, roles: Role[]) => {
-  if (!ctx.role || !roles.includes(ctx.role)) {
-    return errorJson(403, "FORBIDDEN", "You do not have permission to perform this action.");
+const requireRole = (ctx: RequestContext, roles: Role[], options?: { orgId?: string | null }) => {
+  const targetOrgId = options?.orgId ?? ctx.orgId;
+  if (targetOrgId) {
+    const membership = ctx.memberships.find((entry) => entry.orgId === targetOrgId);
+    if (membership && roles.includes(membership.role)) {
+      return null;
+    }
   }
-  return null;
+  if (ctx.role && roles.includes(ctx.role)) {
+    return null;
+  }
+  return errorJson(403, "FORBIDDEN", "You do not have permission to perform this action.");
 };
 
 const handleDbError = (error: any) => {
@@ -353,16 +430,14 @@ const listCourses = async (ctx: RequestContext) => {
   const authError = requireUser(ctx) ?? requireRole(ctx, ["admin", "member"]);
   if (authError) return authError;
 
-  let query = supabase
+  const access = ensureOrgAccess(ctx);
+  if (access instanceof Response) return access;
+
+  const { data, error } = await supabase
     .from("courses")
     .select("id, name, title, slug, organization_id, created_by, created_at, updated_at, status")
+    .eq("organization_id", access.orgId)
     .order("created_at", { ascending: false });
-
-  if (ctx.orgId) {
-    query = query.eq("organization_id", ctx.orgId);
-  }
-
-  const { data, error } = await query;
   if (error) return handleDbError(error);
 
   const normalized = (data ?? []).map(mapCourse);
@@ -387,14 +462,16 @@ const createCourse = async (req: Request, ctx: RequestContext) => {
   }
 
   const slug = slugInput || slugify(nameInput);
-  const organizationId = (payload.org_id ?? ctx.orgId ?? null) as string | null;
+  const requestedOrgId = (payload.org_id ?? ctx.orgId ?? null) as string | null;
+  const access = ensureOrgAccess(ctx, requestedOrgId);
+  if (access instanceof Response) return access;
 
   const insertPayload = {
     id: payload.id ?? undefined,
     name: nameInput,
     title: payload.title ? payload.title.toString() : nameInput,
     slug,
-    organization_id: organizationId,
+    organization_id: access.orgId,
     description: payload.description ?? null,
     status: payload.status ?? "draft",
     created_by: ctx.userId,
@@ -540,7 +617,10 @@ const createOrganization = async (req: Request, ctx: RequestContext) => {
 };
 
 const upsertMembership = async (req: Request, ctx: RequestContext, orgId: string) => {
-  const authError = requireUser(ctx) ?? requireRole(ctx, ["admin"]);
+  const access = ensureOrgAccess(ctx, orgId);
+  if (access instanceof Response) return access;
+
+  const authError = requireUser(ctx) ?? requireRole(ctx, ["admin"], { orgId: access.orgId });
   if (authError) return authError;
 
   const body = await readJson<Record<string, any>>(req);
@@ -560,7 +640,7 @@ const upsertMembership = async (req: Request, ctx: RequestContext, orgId: string
     .upsert(
       [
         {
-          org_id: orgId,
+          org_id: access.orgId,
           user_id: userId,
           role,
         },
@@ -575,13 +655,16 @@ const upsertMembership = async (req: Request, ctx: RequestContext, orgId: string
 };
 
 const getWorkspaceOverview = async (ctx: RequestContext, orgId: string) => {
-  const authError = requireUser(ctx) ?? requireRole(ctx, ["admin", "member"]);
+  const access = ensureOrgAccess(ctx, orgId);
+  if (access instanceof Response) return access;
+
+  const authError = requireUser(ctx) ?? requireRole(ctx, ["admin", "member"], { orgId: access.orgId });
   if (authError) return authError;
 
   const { data, error } = await supabase
     .from("org_workspace_strategic_plans")
     .select("id, org_id, content, created_by, created_at, updated_at")
-    .eq("org_id", orgId)
+    .eq("org_id", access.orgId)
     .order("created_at", { ascending: false });
 
   if (error) return handleDbError(error);
@@ -589,7 +672,10 @@ const getWorkspaceOverview = async (ctx: RequestContext, orgId: string) => {
 };
 
 const createWorkspacePlan = async (req: Request, ctx: RequestContext, orgId: string) => {
-  const authError = requireUser(ctx) ?? requireRole(ctx, ["admin", "member"]);
+  const access = ensureOrgAccess(ctx, orgId);
+  if (access instanceof Response) return access;
+
+  const authError = requireUser(ctx) ?? requireRole(ctx, ["admin", "member"], { orgId: access.orgId });
   if (authError) return authError;
 
   const body = await readJson<Record<string, any>>(req);
@@ -606,7 +692,7 @@ const createWorkspacePlan = async (req: Request, ctx: RequestContext, orgId: str
     .from("org_workspace_strategic_plans")
     .insert([
       {
-        org_id: orgId,
+        org_id: access.orgId,
         content,
         created_by: body.createdBy ?? ctx.userId,
       },
@@ -619,13 +705,16 @@ const createWorkspacePlan = async (req: Request, ctx: RequestContext, orgId: str
 };
 
 const deleteWorkspacePlan = async (ctx: RequestContext, orgId: string, planId: string) => {
-  const authError = requireUser(ctx) ?? requireRole(ctx, ["admin", "member"]);
+  const access = ensureOrgAccess(ctx, orgId);
+  if (access instanceof Response) return access;
+
+  const authError = requireUser(ctx) ?? requireRole(ctx, ["admin", "member"], { orgId: access.orgId });
   if (authError) return authError;
 
   const { error } = await supabase
     .from("org_workspace_strategic_plans")
     .delete()
-    .eq("org_id", orgId)
+    .eq("org_id", access.orgId)
     .eq("id", planId);
 
   if (error) return handleDbError(error);
@@ -646,13 +735,17 @@ const createNotification = async (req: Request, ctx: RequestContext) => {
     return errorJson(400, "VALIDATION_ERROR", "title is required");
   }
 
+  const requestedOrgId = (body.orgId ?? body.org_id ?? ctx.orgId ?? null) as string | null;
+  const access = ensureOrgAccess(ctx, requestedOrgId);
+  if (access instanceof Response) return access;
+
   const { data, error } = await supabase
     .from("notifications")
     .insert([
       {
         title,
         body: body.body ?? null,
-        org_id: body.orgId ?? body.org_id ?? ctx.orgId,
+        org_id: access.orgId,
         user_id: ctx.userId,
       },
     ])
@@ -667,6 +760,31 @@ const markNotificationRead = async (ctx: RequestContext, notificationId: string)
   const authError = requireUser(ctx) ?? requireRole(ctx, ["admin", "member"]);
   if (authError) return authError;
 
+  const { data: notification, error: fetchError } = await supabase
+    .from("notifications")
+    .select("id, org_id")
+    .eq("id", notificationId)
+    .maybeSingle();
+
+  if (fetchError) return handleDbError(fetchError);
+  if (!notification) return errorJson(404, "NOT_FOUND", "Notification not found.");
+
+  const notificationOrgId = notification.org_id ?? null;
+  const isPlatformAdmin = ctx.role === "admin" && ctx.memberships.length === 0;
+  if (notificationOrgId) {
+    const access = ensureOrgAccess(ctx, notificationOrgId);
+    if (access instanceof Response) {
+      console.warn("[notifications] org mismatch on mark read", {
+        notificationId,
+        userId: ctx.userId,
+        orgId: notificationOrgId,
+      });
+      if (!isPlatformAdmin) {
+        return access;
+      }
+    }
+  }
+
   const { error } = await supabase
     .from("notifications")
     .update({ read: true })
@@ -679,6 +797,31 @@ const markNotificationRead = async (ctx: RequestContext, notificationId: string)
 const deleteNotification = async (ctx: RequestContext, notificationId: string) => {
   const authError = requireUser(ctx) ?? requireRole(ctx, ["admin"]);
   if (authError) return authError;
+
+  const { data: notification, error: fetchError } = await supabase
+    .from("notifications")
+    .select("id, org_id")
+    .eq("id", notificationId)
+    .maybeSingle();
+
+  if (fetchError) return handleDbError(fetchError);
+  if (!notification) return errorJson(404, "NOT_FOUND", "Notification not found.");
+
+  const notificationOrgId = notification.org_id ?? null;
+  const isPlatformAdmin = ctx.role === "admin" && ctx.memberships.length === 0;
+  if (notificationOrgId) {
+    const access = ensureOrgAccess(ctx, notificationOrgId);
+    if (access instanceof Response) {
+      console.warn("[notifications] org mismatch on delete", {
+        notificationId,
+        userId: ctx.userId,
+        orgId: notificationOrgId,
+      });
+      if (!isPlatformAdmin) {
+        return access;
+      }
+    }
+  }
 
   const { error } = await supabase
     .from("notifications")
@@ -705,7 +848,7 @@ const getLearnerProgress = async (url: URL, ctx: RequestContext) => {
 
   const userId = ctx.userId;
   if (!userId) {
-    return errorJson(401, "UNAUTHENTICATED", "Missing user context. Supply Authorization or X-User-Id header.");
+    return errorJson(401, "UNAUTHENTICATED", "Missing user context. Supply a valid Authorization header.");
   }
 
   const courseResponse = await supabase
@@ -1268,7 +1411,7 @@ Deno.serve(async (req) => {
   const url = new URL(req.url);
   const pathname = url.pathname;
   const method = req.method.toUpperCase();
-  const ctx = getContext(req);
+  const ctx = await getContext(req);
 
   try {
     if (pathname === "/api/health" && method === "GET") {

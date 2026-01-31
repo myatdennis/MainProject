@@ -33,7 +33,7 @@ describe('apiClient key transform', () => {
   it('transforms outgoing body to snake_case by default', async () => {
     const spy = vi.spyOn(global, 'fetch').mockResolvedValueOnce(buildResponse({ ok: true }));
     const body = { courseId: 'A', orderIndex: 2, content: { type: 'video', body: { helloWorld: true } } };
-    await apiRequest('/out', { method: 'POST', body: JSON.stringify(body) });
+    await apiRequest('/out', { method: 'POST', body });
 
     expect(spy).toHaveBeenCalledTimes(1);
     const arg = spy.mock.calls[0][1] as RequestInit;

@@ -54,13 +54,13 @@ export const listNotifications = async (opts?: { organizationId?: string; userId
 export const addNotification = async (notification: Omit<Notification, 'id' | 'createdAt'>) => {
   const json = await apiFetch<{ data: any }>('/api/admin/notifications', {
     method: 'POST',
-    body: JSON.stringify({
+    body: {
       title: notification.title,
       body: notification.body,
       organization_id: notification.organizationId,
       userId: notification.userId,
       read: notification.read ?? false
-    })
+    }
   });
 
   return mapNotification(json.data);
@@ -69,7 +69,7 @@ export const addNotification = async (notification: Omit<Notification, 'id' | 'c
 export const markNotificationRead = async (id: string, read = true) => {
   const json = await apiFetch<{ data: any }>(`/api/admin/notifications/${id}/read`, {
     method: 'POST',
-    body: JSON.stringify({ read })
+    body: { read }
   });
 
   return mapNotification(json.data);

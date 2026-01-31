@@ -494,7 +494,7 @@ Certificate Verification: Visit our verification portal and enter code ${certifi
     try {
       const saved = await apiFetch<{ data: any }>(`/api/client/certificates/${certificate.courseId}`, {
         method: 'POST',
-        body: JSON.stringify({
+        body: {
           id: certificate.id,
           user_id: certificate.userId,
           pdf_url: certificate.certificateUrl,
@@ -510,7 +510,7 @@ Certificate Verification: Visit our verification portal and enter code ${certifi
             status: certificate.status,
             details: certificate.metadata
           }
-        })
+        }
       });
       if (saved?.data?.id) {
         certificate.id = saved.data.id;

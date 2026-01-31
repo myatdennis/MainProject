@@ -131,7 +131,7 @@ export const saveSurvey = async (survey: Survey) => {
 
   const json = await apiFetch<{ data: any }>('/api/admin/surveys', {
     method: 'POST',
-    body: JSON.stringify(payload)
+    body: payload
   });
 
   return mapSurveyRecord(json.data);

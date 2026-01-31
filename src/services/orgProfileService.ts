@@ -207,7 +207,7 @@ export const getOrgProfile = async (orgId: string): Promise<OrgProfileBundle> =>
 export const upsertOrgProfile = async (orgId: string, payload: OrgProfileUpdatePayload): Promise<OrgProfileBundle> => {
   const json = await apiRequest<{ data: any }>(`/api/admin/org-profiles/${orgId}`, {
     method: 'PUT',
-    body: JSON.stringify(payload),
+    body: payload,
   });
   return mapBundle(json.data);
 };
@@ -223,7 +223,7 @@ export const removeOrgProfile = async (orgId: string): Promise<void> => {
 export const createOrgContact = async (orgId: string, input: OrgContactInput): Promise<OrgContact> => {
   const json = await apiRequest<{ data: any }>(`/api/admin/org-profiles/${orgId}/contacts`, {
     method: 'POST',
-    body: JSON.stringify(input),
+    body: input,
   });
   return mapContact(json.data);
 };
@@ -235,7 +235,7 @@ export const updateOrgContact = async (
 ): Promise<OrgContact> => {
   const json = await apiRequest<{ data: any }>(`/api/admin/org-profiles/${orgId}/contacts/${contactId}`, {
     method: 'PUT',
-    body: JSON.stringify(input),
+    body: input,
   });
   return mapContact(json.data);
 };

@@ -3,7 +3,8 @@ import { Link, Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../../context/AuthContext';
 import LoadingSpinner from '../ui/LoadingSpinner';
 import Button from '../ui/Button';
-import api from '../../lib/httpClient';
+import apiRequest, { ApiError } from '../../utils/apiClient';
+import buildSessionAuditHeaders from '../../utils/sessionAuditHeaders';
 
 type AuthMode = 'admin' | 'lms';
 
@@ -272,49 +273,64 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
       setAdminGateError(null);
       logGuardEvent('admin_gate_check', { reason });
 
-      api
-        .get<AdminCapabilityPayload>('/admin/me', {
-          signal: controller.signal,
-          validateStatus: () => true,
-        })
-        .then((response) => {
+      apiRequest<AdminCapabilityPayload>('/api/admin/me', {
+        signal: controller.signal,
+        headers: buildSessionAuditHeaders(),
+      })
+        .then((payload) => {
           if (controller.signal.aborted) {
             return;
           }
 
-          if (response.status === 200 && response.data) {
-            setAdminCapability({ status: 'granted', payload: response.data });
-            logGuardEvent('admin_capability_granted', {
-              via: response.data?.access?.via ?? 'unknown',
-              adminOrgs: response.data?.user?.adminOrgIds?.length ?? 0,
-            });
-            applyServerActiveOrg(response.data?.user?.activeOrgId ?? null);
-            setAdminGateStatus('allowed');
-            setAdminGateError(null);
+          const access = payload?.access;
+          const user = payload?.user;
+
+          if (!access || !user) {
+            setAdminCapability({ status: 'error', payload: payload ?? null, reason: 'malformed_payload' });
+            logGuardEvent('admin_capability_error', { reason: 'malformed_payload' });
+            setAdminGateStatus('error');
+            setAdminGateError('malformed_payload');
             return;
           }
 
-          const reasonCode = response.data?.access?.reason || response.data?.error || `status_${response.status}`;
-          if (response.status === 401 || response.status === 403) {
-            setAdminCapability({ status: 'denied', payload: response.data ?? null, reason: reasonCode });
-            logGuardEvent('admin_capability_denied', { reason: reasonCode });
-            setAdminGateStatus('unauthorized');
-            setAdminGateError(reasonCode);
-          } else {
-            setAdminCapability({ status: 'error', payload: response.data ?? null, reason: reasonCode });
-            logGuardEvent('admin_capability_error', { reason: reasonCode });
-            setAdminGateStatus('error');
-            setAdminGateError(reasonCode);
-          }
+          setAdminCapability({ status: 'granted', payload });
+          logGuardEvent('admin_capability_granted', {
+            via: access.via ?? 'unknown',
+            adminOrgs: user?.adminOrgIds?.length ?? 0,
+          });
+          applyServerActiveOrg(user?.activeOrgId ?? null);
+          setAdminGateStatus('allowed');
+          setAdminGateError(null);
         })
         .catch((error) => {
-          if (
-            (error && typeof error === 'object' && 'code' in error && (error as { code?: string }).code === 'ERR_CANCELED') ||
-            controller.signal.aborted
-          ) {
+          if (controller.signal.aborted) {
             return;
           }
-          const reasonCode = error instanceof Error ? error.message : 'admin_capability_failed';
+
+          if (error instanceof ApiError) {
+            const body = (error.body ?? null) as AdminCapabilityPayload | { message?: string } | null;
+            const reasonCode =
+              body?.access?.reason ||
+              (typeof body?.message === 'string' ? body.message : null) ||
+              (body && typeof (body as { error?: string }).error === 'string' ? (body as { error?: string }).error : null) ||
+              `status_${error.status}`;
+
+            if (error.status === 401 || error.status === 403) {
+              setAdminCapability({ status: 'denied', payload: body ?? null, reason: reasonCode });
+              logGuardEvent('admin_capability_denied', { reason: reasonCode });
+              setAdminGateStatus('unauthorized');
+              setAdminGateError(reasonCode);
+            } else {
+              setAdminCapability({ status: 'error', payload: body ?? null, reason: reasonCode });
+              logGuardEvent('admin_capability_error', { reason: reasonCode });
+              setAdminGateStatus('error');
+              setAdminGateError(reasonCode);
+            }
+            return;
+          }
+
+          const reasonCode =
+            error instanceof Error ? `unexpected_${error.name ?? 'error'}` : 'unexpected_admin_capability_failure';
           console.warn('[RequireAuth] Admin capability fetch failed', error);
           setAdminCapability({ status: 'error', payload: null, reason: reasonCode });
           logGuardEvent('admin_capability_error', { reason: reasonCode });

@@ -225,7 +225,7 @@ export const getOrg = async (id: string): Promise<Org | null> => {
 export const createOrg = async (payload: Partial<Org>): Promise<Org> => {
   const json = await apiRequest<{ data: any }>('/api/admin/organizations', {
     method: 'POST',
-    body: JSON.stringify(payload)
+    body: payload
   });
   return mapOrgRecord(json.data);
 };
@@ -233,7 +233,7 @@ export const createOrg = async (payload: Partial<Org>): Promise<Org> => {
 export const updateOrg = async (id: string, patch: Partial<Org>): Promise<Org> => {
   const json = await apiRequest<{ data: any }>(`/api/admin/organizations/${id}`, {
     method: 'PUT',
-    body: JSON.stringify(patch)
+    body: patch
   });
   return mapOrgRecord(json.data);
 };
@@ -298,7 +298,7 @@ export const addOrgMember = async (
 ): Promise<OrgMember> => {
   const json = await apiRequest<{ data: any }>(`/api/admin/organizations/${organizationId}/members`, {
     method: 'POST',
-    body: JSON.stringify(payload)
+    body: payload,
   });
 
   return mapMemberRecord(json.data);
