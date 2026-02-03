@@ -15,8 +15,8 @@ const asJson = (headers: Record<string, string> = {}) => ({
   ...headers,
 });
 
-const adminContextHeaders = () => ({
-  ...asJson(createAdminAuthHeaders()),
+const adminContextHeaders = async () => ({
+  ...asJson(await createAdminAuthHeaders()),
   'x-user-id': 'integration-admin',
   'x-user-role': 'admin',
 });
@@ -37,7 +37,7 @@ describe('Server demo-mode behavior', () => {
     const slug = `demo-${randomUUID()}`;
     const createRes = await server!.fetch('/api/admin/courses', {
       method: 'POST',
-      headers: adminContextHeaders(),
+      headers: await adminContextHeaders(),
       body: JSON.stringify({
         course: {
           title: `Integration Course ${slug}`,
@@ -52,7 +52,7 @@ describe('Server demo-mode behavior', () => {
     expect(created).toHaveProperty('data.id');
 
     const adminList = await server!.fetch('/api/admin/courses', {
-      headers: adminContextHeaders(),
+      headers: await adminContextHeaders(),
     });
     expect(adminList.status).toBe(200);
     const adminJson = await adminList.json();
@@ -88,7 +88,7 @@ describe('Server demo-mode behavior', () => {
   });
 
   it('allows admin access when a signed cookie supplies the access token', async () => {
-    const adminAuth = createAdminAuthHeaders();
+    const adminAuth = await createAdminAuthHeaders();
     const token = adminAuth.Authorization?.replace(/^Bearer\s+/i, '') ?? '';
     expect(token).not.toHaveLength(0);
     const cookieHeader = `${authCookieNames.access || 'access_token'}=${token}`;
@@ -105,7 +105,7 @@ describe('Server demo-mode behavior', () => {
 
   it('rejects admin route access for authenticated non-admin users', async () => {
     const res = await server!.fetch('/api/admin/courses', {
-      headers: asJson(createMemberAuthHeaders({ userId: 'member-user', email: 'member@tests.local' })),
+      headers: asJson(await createMemberAuthHeaders({ userId: 'member-user', email: 'member@tests.local' })),
     });
     expect(res.status).toBe(403);
     const body = await res.json();
@@ -117,7 +117,7 @@ describe('Server demo-mode behavior', () => {
     const createCourse = async (slug: string) => {
       const res = await server!.fetch('/api/admin/courses', {
         method: 'POST',
-        headers: adminContextHeaders(),
+        headers: await adminContextHeaders(),
         body: JSON.stringify({ course: { title: slug, slug }, modules: [] }),
       });
       expect([200, 201]).toContain(res.status);
@@ -128,7 +128,7 @@ describe('Server demo-mode behavior', () => {
     const assignToOrg = async (courseId: string, orgId: string) => {
       const res = await server!.fetch(`/api/admin/courses/${courseId}/assign`, {
         method: 'POST',
-        headers: adminContextHeaders(),
+        headers: await adminContextHeaders(),
         body: JSON.stringify({ organization_id: orgId, user_ids: [] }),
       });
       expect(res.status).toBe(201);

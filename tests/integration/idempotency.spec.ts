@@ -22,7 +22,7 @@ describe('Idempotency keys (integration)', () => {
 
     const res1 = await server!.fetch('/api/admin/courses', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...createAdminAuthHeaders() },
+      headers: { 'Content-Type': 'application/json', ...(await createAdminAuthHeaders()) },
       body: JSON.stringify(body),
     });
     expect([200, 201]).toContain(res1.status);
@@ -32,7 +32,7 @@ describe('Idempotency keys (integration)', () => {
     // Retry with same idempotency key should be treated as duplicate
     const res2 = await server!.fetch('/api/admin/courses', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...createAdminAuthHeaders() },
+      headers: { 'Content-Type': 'application/json', ...(await createAdminAuthHeaders()) },
       body: JSON.stringify(body),
     });
     const json2 = await res2.json();

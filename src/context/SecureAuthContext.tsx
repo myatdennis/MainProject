@@ -673,8 +673,10 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         const payload = await parseSessionPayload(response);
 
         if (response.status === 401 || response.status === 403) {
-          handleSessionUnauthorized({ silent: true, reason: 'bootstrap_unauthenticated' });
-          setBootstrapError(null);
+          applySessionPayload(null, { persistTokens: true, reason: 'bootstrap_unauthenticated' });
+          setBootstrapError('Your session expired. Please sign in again.');
+          setAuthStatus('error');
+          lastSessionFetchResultRef.current = 'unauthenticated';
           logSessionResult('unauthenticated');
           return;
         }
@@ -693,7 +695,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           setBootstrapError(null);
           logSessionResult('authenticated');
         } else {
-          handleSessionUnauthorized({ reason: 'bootstrap_empty' });
+          applySessionPayload(null, { persistTokens: true, reason: 'bootstrap_empty' });
+          setBootstrapError('We could not restore your session. Please try again.');
+          setAuthStatus('error');
           logSessionResult('empty');
         }
       } catch (error) {
@@ -702,8 +706,10 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           return;
         }
         if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
-          handleSessionUnauthorized({ silent: true, reason: 'bootstrap_unauthenticated' });
-          setBootstrapError(null);
+          applySessionPayload(null, { persistTokens: true, reason: 'bootstrap_unauthenticated' });
+          setBootstrapError('Your session expired. Please sign in again.');
+          setAuthStatus('error');
+          lastSessionFetchResultRef.current = 'unauthenticated';
           logSessionResult('unauthenticated');
           return;
         }
@@ -813,7 +819,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   // Token Refresh
   // ============================================================================
 
-  const refreshToken = useCallback(
+  const refreshTokenCallback = useCallback(
     async (options: RefreshOptions = {}): Promise<boolean> => {
       const reason: RefreshReason = options.reason ?? 'protected_401';
 
@@ -1280,7 +1286,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     login,
     register,
     logout,
-    refreshToken,
+    refreshToken: refreshTokenCallback,
     forgotPassword,
     sendMfaChallenge,
     verifyMfa,

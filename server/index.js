@@ -49,6 +49,7 @@ import {
   optionalAuthenticate,
   resolveUserRole,
 } from './middleware/auth.js';
+import { supabaseJwtMiddleware } from './middleware/supabaseJwt.js';
 import { setDoubleSubmitCSRF, getCSRFToken } from './middleware/csrf.js';
 import adminUsersRouter from './routes/admin-users.js';
 import mfaRoutes from './routes/mfa.js';
@@ -971,6 +972,7 @@ const ensureAuthenticatedForHandler = (req, res) => {
 };
 
 app.use('/api', apiLimiter);
+app.use('/api', supabaseJwtMiddleware);
 app.use('/api', (req, res, next) => {
   const path = req.path || '/';
   if (shouldBypassApiAuth(path, req.method)) {

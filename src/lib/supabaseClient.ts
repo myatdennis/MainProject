@@ -1,214 +1,40 @@
-import { createClient } from '@supabase/supabase-js';
-import type { SupabaseClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 
-export const hasSupabaseConfig = Boolean(supabaseUrl && supabaseAnonKey);
+let supabase: SupabaseClient | null = null;
+let warnedMissingConfig = false;
 
-export class SupabaseConfigError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'SupabaseConfigError';
-  }
+function hasConfig() {
+  return Boolean(supabaseUrl && supabaseAnonKey);
 }
 
-const missingConfigMessage = 'Supabase credentials are missing. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to enable syncing.';
-let missingConfigLogged = false;
-
-let supabaseClient: SupabaseClient | null = null;
-let initError: Error | null = null;
-
-const realtimeDefaults = {
-  params: {
-    eventsPerSecond: 10,
-  },
-};
-
-function throwMissingSupabase(action?: string): never {
-  const context = action ? ` (attempted ${action})` : '';
-  const errorMessage = `${missingConfigMessage}${context}`;
-  const error = new SupabaseConfigError(errorMessage);
-  initError = error;
-  if (!missingConfigLogged) {
-    console.error('[supabaseClient] ' + errorMessage);
-    missingConfigLogged = true;
-  }
-  throw error;
-}
-
-export function ensureSupabaseConfigured(action?: string): void {
-  if (hasSupabaseConfig) return;
-  throwMissingSupabase(action);
-}
-
-async function hydrateClient(): Promise<SupabaseClient | null> {
-  if (!hasSupabaseConfig) {
-    if (!missingConfigLogged) {
-      console.warn('[supabaseClient] ' + missingConfigMessage + ' (skipping initialization)');
-      missingConfigLogged = true;
-    }
-    if (!(initError instanceof SupabaseConfigError)) {
-      initError = new SupabaseConfigError(missingConfigMessage);
+async function initClient(): Promise<SupabaseClient | null> {
+  if (!hasConfig()) {
+    if (import.meta.env.DEV && !warnedMissingConfig) {
+      console.warn('[supabaseClient] Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY');
+      warnedMissingConfig = true;
     }
     return null;
   }
 
-  if (supabaseClient) return supabaseClient;
+  if (supabase) return supabase;
 
-  try {
-    supabaseClient = createClient(supabaseUrl, supabaseAnonKey, {
-      auth: {
-        persistSession: true,
-        detectSessionInUrl: true,
-        autoRefreshToken: true,
-      },
-      db: {
-        schema: 'public',
-      },
-      realtime: realtimeDefaults,
-    });
-    initError = null;
-  } catch (error) {
-    initError = error instanceof Error ? error : new Error(String(error));
-    supabaseClient = null;
-    if (import.meta.env.DEV) {
-      console.error('[supabaseClient] Failed to initialize client:', initError.message);
-    }
-  }
-  return supabaseClient;
+  supabase = createClient(supabaseUrl, supabaseAnonKey, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+    },
+  });
+
+  return supabase;
 }
 
 export async function getSupabase(): Promise<SupabaseClient | null> {
-  return hydrateClient();
+  return initClient();
 }
 
-export async function getSupabaseClient(): Promise<SupabaseClient | null> {
-  return hydrateClient();
-}
+export { supabase };
 
-export function getSupabaseSync(): SupabaseClient | null {
-  return supabaseClient;
-}
-
-export function getSupabaseStatus() {
-  if (!hasSupabaseConfig) {
-    return { status: 'disabled', reason: 'missing-env', message: missingConfigMessage } as const;
-  }
-  if (initError) {
-    return { status: 'error', message: initError.message } as const;
-  }
-  return { status: supabaseClient ? 'ready' : 'idle' } as const;
-}
-
-export { missingConfigMessage as SUPABASE_MISSING_CONFIG_MESSAGE };
-
-export { supabaseClient };
-
-export default supabaseClient;
-
-export interface UserProfile {
-  id: string;
-  user_id: string;
-  name: string;
-  email: string;
-  organization?: string;
-  role?: string;
-  cohort?: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface Course {
-  id: string;
-  title: string;
-  description?: string;
-  status: 'draft' | 'published' | 'archived';
-  thumbnail?: string;
-  duration?: string;
-  difficulty: 'Beginner' | 'Intermediate' | 'Advanced';
-  estimated_time?: string;
-  prerequisites: string[];
-  learning_objectives: string[];
-  key_takeaways: string[];
-  tags: string[];
-  type?: string;
-  created_by?: string;
-  created_at: string;
-  updated_at: string;
-  published_at?: string;
-  due_date?: string;
-}
-
-export interface Module {
-  id: string;
-  course_id: string;
-  title: string;
-  description?: string;
-  duration?: string;
-  order_index: number;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface Lesson {
-  id: string;
-  module_id: string;
-  title: string;
-  type: 'video' | 'interactive' | 'quiz' | 'download' | 'text';
-  duration?: string;
-  order_index: number;
-  content: any;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface UserCourseEnrollment {
-  id: string;
-  user_id: string;
-  course_id: string;
-  enrolled_at: string;
-  completed_at?: string;
-  progress_percentage: number;
-  last_accessed_at: string;
-}
-
-export interface UserLessonProgress {
-  id: string;
-  user_id: string;
-  lesson_id: string;
-  module_id?: string;
-  course_id?: string;
-  completed: boolean;
-  completed_at?: string;
-  time_spent: number;
-  progress_percentage: number;
-  last_accessed_at: string;
-  status?: 'not-started' | 'in-progress' | 'completed';
-  score?: number;
-  attempts?: number;
-  last_position?: number;
-}
-
-export interface UserQuizAttempt {
-  id: string;
-  user_id: string;
-  lesson_id: string;
-  attempt_number: number;
-  score: number;
-  max_score: number;
-  percentage: number;
-  answers: any;
-  started_at: string;
-  completed_at?: string;
-  passed: boolean;
-}
-
-export interface UserReflection {
-  id: string;
-  user_id: string;
-  lesson_id: string;
-  content: string;
-  created_at: string;
-  updated_at: string;
-}

@@ -12,6 +12,7 @@ import {
   setActiveOrgPreference,
 } from '../lib/secureStorage';
 import type { UserSession, SessionMetadata } from '../lib/secureStorage';
+import { getSupabase } from '../lib/supabaseClient';
 
 export class ApiError extends Error {
   status: number;
@@ -203,7 +204,30 @@ const ensureSessionViaRefresh = async (): Promise<boolean> => {
   });
 };
 
-const logUnauthorized = (url: string, status: number, body: unknown) => {
+const SESSION_ENDPOINT_REGEX = /\/api\/auth\/session/i;
+
+type UnauthorizedMeta = {
+  hasAuthorization?: boolean;
+  credentials?: RequestCredentials;
+};
+
+const logUnauthorized = (url: string, status: number, body: unknown, meta?: UnauthorizedMeta) => {
+  if (status === 401 && SESSION_ENDPOINT_REGEX.test(extractPathname(url))) {
+    const bodyDetails =
+      body && typeof body === 'object'
+        ? {
+            message: (body as Record<string, unknown>).message,
+            code: (body as Record<string, unknown>).code,
+          }
+        : { message: typeof body === 'string' ? body : undefined, code: undefined };
+    console.debug('[apiRequest][session-unauthorized]', {
+      url,
+      hasAuthorization: Boolean(meta?.hasAuthorization),
+      credentialsEnabled: meta?.credentials ? meta.credentials !== 'omit' : true,
+      ...bodyDetails,
+    });
+  }
+
   console.warn('[apiRequest] Unauthorized:', { url, status, body });
 };
 
@@ -304,18 +328,12 @@ const broadcastRefreshEvent = (status: RefreshEvent['status']) => {
   } catch (error) {
     console.warn('[apiRequest] Failed to broadcast refresh event via channel', error);
   }
-  if (!refreshChannel && typeof window !== 'undefined' && typeof window.localStorage !== 'undefined') {
-    try {
-      window.localStorage.setItem(REFRESH_STORAGE_KEY, JSON.stringify({ ...payload, sourceId: payload.sourceId ?? REFRESH_SOURCE_ID }));
-    } catch (error) {
-      console.warn('[apiRequest] Failed to broadcast refresh event via storage', error);
-    }
-  }
 };
 
 if (refreshChannel) {
   refreshChannel.addEventListener('message', (event) => handleExternalRefreshEvent(event.data));
 } else if (typeof window !== 'undefined') {
+  // secureStorage blocks sensitive keys in localStorage; BroadcastChannel is the supported mechanism.
   window.addEventListener('storage', (event) => {
     if (event.key !== REFRESH_STORAGE_KEY || !event.newValue) return;
     try {
@@ -427,7 +445,20 @@ const enforceAdminPrivileges = (
   }
 };
 
-const prepareRequest = async (path: string, options: InternalRequestOptions = {}) => {
+type PreparedRequest = {
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  body?: BodyInit;
+  controller: AbortController;
+  linkedSignals: AbortSignal[];
+  abortForwarder: () => void;
+  timeoutId: ReturnType<typeof setTimeout> | null;
+  hasAuthorization: boolean;
+  credentials: RequestCredentials;
+};
+
+const prepareRequest = async (path: string, options: InternalRequestOptions = {}): Promise<PreparedRequest> => {
   assertNoDoubleApi(path);
 
   const method = options.method ?? 'GET';
@@ -453,19 +484,46 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
     allowAnonymous: options.allowAnonymous,
   });
   const activeSession = getActiveSession();
-  if (requiresAuth && !options.allowAnonymous && !activeSession) {
-    const message = 'Your session is out of sync. Please refresh the page to continue.';
-    throw new ApiError(message, 401, url, {
-      code: 'session_desynced',
-      message,
-    });
-  }
 
   enforceAdminPrivileges(url, options.allowAnonymous, activeSession);
 
   // Build auth headers for EVERY request
   const authHeaders = await buildAuthHeaders();
-  let authSource: AuthHeaderSource | 'custom' = readAuthSource(authHeaders);
+  let overrideAuthSource: AuthHeaderSource | null = null;
+  let supabaseToken: string | null = null;
+
+  if (options.allowAnonymous !== true) {
+    try {
+      const supabaseClient = await getSupabase();
+      if (supabaseClient) {
+        const { data, error } = await supabaseClient.auth.getSession();
+        if (!error) {
+          supabaseToken = data?.session?.access_token ?? null;
+        } else if (import.meta.env?.DEV && console?.debug) {
+          console.debug('[apiClient] tokenPresent', false, 'url', url, 'error', error.message ?? error);
+        }
+      }
+    } catch (error) {
+      if (import.meta.env?.DEV && console?.debug) {
+        console.debug('[apiClient] tokenPresent', false, 'url', url, 'error', error);
+      }
+    } finally {
+      if (import.meta.env?.DEV && console?.debug) {
+        console.debug('[apiClient] tokenPresent', Boolean(supabaseToken), 'url', url);
+      }
+    }
+  }
+
+  if (supabaseToken) {
+    authHeaders.Authorization = `Bearer ${supabaseToken}`;
+    overrideAuthSource = 'supabase';
+  }
+
+  if (import.meta.env?.DEV) {
+    headers['X-Debug-Auth'] = supabaseToken ? 'supabase' : 'none';
+  }
+
+  let authSource: AuthHeaderSource | 'custom' = overrideAuthSource ?? readAuthSource(authHeaders);
 
   const baseHeaders: Record<string, string> = {};
   const headers = mergeHeadersSafely(baseHeaders, authHeaders, options.headers);
@@ -495,6 +553,14 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
     }
   }
   const hasAuthorization = Boolean(headers.Authorization);
+
+  if (requiresAuth && !options.allowAnonymous && !activeSession && !hasAuthorization) {
+    const message = 'Your session is out of sync. Please refresh the page to continue.';
+    throw new ApiError(message, 401, url, {
+      code: 'session_desynced',
+      message,
+    });
+  }
   if (!['secureStorage', 'supabase'].includes(authSource) && hasAuthorization) {
     authSource = 'custom';
   }
@@ -544,28 +610,19 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
     linkedSignals,
     abortForwarder,
     timeoutId,
+    hasAuthorization,
+    credentials: 'include',
   };
 };
 
-const executeFetch = async (
-  input: {
-    url: string;
-    method: string;
-    headers: Record<string, string>;
-    body?: any;
-    controller: AbortController;
-    linkedSignals: AbortSignal[];
-    abortForwarder: () => void;
-    timeoutId: ReturnType<typeof setTimeout> | null;
-  },
-): Promise<Response> => {
-  const { url, method, headers, body, controller, linkedSignals, abortForwarder, timeoutId } = input;
+const executeFetch = async (input: PreparedRequest): Promise<Response> => {
+  const { url, method, headers, body, controller, linkedSignals, abortForwarder, timeoutId, credentials } = input;
 
   let res: Response;
   try {
     res = await fetch(url, {
       method,
-      credentials: 'include',
+      credentials,
       headers,
       body,
       signal: controller.signal,
@@ -650,7 +707,10 @@ const sendRequest = async (path: string, options: InternalRequestOptions = {}): 
 
     clearSupabaseAuthSnapshot();
     const body = isJsonResponse(contentType) ? await safeParseJson(res) : await safeReadText(res);
-    logUnauthorized(prepared.url, res.status, body);
+    logUnauthorized(prepared.url, res.status, body, {
+      hasAuthorization: prepared.hasAuthorization,
+      credentials: prepared.credentials,
+    });
     throw new ApiError('Unauthorized', res.status, prepared.url, body);
   }
 

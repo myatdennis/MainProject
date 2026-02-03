@@ -1,7 +1,7 @@
 import { spawn, ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import jwt from 'jsonwebtoken';
+import fetch from 'node-fetch';
 
 const repoRoot = path.resolve(__dirname, '../../..');
 const demoDataPath = path.join(repoRoot, 'server', 'demo-data.json');
@@ -140,33 +140,39 @@ export async function stopTestServer(handle?: TestServerHandle | null) {
   await handle.stop();
 }
 
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret-key-change-in-production-min-32-chars';
-
-type TokenClaims = Partial<{ userId: string; email: string; role: string }>;
-
-function buildAuthHeaders(claims: TokenClaims = {}) {
-  const token = jwt.sign(
-    {
-      userId: claims.userId || 'integration-user',
-      email: claims.email || 'integration@tests.local',
-      role: claims.role || 'member',
+async function createSupabaseJwt(claims: Record<string, any> = {}) {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const svcKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+  if (!supabaseUrl || !svcKey) {
+    throw new Error('SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required for integration tests');
+  }
+  const response = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
+    method: 'POST',
+    headers: {
+      apikey: svcKey,
+      'Content-Type': 'application/json',
     },
-    JWT_SECRET,
-    {
-      expiresIn: 60 * 60,
-      issuer: 'lms-platform',
-      audience: 'lms-users',
-    }
-  );
-  return {
-    Authorization: `Bearer ${token}`,
-  };
+    body: JSON.stringify({
+      email: claims.email || 'integration@tests.local',
+      password: process.env.TEST_SUPABASE_PASSWORD || 'integration-password',
+    }),
+  });
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(`Failed to fetch Supabase token: ${response.status} ${JSON.stringify(data)}`);
+  }
+  return data.access_token;
 }
 
-export function createAdminAuthHeaders(claims: Partial<{ userId: string; email: string }> = {}) {
+async function buildAuthHeaders(claims: Record<string, any> = {}) {
+  const token = await createSupabaseJwt(claims);
+  return { Authorization: `Bearer ${token}` };
+}
+
+export async function createAdminAuthHeaders(claims: Partial<{ email: string }> = {}) {
   return buildAuthHeaders({ ...claims, role: 'admin' });
 }
 
-export function createMemberAuthHeaders(claims: TokenClaims = {}) {
+export async function createMemberAuthHeaders(claims: Partial<{ email: string; role: string }> = {}) {
   return buildAuthHeaders({ ...claims, role: claims.role || 'member' });
 }
