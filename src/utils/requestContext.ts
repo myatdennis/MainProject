@@ -15,6 +15,13 @@ const SUPABASE_SESSION_RETRY_MS = 15 * 1000;
 
 let supabaseSessionSnapshot: SupabaseSessionSnapshot | null = null;
 
+type HasSupabaseConfigExport = boolean | (() => boolean);
+
+const isSupabaseConfigured = (): boolean => {
+  const value = hasSupabaseConfig as HasSupabaseConfigExport;
+  return typeof value === 'function' ? value() : Boolean(value);
+};
+
 const now = () => Date.now();
 
 const isSnapshotFresh = (snapshot: SupabaseSessionSnapshot | null): boolean => {
@@ -29,7 +36,7 @@ const createRetrySnapshot = (): SupabaseSessionSnapshot => ({
 });
 
 const resolveSupabaseSessionSnapshot = async (): Promise<SupabaseSessionSnapshot | null> => {
-  if (!hasSupabaseConfig()) return null;
+  if (!isSupabaseConfigured()) return null;
 
   if (isSnapshotFresh(supabaseSessionSnapshot)) {
     return supabaseSessionSnapshot;
@@ -118,7 +125,7 @@ export const buildAuthHeaders = async (): Promise<AuthHeaders> => {
   }
 
   // 2) Fallback to Supabase session
-  if (hasSupabaseConfig()) {
+  if (isSupabaseConfigured()) {
     try {
       if (!headers.Authorization) {
         const supabaseToken = await resolveSupabaseAccessToken();

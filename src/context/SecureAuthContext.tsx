@@ -20,6 +20,7 @@ import { loginSchema, emailSchema, registerSchema } from '../utils/validators';
 import { queueRefresh } from '../lib/refreshQueue';
 import apiRequest, { ApiError, apiRequestRaw } from '../utils/apiClient';
 import buildSessionAuditHeaders from '../utils/sessionAuditHeaders';
+import { startSupabaseLogin } from '../utils/startSupabaseLogin';
 
 // MFA helpers
 
@@ -826,9 +827,12 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   const onGoToLogin = useCallback(() => {
     applySessionPayload(null, { persistTokens: true, reason: 'bootstrap_error_redirect' });
     setBootstrapError(null);
-    const currentPath = typeof window !== 'undefined' ? window.location.pathname || '' : '';
-    const redirectPath = currentPath.startsWith('/admin') ? '/admin/login' : '/login';
-    window.location.assign(redirectPath);
+    const fallbackPath = resolveLoginPath();
+    const currentPath =
+      typeof window !== 'undefined' && window.location
+        ? `${window.location.pathname}${window.location.search}`
+        : undefined;
+    void startSupabaseLogin({ fallbackPath, returnTo: currentPath });
   }, [applySessionPayload]);
 
   useEffect(() => {

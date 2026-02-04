@@ -13,7 +13,7 @@ import {
   setActiveOrgPreference,
 } from '../lib/secureStorage';
 import type { UserSession, SessionMetadata } from '../lib/secureStorage';
-import { getSupabase } from '../lib/supabaseClient';
+import { getSupabase, hasSupabaseConfig } from '../lib/supabaseClient';
 
 export class ApiError extends Error {
   status: number;
@@ -84,6 +84,13 @@ type AccessTokenResult = {
   source: AuthHeaderSource | null;
 };
 
+type HasSupabaseConfigExport = boolean | (() => boolean);
+
+const isSupabaseConfigured = (): boolean => {
+  const value = hasSupabaseConfig as HasSupabaseConfigExport;
+  return typeof value === 'function' ? value() : Boolean(value);
+};
+
 const buildNotAuthenticatedError = (url: string) =>
   new ApiError('Please log in again.', 401, url, {
     code: 'not_authenticated',
@@ -133,22 +140,24 @@ const applySessionBootstrap = (payload: SessionBootstrapPayload | null, reason: 
 };
 
 const resolveAccessToken = async (): Promise<AccessTokenResult> => {
-  try {
-    const supabase = await getSupabase();
-    if (supabase) {
-      const { data, error } = await supabase.auth.getSession();
-      if (!error) {
-        const token = data?.session?.access_token ?? null;
-        if (token) {
-          return { token, source: 'supabase' };
+  if (isSupabaseConfigured()) {
+    try {
+      const supabase = await getSupabase();
+      if (supabase) {
+        const { data, error } = await supabase.auth.getSession();
+        if (!error) {
+          const token = data?.session?.access_token ?? null;
+          if (token) {
+            return { token, source: 'supabase' };
+          }
+        } else if (import.meta.env?.DEV) {
+          console.debug('[apiClient] Supabase session error', error.message || error);
         }
-      } else if (import.meta.env?.DEV) {
-        console.debug('[apiClient] Supabase session error', error.message || error);
       }
-    }
-  } catch (error) {
-    if (import.meta.env?.DEV) {
-      console.debug('[apiClient] Supabase token lookup failed', error);
+    } catch (error) {
+      if (import.meta.env?.DEV) {
+        console.debug('[apiClient] Supabase token lookup failed', error);
+      }
     }
   }
 

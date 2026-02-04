@@ -70,6 +70,7 @@ import AdminCoursesImport from './pages/Admin/AdminCoursesImport';
 import AdminCourseBulkPlaceholder from './pages/Admin/Course/AdminCourseBulkPlaceholder';
 import AdminCourseNewPlaceholder from './pages/Admin/Course/AdminCourseNewPlaceholder';
 import InviteAccept from './pages/InviteAccept';
+import AuthCallback from './pages/AuthCallback';
 
 import HomePage from './pages/HomePage';
 import LMSLogin from './pages/LMS/LMSLogin';
@@ -174,6 +175,7 @@ function AppContent() {
                 <Route path="/contact" element={<ContactPage />} />
                 <Route path="/client-portal" element={<ClientPortalPage />} />
                 <Route path="/invite/:token" element={<InviteAccept />} />
+                <Route path="/auth/callback" element={<AuthCallback />} />
                 <Route path="/client-portal/org/:orgId/*" element={<OrgWorkspaceProtectedLayout />} />
                 <Route
                   path="/client/*"
