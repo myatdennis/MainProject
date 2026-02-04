@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { AlertTriangle, RefreshCw } from 'lucide-react';
-import { getSupabaseStatus, hasSupabaseConfig, SUPABASE_MISSING_CONFIG_MESSAGE } from '../lib/supabaseClient';
+import { hasSupabaseConfig, SUPABASE_MISSING_CONFIG_MESSAGE } from '../lib/supabaseClient';
+import { getRuntimeStatus, subscribeRuntimeStatus, type RuntimeStatus } from '../state/runtimeStatus';
 
 interface StatusState {
   status: 'disabled' | 'error' | 'ready' | 'idle';
@@ -8,35 +9,47 @@ interface StatusState {
   message?: string;
 }
 
-const statusPollingMs = 8000;
-
 const missingConfigMessage = SUPABASE_MISSING_CONFIG_MESSAGE;
 
+const deriveStatusState = (runtime: RuntimeStatus): StatusState => {
+  if (!runtime.supabaseConfigured || !hasSupabaseConfig()) {
+    return {
+      status: 'disabled',
+      reason: 'missing-env',
+      message: missingConfigMessage,
+    };
+  }
+
+  if (!runtime.supabaseHealthy) {
+    return {
+      status: 'error',
+      reason: runtime.lastError ?? 'supabase-offline',
+      message: runtime.lastError ?? 'We could not connect to Supabase.',
+    };
+  }
+
+  return {
+    status: 'ready',
+    reason: undefined,
+    message: undefined,
+  };
+};
+
 export const SupabaseStatusBanner = () => {
-  const [status, setStatus] = useState<StatusState>(getSupabaseStatus() as StatusState);
+  const [status, setStatus] = useState<StatusState>(() => deriveStatusState(getRuntimeStatus()));
 
   useEffect(() => {
-    if (!hasSupabaseConfig) {
-      setStatus({ status: 'disabled', reason: 'missing-env', message: missingConfigMessage });
-      return;
-    }
-
-    if (typeof window === 'undefined') {
-      return;
-    }
-
-    const interval = window.setInterval(() => {
-      setStatus(getSupabaseStatus() as StatusState);
-    }, statusPollingMs);
-
-    return () => window.clearInterval(interval);
+    const unsubscribe = subscribeRuntimeStatus((runtime) => {
+      setStatus(deriveStatusState(runtime));
+    });
+    return unsubscribe;
   }, []);
 
-  if (hasSupabaseConfig && status.status !== 'error') {
+  if (status.status === 'ready') {
     return null;
   }
 
-  const isMissingConfig = !hasSupabaseConfig || status.reason === 'missing-env';
+  const isMissingConfig = status.status === 'disabled' && status.reason === 'missing-env';
 
   const bannerTitle = isMissingConfig ? 'Supabase is not configured' : 'Supabase connection issue';
   const description = isMissingConfig

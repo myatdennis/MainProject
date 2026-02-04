@@ -24,7 +24,7 @@ vi.mock('../../lib/secureStorage', () => ({
 
 vi.mock('../../lib/supabaseClient', () => ({
   getSupabase: vi.fn(async () => null),
-  hasSupabaseConfig: false,
+  hasSupabaseConfig: () => false,
 }));
 
 vi.mock('../../dal/sync', () => ({

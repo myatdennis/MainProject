@@ -79,7 +79,7 @@ class EnhancedSyncService extends EventEmitter {
     try {
       const supabase = await getSupabase();
       if (!supabase) {
-        if (hasSupabaseConfig) this.emit('syncError', { table: tableName, error: new Error('Supabase unavailable') });
+        if (hasSupabaseConfig()) this.emit('syncError', { table: tableName, error: new Error('Supabase unavailable') });
         return;
       }
       const subscription = supabase

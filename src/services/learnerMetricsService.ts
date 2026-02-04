@@ -1,6 +1,6 @@
 import { getSupabase, hasSupabaseConfig } from '../lib/supabaseClient';
 
-const isSupabaseReady = hasSupabaseConfig;
+const isSupabaseReady = hasSupabaseConfig();
 
 export interface PersistedGoal {
   id: string;

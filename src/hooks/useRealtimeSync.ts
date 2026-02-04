@@ -70,7 +70,7 @@ export const useRealtimeSync = (options: UseRealtimeSyncOptions = {}) => {
   }, [onEvent, userId]);
 
   const connect = useCallback(async () => {
-    if (!enabled || !hasSupabaseConfig) {
+    if (!enabled || !hasSupabaseConfig()) {
       console.log('[RealtimeSync] Connection disabled or Supabase not configured');
       return;
     }

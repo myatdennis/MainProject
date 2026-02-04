@@ -29,7 +29,7 @@ const createRetrySnapshot = (): SupabaseSessionSnapshot => ({
 });
 
 const resolveSupabaseSessionSnapshot = async (): Promise<SupabaseSessionSnapshot | null> => {
-  if (!hasSupabaseConfig) return null;
+  if (!hasSupabaseConfig()) return null;
 
   if (isSnapshotFresh(supabaseSessionSnapshot)) {
     return supabaseSessionSnapshot;
@@ -118,7 +118,7 @@ export const buildAuthHeaders = async (): Promise<AuthHeaders> => {
   }
 
   // 2) Fallback to Supabase session
-  if (hasSupabaseConfig) {
+  if (hasSupabaseConfig()) {
     try {
       if (!headers.Authorization) {
         const supabaseToken = await resolveSupabaseAccessToken();

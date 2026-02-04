@@ -17,7 +17,7 @@ export const useCourseProgress = (courseId: string) => {
     try {
       setLoading(true);
       setError(null);
-      if (!hasSupabaseConfig) {
+      if (!hasSupabaseConfig()) {
         setLoading(false);
         return;
       }
@@ -92,7 +92,7 @@ export const useCourseProgress = (courseId: string) => {
 
   const enrollInCourse = async () => {
     try {
-  if (!hasSupabaseConfig) throw new Error('User not authenticated (Supabase disabled)');
+  if (!hasSupabaseConfig()) throw new Error('User not authenticated (Supabase disabled)');
   const supabase = await getSupabase();
   if (!supabase) throw new Error('Supabase client unavailable');
   const { data: { user } } = await supabase.auth.getUser();
@@ -128,7 +128,7 @@ export const useCourseProgress = (courseId: string) => {
     }
   ) => {
     try {
-  if (!hasSupabaseConfig) return;
+  if (!hasSupabaseConfig()) return;
   const supabase = await getSupabase();
   if (!supabase) return;
   const { data: { user } } = await supabase.auth.getUser();
@@ -217,7 +217,7 @@ export const useCourseProgress = (courseId: string) => {
 
   const saveReflection = async (lessonId: string, content: string) => {
     try {
-  if (!hasSupabaseConfig) throw new Error('User not authenticated (Supabase disabled)');
+  if (!hasSupabaseConfig()) throw new Error('User not authenticated (Supabase disabled)');
   const supabase = await getSupabase();
   if (!supabase) throw new Error('Supabase client unavailable');
   const { data: { user } } = await supabase.auth.getUser();
@@ -255,7 +255,7 @@ export const useCourseProgress = (courseId: string) => {
     maxScore: number
   ) => {
     try {
-  if (!hasSupabaseConfig) throw new Error('User not authenticated (Supabase disabled)');
+  if (!hasSupabaseConfig()) throw new Error('User not authenticated (Supabase disabled)');
   const supabase = await getSupabase();
   if (!supabase) throw new Error('Supabase client unavailable');
   const { data: { user } } = await supabase.auth.getUser();

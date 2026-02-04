@@ -7,7 +7,7 @@ import apiRequest, { ApiError as RequestError } from './apiClient';
 
 const STORAGE_KEY = 'huddle_course_assignments_v1';
 
-const supabaseReady = () => hasSupabaseConfig || isSupabaseOperational();
+const supabaseReady = () => hasSupabaseConfig() || isSupabaseOperational();
 
 const getAuthedSupabaseClient = async () => {
   try {

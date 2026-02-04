@@ -117,7 +117,7 @@ export const useAutoSaveProgress = (options: UseAutoSaveOptions = {}) => {
   }, [userId]);
 
   const saveToDatabase = useCallback(async (data: ProgressData): Promise<boolean> => {
-    if (!hasSupabaseConfig) {
+    if (!hasSupabaseConfig()) {
       console.warn('[AutoSave] Supabase not configured; skipping remote save');
       return true; // Treat as success in demo mode
     }

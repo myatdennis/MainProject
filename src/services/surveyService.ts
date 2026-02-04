@@ -58,7 +58,7 @@ export interface SurveyAssignment {
 
 export const getAssignments = async (surveyId: string): Promise<SurveyAssignment | null> => {
   try {
-    if (!hasSupabaseConfig) return null;
+    if (!hasSupabaseConfig()) return null;
     const supabase = await getSupabase();
     if (!supabase) return null;
     const { data, error } = await supabase.from('survey_assignments').select('*').eq('survey_id', surveyId).limit(1).single();
@@ -75,7 +75,7 @@ export const getAssignments = async (surveyId: string): Promise<SurveyAssignment
 
 export const saveAssignments = async (surveyId: string, organizationIds: string[]) => {
   try {
-    if (!hasSupabaseConfig) return null;
+    if (!hasSupabaseConfig()) return null;
     const supabase = await getSupabase();
     if (!supabase) return null;
     const payload = {

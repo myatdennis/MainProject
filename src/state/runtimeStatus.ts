@@ -20,8 +20,8 @@ export type RuntimeStatus = {
 type RuntimeListener = (status: RuntimeStatus) => void;
 
 const DEFAULT_STATUS: RuntimeStatus = {
-  supabaseConfigured: hasSupabaseConfig,
-  supabaseHealthy: hasSupabaseConfig,
+  supabaseConfigured: hasSupabaseConfig(),
+  supabaseHealthy: hasSupabaseConfig(),
   apiHealthy: true,
   apiReachable: true,
   apiAuthRequired: false,
@@ -78,7 +78,7 @@ const parseHealthResponse = async (response: Response, overrides: HealthOverride
   const offlineQueue = diagnostics?.offlineQueue ?? {};
   const supabaseConfigured =
     typeof supabaseStatus === 'object'
-      ? !supabaseStatus?.disabled && (supabaseStatus?.status !== 'disabled' || hasSupabaseConfig)
+      ? !supabaseStatus?.disabled && (supabaseStatus?.status !== 'disabled' || hasSupabaseConfig())
       : currentStatus.supabaseConfigured;
   const supabaseHealthy =
     typeof supabaseStatus?.status === 'string'
@@ -107,7 +107,7 @@ const parseHealthResponse = async (response: Response, overrides: HealthOverride
     (diagnostics?.status as RuntimeStatus['statusLabel']) ?? (apiHealthy ? 'ok' : 'degraded');
 
   currentStatus = {
-    supabaseConfigured: supabaseConfigured || hasSupabaseConfig,
+    supabaseConfigured: supabaseConfigured || hasSupabaseConfig(),
     supabaseHealthy: supabaseHealthy || (supabaseConfigured && apiHealthy),
     apiHealthy,
     apiReachable,
@@ -140,7 +140,7 @@ export const subscribeRuntimeStatus = (listener: RuntimeListener): (() => void) 
 
 const performRefresh = async (): Promise<RuntimeStatus> => {
   if (typeof window === 'undefined') {
-    currentStatus = { ...currentStatus, supabaseConfigured: hasSupabaseConfig };
+    currentStatus = { ...currentStatus, supabaseConfigured: hasSupabaseConfig() };
     return currentStatus;
   }
 
@@ -180,7 +180,7 @@ const performRefresh = async (): Promise<RuntimeStatus> => {
       apiReachable: false,
       apiAuthRequired: false,
       wsEnabled: false,
-      supabaseHealthy: currentStatus.supabaseHealthy && hasSupabaseConfig,
+      supabaseHealthy: currentStatus.supabaseHealthy && hasSupabaseConfig(),
       statusLabel: 'degraded',
       lastChecked: Date.now(),
       lastError: message,
