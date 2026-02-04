@@ -556,9 +556,12 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       silent,
     }: { surface?: SessionSurface; signal?: AbortSignal; silent?: boolean } = {}): Promise<boolean> => {
       try {
+        const hasStoredToken = Boolean(getAccessToken());
         const response = await apiRequestRaw('/api/auth/session', {
           method: 'GET',
           signal,
+          requireAuth: hasStoredToken,
+          allowAnonymous: !hasStoredToken,
         });
         if (import.meta.env.DEV) {
           const authHeader = response.headers.get('authorization') || '';
@@ -668,7 +671,13 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       setAuthInitializing(true);
 
       try {
-        const response = await apiRequestRaw('/api/auth/session', { method: 'GET', signal });
+        const hasStoredToken = Boolean(getAccessToken());
+        const response = await apiRequestRaw('/api/auth/session', {
+          method: 'GET',
+          signal,
+          requireAuth: hasStoredToken,
+          allowAnonymous: !hasStoredToken,
+        });
         captureServerClock(headersToRecord(response.headers));
         const payload = await parseSessionPayload(response);
 

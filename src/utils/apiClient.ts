@@ -1,6 +1,6 @@
 import buildAuthHeaders, { clearSupabaseAuthSnapshot, type AuthHeaderSource } from './requestContext';
 import { buildApiUrl, assertNoDoubleApi } from '../config/apiBase';
-import { guardRequest, SessionGateError, shouldRequireSession, getActiveSession } from '../lib/sessionGate';
+import { shouldRequireSession, getActiveSession } from '../lib/sessionGate';
 import { queueRefresh } from '../lib/refreshQueue';
 import {
   getRefreshToken,
@@ -206,12 +206,29 @@ const ensureSessionViaRefresh = async (): Promise<boolean> => {
 
 const SESSION_ENDPOINT_REGEX = /\/api\/auth\/session/i;
 
+const containsNoTokenMessage = (payload: unknown): boolean => {
+  const checkValue = (value: unknown) =>
+    typeof value === 'string' && value.toLowerCase().includes('no token provided');
+  if (!payload) return false;
+  if (checkValue(payload)) return true;
+  if (typeof payload === 'object') {
+    const data = payload as Record<string, unknown>;
+    return ['message', 'error', 'code', 'detail'].some((key) => checkValue(data[key]));
+  }
+  return false;
+};
+
+const isSessionPath = (target: string): boolean => SESSION_ENDPOINT_REGEX.test(extractPathname(target));
+
 type UnauthorizedMeta = {
   hasAuthorization?: boolean;
   credentials?: RequestCredentials;
 };
 
 const logUnauthorized = (url: string, status: number, body: unknown, meta?: UnauthorizedMeta) => {
+  if (status === 401 && isSessionPath(url) && containsNoTokenMessage(body)) {
+    return;
+  }
   if (status === 401 && SESSION_ENDPOINT_REGEX.test(extractPathname(url))) {
     const bodyDetails =
       body && typeof body === 'object'
@@ -264,7 +281,6 @@ const REFRESH_ENDPOINT_REGEX = /\/api\/auth\/refresh\b/i;
 const ABSOLUTE_URL_REGEX = /^https?:\/\//i;
 const REFRESH_CHANNEL_NAME = 'auth';
 const REFRESH_WAIT_TIMEOUT = 5000;
-const REFRESH_STORAGE_KEY = '__auth_refresh_event__';
 
 type RefreshEvent = {
   type: 'REFRESH';
@@ -332,17 +348,6 @@ const broadcastRefreshEvent = (status: RefreshEvent['status']) => {
 
 if (refreshChannel) {
   refreshChannel.addEventListener('message', (event) => handleExternalRefreshEvent(event.data));
-} else if (typeof window !== 'undefined') {
-  // secureStorage blocks sensitive keys in localStorage; BroadcastChannel is the supported mechanism.
-  window.addEventListener('storage', (event) => {
-    if (event.key !== REFRESH_STORAGE_KEY || !event.newValue) return;
-    try {
-      const parsed = JSON.parse(event.newValue) as RefreshEvent;
-      handleExternalRefreshEvent(parsed);
-    } catch (error) {
-      console.warn('[apiRequest] Failed to parse refresh event from storage', error);
-    }
-  });
 }
 
 const waitForRefreshCompletion = (): Promise<boolean> => {
@@ -427,7 +432,7 @@ const enforceAdminPrivileges = (
   allowAnonymous: boolean | undefined,
   session: ReturnType<typeof getActiveSession>,
 ) => {
-  if (allowAnonymous) return;
+  if (allowAnonymous || !session) return;
   const pathname = extractPathname(url);
   if (!ADMIN_PATH_PATTERN.test(pathname)) {
     return;
@@ -450,6 +455,7 @@ type PreparedRequest = {
   method: string;
   headers: Record<string, string>;
   body?: BodyInit;
+  requiresSession: boolean;
   controller: AbortController;
   linkedSignals: AbortSignal[];
   abortForwarder: () => void;
@@ -464,26 +470,12 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
   const method = options.method ?? 'GET';
   const url = buildApiUrl(path);
 
-  try {
-    guardRequest(url, {
+  const requiresSession =
+    shouldRequireSession(url, {
       requireAuth: options.requireAuth,
       allowAnonymous: options.allowAnonymous,
-      reason: 'Blocked request with no authenticated session',
-    });
-  } catch (error) {
-    if (error instanceof SessionGateError) {
-      throw new ApiError('Authentication required', 401, url, {
-        message: 'Please sign in to continue.',
-      });
-    }
-    throw error;
-  }
-
-  const requiresAuth = shouldRequireSession(url, {
-    requireAuth: options.requireAuth,
-    allowAnonymous: options.allowAnonymous,
-  });
-  const activeSession = getActiveSession();
+    }) && options.allowAnonymous !== true;
+  let activeSession = getActiveSession();
 
   enforceAdminPrivileges(url, options.allowAnonymous, activeSession);
 
@@ -491,6 +483,8 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
   const authHeaders = await buildAuthHeaders();
   let overrideAuthSource: AuthHeaderSource | null = null;
   let supabaseToken: string | null = null;
+  const canDebugSupabaseToken =
+    shouldLogDebug(url) && typeof console !== 'undefined' && typeof console.debug === 'function';
 
   if (options.allowAnonymous !== true) {
     try {
@@ -499,16 +493,16 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
         const { data, error } = await supabaseClient.auth.getSession();
         if (!error) {
           supabaseToken = data?.session?.access_token ?? null;
-        } else if (import.meta.env?.DEV && console?.debug) {
+        } else if (canDebugSupabaseToken) {
           console.debug('[apiClient] tokenPresent', false, 'url', url, 'error', error.message ?? error);
         }
       }
     } catch (error) {
-      if (import.meta.env?.DEV && console?.debug) {
+      if (canDebugSupabaseToken) {
         console.debug('[apiClient] tokenPresent', false, 'url', url, 'error', error);
       }
     } finally {
-      if (import.meta.env?.DEV && console?.debug) {
+      if (canDebugSupabaseToken) {
         console.debug('[apiClient] tokenPresent', Boolean(supabaseToken), 'url', url);
       }
     }
@@ -519,14 +513,14 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
     overrideAuthSource = 'supabase';
   }
 
-  if (import.meta.env?.DEV) {
-    headers['X-Debug-Auth'] = supabaseToken ? 'supabase' : 'none';
-  }
-
   let authSource: AuthHeaderSource | 'custom' = overrideAuthSource ?? readAuthSource(authHeaders);
 
   const baseHeaders: Record<string, string> = {};
   const headers = mergeHeadersSafely(baseHeaders, authHeaders, options.headers);
+
+  if (import.meta.env?.DEV) {
+    headers['X-Debug-Auth'] = supabaseToken ? 'supabase' : 'none';
+  }
   const methodAllowsBody = !['GET', 'HEAD'].includes(method);
 
   let body: BodyInit | undefined;
@@ -553,25 +547,11 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
     }
   }
   const hasAuthorization = Boolean(headers.Authorization);
-
-  if (requiresAuth && !options.allowAnonymous && !activeSession && !hasAuthorization) {
-    const message = 'Your session is out of sync. Please refresh the page to continue.';
-    throw new ApiError(message, 401, url, {
-      code: 'session_desynced',
-      message,
-    });
-  }
   if (!['secureStorage', 'supabase'].includes(authSource) && hasAuthorization) {
     authSource = 'custom';
   }
   const debugAuthSource: AuthHeaderSource | 'custom' =
     hasAuthorization && authSource === 'none' ? 'custom' : hasAuthorization ? authSource : 'none';
-
-  if (requiresAuth && activeSession && !hasAuthorization) {
-    throw new ApiError('Missing authorization token', 401, url, {
-      message: 'Secure session token missing. Please sign in again.',
-    });
-  }
 
   const canLog = shouldLogDebug(url) && typeof console !== 'undefined' && typeof console.debug === 'function';
   const debugPayload = canLog
@@ -606,6 +586,7 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
     method,
     headers,
     body,
+    requiresSession,
     controller,
     linkedSignals,
     abortForwarder,
@@ -647,13 +628,18 @@ const isRefreshPath = (url: string): boolean => {
 
 const sendRequest = async (path: string, options: InternalRequestOptions = {}): Promise<Response> => {
   const prepared = await prepareRequest(path, options);
-  const isRefreshRequest = isRefreshPath(prepared.url);
-  const requiresSession =
-    shouldRequireSession(path, { requireAuth: options.requireAuth, allowAnonymous: options.allowAnonymous }) &&
-    !options.allowAnonymous;
+  const isAdminRequest = ADMIN_PATH_PATTERN.test(extractPathname(prepared.url));
   let activeSession = getActiveSession();
+  if (import.meta.env?.VITEST && isAdminRequest) {
+    console.debug('[apiClient][admin-check]', {
+      hasSessionBeforeRefresh: Boolean(activeSession),
+      hasAuthHeader: prepared.hasAuthorization,
+    });
+  }
+  const isRefreshRequest = isRefreshPath(prepared.url);
+  const requiresSession = prepared.requiresSession;
 
-  if (requiresSession && !activeSession) {
+  if (requiresSession && !activeSession && !prepared.hasAuthorization) {
     try {
       const refreshed = await ensureSessionViaRefresh();
       if (refreshed) {
@@ -668,6 +654,11 @@ const sendRequest = async (path: string, options: InternalRequestOptions = {}): 
     }
 
     if (!activeSession) {
+      if (isAdminRequest) {
+        throw new ApiError('Authentication required', 401, prepared.url, {
+          message: 'Please sign in to continue.',
+        });
+      }
       throw buildNotAuthenticatedError(prepared.url);
     }
   }
@@ -722,11 +713,21 @@ const sendRequest = async (path: string, options: InternalRequestOptions = {}): 
   return res;
 };
 
-export async function apiRequest<T = unknown>(
-  path: string,
-  options: ApiRequestOptions = {},
-): Promise<T> {
-  const res = await sendRequest(path, options);
+export async function apiRequest<T = unknown>(path: string, options: ApiRequestOptions = {}): Promise<T> {
+  let res: Response;
+  try {
+    res = await sendRequest(path, options);
+  } catch (error) {
+    if (
+      error instanceof ApiError &&
+      error.status === 401 &&
+      isSessionPath(path) &&
+      containsNoTokenMessage(error.body)
+    ) {
+      return null as T;
+    }
+    throw error;
+  }
 
   const contentType = res.headers.get('content-type');
 

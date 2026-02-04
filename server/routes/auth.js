@@ -440,7 +440,7 @@ const refreshSessionFromCookies = async (req, res) => {
       email: payload.email,
       role: payload.role,
     });
-    attachAuthCookies(res, tokens, req);
+    attachAuthCookies(req, res, tokens);
     const userPayload = buildDemoUserPayloadFromToken(payload);
     return {
       ok: true,
@@ -474,7 +474,7 @@ const refreshSessionFromCookies = async (req, res) => {
   const userPayload = buildUserPayloadFromSupabase(data.user, membershipRows);
   const tokens = buildTokenResponseFromSession(data.session);
 
-  attachAuthCookies(res, tokens, req);
+  attachAuthCookies(req, res, tokens);
 
   return {
     ok: true,

@@ -4,6 +4,7 @@ const PRIVILEGED_ENDPOINT_PATTERNS: RegExp[] = [
   /^\/?api\/admin\b/i,
   /^\/?api\/client\b/i,
   /^\/?api\/learner\b/i,
+  /^\/?api\/protected\b/i,
   /^\/?api\/analytics\b/i,
   /^\/?api\/orgs\b/i,
   /^\/?api\/notifications\b/i,

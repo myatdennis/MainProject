@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { __setApiBaseUrlOverride } from '../../config/apiBase';
+import * as sessionGate from '../../lib/sessionGate';
 
 const mockBuildAuthHeaders = vi.fn().mockResolvedValue({});
 const mockResolveSupabaseAccessToken = vi.fn().mockResolvedValue(null);
@@ -11,25 +12,8 @@ vi.mock('../requestContext', () => ({
   clearSupabaseAuthSnapshot: mockClearSupabaseAuthSnapshot,
 }));
 
-const guardRequestMock = vi.fn();
-const shouldRequireSessionMock = vi.fn().mockReturnValue(false);
-const getActiveSessionMock = vi.fn().mockReturnValue(null);
-class MockSessionGateError extends Error {
-  code: string;
-  constructor(message: string) {
-    super(message);
-    this.name = 'SessionGateError';
-    this.code = 'SESSION_REQUIRED';
-  }
-}
-
-vi.mock('../lib/sessionGate', () => ({
-  __esModule: true,
-  guardRequest: guardRequestMock,
-  shouldRequireSession: shouldRequireSessionMock,
-  getActiveSession: getActiveSessionMock,
-  SessionGateError: MockSessionGateError,
-}));
+const shouldRequireSessionSpy = vi.spyOn(sessionGate, 'shouldRequireSession');
+const getActiveSessionSpy = vi.spyOn(sessionGate, 'getActiveSession');
 
 const fetchSpy = vi.fn();
 (globalThis as any).fetch = fetchSpy;
@@ -65,13 +49,11 @@ describe('apiClient', () => {
     mockResolveSupabaseAccessToken.mockReset();
     mockResolveSupabaseAccessToken.mockResolvedValue(null);
     mockClearSupabaseAuthSnapshot.mockReset();
-    guardRequestMock.mockReset();
-    shouldRequireSessionMock.mockReset();
-    shouldRequireSessionMock.mockReturnValue(false);
-    getActiveSessionMock.mockReset();
-    getActiveSessionMock.mockReturnValue(null);
+    shouldRequireSessionSpy.mockReset();
+    shouldRequireSessionSpy.mockReturnValue(false);
+    getActiveSessionSpy.mockReset();
+    getActiveSessionSpy.mockReturnValue(null);
     debugSpy.mockClear();
-    vi.resetModules();
     vi.unstubAllEnvs();
     __setApiBaseUrlOverride();
     (globalThis as any).window = (globalThis as any).window || { location: { origin: 'http://localhost' } };
@@ -218,9 +200,14 @@ describe('apiClient', () => {
 
     const { ApiError } = await loadApiClient();
     const promise = apiRequest('/slow', { timeoutMs: 50 });
+    let caught: unknown;
+    const handledPromise = promise.catch((error) => {
+      caught = error;
+    });
     await vi.advanceTimersByTimeAsync(60);
-    await expect(promise).rejects.toBeInstanceOf(ApiError);
-    await expect(promise).rejects.toMatchObject({
+    await handledPromise;
+    expect(caught).toBeInstanceOf(ApiError);
+    expect(caught).toMatchObject({
       status: 0,
       message: 'Request timed out',
       body: { message: 'The request exceeded the allowed time.' },
@@ -246,23 +233,23 @@ describe('apiClient', () => {
   it('rejects privileged requests when no session is available', async () => {
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.huddle.local');
     __setApiBaseUrlOverride('https://api.huddle.local');
+    shouldRequireSessionSpy.mockReturnValue(true);
+    fetchSpy.mockResolvedValueOnce(createResponse({ error: 'expired' }, { status: 401 }));
     const { apiRequest, ApiError } = await loadApiClient();
-    guardRequestMock.mockImplementation(() => {
-      throw new MockSessionGateError('session missing');
-    });
 
     await expect(apiRequest('/api/admin/courses')).rejects.toMatchObject({
       status: 401,
-      body: { message: 'Please sign in to continue.' },
+      body: { code: 'not_authenticated' },
     } satisfies Partial<InstanceType<typeof ApiError>>);
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(fetchSpy.mock.calls[0][0]).toContain('/api/auth/refresh');
   });
 
   it('includes Authorization header on protected routes when session exists', async () => {
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.huddle.local');
     __setApiBaseUrlOverride('https://api.huddle.local');
-    shouldRequireSessionMock.mockReturnValue(true);
-    getActiveSessionMock.mockReturnValue({ id: 'user-1', role: 'admin', isPlatformAdmin: true });
+    shouldRequireSessionSpy.mockReturnValue(true);
+    getActiveSessionSpy.mockReturnValue({ id: 'user-1', role: 'admin', isPlatformAdmin: true });
     mockBuildAuthHeaders.mockResolvedValue({ Authorization: 'Bearer secure-token' });
     fetchSpy.mockResolvedValueOnce(createResponse({ ok: true }));
     const { apiRequest } = await loadApiClient();
@@ -276,8 +263,8 @@ describe('apiClient', () => {
   it('blocks admin routes when user lacks admin privileges', async () => {
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.huddle.local');
     __setApiBaseUrlOverride('https://api.huddle.local');
-    shouldRequireSessionMock.mockReturnValue(true);
-    getActiveSessionMock.mockReturnValue({ id: 'user-2', role: 'member' });
+    shouldRequireSessionSpy.mockReturnValue(true);
+    getActiveSessionSpy.mockReturnValue({ id: 'user-2', role: 'member' });
     const { apiRequest, ApiError } = await loadApiClient();
 
     await expect(apiRequest('/api/admin/users')).rejects.toMatchObject({
@@ -312,10 +299,8 @@ describe('apiClient', () => {
   it('attempts a refresh when requiresAuth and no active session, then proceeds', async () => {
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.huddle.local');
     __setApiBaseUrlOverride('https://api.huddle.local');
-    shouldRequireSessionMock
-      .mockReturnValueOnce(false) // prepareRequest
-      .mockReturnValue(true); // sendRequest and beyond
-    getActiveSessionMock
+    shouldRequireSessionSpy.mockReturnValue(true);
+    getActiveSessionSpy
       .mockReturnValueOnce(null) // prepareRequest
       .mockReturnValueOnce(null) // sendRequest initial check
       .mockReturnValue({ id: 'user-1', role: 'admin', isPlatformAdmin: true }); // after refresh
@@ -338,10 +323,8 @@ describe('apiClient', () => {
   it('throws not_authenticated when refresh fails during auth gate', async () => {
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.huddle.local');
     __setApiBaseUrlOverride('https://api.huddle.local');
-    shouldRequireSessionMock
-      .mockReturnValueOnce(false)
-      .mockReturnValue(true);
-    getActiveSessionMock.mockReturnValue(null);
+    shouldRequireSessionSpy.mockReturnValue(true);
+    getActiveSessionSpy.mockReturnValue(null);
 
     fetchSpy.mockResolvedValueOnce(
       createResponse({ error: 'expired' }, { status: 401 }),

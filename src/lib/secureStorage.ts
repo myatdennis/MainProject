@@ -53,6 +53,7 @@ const warn = (message: string, error?: unknown) => {
 
 let warnedFallback = false;
 let warnedSessionUnavailable = false;
+let warnedLocalUnavailable = false;
 
 const getBrowserSessionStorage = (): StorageLike | null => {
   if (typeof window === 'undefined' || typeof window.sessionStorage === 'undefined') {
@@ -67,6 +68,24 @@ const getBrowserSessionStorage = (): StorageLike | null => {
     if (!warnedSessionUnavailable) {
       warn('[secureStorage] sessionStorage is not accessible; falling back to in-memory storage.', error);
       warnedSessionUnavailable = true;
+    }
+    return null;
+  }
+};
+
+const getBrowserLocalStorage = (): StorageLike | null => {
+  if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') {
+    return null;
+  }
+  try {
+    const testKey = '__secure_storage_local_probe__';
+    window.localStorage.setItem(testKey, testKey);
+    window.localStorage.removeItem(testKey);
+    return window.localStorage;
+  } catch (error) {
+    if (!warnedLocalUnavailable) {
+      warn('[secureStorage] localStorage is not accessible; falling back to in-memory tokens.', error);
+      warnedLocalUnavailable = true;
     }
     return null;
   }
@@ -249,6 +268,51 @@ const SESSION_METADATA_KEY = 'session_metadata';
 const USER_SESSION_KEY = 'user_session';
 const ACCESS_TOKEN_KEY = 'access_token';
 const REFRESH_TOKEN_KEY = 'refresh_token';
+const ACCESS_TOKEN_LOCAL_KEY = '__auth_access_token_v1__';
+const REFRESH_TOKEN_LOCAL_KEY = '__auth_refresh_token_v1__';
+
+type TokenCacheKey = typeof ACCESS_TOKEN_LOCAL_KEY | typeof REFRESH_TOKEN_LOCAL_KEY;
+
+const tokenCache: Record<TokenCacheKey, string | null | undefined> = {
+  [ACCESS_TOKEN_LOCAL_KEY]: undefined,
+  [REFRESH_TOKEN_LOCAL_KEY]: undefined,
+};
+
+const persistTokenValue = (key: TokenCacheKey, value: string | null) => {
+  tokenCache[key] = value ?? null;
+  const storage = getBrowserLocalStorage();
+  if (!storage) return;
+  try {
+    if (value) {
+      storage.setItem(key, value);
+    } else {
+      storage.removeItem(key);
+    }
+  } catch (error) {
+    warn('[secureStorage] Failed to persist auth token to localStorage.', error);
+  }
+};
+
+const readTokenValue = (key: TokenCacheKey): string | null => {
+  if (tokenCache[key] !== undefined) {
+    return tokenCache[key] ?? null;
+  }
+  const storage = getBrowserLocalStorage();
+  if (!storage) {
+    tokenCache[key] = null;
+    return null;
+  }
+  try {
+    const stored = storage.getItem(key);
+    const normalized = stored && stored.trim().length > 0 ? stored : null;
+    tokenCache[key] = normalized;
+    return normalized;
+  } catch (error) {
+    warn('[secureStorage] Failed to read auth token from localStorage.', error);
+    tokenCache[key] = null;
+    return null;
+  }
+};
 
 type TokenTelemetryEvent =
   | 'set_access_token'
@@ -266,9 +330,10 @@ const shouldLogTokenTelemetry = (): boolean => {
 
 const readTokenPresenceSnapshot = () => {
   try {
-    const accessTokenPresent = Boolean(secureGet<string>(ACCESS_TOKEN_KEY));
-    const refreshTokenPresent = Boolean(secureGet<string>(REFRESH_TOKEN_KEY));
-    return { accessTokenPresent, refreshTokenPresent };
+    return {
+      accessTokenPresent: Boolean(getAccessToken()),
+      refreshTokenPresent: Boolean(getRefreshToken()),
+    };
   } catch (error) {
     return { accessTokenPresent: false, refreshTokenPresent: false };
   }
@@ -295,38 +360,60 @@ const logTokenTelemetry = (event: TokenTelemetryEvent, reason?: string) => {
 export function setAccessToken(token: string | null, reason?: string): void {
   if (!token) {
     secureRemove(ACCESS_TOKEN_KEY);
+    persistTokenValue(ACCESS_TOKEN_LOCAL_KEY, null);
     logTokenTelemetry('clear_access_token', reason ?? 'set_access_token:null');
     return;
   }
   secureSet(ACCESS_TOKEN_KEY, token);
+  persistTokenValue(ACCESS_TOKEN_LOCAL_KEY, token);
   logTokenTelemetry('set_access_token', reason);
 }
 
 export function getAccessToken(): string | null {
-  return secureGet<string>(ACCESS_TOKEN_KEY);
+  const cached = readTokenValue(ACCESS_TOKEN_LOCAL_KEY);
+  if (cached) {
+    return cached;
+  }
+  const legacy = secureGet<string>(ACCESS_TOKEN_KEY);
+  if (legacy) {
+    persistTokenValue(ACCESS_TOKEN_LOCAL_KEY, legacy);
+  }
+  return legacy;
 }
 
 export function clearAccessToken(reason?: string): void {
   secureRemove(ACCESS_TOKEN_KEY);
+  persistTokenValue(ACCESS_TOKEN_LOCAL_KEY, null);
   logTokenTelemetry('clear_access_token', reason ?? 'clear_access_token');
 }
 
 export function setRefreshToken(token: string | null, reason?: string): void {
   if (!token) {
     secureRemove(REFRESH_TOKEN_KEY);
+    persistTokenValue(REFRESH_TOKEN_LOCAL_KEY, null);
     logTokenTelemetry('clear_refresh_token', reason ?? 'set_refresh_token:null');
     return;
   }
   secureSet(REFRESH_TOKEN_KEY, token);
+  persistTokenValue(REFRESH_TOKEN_LOCAL_KEY, token);
   logTokenTelemetry('set_refresh_token', reason);
 }
 
 export function getRefreshToken(): string | null {
-  return secureGet<string>(REFRESH_TOKEN_KEY);
+  const cached = readTokenValue(REFRESH_TOKEN_LOCAL_KEY);
+  if (cached) {
+    return cached;
+  }
+  const legacy = secureGet<string>(REFRESH_TOKEN_KEY);
+  if (legacy) {
+    persistTokenValue(REFRESH_TOKEN_LOCAL_KEY, legacy);
+  }
+  return legacy;
 }
 
 export function clearRefreshToken(reason?: string): void {
   secureRemove(REFRESH_TOKEN_KEY);
+  persistTokenValue(REFRESH_TOKEN_LOCAL_KEY, null);
   logTokenTelemetry('clear_refresh_token', reason ?? 'clear_refresh_token');
 }
 

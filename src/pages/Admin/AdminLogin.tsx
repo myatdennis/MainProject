@@ -7,6 +7,7 @@ import { sanitizeText } from '../../utils/sanitize';
 import useRuntimeStatus from '../../hooks/useRuntimeStatus';
 import type { RuntimeStatus } from '../../state/runtimeStatus';
 import apiRequest, { ApiError } from '../../utils/apiClient';
+import { getAccessToken } from '../../lib/secureStorage';
 
 interface AdminCapabilityResponse {
   user?: Record<string, any>;
@@ -115,7 +116,11 @@ const AdminLogin: React.FC = () => {
       }
       console.warn('[AdminLogin] capability check failed, falling back to session endpoint', capabilityError);
       try {
-        const fallback = await apiRequest<{ user?: Record<string, any> }>('/api/auth/session');
+        const hasStoredToken = Boolean(getAccessToken());
+        const fallback = await apiRequest<{ user?: Record<string, any> }>('/api/auth/session', {
+          requireAuth: hasStoredToken,
+          allowAnonymous: !hasStoredToken,
+        });
         const user = fallback?.user;
         if (user?.isPlatformAdmin) {
           return { allowed: true, user };
