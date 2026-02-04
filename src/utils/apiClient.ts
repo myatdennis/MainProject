@@ -84,13 +84,6 @@ type AccessTokenResult = {
   source: AuthHeaderSource | null;
 };
 
-type HasSupabaseConfigExport = boolean | (() => boolean);
-
-const isSupabaseConfigured = (): boolean => {
-  const value = hasSupabaseConfig as HasSupabaseConfigExport;
-  return typeof value === 'function' ? value() : Boolean(value);
-};
-
 const buildNotAuthenticatedError = (url: string) =>
   new ApiError('Please log in again.', 401, url, {
     code: 'not_authenticated',
@@ -140,7 +133,7 @@ const applySessionBootstrap = (payload: SessionBootstrapPayload | null, reason: 
 };
 
 const resolveAccessToken = async (): Promise<AccessTokenResult> => {
-  if (isSupabaseConfigured()) {
+  if (hasSupabaseConfig()) {
     try {
       const supabase = await getSupabase();
       if (supabase) {

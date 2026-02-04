@@ -6,8 +6,11 @@ const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undef
 export const SUPABASE_MISSING_CONFIG_MESSAGE =
   'Supabase configuration missing. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.';
 
-// ✅ Export as a BOOLEAN (some files import it as a value)
-export const hasSupabaseConfig: boolean = Boolean(supabaseUrl && supabaseAnonKey);
+export const HAS_SUPABASE_CONFIG = Boolean(supabaseUrl && supabaseAnonKey);
+
+export function hasSupabaseConfig(): boolean {
+  return HAS_SUPABASE_CONFIG;
+}
 
 // Internal singleton
 let _supabase: SupabaseClient | null = null;
@@ -15,7 +18,7 @@ let warnedMissingConfig = false;
 
 // Create (or return existing) client
 function initClient(): SupabaseClient | null {
-  if (!hasSupabaseConfig) {
+  if (!hasSupabaseConfig()) {
     if (import.meta.env.DEV && !warnedMissingConfig) {
       console.warn('[supabaseClient] Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY');
       warnedMissingConfig = true;
