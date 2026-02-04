@@ -12,9 +12,8 @@ const AuthCallback = () => {
     let cancelled = false;
 
     const processCallback = async () => {
-      if (typeof window === 'undefined') {
-        return;
-      }
+      if (typeof window === 'undefined') return;
+
       const client = supabase ?? getSupabase();
       if (!client) {
         setStatus('error');
@@ -23,22 +22,48 @@ const AuthCallback = () => {
       }
 
       try {
+        // 1) Finalize OAuth (important when Supabase redirects back with ?code=...)
+        // If there is no code, exchangeCodeForSession safely does nothing useful.
+        const url = window.location.href;
+        if (url.includes('code=')) {
+          await client.auth.exchangeCodeForSession(url);
+        }
+
+        // 2) Get Supabase session
         const { data, error } = await client.auth.getSession();
         if (error || !data.session) {
           throw error ?? new Error('Missing Supabase session.');
         }
+
+        const supabaseAccessToken = data.session.access_token;
+
+        // 3) Tell your API to mint your APP session cookies (access_token/refresh_token)
+        // IMPORTANT: use /api if you proxy through Netlify; otherwise use the full API origin.
+        const resp = await fetch('/api/auth/supabase', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${supabaseAccessToken}`,
+            'Content-Type': 'application/json',
+          },
+          credentials: 'include',
+          body: JSON.stringify({}),
+        });
+
+        if (!resp.ok) {
+          const text = await resp.text().catch(() => '');
+          throw new Error(`API session mint failed (${resp.status}): ${text}`);
+        }
+
+        // 4) Redirect to where the user wanted to go
         const params = new URLSearchParams(window.location.search);
         const returnTo = params.get('returnTo');
-        setStatus('redirecting');
         const fallback = window.location.pathname.startsWith('/lms') ? '/lms/dashboard' : '/admin';
         const target = returnTo && returnTo.startsWith('/') ? returnTo : fallback;
-        if (!cancelled) {
-          window.location.replace(target);
-        }
-      } catch (error) {
-        if (import.meta.env.DEV) {
-          console.error('[AuthCallback] Failed to finalize Supabase session', error);
-        }
+
+        setStatus('redirecting');
+        if (!cancelled) window.location.replace(target);
+      } catch (err) {
+        if (import.meta.env.DEV) console.error('[AuthCallback] Failed', err);
         if (!cancelled) {
           setStatus('error');
           setMessage('We could not verify your session. Please try logging in again.');
@@ -47,7 +72,6 @@ const AuthCallback = () => {
     };
 
     void processCallback();
-
     return () => {
       cancelled = true;
     };
@@ -96,4 +120,3 @@ const AuthCallback = () => {
 };
 
 export default AuthCallback;
-
