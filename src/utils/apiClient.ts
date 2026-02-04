@@ -3,6 +3,7 @@ import { buildApiUrl, assertNoDoubleApi } from '../config/apiBase';
 import { shouldRequireSession, getActiveSession } from '../lib/sessionGate';
 import { queueRefresh } from '../lib/refreshQueue';
 import {
+  getAccessToken as getStoredAccessToken,
   getRefreshToken,
   setAccessToken,
   setRefreshToken,
@@ -78,6 +79,11 @@ type SessionBootstrapPayload = {
   activeOrgId?: string | null;
 };
 
+type AccessTokenResult = {
+  token: string | null;
+  source: AuthHeaderSource | null;
+};
+
 const buildNotAuthenticatedError = (url: string) =>
   new ApiError('Please log in again.', 401, url, {
     code: 'not_authenticated',
@@ -126,22 +132,59 @@ const applySessionBootstrap = (payload: SessionBootstrapPayload | null, reason: 
   return true;
 };
 
+const resolveAccessToken = async (): Promise<AccessTokenResult> => {
+  try {
+    const supabase = await getSupabase();
+    if (supabase) {
+      const { data, error } = await supabase.auth.getSession();
+      if (!error) {
+        const token = data?.session?.access_token ?? null;
+        if (token) {
+          return { token, source: 'supabase' };
+        }
+      } else if (import.meta.env?.DEV) {
+        console.debug('[apiClient] Supabase session error', error.message || error);
+      }
+    }
+  } catch (error) {
+    if (import.meta.env?.DEV) {
+      console.debug('[apiClient] Supabase token lookup failed', error);
+    }
+  }
+
+  try {
+    const stored = getStoredAccessToken();
+    if (stored) {
+      return { token: stored, source: 'secureStorage' };
+    }
+  } catch (error) {
+    console.warn('[apiClient] Failed to read stored access token', error);
+  }
+
+  return { token: null, source: null };
+};
+
 const bootstrapSessionFromServer = async (): Promise<boolean> => {
-  const sessionUrl = buildApiUrl('/api/auth/session');
+  const sessionPath = '/api/auth/session';
+  const sessionUrl = buildApiUrl(sessionPath);
   let response: Response;
   try {
-    response = await fetch(sessionUrl, {
+    response = await apiRequestRaw(sessionPath, {
       method: 'GET',
-      credentials: 'include',
+      allowAnonymous: true,
+      requireAuth: false,
     });
   } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') {
-      throw buildNetworkError(sessionUrl);
+    if (error instanceof ApiError) {
+      if (error.status === 401 || error.status === 403) {
+        throw buildNotAuthenticatedError(sessionUrl);
+      }
+      if (error.status === 0) {
+        throw buildNetworkError(sessionUrl);
+      }
+      throw error;
     }
-    if (error instanceof TypeError) {
-      throw buildNetworkError(sessionUrl);
-    }
-    throw error;
+    throw buildNetworkError(sessionUrl);
   }
 
   if (response.status === 401 || response.status === 403) {
@@ -482,35 +525,13 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
   // Build auth headers for EVERY request
   const authHeaders = await buildAuthHeaders();
   let overrideAuthSource: AuthHeaderSource | null = null;
-  let supabaseToken: string | null = null;
-  const canDebugSupabaseToken =
-    shouldLogDebug(url) && typeof console !== 'undefined' && typeof console.debug === 'function';
 
-  if (options.allowAnonymous !== true) {
-    try {
-      const supabaseClient = await getSupabase();
-      if (supabaseClient) {
-        const { data, error } = await supabaseClient.auth.getSession();
-        if (!error) {
-          supabaseToken = data?.session?.access_token ?? null;
-        } else if (canDebugSupabaseToken) {
-          console.debug('[apiClient] tokenPresent', false, 'url', url, 'error', error.message ?? error);
-        }
-      }
-    } catch (error) {
-      if (canDebugSupabaseToken) {
-        console.debug('[apiClient] tokenPresent', false, 'url', url, 'error', error);
-      }
-    } finally {
-      if (canDebugSupabaseToken) {
-        console.debug('[apiClient] tokenPresent', Boolean(supabaseToken), 'url', url);
-      }
+  if (!authHeaders.Authorization) {
+    const { token, source } = await resolveAccessToken();
+    if (token) {
+      authHeaders.Authorization = `Bearer ${token}`;
+      overrideAuthSource = source;
     }
-  }
-
-  if (supabaseToken) {
-    authHeaders.Authorization = `Bearer ${supabaseToken}`;
-    overrideAuthSource = 'supabase';
   }
 
   let authSource: AuthHeaderSource | 'custom' = overrideAuthSource ?? readAuthSource(authHeaders);
@@ -519,7 +540,7 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
   const headers = mergeHeadersSafely(baseHeaders, authHeaders, options.headers);
 
   if (import.meta.env?.DEV) {
-    headers['X-Debug-Auth'] = supabaseToken ? 'supabase' : 'none';
+    headers['X-Debug-Auth'] = authHeaders.Authorization ? (overrideAuthSource ?? readAuthSource(authHeaders) ?? 'none') : 'none';
   }
   const methodAllowsBody = !['GET', 'HEAD'].includes(method);
 

@@ -130,6 +130,9 @@ const resolveMaxAge = (fallbackMs, expiresAt) => {
 
 const setCookie = (res, name, value, maxAgeMs, req, opts = {}) => {
   const options = { ...getCookieOptions(req, { ...opts, name }), maxAge: Math.max(1000, maxAgeMs) };
+  if (options.sameSite === 'none' && !options.secure) {
+    options.secure = true;
+  }
   res.cookie(name, value, options);
 };
 

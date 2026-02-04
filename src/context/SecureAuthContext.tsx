@@ -504,6 +504,27 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     }
   };
 
+  const extractMessage = (payload: unknown): string | undefined => {
+    if (!payload) return undefined;
+    if (typeof payload === 'string') return payload;
+    if (typeof payload === 'object') {
+      const data = payload as Record<string, unknown>;
+      for (const key of ['message', 'error', 'detail', 'code']) {
+        const value = data[key];
+        if (typeof value === 'string' && value.trim()) {
+          return value;
+        }
+      }
+    }
+    return undefined;
+  };
+
+  const isNoTokenUnauthorized = (status: number, payload: unknown) => {
+    if (status !== 401) return false;
+    const message = extractMessage(payload)?.toLowerCase() ?? '';
+    return message.includes('no token provided');
+  };
+
   const requestJsonWithClock = useCallback(
     async <T,>(path: string, options: Parameters<typeof apiRequestRaw>[1] = {}): Promise<T> => {
       let response: Response;
@@ -555,8 +576,8 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       signal,
       silent,
     }: { surface?: SessionSurface; signal?: AbortSignal; silent?: boolean } = {}): Promise<boolean> => {
+      const hasStoredToken = Boolean(getAccessToken());
       try {
-        const hasStoredToken = Boolean(getAccessToken());
         const response = await apiRequestRaw('/api/auth/session', {
           method: 'GET',
           signal,
@@ -570,6 +591,16 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           }
         }
         captureServerClock(headersToRecord(response.headers));
+        const payload = await parseSessionPayload(response);
+        const noTokenUnauth = !hasStoredToken && isNoTokenUnauthorized(response.status, payload);
+
+        if (noTokenUnauth) {
+          handleSessionUnauthorized({
+            silent: true,
+            reason: surface ? `${surface}_session_no_token` : 'session_no_token',
+          });
+          return false;
+        }
 
         if (response.status === 401 || response.status === 403) {
           handleSessionUnauthorized({
@@ -578,8 +609,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           });
           return false;
         }
-
-        const payload = await parseSessionPayload(response);
 
         if (!response.ok) {
           lastSessionFetchResultRef.current = 'error';
@@ -611,6 +640,15 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         return false;
       } catch (error: unknown) {
         if (error instanceof ApiError) {
+          const noTokenUnauth =
+            error.status === 401 && !hasStoredToken && isNoTokenUnauthorized(error.status, error.body);
+          if (noTokenUnauth) {
+            handleSessionUnauthorized({
+              silent: true,
+              reason: surface ? `${surface}_session_no_token` : 'session_no_token',
+            });
+            return false;
+          }
           if (error.status === 401 || error.status === 403) {
             handleSessionUnauthorized({
               silent,
@@ -670,8 +708,8 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       setBootstrapError(null);
       setAuthInitializing(true);
 
+      const hasStoredToken = Boolean(getAccessToken());
       try {
-        const hasStoredToken = Boolean(getAccessToken());
         const response = await apiRequestRaw('/api/auth/session', {
           method: 'GET',
           signal,
@@ -680,6 +718,16 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         });
         captureServerClock(headersToRecord(response.headers));
         const payload = await parseSessionPayload(response);
+
+        const noTokenUnauth = !hasStoredToken && isNoTokenUnauthorized(response.status, payload);
+        if (noTokenUnauth) {
+          applySessionPayload(null, { persistTokens: true, reason: 'bootstrap_no_token' });
+          setAuthStatus('unauthenticated');
+          setBootstrapError(null);
+          lastSessionFetchResultRef.current = 'unauthenticated';
+          logSessionResult('unauthenticated');
+          return;
+        }
 
         if (response.status === 401 || response.status === 403) {
           applySessionPayload(null, { persistTokens: true, reason: 'bootstrap_unauthenticated' });
@@ -715,6 +763,17 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           return;
         }
         if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
+          const noTokenUnauth =
+            error.status === 401 && !hasStoredToken && isNoTokenUnauthorized(error.status, error.body);
+          if (noTokenUnauth) {
+            applySessionPayload(null, { persistTokens: true, reason: 'bootstrap_no_token' });
+            setAuthStatus('unauthenticated');
+            setBootstrapError(null);
+            lastSessionFetchResultRef.current = 'unauthenticated';
+            logSessionResult('unauthenticated');
+            return;
+          }
+
           applySessionPayload(null, { persistTokens: true, reason: 'bootstrap_unauthenticated' });
           setBootstrapError('Your session expired. Please sign in again.');
           setAuthStatus('error');
