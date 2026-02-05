@@ -18,6 +18,7 @@ export interface AuthTokens {
   accessToken: string;
   refreshToken: string;
   expiresAt: number;
+  refreshExpiresAt: number;
 }
 
 const refreshStore = new Map<string, { userId: string; expiresAt: number }>();
@@ -42,6 +43,7 @@ export const issueTokens = (user: PublicUser): AuthTokens => {
     accessToken,
     refreshToken,
     expiresAt: Date.now() + ACCESS_TOKEN_TTL * 1000,
+    refreshExpiresAt: Date.now() + REFRESH_TOKEN_TTL * 1000,
   };
 };
 
