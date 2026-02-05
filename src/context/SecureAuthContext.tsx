@@ -20,7 +20,6 @@ import { loginSchema, emailSchema, registerSchema } from '../utils/validators';
 import { queueRefresh } from '../lib/refreshQueue';
 import apiRequest, { ApiError, apiRequestRaw } from '../utils/apiClient';
 import buildSessionAuditHeaders from '../utils/sessionAuditHeaders';
-import { startSupabaseLogin } from '../utils/startSupabaseLogin';
 
 // MFA helpers
 
@@ -37,7 +36,9 @@ const resolveLoginPath = () => {
     return '/login';
   }
   const pathname = window.location.pathname || '';
-  return pathname.startsWith('/admin') ? '/admin/login' : '/login';
+  if (pathname.startsWith('/admin')) return '/admin/login';
+  if (pathname.startsWith('/lms')) return '/lms/login';
+  return '/login';
 };
 const isLoginRoute = () => {
   if (typeof window === 'undefined' || !window.location) {
@@ -828,11 +829,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     applySessionPayload(null, { persistTokens: true, reason: 'bootstrap_error_redirect' });
     setBootstrapError(null);
     const fallbackPath = resolveLoginPath();
-    const currentPath =
-      typeof window !== 'undefined' && window.location
-        ? `${window.location.pathname}${window.location.search}`
-        : undefined;
-    void startSupabaseLogin({ fallbackPath, returnTo: currentPath });
+    if (typeof window !== 'undefined') {
+      window.location.assign(fallbackPath);
+    }
   }, [applySessionPayload]);
 
   useEffect(() => {

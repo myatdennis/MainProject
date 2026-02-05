@@ -12,7 +12,6 @@ import { migrateFromLocalStorage, checkStorageSecurity, installLocalStorageGuard
 import { getApiBaseUrl } from './config/apiBase';
 import { registerApiNavigationGuard } from './utils/apiNavigationGuard';
 import { toast } from 'react-hot-toast';
-import { startSupabaseLogin } from './utils/startSupabaseLogin';
 
 const devConsole = {
   log: (...args: unknown[]) => {
@@ -115,7 +114,7 @@ class SecureAuthErrorBoundary extends React.Component<{ children: React.ReactNod
   };
 
   handleGoToLogin = () => {
-    void startSupabaseLogin();
+    window.location.assign('/login');
   };
 
   render() {
