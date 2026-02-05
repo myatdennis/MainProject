@@ -20,6 +20,7 @@ import { loginSchema, emailSchema, registerSchema } from '../utils/validators';
 import { queueRefresh } from '../lib/refreshQueue';
 import apiRequest, { ApiError, apiRequestRaw } from '../utils/apiClient';
 import buildSessionAuditHeaders from '../utils/sessionAuditHeaders';
+import { getCSRFToken } from '../hooks/useCSRFToken';
 
 // MFA helpers
 
@@ -33,12 +34,10 @@ const SESSION_RELOAD_THROTTLE_MS = 45 * 1000;
 const isNavigatorOffline = () => typeof navigator !== 'undefined' && navigator.onLine === false;
 const resolveLoginPath = () => {
   if (typeof window === 'undefined' || !window.location) {
-    return '/login';
+    return '/lms/login';
   }
   const pathname = window.location.pathname || '';
-  if (pathname.startsWith('/admin')) return '/admin/login';
-  if (pathname.startsWith('/lms')) return '/lms/login';
-  return '/login';
+  return pathname.startsWith('/admin') ? '/admin/login' : '/lms/login';
 };
 const isLoginRoute = () => {
   if (typeof window === 'undefined' || !window.location) {
@@ -46,6 +45,19 @@ const isLoginRoute = () => {
   }
   const pathname = window.location.pathname || '';
   return pathname.startsWith('/login') || pathname.startsWith('/admin/login') || pathname.startsWith('/lms/login');
+};
+const isAuthBypassRoute = () => {
+  if (typeof window === 'undefined' || !window.location) {
+    return false;
+  }
+  const pathname = window.location.pathname || '';
+  if (!pathname) return false;
+  if (pathname === '/login') return true;
+  if (pathname.startsWith('/lms/login')) return true;
+  if (pathname.startsWith('/admin/login')) return true;
+  if (pathname === '/auth/callback') return true;
+  if (pathname.startsWith('/invite/')) return true;
+  return false;
 };
 const isDevEnvironment = Boolean(import.meta.env?.DEV);
 const logAuthDebug = (label: string, payload: Record<string, unknown>) => {
@@ -1030,10 +1042,14 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
   const logout = useCallback(async (type?: 'lms' | 'admin'): Promise<void> => {
     try {
+      const csrfToken = getCSRFToken();
       await apiRequest('/api/auth/logout', {
         method: 'POST',
         body: {},
-        headers: buildSessionAuditHeaders(),
+        headers: {
+          ...buildSessionAuditHeaders(),
+          ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}), // Ensure CSRF token is forwarded when present.
+        },
       });
     } catch (error) {
       console.warn('[SecureAuth] Logout request failed (continuing with local cleanup)', error);
@@ -1408,6 +1424,9 @@ const renderAuthState = ({
   }
 
   if (authStatus === 'unauthenticated') {
+    if (isAuthBypassRoute()) {
+      return <>{children}</>;
+    }
     if (!isLoginRoute()) {
       if (typeof window !== 'undefined') {
         const target = resolveLoginPath();

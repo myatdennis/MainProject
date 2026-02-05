@@ -66,6 +66,8 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
   const retryRef = useRef(false);
   const adminCheckAbortRef = useRef<AbortController | null>(null);
   const redirectLogRef = useRef<string | null>(null);
+  const currentLoginPath = loginPathByMode[mode];
+  const isOnModeLoginPath = location.pathname === currentLoginPath;
   const hasSession = Boolean(user);
   const surfaceState = surfaceAuthStatus?.[mode] ?? 'idle';
   const waitingForSurface = hasSession && surfaceState === 'checking';
@@ -483,18 +485,26 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
   }
 
   if (!hasSession) {
-    const targetPath = loginPathByMode[mode];
+    const targetPath = currentLoginPath;
+    if (isOnModeLoginPath) {
+      logGuardEvent('bypass_login_gate', { reason: 'missing_session_on_login_path', target: targetPath });
+      return null;
+    }
     if (location.pathname !== targetPath) {
       logRedirectOnce(targetPath, 'missing_session');
       logGuardEvent('redirect_login', { target: targetPath, reason: 'missing_session' });
       return <Navigate to={targetPath} state={{ from: location, reason: 'missing_session' }} replace />;
     }
     logGuardEvent('render_login_route', { reason: 'missing_session', target: targetPath });
-    return <>{children}</>;
+    return null;
   }
 
   if (mode === 'admin') {
     if (!isAuthenticated.admin) {
+      if (isOnModeLoginPath) {
+        logGuardEvent('allow_admin_login_route', { reason: 'already_on_login_route' });
+        return null;
+      }
       logRedirectOnce('/admin/login', 'missing_admin_session_with_user');
       logGuardEvent('redirect_admin_login_unauthenticated', { reason: 'missing_admin_session_with_user' });
       return (
@@ -508,13 +518,13 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
   } else {
     if (!isAuthenticated.lms) {
       const lmsTarget = loginPathByMode.lms;
-      if (location.pathname !== lmsTarget) {
+      if (!isOnModeLoginPath) {
         logRedirectOnce(lmsTarget, 'missing_lms_session');
         logGuardEvent('redirect_login', { reason: 'missing_lms_session' });
         return <Navigate to={lmsTarget} state={{ from: location, reason: 'missing_lms_session' }} replace />;
       }
       logGuardEvent('render_login_route', { reason: 'missing_lms_session', target: lmsTarget });
-      return <>{children}</>;
+      return null;
     }
     if (!lmsRoleEligible) {
       logGuardEvent('redirect_unauthorized', {
