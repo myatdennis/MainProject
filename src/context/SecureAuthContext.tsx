@@ -1278,7 +1278,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
       // DEV log registration payload (mask password)
       if (import.meta.env && import.meta.env.DEV) {
-        // eslint-disable-next-line no-console
         console.log('REGISTER payload', { ...payload, password: payload?.password ? '***' : payload?.password });
       }
 

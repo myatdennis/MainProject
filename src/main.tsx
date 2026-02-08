@@ -16,13 +16,11 @@ import { toast } from 'react-hot-toast';
 const devConsole = {
   log: (...args: unknown[]) => {
     if (import.meta.env?.DEV) {
-      // eslint-disable-next-line no-console
       console.log(...args);
     }
   },
   info: (...args: unknown[]) => {
     if (import.meta.env?.DEV) {
-      // eslint-disable-next-line no-console
       console.info(...args);
     }
   },
