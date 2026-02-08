@@ -754,6 +754,7 @@ ${content.type === 'quiz' && 'questions' in content.content ? `\nQuestions: ${co
                 const res = await fetch(`/api/admin/courses/${encodeURIComponent(formData.id)}/publish`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'x-user-role': 'admin' },
+                    credentials: 'include',
                     body: JSON.stringify(payload)
                 });
                 if (!res.ok) {

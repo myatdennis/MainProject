@@ -95,9 +95,11 @@ const AdminCourses = () => {
       } catch (err) {
         console.warn('[AdminCourses] Failed to initialize course store:', err);
       } finally {
-        if (!cancelled) {
-          setVersion((v) => v + 1);
+        if (cancelled) {
+          return;
         }
+        setCatalogState(courseStore.getAdminCatalogState());
+        setVersion((v) => v + 1);
       }
     };
 

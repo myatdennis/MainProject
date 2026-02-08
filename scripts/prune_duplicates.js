@@ -25,7 +25,7 @@ const KEEP = (() => {
 })();
 
 async function getJson(url) {
-  const res = await fetch(url);
+  const res = await fetch(url, { credentials: 'include' });
   if (!res.ok) {
     const txt = await res.text().catch(() => '');
     throw new Error(`GET ${url} failed: ${res.status} ${res.statusText} ${txt}`);
@@ -38,7 +38,7 @@ async function del(url) {
     console.log(`[dry-run] DELETE ${url}`);
     return;
   }
-  const res = await fetch(url, { method: 'DELETE' });
+  const res = await fetch(url, { method: 'DELETE', credentials: 'include' });
   if (!res.ok && res.status !== 204) {
     const txt = await res.text().catch(() => '');
     throw new Error(`DELETE ${url} failed: ${res.status} ${res.statusText} ${txt}`);

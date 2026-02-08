@@ -47,6 +47,7 @@ async function createUser(u) {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`
     },
+    credentials: 'include',
     body: JSON.stringify(body)
   });
 
@@ -67,6 +68,7 @@ async function createUser(u) {
         Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
         Prefer: 'resolution=merge-duplicates'
       },
+      credentials: 'include',
       body: JSON.stringify({ user_id: data.id || data.user?.id || null, name: u.name, email: u.email, role: u.role })
     });
     if (!profileRes.ok) {

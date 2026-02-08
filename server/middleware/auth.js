@@ -4,9 +4,10 @@
  */
 
 import rateLimit from 'express-rate-limit';
-import supabase from '../lib/supabaseClient.js';
+import supabase, { supabaseAuthClient } from '../lib/supabaseClient.js';
 import { extractTokenFromHeader } from '../utils/jwt.js';
 import { getAccessTokenFromRequest } from '../utils/authCookies.js';
+import { getUserMemberships } from '../utils/memberships.js';
 import { E2E_TEST_MODE, DEV_FALLBACK, demoAutoAuthEnabled } from '../config/runtimeFlags.js';
 import { getPermissionsForRole, mergePermissions } from '../../shared/permissions/index.js';
 
@@ -170,66 +171,6 @@ export const mapMembershipRows = (rows = []) =>
     lastSeenAt: row.last_seen_at,
   }));
 
-const MEMBERSHIP_VIEW_NAME = 'user_organizations_vw';
-
-const isMembershipViewMissingError = (error) =>
-  Boolean(
-    error &&
-      (error.code === 'PGRST205' ||
-        error.code === '42P01' ||
-        (typeof error.message === 'string' && error.message.includes(MEMBERSHIP_VIEW_NAME))),
-  );
-
-const normalizeOrgId = (value) => {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed || null;
-};
-
-async function loadMembershipsFromBaseTables(userId) {
-  if (!userId || !supabase) return [];
-  try {
-    const { data: membershipRows, error } = await supabase
-      .from('organization_memberships')
-      .select('org_id, role, created_at, updated_at')
-      .eq('user_id', userId);
-
-    if (error) throw error;
-
-    const rows = Array.isArray(membershipRows) ? membershipRows : [];
-    const orgIds = Array.from(new Set(rows.map((row) => normalizeOrgId(row?.org_id)).filter(Boolean)));
-
-    let orgMap = new Map();
-    if (orgIds.length > 0) {
-      const { data: orgs, error: orgError } = await supabase
-        .from('organizations')
-        .select('id,name,status,subscription,features')
-        .in('id', orgIds);
-
-      if (orgError) throw orgError;
-      orgMap = new Map((orgs || []).map((org) => [org.id, org]));
-    }
-
-    return rows.map((row) => {
-      const organization = orgMap.get(normalizeOrgId(row?.org_id)) || {};
-      return {
-        organization_id: normalizeOrgId(row?.org_id),
-        role: row?.role || 'member',
-        status: 'active',
-        organization_name: organization.name || null,
-        organization_status: organization.status || null,
-        subscription: organization.subscription ?? null,
-        features: organization.features ?? null,
-        accepted_at: row?.created_at || null,
-        last_seen_at: row?.updated_at || null,
-      };
-    });
-  } catch (error) {
-    console.error('[auth] organization_memberships fallback failed', { userId, error });
-    return [];
-  }
-}
-
 const buildMembershipMap = (memberships = []) => {
   const map = new Map();
   memberships.forEach((membership) => {
@@ -273,11 +214,11 @@ const determineActiveOrgId = (req, memberships = []) => {
 };
 
 async function loadSupabaseUser(token) {
-  if (!token || !supabase) return null;
+  if (!token || !supabaseAuthClient) return null;
   const cached = cacheGet(tokenCache, token);
   if (cached) return cached;
 
-  const { data, error } = await supabase.auth.getUser(token);
+  const { data, error } = await supabaseAuthClient.auth.getUser(token);
   if (error || !data?.user) {
     return null;
   }
@@ -286,33 +227,13 @@ async function loadSupabaseUser(token) {
 }
 
 async function loadMemberships(userId) {
-  if (!userId || !supabase) return [];
+  if (!userId) return [];
   const cacheKey = `org-memberships:${userId}`;
   const cached = cacheGet(membershipCache, cacheKey);
   if (cached) return cached;
 
-  const { data, error } = await supabase
-    .from('user_organizations_vw')
-    .select('organization_id, role, status, organization_name, organization_status, subscription, features, accepted_at, last_seen_at')
-    .eq('user_id', userId);
-
-  if (error) {
-    if (isMembershipViewMissingError(error)) {
-      console.warn('[auth] user_organizations_vw missing, falling back to base tables', {
-        userId,
-        code: error.code,
-        message: error.message,
-      });
-      const fallbackRows = await loadMembershipsFromBaseTables(userId);
-      const mappedFallback = mapMembershipRows(fallbackRows);
-      cacheSet(membershipCache, cacheKey, mappedFallback);
-      return mappedFallback;
-    }
-    console.error('[auth] Failed to load memberships', { userId, error });
-    return [];
-  }
-
-  const mapped = mapMembershipRows(data || []);
+  const rows = await getUserMemberships(userId, { logPrefix: '[auth-middleware]' });
+  const mapped = mapMembershipRows(rows);
   cacheSet(membershipCache, cacheKey, mapped);
   return mapped;
 }
@@ -352,14 +273,17 @@ const buildUserPayload = (user, memberships) => {
 };
 
 const resolveAccessTokenFromRequest = (req) => {
-  const headerToken = extractTokenFromHeader(req.headers?.authorization);
-  if (headerToken) {
-    return { token: headerToken, source: 'authorization' };
-  }
   const cookieToken = getAccessTokenFromRequest(req);
   if (cookieToken) {
     return { token: cookieToken, source: 'cookie' };
   }
+
+  const authorizationHeader = req.headers?.authorization;
+  const headerToken = extractTokenFromHeader(authorizationHeader);
+  if (headerToken) {
+    return { token: headerToken, source: 'authorization' };
+  }
+
   return { token: null, source: null };
 };
 

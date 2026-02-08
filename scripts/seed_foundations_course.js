@@ -97,6 +97,7 @@ async function seedCourse() {
         'X-User-Id': 'admin',
         'X-User-Role': 'admin'
       },
+      credentials: 'include',
       body: JSON.stringify(foundationsCourse)
     });
 

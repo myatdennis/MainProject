@@ -113,6 +113,7 @@ fetch('http://localhost:8888/api/admin/courses', {
     'X-User-Id': 'admin-user',
     'X-Org-Id': 'demo-org'
   },
+  credentials: 'include',
   body: JSON.stringify(payload)
 })
 .then(res => res.json())

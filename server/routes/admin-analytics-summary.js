@@ -61,6 +61,7 @@ router.post('/', async (req, res, next) => {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${OPENAI_KEY}`
       },
+      credentials: 'include',
       body: JSON.stringify({ model: 'gpt-4o-mini', messages: [{ role: 'user', content: prompt }], max_tokens: 400 })
     })
 

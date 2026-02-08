@@ -2,7 +2,11 @@ import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import supabase, { supabaseEnv } from '../lib/supabaseClient.js';
+import supabase, {
+  supabaseAuthClient,
+  isSupabaseConfigured,
+  isSupabaseAuthConfigured,
+} from '../lib/supabaseClient.js';
 
 const router = express.Router();
 
@@ -42,7 +46,7 @@ const probeDatabase = async () => {
       ok: false,
       code: 'SUPABASE_NOT_CONFIGURED',
       message: 'Supabase client is not configured on the server',
-      configured: supabaseEnv?.configured || false,
+      configured: isSupabaseConfigured(),
     };
   }
 
@@ -79,9 +83,15 @@ router.get(['/health', '/health/'], (_req, res) => {
 });
 
 router.get(['/api/health', '/api/health/'], (req, res) => {
+  const supabaseConfigured = isSupabaseConfigured();
+  const supabaseAuthConfigured = isSupabaseAuthConfigured();
+  const supabaseAuthClientReady = Boolean(supabaseAuthClient);
   res.status(200).json(
     buildHealthPayload({
       requestId: req.requestId || null,
+      supabaseConfigured,
+      supabaseAuthConfigured,
+      supabaseAuthClientReady,
     }),
   );
 });

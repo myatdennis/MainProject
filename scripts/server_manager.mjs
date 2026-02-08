@@ -25,7 +25,8 @@ class ServerManager {
     for (const port of this.ports) {
       try {
         const response = await fetch(`http://localhost:${port}`, {
-          signal: AbortSignal.timeout(1000)
+          signal: AbortSignal.timeout(1000),
+          credentials: 'include'
         });
         // If we get here, port is in use
         this.log(`Port ${port} is in use`, '\x1b[33m');
@@ -120,9 +121,10 @@ class ServerManager {
       
       for (let attempt = 1; attempt <= 3; attempt++) {
         try {
-          const response = await fetch(url, {
-            signal: AbortSignal.timeout(5000)
-          });
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(5000),
+        credentials: 'include'
+      });
           
           if (response.ok) {
             this.log(`✅ ${route}: Connected (${response.status})`, '\x1b[32m');

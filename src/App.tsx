@@ -108,6 +108,15 @@ const OrgWorkspaceProtectedLayout = () => (
   </RequireAuth>
 );
 
+const LegacyCourseRedirect = () => {
+  const location = useLocation();
+  const targetPath =
+    location.pathname && location.pathname.startsWith('/courses')
+      ? `/lms${location.pathname}`
+      : '/lms/courses';
+  return <Navigate to={{ pathname: targetPath, search: location.search, hash: location.hash }} replace />;
+};
+
 
 function App() {
   return (
@@ -177,10 +186,7 @@ function AppContent() {
                 <Route path="/invite/:token" element={<InviteAccept />} />
                 <Route path="/auth/callback" element={<AuthCallback />} />
                 <Route path="/client-portal/org/:orgId/*" element={<OrgWorkspaceProtectedLayout />} />
-                <Route
-                  path="/client/*"
-                  element={<ClientProtectedLayout />}
-                >
+                <Route path="/client/*" element={<ClientProtectedLayout />}>
                   <Route index element={<Navigate to="dashboard" replace />} />
                   <Route path="dashboard" element={<ClientDashboard />} />
                   <Route path="courses" element={<ClientCourses />} />
@@ -191,7 +197,11 @@ function AppContent() {
                   <Route path="profile" element={<ClientProfile />} />
                   <Route path="*" element={<Navigate to="dashboard" replace />} />
                 </Route>
+                {/* Public auth routes */}
+                <Route path="/login" element={<Navigate to="/lms/login" replace />} />
                 <Route path="/lms/login" element={<LMSLogin />} />
+                <Route path="/admin/login" element={<AdminLogin />} />
+                <Route path="/courses/*" element={<LegacyCourseRedirect />} />
                 <Route path="/lms" element={<Navigate to="/lms/dashboard" replace />} />
                 <Route path="/lms/*" element={<LmsProtectedLayout />}>
                   <Route index element={<Navigate to="dashboard" replace />} />
@@ -213,7 +223,6 @@ function AppContent() {
                   <Route path="help" element={<LMSHelp />} />
                   <Route path="meeting" element={<LMSMeeting />} />
                 </Route>
-                <Route path="/admin/login" element={<AdminLogin />} />
                 <Route path="/admin/*" element={<AdminProtectedLayout />}>
                   <Route index element={<Navigate to="courses" replace />} />
                   <Route path="dashboard" element={<AdminDashboard />} />

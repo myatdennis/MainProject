@@ -183,18 +183,6 @@ const AdminLogin: React.FC = () => {
     },
   ];
 
-  if (authInitializing) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-softwhite">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sunrise mx-auto mb-4"></div>
-          <h2 className="text-h2 font-heading text-charcoal mb-2">Initializing authentication...</h2>
-          <p className="text-body text-gray">Please wait while we check your authentication status.</p>
-        </div>
-      </div>
-    );
-  }
-
   const handleCapabilityGate = useCallback(async () => {
     setCapabilityFallbackActive(false);
     const capability = await verifyAdminCapability();
@@ -285,6 +273,18 @@ const AdminLogin: React.FC = () => {
       setError(result.error || 'Authentication failed.');
     }
   };
+
+  if (authInitializing) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-softwhite">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-sunrise mx-auto mb-4"></div>
+          <h2 className="text-h2 font-heading text-charcoal mb-2">Initializing authentication...</h2>
+          <p className="text-body text-gray">Please wait while we check your authentication status.</p>
+        </div>
+      </div>
+    );
+  }
 
   const handleMfaSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

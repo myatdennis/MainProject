@@ -21,7 +21,8 @@ const ConnectionDiagnostic = () => {
         try {
             await fetch(window.location.origin, {
                 method: 'HEAD',
-                mode: 'no-cors'
+                mode: 'no-cors',
+                credentials: 'include'
             });
             newStatus.serverReachable = true;
         }

@@ -27,6 +27,7 @@ async function main() {
         Accept: 'application/json',
         apikey: SUPABASE_ANON_KEY,
       },
+      credentials: 'include',
       body: JSON.stringify({
         email: ADMIN_EMAIL,
         password: ADMIN_PASSWORD,

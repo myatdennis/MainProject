@@ -66,11 +66,15 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
   const retryRef = useRef(false);
   const adminCheckAbortRef = useRef<AbortController | null>(null);
   const redirectLogRef = useRef<string | null>(null);
+  const currentLoginPath = loginPathByMode[mode];
+  const isOnModeLoginPath = location.pathname === currentLoginPath;
   const hasSession = Boolean(user);
   const surfaceState = surfaceAuthStatus?.[mode] ?? 'idle';
-  const waitingForSurface = hasSession && surfaceState === 'checking';
+  const effectiveSurfaceState =
+    surfaceState === 'idle' && sessionStatus === 'ready' && orgResolutionStatus === 'ready' ? 'ready' : surfaceState;
+  const waitingForSurface = hasSession && effectiveSurfaceState === 'checking';
   const waitingForOrgContext =
-    mode === 'admin' && hasSession && memberships.length > 0 && orgResolutionStatus !== 'ready';
+    mode === 'admin' && hasSession && memberships.length > 0 && !activeOrgId && orgResolutionStatus !== 'ready';
   const [adminCapability, setAdminCapability] = useState<AdminCapabilityState>({ status: 'idle', payload: null });
   const [adminGateStatus, setAdminGateStatus] = useState<'checking' | 'allowed' | 'unauthorized' | 'error'>(
     mode === 'admin' ? 'checking' : 'allowed',
@@ -88,7 +92,7 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
         surface: mode,
         path: location.pathname,
         sessionStatus,
-        surfaceStatus: surfaceState,
+        surfaceStatus: effectiveSurfaceState,
         orgResolutionStatus,
         hasSession,
         role: user?.role ?? null,
@@ -96,8 +100,24 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
       };
       console.info(`[RequireAuth][${mode}] ${event}`, meta);
     },
-    [ROUTE_GUARD_DEBUG, location.pathname, mode, sessionStatus, surfaceState, orgResolutionStatus, hasSession, user?.role],
+    [ROUTE_GUARD_DEBUG, location.pathname, mode, sessionStatus, effectiveSurfaceState, orgResolutionStatus, hasSession, user?.role],
   );
+
+  useEffect(() => {
+    const isDev =
+      (typeof import.meta !== 'undefined' && (import.meta as any)?.env?.DEV) ||
+      (typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production');
+    if (!isDev) return;
+    if (!hasSession) return;
+    if (surfaceState === effectiveSurfaceState) return;
+    console.debug('[RequireAuth] surface_status_adjust', {
+      rawSurfaceStatus: surfaceState,
+      effectiveSurfaceStatus: effectiveSurfaceState,
+      sessionStatus,
+      orgResolutionStatus,
+      path: location.pathname,
+    });
+  }, [surfaceState, effectiveSurfaceState, hasSession, sessionStatus, orgResolutionStatus, location.pathname]);
 
   const logRedirectOnce = useCallback(
     (target: string, reason: string) => {
@@ -375,6 +395,30 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
     }
   }, [mode, adminGateStatus, adminGateError, logGuardEvent]);
 
+  const adminGateStateRef = useRef({
+    waiting: false,
+    sessionStatus,
+    orgResolutionStatus,
+    effectiveSurfaceState,
+    adminGateStatus,
+    hasSession,
+  });
+
+  useEffect(() => {
+    adminGateStateRef.current = {
+      waiting:
+        mode === 'admin' &&
+        hasSession &&
+        effectiveSurfaceState !== 'ready' &&
+        (sessionStatus !== 'ready' || orgResolutionStatus !== 'ready' || adminGateStatus === 'checking'),
+      sessionStatus,
+      orgResolutionStatus,
+      effectiveSurfaceState,
+      adminGateStatus,
+      hasSession,
+    };
+  }, [mode, hasSession, sessionStatus, orgResolutionStatus, effectiveSurfaceState, adminGateStatus]);
+
   useEffect(() => {
     if (mode !== 'admin') {
       if (adminGateTimeoutRef.current) {
@@ -383,31 +427,78 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
       }
       return;
     }
-    if (adminGateStatus !== 'checking') {
+
+    const waiting =
+      hasSession &&
+      adminGateStatus === 'checking' &&
+      (sessionStatus !== 'ready' || orgResolutionStatus !== 'ready' || effectiveSurfaceState !== 'ready');
+
+    adminGateStateRef.current.waiting = waiting;
+
+    if (!waiting) {
       if (adminGateTimeoutRef.current) {
         clearTimeout(adminGateTimeoutRef.current);
         adminGateTimeoutRef.current = null;
+        if ((typeof import.meta !== 'undefined' && (import.meta as any)?.env?.DEV) || process.env?.NODE_ENV !== 'production') {
+          console.log('[RequireAuth][admin] gate_timeout cleared', {
+            adminGateStatus,
+            sessionStatus,
+            orgResolutionStatus,
+            surfaceStatus: effectiveSurfaceState,
+          });
+        }
       }
       return;
     }
+
     if (adminGateTimeoutRef.current) {
       clearTimeout(adminGateTimeoutRef.current);
     }
+    if ((typeof import.meta !== 'undefined' && (import.meta as any)?.env?.DEV) || process.env?.NODE_ENV !== 'production') {
+      console.log('[RequireAuth][admin] gate_timeout started', {
+        timeoutMs: ADMIN_GATE_TIMEOUT_MS,
+        adminGateStatus,
+        sessionStatus,
+        orgResolutionStatus,
+        surfaceStatus: effectiveSurfaceState,
+      });
+    }
     adminGateTimeoutRef.current = setTimeout(() => {
-      adminCheckAbortRef.current?.abort();
       adminGateTimeoutRef.current = null;
+      const latest = adminGateStateRef.current;
+      if (!latest.waiting) {
+        if ((typeof import.meta !== 'undefined' && (import.meta as any)?.env?.DEV) || process.env?.NODE_ENV !== 'production') {
+          console.log('[RequireAuth][admin] gate_timeout ignored (state ready)', latest);
+        }
+        return;
+      }
+      adminCheckAbortRef.current?.abort();
       setAdminGateStatus('error');
       setAdminGateError('timeout');
       logGuardEvent('admin_gate_timeout', { timeoutMs: ADMIN_GATE_TIMEOUT_MS });
+      if ((typeof import.meta !== 'undefined' && (import.meta as any)?.env?.DEV) || process.env?.NODE_ENV !== 'production') {
+        console.log('[RequireAuth][admin] gate_timeout fired', latest);
+      }
     }, ADMIN_GATE_TIMEOUT_MS);
 
     return () => {
       if (adminGateTimeoutRef.current) {
         clearTimeout(adminGateTimeoutRef.current);
         adminGateTimeoutRef.current = null;
+        if ((typeof import.meta !== 'undefined' && (import.meta as any)?.env?.DEV) || process.env?.NODE_ENV !== 'production') {
+          console.log('[RequireAuth][admin] gate_timeout cleanup');
+        }
       }
     };
-  }, [mode, adminGateStatus, logGuardEvent]);
+  }, [
+    mode,
+    hasSession,
+    adminGateStatus,
+    sessionStatus,
+    orgResolutionStatus,
+    effectiveSurfaceState,
+    logGuardEvent,
+  ]);
 
   const normalizeRole = (role?: string | null) => (role ? role.trim().toLowerCase() : '');
   const ADMIN_ROLES = useMemo(() => new Set(['owner', 'admin', 'manager', 'editor', 'platform_admin']), []);
@@ -437,7 +528,11 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
     return MEMBER_ROLES.has(normalizeRole(user.role));
   }, [ADMIN_ROLES, MEMBER_ROLES, activeMembership, hasActiveMembership, user]);
 
-  const waitingForAdminGate = mode === 'admin' && hasSession && adminGateStatus === 'checking';
+  const waitingForAdminGate =
+    mode === 'admin' &&
+    hasSession &&
+    adminGateStatus === 'checking' &&
+    (sessionStatus !== 'ready' || orgResolutionStatus !== 'ready' || effectiveSurfaceState !== 'ready');
 
   const shouldShowSpinner =
     sessionStatus !== 'ready' || (hasSession && (waitingForSurface || waitingForOrgContext || waitingForAdminGate));
@@ -483,18 +578,35 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
   }
 
   if (!hasSession) {
-    const targetPath = loginPathByMode[mode];
+    const targetPath = currentLoginPath;
+    if (isOnModeLoginPath) {
+      logGuardEvent('bypass_login_gate', { reason: 'missing_session_on_login_path', target: targetPath });
+      return null;
+    }
     if (location.pathname !== targetPath) {
       logRedirectOnce(targetPath, 'missing_session');
       logGuardEvent('redirect_login', { target: targetPath, reason: 'missing_session' });
       return <Navigate to={targetPath} state={{ from: location, reason: 'missing_session' }} replace />;
     }
     logGuardEvent('render_login_route', { reason: 'missing_session', target: targetPath });
-    return <>{children}</>;
+    return null;
   }
 
   if (mode === 'admin') {
+    if (typeof window !== 'undefined') {
+      console.log('[RequireAuth][admin] gate_state', {
+        sessionStatus,
+        orgResolutionStatus,
+        surfaceStatus: effectiveSurfaceState,
+        hasSession,
+        role: user?.role ?? null,
+      });
+    }
     if (!isAuthenticated.admin) {
+      if (isOnModeLoginPath) {
+        logGuardEvent('allow_admin_login_route', { reason: 'already_on_login_route' });
+        return null;
+      }
       logRedirectOnce('/admin/login', 'missing_admin_session_with_user');
       logGuardEvent('redirect_admin_login_unauthenticated', { reason: 'missing_admin_session_with_user' });
       return (
@@ -508,13 +620,13 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
   } else {
     if (!isAuthenticated.lms) {
       const lmsTarget = loginPathByMode.lms;
-      if (location.pathname !== lmsTarget) {
+      if (!isOnModeLoginPath) {
         logRedirectOnce(lmsTarget, 'missing_lms_session');
         logGuardEvent('redirect_login', { reason: 'missing_lms_session' });
         return <Navigate to={lmsTarget} state={{ from: location, reason: 'missing_lms_session' }} replace />;
       }
       logGuardEvent('render_login_route', { reason: 'missing_lms_session', target: lmsTarget });
-      return <>{children}</>;
+      return null;
     }
     if (!lmsRoleEligible) {
       logGuardEvent('redirect_unauthorized', {

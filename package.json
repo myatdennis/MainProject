@@ -10,6 +10,8 @@
     "check:env:local": "node scripts/check_env_local.cjs",
     "check:health": "node scripts/check-health.mjs",
     "dev": "npm run preclean:components && npm run check:env:local && vite",
+    "dev:reset": "bash scripts/kill_dev_ports.sh",
+    "dev:auth:smoke": "node scripts/dev_auth_smoke_test.cjs",
     "dev:server": "cross-env PORT=8888 npm run start:server",
     "dev:full": "concurrently -k -s first -n server,vite \"npm run dev:server\" \"npm run dev\"",
     "dev:vercel": "vercel dev",

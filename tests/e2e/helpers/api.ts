@@ -19,6 +19,7 @@ async function apiPost(path: string, body: any) {
       'Content-Type': 'application/json',
       'x-user-role': 'admin'
     },
+    credentials: 'include',
     body: JSON.stringify(body || {})
   });
   if (!res.ok) {

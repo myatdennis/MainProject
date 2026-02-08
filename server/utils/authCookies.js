@@ -3,6 +3,7 @@ import { ACCESS_TOKEN_TTL_SECONDS, REFRESH_TOKEN_TTL_SECONDS } from './tokenUtil
 const ACCESS_TOKEN_COOKIE = process.env.ACCESS_TOKEN_COOKIE_NAME || 'access_token';
 const REFRESH_TOKEN_COOKIE = process.env.REFRESH_TOKEN_COOKIE_NAME || 'refresh_token';
 const DEFAULT_COOKIE_DOMAIN = process.env.COOKIE_FALLBACK_DOMAIN || '.the-huddle.co';
+const COOKIE_DOMAIN = (process.env.COOKIE_DOMAIN || '').trim() || '';
 
 const parseBoolean = (value, fallback = false) => {
   if (typeof value === 'boolean') return value;
@@ -136,26 +137,42 @@ const setCookie = (res, name, value, maxAgeMs, req, opts = {}) => {
   res.cookie(name, value, options);
 };
 
-export const attachAuthCookies = (req, res, tokens) => {
-  setCookie(res, ACCESS_TOKEN_COOKIE, tokens.accessToken, resolveMaxAge(ACCESS_TOKEN_TTL_SECONDS * 1000, tokens.expiresAt), req, { name: ACCESS_TOKEN_COOKIE });
-  setCookie(
-    res,
-    REFRESH_TOKEN_COOKIE,
-    tokens.refreshToken,
-    resolveMaxAge(REFRESH_TOKEN_TTL_SECONDS * 1000, tokens.refreshExpiresAt),
-    req,
-    { name: REFRESH_TOKEN_COOKIE }
-  );
+const baseCookieOptions = () => {
+  const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production';
+  const options = {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: isProduction ? 'none' : 'lax',
+    path: '/',
+  };
+  if (isProduction && COOKIE_DOMAIN) {
+    options.domain = COOKIE_DOMAIN;
+  }
+  return options;
 };
 
-const clearCookie = (res, name, req, opts = {}) => {
-  const options = { ...getCookieOptions(req, { ...opts, name }), maxAge: 0 };
-  res.cookie(name, '', options);
+const applyCookie = (res, name, value, maxAgeSeconds) => {
+  const options = { ...baseCookieOptions(), maxAge: Math.max(0, Math.trunc(maxAgeSeconds * 1000)) };
+  res.cookie(name, value, options);
 };
 
-export const clearAuthCookies = (req, res) => {
-  clearCookie(res, ACCESS_TOKEN_COOKIE, req, { name: ACCESS_TOKEN_COOKIE });
-  clearCookie(res, REFRESH_TOKEN_COOKIE, req, { name: REFRESH_TOKEN_COOKIE });
+export const setAuthCookies = (res, { accessToken, refreshToken }) => {
+  if (typeof accessToken === 'string') {
+    applyCookie(res, ACCESS_TOKEN_COOKIE, accessToken, ACCESS_TOKEN_TTL_SECONDS);
+  }
+  if (typeof refreshToken === 'string') {
+    applyCookie(res, REFRESH_TOKEN_COOKIE, refreshToken, REFRESH_TOKEN_TTL_SECONDS);
+  }
+};
+
+export const attachAuthCookies = (_req, res, tokens) => {
+  setAuthCookies(res, tokens);
+};
+
+export const clearAuthCookies = (...args) => {
+  const res = args.length === 2 ? args[1] : args[0];
+  applyCookie(res, ACCESS_TOKEN_COOKIE, '', 0);
+  applyCookie(res, REFRESH_TOKEN_COOKIE, '', 0);
 };
 
 

@@ -48,6 +48,7 @@ async function createUser(u: { email: string; password: string; role: string; na
       'Content-Type': 'application/json',
       Authorization: `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`
     },
+    credentials: 'include',
     body: JSON.stringify(body)
   });
 

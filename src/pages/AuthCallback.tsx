@@ -1,12 +1,20 @@
 import { useEffect, useState } from 'react';
 
+const resolveLoginPath = () => {
+  if (typeof window === 'undefined' || !window.location) {
+    return '/lms/login';
+  }
+  const pathname = window.location.pathname || '';
+  return pathname.startsWith('/admin') ? '/admin/login' : '/lms/login';
+};
+
 const AuthCallback = () => {
   const [message, setMessage] = useState('Redirecting you to the login page…');
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
     setMessage('Please log in again.');
-    window.location.assign('/login');
+    window.location.assign(resolveLoginPath());
   }, []);
 
   return (
@@ -20,4 +28,3 @@ const AuthCallback = () => {
 };
 
 export default AuthCallback;
-
