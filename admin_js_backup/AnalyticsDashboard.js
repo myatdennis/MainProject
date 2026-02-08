@@ -54,7 +54,7 @@ var AnalyticsDashboard = function () {
                     _a.label = 1;
                 case 1:
                     _a.trys.push([1, 4, 5, 6]);
-                    return [4 /*yield*/, fetch('/api/admin/analytics')];
+                    return [4 /*yield*/, fetch('/api/admin/analytics', { credentials: 'include' })];
                 case 2:
                     res = _a.sent();
                     return [4 /*yield*/, res.json()];
@@ -127,7 +127,7 @@ var AnalyticsDashboard = function () {
             switch (_a.label) {
                 case 0:
                     _a.trys.push([0, 3, , 4]);
-                    return [4 /*yield*/, fetch('/api/admin/analytics/summary', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) })];
+                    return [4 /*yield*/, fetch('/api/admin/analytics/summary', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}), credentials: 'include' })];
                 case 1:
                     res = _a.sent();
                     return [4 /*yield*/, res.json()];

@@ -20,7 +20,7 @@ const tests = [];
 // Helper function to make HTTP requests
 async function makeRequest(url, options = {}) {
   try {
-    const response = await fetch(url, options);
+    const response = await fetch(url, { ...options, credentials: 'include' });
     return {
       status: response.status,
       ok: response.ok,

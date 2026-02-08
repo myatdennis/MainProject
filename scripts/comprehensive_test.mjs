@@ -262,7 +262,8 @@ async function testDatabaseConnectivity() {
       headers: {
         'apikey': supabaseKey,
         'Authorization': `Bearer ${supabaseKey}`
-      }
+      },
+      credentials: 'include'
     });
     
     if (response.ok) {

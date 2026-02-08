@@ -108,6 +108,15 @@ const OrgWorkspaceProtectedLayout = () => (
   </RequireAuth>
 );
 
+const LegacyCourseRedirect = () => {
+  const location = useLocation();
+  const targetPath =
+    location.pathname && location.pathname.startsWith('/courses')
+      ? `/lms${location.pathname}`
+      : '/lms/courses';
+  return <Navigate to={{ pathname: targetPath, search: location.search, hash: location.hash }} replace />;
+};
+
 
 function App() {
   return (
@@ -192,6 +201,7 @@ function AppContent() {
                 <Route path="/login" element={<Navigate to="/lms/login" replace />} />
                 <Route path="/lms/login" element={<LMSLogin />} />
                 <Route path="/admin/login" element={<AdminLogin />} />
+                <Route path="/courses/*" element={<LegacyCourseRedirect />} />
                 <Route path="/lms" element={<Navigate to="/lms/dashboard" replace />} />
                 <Route path="/lms/*" element={<LmsProtectedLayout />}>
                   <Route index element={<Navigate to="dashboard" replace />} />

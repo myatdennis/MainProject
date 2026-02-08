@@ -509,6 +509,8 @@ type PreparedRequest = {
   credentials: RequestCredentials;
 };
 
+const devMode = Boolean((import.meta as any)?.env?.DEV ?? (typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production'));
+
 const prepareRequest = async (path: string, options: InternalRequestOptions = {}): Promise<PreparedRequest> => {
   assertNoDoubleApi(path);
 
@@ -520,7 +522,7 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
       requireAuth: options.requireAuth,
       allowAnonymous: options.allowAnonymous,
     }) && options.allowAnonymous !== true;
-  let activeSession = getActiveSession();
+  const activeSession = getActiveSession();
 
   enforceAdminPrivileges(url, options.allowAnonymous, activeSession);
 
@@ -604,7 +606,9 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
     console.debug('[apiRequest][auth-debug]', debugPayload);
   }
 
-  return {
+  const credentialsMode: RequestCredentials = 'include';
+
+  const preparedRequest: PreparedRequest = {
     url,
     method,
     headers,
@@ -615,8 +619,33 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
     abortForwarder,
     timeoutId,
     hasAuthorization,
-    credentials: 'include',
+    credentials: credentialsMode,
   };
+
+  if (devMode) {
+    const originForUrl =
+      typeof window !== 'undefined' && window.location?.origin
+        ? window.location.origin
+        : 'http://localhost';
+
+    let parsed: URL | null = null;
+    try {
+      parsed = new URL(url, originForUrl);
+    } catch {
+      parsed = null;
+    }
+
+    if (parsed?.pathname && /\/api\/auth\/session$/i.test(parsed.pathname)) {
+      console.debug('[apiRequest][session]', {
+        finalUrl: url,
+        credentials: preparedRequest.credentials,
+        hasAuthHeader: hasAuthorization,
+        originUsedToParse: originForUrl,
+      });
+    }
+  }
+
+  return preparedRequest;
 };
 
 const executeFetch = async (input: PreparedRequest): Promise<Response> => {

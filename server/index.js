@@ -1,9 +1,4 @@
-// Ensure .env is loaded before any env validation
-import dotenv from 'dotenv';
-dotenv.config();
-
-// (Removed initial lightweight dev server stub in favor of the full server below)
-// import 'dotenv/config';
+import 'dotenv/config';
 import express from 'express';
 import http from 'http';
 import path from 'path';
@@ -35,6 +30,7 @@ import { enqueueJob, registerJobProcessor, hasQueueBackend } from './jobs/taskQu
 import setupNotificationDispatcher from './services/notificationDispatcher.js';
 import { validateCourse as validatePublishableCourse } from './lib/courseValidation.js';
 import { getSupabaseConfig } from './config/supabaseConfig.js';
+import { getUserMemberships } from './utils/memberships.js';
 
 // Import auth routes and middleware
 import authRoutes from './routes/auth.js';
@@ -325,62 +321,11 @@ const ANALYTICS_PII_FIELDS = new Set([
 ]);
 
 
-app.use(corsMiddleware);
-
 const cookiePolicySnapshot = describeCookiePolicy();
 log('info', 'http_cookie_policy', cookiePolicySnapshot);
 log('info', 'http_cors_policy', {
   allowedOrigins: resolvedCorsOrigins,
   allowCredentials: true,
-});
-
-// Attach request ids early so health/diagnostics endpoints can include them even before
-// the rest of the middleware stack (body parsers, auth, etc.) runs.
-app.use(attachRequestId);
-
-// Mount health routes before any static handlers or catch-alls so Railway/Netlify
-// can probe /health or /api/health even if auth or other middleware is misconfigured.
-app.use('/', healthRouter);
-
-app.get('/api/health/stream', (req, res) => {
-  res.status(200);
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache, no-transform');
-  res.setHeader('Connection', 'keep-alive');
-  if (typeof res.flushHeaders === 'function') {
-    res.flushHeaders();
-  }
-  res.write(`retry: ${HEALTH_STREAM_RETRY_MS}\n\n`);
-
-  let cancelled = false;
-
-  const sendSnapshot = async () => {
-    if (cancelled) return;
-    try {
-      const payload = await buildHealthPayload({ stream: true });
-      res.write(`data: ${JSON.stringify(payload)}\n\n`);
-    } catch (error) {
-      logger.warn('health_stream_emit_failed', { error: error instanceof Error ? error.message : error });
-    }
-  };
-
-  const heartbeat = setInterval(() => {
-    if (!cancelled) {
-      res.write(':heartbeat\n\n');
-    }
-  }, HEALTH_STREAM_HEARTBEAT_MS);
-
-  const interval = setInterval(() => {
-    void sendSnapshot();
-  }, HEALTH_STREAM_INTERVAL_MS);
-
-  void sendSnapshot();
-
-  req.on('close', () => {
-    cancelled = true;
-    clearInterval(interval);
-    clearInterval(heartbeat);
-  });
 });
 
 app.get('/api/health/db', async (_req, res) => {
@@ -903,10 +848,61 @@ if (isProduction) {
 const PORT = Number(process.env.PORT) || 8888;
 logger.info('server_port', { port: PORT });
 
+// Attach request ids early so every request (including health endpoints) gets an id.
+app.use(attachRequestId);
+
+// Core middleware: cookie parser first so downstream middleware can read req.cookies
+app.use(cookieParser());
+app.use(corsMiddleware);
+app.options('*', corsMiddleware);
+
+// Health + diagnostics routes should respond even if downstream middleware fails,
+// but they still need the shared CORS policy so browsers accept the responses.
+app.use('/', healthRouter);
+app.get('/api/health/stream', (req, res) => {
+  res.status(200);
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  if (typeof res.flushHeaders === 'function') {
+    res.flushHeaders();
+  }
+  res.write(`retry: ${HEALTH_STREAM_RETRY_MS}\n\n`);
+
+  let cancelled = false;
+
+  const sendSnapshot = async () => {
+    if (cancelled) return;
+    try {
+      const payload = await buildHealthPayload({ stream: true });
+      res.write(`data: ${JSON.stringify(payload)}\n\n`);
+    } catch (error) {
+      logger.warn('health_stream_emit_failed', { error: error instanceof Error ? error.message : error });
+    }
+  };
+
+  const heartbeat = setInterval(() => {
+    if (!cancelled) {
+      res.write(':heartbeat\n\n');
+    }
+  }, HEALTH_STREAM_HEARTBEAT_MS);
+
+  const interval = setInterval(() => {
+    void sendSnapshot();
+  }, HEALTH_STREAM_INTERVAL_MS);
+
+  void sendSnapshot();
+
+  req.on('close', () => {
+    cancelled = true;
+    clearInterval(interval);
+    clearInterval(heartbeat);
+  });
+});
+
 app.use(express.json({ limit: '10mb' }));
 
 // Security middleware
-app.use(cookieParser());
 app.use(securityHeaders);
 app.use(setDoubleSubmitCSRF);
 
@@ -919,7 +915,15 @@ app.get('/api/auth/csrf', getCSRFToken);
 const diagnosticsAllowedOrigins = new Set(
   resolvedCorsOrigins.length > 0
     ? resolvedCorsOrigins
-    : ['http://localhost:5174', 'http://127.0.0.1:5174', 'http://localhost:8888', 'http://127.0.0.1:8888'],
+    : [
+        'http://localhost:5174',
+        'http://localhost:5175',
+        'http://127.0.0.1:5174',
+        'http://127.0.0.1:5175',
+        'http://localhost:8888',
+        'http://127.0.0.1:8888',
+        'http://localhost:* (dev wildcard)',
+      ],
 );
 const defaultCookieSameSite = (process.env.COOKIE_SAMESITE || '').trim() || (process.env.NODE_ENV === 'production' ? 'none' : 'lax');
 const defaultCookieSecure = process.env.NODE_ENV === 'production';
@@ -971,6 +975,16 @@ const ensureAuthenticatedForHandler = (req, res) => {
   });
 };
 
+app.use('/api', (req, res, next) => {
+  if (req.method === 'GET' || req.method === 'HEAD') {
+    if (req.headers['if-none-match']) delete req.headers['if-none-match'];
+    if (req.headers['if-modified-since']) delete req.headers['if-modified-since'];
+  }
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+  res.setHeader('Pragma', 'no-cache');
+  res.setHeader('Expires', '0');
+  next();
+});
 app.use('/api', apiLimiter);
 app.use('/api', supabaseJwtMiddleware);
 app.use('/api', (req, res, next) => {
@@ -1312,8 +1326,8 @@ const getDocumentOrgId = async (documentId) => {
     return undefined;
   }
 };
-const COURSE_WITH_MODULES_LESSONS_SELECT = '*, modules(*, lessons!lessons_module_org_fk(*))';
-const MODULE_LESSONS_FOREIGN_TABLE = 'modules.lessons!lessons_module_org_fk';
+const COURSE_WITH_MODULES_LESSONS_SELECT = '*, modules(*, lessons(*))';
+const MODULE_LESSONS_FOREIGN_TABLE = 'modules.lessons';
 const isUuid = (value) => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 const isAnalyticsClientEventDuplicate = (error) =>
   Boolean(
@@ -1349,6 +1363,10 @@ const missingColumnPatterns = [
   /Could not find ['"]?([\w.]+)['"]? column/i,
   /Could not find '([\w.]+)' column of '([\w.]+)' in the schema cache/i,
 ];
+const missingRelationPatterns = [
+  /relation\s+"?([\w.]+)"?\s+does not exist/i,
+  /table\s+"?([\w.]+)"?\s+does not exist/i,
+];
 
 const normalizeColumnIdentifier = (identifier) => {
   if (typeof identifier !== 'string') return null;
@@ -1378,6 +1396,77 @@ const isMissingColumnError = (error) =>
       (error.code === '42703' ||
         error.code === 'PGRST204' ||
         missingColumnPatterns.some((pattern) =>
+          typeof error.message === 'string' && pattern.test(error.message)
+            ? true
+            : typeof error.details === 'string' && pattern.test(error.details),
+        )),
+  );
+
+const lessonColumnSupport = {
+  durationSeconds: true,
+  durationText: false,
+  contentJson: true,
+  contentLegacy: false,
+  completionRuleJson: true,
+};
+
+const formatLegacyDuration = (seconds) => {
+  if (typeof seconds !== 'number' || Number.isNaN(seconds)) return null;
+  const minutes = Math.max(0, Math.round(seconds / 60));
+  return `${minutes} min`;
+};
+
+const maybeHandleLessonColumnError = (error) => {
+  const missingColumn = normalizeColumnIdentifier(extractMissingColumnName(error));
+  if (!missingColumn) return false;
+  switch (missingColumn) {
+    case 'duration_s':
+      if (lessonColumnSupport.durationSeconds) {
+        lessonColumnSupport.durationSeconds = false;
+        lessonColumnSupport.durationText = true;
+        logger.warn('lessons_duration_seconds_missing', { code: error.code ?? null });
+        return true;
+      }
+      return false;
+    case 'duration':
+      if (lessonColumnSupport.durationText) {
+        lessonColumnSupport.durationText = false;
+        logger.warn('lessons_duration_column_missing', { code: error.code ?? null });
+        return true;
+      }
+      return false;
+    case 'content_json':
+      if (lessonColumnSupport.contentJson) {
+        lessonColumnSupport.contentJson = false;
+        lessonColumnSupport.contentLegacy = true;
+        logger.warn('lessons_content_json_missing', { code: error.code ?? null });
+        return true;
+      }
+      return false;
+    case 'content':
+      if (lessonColumnSupport.contentLegacy) {
+        lessonColumnSupport.contentLegacy = false;
+        logger.warn('lessons_content_column_missing', { code: error.code ?? null });
+        return true;
+      }
+      return false;
+    case 'completion_rule_json':
+      if (lessonColumnSupport.completionRuleJson) {
+        lessonColumnSupport.completionRuleJson = false;
+        logger.warn('lessons_completion_rule_column_missing', { code: error.code ?? null });
+        return true;
+      }
+      return false;
+    default:
+      return false;
+  }
+};
+
+const isMissingRelationError = (error) =>
+  Boolean(
+    error &&
+      (error.code === '42P01' ||
+        missingRelationPatterns.some((pattern) =>
           typeof error.message === 'string' && pattern.test(error.message)
             ? true
             : typeof error.details === 'string' && pattern.test(error.details),
@@ -2239,6 +2328,41 @@ const getPayloadSize = (req) => {
   } catch {
     return 0;
   }
+};
+
+const schemaSupportFlags = {
+  lessonProgress: 'unknown',
+  courseProgress: 'unknown',
+};
+
+let courseVersionColumnAvailable = true;
+
+const handleCourseVersionColumnError = (error) => {
+  if (!courseVersionColumnAvailable || !error) {
+    return false;
+  }
+  if (!isMissingColumnError(error)) {
+    return false;
+  }
+  const missingColumn = normalizeColumnIdentifier(extractMissingColumnName(error));
+  if (missingColumn && missingColumn.toLowerCase() === 'version') {
+    courseVersionColumnAvailable = false;
+    logger.warn('courses_version_column_missing', {
+      code: error.code ?? null,
+      message: error.message ?? null,
+    });
+    return true;
+  }
+  return false;
+};
+
+const isMissingColumnError = (error) => {
+  if (!error) return false;
+  const message = typeof error.message === 'string' ? error.message.toLowerCase() : '';
+  if (error.code && String(error.code) === '42703') {
+    return true;
+  }
+  return message.includes('does not exist');
 };
 
 const logAdminCoursesError = (req, err, label) => {
@@ -3919,16 +4043,8 @@ const handleLogin = async (req, res) => {
       return;
     }
 
-    const { data: membershipRows, error: membershipError } = await supabase
-      .from('user_organizations_vw')
-      .select('organization_id, role, status, organization_name, organization_status, subscription, features')
-      .eq('user_id', data.user.id);
-
-    if (membershipError) {
-      throw membershipError;
-    }
-
-    const membershipPayload = (membershipRows || []).map(mapMembershipResponse);
+    const membershipRows = await getUserMemberships(data.user.id, { logPrefix: '[server-login]' });
+    const membershipPayload = membershipRows.map(mapMembershipResponse);
     const activeOrgIds = membershipPayload.filter((m) => m.status === 'active').map((m) => m.organizationId);
 
     const derivedRole = resolveUserRole(
@@ -4511,6 +4627,31 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
 
   try {
     const meta = course.meta ?? {};
+    const resolvedCourseVersion = typeof course?.version === 'number' ? course.version : 1;
+    let includeCourseVersionField = courseVersionColumnAvailable;
+    const maybeHandleMissingCourseVersion = (error) => {
+      const flagged = handleCourseVersionColumnError(error);
+      if (flagged) {
+        includeCourseVersionField = false;
+      }
+      return flagged;
+    };
+    const buildCourseRecordPayload = (includeVersion = includeCourseVersionField) => {
+      const payload = {
+        id: course.id ?? undefined,
+        slug: course.slug ?? undefined,
+        title: course.title || course.name,
+        description: course.description ?? null,
+        status: course.status ?? 'draft',
+        organization_id: organizationId,
+        meta_json: meta,
+      };
+      if (includeVersion) {
+        payload.version = resolvedCourseVersion;
+      }
+      return payload;
+    };
+
     // Optional optimistic version check to avoid overwriting newer versions
     if (course.id) {
       const existing = await supabase.from('courses').select('id, version, organization_id').eq('id', course.id).maybeSingle();
@@ -4577,61 +4718,60 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
     }
 
     // If Supabase supports the upsert_course_full RPC, try a single transactional upsert
-    try {
-      const rpcPayload = {
-        id: course.id ?? undefined,
-        slug: course.slug ?? undefined,
-        title: course.title || course.name,
-        description: course.description ?? null,
-        status: course.status ?? 'draft',
-        version: course.version ?? 1,
-        organization_id: organizationId,
-        meta_json: meta,
-      };
+    if (includeCourseVersionField) {
       try {
-        console.log('[srv] Attempting RPC upsert_course_full', { rpcPayload, moduleCount: Array.isArray(modules) ? modules.length : 0 });
-      } catch (_) {}
-      const rpcRes = await supabase.rpc('upsert_course_full', { p_course: rpcPayload, p_modules: modules });
-      try {
-        console.log('[srv] rpcRes for upsert_course_full', { error: rpcRes?.error ?? null, data: rpcRes?.data ?? null });
-      } catch (_) {}
-      if (!rpcRes.error && rpcRes.data) {
-        const sel = await supabase
-          .from('courses')
-          .select(COURSE_WITH_MODULES_LESSONS_SELECT)
-          .eq('id', rpcRes.data)
-          .single();
-        if (sel.error) throw sel.error;
-        res.status(201).json({ data: sel.data });
-        return;
+        const rpcPayload = buildCourseRecordPayload(true);
+        try {
+          console.log('[srv] Attempting RPC upsert_course_full', { rpcPayload, moduleCount: Array.isArray(modules) ? modules.length : 0 });
+        } catch (_) {}
+        const rpcRes = await supabase.rpc('upsert_course_full', { p_course: rpcPayload, p_modules: modules });
+        try {
+          console.log('[srv] rpcRes for upsert_course_full', { error: rpcRes?.error ?? null, data: rpcRes?.data ?? null });
+        } catch (_) {}
+        if (!rpcRes.error && rpcRes.data) {
+          const sel = await supabase
+            .from('courses')
+            .select(COURSE_WITH_MODULES_LESSONS_SELECT)
+            .eq('id', rpcRes.data)
+            .single();
+          if (sel.error) throw sel.error;
+          res.status(201).json({ data: sel.data });
+          return;
+        }
+      } catch (rpcErr) {
+        const handled = maybeHandleMissingCourseVersion(rpcErr);
+        if (!handled) {
+          console.warn('RPC upsert_course_full failed, falling back to client-side sequence:', rpcErr);
+        } else {
+          console.warn('RPC upsert_course_full skipped course version field due to missing column');
+        }
       }
-    } catch (rpcErr) {
-      console.warn('RPC upsert_course_full failed, falling back to client-side sequence:', rpcErr);
     }
 
     // Upsert course row first to obtain courseRow.id
-    const upsertPayload = {
-      id: course.id ?? undefined,
-      slug: course.slug ?? undefined,
-      title: course.title || course.name,
-      description: course.description ?? null,
-      status: course.status ?? 'draft',
-      version: course.version ?? 1,
-      organization_id: organizationId,
-      meta_json: meta,
-    };
-    try {
-      console.log('[srv] Performing course upsert', { upsertPayload });
-    } catch (_) {}
+    let courseRow = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const upsertPayload = buildCourseRecordPayload(includeCourseVersionField);
+      try {
+        console.log('[srv] Performing course upsert', { upsertPayload });
+      } catch (_) {}
 
-    const courseRes = await supabase
-      .from('courses')
-      .upsert(upsertPayload)
-      .select('*')
-      .single();
+      const courseRes = await supabase.from('courses').upsert(upsertPayload).select('*').single();
 
-    if (courseRes.error) throw courseRes.error;
-    const courseRow = courseRes.data;
+      if (!courseRes.error) {
+        courseRow = courseRes.data;
+        break;
+      }
+
+      if (includeCourseVersionField && maybeHandleMissingCourseVersion(courseRes.error)) {
+        continue;
+      }
+      throw courseRes.error;
+    }
+
+    if (!courseRow) {
+      throw new Error('Failed to upsert course record');
+    }
 
     // E2E fallback when Supabase isn't configured: keep an in-memory course store
     if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
@@ -4735,22 +4875,54 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
             await supabase.from('lessons').delete().in('id', lessonsToDelete);
           }
 
-          for (const [lessonIndex, lesson] of lessons.entries()) {
-            const { error: lessonError } = await supabase
-              .from('lessons')
-              .upsert({
-                id: lesson.id,
-                module_id: moduleRow.id,
-                order_index: lesson.order_index ?? lessonIndex,
-                type: lesson.type,
-                title: lesson.title,
-                description: lesson.description ?? null,
-                duration_s: lesson.duration_s ?? null,
-                content_json: lesson.content_json ?? {},
-                completion_rule_json: lesson.completion_rule_json ?? null
-              });
+          const buildLessonUpsertPayload = (lessonInput, moduleId, lessonIndex) => {
+            const baseDuration =
+              typeof lessonInput.duration_s === 'number' && Number.isFinite(lessonInput.duration_s)
+                ? lessonInput.duration_s
+                : null;
+            const contentPayload = lessonInput.content_json ?? lessonInput.content ?? {};
+            const payload = {
+              id: lessonInput.id,
+              module_id: moduleId,
+              order_index: lessonInput.order_index ?? lessonIndex,
+              type: lessonInput.type,
+              title: lessonInput.title,
+              description: lessonInput.description ?? null,
+            };
+            if (lessonColumnSupport.durationSeconds) {
+              payload.duration_s = baseDuration;
+            }
+            if (lessonColumnSupport.durationText) {
+              const legacyDuration = lessonInput.duration ?? (baseDuration != null ? formatLegacyDuration(baseDuration) : null);
+              if (legacyDuration) {
+                payload.duration = legacyDuration;
+              }
+            }
+            if (lessonColumnSupport.contentJson) {
+              payload.content_json = contentPayload || {};
+            }
+            if (lessonColumnSupport.contentLegacy) {
+              payload.content = contentPayload || {};
+            }
+            if (lessonColumnSupport.completionRuleJson && lessonInput.completion_rule_json) {
+              payload.completion_rule_json = lessonInput.completion_rule_json;
+            }
+            return payload;
+          };
 
-            if (lessonError) throw lessonError;
+          for (const [lessonIndex, lesson] of lessons.entries()) {
+            let lessonPayload = buildLessonUpsertPayload(lesson, moduleRow.id, lessonIndex);
+            for (let attempt = 0; attempt < 2; attempt += 1) {
+              const { error: lessonError } = await supabase.from('lessons').upsert(lessonPayload);
+              if (!lessonError) {
+                break;
+              }
+              if (maybeHandleLessonColumnError(lessonError)) {
+                lessonPayload = buildLessonUpsertPayload(lesson, moduleRow.id, lessonIndex);
+                continue;
+              }
+              throw lessonError;
+            }
           }
         } else {
           await supabase.from('lessons').delete().eq('module_id', moduleRow.id);
@@ -4779,6 +4951,15 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
 
     res.status(201).json({ data: refreshed.data });
   } catch (error) {
+    try {
+      console.error('[admin-courses] upsert_error_detail', {
+        message: error?.message ?? null,
+        code: error?.code ?? null,
+        details: error?.details ?? null,
+        hint: error?.hint ?? null,
+        stack: error?.stack ?? null,
+      });
+    } catch (_) {}
     logAdminCoursesError(req, error, 'Failed to upsert course');
     // Provide more details to the client for debugging
     const errorMessage = error?.message || 'Unable to save course';
@@ -6241,8 +6422,7 @@ app.post('/api/learner/progress', authenticate, async (req, res) => {
       updated_at: nowIso,
     });
 
-    let lessonRows = [];
-    if (lessonList.length > 0) {
+    const upsertLessonProgressModern = async () => {
       const payload = lessonList.map((lesson) => ({
         user_id: userId,
         org_id: null,
@@ -6252,31 +6432,107 @@ app.post('/api/learner/progress', authenticate, async (req, res) => {
         completed: Boolean(lesson.completed ?? lesson.progressPercent >= 100),
         time_spent_seconds: Math.max(0, Math.round(lesson.positionSeconds ?? 0)),
       }));
-
       const { data, error } = await supabase
         .from('user_lesson_progress')
         .upsert(payload, { onConflict: 'user_id,lesson_id' })
         .select('*');
-
       if (error) throw error;
-      lessonRows = (data || []).map((row) => normalizeLessonRecord(row));
+      return (data || []).map((row) => normalizeLessonRecord(row));
+    };
+
+    const upsertLessonProgressLegacy = async () => {
+      const payload = lessonList.map((lesson) => ({
+        user_id: userId,
+        org_id: null,
+        course_id: courseId,
+        lesson_id: lesson.lessonId,
+        percent: clampPercent(lesson.progressPercent),
+        status: Boolean(lesson.completed ?? lesson.progressPercent >= 100) ? 'completed' : 'in_progress',
+        time_spent_s: Math.max(0, Math.round(lesson.positionSeconds ?? 0)),
+        updated_at: nowIso,
+      }));
+      const { data, error } = await supabase
+        .from('user_lesson_progress')
+        .upsert(payload, { onConflict: 'user_id,lesson_id' })
+        .select('*');
+      if (error) throw error;
+      return (data || []).map((row) => normalizeLessonRecord(row));
+    };
+
+    let lessonRows = [];
+    if (lessonList.length > 0) {
+      if (schemaSupportFlags.lessonProgress === 'legacy') {
+        lessonRows = await upsertLessonProgressLegacy();
+      } else {
+        try {
+          lessonRows = await upsertLessonProgressModern();
+          schemaSupportFlags.lessonProgress = 'modern';
+        } catch (error) {
+          if (isMissingColumnError(error)) {
+            console.warn('[progress] Falling back to legacy lesson progress schema', { code: error.code });
+            schemaSupportFlags.lessonProgress = 'legacy';
+            lessonRows = await upsertLessonProgressLegacy();
+          } else {
+            throw error;
+          }
+        }
+      }
     }
 
-    const { data: courseRow, error: courseError } = await supabase
-      .from('user_course_progress')
-      .upsert(
-        {
-          user_id: userId,
-          course_id: courseId,
-          progress: clampPercent(courseProgress.percent),
-          completed: (courseProgress.percent ?? 0) >= 100,
-        },
-        { onConflict: 'user_id,course_id' },
-      )
-      .select('*')
-      .single();
+    const upsertCourseProgressModern = async () => {
+      const { data, error } = await supabase
+        .from('user_course_progress')
+        .upsert(
+          {
+            user_id: userId,
+            course_id: courseId,
+            progress: clampPercent(courseProgress.percent),
+            completed: (courseProgress.percent ?? 0) >= 100,
+          },
+          { onConflict: 'user_id,course_id' },
+        )
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    };
 
-    if (courseError) throw courseError;
+    const upsertCourseProgressLegacy = async () => {
+      const { data, error } = await supabase
+        .from('user_course_progress')
+        .upsert(
+          {
+            user_id: userId,
+            course_id: courseId,
+            percent: clampPercent(courseProgress.percent),
+            status: (courseProgress.percent ?? 0) >= 100 ? 'completed' : 'in_progress',
+            time_spent_s: Math.max(0, Math.round(courseProgress.totalTimeSeconds ?? 0)),
+          },
+          { onConflict: 'user_id,course_id' },
+        )
+        .select('*')
+        .single();
+      if (error) throw error;
+      return data;
+    };
+
+    let courseRow;
+    if (schemaSupportFlags.courseProgress === 'legacy') {
+      courseRow = await upsertCourseProgressLegacy();
+    } else {
+      try {
+        courseRow = await upsertCourseProgressModern();
+        schemaSupportFlags.courseProgress = 'modern';
+      } catch (error) {
+        if (isMissingColumnError(error)) {
+          console.warn('[progress] Falling back to legacy course progress schema', { code: error.code });
+          schemaSupportFlags.courseProgress = 'legacy';
+          courseRow = await upsertCourseProgressLegacy();
+        } else {
+          throw error;
+        }
+      }
+    }
     const courseRecord = courseRow
       ? {
           user_id: courseRow.user_id,
@@ -6374,7 +6630,7 @@ app.get('/api/learner/progress', authenticate, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('user_lesson_progress')
-      .select('lesson_id, progress, completed, time_spent_seconds, updated_at, created_at')
+      .select('*')
       .eq('user_id', normalizedUserId)
       .in('lesson_id', lessonIds);
 
@@ -6384,13 +6640,7 @@ app.get('/api/learner/progress', authenticate, async (req, res) => {
     (data || []).forEach((row) => {
       const lessonId = row.lesson_id || row.lessonId;
       if (!lessonId) return;
-      byLessonId.set(String(lessonId), buildLessonRow(String(lessonId), {
-        progress: row.progress,
-        completed: row.completed,
-        time_spent_seconds: row.time_spent_seconds,
-        updated_at: row.updated_at,
-        created_at: row.created_at,
-      }));
+      byLessonId.set(String(lessonId), buildLessonRow(String(lessonId), row));
     });
 
     const lessons = lessonIds.map((lessonId) => byLessonId.get(lessonId) || buildLessonRow(lessonId, null));
@@ -6401,6 +6651,20 @@ app.get('/api/learner/progress', authenticate, async (req, res) => {
       },
     });
   } catch (error) {
+    if (isMissingRelationError(error)) {
+      logger.warn('learner_progress_table_missing', {
+        code: error.code ?? null,
+        message: error.message ?? null,
+        requestId: req.requestId ?? null,
+      });
+      res.json({
+        data: {
+          lessons: lessonIds.map((lessonId) => buildLessonRow(lessonId, null)),
+        },
+        fallback: 'empty_progress',
+      });
+      return;
+    }
     console.error('Failed to fetch learner progress:', error);
     writeErrorDiagnostics(req, error, { meta: { surface: 'learner_progress_commit' } });
     res.status(500).json({ error: 'Unable to fetch progress' });
@@ -10173,8 +10437,22 @@ app.use((req, res, next) => {
   });
 });
 
+const redactEnv = (input) => {
+  if (!input || typeof input !== 'object') {
+    return input;
+  }
+  return Object.keys(input).reduce((acc, key) => {
+    if (/(KEY|SECRET|TOKEN|PASSWORD|DATABASE_URL)/i.test(key)) {
+      acc[key] = '***redacted***';
+    } else {
+      acc[key] = input[key];
+    }
+    return acc;
+  }, {});
+};
+
 // Example usage of shared utils
-log('info', 'Server started', { env });
+log('info', 'Server started', { env: redactEnv(env) });
 
 
 // Use the structured API error handler for all errors

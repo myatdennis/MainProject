@@ -65,7 +65,7 @@ npm run start:server
 curl http://localhost:8888/api/health
 ```
 
-When running locally behind another port, set `PORT=5000 npm run start:server` and update `VITE_API_BASE_URL` to `http://localhost:5000/api`. The `/api/health` endpoint always responds with `{ ok: true, env: <NODE_ENV> }`, which is what Netlify uses to confirm the Railway proxy is healthy.
+When running locally behind another port, set `PORT=5000 npm run start:server` and update the proxy target in `vite.config.ts` (the `/api` proxy) to point at that port. Keep `VITE_API_BASE_URL` as `/api` so the browser always talks to the Vite server, which forwards requests to your API. The `/api/health` endpoint always responds with `{ ok: true, env: <NODE_ENV> }`, which is what Netlify uses to confirm the Railway proxy is healthy.
 
 ## Full-stack dev runbook
 
@@ -79,6 +79,10 @@ When running locally behind another port, set `PORT=5000 npm run start:server` a
     curl -i http://localhost:5174/api/health
     ```
     Vite forwards this to `http://localhost:8888/api/health`, so a `200 OK` means both servers are happy.
+    ```bash
+    curl -i http://localhost:5174/api/auth/session
+    ```
+    This should return JSON (200 or 401) proving `/api/auth/session` is reachable through Vite.
 3. **(Optional) Direct API health**
     ```bash
     curl -i http://localhost:8888/api/health
@@ -94,24 +98,19 @@ Local development: API proxy note
 
 When developing locally prefer the Vite proxy so requests go to your local backend.
 
-- Leave `VITE_API_BASE_URL` and `VITE_API_URL` blank in `.env` / `.env.local` to use the Vite proxy (`/api`).
-- If you set them to a remote/production URL your browser will call that host directly and you may see CORS errors.
-- To call a local backend directly set:
-
-```env
-VITE_API_BASE_URL=http://localhost:8888
-VITE_API_URL=http://localhost:8888/api
-```
+- Leave `VITE_API_BASE_URL` blank **or** set it to `/api` in `.env` / `.env.local` to use the Vite proxy.
+- If you set it to a remote/production URL your browser will call that host directly and you may see CORS errors.
+- If you change your API port, update `vite.config.ts -> server.proxy['/api'].target` to the new origin instead of changing `VITE_API_BASE_URL`.
 
 ### Backend base URL configuration
 
 The frontend now derives **all** HTTP and WebSocket calls from a single origin so production builds can talk to Railway without Netlify rewrites.
 
-- **Local dev (.env.local)** – leave `VITE_API_BASE_URL` unset to keep using the Vite proxy, or point it straight at your Express server:
+- **Local dev (.env.local)** – leave `VITE_API_BASE_URL` unset or set it to `/api` to keep using the Vite proxy. Update `vite.config.ts` if your API runs on a different port. When testing against a remote API you may set `VITE_API_BASE_URL=https://remote-host/api`.
 
     ```env
     # .env.local
-    VITE_API_BASE_URL=http://localhost:8888/api
+    VITE_API_BASE_URL=/api
     VITE_WS_URL=ws://localhost:8888/ws
     VITE_ENABLE_WS=true
     ```

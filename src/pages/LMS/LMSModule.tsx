@@ -12,7 +12,7 @@ import Badge from '../../components/ui/Badge';
 import ProgressBar from '../../components/ui/ProgressBar';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import { courseStore } from '../../store/courseStore';
-import { normalizeCourse, type NormalizedCourse, type NormalizedLesson } from '../../utils/courseNormalization';
+import { normalizeCourse, slugify, type NormalizedCourse, type NormalizedLesson } from '../../utils/courseNormalization';
 import {
   loadStoredCourseProgress,
   saveStoredCourseProgress,
@@ -30,19 +30,94 @@ const supportedSidebarLessonTypes = ['video', 'interactive', 'quiz', 'resource',
 const PROGRESS_MILESTONES = [25, 50, 75, 100] as const;
 type SidebarLessonType = (typeof supportedSidebarLessonTypes)[number];
 
-const deriveModuleContext = (moduleId: string | undefined): {
+const normalizeIdentifier = (value?: string | null): string | null => {
+  if (!value) return null;
+  try {
+    return slugify(String(value));
+  } catch {
+    return String(value).toLowerCase();
+  }
+};
+
+const deriveModuleContext = (
+  moduleId: string | undefined,
+  preferredLessonId?: string | null,
+): {
   course: NormalizedCourse;
   module: NonNullable<NormalizedCourse['modules'][number]>;
 } | null => {
-  if (!moduleId) return null;
-  const courses = courseStore.getAllCourses();
-  for (const course of courses) {
-    const normalized = normalizeCourse(course);
-    const targetModule = normalized.modules.find((module) => module.id === moduleId);
+  const normalizedModuleIdentifier = normalizeIdentifier(moduleId);
+  const normalizedLessonIdentifier = normalizeIdentifier(preferredLessonId);
+  const courses = courseStore.getAllCourses().map((course) => ({
+    original: course,
+    normalized: normalizeCourse(course),
+  }));
+
+  const matchModule = (
+    normalized: NormalizedCourse,
+    matcher: (courseModule: NormalizedCourse['modules'][number]) => boolean,
+  ) => {
+    const targetModule = normalized.modules.find((courseModule) => matcher(courseModule));
     if (targetModule) {
       return { course: normalized, module: targetModule };
     }
+    return null;
+  };
+
+  if (normalizedModuleIdentifier) {
+    for (const { normalized } of courses) {
+      const context = matchModule(normalized, (courseModule) => {
+        const candidateIds = [
+          normalizeIdentifier(courseModule.id),
+          normalizeIdentifier((courseModule as any)?.slug),
+          normalizeIdentifier(`${normalized.slug}-${courseModule.id}`),
+          normalizeIdentifier(`${normalized.slug}-${courseModule.title}`),
+        ];
+        return candidateIds.includes(normalizedModuleIdentifier);
+      });
+      if (context) {
+        return context;
+      }
+    }
   }
+
+  if (normalizedLessonIdentifier) {
+    for (const { normalized } of courses) {
+      const context = matchModule(normalized, (courseModule) =>
+        (courseModule.lessons ?? []).some(
+          (lesson) =>
+            normalizeIdentifier(lesson.id) === normalizedLessonIdentifier ||
+            normalizeIdentifier((lesson as any)?.slug) === normalizedLessonIdentifier,
+        ),
+      );
+      if (context) {
+        return context;
+      }
+    }
+  }
+
+  if (moduleId) {
+    const resolvedCourse = courseStore.resolveCourse(moduleId);
+    if (resolvedCourse) {
+      const normalized = normalizeCourse(resolvedCourse);
+      if (normalizedLessonIdentifier) {
+        const context = matchModule(normalized, (courseModule) =>
+          (courseModule.lessons ?? []).some(
+            (lesson) =>
+              normalizeIdentifier(lesson.id) === normalizedLessonIdentifier ||
+              normalizeIdentifier((lesson as any)?.slug) === normalizedLessonIdentifier,
+          ),
+        );
+        if (context) {
+          return context;
+        }
+      }
+      if (normalized.modules.length > 0) {
+        return { course: normalized, module: normalized.modules[0] };
+      }
+    }
+  }
+
   return null;
 };
 
@@ -228,7 +303,7 @@ const LMSModule = () => {
       setIsLoading(true);
       setError(null);
       try {
-  const context = deriveModuleContext(moduleIdentifier ?? undefined);
+        const context = deriveModuleContext(moduleIdentifier ?? undefined, requestedLessonId);
         if (!context) {
           setError('Module not found. It may have been unpublished or removed.');
           setCourseContext(null);
@@ -276,7 +351,7 @@ const LMSModule = () => {
       }
     };
     void loadModule();
-  }, [moduleIdentifier, learnerId, focusLesson]);
+  }, [moduleIdentifier, requestedLessonId, learnerId, focusLesson]);
 
   useEffect(() => {
     if (!requestedLessonId || !courseContext?.lessons?.length) return;

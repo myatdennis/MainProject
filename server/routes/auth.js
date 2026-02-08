@@ -15,12 +15,13 @@ import {
   mapMembershipRows,
 } from '../middleware/auth.js';
 import supabase, { supabaseAuthClient } from '../lib/supabaseClient.js';
+import getUserMemberships from '../utils/memberships.js';
 import {
-  attachAuthCookies,
+  setAuthCookies,
   clearAuthCookies,
   getRefreshTokenFromRequest,
 } from '../utils/authCookies.js';
-import { doubleSubmitCSRF } from '../middleware/csrf.js';
+import { doubleSubmitCSRF, setCSRFToken } from '../middleware/csrf.js';
 import {
   demoLoginEnabled,
   E2E_TEST_MODE as e2eTestMode,
@@ -44,10 +45,10 @@ const parseBoolean = (value, fallback = false) => {
   return fallback;
 };
 
+const devLoginDiagnosticsEnabled = (process.env.NODE_ENV || '').toLowerCase() !== 'production';
 const isE2ETestMode = e2eTestMode;
 const isDemoModeExplicit = demoModeExplicit || allowDemoExplicit;
 const allowLegacyDemoUsers = allowLegacyDemoUsersFlag || isE2ETestMode;
-const canUseDemoMode = demoLoginEnabled;
 
 const legacyDemoUsers = [
   {
@@ -215,123 +216,6 @@ const buildJwtConfigError = () => ({
   missingEnv: ['JWT_SECRET'],
 });
 
-const matchLegacyDemoUser = async (email, password) => {
-  const legacyUser = legacyDemoUsers.find((user) => normalizeEmail(user.email) === normalizeEmail(email));
-  if (!legacyUser) return null;
-  if (legacyUser.password && legacyUser.password === password) {
-    return legacyUser;
-  }
-  return null;
-};
-
-const matchConfiguredDemoUser = async (email, password) => {
-  const target = normalizeEmail(email);
-  for (const user of configuredDemoUsers) {
-    if (user.emailLower !== target) continue;
-    if (user.passwordHash) {
-      const match = await bcrypt.compare(password, user.passwordHash);
-      if (match) return user;
-    } else if (user.password && user.password === password) {
-      return user;
-    }
-  }
-  return null;
-};
-
-const resolveDemoUser = async (email, password) => {
-  const configured = await matchConfiguredDemoUser(email, password);
-  if (configured) return configured;
-  if (allowLegacyDemoUsers) {
-    return matchLegacyDemoUser(email, password);
-  }
-  return null;
-};
-
-const ORGANIZATION_VIEW_COLUMNS =
-  'organization_id, role, status, organization_name, organization_status, subscription, features, accepted_at, last_seen_at';
-
-const MEMBERSHIP_VIEW_NAME = 'user_organizations_vw';
-
-const isMembershipViewMissingError = (error) =>
-  Boolean(
-    error &&
-      (error.code === 'PGRST205' ||
-        error.code === '42P01' ||
-        (typeof error.message === 'string' && error.message.includes(MEMBERSHIP_VIEW_NAME))),
-  );
-
-const normalizeOrgId = (value) => {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed || null;
-};
-
-const fetchMembershipsFromBaseTables = async (userId) => {
-  if (!supabase || !userId) return [];
-  try {
-    const { data: membershipRows, error } = await supabase
-      .from('organization_memberships')
-      .select('org_id, role, created_at, updated_at')
-      .eq('user_id', userId);
-
-    if (error) throw error;
-
-    const rows = Array.isArray(membershipRows) ? membershipRows : [];
-    const orgIds = Array.from(new Set(rows.map((row) => normalizeOrgId(row?.org_id)).filter(Boolean)));
-
-    let orgMap = new Map();
-    if (orgIds.length > 0) {
-      const { data: orgs, error: orgError } = await supabase
-        .from('organizations')
-        .select('id,name,status,subscription,features')
-        .in('id', orgIds);
-
-      if (orgError) throw orgError;
-      orgMap = new Map((orgs || []).map((org) => [org.id, org]));
-    }
-
-    return rows.map((row) => {
-      const organization = orgMap.get(normalizeOrgId(row?.org_id)) || {};
-      return {
-        organization_id: normalizeOrgId(row?.org_id),
-        role: row?.role || 'member',
-        status: 'active',
-        organization_name: organization.name || null,
-        organization_status: organization.status || null,
-        subscription: organization.subscription ?? null,
-        features: organization.features ?? null,
-        accepted_at: row?.created_at || null,
-        last_seen_at: row?.updated_at || null,
-      };
-    });
-  } catch (error) {
-    console.error('[AUTH ROUTES] organization_memberships fallback failed', { userId, error });
-    return [];
-  }
-};
-
-const fetchUserMembershipRows = async (userId) => {
-  if (!supabase || !userId) return [];
-  const { data, error } = await supabase
-    .from('user_organizations_vw')
-    .select(ORGANIZATION_VIEW_COLUMNS)
-    .eq('user_id', userId);
-
-  if (error) {
-    if (isMembershipViewMissingError(error)) {
-      console.warn('[AUTH ROUTES] user_organizations_vw missing, falling back to base tables', {
-        userId,
-        code: error.code,
-        message: error.message,
-      });
-      return fetchMembershipsFromBaseTables(userId);
-    }
-    console.error('[AUTH ROUTES] Failed to fetch memberships', { userId, error });
-    return [];
-  }
-
-  return data || [];
-};
 
 const buildTokenResponseFromSession = (session) => {
   if (!session) {
@@ -440,7 +324,9 @@ const refreshSessionFromCookies = async (req, res) => {
       email: payload.email,
       role: payload.role,
     });
-    attachAuthCookies(req, res, tokens);
+    setAuthCookies(res, tokens);
+    setCSRFToken(req, res, () => {});
+    setCSRFToken(req, res, () => {});
     const userPayload = buildDemoUserPayloadFromToken(payload);
     return {
       ok: true,
@@ -470,11 +356,13 @@ const refreshSessionFromCookies = async (req, res) => {
     };
   }
 
-  const membershipRows = await fetchUserMembershipRows(data.user.id);
+  const membershipRows = await getUserMemberships(data.user.id, { logPrefix: '[auth-refresh]' });
   const userPayload = buildUserPayloadFromSupabase(data.user, membershipRows);
   const tokens = buildTokenResponseFromSession(data.session);
 
-  attachAuthCookies(req, res, tokens);
+  setAuthCookies(res, tokens);
+  setCSRFToken(req, res, () => {});
+  setCSRFToken(req, res, () => {});
 
   return {
     ok: true,
@@ -495,10 +383,6 @@ router.use((req, _res, next) => {
 // ============================================================================
 
 router.post('/login', async (req, res) => {
-  if (!isJwtSecretConfigured) {
-    const jwtError = buildJwtConfigError();
-    return res.status(jwtError.status).json(jwtError);
-  }
   const origin = req.headers.origin || 'unknown';
   if (process.env.DEBUG_AUTH === 'true') {
     console.log('[DEBUG_AUTH] Entered /api/auth/login', {
@@ -511,51 +395,139 @@ router.post('/login', async (req, res) => {
   }
   try {
     const { email, password } = req.body;
+    const supabaseUrlHost = (() => {
+      try {
+        const rawUrl = process.env.SUPABASE_URL || '';
+        if (!rawUrl) return null;
+        return new URL(rawUrl).host || null;
+      } catch {
+        return null;
+      }
+    })();
+    const passwordLength = typeof password === 'string' ? password.length : null;
+    const hasLeadingOrTrailingWhitespace =
+      typeof password === 'string' ? password.trim() !== password : null;
+    const containsNewline = typeof password === 'string' ? /\r|\n/.test(password) : null;
+    const contentType = req.headers['content-type'] || null;
+    const originHeader = req.headers?.origin || null;
+    const logDevDiagnostics = (extra = {}) => {
+      if (!devLoginDiagnosticsEnabled) return;
+      console.debug('[AUTH LOGIN][dev-diagnostics]', {
+        email: email || null,
+        passwordLength,
+        hasLeadingOrTrailingWhitespace,
+        containsNewline,
+        contentType,
+        supabaseUrlHost,
+        originHeader,
+        ...extra,
+      });
+    };
+    logDevDiagnostics({ signInWithPasswordAttempted: false, supabaseErrorStatus: null, supabaseErrorCode: null });
+    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip;
     if (!email || !password) {
-      return res.status(400).json({
+      logDevDiagnostics({ signInWithPasswordAttempted: false, supabaseErrorStatus: null, supabaseErrorCode: null });
+      const payload = {
         code: 'MISSING_CREDENTIALS',
         error: 'missing_credentials',
         message: 'Email and password are required',
-      });
+      };
+      if (devLoginDiagnosticsEnabled) {
+        console.info('[AUTH LOGIN][dev]', {
+          email: email || null,
+          reason: 'missing_credentials',
+        });
+      }
+      return res.status(400).json(payload);
     }
-    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip;
     if (process.env.DEBUG_AUTH === 'true') {
       console.log('[DEBUG_AUTH] login input', { email, ip });
     }
-    const useDemoMode = canUseDemoMode;
-    if (useDemoMode) {
-      if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Using demo mode authentication');
-      const demoUser = await resolveDemoUser(email, password);
-      if (demoUser) {
-        const normalizedEmail = normalizeEmail(demoUser.email);
-        const resolvedRole = isCanonicalAdminEmail(normalizedEmail) ? 'admin' : demoUser.role || 'user';
-        const tokens = generateTokens({
-          userId: demoUser.id,
+    const normalizedEmail = normalizeEmail(email);
+    const diagnostics = devLoginDiagnosticsEnabled
+      ? {
           email: normalizedEmail,
-          role: resolvedRole,
-          organizationId: demoUser.organizationId,
-        });
-        attachAuthCookies(req, res, tokens);
-        if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Demo tokens issued, cookies set');
-        return res.json({
-          user: {
-            id: demoUser.id,
+          userId: null,
+          membershipCount: null,
+          membershipRoles: [],
+        }
+      : null;
+    const emitDevLoginLog = (reason) => {
+      if (!diagnostics) {
+        return;
+      }
+      console.info('[AUTH LOGIN][dev]', {
+        email: diagnostics.email,
+        userId: diagnostics.userId,
+        membershipCount: diagnostics.membershipCount,
+        membershipRoles: diagnostics.membershipRoles,
+        reason,
+      });
+    };
+    const sendInvalidCredentials = () => {
+      emitDevLoginLog('invalid_password');
+      return res.status(401).json({
+        error: 'Invalid login credentials',
+      });
+    };
+    let userRecord = null;
+    if (supabase) {
+      try {
+        const { data: users, error: queryError } = await supabase
+          .from('users')
+          .select('*')
+          .eq('email', normalizedEmail)
+          .limit(1);
+        if (queryError) {
+          if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Failed to load profile row', { queryError });
+          console.warn('[AUTH LOGIN DB ERROR]', {
             email: normalizedEmail,
-            role: resolvedRole,
-            firstName: demoUser.firstName,
-            lastName: demoUser.lastName,
-            organizationId: demoUser.organizationId,
-          },
-          ...tokens,
+            ip,
+            error: queryError?.message,
+            at: 'supabase.from(users).select',
+          });
+        } else if (users && users.length > 0) {
+          userRecord = users[0];
+        }
+      } catch (profileError) {
+        if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Profile lookup error', { profileError });
+        console.error('[AUTH LOGIN PROFILE ERROR]', {
+          email: normalizedEmail,
+          ip,
+          error: profileError instanceof Error ? profileError.message : profileError,
+          at: 'profile lookup',
         });
       }
     }
-    const normalizedEmail = normalizeEmail(email);
-    const logPrefix = `[AUTH LOGIN] ${normalizedEmail}`;
+    if (diagnostics) {
+      diagnostics.userId = userRecord?.id || null;
+      if (userRecord?.id) {
+        try {
+          const membershipRows = await getUserMemberships(userRecord.id, { logPrefix: '[auth-login]' });
+          const membershipRoles = Array.isArray(membershipRows)
+            ? Array.from(new Set(membershipRows.map((row) => row?.role || row?.organization_role || 'member').filter(Boolean)))
+            : [];
+          diagnostics.membershipCount = Array.isArray(membershipRows) ? membershipRows.length : 0;
+          diagnostics.membershipRoles = membershipRoles;
+        } catch {
+          diagnostics.membershipCount = diagnostics.membershipCount ?? 0;
+          diagnostics.membershipRoles = diagnostics.membershipRoles ?? [];
+        }
+      } else {
+        diagnostics.membershipCount = diagnostics.membershipCount ?? 0;
+        diagnostics.membershipRoles = diagnostics.membershipRoles ?? [];
+      }
+    }
     if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Attempting Supabase login', { normalizedEmail, origin, ip });
+    logDevDiagnostics({ signInWithPasswordAttempted: true, supabaseErrorStatus: null, supabaseErrorCode: null });
     if (!supabase || !supabaseAuthClient) {
       if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Supabase client missing');
       const configError = buildAuthConfigError();
+      logDevDiagnostics({
+        signInWithPasswordAttempted: false,
+        supabaseErrorStatus: configError?.status ?? null,
+        supabaseErrorCode: configError?.code || null,
+      });
       return res.status(configError.status).json(configError);
     }
     const { data, error: authError } = await supabaseAuthClient.auth.signInWithPassword({
@@ -563,6 +535,11 @@ router.post('/login', async (req, res) => {
       password,
     });
     if (authError || !data?.user || !data.session) {
+      logDevDiagnostics({
+        signInWithPasswordAttempted: true,
+        supabaseErrorStatus: typeof authError?.status === 'number' ? authError.status : null,
+        supabaseErrorCode: authError?.code || authError?.name || null,
+      });
       const detailMessage = authError?.message || 'unknown error';
       // Safe log for failed login (mask password)
       console.warn('[AUTH LOGIN FAILURE]', {
@@ -572,61 +549,47 @@ router.post('/login', async (req, res) => {
         at: 'supabaseAuthClient.auth.signInWithPassword',
       });
       if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Supabase auth failed', { detailMessage });
-      return res.status(401).json({
-        code: 'INVALID_CREDENTIALS',
-        error: 'invalid_credentials',
-        message: 'Email or password is incorrect',
-      });
+      return sendInvalidCredentials();
     }
     if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Supabase auth success', { userId: data.user.id });
-    let userRecord = null;
-    try {
-      const { data: users, error: queryError } = await supabase
-        .from('users')
-        .select('*')
-        .eq('email', normalizedEmail)
-        .limit(1);
-      if (queryError) {
-        if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Failed to load profile row', { queryError });
-        // Log DB error
-        console.warn('[AUTH LOGIN DB ERROR]', {
-          email: normalizedEmail,
-          ip,
-          error: queryError?.message,
-          at: 'supabase.from(users).select',
-        });
-      } else if (users && users.length > 0) {
-        userRecord = users[0];
-        if (userRecord && userRecord.is_active === false) {
-          if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Profile marked inactive');
-          console.warn('[AUTH LOGIN INACTIVE]', {
-            email: normalizedEmail,
-            ip,
-            at: 'userRecord.is_active === false',
-          });
-          return res.status(403).json({
-            code: 'ACCOUNT_DISABLED',
-            error: 'account_disabled',
-            message: 'Your account has been disabled',
-          });
-        }
-      }
-    } catch (profileError) {
-      if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Profile lookup error', { profileError });
-      // Log unexpected DB/profile error
-      console.error('[AUTH LOGIN PROFILE ERROR]', {
+    logDevDiagnostics({ signInWithPasswordAttempted: true, supabaseErrorStatus: null, supabaseErrorCode: null });
+    if (userRecord && userRecord.is_active === false) {
+      if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Profile marked inactive');
+      console.warn('[AUTH LOGIN INACTIVE]', {
         email: normalizedEmail,
         ip,
-        error: profileError instanceof Error ? profileError.message : profileError,
-        at: 'profile lookup',
+        at: 'userRecord.is_active === false',
       });
+      const payload = {
+        code: 'ACCOUNT_DISABLED',
+        error: 'account_disabled',
+        message: 'Your account has been disabled',
+      };
+      emitDevLoginLog('invalid_password');
+      return res.status(403).json(payload);
     }
     const supabaseUser = data.user;
-    const membershipRows = await fetchUserMembershipRows(supabaseUser.id);
+    const membershipRows = await getUserMemberships(supabaseUser.id, { logPrefix: '[auth-login]' });
+    if (diagnostics) {
+      diagnostics.userId = supabaseUser.id;
+      diagnostics.membershipCount = Array.isArray(membershipRows) ? membershipRows.length : 0;
+      diagnostics.membershipRoles = Array.isArray(membershipRows)
+        ? Array.from(new Set(membershipRows.map((row) => row?.role || row?.organization_role || 'member').filter(Boolean)))
+        : [];
+    }
     const userPayload = buildUserPayloadFromSupabase(supabaseUser, membershipRows);
     const tokens = buildTokenResponseFromSession(data.session);
-    attachAuthCookies(req, res, tokens);
+    setAuthCookies(res, tokens);
+    setCSRFToken(req, res, () => {});
+    if ((process.env.NODE_ENV || '').toLowerCase() !== 'production') {
+      const setCookieHeader = res.getHeader('set-cookie');
+      console.info('[AUTH LOGIN][dev] set-cookie (supabase)', {
+        hasSetCookie: Boolean(setCookieHeader),
+        cookieCount: Array.isArray(setCookieHeader) ? setCookieHeader.length : setCookieHeader ? 1 : 0,
+      });
+    }
     if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Tokens issued, cookies set', { userId: userPayload.userId });
+    emitDevLoginLog('success');
     return res.json({
       user: userPayload,
       memberships: userPayload.memberships,
@@ -643,11 +606,17 @@ router.post('/login', async (req, res) => {
       ip: req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip,
       at: 'catch',
     });
-    res.status(500).json({
+    const payload = {
       code: 'LOGIN_FAILED',
       error: 'login_failed',
       message: 'An unexpected error occurred during login. Please try again.',
+    };
+    logDevDiagnostics({
+      signInWithPasswordAttempted: true,
+      supabaseErrorStatus: typeof error?.status === 'number' ? error.status : null,
+      supabaseErrorCode: error instanceof Error ? error.name : null,
     });
+    return res.status(500).json(payload);
   }
 });
 
@@ -774,11 +743,11 @@ router.post('/register', authLimiter, async (req, res) => {
         });
       }
 
-      const membershipRows = await fetchUserMembershipRows(sessionData.user.id);
+      const membershipRows = await getUserMemberships(sessionData.user.id, { logPrefix: '[auth-register]' });
       const userPayload = buildUserPayloadFromSupabase(sessionData.user, membershipRows);
       const tokens = buildTokenResponseFromSession(sessionData.session);
 
-  attachAuthCookies(req, res, tokens);
+  setAuthCookies(res, tokens);
       res.status(201).json({
         ok: true,
         user: userPayload,
@@ -841,7 +810,7 @@ router.post('/refresh', async (req, res) => {
     const result = await refreshSessionFromCookies(req, res);
     if (!result.ok) {
       if ((result.status || 401) === 401 && result.error !== 'missing_refresh_token') {
-        clearAuthCookies(req, res);
+        clearAuthCookies(res);
       }
       if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Refresh failed', { error: result.error, message: result.message });
       // Log refresh failure (mask token)
@@ -868,7 +837,7 @@ router.post('/refresh', async (req, res) => {
       ip: req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip,
       at: 'catch',
     });
-    clearAuthCookies(req, res);
+    clearAuthCookies(res);
     res.status(500).json({
       code: 'REFRESH_FAILED',
       error: 'refresh_failed',
@@ -900,7 +869,7 @@ router.post('/logout', doubleSubmitCSRF, async (req, res) => {
       }
     }
   } finally {
-    clearAuthCookies(req, res);
+    clearAuthCookies(res);
     res.json({
       success: true,
       message: 'Logged out successfully',
@@ -924,11 +893,56 @@ router.get('/verify', async (req, res) => {
 });
 
 router.get('/session', async (req, res) => {
-  res.json({
+  const devMode = (process.env.NODE_ENV || '').toLowerCase() !== 'production';
+  const cookieHeader = req.headers?.cookie || null;
+  const cookieKeys = Object.keys(req.cookies || {});
+  const accessCookieName = 'access_token';
+  const accessCookiePresent = Boolean(req.cookies?.[accessCookieName]);
+  if (devMode) {
+    console.log('[auth/session]', {
+      hasCookieToken: accessCookiePresent,
+      hasAuthHeader: Boolean(req.headers?.authorization),
+      originHeader: req.headers?.origin || null,
+      hostHeader: req.headers?.host || null,
+      cookieHeader,
+      cookieKeys,
+      accessCookieName,
+    });
+  }
+  if (!req.user) {
+    // Session endpoint treats missing/invalid tokens as logged-out instead of 401 to reduce UX friction
+    return res.json({
+      session: null,
+      authenticated: false,
+      ...(devMode
+        ? {
+            debugCookies: {
+              cookieHeader,
+              cookieKeys,
+              accessCookieName,
+              accessCookiePresent,
+            },
+          }
+        : {}),
+    });
+  }
+
+  return res.json({
     user: req.user,
     memberships: req.user?.memberships || [],
     organizationIds: req.user?.organizationIds || [],
     activeOrgId: req.activeOrgId || req.user?.organizationId || null,
+    authenticated: true,
+    ...(devMode
+      ? {
+          debugCookies: {
+            cookieHeader,
+            cookieKeys,
+            accessCookieName,
+            accessCookiePresent,
+          },
+        }
+      : {}),
   });
 });
 

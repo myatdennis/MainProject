@@ -152,6 +152,7 @@ async function createSupabaseJwt(claims: Record<string, any> = {}) {
       apikey: svcKey,
       'Content-Type': 'application/json',
     },
+    credentials: 'include',
     body: JSON.stringify({
       email: claims.email || 'integration@tests.local',
       password: process.env.TEST_SUPABASE_PASSWORD || 'integration-password',

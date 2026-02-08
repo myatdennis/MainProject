@@ -162,6 +162,7 @@ const callAiProvider = async (metrics, instructions = '') => {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${OPENAI_KEY}`,
     },
+    credentials: 'include',
     body: JSON.stringify({
       model: process.env.OPENAI_MODEL || 'gpt-4o-mini',
       temperature: 0.5,

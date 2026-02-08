@@ -33,12 +33,10 @@ function runChecks() {
   const websocketsEnabled = parseFlag(process.env.VITE_ENABLE_WS, { defaultValue: false });
 
   const apiBase = process.env.VITE_API_BASE_URL || '';
-  if (!apiBase) {
-    warnings.push('VITE_API_BASE_URL not set — dev server will rely on Vite proxy /api forwarding.');
-  } else if (!apiBase.startsWith('http://')) {
-    warnings.push(`VITE_API_BASE_URL normally uses http:// in dev, currently "${apiBase}".`);
-  } else if (!apiBase.includes(String(port))) {
-    warnings.push(`VITE_API_BASE_URL (${apiBase}) does not match PORT ${port}.`);
+  if (!apiBase || apiBase === '/api') {
+    warnings.push('VITE_API_BASE_URL not set (or /api) — dev server will rely on the Vite proxy.');
+  } else if (/^https?:\/\//i.test(apiBase)) {
+    warnings.push(`VITE_API_BASE_URL is absolute ("${apiBase}"). Prefer "/api" in dev and adjust the Vite proxy target instead.`);
   }
 
   const wsUrl = process.env.VITE_WS_URL;

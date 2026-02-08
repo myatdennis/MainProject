@@ -8,7 +8,13 @@ const normalizeOrigins = (value = '') =>
 
 const NETLIFY_PREVIEW_REGEX = /^https:\/\/deploy-preview-\d+--the-huddleco\.netlify\.app$/i;
 
-const devDefaults = ['http://localhost:5174', 'http://127.0.0.1:5174', 'http://localhost:8888'];
+const devDefaults = [
+  'http://localhost:5174',
+  'http://localhost:5175',
+  'http://127.0.0.1:5174',
+  'http://127.0.0.1:5175',
+  'http://localhost:8888',
+];
 const requiredProdOrigins = ['https://the-huddle.co', 'https://www.the-huddle.co'];
 const prodDefaults = requiredProdOrigins;
 
@@ -23,6 +29,11 @@ if (process.env.NODE_ENV === 'production') {
 
 export const resolvedCorsOrigins = Array.from(resolved);
 
+const isLocalDevOrigin = (origin) =>
+  typeof origin === 'string' && /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/i.test(origin);
+
+const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production';
+
 if (!envOrigins.length) {
   console.warn(
     `[cors] CORS_ALLOWED_ORIGINS not set; using defaults: ${
@@ -36,6 +47,9 @@ const isAllowedOrigin = (origin) => {
     return true;
   }
   if (process.env.NODE_ENV === 'production' && NETLIFY_PREVIEW_REGEX.test(origin)) {
+    return true;
+  }
+  if (!isProduction && isLocalDevOrigin(origin)) {
     return true;
   }
   return false;

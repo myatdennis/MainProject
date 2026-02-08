@@ -64,16 +64,16 @@ async function postJson(url, body) {
   }
   // For demo/dev we attempt without CSRF first; if blocked we fetch token and retry
   const headers = authHeaders({ 'Content-Type': 'application/json' });
-  let res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+  let res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), credentials: 'include' });
   if (res.status === 403) {
     // Try to obtain CSRF token via cookie pattern endpoint (if exposed)
     try {
-      const tokenRes = await fetch(`${API_BASE}/api/auth/csrf`, { headers: authHeaders() });
+      const tokenRes = await fetch(`${API_BASE}/api/auth/csrf`, { headers: authHeaders(), credentials: 'include' });
       if (tokenRes.ok) {
         const json = await tokenRes.json().catch(() => ({}));
         if (json?.csrfToken) {
           headers['x-csrf-token'] = json.csrfToken;
-          res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body) });
+          res = await fetch(url, { method: 'POST', headers, body: JSON.stringify(body), credentials: 'include' });
         }
       }
     } catch {}
@@ -88,7 +88,7 @@ async function postJson(url, body) {
 }
 
 async function getJson(url) {
-  const res = await fetch(url, { headers: authHeaders() });
+  const res = await fetch(url, { headers: authHeaders(), credentials: 'include' });
   if (!res.ok) {
     const txt = await res.text().catch(() => '');
     throw new Error(`GET ${url} failed: ${res.status} ${res.statusText} ${txt}`);
@@ -101,7 +101,7 @@ async function deleteReq(url) {
     console.log(`[dry-run] DELETE ${url}`);
     return;
   }
-  const res = await fetch(url, { method: 'DELETE', headers: authHeaders() });
+  const res = await fetch(url, { method: 'DELETE', headers: authHeaders(), credentials: 'include' });
   if (!res.ok && res.status !== 204) {
     const txt = await res.text().catch(() => '');
     throw new Error(`DELETE ${url} failed: ${res.status} ${res.statusText} ${txt}`);
@@ -113,7 +113,7 @@ async function waitForHealth(timeoutMs) {
   const url = `${API_BASE}/api/health`;
   while (Date.now() - start < timeoutMs) {
     try {
-      const res = await fetch(url, { headers: authHeaders() });
+      const res = await fetch(url, { headers: authHeaders(), credentials: 'include' });
       if (res.ok) return true;
     } catch {}
     await new Promise((r) => setTimeout(r, 300));

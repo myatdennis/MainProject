@@ -40,11 +40,14 @@ export const FORCE_ORG_ENFORCEMENT = parseFlag(
 
 export const DEV_FALLBACK = Boolean(devFallbackExplicit || allowDemoExplicit || demoModeExplicit);
 export const implicitDemoFallback = !isProduction && !supabaseServerConfigured;
-export const demoLoginEnabled =
-  Boolean(
-    (E2E_TEST_MODE && !isProduction) ||
-      (!isProduction && (allowDemoExplicit || demoModeExplicit || DEV_FALLBACK || implicitDemoFallback)),
-  );
+export const demoLoginEnabled = Boolean(
+  (E2E_TEST_MODE && !isProduction) ||
+    (!isProduction &&
+      (allowDemoExplicit ||
+        demoModeExplicit ||
+        DEV_FALLBACK ||
+        (implicitDemoFallback && !demoModeFlag && !devFallbackFlag))),
+);
 const demoAutoAuthExplicit = parseFlag(
   process.env.ALLOW_DEMO_AUTO_AUTH ?? process.env.DEMO_AUTO_AUTH ?? process.env.DEMO_AUTO_LOGIN,
 );
@@ -53,7 +56,7 @@ export const demoModeSource = (() => {
   if (E2E_TEST_MODE) return 'e2e';
   if (DEV_FALLBACK) return 'dev-fallback';
   if (allowDemoExplicit || demoModeExplicit) return 'explicit';
-  if (implicitDemoFallback) return 'dev-missing-supabase';
+  if (implicitDemoFallback && !demoModeFlag && !devFallbackFlag) return 'dev-missing-supabase';
   return null;
 })();
 

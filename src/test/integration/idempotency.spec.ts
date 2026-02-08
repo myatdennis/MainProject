@@ -63,8 +63,9 @@ beforeAll(async () => {
     const loginRes = await fn(`${API_BASE}/api/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({
-  email: 'mya@the-huddle.co',
+        email: 'mya@the-huddle.co',
         password: 'admin123',
         type: 'admin',
       }),

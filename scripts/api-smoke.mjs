@@ -16,7 +16,7 @@ const applyAdminHeaders = (init = {}) => {
 };
 
 const fetchJson = async (path, init = {}) => {
-  const res = await fetch(`${baseUrl}${path}`, applyAdminHeaders(init));
+  const res = await fetch(`${baseUrl}${path}`, { ...applyAdminHeaders(init), credentials: 'include' });
   if (!res.ok) {
     const body = await res.text();
     throw new Error(`${path} ${res.status} ${res.statusText}: ${body}`);

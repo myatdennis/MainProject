@@ -33,6 +33,36 @@ devConsole.log('📍 Environment:', import.meta.env.MODE);
 devConsole.log('🔧 Supabase configured:', !!(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY));
 devConsole.log('⚙️ React version detected:', React?.version || 'unknown');
 devConsole.info('[api] Base URL resolved:', getApiBaseUrl() || '(not set)');
+if (import.meta.env?.DEV && typeof window !== 'undefined') {
+  const apiBaseForLogs = getApiBaseUrl();
+  console.debug('[dev] api-context', {
+    apiBaseUrl: apiBaseForLogs,
+    windowOrigin: window.location.origin,
+  });
+
+  const normalizeBase = (value: string | undefined | null) => {
+    if (!value) return '/api';
+    const trimmed = value.replace(/\/+$/, '');
+    return trimmed || '/api';
+  };
+
+  const healthUrl = `${normalizeBase(apiBaseForLogs)}/health`;
+  (async () => {
+    try {
+      const response = await fetch(healthUrl, { credentials: 'include' });
+      console.debug('[dev][api] health ping', {
+        url: healthUrl,
+        status: response.status,
+        ok: response.ok,
+      });
+    } catch (error) {
+      console.warn('[dev][api] health ping failed', {
+        url: healthUrl,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  })();
+}
 
 if (typeof window !== 'undefined') {
   try {

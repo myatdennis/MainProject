@@ -105,7 +105,7 @@ class NextPhaseImplementation {
       for (let attempt = 1; attempt <= 5; attempt++) {
         this.log(`Connection attempt ${attempt}/5...`, COLORS.BLUE);
         await delay(2000);      try {
-        const response = await fetch(this.serverUrl);
+        const response = await fetch(this.serverUrl, { credentials: 'include' });
         if (response.ok) {
           connected = true;
           this.log('✅ Server connectivity: ESTABLISHED', COLORS.GREEN);
@@ -264,7 +264,7 @@ class NextPhaseImplementation {
     for (const route of routes) {
       try {
         const url = `${this.serverUrl}${route}`;
-        const response = await fetch(url);
+        const response = await fetch(url, { credentials: 'include' });
         if (response.ok) {
           this.log(`✅ Route ${route}: ACCESSIBLE`, COLORS.GREEN);
         } else {

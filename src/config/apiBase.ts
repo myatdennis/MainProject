@@ -158,7 +158,26 @@ const getNodeOrigin = () => {
   return trimTrailingSlash(DEFAULT_NODE_ORIGIN);
 };
 
+const normalizeBaseOutput = (value?: string | null) => {
+  if (!value) return '';
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimTrailingSlash(trimmed);
+  }
+
+  const relative = ensureLeadingSlash(trimTrailingSlash(trimmed));
+  if (relative === '/') {
+    return '';
+  }
+  return relative;
+};
+
 export function getApiOrigin(): string {
+  if (devMode && isBrowser) {
+    return '';
+  }
   const envBase = getEnvBase();
   if (envBase.origin) return envBase.origin;
   const browserOrigin = getBrowserOrigin();
@@ -167,9 +186,23 @@ export function getApiOrigin(): string {
 }
 
 export function getApiBaseUrl(): string {
+  if (devMode && isBrowser) {
+    return DEFAULT_DEV_API_BASE;
+  }
+
   const origin = getApiOrigin();
   const pathPrefix = getApiPathPrefix();
-  return pathPrefix ? `${origin}${pathPrefix}` : origin;
+  const combined = normalizeBaseOutput(`${origin || ''}${pathPrefix || ''}`);
+  if (combined) {
+    return combined;
+  }
+
+  const envFallback = normalizeBaseOutput(getRawApiBase());
+  if (envFallback) {
+    return envFallback;
+  }
+
+  return DEFAULT_DEV_API_BASE;
 }
 
 const splitPathAndSuffix = (input: string) => {

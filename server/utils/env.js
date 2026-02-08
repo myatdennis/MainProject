@@ -37,7 +37,10 @@ export const env = {
   JWT_SECRET: getString('JWT_SECRET'),
   JWT_EXPIRES_IN: getString('JWT_EXPIRES_IN', '15m'),
   REFRESH_TOKEN_EXPIRES_IN: getString('REFRESH_TOKEN_EXPIRES_IN', '7d'),
-  CORS_ALLOWED_ORIGINS: getString('CORS_ALLOWED_ORIGINS', 'http://localhost:5174'),
+  CORS_ALLOWED_ORIGINS: getString(
+    'CORS_ALLOWED_ORIGINS',
+    'http://localhost:5174,http://localhost:5175,http://127.0.0.1:5174,http://127.0.0.1:5175',
+  ),
   DATABASE_URL: getString('DATABASE_URL'),
   COOKIE_DOMAIN: getString('COOKIE_DOMAIN'),
   BROADCAST_API_KEY: getString('BROADCAST_API_KEY'),

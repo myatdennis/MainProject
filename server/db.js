@@ -7,21 +7,39 @@
 
 import postgres from 'postgres'
 
-const connectionString = process.env.DATABASE_URL
+let sqlClient = null
 
-if (!connectionString) {
-  console.warn('[server/db] WARNING: DATABASE_URL is not set. Create a .env or export DATABASE_URL before starting the server.')
+const ensureSqlClient = () => {
+  if (sqlClient) {
+    return sqlClient
+  }
+
+  const connectionString = process.env.DATABASE_URL
+  if (!connectionString) {
+    console.warn('[server/db] WARNING: DATABASE_URL is not set. Create a .env or export DATABASE_URL before starting the server.')
+  }
+
+  sqlClient = postgres(connectionString || '', {
+    max: 5,
+    // If you need to pass custom SSL options you can do so via the
+    // connection string query params (sslmode, sslrootcert) or by
+    // passing an `ssl` option here. Most Supabase instances work with
+    // `sslmode=verify-full&sslrootcert=/path/to/root.crt` set in the
+    // DATABASE_URL.
+  })
+
+  return sqlClient
 }
 
-// Create a Postgres client. The `postgres` library accepts a connection string
-// and optional configuration. We keep the defaults but set a small pool size.
-const sql = postgres(connectionString || '', {
-  max: 5,
-  // If you need to pass custom SSL options you can do so via the
-  // connection string query params (sslmode, sslrootcert) or by
-  // passing an `ssl` option here. Most Supabase instances work with
-  // `sslmode=verify-full&sslrootcert=/path/to/root.crt` set in the
-  // DATABASE_URL.
+const sql = new Proxy(function sqlProxy () {}, {
+  apply (_target, thisArg, args) {
+    return ensureSqlClient().apply(thisArg, args)
+  },
+  get (_target, prop) {
+    const client = ensureSqlClient()
+    const value = client[prop]
+    return typeof value === 'function' ? value.bind(client) : value
+  }
 })
 
 export default sql

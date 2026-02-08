@@ -46,19 +46,6 @@ const isLoginRoute = () => {
   const pathname = window.location.pathname || '';
   return pathname.startsWith('/login') || pathname.startsWith('/admin/login') || pathname.startsWith('/lms/login');
 };
-const isAuthBypassRoute = () => {
-  if (typeof window === 'undefined' || !window.location) {
-    return false;
-  }
-  const pathname = window.location.pathname || '';
-  if (!pathname) return false;
-  if (pathname === '/login') return true;
-  if (pathname.startsWith('/lms/login')) return true;
-  if (pathname.startsWith('/admin/login')) return true;
-  if (pathname === '/auth/callback') return true;
-  if (pathname.startsWith('/invite/')) return true;
-  return false;
-};
 const isDevEnvironment = Boolean(import.meta.env?.DEV);
 const logAuthDebug = (label: string, payload: Record<string, unknown>) => {
   if (!isDevEnvironment) return;
@@ -538,6 +525,11 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     const message = extractMessage(payload)?.toLowerCase() ?? '';
     return message.includes('no token provided');
   };
+  const isServerOrNetworkErrorStatus = (status?: number | null) => {
+    if (status === 0) return true;
+    if (typeof status !== 'number') return false;
+    return status >= 500;
+  };
 
   const requestJsonWithClock = useCallback(
     async <T,>(path: string, options: Parameters<typeof apiRequestRaw>[1] = {}): Promise<T> => {
@@ -583,6 +575,19 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   );
 
   const [bootstrapError, setBootstrapError] = useState<string | null>(null);
+  const continueAsGuest = useCallback(
+    (reason: string) => {
+      if (import.meta.env.DEV) {
+        console.info('[Auth] auth_restore: logged_out, continuing as guest.', { reason });
+      }
+      applySessionPayload(null, { persistTokens: true, reason });
+      setAuthStatus('unauthenticated');
+      setBootstrapError(null);
+      lastSessionFetchResultRef.current = 'unauthenticated';
+      logSessionResult('unauthenticated');
+    },
+    [applySessionPayload, setAuthStatus, setBootstrapError],
+  );
 
   const fetchServerSession = useCallback(
     async ({
@@ -597,6 +602,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           signal,
           requireAuth: hasStoredToken,
           allowAnonymous: !hasStoredToken,
+          credentials: 'include',
         });
         if (import.meta.env.DEV) {
           const authHeader = response.headers.get('authorization') || '';
@@ -613,24 +619,40 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             silent: true,
             reason: surface ? `${surface}_session_no_token` : 'session_no_token',
           });
+          continueAsGuest(surface ? `${surface}_session_no_token` : 'session_no_token');
           return false;
         }
 
         if (response.status === 401 || response.status === 403) {
+          if (import.meta.env.DEV) {
+            console.debug('[SecureAuth][dev] session fetch unauthorized status', response.status);
+          }
           handleSessionUnauthorized({
             silent,
             reason: surface ? `${surface}_session_unauthenticated` : 'session_unauthenticated',
           });
+          continueAsGuest(surface ? `${surface}_session_unauthenticated` : 'session_unauthenticated');
           return false;
         }
 
         if (!response.ok) {
-          lastSessionFetchResultRef.current = 'error';
-          if (!silent) {
-            setBootstrapError(
-              'Unable to restore your session. Please refresh and try again.',
-            );
+          const severeServerError = isServerOrNetworkErrorStatus(response.status);
+          if (severeServerError) {
+            lastSessionFetchResultRef.current = 'error';
+            if (import.meta.env.DEV) {
+              console.warn('[Auth] auth_restore: error', { status: response.status, surface, payload });
+            }
+            if (!silent) {
+              setBootstrapError('Unable to restore your session. Please refresh and try again.');
+            }
+            return false;
           }
+
+          handleSessionUnauthorized({
+            silent: true,
+            reason: surface ? `${surface}_session_http_${response.status}` : 'session_http_error',
+          });
+          continueAsGuest(surface ? `${surface}_session_http_${response.status}` : 'session_http_error');
           return false;
         }
 
@@ -651,6 +673,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           silent,
           reason: 'session_bootstrap_empty',
         });
+        continueAsGuest('session_bootstrap_empty');
         return false;
       } catch (error: unknown) {
         if (error instanceof ApiError) {
@@ -661,37 +684,47 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
               silent: true,
               reason: surface ? `${surface}_session_no_token` : 'session_no_token',
             });
+            continueAsGuest(surface ? `${surface}_session_no_token` : 'session_no_token');
             return false;
           }
           if (error.status === 401 || error.status === 403) {
+            if (import.meta.env.DEV) {
+              console.debug('[SecureAuth][dev] ApiError session status', { status: error.status, surface });
+            }
             handleSessionUnauthorized({
               silent,
               reason: surface ? `${surface}_session_unauthenticated` : 'session_unauthenticated',
             });
+            continueAsGuest(surface ? `${surface}_session_unauthenticated` : 'session_unauthenticated_api_error');
             return false;
           }
 
-          if (error.code === 'timeout') {
+          if (error.code === 'timeout' || isServerOrNetworkErrorStatus(error.status)) {
             lastSessionFetchResultRef.current = 'error';
             if (!silent) {
-              setBootstrapError('Network timeout while restoring your session. Please retry.');
+              setBootstrapError('Network issue while restoring your session. Please retry.');
+            }
+            if (import.meta.env.DEV) {
+              console.warn('[Auth] auth_restore: error (timeout/network)', { surface, status: error.status });
             }
             return false;
           }
 
-          lastSessionFetchResultRef.current = 'error';
-          if (!silent) {
-            const message =
-              (error.body as { message?: string } | undefined)?.message ||
-              'Unable to restore your session. Please refresh.';
-            setBootstrapError(message);
-          }
+          handleSessionUnauthorized({
+            silent,
+            reason: surface ? `${surface}_session_http_${error.status ?? 'unknown'}` : 'session_http_api_error',
+            message: (error.body as { message?: string } | undefined)?.message,
+          });
+          continueAsGuest(surface ? `${surface}_session_http_${error.status ?? 'unknown'}` : 'session_http_api_error');
           return false;
         }
         if (error instanceof DOMException && error.name === 'AbortError') {
           lastSessionFetchResultRef.current = 'error';
           if (!silent) {
             setBootstrapError('Session check canceled. Please retry.');
+          }
+          if (import.meta.env.DEV) {
+            console.warn('[Auth] auth_restore: error (abort)', { surface });
           }
           return false;
         }
@@ -700,6 +733,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           if (!silent) {
             setBootstrapError('Session check canceled. Please retry.');
           }
+          if (import.meta.env.DEV) {
+            console.warn('[Auth] auth_restore: error (axios cancel)', { surface });
+          }
           return false;
         }
         if (!silent) {
@@ -707,10 +743,13 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         }
         lastSessionFetchResultRef.current = 'error';
         console.warn('[SecureAuth] Failed to reload session', error);
+        if (import.meta.env.DEV) {
+          console.warn('[Auth] auth_restore: error (network)', { surface });
+        }
         return false;
       }
     },
-    [applySessionPayload, captureServerClock, handleSessionUnauthorized],
+    [applySessionPayload, captureServerClock, continueAsGuest, handleSessionUnauthorized],
   );
 
   const runBootstrap = useCallback(
@@ -729,34 +768,33 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           signal,
           requireAuth: hasStoredToken,
           allowAnonymous: !hasStoredToken,
+          credentials: 'include',
         });
         captureServerClock(headersToRecord(response.headers));
         const payload = await parseSessionPayload(response);
 
         const noTokenUnauth = !hasStoredToken && isNoTokenUnauthorized(response.status, payload);
         if (noTokenUnauth) {
-          applySessionPayload(null, { persistTokens: true, reason: 'bootstrap_no_token' });
-          setAuthStatus('unauthenticated');
-          setBootstrapError(null);
-          lastSessionFetchResultRef.current = 'unauthenticated';
-          logSessionResult('unauthenticated');
+          continueAsGuest('bootstrap_no_token');
           return;
         }
 
         if (response.status === 401 || response.status === 403) {
-          applySessionPayload(null, { persistTokens: true, reason: 'bootstrap_unauthenticated' });
-          setBootstrapError('Your session expired. Please sign in again.');
-          setAuthStatus('error');
-          lastSessionFetchResultRef.current = 'unauthenticated';
-          logSessionResult('unauthenticated');
+          continueAsGuest('bootstrap_unauthenticated');
           return;
         }
 
         if (!response.ok) {
-          lastSessionFetchResultRef.current = 'error';
-          setBootstrapError('Unable to restore your session. Please try again.');
-          setAuthStatus('error');
-          logSessionResult('error');
+          const severeServerError = isServerOrNetworkErrorStatus(response.status);
+          if (severeServerError) {
+            lastSessionFetchResultRef.current = 'error';
+            setBootstrapError('Unable to restore your session. Please try again.');
+            setAuthStatus('error');
+            logSessionResult('error');
+            return;
+          }
+
+          continueAsGuest(`bootstrap_http_${response.status}`);
           return;
         }
 
@@ -766,10 +804,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           setBootstrapError(null);
           logSessionResult('authenticated');
         } else {
-          applySessionPayload(null, { persistTokens: true, reason: 'bootstrap_empty' });
-          setBootstrapError('We could not restore your session. Please try again.');
-          setAuthStatus('error');
-          logSessionResult('empty');
+          continueAsGuest('bootstrap_empty');
         }
       } catch (error) {
         if (error instanceof DOMException && error.name === 'AbortError') {
@@ -780,31 +815,28 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           const noTokenUnauth =
             error.status === 401 && !hasStoredToken && isNoTokenUnauthorized(error.status, error.body);
           if (noTokenUnauth) {
-            applySessionPayload(null, { persistTokens: true, reason: 'bootstrap_no_token' });
-            setAuthStatus('unauthenticated');
-            setBootstrapError(null);
-            lastSessionFetchResultRef.current = 'unauthenticated';
-            logSessionResult('unauthenticated');
+            continueAsGuest('bootstrap_no_token');
             return;
           }
 
-          applySessionPayload(null, { persistTokens: true, reason: 'bootstrap_unauthenticated' });
-          setBootstrapError('Your session expired. Please sign in again.');
-          setAuthStatus('error');
-          lastSessionFetchResultRef.current = 'unauthenticated';
-          logSessionResult('unauthenticated');
+          continueAsGuest('bootstrap_unauthenticated');
           return;
         }
-        lastSessionFetchResultRef.current = 'error';
-        setBootstrapError('Network issue while restoring your session. Please retry.');
-        setAuthStatus('error');
-        logSessionResult('error');
+        const severeServerError = error instanceof ApiError ? isServerOrNetworkErrorStatus(error.status) : true;
+        if (severeServerError) {
+          lastSessionFetchResultRef.current = 'error';
+          setBootstrapError('Network issue while restoring your session. Please retry.');
+          setAuthStatus('error');
+          logSessionResult('error');
+        } else {
+          continueAsGuest('bootstrap_http_error');
+        }
       } finally {
         setSessionStatus('ready');
         setAuthInitializing(false);
       }
     },
-    [applySessionPayload, captureServerClock, handleSessionUnauthorized],
+    [applySessionPayload, captureServerClock, continueAsGuest],
   );
 
   const runBootstrapRef = useRef(runBootstrap);
@@ -1409,11 +1441,24 @@ const renderAuthState = ({
   onGoToLogin: () => void;
   children: ReactNode;
 }) => {
+  const pathname =
+    typeof window !== 'undefined' && window.location ? window.location.pathname || '' : '';
+  const isAuthenticatedUser = authStatus === 'authenticated';
+  const isPublicAuthPath =
+    pathname === '/' ||
+    pathname === '/login' ||
+    pathname.startsWith('/lms/login') ||
+    pathname.startsWith('/admin/login') ||
+    pathname.startsWith('/auth/callback') ||
+    pathname.startsWith('/invite/');
+
   if (authStatus === 'booting') {
     return <BootstrapLoading />;
   }
 
-  if (authStatus === 'error') {
+  const shouldBypassErrorOverlay = authStatus === 'error' && isPublicAuthPath;
+
+  if (authStatus === 'error' && !shouldBypassErrorOverlay) {
     return (
       <BootstrapErrorOverlay
         message={bootstrapError || 'We could not restore your session. Please try again.'}
@@ -1423,8 +1468,12 @@ const renderAuthState = ({
     );
   }
 
+  if (authStatus === 'error' && shouldBypassErrorOverlay) {
+    return <>{children}</>;
+  }
+
   if (authStatus === 'unauthenticated') {
-    if (isAuthBypassRoute()) {
+    if (!isAuthenticatedUser && isPublicAuthPath) {
       return <>{children}</>;
     }
     if (!isLoginRoute()) {
