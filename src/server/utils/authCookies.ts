@@ -98,7 +98,6 @@ export const getCookieOptions = (req: Request, opts: CookieOptionsInput = {}) =>
     options.domain = domain;
   }
   if (process.env.DEBUG_COOKIES === 'true') {
-    // eslint-disable-next-line no-console
     console.log('[COOKIE]', {
       req_host: req.headers?.host,
       x_forwarded_host: req.headers?.['x-forwarded-host'],

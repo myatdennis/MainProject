@@ -287,6 +287,12 @@ import { describeCookiePolicy } from './utils/authCookies.js';
 import { env } from './utils/env.js';
 import { log } from './utils/logger.js';
 import { handleError } from './utils/errorHandler.js';
+import {
+  isMissingColumnError,
+  isMissingRelationError,
+  normalizeColumnIdentifier,
+  extractMissingColumnName,
+} from './utils/errors.js';
 
 const fsp = fs.promises;
 const PROGRESS_BATCH_MAX_SIZE = Number(process.env.PROGRESS_BATCH_MAX_SIZE || 100);
@@ -1358,49 +1364,6 @@ const parsePaginationParams = (req, { defaultSize = 25, maxSize = 100 } = {}) =>
 const OPTIONAL_NOTIFICATION_COLUMNS = ['dispatch_status', 'channels', 'metadata', 'scheduled_for', 'delivered_at'];
 const OPTIONAL_NOTIFICATION_COLUMN_SET = new Set(OPTIONAL_NOTIFICATION_COLUMNS);
 const notificationColumnSuppression = new Set();
-const missingColumnPatterns = [
-  /column\s+"?([\w.]+)"?\s+does not exist/i,
-  /Could not find ['"]?([\w.]+)['"]? column/i,
-  /Could not find '([\w.]+)' column of '([\w.]+)' in the schema cache/i,
-];
-const missingRelationPatterns = [
-  /relation\s+"?([\w.]+)"?\s+does not exist/i,
-  /table\s+"?([\w.]+)"?\s+does not exist/i,
-];
-
-const normalizeColumnIdentifier = (identifier) => {
-  if (typeof identifier !== 'string') return null;
-  const cleaned = identifier.replace(/['"]/g, '');
-  const segments = cleaned.split('.');
-  return segments[segments.length - 1] || null;
-};
-
-const extractMissingColumnName = (error) => {
-  if (!error) return null;
-  const candidates = [error.message, error.details, error.hint, error.code];
-  for (const text of candidates) {
-    if (typeof text !== 'string') continue;
-    for (const pattern of missingColumnPatterns) {
-      const match = text.match(pattern);
-      if (match?.[1]) {
-        return match[1];
-      }
-    }
-  }
-  return null;
-};
-
-const isMissingColumnError = (error) =>
-  Boolean(
-    error &&
-      (error.code === '42703' ||
-        error.code === 'PGRST204' ||
-        missingColumnPatterns.some((pattern) =>
-          typeof error.message === 'string' && pattern.test(error.message)
-            ? true
-            : typeof error.details === 'string' && pattern.test(error.details),
-        )),
-  );
 
 const lessonColumnSupport = {
   durationSeconds: true,
@@ -1461,17 +1424,6 @@ const maybeHandleLessonColumnError = (error) => {
       return false;
   }
 };
-
-const isMissingRelationError = (error) =>
-  Boolean(
-    error &&
-      (error.code === '42P01' ||
-        missingRelationPatterns.some((pattern) =>
-          typeof error.message === 'string' && pattern.test(error.message)
-            ? true
-            : typeof error.details === 'string' && pattern.test(error.details),
-        )),
-  );
 
 const buildNotificationSelectColumns = () => {
   const base = ['id', 'title', 'body', 'org_id', 'user_id', 'created_at', 'read', 'updated_at'];
@@ -2354,15 +2306,6 @@ const handleCourseVersionColumnError = (error) => {
     return true;
   }
   return false;
-};
-
-const isMissingColumnError = (error) => {
-  if (!error) return false;
-  const message = typeof error.message === 'string' ? error.message.toLowerCase() : '';
-  if (error.code && String(error.code) === '42703') {
-    return true;
-  }
-  return message.includes('does not exist');
 };
 
 const logAdminCoursesError = (req, err, label) => {
