@@ -52,6 +52,15 @@ const detectDevMode = () => {
 };
 
 const devMode = detectDevMode();
+const isTestEnv = (() => {
+  if (typeof import.meta !== 'undefined' && (import.meta as any)?.env?.VITEST) {
+    return true;
+  }
+  if (typeof process !== 'undefined' && process.env?.VITEST) {
+    return true;
+  }
+  return false;
+})();
 
 const logMissingEnv = (() => {
   const seen = new Set<string>();
@@ -145,7 +154,7 @@ const getApiPathPrefix = () => {
 };
 
 const getBrowserOrigin = () => {
-  if (!isBrowser) return '';
+  if (!isBrowser || isTestEnv) return '';
   if (typeof window !== 'undefined' && window.location?.origin) {
     return trimTrailingSlash(window.location.origin);
   }
@@ -175,23 +184,41 @@ const normalizeBaseOutput = (value?: string | null) => {
 };
 
 export function getApiOrigin(): string {
-  if (devMode && isBrowser) {
+  const envBase = getEnvBase();
+  if (envBase.origin) {
+    return envBase.origin;
+  }
+  if (devMode && isBrowser && !isTestEnv) {
     return '';
   }
-  const envBase = getEnvBase();
-  if (envBase.origin) return envBase.origin;
   const browserOrigin = getBrowserOrigin();
   if (browserOrigin) return browserOrigin;
   return getNodeOrigin();
 }
 
 export function getApiBaseUrl(): string {
-  if (devMode && isBrowser) {
-    return DEFAULT_DEV_API_BASE;
+  const envBase = getEnvBase();
+  const pathPrefix = getApiPathPrefix();
+
+  if (envBase.origin) {
+    const combined = normalizeBaseOutput(`${envBase.origin}${pathPrefix || ''}`);
+    if (combined) {
+      return combined;
+    }
+  }
+
+  if (!envBase.origin && envBase.pathPrefix && !devMode) {
+    const fallback = normalizeBaseOutput(envBase.pathPrefix);
+    if (fallback) {
+      return fallback;
+    }
+  }
+
+  if (devMode && isBrowser && !isTestEnv) {
+    return normalizeBaseOutput(pathPrefix) || DEFAULT_DEV_API_BASE;
   }
 
   const origin = getApiOrigin();
-  const pathPrefix = getApiPathPrefix();
   const combined = normalizeBaseOutput(`${origin || ''}${pathPrefix || ''}`);
   if (combined) {
     return combined;

@@ -108,7 +108,7 @@ describe('apiClient', () => {
     expect(headers.Authorization).toBe('Bearer secret');
     expect(headers['X-Org-Id']).toBe('org-7');
     expect(headers['Content-Type']).toBe('application/json');
-    expect(options?.body).toContain('assignedTo');
+    expect(options?.body).toContain('assigned_to');
   });
 
   it('stringifies plain object bodies and sets JSON headers automatically', async () => {
@@ -337,5 +337,30 @@ describe('apiClient', () => {
     } satisfies Partial<InstanceType<typeof ApiError>>);
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(fetchSpy.mock.calls[0][0]).toContain('/api/auth/refresh');
+  });
+
+  it('throttles repeated requests after a 429 response', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2024-01-01T00:00:00Z'));
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.huddle.local');
+    __setApiBaseUrlOverride('https://api.huddle.local');
+    const { apiRequest } = await loadApiClient();
+    fetchSpy.mockResolvedValueOnce(
+      createResponse({ message: 'slow down' }, { status: 429, headers: { 'Retry-After': '2' } }),
+    );
+
+    await expect(apiRequest('/courses')).rejects.toMatchObject({ status: 429 });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    await expect(apiRequest('/courses')).rejects.toMatchObject({
+      status: 429,
+      body: expect.objectContaining({ throttled: true }),
+    });
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+
+    fetchSpy.mockResolvedValueOnce(createResponse({ data: [] }));
+    vi.setSystemTime(new Date('2024-01-01T00:00:03Z'));
+    await apiRequest('/courses');
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 });

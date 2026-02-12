@@ -2,7 +2,7 @@ import { createClient } from '@supabase/supabase-js';
 import { extractTokenFromHeader } from '../utils/jwt.js';
 import { getAccessTokenFromRequest } from '../utils/authCookies.js';
 
-const JWT_AUTH_BYPASS_PATHS = ['/api/auth/login', '/api/auth/logout', '/api/auth/health'];
+const JWT_AUTH_BYPASS_PATHS = ['/api/auth/login', '/api/auth/logout', '/api/auth/health', '/api/health'];
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
 const supabasePublicClient =
@@ -25,6 +25,11 @@ export async function supabaseJwtMiddleware(req, res, next) {
   }
 
   if (!supabasePublicClient) {
+    const devFallbackEnabled = String(process.env.DEV_FALLBACK || '').toLowerCase() === 'true';
+    const e2eMode = String(process.env.E2E_TEST_MODE || '').toLowerCase() === 'true';
+    if (devFallbackEnabled || e2eMode) {
+      return next();
+    }
     console.error('[supabaseJwt] Missing SUPABASE_URL or SUPABASE_ANON_KEY');
     return res.status(503).json({
       error: 'auth_unavailable',

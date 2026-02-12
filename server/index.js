@@ -1332,8 +1332,8 @@ const getDocumentOrgId = async (documentId) => {
     return undefined;
   }
 };
-const COURSE_WITH_MODULES_LESSONS_SELECT = '*, modules(*, lessons(*))';
-const MODULE_LESSONS_FOREIGN_TABLE = 'modules.lessons';
+const COURSE_WITH_MODULES_LESSONS_SELECT = '*, modules(*, lessons!lessons_module_org_fk(*))';
+const MODULE_LESSONS_FOREIGN_TABLE = 'modules.lessons!lessons_module_org_fk';
 const isUuid = (value) => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 const isAnalyticsClientEventDuplicate = (error) =>
   Boolean(
@@ -4201,14 +4201,22 @@ app.get('/api/admin/courses', async (req, res) => {
   );
 
   const isPlatformAdmin = Boolean(context.isPlatformAdmin);
-  const allowedOrgIds = Array.isArray(context.organizationIds)
-    ? context.organizationIds.map((value) => normalizeOrgIdValue(value)).filter(Boolean)
+  const adminOrgIds = Array.isArray(context.memberships)
+    ? context.memberships
+        .filter((membership) => String(membership.role || '').toLowerCase() === 'admin' && membership.orgId)
+        .map((membership) => normalizeOrgIdValue(membership.orgId))
+        .filter(Boolean)
     : [];
-  const allowedOrgIdSet = new Set(allowedOrgIds);
+  const allowedOrgIdSet = new Set(adminOrgIds);
 
   const restrictToAllowed = !isPlatformAdmin && !requestedOrgId;
 
-  if (!isPlatformAdmin && !requestedOrgId && allowedOrgIds.length === 0) {
+  if (!isPlatformAdmin && adminOrgIds.length === 0) {
+    res.status(403).json({ error: 'org_admin_required', message: 'Admin membership required.' });
+    return;
+  }
+
+  if (!isPlatformAdmin && !requestedOrgId && adminOrgIds.length === 0) {
     res.json({ data: [], pagination: { page: 1, pageSize: 0, total: 0, hasMore: false } });
     return;
   }
@@ -4244,12 +4252,12 @@ app.get('/api/admin/courses', async (req, res) => {
         keyTakeaways: c.keyTakeaways ?? [],
         modules: c.modules || [],
       }));
-      const filtered = shaped.filter((course) => {
-        const courseOrgId = pickOrgId(course.organization_id, course.org_id, course.organizationId);
-        if (requestedOrgId) {
-          return courseOrgId === requestedOrgId;
-        }
-        if (!isPlatformAdmin) {
+    const filtered = shaped.filter((course) => {
+      const courseOrgId = pickOrgId(course.organization_id, course.org_id, course.organizationId);
+      if (requestedOrgId) {
+        return courseOrgId === requestedOrgId;
+      }
+      if (!isPlatformAdmin) {
           return courseOrgId ? allowedOrgIdSet.has(courseOrgId) : false;
         }
         return true;
@@ -4330,14 +4338,7 @@ app.get('/api/admin/courses', async (req, res) => {
     if (orgFilter) {
       query = query.eq('organization_id', orgFilter);
     } else if (!isPlatformAdmin) {
-      if (!allowedOrgIds.length) {
-        res.json({
-          data: [],
-          pagination: { page, pageSize, total: 0, hasMore: false },
-        });
-        return;
-      }
-      query = query.in('organization_id', allowedOrgIds);
+      query = query.in('organization_id', adminOrgIds);
     }
 
     const { data, error, count } = await query;
@@ -5508,23 +5509,95 @@ app.get('/api/client/courses', async (req, res) => {
   }
 
   const orgId = orgIdRaw;
+  const sessionUserId =
+    (req.user && (req.user.userId || req.user.id || req.user.sub)) || null;
+  const normalizedSessionUserId = sessionUserId ? String(sessionUserId).trim().toLowerCase() : null;
 
-  const respondWithDemoCourses = () => {
+  const resolveAssignmentCourseIds = async () => {
+    if (!assignedOnly || !orgId) {
+      return null;
+    }
+
+    const ids = new Set();
+
+    const pushIds = (rows = []) => {
+      rows.forEach((assignment) => {
+        if (!assignment) return;
+        const targetUser = typeof assignment.user_id === 'string' ? assignment.user_id.trim().toLowerCase() : null;
+        if (
+          assignment.active === false ||
+          (normalizedSessionUserId && targetUser && targetUser !== normalizedSessionUserId)
+        ) {
+          return;
+        }
+        if (!targetUser && normalizedSessionUserId) {
+          // only include org-level assignments with null user scope when caller belongs to org
+          const isOrgMatch =
+            String(assignment.organization_id || assignment.org_id || '').trim() === orgId;
+          if (!isOrgMatch) {
+            return;
+          }
+        }
+        const courseId = assignment.course_id || assignment.courseId || null;
+        if (courseId) {
+          ids.add(String(courseId));
+        }
+      });
+    };
+
+    if (!supabase) {
+      if (E2E_TEST_MODE || DEV_FALLBACK) {
+        pushIds(e2eStore.assignments || []);
+        return Array.from(ids);
+      }
+      return null;
+    }
+
+    const tablesToTry = ['assignments', 'course_assignments'];
+    for (const table of tablesToTry) {
+      let query = supabase
+        .from(table)
+        .select('course_id,organization_id,org_id,user_id,active')
+        .eq('organization_id', orgId);
+      if (normalizedSessionUserId) {
+        query = query.or(
+          `user_id.eq.${normalizedSessionUserId},user_id.is.null`
+        );
+      } else {
+        query = query.is('user_id', null);
+      }
+      const { data, error } = await query;
+      if (error) {
+        const missingRelation = typeof error.message === 'string' && /relation/.test(error.message);
+        if (missingRelation) {
+          continue;
+        }
+        throw error;
+      }
+      pushIds(data || []);
+      if (ids.size > 0 || table === tablesToTry[tablesToTry.length - 1]) {
+        break;
+      }
+    }
+
+    return Array.from(ids);
+  };
+
+  const respondWithDemoCourses = async () => {
     // In dev/demo mode, show ALL courses (not just published)
     let courses = Array.from(e2eStore.courses.values());
 
     if (assignedOnly && orgId) {
-      const assignedIds = new Set(
-        (e2eStore.assignments || [])
-          .filter(
-            (asn) =>
-              asn &&
-              asn.active !== false &&
-              String(asn.organization_id || asn.org_id || '').trim() === orgId &&
-              (asn.user_id === null || typeof asn.user_id === 'undefined')
-          )
-          .map((asn) => String(asn.course_id))
+      const demoAssignments = (e2eStore.assignments || []).filter(
+        (asn) =>
+          asn &&
+          asn.active !== false &&
+          String(asn.organization_id || asn.org_id || '').trim() === orgId &&
+          (!normalizedSessionUserId ||
+            asn.user_id === null ||
+            String(asn.user_id).trim().toLowerCase() === normalizedSessionUserId)
       );
+      const assignedIds = new Set(demoAssignments.map((asn) => String(asn.course_id)));
       courses = courses.filter((course) => assignedIds.has(String(course.id)) || assignedIds.has(String(course.slug)));
     }
 
@@ -5572,12 +5645,21 @@ app.get('/api/client/courses', async (req, res) => {
   };
 
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
-    respondWithDemoCourses();
+    await respondWithDemoCourses();
     return;
   }
 
   if (!ensureSupabase(res)) return;
   try {
+    let assignmentCourseIds = null;
+    if (assignedOnly && orgId) {
+      assignmentCourseIds = await resolveAssignmentCourseIds();
+      if (assignedOnly && Array.isArray(assignmentCourseIds) && assignmentCourseIds.length === 0) {
+        res.json({ data: [] });
+        return;
+      }
+    }
+
     let courseQuery = supabase
       .from('courses')
       .select(COURSE_WITH_MODULES_LESSONS_SELECT)
@@ -5586,21 +5668,8 @@ app.get('/api/client/courses', async (req, res) => {
       .order('order_index', { ascending: true, foreignTable: 'modules' })
       .order('order_index', { ascending: true, foreignTable: MODULE_LESSONS_FOREIGN_TABLE });
 
-    if (assignedOnly && orgId) {
-      const { data: assignmentRows, error: assignmentError } = await supabase
-        .from('assignments')
-        .select('course_id')
-        .eq('organization_id', orgId)
-        .eq('active', true)
-        .is('user_id', null);
-
-      if (assignmentError) throw assignmentError;
-      const courseIds = Array.from(new Set((assignmentRows || []).map((row) => row.course_id).filter(Boolean)));
-      if (courseIds.length === 0) {
-        res.json({ data: [] });
-        return;
-      }
-      courseQuery = courseQuery.in('id', courseIds);
+    if (assignedOnly && orgId && Array.isArray(assignmentCourseIds)) {
+      courseQuery = courseQuery.in('id', assignmentCourseIds);
     }
 
     const { data, error } = await courseQuery;
@@ -7328,6 +7397,34 @@ app.get('/api/admin/organizations', async (req, res) => {
   if (!ensureSupabase(res)) return;
   if (!requireAdminAccess(req, res)) return;
 
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  const adminMemberships = Array.isArray(context.memberships)
+    ? context.memberships.filter(
+        (membership) => String(membership.role || '').toLowerCase() === 'admin' && membership.orgId,
+      )
+    : [];
+  const adminOrgIds = adminMemberships.map((membership) => membership.orgId).filter(Boolean);
+  const requestedOrgId = pickOrgId(
+    req.query?.orgId,
+    req.query?.organizationId,
+    req.body?.orgId,
+    req.body?.organizationId,
+    req.params?.orgId,
+  );
+
+  const isPlatformAdmin = Boolean(context.isPlatformAdmin || context.userRole === 'admin');
+  if (!isPlatformAdmin && adminOrgIds.length === 0) {
+    res.status(403).json({ error: 'org_admin_required', message: 'Admin membership required.' });
+    return;
+  }
+
+  if (!isPlatformAdmin && requestedOrgId && !adminOrgIds.includes(requestedOrgId)) {
+    res.status(403).json({ error: 'org_access_denied', message: 'Organization scope not permitted.' });
+    return;
+  }
+
   const { page, pageSize, from, to } = parsePaginationParams(req, { defaultSize: 25, maxSize: 100 });
   const search = (req.query.search || '').toString().trim();
   const statuses = (req.query.status || '')
@@ -7368,6 +7465,12 @@ app.get('/api/admin/organizations', async (req, res) => {
 
     if (subscriptions.length) {
       query = query.in('subscription', subscriptions);
+    }
+
+    if (requestedOrgId) {
+      query = query.eq('id', requestedOrgId);
+    } else if (!isPlatformAdmin) {
+      query = query.in('id', adminOrgIds);
     }
 
     const { data, error, count } = await query;
@@ -7478,7 +7581,7 @@ app.get('/api/admin/organizations/:id', async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { id } = req.params;
 
-  const access = await requireOrgAccess(req, res, id, { write: false });
+  const access = await requireOrgAccess(req, res, id, { write: false, requireOrgAdmin: true });
   if (!access) return;
 
   try {
@@ -7505,6 +7608,9 @@ app.put('/api/admin/organizations/:id', async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { id } = req.params;
   const patch = req.body || {};
+
+  const access = await requireOrgAccess(req, res, id, { write: true, requireOrgAdmin: true });
+  if (!access) return;
 
   try {
     const updatePayload = {
@@ -7563,6 +7669,9 @@ app.delete('/api/admin/organizations/:id', async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { id } = req.params;
 
+  const access = await requireOrgAccess(req, res, id, { write: true, requireOrgAdmin: true });
+  if (!access) return;
+
   try {
     const { error } = await supabase.from('organizations').delete().eq('id', id);
     if (error) throw error;
@@ -7581,7 +7690,7 @@ app.get('/api/admin/organizations/:orgId/members', async (req, res) => {
   const context = requireUserContext(req, res);
   if (!context) return;
 
-  const access = await requireOrgAccess(req, res, orgId, { write: false });
+  const access = await requireOrgAccess(req, res, orgId, { write: false, requireOrgAdmin: true });
   if (!access) return;
 
   try {
@@ -7612,7 +7721,7 @@ app.post('/api/admin/organizations/:orgId/members', async (req, res) => {
   const context = requireUserContext(req, res);
   if (!context) return;
 
-  const access = await requireOrgAccess(req, res, orgId, { write: true });
+  const access = await requireOrgAccess(req, res, orgId, { write: true, requireOrgAdmin: true });
   if (!access) return;
 
   try {
@@ -7662,7 +7771,7 @@ app.patch('/api/admin/organizations/:orgId/members/:membershipId', async (req, r
   const context = requireUserContext(req, res);
   if (!context) return;
 
-  const access = await requireOrgAccess(req, res, orgId, { write: true });
+  const access = await requireOrgAccess(req, res, orgId, { write: true, requireOrgAdmin: true });
   if (!access) return;
 
   try {
@@ -8106,7 +8215,7 @@ app.get('/api/admin/onboarding/:orgId/invites', async (req, res) => {
 app.post('/api/admin/onboarding/:orgId/invites', async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { orgId } = req.params;
-  const access = await requireOrgAccess(req, res, orgId, { write: true });
+  const access = await requireOrgAccess(req, res, orgId, { write: true, requireOrgAdmin: true });
   if (!access) return;
 
   const actor = buildActorFromRequest(req);
@@ -9274,20 +9383,23 @@ app.get('/api/admin/documents', async (req, res) => {
   const { user_id, tag, category, search, visibility } = req.query;
   const requestedOrgId = pickOrgId(req.query?.orgId, req.query?.org_id, req.query?.organization_id);
   const isPlatformAdmin = Boolean(context.isPlatformAdmin);
-  const allowedOrgIds = Array.isArray(context.organizationIds)
-    ? context.organizationIds.map((value) => normalizeOrgIdValue(value)).filter(Boolean)
+  const adminOrgIds = Array.isArray(context.memberships)
+    ? context.memberships
+        .filter((membership) => String(membership.role || '').toLowerCase() === 'admin' && membership.orgId)
+        .map((membership) => normalizeOrgIdValue(membership.orgId))
+        .filter(Boolean)
     : [];
-  const allowedOrgIdSet = new Set(allowedOrgIds);
+  const allowedOrgIdSet = new Set(adminOrgIds);
 
   if (requestedOrgId) {
-    const access = await requireOrgAccess(req, res, requestedOrgId, { write: false });
+    const access = await requireOrgAccess(req, res, requestedOrgId, { write: false, requireOrgAdmin: true });
     if (!access) return;
     if (!isPlatformAdmin && !allowedOrgIdSet.has(requestedOrgId)) {
       res.status(403).json({ error: 'org_access_denied', message: 'Organization scope not permitted' });
       return;
     }
   } else if (!isPlatformAdmin) {
-    if (!allowedOrgIds.length) {
+    if (!adminOrgIds.length) {
       res.json({ data: [] });
       return;
     }
@@ -9305,7 +9417,7 @@ app.get('/api/admin/documents', async (req, res) => {
     if (requestedOrgId) {
       query = query.eq('organization_id', requestedOrgId);
     } else if (!isPlatformAdmin) {
-      query = query.in('organization_id', allowedOrgIds);
+      query = query.in('organization_id', adminOrgIds);
     }
     if (user_id) {
       query = query.eq('user_id', user_id);

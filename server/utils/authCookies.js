@@ -4,6 +4,7 @@ const ACCESS_TOKEN_COOKIE = process.env.ACCESS_TOKEN_COOKIE_NAME || 'access_toke
 const REFRESH_TOKEN_COOKIE = process.env.REFRESH_TOKEN_COOKIE_NAME || 'refresh_token';
 const DEFAULT_COOKIE_DOMAIN = process.env.COOKIE_FALLBACK_DOMAIN || '.the-huddle.co';
 const COOKIE_DOMAIN = (process.env.COOKIE_DOMAIN || '').trim() || '';
+const ACTIVE_ORG_COOKIE = process.env.ACTIVE_ORG_COOKIE_NAME || 'active_org';
 
 const parseBoolean = (value, fallback = false) => {
   if (typeof value === 'boolean') return value;
@@ -173,13 +174,30 @@ export const clearAuthCookies = (...args) => {
   const res = args.length === 2 ? args[1] : args[0];
   applyCookie(res, ACCESS_TOKEN_COOKIE, '', 0);
   applyCookie(res, REFRESH_TOKEN_COOKIE, '', 0);
+  applyCookie(res, ACTIVE_ORG_COOKIE, '', 0);
 };
 
 
 export const getAccessTokenFromRequest = (req) => req?.cookies?.[ACCESS_TOKEN_COOKIE] || null;
 export const getRefreshTokenFromRequest = (req) => req?.cookies?.[REFRESH_TOKEN_COOKIE] || null;
+export const getActiveOrgFromRequest = (req) => {
+  const candidate = req?.cookies?.[ACTIVE_ORG_COOKIE];
+  if (typeof candidate !== 'string') return null;
+  const trimmed = candidate.trim();
+  return trimmed || null;
+};
+
+export const setActiveOrgCookie = (req, res, orgId) => {
+  const value = orgId ? String(orgId).trim() : '';
+  if (!value) {
+    applyCookie(res, ACTIVE_ORG_COOKIE, '', 0);
+    return;
+  }
+  applyCookie(res, ACTIVE_ORG_COOKIE, value, REFRESH_TOKEN_TTL_SECONDS);
+};
 
 export const authCookieNames = {
   access: ACCESS_TOKEN_COOKIE,
   refresh: REFRESH_TOKEN_COOKIE,
+  activeOrg: ACTIVE_ORG_COOKIE,
 };

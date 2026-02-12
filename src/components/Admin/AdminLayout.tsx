@@ -27,6 +27,7 @@ import {
   RefreshCcw,
   ChevronDown,
   UserCircle2,
+  AlertTriangle,
 } from 'lucide-react';
 import Card from '../ui/Card';
 import Button from '../ui/Button';
@@ -39,6 +40,7 @@ import { useActiveOrganization } from '../../hooks/useActiveOrganization';
 import useRuntimeStatus from '../../hooks/useRuntimeStatus';
 import { refreshRuntimeStatus } from '../../state/runtimeStatus';
 import ApiStatusBanner from '../system/ApiStatusBanner';
+import { useToast } from '../../context/ToastContext';
 
 interface AdminLayoutProps {
   children?: ReactNode;
@@ -69,6 +71,7 @@ const navigation: AdminNavItem[] = [
 const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
   const { isAuthenticated, user: authUser, authInitializing, logout: legacyLogout } = useAuth();
   const { user, logout } = useSecureAuth();
+  const { showToast } = useToast();
   const runtimeStatus = useRuntimeStatus();
   const {
     organizations: organizationOptions,
@@ -90,6 +93,7 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
   const ADMIN_MENU_DEBUG = Boolean(env?.DEV || env?.VITE_ENABLE_ADMIN_MENU_DEBUG === 'true');
   const apiReachable = runtimeStatus.apiReachable ?? runtimeStatus.apiHealthy;
   const apiAuthRequired = Boolean(runtimeStatus.apiAuthRequired);
+  const isOrgSelectionRequired = Boolean(isMultiOrg && !activeOrgId);
 
   const handleRuntimeRetry = useCallback(() => {
     refreshRuntimeStatus().catch((error) => {
@@ -168,6 +172,21 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
       console.warn('[AdminLayout] Failed to refresh organizations', error);
     }
   };
+
+  const guardNavigation = useCallback(
+    (targetPath: string) => {
+      if (!isOrgSelectionRequired) {
+        return false;
+      }
+      const allowList = ['/admin/organizations', '/admin/settings'];
+      if (allowList.some((allowed) => targetPath.startsWith(allowed))) {
+        return false;
+      }
+      showToast('Select an active organization to access this area.', 'error');
+      return true;
+    },
+    [isOrgSelectionRequired, showToast],
+  );
 
   useEffect(() => {
     if (authInitializing) return;
@@ -328,7 +347,13 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
                     key={item.name}
                     to={item.href}
                     end={item.exact}
-                    onClick={() => setSidebarOpen(false)}
+                    onClick={(event) => {
+                      if (guardNavigation(item.href)) {
+                        event.preventDefault();
+                        return;
+                      }
+                      setSidebarOpen(false);
+                    }}
                     className={({ isActive }) =>
                       `flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-semibold transition ${
                         isActive
@@ -357,13 +382,34 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
             <Card tone="muted" className="space-y-3">
               <p className="font-heading text-sm font-semibold text-charcoal">Quick actions</p>
               <Button asChild size="sm" variant="secondary" leadingIcon={<Plus className="h-4 w-4" />}>
-                <Link to="/admin/courses/new">Create course</Link>
+                <Link
+                  to="/admin/courses/new"
+                  onClick={(event) => {
+                    if (guardNavigation('/admin/courses/new')) event.preventDefault();
+                  }}
+                >
+                  Create course
+                </Link>
               </Button>
               <Button asChild size="sm" variant="ghost" leadingIcon={<ClipboardList className="h-4 w-4" />}>
-                <Link to="/admin/courses/import">Import courses</Link>
+                <Link
+                  to="/admin/courses/import"
+                  onClick={(event) => {
+                    if (guardNavigation('/admin/courses/import')) event.preventDefault();
+                  }}
+                >
+                  Import courses
+                </Link>
               </Button>
               <Button asChild size="sm" variant="ghost" leadingIcon={<Bell className="h-4 w-4" />}>
-                <Link to="/admin/surveys/queue">Survey queue</Link>
+                <Link
+                  to="/admin/surveys/queue"
+                  onClick={(event) => {
+                    if (guardNavigation('/admin/surveys/queue')) event.preventDefault();
+                  }}
+                >
+                  Survey queue
+                </Link>
               </Button>
             </Card>
           </div>
@@ -498,14 +544,32 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
               </div>
             </div>
           </div>
-          <div className="px-6 pb-4 pt-0 lg:px-10">
-            <SurveyQueueStatus />
+        <div className="px-6 pb-4 pt-0 lg:px-10">
+          <SurveyQueueStatus />
+        </div>
+      </header>
+      {isOrgSelectionRequired && (
+        <div className="mx-6 mt-4 flex items-start gap-3 rounded-2xl border border-sunrise/30 bg-sunrise/10 px-4 py-3 text-sm text-sunrise lg:mx-10">
+          <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" aria-hidden="true" />
+          <div className="flex flex-1 flex-col gap-1">
+            <span className="font-semibold">Select an active organization</span>
+            <span className="text-sunrise/80">
+              Admin tools stay locked until you choose a workspace. Pick an organization from the header dropdown to continue.
+            </span>
           </div>
-        </header>
+          <button
+            type="button"
+            className="rounded-full border border-sunrise/50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-sunrise transition hover:bg-sunrise/10"
+            onClick={handleRefreshOrganizations}
+          >
+            Refresh list
+          </button>
+        </div>
+      )}
 
-        <main className="flex-1 overflow-y-auto bg-softwhite px-6 py-8 lg:px-12">
-          {children ?? <Outlet />}
-        </main>
+      <main className="flex-1 overflow-y-auto bg-softwhite px-6 py-8 lg:px-12">
+        {children ?? <Outlet />}
+      </main>
       </div>
     </div>
   );

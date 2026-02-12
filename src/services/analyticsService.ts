@@ -617,6 +617,12 @@ class AnalyticsService {
   }
 
   private async bootstrapAnalytics(): Promise<void> {
+    if (!isAnalyticsEnabled()) {
+      if (import.meta.env?.DEV) {
+        console.info('[analyticsService] Analytics bootstrap skipped (disabled by flag).');
+      }
+      return;
+    }
     try {
       const eventsResponse = await analyticsApiClient.fetchEvents();
       (eventsResponse.data || []).forEach((record) => {

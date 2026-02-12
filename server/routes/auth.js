@@ -20,6 +20,7 @@ import {
   setAuthCookies,
   clearAuthCookies,
   getRefreshTokenFromRequest,
+  setActiveOrgCookie,
 } from '../utils/authCookies.js';
 import { doubleSubmitCSRF, setCSRFToken } from '../middleware/csrf.js';
 import {
@@ -882,6 +883,32 @@ router.post('/logout', doubleSubmitCSRF, async (req, res) => {
 // ============================================================================
 
 router.use(authenticate);
+
+router.patch('/active-org', (req, res) => {
+  const requested =
+    typeof req.body?.orgId === 'string' && req.body.orgId.trim().length > 0
+      ? req.body.orgId.trim()
+      : null;
+
+  if (!requested) {
+    setActiveOrgCookie(req, res, '');
+    req.activeOrgId = null;
+    return res.json({ activeOrgId: null });
+  }
+
+  const memberships = req.orgMemberships;
+  const hasMembership = memberships instanceof Map ? memberships.has(requested) : false;
+  if (!hasMembership) {
+    return res.status(403).json({
+      error: 'org_access_denied',
+      message: 'You do not have access to that organization.',
+    });
+  }
+
+  setActiveOrgCookie(req, res, requested);
+  req.activeOrgId = requested;
+  res.json({ activeOrgId: requested });
+});
 
 router.get('/verify', async (req, res) => {
   res.json({

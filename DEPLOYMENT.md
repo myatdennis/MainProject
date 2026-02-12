@@ -103,14 +103,20 @@
 
 Production environment variables you need to set:
 
-- ✅ `VITE_SUPABASE_URL`
-- ✅ `VITE_SUPABASE_ANON_KEY`
+- ✅ `SUPABASE_URL`
 - ✅ `SUPABASE_SERVICE_ROLE_KEY`
-- ✅ `JWT_SECRET` (generate with: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`)
-- ✅ `VITE_API_BASE_URL` (your domain URL)
-- ✅ `VITE_API_URL` (your domain URL + /api)
+- ✅ `SUPABASE_ANON_KEY` (backend auth client)
+- ✅ `VITE_SUPABASE_URL`
+- ✅ `VITE_SUPABASE_ANON_KEY` (frontend storage access)
+- ✅ `JWT_SECRET` and `JWT_REFRESH_SECRET` (generate with: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`)
+- ✅ `VITE_API_BASE_URL` / `VITE_API_URL` (your domain + `/api`)
+- ✅ `COOKIE_DOMAIN` (e.g. `.the-huddle.co`) so auth + `active_org` cookies stay scoped correctly
+- ✅ `VITE_ENABLE_WS=true` (if WebSocket sync is enabled in prod)
 - ✅ `NODE_ENV=production`
 - ✅ `PORT=8787` (or your hosting platform's default)
+- ➕ Optional operational knobs:
+  - `ACTIVE_ORG_COOKIE_NAME` if you need a custom cookie identifier for the admin org selector
+  - `VITE_ALLOW_DEFAULT_COURSES=true` only in demo environments where you intentionally seed the default catalog
 
 ### Runtime health & mode switching
 
@@ -118,7 +124,7 @@ Use this checklist whenever you flip the platform between demo mode (in-memory d
 
 1. **Set the correct env toggles**
    - Demo/local rehearsals: `DEV_FALLBACK=true`, `DEMO_MODE=true`, omit Supabase keys.
-   - Supabase/production: `DEV_FALLBACK=false`, `DEMO_MODE=false`, and provide `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`.
+   - Supabase/production: `DEV_FALLBACK=false`, `DEMO_MODE=false`, and provide `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`.
 2. **Restart both processes** (Express API + Vite build) so `src/state/runtimeStatus.ts` sees the new configuration and updates `window.__APP_RUNTIME_STATUS__`.
 3. **Verify `/api/health`** from the deploy target:
    ```bash
@@ -132,7 +138,15 @@ Use this checklist whenever you flip the platform between demo mode (in-memory d
 5. **Exercise auth flows**
    - Registration: submit the LMS Create Account form with a real organization ID; confirm Supabase user + profile rows are created.
    - Forgot password: attempt in secure mode only—UI should block the action if `/api/health` is degraded.
-6. **Record the runtime snapshot** by grabbing the object in your browser console: `window.__APP_RUNTIME_STATUS__`. Attach this JSON to the deployment log (e.g., `ADMIN_PORTAL_FIX_PLAN.md`) so ops can see exactly which mode shipped.
+6. **Record the runtime snapshot** by grabbing `window.__APP_RUNTIME_STATUS__` *and* the active organization selection:
+   - In the browser console run:
+     ```js
+     ({
+       runtime: window.__APP_RUNTIME_STATUS__,
+       activeOrg: document.cookie.match(/active_org=([^;]+)/)?.[1] || '(none)'
+     })
+     ```
+   - Attach this JSON to the deployment log (e.g., `ADMIN_PORTAL_FIX_PLAN.md`) so ops can see exactly which mode and organization scope shipped.
 
 These steps ensure the DAL-guarded services (`assignmentStorage`, `progressService`, analytics dashboards) behave consistently with the documented runtime state.
 

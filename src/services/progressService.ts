@@ -270,13 +270,13 @@ export const progressService = {
   getAvailability,
 
   fetchLessonProgress: async (options: {
-    userId: string;
+    userId?: string;
     courseId: string;
     lessonIds: string[];
     allowImpersonation?: boolean;
   }): Promise<LessonProgressRow[]> => {
     const { userId, courseId, lessonIds, allowImpersonation } = options;
-    if (!userId || !courseId || lessonIds.length === 0) {
+    if (!courseId || lessonIds.length === 0) {
       return [];
     }
 
@@ -287,18 +287,16 @@ export const progressService = {
       return [];
     }
 
-    let effectiveUserId = userId.toLowerCase();
     const isAdminSession =
       Boolean(sessionContext?.isPlatformAdmin) || (sessionContext?.role === 'admin' || sessionContext?.role === 'platform_admin');
+    const normalizedRequestedId = userId ? userId.toLowerCase() : sessionUserId;
 
-    if (!effectiveUserId || effectiveUserId !== sessionUserId) {
-      if (isAdminSession && allowImpersonation && effectiveUserId) {
+    if (!normalizedRequestedId || normalizedRequestedId !== sessionUserId) {
+      if (isAdminSession && allowImpersonation && normalizedRequestedId) {
         // permitted impersonation; proceed with requested user id
       } else {
-        if (import.meta.env?.DEV) {
-          console.warn('[progressService] Requested user does not match session; defaulting to authenticated user.');
-        }
-        effectiveUserId = sessionUserId;
+        console.warn('[progressService] Requested user does not match authenticated session; skipping remote fetch.');
+        return [];
       }
     }
 
@@ -324,9 +322,15 @@ export const progressService = {
 
       return response?.data?.lessons ?? [];
     } catch (error) {
-      if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
-        console.warn('[progressService] Remote progress request rejected (unauthorized).');
-        return [];
+      if (error instanceof ApiError) {
+        if (error.status === 401 || error.status === 403) {
+          console.warn('[progressService] Remote progress request rejected (unauthorized).');
+          return [];
+        }
+        if (error.status === 429) {
+          console.warn('[progressService] Rate limit reached while fetching lesson progress; using local cache.');
+          return [];
+        }
       }
       console.warn('Failed to fetch lesson progress snapshot:', error);
       return [];
