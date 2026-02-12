@@ -98,7 +98,6 @@ describe('progressService.fetchLessonProgress session enforcement', () => {
 
     const service = await importService();
     const result = await service.fetchLessonProgress({
-      userId: 'user-123',
       courseId: 'course-1',
       lessonIds: ['lesson-1'],
     });
@@ -113,7 +112,20 @@ describe('progressService.fetchLessonProgress session enforcement', () => {
 
     const service = await importService();
     const result = await service.fetchLessonProgress({
-      userId: 'user-123',
+      courseId: 'course-1',
+      lessonIds: ['lesson-1'],
+    });
+
+    expect(result).toEqual([]);
+    expect(mockApiRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats rate limit errors as empty responses', async () => {
+    mockGetUserSession.mockReturnValue({ id: 'user-123' });
+    mockApiRequest.mockRejectedValue(new MockApiError(429));
+
+    const service = await importService();
+    const result = await service.fetchLessonProgress({
       courseId: 'course-1',
       lessonIds: ['lesson-1'],
     });

@@ -26,6 +26,16 @@ node tests/run-survey-import.mjs
 npm run test:e2e
 ```
 
+### API/Integration Suite
+
+Run the Vitest-powered integration tests (including org-scoping safeguards) with:
+
+```bash
+npm run test:integration
+```
+
+The script spins up the Express server in dev-fallback mode and exercises the admin APIs. Make sure any required Supabase environment variables are exported before running the suite.
+
 Troubleshooting
 - If Playwright throws 'Page closed' or browser crashes, try running headed (set headless: false) and inspect console logs.
 - If ports differ, update the test base URL or ensure Vite serves on a known port (e.g., `--port 5176`).

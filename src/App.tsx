@@ -1,4 +1,4 @@
-import { useEffect, Suspense, lazy, useRef } from 'react';
+import { useEffect, Suspense, lazy, useRef, useContext } from 'react';
 // Load admin routes eagerly so they always share the main React instance in dev/prod.
 import AdminDashboard from './pages/Admin/AdminDashboard';
 import AdminHealth from './pages/Admin/AdminHealth';
@@ -39,6 +39,7 @@ import TroubleshootingGuide from './components/TroubleshootingGuide';
 import RequireAuth from './components/routing/RequireAuth';
 import DevDebugPanel from './components/DevDebugPanel';
 import { useSecureAuth } from './context/SecureAuthContext';
+import ToastContext from './context/ToastContext';
 
 // Import components used in routes/layout
 import OrgWorkspaceLayout from './components/OrgWorkspace/OrgWorkspaceLayout';
@@ -129,6 +130,8 @@ function App() {
 function AppContent() {
   useViewportHeight();
   const { sessionStatus, user, activeOrgId, orgResolutionStatus } = useSecureAuth();
+  const toastContext = useContext(ToastContext);
+  const showCatalogToast = toastContext?.showToast;
   const courseInitKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -161,6 +164,29 @@ function AppContent() {
 
   const location = useLocation();
   const hideMarketingChrome = /^\/(admin|lms|client)(?:\/|$)/i.test(location.pathname);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof showCatalogToast !== 'function') {
+      return;
+    }
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<Record<string, unknown>>).detail || {};
+      const eventType = typeof detail.event === 'string' ? detail.event : 'unknown';
+      let message = 'We are reconnecting to your course catalog.';
+      if (eventType === 'assignment_scope_failed') {
+        message = 'We hit a snag loading your assignments. Showing cached data while we retry.';
+      } else if (eventType === 'assignment_scope_empty') {
+        message = 'No assignments were returned for this workspace. Cached courses are still available.';
+      } else if (eventType === 'default_catalog_loaded') {
+        message = 'Showing the demo course catalog while we reconnect. Please refresh soon.';
+      }
+      showCatalogToast(message, eventType === 'assignment_scope_failed' ? 'error' : 'warning', 6000);
+    };
+    window.addEventListener('huddle:catalog-warning', handler as EventListener);
+    return () => {
+      window.removeEventListener('huddle:catalog-warning', handler as EventListener);
+    };
+  }, [showCatalogToast]);
 
   return (
     <div className="flex min-h-[calc(var(--app-vh,1vh)*100)] flex-col bg-[var(--hud-bg)]" style={{ paddingBottom: 'var(--safe-area-bottom, 0px)' }}>

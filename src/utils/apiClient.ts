@@ -39,6 +39,7 @@ type ApiRequestOptions = {
   timeoutMs?: number;
   requireAuth?: boolean;
   allowAnonymous?: boolean;
+  noTransform?: boolean;
 };
 
 type InternalRequestOptions = ApiRequestOptions & {
@@ -68,6 +69,116 @@ const safeReadText = async (res: Response) => {
   } catch {
     return '';
   }
+};
+
+const CAMEL_PRESERVE_KEYS = new Set(['body']);
+const shouldPreserveKey = (key: string) => {
+  const normalized = key.toLowerCase();
+  return CAMEL_PRESERVE_KEYS.has(normalized) || normalized.endsWith('_json');
+};
+
+const toCamelKey = (key: string) => key.replace(/_([a-z])/g, (_, c) => (c ? c.toUpperCase() : ''));
+const toSnakeKey = (key: string) =>
+  key
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/([A-Z])([A-Z][a-z])/g, '$1_$2')
+    .toLowerCase();
+
+const transformKeysDeep = (value: unknown, mode: 'camel' | 'snake', parentPreserve = false): any => {
+  if (parentPreserve) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((entry) => transformKeysDeep(entry, mode, false));
+  }
+  if (!isPlainObject(value)) {
+    return value;
+  }
+  const next: Record<string, any> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    const preserve = shouldPreserveKey(key);
+    const transformedKey = preserve ? key : mode === 'camel' ? toCamelKey(key) : toSnakeKey(key);
+    next[transformedKey] = transformKeysDeep(entry, mode, preserve);
+  }
+  return next;
+};
+
+const normalizeErrorBody = (body: unknown): Record<string, any> => {
+  if (isPlainObject(body)) {
+    return { ...body };
+  }
+  if (typeof body === 'string' && body.trim()) {
+    return { message: body };
+  }
+  if (body == null) {
+    return { message: 'Too many requests' };
+  }
+  return { payload: body };
+};
+
+type ThrottleEntry = {
+  retryAt: number;
+  strikes: number;
+};
+
+const ROUTE_THROTTLE_STATE = new Map<string, ThrottleEntry>();
+const BACKOFF_STEPS_MS = [500, 1500, 3000, 5000];
+
+const getThrottleKey = (url: string): string => extractPathname(url) || url;
+
+const clearThrottleEntry = (key: string) => {
+  const existing = ROUTE_THROTTLE_STATE.get(key);
+  if (existing && existing.retryAt <= Date.now()) {
+    ROUTE_THROTTLE_STATE.delete(key);
+  }
+};
+
+const parseRetryAfterHeader = (headerValue: string | null): number => {
+  if (!headerValue) return 0;
+  const numericDelay = Number(headerValue);
+  if (!Number.isNaN(numericDelay) && numericDelay >= 0) {
+    return Math.round(numericDelay * 1000);
+  }
+  const parsedDate = Date.parse(headerValue);
+  if (!Number.isNaN(parsedDate)) {
+    const delta = parsedDate - Date.now();
+    return delta > 0 ? delta : 0;
+  }
+  return 0;
+};
+
+const scheduleThrottle = (key: string, delayMs: number, headerProvided: boolean) => {
+  const entry = ROUTE_THROTTLE_STATE.get(key);
+  const strikes = headerProvided ? 1 : Math.min((entry?.strikes ?? 0) + 1, BACKOFF_STEPS_MS.length);
+  ROUTE_THROTTLE_STATE.set(key, {
+    retryAt: Date.now() + delayMs,
+    strikes,
+  });
+};
+
+const getBackoffDelayMs = (key: string): number => {
+  const entry = ROUTE_THROTTLE_STATE.get(key);
+  const strikes = Math.min((entry?.strikes ?? 0) + 1, BACKOFF_STEPS_MS.length);
+  return BACKOFF_STEPS_MS[strikes - 1] ?? BACKOFF_STEPS_MS[BACKOFF_STEPS_MS.length - 1];
+};
+
+const assertNotThrottled = (url: string) => {
+  const key = getThrottleKey(url);
+  const entry = ROUTE_THROTTLE_STATE.get(key);
+  if (entry && entry.retryAt > Date.now()) {
+    const remaining = Math.max(entry.retryAt - Date.now(), 0);
+    const payload = {
+      throttled: true,
+      retryAt: new Date(entry.retryAt).toISOString(),
+      retryAfterMs: remaining,
+      route: key,
+    };
+    throw new ApiError('Too Many Requests', 429, url, payload);
+  }
+  if (entry && entry.retryAt <= Date.now()) {
+    ROUTE_THROTTLE_STATE.delete(key);
+  }
+  return key;
 };
 
 type SessionBootstrapPayload = {
@@ -566,7 +677,8 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
       if (!hasContentType) {
         headers['Content-Type'] = 'application/json';
       }
-      body = JSON.stringify(rawBody);
+      const transformedBody = options.noTransform ? rawBody : transformKeysDeep(rawBody, 'snake');
+      body = JSON.stringify(transformedBody);
     } else {
       body = rawBody as BodyInit;
     }
@@ -715,6 +827,13 @@ const sendRequest = async (path: string, options: InternalRequestOptions = {}): 
     }
   }
 
+  let throttleKey: string | null = null;
+  try {
+    throttleKey = assertNotThrottled(prepared.url);
+  } catch (error) {
+    throw error;
+  }
+
   if (isRefreshRequest) {
     markRefreshStarted();
   }
@@ -757,9 +876,31 @@ const sendRequest = async (path: string, options: InternalRequestOptions = {}): 
     throw new ApiError('Unauthorized', res.status, prepared.url, body);
   }
 
+  if (res.status === 429) {
+    const retryAfterHeader = res.headers.get('retry-after');
+    const retryDelayMsFromHeader = parseRetryAfterHeader(retryAfterHeader);
+    const key = throttleKey ?? getThrottleKey(prepared.url);
+    const delayMs = retryDelayMsFromHeader > 0 ? retryDelayMsFromHeader : getBackoffDelayMs(key);
+    scheduleThrottle(key, delayMs, retryDelayMsFromHeader > 0);
+    const rawBody = isJsonResponse(contentType) ? await safeParseJson(res) : await safeReadText(res);
+    const normalizedBody = normalizeErrorBody(rawBody);
+    normalizedBody.throttled = true;
+    normalizedBody.retryAfterMs = delayMs;
+    normalizedBody.retryAt = new Date(Date.now() + delayMs).toISOString();
+    normalizedBody.route = key;
+    if (!('code' in normalizedBody)) {
+      normalizedBody.code = retryDelayMsFromHeader > 0 ? 'server_throttle' : 'client_throttle';
+    }
+    throw new ApiError('Too Many Requests', res.status, prepared.url, normalizedBody);
+  }
+
   if (!res.ok) {
     const body = isJsonResponse(contentType) ? await safeParseJson(res) : await safeReadText(res);
     throw new ApiError(`Request failed with status ${res.status}`, res.status, prepared.url, body);
+  }
+
+  if (throttleKey) {
+    ROUTE_THROTTLE_STATE.delete(throttleKey);
   }
 
   return res;
@@ -789,7 +930,8 @@ export async function apiRequest<T = unknown>(path: string, options: ApiRequestO
   // Parse JSON if possible, otherwise return text
   if (isJsonResponse(contentType)) {
     const data = await safeParseJson(res);
-    return data as T;
+    const transformed = options.noTransform ? data : transformKeysDeep(data, 'camel');
+    return transformed as T;
   }
 
   const text = await safeReadText(res);

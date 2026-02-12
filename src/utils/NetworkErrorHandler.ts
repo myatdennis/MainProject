@@ -4,6 +4,7 @@ export interface ApiError extends Error {
   status?: number;
   code?: string;
   details?: any;
+  body?: any;
 }
 
 export interface RetryConfig {
@@ -13,6 +14,8 @@ export interface RetryConfig {
 }
 
 export class NetworkErrorHandler {
+  private static readonly routeCooldowns = new Map<string, number>();
+  private static readonly rateLimitBackoff = [500, 1500, 3000];
   private static defaultRetryConfig: RetryConfig = {
     maxAttempts: 3,
     delay: 1000,
@@ -26,16 +29,26 @@ export class NetworkErrorHandler {
       errorMessage?: string;
       showErrorToast?: boolean;
       logErrors?: boolean;
+      throttleKey?: string;
     } = {}
   ): Promise<T> {
     const {
       retryConfig = {},
       errorMessage = 'An unexpected error occurred',
       showErrorToast = true,
-      logErrors = true
+      logErrors = true,
+      throttleKey,
     } = options;
 
     const config = { ...this.defaultRetryConfig, ...retryConfig };
+    if (throttleKey) {
+      const retryAt = this.routeCooldowns.get(throttleKey);
+      if (retryAt && retryAt > Date.now()) {
+        const blocked = this.buildThrottleError(throttleKey, retryAt);
+        this.handleFinalError(blocked, errorMessage, showErrorToast);
+        throw blocked;
+      }
+    }
     let lastError: ApiError;
 
     for (let attempt = 1; attempt <= config.maxAttempts; attempt++) {
@@ -53,13 +66,24 @@ export class NetworkErrorHandler {
           });
         }
 
+        const isRateLimited = lastError.status === 429;
+        if (isRateLimited) {
+          const cooldownKey = throttleKey ?? this.extractRouteFromError(lastError);
+          const cooldownMs = this.computeRateLimitDelay(lastError, attempt);
+          if (cooldownKey) {
+            this.routeCooldowns.set(cooldownKey, Date.now() + cooldownMs);
+          }
+        }
+
         // Don't retry on certain error types
-        if (this.shouldNotRetry(lastError) || attempt === config.maxAttempts) {
+        if (isRateLimited || this.shouldNotRetry(lastError) || attempt === config.maxAttempts) {
           break;
         }
 
-        // Wait before retry with exponential backoff
-        const delay = config.delay * Math.pow(config.backoffMultiplier, attempt - 1);
+        let delay = config.delay * Math.pow(config.backoffMultiplier, attempt - 1);
+        if (isRateLimited) {
+          delay = this.computeRateLimitDelay(lastError, attempt);
+        }
         await this.sleep(delay);
       }
     }
@@ -107,6 +131,7 @@ export class NetworkErrorHandler {
   private static handleFinalError(error: ApiError, message: string, showToast: boolean) {
     let errorMessage = message;
     let errorType: 'error' | 'loading' = 'error';
+    const throttled = this.isThrottledError(error);
 
     // Customize message based on error type
     if (error.status === 401) {
@@ -126,7 +151,7 @@ export class NetworkErrorHandler {
       errorMessage = 'Request timed out. Please try again.';
     }
 
-    if (showToast) {
+    if (showToast && !throttled) {
       toast.error(errorMessage, {
         duration: 5000,
         position: 'top-right',
@@ -170,6 +195,62 @@ export class NetworkErrorHandler {
 
   private static sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  private static computeRateLimitDelay(error: ApiError, attempt: number): number {
+    const retryAfterMs = this.extractRetryAfter(error);
+    if (retryAfterMs && retryAfterMs > 0) {
+      return Math.min(retryAfterMs, 5000);
+    }
+    const index = Math.min(attempt, this.rateLimitBackoff.length);
+    return this.rateLimitBackoff[index - 1] ?? this.rateLimitBackoff[this.rateLimitBackoff.length - 1];
+  }
+
+  private static extractRetryAfter(error: ApiError): number | undefined {
+    const body = (error as any)?.body;
+    const details = (error as any)?.details;
+    const retryAfterMs = body?.retryAfterMs ?? details?.retryAfterMs;
+    if (typeof retryAfterMs === 'number' && retryAfterMs >= 0) {
+      return retryAfterMs;
+    }
+    return undefined;
+  }
+
+  private static isThrottledError(error: ApiError): boolean {
+    const body = (error as any)?.body;
+    const details = (error as any)?.details;
+    return Boolean(body?.throttled || details?.throttled || error.code === 'client_throttle');
+  }
+
+  private static extractRouteFromError(error: ApiError): string | null {
+    const bodyRoute = (error as any)?.body?.route;
+    if (typeof bodyRoute === 'string') {
+      return bodyRoute;
+    }
+    const url = (error as any)?.url;
+    if (typeof url === 'string') {
+      try {
+        const parsed = new URL(url);
+        return parsed.pathname || parsed.href;
+      } catch {
+        return url;
+      }
+    }
+    return null;
+  }
+
+  private static buildThrottleError(key: string, retryAt: number): ApiError {
+    const remaining = Math.max(retryAt - Date.now(), 0);
+    const error = new Error('Too many requests. Please wait before retrying.') as ApiError;
+    error.status = 429;
+    error.code = 'client_throttle';
+    error.body = {
+      throttled: true,
+      route: key,
+      retryAt: new Date(retryAt).toISOString(),
+      retryAfterMs: remaining,
+    };
+    return error;
   }
 
   // Utility method for handling specific API patterns

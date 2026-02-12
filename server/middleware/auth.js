@@ -6,7 +6,7 @@
 import rateLimit from 'express-rate-limit';
 import supabase, { supabaseAuthClient } from '../lib/supabaseClient.js';
 import { extractTokenFromHeader } from '../utils/jwt.js';
-import { getAccessTokenFromRequest } from '../utils/authCookies.js';
+import { getAccessTokenFromRequest, getActiveOrgFromRequest } from '../utils/authCookies.js';
 import { getUserMemberships } from '../utils/memberships.js';
 import { E2E_TEST_MODE, DEV_FALLBACK, demoAutoAuthEnabled } from '../config/runtimeFlags.js';
 import { getPermissionsForRole, mergePermissions } from '../../shared/permissions/index.js';
@@ -183,13 +183,20 @@ const buildMembershipMap = (memberships = []) => {
 
 const getRequestedOrgId = (req) => {
   if (!req) return null;
+  const headerOrg =
+    typeof req.headers?.['x-org-id'] === 'string'
+      ? req.headers['x-org-id'].trim()
+      : null;
+  const cookieOrg = getActiveOrgFromRequest(req);
   const candidates = [
+    headerOrg,
     req.query?.orgId,
     req.query?.organizationId,
     req.body?.orgId,
     req.body?.organizationId,
     req.params?.orgId,
     req.params?.organizationId,
+    cookieOrg,
   ];
 
   for (const candidate of candidates) {

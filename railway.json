@@ -10,9 +10,13 @@
       "env": [
         "SUPABASE_URL",
         "SUPABASE_SERVICE_ROLE_KEY",
+        "SUPABASE_ANON_KEY",
         "CORS_ALLOWED_ORIGINS",
         "PORT",
-        "DEV_FALLBACK"
+        "DEV_FALLBACK",
+        "JWT_SECRET",
+        "JWT_REFRESH_SECRET",
+        "COOKIE_DOMAIN"
       ]
     },
     {

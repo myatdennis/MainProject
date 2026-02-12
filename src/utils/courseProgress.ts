@@ -10,6 +10,16 @@ export type StoredCourseProgress = {
 };
 
 export const PROGRESS_STORAGE_KEY = 'lms_course_progress_v1';
+const REMOTE_SYNC_CACHE_TTL_MS = 45_000;
+const MAX_CONCURRENT_REMOTE_SYNCS = 2;
+const MAX_LESSON_IDS_PER_REQUEST = 25;
+
+type RemoteSyncCacheEntry = {
+  timestamp: number;
+  payload: StoredCourseProgress | null;
+};
+
+const remoteSyncCache = new Map<string, RemoteSyncCacheEntry>();
 
 const readLocalProgress = (courseSlug: string): StoredCourseProgress => {
   try {
@@ -87,6 +97,43 @@ const deriveStoredProgressFromRemote = (
   };
 };
 
+const chunkLessonIds = (lessonIds: string[]): string[][] => {
+  if (lessonIds.length <= MAX_LESSON_IDS_PER_REQUEST) {
+    return [lessonIds];
+  }
+  const chunks: string[][] = [];
+  for (let i = 0; i < lessonIds.length; i += MAX_LESSON_IDS_PER_REQUEST) {
+    chunks.push(lessonIds.slice(i, i + MAX_LESSON_IDS_PER_REQUEST));
+  }
+  return chunks;
+};
+
+// Limit concurrent remote syncs so we don't flood the API and trigger 429s when
+// multiple courses request progress snapshots simultaneously.
+const createConcurrencyLimiter = () => {
+  let active = 0;
+  const waiters: Array<() => void> = [];
+  const release = () => {
+    active = Math.max(0, active - 1);
+    const next = waiters.shift();
+    if (next) {
+      active++;
+      next();
+    }
+  };
+  return async () => {
+    if (active < MAX_CONCURRENT_REMOTE_SYNCS) {
+      active++;
+      return release;
+    }
+    return new Promise<() => void>((resolve) => {
+      waiters.push(() => resolve(release));
+    });
+  };
+};
+
+const acquireRemoteSyncSlot = createConcurrencyLimiter();
+
 export const loadStoredCourseProgress = (courseSlug?: string): StoredCourseProgress => {
   if (!courseSlug) return { completedLessonIds: [], lessonProgress: {}, lessonPositions: {} };
   return readLocalProgress(courseSlug);
@@ -95,18 +142,39 @@ export const loadStoredCourseProgress = (courseSlug?: string): StoredCourseProgr
 export const syncCourseProgressWithRemote = async (options: {
   courseSlug: string;
   courseId: string;
-  userId: string;
+  userId?: string;
   lessonIds: string[];
 }): Promise<StoredCourseProgress | null> => {
   const { courseSlug, courseId, userId, lessonIds } = options;
-  if (!progressService.isEnabled() || !userId || !courseId || lessonIds.length === 0) {
+  if (!progressService.isEnabled() || !courseId || lessonIds.length === 0) {
     return null;
   }
 
-  const rows = await progressService.fetchLessonProgress({ userId, courseId, lessonIds });
-  const derived = deriveStoredProgressFromRemote(rows, lessonIds);
-  writeLocalProgress(courseSlug, derived);
-  return derived;
+  const cacheKey = `${userId}:${courseId}`;
+  const cached = remoteSyncCache.get(cacheKey);
+  if (cached && Date.now() - cached.timestamp < REMOTE_SYNC_CACHE_TTL_MS) {
+    return cached.payload;
+  }
+
+  const release = await acquireRemoteSyncSlot();
+  try {
+    const aggregatedRows: LessonProgressRow[] = [];
+    for (const chunk of chunkLessonIds(lessonIds)) {
+      const rows = await progressService.fetchLessonProgress({ userId, courseId, lessonIds: chunk });
+      aggregatedRows.push(...rows);
+      if (chunk.length >= MAX_LESSON_IDS_PER_REQUEST) {
+        // Small delay prevents hammering Supabase with large requests in succession
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+    }
+
+    const derived = deriveStoredProgressFromRemote(aggregatedRows, lessonIds);
+    writeLocalProgress(courseSlug, derived);
+    remoteSyncCache.set(cacheKey, { timestamp: Date.now(), payload: derived });
+    return derived;
+  } finally {
+    release();
+  }
 };
 
 export const saveStoredCourseProgress = (
@@ -121,7 +189,8 @@ export const saveStoredCourseProgress = (
     !options?.userId ||
     !options?.lessonIds ||
     options.lessonIds.length === 0 ||
-    !progressService.isEnabled()
+    !progressService.isEnabled() ||
+    !isRemoteSyncAvailable()
   ) {
     return;
   }
@@ -217,4 +286,10 @@ export const buildLearnerProgressSnapshot = (
     bookmarks: [],
     notes: []
   };
+};
+const isRemoteSyncAvailable = () => {
+  const envSource =
+    (typeof import.meta !== 'undefined' && (import.meta as any)?.env?.VITE_API_BASE_URL) ||
+    (typeof process !== 'undefined' && process.env?.VITE_API_BASE_URL);
+  return Boolean(envSource && String(envSource).trim().length > 0);
 };

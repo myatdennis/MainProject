@@ -218,3 +218,25 @@ describe('courseStore admin catalog phase transitions', () => {
     expect(finalState.phase).toBe('ready');
   });
 });
+
+describe('courseStore learner catalog fallbacks', () => {
+  it('uses default catalog when assignments return 200 with empty payload', async () => {
+    window.history.pushState({}, '', '/lms/courses');
+    secureStorageMock.getUserSession.mockReturnValue({
+      id: 'learner-101',
+      role: 'learner',
+      activeOrgId: 'org-learner',
+      memberships: [{ orgId: 'org-learner', status: 'active' }],
+    });
+    assignmentStorageMock.getAssignmentsForUser.mockResolvedValue([]);
+    clientCoursesMock.fetchPublishedCourses.mockResolvedValue([]);
+
+    const courseStore = await importCourseStore();
+    await courseStore.init();
+
+    const learnerState = courseStore.getLearnerCatalogState();
+    expect(learnerState.status).toBe('ok');
+    expect(learnerState.detail).toBe('fallback_default');
+    expect(courseStore.getAllCourses().length).toBeGreaterThan(0);
+  });
+});

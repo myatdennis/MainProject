@@ -998,6 +998,21 @@ let adminCatalogState: AdminCatalogState = {
   lastError: null,
 };
 
+type LearnerCatalogStatus = 'idle' | 'ok' | 'empty' | 'error';
+interface LearnerCatalogState {
+  status: LearnerCatalogStatus;
+  lastUpdatedAt: number | null;
+  lastError: string | null;
+  detail: string | null;
+}
+
+let learnerCatalogState: LearnerCatalogState = {
+  status: 'idle',
+  lastUpdatedAt: null,
+  lastError: null,
+  detail: null,
+};
+
 let initPromise: Promise<void> | null = null;
 
 const storeSubscribers = new Set<() => void>();
@@ -1031,6 +1046,18 @@ const setAdminCatalogState = (update: Partial<AdminCatalogState> | ((state: Admi
     return;
   }
   adminCatalogState = nextState;
+  notifySubscribers();
+};
+
+const setLearnerCatalogState = (update: Partial<LearnerCatalogState>) => {
+  const nextState = { ...learnerCatalogState, ...update };
+  const changed =
+    nextState.status !== learnerCatalogState.status ||
+    nextState.lastUpdatedAt !== learnerCatalogState.lastUpdatedAt ||
+    nextState.lastError !== learnerCatalogState.lastError ||
+    nextState.detail !== learnerCatalogState.detail;
+  if (!changed) return;
+  learnerCatalogState = nextState;
   notifySubscribers();
 };
 
@@ -1103,33 +1130,131 @@ const hasLocalProgressForCourse = (course: Course): boolean => {
   }
 };
 
+const CATALOG_CACHE_STORAGE_KEY = 'huddle_assignment_catalog_v2';
+const CATALOG_CACHE_MAX_AGE_MS = 1000 * 60 * 30; // 30 minutes
+
+type CatalogCacheEntry = {
+  timestamp: number;
+  courses: { [key: string]: Course };
+};
+
+const buildCatalogCacheKey = (userId: string | null, orgId: string | null) => {
+  if (!userId) return null;
+  return `${userId}:${orgId ?? 'none'}`;
+};
+
+const readCatalogCache = (): Record<string, CatalogCacheEntry> => {
+  if (typeof window === 'undefined') return {};
+  try {
+    const raw = window.localStorage.getItem(CATALOG_CACHE_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return typeof parsed === 'object' && parsed !== null ? parsed : {};
+  } catch (error) {
+    console.warn('[courseStore] Failed to read catalog cache:', error);
+    return {};
+  }
+};
+
+const writeCatalogCache = (payload: Record<string, CatalogCacheEntry>) => {
+  if (typeof window === 'undefined') return;
+  try {
+    window.localStorage.setItem(CATALOG_CACHE_STORAGE_KEY, JSON.stringify(payload));
+  } catch (error) {
+    console.warn('[courseStore] Failed to persist catalog cache:', error);
+  }
+};
+
+const loadCachedCatalog = (cacheKey: string | null): { [key: string]: Course } | null => {
+  if (!cacheKey) return null;
+  const cache = readCatalogCache();
+  const entry: CatalogCacheEntry | undefined = cache[cacheKey];
+  if (!entry) return null;
+  if (Date.now() - entry.timestamp > CATALOG_CACHE_MAX_AGE_MS) {
+    return null;
+  }
+  return entry.courses || null;
+};
+
+const saveCachedCatalog = (cacheKey: string | null, catalog: { [key: string]: Course }) => {
+  if (!cacheKey || typeof window === 'undefined') return;
+  try {
+    const serializedCatalog = JSON.parse(JSON.stringify(catalog));
+    const cache = readCatalogCache();
+    cache[cacheKey] = {
+      timestamp: Date.now(),
+      courses: serializedCatalog,
+    };
+    writeCatalogCache(cache);
+  } catch (error) {
+    console.warn('[courseStore] Failed to serialize catalog cache:', error);
+  }
+};
+
 const ensureAssignmentScopedCatalog = async (
   currentCourses: { [key: string]: Course },
   userId: string | null,
+  orgId: string | null,
 ): Promise<{ [key: string]: Course }> => {
   if (!userId) {
+    setLearnerCatalogState({
+      status: 'idle',
+      lastUpdatedAt: Date.now(),
+      lastError: null,
+      detail: null,
+    });
     return currentCourses;
   }
+
+  const cacheKey = buildCatalogCacheKey(userId, orgId);
+
+  const hasAnyCourses = (catalog: { [key: string]: Course } | null | undefined) =>
+    Boolean(catalog && Object.keys(catalog).length > 0);
 
   try {
     const assignments = await getAssignmentsForUser(userId);
     if (!assignments || assignments.length === 0) {
-      console.info('[courseStore] No assignments returned from API; checking for locally completed courses.');
-      const fallbackEntries = Object.entries(currentCourses).filter(([, course]) => hasLocalProgressForCourse(course));
-      if (fallbackEntries.length === 0) {
-        console.info('[courseStore] No local progress detected; presenting empty learner catalog.');
-        return {};
+      emitCatalogDiagnostic('assignment_scope_empty', { userId });
+      const cached = cacheKey ? loadCachedCatalog(cacheKey) : null;
+
+      const fallback = (() => {
+        if (DEFAULT_CATALOG_ALLOWED) {
+          const defaults = getDefaultCourses();
+          if (hasAnyCourses(defaults)) {
+            return { source: 'default' as const, catalog: defaults };
+          }
+        }
+
+        if (hasAnyCourses(currentCourses)) {
+          return { source: 'published' as const, catalog: currentCourses };
+        }
+
+        if (hasAnyCourses(cached)) {
+          return { source: 'cached' as const, catalog: cached as { [key: string]: Course } };
+        }
+
+        return { source: 'empty' as const, catalog: {} as { [key: string]: Course } };
+      })();
+
+      if (fallback.source !== 'empty' && cacheKey) {
+        saveCachedCatalog(cacheKey, fallback.catalog);
       }
 
-      const fallbackCatalog: { [key: string]: Course } = {};
-      fallbackEntries.forEach(([id, course]) => {
-        fallbackCatalog[id] = {
-          ...course,
-          assignmentStatus: course.assignmentStatus ?? 'completed',
-        };
+      console.info(
+        `[courseStore] No assignments (200 empty) — using fallback catalog: ${fallback.source}`,
+      );
+
+      setLearnerCatalogState({
+        status: fallback.source === 'empty' ? 'empty' : 'ok',
+        lastUpdatedAt: Date.now(),
+        lastError: null,
+        detail:
+          fallback.source === 'empty'
+            ? 'no_assignments'
+            : (`fallback_${fallback.source}` as 'fallback_default' | 'fallback_published' | 'fallback_cached'),
       });
-      console.info('[courseStore] Preserving', fallbackEntries.length, 'course(s) with stored progress history.');
-      return fallbackCatalog;
+
+      return fallback.catalog;
     }
 
     const courseMap: { [key: string]: Course } = { ...currentCourses };
@@ -1156,6 +1281,23 @@ const ensureAssignmentScopedCatalog = async (
 
     const filteredEntries = Object.entries(courseMap).filter(([id]) => assignmentByCourseId.has(id));
     if (filteredEntries.length === 0) {
+      const cached = loadCachedCatalog(cacheKey);
+      if (cached) {
+        console.info('[courseStore] Using cached catalog for empty assignment filter.');
+        setLearnerCatalogState({
+          status: 'empty',
+          lastUpdatedAt: Date.now(),
+          lastError: null,
+          detail: 'cached',
+        });
+        return cached;
+      }
+      setLearnerCatalogState({
+        status: 'empty',
+        lastUpdatedAt: Date.now(),
+        lastError: null,
+        detail: 'filtered_empty',
+      });
       return currentCourses;
     }
 
@@ -1172,11 +1314,66 @@ const ensureAssignmentScopedCatalog = async (
     });
 
     console.log('[courseStore] Assignment filter reduced catalog to', filteredEntries.length, 'course(s).');
+    saveCachedCatalog(cacheKey, filtered);
+    setLearnerCatalogState({
+      status: 'ok',
+      lastUpdatedAt: Date.now(),
+      lastError: null,
+      detail: null,
+    });
     return filtered;
   } catch (error) {
     console.warn('[courseStore] Unable to scope catalog by assignments:', error);
-    return currentCourses;
+    emitCatalogDiagnostic('assignment_scope_failed', {
+      userId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    const cached = loadCachedCatalog(cacheKey);
+    if (cached) {
+      console.info('[courseStore] Using cached catalog after assignment scope failure.');
+      setLearnerCatalogState({
+        status: 'error',
+        lastUpdatedAt: Date.now(),
+        lastError: error instanceof Error ? error.message : String(error),
+        detail: 'cached',
+      });
+      return cached;
+    }
+    setLearnerCatalogState({
+      status: 'error',
+      lastUpdatedAt: Date.now(),
+      lastError: error instanceof Error ? error.message : String(error),
+      detail: null,
+    });
+    return {};
   }
+};
+
+const DEFAULT_CATALOG_ALLOWED =
+  typeof import.meta.env?.VITE_ALLOW_DEFAULT_COURSES !== 'undefined'
+    ? import.meta.env?.VITE_ALLOW_DEFAULT_COURSES === 'true'
+    : import.meta.env?.MODE !== 'production';
+
+type CatalogDiagnosticEvent =
+  | 'default_catalog_loaded'
+  | 'assignment_scope_empty'
+  | 'assignment_scope_failed';
+
+const emitCatalogDiagnostic = (event: CatalogDiagnosticEvent, detail: Record<string, unknown> = {}) => {
+  const payload = {
+    ...detail,
+    event,
+    timestamp: new Date().toISOString(),
+  };
+  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+    try {
+      window.dispatchEvent(new CustomEvent('huddle:catalog-warning', { detail: payload }));
+    } catch (error) {
+      console.warn('[courseStore] catalog warning dispatch failed', error);
+    }
+  }
+  const logMethod = event === 'assignment_scope_failed' ? console.error : console.warn;
+  logMethod('[courseStore] catalog_diagnostic', payload);
 };
 
 // Store management functions
@@ -1189,7 +1386,6 @@ export const courseStore = {
     initPromise = (async () => {
     let supabaseOperational = false;
     let restrictToOrg = true;
-    let canSyncDefaults = false;
     let canUseAdminApi = false;
     let adminLoadStatus: AdminLoadStatus = 'skipped';
     let adminLoadError: string | null = null;
@@ -1208,19 +1404,10 @@ export const courseStore = {
         courses = getDefaultCourses();
         return;
       }
-      const normalizedRole = orgContext.role ? orgContext.role.toLowerCase() : null;
       const adminSurfaceDetected = isAdminSurface();
-      const isAdminRole = Boolean(
-        normalizedRole && (normalizedRole === 'admin' || normalizedRole.endsWith('_admin') || normalizedRole.includes('admin')),
-      );
-      const treatAsAdmin = isAdminRole || adminSurfaceDetected;
-      restrictToOrg = !treatAsAdmin;
+      const treatAsAdmin = adminSurfaceDetected;
+      restrictToOrg = !adminSurfaceDetected;
       const adminMode = !restrictToOrg;
-      if (adminSurfaceDetected && !isAdminRole) {
-        console.info(
-          '[courseStore.init] Admin surface detected without explicit admin role; expanding catalog visibility for builder access.',
-        );
-      }
       let runtimeStatus = getRuntimeStatus();
       try {
         runtimeStatus = await refreshRuntimeStatus();
@@ -1231,7 +1418,6 @@ export const courseStore = {
       const apiReachable = runtimeStatus.apiReachable ?? runtimeStatus.apiHealthy;
       const apiAuthRequired = runtimeStatus.apiAuthRequired;
   canUseAdminApi = adminMode && apiReachable;
-      canSyncDefaults = canUseAdminApi && supabaseOperational;
       console.log('[courseStore.init] Runtime status snapshot:', runtimeStatus);
       // Prefer admin list (richer shape) but gracefully fall back to published-only
       let dbCourses: Course[] = [];
@@ -1314,82 +1500,75 @@ export const courseStore = {
         courses = {};
         console.warn('[courseStore.init] Admin course load unauthorized; leaving local catalog empty.');
       } else {
-        console.log('[courseStore.init] No courses returned from API, seeding defaults...');
-        const defaultCourses = getDefaultCourses();
-        courses = defaultCourses;
-        if (!canSyncDefaults) {
-          console.log('[courseStore.init] Default catalog loaded locally; admin sync skipped.');
-        }
-        for (const course of Object.values(defaultCourses)) {
-          if (!canSyncDefaults) {
-            continue;
+        if (DEFAULT_CATALOG_ALLOWED) {
+          console.log('[courseStore.init] No courses returned; loading local default catalog for demo use.');
+          courses = getDefaultCourses();
+          emitCatalogDiagnostic('default_catalog_loaded', {
+            reason: 'admin_catalog_unavailable',
+            scope: restrictToOrg ? 'learner' : 'admin',
+          });
+          if (restrictToOrg) {
+            setLearnerCatalogState({
+              status: 'ok',
+              lastUpdatedAt: Date.now(),
+              lastError: null,
+              detail: 'default_catalog',
+            });
           }
-          try {
-            const persisted = await syncCourseToDatabase(course);
-            if (persisted) {
-              const normalized = normalizeCourse(persisted as Course);
-              courses[normalized.id] = {
-                ...courses[course.id],
-                ...normalized,
-              };
-              if (normalized.id !== course.id) {
-                delete courses[course.id];
-              }
-            }
-          } catch (error) {
-            if (error instanceof CourseValidationError) {
-              console.warn(
-                `Default course "${course.title}" failed validation during seed: ${error.issues.join(
-                  ' | ',
-                )}`,
-              );
-            } else {
-              console.error('Failed to seed default course', error);
-            }
+        } else {
+          courses = {};
+          emitCatalogDiagnostic('default_catalog_loaded', {
+            reason: 'admin_catalog_unavailable',
+            scope: restrictToOrg ? 'learner' : 'admin',
+            disabled: true,
+          });
+          console.warn('[courseStore.init] No courses returned and default catalog disabled.');
+          if (restrictToOrg) {
+            setLearnerCatalogState({
+              status: 'empty',
+              lastUpdatedAt: Date.now(),
+              lastError: null,
+              detail: 'default_disabled',
+            });
           }
         }
-        console.log(
-          canSyncDefaults
-            ? 'Default courses synced to backend'
-            : 'Default courses ready locally (no admin sync performed)'
-        );
       }
 
       if (restrictToOrg) {
-        courses = await ensureAssignmentScopedCatalog(courses, orgContext.userId);
+        courses = await ensureAssignmentScopedCatalog(courses, orgContext.userId, orgContext.orgId);
       }
     } catch (error) {
       console.error('Error initializing course store:', error);
       adminLoadStatus = 'error';
       adminLoadError = error instanceof Error ? error.message : 'course_store_init_failed';
-      const defaultCourses = getDefaultCourses();
-      courses = defaultCourses;
-      if (!canSyncDefaults) {
-        console.log('[courseStore.init] Default catalog loaded locally during error path; admin sync skipped.');
-      }
-      for (const course of Object.values(defaultCourses)) {
-        if (!canSyncDefaults) {
-          continue;
+      if (DEFAULT_CATALOG_ALLOWED) {
+        courses = getDefaultCourses();
+        emitCatalogDiagnostic('default_catalog_loaded', {
+          reason: 'init_failure',
+          error: adminLoadError,
+        });
+        if (restrictToOrg) {
+          setLearnerCatalogState({
+            status: 'ok',
+            lastUpdatedAt: Date.now(),
+            lastError: null,
+            detail: 'default_catalog',
+          });
         }
-        try {
-          const persisted = await syncCourseToDatabase(course);
-          if (!persisted) continue;
-          const normalized = normalizeCourse(persisted as Course);
-          courses[normalized.id] = {
-            ...courses[course.id],
-            ...normalized,
-          };
-          if (normalized.id !== course.id) {
-            delete courses[course.id];
-          }
-        } catch (seedError) {
-          if (seedError instanceof CourseValidationError) {
-            console.warn(
-              `Skipped syncing default course "${course.title}" due to validation issues: ${seedError.issues.join(
-                ' | ',
-              )}`,
-            );
-          }
+      } else {
+        courses = {};
+        emitCatalogDiagnostic('default_catalog_loaded', {
+          reason: 'init_failure',
+          error: adminLoadError,
+          disabled: true,
+        });
+        if (restrictToOrg) {
+          setLearnerCatalogState({
+            status: 'error',
+            lastUpdatedAt: Date.now(),
+            lastError: adminLoadError,
+            detail: 'default_disabled',
+          });
         }
       }
     } finally {
@@ -1598,6 +1777,7 @@ export const courseStore = {
   },
 
   getAdminCatalogState: (): AdminCatalogState => adminCatalogState,
+  getLearnerCatalogState: (): LearnerCatalogState => learnerCatalogState,
 
   subscribe: (listener: () => void): (() => void) => {
     storeSubscribers.add(listener);

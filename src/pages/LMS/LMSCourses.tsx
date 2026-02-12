@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   ArrowUpRight,
   BookOpen,
@@ -26,6 +26,7 @@ import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import Skeleton from '../../components/ui/Skeleton';
 import EmptyState from '../../components/ui/EmptyState';
 import { useUserProfile } from '../../hooks/useUserProfile';
+import { useSecureAuth } from '../../context/SecureAuthContext';
 
 type StatusFilter = 'all' | 'not-started' | 'in-progress' | 'completed';
 
@@ -37,17 +38,30 @@ const statusFilters: Array<{ value: StatusFilter; label: string }> = [
 ];
 
 const LMSCourses = () => {
+  const navigate = useNavigate();
   const { user } = useUserProfile();
+  const { sessionStatus, orgResolutionStatus } = useSecureAuth();
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<StatusFilter>('all');
   const [progressRefreshToken, setProgressRefreshToken] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [catalogRetrying, setCatalogRetrying] = useState(false);
+  const [learnerCatalogState, setLearnerCatalogState] = useState(courseStore.getLearnerCatalogState());
+  const syncDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const syncRanRef = useRef(false);
 
   const learnerId = useMemo(() => {
     if (user?.email) return user.email.toLowerCase();
     if (user?.id) return String(user.id).toLowerCase();
     return 'local-user';
   }, [user]);
+
+  useEffect(() => {
+    const unsubscribe = courseStore.subscribe(() => {
+      setLearnerCatalogState(courseStore.getLearnerCatalogState());
+    });
+    return unsubscribe;
+  }, []);
 
   const publishedCourses = useMemo(() => {
     return courseStore
@@ -89,6 +103,24 @@ const LMSCourses = () => {
       });
   }, [progressRefreshToken]);
 
+  const canSyncProgress = sessionStatus === 'ready' && orgResolutionStatus === 'ready';
+  const hasCatalogLoaded = learnerCatalogState.status !== 'idle' || publishedCourses.length > 0;
+
+  const handleRetryCatalog = useCallback(async () => {
+    if (catalogRetrying) return;
+    setCatalogRetrying(true);
+    try {
+      if (typeof (courseStore as any).init === 'function') {
+        await (courseStore as any).init();
+        setProgressRefreshToken((token) => token + 1);
+      }
+    } catch (error) {
+      console.warn('[LMSCourses] Catalog retry failed:', error);
+    } finally {
+      setCatalogRetrying(false);
+    }
+  }, [catalogRetrying]);
+
   // Ensure course store refreshes on landing (always fetch & merge latest)
   useEffect(() => {
     let active = true;
@@ -113,35 +145,48 @@ const LMSCourses = () => {
   }, []);
 
   useEffect(() => {
-    let isMounted = true;
-    const syncProgress = async () => {
+    if (syncRanRef.current) {
+      return;
+    }
+    if (!canSyncProgress || !learnerId || !hasCatalogLoaded || publishedCourses.length === 0) {
+      return;
+    }
+    if (syncDebounceRef.current) {
+      clearTimeout(syncDebounceRef.current);
+    }
+    syncDebounceRef.current = window.setTimeout(() => {
+      syncRanRef.current = true;
       setIsSyncing(true);
-      const results = await Promise.all(
-        publishedCourses.map(async (course) => {
-          const lessonIds =
-            course.chapters?.flatMap((chapter) => chapter.lessons?.map((lesson) => lesson.id) ?? []) ?? [];
-          if (!lessonIds.length) return null;
-          return syncCourseProgressWithRemote({
-            courseSlug: course.slug,
-            courseId: course.id,
-            userId: learnerId,
-            lessonIds,
-          });
+      (async () => {
+        const results = await Promise.all(
+          publishedCourses.map(async (course) => {
+            const lessonIds =
+              course.chapters?.flatMap((chapter) => chapter.lessons?.map((lesson) => lesson.id) ?? []) ?? [];
+            if (!lessonIds.length) return null;
+            return syncCourseProgressWithRemote({
+              courseSlug: course.slug,
+              courseId: course.id,
+              userId: learnerId,
+              lessonIds,
+            });
+          }),
+        );
+        if (results.some(Boolean)) {
+          setProgressRefreshToken((token) => token + 1);
+        }
+      })()
+        .catch((error) => {
+          console.warn('[LMSCourses] Failed to sync learner progress:', error);
         })
-      );
-
-      if (!isMounted) return;
-      if (results.some((entry) => entry)) {
-        setProgressRefreshToken((token) => token + 1);
-      }
-      setIsSyncing(false);
-    };
-
-    void syncProgress();
+        .finally(() => setIsSyncing(false));
+    }, 350);
     return () => {
-      isMounted = false;
+      if (syncDebounceRef.current) {
+        clearTimeout(syncDebounceRef.current);
+        syncDebounceRef.current = null;
+      }
     };
-  }, [publishedCourses, learnerId]);
+  }, [canSyncProgress, hasCatalogLoaded, learnerId, publishedCourses.length]);
 
   const filteredCourses = useMemo(() => {
     const query = searchTerm.trim().toLowerCase();
@@ -161,6 +206,10 @@ const LMSCourses = () => {
       return true;
     });
   }, [publishedCourses, searchTerm, filterStatus]);
+
+  const showEmptyCatalogState = !isSyncing && publishedCourses.length === 0;
+  const showNoAssignmentsState = showEmptyCatalogState && learnerCatalogState.status === 'empty';
+  const showCatalogErrorState = showEmptyCatalogState && learnerCatalogState.status === 'error';
 
   return (
     <div className="min-h-screen bg-softwhite">
@@ -288,7 +337,7 @@ const LMSCourses = () => {
           title="Available courses"
           helper={`${filteredCourses.length} of ${publishedCourses.length} courses`}
           actionLabel="View learning plan"
-          onAction={() => {/* placeholder for deeper integration */}}
+          onAction={() => navigate('/lms/progress')}
         />
 
         {isSyncing ? (
@@ -311,7 +360,39 @@ const LMSCourses = () => {
               </Card>
             ))}
           </div>
-        ) : filteredCourses.length === 0 ? (
+        ) : showCatalogErrorState ? (
+          <div className="mt-8">
+            <EmptyState
+              title="We're reconnecting to your catalog"
+              description="We couldn't load your assignments from the server. We're showing any cached courses we have. Try again in a moment."
+              action={
+                <Button
+                  onClick={handleRetryCatalog}
+                  loading={catalogRetrying}
+                  trailingIcon={<ArrowUpRight className="h-4 w-4" />}
+                >
+                  Retry loading courses
+                </Button>
+              }
+            />
+          </div>
+        ) : showNoAssignmentsState ? (
+          <div className="mt-8">
+            <EmptyState
+              title="No courses have been assigned yet"
+              description="Your learning team hasn’t assigned courses to this workspace. Check back later or contact your administrator if you believe this is an error."
+              action={
+                <Button
+                  onClick={handleRetryCatalog}
+                  loading={catalogRetrying}
+                  trailingIcon={<ArrowUpRight className="h-4 w-4" />}
+                >
+                  Refresh catalog
+                </Button>
+              }
+            />
+          </div>
+        ) : filteredCourses.length === 0 && publishedCourses.length > 0 ? (
           <div className="mt-8">
             <EmptyState
               title="No courses match that search"

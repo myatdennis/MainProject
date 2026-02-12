@@ -1,18 +1,31 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 const mockApiRequest = vi.fn(() => Promise.resolve({ data: {} }));
+const mockEnsureReady = vi.hoisted(() => vi.fn(() => true));
+const mockIsEnabled = vi.hoisted(() => vi.fn(() => true));
 
 vi.mock('../../utils/apiClient', () => ({
   __esModule: true,
   default: () => mockApiRequest(),
 }));
 
+vi.mock('../analytics/analyticsApiClient', () => ({
+  analyticsApiClient: {
+    fetchEvents: vi.fn(() => Promise.resolve({ data: [] })),
+    fetchJourneys: vi.fn(() => Promise.resolve({ data: [] })),
+    persistEvent: mockApiRequest,
+    persistJourney: mockApiRequest,
+  },
+  isAnalyticsEnabled: mockIsEnabled,
+}));
+
 describe('analyticsService', () => {
-beforeEach(async () => {
-  vi.clearAllMocks();
-  vi.resetModules();
-  mockApiRequest.mockResolvedValue({ data: [] });
-});
+  beforeEach(async () => {
+    vi.clearAllMocks();
+    vi.resetModules();
+    mockApiRequest.mockResolvedValue({ data: [] });
+    vi.stubEnv('VITE_ENABLE_ANALYTICS', 'true');
+  });
 
   it('records course lifecycle events', async () => {
     const { analyticsService } = await import('../analyticsService');

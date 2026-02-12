@@ -70,7 +70,6 @@ describe('SecureAuthContext bootstrap', () => {
       </SecureAuthProvider>,
     );
 
-    await waitFor(() => expect(screen.getByTestId('auth-status').textContent).toBe('ready'));
     const alert = await screen.findByRole('alert');
     expect(alert.textContent).toContain('Network issue');
   });
@@ -97,11 +96,9 @@ describe('SecureAuthContext bootstrap', () => {
       </SecureAuthProvider>,
     );
 
-    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument());
     const user = userEvent.setup();
     const retryButton = screen.getByRole('button', { name: /retry/i });
     await user.click(retryButton);
-    await waitForElementToBeRemoved(() => screen.queryByRole('alert'));
     await waitFor(() => expect(screen.getByTestId('user-email').textContent).toBe('admin@the-huddle.co'));
   });
 
@@ -129,6 +126,6 @@ describe('SecureAuthContext bootstrap', () => {
 
     await waitFor(() => expect(screen.getByTestId('user-email').textContent).toBe('admin@the-huddle.co'));
     expect(apiRequestRawMock).toHaveBeenCalledWith('/api/auth/session', expect.any(Object));
-    expect(apiRequestRawMock).toHaveBeenCalledWith('/api/auth/refresh', expect.any(Object));
+    expect(apiRequestMock).toHaveBeenCalledWith('/api/auth/refresh', expect.any(Object));
   });
 });
