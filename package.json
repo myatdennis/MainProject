@@ -17,7 +17,7 @@
     "dev:vercel": "vercel dev",
     "create-demo-users": "node scripts/create_demo_users.js",
     "preclean:components": "rm -f src/components/*.js",
-    "build": "npm run preclean:components && node scripts/check_deploy_env.cjs && vite build",
+    "build": "npm run preclean:components && node scripts/update_sw_version.mjs && node scripts/check_deploy_env.cjs && vite build",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "typecheck:server": "tsc --project tsconfig.server.json --noEmit",

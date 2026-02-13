@@ -308,7 +308,7 @@ Following this contract gives us a single choke point for auth tokens, offline q
 - Vite dev server proxies `/api` and `/ws` to `http://localhost:8888`. Adjust `vite.config.ts` if you change the API port.
 - Production builds rely on `VITE_API_BASE_URL` and, when `VITE_ENABLE_WS=true`, `VITE_WS_URL`. Set these in Netlify/Vercel to avoid runtime 404s.
 - If using Netlify proxy instead of absolute URLs, add a redirect mapping `/api/*` to your backend in `netlify.toml` (we've scaffolded placeholders — replace `<RAILWAY_HOST>`).
-- Service worker can be cleared at `/unregister-sw.html` if you see stale assets.
+- Service worker caching: each `npm run build` bumps the SW cache via `scripts/update_sw_version.mjs`. If you ever see stale assets, open Chrome DevTools → Application → Service Workers → **Unregister**, then use Application → Storage → **Clear site data** (or visit `/unregister-sw.html`).
 - When Supabase is not configured, the server uses a safe in-memory fallback by default (DEV_FALLBACK). Disable with `DEV_FALLBACK=false`.
 - E2E tests use `E2E_TEST_MODE=true` and stub `VITE_API_BASE_URL` as needed.
 

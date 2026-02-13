@@ -152,4 +152,28 @@ describe('Server demo-mode behavior', () => {
     expect(orgBSlugs).toContain(courseB.slug);
     expect(orgBSlugs).not.toContain(courseA.slug);
   }, 20000);
+
+  it('records audit log metadata when provided', async () => {
+    const payload = {
+      action: `integration_audit_${Date.now()}`,
+      userId: 'integration-user',
+      orgId: 'integration-org',
+      details: { surface: 'integration-test' },
+    };
+    const res = await server!.fetch('/api/audit-log', {
+      method: 'POST',
+      headers: asJson(),
+      body: JSON.stringify(payload),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toHaveProperty('ok', true);
+    expect(body).toHaveProperty('stored');
+    expect(body).toHaveProperty('entry');
+    expect(body.entry).toMatchObject({
+      user_id: payload.userId,
+      org_id: payload.orgId,
+      action: payload.action,
+    });
+  });
 });
