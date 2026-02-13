@@ -105,7 +105,7 @@ const normalizeMemberships = (rows: Array<Record<string, any>> | undefined): Use
       organizationId: orgId,
       role: row.role ?? row.organization_role ?? null,
       status: row.status ?? null,
-      organizationName: row.organizationName ?? row.organization_name ?? null,
+      organizationName: row.organizationName ?? row.org_name ?? null,
       organizationStatus: row.organizationStatus ?? row.organization_status ?? null,
       subscription: row.subscription ?? null,
       features: row.features ?? null,
