@@ -126,5 +126,5 @@ select
 from public.organizations o
 left join progress on progress.org_id = o.id
 left join surveys on surveys.org_id = o.id
-left join assignments on assignments.org_id = o.id
+left join assignments on assignments.organization_id = o.id
 left join dropoffs on dropoffs.org_id = o.id;
