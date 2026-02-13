@@ -1332,7 +1332,8 @@ const getDocumentOrgId = async (documentId) => {
     return undefined;
   }
 };
-const COURSE_WITH_MODULES_LESSONS_SELECT = '*, modules(*, lessons!lessons_module_org_fk(*))';
+const COURSE_WITH_MODULES_LESSONS_SELECT =
+  '*, modules:modules!modules_course_org_fk(*, lessons:lessons!lessons_module_org_fk(*))';
 const MODULE_LESSONS_FOREIGN_TABLE = 'modules.lessons!lessons_module_org_fk';
 const isUuid = (value) => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 const isAnalyticsClientEventDuplicate = (error) =>
@@ -4315,8 +4316,8 @@ app.get('/api/admin/courses', async (req, res) => {
 
   const moduleFields = includeStructure
     ? includeLessons
-      ? ',modules(id,course_id,title,description,order_index,lessons(id,module_id,title,description,type,order_index,duration_s,content_json,completion_rule_json))'
-      : ',modules(id,course_id,title,description,order_index)'
+      ? ',modules:modules!modules_course_org_fk(id,course_id,title,description,order_index,lessons:lessons!lessons_module_org_fk(id,module_id,title,description,type,order_index,duration_s,content_json,completion_rule_json))'
+      : ',modules:modules!modules_course_org_fk(id,course_id,title,description,order_index)'
     : '';
 
   try {
