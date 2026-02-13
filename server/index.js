@@ -2720,8 +2720,9 @@ const normalizeMembershipForAdminResponse = (membership = {}) => {
   return {
     orgId: resolveOrgId || null,
     role,
-    status,
+    status: status || 'active',
     organizationName: membership.organizationName ?? membership.organization_name ?? null,
+    organizationSlug: membership.organizationSlug ?? membership.organization_slug ?? membership.org_slug ?? null,
     organizationStatus: membership.organizationStatus ?? membership.organization_status ?? null,
     subscription: membership.subscription ?? null,
     features: membership.features ?? null,
@@ -3879,6 +3880,7 @@ const mapMembershipResponse = (row) => ({
   role: row.role,
   status: row.status,
   organizationName: row.org_name,
+  organizationSlug: row.organization_slug ?? row.org_slug ?? null,
   organizationStatus: row.organization_status,
   subscription: row.subscription,
   features: row.features,
