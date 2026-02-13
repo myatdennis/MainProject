@@ -182,11 +182,13 @@ export interface UserMembership {
   role?: string | null;
   status?: string | null;
   organizationName?: string | null;
+  organizationSlug?: string | null;
   organizationStatus?: string | null;
   subscription?: string | null;
   features?: Record<string, unknown> | null;
   acceptedAt?: string | null;
   lastSeenAt?: string | null;
+  createdAt?: string | null;
 }
 
 export interface UserSession {

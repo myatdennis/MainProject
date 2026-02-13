@@ -1,8 +1,7 @@
 import supabase from '../lib/supabaseClient.js';
 
 const MEMBERSHIP_VIEW_NAME = 'user_organizations_vw';
-const VIEW_COLUMNS =
-  'user_id, org_id, role, org_name, organization_status, subscription, features, accepted_at, last_seen_at';
+const VIEW_COLUMNS = 'user_id, org_id, org_name, org_slug, role, created_at';
 
 const isViewMissingError = (error) =>
   Boolean(
@@ -19,17 +18,24 @@ const normalizeOrgId = (value) => {
   return trimmed || null;
 };
 
-const mapMembershipRecord = (row = {}) => ({
-  organization_id: normalizeOrgId(row.organization_id ?? row.org_id),
-  role: row.role || 'member',
-  status: row.status || 'active',
-  organization_name: row.org_name || null,
-  organization_status: row.organization_status || null,
-  subscription: row.subscription ?? null,
-  features: row.features ?? null,
-  accepted_at: row.accepted_at || null,
-  last_seen_at: row.last_seen_at || null,
-});
+const mapMembershipRecord = (row = {}) => {
+  const resolvedOrgId = normalizeOrgId(row.organization_id ?? row.org_id);
+  return {
+    organization_id: resolvedOrgId,
+    org_id: resolvedOrgId,
+    role: row.role || 'member',
+    status: row.status || 'active',
+    organization_name: row.organization_name ?? row.org_name ?? null,
+    organization_slug: row.organization_slug ?? row.org_slug ?? null,
+    org_slug: row.org_slug ?? row.organization_slug ?? null,
+    organization_status: row.organization_status ?? null,
+    subscription: row.subscription ?? null,
+    features: row.features ?? null,
+    accepted_at: row.accepted_at ?? row.created_at ?? null,
+    last_seen_at: row.last_seen_at ?? null,
+    created_at: row.created_at ?? null,
+  };
+};
 
 const fetchMembershipsFromBaseTables = async (userId, logPrefix) => {
   if (!supabase || !userId) return [];
@@ -50,7 +56,7 @@ const fetchMembershipsFromBaseTables = async (userId, logPrefix) => {
     if (orgIds.length > 0) {
       const { data: organizations, error: orgError } = await supabase
         .from('organizations')
-        .select('id,name,status,subscription,features')
+        .select('id,name,slug,status,subscription,features')
         .in('id', orgIds);
 
       if (orgError) {
@@ -66,11 +72,13 @@ const fetchMembershipsFromBaseTables = async (userId, logPrefix) => {
         role: row?.role,
         status: 'active',
         organization_name: organization.name || null,
+        organization_slug: organization.slug || null,
         organization_status: organization.status || null,
         subscription: organization.subscription ?? null,
         features: organization.features ?? null,
         accepted_at: row?.created_at || null,
         last_seen_at: row?.updated_at || null,
+        org_slug: organization.slug || null,
       });
     });
   } catch (error) {

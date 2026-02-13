@@ -158,18 +158,23 @@ const cacheSet = (store, key, value, ttlMs = MEMBERSHIP_CACHE_MS) => {
 };
 
 export const mapMembershipRows = (rows = []) =>
-  rows.map((row) => ({
-    orgId: row.organization_id,
-    organizationId: row.organization_id,
-    role: row.role,
-    status: row.status,
-    organizationName: row.org_name,
-    organizationStatus: row.organization_status,
-    subscription: row.subscription,
-    features: row.features,
-    acceptedAt: row.accepted_at,
-    lastSeenAt: row.last_seen_at,
-  }));
+  rows.map((row) => {
+    const orgId = row.organization_id ?? row.org_id ?? null;
+    return {
+      orgId,
+      organizationId: orgId,
+      role: row.role || null,
+      status: row.status || 'active',
+      organizationName: row.organizationName ?? row.organization_name ?? row.org_name ?? null,
+      organizationSlug: row.organizationSlug ?? row.organization_slug ?? row.org_slug ?? null,
+      organizationStatus: row.organizationStatus ?? row.organization_status ?? null,
+      subscription: row.subscription ?? null,
+      features: row.features ?? null,
+      acceptedAt: row.acceptedAt ?? row.accepted_at ?? row.created_at ?? null,
+      lastSeenAt: row.lastSeenAt ?? row.last_seen_at ?? null,
+      createdAt: row.created_at ?? null,
+    };
+  });
 
 const buildMembershipMap = (memberships = []) => {
   const map = new Map();
