@@ -23,7 +23,7 @@ const mapMembershipRecord = (row = {}) => ({
   organization_id: normalizeOrgId(row.organization_id ?? row.org_id),
   role: row.role || 'member',
   status: row.status || 'active',
-  organization_name: row.organization_name || null,
+  organization_name: row.org_name || null,
   organization_status: row.organization_status || null,
   subscription: row.subscription ?? null,
   features: row.features ?? null,

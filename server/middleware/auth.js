@@ -163,7 +163,7 @@ export const mapMembershipRows = (rows = []) =>
     organizationId: row.organization_id,
     role: row.role,
     status: row.status,
-    organizationName: row.organization_name,
+    organizationName: row.org_name,
     organizationStatus: row.organization_status,
     subscription: row.subscription,
     features: row.features,
