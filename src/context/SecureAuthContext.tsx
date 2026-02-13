@@ -28,6 +28,8 @@ import { logAuditAction } from '../dal/auditLog';
 import axios from 'axios';
 import { toast } from 'react-hot-toast';
 
+axios.defaults.withCredentials = true;
+
 const MIN_REFRESH_INTERVAL_MS = 60 * 1000;
 const SESSION_RELOAD_THROTTLE_MS = 45 * 1000;
 
@@ -105,7 +107,7 @@ const normalizeMemberships = (rows: Array<Record<string, any>> | undefined): Use
       organizationId: orgId,
       role: row.role ?? row.organization_role ?? null,
       status: row.status ?? 'active',
-      organizationName: row.organizationName ?? row.org_name ?? null,
+      organizationName: row.organizationName ?? row.organization_name ?? row.org_name ?? null,
       organizationSlug: row.organizationSlug ?? row.organization_slug ?? row.org_slug ?? null,
       organizationStatus: row.organizationStatus ?? row.organization_status ?? null,
       subscription: row.subscription ?? null,
