@@ -7280,61 +7280,6 @@ app.post('/api/analytics/events/batch', async (req, res) => {
   }
 });
 
-// ---------------------------------------------------------------------------
-// Audit log endpoint (best-effort, never blocks UX)
-// ---------------------------------------------------------------------------
-app.post('/api/audit-log', async (req, res) => {
-  const { action, details = {}, timestamp } = req.body || {};
-
-  if (!action) {
-    res.status(400).json({ error: 'action is required' });
-    return;
-  }
-
-  const entry = {
-    id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-    action,
-    details,
-    timestamp: timestamp || new Date().toISOString(),
-  };
-
-  const fallback = () => res.status(200).json({ stored: false, status: 'queued' });
-
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
-    e2eStore.auditLogs.unshift(entry);
-    if (e2eStore.auditLogs.length > 500) {
-      e2eStore.auditLogs.length = 500;
-    }
-    persistE2EStore();
-    res.status(201).json({ data: entry, demo: true });
-    return;
-  }
-
-  if (!supabase) {
-    console.warn('[audit-log] Supabase unavailable, acknowledging without persistence');
-    fallback();
-    return;
-  }
-
-  try {
-    const { data, error } = await supabase
-      .from('audit_logs')
-      .insert({
-        action,
-        details,
-        timestamp: entry.timestamp,
-      })
-      .select('*')
-      .single();
-
-    if (error) throw error;
-    res.status(201).json({ data, stored: true });
-  } catch (error) {
-    console.error('Failed to persist audit log entry:', error);
-    fallback();
-  }
-});
-
 app.post('/api/client/certificates/:courseId', async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { courseId } = req.params;
@@ -10208,14 +10153,46 @@ app.delete('/api/admin/notifications/:id', async (req, res) => {
   }
 });
 
-app.post('/api/analytics/events', async (req, res) => {
-  const parsed = validateOr400(analyticsEventIngestSchema, req, res);
-  if (!parsed) return;
-  const { id, user_id, course_id, lesson_id, module_id, event_type, session_id, user_agent, payload, org_id } = parsed;
+app.post('/api/analytics/events', optionalAuthenticate, async (req, res) => {
+  const parseResult = analyticsEventIngestSchema.safeParse(req.body || {});
+  if (!parseResult.success) {
+    res.status(400).json({
+      ok: false,
+      error: 'ANALYTICS_PAYLOAD_INVALID',
+      message: 'Validation failed',
+      details: parseResult.error.issues.map((issue) => ({
+        path: issue.path,
+        message: issue.message,
+      })),
+      receivedKeys: Object.keys(req.body || {}),
+    });
+    return;
+  }
+  const { id, user_id, course_id, lesson_id, module_id, event_type, session_id, user_agent, payload, org_id } =
+    parseResult.data;
 
-  const normalizedOrgId = typeof org_id === 'string' ? org_id.trim() : '';
+  logger.info('analytics_events_ingest_request', {
+    requestId: req.requestId,
+    userId: req.user?.userId || req.user?.id || null,
+    receivedKeys: Object.keys(req.body || {}),
+  });
+
+  const headerOrgId = (req.headers['x-org-id'] || req.headers['x-organization-id'] || '').toString().trim();
+  const derivedOrgId = req.activeOrgId || req.user?.activeOrgId || req.user?.organizationId || headerOrgId;
+
+  let normalizedOrgId = typeof org_id === 'string' ? org_id.trim() : '';
+  if (!isUuid(normalizedOrgId) && isUuid(derivedOrgId)) {
+    normalizedOrgId = derivedOrgId;
+  }
+
   if (!isUuid(normalizedOrgId)) {
-    res.status(400).json({ error: 'org_id is required for analytics events' });
+    res.status(400).json({
+      ok: false,
+      error: 'ANALYTICS_PAYLOAD_INVALID',
+      message: 'org_id is required for analytics events',
+      missing: ['org_id'],
+      receivedKeys: Object.keys(req.body || {}),
+    });
     return;
   }
 
@@ -10369,7 +10346,7 @@ app.post('/api/audit-log', async (req, res) => {
       details: entry.details,
       user_id: entry.user_id,
       org_id: entry.org_id,
-      timestamp: entry.timestamp,
+      created_at: entry.timestamp,
     });
 
     if (error) throw error;

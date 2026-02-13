@@ -147,6 +147,10 @@ export const analyticsApiClient = {
       await apiRequest('/api/analytics/events', {
         method: 'POST',
         body: {
+          // Server expects org-scoped analytics payloads. Keys map directly
+          // onto the analytics_events table: id -> client_event_id, *_id fields,
+          // event_type, session_id, user_agent, and payload (arbitrary JSON).
+          // Optional fields may be null when not applicable.
           id: event.id,
           user_id: event.userId && event.userId !== 'system' ? event.userId : null,
           course_id: event.courseId ?? null,
