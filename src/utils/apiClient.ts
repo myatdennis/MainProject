@@ -40,6 +40,7 @@ type ApiRequestOptions = {
   requireAuth?: boolean;
   allowAnonymous?: boolean;
   noTransform?: boolean;
+  credentials?: RequestCredentials;
 };
 
 type InternalRequestOptions = ApiRequestOptions & {
@@ -718,7 +719,7 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
     console.debug('[apiRequest][auth-debug]', debugPayload);
   }
 
-  const credentialsMode: RequestCredentials = 'include';
+  const credentialsMode: RequestCredentials = options.credentials ?? 'include';
 
   const preparedRequest: PreparedRequest = {
     url,
