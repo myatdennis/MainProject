@@ -6,7 +6,7 @@ const normalizeOrigins = (value = '') =>
     .map((entry) => entry.trim())
     .filter(Boolean);
 
-const NETLIFY_PREVIEW_REGEX = /^https:\/\/deploy-preview-\d+--the-huddleco\.netlify\.app$/i;
+const NETLIFY_PREVIEW_REGEX = /^https:\/\/[a-z0-9-]+\.netlify\.app$/i;
 
 const devDefaults = [
   'http://localhost:5174',
@@ -15,7 +15,7 @@ const devDefaults = [
   'http://127.0.0.1:5175',
   'http://localhost:8888',
 ];
-const requiredProdOrigins = ['https://the-huddle.co', 'https://www.the-huddle.co'];
+const requiredProdOrigins = ['https://the-huddle.co', 'https://www.the-huddle.co', 'https://app.the-huddle.co'];
 const prodDefaults = requiredProdOrigins;
 
 const envOrigins = normalizeOrigins(process.env.CORS_ALLOWED_ORIGINS || '');
@@ -63,7 +63,7 @@ const corsOptions = {
     if (isAllowedOrigin(origin)) {
       return callback(null, true);
     }
-    return callback(new Error(`[cors] Origin ${origin} is not allowed.`));
+    return callback(null, false);
   },
   credentials: true,
   optionsSuccessStatus: 204,
