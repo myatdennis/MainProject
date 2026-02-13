@@ -15,7 +15,6 @@ const devDefaults = [
   'http://127.0.0.1:5175',
   'http://localhost:8888',
 ];
-
 const requiredProdOrigins = [
   'https://the-huddle.co',
   'https://www.the-huddle.co',
@@ -23,7 +22,6 @@ const requiredProdOrigins = [
   'https://admin.the-huddle.co',
   'https://api.the-huddle.co',
 ];
-
 const prodDefaults = requiredProdOrigins;
 
 const envOrigins = normalizeOrigins(process.env.CORS_ALLOWED_ORIGINS || '');
@@ -96,6 +94,7 @@ const baseCorsOptions = {
     'Content-Type',
     'X-Requested-With',
     'X-Org-Id',
+    'X-User-Role',
     'X-Runtime-Status',
     'X-CSRF-Token',
   ],
