@@ -95,6 +95,7 @@ const baseCorsOptions = {
     'X-Requested-With',
     'X-Org-Id',
     'X-User-Role',
+    'X-User-Id',
     'X-Runtime-Status',
     'X-CSRF-Token',
   ],
