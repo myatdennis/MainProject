@@ -1,7 +1,7 @@
 import supabase from '../lib/supabaseClient.js';
 
 const MEMBERSHIP_VIEW_NAME = 'user_organizations_vw';
-const VIEW_COLUMNS = 'user_id, org_id, org_name, org_slug, role, created_at';
+const VIEW_COLUMNS = '*';
 
 const isViewMissingError = (error) =>
   Boolean(

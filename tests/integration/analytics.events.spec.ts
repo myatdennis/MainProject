@@ -37,6 +37,25 @@ describe('analytics events API', () => {
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json).toHaveProperty('status');
+    expect(json.missingOrgContext).toBe(false);
+  });
+
+  it('accepts payloads without org context but flags missingOrgContext', async () => {
+    const res = await server!.fetch('/api/analytics/events', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        id: `evt-${randomUUID()}`,
+        event_type: 'page_view',
+        session_id: 'session-no-org',
+        user_agent: 'integration-tests',
+        payload: { visibility: 'limited' },
+      }),
+    });
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json).toHaveProperty('status');
+    expect(json.missingOrgContext).toBe(true);
   });
 
   it('rejects empty payloads with structured error details', async () => {

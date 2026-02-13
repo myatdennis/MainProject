@@ -1,6 +1,6 @@
 import apiRequest, { ApiError } from '../../utils/apiClient';
 import type { AnalyticsEvent, LearnerJourney } from '../analyticsService';
-import { getAccessToken, getUserSession } from '../../lib/secureStorage';
+import { getAccessToken, getUserSession, getActiveOrgPreference } from '../../lib/secureStorage';
 
 const parseEnvAnalyticsFlag = (): boolean => {
   try {
@@ -45,6 +45,19 @@ const hasAuthSession = () => {
     return Boolean(token || session?.id);
   } catch {
     return false;
+  }
+};
+
+const resolveOrgId = (): string | null => {
+  try {
+    const preference = getActiveOrgPreference();
+    if (preference) {
+      return preference;
+    }
+    const session = getUserSession();
+    return session?.activeOrgId || session?.organizationId || null;
+  } catch {
+    return null;
   }
 };
 
@@ -144,8 +157,14 @@ export const analyticsApiClient = {
   persistEvent: async (event: AnalyticsEvent) => {
     if (!ensureAnalyticsReady()) return;
     try {
+      const derivedOrgId = event.orgId ?? resolveOrgId();
+      const headers: Record<string, string> | undefined = derivedOrgId
+        ? { 'X-Org-Id': derivedOrgId }
+        : undefined;
+
       await apiRequest('/api/analytics/events', {
         method: 'POST',
+        headers,
         body: {
           // Server expects org-scoped analytics payloads. Keys map directly
           // onto the analytics_events table: id -> client_event_id, *_id fields,
@@ -153,6 +172,7 @@ export const analyticsApiClient = {
           // Optional fields may be null when not applicable.
           id: event.id,
           user_id: event.userId && event.userId !== 'system' ? event.userId : null,
+          org_id: derivedOrgId ?? null,
           course_id: event.courseId ?? null,
           lesson_id: event.lessonId ?? null,
           module_id: event.moduleId ?? null,

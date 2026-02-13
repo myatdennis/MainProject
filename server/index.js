@@ -3879,7 +3879,7 @@ const mapMembershipResponse = (row) => ({
   organizationId: row.organization_id,
   role: row.role,
   status: row.status,
-  organizationName: row.org_name,
+  organizationName: row.organization_name ?? row.org_name ?? null,
   organizationSlug: row.organization_slug ?? row.org_slug ?? null,
   organizationStatus: row.organization_status,
   subscription: row.subscription,
@@ -5195,8 +5195,9 @@ app.get('/api/client/assignments', authenticate, async (req, res) => {
       }
 
       if (resolvedOrgFilter) {
-        const orgColumn = table === 'course_assignments' ? 'organization_id' : 'org_id';
-        query = query.or(`${orgColumn}.eq.${resolvedOrgFilter},${orgColumn}.is.null`);
+        if (table === 'assignments') {
+          query = query.or(`organization_id.eq.${resolvedOrgFilter},organization_id.is.null`);
+        }
       }
 
       const { data, error } = await query;
@@ -10180,20 +10181,20 @@ app.post('/api/analytics/events', optionalAuthenticate, async (req, res) => {
   const headerOrgId = (req.headers['x-org-id'] || req.headers['x-organization-id'] || '').toString().trim();
   const derivedOrgId = req.activeOrgId || req.user?.activeOrgId || req.user?.organizationId || headerOrgId;
 
-  let normalizedOrgId = typeof org_id === 'string' ? org_id.trim() : '';
-  if (!isUuid(normalizedOrgId) && isUuid(derivedOrgId)) {
-    normalizedOrgId = derivedOrgId;
+  let normalizedOrgCandidate = typeof org_id === 'string' ? org_id.trim() : '';
+  if (!isUuid(normalizedOrgCandidate) && isUuid(derivedOrgId)) {
+    normalizedOrgCandidate = derivedOrgId;
   }
+  const resolvedOrgId = isUuid(normalizedOrgCandidate) ? normalizedOrgCandidate : null;
+  const orgMissing = !resolvedOrgId;
 
-  if (!isUuid(normalizedOrgId)) {
-    res.status(400).json({
-      ok: false,
-      error: 'ANALYTICS_PAYLOAD_INVALID',
-      message: 'org_id is required for analytics events',
-      missing: ['org_id'],
-      receivedKeys: Object.keys(req.body || {}),
+  if (orgMissing) {
+    logger.warn('analytics_event_missing_org', {
+      requestId: req.requestId,
+      userId: req.user?.userId || req.user?.id || null,
+      headerOrgId,
+      derivedOrgId,
     });
-    return;
   }
 
   const sanitizedPayload = scrubAnalyticsPayload(payload ?? {});
@@ -10203,8 +10204,10 @@ app.post('/api/analytics/events', optionalAuthenticate, async (req, res) => {
   const normalizedClientEventId = rawClientEventId || null;
   const useCustomPrimaryKey = normalizedClientEventId ? isUuid(normalizedClientEventId) : false;
 
-  const respondQueued = (meta = {}) => res.json({ status: 'queued', stored: false, ...meta });
-  const respondStored = (meta = {}) => res.json({ status: 'stored', stored: true, ...meta });
+  const respondQueued = (meta = {}) =>
+    res.json({ status: 'queued', stored: false, missingOrgContext: orgMissing, ...meta });
+  const respondStored = (meta = {}) =>
+    res.json({ status: 'stored', stored: true, missingOrgContext: orgMissing, ...meta });
 
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
     const eventId = useCustomPrimaryKey
@@ -10213,7 +10216,7 @@ app.post('/api/analytics/events', optionalAuthenticate, async (req, res) => {
     const record = {
       id: eventId,
       user_id: user_id ?? null,
-      org_id: normalizedOrgId,
+      org_id: resolvedOrgId,
       course_id: course_id ?? null,
       lesson_id: lesson_id ?? null,
       module_id: module_id ?? null,
@@ -10242,7 +10245,7 @@ app.post('/api/analytics/events', optionalAuthenticate, async (req, res) => {
   try {
     const insertPayload = {
       user_id: user_id ?? null,
-      org_id: normalizedOrgId,
+      org_id: resolvedOrgId,
       course_id: course_id ?? null,
       lesson_id: lesson_id ?? null,
       module_id: module_id ?? null,

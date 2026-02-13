@@ -13,6 +13,7 @@ export interface AnalyticsEvent {
   id: string;
   type: EventType;
   userId: string;
+  orgId?: string;
   courseId?: string;
   lessonId?: string;
   moduleId?: string;
