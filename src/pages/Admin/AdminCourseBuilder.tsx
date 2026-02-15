@@ -2,7 +2,15 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { DndContext, PointerSensor, TouchSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
-import { courseStore, generateId, calculateCourseDuration, countTotalLessons } from '../../store/courseStore';
+import {
+  courseStore,
+  generateId,
+  calculateCourseDuration,
+  countTotalLessons,
+  createModuleId,
+  createLessonId,
+  sanitizeModuleGraph,
+} from '../../store/courseStore';
 import { syncCourseToDatabase, CourseValidationError, loadCourseFromDatabase, adminPublishCourse } from '../../dal/adminCourses';
 import { computeCourseDiff } from '../../utils/courseDiff';
 // import type { NormalizedCourse } from '../../utils/courseNormalization';
@@ -500,6 +508,7 @@ const AdminCourseBuilder = () => {
         const existing = courseStore.getCourse(courseId);
         if (existing) {
           if (cancelled) return;
+          console.log('COURSE STATE', existing.modules);
           setCourse(existing);
           lastPersistedRef.current = existing;
           lastLoadedCourseIdRef.current = courseId;
@@ -513,9 +522,21 @@ const AdminCourseBuilder = () => {
         if (remote) {
           setCourse((prev) => {
             const merged = mergePersistedCourse(prev, remote);
-            courseStore.saveCourse(merged, { skipRemoteSync: true });
-            lastPersistedRef.current = merged;
-            return merged;
+            const mergedModules =
+              merged.modules && merged.modules.length
+                ? merged.modules
+                : prev.modules && prev.modules.length
+                ? prev.modules
+                : merged.modules;
+            const nextCourseState = {
+              ...prev,
+              ...merged,
+              modules: mergedModules,
+            };
+            courseStore.saveCourse(nextCourseState, { skipRemoteSync: true });
+            lastPersistedRef.current = nextCourseState;
+            console.log('COURSE STATE', nextCourseState.modules);
+            return nextCourseState;
           });
           lastLoadedCourseIdRef.current = courseId;
           setStatusBanner(null);
@@ -586,6 +607,10 @@ const AdminCourseBuilder = () => {
   // Auto-save course changes with enhanced feedback
   useEffect(() => {
     if (course.id && course.id !== 'new' && course.title?.trim()) {
+      if (!course.modules || course.modules.length === 0) {
+        return;
+      }
+      console.log('COURSE STATE', course.modules);
       // Debounce saves to avoid too frequent localStorage writes
       const timeoutId = setTimeout(() => {
         try {
@@ -644,8 +669,12 @@ const AdminCourseBuilder = () => {
   useEffect(() => {
     if (!course.id || !course.title?.trim()) return;
     if (autoSaveLockRef.current) return;
+    console.log('COURSE STATE', course.modules);
     const diff = computeCourseDiff(lastPersistedRef.current, course);
     if (!diff.hasChanges) return;
+    if (!course.modules || course.modules.length === 0) {
+      return;
+    }
 
     const gate = evaluateRuntimeGate('course.auto-save', runtimeStatus);
     const isBrowserOnline = typeof navigator !== 'undefined' ? navigator.onLine !== false : true;
@@ -775,14 +804,14 @@ const AdminCourseBuilder = () => {
       modules: [
         // Start with one module template
         {
-          id: generateId('module'),
+          id: createModuleId(),
           title: 'Introduction',
           description: 'Course overview and learning objectives',
           duration: '10 min',
           order: 1,
           lessons: [
             {
-              id: generateId('lesson'),
+              id: createLessonId(),
               title: 'Welcome & Overview',
               type: 'video',
               duration: '5 min',
@@ -999,6 +1028,11 @@ const AdminCourseBuilder = () => {
     }
   }, [course]);
 
+  const enforceStableModuleGraph = (input: Course): Course => ({
+    ...input,
+    modules: sanitizeModuleGraph(input.modules || []),
+  });
+
   type PersistCourseOptions = {
     statusOverride?: 'draft' | 'published';
     intentOverride?: CourseValidationIntent;
@@ -1026,18 +1060,20 @@ const AdminCourseBuilder = () => {
       typeof options === 'string' ? { statusOverride: options } : options ?? {};
     const { statusOverride, intentOverride, gate: gateOverride, action, skipValidation } = resolvedOptions;
 
-    const resolvedOrgId = resolveOrganizationId(nextCourse);
+    const sanitizedNextCourse = enforceStableModuleGraph(nextCourse);
+
+    const resolvedOrgId = resolveOrganizationId(sanitizedNextCourse);
 
     const preparedCourse: Course = {
-      ...nextCourse,
+      ...sanitizedNextCourse,
       status: statusOverride ?? nextCourse.status ?? 'draft',
-      duration: calculateCourseDuration(nextCourse.modules || []),
-      lessons: countTotalLessons(nextCourse.modules || []),
+      duration: calculateCourseDuration(sanitizedNextCourse.modules || []),
+      lessons: countTotalLessons(sanitizedNextCourse.modules || []),
       lastUpdated: new Date().toISOString(),
       publishedDate:
         (statusOverride ?? nextCourse.status) === 'published'
-          ? nextCourse.publishedDate || new Date().toISOString()
-          : nextCourse.publishedDate,
+          ? sanitizedNextCourse.publishedDate || new Date().toISOString()
+          : sanitizedNextCourse.publishedDate,
     };
 
     if (resolvedOrgId) {
@@ -1113,13 +1149,15 @@ const AdminCourseBuilder = () => {
       });
     }
 
-    courseStore.saveCourse(merged, { skipRemoteSync: true });
-    setCourse(merged);
+    const mergedWithFallback =
+      merged.modules && merged.modules.length > 0 ? merged : { ...merged, modules: preparedCourse.modules };
+    courseStore.saveCourse(mergedWithFallback, { skipRemoteSync: true });
+    setCourse(mergedWithFallback);
     if (remoteSynced) {
-      lastPersistedRef.current = merged;
-      await markDraftSynced(merged.id, merged);
+      lastPersistedRef.current = mergedWithFallback;
+      await markDraftSynced(mergedWithFallback.id, mergedWithFallback);
     }
-    return { course: merged, gate, remoteSynced };
+    return { course: mergedWithFallback, gate, remoteSynced };
   };
 
   const handleSave = async () => {
@@ -1368,7 +1406,7 @@ const AdminCourseBuilder = () => {
 
   const addModule = () => {
     const newModule: Module = {
-      id: generateId('module'),
+      id: createModuleId(),
       title: `Module ${(course.modules || []).length + 1}`,
       description: '',
       duration: '0 min',
@@ -1411,13 +1449,15 @@ const AdminCourseBuilder = () => {
     if (!module) return;
 
     const newLesson: Lesson = {
-      id: generateId('lesson'),
+      id: createLessonId(),
       title: `Lesson ${module.lessons.length + 1}`,
       type: 'video',
       duration: '10 min',
       content: {},
       completed: false,
-      order: module.lessons.length + 1
+      order: module.lessons.length + 1,
+      module_id: moduleId,
+      moduleId,
     };
 
     updateModule(moduleId, {
@@ -1434,6 +1474,8 @@ const AdminCourseBuilder = () => {
       const merged: Lesson = {
         ...lesson,
         ...updates,
+        module_id: lesson.module_id || (lesson as any).moduleId || moduleId,
+        moduleId: lesson.module_id || (lesson as any).moduleId || moduleId,
       };
       if (merged.content) {
         merged.content = canonicalizeLessonContent(merged.content);

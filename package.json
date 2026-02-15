@@ -54,6 +54,7 @@
     "seed:analytics": "node ./scripts/seed_analytics.js",
     "seed:supabase": "node ./scripts/seed_supabase_sample_data.mjs",
     "retention:events": "node ./scripts/prune_old_events.mjs",
+    "check:schema-contract": "node scripts/check_schema_contract.mjs",
     "diag:env": "node scripts/check_deploy_env.cjs",
     "diag:print": "node scripts/print_vite_env.cjs",
     "diag:ssl": "node scripts/check_ssl.cjs",

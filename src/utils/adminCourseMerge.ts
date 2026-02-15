@@ -30,8 +30,12 @@ export const mapPersistedLessonType = (persistedType: string, fallback?: Lesson[
 
 export const mergePersistedCourse = (local: Course, persisted: NormalizedCourse): Course => {
   const localModules = new Map((local.modules || []).map((module) => [module.id, module]));
+  const persistedModules =
+    Array.isArray(persisted.modules) && persisted.modules.length > 0
+      ? persisted.modules
+      : local.modules || [];
 
-  const mergedModules: Module[] = (persisted.modules || []).map((pModule, moduleIndex) => {
+  const mergedModules: Module[] = persistedModules.map((pModule, moduleIndex) => {
     const existingModule = localModules.get(pModule.id) || (local.modules || [])[moduleIndex];
     const localLessons = new Map((existingModule?.lessons || []).map((lesson) => [lesson.id, lesson]));
 
