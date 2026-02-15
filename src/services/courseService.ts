@@ -29,6 +29,8 @@ import { CURRENT_CONTENT_SCHEMA_VERSION } from '../schema/contentSchema';
 import { ZodError } from 'zod';
 import { createActionIdentifiers, type IdempotentAction } from '../utils/idempotency';
 import { cloneWithCanonicalOrgId, resolveOrgIdFromCarrier, stampCanonicalOrgId } from '../utils/orgFieldUtils';
+import { normalizeLessonForPersistence } from '../utils/lessonContent';
+import type { CourseValidationIssue } from '../validation/courseValidation';
 
 export type SupabaseCourseRecord = {
   id: string;
@@ -86,12 +88,14 @@ export type SupabaseLessonRecord = {
 export class CourseValidationError extends Error {
   readonly context: string;
   readonly issues: string[];
+  readonly details?: CourseValidationIssue[];
 
-  constructor(context: string, issues: string[]) {
+  constructor(context: string, issues: string[], details?: CourseValidationIssue[]) {
     super(`${context} validation failed: ${issues.join('; ')}`);
     this.name = 'CourseValidationError';
     this.context = context;
     this.issues = issues;
+    this.details = details;
   }
 }
 
@@ -407,23 +411,24 @@ export class CourseService {
   private static buildModulesPayloadForUpsert(course: NormalizedCourse) {
     const modules = (course.modules || []).map((mod, moduleIndex) => {
       const lessons = (mod.lessons || []).map((lesson, lessonIndex) => {
-        const apiType = mapLessonTypeForApi(lesson.type);
+        const canonicalLesson = normalizeLessonForPersistence(lesson);
+        const apiType = mapLessonTypeForApi(canonicalLesson.type);
         const estimatedMinutes =
-          typeof lesson.estimatedDuration === 'number'
-            ? lesson.estimatedDuration
-            : parseDurationToMinutes(lesson.duration);
+          typeof canonicalLesson.estimatedDuration === 'number'
+            ? canonicalLesson.estimatedDuration
+            : parseDurationToMinutes(canonicalLesson.duration);
         const durationSeconds =
           typeof estimatedMinutes === 'number' && Number.isFinite(estimatedMinutes) ? estimatedMinutes * 60 : null;
 
-        const content = buildLessonContent(lesson, apiType);
-        const completionRule = mapCompletionRule(lesson);
+        const content = buildLessonContent(canonicalLesson, apiType);
+        const completionRule = mapCompletionRule(canonicalLesson);
 
         return {
-          id: lesson.id,
-          title: (lesson.title || '').trim() || `Lesson ${lessonIndex + 1}`,
-          description: lesson.description ?? null,
+          id: canonicalLesson.id,
+          title: (canonicalLesson.title || '').trim() || `Lesson ${lessonIndex + 1}`,
+          description: canonicalLesson.description ?? null,
           type: apiType,
-          order_index: lesson.order ?? lessonIndex,
+          order_index: canonicalLesson.order ?? lessonIndex,
           duration_s: durationSeconds,
           content_json: content,
           completion_rule_json: completionRule ?? null,
