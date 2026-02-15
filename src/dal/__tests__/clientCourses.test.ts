@@ -8,6 +8,10 @@ vi.mock('../../utils/apiClient', () => ({
   default: (...args: any[]) => apiClientMock(...args),
 }));
 
+vi.mock('../../lib/secureStorage', () => ({
+  getUserSession: vi.fn(() => ({ id: 'test-user' })),
+}));
+
 vi.mock('../../services/courseService', async () => {
   const actual = await vi.importActual<typeof import('../../services/courseService')>('../../services/courseService');
   return {

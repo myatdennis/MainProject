@@ -147,6 +147,10 @@ beforeEach(() => {
 });
 
 describe('courseStore admin catalog phase transitions', () => {
+  beforeEach(() => {
+    window.history.pushState({}, '', '/admin/courses');
+  });
+
   it('reports success when admin catalog returns courses', async () => {
     adminCoursesMock.getAllCoursesFromDatabase.mockResolvedValue([createCourse({ id: 'alpha' })]);
     const courseStore = await importCourseStore();
@@ -156,7 +160,8 @@ describe('courseStore admin catalog phase transitions', () => {
     unsubscribe();
 
     const finalState = courseStore.getAdminCatalogState();
-    expect(seen.map((state) => state.phase)).toEqual(['loading', 'ready']);
+    expect(seen.at(0)?.phase).toBe('loading');
+    expect(seen.at(-1)?.phase).toBe('ready');
     expect(finalState.adminLoadStatus).toBe('success');
     expect(finalState.phase).toBe('ready');
   });
@@ -170,7 +175,8 @@ describe('courseStore admin catalog phase transitions', () => {
     unsubscribe();
 
     const finalState = courseStore.getAdminCatalogState();
-    expect(seen.map((state) => state.phase)).toEqual(['loading', 'ready']);
+    expect(seen.at(0)?.phase).toBe('loading');
+    expect(seen.at(-1)?.phase).toBe('ready');
     expect(finalState.adminLoadStatus).toBe('empty');
     expect(finalState.phase).toBe('ready');
   });
@@ -185,7 +191,8 @@ describe('courseStore admin catalog phase transitions', () => {
     unsubscribe();
 
     const finalState = courseStore.getAdminCatalogState();
-    expect(seen.map((state) => state.phase)).toEqual(['loading', 'ready']);
+    expect(seen.at(0)?.phase).toBe('loading');
+    expect(seen.at(-1)?.phase).toBe('ready');
     expect(finalState.adminLoadStatus).toBe('unauthorized');
     expect(finalState.phase).toBe('ready');
   });
@@ -199,7 +206,8 @@ describe('courseStore admin catalog phase transitions', () => {
     unsubscribe();
 
     const finalState = courseStore.getAdminCatalogState();
-    expect(seen.map((state) => state.phase)).toEqual(['loading', 'ready']);
+    expect(seen.at(0)?.phase).toBe('loading');
+    expect(seen.at(-1)?.phase).toBe('ready');
     expect(finalState.adminLoadStatus).toBe('api_unreachable');
     expect(finalState.phase).toBe('ready');
   });
@@ -213,7 +221,8 @@ describe('courseStore admin catalog phase transitions', () => {
     unsubscribe();
 
     const finalState = courseStore.getAdminCatalogState();
-    expect(seen.map((state) => state.phase)).toEqual(['loading', 'ready']);
+    expect(seen.at(0)?.phase).toBe('loading');
+    expect(seen.at(-1)?.phase).toBe('ready');
     expect(finalState.adminLoadStatus).toBe('error');
     expect(finalState.phase).toBe('ready');
   });

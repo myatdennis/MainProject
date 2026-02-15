@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 vi.mock('../../utils/requestContext', () => ({
   __esModule: true,
@@ -7,30 +7,24 @@ vi.mock('../../utils/requestContext', () => ({
     'X-User-Role': 'member'
   })
 }));
+vi.mock('../../utils/apiClient', () => {
+  return {
+    __esModule: true,
+    default: vi.fn()
+  };
+});
+
 import {
   getWorkspace,
   addActionItem,
   addStrategicPlanVersion
 } from '../clientWorkspaceService';
-
-// Helper to mock fetch responses
-const mockFetchJson = (payload: any) =>
-  vi.fn().mockResolvedValue({
-    ok: true,
-    status: 200,
-    headers: new Headers({ 'content-type': 'application/json' }),
-    json: async () => payload
-  } as Response);
+import apiRequest from '../../utils/apiClient';
 
 describe('clientWorkspaceService', () => {
-  const originalFetch = global.fetch;
-
   beforeEach(() => {
+    vi.mocked(apiRequest).mockReset();
     vi.clearAllMocks();
-  });
-
-  afterEach(() => {
-    global.fetch = originalFetch;
   });
 
   it('maps workspace payloads from the API', async () => {
@@ -67,15 +61,11 @@ describe('clientWorkspaceService', () => {
       }
     };
 
-    global.fetch = mockFetchJson(response);
+    vi.mocked(apiRequest).mockResolvedValue(response);
 
     const workspace = await getWorkspace('org-123');
 
-    const [requestUrl, requestInit] = (global.fetch as any).mock.calls[0];
-    expect(requestUrl).toContain('/api/orgs/org-123/workspace');
-    const headers = (requestInit.headers as Headers);
-    expect(headers.get('X-User-Id')).toBe('test-user');
-    expect(headers.get('X-User-Role')).toBe('member');
+    expect(apiRequest).toHaveBeenCalledWith('/api/orgs/org-123/workspace', { noTransform: true });
     expect(workspace.orgId).toBe('org-123');
     expect(workspace.strategicPlans[0]).toMatchObject({
       id: 'sp-1',
@@ -107,23 +97,15 @@ describe('clientWorkspaceService', () => {
       }
     };
 
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 201,
-      headers: new Headers({ 'content-type': 'application/json' }),
-      json: async () => response
-    } as Response);
-    global.fetch = fetchMock;
+    vi.mocked(apiRequest).mockResolvedValue(response);
 
     const created = await addStrategicPlanVersion('org-abc', 'Updated strategy', 'Taylor', { version: 2 });
 
-    const [requestUrl, requestInit] = fetchMock.mock.calls[0];
-    expect(requestUrl).toContain('/api/orgs/org-abc/workspace/strategic-plans');
-    expect(requestInit.method).toBe('POST');
-    expect(requestInit.body).toBe(JSON.stringify({ content: 'Updated strategy', createdBy: 'Taylor', metadata: { version: 2 } }));
-    const headers = requestInit.headers as Headers;
-    expect(headers.get('X-User-Id')).toBe('test-user');
-    expect(headers.get('X-User-Role')).toBe('member');
+    expect(apiRequest).toHaveBeenCalledWith('/api/orgs/org-abc/workspace/strategic-plans', {
+      noTransform: true,
+      method: 'POST',
+      body: { content: 'Updated strategy', createdBy: 'Taylor', metadata: { version: 2 } }
+    });
     expect(created).toMatchObject({
       id: 'sp-55',
       orgId: 'org-abc',
@@ -144,13 +126,7 @@ describe('clientWorkspaceService', () => {
       }
     };
 
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 201,
-      headers: new Headers({ 'content-type': 'application/json' }),
-      json: async () => response
-    } as Response);
-    global.fetch = fetchMock;
+    vi.mocked(apiRequest).mockResolvedValue(response);
 
     const created = await addActionItem('org-xyz', {
       orgId: 'org-xyz',
@@ -158,12 +134,18 @@ describe('clientWorkspaceService', () => {
       status: 'Not Started'
     } as any);
 
-    const [requestUrl, requestInit] = fetchMock.mock.calls[0];
-    expect(requestUrl).toContain('/api/orgs/org-xyz/workspace/action-items');
-    expect(requestInit.method).toBe('POST');
-    const headers = requestInit.headers as Headers;
-    expect(headers.get('X-User-Id')).toBe('test-user');
-    expect(headers.get('X-User-Role')).toBe('member');
+    expect(apiRequest).toHaveBeenCalledWith('/api/orgs/org-xyz/workspace/action-items', {
+      noTransform: true,
+      method: 'POST',
+      body: {
+        title: 'Draft follow-up',
+        description: undefined,
+        assignee: undefined,
+        dueDate: undefined,
+        status: 'Not Started',
+        metadata: undefined
+      }
+    });
     expect(created.id).toBe('action-77');
     expect(created.title).toBe('Draft follow-up');
   });

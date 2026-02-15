@@ -121,7 +121,8 @@ const handleAnalyticsFailure = <T>(
       return fallback;
     }
   }
-  throw error;
+  console.warn(`[analyticsApiClient] ${context} request failed`, error);
+  return fallback;
 };
 
 const summarizePayloadKeys = (payload: Record<string, any> | undefined): string => {

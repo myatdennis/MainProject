@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { render, screen } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const mockResolveCourse = vi.fn();
 const mockGetCourse = vi.fn();
@@ -62,12 +63,15 @@ const baseCourse = {
 };
 
 const renderWithRouter = () => {
+  const queryClient = new QueryClient();
   return render(
-    <MemoryRouter initialEntries={[`/lms/courses/${baseCourse.id}/completion`]}> 
-      <Routes>
-        <Route path="/lms/courses/:courseId/completion" element={<LMSCourseCompletion />} />
-      </Routes>
-    </MemoryRouter>
+    <QueryClientProvider client={queryClient}>
+      <MemoryRouter initialEntries={[`/lms/courses/${baseCourse.id}/completion`]}>
+        <Routes>
+          <Route path="/lms/courses/:courseId/completion" element={<LMSCourseCompletion />} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>
   );
 };
 
