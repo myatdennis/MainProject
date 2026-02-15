@@ -13,17 +13,21 @@ export interface FetchCourseOptions {
   includeDrafts?: boolean;
 }
 
+const hasClientSession = (): boolean => {
+  if (typeof window === 'undefined') {
+    return true;
+  }
+  try {
+    return Boolean(getUserSession());
+  } catch {
+    return false;
+  }
+};
+
 export async function fetchPublishedCourses(
   options: FetchPublishedCoursesOptions = {}
 ): Promise<NormalizedCourse[]> {
   const { orgId, assignedOnly = false } = options;
-  const session = typeof window === 'undefined' ? null : getUserSession();
-  if (!session) {
-    if (import.meta.env.DEV) {
-      console.info('[clientCourses.fetchPublishedCourses] Skipping API fetch because no session is present.');
-    }
-    return [];
-  }
   const params = new URLSearchParams();
 
   if (assignedOnly) {
@@ -33,6 +37,13 @@ export async function fetchPublishedCourses(
     }
     params.set('assigned', 'true');
     params.set('orgId', orgId);
+  }
+
+  if (!hasClientSession()) {
+    if (import.meta.env.DEV) {
+      console.info('[clientCourses.fetchPublishedCourses] Skipping API fetch because no session is present.');
+    }
+    return [];
   }
 
   const path = params.toString() ? `/api/client/courses?${params.toString()}` : '/api/client/courses';
@@ -49,8 +60,7 @@ export async function fetchCourse(
   identifier: string,
   options: FetchCourseOptions = {}
 ): Promise<NormalizedCourse | null> {
-  const session = typeof window === 'undefined' ? null : getUserSession();
-  if (!session) {
+  if (!hasClientSession()) {
     if (import.meta.env.DEV) {
       console.info('[clientCourses.fetchCourse] Skipping API fetch because no session is present.');
     }

@@ -3,6 +3,14 @@ import type { CourseAssignment } from '../../types/assignment';
 
 const mockApiRequest = vi.fn();
 const mockGetUserSession = vi.fn();
+const secureStore = new Map<string, unknown>();
+const secureGetMock = vi.fn((key: string) => (secureStore.has(key) ? secureStore.get(key) : null));
+const secureSetMock = vi.fn((key: string, value: unknown) => {
+  secureStore.set(key, value);
+});
+const secureRemoveMock = vi.fn((key: string) => {
+  secureStore.delete(key);
+});
 
 class MockApiError extends Error {
   status?: number;
@@ -20,6 +28,9 @@ vi.mock('../../utils/apiClient', () => ({
 
 vi.mock('../../lib/secureStorage', () => ({
   getUserSession: mockGetUserSession,
+  secureGet: secureGetMock,
+  secureSet: secureSetMock,
+  secureRemove: secureRemoveMock,
 }));
 
 vi.mock('../../lib/supabaseClient', () => ({
@@ -48,6 +59,10 @@ describe('assignmentStorage session enforcement', () => {
     vi.resetModules();
     mockApiRequest.mockReset();
     mockGetUserSession.mockReset();
+    secureStore.clear();
+    secureGetMock.mockClear();
+    secureSetMock.mockClear();
+    secureRemoveMock.mockClear();
     localStorage.clear();
   });
 
@@ -101,6 +116,7 @@ describe('assignmentStorage session enforcement', () => {
         id: 'assign-1',
         courseId: 'course-1',
         userId: 'user-123',
+        organizationId: null,
         status: 'assigned',
         progress: 0,
         dueDate: null,
@@ -108,6 +124,7 @@ describe('assignmentStorage session enforcement', () => {
         assignedBy: null,
         createdAt: now,
         updatedAt: now,
+        active: true,
       },
     ] satisfies CourseAssignment[]);
   });

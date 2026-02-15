@@ -66,6 +66,7 @@ import useIsMobile from '../../hooks/useIsMobile';
 import useRuntimeStatus from '../../hooks/useRuntimeStatus';
 import useSwipeNavigation from '../../hooks/useSwipeNavigation';
 import VersionControl from '../../components/VersionControl';
+import { ModuleIssueBadge, LessonIssueTag } from '../../components/Admin/ValidationIssueIndicators';
 import { useToast } from '../../context/ToastContext';
 import { useSecureAuth } from '../../context/SecureAuthContext';
 import type { CourseAssignment } from '../../types/assignment';
@@ -73,6 +74,7 @@ import { getDraftSnapshot, deleteDraftSnapshot, markDraftSynced, type DraftSnaps
 import { evaluateRuntimeGate, type RuntimeGateResult, type GateMode, type RuntimeAction } from '../../utils/runtimeGating';
 import { createActionIdentifiers, type IdempotentAction } from '../../utils/idempotency';
 import { cloneWithCanonicalOrgId, resolveOrgIdFromCarrier, stampCanonicalOrgId } from '../../utils/orgFieldUtils';
+import { buildIssueTargets } from '../../utils/validationIssues';
 
 const buildUploadKey = (moduleId: string, lessonId: string) => `${moduleId}::${lessonId}`;
 const parseUploadKey = (key: string) => {
@@ -205,6 +207,7 @@ const AdminCourseBuilder = () => {
   const [validationIssues, setValidationIssues] = useState<CourseValidationIssue[]>([]);
   const [isValidationModalOpen, setValidationModalOpen] = useState(false);
   const [activeValidationIntent, setActiveValidationIntent] = useState<CourseValidationIntent>('draft');
+  const issueTargets = useMemo(() => buildIssueTargets(validationIssues), [validationIssues]);
   const requestCourseReload = useCallback(() => {
     lastLoadedCourseIdRef.current = null;
     draftCheckIdRef.current = null;
@@ -1697,7 +1700,6 @@ const AdminCourseBuilder = () => {
   };
 
   const renderLessonEditor = (moduleId: string, lesson: Lesson) => {
-    const lessonIssueCount = issueTargets.lessonMap.get(lesson.id)?.length ?? 0;
     const isEditing = editingLesson?.moduleId === moduleId && editingLesson?.lessonId === lesson.id;
     const uploadKey = buildUploadKey(moduleId, lesson.id);
     const uploadStatus = uploadStatuses[uploadKey];
@@ -1742,11 +1744,7 @@ const AdminCourseBuilder = () => {
                   >
                     {lesson.title}
                   </h4>
-                  {lessonIssueCount > 0 && (
-                    <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">
-                      <AlertTriangle className="mr-1 h-3 w-3" /> Fix required
-                    </span>
-                  )}
+                  <LessonIssueTag issueTargets={issueTargets} lessonId={lesson.id} />
                 </div>
               )}
               <div className="flex items-center space-x-4 text-sm text-gray-600">
@@ -3465,7 +3463,6 @@ const AdminCourseBuilder = () => {
                     {modulesToRender.map((module) => {
                       const moduleLessons = module.lessons || [];
                       const completionRate = moduleLessons.filter((lesson) => lesson.completed).length;
-                      const moduleIssueCount = issueTargets.moduleMap.get(module.id)?.length ?? 0;
 
                       return (
                         <SortableItem key={module.id} id={module.id} className="block">
@@ -3515,11 +3512,7 @@ const AdminCourseBuilder = () => {
                                         <span className="inline-flex items-center rounded-full border border-gray-200 bg-white px-2 py-1 font-semibold text-gray-700">
                                           <CheckCircle className="mr-1 h-3 w-3 text-green-500" /> {completionRate}/{moduleLessons.length} complete
                                         </span>
-                                        {moduleIssueCount > 0 && (
-                                          <span className="inline-flex items-center rounded-full border border-red-200 bg-red-50 px-2 py-1 font-semibold text-red-700">
-                                            <AlertTriangle className="mr-1 h-3 w-3" /> Needs attention ({moduleIssueCount})
-                                          </span>
-                                        )}
+                                        <ModuleIssueBadge issueTargets={issueTargets} moduleId={module.id} />
                                       </div>
                                     </div>
                                   </div>

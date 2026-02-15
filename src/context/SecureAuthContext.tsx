@@ -28,7 +28,9 @@ import { logAuditAction } from '../dal/auditLog';
 import axios from 'axios';
 import { toast } from 'react-hot-toast';
 
-axios.defaults.withCredentials = true;
+if (axios?.defaults) {
+  axios.defaults.withCredentials = true;
+}
 
 const MIN_REFRESH_INTERVAL_MS = 60 * 1000;
 const SESSION_RELOAD_THROTTLE_MS = 45 * 1000;
