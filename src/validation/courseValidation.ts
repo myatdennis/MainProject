@@ -1,5 +1,6 @@
 import type { Course, Lesson, Module, Chapter } from '../types/courseTypes';
 import type { LessonVideoAsset } from '../types/courseTypes';
+import { canonicalizeLessonContent, deriveTextContent } from '../utils/lessonContent';
 
 export type CourseValidationIntent = 'draft' | 'publish';
 
@@ -83,9 +84,25 @@ const hasVideoSource = (lesson: Lesson, options: { allowPlaceholders?: boolean }
   return Boolean(videoUrl);
 };
 
+const lessonUsesExternalVideo = (lesson: Lesson): boolean => {
+  const sourceType = lesson.content?.videoSourceType;
+  if (sourceType === 'external') return true;
+  const provider = lesson.content?.videoProvider;
+  if (!provider) return false;
+  return provider === 'youtube' || provider === 'vimeo' || provider === 'wistia';
+};
+
 const validateVideoAsset = (
   lesson: Lesson,
 ): { valid: boolean; missing: Array<keyof LessonVideoAsset>; warnings: Array<keyof LessonVideoAsset> } => {
+  if (lessonUsesExternalVideo(lesson)) {
+    return {
+      valid: Boolean(lesson.content?.videoUrl),
+      missing: [],
+      warnings: [],
+    };
+  }
+
   const asset = lesson.content?.videoAsset;
   if (!asset) {
     return {
@@ -125,7 +142,7 @@ const validateVideoAsset = (
 };
 
 const hasTextContent = (lesson: Lesson): boolean => {
-  const text = lesson.content?.textContent || lesson.content?.content || lesson.content?.notes;
+  const text = deriveTextContent(lesson);
   return trim(text).length > 0;
 };
 
@@ -223,7 +240,10 @@ export const validateCourse = (
       });
     }
 
-    const lessons = ensureLessons(module.lessons);
+    const lessons = ensureLessons(module.lessons).map((lesson) => ({
+      ...lesson,
+      content: canonicalizeLessonContent(lesson.content),
+    }));
     if (lessons.length === 0) {
       pushIssue(issues, {
         code: 'module.lessons.missing',

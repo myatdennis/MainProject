@@ -21,6 +21,7 @@ import { getUserSession } from '../../lib/secureStorage';
 import { ApiError } from '../../utils/apiClient';
 import { getVideoEmbedUrl } from '../../utils/videoUtils';
 import { uploadLessonVideo, uploadDocumentResource } from '../../dal/media';
+import { canonicalizeLessonContent, canonicalizeQuizQuestions } from '../../utils/lessonContent';
 import { 
   ArrowLeft, 
   Save, 
@@ -99,88 +100,6 @@ interface ConfirmDialogConfig {
   confirmLabel: string;
   tone: ConfirmTone;
 }
-
-const canonicalizeQuizQuestions = (questions: any[] = []) =>
-  questions.map((question: any) => {
-    const questionId = question?.id || generateId('question');
-    const rawOptions = Array.isArray(question?.options) ? question.options : [''];
-
-    const normalizedOptions = rawOptions.map((option: any, optionIndex: number) => {
-      if (typeof option === 'string') {
-        return {
-          id: `${questionId}-opt-${optionIndex}`,
-          text: option,
-          correct:
-            typeof question?.correctAnswerIndex === 'number'
-              ? question.correctAnswerIndex === optionIndex
-              : false,
-          isCorrect:
-            typeof question?.correctAnswerIndex === 'number'
-              ? question.correctAnswerIndex === optionIndex
-              : false,
-        };
-      }
-
-      if (option && typeof option === 'object') {
-        const optionId = option.id || `${questionId}-opt-${optionIndex}`;
-        const isCorrect =
-          option.correct ??
-          option.isCorrect ??
-          (typeof question?.correctAnswerIndex === 'number'
-            ? question.correctAnswerIndex === optionIndex
-            : false);
-
-        return {
-          ...option,
-          id: optionId,
-          text: option.text || option.label || option.value || `Option ${optionIndex + 1}`,
-          correct: Boolean(isCorrect),
-          isCorrect: Boolean(isCorrect),
-        };
-      }
-
-      return {
-        id: `${questionId}-opt-${optionIndex}`,
-        text: '',
-        correct: false,
-        isCorrect: false,
-      };
-    });
-
-    const resolvedIndex =
-      typeof question?.correctAnswerIndex === 'number'
-        ? question.correctAnswerIndex
-        : normalizedOptions.findIndex((option: { correct?: boolean; isCorrect?: boolean }) =>
-            Boolean(option.correct || option.isCorrect)
-          );
-
-    return {
-      ...question,
-      id: questionId,
-      text: question?.text || question?.question || '',
-      options: normalizedOptions,
-      correctAnswerIndex: resolvedIndex >= 0 ? resolvedIndex : 0,
-    };
-  });
-
-const canonicalizeLessonContent = (content?: Lesson['content']): Lesson['content'] => {
-  if (!content) return {};
-  const next = { ...content };
-  if (Array.isArray(next.questions)) {
-    next.questions = canonicalizeQuizQuestions(next.questions);
-  }
-  if (next.video && typeof next.video === 'object' && next.video.url) {
-    next.videoUrl = next.videoUrl || next.video.url;
-    if (!next.videoProvider) {
-      const allowedProviders: Array<Lesson['content']['videoProvider']> = ['youtube', 'vimeo', 'wistia', 'native'];
-      const providerCandidate = next.video.provider;
-      if (allowedProviders.includes(providerCandidate as Lesson['content']['videoProvider'])) {
-        next.videoProvider = providerCandidate as Lesson['content']['videoProvider'];
-      }
-    }
-  }
-  return next;
-};
 
 const confirmToneIconClasses: Record<ConfirmTone, string> = {
   info: 'bg-blue-50 text-blue-600',
@@ -283,6 +202,9 @@ const AdminCourseBuilder = () => {
   const [statusBanner, setStatusBanner] = useState<BuilderBanner | null>(null);
   const [draftSnapshotPrompt, setDraftSnapshotPrompt] = useState<DraftSnapshot | null>(null);
   const [reloadNonce, setReloadNonce] = useState(0);
+  const [validationIssues, setValidationIssues] = useState<CourseValidationIssue[]>([]);
+  const [isValidationModalOpen, setValidationModalOpen] = useState(false);
+  const [activeValidationIntent, setActiveValidationIntent] = useState<CourseValidationIntent>('draft');
   const requestCourseReload = useCallback(() => {
     lastLoadedCourseIdRef.current = null;
     draftCheckIdRef.current = null;
@@ -293,6 +215,35 @@ const AdminCourseBuilder = () => {
     isOffline()
       ? 'Huddle can’t reach the network right now. Your draft stays safe locally until you reconnect.'
       : message;
+  const authAlertedRef = useRef(false);
+  const handleAuthRequired = useCallback(
+    (source: string) => {
+      if (authAlertedRef.current) return;
+      authAlertedRef.current = true;
+      const hasServiceWorker = typeof navigator !== 'undefined' && Boolean((navigator as any).serviceWorker?.controller);
+      setStatusBanner({
+        tone: 'danger',
+        title: 'Session expired',
+        description: hasServiceWorker
+          ? 'Please refresh and sign in again so we can sync your edits.'
+          : 'Please sign in again to continue editing this course.',
+        icon: AlertTriangle,
+        actionLabel: 'Go to login',
+        onAction: () => {
+          window.location.href = `/admin/login?reauth=1&from=${encodeURIComponent(window.location.pathname)}`;
+        },
+      });
+      showToast(
+        hasServiceWorker
+          ? 'Session expired. Hard refresh (Shift+Reload) and sign in again.'
+          : 'Session expired. Please sign in again.',
+        'warning',
+        6000,
+      );
+      console.warn('[AdminCourseBuilder] Auth required', { source });
+    },
+    [showToast],
+  );
 
   const [searchParams] = useSearchParams();
   const [highlightLessonId, setHighlightLessonId] = useState<string | null>(null);
@@ -377,6 +328,14 @@ const AdminCourseBuilder = () => {
       setActiveMobileModuleId(currentModules[0].id);
     }
   }, [course.modules, activeMobileModuleId]);
+
+  useEffect(() => {
+    if (runtimeStatus.apiAuthRequired) {
+      handleAuthRequired('runtime-status');
+    } else {
+      authAlertedRef.current = false;
+    }
+  }, [runtimeStatus.apiAuthRequired, handleAuthRequired]);
 
   useEffect(() => {
     if (!isMobile || !activeMobileModuleId) return;
@@ -553,6 +512,10 @@ const AdminCourseBuilder = () => {
         }
       } catch (error) {
         if (cancelled) return;
+        if (error instanceof ApiError && error.status === 401) {
+          handleAuthRequired('hydrate-course');
+          return;
+        }
         console.error('Failed to load course details:', error);
         const rawMessage = error instanceof Error ? error.message : 'Unknown error';
         const descriptiveMessage = isOffline()
@@ -1110,7 +1073,8 @@ const AdminCourseBuilder = () => {
         const blockingIssues = validation.issues
           .filter((issue) => issue.severity === 'error')
           .map((issue) => issue.message);
-        throw new CourseValidationError('course', blockingIssues);
+        showValidationIssues(validation.issues, validationIntent);
+        throw new CourseValidationError('course', blockingIssues, validation.issues);
       }
     }
 
@@ -1173,6 +1137,8 @@ const AdminCourseBuilder = () => {
         setLastSaveTime(new Date());
         setHasPendingChanges(false);
         showToast('Draft synced to your Huddle workspace.', 'success');
+        setValidationIssues([]);
+        setValidationModalOpen(false);
         setTimeout(() => setSaveStatus('idle'), 3000);
       } else {
         setSaveStatus('idle');
@@ -1190,8 +1156,19 @@ const AdminCourseBuilder = () => {
       if (error instanceof CourseValidationError) {
         console.warn('⚠️ Course validation issues:', error.issues);
         showToast('Validation failed. Resolve highlighted issues before saving.', 'warning', 5000);
+        const details =
+          error.details ||
+          error.issues.map((message, index) => ({
+            code: `local.validation.${index}`,
+            message,
+            severity: 'error' as const,
+          }));
+        showValidationIssues(details, 'draft');
       } else {
         console.error('❌ Error saving course:', error);
+        if (error instanceof ApiError && error.status === 401) {
+          handleAuthRequired('save-course');
+        }
         showToast(networkFallback('Unable to save course. Please try again.'), isOffline() ? 'warning' : 'error', 5000);
       }
       setSaveStatus('error');
@@ -1261,11 +1238,21 @@ const AdminCourseBuilder = () => {
       setLastSaveTime(new Date());
       setHasPendingChanges(false);
       showToast('Course published to learners via Huddle.', 'success');
+      setValidationIssues([]);
+      setValidationModalOpen(false);
       setTimeout(() => setSaveStatus('idle'), 3000);
     } catch (error) {
       if (error instanceof CourseValidationError) {
         console.warn('⚠️ Course validation issues:', error.issues);
         showToast('Validation failed. Please resolve issues before publishing.', 'warning', 5000);
+        const details =
+          error.details ||
+          error.issues.map((message, index) => ({
+            code: `publish.validation.${index}`,
+            message,
+            severity: 'error' as const,
+          }));
+        showValidationIssues(details, 'publish');
       } else if (error instanceof ApiError) {
         console.warn('Publish request failed', error);
         const responseBody = (error.body || {}) as { error?: string; code?: string; issues?: CourseValidationIssue[]; currentVersion?: number };
@@ -1294,9 +1281,15 @@ const AdminCourseBuilder = () => {
             icon: AlertTriangle
           });
           showToast('Fix the publish blockers and try again.', 'warning', 6000);
+          if (issues.length) {
+            showValidationIssues(issues, 'publish');
+          }
         } else if (errorCode === 'idempotency_conflict') {
           showToast('Publish request already in progress. Please wait a moment and refresh.', 'info', 4000);
         } else {
+          if (error.status === 401) {
+            handleAuthRequired('publish-course');
+          }
           showToast(networkFallback('Unable to publish course. Please try again.'), isOffline() ? 'warning' : 'error', 5000);
         }
       } else {
@@ -1365,6 +1358,10 @@ const AdminCourseBuilder = () => {
 
   const handleRestoreDraftSnapshot = useCallback(async () => {
     if (!draftSnapshotPrompt) return;
+    if (runtimeStatus.apiAuthRequired) {
+      handleAuthRequired('restore-draft');
+      return;
+    }
     try {
       setCourse(draftSnapshotPrompt.course);
       courseStore.saveCourse(draftSnapshotPrompt.course, { skipRemoteSync: true });
@@ -1379,7 +1376,7 @@ const AdminCourseBuilder = () => {
       setDraftSnapshotPrompt(null);
       draftCheckIdRef.current = course.id;
     }
-  }, [course.id, draftSnapshotPrompt, showToast]);
+  }, [course.id, draftSnapshotPrompt, runtimeStatus.apiAuthRequired, handleAuthRequired, showToast]);
 
   const handleDiscardDraftSnapshot = useCallback(async () => {
     if (!course.id) return;
@@ -1700,6 +1697,7 @@ const AdminCourseBuilder = () => {
   };
 
   const renderLessonEditor = (moduleId: string, lesson: Lesson) => {
+    const lessonIssueCount = issueTargets.lessonMap.get(lesson.id)?.length ?? 0;
     const isEditing = editingLesson?.moduleId === moduleId && editingLesson?.lessonId === lesson.id;
     const uploadKey = buildUploadKey(moduleId, lesson.id);
     const uploadStatus = uploadStatuses[uploadKey];
@@ -1736,13 +1734,20 @@ const AdminCourseBuilder = () => {
                   autoFocus
                 />
               ) : (
-                <h4 
-                  className="font-medium text-gray-900 cursor-pointer hover:text-blue-600 transition-colors"
-                  onDoubleClick={() => setInlineEditing({ moduleId, lessonId: lesson.id })}
-                  title="Double-click to edit"
-                >
-                  {lesson.title}
-                </h4>
+                <div className="flex items-center space-x-2">
+                  <h4
+                    className="font-medium text-gray-900 cursor-pointer hover:text-blue-600 transition-colors"
+                    onDoubleClick={() => setInlineEditing({ moduleId, lessonId: lesson.id })}
+                    title="Double-click to edit"
+                  >
+                    {lesson.title}
+                  </h4>
+                  {lessonIssueCount > 0 && (
+                    <span className="inline-flex items-center rounded-full bg-red-100 px-2 py-0.5 text-xs font-semibold text-red-700">
+                      <AlertTriangle className="mr-1 h-3 w-3" /> Fix required
+                    </span>
+                  )}
+                </div>
               )}
               <div className="flex items-center space-x-4 text-sm text-gray-600">
                 <span className="flex items-center">
@@ -3460,6 +3465,7 @@ const AdminCourseBuilder = () => {
                     {modulesToRender.map((module) => {
                       const moduleLessons = module.lessons || [];
                       const completionRate = moduleLessons.filter((lesson) => lesson.completed).length;
+                      const moduleIssueCount = issueTargets.moduleMap.get(module.id)?.length ?? 0;
 
                       return (
                         <SortableItem key={module.id} id={module.id} className="block">
@@ -3509,6 +3515,11 @@ const AdminCourseBuilder = () => {
                                         <span className="inline-flex items-center rounded-full border border-gray-200 bg-white px-2 py-1 font-semibold text-gray-700">
                                           <CheckCircle className="mr-1 h-3 w-3 text-green-500" /> {completionRate}/{moduleLessons.length} complete
                                         </span>
+                                        {moduleIssueCount > 0 && (
+                                          <span className="inline-flex items-center rounded-full border border-red-200 bg-red-50 px-2 py-1 font-semibold text-red-700">
+                                            <AlertTriangle className="mr-1 h-3 w-3" /> Needs attention ({moduleIssueCount})
+                                          </span>
+                                        )}
                                       </div>
                                     </div>
                                   </div>
@@ -3874,6 +3885,62 @@ const AdminCourseBuilder = () => {
                 className={`rounded-lg px-4 py-2 text-sm font-semibold text-white focus:outline-none focus:ring-2 focus:ring-offset-2 ${confirmToneButtonClasses[confirmDialogContent.tone]}`}
               >
                 {confirmDialogContent.confirmLabel}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {isValidationModalOpen && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center">
+          <div
+            className="absolute inset-0 bg-black/40"
+            aria-hidden="true"
+            onClick={() => setValidationModalOpen(false)}
+          />
+          <div className="relative z-50 w-full max-w-2xl rounded-2xl bg-white p-6 shadow-2xl">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-wide text-orange-500 font-semibold">
+                  {activeValidationIntent === 'publish' ? 'Publish blockers' : 'Draft validation'}
+                </p>
+                <h2 className="text-xl font-semibold text-gray-900 mt-1">Resolve the highlighted issues</h2>
+                <p className="text-sm text-gray-600 mt-1">
+                  Review each issue and jump directly to the module or lesson that needs attention.
+                </p>
+              </div>
+              <button
+                onClick={() => setValidationModalOpen(false)}
+                className="text-gray-400 hover:text-gray-600"
+                aria-label="Close validation issues"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="mt-4 max-h-[60vh] overflow-y-auto space-y-3">
+              {validationIssues.map((issue, index) => (
+                <div
+                  key={`${issue.code}-${issue.moduleId ?? 'course'}-${issue.lessonId ?? index}`}
+                  className="flex items-start justify-between rounded-xl border border-red-200 bg-red-50 p-3"
+                >
+                  <div>
+                    <p className="text-sm font-medium text-red-900">{issue.message}</p>
+                    {issue.path && <p className="text-xs text-red-600 mt-1">{issue.path}</p>}
+                  </div>
+                  <button
+                    onClick={() => focusIssue(issue)}
+                    className="ml-4 rounded-md bg-red-600 px-3 py-1 text-xs font-semibold text-white shadow hover:bg-red-700"
+                  >
+                    Fix
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="mt-4 flex justify-end">
+              <button
+                onClick={() => setValidationModalOpen(false)}
+                className="rounded-md border border-gray-200 px-4 py-2 text-sm font-medium text-gray-700 hover:bg-gray-50"
+              >
+                Close
               </button>
             </div>
           </div>

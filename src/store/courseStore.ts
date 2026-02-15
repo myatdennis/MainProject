@@ -17,6 +17,7 @@ import { saveDraftSnapshot, markDraftSynced, deleteDraftSnapshot } from '../dal/
 import { ApiError } from '../utils/apiClient';
 import { cloneWithCanonicalOrgId, resolveOrgIdFromCarrier, stampCanonicalOrgId } from '../utils/orgFieldUtils';
 import { nanoid } from 'nanoid';
+import { canonicalizeLessonContent } from '../utils/lessonContent';
 
 // Course data types
 export interface ScenarioChoice {
@@ -133,6 +134,7 @@ export const sanitizeModuleGraph = (modules: Module[] = []): Module[] =>
         module_id: resolvedModuleId,
         moduleId: resolvedModuleId,
         order: lesson.order ?? lessonIndex + 1,
+        content: canonicalizeLessonContent(lesson.content),
       };
     });
 
