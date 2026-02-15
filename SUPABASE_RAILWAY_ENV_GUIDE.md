@@ -69,6 +69,16 @@ Deploy steps:
 - If you need client-side Supabase (uploads/RLS reads), only use VITE_SUPABASE_ANON_KEY.
 - Server-side uses SUPABASE_SERVICE_ROLE_KEY for administrative tasks (imports, assignments, writes).
 
+### PostgREST schema cache refresh
+
+Supabase’s PostgREST layer caches table/view metadata. Whenever a migration drops/recreates views (for example `user_organizations_vw`) or adds/removes columns on tables that the API hits directly (`audit_logs`, `analytics_events`, `assignments`, etc.), refresh the cache immediately after running migrations:
+
+```
+psql "$SUPABASE_DATABASE_URL" -c "NOTIFY pgrst, 'reload schema';"
+```
+
+Do this for every environment (staging + production) so API requests don’t see `PGRST204`/`PGRST205` errors after deploy.
+
 ## 5) Troubleshooting
 
 - CORS 403 on preflight:

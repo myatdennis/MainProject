@@ -7,7 +7,7 @@ import rateLimit from 'express-rate-limit';
 import supabase, { supabaseAuthClient } from '../lib/supabaseClient.js';
 import { extractTokenFromHeader } from '../utils/jwt.js';
 import { getAccessTokenFromRequest, getActiveOrgFromRequest } from '../utils/authCookies.js';
-import { getUserMemberships } from '../utils/memberships.js';
+import { getUserMemberships, getMembershipDiagnostics } from '../utils/memberships.js';
 import { E2E_TEST_MODE, DEV_FALLBACK, demoAutoAuthEnabled } from '../config/runtimeFlags.js';
 import { getPermissionsForRole, mergePermissions } from '../../shared/permissions/index.js';
 
@@ -245,7 +245,15 @@ async function loadMemberships(userId) {
   if (cached) return cached;
 
   const rows = await getUserMemberships(userId, { logPrefix: '[auth-middleware]' });
+  const diagnostics = getMembershipDiagnostics(rows);
   const mapped = mapMembershipRows(rows);
+  if (diagnostics) {
+    Object.defineProperty(mapped, '__diagnostics', {
+      value: diagnostics,
+      enumerable: false,
+      configurable: true,
+    });
+  }
   cacheSet(membershipCache, cacheKey, mapped);
   return mapped;
 }
@@ -351,7 +359,10 @@ async function buildAuthContext(req, { optional = false } = {}) {
   const membershipMap = buildMembershipMap(memberships);
   const activeOrgId = determineActiveOrgId(req, memberships);
 
-  return { user: userPayload, membershipsMap: membershipMap, activeOrgId };
+  const membershipDiagnostics =
+    (memberships && memberships.__diagnostics && { ...memberships.__diagnostics }) || null;
+
+  return { user: userPayload, membershipsMap: membershipMap, activeOrgId, membershipDiagnostics };
 }
 
 /**
@@ -370,7 +381,8 @@ export async function authenticate(req, res, next) {
     req.user = context.user;
     req.orgMemberships = context.membershipsMap;
     req.activeOrgId = context.activeOrgId;
-  req.userPermissions = new Set(Array.isArray(context.user.permissions) ? context.user.permissions : []);
+    req.membershipDiagnostics = context.membershipDiagnostics || null;
+    req.userPermissions = new Set(Array.isArray(context.user.permissions) ? context.user.permissions : []);
     return next();
   } catch (error) {
     if (error.message === 'supabase_not_configured') {
@@ -413,7 +425,8 @@ export async function optionalAuthenticate(req, res, next) {
       req.user = context.user;
       req.orgMemberships = context.membershipsMap;
       req.activeOrgId = context.activeOrgId;
-  req.userPermissions = new Set(Array.isArray(context.user.permissions) ? context.user.permissions : []);
+      req.membershipDiagnostics = context.membershipDiagnostics || null;
+      req.userPermissions = new Set(Array.isArray(context.user.permissions) ? context.user.permissions : []);
     }
   } catch (error) {
     console.warn('[auth] optional auth failed:', error.message);

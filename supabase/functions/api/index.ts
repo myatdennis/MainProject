@@ -525,13 +525,13 @@ const COURSE_DETAIL_SELECT = `
   updated_at,
   status,
   description,
-  modules:modules (
+  modules:modules!modules_course_id_fkey (
     id,
     title,
     description,
     duration,
     order_index,
-    lessons:lessons (
+    lessons:lessons!lessons_module_id_fkey (
       id,
       module_id,
       title,

@@ -5,7 +5,7 @@ import {
   syncCourseToDatabase,
 } from '../dal/adminCourses';
 import { fetchPublishedCourses, fetchCourse } from '../dal/clientCourses';
-import { Course, Module } from '../types/courseTypes';
+import { Course, Module, Lesson } from '../types/courseTypes';
 import { slugify, normalizeCourse } from '../utils/courseNormalization';
 import { getUserSession, getActiveOrgPreference } from '../lib/secureStorage';
 import { getAssignmentsForUser } from '../utils/assignmentStorage';
@@ -16,6 +16,7 @@ import { hasStoredProgressHistory } from '../utils/courseAvailability';
 import { saveDraftSnapshot, markDraftSynced, deleteDraftSnapshot } from '../dal/courseDrafts';
 import { ApiError } from '../utils/apiClient';
 import { cloneWithCanonicalOrgId, resolveOrgIdFromCarrier, stampCanonicalOrgId } from '../utils/orgFieldUtils';
+import { nanoid } from 'nanoid';
 
 // Course data types
 export interface ScenarioChoice {
@@ -117,8 +118,36 @@ const _saveCoursesToLocalStorage = (_courses: { [key: string]: Course }): void =
   // persistence handled via CourseService / API gateway
 };
 
+export const createModuleId = (): string => `mod-${nanoid(10)}`;
+export const createLessonId = (): string => `les-${nanoid(10)}`;
+
+export const sanitizeModuleGraph = (modules: Module[] = []): Module[] =>
+  modules.map((module, moduleIndex) => {
+    const moduleId = module.id || createModuleId();
+    const normalizedLessons = (module.lessons || []).map((lesson, lessonIndex) => {
+      const lessonId = lesson.id || createLessonId();
+      const resolvedModuleId = lesson.module_id || (lesson as any).moduleId || moduleId;
+      return {
+        ...lesson,
+        id: lessonId,
+        module_id: resolvedModuleId,
+        moduleId: resolvedModuleId,
+        order: lesson.order ?? lessonIndex + 1,
+      };
+    });
+
+    return {
+      ...module,
+      id: moduleId,
+      order: module.order ?? moduleIndex + 1,
+      lessons: normalizedLessons,
+    };
+  });
+
 const createCoursePayloadForApi = (course: Course): Course => {
   const { clone } = cloneWithCanonicalOrgId(course, { removeAliases: true });
+  const sanitizedModules = sanitizeModuleGraph((clone as Course).modules || []);
+  (clone as Course).modules = sanitizedModules;
   return clone as Course;
 };
 
@@ -1623,10 +1652,17 @@ export const courseStore = {
   },
 
   saveCourse: (course: Course, options: { skipRemoteSync?: boolean } = {}): void => {
-    course.lastUpdated = new Date().toISOString();
-    courses[course.id] = { ...course };
+    const normalizedModules = sanitizeModuleGraph(course.modules || []);
+    const nextCourse: Course = {
+      ...course,
+      modules: normalizedModules,
+      lastUpdated: new Date().toISOString(),
+    };
+    course.modules = normalizedModules;
+    course.lastUpdated = nextCourse.lastUpdated;
+    courses[nextCourse.id] = { ...nextCourse };
     _saveCoursesToLocalStorage(courses);
-    void saveDraftSnapshot(course, {
+    void saveDraftSnapshot(nextCourse, {
       dirty: true,
       cause: options.skipRemoteSync ? 'local-save' : 'store-save',
     });
@@ -1637,18 +1673,22 @@ export const courseStore = {
       import.meta.env.VITE_SUPABASE_URL &&
       import.meta.env.VITE_SUPABASE_ANON_KEY
     ) {
-      const apiPayload = createCoursePayloadForApi(course);
+      const apiPayload = createCoursePayloadForApi(nextCourse);
       syncCourseToDatabase(apiPayload)
         .then((persisted) => {
           if (!persisted) return;
     const normalized = normalizeCourse(persisted as Course);
-          const targetId = normalized.id || course.id;
+          const targetId = normalized.id || nextCourse.id;
+          const normalizedModules = normalized.modules && normalized.modules.length
+            ? sanitizeModuleGraph(normalized.modules as Module[])
+            : courses[nextCourse.id]?.modules ?? nextCourse.modules;
           courses[targetId] = {
-            ...(courses[course.id] || course),
+            ...(courses[nextCourse.id] || nextCourse),
             ...normalized,
+            modules: normalizedModules,
           };
-          if (targetId !== course.id) {
-            delete courses[course.id];
+          if (targetId !== nextCourse.id) {
+            delete courses[nextCourse.id];
           }
           _saveCoursesToLocalStorage(courses);
           void markDraftSynced(targetId, courses[targetId]);
@@ -1660,7 +1700,7 @@ export const courseStore = {
             );
             return;
           }
-          console.warn(`Failed to sync course "${course.title}" to database:`, error.message || error);
+          console.warn(`Failed to sync course "${nextCourse.title}" to database:`, error.message || error);
         });
     }
   },
@@ -1735,6 +1775,7 @@ export const courseStore = {
       stampCanonicalOrgId(newCourse as Record<string, any>, initialOrgId);
     }
     
+    newCourse.modules = sanitizeModuleGraph(newCourse.modules || []);
     courses[newCourse.id] = newCourse;
     _saveCoursesToLocalStorage(courses);
     void saveDraftSnapshot(newCourse, { dirty: true, cause: 'create-course' });
@@ -1746,9 +1787,13 @@ export const courseStore = {
         if (!persisted) return;
   const normalized = normalizeCourse(persisted as Course);
         const normalizedId = normalized.id || newCourse.id;
+        const normalizedModules = normalized.modules && normalized.modules.length
+          ? sanitizeModuleGraph(normalized.modules as Module[])
+          : courses[newCourse.id]?.modules ?? newCourse.modules;
         courses[normalizedId] = {
           ...courses[newCourse.id],
           ...normalized,
+          modules: normalizedModules,
         };
         if (normalizedId !== newCourse.id) {
           delete courses[newCourse.id];
@@ -1789,7 +1834,13 @@ export const courseStore = {
 
 // Helper function to generate unique IDs
 export const generateId = (prefix: string = 'item'): string => {
-  return `${prefix}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+  if (prefix === 'module') {
+    return createModuleId();
+  }
+  if (prefix === 'lesson') {
+    return createLessonId();
+  }
+  return `${prefix}-${nanoid(8)}`;
 };
 
 // Helper function to calculate total course duration

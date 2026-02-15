@@ -18,6 +18,20 @@ const normalizeOrgId = (value) => {
   return trimmed || null;
 };
 
+const DIAGNOSTIC_KEY = '__diagnostics';
+
+const attachDiagnostics = (rows, diagnostics) => {
+  if (!Array.isArray(rows) || !diagnostics) return rows;
+  Object.defineProperty(rows, DIAGNOSTIC_KEY, {
+    value: diagnostics,
+    enumerable: false,
+    configurable: true,
+  });
+  return rows;
+};
+
+const getDiagnostics = (rows) => (rows && rows[DIAGNOSTIC_KEY]) || null;
+
 const mapMembershipRecord = (row = {}) => {
   const resolvedOrgId = normalizeOrgId(row.organization_id ?? row.org_id);
   return {
@@ -102,14 +116,25 @@ export const getUserMemberships = async (userId, { logPrefix = '[memberships]' }
           code: error.code,
           message: error.message,
         });
-        return fetchMembershipsFromBaseTables(userId, logPrefix);
+        const fallbackRows = await fetchMembershipsFromBaseTables(userId, logPrefix);
+        return attachDiagnostics(fallbackRows, {
+          code: error.code || 'view_unavailable',
+          message: error.message,
+          fallback: 'base_tables',
+          timestamp: new Date().toISOString(),
+        });
       }
       console.warn(`${logPrefix} membership_view_query_failed`, {
         userId,
         code: error.code,
         message: error.message,
       });
-      return [];
+      return attachDiagnostics([], {
+        code: error.code || 'view_query_failed',
+        message: error.message,
+        fallback: 'none',
+        timestamp: new Date().toISOString(),
+      });
     }
 
     if (!Array.isArray(data)) {
@@ -127,3 +152,5 @@ export const getUserMemberships = async (userId, { logPrefix = '[memberships]' }
 };
 
 export default getUserMemberships;
+
+export const getMembershipDiagnostics = (rows) => getDiagnostics(rows);

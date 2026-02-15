@@ -30,6 +30,7 @@ import { enqueueJob, registerJobProcessor, hasQueueBackend } from './jobs/taskQu
 import setupNotificationDispatcher from './services/notificationDispatcher.js';
 import { validateCourse as validatePublishableCourse } from './lib/courseValidation.js';
 import { getSupabaseConfig } from './config/supabaseConfig.js';
+import { normalizeModuleLessonPayloads, shouldLogModuleNormalization, coerceTextId } from './lib/moduleLessonNormalizer.js';
 import { getUserMemberships } from './utils/memberships.js';
 
 // Import auth routes and middleware
@@ -66,6 +67,12 @@ import { sendEmail } from './services/emailService.js';
 import { createMediaService } from './services/mediaService.js';
 import { isJwtSecretConfigured } from './utils/jwt.js';
 import { writeErrorDiagnostics, summarizeRequestBody } from './utils/errorDiagnostics.js';
+import {
+  COURSE_WITH_MODULES_LESSONS_SELECT,
+  MODULE_LESSONS_FOREIGN_TABLE,
+  COURSE_MODULES_WITH_LESSON_FIELDS,
+  COURSE_MODULES_NO_LESSONS_FIELDS,
+} from './constants/courseSelect.js';
 
 // Resolve __dirname in ESM
 const __filename = fileURLToPath(import.meta.url);
@@ -1273,6 +1280,19 @@ function pickOrgId(...candidates) {
   return null;
 }
 
+function getHeaderOrgId(req) {
+  if (!req || !req.headers) return null;
+  const headerKeys = ['x-org-id', 'x-organization-id', 'x_org_id', 'x_organization_id'];
+  for (const key of headerKeys) {
+    const value = req.headers[key];
+    if (typeof value === 'string') {
+      const trimmed = value.trim();
+      if (trimmed) return trimmed;
+    }
+  }
+  return null;
+}
+
 function hydrateSandboxOrgFields(e2eStore) {
   for (const [courseId, course] of e2eStore.courses.entries()) {
     e2eStore.courses.set(
@@ -1332,9 +1352,6 @@ const getDocumentOrgId = async (documentId) => {
     return undefined;
   }
 };
-const COURSE_WITH_MODULES_LESSONS_SELECT =
-  '*, modules:modules!modules_course_org_fk(*, lessons:lessons!lessons_module_org_fk(*))';
-const MODULE_LESSONS_FOREIGN_TABLE = 'modules.lessons!lessons_module_org_fk';
 const isUuid = (value) => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 const isAnalyticsClientEventDuplicate = (error) =>
   Boolean(
@@ -1372,6 +1389,12 @@ const lessonColumnSupport = {
   contentJson: true,
   contentLegacy: false,
   completionRuleJson: true,
+  organizationId: true,
+  courseId: true,
+};
+
+const moduleColumnSupport = {
+  organizationId: true,
 };
 
 const formatLegacyDuration = (seconds) => {
@@ -1421,9 +1444,44 @@ const maybeHandleLessonColumnError = (error) => {
         return true;
       }
       return false;
+    case 'organization_id':
+      if (lessonColumnSupport.organizationId) {
+        lessonColumnSupport.organizationId = false;
+        logger.warn('lessons_organization_column_missing', { code: error.code ?? null });
+        return true;
+      }
+      return false;
+    case 'course_id':
+      if (lessonColumnSupport.courseId) {
+        lessonColumnSupport.courseId = false;
+        logger.warn('lessons_course_column_missing', { code: error.code ?? null });
+        return true;
+      }
+      return false;
     default:
       return false;
   }
+};
+
+const maybeHandleModuleColumnError = (error) => {
+  const missingColumn = normalizeColumnIdentifier(extractMissingColumnName(error));
+  if (!missingColumn) return false;
+  if (missingColumn === 'organization_id' && moduleColumnSupport.organizationId) {
+    moduleColumnSupport.organizationId = false;
+    logger.warn('modules_organization_column_missing', { code: error?.code ?? null });
+    return true;
+  }
+  return false;
+};
+
+const logModuleNormalizationDiagnostics = (diagnostics, context = {}) => {
+  if (!shouldLogModuleNormalization(diagnostics)) return;
+  logger.warn('course_module_normalization', {
+    requestId: context.requestId ?? null,
+    courseId: context.courseId ?? null,
+    source: context.source ?? 'unknown',
+    ...diagnostics,
+  });
 };
 
 const buildNotificationSelectColumns = () => {
@@ -2792,6 +2850,9 @@ app.get('/api/admin/me', (req, res) => {
       reason: context.isPlatformAdmin ? 'platform_admin' : 'org_admin_membership',
       orgAdminCount: adminOrgIds.length,
       timestamp: new Date().toISOString(),
+    },
+    diagnostics: {
+      membership: req.membershipDiagnostics || null,
     },
     context: {
       surface: 'admin',
@@ -4318,8 +4379,8 @@ app.get('/api/admin/courses', async (req, res) => {
 
   const moduleFields = includeStructure
     ? includeLessons
-      ? ',modules:modules!modules_course_org_fk(id,course_id,title,description,order_index,lessons:lessons!lessons_module_org_fk(id,module_id,title,description,type,order_index,duration_s,content_json,completion_rule_json))'
-      : ',modules:modules!modules_course_org_fk(id,course_id,title,description,order_index)'
+      ? COURSE_MODULES_WITH_LESSON_FIELDS
+      : COURSE_MODULES_NO_LESSONS_FIELDS
     : '';
 
   try {
@@ -4541,7 +4602,9 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
 
   if (!ensureSupabase(res)) return;
 
-  const { course, modules = [] } = req.body || {};
+  let { course, modules = [] } = req.body || {};
+  modules = Array.isArray(modules) ? modules : [];
+  const headerOrgId = getHeaderOrgId(req);
   let organizationId = pickOrgId(
     course?.organization_id,
     course?.org_id,
@@ -4549,7 +4612,11 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
     req.body?.organization_id,
     req.body?.org_id,
     req.body?.orgId,
-    req.body?.organizationId
+    req.body?.organizationId,
+    req.activeOrgId,
+    req.user?.activeOrgId,
+    req.user?.organizationId,
+    headerOrgId
   );
   // Lightweight request tracing to aid debugging in CI/local runs
   try {
@@ -4566,6 +4633,18 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
     // Swallow logging errors to avoid interfering with normal request flow
     console.warn('Failed to log upsert request summary', logErr);
   }
+
+  const initialNormalization = normalizeModuleLessonPayloads(modules, {
+    courseId: course?.id ?? courseIdFromParams ?? null,
+    organizationId,
+    pickOrgId,
+  });
+  logModuleNormalizationDiagnostics(initialNormalization.diagnostics, {
+    requestId: req.requestId,
+    source: 'course_upsert.initial',
+    courseId: course?.id ?? courseIdFromParams ?? null,
+  });
+  modules = initialNormalization.modules;
 
   if (!course?.title) {
     res.status(400).json({ error: 'Course title is required' });
@@ -4775,7 +4854,19 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
       return;
     }
 
-    const incomingModuleIds = modules.map((module) => module.id).filter(Boolean);
+    const persistenceNormalization = normalizeModuleLessonPayloads(modules, {
+      courseId: courseRow.id,
+      organizationId: organizationId ?? courseRow.organization_id ?? null,
+      pickOrgId,
+    });
+    logModuleNormalizationDiagnostics(persistenceNormalization.diagnostics, {
+      requestId: req.requestId,
+      source: 'course_upsert.persist',
+      courseId: courseRow.id,
+    });
+    const modulesForPersistence = persistenceNormalization.modules;
+
+    const incomingModuleIds = modulesForPersistence.map((module) => module.id).filter(Boolean);
     if (incomingModuleIds.length > 0) {
       const { data: existingModules } = await supabase
         .from('modules')
@@ -4790,20 +4881,47 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
         await supabase.from('modules').delete().in('id', modulesToDelete);
       }
 
-      for (const [moduleIndex, module] of modules.entries()) {
-        const { data: moduleRow, error: moduleError } = await supabase
-          .from('modules')
-          .upsert({
+      for (const [moduleIndex, module] of modulesForPersistence.entries()) {
+        const buildModuleUpsertPayload = () => {
+          const payload = {
             id: module.id,
-            course_id: courseRow.id,
+            course_id: module.course_id ?? courseRow.id,
             order_index: module.order_index ?? moduleIndex,
             title: module.title,
-            description: module.description ?? null
-          })
-          .select('*')
-          .single();
+            description: module.description ?? null,
+          };
+          const moduleOrgId = pickOrgId(
+            module.organization_id,
+            module.org_id,
+            module.organizationId,
+            organizationId ?? courseRow.organization_id ?? null,
+          );
+          if (moduleColumnSupport.organizationId && moduleOrgId) {
+            payload.organization_id = moduleOrgId;
+          }
+          return payload;
+        };
 
-        if (moduleError) throw moduleError;
+        let moduleRow = null;
+        let moduleError = null;
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          const modulePayload = buildModuleUpsertPayload();
+          const moduleRes = await supabase.from('modules').upsert(modulePayload).select('*').single();
+          if (!moduleRes.error) {
+            moduleRow = moduleRes.data;
+            moduleError = null;
+            break;
+          }
+          moduleError = moduleRes.error;
+          if (maybeHandleModuleColumnError(moduleError)) {
+            continue;
+          }
+          throw moduleError;
+        }
+
+        if (!moduleRow) {
+          throw moduleError || new Error('Failed to upsert module');
+        }
 
         const lessons = module.lessons || [];
         const incomingLessonIds = lessons.map((lesson) => lesson.id);
@@ -4822,7 +4940,7 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
             await supabase.from('lessons').delete().in('id', lessonsToDelete);
           }
 
-          const buildLessonUpsertPayload = (lessonInput, moduleId, lessonIndex) => {
+          const buildLessonUpsertPayload = (lessonInput, moduleRowPayload, moduleData, lessonIndex) => {
             const baseDuration =
               typeof lessonInput.duration_s === 'number' && Number.isFinite(lessonInput.duration_s)
                 ? lessonInput.duration_s
@@ -4830,7 +4948,7 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
             const contentPayload = lessonInput.content_json ?? lessonInput.content ?? {};
             const payload = {
               id: lessonInput.id,
-              module_id: moduleId,
+              module_id: moduleRowPayload.id,
               order_index: lessonInput.order_index ?? lessonIndex,
               type: lessonInput.type,
               title: lessonInput.title,
@@ -4854,18 +4972,39 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
             if (lessonColumnSupport.completionRuleJson && lessonInput.completion_rule_json) {
               payload.completion_rule_json = lessonInput.completion_rule_json;
             }
+            const resolvedLessonOrgId = pickOrgId(
+              lessonInput.organization_id,
+              lessonInput.org_id,
+              lessonInput.organizationId,
+              moduleData?.organization_id,
+              moduleRowPayload?.organization_id,
+              organizationId ?? courseRow.organization_id ?? null,
+            );
+            if (lessonColumnSupport.organizationId && resolvedLessonOrgId) {
+              payload.organization_id = resolvedLessonOrgId;
+            }
+            const resolvedLessonCourseId = coerceTextId(
+              lessonInput.course_id,
+              lessonInput.courseId,
+              moduleData?.course_id,
+              moduleRowPayload?.course_id,
+              courseRow.id,
+            );
+            if (lessonColumnSupport.courseId && resolvedLessonCourseId) {
+              payload.course_id = resolvedLessonCourseId;
+            }
             return payload;
           };
 
           for (const [lessonIndex, lesson] of lessons.entries()) {
-            let lessonPayload = buildLessonUpsertPayload(lesson, moduleRow.id, lessonIndex);
+            let lessonPayload = buildLessonUpsertPayload(lesson, moduleRow, module, lessonIndex);
             for (let attempt = 0; attempt < 2; attempt += 1) {
               const { error: lessonError } = await supabase.from('lessons').upsert(lessonPayload);
               if (!lessonError) {
                 break;
               }
               if (maybeHandleLessonColumnError(lessonError)) {
-                lessonPayload = buildLessonUpsertPayload(lesson, moduleRow.id, lessonIndex);
+                lessonPayload = buildLessonUpsertPayload(lesson, moduleRow, module, lessonIndex);
                 continue;
               }
               throw lessonError;
@@ -10303,7 +10442,11 @@ app.post('/api/analytics/events', optionalAuthenticate, async (req, res) => {
       clientEventId: normalizedClientEventId,
       eventType: normalizedEvent,
     });
-    respondQueued({ reason: 'persistence_failed' });
+    respondQueued({
+      reason: error?.code || 'persistence_failed',
+      errorCode: error?.code || null,
+      message: error?.message || null,
+    });
   }
 });
 
@@ -10356,7 +10499,12 @@ app.post('/api/audit-log', async (req, res) => {
     respondOk({ stored: true });
   } catch (error) {
     console.error('Failed to persist audit log entry:', error);
-    respondOk({ stored: false, reason: 'persistence_failed' });
+    respondOk({
+      stored: false,
+      reason: error?.code || 'persistence_failed',
+      errorCode: error?.code || null,
+      message: error?.message || null,
+    });
   }
 });
 
