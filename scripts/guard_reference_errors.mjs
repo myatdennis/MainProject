@@ -17,8 +17,8 @@ const patterns = [
   },
 ];
 
-const collectFiles = async (dir: string): Promise<string[]> => {
-  const files: string[] = [];
+const collectFiles = async (dir) => {
+  const files = [];
   const entries = await fs.readdir(dir, { withFileTypes: true });
   for (const entry of entries) {
     const entryPath = path.join(dir, entry.name);
@@ -31,7 +31,7 @@ const collectFiles = async (dir: string): Promise<string[]> => {
   return files;
 };
 
-const formatMatch = (content: string, index: number) => {
+const formatMatch = (content, index) => {
   const start = Math.max(0, index - 60);
   const end = Math.min(content.length, index + 120);
   return content.slice(start, end).replace(/\\s+/g, ' ').trim();
@@ -46,13 +46,13 @@ const run = async () => {
   }
 
   const files = await collectFiles(distDir);
-  const failures: Array<{ file: string; label: string; excerpt: string }> = [];
+  const failures = [];
 
   for (const file of files) {
     const content = await fs.readFile(file, 'utf8');
     for (const pattern of patterns) {
       const regex = new RegExp(pattern.regex);
-      let match: RegExpExecArray | null;
+      let match;
       while ((match = regex.exec(content))) {
         failures.push({
           file,
