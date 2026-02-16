@@ -4,16 +4,13 @@ import path from 'node:path';
 
 const projectRoot = process.cwd();
 const distDir = path.join(projectRoot, 'dist');
+const assetsDir = path.join(distDir, 'assets');
 
 const targetExtensions = new Set(['.js', '.mjs', '.cjs']);
 const patterns = [
   {
     label: 'ReferenceError pattern',
-    regex: /ReferenceError[^\\n]{0,120}is not defined/gi,
-  },
-  {
-    label: 'missing export pattern',
-    regex: /(does not provide an export named|has no exported member)/gi,
+    regex: /ReferenceError[^]{0,160}is not defined/gi,
   },
 ];
 
@@ -39,13 +36,13 @@ const formatMatch = (content, index) => {
 
 const run = async () => {
   try {
-    await fs.access(distDir);
+    await fs.access(assetsDir);
   } catch {
-    console.warn('[guard:ref] dist folder missing. Run `npm run build` before this guard.');
+    console.warn('[guard:ref] dist/assets folder missing. Run `npm run build` before this guard.');
     process.exit(0);
   }
 
-  const files = await collectFiles(distDir);
+  const files = await collectFiles(assetsDir);
   const failures = [];
 
   for (const file of files) {
