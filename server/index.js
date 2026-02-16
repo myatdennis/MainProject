@@ -3061,6 +3061,52 @@ async function ensureUniqueOrgSlug(desiredSlug) {
   }
 }
 
+async function ensureUniqueCourseSlug(desiredSlug, { excludeCourseId = null } = {}) {
+  const baseSlug = slugify(desiredSlug) || `course-${randomUUID().slice(0, 8)}`;
+  const normalizedExclude = excludeCourseId ? String(excludeCourseId).toLowerCase() : null;
+  const candidateAvailable = async (candidate) => {
+    if (supabase && !(DEV_FALLBACK || E2E_TEST_MODE)) {
+      try {
+        const { data, error } = await supabase
+          .from('courses')
+          .select('id')
+          .eq('slug', candidate)
+          .maybeSingle();
+        if (error && error.code !== 'PGRST116') {
+          console.warn('[courses] Failed to verify slug uniqueness', { candidate, error });
+          return false;
+        }
+        if (!data) return true;
+        if (normalizedExclude && String(data.id).toLowerCase() === normalizedExclude) {
+          return true;
+        }
+        return false;
+      } catch (error) {
+        console.warn('[courses] Slug uniqueness check failed', { candidate, error });
+        return false;
+      }
+    }
+    for (const courseRecord of e2eStore.courses.values()) {
+      if (normalizedExclude && String(courseRecord.id).toLowerCase() === normalizedExclude) {
+        continue;
+      }
+      const slugValue = (courseRecord.slug ?? courseRecord.id ?? '').toLowerCase();
+      if (slugValue && slugValue === candidate.toLowerCase()) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  for (let suffix = 0; suffix < 25; suffix += 1) {
+    const candidate = suffix === 0 ? baseSlug : `${baseSlug}-${suffix + 1}`;
+    if (await candidateAvailable(candidate)) {
+      return candidate;
+    }
+  }
+  return `${baseSlug}-${randomUUID().slice(0, 6)}`;
+}
+
 async function initializeActivationSteps(orgId, actor) {
   if (!supabase) return;
   try {
@@ -4706,6 +4752,16 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
       const access = await requireOrgAccess(req, res, organizationId, { write: true, requireOrgAdmin: true });
       if (!access) return;
     }
+
+    const desiredCourseSlug =
+      course.slug ||
+      course.title ||
+      course.name ||
+      course.id ||
+      `course-${Date.now().toString(36)}`;
+    course.slug = await ensureUniqueCourseSlug(desiredCourseSlug, {
+      excludeCourseId: course.id ?? null,
+    });
     if (!courseLocal?.title) {
       res.status(400).json({ error: 'Course title is required' });
       return;
@@ -4749,9 +4805,13 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
         }
       }
       const id = courseLocal.id ?? existingId ?? `e2e-course-${Date.now()}`;
+      const resolvedSlug = await ensureUniqueCourseSlug(courseLocal.slug || courseLocal.title || id, {
+        excludeCourseId: courseLocal.id ?? existingId ?? null,
+      });
+      courseLocal.slug = resolvedSlug;
       const courseObj = {
         id,
-        slug: courseLocal.slug ?? id,
+        slug: resolvedSlug,
         title: courseLocal.title,
         description: courseLocal.description ?? null,
         status: courseLocal.status ?? 'draft',

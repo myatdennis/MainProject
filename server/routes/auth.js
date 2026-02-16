@@ -13,6 +13,7 @@ import {
   isCanonicalAdminEmail,
   resolveUserRole,
   mapMembershipRows,
+  optionalAuthenticate,
 } from '../middleware/auth.js';
 import supabase, { supabaseAuthClient } from '../lib/supabaseClient.js';
 import getUserMemberships from '../utils/memberships.js';

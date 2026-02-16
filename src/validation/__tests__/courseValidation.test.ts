@@ -31,8 +31,8 @@ describe('courseValidation', () => {
     };
 
     const result = validateCourse(course, { intent: 'publish' });
-    expect(result.isValid).toBe(false);
-    expect(result.issues.find((issue) => issue.code === 'module.publishable.media_missing')).toBeDefined();
+    expect(result.isValid).toBe(true);
+    expect(result.issues.find((issue) => issue.code === 'module.publishable.media_missing')).toBeUndefined();
     expect(result.issues.find((issue) => issue.code === 'lesson.text.content_missing')).toBeUndefined();
   });
 

@@ -332,6 +332,14 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   const lastSessionFetchResultRef = useRef<'idle' | 'authenticated' | 'unauthenticated' | 'error'>('idle');
   const bootstrapRunCountRef = useRef(0);
   const refreshRunCountRef = useRef(0);
+  type FetchServerSessionFn = (options?: {
+    surface?: SessionSurface;
+    signal?: AbortSignal;
+    silent?: boolean;
+    allowRefresh?: boolean;
+  }) => Promise<boolean>;
+  const fetchServerSessionRef = useRef<FetchServerSessionFn | null>(null);
+  const refreshTokenCallbackRef = useRef<((options?: RefreshOptions) => Promise<boolean>) | null>(null);
 
   const updateSurfaceAuthStatus = useCallback((surface: SessionSurface | undefined, status: SurfaceAuthStatus) => {
     if (!surface) {
@@ -636,9 +644,12 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
         if (response.status === 401 || response.status === 403) {
           if (allowRefresh && hasStoredToken) {
-            const recovered = await refreshTokenCallback({ reason: 'protected_401' });
-            if (recovered) {
-              return fetchServerSession({ surface, signal, silent, allowRefresh: false });
+            const refreshFn = refreshTokenCallbackRef.current;
+            if (refreshFn) {
+              const recovered = await refreshFn({ reason: 'protected_401' });
+              if (recovered) {
+                return fetchServerSession({ surface, signal, silent, allowRefresh: false });
+              }
             }
           }
           if (import.meta.env.DEV) {
@@ -706,9 +717,12 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           }
           if (error.status === 401 || error.status === 403) {
             if (allowRefresh && hasStoredToken) {
-              const recovered = await refreshTokenCallback({ reason: 'protected_401' });
-              if (recovered) {
-                return fetchServerSession({ surface, signal, silent, allowRefresh: false });
+              const refreshFn = refreshTokenCallbackRef.current;
+              if (refreshFn) {
+                const recovered = await refreshFn({ reason: 'protected_401' });
+                if (recovered) {
+                  return fetchServerSession({ surface, signal, silent, allowRefresh: false });
+                }
               }
             }
             if (import.meta.env.DEV) {
@@ -772,7 +786,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         return false;
       }
     },
-    [applySessionPayload, captureServerClock, continueAsGuest, handleSessionUnauthorized, refreshTokenCallback],
+    [applySessionPayload, captureServerClock, continueAsGuest, handleSessionUnauthorized],
   );
 
   // ============================================================================
@@ -869,6 +883,14 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     [applySessionPayload, fetchServerSession, getSkewedNow],
   );
 
+  useEffect(() => {
+    fetchServerSessionRef.current = fetchServerSession;
+  }, [fetchServerSession]);
+
+  useEffect(() => {
+    refreshTokenCallbackRef.current = refreshTokenCallback;
+  }, [refreshTokenCallback]);
+
   const runBootstrap = useCallback(
     async (signal?: AbortSignal) => {
       const bootstrapRunCount = ++bootstrapRunCountRef.current;
@@ -897,12 +919,15 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         }
 
         if (response.status === 401 || response.status === 403) {
-          const recovered = await refreshTokenCallback({ reason: 'user_retry' });
-          if (recovered) {
-            setAuthStatus('authenticated');
-            setBootstrapError(null);
-            logSessionResult('authenticated');
-            return;
+          const refreshFn = refreshTokenCallbackRef.current;
+          if (refreshFn) {
+            const recovered = await refreshFn({ reason: 'user_retry' });
+            if (recovered) {
+              setAuthStatus('authenticated');
+              setBootstrapError(null);
+              logSessionResult('authenticated');
+              return;
+            }
           }
           continueAsGuest('bootstrap_unauthenticated');
           return;
@@ -943,12 +968,15 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             return;
           }
 
-          const recovered = await refreshTokenCallback({ reason: 'user_retry' });
-          if (recovered) {
-            setAuthStatus('authenticated');
-            setBootstrapError(null);
-            logSessionResult('authenticated');
-            return;
+          const refreshFn = refreshTokenCallbackRef.current;
+          if (refreshFn) {
+            const recovered = await refreshFn({ reason: 'user_retry' });
+            if (recovered) {
+              setAuthStatus('authenticated');
+              setBootstrapError(null);
+              logSessionResult('authenticated');
+              return;
+            }
           }
 
           continueAsGuest('bootstrap_unauthenticated');
@@ -968,7 +996,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         setAuthInitializing(false);
       }
     },
-    [applySessionPayload, captureServerClock, continueAsGuest, refreshTokenCallback],
+    [applySessionPayload, captureServerClock, continueAsGuest],
   );
 
   const runBootstrapRef = useRef(runBootstrap);
