@@ -12,6 +12,10 @@ const patterns = [
     label: 'ReferenceError pattern',
     regex: /ReferenceError[^]{0,160}is not defined/gi,
   },
+  {
+    label: 'TDZ pattern',
+    regex: /Cannot access [^]{0,160} before initialization/gi,
+  },
 ];
 
 const collectFiles = async (dir) => {

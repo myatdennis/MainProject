@@ -254,6 +254,19 @@ const parseServerValidationPayload = (
   };
 };
 
+const coerceValidationPayload = (
+  payload?: ValidationIssuePayload,
+): { issues: CourseValidationIssue[]; issueTargets: IssueTargets } => {
+  const issues = Array.isArray(payload)
+    ? payload
+    : Array.isArray(payload?.issues)
+    ? (payload?.issues as CourseValidationIssue[])
+    : [];
+  const providedTargets = Array.isArray(payload) ? null : payload?.issueTargets;
+  const issueTargets = providedTargets ? normalizeIssueTargetsPayload(providedTargets) : buildIssueTargets(issues);
+  return { issues, issueTargets };
+};
+
 const evaluateCourseValidation = (course: Course, intent: CourseValidationIntent): ValidationSummary =>
   getCourseValidationSummary(course, intent);
 
@@ -319,24 +332,20 @@ const AdminCourseBuilder = () => {
   }, [setActiveValidationIntent, setIssueTargetsState, setValidationIssues, setValidationModalOpen]);
   const applyValidationIssues = useCallback(
     (payload?: ValidationIssuePayload, _intent?: CourseValidationIntent) => {
-      const normalizedIssues = Array.isArray(payload) ? payload : payload?.issues ?? [];
+      const { issues: normalizedIssues, issueTargets: normalizedTargets } = coerceValidationPayload(payload);
       if (!normalizedIssues.length) {
         clearValidationIssues();
         return;
       }
-      const providedTargets = Array.isArray(payload) ? null : payload?.issueTargets;
-      const nextTargets = providedTargets
-        ? normalizeIssueTargetsPayload(providedTargets)
-        : buildIssueTargets(normalizedIssues);
       setValidationIssues(normalizedIssues);
-      setIssueTargetsState(nextTargets);
+      setIssueTargetsState(normalizedTargets);
       setActiveValidationIntent(_intent ?? 'draft');
       setValidationModalOpen(true);
       setValidationOverride({
         intent: _intent ?? 'draft',
         isValid: normalizedIssues.length === 0,
         issues: normalizedIssues,
-        issueTargets: nextTargets,
+        issueTargets: normalizedTargets,
       });
     },
     [
@@ -348,7 +357,7 @@ const AdminCourseBuilder = () => {
       setValidationOverride,
     ],
   );
-  const showValidationIssues = useCallback(
+  const presentValidationIssues = useCallback(
     (payload?: ValidationIssuePayload, intent?: CourseValidationIntent) => {
       try {
         applyValidationIssues(payload, intent);
@@ -358,19 +367,25 @@ const AdminCourseBuilder = () => {
           intent,
           hasPayload: Boolean(payload),
         });
+        const fallback = coerceValidationPayload(payload);
+        if (fallback.issues.length) {
+          setValidationIssues(fallback.issues);
+          setIssueTargetsState(fallback.issueTargets);
+          setValidationModalOpen(true);
+        }
       }
     },
-    [applyValidationIssues],
+    [applyValidationIssues, setIssueTargetsState, setValidationIssues],
   );
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    window.__huddleShowValidationIssues = showValidationIssues;
+    window.__huddleShowValidationIssues = presentValidationIssues;
     return () => {
-      if (window.__huddleShowValidationIssues === showValidationIssues) {
+      if (window.__huddleShowValidationIssues === presentValidationIssues) {
         delete window.__huddleShowValidationIssues;
       }
     };
-  }, [showValidationIssues]);
+  }, [presentValidationIssues]);
   const validationPanelRef = useRef<HTMLDivElement | null>(null);
   const [validationPanelPulse, setValidationPanelPulse] = useState(false);
   const publishValidationIntent: CourseValidationIntent = 'publish';
@@ -1335,7 +1350,7 @@ const AdminCourseBuilder = () => {
         const blockingIssues = validationSummary.issues
           .filter((issue) => issue.severity === 'error')
           .map((issue) => issue.message);
-        showValidationIssues(
+        presentValidationIssues(
           { issues: validationSummary.issues, issueTargets: validationSummary.issueTargets },
           validationIntent,
         );
@@ -1421,7 +1436,7 @@ const AdminCourseBuilder = () => {
         console.warn('⚠️ Course validation issues:', error.issues);
         showToast('Validation failed. Resolve highlighted issues before saving.', 'warning', 5000);
         const details = mapValidationErrorDetails(error, 'local.validation');
-        showValidationIssues({ issues: details, issueTargets: buildIssueTargets(details) }, 'draft');
+        presentValidationIssues({ issues: details, issueTargets: buildIssueTargets(details) }, 'draft');
       } else {
         console.error('❌ Error saving course:', error);
         if (error instanceof ApiError && error.status === 401) {
@@ -1546,7 +1561,7 @@ const AdminCourseBuilder = () => {
           logPublishGuard('warn', 'publish_validation_error', { error: pipelineError }, detailCount);
           showToast('Validation failed. Please resolve issues before publishing.', 'warning', 5000);
           const normalizedIssues = validationDetails ?? [];
-          showValidationIssues(
+          presentValidationIssues(
             { issues: normalizedIssues, issueTargets: buildIssueTargets(normalizedIssues) },
             'publish',
           );
@@ -1574,7 +1589,7 @@ const AdminCourseBuilder = () => {
         logPublishGuard('warn', 'publish_validation_error', { error }, error.issues.length);
         showToast('Validation failed. Please resolve issues before publishing.', 'warning', 5000);
         const details = mapValidationErrorDetails(error, 'publish.validation');
-        showValidationIssues({ issues: details, issueTargets: buildIssueTargets(details) }, 'publish');
+        presentValidationIssues({ issues: details, issueTargets: buildIssueTargets(details) }, 'publish');
       } else if (error instanceof ApiError) {
         logPublishGuard('warn', 'publish_request_failed', { status: error.status, error });
         const responseBody = (error.body || {}) as { error?: string; code?: string; issues?: CourseValidationIssue[]; currentVersion?: number };
@@ -1607,7 +1622,7 @@ const AdminCourseBuilder = () => {
             logPublishGuard('warn', 'publish_validation_failed_server', { status: error.status }, serverValidation.issues.length);
             const serverIssues = Array.isArray(serverValidation.issues) ? serverValidation.issues : [];
             const serverTargets = serverValidation.issueTargets ?? getIssueTargetsOrEmpty();
-            showValidationIssues({ issues: serverIssues, issueTargets: serverTargets }, 'publish');
+            presentValidationIssues({ issues: serverIssues, issueTargets: serverTargets }, 'publish');
           }
         } else if (errorCode === 'idempotency_conflict') {
           showToast('Publish request already in progress. Please wait a moment and refresh.', 'info', 4000);
