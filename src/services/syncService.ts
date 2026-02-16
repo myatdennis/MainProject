@@ -37,6 +37,22 @@ const mapAssignmentFromSupabase = (record: any): CourseAssignment => ({
   updatedAt: record?.updated_at || new Date().toISOString(),
 });
 
+const resolveProgressUserId = (record: any): string | null => {
+  const raw =
+    (record && (record.user_id_uuid || record.user_id || record.userId)) ??
+    null;
+  if (typeof raw !== 'string') {
+    return null;
+  }
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  if (trimmed.includes('@')) {
+    console.warn('[SyncService] Ignoring progress event with email-like user_id', { userId: trimmed });
+    return null;
+  }
+  return trimmed;
+};
+
 class SyncService {
   private subscribers: { [key: string]: ((data: any) => void)[] } = {};
   private syncInterval: number | null = null;
@@ -95,9 +111,15 @@ class SyncService {
         case 'assignment_deleted':
           this.emit(t, d);
           break;
-        case 'user_progress':
-          this.emit('user_progress', { progress: d, userId: d.user_id, timestamp: Date.now(), source: 'client' });
+        case 'user_progress': {
+          const resolvedUserId = resolveProgressUserId(d);
+          if (!resolvedUserId) {
+            console.warn('[SyncService] Dropping websocket progress event with invalid user_id');
+            return;
+          }
+          this.emit('user_progress', { progress: d, userId: resolvedUserId, timestamp: Date.now(), source: 'client' });
           break;
+        }
         case 'course_updated':
         case 'course_created':
         case 'course_deleted':
@@ -288,9 +310,16 @@ class SyncService {
           (payload: any) => {
             console.log('Real-time progress change detected:', payload);
 
+            const record = payload.new || payload.old;
+            const resolvedUserId = resolveProgressUserId(record);
+            if (!resolvedUserId) {
+              console.warn('[SyncService] Dropping realtime progress change with invalid user_id');
+              return;
+            }
+
             this.emit('user_progress', {
-              progress: payload.new || payload.old,
-              userId: (payload.new || payload.old)?.user_id,
+              progress: record,
+              userId: resolvedUserId,
               timestamp: Date.now(),
               source: 'client',
             });

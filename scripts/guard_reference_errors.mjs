@@ -13,6 +13,10 @@ const patterns = [
     regex: /ReferenceError[^]{0,160}is not defined/gi,
   },
   {
+    label: '"is not defined" pattern',
+    regex: /\b[\w$]+\s+is not defined\b/gi,
+  },
+  {
     label: 'TDZ pattern',
     regex: /Cannot access [^]{0,160} before initialization/gi,
   },
@@ -35,7 +39,17 @@ const collectFiles = async (dir) => {
 const formatMatch = (content, index) => {
   const start = Math.max(0, index - 60);
   const end = Math.min(content.length, index + 120);
-  return content.slice(start, end).replace(/\\s+/g, ' ').trim();
+  return content.slice(start, end).replace(/\s+/g, ' ').trim();
+};
+
+const shouldIgnoreMatch = (label, excerpt) => {
+  if (label === '"is not defined" pattern') {
+    const allowListTokens = ['Symbol.', '`document` global'];
+    if (allowListTokens.some((token) => excerpt.includes(token))) {
+      return true;
+    }
+  }
+  return false;
 };
 
 const run = async () => {
@@ -55,10 +69,14 @@ const run = async () => {
       const regex = new RegExp(pattern.regex);
       let match;
       while ((match = regex.exec(content))) {
+        const excerpt = formatMatch(content, match.index);
+        if (shouldIgnoreMatch(pattern.label, excerpt)) {
+          continue;
+        }
         failures.push({
           file,
           label: pattern.label,
-          excerpt: formatMatch(content, match.index),
+          excerpt,
         });
       }
     }

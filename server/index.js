@@ -73,6 +73,7 @@ import {
   COURSE_MODULES_WITH_LESSON_FIELDS,
   COURSE_MODULES_NO_LESSONS_FIELDS,
 } from './constants/courseSelect.js';
+import { courseUpsertPayloadSchema } from '../shared/contracts/courseContract.js';
 
 // Resolve __dirname in ESM
 const __filename = fileURLToPath(import.meta.url);
@@ -114,6 +115,19 @@ const hasPlaceholderValue = (value) => {
   return placeholderPatterns.some((pattern) => pattern.test(value));
 };
 
+const isConflictConstraintMissing = (error) => {
+  if (!error) return false;
+  if (error.code === '42P10') return true;
+  const message = typeof error.message === 'string' ? error.message : '';
+  return /no unique or exclusion constraint matching the on conflict specification/i.test(message);
+};
+
+const isUserCourseProgressUuidColumnMissing = (error) => {
+  if (!isMissingColumnError(error)) return false;
+  const missing = normalizeColumnIdentifier(extractMissingColumnName(error));
+  return missing === 'user_id_uuid';
+};
+
 const warnOnPlaceholderSecrets = () => {
   const sensitiveEnvVars = [
     'SUPABASE_KEY',
@@ -143,6 +157,8 @@ const logRouteError = (route, error) => {
     stack: error?.stack,
   });
 };
+
+const ORG_HEADER_KEYS = ['x-org-id', 'x-organization-id', 'x_org_id', 'x_organization_id'];
 
 const ensureEnvironmentIsValid = () => {
   const baseRequired = ['CORS_ALLOWED_ORIGINS'];
@@ -1146,6 +1162,32 @@ if (E2E_TEST_MODE) {
 }
 let loggedMissingSupabaseConfig = false;
 
+const auditUserCourseProgressUuid = async () => {
+  if (!supabase) return;
+  try {
+    const { count, error } = await supabase
+      .from('user_course_progress')
+      .select('id', { head: true, count: 'exact' })
+      .is('user_id_uuid', null);
+    if (error) throw error;
+    if (typeof count === 'number' && count > 0) {
+      logger.error('user_course_progress_uuid_missing', {
+        rowsWithoutUuid: count,
+      });
+    } else {
+      logger.info('user_course_progress_uuid_verified', { rowsWithoutUuid: count || 0 });
+    }
+  } catch (error) {
+    logger.warn('user_course_progress_uuid_audit_failed', {
+      message: error?.message ?? String(error),
+    });
+  }
+};
+
+if (supabase) {
+  auditUserCourseProgressUuid();
+}
+
 const mediaService = createMediaService({
   getSupabase: () => supabase,
   courseVideosBucket: COURSE_VIDEOS_BUCKET,
@@ -1280,14 +1322,48 @@ function pickOrgId(...candidates) {
   return null;
 }
 
-function getHeaderOrgId(req) {
+function userHasOrgMembership(req, orgId) {
+  if (!req || !orgId) return false;
+  if (req.user?.isPlatformAdmin || req.user?.platformRole === 'platform_admin') {
+    return true;
+  }
+  if (req.orgMemberships && typeof req.orgMemberships.has === 'function' && req.orgMemberships.has(orgId)) {
+    return true;
+  }
+  if (Array.isArray(req.user?.memberships)) {
+    return req.user.memberships.some((membership) => normalizeOrgIdValue(membership.orgId) === orgId);
+  }
+  if (Array.isArray(req.user?.organizationIds)) {
+    return req.user.organizationIds.some((candidate) => normalizeOrgIdValue(candidate) === orgId);
+  }
+  return false;
+}
+
+function getHeaderOrgId(req, { requireMembership = true } = {}) {
   if (!req || !req.headers) return null;
-  const headerKeys = ['x-org-id', 'x-organization-id', 'x_org_id', 'x_organization_id'];
-  for (const key of headerKeys) {
+  for (const key of ORG_HEADER_KEYS) {
     const value = req.headers[key];
     if (typeof value === 'string') {
       const trimmed = value.trim();
-      if (trimmed) return trimmed;
+      if (!trimmed) continue;
+      if (!isUuid(trimmed)) {
+        console.warn('[headers] Ignoring non-uuid org id header', {
+          header: key,
+          value: trimmed,
+          requestId: req.requestId ?? null,
+        });
+        continue;
+      }
+      if (requireMembership && !userHasOrgMembership(req, trimmed)) {
+        console.warn('[headers] Ignoring org id header without membership', {
+          header: key,
+          value: trimmed,
+          requestId: req.requestId ?? null,
+          userId: req.user?.userId || req.user?.id || null,
+        });
+        continue;
+      }
+      return trimmed;
     }
   }
   return null;
@@ -2935,7 +3011,11 @@ app.get('/api/admin/me', (req, res) => {
     },
     context: {
       surface: 'admin',
-      requestOrgId: pickOrgId(req.query?.orgId, req.query?.organizationId, req.headers?.['x-org-id']),
+      requestOrgId: pickOrgId(
+        req.query?.orgId,
+        req.query?.organizationId,
+        getHeaderOrgId(req, { requireMembership: false }),
+      ),
     },
   });
 });
@@ -3013,6 +3093,37 @@ const slugify = (value) => {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 64);
+};
+
+const isCourseSlugConstraintError = (error) =>
+  Boolean(
+    error &&
+      error.code === '23505' &&
+      typeof error.message === 'string' &&
+      error.message.includes('courses_org_slug_unique'),
+  );
+
+const buildSlugSuggestion = (slug) => {
+  if (!slug) return `course-${randomUUID().slice(0, 8)}`;
+  const match = slug.match(/^(.*?)-(\d+)$/);
+  if (match) {
+    const [, prefix, suffix] = match;
+    const next = Number.parseInt(suffix, 10);
+    if (Number.isFinite(next)) {
+      return `${prefix}-${next + 1}`;
+    }
+  }
+  return `${slug}-2`;
+};
+
+const logSlugConflict = ({ courseId, orgId, attemptedSlug, suggestion, requestId }) => {
+  console.warn('[admin.courses] slug_conflict', {
+    courseId: courseId ?? null,
+    orgId: orgId ?? null,
+    attemptedSlug: attemptedSlug ?? null,
+    suggestion,
+    requestId: requestId ?? null,
+  });
 };
 
 const buildInviteLink = (token) => {
@@ -3116,6 +3227,43 @@ async function initializeActivationSteps(orgId, actor) {
     console.warn('[onboarding] Failed to initialize activation steps', { orgId, error });
   }
 }
+
+const respondWithCourseSlugConflict = async ({
+  req,
+  res,
+  courseId,
+  organizationId,
+  attemptedSlug,
+  suggestion,
+  idempotencyKey = null,
+}) => {
+  logSlugConflict({
+    courseId: courseId ?? null,
+    orgId: organizationId ?? null,
+    attemptedSlug: attemptedSlug ?? null,
+    suggestion,
+    requestId: req.requestId,
+  });
+  if (idempotencyKey && supabase) {
+    try {
+      await supabase.from('idempotency_keys').delete().eq('id', idempotencyKey);
+    } catch (cleanupErr) {
+      console.warn('Failed to release idempotency key after slug conflict', {
+        idempotencyKey,
+        error: cleanupErr?.message || cleanupErr,
+      });
+    }
+  }
+  // Regression check:
+  // curl --request POST http://localhost:8888/api/admin/courses \
+  //   --header 'Content-Type: application/json' \
+  //   --data '{"course":{"title":"Demo Course","slug":"existing-slug","organizationId":"org-demo"}}'
+  res.status(409).json({
+    code: 'slug_taken',
+    message: 'Slug already exists',
+    suggestion,
+  });
+};
 
 async function markActivationStep(orgId, stepId, { status = 'completed', actor, metadata = {} } = {}) {
   if (!supabase) return;
@@ -4926,6 +5074,16 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
     res.status(400).json({ error: 'Course title is required' });
     return;
   }
+  const rawSlugInput = typeof course?.slug === 'string' ? course.slug.trim() : '';
+  const slugNeedsDerivation = !rawSlugInput || rawSlugInput === 'new-course';
+  const slugSource = slugNeedsDerivation
+    ? course?.title || course?.name || course?.id || `course-${randomUUID().slice(0, 8)}`
+    : rawSlugInput;
+  const normalizedSlug = slugify(slugSource) || `course-${randomUUID().slice(0, 8)}`;
+  course.slug = normalizedSlug;
+  if (req.body?.course) {
+    req.body.course.slug = normalizedSlug;
+  }
 
   try {
     const meta = course.meta ?? {};
@@ -5030,6 +5188,19 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
         try {
           console.log('[srv] rpcRes for upsert_course_full', { error: rpcRes?.error ?? null, data: rpcRes?.data ?? null });
         } catch (_) {}
+        if (rpcRes.error && isCourseSlugConstraintError(rpcRes.error)) {
+          const suggestion = buildSlugSuggestion(course.slug);
+          await respondWithCourseSlugConflict({
+            req,
+            res,
+            courseId: course.id ?? null,
+            organizationId,
+            attemptedSlug: course.slug,
+            suggestion,
+            idempotencyKey,
+          });
+          return;
+        }
         if (!rpcRes.error && rpcRes.data) {
           const sel = await supabase
             .from('courses')
@@ -5063,6 +5234,20 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
       if (!courseRes.error) {
         courseRow = courseRes.data;
         break;
+      }
+
+      if (isCourseSlugConstraintError(courseRes.error)) {
+        const suggestion = buildSlugSuggestion(course.slug);
+        await respondWithCourseSlugConflict({
+          req,
+          res,
+          courseId: course.id ?? null,
+          organizationId,
+          attemptedSlug: course.slug,
+          suggestion,
+          idempotencyKey,
+        });
+        return;
       }
 
       if (includeCourseVersionField && maybeHandleMissingCourseVersion(courseRes.error)) {
@@ -6849,6 +7034,7 @@ app.post('/api/learner/progress', authenticate, async (req, res) => {
 
     const courseRecordForBroadcast = () => ({
       user_id: userId,
+      user_id_uuid: userId,
       course_id: courseId,
       percent: clampPercent(courseProgress.percent),
       status: (courseProgress.percent ?? 0) >= 100 ? 'completed' : 'in_progress',
@@ -6916,40 +7102,76 @@ app.post('/api/learner/progress', authenticate, async (req, res) => {
     }
 
     const upsertCourseProgressModern = async () => {
-      const { data, error } = await supabase
-        .from('user_course_progress')
-        .upsert(
-          {
-            user_id: userId,
-            course_id: courseId,
-            progress: clampPercent(courseProgress.percent),
-            completed: (courseProgress.percent ?? 0) >= 100,
-          },
-          { onConflict: 'user_id,course_id' },
-        )
-        .select('*')
-        .single();
-      if (error) throw error;
-      return data;
+      const payload = {
+        user_id_uuid: userId,
+        user_id: userId,
+        course_id: courseId,
+        progress: clampPercent(courseProgress.percent),
+        completed: (courseProgress.percent ?? 0) >= 100,
+      };
+      try {
+        const { data, error } = await supabase
+          .from('user_course_progress')
+          .upsert(payload, { onConflict: 'user_id_uuid,course_id' })
+          .select('*')
+          .single();
+        if (error) throw error;
+        return data;
+      } catch (error) {
+        if (isUserCourseProgressUuidColumnMissing(error) || isConflictConstraintMissing(error)) {
+          logger.warn('user_course_progress_uuid_modern_fallback', {
+            code: error?.code ?? null,
+            message: error?.message ?? null,
+          });
+          const fallbackPayload = { ...payload };
+          delete fallbackPayload.user_id_uuid;
+          const { data, error: legacyError } = await supabase
+            .from('user_course_progress')
+            .upsert(fallbackPayload, { onConflict: 'user_id,course_id' })
+            .select('*')
+            .single();
+          if (legacyError) throw legacyError;
+          return data;
+        }
+        throw error;
+      }
     };
 
     const upsertCourseProgressLegacy = async () => {
-      const { data, error } = await supabase
-        .from('user_course_progress')
-        .upsert(
-          {
-            user_id: userId,
-            course_id: courseId,
-            percent: clampPercent(courseProgress.percent),
-            status: (courseProgress.percent ?? 0) >= 100 ? 'completed' : 'in_progress',
-            time_spent_s: Math.max(0, Math.round(courseProgress.totalTimeSeconds ?? 0)),
-          },
-          { onConflict: 'user_id,course_id' },
-        )
-        .select('*')
-        .single();
-      if (error) throw error;
-      return data;
+      const payload = {
+        user_id_uuid: userId,
+        user_id: userId,
+        course_id: courseId,
+        percent: clampPercent(courseProgress.percent),
+        status: (courseProgress.percent ?? 0) >= 100 ? 'completed' : 'in_progress',
+        time_spent_s: Math.max(0, Math.round(courseProgress.totalTimeSeconds ?? 0)),
+      };
+      try {
+        const { data, error } = await supabase
+          .from('user_course_progress')
+          .upsert(payload, { onConflict: 'user_id_uuid,course_id' })
+          .select('*')
+          .single();
+        if (error) throw error;
+        return data;
+      } catch (error) {
+        if (isUserCourseProgressUuidColumnMissing(error) || isConflictConstraintMissing(error)) {
+          logger.warn('user_course_progress_uuid_legacy_fallback', {
+            code: error?.code ?? null,
+            message: error?.message ?? null,
+          });
+          const fallbackPayload = { ...payload };
+          delete fallbackPayload.user_id_uuid;
+          const { data, error: legacyError } = await supabase
+            .from('user_course_progress')
+            .upsert(fallbackPayload, { onConflict: 'user_id,course_id' })
+            .select('*')
+            .single();
+          if (legacyError) throw legacyError;
+          return data;
+        }
+        throw error;
+      }
     };
 
     let courseRow;
@@ -7107,18 +7329,20 @@ app.get('/api/learner/progress', authenticate, async (req, res) => {
   }
 });
 
-app.post('/api/client/progress/course', async (req, res) => {
+app.post('/api/client/progress/course', authenticate, async (req, res) => {
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
-    const { user_id, course_id, percent, status, time_spent_s } = req.body || {};
+    const { user_id: bodyUserId, course_id, percent, status, time_spent_s } = req.body || {};
     const clientEventId = req.body?.client_event_id ?? null;
+    const sessionUserId = req.user?.userId || req.user?.id || null;
+    const resolvedUserId = sessionUserId || (typeof bodyUserId === 'string' ? bodyUserId : null);
 
-    if (!user_id || !course_id) {
+    if (!resolvedUserId || !course_id) {
       res.status(400).json({ error: 'user_id and course_id are required' });
       return;
     }
 
     // Rate limit per user to avoid abuse
-    const rlKey = `course:${String(user_id).toLowerCase()}`;
+    const rlKey = `course:${String(resolvedUserId).toLowerCase()}`;
     if (!checkProgressLimit(rlKey)) {
       res.status(429).json({ error: 'Too many progress updates, please slow down' });
       return;
@@ -7128,7 +7352,7 @@ app.post('/api/client/progress/course', async (req, res) => {
     try {
       if (clientEventId) {
         if (e2eStore.progressEvents.has(clientEventId)) {
-          const key = `${user_id}:${course_id}`;
+          const key = `${resolvedUserId}:${course_id}`;
           const existing = e2eStore.courseProgress.get(key) || null;
           res.json({ data: existing, idempotent: true });
           return;
@@ -7136,10 +7360,10 @@ app.post('/api/client/progress/course', async (req, res) => {
         e2eStore.progressEvents.add(clientEventId);
       }
 
-      const key = `${user_id}:${course_id}`;
+      const key = `${resolvedUserId}:${course_id}`;
       const now = new Date().toISOString();
       const record = {
-        user_id,
+        user_id: resolvedUserId,
         course_id,
         percent: typeof percent === 'number' ? percent : 0,
         status: status || 'in_progress',
@@ -7150,7 +7374,7 @@ app.post('/api/client/progress/course', async (req, res) => {
 
       try {
         const payload = { type: 'course_progress', data: record, timestamp: Date.now() };
-        broadcastToTopic(`progress:user:${String(user_id).toLowerCase()}`, payload);
+        broadcastToTopic(`progress:user:${String(resolvedUserId).toLowerCase()}`, payload);
         broadcastToTopic(`progress:course:${course_id}`, payload);
         broadcastToTopic('progress:all', payload);
       } catch (bErr) {
@@ -7163,7 +7387,7 @@ app.post('/api/client/progress/course', async (req, res) => {
 
       recordCourseProgress('demo-store', Date.now() - opStart, {
         status: 'success',
-        userId: user_id,
+        userId: resolvedUserId,
         courseId: course_id,
         percent: record.percent,
       });
@@ -7171,7 +7395,7 @@ app.post('/api/client/progress/course', async (req, res) => {
     } catch (error) {
       recordCourseProgress('demo-store', Date.now() - opStart, {
         status: 'error',
-        userId: user_id,
+        userId: resolvedUserId,
         courseId: course_id,
         message: error instanceof Error ? error.message : String(error),
       });
@@ -7182,15 +7406,30 @@ app.post('/api/client/progress/course', async (req, res) => {
   }
 
   if (!ensureSupabase(res)) return;
-  const { user_id, course_id, percent, status, time_spent_s } = req.body || {};
+  const { user_id: bodyUserId, course_id, percent, status, time_spent_s } = req.body || {};
   const clientEventId = req.body?.client_event_id ?? null;
-
-  if (!user_id || !course_id) {
-    res.status(400).json({ error: 'user_id and course_id are required' });
+  const context = requireUserContext(req, res);
+  if (!context) return;
+  const sessionUserIdRaw = typeof context.userId === 'string' ? context.userId.trim() : '';
+  if (!isUuid(sessionUserIdRaw)) {
+    res.status(400).json({ error: 'invalid_user_context', message: 'Authenticated user id must be a uuid.' });
+    return;
+  }
+  const canonicalUserId = sessionUserIdRaw;
+  if (!course_id) {
+    res.status(400).json({ error: 'course_id is required' });
     return;
   }
 
-  const rlKey = `course:${String(user_id).toLowerCase()}`;
+  if (bodyUserId && bodyUserId !== canonicalUserId) {
+    logger.warn('progress_course_user_mismatch', {
+      providedUserId: bodyUserId,
+      authenticatedUserId: canonicalUserId,
+      requestId: req.requestId ?? null,
+    });
+  }
+
+  const rlKey = `course:${canonicalUserId.toLowerCase()}`;
   if (!checkProgressLimit(rlKey)) {
     res.status(429).json({ error: 'Too many progress updates, please slow down' });
     return;
@@ -7198,22 +7437,26 @@ app.post('/api/client/progress/course', async (req, res) => {
 
   const opStart = Date.now();
   try {
-    const toApiCourseRecord = (row, fallbackTimeSpent) => ({
-      user_id: row?.user_id ?? user_id,
-      course_id: row?.course_id ?? course_id,
-      percent: clampPercent(Number(row?.progress ?? row?.percent ?? percent ?? 0)),
-      status: row?.completed ?? (typeof status === 'string' ? status === 'completed' : (percent ?? 0) >= 100)
-        ? 'completed'
-        : 'in_progress',
-      time_spent_s: typeof row?.time_spent_s === 'number'
-        ? row.time_spent_s
-        : typeof row?.time_spent_seconds === 'number'
-        ? row.time_spent_seconds
-        : typeof fallbackTimeSpent === 'number'
-        ? fallbackTimeSpent
-        : 0,
-      updated_at: row?.updated_at ?? row?.created_at ?? new Date().toISOString(),
-    });
+    const toApiCourseRecord = (row, fallbackTimeSpent) => {
+      const resolvedUserId = row?.user_id_uuid || row?.user_id || canonicalUserId;
+      return {
+        user_id: resolvedUserId,
+        user_id_uuid: row?.user_id_uuid ?? resolvedUserId,
+        course_id: row?.course_id ?? course_id,
+        percent: clampPercent(Number(row?.progress ?? row?.percent ?? percent ?? 0)),
+        status: row?.completed ?? (typeof status === 'string' ? status === 'completed' : (percent ?? 0) >= 100)
+          ? 'completed'
+          : 'in_progress',
+        time_spent_s: typeof row?.time_spent_s === 'number'
+          ? row.time_spent_s
+          : typeof row?.time_spent_seconds === 'number'
+          ? row.time_spent_seconds
+          : typeof fallbackTimeSpent === 'number'
+          ? fallbackTimeSpent
+          : 0,
+        updated_at: row?.updated_at ?? row?.created_at ?? new Date().toISOString(),
+      };
+    };
 
     const normalizedPercent = clampPercent(typeof percent === 'number' ? percent : 0);
     const normalizedCompleted = typeof status === 'string' ? status === 'completed' : normalizedPercent >= 100;
@@ -7221,16 +7464,18 @@ app.post('/api/client/progress/course', async (req, res) => {
     // If client provided an idempotency key, record the event first to avoid double-processing
     if (clientEventId) {
       try {
-        await supabase.from('progress_events').insert({ id: clientEventId, user_id, course_id, lesson_id: null, payload: req.body });
+        await supabase
+          .from('progress_events')
+          .insert({ id: clientEventId, user_id: canonicalUserId, course_id, lesson_id: null, payload: req.body });
       } catch (evErr) {
         // If the event already exists, treat as idempotent and return current progress
         try {
-          const existing = await supabase
+          const existingQuery = supabase
             .from('user_course_progress')
             .select('*')
-            .eq('user_id', user_id)
             .eq('course_id', course_id)
-            .maybeSingle();
+            .or(`user_id_uuid.eq.${canonicalUserId},user_id.eq.${canonicalUserId}`);
+          const existing = await existingQuery.maybeSingle();
           if (existing && !existing.error && existing.data) {
             res.json({ data: toApiCourseRecord(existing.data, time_spent_s), idempotent: true });
             return;
@@ -7240,21 +7485,38 @@ app.post('/api/client/progress/course', async (req, res) => {
         }
       }
     }
-    const { data, error } = await supabase
-      .from('user_course_progress')
-      .upsert({
-        user_id,
-        course_id,
-        progress: normalizedPercent,
-        completed: normalizedCompleted,
-      }, { onConflict: 'user_id,course_id' })
-      .select('*')
-      .single();
+    const upsertPayload = {
+      user_id_uuid: canonicalUserId,
+      user_id: canonicalUserId,
+      course_id,
+      progress: normalizedPercent,
+      completed: normalizedCompleted,
+    };
+    const upsertCourseProgress = async (payload, conflictTarget) =>
+      supabase.from('user_course_progress').upsert(payload, { onConflict: conflictTarget }).select('*').single();
 
-    if (error) throw error;
+    let upsertResult;
+    try {
+      upsertResult = await upsertCourseProgress(upsertPayload, 'user_id_uuid,course_id');
+      if (upsertResult.error) throw upsertResult.error;
+    } catch (error) {
+      if (isUserCourseProgressUuidColumnMissing(error) || isConflictConstraintMissing(error)) {
+        logger.warn('user_course_progress_uuid_fallback_runtime', {
+          code: error?.code ?? null,
+          message: error?.message ?? null,
+        });
+        const fallbackPayload = { ...upsertPayload };
+        delete fallbackPayload.user_id_uuid;
+        upsertResult = await upsertCourseProgress(fallbackPayload, 'user_id,course_id');
+        if (upsertResult.error) throw upsertResult.error;
+      } else {
+        throw error;
+      }
+    }
+    const data = upsertResult.data;
     try {
       const apiRecord = toApiCourseRecord(data, time_spent_s);
-      const userId = apiRecord?.user_id || user_id;
+      const userId = apiRecord?.user_id || canonicalUserId;
       const courseId = apiRecord?.course_id || course_id;
       const payload = { type: 'course_progress', data: apiRecord, timestamp: Date.now() };
       if (userId) broadcastToTopic(`progress:user:${String(userId).toLowerCase()}`, payload);
@@ -7267,9 +7529,9 @@ app.post('/api/client/progress/course', async (req, res) => {
         error: bErr instanceof Error ? bErr.message : bErr,
       });
     }
-  recordCourseProgress('supabase', Date.now() - opStart, {
+    recordCourseProgress('supabase', Date.now() - opStart, {
       status: 'success',
-      userId: user_id,
+      userId: canonicalUserId,
       courseId: course_id,
       percent: normalizedPercent,
     });
@@ -7278,7 +7540,7 @@ app.post('/api/client/progress/course', async (req, res) => {
   } catch (error) {
     recordCourseProgress('supabase', Date.now() - opStart, {
       status: 'error',
-      userId: user_id,
+      userId: canonicalUserId,
       courseId: course_id,
       message: error instanceof Error ? error.message : String(error),
     });
@@ -10693,8 +10955,8 @@ app.post('/api/analytics/events', optionalAuthenticate, async (req, res) => {
     receivedKeys: Object.keys(req.body || {}),
   });
 
-  const headerOrgId = (req.headers['x-org-id'] || req.headers['x-organization-id'] || '').toString().trim();
-  const derivedOrgId = req.activeOrgId || req.user?.activeOrgId || req.user?.organizationId || headerOrgId;
+  const trustedHeaderOrgId = getHeaderOrgId(req) || null;
+  const derivedOrgId = req.activeOrgId || req.user?.activeOrgId || req.user?.organizationId || trustedHeaderOrgId;
 
   let normalizedOrgCandidate = typeof org_id === 'string' ? org_id.trim() : '';
   if (!isUuid(normalizedOrgCandidate) && isUuid(derivedOrgId)) {
@@ -10707,7 +10969,7 @@ app.post('/api/analytics/events', optionalAuthenticate, async (req, res) => {
     logger.warn('analytics_event_missing_org', {
       requestId: req.requestId,
       userId: req.user?.userId || req.user?.id || null,
-      headerOrgId,
+      headerOrgId: trustedHeaderOrgId,
       derivedOrgId,
     });
   }

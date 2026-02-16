@@ -13,6 +13,7 @@ import {
 } from '../../store/courseStore';
 import { syncCourseToDatabase, CourseValidationError, loadCourseFromDatabase, adminPublishCourse } from '../../dal/adminCourses';
 import { computeCourseDiff } from '../../utils/courseDiff';
+import { slugify } from '../../utils/courseNormalization';
 // import type { NormalizedCourse } from '../../utils/courseNormalization';
 import { mergePersistedCourse } from '../../utils/adminCourseMerge';
 import type { Course, Module, Lesson, LessonVideoAsset } from '../../types/courseTypes';
@@ -187,6 +188,7 @@ type ValidationSummary = CourseValidationSummary;
 declare global {
   interface Window {
     __huddleShowValidationIssues?: (payload?: ValidationIssuePayload, intent?: CourseValidationIntent) => void;
+    showValidationIssues?: (payload?: ValidationIssuePayload, intent?: CourseValidationIntent) => void;
   }
 }
 
@@ -276,7 +278,7 @@ type UploadStatus = 'idle' | 'uploading' | 'paused' | 'error' | 'success';
 
 const AdminCourseBuilder = () => {
   const { courseId } = useParams();
-  const { activeOrgId } = useSecureAuth();
+  const { activeOrgId, user: authUser } = useSecureAuth();
   const navigate = useNavigate();
   const isNewCourseRoute = !courseId || courseId === 'new';
   const isEditing = !isNewCourseRoute;
@@ -323,6 +325,15 @@ const AdminCourseBuilder = () => {
   const [issueTargetsState, setIssueTargetsState] = useState<IssueTargets>(() => getIssueTargetsOrEmpty());
   const [validationOverride, setValidationOverride] = useState<ValidationSummary | null>(null);
   const [highlightModuleId, setHighlightModuleId] = useState<string | null>(null);
+  const validationPanelRef = useRef<HTMLDivElement | null>(null);
+  const [validationPanelPulse, setValidationPanelPulse] = useState(false);
+  const emphasizeValidationPanel = useCallback(() => {
+    setValidationPanelPulse(true);
+    if (validationPanelRef.current) {
+      validationPanelRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    window.setTimeout(() => setValidationPanelPulse(false), 1600);
+  }, []);
   const clearValidationIssues = useCallback(() => {
     setValidationIssues([]);
     setIssueTargetsState(getIssueTargetsOrEmpty());
@@ -359,8 +370,12 @@ const AdminCourseBuilder = () => {
   );
   const presentValidationIssues = useCallback(
     (payload?: ValidationIssuePayload, intent?: CourseValidationIntent) => {
+      const preview = coerceValidationPayload(payload);
       try {
         applyValidationIssues(payload, intent);
+        if (preview.issues.length) {
+          emphasizeValidationPanel();
+        }
       } catch (error) {
         console.error('[AdminCourseBuilder] failed to present validation issues', {
           error,
@@ -372,22 +387,25 @@ const AdminCourseBuilder = () => {
           setValidationIssues(fallback.issues);
           setIssueTargetsState(fallback.issueTargets);
           setValidationModalOpen(true);
+          emphasizeValidationPanel();
         }
       }
     },
-    [applyValidationIssues, setIssueTargetsState, setValidationIssues],
+    [applyValidationIssues, emphasizeValidationPanel, setIssueTargetsState, setValidationIssues],
   );
   useEffect(() => {
     if (typeof window === 'undefined') return;
     window.__huddleShowValidationIssues = presentValidationIssues;
+    window.showValidationIssues = presentValidationIssues;
     return () => {
       if (window.__huddleShowValidationIssues === presentValidationIssues) {
         delete window.__huddleShowValidationIssues;
       }
+      if (window.showValidationIssues === presentValidationIssues) {
+        delete window.showValidationIssues;
+      }
     };
   }, [presentValidationIssues]);
-  const validationPanelRef = useRef<HTMLDivElement | null>(null);
-  const [validationPanelPulse, setValidationPanelPulse] = useState(false);
   const publishValidationIntent: CourseValidationIntent = 'publish';
   const localValidationSummary = useMemo(
     () => evaluateCourseValidation(course, publishValidationIntent),
@@ -404,6 +422,7 @@ const AdminCourseBuilder = () => {
   const hasCourseModules = (course.modules || []).length > 0;
   const publishDisabled =
     !hasCourseModules || !effectiveValidationSummary.isValid || saveStatus === 'saving';
+  const publishIssueCount = effectiveValidationSummary.issues.length;
   const publishButtonTitle = !hasCourseModules
     ? 'Add modules and lessons before publishing'
     : !effectiveValidationSummary.isValid
@@ -411,6 +430,10 @@ const AdminCourseBuilder = () => {
     : saveStatus === 'saving'
     ? 'Please wait for the current operation to finish'
     : '';
+  const publishDevHint =
+    import.meta.env.DEV && !effectiveValidationSummary.isValid && publishIssueCount > 0
+      ? `Fix ${publishIssueCount} ${publishIssueCount === 1 ? 'issue' : 'issues'}`
+      : null;
   const firstNavigableIssue = useMemo(
     () => effectiveValidationSummary.issues.find((issue) => issue.moduleId || issue.lessonId) ?? null,
     [effectiveValidationSummary.issues],
@@ -637,14 +660,6 @@ const AdminCourseBuilder = () => {
       setHighlightLessonId,
     ],
   );
-
-  const emphasizeValidationPanel = useCallback(() => {
-    setValidationPanelPulse(true);
-    if (validationPanelRef.current) {
-      validationPanelRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
-    window.setTimeout(() => setValidationPanelPulse(false), 1600);
-  }, []);
 
   const handleNextModule = useCallback(() => {
     if (!modules.length || !activeMobileModuleId) return;
@@ -979,7 +994,11 @@ const AdminCourseBuilder = () => {
           setSaveStatus('idle');
         }
       } catch (err) {
-        console.error('❌ Remote auto-sync failed:', err);
+        if (err && typeof err === 'object' && (err as any).__handledSlugConflict) {
+          console.warn('⚠️ Remote auto-sync skipped: slug conflict requires user action.');
+        } else {
+          console.error('❌ Remote auto-sync failed:', err);
+        }
         setSaveStatus('error');
         setTimeout(() => setSaveStatus('idle'), 4000);
       } finally {
@@ -1289,6 +1308,43 @@ const AdminCourseBuilder = () => {
     remoteSynced: boolean;
   };
 
+  type SlugConflictInfo = {
+    suggestion: string;
+    message: string;
+  };
+
+  const buildLocalSlugSuggestion = (value?: string | null): string => {
+    const normalized = slugify(value || '') || '';
+    if (!normalized) {
+      return `course-${Math.random().toString(36).slice(2, 8)}`;
+    }
+    const match = normalized.match(/^(.*?)-(\d+)$/);
+    if (match) {
+      const [, prefix, suffix] = match;
+      const next = Number.parseInt(suffix, 10);
+      if (Number.isFinite(next)) {
+        return `${prefix}-${next + 1}`;
+      }
+    }
+    return `${normalized}-2`;
+  };
+
+  const parseSlugConflictError = (error: unknown, fallbackSlug?: string | null): SlugConflictInfo | null => {
+    if (!(error instanceof ApiError)) return null;
+    if (error.status !== 409) return null;
+    const body = (error.body ?? {}) as Record<string, any>;
+    const code = (body?.code || body?.error) ?? null;
+    if (code !== 'slug_taken') return null;
+    const suggestionInput =
+      typeof body?.suggestion === 'string' && body.suggestion.trim().length > 0 ? body.suggestion.trim() : null;
+    const suggestion = slugify(suggestionInput || '') || buildLocalSlugSuggestion(fallbackSlug);
+    const message =
+      typeof body?.message === 'string' && body.message.trim().length > 0
+        ? body.message.trim()
+        : 'Slug is already used. Updated the slug field with a new suggestion.';
+    return { suggestion, message };
+  };
+
   const isClientGeneratedId = (value?: string | null): boolean => {
     if (!value) return true;
     return value.startsWith('course-');
@@ -1384,6 +1440,16 @@ const AdminCourseBuilder = () => {
           status,
           message: error instanceof Error ? error.message : String(error),
         });
+        const slugConflict = parseSlugConflictError(error, preparedCourse.slug);
+        if (slugConflict) {
+          const nextCourseState = { ...preparedCourse, slug: slugConflict.suggestion };
+          courseStore.saveCourse(nextCourseState, { skipRemoteSync: true });
+          setCourse(nextCourseState);
+          showToast(slugConflict.message, 'warning', 6000);
+          if (error && typeof error === 'object') {
+            (error as any).__handledSlugConflict = slugConflict;
+          }
+        }
         throw error;
       }
     } else if (!resolvedOrgId) {
@@ -1432,6 +1498,11 @@ const AdminCourseBuilder = () => {
         navigate(`/admin/course-builder/${result.course.id}`);
       }
     } catch (error) {
+      if (error && typeof error === 'object' && (error as any).__handledSlugConflict) {
+        setSaveStatus('error');
+        setTimeout(() => setSaveStatus('idle'), 5000);
+        return;
+      }
       if (error instanceof CourseValidationError) {
         console.warn('⚠️ Course validation issues:', error.issues);
         showToast('Validation failed. Resolve highlighted issues before saving.', 'warning', 5000);
@@ -1450,8 +1521,11 @@ const AdminCourseBuilder = () => {
   };
 
   const handlePublish = async () => {
+    const publishOrgId = activeOrgId ?? course.organizationId ?? null;
     const publishContext = {
       courseId: course.id,
+      orgId: publishOrgId,
+      userId: authUser?.id ?? null,
       moduleCount: course.modules?.length ?? 0,
       lessonCount: countTotalLessons(course.modules || []),
     };
@@ -1483,10 +1557,30 @@ const AdminCourseBuilder = () => {
       }
     };
 
+    const publishFailedToast = (detail: string, tone: 'success' | 'info' | 'warning' | 'error' = 'error', duration = 6000) => {
+      const message = detail ? `Publish failed. ${detail}` : 'Publish failed.';
+      showToast(message, tone, duration);
+    };
+
+    const logPublishFailure = (
+      status: number | null,
+      errorCode: string | null,
+      message: string,
+      meta: Record<string, unknown> = {},
+    ) => {
+      console.warn('[AdminCourseBuilder] publish_failure', {
+        ...publishContext,
+        status,
+        errorCode,
+        message,
+        ...meta,
+      });
+    };
+
     if (!effectiveValidationSummary.isValid) {
       logPublishGuard('warn', 'publish_blocked_local_validation', {}, effectiveValidationSummary.issues.length);
       emphasizeValidationPanel();
-      showToast('Resolve validation blockers before publishing.', 'warning', 5000);
+      publishFailedToast('Resolve validation blockers before publishing.', 'warning', 5000);
       return;
     }
 
@@ -1533,10 +1627,33 @@ const AdminCourseBuilder = () => {
         const publishVersion =
           typeof (latestPersisted as any)?.version === 'number' ? (latestPersisted as any).version : null;
 
-        await adminPublishCourse(latestPersisted.id, {
+        const publishResponse = await adminPublishCourse(latestPersisted.id, {
           version: publishVersion,
           idempotencyKey: publishIdentifiers.idempotencyKey,
         });
+
+        const remoteValidation = coerceValidationPayload(publishResponse as ValidationIssuePayload);
+        if (remoteValidation.issues.length > 0) {
+          const blockerMessage =
+            remoteValidation.issues[0]?.message ?? 'Resolve the highlighted publish blockers and try again.';
+          setStatusBanner({
+            tone: 'danger',
+            title: 'Resolve publish blockers',
+            description: blockerMessage,
+            icon: AlertTriangle,
+          });
+          logPublishFailure(422, 'validation_failed', blockerMessage, {
+            source: 'publish_response',
+            issuesCount: remoteValidation.issues.length,
+          });
+          publishFailedToast(blockerMessage, 'warning');
+          presentValidationIssues({
+            issues: remoteValidation.issues,
+            issueTargets: remoteValidation.issueTargets,
+          }, 'publish');
+          setSaveStatus('idle');
+          return;
+        }
 
         try {
           const refreshed = await loadCourseFromDatabase(latestPersisted.id, { includeDrafts: true });
@@ -1559,7 +1676,11 @@ const AdminCourseBuilder = () => {
         if (pipelineError instanceof CourseValidationError) {
           const detailCount = validationDetails?.length ?? pipelineError.issues.length ?? 0;
           logPublishGuard('warn', 'publish_validation_error', { error: pipelineError }, detailCount);
-          showToast('Validation failed. Please resolve issues before publishing.', 'warning', 5000);
+          logPublishFailure(null, 'validation_failed', pipelineError.message ?? 'Validation failed.', {
+            source: 'publish_pipeline',
+            issuesCount: detailCount,
+          });
+          publishFailedToast('Resolve validation blockers before publishing.', 'warning');
           const normalizedIssues = validationDetails ?? [];
           presentValidationIssues(
             { issues: normalizedIssues, issueTargets: buildIssueTargets(normalizedIssues) },
@@ -1585,15 +1706,31 @@ const AdminCourseBuilder = () => {
       clearValidationIssues();
       setTimeout(() => setSaveStatus('idle'), 3000);
     } catch (error) {
+      if (error && typeof error === 'object' && (error as any).__handledSlugConflict) {
+        setSaveStatus('error');
+        setTimeout(() => setSaveStatus('idle'), 5000);
+        return;
+      }
       if (error instanceof CourseValidationError) {
         logPublishGuard('warn', 'publish_validation_error', { error }, error.issues.length);
-        showToast('Validation failed. Please resolve issues before publishing.', 'warning', 5000);
+        logPublishFailure(null, 'validation_failed', error.message ?? 'Validation failed.', {
+          source: 'publish_catch',
+          issuesCount: error.issues.length,
+        });
+        publishFailedToast('Resolve validation blockers before publishing.', 'warning');
         const details = mapValidationErrorDetails(error, 'publish.validation');
         presentValidationIssues({ issues: details, issueTargets: buildIssueTargets(details) }, 'publish');
       } else if (error instanceof ApiError) {
         logPublishGuard('warn', 'publish_request_failed', { status: error.status, error });
         const responseBody = (error.body || {}) as { error?: string; code?: string; issues?: CourseValidationIssue[]; currentVersion?: number };
-        const errorCode = error.code || responseBody.code || responseBody.error;
+        const errorCode = error.code || responseBody.code || responseBody.error || null;
+        const apiErrorMessage =
+          typeof (responseBody as any)?.message === 'string'
+            ? ((responseBody as any).message as string)
+            : error.message;
+        logPublishFailure(error.status ?? null, errorCode, apiErrorMessage || 'Publish request failed.', {
+          source: 'publish_api_error',
+        });
 
         if (error.status === 409 && errorCode === 'version_conflict') {
           setStatusBanner({
@@ -1607,7 +1744,7 @@ const AdminCourseBuilder = () => {
               setStatusBanner(null);
             }
           });
-          showToast('Reload the latest draft before publishing.', 'warning', 6000);
+          publishFailedToast('Reload the latest draft before publishing.', 'warning');
         } else if (error.status === 422 && errorCode === 'validation_failed') {
           const serverValidation = parseServerValidationPayload(responseBody);
           const firstIssue = serverValidation.issues[0]?.message ?? 'Resolve the highlighted publish blockers and try again.';
@@ -1617,7 +1754,11 @@ const AdminCourseBuilder = () => {
             description: firstIssue,
             icon: AlertTriangle
           });
-          showToast('Fix the publish blockers and try again.', 'warning', 6000);
+          logPublishFailure(error.status ?? null, errorCode, firstIssue, {
+            source: 'publish_server_validation',
+            issuesCount: serverValidation.issues.length,
+          });
+          publishFailedToast('Fix the publish blockers and try again.', 'warning');
           if (serverValidation.issues.length) {
             logPublishGuard('warn', 'publish_validation_failed_server', { status: error.status }, serverValidation.issues.length);
             const serverIssues = Array.isArray(serverValidation.issues) ? serverValidation.issues : [];
@@ -1625,17 +1766,21 @@ const AdminCourseBuilder = () => {
             presentValidationIssues({ issues: serverIssues, issueTargets: serverTargets }, 'publish');
           }
         } else if (errorCode === 'idempotency_conflict') {
-          showToast('Publish request already in progress. Please wait a moment and refresh.', 'info', 4000);
+          publishFailedToast('Publish request already in progress. Please wait a moment and refresh.', 'info', 4000);
         } else {
           if (error.status === 401) {
             handleAuthRequired('publish-course');
           }
           logPublishGuard('warn', 'publish_request_failed_retryable', { status: error.status });
-          showToast(networkFallback('Unable to publish course. Please try again.'), isOffline() ? 'warning' : 'error', 5000);
+          const fallbackDetail = networkFallback('Unable to publish course. Please try again.');
+          publishFailedToast(fallbackDetail, isOffline() ? 'warning' : 'error', 5000);
         }
       } else {
         logPublishGuard('error', 'publish_unhandled_error', { error });
-        showToast(networkFallback('Unable to publish course. Please try again.'), isOffline() ? 'warning' : 'error', 5000);
+        const message = error instanceof Error ? error.message : 'Unexpected error';
+        logPublishFailure(null, 'unknown_error', message, { source: 'publish_unknown' });
+        const fallbackDetail = networkFallback('Unable to publish course. Please try again.');
+        publishFailedToast(fallbackDetail, isOffline() ? 'warning' : 'error', 5000);
       }
       setSaveStatus('error');
       setTimeout(() => setSaveStatus('idle'), 5000);
@@ -3457,6 +3602,11 @@ const AdminCourseBuilder = () => {
             >
               <CheckCircle className="h-4 w-4" />
               <span>{course.status === 'published' ? 'Update Published' : 'Publish Course'}</span>
+              {publishDevHint && (
+                <span className="text-xs font-semibold uppercase tracking-wide text-lime-100">
+                  {publishDevHint}
+                </span>
+              )}
             </button>
             <button
               onClick={() => window.open(`/courses/${course.id}`, '_blank')}

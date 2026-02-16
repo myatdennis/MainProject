@@ -32,6 +32,18 @@ devConsole.log('📍 Environment:', import.meta.env.MODE);
 devConsole.log('🔧 Supabase configured:', !!(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY));
 devConsole.log('⚙️ React version detected:', React?.version || 'unknown');
 devConsole.info('[api] Base URL resolved:', getApiBaseUrl() || '(not set)');
+const declaredBuildTag = serviceWorkerManager.getDeclaredVersionTag();
+console.info('[build] declared version tag:', declaredBuildTag);
+serviceWorkerManager
+  .getResolvedVersionTag()
+  .then((resolved) => {
+    if (resolved && resolved !== declaredBuildTag) {
+      console.info('[build] resolved service worker tag:', resolved);
+    }
+  })
+  .catch((error) => {
+    console.warn('[build] failed to resolve service worker tag', error);
+  });
 if (import.meta.env?.DEV && typeof window !== 'undefined') {
   const apiBaseForLogs = getApiBaseUrl();
   console.debug('[dev] api-context', {

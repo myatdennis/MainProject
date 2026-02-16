@@ -1,12 +1,13 @@
 import type { CourseAssignmentStatus } from './assignment';
+import type { OrganizationId, TextIdentifier } from './entityIds';
 
 // Core types for the Course Management System
 
 export interface Course {
   // Core identification
-  id: string;
+  id: TextIdentifier;
   slug?: string;
-  organizationId?: string | null;
+  organizationId?: OrganizationId | null;
   organizationName?: string | null;
   title: string;
   description: string;
@@ -81,7 +82,7 @@ export interface Course {
 }
 
 export interface Module {
-  id: string;
+  id: TextIdentifier;
   title: string;
   description: string;
   duration: string;
@@ -91,8 +92,8 @@ export interface Module {
 }
 
 export interface Chapter {
-  id: string;
-  courseId: string;
+  id: TextIdentifier;
+  courseId: TextIdentifier;
   title: string;
   description: string;
   order: number;
@@ -103,8 +104,8 @@ export interface Chapter {
 }
 
 export interface Lesson {
-  id: string;
-  chapterId?: string; // optional for backward compatibility
+  id: TextIdentifier;
+  chapterId?: TextIdentifier; // optional for backward compatibility
   title: string;
   description?: string; // optional for backward compatibility
   type: 'video' | 'text' | 'quiz' | 'interactive' | 'document' | 'scenario';
