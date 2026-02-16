@@ -37,3 +37,4 @@ server/diagnostics/
 *.log
 .env
 .env.*
+public/sw-version.json

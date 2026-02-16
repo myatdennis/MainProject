@@ -1336,6 +1336,64 @@ const getCourseOrgId = async (courseId) => {
   }
 };
 
+const MODULE_SELECT_WITH_LESSONS =
+  'id,course_id,title,description,order_index,lessons:lessons!lessons_module_id_fkey(id,module_id,title,description,type,order_index,duration_s,content_json,completion_rule_json)';
+const MODULE_SELECT_NO_LESSONS = 'id,course_id,title,description,order_index';
+
+const normalizeModuleGraph = (modules, { includeLessons = false } = {}) => {
+  if (!Array.isArray(modules)) {
+    return [];
+  }
+  return modules.map((module) => {
+    if (!includeLessons) {
+      const { lessons, ...rest } = module;
+      return rest;
+    }
+    return {
+      ...module,
+      lessons: Array.isArray(module.lessons) ? module.lessons : [],
+    };
+  });
+};
+
+const fetchModulesForCourse = async (courseId, { includeLessons = false } = {}) => {
+  if (!supabase || !courseId) return [];
+  const selectClause = includeLessons ? MODULE_SELECT_WITH_LESSONS : MODULE_SELECT_NO_LESSONS;
+  const { data, error } = await supabase
+    .from('modules')
+    .select(selectClause)
+    .eq('course_id', courseId)
+    .order('order_index', { ascending: true });
+  if (error) throw error;
+  return normalizeModuleGraph(data || [], { includeLessons });
+};
+
+const ensureCourseStructureLoaded = async (courseRecord, { includeLessons = false } = {}) => {
+  if (!courseRecord || !courseRecord.id) {
+    return courseRecord;
+  }
+  if (!supabase) {
+    if (Array.isArray(courseRecord.modules)) {
+      return { ...courseRecord, modules: normalizeModuleGraph(courseRecord.modules, { includeLessons }) };
+    }
+    return { ...courseRecord, modules: [] };
+  }
+  if (Array.isArray(courseRecord.modules)) {
+    const normalized = normalizeModuleGraph(courseRecord.modules, { includeLessons });
+    return { ...courseRecord, modules: normalized };
+  }
+  try {
+    const hydratedModules = await fetchModulesForCourse(courseRecord.id, { includeLessons });
+    return { ...courseRecord, modules: hydratedModules };
+  } catch (error) {
+    console.warn('[admin.courses] Failed to hydrate modules for course', {
+      courseId: courseRecord.id,
+      message: error?.message || error,
+    });
+    return { ...courseRecord, modules: [] };
+  }
+};
+
 const getDocumentOrgId = async (documentId) => {
   if (!documentId || !supabase) return undefined;
   try {
@@ -2661,6 +2719,27 @@ const safeArray = (value) => {
   return [];
 };
 
+const flattenLessonContentBody = (content) => {
+  if (!content || typeof content !== 'object') {
+    return {};
+  }
+  if (typeof content.body === 'object' && content.body !== null) {
+    const { body, ...rest } = content;
+    const schemaVersion =
+      rest.schema_version ??
+      body.schema_version ??
+      rest.schemaVersion ??
+      body.schemaVersion ??
+      undefined;
+    return {
+      ...rest,
+      ...body,
+      ...(schemaVersion ? { schema_version: schemaVersion } : {}),
+    };
+  }
+  return content;
+};
+
 const coerceLessonContent = (lesson) => {
   const candidate =
     lesson?.content_json ??
@@ -2670,7 +2749,7 @@ const coerceLessonContent = (lesson) => {
     null;
 
   if (candidate && typeof candidate === 'object') {
-    return candidate;
+    return flattenLessonContentBody(candidate);
   }
 
   return {};
@@ -4408,6 +4487,15 @@ app.get('/api/admin/courses', async (req, res) => {
     const { data, error, count } = await query;
     if (error) throw error;
 
+    const normalizedData = Array.isArray(data) ? data : [];
+    const responseData = includeStructure
+      ? await Promise.all(
+          normalizedData.map((courseRecord) =>
+            ensureCourseStructureLoaded(courseRecord, { includeLessons }),
+          ),
+        )
+      : normalizedData;
+
     let debugMeta = null;
     if (NODE_ENV !== 'production') {
       debugMeta = {
@@ -4428,7 +4516,7 @@ app.get('/api/admin/courses', async (req, res) => {
     }
 
     const responseBody = {
-      data,
+      data: responseData,
       pagination: {
         page,
         pageSize,
@@ -4446,6 +4534,134 @@ app.get('/api/admin/courses', async (req, res) => {
     logAdminCoursesError(req, error, 'Failed to fetch courses');
     res.status(500).json({ error: 'Unable to fetch courses' });
   }
+});
+
+app.get('/api/admin/courses/:identifier', async (req, res) => {
+  const context = requireUserContext(req, res);
+  if (!context) return;
+  const identifier = (req.params?.identifier || '').trim();
+  if (!identifier) {
+    res.status(400).json({ error: 'course_identifier_required', message: 'Provide a course id or slug.' });
+    return;
+  }
+
+  const requestedOrgId = pickOrgId(
+    req.query?.orgId,
+    req.query?.org_id,
+    req.query?.organization_id,
+    req.query?.organizationId,
+    req.body?.orgId,
+    req.body?.org_id,
+    req.body?.organization_id,
+    req.body?.organizationId,
+  );
+  const includeStructure = parseBooleanParam(req.query.includeStructure, true);
+  const includeLessons = parseBooleanParam(req.query.includeLessons, true);
+  const isPlatformAdmin = Boolean(context.isPlatformAdmin);
+  const adminOrgIds = Array.isArray(context.memberships)
+    ? context.memberships
+        .filter((membership) => String(membership.role || '').toLowerCase() === 'admin' && membership.orgId)
+        .map((membership) => normalizeOrgIdValue(membership.orgId))
+        .filter(Boolean)
+    : [];
+  const allowedOrgIdSet = new Set(adminOrgIds);
+
+  if (!isPlatformAdmin && adminOrgIds.length === 0) {
+    res.status(403).json({ error: 'org_admin_required', message: 'Admin membership required.' });
+    return;
+  }
+
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    let courseRecord = e2eStore.courses.get(identifier) || null;
+    if (!courseRecord) {
+      for (const record of e2eStore.courses.values()) {
+        if ((record.slug && String(record.slug).trim() === identifier) || record.id === identifier) {
+          courseRecord = record;
+          break;
+        }
+      }
+    }
+    if (!courseRecord) {
+      res.status(404).json({ error: 'course_not_found' });
+      return;
+    }
+    const courseOrgId = pickOrgId(
+      courseRecord.organization_id,
+      courseRecord.org_id,
+      courseRecord.organizationId,
+    );
+    if (requestedOrgId && courseOrgId && requestedOrgId !== courseOrgId) {
+      res.status(404).json({ error: 'course_not_found' });
+      return;
+    }
+    if (!isPlatformAdmin && courseOrgId && !allowedOrgIdSet.has(courseOrgId)) {
+      res.status(403).json({ error: 'org_access_denied', message: 'Organization scope not permitted' });
+      return;
+    }
+    const responseCourse = includeStructure
+      ? {
+          ...courseRecord,
+          modules: normalizeModuleGraph(courseRecord.modules || [], { includeLessons }),
+        }
+      : (() => {
+          const { modules, ...rest } = courseRecord;
+          return rest;
+        })();
+    res.json({ data: responseCourse });
+    return;
+  }
+
+  if (!ensureSupabase(res)) return;
+
+  const fetchCourseRecord = async (column, value) => {
+    const { data, error } = await supabase
+      .from('courses')
+      .select(COURSE_WITH_MODULES_LESSONS_SELECT)
+      .eq(column, value)
+      .maybeSingle();
+    if (error && error.code !== 'PGRST116') {
+      throw error;
+    }
+    return data;
+  };
+
+  let courseRecord = await fetchCourseRecord('id', identifier);
+  if (!courseRecord) {
+    courseRecord = await fetchCourseRecord('slug', identifier);
+  }
+  if (!courseRecord) {
+    res.status(404).json({ error: 'course_not_found' });
+    return;
+  }
+
+  const courseOrgId = pickOrgId(
+    courseRecord.organization_id,
+    courseRecord.org_id,
+    courseRecord.organizationId,
+  );
+  if (requestedOrgId && courseOrgId && requestedOrgId !== courseOrgId) {
+    res.status(404).json({ error: 'course_not_found' });
+    return;
+  }
+  if (!isPlatformAdmin) {
+    const targetOrgId = courseOrgId || requestedOrgId;
+    if (!targetOrgId || !allowedOrgIdSet.has(targetOrgId)) {
+      res.status(403).json({ error: 'org_access_denied', message: 'Organization scope not permitted' });
+      return;
+    }
+  }
+  if (courseOrgId) {
+    const access = await requireOrgAccess(req, res, courseOrgId, { write: false, requireOrgAdmin: true });
+    if (!access) return;
+  }
+
+  const shapedCourse = includeStructure
+    ? await ensureCourseStructureLoaded(courseRecord, { includeLessons })
+    : (() => {
+        const { modules, ...rest } = courseRecord;
+        return rest;
+      })();
+  res.json({ data: shapedCourse });
 });
 
 async function handleAdminCourseUpsert(req, res, options = {}) {
@@ -5912,7 +6128,12 @@ app.get('/api/client/courses/:identifier', async (req, res) => {
       ({ data, error } = await buildQuery('slug', identifier));
       if (error && error.code !== 'PGRST116') throw error;
     }
-    res.json({ data: data ?? null });
+    if (data) {
+      const hydrated = await ensureCourseStructureLoaded(data, { includeLessons: true });
+      res.json({ data: hydrated });
+      return;
+    }
+    res.json({ data: null });
   } catch (error) {
     console.error(`Failed to fetch course ${identifier}:`, error);
     res.status(500).json({ error: 'Unable to load course' });
@@ -10290,6 +10511,101 @@ app.delete('/api/admin/notifications/:id', async (req, res) => {
   } catch (error) {
     console.error('Failed to delete notification:', error);
     res.status(500).json({ error: 'Unable to delete notification' });
+  }
+});
+
+app.get('/api/analytics/events', optionalAuthenticate, async (req, res) => {
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  const requestedOrgId = pickOrgId(
+    req.query?.orgId,
+    req.query?.org_id,
+    req.query?.organizationId,
+    req.query?.organization_id,
+    getHeaderOrgId(req),
+    req.activeOrgId,
+  );
+  const resolvedOrgIds = new Set(
+    requestedOrgId
+      ? [requestedOrgId]
+      : context.isPlatformAdmin
+      ? []
+      : (context.organizationIds || []).map((orgId) => normalizeOrgIdValue(orgId)).filter(Boolean),
+  );
+  const limitParam = Number.parseInt(String(req.query?.limit ?? ''), 10);
+  const limit = clampNumber(Number.isNaN(limitParam) ? 50 : limitParam, 1, 500);
+  const sinceParam = req.query?.since ? String(req.query.since) : null;
+  const sinceIso = (() => {
+    if (!sinceParam) return null;
+    const ms = Date.parse(sinceParam);
+    return Number.isNaN(ms) ? null : new Date(ms).toISOString();
+  })();
+
+  const filterEventByOrg = (orgId) => {
+    if (!resolvedOrgIds.size) return true;
+    if (!orgId) return false;
+    return resolvedOrgIds.has(orgId);
+  };
+
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    const events = Array.isArray(e2eStore.analyticsEvents) ? e2eStore.analyticsEvents : [];
+    const filtered = events.filter((event) => {
+      const eventOrgId = pickOrgId(event.org_id, event.organization_id, event.orgId);
+      if (!filterEventByOrg(eventOrgId)) {
+        return false;
+      }
+      if (!sinceIso) {
+        return true;
+      }
+      const ts = event.created_at || event.timestamp;
+      return ts ? Date.parse(ts) >= Date.parse(sinceIso) : false;
+    });
+    res.json({
+      data: filtered.slice(0, limit),
+      pagination: { limit, hasMore: filtered.length > limit },
+      demo: true,
+    });
+    return;
+  }
+
+  if (!ensureSupabase(res)) return;
+
+  if (!context.isPlatformAdmin && !resolvedOrgIds.size) {
+    res.json({ data: [], pagination: { limit, hasMore: false }, reason: 'org_scope_required' });
+    return;
+  }
+
+  try {
+    let query = supabase
+      .from('analytics_events')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (resolvedOrgIds.size === 1) {
+      query = query.eq('org_id', Array.from(resolvedOrgIds)[0]);
+    } else if (resolvedOrgIds.size > 1) {
+      query = query.in('org_id', Array.from(resolvedOrgIds));
+    }
+
+    if (sinceIso) {
+      query = query.gte('created_at', sinceIso);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    const rows = Array.isArray(data) ? data : [];
+    res.json({
+      data: rows,
+      pagination: { limit, hasMore: rows.length === limit },
+    });
+  } catch (error) {
+    console.error('[analytics.events] fetch_failed', {
+      requestId: req.requestId,
+      message: error?.message || error,
+    });
+    res.status(500).json({ error: 'Unable to fetch analytics events' });
   }
 });
 

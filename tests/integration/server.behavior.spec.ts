@@ -66,6 +66,61 @@ describe('Server demo-mode behavior', () => {
     expect(clientSlugs).toContain(slug);
   }, 20000);
 
+  it('returns nested modules and lessons from the admin course detail endpoint', async () => {
+    const slug = `detail-${randomUUID()}`;
+    const createRes = await server!.fetch('/api/admin/courses', {
+      method: 'POST',
+      headers: await adminContextHeaders(),
+      body: JSON.stringify({
+        course: {
+          title: `Course ${slug}`,
+          slug,
+        },
+        modules: [
+          {
+            title: 'Module 1',
+            description: 'Demo module',
+            lessons: [
+              {
+                title: 'Lesson 1',
+                type: 'text',
+                content: { textContent: 'Some body content' },
+              },
+            ],
+          },
+        ],
+      }),
+    });
+    expect([200, 201]).toContain(createRes.status);
+    const createdJson = await createRes.json();
+    const courseId = createdJson.data?.id;
+    expect(courseId).toBeTruthy();
+
+    const detailRes = await server!.fetch(`/api/admin/courses/${courseId}`, {
+      headers: await adminContextHeaders(),
+    });
+    expect(detailRes.status).toBe(200);
+    const detailJson = await detailRes.json();
+    expect(Array.isArray(detailJson.data?.modules)).toBe(true);
+    expect(detailJson.data.modules[0]?.lessons).toHaveLength(1);
+
+    const listRes = await server!.fetch('/api/admin/courses?includeStructure=true&includeLessons=true', {
+      headers: await adminContextHeaders(),
+    });
+    expect(listRes.status).toBe(200);
+    const listJson = await listRes.json();
+    const hydrated = (listJson.data || []).find((course: any) => course.id === courseId);
+    expect(hydrated).toBeTruthy();
+    expect(Array.isArray(hydrated.modules)).toBe(true);
+    expect(hydrated.modules[0]?.lessons).toHaveLength(1);
+
+    const clientDetail = await server!.fetch(`/api/client/courses/${courseId}?includeDrafts=true`);
+    expect(clientDetail.status).toBe(200);
+    const clientJson = await clientDetail.json();
+    expect(Array.isArray(clientJson.data?.modules)).toBe(true);
+    expect(clientJson.data.modules[0]?.lessons).toHaveLength(1);
+  }, 20000);
+
   it('rejects admin course creation when no auth token is provided', async () => {
     const res = await server!.fetch('/api/admin/courses', {
       method: 'POST',

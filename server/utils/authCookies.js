@@ -138,43 +138,37 @@ const setCookie = (res, name, value, maxAgeMs, req, opts = {}) => {
   res.cookie(name, value, options);
 };
 
-const baseCookieOptions = () => {
-  const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production';
-  const options = {
-    httpOnly: true,
-    secure: isProduction,
-    sameSite: isProduction ? 'none' : 'lax',
-    path: '/',
+const applyCookie = (req, res, name, value, maxAgeSeconds, overrides = {}) => {
+  const request = req || res.req || null;
+  const baseOptions = getCookieOptions(request || undefined, { httpOnly: overrides.httpOnly ?? true, name });
+  const merged = {
+    ...baseOptions,
+    ...overrides,
+    maxAge: Math.max(1000, Math.trunc(maxAgeSeconds * 1000)),
   };
-  if (isProduction && COOKIE_DOMAIN) {
-    options.domain = COOKIE_DOMAIN;
+  if (merged.sameSite === 'none' && !merged.secure) {
+    merged.secure = true;
   }
-  return options;
+  res.cookie(name, value, merged);
 };
 
-const applyCookie = (res, name, value, maxAgeSeconds) => {
-  const options = { ...baseCookieOptions(), maxAge: Math.max(0, Math.trunc(maxAgeSeconds * 1000)) };
-  res.cookie(name, value, options);
-};
-
-export const setAuthCookies = (res, { accessToken, refreshToken }) => {
+export const setAuthCookies = (req, res, { accessToken, refreshToken }) => {
   if (typeof accessToken === 'string') {
-    applyCookie(res, ACCESS_TOKEN_COOKIE, accessToken, ACCESS_TOKEN_TTL_SECONDS);
+    applyCookie(req, res, ACCESS_TOKEN_COOKIE, accessToken, ACCESS_TOKEN_TTL_SECONDS);
   }
   if (typeof refreshToken === 'string') {
-    applyCookie(res, REFRESH_TOKEN_COOKIE, refreshToken, REFRESH_TOKEN_TTL_SECONDS);
+    applyCookie(req, res, REFRESH_TOKEN_COOKIE, refreshToken, REFRESH_TOKEN_TTL_SECONDS);
   }
 };
 
-export const attachAuthCookies = (_req, res, tokens) => {
-  setAuthCookies(res, tokens);
+export const attachAuthCookies = (req, res, tokens) => {
+  setAuthCookies(req, res, tokens);
 };
 
-export const clearAuthCookies = (...args) => {
-  const res = args.length === 2 ? args[1] : args[0];
-  applyCookie(res, ACCESS_TOKEN_COOKIE, '', 0);
-  applyCookie(res, REFRESH_TOKEN_COOKIE, '', 0);
-  applyCookie(res, ACTIVE_ORG_COOKIE, '', 0);
+export const clearAuthCookies = (req, res) => {
+  applyCookie(req, res, ACCESS_TOKEN_COOKIE, '', 0);
+  applyCookie(req, res, REFRESH_TOKEN_COOKIE, '', 0);
+  applyCookie(req, res, ACTIVE_ORG_COOKIE, '', 0);
 };
 
 
@@ -190,10 +184,10 @@ export const getActiveOrgFromRequest = (req) => {
 export const setActiveOrgCookie = (req, res, orgId) => {
   const value = orgId ? String(orgId).trim() : '';
   if (!value) {
-    applyCookie(res, ACTIVE_ORG_COOKIE, '', 0);
+    applyCookie(req, res, ACTIVE_ORG_COOKIE, '', 0);
     return;
   }
-  applyCookie(res, ACTIVE_ORG_COOKIE, value, REFRESH_TOKEN_TTL_SECONDS);
+  applyCookie(req, res, ACTIVE_ORG_COOKIE, value, REFRESH_TOKEN_TTL_SECONDS);
 };
 
 export const authCookieNames = {

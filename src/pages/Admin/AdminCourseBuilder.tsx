@@ -16,7 +16,8 @@ import { computeCourseDiff } from '../../utils/courseDiff';
 // import type { NormalizedCourse } from '../../utils/courseNormalization';
 import { mergePersistedCourse } from '../../utils/adminCourseMerge';
 import type { Course, Module, Lesson, LessonVideoAsset } from '../../types/courseTypes';
-import { validateCourse, type CourseValidationIntent, type CourseValidationIssue } from '../../validation/courseValidation';
+import { type CourseValidationIntent, type CourseValidationIssue } from '../../validation/courseValidation';
+import { getCourseValidationSummary, type CourseValidationSummary } from '../../validation/courseValidationSummary';
 import { getUserSession } from '../../lib/secureStorage';
 import { ApiError } from '../../utils/apiClient';
 import { getVideoEmbedUrl } from '../../utils/videoUtils';
@@ -74,7 +75,8 @@ import { getDraftSnapshot, deleteDraftSnapshot, markDraftSynced, type DraftSnaps
 import { evaluateRuntimeGate, type RuntimeGateResult, type GateMode, type RuntimeAction } from '../../utils/runtimeGating';
 import { createActionIdentifiers, type IdempotentAction } from '../../utils/idempotency';
 import { cloneWithCanonicalOrgId, resolveOrgIdFromCarrier, stampCanonicalOrgId } from '../../utils/orgFieldUtils';
-import { buildIssueTargets } from '../../utils/validationIssues';
+import { buildIssueTargets, getIssueTargetsOrEmpty } from '../../utils/validationIssues';
+import type { IssueTargets } from '../../utils/validationIssues';
 
 const buildUploadKey = (moduleId: string, lessonId: string) => `${moduleId}::${lessonId}`;
 const parseUploadKey = (key: string) => {
@@ -157,6 +159,104 @@ const inferDocumentType = (fileName?: string): Lesson['content']['documentType']
   return 'document';
 };
 
+type RemoteIssueMap =
+  | Map<string, CourseValidationIssue[]>
+  | Record<string, CourseValidationIssue[]>
+  | Array<[string, CourseValidationIssue[]]>;
+
+type RemoteIssueTargets =
+  | IssueTargets
+  | {
+      moduleMap?: RemoteIssueMap | null;
+      lessonMap?: RemoteIssueMap | null;
+    }
+  | null
+  | undefined;
+
+type ValidationIssuePayload =
+  | CourseValidationIssue[]
+  | {
+      issues?: CourseValidationIssue[] | null;
+      issueTargets?: RemoteIssueTargets | null;
+    }
+  | null
+  | undefined;
+
+type ValidationSummary = CourseValidationSummary;
+
+declare global {
+  interface Window {
+    __huddleShowValidationIssues?: (payload?: ValidationIssuePayload, intent?: CourseValidationIntent) => void;
+  }
+}
+
+const toIssueMap = (input?: RemoteIssueMap | null): Map<string, CourseValidationIssue[]> => {
+  if (!input) return new Map();
+  if (input instanceof Map) return new Map(input);
+  if (Array.isArray(input)) {
+    return new Map(
+      input
+        .filter((entry): entry is [string, CourseValidationIssue[]] => Array.isArray(entry) && typeof entry[0] === 'string')
+        .map(([key, value]) => [key, Array.isArray(value) ? value : []]),
+    );
+  }
+  return new Map(
+    Object.entries(input).map(([key, value]) => [key, Array.isArray(value) ? value : []]),
+  );
+};
+
+const normalizeIssueTargetsPayload = (targets?: RemoteIssueTargets): IssueTargets => {
+  if (!targets) {
+    return getIssueTargetsOrEmpty();
+  }
+
+  const moduleMap = toIssueMap((targets as IssueTargets)?.moduleMap ?? (targets as Record<string, any>)?.moduleMap);
+  const lessonMap = toIssueMap((targets as IssueTargets)?.lessonMap ?? (targets as Record<string, any>)?.lessonMap);
+
+  if (moduleMap.size === 0 && lessonMap.size === 0) {
+    return getIssueTargetsOrEmpty();
+  }
+
+  return { moduleMap, lessonMap };
+};
+
+const mapValidationErrorDetails = (error: CourseValidationError, prefix: string): CourseValidationIssue[] => {
+  if (Array.isArray(error.details) && error.details.length > 0) {
+    return error.details;
+  }
+  return error.issues.map((message, index) => ({
+    code: `${prefix}.${index}`,
+    message,
+    severity: 'error' as const,
+  }));
+};
+
+const parseServerValidationPayload = (
+  payload: unknown,
+): { issues: CourseValidationIssue[]; issueTargets: IssueTargets } => {
+  if (!payload || typeof payload !== 'object') {
+    return { issues: [], issueTargets: getIssueTargetsOrEmpty() };
+  }
+  const body = payload as Record<string, unknown>;
+  const nested = typeof body.result === 'object' && body.result !== null ? (body.result as Record<string, unknown>) : null;
+  const issues = Array.isArray(body.issues)
+    ? (body.issues as CourseValidationIssue[])
+    : nested && Array.isArray(nested.issues)
+    ? (nested.issues as CourseValidationIssue[])
+    : [];
+  const issueTargets =
+    (body.issueTargets as RemoteIssueTargets) ??
+    (nested?.issueTargets as RemoteIssueTargets) ??
+    null;
+  return {
+    issues,
+    issueTargets: normalizeIssueTargetsPayload(issueTargets),
+  };
+};
+
+const evaluateCourseValidation = (course: Course, intent: CourseValidationIntent): ValidationSummary =>
+  getCourseValidationSummary(course, intent);
+
 
 
 type UploadStatus = 'idle' | 'uploading' | 'paused' | 'error' | 'success';
@@ -207,7 +307,106 @@ const AdminCourseBuilder = () => {
   const [validationIssues, setValidationIssues] = useState<CourseValidationIssue[]>([]);
   const [isValidationModalOpen, setValidationModalOpen] = useState(false);
   const [activeValidationIntent, setActiveValidationIntent] = useState<CourseValidationIntent>('draft');
-  const issueTargets = useMemo(() => buildIssueTargets(validationIssues), [validationIssues]);
+  const [issueTargetsState, setIssueTargetsState] = useState<IssueTargets>(() => getIssueTargetsOrEmpty());
+  const [validationOverride, setValidationOverride] = useState<ValidationSummary | null>(null);
+  const [highlightModuleId, setHighlightModuleId] = useState<string | null>(null);
+  const clearValidationIssues = useCallback(() => {
+    setValidationIssues([]);
+    setIssueTargetsState(getIssueTargetsOrEmpty());
+    setValidationModalOpen(false);
+    setActiveValidationIntent('draft');
+    setValidationOverride(null);
+  }, [setActiveValidationIntent, setIssueTargetsState, setValidationIssues, setValidationModalOpen]);
+  const applyValidationIssues = useCallback(
+    (payload?: ValidationIssuePayload, _intent?: CourseValidationIntent) => {
+      const normalizedIssues = Array.isArray(payload) ? payload : payload?.issues ?? [];
+      if (!normalizedIssues.length) {
+        clearValidationIssues();
+        return;
+      }
+      const providedTargets = Array.isArray(payload) ? null : payload?.issueTargets;
+      const nextTargets = providedTargets
+        ? normalizeIssueTargetsPayload(providedTargets)
+        : buildIssueTargets(normalizedIssues);
+      setValidationIssues(normalizedIssues);
+      setIssueTargetsState(nextTargets);
+      setActiveValidationIntent(_intent ?? 'draft');
+      setValidationModalOpen(true);
+      setValidationOverride({
+        intent: _intent ?? 'draft',
+        isValid: normalizedIssues.length === 0,
+        issues: normalizedIssues,
+        issueTargets: nextTargets,
+      });
+    },
+    [
+      clearValidationIssues,
+      setActiveValidationIntent,
+      setIssueTargetsState,
+      setValidationIssues,
+      setValidationModalOpen,
+      setValidationOverride,
+    ],
+  );
+  const showValidationIssues = useCallback(
+    (payload?: ValidationIssuePayload, intent?: CourseValidationIntent) => {
+      try {
+        applyValidationIssues(payload, intent);
+      } catch (error) {
+        console.error('[AdminCourseBuilder] failed to present validation issues', {
+          error,
+          intent,
+          hasPayload: Boolean(payload),
+        });
+      }
+    },
+    [applyValidationIssues],
+  );
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    window.__huddleShowValidationIssues = showValidationIssues;
+    return () => {
+      if (window.__huddleShowValidationIssues === showValidationIssues) {
+        delete window.__huddleShowValidationIssues;
+      }
+    };
+  }, [showValidationIssues]);
+  const validationPanelRef = useRef<HTMLDivElement | null>(null);
+  const [validationPanelPulse, setValidationPanelPulse] = useState(false);
+  const publishValidationIntent: CourseValidationIntent = 'publish';
+  const localValidationSummary = useMemo(
+    () => evaluateCourseValidation(course, publishValidationIntent),
+    [course, publishValidationIntent],
+  );
+  const effectiveValidationSummary = validationOverride ?? localValidationSummary;
+  const effectiveIssueTargets = validationOverride?.issueTargets ?? localValidationSummary.issueTargets;
+  const visibleIssueTargets = useMemo(() => {
+    if (isValidationModalOpen && validationIssues.length > 0) {
+      return issueTargetsState;
+    }
+    return effectiveIssueTargets;
+  }, [isValidationModalOpen, issueTargetsState, effectiveIssueTargets, validationIssues.length]);
+  const hasCourseModules = (course.modules || []).length > 0;
+  const publishDisabled =
+    !hasCourseModules || !effectiveValidationSummary.isValid || saveStatus === 'saving';
+  const publishButtonTitle = !hasCourseModules
+    ? 'Add modules and lessons before publishing'
+    : !effectiveValidationSummary.isValid
+    ? 'Resolve validation issues before publishing'
+    : saveStatus === 'saving'
+    ? 'Please wait for the current operation to finish'
+    : '';
+  const firstNavigableIssue = useMemo(
+    () => effectiveValidationSummary.issues.find((issue) => issue.moduleId || issue.lessonId) ?? null,
+    [effectiveValidationSummary.issues],
+  );
+  const blockingIssueCount = useMemo(
+    () => effectiveValidationSummary.issues.filter((issue) => issue.severity === 'error').length,
+    [effectiveValidationSummary.issues],
+  );
+  useEffect(() => {
+    setValidationOverride(null);
+  }, [course]);
   const requestCourseReload = useCallback(() => {
     lastLoadedCourseIdRef.current = null;
     draftCheckIdRef.current = null;
@@ -368,6 +567,68 @@ const AdminCourseBuilder = () => {
     } else {
       console.info(`[AdminCourseBuilder] ${event}`);
     }
+  }, []);
+
+  const findModuleIdForLesson = useCallback(
+    (lessonId?: string | null): string | null => {
+      if (!lessonId) return null;
+      const modules = course.modules || [];
+      for (const module of modules) {
+        if (module.lessons?.some((lesson) => lesson.id === lessonId)) {
+          return module.id;
+        }
+      }
+      return null;
+    },
+    [course.modules],
+  );
+
+  const focusValidationIssue = useCallback(
+    (issue: CourseValidationIssue) => {
+      const moduleId = issue.moduleId ?? findModuleIdForLesson(issue.lessonId);
+      if (moduleId) {
+        setExpandedModules((prev) => ({ ...prev, [moduleId]: true }));
+        if (isMobile) {
+          setActiveMobileModuleId(moduleId);
+        }
+        setHighlightModuleId(moduleId);
+        window.setTimeout(() => {
+          setHighlightModuleId((current) => (current === moduleId ? null : current));
+        }, 2000);
+        requestAnimationFrame(() => {
+          const moduleEl = document.getElementById(`module-${moduleId}`);
+          moduleEl?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+      }
+
+      if (issue.lessonId && moduleId) {
+        setEditingLesson({ moduleId, lessonId: issue.lessonId });
+        setHighlightLessonId(issue.lessonId);
+        window.setTimeout(() => {
+          setHighlightLessonId((current) => (current === issue.lessonId ? null : current));
+        }, 2000);
+        window.setTimeout(() => {
+          const lessonEl = document.getElementById(`lesson-${issue.lessonId}`);
+          lessonEl?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 120);
+      }
+    },
+    [
+      findModuleIdForLesson,
+      isMobile,
+      setActiveMobileModuleId,
+      setEditingLesson,
+      setExpandedModules,
+      setHighlightLessonId,
+    ],
+  );
+
+  const emphasizeValidationPanel = useCallback(() => {
+    setValidationPanelPulse(true);
+    if (validationPanelRef.current) {
+      validationPanelRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    window.setTimeout(() => setValidationPanelPulse(false), 1600);
   }, []);
 
   const handleNextModule = useCallback(() => {
@@ -1069,15 +1330,16 @@ const AdminCourseBuilder = () => {
     if (!skipValidation) {
       const validationIntent: CourseValidationIntent =
         intentOverride ?? (preparedCourse.status === 'published' ? 'publish' : 'draft');
-      const validation = validateCourse(preparedCourse, {
-        intent: validationIntent,
-      });
-      if (!validation.isValid) {
-        const blockingIssues = validation.issues
+      const validationSummary = evaluateCourseValidation(preparedCourse, validationIntent);
+      if (!validationSummary.isValid) {
+        const blockingIssues = validationSummary.issues
           .filter((issue) => issue.severity === 'error')
           .map((issue) => issue.message);
-        showValidationIssues(validation.issues, validationIntent);
-        throw new CourseValidationError('course', blockingIssues, validation.issues);
+        showValidationIssues(
+          { issues: validationSummary.issues, issueTargets: validationSummary.issueTargets },
+          validationIntent,
+        );
+        throw new CourseValidationError('course', blockingIssues, validationSummary.issues);
       }
     }
 
@@ -1140,8 +1402,7 @@ const AdminCourseBuilder = () => {
         setLastSaveTime(new Date());
         setHasPendingChanges(false);
         showToast('Draft synced to your Huddle workspace.', 'success');
-        setValidationIssues([]);
-        setValidationModalOpen(false);
+        clearValidationIssues();
         setTimeout(() => setSaveStatus('idle'), 3000);
       } else {
         setSaveStatus('idle');
@@ -1159,14 +1420,8 @@ const AdminCourseBuilder = () => {
       if (error instanceof CourseValidationError) {
         console.warn('⚠️ Course validation issues:', error.issues);
         showToast('Validation failed. Resolve highlighted issues before saving.', 'warning', 5000);
-        const details =
-          error.details ||
-          error.issues.map((message, index) => ({
-            code: `local.validation.${index}`,
-            message,
-            severity: 'error' as const,
-          }));
-        showValidationIssues(details, 'draft');
+        const details = mapValidationErrorDetails(error, 'local.validation');
+        showValidationIssues({ issues: details, issueTargets: buildIssueTargets(details) }, 'draft');
       } else {
         console.error('❌ Error saving course:', error);
         if (error instanceof ApiError && error.status === 401) {
@@ -1180,6 +1435,46 @@ const AdminCourseBuilder = () => {
   };
 
   const handlePublish = async () => {
+    const publishContext = {
+      courseId: course.id,
+      moduleCount: course.modules?.length ?? 0,
+      lessonCount: countTotalLessons(course.modules || []),
+    };
+    let publishIdentifiers: { idempotencyKey: string; clientRequestId: string } | null = null;
+    const getPublishTelemetry = (issuesCount = 0, requestIdOverride: string | null = null) => ({
+      ...publishContext,
+      issuesCount,
+      requestId: requestIdOverride ?? publishIdentifiers?.clientRequestId ?? null,
+    });
+    const logPublishGuard = (
+      level: 'info' | 'warn' | 'error',
+      event: string,
+      meta: Record<string, unknown> = {},
+      issuesCountOverride?: number,
+    ) => {
+      const requestId =
+        typeof meta.requestId === 'string' ? (meta.requestId as string) : null;
+      const payload = {
+        event,
+        ...getPublishTelemetry(issuesCountOverride ?? 0, requestId),
+        ...meta,
+      };
+      if (level === 'error') {
+        console.error(`[AdminCourseBuilder] ${event}`, payload);
+      } else if (level === 'warn') {
+        console.warn(`[AdminCourseBuilder] ${event}`, payload);
+      } else {
+        console.info(`[AdminCourseBuilder] ${event}`, payload);
+      }
+    };
+
+    if (!effectiveValidationSummary.isValid) {
+      logPublishGuard('warn', 'publish_blocked_local_validation', {}, effectiveValidationSummary.issues.length);
+      emphasizeValidationPanel();
+      showToast('Resolve validation blockers before publishing.', 'warning', 5000);
+      return;
+    }
+
     setSaveStatus('saving');
     setStatusBanner(null);
 
@@ -1199,65 +1494,89 @@ const AdminCourseBuilder = () => {
 
       const preparedCourse = {
         ...course,
-        lastUpdated: new Date().toISOString()
+        lastUpdated: new Date().toISOString(),
       };
 
-      const { course: persistedCourse, remoteSynced } = await persistCourse(preparedCourse, {
-        intentOverride: 'publish',
-        statusOverride: 'published',
-        gate,
-        action: 'course.publish',
-      });
-
-      if (!remoteSynced) {
-        showToast('Unable to reach Supabase. Publishing will resume once we reconnect.', 'warning', 6000);
-        setSaveStatus('idle');
-        return;
-      }
-
-      const latestPersisted = lastPersistedRef.current || persistedCourse;
-      const publishIdentifiers = createActionIdentifiers('course.publish', { courseId: latestPersisted.id });
-      const publishVersion = typeof (latestPersisted as any)?.version === 'number'
-        ? (latestPersisted as any).version
-        : null;
-
-      await adminPublishCourse(latestPersisted.id, {
-        version: publishVersion,
-        idempotencyKey: publishIdentifiers.idempotencyKey
-      });
+      let latestPersisted: Course | null = null;
 
       try {
-        const refreshed = await loadCourseFromDatabase(latestPersisted.id, { includeDrafts: true });
-        if (refreshed) {
-          courseStore.saveCourse(refreshed as Course, { skipRemoteSync: true });
-          setCourse(refreshed as Course);
-          lastPersistedRef.current = refreshed as Course;
+        const { course: persistedCourse, remoteSynced } = await persistCourse(preparedCourse, {
+          intentOverride: 'publish',
+          statusOverride: 'published',
+          gate,
+          action: 'course.publish',
+        });
+
+        if (!remoteSynced) {
+          showToast('Unable to reach Supabase. Publishing will resume once we reconnect.', 'warning', 6000);
+          setSaveStatus('idle');
+          return;
         }
-      } catch (refreshErr) {
-        console.warn('Failed to reload course after publish', refreshErr);
+
+        latestPersisted = lastPersistedRef.current || persistedCourse;
+        publishIdentifiers = createActionIdentifiers('course.publish', { courseId: latestPersisted.id });
+        const publishVersion =
+          typeof (latestPersisted as any)?.version === 'number' ? (latestPersisted as any).version : null;
+
+        await adminPublishCourse(latestPersisted.id, {
+          version: publishVersion,
+          idempotencyKey: publishIdentifiers.idempotencyKey,
+        });
+
+        try {
+          const refreshed = await loadCourseFromDatabase(latestPersisted.id, { includeDrafts: true });
+          if (refreshed) {
+            courseStore.saveCourse(refreshed as Course, { skipRemoteSync: true });
+            setCourse(refreshed as Course);
+            lastPersistedRef.current = refreshed as Course;
+            latestPersisted = refreshed as Course;
+          }
+        } catch (refreshErr) {
+          console.warn('Failed to reload course after publish', refreshErr);
+        }
+      } catch (pipelineError) {
+        const validationDetails =
+          pipelineError instanceof CourseValidationError
+            ? mapValidationErrorDetails(pipelineError, 'publish.validation')
+            : null;
+        logPublishGuard('warn', 'publish_pipeline_failed', { error: pipelineError }, validationDetails?.length ?? 0);
+
+        if (pipelineError instanceof CourseValidationError) {
+          const detailCount = validationDetails?.length ?? pipelineError.issues.length ?? 0;
+          logPublishGuard('warn', 'publish_validation_error', { error: pipelineError }, detailCount);
+          showToast('Validation failed. Please resolve issues before publishing.', 'warning', 5000);
+          const normalizedIssues = validationDetails ?? [];
+          showValidationIssues(
+            { issues: normalizedIssues, issueTargets: buildIssueTargets(normalizedIssues) },
+            'publish',
+          );
+          setSaveStatus('error');
+          setTimeout(() => setSaveStatus('idle'), 5000);
+          return;
+        }
+
+        throw pipelineError;
+      }
+
+      if (!latestPersisted) {
+        return;
       }
 
       setSaveStatus('saved');
       setLastSaveTime(new Date());
       setHasPendingChanges(false);
       showToast('Course published to learners via Huddle.', 'success');
-      setValidationIssues([]);
-      setValidationModalOpen(false);
+      logPublishGuard('info', 'publish_complete');
+      clearValidationIssues();
       setTimeout(() => setSaveStatus('idle'), 3000);
     } catch (error) {
       if (error instanceof CourseValidationError) {
-        console.warn('⚠️ Course validation issues:', error.issues);
+        logPublishGuard('warn', 'publish_validation_error', { error }, error.issues.length);
         showToast('Validation failed. Please resolve issues before publishing.', 'warning', 5000);
-        const details =
-          error.details ||
-          error.issues.map((message, index) => ({
-            code: `publish.validation.${index}`,
-            message,
-            severity: 'error' as const,
-          }));
-        showValidationIssues(details, 'publish');
+        const details = mapValidationErrorDetails(error, 'publish.validation');
+        showValidationIssues({ issues: details, issueTargets: buildIssueTargets(details) }, 'publish');
       } else if (error instanceof ApiError) {
-        console.warn('Publish request failed', error);
+        logPublishGuard('warn', 'publish_request_failed', { status: error.status, error });
         const responseBody = (error.body || {}) as { error?: string; code?: string; issues?: CourseValidationIssue[]; currentVersion?: number };
         const errorCode = error.code || responseBody.code || responseBody.error;
 
@@ -1275,8 +1594,8 @@ const AdminCourseBuilder = () => {
           });
           showToast('Reload the latest draft before publishing.', 'warning', 6000);
         } else if (error.status === 422 && errorCode === 'validation_failed') {
-          const issues = Array.isArray(responseBody.issues) ? responseBody.issues : [];
-          const firstIssue = issues[0]?.message ?? 'Resolve the highlighted publish blockers and try again.';
+          const serverValidation = parseServerValidationPayload(responseBody);
+          const firstIssue = serverValidation.issues[0]?.message ?? 'Resolve the highlighted publish blockers and try again.';
           setStatusBanner({
             tone: 'danger',
             title: 'Resolve publish blockers',
@@ -1284,8 +1603,11 @@ const AdminCourseBuilder = () => {
             icon: AlertTriangle
           });
           showToast('Fix the publish blockers and try again.', 'warning', 6000);
-          if (issues.length) {
-            showValidationIssues(issues, 'publish');
+          if (serverValidation.issues.length) {
+            logPublishGuard('warn', 'publish_validation_failed_server', { status: error.status }, serverValidation.issues.length);
+            const serverIssues = Array.isArray(serverValidation.issues) ? serverValidation.issues : [];
+            const serverTargets = serverValidation.issueTargets ?? getIssueTargetsOrEmpty();
+            showValidationIssues({ issues: serverIssues, issueTargets: serverTargets }, 'publish');
           }
         } else if (errorCode === 'idempotency_conflict') {
           showToast('Publish request already in progress. Please wait a moment and refresh.', 'info', 4000);
@@ -1293,10 +1615,11 @@ const AdminCourseBuilder = () => {
           if (error.status === 401) {
             handleAuthRequired('publish-course');
           }
+          logPublishGuard('warn', 'publish_request_failed_retryable', { status: error.status });
           showToast(networkFallback('Unable to publish course. Please try again.'), isOffline() ? 'warning' : 'error', 5000);
         }
       } else {
-        console.error('❌ Error publishing course:', error);
+        logPublishGuard('error', 'publish_unhandled_error', { error });
         showToast(networkFallback('Unable to publish course. Please try again.'), isOffline() ? 'warning' : 'error', 5000);
       }
       setSaveStatus('error');
@@ -1744,7 +2067,7 @@ const AdminCourseBuilder = () => {
                   >
                     {lesson.title}
                   </h4>
-                  <LessonIssueTag issueTargets={issueTargets} lessonId={lesson.id} />
+                  <LessonIssueTag issueTargets={visibleIssueTargets} lessonId={lesson.id} />
                 </div>
               )}
               <div className="flex items-center space-x-4 text-sm text-gray-600">
@@ -2604,16 +2927,22 @@ const AdminCourseBuilder = () => {
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Main Content</label>
                 <textarea
-                  value={lesson.content.content || ''}
-                  onChange={(e) => updateLesson(moduleId, lesson.id, {
-                    content: { ...lesson.content, content: e.target.value }
-                  })}
+                  value={lesson.content.textContent ?? lesson.content.content ?? ''}
+                  onChange={(e) =>
+                    updateLesson(moduleId, lesson.id, {
+                      content: {
+                        ...lesson.content,
+                        content: e.target.value,
+                        textContent: e.target.value,
+                      },
+                    })
+                  }
                   rows={6}
                   placeholder="Enter the main content, reading material, or instructions..."
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  This content will be displayed to learners. You can include instructions, reading material, or reflection prompts.
+                  This content will be displayed to learners. Modules can publish with text-only lessons as long as this section includes the learner-facing material.
                 </p>
               </div>
 
@@ -3007,35 +3336,24 @@ const AdminCourseBuilder = () => {
             <p className="text-gray-600">
               {isEditing ? `Editing: ${course.title}` : 'Build a comprehensive learning experience'}
             </p>
-            {isEditing && (() => {
-              const validation = validateCourse(course, {
-                intent: course.status === 'published' ? 'publish' : 'draft',
-              });
-              const blockingIssues = validation.issues.filter((issue) => issue.severity === 'error');
-              return (
-                <div className={`mt-2 px-3 py-2 rounded-lg text-sm ${
-                  validation.isValid 
-                    ? 'bg-green-50 text-green-700 border border-green-200' 
-                    : 'bg-yellow-50 text-yellow-700 border border-yellow-200'
-                }`}>
-                  {validation.isValid ? (
-                    <span>✅ Course is valid and ready to publish</span>
-                  ) : (
-                    <div>
-                      <span>⚠️ {blockingIssues.length} validation issue(s):</span>
-                      <ul className="mt-1 text-xs">
-                        {blockingIssues.slice(0, 3).map((issue, index) => (
-                          <li key={`${issue.code}-${index}`}>• {issue.message}</li>
-                        ))}
-                        {blockingIssues.length > 3 && (
-                          <li>• ... and {blockingIssues.length - 3} more</li>
-                        )}
-                      </ul>
-                    </div>
-                  )}
-                </div>
-              );
-            })()}
+            {isEditing && (
+              <div
+                className={`mt-2 px-3 py-2 rounded-lg text-sm ${
+                  effectiveValidationSummary.isValid
+                    ? 'bg-green-50 text-green-700 border border-green-200'
+                    : 'bg-amber-50 text-amber-700 border border-amber-200'
+                }`}
+              >
+                {effectiveValidationSummary.isValid ? (
+                  <span>✅ Course is valid and ready to publish</span>
+                ) : (
+                  <div>
+                    <span>⚠️ {blockingIssueCount} validation issue(s) detected</span>
+                    <p className="mt-1 text-xs">Resolve the blockers below before publishing.</p>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
           
           <div className="flex w-full flex-col items-end gap-3">
@@ -3119,8 +3437,8 @@ const AdminCourseBuilder = () => {
             <button
               onClick={handlePublish}
               className="bg-green-600 text-white px-6 py-3 rounded-lg hover:bg-green-700 transition-colors duration-200 flex items-center space-x-2"
-              disabled={(course.modules || []).length === 0}
-              title={(course.modules || []).length === 0 ? "Add content before publishing" : ""}
+              disabled={publishDisabled}
+              title={publishButtonTitle}
             >
               <CheckCircle className="h-4 w-4" />
               <span>{course.status === 'published' ? 'Update Published' : 'Publish Course'}</span>
@@ -3291,9 +3609,87 @@ const AdminCourseBuilder = () => {
                     className="text-blue-600 hover:text-blue-700 text-sm"
                   >
                     + Add Learning Objective
-                  </button>
-                </div>
+            </button>
+          </div>
+        </div>
+
+        <div
+          ref={validationPanelRef}
+          className={`mt-4 rounded-2xl border px-4 py-3 shadow-sm transition-all ${
+            effectiveValidationSummary.isValid
+              ? 'border-green-200 bg-green-50 text-green-900'
+              : 'border-amber-200 bg-amber-50 text-amber-900'
+          } ${validationPanelPulse ? 'ring-2 ring-amber-400' : ''}`}
+        >
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex items-center gap-3">
+              {effectiveValidationSummary.isValid ? (
+                <ShieldCheck className="h-5 w-5 text-green-600" aria-hidden="true" />
+              ) : (
+                <AlertTriangle className="h-5 w-5 text-amber-500" aria-hidden="true" />
+              )}
+              <div>
+                <p className="text-sm font-semibold">
+                  {effectiveValidationSummary.isValid
+                    ? 'All publish checks passed'
+                    : `${blockingIssueCount} publish blocker(s)`}
+                </p>
+                <p className="text-xs opacity-80">
+                  {effectiveValidationSummary.isValid
+                    ? 'Learners will see the latest content as soon as you publish.'
+                    : 'Resolve the issues below before publishing to learners.'}
+                </p>
+                {!effectiveValidationSummary.isValid && (
+                  <p className="text-xs mt-1">
+                    Each module needs at least one publish-ready lesson: a video with stored media metadata, a quiz with questions, or a text lesson with learner-facing content.
+                  </p>
+                )}
               </div>
+            </div>
+            {!effectiveValidationSummary.isValid && firstNavigableIssue && (
+              <button
+                onClick={() => focusValidationIssue(firstNavigableIssue)}
+                className="inline-flex items-center rounded-lg border border-amber-300 px-3 py-1 text-xs font-semibold text-amber-900 hover:bg-white/40"
+              >
+                Focus first issue
+              </button>
+            )}
+          </div>
+          {effectiveValidationSummary.issues.length > 0 ? (
+            <div className="mt-3 max-h-56 overflow-y-auto pr-1">
+              <ul className="space-y-2">
+                {effectiveValidationSummary.issues.map((issue, index) => {
+                  const canNavigate = Boolean(issue.lessonId || issue.moduleId);
+                  return (
+                    <li
+                      key={`${issue.code}-${issue.lessonId ?? issue.moduleId ?? index}`}
+                      className="flex items-start justify-between gap-3 rounded-xl bg-white/80 px-3 py-2 text-sm shadow-sm ring-1 ring-black/5"
+                    >
+                      <div>
+                        <p className="font-semibold text-amber-900">{issue.message}</p>
+                        <p className="text-xs text-amber-600">
+                          {issue.severity.toUpperCase()} • {issue.code}
+                        </p>
+                      </div>
+                      {canNavigate && (
+                        <button
+                          onClick={() => focusValidationIssue(issue)}
+                          className="text-xs font-semibold text-amber-900 underline-offset-2 hover:underline"
+                        >
+                          Jump
+                        </button>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          ) : (
+            <p className="mt-3 text-sm text-green-800">
+              Publish validation is using stricter checks, and your course passes them all.
+            </p>
+          )}
+        </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Key Takeaways</label>
@@ -3470,7 +3866,9 @@ const AdminCourseBuilder = () => {
                             <div
                               id={`module-${module.id}`}
                               className={`border border-gray-200 rounded-lg bg-white transition-shadow ${
-                                isMobile && module.id === activeMobileModuleId ? 'ring-2 ring-orange-200 shadow-lg' : ''
+                                (isMobile && module.id === activeMobileModuleId) || module.id === highlightModuleId
+                                  ? 'ring-2 ring-orange-200 shadow-lg'
+                                  : ''
                               }`}
                             >
                               <div className="p-4 bg-gray-50 border-b border-gray-200">
@@ -3512,7 +3910,7 @@ const AdminCourseBuilder = () => {
                                         <span className="inline-flex items-center rounded-full border border-gray-200 bg-white px-2 py-1 font-semibold text-gray-700">
                                           <CheckCircle className="mr-1 h-3 w-3 text-green-500" /> {completionRate}/{moduleLessons.length} complete
                                         </span>
-                                        <ModuleIssueBadge issueTargets={issueTargets} moduleId={module.id} />
+                                        <ModuleIssueBadge issueTargets={visibleIssueTargets} moduleId={module.id} />
                                       </div>
                                     </div>
                                   </div>
@@ -3920,7 +4318,7 @@ const AdminCourseBuilder = () => {
                     {issue.path && <p className="text-xs text-red-600 mt-1">{issue.path}</p>}
                   </div>
                   <button
-                    onClick={() => focusIssue(issue)}
+                    onClick={() => focusValidationIssue(issue)}
                     className="ml-4 rounded-md bg-red-600 px-3 py-1 text-xs font-semibold text-white shadow hover:bg-red-700"
                   >
                     Fix

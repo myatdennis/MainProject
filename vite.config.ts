@@ -152,6 +152,9 @@ export default async () => {
     build: {
       rollupOptions: {
         output: {
+          entryFileNames: 'assets/[name].[hash].js',
+          chunkFileNames: 'assets/[name].[hash].js',
+          assetFileNames: 'assets/[name].[hash][extname]',
           manualChunks(id: string) {
             // Further split common large libraries
             if (id.includes('zod')) return 'zod';

@@ -6,6 +6,21 @@ const devLog = (...args: unknown[]) => {
   }
 };
 
+const resolveBuildTag = (): string => {
+  const candidates = [
+    import.meta.env?.VITE_APP_VERSION,
+    import.meta.env?.VITE_GIT_SHA,
+    import.meta.env?.VITE_VERCEL_GIT_COMMIT_SHA,
+    import.meta.env?.VITE_NETLIFY_BUILD_ID,
+    import.meta.env?.VITE_COMMIT_SHA,
+    import.meta.env?.VITE_BUILD_ID,
+    import.meta.env?.MODE,
+  ];
+  const first = candidates.find((value) => typeof value === 'string' && value.trim().length > 0);
+  const raw = first ?? `dev-${Date.now()}`;
+  return raw.replace(/[^a-zA-Z0-9_-]/g, '-');
+};
+
 export interface ServiceWorkerConfig {
   onUpdate?: (registration: ServiceWorkerRegistration) => void;
   onSuccess?: (registration: ServiceWorkerRegistration) => void;
@@ -19,13 +34,17 @@ class ServiceWorkerManager {
   private updateFailureCount = 0;
   private readonly MAX_UPDATE_FAILURES = 3;
   private updateAccepted = false;
+  private readonly versionTag = resolveBuildTag();
+  private versionTagPromise: Promise<string> | null = null;
+  private pendingExternalUpdate = false;
 
   async register(config: ServiceWorkerConfig = {}): Promise<void> {
     this.config = config;
 
     if ('serviceWorker' in navigator && 'caches' in window) {
       try {
-        const swUrl = '/sw.js';
+        const resolvedTag = await this.resolveVersionTag();
+        const swUrl = `/sw.js?v=${encodeURIComponent(resolvedTag)}`;
         
         // Register the service worker
         this.registration = await navigator.serviceWorker.register(swUrl, {
@@ -34,16 +53,24 @@ class ServiceWorkerManager {
         this.updateFailureCount = 0;
 
         devLog('[SW] Service worker registered:', this.registration);
+        devLog('[SW] Active version tag:', resolvedTag);
 
         // Set up event listeners
         this.setupEventListeners();
 
         // Check for updates
         this.checkForUpdates();
+        if (this.registration.waiting) {
+          this.handleUpdate();
+        }
 
         // Notify success
         if (this.config.onSuccess) {
           this.config.onSuccess(this.registration);
+        }
+        if (this.pendingExternalUpdate && this.registration?.waiting) {
+          this.pendingExternalUpdate = false;
+          this.handleUpdate();
         }
 
       } catch (error) {
@@ -52,6 +79,40 @@ class ServiceWorkerManager {
       }
     } else {
       devLog('[SW] Service workers not supported');
+    }
+  }
+
+  private async resolveVersionTag(): Promise<string> {
+    if (this.versionTagPromise) {
+      return this.versionTagPromise;
+    }
+    this.versionTagPromise = (async () => {
+      const manifestVersion = await this.fetchManifestVersion();
+      if (manifestVersion) {
+        return manifestVersion;
+      }
+      const fallback = this.versionTag || `dev-${Date.now()}`;
+      devLog('[SW] Using fallback version tag:', fallback);
+      return fallback;
+    })();
+    return this.versionTagPromise;
+  }
+
+  private async fetchManifestVersion(): Promise<string | null> {
+    try {
+      const response = await fetch('/sw-version.json', { cache: 'no-store' });
+      if (!response.ok) {
+        return null;
+      }
+      const payload = await response.json();
+      const version =
+        typeof payload?.version === 'string' && payload.version.trim().length > 0
+          ? payload.version.trim()
+          : null;
+      return version;
+    } catch (error) {
+      devLog('[SW] Failed to read sw-version manifest', error);
+      return null;
     }
   }
 
@@ -88,6 +149,19 @@ class ServiceWorkerManager {
     // Listen for messages from service worker
     navigator.serviceWorker.addEventListener('message', (event) => {
       devLog('[SW] Message from service worker:', event.data);
+      if (event.data?.type === 'SW_ACTIVATED') {
+        devLog('[SW] Activated version', event.data?.version);
+        return;
+      }
+      if (event.data?.type === 'SW_UPDATE_AVAILABLE') {
+        if (this.registration?.waiting) {
+          this.pendingExternalUpdate = false;
+          this.handleUpdate();
+        } else {
+          this.pendingExternalUpdate = true;
+        }
+        return;
+      }
       
       if (event.data && event.data.type === 'CACHE_UPDATED') {
         toast('New data cached', {
@@ -108,8 +182,8 @@ class ServiceWorkerManager {
       toast.custom((t) => (
         <div className="bg-charcoal text-white px-4 py-3 rounded shadow-lg flex flex-col gap-2 w-80">
           <div>
-            <p className="text-sm font-semibold">Update ready</p>
-            <p className="text-xs text-white/80">Refresh when you’re done editing.</p>
+            <p className="text-sm font-semibold">New version ready</p>
+            <p className="text-xs text-white/80">Reload when you’re done editing to apply it.</p>
           </div>
           <div className="flex gap-2 justify-end">
             <button
@@ -165,8 +239,8 @@ class ServiceWorkerManager {
     toast.custom((t) => (
       <div className="bg-charcoal text-white px-4 py-3 rounded shadow-lg flex flex-col gap-2 w-80">
         <div>
-          <p className="text-sm font-semibold">Update available</p>
-          <p className="text-xs text-white/80">Refresh to load the newest admin experience.</p>
+          <p className="text-sm font-semibold">New version available</p>
+          <p className="text-xs text-white/80">Refresh to load the latest admin experience.</p>
         </div>
         <div className="flex gap-2 justify-end">
           <button

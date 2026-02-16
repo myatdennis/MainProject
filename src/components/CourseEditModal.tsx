@@ -9,7 +9,8 @@ import {
 import { Course } from '../types/courseTypes';
 import { slugify } from '../utils/courseNormalization';
 import apiRequest from '../utils/apiClient';
-import { validateCourse, type CourseValidationIssue } from '../validation/courseValidation';
+import { type CourseValidationIssue } from '../validation/courseValidation';
+import { getCourseValidationSummary } from '../validation/courseValidationSummary';
 
 const generateCourseId = () => {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -702,12 +703,14 @@ ${content.type === 'quiz' && 'questions' in content.content ? `\nQuestions: ${co
 
   const handleSave = () => {
     const coursePayload = buildCoursePayload();
-    const validation = validateCourse(coursePayload, {
-      intent: coursePayload.status === 'published' ? 'publish' : 'draft',
-    });
+    const summary = getCourseValidationSummary(
+      coursePayload,
+      coursePayload.status === 'published' ? 'publish' : 'draft',
+    );
+    const validationIssues = summary.issues ?? [];
 
-    if (!validation.isValid) {
-      const message = formatValidationIssues(validation.issues);
+    if (!summary.isValid) {
+      const message = formatValidationIssues(validationIssues);
       alert(`Please fix the following issues:\n\n${message}`);
       return;
     }
@@ -912,9 +915,10 @@ ${content.type === 'quiz' && 'questions' in content.content ? `\nQuestions: ${co
 
   const handlePublish = () => {
     const coursePayload = buildCoursePayload({ status: 'published' });
-    const validation = validateCourse(coursePayload, { intent: 'publish' });
-    if (!validation.isValid) {
-      const message = formatValidationIssues(validation.issues);
+    const summary = getCourseValidationSummary(coursePayload, 'publish');
+    const validationIssues = summary.issues ?? [];
+    if (!summary.isValid) {
+      const message = formatValidationIssues(validationIssues);
       alert(`Cannot publish course. Please fix the following:\n\n${message}`);
       return;
     }

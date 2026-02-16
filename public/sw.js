@@ -1,9 +1,21 @@
 // Production Service Worker: Caching for static assets and API responses
 
-const CACHE_VERSION = 'v4';
-const CACHE_NAME = `mainproject-cache-${CACHE_VERSION}`;
-const IMAGE_CACHE = 'mainproject-img-cache-v1';
-const FONT_CACHE = 'mainproject-font-cache-v1';
+const swUrl = new URL(self.location.href);
+const versionTag = swUrl.searchParams.get('v') || 'legacy';
+const scopeHost = (() => {
+  try {
+    const scopeUrl = new URL((self.registration && self.registration.scope) || self.location.origin);
+    return scopeUrl.host.replace(/[^a-z0-9-]/gi, '-');
+  } catch {
+    return 'default-scope';
+  }
+})();
+
+const CACHE_VERSION = `v5-${versionTag}-${scopeHost}`;
+const CACHE_NAME = `mainproject-static-${CACHE_VERSION}`;
+const BUNDLE_CACHE = `mainproject-bundles-${CACHE_VERSION}`;
+const IMAGE_CACHE = `mainproject-img-${scopeHost}-v2`;
+const FONT_CACHE = `mainproject-font-${scopeHost}-v2`;
 const STATIC_ASSETS = [
   '/',
   '/index.html',
@@ -13,9 +25,11 @@ const STATIC_ASSETS = [
 ];
 const OFFLINE_FALLBACK = '/offline.html';
 const MAX_IMAGE_ENTRIES = 60;
+const CACHE_WHITELIST = [CACHE_NAME, BUNDLE_CACHE, IMAGE_CACHE, FONT_CACHE];
 
 
 self.addEventListener('install', event => {
+  const hadExistingController = Boolean(self.registration && self.registration.active);
   event.waitUntil((async () => {
     try {
       const cache = await caches.open(CACHE_NAME);
@@ -32,6 +46,9 @@ self.addEventListener('install', event => {
           console.error('[SW] Failed to cache static assets during install:', inner);
         }
       }
+      if (hadExistingController) {
+        await notifyClients({ type: 'SW_UPDATE_AVAILABLE', version: CACHE_VERSION });
+      }
     } catch (e) {
       console.error('[SW] Install error:', e);
     }
@@ -41,16 +58,16 @@ self.addEventListener('install', event => {
 
 
 self.addEventListener('activate', event => {
-  event.waitUntil(
-    caches.keys().then(keys =>
-      Promise.all(
-        keys
-          .filter(key => ![CACHE_NAME, IMAGE_CACHE, FONT_CACHE].includes(key))
-          .map(key => caches.delete(key))
-      )
-    )
-  );
-  self.clients.claim();
+  event.waitUntil((async () => {
+    const keys = await caches.keys();
+    await Promise.all(
+      keys
+        .filter((key) => !CACHE_WHITELIST.includes(key))
+        .map((key) => caches.delete(key)),
+    );
+    await self.clients.claim();
+    await notifyClients({ type: 'SW_ACTIVATED', version: CACHE_VERSION });
+  })());
 });
 
 
@@ -62,6 +79,10 @@ self.addEventListener('fetch', event => {
 
   // Never intercept service worker script updates or manifest requests
   if (url.pathname === '/sw.js' || url.pathname === '/service-worker.js') {
+    return;
+  }
+  if (url.pathname === '/sw-version.json') {
+    event.respondWith(fetch(request));
     return;
   }
 
@@ -78,8 +99,16 @@ self.addEventListener('fetch', event => {
   event.respondWith(handleRequest(request, url));
 });
 
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
+});
+
 const IMAGE_REGEX = /\.(png|jpg|jpeg|gif|webp|avif|svg)$/i;
 const FONT_REGEX = /\.(woff2?|ttf|otf|eot)$/i;
+const SCRIPT_REGEX = /\.(mjs|js)$/i;
+const STYLE_REGEX = /\.css$/i;
 
 async function handleRequest(request, url) {
   try {
@@ -89,6 +118,16 @@ async function handleRequest(request, url) {
 
     if (FONT_REGEX.test(url.pathname)) {
       return await handleFontRequest(request);
+    }
+
+    if (
+      SCRIPT_REGEX.test(url.pathname) ||
+      STYLE_REGEX.test(url.pathname) ||
+      request.destination === 'script' ||
+      request.destination === 'style' ||
+      request.destination === 'worker'
+    ) {
+      return await networkFirst(request, BUNDLE_CACHE);
     }
 
     return await handleStaticRequest(request);
@@ -212,5 +251,29 @@ async function limitCacheEntries(cache, maxEntries) {
   const keys = await cache.keys();
   if (keys.length > maxEntries) {
     await cache.delete(keys[0]);
+  }
+}
+
+async function networkFirst(request, cacheName = CACHE_NAME) {
+  const cache = await caches.open(cacheName);
+  try {
+    const response = await fetch(request);
+    if (response && response.ok) {
+      cache.put(request, response.clone());
+    }
+    return response;
+  } catch (error) {
+    const cached = await cache.match(request);
+    if (cached) {
+      return cached;
+    }
+    throw error;
+  }
+}
+
+async function notifyClients(message) {
+  const allClients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+  for (const client of allClients) {
+    client.postMessage(message);
   }
 }

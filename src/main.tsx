@@ -12,6 +12,7 @@ import { migrateFromLocalStorage, checkStorageSecurity, installLocalStorageGuard
 import { getApiBaseUrl } from './config/apiBase';
 import { registerApiNavigationGuard } from './utils/apiNavigationGuard';
 import { toast } from 'react-hot-toast';
+import AppErrorBoundary from './components/errors/AppErrorBoundary';
 
 const devConsole = {
   log: (...args: unknown[]) => {
@@ -215,15 +216,17 @@ if (!rootElement) {
     createRoot(rootElement).render(
       <StrictMode>
         <QueryClientProvider client={queryClient}>
-          <SecureAuthErrorBoundary>
-            <SecureAuthProvider>
-              <ToastProvider>
-                <HelmetProvider>
-                  <App />
-                </HelmetProvider>
-              </ToastProvider>
-            </SecureAuthProvider>
-          </SecureAuthErrorBoundary>
+          <AppErrorBoundary surface="admin">
+            <SecureAuthErrorBoundary>
+              <SecureAuthProvider>
+                <ToastProvider>
+                  <HelmetProvider>
+                    <App />
+                  </HelmetProvider>
+                </ToastProvider>
+              </SecureAuthProvider>
+            </SecureAuthErrorBoundary>
+          </AppErrorBoundary>
         </QueryClientProvider>
       </StrictMode>
     );
@@ -238,8 +241,8 @@ const showServiceWorkerUpdateToast = (registration: ServiceWorkerRegistration) =
   toast.custom((t) => (
     <div className="bg-charcoal text-white px-4 py-3 rounded shadow-lg flex flex-col gap-2 w-80">
       <div>
-        <p className="text-sm font-semibold">Update available</p>
-        <p className="text-xs text-white/80">Refresh to load the newest improvements.</p>
+        <p className="text-sm font-semibold">New version available</p>
+        <p className="text-xs text-white/80">Refresh to load the latest admin experience.</p>
       </div>
       <div className="flex gap-2 justify-end">
         <button
@@ -293,30 +296,50 @@ const showServiceWorkerErrorToast = () => {
 };
 
 const supportsServiceWorker = typeof navigator !== 'undefined' && 'serviceWorker' in navigator;
+const deployContext = (import.meta.env.VITE_DEPLOY_CONTEXT || '').toLowerCase();
+const hostLooksLikePreview =
+  typeof window !== 'undefined' && /deploy-preview|preview|staging/.test(window.location.hostname);
+const isPreviewBuild =
+  deployContext === 'deploy-preview' ||
+  deployContext === 'preview' ||
+  deployContext === 'branch';
 const serviceWorkerEnabled =
-  supportsServiceWorker && import.meta.env.PROD && import.meta.env.VITE_ENABLE_SW !== 'false';
+  supportsServiceWorker &&
+  import.meta.env.PROD &&
+  import.meta.env.VITE_ENABLE_SW !== 'false' &&
+  !isPreviewBuild &&
+  !hostLooksLikePreview;
 
 if (serviceWorkerEnabled) {
   console.log('📦 Production mode: Registering service worker...');
-  serviceWorkerManager.register({
-    onSuccess: () => {
-      console.log('✅ Admin portal is ready for offline use');
-    },
-    onUpdate: (registration) => {
-      console.log('🔄 New version available');
-      showServiceWorkerUpdateToast(registration);
-    },
-    onOfflineReady: () => {
-      console.log('💾 Admin portal cached for offline use');
-    },
-    onError: () => {
+  serviceWorkerManager
+    .register({
+      onSuccess: () => {
+        console.log('✅ Admin portal is ready for offline use');
+      },
+      onUpdate: (registration) => {
+        console.log('🔄 New version available');
+        showServiceWorkerUpdateToast(registration);
+      },
+      onOfflineReady: () => {
+        console.log('💾 Admin portal cached for offline use');
+      },
+      onError: () => {
+        showServiceWorkerErrorToast();
+      },
+    })
+    .then(() => {
+      serviceWorkerManager.setupNetworkMonitoring();
+    })
+    .catch((error) => {
+      console.error('[SW] Registration failed:', error);
       showServiceWorkerErrorToast();
-    },
-  });
-
-  serviceWorkerManager.setupNetworkMonitoring();
+    });
 } else {
-  console.log('🛠️ Service worker disabled for this build');
+  console.log(
+    '🛠️ Service worker disabled for this build',
+    { deployContext, hostLooksLikePreview, swAllowed: supportsServiceWorker && import.meta.env.PROD },
+  );
   serviceWorkerManager.forceCleanup().catch((error) => {
     console.warn('[SW] Failed to perform cleanup:', error);
   });

@@ -599,7 +599,13 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       surface,
       signal,
       silent,
-    }: { surface?: SessionSurface; signal?: AbortSignal; silent?: boolean } = {}): Promise<boolean> => {
+      allowRefresh = true,
+    }: {
+      surface?: SessionSurface;
+      signal?: AbortSignal;
+      silent?: boolean;
+      allowRefresh?: boolean;
+    } = {}): Promise<boolean> => {
       const hasStoredToken = Boolean(getAccessToken());
       try {
         const response = await apiRequestRaw('/api/auth/session', {
@@ -629,6 +635,12 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         }
 
         if (response.status === 401 || response.status === 403) {
+          if (allowRefresh && hasStoredToken) {
+            const recovered = await refreshTokenCallback({ reason: 'protected_401' });
+            if (recovered) {
+              return fetchServerSession({ surface, signal, silent, allowRefresh: false });
+            }
+          }
           if (import.meta.env.DEV) {
             console.debug('[SecureAuth][dev] session fetch unauthorized status', response.status);
           }
@@ -693,6 +705,12 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             return false;
           }
           if (error.status === 401 || error.status === 403) {
+            if (allowRefresh && hasStoredToken) {
+              const recovered = await refreshTokenCallback({ reason: 'protected_401' });
+              if (recovered) {
+                return fetchServerSession({ surface, signal, silent, allowRefresh: false });
+              }
+            }
             if (import.meta.env.DEV) {
               console.debug('[SecureAuth][dev] ApiError session status', { status: error.status, surface });
             }
@@ -754,7 +772,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         return false;
       }
     },
-    [applySessionPayload, captureServerClock, continueAsGuest, handleSessionUnauthorized],
+    [applySessionPayload, captureServerClock, continueAsGuest, handleSessionUnauthorized, refreshTokenCallback],
   );
 
   // ============================================================================
