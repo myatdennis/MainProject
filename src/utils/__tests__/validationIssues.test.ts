@@ -27,6 +27,9 @@ describe('validationIssues helpers', () => {
     const targets = buildIssueTargets(issues);
     expect(targets.moduleMap.get('mod-1')?.length).toBe(2);
     expect(targets.lessonMap.get('les-1')?.length).toBe(1);
-    expect(getIssueTargetsOrEmpty(targets).moduleMap.get('mod-2')?.length).toBe(1);
+    const cloned = getIssueTargetsOrEmpty(targets);
+    expect(cloned).not.toBe(targets);
+    expect(cloned.moduleMap.get('mod-2')?.length).toBe(1);
+    expect(cloned.lessonMap.get('les-2')?.length).toBe(1);
   });
 });

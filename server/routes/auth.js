@@ -325,7 +325,7 @@ const refreshSessionFromCookies = async (req, res) => {
       email: payload.email,
       role: payload.role,
     });
-    setAuthCookies(res, tokens);
+    setAuthCookies(req, res, tokens);
     setCSRFToken(req, res, () => {});
     setCSRFToken(req, res, () => {});
     const userPayload = buildDemoUserPayloadFromToken(payload);
@@ -361,7 +361,7 @@ const refreshSessionFromCookies = async (req, res) => {
   const userPayload = buildUserPayloadFromSupabase(data.user, membershipRows);
   const tokens = buildTokenResponseFromSession(data.session);
 
-  setAuthCookies(res, tokens);
+  setAuthCookies(req, res, tokens);
   setCSRFToken(req, res, () => {});
   setCSRFToken(req, res, () => {});
 
@@ -580,7 +580,7 @@ router.post('/login', async (req, res) => {
     }
     const userPayload = buildUserPayloadFromSupabase(supabaseUser, membershipRows);
     const tokens = buildTokenResponseFromSession(data.session);
-    setAuthCookies(res, tokens);
+    setAuthCookies(req, res, tokens);
     setCSRFToken(req, res, () => {});
     if ((process.env.NODE_ENV || '').toLowerCase() !== 'production') {
       const setCookieHeader = res.getHeader('set-cookie');
@@ -748,7 +748,7 @@ router.post('/register', authLimiter, async (req, res) => {
       const userPayload = buildUserPayloadFromSupabase(sessionData.user, membershipRows);
       const tokens = buildTokenResponseFromSession(sessionData.session);
 
-  setAuthCookies(res, tokens);
+  setAuthCookies(req, res, tokens);
       res.status(201).json({
         ok: true,
         user: userPayload,
@@ -811,7 +811,7 @@ router.post('/refresh', async (req, res) => {
     const result = await refreshSessionFromCookies(req, res);
     if (!result.ok) {
       if ((result.status || 401) === 401 && result.error !== 'missing_refresh_token') {
-        clearAuthCookies(res);
+        clearAuthCookies(req, res);
       }
       if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Refresh failed', { error: result.error, message: result.message });
       // Log refresh failure (mask token)
@@ -838,7 +838,7 @@ router.post('/refresh', async (req, res) => {
       ip: req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip,
       at: 'catch',
     });
-    clearAuthCookies(res);
+    clearAuthCookies(req, res);
     res.status(500).json({
       code: 'REFRESH_FAILED',
       error: 'refresh_failed',
@@ -870,12 +870,65 @@ router.post('/logout', doubleSubmitCSRF, async (req, res) => {
       }
     }
   } finally {
-    clearAuthCookies(res);
+    clearAuthCookies(req, res);
     res.json({
       success: true,
       message: 'Logged out successfully',
     });
   }
+});
+
+router.get('/session', optionalAuthenticate, async (req, res) => {
+  const devMode = (process.env.NODE_ENV || '').toLowerCase() !== 'production';
+  const cookieHeader = req.headers?.cookie || null;
+  const cookieKeys = Object.keys(req.cookies || {});
+  const accessCookieName = 'access_token';
+  const accessCookiePresent = Boolean(req.cookies?.[accessCookieName]);
+  if (devMode) {
+    console.log('[auth/session]', {
+      hasCookieToken: accessCookiePresent,
+      hasAuthHeader: Boolean(req.headers?.authorization),
+      originHeader: req.headers?.origin || null,
+      hostHeader: req.headers?.host || null,
+      cookieHeader,
+      cookieKeys,
+      accessCookieName,
+    });
+  }
+  if (!req.user) {
+    return res.json({
+      session: null,
+      authenticated: false,
+      ...(devMode
+        ? {
+            debugCookies: {
+              cookieHeader,
+              cookieKeys,
+              accessCookieName,
+              accessCookiePresent,
+            },
+          }
+        : {}),
+    });
+  }
+
+  return res.json({
+    user: req.user,
+    memberships: req.user?.memberships || [],
+    organizationIds: req.user?.organizationIds || [],
+    activeOrgId: req.activeOrgId || req.user?.organizationId || null,
+    authenticated: true,
+    ...(devMode
+      ? {
+          debugCookies: {
+            cookieHeader,
+            cookieKeys,
+            accessCookieName,
+            accessCookiePresent,
+          },
+        }
+      : {}),
+  });
 });
 
 // ============================================================================
@@ -916,60 +969,6 @@ router.get('/verify', async (req, res) => {
     user: req.user,
     memberships: req.user?.memberships || [],
     activeOrgId: req.activeOrgId || req.user?.organizationId || null,
-  });
-});
-
-router.get('/session', async (req, res) => {
-  const devMode = (process.env.NODE_ENV || '').toLowerCase() !== 'production';
-  const cookieHeader = req.headers?.cookie || null;
-  const cookieKeys = Object.keys(req.cookies || {});
-  const accessCookieName = 'access_token';
-  const accessCookiePresent = Boolean(req.cookies?.[accessCookieName]);
-  if (devMode) {
-    console.log('[auth/session]', {
-      hasCookieToken: accessCookiePresent,
-      hasAuthHeader: Boolean(req.headers?.authorization),
-      originHeader: req.headers?.origin || null,
-      hostHeader: req.headers?.host || null,
-      cookieHeader,
-      cookieKeys,
-      accessCookieName,
-    });
-  }
-  if (!req.user) {
-    // Session endpoint treats missing/invalid tokens as logged-out instead of 401 to reduce UX friction
-    return res.json({
-      session: null,
-      authenticated: false,
-      ...(devMode
-        ? {
-            debugCookies: {
-              cookieHeader,
-              cookieKeys,
-              accessCookieName,
-              accessCookiePresent,
-            },
-          }
-        : {}),
-    });
-  }
-
-  return res.json({
-    user: req.user,
-    memberships: req.user?.memberships || [],
-    organizationIds: req.user?.organizationIds || [],
-    activeOrgId: req.activeOrgId || req.user?.organizationId || null,
-    authenticated: true,
-    ...(devMode
-      ? {
-          debugCookies: {
-            cookieHeader,
-            cookieKeys,
-            accessCookieName,
-            accessCookiePresent,
-          },
-        }
-      : {}),
   });
 });
 

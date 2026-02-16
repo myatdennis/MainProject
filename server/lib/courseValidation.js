@@ -4,7 +4,49 @@ const MIN_DESCRIPTION_PUBLISH = 50;
 
 const PLACEHOLDER_VIDEO_PREFIXES = ['uploaded:', 'blob:'];
 
+const REQUIRED_VIDEO_ASSET_FIELDS = ['storagePath', 'bucket', 'bytes', 'mimeType'];
+const OPTIONAL_VIDEO_ASSET_FIELDS = ['checksum', 'uploadedAt', 'source'];
+
 const ensureLessons = (lessons) => (Array.isArray(lessons) ? lessons : []);
+const validateVideoAsset = (lesson) => {
+  const asset = lesson?.content?.videoAsset;
+  if (!asset) {
+    return {
+      valid: false,
+      missing: [...REQUIRED_VIDEO_ASSET_FIELDS],
+      warnings: OPTIONAL_VIDEO_ASSET_FIELDS,
+    };
+  }
+
+  const missing = REQUIRED_VIDEO_ASSET_FIELDS.filter((field) => {
+    const value = asset[field];
+    if (field === 'bytes') {
+      return typeof value !== 'number' || value <= 0;
+    }
+    if (typeof value === 'string') {
+      return value.trim().length === 0;
+    }
+    return value == null;
+  });
+
+  const warnings = OPTIONAL_VIDEO_ASSET_FIELDS.filter((field) => {
+    const value = asset[field];
+    if (field === 'checksum') {
+      return typeof value !== 'string' || value.trim().length < 12;
+    }
+    if (field === 'uploadedAt') {
+      return typeof value !== 'string' || Number.isNaN(Date.parse(value));
+    }
+    return value == null;
+  });
+
+  return {
+    valid: missing.length === 0,
+    missing,
+    warnings,
+  };
+};
+
 const trim = (value) => (typeof value === 'string' ? value.trim() : '');
 
 const isPlaceholderVideoUrl = (value) => {
@@ -64,6 +106,9 @@ const lessonHasPublishableMedia = (lesson, intent) => {
   }
   if (lesson?.type === 'quiz') {
     return hasQuizQuestions(lesson);
+  }
+  if (lesson?.type === 'text') {
+    return hasTextContent(lesson);
   }
   return false;
 };
@@ -161,6 +206,27 @@ export const validateCourse = (course, options = {}) => {
               moduleId: module.id,
               lessonId: lesson?.id,
             });
+          } else if (intent === 'publish') {
+            const metadataCheck = validateVideoAsset(lesson);
+            if (!metadataCheck.valid) {
+              pushIssue(issues, {
+                code: 'lesson.video.metadata_missing',
+                message: `Lesson ${lessonIndex + 1} in Module ${moduleIndex + 1} is missing video metadata: ${metadataCheck.missing.join(', ')}`,
+                path: `modules[${moduleIndex}].lessons[${lessonIndex}].content.videoAsset`,
+                moduleId: module.id,
+                lessonId: lesson?.id,
+              });
+            }
+            if (metadataCheck.warnings.length > 0) {
+              pushIssue(issues, {
+                code: 'lesson.video.metadata_incomplete',
+                message: `Video metadata incomplete (recommended fields: ${metadataCheck.warnings.join(', ')}) for Module ${moduleIndex + 1}, Lesson ${lessonIndex + 1}`,
+                path: `modules[${moduleIndex}].lessons[${lessonIndex}].content.videoAsset`,
+                moduleId: module.id,
+                lessonId: lesson?.id,
+                severity: 'warning',
+              });
+            }
           }
           break;
         case 'quiz':
@@ -220,7 +286,7 @@ export const validateCourse = (course, options = {}) => {
     if (intent === 'publish' && requireMediaForPublishedModules && !moduleHasMedia) {
       pushIssue(issues, {
         code: 'module.publishable.media_missing',
-        message: `Module ${moduleIndex + 1} must include at least one video with a playable source or a quiz with questions before publishing`,
+        message: `Module ${moduleIndex + 1} must include a video with a playable source, a quiz with questions, or a text lesson with learner-facing content before publishing`,
         path: `modules[${moduleIndex}].lessons`,
         moduleId: module.id,
       });

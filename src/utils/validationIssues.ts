@@ -5,17 +5,14 @@ export type IssueTargets = {
   lessonMap: Map<string, CourseValidationIssue[]>;
 };
 
-const EMPTY_TARGETS: IssueTargets = {
+const createEmptyTargets = (): IssueTargets => ({
   moduleMap: new Map(),
   lessonMap: new Map(),
-};
+});
 
 export const buildIssueTargets = (issues?: CourseValidationIssue[] | null): IssueTargets => {
   if (!issues || issues.length === 0) {
-    return {
-      moduleMap: new Map(),
-      lessonMap: new Map(),
-    };
+    return createEmptyTargets();
   }
 
   const moduleMap = new Map<string, CourseValidationIssue[]>();
@@ -35,7 +32,12 @@ export const buildIssueTargets = (issues?: CourseValidationIssue[] | null): Issu
 
 export const getIssueTargetsOrEmpty = (targets?: IssueTargets | null): IssueTargets => {
   if (!targets) {
-    return EMPTY_TARGETS;
+    return createEmptyTargets();
   }
-  return targets;
+  const safeModuleMap = targets.moduleMap instanceof Map ? new Map(targets.moduleMap) : new Map();
+  const safeLessonMap = targets.lessonMap instanceof Map ? new Map(targets.lessonMap) : new Map();
+  return {
+    moduleMap: safeModuleMap,
+    lessonMap: safeLessonMap,
+  };
 };

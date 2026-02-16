@@ -36,7 +36,7 @@ import {
   buildModulesFromChapters,
   recalculateCourseDurations,
 } from '../../utils/courseStructure';
-import { validateCourse } from '../../validation/courseValidation';
+import { getCourseValidationSummary } from '../../validation/courseValidationSummary';
 
 type LessonUpdate = Partial<Lesson> & {
   content?: Partial<LessonContent>;
@@ -225,10 +225,10 @@ const AdvancedCourseBuilder: React.FC = () => {
 
   const publishValidation = useMemo(() => {
     if (!course) return null;
-    return validateCourse(course, { intent: 'publish' });
+    return getCourseValidationSummary(course, 'publish');
   }, [course]);
 
-  const publishBlockingIssues = publishValidation?.issues.filter((issue) => issue.severity === 'error') ?? [];
+  const publishBlockingIssues = publishValidation?.issues?.filter((issue) => issue.severity === 'error') ?? [];
 
   useEffect(() => {
     return () => {

@@ -181,6 +181,10 @@ const lessonHasPublishableMedia = (lesson: Lesson, intent: CourseValidationInten
     return hasQuizQuestions(lesson);
   }
 
+  if (lesson.type === 'text') {
+    return hasTextContent(lesson);
+  }
+
   return false;
 };
 
@@ -355,7 +359,7 @@ export const validateCourse = (
     if (intent === 'publish' && requireMediaForPublishedModules && !moduleHasPublishableMedia) {
       pushIssue(issues, {
         code: 'module.publishable.media_missing',
-        message: `Module ${moduleIndex + 1} must include at least one video with a media source or a quiz with questions before publishing`,
+        message: `Module ${moduleIndex + 1} must include at least one video with a media source, a quiz with questions, or a text lesson with learner-facing content before publishing`,
         path: `modules[${moduleIndex}].lessons`,
         moduleId: module.id,
       });

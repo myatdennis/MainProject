@@ -68,4 +68,23 @@ describe('analytics events API', () => {
     });
     expect(Array.isArray(json.details)).toBe(true);
   });
+
+  it('lists stored analytics events for admins via GET', async () => {
+    const identifier = `evt-${randomUUID()}`;
+    await postEvent({
+      id: identifier,
+      event_type: 'lesson_completed',
+      session_id: 'session-list',
+      user_agent: 'integration-tests',
+      payload: { status: 'ok' },
+    });
+    const res = await server!.fetch('/api/analytics/events?limit=5', {
+      headers: await adminContextHeaders(),
+    });
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(Array.isArray(json.data)).toBe(true);
+    const ids = (json.data || []).map((entry: any) => entry.id || entry.client_event_id);
+    expect(ids).toContain(identifier);
+  });
 });
