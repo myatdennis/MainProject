@@ -31,6 +31,7 @@ import { createActionIdentifiers, type IdempotentAction } from '../utils/idempot
 import { cloneWithCanonicalOrgId, resolveOrgIdFromCarrier, stampCanonicalOrgId } from '../utils/orgFieldUtils';
 import { normalizeLessonForPersistence } from '../utils/lessonContent';
 import type { CourseValidationIssue } from '../validation/courseValidation';
+import { parseSlugConflictError, SlugConflictError } from '../utils/slugConflict';
 
 export type SupabaseCourseRecord = {
   id: string;
@@ -505,10 +506,18 @@ export class CourseService {
     const endpoint = isCreateOperation ? '/api/admin/courses' : `/api/admin/courses/${course.id}`;
     const method = isCreateOperation ? 'POST' : 'PUT';
 
-    await apiRequest(endpoint, {
-      method,
-      body,
-    });
+    try {
+      await apiRequest(endpoint, {
+        method,
+        body,
+      });
+    } catch (error) {
+      const slugConflict = parseSlugConflictError(error, course.slug);
+      if (slugConflict) {
+        throw new SlugConflictError(slugConflict);
+      }
+      throw error;
+    }
   }
 
   private static async fetchCourseStructure(identifier: string): Promise<NormalizedCourse | null> {

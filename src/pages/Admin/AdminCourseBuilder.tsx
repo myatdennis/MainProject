@@ -78,6 +78,7 @@ import { createActionIdentifiers, type IdempotentAction } from '../../utils/idem
 import { cloneWithCanonicalOrgId, resolveOrgIdFromCarrier, stampCanonicalOrgId } from '../../utils/orgFieldUtils';
 import { buildIssueTargets, getIssueTargetsOrEmpty } from '../../utils/validationIssues';
 import type { IssueTargets } from '../../utils/validationIssues';
+import { SlugConflictError } from '../../utils/slugConflict';
 
 const buildUploadKey = (moduleId: string, lessonId: string) => `${moduleId}::${lessonId}`;
 const parseUploadKey = (key: string) => {
@@ -994,7 +995,7 @@ const AdminCourseBuilder = () => {
           setSaveStatus('idle');
         }
       } catch (err) {
-        if (err && typeof err === 'object' && (err as any).__handledSlugConflict) {
+        if (err instanceof SlugConflictError) {
           console.warn('⚠️ Remote auto-sync skipped: slug conflict requires user action.');
         } else {
           console.error('❌ Remote auto-sync failed:', err);
@@ -1308,43 +1309,6 @@ const AdminCourseBuilder = () => {
     remoteSynced: boolean;
   };
 
-  type SlugConflictInfo = {
-    suggestion: string;
-    message: string;
-  };
-
-  const buildLocalSlugSuggestion = (value?: string | null): string => {
-    const normalized = slugify(value || '') || '';
-    if (!normalized) {
-      return `course-${Math.random().toString(36).slice(2, 8)}`;
-    }
-    const match = normalized.match(/^(.*?)-(\d+)$/);
-    if (match) {
-      const [, prefix, suffix] = match;
-      const next = Number.parseInt(suffix, 10);
-      if (Number.isFinite(next)) {
-        return `${prefix}-${next + 1}`;
-      }
-    }
-    return `${normalized}-2`;
-  };
-
-  const parseSlugConflictError = (error: unknown, fallbackSlug?: string | null): SlugConflictInfo | null => {
-    if (!(error instanceof ApiError)) return null;
-    if (error.status !== 409) return null;
-    const body = (error.body ?? {}) as Record<string, any>;
-    const code = (body?.code || body?.error) ?? null;
-    if (code !== 'slug_taken') return null;
-    const suggestionInput =
-      typeof body?.suggestion === 'string' && body.suggestion.trim().length > 0 ? body.suggestion.trim() : null;
-    const suggestion = slugify(suggestionInput || '') || buildLocalSlugSuggestion(fallbackSlug);
-    const message =
-      typeof body?.message === 'string' && body.message.trim().length > 0
-        ? body.message.trim()
-        : 'Slug is already used. Updated the slug field with a new suggestion.';
-    return { suggestion, message };
-  };
-
   const isClientGeneratedId = (value?: string | null): boolean => {
     if (!value) return true;
     return value.startsWith('course-');
@@ -1440,15 +1404,11 @@ const AdminCourseBuilder = () => {
           status,
           message: error instanceof Error ? error.message : String(error),
         });
-        const slugConflict = parseSlugConflictError(error, preparedCourse.slug);
-        if (slugConflict) {
-          const nextCourseState = { ...preparedCourse, slug: slugConflict.suggestion };
+        if (error instanceof SlugConflictError) {
+          const nextCourseState = { ...preparedCourse, slug: error.suggestion };
           courseStore.saveCourse(nextCourseState, { skipRemoteSync: true });
           setCourse(nextCourseState);
-          showToast(slugConflict.message, 'warning', 6000);
-          if (error && typeof error === 'object') {
-            (error as any).__handledSlugConflict = slugConflict;
-          }
+          showToast(error.userMessage, 'warning', 6000);
         }
         throw error;
       }
@@ -1498,7 +1458,7 @@ const AdminCourseBuilder = () => {
         navigate(`/admin/course-builder/${result.course.id}`);
       }
     } catch (error) {
-      if (error && typeof error === 'object' && (error as any).__handledSlugConflict) {
+      if (error instanceof SlugConflictError) {
         setSaveStatus('error');
         setTimeout(() => setSaveStatus('idle'), 5000);
         return;
@@ -1706,7 +1666,7 @@ const AdminCourseBuilder = () => {
       clearValidationIssues();
       setTimeout(() => setSaveStatus('idle'), 3000);
     } catch (error) {
-      if (error && typeof error === 'object' && (error as any).__handledSlugConflict) {
+      if (error instanceof SlugConflictError) {
         setSaveStatus('error');
         setTimeout(() => setSaveStatus('idle'), 5000);
         return;

@@ -4,6 +4,7 @@ import { courseStore } from '../../store/courseStore';
 import { syncCourseToDatabase, CourseValidationError } from '../../dal/adminCourses';
 import type { Course } from '../../types/courseTypes';
 import { useToast } from '../../context/ToastContext';
+import { SlugConflictError } from '../../utils/slugConflict';
 
 import { LazyImage } from '../../components/PerformanceComponents';
 // Removed unused UI imports to satisfy lints
@@ -55,10 +56,19 @@ const AdminCourseDetail = () => {
           : inputCourse.publishedDate,
     };
 
-  const snapshot = await syncCourseToDatabase(prepared);
-    const finalCourse = (snapshot ?? prepared) as Course;
-    courseStore.saveCourse(finalCourse, { skipRemoteSync: true });
-    return finalCourse;
+    try {
+      const snapshot = await syncCourseToDatabase(prepared);
+      const finalCourse = (snapshot ?? prepared) as Course;
+      courseStore.saveCourse(finalCourse, { skipRemoteSync: true });
+      return finalCourse;
+    } catch (error) {
+      if (error instanceof SlugConflictError) {
+        const nextCourse = { ...prepared, slug: error.suggestion };
+        courseStore.saveCourse(nextCourse, { skipRemoteSync: true });
+        showToast(error.userMessage, 'warning');
+      }
+      throw error;
+    }
   };
 
   const handleDuplicateCourse = async () => {

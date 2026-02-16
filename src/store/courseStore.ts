@@ -18,6 +18,7 @@ import { ApiError } from '../utils/apiClient';
 import { cloneWithCanonicalOrgId, resolveOrgIdFromCarrier, stampCanonicalOrgId } from '../utils/orgFieldUtils';
 import { nanoid } from 'nanoid';
 import { canonicalizeLessonContent } from '../utils/lessonContent';
+import { SlugConflictError } from '../utils/slugConflict';
 
 // Course data types
 export interface ScenarioChoice {
@@ -1804,6 +1805,15 @@ export const courseStore = {
         void markDraftSynced(normalizedId, courses[normalizedId]);
       })
       .catch((error) => {
+        if (error instanceof SlugConflictError) {
+          console.warn(
+            `Slug conflict when persisting course "${newCourse.title}". Suggested slug applied.`,
+            { suggestion: error.suggestion },
+          );
+          courses[newCourse.id].slug = error.suggestion;
+          _saveCoursesToLocalStorage(courses);
+          return;
+        }
         if (error instanceof CourseValidationError) {
           console.warn(
             `New course "${newCourse.title}" failed validation when syncing: ${error.issues.join(' | ')}`,
