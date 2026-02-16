@@ -195,6 +195,16 @@ const postProgressEvent = async (item: OfflineQueueItem): Promise<boolean> => {
       payload.client_event_id = item.id;
     }
 
+    const sessionContext = getSessionContext();
+    if (sessionContext?.userId) {
+      payload.user_id = sessionContext.userId;
+    } else if (typeof payload.user_id === 'string' && payload.user_id.includes('@')) {
+      console.warn('[progressService] Stripping email-like user_id before syncing progress event', {
+        userId: payload.user_id,
+      });
+      delete payload.user_id;
+    }
+
     // Decide endpoint based on presence of lessonId
     const endpoint = payload.lesson_id ? '/api/client/progress/lesson' : '/api/client/progress/course';
 

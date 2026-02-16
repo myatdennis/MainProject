@@ -408,6 +408,32 @@ const buildCoursePayload = (course: NormalizedCourse) => {
 };
 
 export class CourseService {
+  private static applyOrgIdContract<T extends Record<string, any>>(
+    entity: T | undefined,
+    fallbackOrgId: string | null,
+  ): T {
+    const base = entity ? { ...entity } : {};
+    const stamped = stampCanonicalOrgId(base, fallbackOrgId);
+    const resolvedOrgId = resolveOrgIdFromCarrier(stamped) ?? fallbackOrgId ?? null;
+    if (resolvedOrgId) {
+      stamped.organizationId = resolvedOrgId;
+    }
+    return stamped as T;
+  }
+
+  private static withOrgContextForModules(modules: Record<string, any>[], fallbackOrgId: string | null) {
+    return modules.map((module) => {
+      const moduleOrgId = resolveOrgIdFromCarrier(module) ?? fallbackOrgId;
+      const normalizedModule = CourseService.applyOrgIdContract(module, moduleOrgId);
+      if (Array.isArray(normalizedModule.lessons)) {
+        normalizedModule.lessons = normalizedModule.lessons.map((lesson: Record<string, any>) =>
+          CourseService.applyOrgIdContract(lesson, moduleOrgId),
+        );
+      }
+      return normalizedModule;
+    });
+  }
+
   private static buildModulesPayloadForUpsert(course: NormalizedCourse) {
     const modules = (course.modules || []).map((mod, moduleIndex) => {
       const lessons = (mod.lessons || []).map((lesson, lessonIndex) => {
@@ -448,13 +474,17 @@ export class CourseService {
 
   private static async upsertCourse(course: NormalizedCourse, options: { idempotencyKey?: string } = {}): Promise<void> {
     const payload = buildCoursePayload(course);
-    const modules = CourseService.buildModulesPayloadForUpsert(course);
+    let modules = CourseService.buildModulesPayloadForUpsert(course);
     const body: Record<string, unknown> = { course: payload, modules };
     if (options.idempotencyKey) {
       body.idempotency_key = options.idempotencyKey;
     }
 
-    const { clone: sanitizedCourse, strippedKeys } = cloneWithCanonicalOrgId(body.course as Record<string, any>, {
+    const {
+      clone: sanitizedCourse,
+      organizationId: canonicalOrgId,
+      strippedKeys,
+    } = cloneWithCanonicalOrgId(body.course as Record<string, any>, {
       removeAliases: true,
     });
     if (import.meta.env?.DEV && strippedKeys.length > 0) {
@@ -463,7 +493,10 @@ export class CourseService {
         requestCourseId: course.id,
       });
     }
-    body.course = sanitizedCourse;
+    const canonicalCourse = CourseService.applyOrgIdContract(sanitizedCourse, canonicalOrgId);
+    body.course = canonicalCourse;
+    modules = CourseService.withOrgContextForModules(modules, canonicalOrgId);
+    body.modules = modules;
     const isCreateOperation = isClientGeneratedCourseId(course.id);
     if (isCreateOperation) {
       delete (body.course as Record<string, unknown>).id;

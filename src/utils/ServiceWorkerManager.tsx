@@ -98,6 +98,14 @@ class ServiceWorkerManager {
     return this.versionTagPromise;
   }
 
+  getDeclaredVersionTag(): string {
+    return this.versionTag;
+  }
+
+  async getResolvedVersionTag(): Promise<string> {
+    return this.resolveVersionTag();
+  }
+
   private async fetchManifestVersion(): Promise<string | null> {
     try {
       const response = await fetch('/sw-version.json', { cache: 'no-store' });
@@ -272,9 +280,6 @@ class ServiceWorkerManager {
     try {
       this.updateAccepted = true;
       registration.waiting.postMessage({ type: 'SKIP_WAITING' });
-      setTimeout(() => {
-        window.location.reload();
-      }, 150);
     } catch (error) {
       this.incrementUpdateFailure(error);
     }

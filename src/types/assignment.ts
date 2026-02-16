@@ -1,10 +1,12 @@
+import type { OrganizationId, TextIdentifier } from './entityIds';
+
 export type CourseAssignmentStatus = 'assigned' | 'in-progress' | 'completed';
 
 export interface CourseAssignment {
-  id: string;
-  courseId: string;
+  id: TextIdentifier;
+  courseId: TextIdentifier;
   userId: string;
-  organizationId?: string | null;
+  organizationId?: OrganizationId | null;
   status: CourseAssignmentStatus;
   progress: number;
   dueDate?: string | null;

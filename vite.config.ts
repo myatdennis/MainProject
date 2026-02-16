@@ -52,6 +52,7 @@ export default async () => {
     resolve: {
       alias: {
         '@': path.resolve(__dirname, 'src'),
+        '@shared': path.resolve(__dirname, 'shared'),
         // Hard-pin React packages to a single physical path so Vite never bundles
         // multiple copies, which would trigger "Invalid hook call" errors when
         // navigating to admin routes that are code-split into secondary chunks.

@@ -4,7 +4,8 @@
     "esModuleInterop": true,
     "module": "es2020",
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["src/*"],
+      "@shared/*": ["shared/*"]
     },
     "target": "es2020"
   },

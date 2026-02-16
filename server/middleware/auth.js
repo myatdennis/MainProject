@@ -19,6 +19,7 @@ const TOKEN_CACHE_LIMIT = Number(process.env.AUTH_TOKEN_CACHE_LIMIT || 5000);
 
 const membershipCache = new Map();
 const tokenCache = new Map();
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const writableOrgRoles = new Set(['owner', 'admin', 'manager', 'editor']);
 
@@ -186,12 +187,15 @@ const buildMembershipMap = (memberships = []) => {
   return map;
 };
 
+const coerceUuid = (value) => {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return UUID_PATTERN.test(trimmed) ? trimmed : null;
+};
+
 const getRequestedOrgId = (req) => {
   if (!req) return null;
-  const headerOrg =
-    typeof req.headers?.['x-org-id'] === 'string'
-      ? req.headers['x-org-id'].trim()
-      : null;
+  const headerOrg = coerceUuid(req.headers?.['x-org-id']);
   const cookieOrg = getActiveOrgFromRequest(req);
   const candidates = [
     headerOrg,
@@ -293,21 +297,21 @@ const buildUserPayload = (user, memberships) => {
 };
 
 const resolveAccessTokenFromRequest = (req) => {
-  const cookieToken = getAccessTokenFromRequest(req);
-  if (cookieToken) {
-    return { token: cookieToken, source: 'cookie' };
-  }
-
   const authorizationHeader = req.headers?.authorization;
   const headerToken = extractTokenFromHeader(authorizationHeader);
   if (headerToken) {
     return { token: headerToken, source: 'authorization' };
   }
 
+  const cookieToken = getAccessTokenFromRequest(req);
+  if (cookieToken) {
+    return { token: cookieToken, source: 'cookie' };
+  }
+
   return { token: null, source: null };
 };
 
-async function buildAuthContext(req, { optional = false } = {}) {
+export async function buildAuthContext(req, { optional = false } = {}) {
   const { token } = resolveAccessTokenFromRequest(req);
 
   if (!token && allowDemoBypassForRequest(req)) {

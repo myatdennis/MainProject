@@ -5,7 +5,7 @@
 
 import express from 'express';
 import bcrypt from 'bcryptjs';
-import { generateTokens, verifyRefreshToken, isJwtSecretConfigured } from '../utils/jwt.js';
+import { generateTokens, verifyRefreshToken, isJwtSecretConfigured, extractTokenFromHeader } from '../utils/jwt.js';
 import {
   authenticate,
   authLimiter,
@@ -13,7 +13,7 @@ import {
   isCanonicalAdminEmail,
   resolveUserRole,
   mapMembershipRows,
-  optionalAuthenticate,
+  buildAuthContext,
 } from '../middleware/auth.js';
 import supabase, { supabaseAuthClient } from '../lib/supabaseClient.js';
 import getUserMemberships from '../utils/memberships.js';
@@ -22,6 +22,7 @@ import {
   clearAuthCookies,
   getRefreshTokenFromRequest,
   setActiveOrgCookie,
+  getAccessTokenFromRequest,
 } from '../utils/authCookies.js';
 import { doubleSubmitCSRF, setCSRFToken } from '../middleware/csrf.js';
 import {
@@ -879,58 +880,103 @@ router.post('/logout', doubleSubmitCSRF, async (req, res) => {
   }
 });
 
-router.get('/session', optionalAuthenticate, async (req, res) => {
-  const devMode = (process.env.NODE_ENV || '').toLowerCase() !== 'production';
-  const cookieHeader = req.headers?.cookie || null;
-  const cookieKeys = Object.keys(req.cookies || {});
-  const accessCookieName = 'access_token';
-  const accessCookiePresent = Boolean(req.cookies?.[accessCookieName]);
-  if (devMode) {
-    console.log('[auth/session]', {
-      hasCookieToken: accessCookiePresent,
-      hasAuthHeader: Boolean(req.headers?.authorization),
-      originHeader: req.headers?.origin || null,
-      hostHeader: req.headers?.host || null,
-      cookieHeader,
-      cookieKeys,
-      accessCookieName,
-    });
-  }
-  if (!req.user) {
-    return res.json({
-      session: null,
+router.get('/session', async (req, res) => {
+  const requestId = req.requestId || req.headers['x-request-id'] || req.headers['x-amzn-trace-id'] || null;
+  const bearerToken = extractTokenFromHeader(req.headers?.authorization);
+  const cookieToken = getAccessTokenFromRequest(req);
+  const mode = bearerToken ? 'bearer' : cookieToken ? 'cookie' : 'none';
+  const logBase = {
+    event: 'auth_session',
+    mode,
+    requestId,
+    hasBearer: Boolean(bearerToken),
+    hasCookie: Boolean(cookieToken),
+    origin: req.headers?.origin || null,
+  };
+
+  if (mode === 'none') {
+    console.info('[auth/session] no session token', logBase);
+    return res.status(401).json({
+      error: 'not_authenticated',
+      message: 'No authenticated session detected.',
       authenticated: false,
-      ...(devMode
-        ? {
-            debugCookies: {
-              cookieHeader,
-              cookieKeys,
-              accessCookieName,
-              accessCookiePresent,
-            },
-          }
-        : {}),
+      mode,
     });
   }
 
-  return res.json({
-    user: req.user,
-    memberships: req.user?.memberships || [],
-    organizationIds: req.user?.organizationIds || [],
-    activeOrgId: req.activeOrgId || req.user?.organizationId || null,
-    authenticated: true,
-    ...(devMode
-      ? {
-          debugCookies: {
-            cookieHeader,
-            cookieKeys,
-            accessCookieName,
-            accessCookiePresent,
-          },
-        }
-      : {}),
-  });
+  try {
+    const context = await buildAuthContext(req, { optional: false });
+    const user = context?.user || null;
+    if (!user) {
+      console.warn('[auth/session] context missing user', { ...logBase, outcome: 'no_user' });
+      return res.status(401).json({
+        error: 'not_authenticated',
+        message: 'Invalid or expired session.',
+        authenticated: false,
+        mode,
+      });
+    }
+
+    const responsePayload = {
+      user,
+      memberships: Array.isArray(user.memberships) ? user.memberships : [],
+      organizationIds: Array.isArray(user.organizationIds) ? user.organizationIds : [],
+      activeOrgId: context.activeOrgId || user.organizationId || null,
+      role: user.role || null,
+      authenticated: true,
+      mode,
+    };
+
+    console.info('[auth/session] success', {
+      ...logBase,
+      outcome: 'ok',
+      userId: user.id || null,
+      orgCount: responsePayload.organizationIds.length,
+    });
+
+    return res.json(responsePayload);
+  } catch (error) {
+    let status = 500;
+    let code = 'session_error';
+    let message = 'Unable to verify session.';
+    const errorMessage = error?.message || 'unknown_error';
+
+    if (errorMessage === 'missing_token') {
+      status = 401;
+      code = 'not_authenticated';
+      message = 'No authenticated session detected.';
+    } else if (errorMessage === 'invalid_token') {
+      status = 401;
+      code = 'invalid_token';
+      message = 'Invalid or expired session token.';
+    } else if (errorMessage === 'supabase_not_configured') {
+      status = 503;
+      code = 'auth_unavailable';
+      message = 'Authentication service unavailable.';
+    }
+
+    console.warn('[auth/session] failure', {
+      ...logBase,
+      outcome: 'error',
+      status,
+      code,
+      error: errorMessage,
+    });
+
+    return res.status(status).json({
+      error: code,
+      message,
+      authenticated: false,
+      mode,
+    });
+  }
 });
+
+/**
+ * Manual verification (local):
+ * curl -H "Authorization: Bearer <ACCESS>" http://localhost:8888/api/auth/session
+ * curl --cookie "access_token=<TOKEN>" http://localhost:8888/api/auth/session
+ */
 
 // ============================================================================
 // Protected routes (require valid access token)
