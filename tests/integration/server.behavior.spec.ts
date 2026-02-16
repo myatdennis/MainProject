@@ -66,6 +66,35 @@ describe('Server demo-mode behavior', () => {
     expect(clientSlugs).toContain(slug);
   }, 20000);
 
+  it('returns 409 slug_taken when creating a course with a duplicate slug', async () => {
+    const slug = `dup-${randomUUID()}`;
+    const headers = await adminContextHeaders();
+
+    const firstRes = await server!.fetch('/api/admin/courses', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        course: { title: `Original ${slug}`, slug },
+        modules: [],
+      }),
+    });
+    expect([200, 201]).toContain(firstRes.status);
+
+    const conflictRes = await server!.fetch('/api/admin/courses', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        course: { title: 'Duplicate Attempt', slug },
+        modules: [],
+      }),
+    });
+    expect(conflictRes.status).toBe(409);
+    const conflictJson = await conflictRes.json();
+    expect(conflictJson).toHaveProperty('code', 'slug_taken');
+    expect(typeof conflictJson.suggestion).toBe('string');
+    expect(conflictJson.suggestion).not.toEqual(slug);
+  });
+
   it('returns nested modules and lessons from the admin course detail endpoint', async () => {
     const slug = `detail-${randomUUID()}`;
     const createRes = await server!.fetch('/api/admin/courses', {

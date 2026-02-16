@@ -39,6 +39,7 @@ import CourseEditModal from '../../components/CourseEditModal';
 import { useToast } from '../../context/ToastContext';
 import { useSyncService } from '../../dal/sync';
 import { slugify } from '../../utils/courseNormalization';
+import { SlugConflictError } from '../../utils/slugConflict';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import Card from '../../components/ui/Card';
 import EmptyState from '../../components/ui/EmptyState';
@@ -123,10 +124,19 @@ const AdminCourses = () => {
           : inputCourse.publishedDate,
     };
 
-  const snapshot = await syncCourseToDatabase(prepared);
-    const finalCourse = (snapshot ?? prepared) as Course;
-    courseStore.saveCourse(finalCourse, { skipRemoteSync: true });
-    return finalCourse;
+    try {
+      const snapshot = await syncCourseToDatabase(prepared);
+      const finalCourse = (snapshot ?? prepared) as Course;
+      courseStore.saveCourse(finalCourse, { skipRemoteSync: true });
+      return finalCourse;
+    } catch (error) {
+      if (error instanceof SlugConflictError) {
+        const updatedCourse = { ...prepared, slug: error.suggestion };
+        courseStore.saveCourse(updatedCourse, { skipRemoteSync: true });
+        showToast(error.userMessage, 'warning');
+      }
+      throw error;
+    }
   };
 
   const filteredCourses = courses.filter((course: Course) => {

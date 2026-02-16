@@ -3095,13 +3095,23 @@ const slugify = (value) => {
     .slice(0, 64);
 };
 
-const isCourseSlugConstraintError = (error) =>
-  Boolean(
-    error &&
-      error.code === '23505' &&
-      typeof error.message === 'string' &&
-      error.message.includes('courses_org_slug_unique'),
-  );
+const slugConstraintNames = new Set([
+  'courses_org_slug_unique',
+  'courses_slug_key',
+  'idx_courses_slug',
+  'courses_slug_org_unique',
+]);
+
+const isCourseSlugConstraintError = (error) => {
+  if (!error || error.code !== '23505') return false;
+  const constraint = typeof error.constraint === 'string' ? error.constraint.toLowerCase() : '';
+  if (constraint && slugConstraintNames.has(constraint)) {
+    return true;
+  }
+  const combined = `${error.message || ''} ${error.details || ''} ${error.hint || ''}`.toLowerCase();
+  if (combined.includes('slug')) return true;
+  return false;
+};
 
 const buildSlugSuggestion = (slug) => {
   if (!slug) return `course-${randomUUID().slice(0, 8)}`;
@@ -3260,7 +3270,7 @@ const respondWithCourseSlugConflict = async ({
   //   --data '{"course":{"title":"Demo Course","slug":"existing-slug","organizationId":"org-demo"}}'
   res.status(409).json({
     code: 'slug_taken',
-    message: 'Slug already exists',
+    message: 'Slug already in use',
     suggestion,
   });
 };
@@ -4901,20 +4911,46 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
       if (!access) return;
     }
 
-    const desiredCourseSlug =
-      course.slug ||
-      course.title ||
-      course.name ||
-      course.id ||
-      `course-${Date.now().toString(36)}`;
-    course.slug = await ensureUniqueCourseSlug(desiredCourseSlug, {
-      excludeCourseId: course.id ?? null,
-    });
     if (!courseLocal?.title) {
       res.status(400).json({ error: 'Course title is required' });
       return;
     }
     try {
+      const rawSlugInput = typeof courseLocal.slug === 'string' ? courseLocal.slug.trim() : '';
+      const slugNeedsDerivation = !rawSlugInput || rawSlugInput === 'new-course';
+      const slugSource =
+        slugNeedsDerivation && courseLocal
+          ? courseLocal.title || courseLocal.name || courseLocal.id || `course-${Date.now().toString(36)}`
+          : rawSlugInput;
+      const normalizedSlug = slugify(slugSource) || `course-${Date.now().toString(36)}`;
+      const normalizedSlugLower = normalizedSlug.toLowerCase();
+      if (!slugNeedsDerivation) {
+        const duplicate = Array.from(e2eStore.courses.values()).find((entry) => {
+          if (!entry || !entry.slug) return false;
+          if (String(entry.slug).toLowerCase() !== normalizedSlugLower) return false;
+          if (courseLocal?.id && String(entry.id) === String(courseLocal.id)) return false;
+          return true;
+        });
+        if (duplicate) {
+          const suggestion = buildSlugSuggestion(normalizedSlug);
+          await respondWithCourseSlugConflict({
+            req,
+            res,
+            courseId: courseLocal.id ?? null,
+            organizationId,
+            attemptedSlug: normalizedSlug,
+            suggestion,
+          });
+          return;
+        }
+      }
+      const derivedSlug = slugNeedsDerivation
+        ? await ensureUniqueCourseSlug(normalizedSlug, {
+            excludeCourseId: courseLocal.id ?? null,
+          })
+        : normalizedSlug;
+      courseLocal.slug = derivedSlug;
+
       // Demo-mode idempotency: respect client-provided idempotency keys in E2E/demo fallback
       const demoIdempotencyKey = req.body?.idempotency_key ?? req.body?.client_event_id ?? null;
       if (demoIdempotencyKey) {
@@ -4934,18 +4970,12 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
         e2eStore.idempotencyKeys[demoIdempotencyKey] = null;
       }
 
-      // Idempotent upsert by id, slug, or external_id (stored in meta_json)
+      // Idempotent upsert by id or external_id (stored in meta_json)
       let existingId = null;
-      const incomingSlug = courseLocal.slug ?? null;
       const incomingExternalId = (courseLocal.external_id ?? courseLocal.meta?.external_id ?? null) || null;
       if (!courseLocal.id) {
         for (const c of e2eStore.courses.values()) {
-          const cSlug = c.slug ?? c.id;
           const cExternal = c.meta_json?.external_id ?? null;
-          if (incomingSlug && String(cSlug).toLowerCase() === String(incomingSlug).toLowerCase()) {
-            existingId = c.id;
-            break;
-          }
           if (incomingExternalId && cExternal && String(cExternal) === String(incomingExternalId)) {
             existingId = c.id;
             break;
@@ -4953,10 +4983,7 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
         }
       }
       const id = courseLocal.id ?? existingId ?? `e2e-course-${Date.now()}`;
-      const resolvedSlug = await ensureUniqueCourseSlug(courseLocal.slug || courseLocal.title || id, {
-        excludeCourseId: courseLocal.id ?? existingId ?? null,
-      });
-      courseLocal.slug = resolvedSlug;
+      const resolvedSlug = courseLocal.slug;
       const courseObj = {
         id,
         slug: resolvedSlug,
@@ -5498,6 +5525,24 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
 
     res.status(201).json({ data: refreshed.data });
   } catch (error) {
+    if (isCourseSlugConstraintError(error)) {
+      const attemptedSlug =
+        (course && course.slug) ||
+        (req.body?.course && req.body.course.slug) ||
+        courseLocal?.slug ||
+        null;
+      const suggestion = buildSlugSuggestion(attemptedSlug);
+      await respondWithCourseSlugConflict({
+        req,
+        res,
+        courseId: course?.id ?? null,
+        organizationId,
+        attemptedSlug,
+        suggestion,
+        idempotencyKey: req.body?.idempotency_key ?? req.body?.client_event_id ?? null,
+      });
+      return;
+    }
     try {
       console.error('[admin-courses] upsert_error_detail', {
         message: error?.message ?? null,
