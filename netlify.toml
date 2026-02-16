@@ -12,18 +12,21 @@
   VITE_ENABLE_WS = "true"
   VITE_API_BASE_URL = "https://api.the-huddle.co/api"
   VITE_WS_URL = "wss://api.the-huddle.co/ws"
+  VITE_DEPLOY_CONTEXT = "$CONTEXT"
 
 [context.deploy-preview.environment]
   API_MODE = "proxy"
   VITE_ENABLE_WS = "true"
   VITE_API_BASE_URL = "/api"
   VITE_WS_URL = "/ws"
+  BUILD_SOURCEMAP = "true"
 
 [context.branch-deploy.environment]
   API_MODE = "proxy"
   VITE_ENABLE_WS = "true"
   VITE_API_BASE_URL = "/api"
   VITE_WS_URL = "/ws"
+  BUILD_SOURCEMAP = "true"
 
 [dev]
   command = "npm run dev"

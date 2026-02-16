@@ -614,7 +614,23 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       silent?: boolean;
       allowRefresh?: boolean;
     } = {}): Promise<boolean> => {
-      const hasStoredToken = Boolean(getAccessToken());
+      let storedAccessToken: string | null = null;
+      let storedRefreshToken: string | null = null;
+      try {
+        storedAccessToken = getAccessToken();
+        storedRefreshToken = getRefreshToken();
+      } catch (tokenError) {
+        console.warn('[SecureAuth] Failed to inspect stored tokens for session fetch', tokenError);
+      }
+      const hasStoredToken = Boolean(storedAccessToken || storedRefreshToken);
+      if (import.meta.env.DEV) {
+        logAuthDebug('[auth] session_fetch_request', {
+          surface,
+          hasStoredToken,
+          hasAccessToken: Boolean(storedAccessToken),
+          hasRefreshToken: Boolean(storedRefreshToken),
+        });
+      }
       try {
         const response = await apiRequestRaw('/api/auth/session', {
           method: 'GET',
@@ -643,6 +659,15 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         }
 
         if (response.status === 401 || response.status === 403) {
+          if (import.meta.env.DEV) {
+            logAuthDebug('[auth] session_fetch_unauthorized', {
+              surface,
+              status: response.status,
+              hasStoredToken,
+              hasAccessToken: Boolean(storedAccessToken),
+              hasRefreshToken: Boolean(storedRefreshToken),
+            });
+          }
           if (allowRefresh && hasStoredToken) {
             const refreshFn = refreshTokenCallbackRef.current;
             if (refreshFn) {
