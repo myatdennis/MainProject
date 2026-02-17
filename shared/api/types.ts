@@ -26,6 +26,7 @@ export interface Lesson {
 export interface Module {
   id: UUID;
   courseId: UUID;
+  organizationId?: UUID | null;
   title: string;
   description?: string | null;
   orderIndex: number;
