@@ -1213,13 +1213,14 @@ registerJobProcessor('audit.write', async (payload = {}) => {
     return null;
   }
   try {
+    const normalizedOrgId = payload.organizationId ?? payload.organization_id ?? payload.org_id ?? null;
     await supabase.from('audit_logs').insert({
       action: payload.action,
       details: payload.details || {},
-      user_id: payload.user_id ?? null,
-      org_id: payload.org_id ?? null,
-      ip_address: payload.ip_address ?? null,
-      created_at: payload.created_at ?? new Date().toISOString(),
+      user_id: payload.userId ?? payload.user_id ?? null,
+      organization_id: normalizedOrgId ?? null,
+      ip_address: payload.ipAddress ?? payload.ip_address ?? null,
+      created_at: payload.createdAt ?? payload.created_at ?? new Date().toISOString(),
     });
   } catch (error) {
     logger.warn('audit_write_failed', { message: error?.message || String(error) });
@@ -3314,20 +3315,28 @@ async function recordActivationEvent(orgId, eventType, metadata = {}, actor) {
 
 async function createAuditLogEntry(action, details = {}, { userId = null, orgId = null, ip = null } = {}) {
   if (!supabase || !action) return;
+  const normalizedOrgId = normalizeOrgIdValue(orgId);
   const payload = {
     action,
     details,
-    user_id: userId,
-    org_id: orgId,
-    ip_address: ip,
-    created_at: new Date().toISOString(),
+    userId,
+    organizationId: normalizedOrgId ?? null,
+    ipAddress: ip ?? null,
+    createdAt: new Date().toISOString(),
   };
   try {
     await enqueueJob('audit.write', payload);
   } catch (error) {
     logger.warn('audit_queue_failed', { message: error?.message || String(error) });
     try {
-      await supabase.from('audit_logs').insert(payload);
+      await supabase.from('audit_logs').insert({
+        action: payload.action,
+        details: payload.details,
+        user_id: payload.userId ?? null,
+        organization_id: payload.organizationId ?? null,
+        ip_address: payload.ipAddress ?? null,
+        created_at: payload.createdAt,
+      });
     } catch (fallbackError) {
       console.warn('[audit] Failed to persist audit entry', { action, orgId, error: fallbackError });
     }
@@ -6181,8 +6190,7 @@ app.get('/api/client/courses', async (req, res) => {
         }
         if (!targetUser && normalizedSessionUserId) {
           // only include org-level assignments with null user scope when caller belongs to org
-          const isOrgMatch =
-            String(assignment.organization_id || assignment.org_id || '').trim() === orgId;
+          const isOrgMatch = String(assignment.organization_id || '').trim() === orgId;
           if (!isOrgMatch) {
             return;
           }
@@ -6206,7 +6214,7 @@ app.get('/api/client/courses', async (req, res) => {
     for (const table of tablesToTry) {
       let query = supabase
         .from(table)
-        .select('course_id,organization_id,org_id,user_id,active')
+        .select('course_id,organization_id,user_id,active')
         .eq('organization_id', orgId);
       if (normalizedSessionUserId) {
         query = query.or(
@@ -6241,7 +6249,7 @@ app.get('/api/client/courses', async (req, res) => {
         (asn) =>
           asn &&
           asn.active !== false &&
-          String(asn.organization_id || asn.org_id || '').trim() === orgId &&
+          String(asn.organization_id || '').trim() === orgId &&
           (!normalizedSessionUserId ||
             asn.user_id === null ||
             String(asn.user_id).trim().toLowerCase() === normalizedSessionUserId)
@@ -6264,9 +6272,8 @@ app.get('/api/client/courses', async (req, res) => {
         thumbnail: c.thumbnail ?? null,
         difficulty: c.difficulty ?? null,
         duration: c.duration ?? null,
-        organization_id: c.organization_id ?? c.org_id ?? null,
-        organizationId: c.organizationId ?? c.organization_id ?? c.org_id ?? null,
-        org_id: c.org_id ?? c.organization_id ?? null,
+        organization_id: c.organization_id ?? null,
+        organizationId: c.organizationId ?? c.organization_id ?? null,
         instructorName: c.instructorName ?? null,
         estimatedDuration: c.estimatedDuration ?? null,
         keyTakeaways: c.keyTakeaways ?? [],
@@ -6326,13 +6333,20 @@ app.get('/api/client/courses', async (req, res) => {
     if (error) throw error;
     res.json({ data });
   } catch (error) {
-    console.error('Failed to fetch published courses:', error);
+    const errorCode = typeof error?.code === 'string' ? error.code : null;
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    console.error('[client/courses] published_fetch_failed', {
+      assignedOnly,
+      orgId,
+      code: errorCode,
+      message: errorMessage,
+    });
     if (DEV_FALLBACK) {
       console.warn('[client/courses] Falling back to demo dataset because Supabase query failed.');
-      respondWithDemoCourses();
+      await respondWithDemoCourses();
       return;
     }
-    res.json({ data: [], meta: { warning: 'catalog_unavailable' } });
+    res.json({ data: [], meta: { warning: 'catalog_unavailable', code: errorCode } });
   }
 });
 
@@ -11142,12 +11156,13 @@ app.post('/api/audit-log', async (req, res) => {
     return;
   }
 
+  const normalizedOrgId = normalizeOrgIdValue(orgId ?? org_id ?? null);
   const entry = {
     id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     action: normalizedAction,
     details,
     user_id: userId ?? user_id ?? null,
-    org_id: orgId ?? org_id ?? null,
+    organization_id: normalizedOrgId ?? null,
     timestamp: timestamp || new Date().toISOString(),
   };
 
@@ -11174,7 +11189,7 @@ app.post('/api/audit-log', async (req, res) => {
       action: entry.action,
       details: entry.details,
       user_id: entry.user_id,
-      org_id: entry.org_id,
+      organization_id: entry.organization_id ?? null,
       created_at: entry.timestamp,
     });
 

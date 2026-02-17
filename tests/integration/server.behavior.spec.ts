@@ -237,6 +237,41 @@ describe('Server demo-mode behavior', () => {
     expect(orgBSlugs).not.toContain(courseA.slug);
   }, 20000);
 
+  it('returns assigned published courses without legacy org_id fields', async () => {
+    const slug = `pub-${randomUUID()}`;
+    const createRes = await server!.fetch('/api/admin/courses', {
+      method: 'POST',
+      headers: await adminContextHeaders(),
+      body: JSON.stringify({
+        course: { title: `Published ${slug}`, slug },
+        modules: [],
+      }),
+    });
+    expect([200, 201]).toContain(createRes.status);
+    const createdJson = await createRes.json();
+    const courseId = createdJson.data?.id;
+    expect(courseId).toBeTruthy();
+
+    const assignRes = await server!.fetch(`/api/admin/courses/${courseId}/assign`, {
+      method: 'POST',
+      headers: await adminContextHeaders(),
+      body: JSON.stringify({ organization_id: 'org-smoke', user_ids: [] }),
+    });
+    expect([200, 201]).toContain(assignRes.status);
+
+    const publishRes = await server!.fetch(`/api/admin/courses/${courseId}/publish`, {
+      method: 'POST',
+      headers: await adminContextHeaders(),
+    });
+    expect([200, 201]).toContain(publishRes.status);
+
+    const listRes = await server!.fetch('/api/client/courses?assigned=true&orgId=org-smoke');
+    expect(listRes.status).toBe(200);
+    const listJson = await listRes.json();
+    expect(Array.isArray(listJson.data)).toBe(true);
+    expect(JSON.stringify(listJson)).not.toContain('org_id');
+  }, 20000);
+
   it('records audit log metadata when provided', async () => {
     const payload = {
       action: `integration_audit_${Date.now()}`,
