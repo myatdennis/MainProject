@@ -11,6 +11,10 @@ interface MobileCourseToolbarProps {
   hasPendingChanges?: boolean;
   lastSaved?: Date | null;
   disabled?: boolean;
+  publishDisabled?: boolean;
+  saveDisabled?: boolean;
+  publishTitle?: string;
+  saveTitle?: string;
 }
 
 const MobileCourseToolbar: FunctionComponent<MobileCourseToolbarProps> = ({
@@ -23,6 +27,10 @@ const MobileCourseToolbar: FunctionComponent<MobileCourseToolbarProps> = ({
   hasPendingChanges,
   lastSaved,
   disabled = false,
+  publishDisabled = false,
+  saveDisabled = false,
+  publishTitle,
+  saveTitle,
 }) => {
   const isSaving = saveStatus === 'saving';
   const savedLabel = lastSaved
@@ -76,7 +84,9 @@ const MobileCourseToolbar: FunctionComponent<MobileCourseToolbarProps> = ({
             <button
               type="button"
               onClick={onPublish}
-              className="flex items-center justify-center rounded-2xl border border-green-200 bg-green-50 px-4 py-3 text-sm font-semibold text-green-700 shadow-inner transition hover:bg-green-100"
+              disabled={publishDisabled}
+              title={publishTitle}
+              className="flex items-center justify-center rounded-2xl border border-green-200 bg-green-50 px-4 py-3 text-sm font-semibold text-green-700 shadow-inner transition hover:bg-green-100 disabled:cursor-not-allowed disabled:opacity-50"
             >
               <CheckCircle className="mr-2 h-4 w-4" /> Publish
             </button>
@@ -86,7 +96,8 @@ const MobileCourseToolbar: FunctionComponent<MobileCourseToolbarProps> = ({
       <button
         type="button"
         onClick={onSave}
-        disabled={disabled || isSaving}
+        disabled={disabled || isSaving || saveDisabled}
+        title={saveTitle}
         className="flex items-center justify-center rounded-2xl bg-gradient-to-r from-orange-500 to-orange-600 px-4 py-3 text-base font-semibold text-white shadow-lg transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
       >
         {isSaving ? (

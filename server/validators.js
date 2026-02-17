@@ -37,20 +37,41 @@ export const moduleCreateSchema = z.object({
 
 export const modulePatchSchema = moduleCreateSchema.partial();
 
-export const lessonCreateSchema = z.object({
-  module_id: uuid().optional(),
-  moduleId: uuid().optional(),
-  title: z.string().min(1),
-  type: z.enum(['video', 'quiz', 'reflection', 'text', 'resource']),
-  description: z.string().nullable().optional(),
-  order_index: z.number().int().nonnegative().optional(),
-  orderIndex: z.number().int().nonnegative().optional(),
-  duration_s: z.number().int().nonnegative().nullable().optional(),
-  durationSeconds: z.number().int().nonnegative().nullable().optional(),
-  content: lessonContentSchema.default({}),
-  completion_rule_json: completionRuleSchema,
-  completionRule: completionRuleSchema,
-});
+const lessonTypeEnum = z.enum(['video', 'interactive', 'quiz', 'download', 'text']);
+
+export const lessonCreateSchema = z
+  .object({
+    id: uuid().optional(),
+    module_id: uuid().optional(),
+    moduleId: uuid().optional(),
+    title: z.string().min(1),
+    type: lessonTypeEnum,
+    description: z.string().nullable().default(null),
+    order_index: z.number().int().nonnegative().optional(),
+    orderIndex: z.number().int().nonnegative().optional(),
+    duration_s: z.number().int().nonnegative().nullable().default(null),
+    durationSeconds: z.number().int().nonnegative().nullable().optional(),
+    content_json: z.record(z.any()).default({}),
+    content: lessonContentSchema.default({}),
+    completion_rule_json: completionRuleSchema.default(null),
+    completionRule: completionRuleSchema,
+  })
+  .superRefine((value, ctx) => {
+    if (!value.module_id && !value.moduleId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'module_id is required',
+        path: ['module_id'],
+      });
+    }
+    if (value.order_index == null && value.orderIndex == null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'order_index is required',
+        path: ['order_index'],
+      });
+    }
+  });
 
 export const lessonPatchSchema = lessonCreateSchema.partial();
 

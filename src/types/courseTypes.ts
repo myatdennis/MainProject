@@ -110,6 +110,7 @@ export interface Lesson {
   description?: string; // optional for backward compatibility
   type: 'video' | 'text' | 'quiz' | 'interactive' | 'document' | 'scenario';
   order?: number; // optional for backward compatibility
+  order_index?: number; // snake_case variant used by admin builder
   estimatedDuration?: number; // optional for backward compatibility
   duration?: string; // formatted duration string for backwards compatibility
   content: LessonContent;

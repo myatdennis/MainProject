@@ -559,7 +559,7 @@ app.post('/api/admin/courses/:id/assign', async (req, res) => {
   const context = requireUserContext(req, res);
   if (!context) return;
 
-  const access = await requireOrgAccess(req, res, organizationId, { write: true });
+  const access = await requireOrgAccess(req, res, organizationId, { write: true, requireOrgAdmin: true });
   if (!access && context.userRole !== 'admin') return;
 
   const dueProvided = hasBodyKey('due_at') || hasBodyKey('dueAt');
@@ -629,6 +629,7 @@ app.post('/api/admin/courses/:id/assign', async (req, res) => {
       org_id: organizationId,
       course_id: id,
       user_id: userId,
+      user_id_uuid: userId ?? null,
       assigned_by: assignedBy ?? null,
       status: statusValue,
       progress: progressValue ?? 0,
@@ -643,6 +644,12 @@ app.post('/api/admin/courses/:id/assign', async (req, res) => {
   };
 
   const targetUserIds = normalizedUserIds.length > 0 ? normalizedUserIds : [null];
+  const buildAssignmentKey = (value) => (value === null ? '__org__' : String(value).toLowerCase());
+  const resolveRowKey = (row) => {
+    if (!row) return '__org__';
+    const candidate = row.user_id ?? row.user_id_uuid ?? null;
+    return buildAssignmentKey(candidate);
+  };
 
   try {
     if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
@@ -744,17 +751,32 @@ app.post('/api/admin/courses/:id/assign', async (req, res) => {
 
     const existingMap = new Map();
     if (normalizedUserIds.length > 0) {
-      const { data: existingUsers, error } = await supabase
-        .from('assignments')
-        .select('*')
-        .eq('course_id', id)
-        .eq('organization_id', organizationId)
-        .eq('active', true)
-        .in('user_id', normalizedUserIds);
-      if (error) throw error;
-      (existingUsers || []).forEach((row) => {
-        if (!row || typeof row.user_id !== 'string') return;
-        existingMap.set(row.user_id.toLowerCase(), row);
+      const seenAssignmentIds = new Set();
+
+      const fetchExistingByColumn = async (column) => {
+        const { data, error } = await supabase
+          .from('assignments')
+          .select('*')
+          .eq('course_id', id)
+          .eq('organization_id', organizationId)
+          .eq('active', true)
+          .in(column, normalizedUserIds);
+        if (error) throw error;
+        return data || [];
+      };
+
+      const rowsByUserId = await fetchExistingByColumn('user_id');
+      rowsByUserId.forEach((row) => {
+        if (!row) return;
+        seenAssignmentIds.add(row.id);
+        existingMap.set(resolveRowKey(row), row);
+      });
+
+      const rowsByUuid = await fetchExistingByColumn('user_id_uuid');
+      rowsByUuid.forEach((row) => {
+        if (!row || seenAssignmentIds.has(row.id)) return;
+        seenAssignmentIds.add(row.id);
+        existingMap.set(resolveRowKey(row), row);
       });
     } else {
       const { data: existingOrg, error } = await supabase
@@ -774,7 +796,7 @@ app.post('/api/admin/courses/:id/assign', async (req, res) => {
     const inserts = [];
     const nowIso = new Date().toISOString();
     for (const userId of targetUserIds) {
-      const key = userId === null ? '__org__' : String(userId).toLowerCase();
+      const key = buildAssignmentKey(userId);
       const existing = existingMap.get(key);
       if (existing) {
         const patch = {
@@ -782,6 +804,8 @@ app.post('/api/admin/courses/:id/assign', async (req, res) => {
           metadata: mergeMetadata(existing.metadata),
           updated_at: nowIso,
           active: true,
+          user_id_uuid: existing.user_id_uuid ?? existing.user_id ?? null,
+          user_id: existing.user_id ?? existing.user_id_uuid ?? null,
         };
         if (dueProvided) patch.due_at = dueAtValue ?? null;
         if (noteProvided) patch.note = noteValue ?? null;
@@ -853,6 +877,88 @@ app.post('/api/admin/courses/:id/assign', async (req, res) => {
   } catch (error) {
     logAdminCoursesError(req, error, `Failed to assign course ${id}`);
     res.status(500).json({ error: 'Unable to assign course' });
+  }
+});
+
+app.get('/api/admin/courses/:id/assignments', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const { id } = req.params;
+  const organizationId = pickOrgId(req.query.orgId, req.query.organizationId);
+
+  if (!organizationId) {
+    res.status(400).json({ error: 'org_id_required', message: 'orgId query parameter is required.' });
+    return;
+  }
+
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  const access = await requireOrgAccess(req, res, organizationId, { write: false, requireOrgAdmin: true });
+  if (!access) return;
+
+  try {
+    const activeOnly = String(req.query.active ?? 'true').toLowerCase() !== 'false';
+    let query = supabase
+      .from('assignments')
+      .select('*')
+      .eq('course_id', id)
+      .eq('organization_id', organizationId)
+      .order('created_at', { ascending: false });
+    if (activeOnly) {
+      query = query.eq('active', true);
+    }
+    const { data, error } = await query;
+    if (error) throw error;
+    res.json({ data: data || [] });
+  } catch (error) {
+    logAdminCoursesError(req, error, `Failed to load assignments for course ${id}`);
+    res.status(500).json({ error: 'Unable to load assignments' });
+  }
+});
+
+app.delete('/api/admin/assignments/:assignmentId', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const { assignmentId } = req.params;
+
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  try {
+    const { data: existing, error: lookupError } = await supabase
+      .from('assignments')
+      .select('*')
+      .eq('id', assignmentId)
+      .maybeSingle();
+    if (lookupError) throw lookupError;
+    if (!existing) {
+      res.status(404).json({ error: 'assignment_not_found' });
+      return;
+    }
+
+    const orgId = existing.organization_id || existing.org_id || null;
+    if (!orgId) {
+      res.status(400).json({ error: 'assignment_missing_org' });
+      return;
+    }
+
+    const access = await requireOrgAccess(req, res, orgId, { write: true, requireOrgAdmin: true });
+    if (!access && context.userRole !== 'admin') return;
+
+    const { data, error } = await supabase
+      .from('assignments')
+      .update({
+        active: false,
+        removed_at: new Date().toISOString(),
+      })
+      .eq('id', assignmentId)
+      .select('*')
+      .maybeSingle();
+    if (error) throw error;
+
+    res.json({ data });
+  } catch (error) {
+    logRouteError('DELETE /api/admin/assignments/:assignmentId', error);
+    res.status(500).json({ error: 'Unable to remove assignment' });
   }
 });
 
@@ -1111,6 +1217,116 @@ app.get('/api/debug/whoami', authenticate, (req, res) => {
     ok: true,
     user: req.user || null,
   });
+});
+
+app.get('/api/admin/users', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const orgId = pickOrgId(req.query.orgId, req.query.organizationId);
+  if (!orgId) {
+    res.status(400).json({ error: 'org_id_required', message: 'orgId query parameter is required.' });
+    return;
+  }
+
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  const access = await requireOrgAccess(req, res, orgId, { write: false, requireOrgAdmin: true });
+  if (!access) return;
+
+  try {
+    const members = await fetchOrgMembersWithProfiles(orgId);
+    res.json({ data: members });
+  } catch (error) {
+    logRouteError('GET /api/admin/users', error);
+    res.status(500).json({ error: 'Unable to load organization users' });
+  }
+});
+
+app.patch('/api/admin/users/:userId', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const { userId } = req.params;
+  const orgId = pickOrgId(req.body?.orgId, req.body?.organizationId);
+  const { role, status } = req.body || {};
+
+  if (!orgId) {
+    res.status(400).json({ error: 'org_id_required', message: 'organizationId is required.' });
+    return;
+  }
+  if (!role && !status) {
+    res.status(400).json({ error: 'no_fields', message: 'role or status must be provided.' });
+    return;
+  }
+
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  const access = await requireOrgAccess(req, res, orgId, { write: true, requireOrgAdmin: true });
+  if (!access) return;
+
+  try {
+    const { data: membership, error: lookupError } = await supabase
+      .from('organization_memberships')
+      .select('id, org_id, user_id, role, status')
+      .eq('org_id', orgId)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (lookupError) throw lookupError;
+    if (!membership) {
+      res.status(404).json({ error: 'membership_not_found' });
+      return;
+    }
+
+    const updatePayload = {};
+    if (role) {
+      updatePayload.role = String(role).toLowerCase();
+    }
+    if (status) {
+      const normalizedStatus = String(status).toLowerCase();
+      if (!['pending', 'active', 'revoked'].includes(normalizedStatus)) {
+        res.status(400).json({ error: 'invalid_status' });
+        return;
+      }
+      updatePayload.status = normalizedStatus;
+      if (normalizedStatus === 'active') {
+        updatePayload.accepted_at = new Date().toISOString();
+        updatePayload.last_seen_at = new Date().toISOString();
+      }
+    }
+
+    const roleIsChangingFromOwner =
+      membership.role === 'owner' && updatePayload.role && updatePayload.role !== 'owner';
+    const statusRevokingOwner = membership.role === 'owner' && updatePayload.status === 'revoked';
+
+    if (roleIsChangingFromOwner || statusRevokingOwner) {
+      const { count, error: ownerCountError } = await supabase
+        .from('organization_memberships')
+        .select('id', { head: true, count: 'exact' })
+        .eq('org_id', orgId)
+        .eq('role', 'owner')
+        .eq('status', 'active');
+      if (ownerCountError) throw ownerCountError;
+      if (!count || count <= 1) {
+        res.status(400).json({ error: 'owner_required', message: 'At least one active owner is required.' });
+        return;
+      }
+    }
+
+    const { data, error } = await supabase
+      .from('organization_memberships')
+      .update(updatePayload)
+      .eq('org_id', orgId)
+      .eq('user_id', userId)
+      .select('*')
+      .maybeSingle();
+
+    if (error) throw error;
+
+    res.json({ data });
+  } catch (error) {
+    logRouteError('PATCH /api/admin/users/:userId', error);
+    res.status(500).json({ error: 'Unable to update organization user' });
+  }
 });
 
 // Auth routes (login, register, refresh, logout)
@@ -3648,6 +3864,43 @@ function buildPublicInvitePayload(invite, orgSummary) {
     },
     loginUrl: INVITE_LOGIN_URL,
   };
+}
+
+async function fetchOrgMembersWithProfiles(orgId) {
+  if (!supabase) {
+    return [];
+  }
+
+  const { data: memberships, error } = await supabase
+    .from('organization_memberships')
+    .select(
+      'id, org_id, user_id, role, status, invited_by, invited_email, accepted_at, last_seen_at, created_at, updated_at',
+    )
+    .eq('org_id', orgId);
+  if (error) throw error;
+
+  const rows = Array.isArray(memberships) ? memberships : [];
+  const userIds = rows.map((row) => row?.user_id).filter(Boolean);
+  const profileMap = new Map();
+
+  if (userIds.length > 0) {
+    const { data: profiles, error: profileError } = await supabase
+      .from('user_profiles')
+      .select('*')
+      .in('user_id', userIds);
+    if (profileError) throw profileError;
+    (profiles || []).forEach((profile) => {
+      if (profile?.user_id) {
+        profileMap.set(profile.user_id, profile);
+      }
+    });
+  }
+
+  return rows.map((membership) => ({
+    ...membership,
+    user_id_uuid: membership.user_id ?? membership.user_id_uuid ?? null,
+    profile: profileMap.get(membership.user_id) || null,
+  }));
 }
 
 async function upsertOrganizationMembership(orgId, userId, role, actor) {
@@ -6667,98 +6920,236 @@ app.post('/api/admin/modules/reorder', async (req, res) => {
   }
 });
 
+const logLessonEvent = (level, event, meta = {}) => {
+  const fn = level === 'error' ? logger.error : level === 'warn' ? logger.warn : logger.info;
+  fn(event, meta);
+};
+
+const buildLessonLogMeta = (req, context) => ({
+  requestId: req.requestId ?? null,
+  userId: context?.userId ?? null,
+  orgId: null,
+  moduleId: null,
+  lessonId: null,
+  lessonType: null,
+  orderIndex: null,
+});
+
+const respondLessonError = (res, logMeta, event, status, code, message, detail = null) => {
+  logLessonEvent('error', event, { ...logMeta, status, code, message, detail });
+  res.status(status).json({ code, message, detail });
+};
+
 // Admin Lessons (E2E fallback)
 app.post('/api/admin/lessons', async (req, res) => {
+  const context = requireUserContext(req, res);
+  if (!context) return;
+  const lessonLogMeta = buildLessonLogMeta(req, context);
+
+  const parseResult = lessonCreateSchema.safeParse(req.body || {});
+  if (!parseResult.success) {
+    respondLessonError(
+      res,
+      lessonLogMeta,
+      'admin_lessons_create_error',
+      400,
+      'validation_failed',
+      'Lesson payload validation failed',
+      parseResult.error.issues,
+    );
+    return;
+  }
+  const parsed = parseResult.data;
+  const { id } = req.params;
+  lessonLogMeta.lessonId = id;
+
+  const moduleId = pickId(parsed, 'module_id', 'moduleId');
+  lessonLogMeta.moduleId = moduleId ?? null;
+
+  const lessonId = parsed.id ?? randomUUID();
+  const expectedCourseVersion = parsed.course_version ?? parsed.expectedCourseVersion ?? null;
+  const title = parsed.title;
+  const type = parsed.type ?? null;
+  if (type) lessonLogMeta.lessonType = type;
+
+  const description = parsed.description ?? null;
+  const orderIndex = pickOrder(parsed);
+  if (orderIndex !== null) lessonLogMeta.orderIndex = orderIndex;
+
+  const durationSeconds = parsed.duration_s ?? parsed.durationSeconds ?? null;
+
+  const normalizedContent =
+    (parsed.content_json && Object.keys(parsed.content_json).length > 0 ? parsed.content_json : null) ??
+    (parsed.content && typeof parsed.content === 'object' ? parsed.content.body ?? parsed.content : null) ??
+    {};
+
+  const completionRule = parsed.completion_rule_json ?? parsed.completionRule ?? null;
+
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
-    const parsed = validateOr400(lessonCreateSchema, req, res);
-    if (!parsed) return;
-    const moduleId = pickId(parsed, 'module_id', 'moduleId');
-    const expectedCourseVersion = parsed.course_version ?? parsed.expectedCourseVersion ?? null;
-    const title = parsed.title;
-    const type = parsed.type;
-    const description = parsed.description ?? null;
-    const orderIndex = pickOrder(parsed);
-    const durationSeconds = parsed.duration_s ?? parsed.durationSeconds ?? null;
-    const content = parsed.content ?? {};
-    const completionRule = parsed.completion_rule_json ?? parsed.completionRule ?? null;
-    if (!moduleId || !title || !type) {
-      res.status(400).json({ error: 'moduleId, title and type are required' });
-      return;
-    }
     const found = e2eFindModule(moduleId);
     if (!found) {
-      res.status(404).json({ error: 'Module not found' });
+      respondLessonError(res, lessonLogMeta, 'admin_lessons_create_error', 404, 'module_not_found', 'Module not found');
       return;
     }
-    // Optional optimistic check: ensure client targets expected course version
+    const resolvedOrgId = pickOrgId(
+      found.course?.organization_id,
+      found.course?.org_id,
+      found.course?.organizationId,
+    );
+    lessonLogMeta.orgId = resolvedOrgId ?? null;
+    if (resolvedOrgId) {
+      const access = await requireOrgAccess(req, res, resolvedOrgId, { write: true, requireOrgAdmin: true });
+      if (!access) return;
+    } else if (!context.isPlatformAdmin) {
+      respondLessonError(
+        res,
+        lessonLogMeta,
+        'admin_lessons_create_error',
+        403,
+        'organization_required',
+        'Lesson creation requires an organization scope',
+      );
+      return;
+    }
     if (typeof expectedCourseVersion === 'number') {
-      const course = found.course;
-      const current = course.version ?? 1;
+      const current = found.course?.version ?? 1;
       if (expectedCourseVersion < current) {
-        res.status(409).json({ error: 'version_conflict', message: `Course has newer version ${current}` });
+        respondLessonError(
+          res,
+          lessonLogMeta,
+          'admin_lessons_create_error',
+          409,
+          'version_conflict',
+          `Course has newer version ${current}`,
+        );
         return;
       }
     }
-    const id = `e2e-less-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+    logLessonEvent('info', 'admin_lessons_create_request', lessonLogMeta);
+    const id = lessonId.startsWith('e2e-') ? lessonId : `e2e-less-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
     const lesson = {
       id,
       module_id: moduleId,
+      organization_id: resolvedOrgId ?? null,
       title,
       description,
       type,
       order_index: orderIndex,
       duration_s: durationSeconds,
-      content_json: (content && typeof content === 'object') ? (content.body ?? content) : {},
+      content_json: normalizedContent,
       completion_rule_json: completionRule ?? null,
     };
     found.module.lessons = found.module.lessons || [];
     found.module.lessons.push(lesson);
     persistE2EStore();
-    console.log(`✅ Created lesson "${title}" in module "${found.module.title}"`);
-    res.status(201).json({ data: { id, module_id: moduleId, title, type, order_index: orderIndex } });
+    res.status(201).json({ data: lesson });
+    logLessonEvent('info', 'admin_lessons_create_success', { ...lessonLogMeta, lessonId: id, status: 201 });
     return;
   }
+
   if (!ensureSupabase(res)) return;
+
   try {
-    const parsed = validateOr400(lessonCreateSchema, req, res);
-    if (!parsed) return;
-    const moduleId = pickId(parsed, 'module_id', 'moduleId');
-    const expectedCourseVersion = parsed.course_version ?? parsed.expectedCourseVersion ?? null;
-    const title = parsed.title;
-    const type = parsed.type;
-    const description = parsed.description ?? null;
-    const orderIndex = pickOrder(parsed);
-    const durationSeconds = parsed.duration_s ?? parsed.durationSeconds ?? null;
-    const content = parsed.content ?? {};
-    const completionRule = parsed.completion_rule_json ?? parsed.completionRule ?? null;
-    if (!moduleId || !title || !type) {
-      res.status(400).json({ error: 'moduleId, title and type are required' });
+    const { data: moduleRow, error: moduleErr } = await supabase
+      .from('modules')
+      .select('id,course_id,organization_id,org_id')
+      .eq('id', moduleId)
+      .maybeSingle();
+    if (moduleErr) {
+      respondLessonError(
+        res,
+        lessonLogMeta,
+        'admin_lessons_create_error',
+        500,
+        'module_lookup_failed',
+        'Unable to load module',
+        moduleErr.message,
+      );
       return;
     }
-    // Optional optimistic check: if client provided expected course version, compare
+    if (!moduleRow) {
+      respondLessonError(res, lessonLogMeta, 'admin_lessons_create_error', 404, 'module_not_found', 'Module not found');
+      return;
+    }
+    const courseId = moduleRow.course_id ?? null;
+    if (!courseId) {
+      respondLessonError(
+        res,
+        lessonLogMeta,
+        'admin_lessons_create_error',
+        400,
+        'module_course_missing',
+        'Module is not linked to a course',
+      );
+      return;
+    }
+    const { data: courseRow, error: courseErr } = await supabase
+      .from('courses')
+      .select('id,version,organization_id,org_id')
+      .eq('id', courseId)
+      .maybeSingle();
+    if (courseErr) {
+      respondLessonError(
+        res,
+        lessonLogMeta,
+        'admin_lessons_create_error',
+        500,
+        'course_lookup_failed',
+        'Unable to load parent course',
+        courseErr.message,
+      );
+      return;
+    }
+    if (!courseRow) {
+      respondLessonError(res, lessonLogMeta, 'admin_lessons_create_error', 404, 'course_not_found', 'Parent course not found');
+      return;
+    }
+    const resolvedOrgId = pickOrgId(
+      moduleRow.organization_id,
+      courseRow.organization_id,
+      moduleRow.org_id,
+      courseRow.org_id,
+    );
+    lessonLogMeta.orgId = resolvedOrgId ?? null;
+    if (resolvedOrgId) {
+      const access = await requireOrgAccess(req, res, resolvedOrgId, { write: true, requireOrgAdmin: true });
+      if (!access) return;
+    } else if (!context.isPlatformAdmin) {
+      respondLessonError(
+        res,
+        lessonLogMeta,
+        'admin_lessons_create_error',
+        403,
+        'organization_required',
+        'Lesson creation requires an organization scope',
+      );
+      return;
+    }
     if (typeof expectedCourseVersion === 'number') {
-      // fetch module to get parent course id
-      const { data: modRow, error: modErr } = await supabase.from('modules').select('id,course_id').eq('id', moduleId).maybeSingle();
-      if (modErr) throw modErr;
-      const courseId = modRow?.course_id ?? null;
-      if (courseId) {
-        const { data: courseRow, error: fetchErr } = await supabase.from('courses').select('id,version').eq('id', courseId).maybeSingle();
-        if (fetchErr) throw fetchErr;
-        const current = courseRow?.version ?? null;
-        if (current !== null && expectedCourseVersion < current) {
-          res.status(409).json({ error: 'version_conflict', message: `Course has newer version ${current}` });
-          return;
-        }
+      const currentVersion = courseRow.version ?? null;
+      if (currentVersion !== null && expectedCourseVersion < currentVersion) {
+        respondLessonError(
+          res,
+          lessonLogMeta,
+          'admin_lessons_create_error',
+          409,
+          'version_conflict',
+          `Course has newer version ${currentVersion}`,
+        );
+        return;
       }
     }
+    logLessonEvent('info', 'admin_lessons_create_request', lessonLogMeta);
     const payload = {
+      id: lessonId,
       module_id: moduleId,
+      organization_id: resolvedOrgId ?? null,
       title,
       type,
       description,
       order_index: orderIndex,
       duration_s: durationSeconds,
-      content_json: content && typeof content === 'object' ? content.body ?? content : {},
+      content_json: normalizedContent,
       completion_rule_json: completionRule ?? null,
     };
     const { data, error } = await supabase
@@ -6766,104 +7157,289 @@ app.post('/api/admin/lessons', async (req, res) => {
       .insert(payload)
       .select('*')
       .single();
-    if (error) throw error;
-    res.status(201).json({ data: { id: data.id, module_id: data.module_id, title: data.title, type: data.type, order_index: data.order_index ?? 0 } });
+    if (error) {
+      respondLessonError(
+        res,
+        lessonLogMeta,
+        'admin_lessons_create_error',
+        500,
+        'lesson_create_failed',
+        'Unable to create lesson',
+        error.message,
+      );
+      return;
+    }
+    lessonLogMeta.lessonId = data.id;
+    res.status(201).json({ data });
+    logLessonEvent('info', 'admin_lessons_create_success', { ...lessonLogMeta, status: 201 });
   } catch (error) {
-    console.error('Failed to create lesson:', error);
-    res.status(500).json({ error: 'Unable to create lesson' });
+    respondLessonError(
+      res,
+      lessonLogMeta,
+      'admin_lessons_create_error',
+      500,
+      'lesson_create_failed',
+      'Unable to create lesson',
+      error instanceof Error ? error.message : null,
+    );
   }
 });
 
 app.patch('/api/admin/lessons/:id', async (req, res) => {
+  const context = requireUserContext(req, res);
+  if (!context) return;
+  const lessonLogMeta = buildLessonLogMeta(req, context);
+
+  const parseResult = lessonPatchSchema.safeParse(req.body || {});
+  if (!parseResult.success) {
+    respondLessonError(
+      res,
+      lessonLogMeta,
+      'admin_lessons_update_error',
+      400,
+      'validation_failed',
+      'Lesson payload validation failed',
+      parseResult.error.issues,
+    );
+    return;
+  }
+  const parsed = parseResult.data;
+  const { id } = req.params;
+  lessonLogMeta.lessonId = id;
+  const expectedCourseVersion = parsed.course_version ?? parsed.expectedCourseVersion ?? null;
+  const title = parsed.title;
+  const type = parsed.type;
+  if (type) lessonLogMeta.lessonType = type;
+  const description = parsed.description ?? null;
+  const orderIndex =
+    parsed.order_index ?? parsed.orderIndex ?? null;
+  if (orderIndex !== null) lessonLogMeta.orderIndex = orderIndex;
+  const durationSeconds = parsed.duration_s ?? parsed.durationSeconds ?? null;
+  const contentPayload =
+    (parsed.content_json && Object.keys(parsed.content_json).length > 0 ? parsed.content_json : null) ??
+    (parsed.content && typeof parsed.content === 'object' ? parsed.content.body ?? parsed.content : null);
+  const completionRule = parsed.completion_rule_json ?? parsed.completionRule ?? null;
+
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
-    const { id } = req.params;
-    const parsed = validateOr400(lessonPatchValidator, req, res);
-    if (!parsed) return;
-    const expectedCourseVersion = parsed.course_version ?? parsed.expectedCourseVersion ?? null;
-    const title = parsed.title;
-    const type = parsed.type;
-    const description = parsed.description ?? null;
-    const orderIndex = pickOrder(parsed);
-    const durationSeconds = parsed.duration_s ?? parsed.durationSeconds ?? null;
-    const content = parsed.content ?? {};
-    const completionRule = parsed.completion_rule_json ?? parsed.completionRule ?? null;
     const found = e2eFindLesson(id);
     if (!found) {
-      res.status(404).json({ error: 'Lesson not found' });
+      respondLessonError(res, lessonLogMeta, 'admin_lessons_update_error', 404, 'lesson_not_found', 'Lesson not found');
       return;
     }
-    // Optional optimistic check: ensure client is targeting expected course version
+    const resolvedOrgId = pickOrgId(
+      found.course?.organization_id,
+      found.course?.org_id,
+      found.course?.organizationId,
+      found.module?.organization_id,
+      found.module?.org_id,
+    );
+    lessonLogMeta.orgId = resolvedOrgId ?? null;
+    lessonLogMeta.moduleId = found.module?.id ?? null;
+    if (resolvedOrgId) {
+      const access = await requireOrgAccess(req, res, resolvedOrgId, { write: true, requireOrgAdmin: true });
+      if (!access) return;
+    } else if (!context.isPlatformAdmin) {
+      respondLessonError(
+        res,
+        lessonLogMeta,
+        'admin_lessons_update_error',
+        403,
+        'organization_required',
+        'Lesson updates require an organization scope',
+      );
+      return;
+    }
     if (typeof expectedCourseVersion === 'number') {
-      const current = found.module.version ?? 1;
+      const current = found.module?.version ?? 1;
       if (expectedCourseVersion < current) {
-        res.status(409).json({ error: 'version_conflict', message: `Module has newer version ${current}` });
+        respondLessonError(
+          res,
+          lessonLogMeta,
+          'admin_lessons_update_error',
+          409,
+          'version_conflict',
+          `Module has newer version ${current}`,
+        );
         return;
       }
     }
+    logLessonEvent('info', 'admin_lessons_update_request', lessonLogMeta);
     if (typeof title === 'string') found.lesson.title = title;
     if (typeof type === 'string') found.lesson.type = type;
     if (description !== undefined) found.lesson.description = description;
     if (typeof orderIndex === 'number') found.lesson.order_index = orderIndex;
-    if (typeof durationSeconds === 'number') found.lesson.duration_s = durationSeconds;
-    if (content !== undefined) found.lesson.content_json = (content && typeof content === 'object') ? (content.body ?? content) : {};
-    if (completionRule !== undefined) found.lesson.completion_rule_json = completionRule;
+    if (typeof durationSeconds === 'number' || durationSeconds === null) found.lesson.duration_s = durationSeconds;
+    if (contentPayload !== undefined) {
+      found.lesson.content_json = contentPayload ?? {};
+    }
+    if (completionRule !== undefined) found.lesson.completion_rule_json = completionRule ?? null;
     persistE2EStore();
-    console.log(`✅ Updated lesson ${id}`);
-    res.json({ data: { id: found.lesson.id, module_id: found.module.id, title: found.lesson.title, type: found.lesson.type, order_index: found.lesson.order_index ?? 0 } });
+    res.json({ data: found.lesson });
+    logLessonEvent('info', 'admin_lessons_update_success', { ...lessonLogMeta, status: 200 });
     return;
   }
   if (!ensureSupabase(res)) return;
   try {
-    const { id } = req.params;
-    const parsed = validateOr400(lessonPatchValidator, req, res);
-    if (!parsed) return;
-    const title = parsed.title;
-    const type = parsed.type;
-    const description = parsed.description ?? null;
-    const orderIndex = pickOrder(parsed);
-    const durationSeconds = parsed.duration_s ?? parsed.durationSeconds ?? null;
-    const content = parsed.content ?? {};
-    const completionRule = parsed.completion_rule_json ?? parsed.completionRule ?? null;
-    const expectedCourseVersion = parsed.course_version ?? parsed.expectedCourseVersion ?? null;
     const patch = {};
     if (typeof title === 'string') patch.title = title;
     if (typeof type === 'string') patch.type = type;
     if (description !== undefined) patch.description = description;
     if (typeof orderIndex === 'number') patch.order_index = orderIndex;
-    if (typeof durationSeconds === 'number') patch.duration_s = durationSeconds;
-    if (content !== undefined) patch.content_json = content && typeof content === 'object' ? content.body ?? content : {};
+    if (typeof durationSeconds === 'number' || durationSeconds === null) patch.duration_s = durationSeconds;
+    if (contentPayload !== undefined) patch.content_json = contentPayload ?? {};
     if (completionRule !== undefined) patch.completion_rule_json = completionRule;
     if (Object.keys(patch).length === 0) {
-      res.status(400).json({ error: 'No fields to update' });
+      respondLessonError(
+        res,
+        lessonLogMeta,
+        'admin_lessons_update_error',
+        400,
+        'no_fields_to_update',
+        'No fields to update',
+      );
       return;
     }
-    // If client provided expected course version, validate against parent course to avoid stale edits
+    const { data: lessonRow, error: lessonErr } = await supabase
+      .from('lessons')
+      .select('id,module_id,type,order_index,organization_id')
+      .eq('id', id)
+      .maybeSingle();
+    if (lessonErr) {
+      respondLessonError(
+        res,
+        lessonLogMeta,
+        'admin_lessons_update_error',
+        500,
+        'lesson_lookup_failed',
+        'Unable to load lesson',
+        lessonErr.message,
+      );
+      return;
+    }
+    if (!lessonRow) {
+      respondLessonError(res, lessonLogMeta, 'admin_lessons_update_error', 404, 'lesson_not_found', 'Lesson not found');
+      return;
+    }
+    lessonLogMeta.moduleId = lessonRow.module_id ?? null;
+    if (!lessonLogMeta.lessonType) lessonLogMeta.lessonType = lessonRow.type ?? null;
+    if (!lessonLogMeta.orderIndex) lessonLogMeta.orderIndex = lessonRow.order_index ?? null;
+    const { data: moduleRow, error: moduleErr } = await supabase
+      .from('modules')
+      .select('id,course_id,organization_id,org_id')
+      .eq('id', lessonRow.module_id)
+      .maybeSingle();
+    if (moduleErr) {
+      respondLessonError(
+        res,
+        lessonLogMeta,
+        'admin_lessons_update_error',
+        500,
+        'module_lookup_failed',
+        'Unable to load module',
+        moduleErr.message,
+      );
+      return;
+    }
+    if (!moduleRow) {
+      respondLessonError(res, lessonLogMeta, 'admin_lessons_update_error', 404, 'module_not_found', 'Module not found');
+      return;
+    }
+    const { data: courseRow, error: courseErr } = await supabase
+      .from('courses')
+      .select('id,version,organization_id,org_id')
+      .eq('id', moduleRow.course_id)
+      .maybeSingle();
+    if (courseErr) {
+      respondLessonError(
+        res,
+        lessonLogMeta,
+        'admin_lessons_update_error',
+        500,
+        'course_lookup_failed',
+        'Unable to load parent course',
+        courseErr.message,
+      );
+      return;
+    }
+    if (!courseRow) {
+      respondLessonError(
+        res,
+        lessonLogMeta,
+        'admin_lessons_update_error',
+        404,
+        'course_not_found',
+        'Parent course not found',
+      );
+      return;
+    }
+
+    const resolvedOrgId = pickOrgId(
+      lessonRow.organization_id,
+      moduleRow.organization_id,
+      courseRow.organization_id,
+      moduleRow.org_id,
+      courseRow.org_id,
+    );
+    lessonLogMeta.orgId = resolvedOrgId ?? null;
+    if (resolvedOrgId) {
+      const access = await requireOrgAccess(req, res, resolvedOrgId, { write: true, requireOrgAdmin: true });
+      if (!access) return;
+    } else if (!context.isPlatformAdmin) {
+      respondLessonError(
+        res,
+        lessonLogMeta,
+        'admin_lessons_update_error',
+        403,
+        'organization_required',
+        'Lesson updates require an organization scope',
+      );
+      return;
+    }
+    logLessonEvent('info', 'admin_lessons_update_request', lessonLogMeta);
     if (typeof expectedCourseVersion === 'number') {
-      // resolve parent course via module
-      const { data: lessonRow, error: lErr } = await supabase.from('lessons').select('id,module_id').eq('id', id).maybeSingle();
-      if (lErr) throw lErr;
-      const moduleId = lessonRow?.module_id ?? null;
-      if (moduleId) {
-        const { data: modRow, error: mErr } = await supabase.from('modules').select('id,course_id').eq('id', moduleId).maybeSingle();
-        if (mErr) throw mErr;
-        const courseId = modRow?.course_id ?? null;
-        if (courseId) {
-          const { data: courseRow, error: cErr } = await supabase.from('courses').select('id,version').eq('id', courseId).maybeSingle();
-          if (cErr) throw cErr;
-          const current = courseRow?.version ?? null;
-          if (current !== null && expectedCourseVersion < current) {
-            res.status(409).json({ error: 'version_conflict', message: `Course has newer version ${current}` });
-            return;
-          }
-        }
+      const current = courseRow.version ?? null;
+      if (current !== null && expectedCourseVersion < current) {
+        respondLessonError(
+          res,
+          lessonLogMeta,
+          'admin_lessons_update_error',
+          409,
+          'version_conflict',
+          `Course has newer version ${current}`,
+        );
+        return;
       }
     }
-    const { data, error } = await supabase.from('lessons').update(patch).eq('id', id).select('id,module_id,title,type,order_index').maybeSingle();
-    if (error) throw error;
+    const { data, error } = await supabase
+      .from('lessons')
+      .update(patch)
+      .eq('id', id)
+      .select('*')
+      .maybeSingle();
+    if (error) {
+      respondLessonError(
+        res,
+        lessonLogMeta,
+        'admin_lessons_update_error',
+        500,
+        'lesson_update_failed',
+        'Unable to update lesson',
+        error.message,
+      );
+      return;
+    }
     res.json({ data: { id: data.id, module_id: data.module_id, title: data.title, type: data.type, order_index: data.order_index ?? 0 } });
+    logLessonEvent('info', 'admin_lessons_update_success', { ...lessonLogMeta, status: 200 });
   } catch (error) {
-    console.error('Failed to update lesson:', error);
-    res.status(500).json({ error: 'Unable to update lesson' });
+    respondLessonError(
+      res,
+      lessonLogMeta,
+      'admin_lessons_update_error',
+      500,
+      'lesson_update_failed',
+      'Unable to update lesson',
+      error instanceof Error ? error.message : null,
+    );
   }
 });
 
@@ -8577,6 +9153,75 @@ app.delete('/api/admin/organizations/:orgId/members/:membershipId', async (req, 
   } catch (error) {
     logRouteError('DELETE /api/admin/organizations/:orgId/members/:membershipId', error);
     res.status(500).json({ error: 'Unable to remove organization member' });
+  }
+});
+
+app.get('/api/admin/organizations/:orgId/users', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const { orgId } = req.params;
+
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  const access = await requireOrgAccess(req, res, orgId, { write: false, requireOrgAdmin: true });
+  if (!access) return;
+
+  try {
+    const members = await fetchOrgMembersWithProfiles(orgId);
+    res.json({ data: members });
+  } catch (error) {
+    logRouteError('GET /api/admin/organizations/:orgId/users', error);
+    res.status(500).json({ error: 'Unable to load organization users' });
+  }
+});
+
+app.post('/api/admin/organizations/:orgId/invites', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const { orgId } = req.params;
+  const { email, role = 'member', metadata = {}, sendEmail = true } = req.body || {};
+
+  const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+  if (!normalizedEmail) {
+    res.status(400).json({ error: 'email_required', message: 'Invite email is required.' });
+    return;
+  }
+
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  const access = await requireOrgAccess(req, res, orgId, { write: true, requireOrgAdmin: true });
+  if (!access) return;
+
+  try {
+    const { data: orgRow } = await supabase
+      .from('organizations')
+      .select('id,name,slug')
+      .eq('id', orgId)
+      .maybeSingle();
+
+    const actor = buildActorFromRequest(req);
+    const { invite, duplicate } = await createOrgInvite({
+      orgId,
+      email: normalizedEmail,
+      role,
+      inviter: actor,
+      orgName: orgRow?.name ?? null,
+      metadata,
+      sendEmail,
+      duplicateStrategy: 'return',
+    });
+
+    res.status(201).json({
+      data: buildPublicInvitePayload(invite, orgRow || null),
+      duplicate,
+    });
+  } catch (error) {
+    logRouteError('POST /api/admin/organizations/:orgId/invites', error);
+    if (error?.message === 'invalid_email') {
+      res.status(400).json({ error: 'invalid_email', message: 'Invite email is invalid.' });
+      return;
+    }
+    res.status(500).json({ error: 'Unable to create organization invite' });
   }
 });
 

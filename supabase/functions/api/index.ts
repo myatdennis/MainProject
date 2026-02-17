@@ -20,11 +20,26 @@ import type {
   Course as CourseDto,
 } from "../../../shared/api/types.ts";
 
-type Role = "admin" | "member";
+type Role = "admin" | "member" | "owner";
 
 type MembershipContext = {
   orgId: string;
   role: Role;
+};
+type ModuleRecord = {
+  id: string;
+  course_id: string;
+  organization_id?: string | null;
+};
+type CourseRecord = {
+  id: string;
+  organization_id: string | null;
+};
+type LessonRecord = {
+  id: string;
+  module_id: string;
+  course_id?: string | null;
+  organization_id?: string | null;
 };
 
 interface RequestContext {
@@ -74,10 +89,19 @@ const decodeJwt = (token: string): Record<string, unknown> | null => {
 const normalizeRole = (value: unknown): Role | null => {
   if (typeof value !== "string") return null;
   const lowered = value.toLowerCase();
-  if (lowered === "admin" || lowered === "member") {
+  if (lowered === "admin" || lowered === "member" || lowered === "owner") {
     return lowered as Role;
   }
   return null;
+};
+
+const roleSatisfies = (actual: Role | null, requiredRoles: Role[]): boolean => {
+  if (!actual) return false;
+  return requiredRoles.some((required) => {
+    if (actual === required) return true;
+    if (actual === "owner" && required === "admin") return true;
+    return false;
+  });
 };
 
 const fetchMemberships = async (userId: string): Promise<MembershipContext[]> => {
@@ -190,9 +214,9 @@ const normalizeOrganization = (row: Record<string, any>) => ({
 });
 
 const moduleSelectColumns =
-  "id, course_id, title, description, order_index, metadata, created_at, updated_at";
+  "id, course_id, organization_id, title, description, order_index, metadata, created_at, updated_at";
 const lessonSelectColumns =
-  "id, module_id, title, description, order_index, type, duration_s, content_json, completion_rule_json, created_at, updated_at";
+  "id, module_id, course_id, organization_id, title, description, order_index, type, duration_s, content_json, completion_rule_json, created_at, updated_at";
 
 const mapLesson = (row: Record<string, any>): LessonDto => {
   const moduleId =
@@ -229,6 +253,7 @@ const mapModule = (row: Record<string, any>): ModuleDto => {
   return {
     id: row.id,
     courseId: row.course_id ?? row.courseId ?? null,
+    organizationId: row.organization_id ?? row.org_id ?? null,
     title: row.title,
     description: row.description ?? null,
     orderIndex: row.order_index ?? 0,
@@ -261,6 +286,79 @@ const mapCourse = (row: Record<string, any>): CourseDto => {
   };
 };
 
+const normalizeJsonPayload = (value: unknown): Record<string, unknown> => {
+  if (value && typeof value === "object") {
+    return value as Record<string, unknown>;
+  }
+  return {};
+};
+
+const fetchCourseRecord = async (courseId: string): Promise<CourseRecord | Response> => {
+  const { data, error } = await supabase
+    .from("courses")
+    .select("id, organization_id")
+    .eq("id", courseId)
+    .maybeSingle();
+
+  if (error) return handleDbError(error);
+  if (!data) {
+    return errorJson(404, "COURSE_NOT_FOUND", "Course not found.");
+  }
+
+  if (!data.organization_id) {
+    return errorJson(422, "COURSE_ORG_MISSING", "Course is missing an organization assignment.");
+  }
+
+  return data as CourseRecord;
+};
+
+const fetchModuleContext = async (
+  moduleId: string,
+): Promise<{ module: ModuleRecord; course: CourseRecord; orgId: string } | Response> => {
+  const { data: module, error } = await supabase
+    .from("modules")
+    .select("id, course_id, organization_id")
+    .eq("id", moduleId)
+    .maybeSingle();
+
+  if (error) return handleDbError(error);
+  if (!module) {
+    return errorJson(404, "module_not_found", "Module not found.");
+  }
+
+  const { data: course, error: courseError } = await supabase
+    .from("courses")
+    .select("id, organization_id")
+    .eq("id", module.course_id)
+    .maybeSingle();
+
+  if (courseError) return handleDbError(courseError);
+  if (!course) {
+    return errorJson(422, "MODULE_PARENT_MISSING", "Module is missing its parent course.");
+  }
+
+  const orgId = course.organization_id ?? module.organization_id ?? null;
+  if (!orgId) {
+    return errorJson(422, "ORG_SCOPE_MISSING", "Course is missing an organization assignment.");
+  }
+
+  return { module, course, orgId };
+};
+
+const fetchLessonRecord = async (lessonId: string): Promise<LessonRecord | Response> => {
+  const { data, error } = await supabase
+    .from("lessons")
+    .select("id, module_id, course_id, organization_id")
+    .eq("id", lessonId)
+    .maybeSingle();
+
+  if (error) return handleDbError(error);
+  if (!data) {
+    return errorJson(404, "NOT_FOUND", "Lesson not found");
+  }
+  return data as LessonRecord;
+};
+
 const requireUser = (ctx: RequestContext) => {
   if (!ctx.userId) {
     return errorJson(401, "UNAUTHENTICATED", "Missing user context. Supply a valid Authorization header.");
@@ -272,14 +370,15 @@ const requireRole = (ctx: RequestContext, roles: Role[], options?: { orgId?: str
   const targetOrgId = options?.orgId ?? ctx.orgId;
   if (targetOrgId) {
     const membership = ctx.memberships.find((entry) => entry.orgId === targetOrgId);
-    if (membership && roles.includes(membership.role)) {
+    if (membership && roleSatisfies(membership.role, roles)) {
       return null;
     }
+    return errorJson(403, "forbidden", "You do not have permission to perform this action.");
   }
-  if (ctx.role && roles.includes(ctx.role)) {
+  if (roleSatisfies(ctx.role, roles)) {
     return null;
   }
-  return errorJson(403, "FORBIDDEN", "You do not have permission to perform this action.");
+  return errorJson(403, "forbidden", "You do not have permission to perform this action.");
 };
 
 const handleDbError = (error: any) => {
@@ -308,7 +407,7 @@ const readJson = async <T>(req: Request): Promise<T | null> => {
 };
 
 const validationError = (error: z.ZodError) =>
-  errorJson(422, "VALIDATION_ERROR", error.errors.map((issue) => `${issue.path.join('.') || 'root'}: ${issue.message}`).join("; "));
+  errorJson(400, "validation_error", error.errors.map((issue) => `${issue.path.join('.') || 'root'}: ${issue.message}`).join("; "));
 
 const noContent = () => new Response(null, { status: 204, headers: corsHeaders });
 
@@ -527,6 +626,7 @@ const COURSE_DETAIL_SELECT = `
   description,
   modules:modules!modules_course_id_fkey (
     id,
+    organization_id,
     title,
     description,
     duration,
@@ -1180,66 +1280,121 @@ const upsertLearnerJourney = async (req: Request, ctx: RequestContext) => {
 };
 
 const createModule = async (req: Request, ctx: RequestContext) => {
-  const authError = requireUser(ctx) ?? requireRole(ctx, ["admin"]);
-  if (authError) return authError;
+  try {
+    const authError = requireUser(ctx);
+    if (authError) return authError;
 
-  const body = await readJson<ModuleInput>(req);
-  if (!body) return errorJson(400, "BAD_REQUEST", "Unable to parse request body");
+    const body = await readJson<ModuleInput>(req);
+    if (!body) return errorJson(400, "BAD_REQUEST", "Unable to parse request body");
 
-  const parsed = moduleSchema.safeParse(body);
-  if (!parsed.success) return validationError(parsed.error);
+    const parsed = moduleSchema.safeParse(body);
+    if (!parsed.success) return validationError(parsed.error);
 
-  const orderIndex = parsed.data.orderIndex ?? (await nextModuleOrderIndex(parsed.data.courseId));
+    const courseRecord = await fetchCourseRecord(parsed.data.courseId);
+    if (courseRecord instanceof Response) return courseRecord;
 
-  const { data, error } = await supabase
-    .from("modules")
-    .insert({
-      course_id: parsed.data.courseId,
-      title: parsed.data.title,
-      description: parsed.data.description ?? null,
-      order_index: orderIndex,
-      metadata: parsed.data.metadata ?? null,
-    })
-    .select(moduleSelectColumns)
-    .single();
+    const roleError = requireRole(ctx, ["admin"], { orgId: courseRecord.organization_id });
+    if (roleError) return roleError;
 
-  if (error) return handleDbError(error);
-  return json({ data: mapModule(data) }, 201);
+    const orderIndex = parsed.data.orderIndex ?? (await nextModuleOrderIndex(parsed.data.courseId));
+
+    const { data, error } = await supabase
+      .from("modules")
+      .insert({
+        course_id: courseRecord.id,
+        organization_id: courseRecord.organization_id,
+        title: parsed.data.title,
+        description: parsed.data.description ?? null,
+        order_index: orderIndex,
+        metadata: parsed.data.metadata ?? null,
+      })
+      .select(moduleSelectColumns)
+      .single();
+
+    if (error) return handleDbError(error);
+    return json({ data: mapModule(data) }, 201);
+  } catch (err) {
+    console.error("createModule_error", err);
+    return errorJson(500, "INTERNAL_ERROR", "Failed to create module.");
+  }
 };
 
 const patchModule = async (req: Request, ctx: RequestContext, moduleId: string) => {
-  const authError = requireUser(ctx) ?? requireRole(ctx, ["admin"]);
-  if (authError) return authError;
+  try {
+    const authError = requireUser(ctx);
+    if (authError) return authError;
 
-  const body = await readJson<ModulePatchInput>(req);
-  if (!body) return errorJson(400, "BAD_REQUEST", "Unable to parse request body");
+    const body = await readJson<ModulePatchInput>(req);
+    if (!body) return errorJson(400, "BAD_REQUEST", "Unable to parse request body");
 
-  const parsed = modulePatchSchema.safeParse(body);
-  if (!parsed.success) return validationError(parsed.error);
+    const parsed = modulePatchSchema.safeParse(body);
+    if (!parsed.success) return validationError(parsed.error);
 
-  const update: Record<string, unknown> = {};
-  if (parsed.data.title !== undefined) update.title = parsed.data.title;
-  if (parsed.data.description !== undefined) update.description = parsed.data.description ?? null;
-  if (parsed.data.orderIndex !== undefined) update.order_index = parsed.data.orderIndex;
-  if (parsed.data.courseId !== undefined) update.course_id = parsed.data.courseId;
-  if (parsed.data.metadata !== undefined) update.metadata = parsed.data.metadata ?? null;
+    const existingContext = await fetchModuleContext(moduleId);
+    if (existingContext instanceof Response) return existingContext;
 
-  if (Object.keys(update).length === 0) {
-    return errorJson(400, "NO_CHANGES", "No fields were provided for update.");
+    const currentRoleError = requireRole(ctx, ["admin"], { orgId: existingContext.orgId });
+    if (currentRoleError) return currentRoleError;
+
+    const targetCourseId = parsed.data.courseId ?? existingContext.course.id;
+
+    let targetCourseRecord: CourseRecord = existingContext.course;
+    if (targetCourseId !== existingContext.course.id) {
+      const courseLookup = await fetchCourseRecord(targetCourseId);
+      if (courseLookup instanceof Response) return courseLookup;
+      targetCourseRecord = courseLookup;
+
+      const newRoleError = requireRole(ctx, ["admin"], { orgId: targetCourseRecord.organization_id });
+      if (newRoleError) return newRoleError;
+    }
+
+    const update: Record<string, unknown> = {};
+    let hasChanges = false;
+
+    if (parsed.data.title !== undefined) {
+      update.title = parsed.data.title;
+      hasChanges = true;
+    }
+    if (parsed.data.description !== undefined) {
+      update.description = parsed.data.description ?? null;
+      hasChanges = true;
+    }
+    if (parsed.data.orderIndex !== undefined) {
+      update.order_index = parsed.data.orderIndex;
+      hasChanges = true;
+    }
+    if (parsed.data.metadata !== undefined) {
+      update.metadata = parsed.data.metadata ?? null;
+      hasChanges = true;
+    }
+
+    const courseChanged = targetCourseId !== existingContext.course.id;
+    if (courseChanged) {
+      update.course_id = targetCourseRecord.id;
+      hasChanges = true;
+    }
+
+    if (!hasChanges) {
+      return errorJson(400, "NO_CHANGES", "No fields were provided for update.");
+    }
+
+    update.organization_id = targetCourseRecord.organization_id;
+    update.updated_at = new Date().toISOString();
+
+    const { data, error } = await supabase
+      .from("modules")
+      .update(update)
+      .eq("id", moduleId)
+      .select(moduleSelectColumns)
+      .maybeSingle();
+
+    if (error) return handleDbError(error);
+    if (!data) return errorJson(404, "NOT_FOUND", "Module not found");
+    return json({ data: mapModule(data) });
+  } catch (err) {
+    console.error("patchModule_error", err);
+    return errorJson(500, "INTERNAL_ERROR", "Failed to update module.");
   }
-
-  update.updated_at = new Date().toISOString();
-
-  const { data, error } = await supabase
-    .from("modules")
-    .update(update)
-    .eq("id", moduleId)
-    .select(moduleSelectColumns)
-    .maybeSingle();
-
-  if (error) return handleDbError(error);
-  if (!data) return errorJson(404, "NOT_FOUND", "Module not found");
-  return json({ data: mapModule(data) });
 };
 
 const deleteModule = async (ctx: RequestContext, moduleId: string) => {
@@ -1252,76 +1407,151 @@ const deleteModule = async (ctx: RequestContext, moduleId: string) => {
 };
 
 const createLesson = async (req: Request, ctx: RequestContext) => {
-  const authError = requireUser(ctx) ?? requireRole(ctx, ["admin"]);
-  if (authError) return authError;
+  try {
+    const authError = requireUser(ctx);
+    if (authError) return authError;
 
-  const body = await readJson<LessonInput>(req);
-  if (!body) return errorJson(400, "BAD_REQUEST", "Unable to parse request body");
+    const body = await readJson<LessonInput>(req);
+    if (!body) return errorJson(400, "validation_error", "Unable to parse request body");
 
-  const parsed = lessonSchema.safeParse(body);
-  if (!parsed.success) return validationError(parsed.error);
+    const parsed = lessonSchema.safeParse(body);
+    if (!parsed.success) return validationError(parsed.error);
 
-  const orderIndex = parsed.data.orderIndex ?? (await nextLessonOrderIndex(parsed.data.moduleId));
+    const lessonIdCandidate = (body as Record<string, unknown>)?.id;
+    const lessonId =
+      typeof lessonIdCandidate === "string" && lessonIdCandidate.trim().length > 0
+        ? lessonIdCandidate.trim()
+        : crypto.randomUUID();
 
-  const { data, error } = await supabase
-    .from("lessons")
-    .insert({
-      module_id: parsed.data.moduleId,
-      title: parsed.data.title,
-      description: parsed.data.description ?? null,
-      order_index: orderIndex,
-      type: parsed.data.type,
-      duration_s: parsed.data.durationSeconds ?? null,
-      content_json: parsed.data.content,
-      completion_rule_json: parsed.data.completionRule ?? null,
-    })
-    .select(lessonSelectColumns)
-    .single();
+    const context = await fetchModuleContext(parsed.data.moduleId);
+    if (context instanceof Response) return context;
 
-  if (error) return handleDbError(error);
-  return json({ data: mapLesson(data) }, 201);
+    const roleError = requireRole(ctx, ["admin"], { orgId: context.orgId });
+    if (roleError) return roleError;
+
+    const orderIndex = parsed.data.orderIndex ?? (await nextLessonOrderIndex(context.module.id));
+    const contentPayload = normalizeJsonPayload(parsed.data.content);
+    const completionRulePayload = normalizeJsonPayload(parsed.data.completionRule);
+
+    const { data, error } = await supabase
+      .from("lessons")
+      .insert({
+        id: lessonId,
+        module_id: context.module.id,
+        course_id: context.course.id,
+        organization_id: context.orgId,
+        title: parsed.data.title,
+        description: parsed.data.description ?? null,
+        order_index: orderIndex,
+        type: parsed.data.type,
+        duration_s: parsed.data.durationSeconds ?? null,
+        content_json: contentPayload,
+        completion_rule_json: completionRulePayload,
+      })
+      .select(lessonSelectColumns)
+      .single();
+
+    if (error) return handleDbError(error);
+    return json({ data: mapLesson(data) }, 201);
+  } catch (err) {
+    console.error("createLesson_error", err);
+    return errorJson(500, "INTERNAL_ERROR", "Failed to create lesson.");
+  }
 };
 
 const patchLesson = async (req: Request, ctx: RequestContext, lessonId: string) => {
-  const authError = requireUser(ctx) ?? requireRole(ctx, ["admin"]);
-  if (authError) return authError;
+  try {
+    const authError = requireUser(ctx);
+    if (authError) return authError;
 
-  const body = await readJson<LessonPatchInput>(req);
-  if (!body) return errorJson(400, "BAD_REQUEST", "Unable to parse request body");
+    const body = await readJson<LessonPatchInput>(req);
+    if (!body) return errorJson(400, "BAD_REQUEST", "Unable to parse request body");
 
-  const parsed = lessonPatchSchema.safeParse(body);
-  if (!parsed.success) return validationError(parsed.error);
+    const parsed = lessonPatchSchema.safeParse(body);
+    if (!parsed.success) return validationError(parsed.error);
 
-  const update: Record<string, unknown> = {};
-  if (parsed.data.moduleId !== undefined) update.module_id = parsed.data.moduleId;
-  if (parsed.data.title !== undefined) update.title = parsed.data.title;
-  if (parsed.data.description !== undefined) update.description = parsed.data.description ?? null;
-  if (parsed.data.orderIndex !== undefined) update.order_index = parsed.data.orderIndex;
-  if (parsed.data.type !== undefined) update.type = parsed.data.type;
-  if (parsed.data.durationSeconds !== undefined) update.duration_s = parsed.data.durationSeconds ?? null;
-  if (parsed.data.content !== undefined) update.content_json = parsed.data.content;
-  if (parsed.data.completionRule !== undefined) update.completion_rule_json = parsed.data.completionRule ?? null;
+    const existing = await fetchLessonRecord(lessonId);
+    if (existing instanceof Response) return existing;
 
-  if (Object.keys(update).length === 0) {
-    return errorJson(400, "NO_CHANGES", "No fields were provided for update.");
+    const targetModuleId = parsed.data.moduleId ?? existing.module_id;
+    const context = await fetchModuleContext(targetModuleId);
+    if (context instanceof Response) return context;
+
+    const roleError = requireRole(ctx, ["admin"], { orgId: context.orgId });
+    if (roleError) return roleError;
+
+    const update: Record<string, unknown> = {};
+    let hasMutations = false;
+
+    if (parsed.data.title !== undefined) {
+      update.title = parsed.data.title;
+      hasMutations = true;
+    }
+    if (parsed.data.description !== undefined) {
+      update.description = parsed.data.description ?? null;
+      hasMutations = true;
+    }
+    if (parsed.data.type !== undefined) {
+      update.type = parsed.data.type;
+      hasMutations = true;
+    }
+    if (parsed.data.durationSeconds !== undefined) {
+      update.duration_s = parsed.data.durationSeconds ?? null;
+      hasMutations = true;
+    }
+    if (parsed.data.content !== undefined) {
+      update.content_json = normalizeJsonPayload(parsed.data.content);
+      hasMutations = true;
+    }
+    if (parsed.data.completionRule !== undefined) {
+      update.completion_rule_json = normalizeJsonPayload(parsed.data.completionRule);
+      hasMutations = true;
+    }
+
+    const moduleChanged = existing.module_id !== context.module.id;
+    if (moduleChanged) {
+      hasMutations = true;
+    }
+
+    if (moduleChanged || (existing.course_id ?? null) !== context.course.id) {
+      update.course_id = context.course.id;
+      hasMutations = true;
+    }
+    let resolvedOrderIndex = parsed.data.orderIndex;
+    if (resolvedOrderIndex === undefined && moduleChanged) {
+      resolvedOrderIndex = await nextLessonOrderIndex(context.module.id);
+    }
+    if (resolvedOrderIndex !== undefined) {
+      update.order_index = resolvedOrderIndex;
+      hasMutations = true;
+    }
+
+    if ((existing.organization_id ?? null) !== context.orgId) {
+      hasMutations = true;
+    }
+
+    if (!hasMutations) {
+      return errorJson(400, "NO_CHANGES", "No fields were provided for update.");
+    }
+
+    update.module_id = context.module.id;
+    update.organization_id = context.orgId;
+    update.updated_at = new Date().toISOString();
+
+    const { data, error } = await supabase
+      .from("lessons")
+      .update(update)
+      .eq("id", lessonId)
+      .select(lessonSelectColumns)
+      .maybeSingle();
+
+    if (error) return handleDbError(error);
+    if (!data) return errorJson(404, "NOT_FOUND", "Lesson not found");
+    return json({ data: mapLesson(data) });
+  } catch (err) {
+    console.error("patchLesson_error", err);
+    return errorJson(500, "INTERNAL_ERROR", "Failed to update lesson.");
   }
-
-  update.updated_at = new Date().toISOString();
-
-  if (parsed.data.moduleId !== undefined && parsed.data.orderIndex === undefined) {
-    update.order_index = await nextLessonOrderIndex(parsed.data.moduleId);
-  }
-
-  const { data, error } = await supabase
-    .from("lessons")
-    .update(update)
-    .eq("id", lessonId)
-    .select(lessonSelectColumns)
-    .maybeSingle();
-
-  if (error) return handleDbError(error);
-  if (!data) return errorJson(404, "NOT_FOUND", "Lesson not found");
-  return json({ data: mapLesson(data) });
 };
 
 const deleteLesson = async (ctx: RequestContext, lessonId: string) => {

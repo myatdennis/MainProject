@@ -85,6 +85,13 @@ const parseUploadKey = (key: string) => {
   const [moduleId, lessonId] = key.split('::');
   return { moduleId, lessonId };
 };
+const LESSON_AUTOSAVE_DELAY = 900;
+const generateStableLessonId = (): string => {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return createLessonId();
+};
 
 type BuilderConfirmAction = 'discard' | 'reset' | 'delete';
 type ConfirmTone = 'info' | 'warning' | 'danger';
@@ -276,6 +283,15 @@ const evaluateCourseValidation = (course: Course, intent: CourseValidationIntent
 
 
 type UploadStatus = 'idle' | 'uploading' | 'paused' | 'error' | 'success';
+type LessonAutosaveStatus = 'idle' | 'saving' | 'error';
+
+type LessonAutosaveState = {
+  status: LessonAutosaveStatus;
+  pending: boolean;
+  moduleId: string | null;
+  lessonId: string | null;
+  message: string | null;
+};
 
 const AdminCourseBuilder = () => {
   const { courseId } = useParams();
@@ -302,6 +318,14 @@ const AdminCourseBuilder = () => {
   const uploadControllers = useRef<Record<string, AbortController | null>>({});
   const pendingUploadFiles = useRef<Record<string, File | null>>({});
   const uploadChannels = useRef<Record<string, 'video' | 'document'>>({});
+  const [lessonAutosaveState, setLessonAutosaveState] = useState<LessonAutosaveState>({
+    status: 'idle',
+    pending: false,
+    moduleId: null,
+    lessonId: null,
+    message: null,
+  });
+  const lessonAutosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showAssignmentModal, setShowAssignmentModal] = useState(false);
   const [hasPendingChanges, setHasPendingChanges] = useState(false);
   const lastPersistedRef = useRef<Course | null>(null);
@@ -342,6 +366,16 @@ const AdminCourseBuilder = () => {
     setActiveValidationIntent('draft');
     setValidationOverride(null);
   }, [setActiveValidationIntent, setIssueTargetsState, setValidationIssues, setValidationModalOpen]);
+  const requestLessonAutosaveRetry = useCallback(() => {
+    if (!editingLesson) return;
+    setLessonAutosaveState({
+      status: 'idle',
+      pending: true,
+      moduleId: editingLesson.moduleId,
+      lessonId: editingLesson.lessonId,
+      message: null,
+    });
+  }, [editingLesson]);
   const applyValidationIssues = useCallback(
     (payload?: ValidationIssuePayload, _intent?: CourseValidationIntent) => {
       const { issues: normalizedIssues, issueTargets: normalizedTargets } = coerceValidationPayload(payload);
@@ -421,8 +455,12 @@ const AdminCourseBuilder = () => {
     return effectiveIssueTargets;
   }, [isValidationModalOpen, issueTargetsState, effectiveIssueTargets, validationIssues.length]);
   const hasCourseModules = (course.modules || []).length > 0;
+  const lessonAutosaveBlocking =
+    lessonAutosaveState.pending ||
+    lessonAutosaveState.status === 'saving' ||
+    lessonAutosaveState.status === 'error';
   const publishDisabled =
-    !hasCourseModules || !effectiveValidationSummary.isValid || saveStatus === 'saving';
+    !hasCourseModules || !effectiveValidationSummary.isValid || saveStatus === 'saving' || lessonAutosaveBlocking;
   const publishIssueCount = effectiveValidationSummary.issues.length;
   const publishButtonTitle = !hasCourseModules
     ? 'Add modules and lessons before publishing'
@@ -430,11 +468,23 @@ const AdminCourseBuilder = () => {
     ? 'Resolve validation issues before publishing'
     : saveStatus === 'saving'
     ? 'Please wait for the current operation to finish'
+    : lessonAutosaveBlocking
+    ? lessonAutosaveState.status === 'error'
+      ? 'Resolve lesson autosave errors before publishing'
+      : 'Lesson autosave in progress. Publishing will resume once it completes.'
     : '';
   const publishDevHint =
     import.meta.env.DEV && !effectiveValidationSummary.isValid && publishIssueCount > 0
       ? `Fix ${publishIssueCount} ${publishIssueCount === 1 ? 'issue' : 'issues'}`
       : null;
+  const saveButtonDisabled = saveStatus === 'saving' || lessonAutosaveBlocking;
+  const saveButtonTitle = saveButtonDisabled
+    ? lessonAutosaveBlocking
+      ? lessonAutosaveState.status === 'error'
+        ? 'Resolve lesson autosave errors before saving.'
+        : 'Lesson autosave in progress. Please wait.'
+      : 'Please wait for the current operation to finish'
+    : '';
   const firstNavigableIssue = useMemo(
     () => effectiveValidationSummary.issues.find((issue) => issue.moduleId || issue.lessonId) ?? null,
     [effectiveValidationSummary.issues],
@@ -451,11 +501,14 @@ const AdminCourseBuilder = () => {
     draftCheckIdRef.current = null;
     setReloadNonce((prev) => prev + 1);
   }, []);
-  const isOffline = () => typeof navigator !== 'undefined' && navigator.onLine === false;
-  const networkFallback = (message: string) =>
-    isOffline()
-      ? 'Huddle can’t reach the network right now. Your draft stays safe locally until you reconnect.'
-      : message;
+  const isOffline = useCallback(() => typeof navigator !== 'undefined' && navigator.onLine === false, []);
+  const networkFallback = useCallback(
+    (message: string) =>
+      isOffline()
+        ? 'Huddle can’t reach the network right now. Your draft stays safe locally until you reconnect.'
+        : message,
+    [isOffline],
+  );
   const authAlertedRef = useRef(false);
   const handleAuthRequired = useCallback(
     (source: string) => {
@@ -695,6 +748,23 @@ const AdminCourseBuilder = () => {
   }, [editingLesson]);
 
   useEffect(() => {
+    if (editingLesson) {
+      return;
+    }
+    if (lessonAutosaveTimerRef.current) {
+      clearTimeout(lessonAutosaveTimerRef.current);
+      lessonAutosaveTimerRef.current = null;
+    }
+    setLessonAutosaveState({
+      status: 'idle',
+      pending: false,
+      moduleId: null,
+      lessonId: null,
+      message: null,
+    });
+  }, [editingLesson]);
+
+  useEffect(() => {
     if (!course.id) return;
     let cancelled = false;
 
@@ -927,6 +997,7 @@ const AdminCourseBuilder = () => {
   useEffect(() => {
     if (!course.id || !course.title?.trim()) return;
     if (autoSaveLockRef.current) return;
+    if (lessonAutosaveState.pending || lessonAutosaveState.status === 'saving') return;
     console.log('COURSE STATE', course.modules);
     const diff = computeCourseDiff(lastPersistedRef.current, course);
     if (!diff.hasChanges) return;
@@ -1010,12 +1081,80 @@ const AdminCourseBuilder = () => {
     return () => {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     };
-  }, [course, runtimeStatus, resolveOrganizationId, showToast]);
+  }, [course, lessonAutosaveState.pending, lessonAutosaveState.status, runtimeStatus, resolveOrganizationId, showToast]);
 
   useEffect(() => {
     const diff = computeCourseDiff(lastPersistedRef.current, course);
     setHasPendingChanges(diff.hasChanges);
   }, [course]);
+
+  useEffect(() => {
+    if (!editingLesson || !lessonAutosaveState.pending) {
+      if (lessonAutosaveTimerRef.current) {
+        clearTimeout(lessonAutosaveTimerRef.current);
+        lessonAutosaveTimerRef.current = null;
+      }
+      return;
+    }
+
+    if (lessonAutosaveTimerRef.current) {
+      clearTimeout(lessonAutosaveTimerRef.current);
+    }
+
+    lessonAutosaveTimerRef.current = window.setTimeout(async () => {
+      if (!editingLesson) return;
+      autoSaveLockRef.current = true;
+      setLessonAutosaveState((prev) => ({
+        ...prev,
+        status: 'saving',
+        moduleId: editingLesson.moduleId,
+        lessonId: editingLesson.lessonId,
+        message: null,
+      }));
+      try {
+        const gate = evaluateRuntimeGate('course.auto-save', runtimeStatus);
+        await persistCourseRef.current(course, { action: 'course.auto-save', gate, skipValidation: true });
+        setLessonAutosaveState({
+          status: 'idle',
+          pending: false,
+          moduleId: editingLesson.moduleId,
+          lessonId: editingLesson.lessonId,
+          message: null,
+        });
+      } catch (error) {
+        const status = error instanceof ApiError ? error.status : undefined;
+        const body = error instanceof ApiError ? error.body : undefined;
+        console.warn('lesson_save_failed', {
+          lessonId: editingLesson.lessonId,
+          moduleId: editingLesson.moduleId,
+          status,
+          body,
+        });
+        const fallbackMessage =
+          typeof navigator !== 'undefined' && navigator.onLine === false
+            ? 'Lesson changes are stored locally. Reconnect to sync with Huddle.'
+            : 'Lesson changes could not be saved. Please retry.';
+        setLessonAutosaveState({
+          status: 'error',
+          pending: false,
+          moduleId: editingLesson.moduleId,
+          lessonId: editingLesson.lessonId,
+          message: fallbackMessage,
+        });
+        showToast(fallbackMessage, 'error');
+      } finally {
+        autoSaveLockRef.current = false;
+        lessonAutosaveTimerRef.current = null;
+      }
+    }, LESSON_AUTOSAVE_DELAY);
+
+    return () => {
+      if (lessonAutosaveTimerRef.current) {
+        clearTimeout(lessonAutosaveTimerRef.current);
+        lessonAutosaveTimerRef.current = null;
+      }
+    };
+  }, [course, editingLesson, lessonAutosaveState.pending, runtimeStatus, showToast]);
 
   function createEmptyCourse(initialCourseId?: string): Course {
     // Smart defaults based on common course patterns
@@ -1290,10 +1429,79 @@ const AdminCourseBuilder = () => {
     }
   }, [course]);
 
-  const enforceStableModuleGraph = (input: Course): Course => ({
-    ...input,
-    modules: sanitizeModuleGraph(input.modules || []),
+const enforceStableModuleGraph = (input: Course): Course => ({
+  ...input,
+  modules: sanitizeModuleGraph(input.modules || []),
+});
+
+const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[] } => {
+  let mutated = false;
+  const issues: string[] = [];
+  const normalizedModules = (input.modules || []).map((module) => {
+    if (!module.lessons || module.lessons.length === 0) {
+      return module;
+    }
+    let moduleMutated = false;
+    const normalizedLessons = module.lessons.map((lesson, index) => {
+      const nextLesson: Lesson = { ...lesson };
+      if (!nextLesson.id) {
+        nextLesson.id = generateStableLessonId();
+        issues.push(`lesson_missing_id:${module.id}:${index}`);
+        moduleMutated = true;
+      }
+      const resolvedModuleId = module.id;
+      if (!nextLesson.module_id || nextLesson.module_id !== resolvedModuleId) {
+        nextLesson.module_id = resolvedModuleId;
+        nextLesson.moduleId = resolvedModuleId;
+        issues.push(`lesson_missing_module:${nextLesson.id}`);
+        moduleMutated = true;
+      }
+      if (!nextLesson.moduleId) {
+        nextLesson.moduleId = nextLesson.module_id;
+        moduleMutated = true;
+      }
+      if (!nextLesson.type) {
+        nextLesson.type = 'text';
+        issues.push(`lesson_missing_type:${nextLesson.id}`);
+        moduleMutated = true;
+      }
+      const desiredOrder = Number.isFinite(nextLesson.order_index)
+        ? Number(nextLesson.order_index)
+        : Number.isFinite(nextLesson.order)
+        ? Number(nextLesson.order)
+        : index + 1;
+      if (nextLesson.order_index !== desiredOrder) {
+        nextLesson.order_index = desiredOrder;
+        moduleMutated = true;
+      }
+      if (nextLesson.order !== desiredOrder) {
+        nextLesson.order = desiredOrder;
+        moduleMutated = true;
+      }
+      return nextLesson;
+    });
+
+    if (moduleMutated) {
+      mutated = true;
+      return {
+        ...module,
+        lessons: normalizedLessons,
+      };
+    }
+
+    return module;
   });
+
+  return mutated
+    ? {
+        course: {
+          ...input,
+          modules: normalizedModules,
+        },
+        issues,
+      }
+    : { course: input, issues };
+};
 
   type PersistCourseOptions = {
     statusOverride?: 'draft' | 'published';
@@ -1322,7 +1530,8 @@ const AdminCourseBuilder = () => {
       typeof options === 'string' ? { statusOverride: options } : options ?? {};
     const { statusOverride, intentOverride, gate: gateOverride, action, skipValidation } = resolvedOptions;
 
-    const sanitizedNextCourse = enforceStableModuleGraph(nextCourse);
+    const enforcedCourse = enforceStableModuleGraph(nextCourse);
+    const { course: sanitizedNextCourse, issues: lessonIntegrityIssues } = ensureLessonIntegrity(enforcedCourse);
 
     const resolvedOrgId = resolveOrganizationId(sanitizedNextCourse);
 
@@ -1358,6 +1567,22 @@ const AdminCourseBuilder = () => {
       }
     })();
     const gate = gateOverride ?? evaluateRuntimeGate(runtimeAction, runtimeStatus);
+
+    if (lessonIntegrityIssues.length > 0) {
+      courseStore.saveCourse(preparedCourse, { skipRemoteSync: true });
+      setCourse(preparedCourse);
+      logDev('lesson_integrity_blocked_save', {
+        courseId: preparedCourse.id,
+        missingFields: lessonIntegrityIssues,
+      });
+      showToast(
+        'A lesson was missing required details. We patched it locally—please review and save again.',
+        'warning',
+        6000,
+      );
+      return { course: preparedCourse, gate, remoteSynced: false };
+    }
+
     const allowRemoteSync = gate.mode === 'remote';
 
     const diff = computeCourseDiff(lastPersistedRef.current, preparedCourse);
@@ -1429,6 +1654,10 @@ const AdminCourseBuilder = () => {
     }
     return { course: mergedWithFallback, gate, remoteSynced };
   };
+  const persistCourseRef = useRef(persistCourse);
+  useEffect(() => {
+    persistCourseRef.current = persistCourse;
+  }, [persistCourse]);
 
   const handleSave = async () => {
     setSaveStatus('saving');
@@ -1892,13 +2121,14 @@ const AdminCourseBuilder = () => {
     if (!module) return;
 
     const newLesson: Lesson = {
-      id: createLessonId(),
+      id: generateStableLessonId(),
       title: `Lesson ${module.lessons.length + 1}`,
-      type: 'video',
+      type: 'text',
       duration: '10 min',
       content: {},
       completed: false,
       order: module.lessons.length + 1,
+      order_index: module.lessons.length + 1,
       module_id: moduleId,
       moduleId,
     };
@@ -1927,6 +2157,15 @@ const AdminCourseBuilder = () => {
     });
 
     updateModule(moduleId, { lessons: updatedLessons });
+    if (editingLesson && editingLesson.moduleId === moduleId && editingLesson.lessonId === lessonId) {
+      setLessonAutosaveState((prev) => ({
+        status: prev.status === 'error' ? prev.status : 'idle',
+        pending: true,
+        moduleId,
+        lessonId,
+        message: prev.status === 'error' ? prev.message : null,
+      }));
+    }
   };
 
   const deleteLesson = (moduleId: string, lessonId: string) => {
@@ -2249,6 +2488,33 @@ const AdminCourseBuilder = () => {
     return (
       <div className="border border-gray-300 rounded-lg p-4 bg-white">
         <div className="space-y-4">
+          {lessonAutosaveState.status === 'saving' && lessonAutosaveState.lessonId === lesson.id && (
+            <div className="flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-700">
+              <Loader className="h-4 w-4 animate-spin" />
+              <span>Saving lesson changes…</span>
+            </div>
+          )}
+          {lessonAutosaveState.status === 'error' && lessonAutosaveState.lessonId === lesson.id && (
+            <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <p className="font-semibold">Lesson changes couldn’t sync.</p>
+                  <p className="mt-1 text-red-700">
+                    {lessonAutosaveState.message ?? 'Check your connection and try again.'}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={requestLessonAutosaveRetry}
+                    className="rounded-lg bg-red-600 px-3 py-1.5 text-white shadow-sm transition hover:bg-red-700"
+                  >
+                    Retry save
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Lesson Title</label>
@@ -3511,14 +3777,15 @@ const AdminCourseBuilder = () => {
               <button
                 onClick={handleSave}
                 data-save-button
-                disabled={saveStatus === 'saving'}
+                disabled={saveButtonDisabled}
+                title={saveButtonTitle}
                 className={`px-6 py-3 rounded-lg transition-all duration-200 flex items-center space-x-2 font-medium ${
                   saveStatus === 'saved' 
                     ? 'bg-green-500 text-white hover:bg-green-600' 
                     : saveStatus === 'error'
                     ? 'bg-red-500 text-white hover:bg-red-600'
                     : 'bg-blue-500 text-white hover:bg-blue-600'
-                } ${saveStatus === 'saving' ? 'opacity-75 cursor-not-allowed' : ''}`}
+                } ${saveButtonDisabled ? 'opacity-75 cursor-not-allowed' : ''}`}
               >
                 {saveStatus === 'saving' ? (
                   <>
@@ -4354,6 +4621,10 @@ const AdminCourseBuilder = () => {
           hasPendingChanges={hasPendingChanges}
           lastSaved={lastSaveTime}
           disabled={initializing}
+          saveDisabled={saveButtonDisabled}
+          saveTitle={saveButtonTitle || undefined}
+          publishDisabled={publishDisabled}
+          publishTitle={publishButtonTitle || undefined}
         />
       )}
 
