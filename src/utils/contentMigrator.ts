@@ -1,6 +1,17 @@
 import { CURRENT_CONTENT_SCHEMA_VERSION } from '../schema/contentSchema';
 import type { QuizOption } from '../types/courseTypes';
 
+type LegacyQuizOptionObject = {
+  id?: string;
+  text?: string;
+  label?: string;
+  value?: string;
+  title?: string;
+  correct?: boolean;
+  isCorrect?: boolean;
+  [key: string]: unknown;
+};
+
 // A small migrator utility for lesson content. For now it ensures a schema_version
 // key is present and allows future migrations to be applied centrally.
 
@@ -95,6 +106,9 @@ function flattenBody(input: Record<string, any>): Record<string, any> {
   return input;
 }
 
+const isLegacyOptionObject = (value: unknown): value is LegacyQuizOptionObject =>
+  Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
 function normalizeQuizQuestions(questions: any[]): any[] {
   return questions.map((question, index) => {
     const id = question?.id || `q_${index}`;
@@ -108,7 +122,7 @@ function normalizeQuizQuestions(questions: any[]): any[] {
       : [];
 
     const normalizedOptions: QuizOption[] = rawOptions
-      .map((option: unknown, optionIndex: number) => {
+      .map((option: LegacyQuizOptionObject | string, optionIndex: number) => {
         const fallbackId = `${id}_opt_${optionIndex}`;
         if (typeof option === 'string') {
           return {
@@ -118,9 +132,14 @@ function normalizeQuizQuestions(questions: any[]): any[] {
             isCorrect: determineStringCorrect(optionIndex, option, question),
           };
         }
-        if (!option || typeof option !== 'object') return null;
+        if (!isLegacyOptionObject(option)) return null;
 
-        const optionText = option.text || option.label || option.value || option.title || String(option);
+        const optionText =
+          option.text ??
+          option.label ??
+          option.value ??
+          option.title ??
+          String(option);
         const optionId = option.id || fallbackId;
         const isCorrect =
           option.correct ??
@@ -135,7 +154,7 @@ function normalizeQuizQuestions(questions: any[]): any[] {
           isCorrect: Boolean(isCorrect),
         };
       })
-      .filter((option): option is QuizOption => Boolean(option?.id));
+      .filter((option: QuizOption | null): option is QuizOption => Boolean(option?.id));
 
     const correctIndices = normalizedOptions
       .map((opt, optIndex) => (opt.correct || opt.isCorrect ? optIndex : -1))
