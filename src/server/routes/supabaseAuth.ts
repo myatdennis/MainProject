@@ -1,8 +1,8 @@
 import express from 'express';
-import { supabaseAuthClient } from '../supabase/supabaseServerClient';
-import { issueTokens } from '../utils/jwt';
-import { attachAuthCookies } from '../utils/authCookies';
-import { findUserByEmail, toPublicUser } from '../data/mockUsers';
+import { supabaseAuthClient } from '../supabase/supabaseServerClient.js';
+import { issueTokens } from '../utils/jwt.js';
+import { attachAuthCookies } from '../utils/authCookies.js';
+import { findUserByEmail, toPublicUser } from '../data/mockUsers.js';
 
 const router = express.Router();
 

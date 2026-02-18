@@ -8,8 +8,8 @@ import {
   publishCourse,
   upsertCourse,
   type CourseUpsertInput,
-} from '../data/mockCourses';
-import { requireAdmin } from '../middleware/authMiddleware';
+} from '../data/mockCourses.js';
+import { requireAdmin } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 

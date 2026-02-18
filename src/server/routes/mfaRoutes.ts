@@ -1,5 +1,5 @@
 import express from 'express';
-import { saveMfaChallenge, verifyMfaChallenge, findUserByEmail } from '../data/mockUsers';
+import { saveMfaChallenge, verifyMfaChallenge, findUserByEmail } from '../data/mockUsers.js';
 
 const router = express.Router();
 

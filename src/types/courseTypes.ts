@@ -1,5 +1,5 @@
-import type { CourseAssignmentStatus } from './assignment';
-import type { OrganizationId, TextIdentifier } from './entityIds';
+import type { CourseAssignmentStatus } from './assignment.js';
+import type { OrganizationId, TextIdentifier } from './entityIds.js';
 
 // Core types for the Course Management System
 

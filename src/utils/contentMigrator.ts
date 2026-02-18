@@ -1,5 +1,5 @@
-import { CURRENT_CONTENT_SCHEMA_VERSION } from '../schema/contentSchema';
-import type { QuizOption } from '../types/courseTypes';
+import { CURRENT_CONTENT_SCHEMA_VERSION } from '../schema/contentSchema.js';
+import type { QuizOption } from '../types/courseTypes.js';
 
 type LegacyQuizOptionObject = {
   id?: string;
