@@ -108,7 +108,7 @@ function normalizeQuizQuestions(questions: any[]): any[] {
       : [];
 
     const normalizedOptions: QuizOption[] = rawOptions
-      .map((option, optionIndex) => {
+      .map((option: unknown, optionIndex: number) => {
         const fallbackId = `${id}_opt_${optionIndex}`;
         if (typeof option === 'string') {
           return {

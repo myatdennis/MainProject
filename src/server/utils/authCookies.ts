@@ -1,4 +1,4 @@
-import type { Request, Response } from 'express';
+import type { Request, Response, CookieOptions } from 'express';
 
 const ACCESS_TOKEN_COOKIE = process.env.ACCESS_TOKEN_COOKIE_NAME || 'access_token';
 const REFRESH_TOKEN_COOKIE = process.env.REFRESH_TOKEN_COOKIE_NAME || 'refresh_token';
@@ -86,9 +86,9 @@ type CookieOptionsInput = {
   httpOnly?: boolean;
 };
 
-export const getCookieOptions = (req: Request, opts: CookieOptionsInput = {}) => {
+export const getCookieOptions = (req: Request, opts: CookieOptionsInput = {}): CookieOptions => {
   const domain = resolveCookieDomain(req);
-  const options: Parameters<Response['cookie']>[2] = {
+  const options: CookieOptions = {
     httpOnly: opts.httpOnly ?? true,
     secure: resolveCookieSecure(),
     sameSite: resolveCookieSameSite(),
@@ -138,7 +138,10 @@ const setCookie = (
   maxAgeMs: number,
   opts: CookieOptionsInput = {},
 ) => {
-  const options = { ...getCookieOptions(req, { ...opts, name }), maxAge: Math.max(1000, maxAgeMs) };
+  const options: CookieOptions = {
+    ...getCookieOptions(req, { ...opts, name }),
+    maxAge: Math.max(1000, maxAgeMs),
+  };
   if (options.sameSite === 'none' && !options.secure) {
     options.secure = true;
   }
@@ -172,7 +175,7 @@ export const attachAuthCookies = (req: Request, res: Response, tokens: CookieTok
 };
 
 const clearCookie = (req: Request, res: Response, name: string) => {
-  const options = { ...getCookieOptions(req, { name }), maxAge: 0 };
+  const options: CookieOptions = { ...getCookieOptions(req, { name }), maxAge: 0 };
   res.cookie(name, '', options);
 };
 
