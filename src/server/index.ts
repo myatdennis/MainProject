@@ -17,6 +17,16 @@ import progressRoutes from './routes/progressRoutes';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+const HEALTH_PATH = '/api/health';
+
+console.info(`[boot] PORT=${PORT} NODE_ENV=${process.env.NODE_ENV ?? 'undefined'}`);
+
+// Health check for Railway and infra monitors.
+// MUST be registered before CORS/CSRF so probes never get blocked.
+app.get(HEALTH_PATH, (_req: Request, res: Response) => {
+  res.status(200).json({ status: 'ok', ts: new Date().toISOString(), port: PORT });
+});
+console.info(`[boot] Registered health route at ${HEALTH_PATH}`);
 
 // Security Middleware
 app.use(helmet());
