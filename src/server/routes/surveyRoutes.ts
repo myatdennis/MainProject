@@ -1,5 +1,5 @@
 import express from 'express';
-import { requireAdmin, requireAuth, type AuthenticatedRequest } from '../middleware/authMiddleware';
+import { requireAdmin, requireAuth, type AuthenticatedRequest } from '../middleware/authMiddleware.js';
 import {
   getSurveyById,
   listSurveyResponses,
@@ -7,7 +7,7 @@ import {
   recordSurveyResponse,
   upsertSurvey,
   type SurveyUpsertInput,
-} from '../data/mockSurveys';
+} from '../data/mockSurveys.js';
 
 const router = express.Router();
 

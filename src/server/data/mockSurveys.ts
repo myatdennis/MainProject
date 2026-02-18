@@ -1,5 +1,5 @@
 import { randomUUID } from 'crypto';
-import type { Survey, SurveyStatus } from '../../types/survey';
+import type { Survey, SurveyStatus } from '../../types/survey.js';
 
 export interface SurveyUpsertInput extends Partial<Survey> {
   id?: string;

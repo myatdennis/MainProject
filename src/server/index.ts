@@ -7,19 +7,17 @@ import rateLimit from 'express-rate-limit';
 import csurf from 'csurf';
 import cookieParser from 'cookie-parser';
 
-import analyticsRoutes from './analyticsRoutes';
-import auditLogRoutes from './auditLogRoutes';
-import authRoutes from './routes/authRoutes';
-import mfaRoutes from './routes/mfaRoutes';
-import courseRoutes from './routes/courseRoutes';
-import surveyRoutes from './routes/surveyRoutes';
-import progressRoutes from './routes/progressRoutes';
+import analyticsRoutes from './analyticsRoutes.js';
+import auditLogRoutes from './auditLogRoutes.js';
+import authRoutes from './routes/authRoutes.js';
+import mfaRoutes from './routes/mfaRoutes.js';
+import courseRoutes from './routes/courseRoutes.js';
+import surveyRoutes from './routes/surveyRoutes.js';
+import progressRoutes from './routes/progressRoutes.js';
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 const HEALTH_PATH = '/api/health';
-
-console.info(`[boot] PORT=${PORT} NODE_ENV=${process.env.NODE_ENV ?? 'undefined'}`);
 
 // Health check for Railway and infra monitors.
 // MUST be registered before CORS/CSRF so probes never get blocked.
@@ -27,6 +25,8 @@ app.get(HEALTH_PATH, (_req: Request, res: Response) => {
   res.status(200).json({ status: 'ok', ts: new Date().toISOString(), port: PORT });
 });
 console.info(`[boot] Registered health route at ${HEALTH_PATH}`);
+
+console.info(`[boot] PORT=${PORT} NODE_ENV=${process.env.NODE_ENV ?? 'undefined'}`);
 
 // Security Middleware
 app.use(helmet());

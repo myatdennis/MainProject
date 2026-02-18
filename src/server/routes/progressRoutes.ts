@@ -1,13 +1,13 @@
 import express from 'express';
-import type { AuthenticatedRequest } from '../middleware/authMiddleware';
-import { requireAuth } from '../middleware/authMiddleware';
+import type { AuthenticatedRequest } from '../middleware/authMiddleware.js';
+import { requireAuth } from '../middleware/authMiddleware.js';
 import {
   listLessonProgress,
   saveProgressSnapshot,
   recordProgressEvents,
   type ProgressSnapshotInput,
   type ProgressEventInput,
-} from '../data/progressStore';
+} from '../data/progressStore.js';
 
 const router = express.Router();
 

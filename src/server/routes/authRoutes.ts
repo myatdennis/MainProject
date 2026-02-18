@@ -4,19 +4,19 @@ import {
   findUserByEmail,
   toPublicUser,
   verifyPassword,
-} from '../data/mockUsers';
+} from '../data/mockUsers.js';
 import {
   issueTokens,
   rotateRefreshToken,
   revokeRefreshToken,
   decodeRefreshToken,
-} from '../utils/jwt';
-import type { AuthenticatedRequest } from '../middleware/authMiddleware';
-import { requireAuth } from '../middleware/authMiddleware';
+} from '../utils/jwt.js';
+import type { AuthenticatedRequest } from '../middleware/authMiddleware.js';
+import { requireAuth } from '../middleware/authMiddleware.js';
 
 // ✅ These two imports are required for the Supabase OAuth bridge + cookies
-import { supabaseAuthClient } from '../supabase/supabaseServerClient';
-import { attachAuthCookies, clearAuthCookies } from '../utils/authCookies';
+import { supabaseAuthClient } from '../supabase/supabaseServerClient.js';
+import { attachAuthCookies, clearAuthCookies } from '../utils/authCookies.js';
 
 const router = express.Router();
 

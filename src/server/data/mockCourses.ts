@@ -1,6 +1,6 @@
 import { randomUUID } from 'crypto';
-import type { Course, Module, Lesson } from '../../types/courseTypes';
-import { normalizeCourse, type NormalizedCourse, slugify } from '../../utils/courseNormalization';
+import type { Course, Module, Lesson } from '../../types/courseTypes.js';
+import { normalizeCourse, type NormalizedCourse, slugify } from '../../utils/courseNormalization.js';
 
 export interface CourseStoreRecord extends NormalizedCourse {
   assignments: Set<string>;

@@ -1,5 +1,5 @@
 import jwt from 'jsonwebtoken';
-import type { PublicUser } from '../data/mockUsers';
+import type { PublicUser } from '../data/mockUsers.js';
 
 const ACCESS_TOKEN_TTL = Number(process.env.JWT_ACCESS_TTL ?? 15 * 60); // seconds
 const REFRESH_TOKEN_TTL = Number(process.env.JWT_REFRESH_TTL ?? 7 * 24 * 60 * 60); // seconds

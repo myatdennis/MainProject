@@ -1,4 +1,4 @@
-import type { OrganizationId, TextIdentifier } from './entityIds';
+import type { OrganizationId, TextIdentifier } from './entityIds.js';
 
 export type CourseAssignmentStatus = 'assigned' | 'in-progress' | 'completed';
 

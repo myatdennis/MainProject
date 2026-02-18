@@ -1,4 +1,4 @@
-import type { Course, Module, Lesson, Chapter } from '../types/courseTypes';
+import type { Course, Module, Lesson, Chapter } from '../types/courseTypes.js';
 
 export interface NormalizedLesson extends Lesson {
   moduleId: string;
@@ -64,13 +64,13 @@ export const formatMinutes = (minutes?: number): string | undefined => {
   return remainingMinutes > 0 ? `${hours}h ${remainingMinutes}m` : `${hours}h`;
 };
 
-import { migrateLessonContent } from './contentMigrator';
+import { migrateLessonContent } from './contentMigrator.js';
 
 const normalizeLessons = (module: Module, _courseId: string, _moduleIndex: number): Lesson[] => {
   const lessons = module.lessons || [];
 
   return lessons
-    .map((lesson, lessonIndex) => {
+    .map((lesson: Lesson, lessonIndex: number) => {
       const estimatedMinutes =
         lesson.estimatedDuration ?? parseDurationToMinutes(lesson.duration);
 
@@ -88,16 +88,16 @@ const normalizeLessons = (module: Module, _courseId: string, _moduleIndex: numbe
         description: lesson.description || ''
       };
     })
-    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    .sort((a: Lesson, b: Lesson) => (a.order ?? 0) - (b.order ?? 0));
 };
 
 const normalizeModules = (course: Course): Module[] => {
   const modules = course.modules || [];
 
   return modules
-    .map((module, index) => {
+    .map((module: Module, index: number) => {
       const lessons = normalizeLessons(module, course.id, index);
-      const moduleMinutes = lessons.reduce((sum, lesson) => {
+      const moduleMinutes = lessons.reduce((sum: number, lesson: Lesson) => {
         return sum + (lesson.estimatedDuration ?? 0);
       }, 0);
 
@@ -109,13 +109,13 @@ const normalizeModules = (course: Course): Module[] => {
         resources: module.resources || []
       };
     })
-    .sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+    .sort((a: Module, b: Module) => (a.order ?? 0) - (b.order ?? 0));
 };
 
 const buildChaptersFromModules = (course: Course, modules: Module[]): Chapter[] => {
-  return modules.map((module, index) => {
+  return modules.map((module: Module, index: number) => {
     const lessons = module.lessons || [];
-    const chapterMinutes = lessons.reduce((sum, lesson) => {
+    const chapterMinutes = lessons.reduce((sum: number, lesson: Lesson) => {
       return sum + (lesson.estimatedDuration ?? 0);
     }, 0);
 
@@ -132,12 +132,12 @@ const buildChaptersFromModules = (course: Course, modules: Module[]): Chapter[] 
 };
 
 const computeCourseLessonCount = (modules: Module[]): number => {
-  return modules.reduce((count, module) => count + (module.lessons?.length ?? 0), 0);
+  return modules.reduce((count: number, module: Module) => count + (module.lessons?.length ?? 0), 0);
 };
 
 const computeCourseDuration = (modules: Module[], fallback?: string): string => {
-  const totalMinutes = modules.reduce((sum, module) => {
-    const moduleMinutes = (module.lessons || []).reduce((moduleSum, lesson) => {
+  const totalMinutes = modules.reduce((sum: number, module: Module) => {
+    const moduleMinutes = (module.lessons || []).reduce((moduleSum: number, lesson: Lesson) => {
       return moduleSum + (lesson.estimatedDuration ?? 0);
     }, 0);
     return sum + moduleMinutes;
@@ -167,8 +167,8 @@ export const normalizeCourse = (course: Course): NormalizedCourse => {
     duration: course.duration || computeCourseDuration(modules, course.duration),
     estimatedDuration:
       course.estimatedDuration ??
-      modules.reduce((sum, module) => {
-        const moduleMinutes = (module.lessons || []).reduce((lessonSum, lesson) => {
+      modules.reduce((sum: number, module: Module) => {
+        const moduleMinutes = (module.lessons || []).reduce((lessonSum: number, lesson: Lesson) => {
           return lessonSum + (lesson.estimatedDuration ?? 0);
         }, 0);
         return sum + moduleMinutes;
@@ -181,8 +181,8 @@ export const normalizeCourse = (course: Course): NormalizedCourse => {
 export const flattenLessons = (course: NormalizedCourse): NormalizedLesson[] => {
   const lessons: NormalizedLesson[] = [];
 
-  course.modules.forEach((module, moduleIndex) => {
-    (module.lessons || []).forEach((lesson) => {
+  course.modules.forEach((module: Module, moduleIndex: number) => {
+    (module.lessons || []).forEach((lesson: Lesson) => {
       lessons.push({
         ...lesson,
         moduleId: module.id,
