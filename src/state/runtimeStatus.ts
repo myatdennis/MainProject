@@ -150,7 +150,7 @@ const performRefresh = async (): Promise<RuntimeStatus> => {
     const response = await fetch(resolveApiUrl('/health'), {
       method: 'GET',
       headers: { 'x-runtime-status': '1' },
-      credentials: 'include',
+      credentials: 'omit',
       signal: controller.signal,
     });
     window.clearTimeout(timeout);

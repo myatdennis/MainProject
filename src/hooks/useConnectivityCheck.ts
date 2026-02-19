@@ -75,7 +75,7 @@ export const useConnectivityCheck = ({ healthPath = '/api/health', intervalMs = 
     const targetHealthUrl = /^https?:/i.test(healthPath) ? healthPath : resolveApiUrl(healthPath);
 
     try {
-      const healthResponse = await fetch(targetHealthUrl, { method: 'GET', credentials: 'include' });
+      const healthResponse = await fetch(targetHealthUrl, { method: 'GET', credentials: 'omit' });
       next.apiHealthy = healthResponse.ok;
       next.roundTripMs = Math.round(performance.now() - startedAt);
       if (!healthResponse.ok) {

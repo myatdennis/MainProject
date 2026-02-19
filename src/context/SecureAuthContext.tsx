@@ -1123,6 +1123,110 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     [memberships],
   );
 
+<<<<<<< HEAD
+=======
+  // ============================================================================
+  // Token Refresh
+  // ============================================================================
+
+  const refreshTokenCallback = useCallback(
+    async (options: RefreshOptions = {}): Promise<boolean> => {
+      const reason: RefreshReason = options.reason ?? 'protected_401';
+
+      const allowedByReason =
+        (reason === 'protected_401' && hasAuthenticatedSessionRef.current) ||
+        (reason === 'user_retry' && hadAuthenticatedSessionRef.current);
+      if (!allowedByReason) {
+        return false;
+      }
+
+      if (hasAttemptedRefreshRef.current || refreshAttemptedRef.current) {
+        return false;
+      }
+
+      return queueRefresh(async () => {
+        hasAttemptedRefreshRef.current = true;
+        refreshAttemptedRef.current = true;
+        const refreshRunCount = ++refreshRunCountRef.current;
+        logAuthDebug('[auth] refresh start', { count: refreshRunCount, reason });
+        let refreshStatus: 'success' | 'unauthenticated' | 'network_issue' | 'error' | 'skipped' = 'skipped';
+        const now = getSkewedNow();
+        if (lastRefreshAttemptRef.current && now - lastRefreshAttemptRef.current < MIN_REFRESH_INTERVAL_MS) {
+          refreshStatus = 'skipped';
+          logRefreshResult(refreshStatus);
+          return false;
+        }
+
+        if (isNavigatorOffline()) {
+          console.info('[SecureAuth] Skipping refresh while offline');
+          refreshStatus = 'network_issue';
+          logRefreshResult(refreshStatus);
+          return false;
+        }
+
+        lastRefreshAttemptRef.current = now;
+
+        try {
+          const refreshToken = getRefreshToken();
+          if (!refreshToken) {
+            logAuthDebug('[auth] refresh aborted - no refresh token available');
+            refreshStatus = 'unauthenticated';
+            logRefreshResult(refreshStatus);
+            return false;
+          }
+
+          const payload = await apiRequest<SessionResponsePayload | null>('/api/auth/refresh', {
+            method: 'POST',
+            allowAnonymous: true,
+            headers: buildSessionAuditHeaders(),
+            body: { reason, refreshToken },
+          });
+
+          if (payload?.user) {
+            applySessionPayload(payload, { persistTokens: true, reason: 'refresh_success' });
+            setAuthStatus('authenticated');
+            refreshStatus = 'success';
+          } else {
+            await fetchServerSession({ silent: true });
+            refreshStatus = 'success';
+          }
+
+          lastRefreshSuccessRef.current = getSkewedNow();
+          return true;
+        } catch (error) {
+          if (error instanceof ApiError) {
+            if (error.status === 401 || error.status === 403) {
+              console.warn('[SecureAuth] Refresh token rejected, clearing session');
+              applySessionPayload(null, { persistTokens: true, reason: 'refresh_rejected' });
+              setAuthStatus('unauthenticated');
+              if (typeof window !== 'undefined') {
+                toast.error('Your session expired. Please sign in again.', { id: 'session-expired' });
+                const loginPath = resolveLoginPath();
+                window.location.assign(loginPath);
+              }
+              refreshStatus = 'unauthenticated';
+              return false;
+            }
+
+            if (error.code === 'timeout' || error.status === 0) {
+              console.warn('[SecureAuth] Refresh deferred due to network issue');
+              refreshStatus = 'network_issue';
+              return false;
+            }
+          }
+
+          console.error('Token refresh failed:', error);
+          refreshStatus = 'error';
+          return false;
+        } finally {
+          logRefreshResult(refreshStatus);
+        }
+      });
+    },
+    [applySessionPayload, fetchServerSession, getSkewedNow],
+  );
+
+>>>>>>> 43edcac (fadfdsa)
   const resolveSession = useCallback(
     async ({ surface, signal }: { surface?: SessionSurface; signal?: AbortSignal } = {}) => {
       try {
@@ -1174,6 +1278,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
   const logout = useCallback(async (type?: 'lms' | 'admin'): Promise<void> => {
     try {
+<<<<<<< HEAD
       const csrfToken = getCSRFToken();
       await apiRequest('/api/auth/logout', {
         method: 'POST',
@@ -1182,6 +1287,13 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           ...buildSessionAuditHeaders(),
           ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}), // Ensure CSRF token is forwarded when present.
         },
+=======
+      const refreshToken = getRefreshToken();
+      await apiRequest('/api/auth/logout', {
+        method: 'POST',
+        body: refreshToken ? { refreshToken } : {},
+        headers: buildSessionAuditHeaders(),
+>>>>>>> 43edcac (fadfdsa)
       });
     } catch (error) {
       console.warn('[SecureAuth] Logout request failed (continuing with local cleanup)', error);
@@ -1190,17 +1302,17 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         logAuditAction('admin_logout', { email: user.email, id: user.id });
       }
 
-    clearAuth('manual_logout');
-    setUser(null);
-    setMemberships([]);
-    setOrganizationIds([]);
-    setActiveOrgIdState(null);
-    setSessionMetaVersion((value) => value + 1);
-    clearActiveOrgPreference();
-    setAuthStatus('unauthenticated');
+      clearAuth('manual_logout');
+      setUser(null);
+      setMemberships([]);
+      setOrganizationIds([]);
+      setActiveOrgIdState(null);
+      setSessionMetaVersion((value) => value + 1);
+      clearActiveOrgPreference();
+      setAuthStatus('unauthenticated');
 
       if (type) {
-        setIsAuthenticated(prev => ({
+        setIsAuthenticated((prev) => ({
           ...prev,
           [type]: false,
         }));
@@ -1211,7 +1323,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         });
       }
     }
-  }, [user]);
+  }, [buildSessionAuditHeaders, logAuditAction, user]);
 
   useEffect(() => {
     if (authInitializing) {

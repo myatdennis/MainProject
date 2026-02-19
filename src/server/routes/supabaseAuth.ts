@@ -1,8 +1,14 @@
 import express from 'express';
+<<<<<<< HEAD
 import { supabaseAuthClient } from '../supabase/supabaseServerClient.js';
 import { issueTokens } from '../utils/jwt.js';
 import { attachAuthCookies } from '../utils/authCookies.js';
 import { findUserByEmail, toPublicUser } from '../data/mockUsers.js';
+=======
+import { supabaseAuthClient } from '../supabase/supabaseServerClient';
+import { issueTokens } from '../utils/jwt';
+import { findUserByEmail, toPublicUser } from '../data/mockUsers';
+>>>>>>> 43edcac (fadfdsa)
 
 const router = express.Router();
 
@@ -43,14 +49,7 @@ router.post('/supabase', async (req, res) => {
 
   const tokens = issueTokens(publicUser);
 
-  attachAuthCookies(req, res, {
-    accessToken: tokens.accessToken,
-    refreshToken: tokens.refreshToken,
-    expiresAt: tokens.expiresAt,
-    refreshExpiresAt: tokens.refreshExpiresAt,
-  });
-
-  return res.json({ success: true, user: publicUser });
+  return res.json({ success: true, user: publicUser, ...tokens });
 });
 
 export default router;

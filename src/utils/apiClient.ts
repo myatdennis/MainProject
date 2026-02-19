@@ -319,15 +319,20 @@ const bootstrapSessionFromServer = async (): Promise<boolean> => {
 
 const ensureSessionViaRefresh = async (): Promise<boolean> => {
   const refreshUrl = buildApiUrl('/api/auth/refresh');
+  const refreshToken = getRefreshToken();
+
+  if (!refreshToken) {
+    throw buildNotAuthenticatedError(refreshUrl);
+  }
 
   return queueRefresh(async () => {
     let response: Response;
     try {
       response = await fetch(refreshUrl, {
         method: 'POST',
-        credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
+        credentials: 'omit',
+        body: JSON.stringify({ refreshToken }),
       });
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
@@ -732,7 +737,11 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
     abortForwarder,
     timeoutId,
     hasAuthorization,
+<<<<<<< HEAD
     credentials: credentialsMode,
+=======
+    credentials: 'omit',
+>>>>>>> 43edcac (fadfdsa)
   };
 
   if (devMode) {

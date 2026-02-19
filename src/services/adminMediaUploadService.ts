@@ -15,7 +15,7 @@ const sendFormDataWithProgress = async (path: string, formData: FormData, option
     const xhr = new XMLHttpRequest();
     xhr.open('POST', url, true);
     xhr.responseType = 'json';
-    xhr.withCredentials = true;
+    xhr.withCredentials = false;
     xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
     Object.entries(headers).forEach(([key, value]) => {
       if (value) {

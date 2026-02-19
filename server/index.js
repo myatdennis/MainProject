@@ -354,7 +354,7 @@ const cookiePolicySnapshot = describeCookiePolicy();
 log('info', 'http_cookie_policy', cookiePolicySnapshot);
 log('info', 'http_cors_policy', {
   allowedOrigins: resolvedCorsOrigins,
-  allowCredentials: true,
+  allowCredentials: false,
 });
 
 app.get('/api/health/db', async (_req, res) => {
@@ -1039,6 +1039,11 @@ app.use(express.json({ limit: '10mb' }));
 
 // Security middleware
 app.use(securityHeaders);
+
+// Auth routes (login, refresh, logout) must run before CSRF enforcement so they can issue tokens
+// without requiring the SPA to fetch a CSRF token first.
+app.use('/api/auth', authRoutes);
+
 app.use(setDoubleSubmitCSRF);
 
 // Expose CSRF token endpoint for clients and scripts that use the double-submit cookie pattern
@@ -1219,6 +1224,7 @@ app.get('/api/debug/whoami', authenticate, (req, res) => {
   });
 });
 
+<<<<<<< HEAD
 app.get('/api/admin/users', async (req, res) => {
   if (!ensureSupabase(res)) return;
   const orgId = pickOrgId(req.query.orgId, req.query.organizationId);
@@ -1331,6 +1337,8 @@ app.patch('/api/admin/users/:userId', async (req, res) => {
 
 // Auth routes (login, register, refresh, logout)
 app.use('/api/auth', authRoutes);
+=======
+>>>>>>> 43edcac (fadfdsa)
 // MFA routes
 app.use('/api/mfa', mfaRoutes);
 

@@ -61,6 +61,7 @@ const isAllowedOrigin = (origin) => {
   return { allowed: false, reason: 'not_allowlisted' };
 };
 
+<<<<<<< HEAD
 const logOriginDecision = (origin, decision) => {
   if (!origin) return;
   const logger = (decision.allowed ? console.debug : console.warn).bind(console);
@@ -77,6 +78,16 @@ const isHealthRequest = (req) => {
 };
 
 const baseCorsOptions = {
+=======
+const allowHeaders = [
+  'Content-Type',
+  'Authorization',
+  'X-Requested-With',
+  'x-runtime-status',
+];
+
+const corsOptions = {
+>>>>>>> 43edcac (fadfdsa)
   origin(origin, callback) {
     if (!origin) {
       return callback(null, true);
@@ -88,6 +99,7 @@ const baseCorsOptions = {
     }
     return callback(null, false);
   },
+<<<<<<< HEAD
   credentials: true,
   allowedHeaders: [
     'Authorization',
@@ -105,6 +117,10 @@ const baseCorsOptions = {
     'x-csrf-token',
   ],
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+=======
+  credentials: false,
+  allowedHeaders: allowHeaders,
+>>>>>>> 43edcac (fadfdsa)
   optionsSuccessStatus: 204,
 };
 

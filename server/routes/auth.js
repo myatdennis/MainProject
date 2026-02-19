@@ -16,6 +16,7 @@ import {
   buildAuthContext,
 } from '../middleware/auth.js';
 import supabase, { supabaseAuthClient } from '../lib/supabaseClient.js';
+<<<<<<< HEAD
 import getUserMemberships from '../utils/memberships.js';
 import {
   setAuthCookies,
@@ -25,6 +26,9 @@ import {
   getAccessTokenFromRequest,
 } from '../utils/authCookies.js';
 import { doubleSubmitCSRF, setCSRFToken } from '../middleware/csrf.js';
+=======
+import { clearAuthCookies } from '../utils/authCookies.js';
+>>>>>>> 43edcac (fadfdsa)
 import {
   demoLoginEnabled,
   E2E_TEST_MODE as e2eTestMode,
@@ -289,7 +293,7 @@ const buildSessionResponse = (userPayload, tokens = {}) => ({
   refreshExpiresAt: tokens.refreshExpiresAt ?? null,
 });
 
-const refreshSessionFromCookies = async (req, res) => {
+const refreshSessionFromToken = async (req, refreshToken) => {
   if (!isJwtSecretConfigured) {
     const jwtError = buildJwtConfigError();
     return {
@@ -301,14 +305,13 @@ const refreshSessionFromCookies = async (req, res) => {
       missingEnv: jwtError.missingEnv,
     };
   }
-  const refreshToken = getRefreshTokenFromRequest(req);
 
   if (!refreshToken) {
     return {
       ok: false,
       status: 401,
       error: 'missing_refresh_token',
-      message: 'Refresh token cookie is required',
+      message: 'Refresh token is required',
     };
   }
 
@@ -327,9 +330,12 @@ const refreshSessionFromCookies = async (req, res) => {
       email: payload.email,
       role: payload.role,
     });
+<<<<<<< HEAD
     setAuthCookies(req, res, tokens);
     setCSRFToken(req, res, () => {});
     setCSRFToken(req, res, () => {});
+=======
+>>>>>>> 43edcac (fadfdsa)
     const userPayload = buildDemoUserPayloadFromToken(payload);
     return {
       ok: true,
@@ -363,10 +369,13 @@ const refreshSessionFromCookies = async (req, res) => {
   const userPayload = buildUserPayloadFromSupabase(data.user, membershipRows);
   const tokens = buildTokenResponseFromSession(data.session);
 
+<<<<<<< HEAD
   setAuthCookies(req, res, tokens);
   setCSRFToken(req, res, () => {});
   setCSRFToken(req, res, () => {});
 
+=======
+>>>>>>> 43edcac (fadfdsa)
   return {
     ok: true,
     body: buildSessionResponse(userPayload, tokens),
@@ -450,6 +459,7 @@ router.post('/login', async (req, res) => {
     const diagnostics = devLoginDiagnosticsEnabled
       ? {
           email: normalizedEmail,
+<<<<<<< HEAD
           userId: null,
           membershipCount: null,
           membershipRoles: [],
@@ -484,6 +494,15 @@ router.post('/login', async (req, res) => {
         if (queryError) {
           if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Failed to load profile row', { queryError });
           console.warn('[AUTH LOGIN DB ERROR]', {
+=======
+          role: resolvedRole,
+          organizationId: demoUser.organizationId,
+        });
+        if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Demo tokens issued');
+        return res.json({
+          user: {
+            id: demoUser.id,
+>>>>>>> 43edcac (fadfdsa)
             email: normalizedEmail,
             ip,
             error: queryError?.message,
@@ -582,6 +601,7 @@ router.post('/login', async (req, res) => {
     }
     const userPayload = buildUserPayloadFromSupabase(supabaseUser, membershipRows);
     const tokens = buildTokenResponseFromSession(data.session);
+<<<<<<< HEAD
     setAuthCookies(req, res, tokens);
     setCSRFToken(req, res, () => {});
     if ((process.env.NODE_ENV || '').toLowerCase() !== 'production') {
@@ -593,6 +613,9 @@ router.post('/login', async (req, res) => {
     }
     if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Tokens issued, cookies set', { userId: userPayload.userId });
     emitDevLoginLog('success');
+=======
+    if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Tokens issued', { userId: userPayload.userId });
+>>>>>>> 43edcac (fadfdsa)
     return res.json({
       user: userPayload,
       memberships: userPayload.memberships,
@@ -749,8 +772,11 @@ router.post('/register', authLimiter, async (req, res) => {
       const membershipRows = await getUserMemberships(sessionData.user.id, { logPrefix: '[auth-register]' });
       const userPayload = buildUserPayloadFromSupabase(sessionData.user, membershipRows);
       const tokens = buildTokenResponseFromSession(sessionData.session);
+<<<<<<< HEAD
 
   setAuthCookies(req, res, tokens);
+=======
+>>>>>>> 43edcac (fadfdsa)
       res.status(201).json({
         ok: true,
         user: userPayload,
@@ -793,24 +819,21 @@ router.post('/refresh', async (req, res) => {
     });
   }
   try {
-    const refreshToken = getRefreshTokenFromRequest(req);
-    if (process.env.DEBUG_AUTH === 'true') {
-      console.log('[DEBUG_AUTH] refresh_token from cookie:', refreshToken ? '[present]' : '[missing]');
-    }
+    const refreshTokenInput = typeof req.body?.refreshToken === 'string' ? req.body.refreshToken.trim() : '';
+    const refreshToken = refreshTokenInput || null;
     if (!refreshToken) {
       if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] No refresh_token, rejecting');
-      // Log missing token
-      console.warn('[AUTH REFRESH FAILURE] Missing refresh token', {
+      console.warn('[AUTH REFRESH FAILURE] Missing refresh token payload', {
         ip: req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip,
-        at: 'getRefreshTokenFromRequest',
+        at: 'refresh_request_validation',
       });
       return res.status(401).json({
         code: 'MISSING_REFRESH_TOKEN',
         error: 'missing_refresh_token',
-        message: 'Refresh token cookie is required',
+        message: 'Refresh token is required',
       });
     }
-    const result = await refreshSessionFromCookies(req, res);
+    const result = await refreshSessionFromToken(req, refreshToken);
     if (!result.ok) {
       if ((result.status || 401) === 401 && result.error !== 'missing_refresh_token') {
         clearAuthCookies(req, res);
@@ -821,7 +844,7 @@ router.post('/refresh', async (req, res) => {
         error: result.error,
         message: result.message,
         ip: req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip,
-        at: 'refreshSessionFromCookies',
+        at: 'refreshSessionFromToken',
       });
       // Defensive: always return a structured error
       return res.status(result.status || 401).json({
@@ -857,12 +880,9 @@ router.post('/refresh', async (req, res) => {
 // Logout (public endpoint – clears cookies even without a valid session)
 // ============================================================================
 
-router.post('/logout', doubleSubmitCSRF, async (req, res) => {
+router.post('/logout', async (req, res) => {
   try {
-    let refreshToken = req.body?.refreshToken;
-    if (!refreshToken) {
-      refreshToken = getRefreshTokenFromRequest(req);
-    }
+    const refreshToken = typeof req.body?.refreshToken === 'string' ? req.body.refreshToken : null;
 
     if (supabaseAuthClient && refreshToken) {
       try {

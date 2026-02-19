@@ -42,8 +42,13 @@ app.use(rateLimit({
 app.use(cookieParser());
 app.use(express.json());
 
+<<<<<<< HEAD
 // CORS: allow frontend origin(s) and enable credentials for cookie-based auth
 const allowedOrigins = [
+=======
+// CORS: allow frontend origin(s) and permit Authorization headers for bearer tokens
+const defaultOrigins = [
+>>>>>>> 43edcac (fadfdsa)
   'https://the-huddle.co',
   'https://www.the-huddle.co',
   'https://the-huddleco.netlify.app',
@@ -60,7 +65,15 @@ const corsAllowList = Array.from(new Set([...(envOrigins ?? []), ...allowedOrigi
 
 console.info('[CORS] Allowed origins:', corsAllowList);
 
+<<<<<<< HEAD
 const corsOptions: cors.CorsOptions = {
+=======
+console.info('[CORS] Allowed origins:', allowedOrigins);
+
+const allowedHeaders = ['Content-Type', 'Authorization', 'x-runtime-status', 'X-Requested-With'];
+
+const corsOptions = {
+>>>>>>> 43edcac (fadfdsa)
   origin(origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) {
     if (!origin) return callback(null, true);
     if (corsAllowList.includes(origin)) {
@@ -70,6 +83,7 @@ const corsOptions: cors.CorsOptions = {
     return callback(new Error('Not allowed by CORS'));
   },
   credentials: false,
+<<<<<<< HEAD
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: [
     'Content-Type',
@@ -81,10 +95,16 @@ const corsOptions: cors.CorsOptions = {
   ],
   exposedHeaders: ['Authorization', 'X-Org-Resolved', 'x-runtime-status'],
   maxAge: 600,
+=======
+  allowedHeaders,
+>>>>>>> 43edcac (fadfdsa)
 };
 
 app.use(cors(corsOptions));
 app.options('*', cors(corsOptions));
+
+// Auth routes should not require CSRF headers because they issue the tokens used thereafter.
+app.use('/api/auth', authRoutes);
 
 // CSRF Protection (for non-GET requests)
 app.use(csurf({ cookie: true }));
@@ -94,10 +114,12 @@ app.get('/api/csrf-token', (req: Request, res: Response) => {
   res.json({ csrfToken: req.csrfToken() });
 });
 
-
 // Routes
+<<<<<<< HEAD
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
+=======
+>>>>>>> 43edcac (fadfdsa)
 app.use('/api/mfa', mfaRoutes);
 app.use('/api', courseRoutes);
 app.use('/api', surveyRoutes);

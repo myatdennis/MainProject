@@ -15,6 +15,7 @@ import {
 import type { AuthenticatedRequest } from '../middleware/authMiddleware.js';
 import { requireAuth } from '../middleware/authMiddleware.js';
 
+<<<<<<< HEAD
 // ✅ These two imports are required for the Supabase OAuth bridge + cookies
 import { supabaseAuthClient } from '../supabase/supabaseServerClient.js';
 import { attachAuthCookies, clearAuthCookies } from '../utils/authCookies.js';
@@ -67,6 +68,11 @@ const buildSessionPayload = (
     ...overrides,
   };
 };
+=======
+// Supabase OAuth bridge helpers + legacy cookie cleanup
+import { supabaseAuthClient } from '../supabase/supabaseServerClient';
+import { clearAuthCookies } from '../utils/authCookies';
+>>>>>>> 43edcac (fadfdsa)
 
 const router = express.Router();
 
@@ -74,7 +80,7 @@ const router = express.Router();
  * ✅ Supabase OAuth bridge
  * Frontend calls POST /api/auth/supabase with:
  *   Authorization: Bearer <supabase_access_token>
- * Server verifies user in Supabase, then issues YOUR app tokens and sets cookies.
+ * Server verifies user in Supabase, then issues YOUR app tokens for client-side storage.
  */
 router.post('/supabase', async (req, res) => {
   try {
@@ -84,7 +90,7 @@ router.post('/supabase', async (req, res) => {
     if (!token) {
       return res.status(401).json({
         error: 'Authentication required',
-        message: 'No token provided (header or cookie)',
+        message: 'No bearer token provided in the Authorization header',
       });
     }
 
@@ -126,18 +132,8 @@ router.post('/supabase', async (req, res) => {
     const publicUser = toPublicUser(user);
     const tokens = issueTokens(publicUser);
 
-    // 4) Set cookies so /api/auth/session (or requireAuth) will work
-    //    attachAuthCookies expects a shape like:
-    //    { accessToken, refreshToken, expiresAt, refreshExpiresAt }
-    attachAuthCookies(req, res, {
-      accessToken: tokens.accessToken,
-      refreshToken: tokens.refreshToken,
-      expiresAt: tokens.expiresAt,
-      refreshExpiresAt: tokens.refreshExpiresAt,
-    });
-
-    // 5) Return user (you can also return tokens; harmless, but cookies are the key)
-    return res.status(200).json({ ok: true, user: publicUser });
+    // 4) Return the tokens directly so the frontend can store them client-side
+    return res.status(200).json({ ok: true, user: publicUser, ...tokens });
   } catch (e) {
     return res.status(500).json({ error: 'server_error' });
   }
@@ -162,6 +158,7 @@ router.post('/login', async (req, res) => {
   const publicUser = toPublicUser(user);
   const tokens = issueTokens(publicUser);
 
+<<<<<<< HEAD
   // ✅ Optional but recommended: set cookies here too for consistency
   attachAuthCookies(req, res, {
     accessToken: tokens.accessToken,
@@ -178,6 +175,9 @@ router.post('/login', async (req, res) => {
   });
 
   res.json(sessionPayload);
+=======
+  res.json({ user: publicUser, ...tokens });
+>>>>>>> 43edcac (fadfdsa)
 });
 
 router.post('/refresh', (req, res) => {
@@ -202,6 +202,7 @@ router.post('/refresh', (req, res) => {
     return res.status(401).json({ error: 'Refresh token expired or revoked' });
   }
 
+<<<<<<< HEAD
   // ✅ Optional: set cookies on refresh too
   attachAuthCookies(req, res, {
     accessToken: tokens.accessToken,
@@ -272,6 +273,9 @@ router.patch('/active-org', requireAuth, (req: AuthenticatedRequest, res) => {
     });
   }
   res.json({ activeOrgId: updated });
+=======
+  res.json({ user: publicUser, ...tokens });
+>>>>>>> 43edcac (fadfdsa)
 });
 
 router.get('/verify', requireAuth, (req: AuthenticatedRequest, res) => {
@@ -282,7 +286,7 @@ router.post('/logout', (req, res) => {
   const { refreshToken } = req.body ?? {};
   revokeRefreshToken(typeof refreshToken === 'string' ? refreshToken : undefined);
 
-  // ✅ Clear cookies so browser stops sending stale tokens
+  // Legacy cookie cleanup for older builds
   clearAuthCookies(req, res);
 
   res.json({ success: true });
