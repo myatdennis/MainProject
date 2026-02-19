@@ -5,8 +5,7 @@
       "name": "api",
       "provider": "node",
       "rootDirectory": "./",
-      "start": "node server/index.js",
-      "build": "npm run build:server",
+      "start": "node index.js",
       "env": [
         "SUPABASE_URL",
         "SUPABASE_SERVICE_ROLE_KEY",
