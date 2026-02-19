@@ -20,6 +20,10 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const HEALTH_PATH = '/api/health';
 
+if ((process.env.NODE_ENV || '').toLowerCase() === 'production') {
+  app.set('trust proxy', 1);
+}
+
 // Health check for Railway and infra monitors.
 // MUST be registered before CORS/CSRF so probes never get blocked.
 app.get(HEALTH_PATH, (_req: Request, res: Response) => {
