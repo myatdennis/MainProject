@@ -45,7 +45,7 @@
 
 **Required Environment Variables:**
 ```bash
-JWT_SECRET=your-secret-key-here  # GENERATE THIS!
+JWT_ACCESS_SECRET=your-secret-key-here  # GENERATE THIS!
 DEMO_MODE=true                   # For demo credentials
 PORT=8787                        # Server port
 ```
@@ -64,7 +64,7 @@ cp .env.example .env
 node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 
 # Add the generated secret to .env
-# JWT_SECRET=<paste-generated-secret-here>
+# JWT_ACCESS_SECRET=<paste-generated-secret-here>
 ```
 
 ### Step 2: Start the Server
@@ -228,8 +228,8 @@ const response = await api.post('/auth/login', {
 
 ## 🐛 Troubleshooting
 
-### Issue: "JWT_SECRET not set" Error
-**Solution:** Add JWT_SECRET to .env file
+### Issue: "JWT_ACCESS_SECRET not set" Error
+**Solution:** Add JWT_ACCESS_SECRET to .env file
 
 ### Issue: CORS Error
 **Solution:** Server already configured for dev CORS (port 5174)

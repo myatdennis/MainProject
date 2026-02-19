@@ -1,0 +1,149 @@
+schemaname,tablename,policyname,permissive,roles,cmd,qual,with_check
+public,assignments,assignments_update_members,PERMISSIVE,{authenticated},UPDATE,"(EXISTS ( SELECT 1
+   FROM organization_memberships m
+  WHERE (((m.user_id)::text = (auth.uid())::text) AND (COALESCE((m.org_id)::text, (m.org_id_uuid)::text, m.org_id_text) = COALESCE((assignments.organization_id)::text, (assignments.org_id)::text)))))","(EXISTS ( SELECT 1
+   FROM organization_memberships m
+  WHERE (((m.user_id)::text = (auth.uid())::text) AND (COALESCE((m.org_id)::text, (m.org_id_uuid)::text, m.org_id_text) = COALESCE((assignments.organization_id)::text, (assignments.org_id)::text)))))"
+public,assignments,assignments_insert_members,PERMISSIVE,{authenticated},INSERT,null,"(EXISTS ( SELECT 1
+   FROM organization_memberships m
+  WHERE (((m.user_id)::text = (auth.uid())::text) AND (COALESCE((m.org_id)::text, (m.org_id_uuid)::text, m.org_id_text) = COALESCE((assignments.organization_id)::text, (assignments.org_id)::text)))))"
+public,assignments,assignments_select_members,PERMISSIVE,{authenticated},SELECT,"(EXISTS ( SELECT 1
+   FROM organization_memberships m
+  WHERE (((m.user_id)::text = (auth.uid())::text) AND (COALESCE((m.org_id)::text, (m.org_id_uuid)::text, m.org_id_text) = COALESCE((assignments.organization_id)::text, (assignments.org_id)::text)))))",null
+public,audit_logs,audit_logs_service_role_all,PERMISSIVE,{public},ALL,(auth.role() = 'service_role'::text),(auth.role() = 'service_role'::text)
+public,course_assignments,Authenticated users can update course assignments,PERMISSIVE,{authenticated},UPDATE,true,true
+public,course_assignments,Authenticated users can read course assignments,PERMISSIVE,{authenticated},SELECT,true,null
+public,course_assignments,Authenticated users can insert course assignments,PERMISSIVE,{authenticated},INSERT,null,true
+public,course_assignments,Authenticated users can delete course assignments,PERMISSIVE,{authenticated},DELETE,true,null
+public,courses,Anonymous users can read published courses,PERMISSIVE,{anon},SELECT,(status = 'published'::text),null
+public,courses,Authenticated users can insert courses,PERMISSIVE,{authenticated},INSERT,null,true
+public,courses,Courses admin manage,PERMISSIVE,{authenticated},ALL,"(EXISTS ( SELECT 1
+   FROM organization_memberships m
+  WHERE ((m.user_id = auth.uid()) AND (m.org_id = courses.organization_id) AND (m.role = ANY (ARRAY['admin'::text, 'editor'::text])))))","(EXISTS ( SELECT 1
+   FROM organization_memberships m
+  WHERE ((m.user_id = auth.uid()) AND (m.org_id = courses.organization_id) AND (m.role = ANY (ARRAY['admin'::text, 'editor'::text])))))"
+public,courses,Courses member read,PERMISSIVE,{authenticated},SELECT,"(EXISTS ( SELECT 1
+   FROM organization_memberships m
+  WHERE ((m.user_id = auth.uid()) AND (m.org_id = courses.organization_id))))",null
+public,courses,Courses owner delete,PERMISSIVE,{authenticated},DELETE,(created_by = (auth.uid())::text),null
+public,courses,Courses owner update,PERMISSIVE,{authenticated},UPDATE,(created_by = (auth.uid())::text),(created_by = (auth.uid())::text)
+public,courses,Courses service role full access,PERMISSIVE,{service_role},ALL,true,true
+public,courses,Authenticated users can update courses,PERMISSIVE,{authenticated},UPDATE,true,true
+public,courses,org members manage courses,PERMISSIVE,{public},ALL,"(organization_id IN ( SELECT courses.organization_id
+   FROM organization_memberships
+  WHERE (organization_memberships.user_id = auth.uid())))",null
+public,courses,Authenticated users can read all courses,PERMISSIVE,{authenticated},SELECT,true,null
+public,courses,Service role has full access,PERMISSIVE,{service_role},ALL,true,true
+public,courses,Authenticated users can delete courses,PERMISSIVE,{authenticated},DELETE,true,null
+public,documents,documents_insert_members,PERMISSIVE,{authenticated},INSERT,null,"(EXISTS ( SELECT 1
+   FROM organization_memberships m
+  WHERE (((m.user_id)::text = (auth.uid())::text) AND (COALESCE((m.org_id)::text, (m.org_id_uuid)::text, m.org_id_text) = (documents.organization_id)::text))))"
+public,documents,documents_update_members,PERMISSIVE,{authenticated},UPDATE,"(EXISTS ( SELECT 1
+   FROM organization_memberships m
+  WHERE (((m.user_id)::text = (auth.uid())::text) AND (COALESCE((m.org_id)::text, (m.org_id_uuid)::text, m.org_id_text) = (documents.organization_id)::text))))","(EXISTS ( SELECT 1
+   FROM organization_memberships m
+  WHERE (((m.user_id)::text = (auth.uid())::text) AND (COALESCE((m.org_id)::text, (m.org_id_uuid)::text, m.org_id_text) = (documents.organization_id)::text))))"
+public,documents,documents_select_members,PERMISSIVE,{authenticated},SELECT,"(EXISTS ( SELECT 1
+   FROM organization_memberships m
+  WHERE (((m.user_id)::text = (auth.uid())::text) AND (COALESCE((m.org_id)::text, (m.org_id_uuid)::text, m.org_id_text) = (documents.organization_id)::text))))",null
+public,lessons,Enable insert for authenticated users only,PERMISSIVE,{authenticated},INSERT,null,true
+public,lessons,Admins can manage all lessons,PERMISSIVE,{authenticated},ALL,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.user_id = auth.uid()) AND (user_profiles.role = 'admin'::text))))",null
+public,lessons,Anyone can read lessons of published courses,PERMISSIVE,{authenticated},SELECT,"(EXISTS ( SELECT 1
+   FROM (modules
+     JOIN courses ON ((courses.id = modules.course_id)))
+  WHERE ((modules.id = lessons.module_id) AND (courses.status = 'published'::text))))",null
+public,modules,Enable insert for authenticated users only,PERMISSIVE,{authenticated},INSERT,null,true
+public,modules,Admins can manage all modules,PERMISSIVE,{authenticated},ALL,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.user_id = auth.uid()) AND (user_profiles.role = 'admin'::text))))",null
+public,modules,Enable read access for all users,PERMISSIVE,{public},SELECT,true,null
+public,notifications,Users read their notifications,PERMISSIVE,{authenticated},SELECT,(user_id = auth.uid()),null
+public,notifications,Org editors manage notifications,PERMISSIVE,{authenticated},ALL,"(EXISTS ( SELECT 1
+   FROM organization_memberships m
+  WHERE ((m.user_id = auth.uid()) AND (m.org_id = notifications.org_id) AND (m.role = ANY (ARRAY['admin'::text, 'editor'::text])))))","(EXISTS ( SELECT 1
+   FROM organization_memberships m
+  WHERE ((m.user_id = auth.uid()) AND (m.org_id = notifications.org_id) AND (m.role = ANY (ARRAY['admin'::text, 'editor'::text])))))"
+public,notifications,Service role access to notifications,PERMISSIVE,{service_role},ALL,true,true
+public,org_invites,org_invites_service_role_all,PERMISSIVE,{public},ALL,(auth.role() = 'service_role'::text),(auth.role() = 'service_role'::text)
+public,org_workspace_action_items,Members read action items,PERMISSIVE,{authenticated},SELECT,"(EXISTS ( SELECT 1
+   FROM organization_memberships m
+  WHERE ((m.user_id = auth.uid()) AND (m.org_id = org_workspace_action_items.org_id))))",null
+public,org_workspace_action_items,Service role access to action items,PERMISSIVE,{service_role},ALL,true,true
+public,org_workspace_action_items,Editors manage action items,PERMISSIVE,{authenticated},ALL,"(EXISTS ( SELECT 1
+   FROM organization_memberships m
+  WHERE ((m.user_id = auth.uid()) AND (m.org_id = org_workspace_action_items.org_id) AND (m.role = ANY (ARRAY['owner'::text, 'admin'::text, 'editor'::text])))))","(EXISTS ( SELECT 1
+   FROM organization_memberships m
+  WHERE ((m.user_id = auth.uid()) AND (m.org_id = org_workspace_action_items.org_id) AND (m.role = ANY (ARRAY['owner'::text, 'admin'::text, 'editor'::text])))))"
+public,org_workspace_session_notes,Service role access to session notes,PERMISSIVE,{service_role},ALL,true,true
+public,org_workspace_session_notes,Members read session notes,PERMISSIVE,{authenticated},SELECT,"(EXISTS ( SELECT 1
+   FROM organization_memberships m
+  WHERE ((m.user_id = auth.uid()) AND (m.org_id = org_workspace_session_notes.org_id))))",null
+public,org_workspace_session_notes,Editors manage session notes,PERMISSIVE,{authenticated},ALL,"(EXISTS ( SELECT 1
+   FROM organization_memberships m
+  WHERE ((m.user_id = auth.uid()) AND (m.org_id = org_workspace_session_notes.org_id) AND (m.role = ANY (ARRAY['owner'::text, 'admin'::text, 'editor'::text])))))","(EXISTS ( SELECT 1
+   FROM organization_memberships m
+  WHERE ((m.user_id = auth.uid()) AND (m.org_id = org_workspace_session_notes.org_id) AND (m.role = ANY (ARRAY['owner'::text, 'admin'::text, 'editor'::text])))))"
+public,org_workspace_strategic_plans,Service role access to strategic plans,PERMISSIVE,{service_role},ALL,true,true
+public,org_workspace_strategic_plans,Editors manage strategic plans,PERMISSIVE,{authenticated},ALL,"(EXISTS ( SELECT 1
+   FROM organization_memberships m
+  WHERE ((m.user_id = auth.uid()) AND (m.org_id = org_workspace_strategic_plans.org_id) AND (m.role = ANY (ARRAY['owner'::text, 'admin'::text, 'editor'::text])))))","(EXISTS ( SELECT 1
+   FROM organization_memberships m
+  WHERE ((m.user_id = auth.uid()) AND (m.org_id = org_workspace_strategic_plans.org_id) AND (m.role = ANY (ARRAY['owner'::text, 'admin'::text, 'editor'::text])))))"
+public,org_workspace_strategic_plans,Members read strategic plans,PERMISSIVE,{authenticated},SELECT,"(EXISTS ( SELECT 1
+   FROM organization_memberships m
+  WHERE ((m.user_id = auth.uid()) AND (m.org_id = org_workspace_strategic_plans.org_id))))",null
+public,organization_memberships,members can view,PERMISSIVE,{public},SELECT,(auth.uid() = user_id),null
+public,organization_memberships,Service role access to memberships,PERMISSIVE,{service_role},ALL,true,true
+public,organization_memberships,Org admins manage memberships,PERMISSIVE,{authenticated},ALL,"(EXISTS ( SELECT 1
+   FROM organization_memberships m
+  WHERE ((m.org_id = organization_memberships.org_id) AND (m.user_id = auth.uid()) AND (lower(COALESCE(m.role, 'member'::text)) = ANY (ARRAY['admin'::text, 'owner'::text])))))","(EXISTS ( SELECT 1
+   FROM organization_memberships m
+  WHERE ((m.org_id = organization_memberships.org_id) AND (m.user_id = auth.uid()) AND (lower(COALESCE(m.role, 'member'::text)) = ANY (ARRAY['admin'::text, 'owner'::text])))))"
+public,organization_memberships,Members can view their membership,PERMISSIVE,{authenticated},SELECT,(user_id = auth.uid()),null
+public,organization_profiles,org_profiles_select_members,PERMISSIVE,{authenticated},SELECT,"(EXISTS ( SELECT 1
+   FROM organization_memberships m
+  WHERE (((m.user_id)::text = (auth.uid())::text) AND (COALESCE((m.org_id)::text, (m.org_id_uuid)::text, m.org_id_text) = (organization_profiles.id)::text))))",null
+public,organizations,org_select_members,PERMISSIVE,{authenticated},SELECT,"(EXISTS ( SELECT 1
+   FROM organization_memberships m
+  WHERE (((m.user_id)::text = (auth.uid())::text) AND (COALESCE((m.org_id)::text, (m.org_id_uuid)::text, m.org_id_text) = (organizations.id)::text))))",null
+public,user_achievements,Users can manage own achievements,PERMISSIVE,{public},ALL,((auth.uid())::text = user_id),((auth.uid())::text = user_id)
+public,user_course_enrollments,Admins can read all user data,PERMISSIVE,{authenticated},SELECT,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.user_id = auth.uid()) AND (user_profiles.role = 'admin'::text))))",null
+public,user_course_enrollments,Users can manage own enrollments,PERMISSIVE,{authenticated},ALL,(auth.uid() = user_id),null
+public,user_course_enrollments,Users can read own enrollments,PERMISSIVE,{authenticated},SELECT,(auth.uid() = user_id),null
+public,user_course_progress,ucp_select_self,PERMISSIVE,{authenticated},SELECT,(user_id = (auth.uid())::text),null
+public,user_course_progress,ucp_insert_self,PERMISSIVE,{authenticated},INSERT,null,(user_id = (auth.uid())::text)
+public,user_course_progress,ucp_update_self,PERMISSIVE,{authenticated},UPDATE,(user_id = (auth.uid())::text),(user_id = (auth.uid())::text)
+public,user_learning_goals,Users can manage own learning goals,PERMISSIVE,{public},ALL,((auth.uid())::text = user_id),((auth.uid())::text = user_id)
+public,user_lesson_progress,Users can manage own lesson progress,PERMISSIVE,{authenticated},ALL,(auth.uid() = user_id),null
+public,user_lesson_progress,Admins can read all lesson progress,PERMISSIVE,{authenticated},SELECT,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.user_id = auth.uid()) AND (user_profiles.role = 'admin'::text))))",null
+public,user_lesson_progress,Users can read own lesson progress,PERMISSIVE,{authenticated},SELECT,(auth.uid() = user_id),null
+public,user_profiles,Users can insert own profile,PERMISSIVE,{authenticated},INSERT,null,(auth.uid() = user_id)
+public,user_profiles,Users can read own profile,PERMISSIVE,{authenticated},SELECT,(auth.uid() = user_id),null
+public,user_profiles,Enable insert for authenticated users only,PERMISSIVE,{authenticated},INSERT,null,true
+public,user_profiles,Users can update own profile,PERMISSIVE,{authenticated},UPDATE,(user_id = ( SELECT auth.uid() AS uid)),(user_id = ( SELECT auth.uid() AS uid))
+public,user_quiz_attempts,Admins can read all quiz attempts,PERMISSIVE,{authenticated},SELECT,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.user_id = auth.uid()) AND (user_profiles.role = 'admin'::text))))",null
+public,user_quiz_attempts,Users can read own quiz attempts,PERMISSIVE,{authenticated},SELECT,(auth.uid() = user_id),null
+public,user_quiz_attempts,Users can manage own quiz attempts,PERMISSIVE,{authenticated},ALL,(auth.uid() = user_id),null
+public,user_reflections,Users can read own reflections,PERMISSIVE,{authenticated},SELECT,(auth.uid() = user_id),null
+public,user_reflections,Admins can read all reflections,PERMISSIVE,{authenticated},SELECT,"(EXISTS ( SELECT 1
+   FROM user_profiles
+  WHERE ((user_profiles.user_id = auth.uid()) AND (user_profiles.role = 'admin'::text))))",null
+public,user_reflections,Users can manage own reflections,PERMISSIVE,{authenticated},ALL,(auth.uid() = user_id),null
+public,users,users_select_self,PERMISSIVE,{authenticated},SELECT,((id)::text = (auth.uid())::text),null
+public,users,users_update_self,PERMISSIVE,{authenticated},UPDATE,((id)::text = (auth.uid())::text),((id)::text = (auth.uid())::text)
+storage,objects,Authenticated users can update course videos,PERMISSIVE,{authenticated},UPDATE,(bucket_id = 'course-videos'::text),null
+storage,objects,Authenticated users can upload course videos,PERMISSIVE,{authenticated},INSERT,null,(bucket_id = 'course-videos'::text)
+storage,objects,Authenticated users can delete course resources,PERMISSIVE,{authenticated},DELETE,(bucket_id = 'course-resources'::text),null
+storage,objects,Public can view course videos,PERMISSIVE,{public},SELECT,(bucket_id = 'course-videos'::text),null
+storage,objects,Authenticated users can update course resources,PERMISSIVE,{authenticated},UPDATE,(bucket_id = 'course-resources'::text),null
+storage,objects,Authenticated users can upload course resources,PERMISSIVE,{authenticated},INSERT,null,(bucket_id = 'course-resources'::text)
+storage,objects,Public can view course resources,PERMISSIVE,{public},SELECT,(bucket_id = 'course-resources'::text),null
+storage,objects,Authenticated users can delete course videos,PERMISSIVE,{authenticated},DELETE,(bucket_id = 'course-videos'::text),null

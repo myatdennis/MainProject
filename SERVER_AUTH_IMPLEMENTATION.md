@@ -189,10 +189,10 @@ To complete the integration, the following steps are needed:
   app.use('/api/auth', authRoutes);
   ```
 
-- [ ] **Add JWT_SECRET to environment**:
+- [ ] **Add JWT_ACCESS_SECRET to environment**:
   ```bash
   # .env
-  JWT_SECRET=your-secure-random-secret-key-here
+  JWT_ACCESS_SECRET=your-secure-random-secret-key-here
   ```
 
 - [ ] **Apply auth middleware to protected routes**:
@@ -453,7 +453,7 @@ describe('XSS Protection', () => {
 1. **Integration** (Immediate):
    - [ ] Update server/app.ts with new middleware
    - [ ] Replace AuthProvider in client
-   - [ ] Add JWT_SECRET to environment
+   - [ ] Add JWT_ACCESS_SECRET to environment
    - [ ] Test auth flow end-to-end
 
 2. **Form Updates** (Next Phase):
@@ -490,7 +490,7 @@ describe('XSS Protection', () => {
 
 ```bash
 # .env
-JWT_SECRET=your-very-secret-key-minimum-32-characters-long
+JWT_ACCESS_SECRET=your-very-secret-key-minimum-32-characters-long
 NODE_ENV=production
 VITE_API_URL=https://your-api-domain.com/api
 ```

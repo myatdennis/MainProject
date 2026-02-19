@@ -6,11 +6,8 @@
 import rateLimit from 'express-rate-limit';
 import supabase, { supabaseAuthClient } from '../lib/supabaseClient.js';
 import { extractTokenFromHeader } from '../utils/jwt.js';
-<<<<<<< HEAD
-import { getAccessTokenFromRequest, getActiveOrgFromRequest } from '../utils/authCookies.js';
+import { getActiveOrgFromRequest } from '../utils/authCookies.js';
 import { getUserMemberships, getMembershipDiagnostics } from '../utils/memberships.js';
-=======
->>>>>>> 43edcac (fadfdsa)
 import { E2E_TEST_MODE, DEV_FALLBACK, demoAutoAuthEnabled } from '../config/runtimeFlags.js';
 import { getPermissionsForRole, mergePermissions } from '../../shared/permissions/index.js';
 
@@ -305,15 +302,8 @@ const resolveAccessTokenFromRequest = (req) => {
   if (headerToken) {
     return { token: headerToken, source: 'authorization' };
   }
-<<<<<<< HEAD
 
-  const cookieToken = getAccessTokenFromRequest(req);
-  if (cookieToken) {
-    return { token: cookieToken, source: 'cookie' };
-  }
 
-=======
->>>>>>> 43edcac (fadfdsa)
   return { token: null, source: null };
 };
 

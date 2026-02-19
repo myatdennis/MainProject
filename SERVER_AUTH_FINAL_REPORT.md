@@ -198,7 +198,7 @@ All 8 core security tasks have been successfully implemented:
    # Add to server/app.ts
    - Import auth routes
    - Add middleware
-   - Set JWT_SECRET in .env
+   - Set JWT_ACCESS_SECRET in .env
    - Test login flow
    ```
 
@@ -322,7 +322,7 @@ All 8 core security tasks have been successfully implemented:
 
 ```bash
 # .env (Required for production)
-JWT_SECRET=your-very-secret-key-minimum-32-characters-long
+JWT_ACCESS_SECRET=your-very-secret-key-minimum-32-characters-long
 NODE_ENV=production
 VITE_API_URL=https://your-api-domain.com/api
 

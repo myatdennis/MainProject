@@ -7,12 +7,15 @@ import {
 
 const ISSUER = process.env.JWT_ISSUER || 'the-huddle-api';
 const AUDIENCE = process.env.JWT_AUDIENCE || 'the-huddle-clients';
-const ACCESS_SECRET = (process.env.JWT_SECRET || '').trim();
-const REFRESH_SECRET = (process.env.JWT_REFRESH_SECRET || ACCESS_SECRET).trim();
+const accessSecretEnv = (process.env.JWT_ACCESS_SECRET || '').trim();
+const refreshSecretEnv = (process.env.JWT_REFRESH_SECRET || '').trim();
+
+const ACCESS_SECRET = accessSecretEnv;
+const REFRESH_SECRET = (refreshSecretEnv || ACCESS_SECRET).trim();
 
 const ensureAccessSecret = () => {
   if (!ACCESS_SECRET) {
-    throw new Error('JWT_SECRET is not configured');
+    throw new Error('JWT_ACCESS_SECRET is not configured');
   }
   return ACCESS_SECRET;
 };

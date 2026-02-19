@@ -20,7 +20,6 @@ import { loginSchema, emailSchema, registerSchema } from '../utils/validators';
 import { queueRefresh } from '../lib/refreshQueue';
 import apiRequest, { ApiError, apiRequestRaw } from '../utils/apiClient';
 import buildSessionAuditHeaders from '../utils/sessionAuditHeaders';
-import { getCSRFToken } from '../hooks/useCSRFToken';
 
 // MFA helpers
 
@@ -1098,8 +1097,8 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
   const setActiveOrganization = useCallback(
     async (orgId: string | null) => {
-  const normalized = orgId && memberships.some((membership) => membership.orgId === orgId) ? orgId : null;
-  setActiveOrgPreference(normalized);
+      const normalized = orgId && memberships.some((membership) => membership.orgId === orgId) ? orgId : null;
+      setActiveOrgPreference(normalized);
       setActiveOrgIdState(normalized);
       setUser((prev) => {
         if (!prev) return prev;
@@ -1123,8 +1122,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     [memberships],
   );
 
-<<<<<<< HEAD
-=======
   // ============================================================================
   // Token Refresh
   // ============================================================================
@@ -1226,7 +1223,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     [applySessionPayload, fetchServerSession, getSkewedNow],
   );
 
->>>>>>> 43edcac (fadfdsa)
   const resolveSession = useCallback(
     async ({ surface, signal }: { surface?: SessionSurface; signal?: AbortSignal } = {}) => {
       try {
@@ -1278,22 +1274,11 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
   const logout = useCallback(async (type?: 'lms' | 'admin'): Promise<void> => {
     try {
-<<<<<<< HEAD
-      const csrfToken = getCSRFToken();
-      await apiRequest('/api/auth/logout', {
-        method: 'POST',
-        body: {},
-        headers: {
-          ...buildSessionAuditHeaders(),
-          ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}), // Ensure CSRF token is forwarded when present.
-        },
-=======
       const refreshToken = getRefreshToken();
       await apiRequest('/api/auth/logout', {
         method: 'POST',
         body: refreshToken ? { refreshToken } : {},
         headers: buildSessionAuditHeaders(),
->>>>>>> 43edcac (fadfdsa)
       });
     } catch (error) {
       console.warn('[SecureAuth] Logout request failed (continuing with local cleanup)', error);

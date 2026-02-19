@@ -138,7 +138,7 @@ If you use the Vite dev server the UI will call `/api/*` and Vite will proxy to 
 - **Optional auto-auth bypass**: silent platform-admin sessions are now disabled by default, even in demo mode. If you intentionally need every localhost request to auto-authenticate (for example, when running legacy smoke suites), set `ALLOW_DEMO_AUTO_AUTH=true` and restart the server. `E2E_TEST_MODE` continues to force the bypass for automated runs.
 - **Guard & menu diagnostics**: toggle `VITE_ENABLE_ROUTE_GUARD_DEBUG=true` to watch role/org redirect decisions in the console, and `VITE_ENABLE_ADMIN_MENU_DEBUG=true` to trace when the admin avatar menu opens, closes, or locks. Both default to the noisier dev build only.
 - **Supabase mode** (staging/prod): set `DEV_FALLBACK=false` and `DEMO_MODE=false`, then provide `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `VITE_SUPABASE_URL`, and `VITE_SUPABASE_ANON_KEY`.
-- Always keep `SUPABASE_SERVICE_ROLE_KEY` and `JWT_SECRET` on the server only. Never expose them in the Vite bundle.
+- Always keep `SUPABASE_SERVICE_ROLE_KEY` and `JWT_ACCESS_SECRET` on the server only. Never expose them in the Vite bundle.
 - `VITE_API_BASE_URL` should point to your deployed Express host when not using the Vite proxy.
 - Set `VITE_ENABLE_WS=true` when your backend WebSocket endpoint is reachable; leave it `false` to fall back to Supabase realtime + polling.
 - When WebSockets are enabled, ensure `VITE_WS_URL` matches your backend (wss:// in prod, ws:// in local) or rely on the default `/ws` proxy path.

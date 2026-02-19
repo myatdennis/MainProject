@@ -11,48 +11,18 @@ const isDev = (process.env.NODE_ENV || '').toLowerCase() !== 'production';
 
 const resolveTokenFromRequest = (req) => {
   const headerToken = extractTokenFromHeader(req.headers?.authorization);
-<<<<<<< HEAD
-  if (headerToken) return headerToken;
-  const cookieToken = getAccessTokenFromRequest(req);
-  if (cookieToken) return cookieToken;
-=======
   if (headerToken) {
     return headerToken;
   }
->>>>>>> 43edcac (fadfdsa)
   return null;
 };
 
-export async function supabaseJwtMiddleware(req, res, next) {
-<<<<<<< HEAD
-  const originalUrl = req.originalUrl || req.url || '';
-  if (JWT_AUTH_BYPASS_PATHS.some((prefix) => originalUrl.startsWith(prefix))) {
+const shouldBypass = (path = '') => JWT_AUTH_BYPASS_PATHS.some((prefix) => path.startsWith(prefix));
+
+export default async function supabaseJwtMiddleware(req, res, next) {
+  if (shouldBypass(req.path || req.originalUrl || '')) {
     return next();
   }
-=======
-  try {
-    const token = resolveTokenFromRequest(req);
-    if (!token) {
-      return res.status(401).json({
-        error: 'Authentication required',
-        message: 'No bearer token provided in the Authorization header',
-      });
-    }
-
-    const claims = await verifySupabaseJwt(token);
-    req.supabaseJwtClaims = claims;
-    req.supabaseJwtToken = token;
-    const user = buildUserFromClaims(claims);
-    req.user = user;
-    return next();
-  } catch (error) {
-    if (error?.code === 'missing_token') {
-      return res.status(401).json({
-        error: 'Authentication required',
-        message: 'No bearer token provided in the Authorization header',
-      });
-    }
->>>>>>> 43edcac (fadfdsa)
 
   if (!supabasePublicClient) {
     const devFallbackEnabled = String(process.env.DEV_FALLBACK || '').toLowerCase() === 'true';
@@ -71,14 +41,14 @@ export async function supabaseJwtMiddleware(req, res, next) {
   if (!token) {
     return res.status(401).json({
       error: 'Authentication required',
-      message: 'No token provided (header or cookie)',
+      message: 'No bearer token provided in the Authorization header',
     });
   }
 
   try {
     const { data, error } = await supabasePublicClient.auth.getUser(token);
     if (isDev) {
-      console.log('Auth check', { hasToken: Boolean(token), success: Boolean(data?.user) });
+      console.log('[supabaseJwt] auth_check', { hasToken: Boolean(token), success: Boolean(data?.user) });
     }
     if (error || !data?.user) {
       return res.status(401).json({
@@ -98,5 +68,3 @@ export async function supabaseJwtMiddleware(req, res, next) {
     });
   }
 }
-
-export default supabaseJwtMiddleware;

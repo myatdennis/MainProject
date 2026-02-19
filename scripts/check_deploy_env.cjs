@@ -5,7 +5,14 @@
  * Run: node scripts/check_deploy_env.cjs
  */
 
-const requiredServer = ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'DATABASE_URL', 'JWT_SECRET', 'COOKIE_DOMAIN'];
+const requiredServer = [
+  'SUPABASE_URL',
+  'SUPABASE_SERVICE_ROLE_KEY',
+  'DATABASE_URL',
+  'JWT_ACCESS_SECRET',
+  'JWT_REFRESH_SECRET',
+  'COOKIE_DOMAIN',
+];
 
 const requiredClient = ['VITE_SUPABASE_URL', 'VITE_SUPABASE_ANON_KEY', 'VITE_API_BASE_URL'];
 
@@ -54,7 +61,8 @@ console.log(
   !!process.env.SUPABASE_SERVICE_ROLE_KEY || !!process.env.SUPABASE_SERVICE_KEY,
 );
 console.log('  dbUrlPresent:', !!process.env.DATABASE_URL);
-console.log('  jwtSecretPresent:', !!process.env.JWT_SECRET);
+console.log('  jwtAccessSecretPresent:', !!process.env.JWT_ACCESS_SECRET);
+console.log('  jwtRefreshSecretPresent:', !!process.env.JWT_REFRESH_SECRET);
 console.log('  cookieDomainPresent:', !!process.env.COOKIE_DOMAIN);
 console.log('  viteApiBasePresent:', !!process.env.VITE_API_BASE_URL || !!process.env.VITE_API_URL);
 

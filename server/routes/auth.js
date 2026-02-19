@@ -16,19 +16,9 @@ import {
   buildAuthContext,
 } from '../middleware/auth.js';
 import supabase, { supabaseAuthClient } from '../lib/supabaseClient.js';
-<<<<<<< HEAD
-import getUserMemberships from '../utils/memberships.js';
-import {
-  setAuthCookies,
-  clearAuthCookies,
-  getRefreshTokenFromRequest,
-  setActiveOrgCookie,
-  getAccessTokenFromRequest,
-} from '../utils/authCookies.js';
-import { doubleSubmitCSRF, setCSRFToken } from '../middleware/csrf.js';
-=======
+
 import { clearAuthCookies } from '../utils/authCookies.js';
->>>>>>> 43edcac (fadfdsa)
+
 import {
   demoLoginEnabled,
   E2E_TEST_MODE as e2eTestMode,
@@ -219,8 +209,8 @@ const buildJwtConfigError = () => ({
   status: 500,
   error: 'JWT_NOT_CONFIGURED',
   code: 'JWT_NOT_CONFIGURED',
-  message: 'JWT secret is not configured. Set JWT_SECRET to a random 32+ character value on the server.',
-  missingEnv: ['JWT_SECRET'],
+  message: 'JWT secrets are not configured. Set JWT_ACCESS_SECRET and JWT_REFRESH_SECRET to random 32+ character values on the server.',
+  missingEnv: ['JWT_ACCESS_SECRET', 'JWT_REFRESH_SECRET'],
 });
 
 
@@ -330,12 +320,8 @@ const refreshSessionFromToken = async (req, refreshToken) => {
       email: payload.email,
       role: payload.role,
     });
-<<<<<<< HEAD
-    setAuthCookies(req, res, tokens);
-    setCSRFToken(req, res, () => {});
-    setCSRFToken(req, res, () => {});
-=======
->>>>>>> 43edcac (fadfdsa)
+
+
     const userPayload = buildDemoUserPayloadFromToken(payload);
     return {
       ok: true,
@@ -369,13 +355,8 @@ const refreshSessionFromToken = async (req, refreshToken) => {
   const userPayload = buildUserPayloadFromSupabase(data.user, membershipRows);
   const tokens = buildTokenResponseFromSession(data.session);
 
-<<<<<<< HEAD
-  setAuthCookies(req, res, tokens);
-  setCSRFToken(req, res, () => {});
-  setCSRFToken(req, res, () => {});
 
-=======
->>>>>>> 43edcac (fadfdsa)
+
   return {
     ok: true,
     body: buildSessionResponse(userPayload, tokens),
@@ -459,42 +440,7 @@ router.post('/login', async (req, res) => {
     const diagnostics = devLoginDiagnosticsEnabled
       ? {
           email: normalizedEmail,
-<<<<<<< HEAD
-          userId: null,
-          membershipCount: null,
-          membershipRoles: [],
-        }
-      : null;
-    const emitDevLoginLog = (reason) => {
-      if (!diagnostics) {
-        return;
-      }
-      console.info('[AUTH LOGIN][dev]', {
-        email: diagnostics.email,
-        userId: diagnostics.userId,
-        membershipCount: diagnostics.membershipCount,
-        membershipRoles: diagnostics.membershipRoles,
-        reason,
-      });
-    };
-    const sendInvalidCredentials = () => {
-      emitDevLoginLog('invalid_password');
-      return res.status(401).json({
-        error: 'Invalid login credentials',
-      });
-    };
-    let userRecord = null;
-    if (supabase) {
-      try {
-        const { data: users, error: queryError } = await supabase
-          .from('users')
-          .select('*')
-          .eq('email', normalizedEmail)
-          .limit(1);
-        if (queryError) {
-          if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Failed to load profile row', { queryError });
-          console.warn('[AUTH LOGIN DB ERROR]', {
-=======
+
           role: resolvedRole,
           organizationId: demoUser.organizationId,
         });
@@ -502,7 +448,7 @@ router.post('/login', async (req, res) => {
         return res.json({
           user: {
             id: demoUser.id,
->>>>>>> 43edcac (fadfdsa)
+
             email: normalizedEmail,
             ip,
             error: queryError?.message,
@@ -601,21 +547,9 @@ router.post('/login', async (req, res) => {
     }
     const userPayload = buildUserPayloadFromSupabase(supabaseUser, membershipRows);
     const tokens = buildTokenResponseFromSession(data.session);
-<<<<<<< HEAD
-    setAuthCookies(req, res, tokens);
-    setCSRFToken(req, res, () => {});
-    if ((process.env.NODE_ENV || '').toLowerCase() !== 'production') {
-      const setCookieHeader = res.getHeader('set-cookie');
-      console.info('[AUTH LOGIN][dev] set-cookie (supabase)', {
-        hasSetCookie: Boolean(setCookieHeader),
-        cookieCount: Array.isArray(setCookieHeader) ? setCookieHeader.length : setCookieHeader ? 1 : 0,
-      });
-    }
-    if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Tokens issued, cookies set', { userId: userPayload.userId });
-    emitDevLoginLog('success');
-=======
+
     if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Tokens issued', { userId: userPayload.userId });
->>>>>>> 43edcac (fadfdsa)
+
     return res.json({
       user: userPayload,
       memberships: userPayload.memberships,
@@ -772,11 +706,8 @@ router.post('/register', authLimiter, async (req, res) => {
       const membershipRows = await getUserMemberships(sessionData.user.id, { logPrefix: '[auth-register]' });
       const userPayload = buildUserPayloadFromSupabase(sessionData.user, membershipRows);
       const tokens = buildTokenResponseFromSession(sessionData.session);
-<<<<<<< HEAD
 
-  setAuthCookies(req, res, tokens);
-=======
->>>>>>> 43edcac (fadfdsa)
+
       res.status(201).json({
         ok: true,
         user: userPayload,

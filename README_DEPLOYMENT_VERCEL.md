@@ -26,7 +26,7 @@ Cons: Serverless function cold starts, WS instability under load, memory limits
    vercel env add VITE_SUPABASE_URL
    vercel env add VITE_SUPABASE_ANON_KEY
    vercel env add SUPABASE_SERVICE_ROLE_KEY
-   vercel env add JWT_SECRET
+   vercel env add JWT_ACCESS_SECRET
    vercel env add DEMO_MODE
    vercel env add VITE_API_URL
    ```
@@ -56,7 +56,7 @@ From `.env.example`:
 - `VITE_SUPABASE_URL` – Your Supabase project URL
 - `VITE_SUPABASE_ANON_KEY` – Public anon key
 - `SUPABASE_SERVICE_ROLE_KEY` – (Only in API host, NOT on frontend) Service role key
-- `JWT_SECRET` – 32+ random chars (API host only)
+- `JWT_ACCESS_SECRET` – 32+ random chars (API host only)
 - `DEMO_MODE` – `false` for production
 - `E2E_TEST_MODE` – Keep `false` in production
 - `VITE_API_URL` – Base path for API calls in browser (usually `/api` when proxying)
@@ -64,7 +64,7 @@ From `.env.example`:
 
 ### Generating Secrets
 ```bash
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))" # JWT_SECRET
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))" # JWT_ACCESS_SECRET
 ```
 
 ## DNS + Custom Domain
@@ -126,7 +126,7 @@ API Host:
 ```
 PORT=8888
 SUPABASE_SERVICE_ROLE_KEY=service_role_key_here
-JWT_SECRET=<generated>
+JWT_ACCESS_SECRET=<generated>
 DEMO_MODE=false
 E2E_TEST_MODE=false
 ```

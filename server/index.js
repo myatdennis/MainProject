@@ -137,7 +137,8 @@ const warnOnPlaceholderSecrets = () => {
     'SUPABASE_URL',
     'VITE_SUPABASE_URL',
     'VITE_SUPABASE_ANON_KEY',
-    'JWT_SECRET',
+    'JWT_ACCESS_SECRET',
+    'JWT_REFRESH_SECRET',
     'DATABASE_URL',
     'BROADCAST_API_KEY',
   ];
@@ -983,13 +984,12 @@ if (isProduction) {
 const PORT = Number(process.env.PORT) || 8888;
 logger.info('server_port', { port: PORT });
 
-// Attach request ids early so every request (including health endpoints) gets an id.
-app.use(attachRequestId);
-
-// Core middleware: cookie parser first so downstream middleware can read req.cookies
+// Core middleware ordering: CORS -> JSON -> request metadata.
 app.use(cookieParser());
 app.use(corsMiddleware);
 app.options('*', corsMiddleware);
+app.use(express.json({ limit: '10mb' }));
+app.use(attachRequestId);
 
 // Health + diagnostics routes should respond even if downstream middleware fails,
 // but they still need the shared CORS policy so browsers accept the responses.
@@ -1035,7 +1035,13 @@ app.get('/api/health/stream', (req, res) => {
   });
 });
 
-app.use(express.json({ limit: '10mb' }));
+app.get('/ws', (_req, res) => {
+  res.json({ ok: true, message: 'Use WebSocket upgrade at wss://api.the-huddle.co/ws' });
+});
+
+app.get('/ws/health', (_req, res) => {
+  res.json(wsHealthSnapshot);
+});
 
 // Security middleware
 app.use(securityHeaders);
@@ -1224,7 +1230,6 @@ app.get('/api/debug/whoami', authenticate, (req, res) => {
   });
 });
 
-<<<<<<< HEAD
 app.get('/api/admin/users', async (req, res) => {
   if (!ensureSupabase(res)) return;
   const orgId = pickOrgId(req.query.orgId, req.query.organizationId);
@@ -1335,10 +1340,6 @@ app.patch('/api/admin/users/:userId', async (req, res) => {
   }
 });
 
-// Auth routes (login, register, refresh, logout)
-app.use('/api/auth', authRoutes);
-=======
->>>>>>> 43edcac (fadfdsa)
 // MFA routes
 app.use('/api/mfa', mfaRoutes);
 
@@ -4391,7 +4392,8 @@ app.get('/api/diagnostics', async (req, res) => {
     supabaseUrlPresent: !!process.env.SUPABASE_URL || !!process.env.VITE_SUPABASE_URL,
     supabaseServiceRoleKeyPresent: !!process.env.SUPABASE_SERVICE_ROLE_KEY || !!process.env.SUPABASE_SERVICE_KEY,
     databaseUrlPresent: !!process.env.DATABASE_URL,
-    jwtSecretPresent: !!process.env.JWT_SECRET,
+    jwtAccessSecretPresent: !!process.env.JWT_ACCESS_SECRET,
+    jwtRefreshSecretPresent: !!process.env.JWT_REFRESH_SECRET,
     cookieDomain: !!process.env.COOKIE_DOMAIN,
     corsAllowedConfigured: resolvedCorsOrigins.length > 0,
     devFallbackMode: DEV_FALLBACK,

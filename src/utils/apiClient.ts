@@ -724,8 +724,6 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
     console.debug('[apiRequest][auth-debug]', debugPayload);
   }
 
-  const credentialsMode: RequestCredentials = options.credentials ?? 'omit';
-
   const preparedRequest: PreparedRequest = {
     url,
     method,
@@ -737,11 +735,7 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
     abortForwarder,
     timeoutId,
     hasAuthorization,
-<<<<<<< HEAD
-    credentials: credentialsMode,
-=======
     credentials: 'omit',
->>>>>>> 43edcac (fadfdsa)
   };
 
   if (devMode) {

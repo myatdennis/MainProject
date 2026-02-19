@@ -30,7 +30,7 @@
    ```bash
    vercel env add VITE_SUPABASE_URL
    vercel env add VITE_SUPABASE_ANON_KEY
-   vercel env add JWT_SECRET
+   vercel env add JWT_ACCESS_SECRET
    vercel env add VITE_API_BASE_URL
    ```
 
@@ -85,7 +85,7 @@
 4. **Set Environment Variables:**
    ```bash
    railway variables set VITE_SUPABASE_URL=your-value
-   railway variables set JWT_SECRET=your-secret
+   railway variables set JWT_ACCESS_SECRET=your-secret
    ```
 
 5. **Deploy:**
@@ -108,7 +108,7 @@ Production environment variables you need to set:
 - ✅ `SUPABASE_ANON_KEY` (backend auth client)
 - ✅ `VITE_SUPABASE_URL`
 - ✅ `VITE_SUPABASE_ANON_KEY` (frontend storage access)
-- ✅ `JWT_SECRET` and `JWT_REFRESH_SECRET` (generate with: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`)
+- ✅ `JWT_ACCESS_SECRET` and `JWT_REFRESH_SECRET` (generate with: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"`)
 - ✅ `VITE_API_BASE_URL` / `VITE_API_URL` (your domain + `/api`)
 - ✅ `COOKIE_DOMAIN` (e.g. `.the-huddle.co`) so auth + `active_org` cookies stay scoped correctly
 - ✅ `VITE_ENABLE_WS=true` (if WebSocket sync is enabled in prod)
