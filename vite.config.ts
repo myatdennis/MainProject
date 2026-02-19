@@ -21,7 +21,7 @@ export default async () => {
   const hmrClientPort = process.env.VITE_HMR_CLIENT_PORT || process.env.HMR_CLIENT_PORT;
 
   const isDev = (process.env.NODE_ENV || '').toLowerCase() !== 'production';
-  const requestedPort = Number(process.env.VITE_PORT || 5174);
+  const requestedPort = Number(process.env.VITE_PORT || 5173);
   let activeViteOrigin = `http://localhost:${requestedPort}`;
   if (isDev && (!process.env.VITE_API_BASE_URL || process.env.VITE_API_BASE_URL.trim() === '')) {
     process.env.VITE_API_BASE_URL = '/api';
@@ -41,7 +41,7 @@ export default async () => {
   return defineConfig({
     define: {
       ...(process.env.NODE_ENV === 'development'
-        ? { 'import.meta.env.VITE_WS_URL': JSON.stringify('ws://localhost:8888/ws') }
+        ? { 'import.meta.env.VITE_WS_URL': JSON.stringify('ws://localhost:3000/ws') }
         : {}),
     },
     plugins: [
@@ -93,7 +93,7 @@ export default async () => {
       },
       proxy: {
         '/api': {
-          target: 'http://localhost:8888',
+          target: 'http://localhost:3000',
           changeOrigin: true,
           secure: false,
           ws: true,
@@ -134,7 +134,7 @@ export default async () => {
           },
         },
         '/ws': {
-          target: 'ws://localhost:8888',
+          target: 'ws://localhost:3000',
           ws: true,
           changeOrigin: true,
           secure: false,

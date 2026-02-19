@@ -46,7 +46,7 @@ import {
   optionalAuthenticate,
   resolveUserRole,
 } from './middleware/auth.js';
-import { supabaseJwtMiddleware } from './middleware/supabaseJwt.js';
+import supabaseJwtMiddleware from './middleware/supabaseJwt.js';
 import { setDoubleSubmitCSRF, getCSRFToken } from './middleware/csrf.js';
 import adminUsersRouter from './routes/admin-users.js';
 import mfaRoutes from './routes/mfa.js';
@@ -981,7 +981,7 @@ app.get('/api/diagnostics/metrics', async (req, res, next) => {
 if (isProduction) {
   app.set('trust proxy', 1);
 }
-const PORT = Number(process.env.PORT) || 8888;
+const PORT = Number(process.env.PORT) || 3000;
 logger.info('server_port', { port: PORT });
 
 // Core middleware ordering: CORS -> JSON -> request metadata.

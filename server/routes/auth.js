@@ -440,18 +440,26 @@ router.post('/login', async (req, res) => {
     const diagnostics = devLoginDiagnosticsEnabled
       ? {
           email: normalizedEmail,
+          origin,
+          ip,
+          contentType,
+          supabaseUrlHost,
+        }
+      : null;
 
-          role: resolvedRole,
-          organizationId: demoUser.organizationId,
-        });
-        if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Demo tokens issued');
-        return res.json({
-          user: {
-            id: demoUser.id,
-
+    let userRecord = null;
+    if (supabase) {
+      try {
+        const { data: users, error: queryError } = await supabase
+          .from('users')
+          .select('id, role, organization_id, is_active')
+          .eq('email', normalizedEmail)
+          .limit(1);
+        if (queryError) {
+          console.warn('[AUTH LOGIN PROFILE QUERY ERROR]', {
             email: normalizedEmail,
             ip,
-            error: queryError?.message,
+            error: queryError.message || queryError,
             at: 'supabase.from(users).select',
           });
         } else if (users && users.length > 0) {

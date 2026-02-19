@@ -39,41 +39,41 @@ export const modulePatchSchema = moduleCreateSchema.partial();
 
 const lessonTypeEnum = z.enum(['video', 'interactive', 'quiz', 'download', 'text']);
 
-export const lessonCreateSchema = z
-  .object({
-    id: uuid().optional(),
-    module_id: uuid().optional(),
-    moduleId: uuid().optional(),
-    title: z.string().min(1),
-    type: lessonTypeEnum,
-    description: z.string().nullable().default(null),
-    order_index: z.number().int().nonnegative().optional(),
-    orderIndex: z.number().int().nonnegative().optional(),
-    duration_s: z.number().int().nonnegative().nullable().default(null),
-    durationSeconds: z.number().int().nonnegative().nullable().optional(),
-    content_json: z.record(z.any()).default({}),
-    content: lessonContentSchema.default({}),
-    completion_rule_json: completionRuleSchema.default(null),
-    completionRule: completionRuleSchema,
-  })
-  .superRefine((value, ctx) => {
-    if (!value.module_id && !value.moduleId) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'module_id is required',
-        path: ['module_id'],
-      });
-    }
-    if (value.order_index == null && value.orderIndex == null) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'order_index is required',
-        path: ['order_index'],
-      });
-    }
-  });
+const lessonShape = z.object({
+  id: uuid().optional(),
+  module_id: uuid().optional(),
+  moduleId: uuid().optional(),
+  title: z.string().min(1),
+  type: lessonTypeEnum,
+  description: z.string().nullable().default(null),
+  order_index: z.number().int().nonnegative().optional(),
+  orderIndex: z.number().int().nonnegative().optional(),
+  duration_s: z.number().int().nonnegative().nullable().default(null),
+  durationSeconds: z.number().int().nonnegative().nullable().optional(),
+  content_json: z.record(z.any()).default({}),
+  content: lessonContentSchema.default({}),
+  completion_rule_json: completionRuleSchema.default(null),
+  completionRule: completionRuleSchema,
+});
 
-export const lessonPatchSchema = lessonCreateSchema.partial();
+export const lessonCreateSchema = lessonShape.superRefine((value, ctx) => {
+  if (!value.module_id && !value.moduleId) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'module_id is required',
+      path: ['module_id'],
+    });
+  }
+  if (value.order_index == null && value.orderIndex == null) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'order_index is required',
+      path: ['order_index'],
+    });
+  }
+});
+
+export const lessonPatchSchema = lessonShape.partial();
 
 export const reorderItemSchema = z.object({
   id: uuid(),

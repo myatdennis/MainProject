@@ -20,10 +20,21 @@ const isNetlifyFrontendBuild =
   process.env.NETLIFY === 'true' ||
   (typeof process.env.CONTEXT === 'string' && process.env.CONTEXT.length > 0);
 
+const forceFlag = String(process.env.FORCE_DEPLOY_ENV_CHECK || '').toLowerCase();
+
+// If explicitly false → never strict.
+// If explicitly true → always strict.
+// Otherwise → strict only in CI.
 const shouldEnforceStrict =
-  process.env.CI === 'true' ||
-  process.env.CI === '1' ||
-  String(process.env.FORCE_DEPLOY_ENV_CHECK || '').toLowerCase() === 'true';
+  forceFlag === 'true' ||
+  (forceFlag !== 'false' && (process.env.CI === 'true' || process.env.CI === '1'));
+const invokingScript = process.env.npm_lifecycle_event || '';
+const skipClientValidation =
+  String(process.env.SKIP_CLIENT_ENV_CHECK || '').toLowerCase() === 'true' ||
+  ['build:server', 'start:server', 'start', 'build'].includes(invokingScript);
+const enforceClientStrict =
+  !skipClientValidation &&
+  (isNetlifyFrontendBuild || String(process.env.ENFORCE_CLIENT_ENV || '').toLowerCase() === 'true');
 
 function check(list) {
   const missing = list.filter((name) => !process.env[name] || String(process.env[name]).trim().length === 0);
@@ -44,11 +55,14 @@ if (isNetlifyFrontendBuild) {
 }
 
 console.log('\nClient (Vite) environment check (Netlify/Vercel build):');
-const missingClient = check(requiredClient);
-if (missingClient.length === 0) {
+const detectedMissingClient = check(requiredClient);
+if (detectedMissingClient.length === 0) {
   console.log('  All required client environment variables appear set');
 } else {
-  console.warn('  Missing client environment variables:', missingClient.join(', '));
+  console.warn('  Missing client environment variables:', detectedMissingClient.join(', '));
+  if (skipClientValidation) {
+    console.warn('  (Client env validation skipped for local server workflows)');
+  }
 }
 
 console.log(`\nTips:\n - Ensure server vars are set in Railway or your backend host. Do NOT put server-only keys in the frontend env vars.\n - Ensure client vars are set in Netlify/Vercel build environment (VITE_*).`);
@@ -66,8 +80,10 @@ console.log('  jwtRefreshSecretPresent:', !!process.env.JWT_REFRESH_SECRET);
 console.log('  cookieDomainPresent:', !!process.env.COOKIE_DOMAIN);
 console.log('  viteApiBasePresent:', !!process.env.VITE_API_BASE_URL || !!process.env.VITE_API_URL);
 
-const hasMissing = missingServer.length > 0 || missingClient.length > 0;
-if (hasMissing && shouldEnforceStrict) {
+const hasMissing = missingServer.length > 0 || (detectedMissingClient.length > 0 && !skipClientValidation);
+const shouldFailServer = shouldEnforceStrict && missingServer.length > 0;
+const shouldFailClient = enforceClientStrict && detectedMissingClient.length > 0;
+if (shouldFailServer || shouldFailClient) {
   console.error('\nDeployment environment check failed (strict mode). Set FORCE_DEPLOY_ENV_CHECK=false to bypass locally.');
   process.exit(1);
 }
