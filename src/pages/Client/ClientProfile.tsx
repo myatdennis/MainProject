@@ -3,10 +3,10 @@ import { Link } from 'react-router-dom';
 import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
-import { useAuth } from '../../context/AuthContext';
+import { useSecureAuth } from '../../context/SecureAuthContext';
 
 const ClientProfile = () => {
-  const { user } = useAuth();
+  const { user } = useSecureAuth();
   return (
     <div className="p-6 max-w-5xl mx-auto">
       <SEO title="My Profile" description="Manage your profile and preferences." />

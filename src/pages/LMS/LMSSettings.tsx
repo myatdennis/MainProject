@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import SEO from '../../components/SEO/SEO';
 import { useToast } from '../../context/ToastContext';
-import { useAuth } from '../../context/AuthContext';
+import { useSecureAuth } from '../../context/SecureAuthContext';
 
 interface UserSettings {
   profile: {
@@ -49,7 +49,7 @@ interface UserSettings {
 const LMSSettings: React.FC = () => {
   const navigate = useNavigate();
   const { showToast } = useToast();
-  const { user } = useAuth();
+  const { user } = useSecureAuth();
   
   const [settings, setSettings] = useState<UserSettings>({
     profile: {

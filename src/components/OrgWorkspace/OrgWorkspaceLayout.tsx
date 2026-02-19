@@ -2,12 +2,12 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { LazyImage } from '../PerformanceComponents';
 import { Link, Outlet, useParams } from 'react-router-dom';
 import notificationService from '../../dal/notifications';
-import { useAuth } from '../../context/AuthContext';
+import { useSecureAuth } from '../../context/SecureAuthContext';
 import { useActiveOrganization } from '../../hooks/useActiveOrganization';
 
 const OrgWorkspaceLayout: React.FC = () => {
   const { orgId } = useParams();
-  const { isAuthenticated } = useAuth();
+  const { isAuthenticated } = useSecureAuth();
   const { memberships, selectOrganization } = useActiveOrganization({ surface: 'admin' });
   const [orgName, setOrgName] = useState<string>(`Organization ${orgId}`);
   const [allowed, setAllowed] = useState<boolean>(false);

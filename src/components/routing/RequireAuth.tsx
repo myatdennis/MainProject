@@ -1,6 +1,6 @@
 import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Navigate, useLocation } from 'react-router-dom';
-import { useAuth } from '../../context/AuthContext';
+import { useSecureAuth } from '../../context/SecureAuthContext';
 import LoadingSpinner from '../ui/LoadingSpinner';
 import Button from '../ui/Button';
 import apiRequest, { ApiError } from '../../utils/apiClient';
@@ -60,7 +60,7 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
     loadSession,
     user,
     organizationIds,
-  } = useAuth();
+  } = useSecureAuth();
   const location = useLocation();
   const sessionRequestRef = useRef(false);
   const retryRef = useRef(false);

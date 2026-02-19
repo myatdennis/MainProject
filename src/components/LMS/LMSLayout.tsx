@@ -15,7 +15,7 @@ import {
   Users,
   LogOut,
 } from 'lucide-react';
-import { useAuth } from '../../context/AuthContext';
+import { useSecureAuth } from '../../context/SecureAuthContext';
 import Card from '../ui/Card';
 import Button from '../ui/Button';
 import Badge from '../ui/Badge';
@@ -41,7 +41,7 @@ const navigation = [
 ];
 
 const LMSLayout = ({ children }: LMSLayoutProps) => {
-  const { logout, isAuthenticated, user } = useAuth();
+  const { logout, isAuthenticated, user } = useSecureAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();

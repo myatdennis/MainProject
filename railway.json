@@ -6,7 +6,7 @@
       "provider": "node",
       "rootDirectory": "./",
       "start": "npm run start:server",
-      "build": "npm run build",
+      "build": "npm run build:server",
       "env": [
         "SUPABASE_URL",
         "SUPABASE_SERVICE_ROLE_KEY",
@@ -23,7 +23,7 @@
       "name": "frontend",
       "provider": "static",
       "rootDirectory": "./",
-      "build": "npm run build",
+      "build": "npm run build:client",
       "publish": "dist",
       "env": [
         "VITE_API_BASE_URL",

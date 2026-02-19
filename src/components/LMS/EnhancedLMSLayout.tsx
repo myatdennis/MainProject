@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { useAuth } from '../../context/AuthContext';
+import { useSecureAuth } from '../../context/SecureAuthContext';
 import ClientErrorBoundary from '../ClientErrorBoundary';
 import ProgressSyncStatus from '../ProgressSyncStatus';
 import RealtimeNotifications from '../RealtimeNotifications';
@@ -25,7 +25,7 @@ interface EnhancedLMSLayoutProps {
 }
 
 const EnhancedLMSLayout: React.FC<EnhancedLMSLayoutProps> = ({ children }) => {
-  const { logout, isAuthenticated, user, authInitializing } = useAuth();
+  const { logout, isAuthenticated, user, authInitializing } = useSecureAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();

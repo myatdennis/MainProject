@@ -10,10 +10,22 @@ import {
 } from '../data/progressStore.js';
 
 const router = express.Router();
+const ORG_HEADER_CANDIDATES = ['x-org-id', 'x-organization-id', 'x_org_id', 'x_organization_id'];
 
-router.get('/learner/progress', requireAuth, (req: AuthenticatedRequest, res) => {
+const resolveOrgId = (req: AuthenticatedRequest): string | null => {
+  for (const key of ORG_HEADER_CANDIDATES) {
+    const value = req.headers[key];
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+  return req.user?.organizationId ?? null;
+};
+
+router.get('/learner/progress', requireAuth, async (req: AuthenticatedRequest, res) => {
   const lessonIds = parseLessonIds(req.query.lessonIds ?? req.query.lesson_ids);
   const userId = coerceString(req.query.userId, req.query.user_id, req.user?.userId);
+  const orgId = resolveOrgId(req);
 
   if (!userId) {
     return res.status(400).json({ error: 'userId is required' });
@@ -21,45 +33,75 @@ router.get('/learner/progress', requireAuth, (req: AuthenticatedRequest, res) =>
   if (lessonIds.length === 0) {
     return res.status(400).json({ error: 'lessonIds is required' });
   }
+  if (!orgId) {
+    return res.status(400).json({
+      error: 'org_required',
+      message: 'Provide X-Org-Id header or include organizationId on the user token.',
+    });
+  }
 
-  const lessons = listLessonProgress(userId, lessonIds);
+  const lessons = await listLessonProgress(userId, lessonIds, orgId);
   res.json({ data: { lessons } });
 });
 
-router.post('/learner/progress', requireAuth, (req: AuthenticatedRequest, res) => {
+router.post('/learner/progress', requireAuth, async (req: AuthenticatedRequest, res) => {
   const snapshot = normalizeSnapshotPayload(req.body, req.user?.userId);
   if (!snapshot) {
     return res.status(400).json({ error: 'Invalid progress snapshot payload' });
   }
 
-  saveProgressSnapshot(snapshot);
+  const orgId = resolveOrgId(req);
+  if (!orgId) {
+    return res.status(400).json({
+      error: 'org_required',
+      message: 'Provide X-Org-Id header or include organizationId on the user token.',
+    });
+  }
+
+  await saveProgressSnapshot(snapshot, orgId);
   res.status(202).json({ success: true });
 });
 
-router.post('/client/progress/lesson', requireAuth, (req: AuthenticatedRequest, res) => {
+router.post('/client/progress/lesson', requireAuth, async (req: AuthenticatedRequest, res) => {
   const event = normalizeEventPayload(req.body, req.user?.userId);
   if (!event || !event.lessonId) {
     return res.status(400).json({ error: 'Lesson progress payload is missing lessonId' });
   }
 
+  const orgId = resolveOrgId(req);
+  if (!orgId) {
+    return res.status(400).json({
+      error: 'org_required',
+      message: 'Provide X-Org-Id header or include organizationId on the user token.',
+    });
+  }
+
   // Force lesson specific event type defaults
   event.type = resolveEventType(event.type, event.percent, true);
-  const result = recordProgressEvents([event]);
+  const result = await recordProgressEvents([event], orgId);
   res.status(202).json(result);
 });
 
-router.post('/client/progress/course', requireAuth, (req: AuthenticatedRequest, res) => {
+router.post('/client/progress/course', requireAuth, async (req: AuthenticatedRequest, res) => {
   const event = normalizeEventPayload(req.body, req.user?.userId);
   if (!event || !event.courseId) {
     return res.status(400).json({ error: 'Course progress payload is missing courseId' });
   }
 
+  const orgId = resolveOrgId(req);
+  if (!orgId) {
+    return res.status(400).json({
+      error: 'org_required',
+      message: 'Provide X-Org-Id header or include organizationId on the user token.',
+    });
+  }
+
   event.type = resolveEventType(event.type, event.percent, false);
-  const result = recordProgressEvents([event]);
+  const result = await recordProgressEvents([event], orgId);
   res.status(202).json(result);
 });
 
-router.post('/client/progress/batch', requireAuth, (req: AuthenticatedRequest, res) => {
+router.post('/client/progress/batch', requireAuth, async (req: AuthenticatedRequest, res) => {
   const rawEvents: any[] = Array.isArray(req.body?.events) ? req.body.events : [];
   const events = rawEvents
     .map((entry) => normalizeEventPayload(entry, req.user?.userId))
@@ -69,7 +111,15 @@ router.post('/client/progress/batch', requireAuth, (req: AuthenticatedRequest, r
     return res.status(400).json({ error: 'events array must contain at least one valid event' });
   }
 
-  const result = recordProgressEvents(events);
+  const orgId = resolveOrgId(req);
+  if (!orgId) {
+    return res.status(400).json({
+      error: 'org_required',
+      message: 'Provide X-Org-Id header or include organizationId on the user token.',
+    });
+  }
+
+  const result = await recordProgressEvents(events, orgId);
   res.status(202).json(result);
 });
 
@@ -189,6 +239,7 @@ const normalizeEventPayload = (input: any, fallbackUserId?: string): ProgressEve
     status: coerceString(input.status, input.progress_status),
     time_spent_s: coerceNumber(input.time_spent_s, input.timeSpentSeconds),
     timestamp: coerceNumber(input.timestamp) ?? Date.now(),
+    orgId: coerceString(input.orgId, input.org_id),
   };
 
   event.type = resolveEventType(event.type, percent, Boolean(event.lessonId));

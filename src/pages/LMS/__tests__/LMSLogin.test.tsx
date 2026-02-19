@@ -44,8 +44,8 @@ const mockAuth = {
   isAuthenticated: { lms: false },
 };
 
-vi.mock('../../../context/AuthContext', () => ({
-  useAuth: () => mockAuth,
+vi.mock('../../../context/SecureAuthContext', () => ({
+  useSecureAuth: () => mockAuth,
 }));
 
 describe('LMSLogin runtime awareness', () => {

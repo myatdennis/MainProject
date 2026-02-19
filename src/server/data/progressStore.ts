@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { supabaseServiceClient } from '../supabase/supabaseServerClient.js';
 
 export interface LessonProgressRecord {
   userId: string;
@@ -59,18 +60,62 @@ export interface ProgressEventInput {
   status?: string;
   time_spent_s?: number;
   timestamp?: number;
+  orgId?: string | null;
 }
+
+const supabase = supabaseServiceClient;
+const supabaseEnabled = Boolean(supabase);
 
 const lessonProgress = new Map<string, LessonProgressRecord>();
 const courseProgress = new Map<string, CourseProgressRecord>();
 const processedEvents = new Set<string>();
 
+const nowIso = () => new Date().toISOString();
+
+const buildSnapshotEvents = (snapshot: ProgressSnapshotInput): ProgressEventInput[] => {
+  const timestamp = Date.now();
+  const lessonEvents: ProgressEventInput[] = snapshot.lessons.map((lesson) => ({
+    clientEventId: `${snapshot.userId}:${lesson.lessonId}:${timestamp}`,
+    type: lesson.completed ? 'lesson_completed' : 'lesson_progress',
+    courseId: snapshot.courseId,
+    lessonId: lesson.lessonId,
+    userId: snapshot.userId,
+    percent: lesson.progressPercent,
+    position: lesson.positionSeconds,
+    status: lesson.completed ? 'completed' : 'in-progress',
+    time_spent_s: lesson.positionSeconds,
+    timestamp,
+  }));
+
+  const courseEvent: ProgressEventInput = {
+    clientEventId: `${snapshot.userId}:${snapshot.courseId}:${timestamp}`,
+    type: snapshot.course.percent >= 100 ? 'course_completed' : 'course_progress',
+    courseId: snapshot.courseId,
+    userId: snapshot.userId,
+    percent: snapshot.course.percent,
+    status: snapshot.course.percent >= 100 ? 'completed' : 'in-progress',
+    time_spent_s: snapshot.course.totalTimeSeconds ?? undefined,
+    timestamp,
+  };
+
+  return [...lessonEvents, courseEvent];
+};
+
 const keyForLesson = (userId: string, lessonId: string) => `${userId}:${lessonId}`;
 const keyForCourse = (userId: string, courseId: string) => `${userId}:${courseId}`;
 
-export const saveProgressSnapshot = (snapshot: ProgressSnapshotInput): void => {
+export const saveProgressSnapshot = async (snapshot: ProgressSnapshotInput, orgId: string): Promise<void> => {
+  if (supabaseEnabled) {
+    const events = buildSnapshotEvents(snapshot).map((event) => ({ ...event, orgId }));
+    await recordProgressEvents(events, orgId);
+    return;
+  }
+  saveProgressSnapshotInMemory(snapshot);
+};
+
+const saveProgressSnapshotInMemory = (snapshot: ProgressSnapshotInput): void => {
   const { userId, courseId, lessons, course } = snapshot;
-  const updatedAt = new Date().toISOString();
+  const updatedAt = nowIso();
 
   lessons.forEach((lesson) => {
     lessonProgress.set(keyForLesson(userId, lesson.lessonId), {
@@ -97,7 +142,49 @@ export const saveProgressSnapshot = (snapshot: ProgressSnapshotInput): void => {
   });
 };
 
-export const listLessonProgress = (userId: string, lessonIds: string[]): LessonProgressRow[] => {
+export const listLessonProgress = async (
+  userId: string,
+  lessonIds: string[],
+  orgId?: string | null,
+): Promise<LessonProgressRow[]> => {
+  if (supabaseEnabled && lessonIds.length > 0) {
+    const { data, error } = await supabase!
+      .from('user_lesson_progress')
+      .select('lesson_id, progress, completed, time_spent_seconds, updated_at, org_id')
+      .eq('user_id', userId)
+      .in('lesson_id', lessonIds);
+    if (error) {
+      console.warn('[progressStore] listLessonProgress query failed', error);
+    } else if (data) {
+      const rowsByLesson = new Map<string, LessonProgressRow>();
+      data
+        .filter((row) => !orgId || !row.org_id || row.org_id === orgId)
+        .forEach((row) => {
+          rowsByLesson.set(row.lesson_id, {
+            lesson_id: row.lesson_id,
+            progress_percentage: clampPercent(Number(row.progress) ?? 0),
+            completed: Boolean(row.completed),
+            time_spent: Number(row.time_spent_seconds ?? 0),
+            last_accessed_at: row.updated_at ?? null,
+          });
+        });
+      return lessonIds.map((lessonId) => {
+        return (
+          rowsByLesson.get(lessonId) ?? {
+            lesson_id: lessonId,
+            progress_percentage: 0,
+            completed: false,
+            time_spent: 0,
+            last_accessed_at: null,
+          }
+        );
+      });
+    }
+  }
+  return listLessonProgressInMemory(userId, lessonIds);
+};
+
+const listLessonProgressInMemory = (userId: string, lessonIds: string[]): LessonProgressRow[] => {
   return lessonIds.map((lessonId) => {
     const stored = lessonProgress.get(keyForLesson(userId, lessonId));
     return {
@@ -114,7 +201,7 @@ export const getCourseProgress = (userId: string, courseId: string): CourseProgr
   return courseProgress.get(keyForCourse(userId, courseId));
 };
 
-export const saveLessonEvent = (event: ProgressEventInput): void => {
+const saveLessonEvent = (event: ProgressEventInput): void => {
   if (!event.lessonId || !event.courseId) {
     return;
   }
@@ -152,7 +239,17 @@ export const saveCourseEvent = (event: ProgressEventInput): void => {
   });
 };
 
-export const recordProgressEvents = (events: ProgressEventInput[]) => {
+export const recordProgressEvents = async (
+  events: ProgressEventInput[],
+  orgContext?: string | null,
+): Promise<{ accepted: string[]; duplicates: string[] }> => {
+  if (supabaseEnabled) {
+    return persistEventsToSupabase(events, orgContext);
+  }
+  return recordEventsInMemory(events);
+};
+
+const recordEventsInMemory = (events: ProgressEventInput[]) => {
   const accepted: string[] = [];
   const duplicates: string[] = [];
 
@@ -172,6 +269,45 @@ export const recordProgressEvents = (events: ProgressEventInput[]) => {
   });
 
   return { accepted, duplicates };
+};
+
+const persistEventsToSupabase = async (
+  events: ProgressEventInput[],
+  orgContext?: string | null,
+): Promise<{ accepted: string[]; duplicates: string[] }> => {
+  if (!orgContext && !events.every((event) => event.orgId)) {
+    throw new Error('Organization context is required for progress ingestion.');
+  }
+  const payload = events.map((event) => ({
+    client_event_id: event.clientEventId ?? randomUUID(),
+    user_id: event.userId,
+    course_id: event.courseId ?? null,
+    lesson_id: event.lessonId ?? null,
+    org_id: event.orgId ?? orgContext ?? null,
+    percent: clampPercent(event.percent ?? 0),
+    time_spent_seconds: event.time_spent_s ?? null,
+    resume_at_seconds: event.position ?? null,
+    status: event.status ?? null,
+    event_type: event.type,
+    occurred_at: event.timestamp ? new Date(event.timestamp).toISOString() : nowIso(),
+  }));
+
+  let rpcData: { accepted: string[]; duplicates: string[] }[] | null = null;
+  try {
+    const { data, error } = await supabase!.rpc('upsert_progress_batch', { events_json: payload });
+    if (error) {
+      throw error;
+    }
+    rpcData = data;
+  } catch (err) {
+    console.error('[progressStore] upsert_progress_batch failed', err);
+    throw new Error('Failed to persist learner progress');
+  }
+
+  return {
+    accepted: rpcData?.[0]?.accepted ?? [],
+    duplicates: rpcData?.[0]?.duplicates ?? [],
+  };
 };
 
 const clampPercent = (value: number): number => {

@@ -1,8 +1,8 @@
-import { useAuth } from '../../context/AuthContext';
+import { useSecureAuth } from '../../context/SecureAuthContext';
 import { useState } from 'react';
 
 const AdminAuthTest = () => {
-  const { login, isAuthenticated, user } = useAuth();
+  const { login, isAuthenticated, user } = useSecureAuth();
   const [status, setStatus] = useState('');
 
   const testLogin = async () => {

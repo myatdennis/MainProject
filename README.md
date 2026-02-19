@@ -393,3 +393,13 @@ If any query fails with “relation does not exist”, rerun `supabase db push` 
 - Server memory & demo data:
     - Guard large demo file with `DEMO_DATA_MAX_BYTES` (default 25MB)
     - Optional memory logs with `LOG_MEMORY=true`
+
+## Smoke Checklist
+
+Run these quick checks after every deploy (replace `$API_BASE`, `$ACCESS_TOKEN`, and `$ORG_ID`):
+
+1. `curl -sSf "$API_BASE/api/health"` – expect `{ "status": "ok", ... }`.
+2. `curl -sS -H "Authorization: Bearer $ACCESS_TOKEN" "$API_BASE/api/auth/session"` – returns `200` with `user`, `memberships`, and `activeOrgId`.
+3. `curl -sS -H "Authorization: Bearer $ACCESS_TOKEN" "$API_BASE/api/admin/me"` – confirms admin capability gating.
+4. `curl -sS -H "Authorization: Bearer $ACCESS_TOKEN" -H "X-Org-Id: $ORG_ID" "$API_BASE/api/admin/organizations"` – must return `200`; omit `X-Org-Id` to see the expected `400 org_required` guardrail.
+5. Visit `/admin/login`, authenticate, land on `/admin/courses`, then refresh to ensure the session persists without redirect loops.

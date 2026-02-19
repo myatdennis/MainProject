@@ -109,19 +109,19 @@ function flattenBody(input: Record<string, any>): Record<string, any> {
 const isLegacyOptionObject = (value: unknown): value is LegacyQuizOptionObject =>
   Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 
-function normalizeQuizQuestions(questions: any[]): any[] {
-  return questions.map((question, index) => {
+function normalizeQuizQuestions(questions: Array<Record<string, any>>): any[] {
+  return questions.map((question: Record<string, any>, index: number) => {
     const id = question?.id || `q_${index}`;
     const text = question?.text || question?.question || question?.prompt || '';
-    const rawOptions = Array.isArray(question?.options)
-      ? question.options
+    const rawOptions: Array<LegacyQuizOptionObject | string> = Array.isArray(question?.options)
+      ? (question.options as Array<LegacyQuizOptionObject | string>)
       : Array.isArray(question?.choices)
-      ? question.choices
+      ? (question.choices as Array<LegacyQuizOptionObject | string>)
       : Array.isArray(question?.answers)
-      ? question.answers
+      ? (question.answers as Array<LegacyQuizOptionObject | string>)
       : [];
 
-    const normalizedOptions: QuizOption[] = rawOptions
+    const normalizedOptions = (rawOptions
       .map((option: LegacyQuizOptionObject | string, optionIndex: number) => {
         const fallbackId = `${id}_opt_${optionIndex}`;
         if (typeof option === 'string') {
@@ -154,7 +154,7 @@ function normalizeQuizQuestions(questions: any[]): any[] {
           isCorrect: Boolean(isCorrect),
         };
       })
-      .filter((option: QuizOption | null): option is QuizOption => Boolean(option?.id));
+      .filter((option: QuizOption | null): option is QuizOption => Boolean(option?.id))) as QuizOption[];
 
     const correctIndices = normalizedOptions
       .map((opt, optIndex) => (opt.correct || opt.isCorrect ? optIndex : -1))

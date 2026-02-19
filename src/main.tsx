@@ -315,9 +315,11 @@ const isPreviewBuild =
   deployContext === 'deploy-preview' ||
   deployContext === 'preview' ||
   deployContext === 'branch';
+const swFlag = String(import.meta.env.VITE_SW_ENABLED ?? import.meta.env.SW_ENABLED ?? 'false').toLowerCase();
 const serviceWorkerEnabled =
   supportsServiceWorker &&
   import.meta.env.PROD &&
+  swFlag === 'true' &&
   import.meta.env.VITE_ENABLE_SW !== 'false' &&
   !isPreviewBuild &&
   !hostLooksLikePreview;
@@ -348,10 +350,12 @@ if (serviceWorkerEnabled) {
       showServiceWorkerErrorToast();
     });
 } else {
-  console.log(
-    '🛠️ Service worker disabled for this build',
-    { deployContext, hostLooksLikePreview, swAllowed: supportsServiceWorker && import.meta.env.PROD },
-  );
+  console.log('🛠️ Service worker disabled for this build', {
+    deployContext,
+    hostLooksLikePreview,
+    swAllowed: supportsServiceWorker && import.meta.env.PROD,
+    reason: swFlag === 'true' ? 'preview_guard' : 'flag_disabled',
+  });
   serviceWorkerManager.forceCleanup().catch((error) => {
     console.warn('[SW] Failed to perform cleanup:', error);
   });

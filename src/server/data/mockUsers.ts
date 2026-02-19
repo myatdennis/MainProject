@@ -48,9 +48,12 @@ const seedUsers: Array<Omit<MockUser, 'passwordHash'> & { password: string }> = 
 ];
 
 const usersByEmail = new Map<string, MockUser>();
+const usersById = new Map<string, MockUser>();
 seedUsers.forEach((user) => {
   const passwordHash = bcrypt.hashSync(user.password, 10);
-  usersByEmail.set(user.email.toLowerCase(), { ...user, passwordHash });
+  const record = { ...user, passwordHash };
+  usersByEmail.set(user.email.toLowerCase(), record);
+  usersById.set(user.id, record);
 });
 
 const passwordResetTokens = new Map<string, { userId: string; expiresAt: number }>();
@@ -58,6 +61,10 @@ const mfaChallenges = new Map<string, { code: string; expiresAt: number }>();
 
 export const findUserByEmail = (email: string): MockUser | undefined => {
   return usersByEmail.get(email.toLowerCase());
+};
+
+export const findUserById = (id: string): MockUser | undefined => {
+  return usersById.get(id);
 };
 
 export const verifyPassword = async (user: MockUser, password: string): Promise<boolean> => {
