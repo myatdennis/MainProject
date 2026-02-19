@@ -719,7 +719,7 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
     console.debug('[apiRequest][auth-debug]', debugPayload);
   }
 
-  const credentialsMode: RequestCredentials = options.credentials ?? 'include';
+  const credentialsMode: RequestCredentials = options.credentials ?? 'omit';
 
   const preparedRequest: PreparedRequest = {
     url,

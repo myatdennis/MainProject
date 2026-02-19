@@ -20,17 +20,12 @@ const app = express();
 const PORT = process.env.PORT || 3000;
 const HEALTH_PATH = '/api/health';
 
-if ((process.env.NODE_ENV || '').toLowerCase() === 'production') {
-  app.set('trust proxy', 1);
-}
+app.set('trust proxy', 1);
 
 // Health check for Railway and infra monitors.
 // MUST be registered before CORS/CSRF so probes never get blocked.
 app.get(HEALTH_PATH, (_req: Request, res: Response) => {
-  res
-    .status(200)
-    .set('Access-Control-Allow-Origin', '*')
-    .json({ status: 'ok', ts: new Date().toISOString(), port: PORT });
+  res.status(200).json({ status: 'ok', ts: new Date().toISOString(), port: PORT });
 });
 console.info(`[boot] Registered health route at ${HEALTH_PATH}`);
 
@@ -48,13 +43,12 @@ app.use(cookieParser());
 app.use(express.json());
 
 // CORS: allow frontend origin(s) and enable credentials for cookie-based auth
-const defaultOrigins = [
+const allowedOrigins = [
   'https://the-huddle.co',
   'https://www.the-huddle.co',
-  'https://api.the-huddle.co',
+  'https://the-huddleco.netlify.app',
   'http://localhost:5173',
-  'http://localhost:4173', // Vite preview
-  'http://localhost:8888', // Netlify dev server
+  'http://localhost:4173',
 ];
 
 const envOrigins = process.env.CORS_ALLOWED_ORIGINS
@@ -62,38 +56,30 @@ const envOrigins = process.env.CORS_ALLOWED_ORIGINS
   .map((origin) => origin.trim())
   .filter(Boolean);
 
-const allowedOrigins = Array.from(new Set([...(envOrigins ?? []), ...defaultOrigins]));
-const wildcardOriginMatchers = [/\.netlify\.app$/i];
+const corsAllowList = Array.from(new Set([...(envOrigins ?? []), ...allowedOrigins]));
 
-if (allowedOrigins.length === 0) {
-  console.warn('[CORS] No explicit origins configured; falling back to localhost only.');
-}
-
-console.info('[CORS] Allowed origins:', allowedOrigins);
+console.info('[CORS] Allowed origins:', corsAllowList);
 
 const corsOptions: cors.CorsOptions = {
   origin(origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) {
-    // Allow requests with no origin like curl or mobile apps
     if (!origin) return callback(null, true);
-
-    if (allowedOrigins.includes(origin) || wildcardOriginMatchers.some((regex) => regex.test(origin))) {
+    if (corsAllowList.includes(origin)) {
       return callback(null, true);
     }
     console.warn('[CORS] Blocked origin:', origin);
     return callback(new Error('Not allowed by CORS'));
   },
-  credentials: true,
+  credentials: false,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: [
-    'Authorization',
     'Content-Type',
+    'Authorization',
     'X-Requested-With',
-    'X-Org-Id',
-    'X-Organization-Id',
-    'X-User-Id',
-    'X-User-Role',
+    'x-runtime-status',
+    'x-org-id',
+    'x-request-id',
   ],
-  exposedHeaders: ['Authorization', 'X-Org-Resolved'],
+  exposedHeaders: ['Authorization', 'X-Org-Resolved', 'x-runtime-status'],
   maxAge: 600,
 };
 
