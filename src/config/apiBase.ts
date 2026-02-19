@@ -38,7 +38,7 @@ const getMetaEnv = (): MetaEnv => {
 };
 
 const DEFAULT_DEV_API_BASE = '/api';
-const DEFAULT_PROD_API_BASE = 'https://api.the-huddle.co/api';
+const DEFAULT_PROD_API_BASE = '/api';
 const DEFAULT_NODE_ORIGIN = 'http://localhost:8888';
 
 const detectDevMode = () => {
@@ -82,15 +82,14 @@ const getRawApiBase = (): string => {
   if (trimmed) {
     return trimmed;
   }
-  if (devMode) {
-    console.warn('[apiBase] VITE_API_BASE_URL is not set. Defaulting to /api proxy for development.');
-    logMissingEnv('VITE_API_BASE_URL', 'Falling back to /api proxy because no production value is configured.');
-    return DEFAULT_DEV_API_BASE;
-  }
-
-  logMissingEnv('VITE_API_BASE_URL', `Falling back to ${DEFAULT_PROD_API_BASE} because no production value is configured.`);
-  console.warn('[apiBase] Missing VITE_API_BASE_URL in production. Defaulting to', DEFAULT_PROD_API_BASE);
-  return DEFAULT_PROD_API_BASE;
+  const fallback = devMode ? DEFAULT_DEV_API_BASE : DEFAULT_PROD_API_BASE;
+  const context = devMode ? 'development' : 'production';
+  const detail = devMode
+    ? 'Falling back to /api proxy because no development value is configured.'
+    : 'Falling back to same-origin /api to avoid accidental production cross-domain requests.';
+  logMissingEnv('VITE_API_BASE_URL', detail);
+  console.warn(`[apiBase] Missing VITE_API_BASE_URL in ${context}. Defaulting to ${fallback}.`);
+  return fallback;
 };
 
 const getRawWsUrl = (): string => {

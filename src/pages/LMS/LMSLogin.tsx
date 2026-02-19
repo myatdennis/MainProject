@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { useAuth } from '../../context/AuthContext';
+import { useSecureAuth } from '../../context/SecureAuthContext';
 import { Users, Lock, Mail, Eye, EyeOff, AlertCircle, Info, ShieldCheck } from 'lucide-react';
 import { loginSchema, emailSchema, registerSchema } from '../../utils/validators';
 import { sanitizeText } from '../../utils/sanitize';
@@ -8,7 +8,7 @@ import useRuntimeStatus from '../../hooks/useRuntimeStatus';
 import type { z } from 'zod';
 
 const LMSLogin: React.FC = () => {
-  const { login, register, isAuthenticated, forgotPassword } = useAuth();
+  const { login, register, isAuthenticated, forgotPassword } = useSecureAuth();
   const runtimeStatus = useRuntimeStatus();
   const supabaseReady = runtimeStatus.supabaseConfigured && runtimeStatus.supabaseHealthy;
   const demoModeEnabled = runtimeStatus.demoModeEnabled || !supabaseReady;

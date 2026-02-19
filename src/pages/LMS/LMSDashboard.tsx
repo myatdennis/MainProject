@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useAuth } from '../../context/AuthContext';
+import { useSecureAuth } from '../../context/SecureAuthContext';
 import { 
   BookOpen, 
   Clock, 
@@ -17,7 +17,7 @@ import { normalizeCourse } from '../../utils/courseNormalization';
 import { loadStoredCourseProgress } from '../../utils/courseProgress';
 
 const LMSDashboard = () => {
-  const { user } = useAuth();
+  const { user } = useSecureAuth();
   const [progressRefreshToken, setProgressRefreshToken] = useState(0);
   const [isLoadingCourses, setIsLoadingCourses] = useState(true);
 

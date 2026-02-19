@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FC, ty
 import { Link, NavLink, useLocation, useNavigate, Outlet } from 'react-router-dom';
 import { ErrorBoundary } from '../ErrorHandling';
 import AdminErrorBoundary from '../ErrorBoundary/AdminErrorBoundary';
-import { useAuth } from '../../context/AuthContext';
 import { useSecureAuth } from '../../context/SecureAuthContext';
 import {
   Shield,
@@ -69,7 +68,7 @@ const navigation: AdminNavItem[] = [
 ];
 
 const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
-  const { isAuthenticated, user: authUser, authInitializing, logout: legacyLogout } = useAuth();
+  const { isAuthenticated, user: authUser, authInitializing, logout: legacyLogout } = useSecureAuth();
   const { user, logout } = useSecureAuth();
   const { showToast } = useToast();
   const runtimeStatus = useRuntimeStatus();

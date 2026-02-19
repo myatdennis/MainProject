@@ -10,6 +10,7 @@ import cookieParser from 'cookie-parser';
 import analyticsRoutes from './analyticsRoutes.js';
 import auditLogRoutes from './auditLogRoutes.js';
 import authRoutes from './routes/authRoutes.js';
+import adminRoutes from './routes/adminRoutes.js';
 import mfaRoutes from './routes/mfaRoutes.js';
 import courseRoutes from './routes/courseRoutes.js';
 import surveyRoutes from './routes/surveyRoutes.js';
@@ -22,7 +23,10 @@ const HEALTH_PATH = '/api/health';
 // Health check for Railway and infra monitors.
 // MUST be registered before CORS/CSRF so probes never get blocked.
 app.get(HEALTH_PATH, (_req: Request, res: Response) => {
-  res.status(200).json({ status: 'ok', ts: new Date().toISOString(), port: PORT });
+  res
+    .status(200)
+    .set('Access-Control-Allow-Origin', '*')
+    .json({ status: 'ok', ts: new Date().toISOString(), port: PORT });
 });
 console.info(`[boot] Registered health route at ${HEALTH_PATH}`);
 
@@ -43,6 +47,7 @@ app.use(express.json());
 const defaultOrigins = [
   'https://the-huddle.co',
   'https://www.the-huddle.co',
+  'https://api.the-huddle.co',
   'http://localhost:5173',
   'http://localhost:4173', // Vite preview
   'http://localhost:8888', // Netlify dev server
@@ -62,7 +67,7 @@ if (allowedOrigins.length === 0) {
 
 console.info('[CORS] Allowed origins:', allowedOrigins);
 
-const corsOptions = {
+const corsOptions: cors.CorsOptions = {
   origin(origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) {
     // Allow requests with no origin like curl or mobile apps
     if (!origin) return callback(null, true);
@@ -74,6 +79,18 @@ const corsOptions = {
     return callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: [
+    'Authorization',
+    'Content-Type',
+    'X-Requested-With',
+    'X-Org-Id',
+    'X-Organization-Id',
+    'X-User-Id',
+    'X-User-Role',
+  ],
+  exposedHeaders: ['Authorization', 'X-Org-Resolved'],
+  maxAge: 600,
 };
 
 app.use(cors(corsOptions));
@@ -90,6 +107,7 @@ app.get('/api/csrf-token', (req: Request, res: Response) => {
 
 // Routes
 app.use('/api/auth', authRoutes);
+app.use('/api/admin', adminRoutes);
 app.use('/api/mfa', mfaRoutes);
 app.use('/api', courseRoutes);
 app.use('/api', surveyRoutes);
