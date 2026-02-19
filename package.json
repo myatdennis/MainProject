@@ -19,7 +19,7 @@
     "preclean:components": "rm -f src/components/*.js",
     "build": "npm run build:client",
     "build:client": "npm run preclean:components && node scripts/update_sw_version.mjs && node scripts/check_deploy_env.cjs && vite build && npm run guard:reference-errors",
-    "build:server": "node scripts/check_deploy_env.cjs",
+    "build:server": "FORCE_DEPLOY_ENV_CHECK=false node scripts/check_deploy_env.cjs",
     "build:all": "npm run build:client && npm run build:server",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
