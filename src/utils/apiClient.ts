@@ -321,18 +321,15 @@ const ensureSessionViaRefresh = async (): Promise<boolean> => {
   const refreshUrl = buildApiUrl('/api/auth/refresh');
   const refreshToken = getRefreshToken();
 
-  if (!refreshToken) {
-    throw buildNotAuthenticatedError(refreshUrl);
-  }
-
   return queueRefresh(async () => {
     let response: Response;
     try {
       response = await fetch(refreshUrl, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        ...(refreshToken
+          ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refreshToken }) }
+          : {}),
         credentials: 'omit',
-        body: JSON.stringify({ refreshToken }),
       });
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
@@ -348,6 +345,10 @@ const ensureSessionViaRefresh = async (): Promise<boolean> => {
     const payload = (isJsonResponse(contentType) ? await safeParseJson(response) : await safeReadText(response)) as
       | SessionBootstrapPayload
       | null;
+
+    if (!refreshToken && response.status === 400) {
+      throw buildNotAuthenticatedError(refreshUrl);
+    }
 
     if (response.status === 401 || response.status === 403) {
       throw new ApiError('Please log in again.', response.status, refreshUrl, {

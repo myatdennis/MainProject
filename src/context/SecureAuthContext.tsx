@@ -822,6 +822,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       const reason: RefreshReason = options.reason ?? 'protected_401';
 
       const allowedByReason =
+        reason === 'user_retry' ||
         (reason === 'protected_401' && hasAuthenticatedSessionRef.current) ||
         (reason === 'user_retry' && hadAuthenticatedSessionRef.current);
       if (!allowedByReason) {
@@ -855,19 +856,11 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         lastRefreshAttemptRef.current = now;
 
         try {
-          const refreshToken = getRefreshToken();
-          if (!refreshToken) {
-            logAuthDebug('[auth] refresh aborted - no refresh token available');
-            refreshStatus = 'unauthenticated';
-            logRefreshResult(refreshStatus);
-            return false;
-          }
-
           const payload = await apiRequest<SessionResponsePayload | null>('/api/auth/refresh', {
             method: 'POST',
             allowAnonymous: true,
             headers: buildSessionAuditHeaders(),
-            body: { reason, refreshToken },
+            body: { reason },
           });
 
           if (payload?.user) {
