@@ -9,6 +9,10 @@ const requiredServer = ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'DATABASE_U
 
 const requiredClient = ['VITE_SUPABASE_URL', 'VITE_SUPABASE_ANON_KEY', 'VITE_API_BASE_URL'];
 
+const isNetlifyFrontendBuild =
+  process.env.NETLIFY === 'true' ||
+  (typeof process.env.CONTEXT === 'string' && process.env.CONTEXT.length > 0);
+
 const shouldEnforceStrict =
   process.env.CI === 'true' ||
   process.env.CI === '1' ||
@@ -19,12 +23,17 @@ function check(list) {
   return missing;
 }
 
-console.log('Server environment check (production):');
-const missingServer = check(requiredServer);
-if (missingServer.length === 0) {
-  console.log('  All required server environment variables appear set');
+let missingServer = [];
+if (isNetlifyFrontendBuild) {
+  console.log('Skipping server env validation for Netlify frontend build.');
 } else {
-  console.warn('  Missing server environment variables:', missingServer.join(', '));
+  console.log('Server environment check (production):');
+  missingServer = check(requiredServer);
+  if (missingServer.length === 0) {
+    console.log('  All required server environment variables appear set');
+  } else {
+    console.warn('  Missing server environment variables:', missingServer.join(', '));
+  }
 }
 
 console.log('\nClient (Vite) environment check (Netlify/Vercel build):');
