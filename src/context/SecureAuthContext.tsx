@@ -822,7 +822,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       const reason: RefreshReason = options.reason ?? 'protected_401';
 
       const allowedByReason =
-        reason === 'user_retry' ||
         (reason === 'protected_401' && hasAuthenticatedSessionRef.current) ||
         (reason === 'user_retry' && hadAuthenticatedSessionRef.current);
       if (!allowedByReason) {
@@ -856,11 +855,19 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         lastRefreshAttemptRef.current = now;
 
         try {
+          const refreshToken = getRefreshToken();
+          if (!refreshToken) {
+            logAuthDebug('[auth] refresh aborted - no refresh token available');
+            refreshStatus = 'unauthenticated';
+            logRefreshResult(refreshStatus);
+            return false;
+          }
+
           const payload = await apiRequest<SessionResponsePayload | null>('/api/auth/refresh', {
             method: 'POST',
             allowAnonymous: true,
             headers: buildSessionAuditHeaders(),
-            body: { reason },
+            body: { reason, refreshToken },
           });
 
           if (payload?.user) {
@@ -1120,107 +1127,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       }
     },
     [memberships],
-  );
-
-  // ============================================================================
-  // Token Refresh
-  // ============================================================================
-
-  const refreshTokenCallback = useCallback(
-    async (options: RefreshOptions = {}): Promise<boolean> => {
-      const reason: RefreshReason = options.reason ?? 'protected_401';
-
-      const allowedByReason =
-        (reason === 'protected_401' && hasAuthenticatedSessionRef.current) ||
-        (reason === 'user_retry' && hadAuthenticatedSessionRef.current);
-      if (!allowedByReason) {
-        return false;
-      }
-
-      if (hasAttemptedRefreshRef.current || refreshAttemptedRef.current) {
-        return false;
-      }
-
-      return queueRefresh(async () => {
-        hasAttemptedRefreshRef.current = true;
-        refreshAttemptedRef.current = true;
-        const refreshRunCount = ++refreshRunCountRef.current;
-        logAuthDebug('[auth] refresh start', { count: refreshRunCount, reason });
-        let refreshStatus: 'success' | 'unauthenticated' | 'network_issue' | 'error' | 'skipped' = 'skipped';
-        const now = getSkewedNow();
-        if (lastRefreshAttemptRef.current && now - lastRefreshAttemptRef.current < MIN_REFRESH_INTERVAL_MS) {
-          refreshStatus = 'skipped';
-          logRefreshResult(refreshStatus);
-          return false;
-        }
-
-        if (isNavigatorOffline()) {
-          console.info('[SecureAuth] Skipping refresh while offline');
-          refreshStatus = 'network_issue';
-          logRefreshResult(refreshStatus);
-          return false;
-        }
-
-        lastRefreshAttemptRef.current = now;
-
-        try {
-          const refreshToken = getRefreshToken();
-          if (!refreshToken) {
-            logAuthDebug('[auth] refresh aborted - no refresh token available');
-            refreshStatus = 'unauthenticated';
-            logRefreshResult(refreshStatus);
-            return false;
-          }
-
-          const payload = await apiRequest<SessionResponsePayload | null>('/api/auth/refresh', {
-            method: 'POST',
-            allowAnonymous: true,
-            headers: buildSessionAuditHeaders(),
-            body: { reason, refreshToken },
-          });
-
-          if (payload?.user) {
-            applySessionPayload(payload, { persistTokens: true, reason: 'refresh_success' });
-            setAuthStatus('authenticated');
-            refreshStatus = 'success';
-          } else {
-            await fetchServerSession({ silent: true });
-            refreshStatus = 'success';
-          }
-
-          lastRefreshSuccessRef.current = getSkewedNow();
-          return true;
-        } catch (error) {
-          if (error instanceof ApiError) {
-            if (error.status === 401 || error.status === 403) {
-              console.warn('[SecureAuth] Refresh token rejected, clearing session');
-              applySessionPayload(null, { persistTokens: true, reason: 'refresh_rejected' });
-              setAuthStatus('unauthenticated');
-              if (typeof window !== 'undefined') {
-                toast.error('Your session expired. Please sign in again.', { id: 'session-expired' });
-                const loginPath = resolveLoginPath();
-                window.location.assign(loginPath);
-              }
-              refreshStatus = 'unauthenticated';
-              return false;
-            }
-
-            if (error.code === 'timeout' || error.status === 0) {
-              console.warn('[SecureAuth] Refresh deferred due to network issue');
-              refreshStatus = 'network_issue';
-              return false;
-            }
-          }
-
-          console.error('Token refresh failed:', error);
-          refreshStatus = 'error';
-          return false;
-        } finally {
-          logRefreshResult(refreshStatus);
-        }
-      });
-    },
-    [applySessionPayload, fetchServerSession, getSkewedNow],
   );
 
   const resolveSession = useCallback(
