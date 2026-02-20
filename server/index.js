@@ -4573,10 +4573,6 @@ const handleLogin = async (req, res) => {
   }
 };
 
-// Register login endpoint at both paths for compatibility
-app.post('/api/auth/login', handleLogin);
-app.post('/login', handleLogin); // Legacy path
-
 app.get('/api/auth/verify', authenticate, (req, res) => {
   if (!req.user) {
     res.status(401).json({ valid: false, error: 'unauthenticated' });

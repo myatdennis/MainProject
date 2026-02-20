@@ -386,7 +386,7 @@ router.use((req, _res, next) => {
 // Login
 // ============================================================================
 
-router.post('/login', async (req, res) => {
+const loginHandler = async (req, res) => {
   const requestId = req.requestId || req.headers['x-request-id'] || null;
   const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || null;
 
@@ -394,17 +394,25 @@ router.post('/login', async (req, res) => {
     const { email, password } = req.body || {};
     if (!email || !password) {
       return res.status(400).json({
+        ok: false,
         error: 'missing_credentials',
         message: 'Email and password are required.',
       });
     }
 
-    if (!supabase || !supabaseAuthClient) {
+    if (!supabaseAuthClient) {
       const configError = buildAuthConfigError();
-      return res.status(configError.status).json(configError);
+      return res.status(configError.status).json({
+        ok: false,
+        error: configError.code || 'auth_not_configured',
+        message: configError.message,
+      });
     }
 
-    const normalizedEmail = normalizeEmail(email);
+    const normalizedEmail =
+      typeof normalizeEmail === 'function'
+        ? normalizeEmail(email)
+        : String(email ?? '').trim().toLowerCase();
     const { data, error: authError } = await supabaseAuthClient.auth.signInWithPassword({
       email: normalizedEmail,
       password,
@@ -418,21 +426,13 @@ router.post('/login', async (req, res) => {
         error: authError?.message || authError || null,
       });
       return res.status(401).json({
+        ok: false,
         error: 'invalid_credentials',
         message: 'The email or password you entered is incorrect.',
       });
     }
 
-    const membershipRows = await getUserMemberships(data.user.id, { logPrefix: '[auth-login]' });
-    const userPayload = buildUserPayloadFromSupabase(data.user, membershipRows);
-    const tokens = buildTokenResponseFromSession(data.session);
-
-    return res.status(200).json({
-      user: userPayload,
-      memberships: userPayload.memberships,
-      organizationIds: userPayload.organizationIds,
-      ...tokens,
-    });
+    return res.status(200).json({ ok: true, user: data.user, session: data.session });
   } catch (error) {
     console.error('[AUTH LOGIN] unexpected error', {
       requestId,
@@ -440,11 +440,15 @@ router.post('/login', async (req, res) => {
       error: error instanceof Error ? error.message : error,
     });
     return res.status(500).json({
+      ok: false,
       error: 'login_failed',
       message: 'Unable to complete login. Please try again.',
     });
   }
-});
+};
+
+router.post('/login', loginHandler);
+router.post('/api/auth/login', loginHandler);
 
 // ============================================================================
 // Register
