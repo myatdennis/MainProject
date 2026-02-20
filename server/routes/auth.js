@@ -737,8 +737,8 @@ router.get('/session', async (req, res) => {
       return respondWithNullSession('no_user');
     }
 
-    let role: string | null = null;
-    let platformRole: string | null = null;
+    let role = null;
+    let platformRole = null;
 
     if (supabase && user?.id) {
       try {
