@@ -432,7 +432,37 @@ const loginHandler = async (req, res) => {
       });
     }
 
-    return res.status(200).json({ ok: true, user: data.user, session: data.session });
+    let profileRole = null;
+    if (supabase && data.user?.id) {
+      try {
+        const { data: profile } = await supabase
+          .from('user_profiles')
+          .select('role')
+          .eq('id', data.user.id)
+          .single();
+        profileRole = profile?.role || null;
+      } catch (profileError) {
+        console.warn('[AUTH LOGIN] profile lookup failed', {
+          requestId,
+          userId: data.user.id,
+          error: profileError?.message || profileError,
+        });
+      }
+    }
+
+    const role = profileRole || 'learner';
+    const isPlatformAdmin = role === 'admin';
+
+    return res.status(200).json({
+      ok: true,
+      user: data.user,
+      session: {
+        ...data.session,
+        role,
+        platformRole: isPlatformAdmin ? 'platform_admin' : null,
+        isPlatformAdmin,
+      },
+    });
   } catch (error) {
     console.error('[AUTH LOGIN] unexpected error', {
       requestId,
