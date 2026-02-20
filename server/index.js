@@ -31,21 +31,13 @@ import setupNotificationDispatcher from './services/notificationDispatcher.js';
 import { validateCourse as validatePublishableCourse } from './lib/courseValidation.js';
 import { getSupabaseConfig } from './config/supabaseConfig.js';
 import { normalizeModuleLessonPayloads, shouldLogModuleNormalization, coerceTextId } from './lib/moduleLessonNormalizer.js';
-import { getUserMemberships } from './utils/memberships.js';
 
 // Import auth routes and middleware
 import authRoutes from './routes/auth.js';
 import adminAnalyticsRoutes from './routes/admin-analytics.js';
 import adminAnalyticsExport from './routes/admin-analytics-export.js';
 import adminAnalyticsSummary from './routes/admin-analytics-summary.js';
-import {
-  apiLimiter,
-  securityHeaders,
-  authenticate,
-  requireAdmin,
-  optionalAuthenticate,
-  resolveUserRole,
-} from './middleware/auth.js';
+import { apiLimiter, securityHeaders, authenticate, requireAdmin, optionalAuthenticate } from './middleware/auth.js';
 import supabaseJwtMiddleware from './middleware/supabaseJwt.js';
 import { setDoubleSubmitCSRF, getCSRFToken } from './middleware/csrf.js';
 import adminUsersRouter from './routes/admin-users.js';
@@ -1361,6 +1353,7 @@ app.use('/api/orgs', authenticate);
 
 const supabaseUrl = supabaseEnv.url;
 const supabaseServiceRoleKey = supabaseEnv.serviceRoleKey;
+const supabaseAnonKey = supabaseEnv.anonKey;
 const missingSupabaseEnvVars = [...supabaseEnv.missing];
 
 // Log Supabase configuration for diagnostics
@@ -1381,9 +1374,11 @@ logger.info('diagnostics_supabase_env', {
 });
 
 let supabase = supabaseUrl && supabaseServiceRoleKey ? createClient(supabaseUrl, supabaseServiceRoleKey) : null;
+let supabaseAuthClient = supabaseUrl && supabaseAnonKey ? createClient(supabaseUrl, supabaseAnonKey) : null;
 if (E2E_TEST_MODE) {
   console.log('[server] Running in E2E_TEST_MODE - ignoring Supabase credentials and using in-memory fallback');
   supabase = null;
+  supabaseAuthClient = null;
 }
 let loggedMissingSupabaseConfig = false;
 
@@ -4491,162 +4486,86 @@ const checkProgressLimit = createRateLimiter({ tokensPerInterval: 8, intervalMs:
 // ============================================================================
 
 // Authentication handler function
-const mapMembershipResponse = (row) => ({
-  organizationId: row.organization_id,
-  role: row.role,
-  status: row.status,
-  organizationName: row.organization_name ?? row.org_name ?? null,
-  organizationSlug: row.organization_slug ?? row.org_slug ?? null,
-  organizationStatus: row.organization_status,
-  subscription: row.subscription,
-  features: row.features,
-});
+const LOGIN_TIMEOUT_MS = 8000;
+
+const withTimeout = (promise, label) =>
+  new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label || 'operation'} timed out after ${LOGIN_TIMEOUT_MS}ms`));
+    }, LOGIN_TIMEOUT_MS);
+
+    Promise.resolve(promise)
+      .then((value) => {
+        clearTimeout(timer);
+        resolve(value);
+      })
+      .catch((error) => {
+        clearTimeout(timer);
+        reject(error);
+      });
+  });
 
 const handleLogin = async (req, res) => {
-  const { email, password } = req.body || {};
-
-  console.log('[AUTH] Login attempt:', { email, type, hasSupabase: Boolean(supabase), E2E_TEST_MODE, DEV_FALLBACK });
-
-  // Opt-in verbose auth diagnostics: when AUTH_DIAG_VERBOSE=true write a per-attempt
-  // JSON file under the server diagnostics directory so Playwright captures can be
-  // correlated with server-side request/response context. We use req.requestId
-  // which is set by the global middleware above.
-  const AUTH_VERBOSE = (process.env.AUTH_DIAG_VERBOSE || '').toLowerCase() === 'true';
-  const writeAuthAttempt = async (outcome, details = {}) => {
-    if (!AUTH_VERBOSE) return;
-    try {
-      if (!fs.existsSync(DIAG_DIR)) fs.mkdirSync(DIAG_DIR, { recursive: true });
-      const id = req.requestId || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2,8)}`;
-      const payload = Object.assign({
-        timestamp: new Date().toISOString(),
-        requestId: id,
-        route: '/api/auth/login',
-        method: req.method,
-        path: req.path,
-        outcome,
-        headers: req.headers,
-        body: req.body
-      }, details);
-      const file = path.join(DIAG_DIR, `auth-attempt-${id}.json`);
-      fs.writeFileSync(file, JSON.stringify(payload, null, 2), 'utf8');
-      console.log(`[diag] Wrote auth attempt diagnostic: ${file}`);
-    } catch (e) {
-      console.warn('Failed to write auth attempt diagnostic', e);
-    }
-  };
-
-  if (!email || !password) {
-    await writeAuthAttempt('missing_credentials');
-    res.status(400).json({ 
-      error: 'Email and password are required',
-      errorType: 'validation_error'
-    });
-    return;
-  }
-
-  // Demo/E2E mode - accept any login with test credentials
-  // Use demo mode if: E2E_TEST_MODE is set, OR we're in dev fallback mode
-  const useDemoMode = E2E_TEST_MODE || DEV_FALLBACK;
-  
-  if (useDemoMode) {
-    console.log('[AUTH] Using demo mode authentication');
-    // Test credentials for demo
-    const validLogins = {
-      'user@pacificcoast.edu': { password: 'user123', role: 'learner', name: 'Demo User' },
-  'mya@the-huddle.co': { password: 'admin123', role: 'admin', name: 'Admin User' },
-      'demo@example.com': { password: 'demo', role: 'learner', name: 'Demo Learner' }
-    };
-
-    const user = validLogins[email.toLowerCase()];
-    
-    if (user && user.password === password) {
-      const userData = {
-        id: `demo-${email.split('@')[0]}`,
-        email: email.toLowerCase(),
-        name: user.name,
-        role: user.role,
-        organizationId: 'demo-org'
-      };
-
-      await writeAuthAttempt('success', { mode: 'demo', user: { id: userData.id, email: userData.email, role: userData.role } });
-      res.json({
-        success: true,
-        user: userData,
-        accessToken: `demo-token-${Date.now()}`,
-        refreshToken: `demo-refresh-${Date.now()}`,
-        expiresAt: Date.now() + 86400000 // 24 hours
-      });
-      return;
-    }
-
-    await writeAuthAttempt('invalid_credentials_demo');
-    res.status(401).json({
-      error: 'Invalid credentials',
-      errorType: 'invalid_credentials'
-    });
-    return;
-  }
-
-  // Supabase authentication (if configured)
-  if (!ensureSupabase(res)) return;
+  const requestId = req.requestId || req.headers['x-request-id'] || null;
+  const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || null;
 
   try {
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password
-    });
-
-    if (error) {
-      await writeAuthAttempt('invalid_credentials_supabase', { error: error && error.message ? error.message : String(error) });
-      res.status(401).json({
-        error: error.message || 'Authentication failed',
-        errorType: 'invalid_credentials'
+    const { email, password } = req.body || {};
+    if (!email || !password) {
+      return res.status(400).json({
+        ok: false,
+        error: 'missing_credentials',
+        message: 'Email and password are required.',
       });
-      return;
     }
 
-    const membershipRows = await getUserMemberships(data.user.id, { logPrefix: '[server-login]' });
-    const membershipPayload = membershipRows.map(mapMembershipResponse);
-    const activeOrgIds = membershipPayload.filter((m) => m.status === 'active').map((m) => m.organizationId);
+    if (!supabaseAuthClient) {
+      console.error('[handleLogin] Supabase auth client missing', { requestId });
+      return res.status(500).json({
+        ok: false,
+        error: 'auth_not_configured',
+        message: 'Authentication service unavailable.',
+      });
+    }
 
-    const derivedRole = resolveUserRole(
-      {
-        email: data.user.email,
-        user_metadata: data.user.user_metadata,
-        app_metadata: data.user.app_metadata,
-      },
-      membershipPayload,
+    const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+    const { data, error: authError } = await withTimeout(
+      supabaseAuthClient.auth.signInWithPassword({
+        email: normalizedEmail,
+        password,
+      }),
+      'supabase.signInWithPassword',
     );
 
-    const userPayload = {
-      id: data.user.id,
-      email: data.user.email,
-      name: data.user.user_metadata?.name || data.user.email,
-      role: derivedRole,
-      organizationId: activeOrgIds[0] || data.user.user_metadata?.organization_id || null,
-      organizationIds: activeOrgIds,
-      memberships: membershipPayload,
-      platformRole: data.user.app_metadata?.platform_role || null,
-    };
+    if (authError || !data?.user || !data.session) {
+      console.warn('[handleLogin] invalid credentials', {
+        requestId,
+        email: normalizedEmail,
+        ip: clientIp,
+        error: authError?.message || authError || null,
+      });
+      return res.status(401).json({
+        ok: false,
+        error: 'invalid_credentials',
+        message: 'The email or password you entered is incorrect.',
+      });
+    }
 
-    await writeAuthAttempt('success', {
-      mode: 'supabase',
-      user: { id: data.user.id, email: data.user.email, orgs: activeOrgIds },
-    });
-
-    res.json({
-      success: true,
-      user: userPayload,
-      accessToken: data.session.access_token,
-      refreshToken: data.session.refresh_token,
-      expiresAt: data.session.expires_at,
+    return res.status(200).json({
+      ok: true,
+      user: data.user,
+      session: data.session,
     });
   } catch (error) {
-    console.error('Login error:', error);
-    try { await writeAuthAttempt('exception', { error: String(error) }); } catch (_) {}
-    res.status(500).json({
-      error: 'Authentication service error',
-      errorType: 'network_error'
+    console.error('[handleLogin] unexpected error', {
+      requestId,
+      ip: clientIp,
+      error: error instanceof Error ? error.message : error,
+    });
+    return res.status(500).json({
+      ok: false,
+      error: 'login_failed',
+      message: 'Unable to complete login. Please try again.',
     });
   }
 };
