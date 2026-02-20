@@ -737,30 +737,20 @@ router.get('/session', async (req, res) => {
       return respondWithNullSession('no_user');
     }
 
-    let role = null;
-    let platformRole = null;
+    let role: string | null = null;
+    let platformRole: string | null = null;
 
     if (supabase && user?.id) {
       try {
         const { data: profileRow, error: profileError } = await supabase
           .from('user_profiles')
-          .select('role, platform_role')
-          .eq('user_id', user.id)
+          .select('role, platform_role, platformRole')
+          .eq('id', user.id)
           .maybeSingle();
 
         if (!profileError && profileRow) {
           role = profileRow.role ?? null;
-          platformRole = profileRow.platform_role ?? null;
-        } else {
-          const { data: userRow, error: userLookupError } = await supabase
-            .from('users')
-            .select('role, platform_role')
-            .eq('id', user.id)
-            .maybeSingle();
-          if (!userLookupError && userRow) {
-            role = userRow.role ?? role;
-            platformRole = userRow.platform_role ?? platformRole;
-          }
+          platformRole = profileRow.platform_role ?? profileRow.platformRole ?? null;
         }
       } catch (lookupException) {
         console.warn('[auth/session] profile lookup failed', {
@@ -771,11 +761,9 @@ router.get('/session', async (req, res) => {
       }
     }
 
-    role = role ?? user.role ?? null;
-    platformRole = platformRole ?? user.platformRole ?? user.platform_role ?? null;
-    const isPlatformAdmin =
-      (typeof role === 'string' && role.toLowerCase() === 'admin') ||
-      (typeof platformRole === 'string' && platformRole === 'platform_admin');
+    role = role ?? user.role ?? 'learner';
+    platformRole = platformRole ?? null;
+    const isPlatformAdmin = typeof role === 'string' && role.toLowerCase() === 'admin';
 
     console.info('[auth/session] success', {
       ...logBase,

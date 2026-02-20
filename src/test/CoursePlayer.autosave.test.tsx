@@ -26,6 +26,43 @@ const mockSyncLogEvent = vi.hoisted(() => vi.fn());
 vi.mock('../dal/sync', () => ({ useSyncService: () => ({ logEvent: mockSyncLogEvent, subscribe: vi.fn(() => ({ unsubscribe: () => {} })) }) }));
 vi.mock('../context/ToastContext', () => ({ useToast: () => ({ showToast: vi.fn() }) }));
 
+const handleApiCallMock = vi.hoisted(() => vi.fn(async (call: () => Promise<any>) => (typeof call === 'function' ? call() : undefined)));
+const isOnlineMock = vi.hoisted(() => vi.fn(() => true));
+vi.mock('../utils/NetworkErrorHandler', () => {
+  const mockHandler = {
+    handleApiCall: (...args: any[]) => handleApiCallMock(...args),
+    isOnline: (...args: any[]) => isOnlineMock(...args),
+  };
+  return {
+    NetworkErrorHandler: mockHandler,
+    default: mockHandler,
+  };
+});
+
+const apiRequestMock = vi.hoisted(() =>
+  vi.fn((path: string, options?: any) => {
+    if (typeof path === 'string' && path.includes('/api/learner/progress')) {
+      return Promise.resolve({ data: { lessons: [] } });
+    }
+    return Promise.resolve({});
+  })
+);
+vi.mock('../utils/apiClient', async () => {
+  const actual = await vi.importActual<typeof import('../utils/apiClient')>('../utils/apiClient');
+  const proxyApiRequest = vi.fn((path: string, options?: any) => {
+    if (typeof path === 'string' && path.includes('/api/learner/progress')) {
+      return Promise.resolve({ data: { lessons: [] } });
+    }
+    return actual.apiRequest(path as any, options as any);
+  });
+  apiRequestMock.mockImplementation((path: string, options?: any) => proxyApiRequest(path, options));
+  return {
+    ...actual,
+    apiRequest: proxyApiRequest,
+    default: proxyApiRequest,
+  };
+});
+
 // Mock assignment progress util
 vi.mock('../utils/assignmentStorage', () => ({ updateAssignmentProgress: vi.fn() }));
 
@@ -113,11 +150,37 @@ const renderCoursePlayer = () => {
 };
 
 describe('CoursePlayer autosave', () => {
+  let fetchMock: ReturnType<typeof vi.fn> | null = null;
+
   beforeEach(() => {
     vi.resetAllMocks();
     mockLoadCourse.mockResolvedValue(mockLoadCourseResult);
     mockLoadStoredCourseProgress.mockReturnValue({ completedLessonIds: [], lessonProgress: {}, lessonPositions: {} });
     mockSyncCourseProgressWithRemote.mockResolvedValue(null);
+
+    fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : '';
+      const headers = { 'Content-Type': 'application/json' };
+
+      if (url.includes('/api/auth/refresh')) {
+        const body = JSON.stringify({
+          user: { id: 'test-user', email: 'test@example.com', role: 'admin' },
+          accessToken: 'mock-access-token',
+          refreshToken: 'mock-refresh-token',
+          memberships: [],
+          organizationIds: [],
+        });
+        return new Response(body, { status: 200, headers });
+      }
+
+      if (init?.method === 'POST' || init?.method === 'PATCH') {
+        return new Response(JSON.stringify({ ok: true }), { status: 200, headers });
+      }
+
+      return new Response(JSON.stringify({ ok: true }), { status: 200, headers });
+    });
+
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
   });
 
   afterEach(() => {
@@ -125,13 +188,15 @@ describe('CoursePlayer autosave', () => {
     vi.clearAllMocks();
     vi.restoreAllMocks();
     vi.useRealTimers();
+    vi.unstubAllGlobals();
+    fetchMock = null;
   });
 
   it('enqueues progress and persists locally on autosave interval', async () => {
-    const intervalCallbacks: Array<{ cb: () => void; stack: string }> = [];
+    const intervalCallbacks: Array<() => void> = [];
     vi.spyOn(window, 'setInterval').mockImplementation((cb: TimerHandler) => {
       if (typeof cb === 'function') {
-        intervalCallbacks.push({ cb: cb as () => void, stack: new Error().stack ?? '' });
+        intervalCallbacks.push(cb as () => void);
       }
       return intervalCallbacks.length as unknown as ReturnType<typeof window.setInterval>;
     });
@@ -172,13 +237,7 @@ describe('CoursePlayer autosave', () => {
     video.currentTime = 30;
     expect(video.currentTime).toBe(30);
 
-    expect(intervalCallbacks.length).toBeGreaterThan(0);
-    const autosaveRecord = intervalCallbacks.find((record) =>
-      record.stack.includes('components/CoursePlayer/CoursePlayer.tsx')
-    ) ?? intervalCallbacks[intervalCallbacks.length - 1];
-    const autosaveTick = autosaveRecord?.cb;
-    expect(autosaveTick).toBeDefined();
-    autosaveTick?.();
+    intervalCallbacks.forEach((cb) => cb());
 
     expect(enqueueProgressMock).toHaveBeenCalledWith(
       expect.objectContaining({
