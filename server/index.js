@@ -3123,13 +3123,38 @@ const sortActionItems = (items) =>
     return dueA - dueB;
   });
 
-const requireAdminAccess = (req, res) => {
+const requireAdminAccess = async (req, res) => {
   const context = getRequestContext(req);
   const isOrgAdmin = Array.isArray(context.memberships)
     ? context.memberships.some((membership) => String(membership.role || '').toLowerCase() === 'admin')
     : false;
 
-  if (context.isPlatformAdmin || context.userRole === 'admin' || isOrgAdmin) {
+  let isPlatformAdmin = Boolean(context.isPlatformAdmin || context.userRole === 'admin');
+
+  if (!isPlatformAdmin && context.userId && supabase) {
+    try {
+      const { data: profile, error } = await supabase.from('user_profiles').select('role').eq('id', context.userId).maybeSingle();
+      if (!error && profile?.role) {
+        const normalizedRole = String(profile.role).toLowerCase();
+        if (normalizedRole === 'admin') {
+          isPlatformAdmin = true;
+          context.userRole = 'admin';
+          context.isPlatformAdmin = true;
+          if (req.user) {
+            req.user.role = 'admin';
+            req.user.isPlatformAdmin = true;
+          }
+        }
+      }
+    } catch (error) {
+      console.warn('[adminAccess] profile lookup failed', {
+        userId: context.userId,
+        error: error?.message || error,
+      });
+    }
+  }
+
+  if (isPlatformAdmin || isOrgAdmin) {
     return true;
   }
 
@@ -8589,7 +8614,7 @@ app.get('/api/client/certificates', async (req, res) => {
 // Organization management
 app.get('/api/admin/organizations', async (req, res) => {
   if (!ensureSupabase(res)) return;
-  if (!requireAdminAccess(req, res)) return;
+  if (!(await requireAdminAccess(req, res))) return;
 
   const context = requireUserContext(req, res);
   if (!context) return;
@@ -8712,7 +8737,7 @@ app.get('/api/admin/organizations', async (req, res) => {
 
 app.post('/api/admin/organizations', async (req, res) => {
   if (!ensureSupabase(res)) return;
-  if (!requireAdminAccess(req, res)) return;
+  if (!(await requireAdminAccess(req, res))) return;
   const payload = req.body || {};
 
   if (!payload.name || !payload.contact_email || !payload.subscription) {
@@ -9745,7 +9770,7 @@ app.post('/api/orgs/:orgId/memberships/leave', async (req, res) => {
 // Organization profile + branding admin APIs
 app.get('/api/admin/org-profiles', async (req, res) => {
   if (!ensureSupabase(res)) return;
-  if (!requireAdminAccess(req, res)) return;
+  if (!(await requireAdminAccess(req, res))) return;
 
   const { search, status } = req.query || {};
 

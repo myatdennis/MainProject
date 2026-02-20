@@ -23,6 +23,25 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3
 
 const writableOrgRoles = new Set(['owner', 'admin', 'manager', 'editor']);
 
+const fetchUserProfileRole = async (userId) => {
+  if (!userId || !supabase) {
+    return null;
+  }
+  try {
+    const { data, error } = await supabase.from('user_profiles').select('role').eq('id', userId).maybeSingle();
+    if (error) {
+      throw error;
+    }
+    return data?.role ? String(data.role).toLowerCase() : null;
+  } catch (error) {
+    console.warn('[auth] Failed to fetch user profile role', {
+      userId,
+      error: error?.message || error,
+    });
+    return null;
+  }
+};
+
 const isCanonicalAdminEmail = (email) => {
   if (!email) return false;
   return normalizeEmail(email) === PRIMARY_ADMIN_EMAIL;
@@ -472,7 +491,7 @@ const hasWritableOrgRole = (membership) => {
 /**
  * Require platform admin role (global)
  */
-export function requireAdmin(req, res, next) {
+export async function requireAdmin(req, res, next) {
   if (!req.user) {
     return res.status(401).json({
       error: 'Authentication required',
@@ -480,12 +499,32 @@ export function requireAdmin(req, res, next) {
     });
   }
 
-  const isPlatformAdmin = req.user.isPlatformAdmin || req.user.platformRole === 'platform_admin';
+  const userId = req.user.userId || req.user.id || null;
+  let resolvedRole = req.user.role ? String(req.user.role).toLowerCase() : null;
+  let isPlatformAdmin = Boolean(req.user.isPlatformAdmin || req.user.platformRole === 'platform_admin');
+
+  if (!isPlatformAdmin && userId) {
+    const profileRole = await fetchUserProfileRole(userId);
+    if (profileRole) {
+      resolvedRole = profileRole;
+      if (profileRole === 'admin') {
+        isPlatformAdmin = true;
+      }
+    }
+  }
+
   const hasOrgAdminRole = Array.isArray(req.user.memberships)
     ? req.user.memberships.some((membership) => String(membership.role || '').toLowerCase() === 'admin')
     : false;
 
   if (isPlatformAdmin || hasOrgAdminRole) {
+    if (resolvedRole) {
+      req.user.role = resolvedRole;
+    }
+    if (isPlatformAdmin) {
+      req.user.isPlatformAdmin = true;
+      req.user.platformRole = 'platform_admin';
+    }
     return next();
   }
 
