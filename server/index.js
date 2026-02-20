@@ -2745,7 +2745,7 @@ const logAdminCoursesError = (req, err, label) => {
         }
       : null,
   };
-  console.error(`[admin-courses] ${label}`, meta);
+  console.error(`[admin-courses] ${label}`, meta, err);
   try {
     writeErrorDiagnostics(req, err, { meta: { surface: 'admin_courses', label } });
   } catch (_) {
@@ -4777,6 +4777,13 @@ app.get('/api/admin/courses', async (req, res) => {
   );
 
   const isPlatformAdmin = Boolean(context.isPlatformAdmin);
+  console.log('[admin.courses] access_context', {
+    requestId: req.requestId,
+    userId: context.userId || null,
+    userRole: context.userRole || null,
+    isPlatformAdmin,
+    requestedOrgId: requestedOrgId || null,
+  });
   let adminOrgIds = Array.isArray(context.memberships)
     ? context.memberships
         .filter((membership) => String(membership.role || '').toLowerCase() === 'admin' && membership.orgId)
@@ -4786,6 +4793,11 @@ app.get('/api/admin/courses', async (req, res) => {
   let allowedOrgIdSet = new Set(adminOrgIds);
 
   if (!isPlatformAdmin && adminOrgIds.length === 0 && supabase) {
+    console.log('[admin.courses] membership_lookup_fallback', {
+      requestId: req.requestId,
+      userId: context.userId || null,
+      reason: 'no_cached_admin_memberships',
+    });
     try {
       const { data: adminMemberships, error: adminMembershipsError } = await supabase
         .from('organization_memberships')
@@ -4801,6 +4813,11 @@ app.get('/api/admin/courses', async (req, res) => {
         .filter(Boolean);
 
       allowedOrgIdSet = new Set(adminOrgIds);
+      console.log('[admin.courses] membership_lookup_result', {
+        requestId: req.requestId,
+        userId: context.userId || null,
+        resolvedOrgIds: adminOrgIds,
+      });
     } catch (membershipLookupError) {
       logAdminCoursesError(req, membershipLookupError, 'Failed to load admin memberships');
       res.status(500).json({ error: 'Unable to verify admin organization memberships' });
@@ -4987,11 +5004,7 @@ app.get('/api/admin/courses', async (req, res) => {
 
     res.json(responseBody);
   } catch (error) {
-    console.error('[admin.courses] supabase_query_failed', {
-      requestId: req.requestId,
-      message: error?.message || String(error),
-      stack: error?.stack || null,
-    });
+    console.error('ADMIN COURSES ERROR:', error);
     logAdminCoursesError(req, error, 'Failed to fetch courses');
     res.status(500).json({ error: 'Unable to fetch courses' });
   }
@@ -11988,6 +12001,14 @@ app.get('/api/analytics/journeys', async (req, res) => {
   const org_id = (req.query?.org_id || req.query?.orgId || '').toString().trim();
   const sinceIso = parseIsoTimestamp(req.query?.since || req.query?.since_at);
   const limit = clampJourneyLimit(req.query?.limit);
+  console.log('[analytics.journeys] request', {
+    requestId: req.requestId,
+    user_id: user_id || null,
+    course_id: course_id || null,
+    org_id: org_id || null,
+    since: sinceIso,
+    limit,
+  });
 
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
     let data = Array.from(e2eStore.learnerJourneys.values());
@@ -12054,6 +12075,7 @@ app.get('/api/analytics/journeys', async (req, res) => {
       message: error?.message || error,
       stack: error?.stack,
     });
+    console.error('ANALYTICS JOURNEYS ERROR:', error);
     res.status(500).json({ error: 'Unable to fetch learner journeys' });
   }
 });

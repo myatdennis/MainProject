@@ -1,0 +1,3 @@
+-- Placeholder migration.
+-- This file was previously empty (0 bytes) which can confuse migration history tools.
+-- No schema changes are applied by this migration.

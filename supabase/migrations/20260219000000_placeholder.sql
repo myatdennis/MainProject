@@ -1,0 +1,2 @@
+-- Placeholder migration created to match normalized remote migration history.
+-- No schema changes.
