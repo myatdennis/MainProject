@@ -43,6 +43,17 @@ const parseBoolean = (value, fallback = false) => {
 };
 
 const devLoginDiagnosticsEnabled = (process.env.NODE_ENV || '').toLowerCase() !== 'production';
+
+const getBearerToken = (req) => {
+  if (!req?.headers) {
+    return null;
+  }
+  const header = req.headers.authorization || req.headers.Authorization || null;
+  if (!header) {
+    return null;
+  }
+  return extractTokenFromHeader(header) || null;
+};
 const isE2ETestMode = e2eTestMode;
 const isDemoModeExplicit = demoModeExplicit || allowDemoExplicit;
 const allowLegacyDemoUsers = allowLegacyDemoUsersFlag || isE2ETestMode;
@@ -841,39 +852,40 @@ router.post('/logout', async (req, res) => {
 
 router.get('/session', async (req, res) => {
   const requestId = req.requestId || req.headers['x-request-id'] || req.headers['x-amzn-trace-id'] || null;
-  const bearerToken = extractTokenFromHeader(req.headers?.authorization);
-  const cookieToken = getAccessTokenFromRequest(req);
-  const mode = bearerToken ? 'bearer' : cookieToken ? 'cookie' : 'none';
+  const accessToken = getBearerToken(req);
+  const mode = accessToken ? 'bearer' : 'none';
   const logBase = {
     event: 'auth_session',
     mode,
     requestId,
-    hasBearer: Boolean(bearerToken),
-    hasCookie: Boolean(cookieToken),
+    hasBearer: Boolean(accessToken),
     origin: req.headers?.origin || null,
   };
 
-  if (mode === 'none') {
-    console.info('[auth/session] no session token', logBase);
-    return res.status(401).json({
-      error: 'not_authenticated',
-      message: 'No authenticated session detected.',
-      authenticated: false,
-      mode,
-    });
-  }
+  const respondWithNullSession = (reason, extra = {}) => {
+    const level = reason === 'exception' ? 'error' : 'info';
+    const logFn = level === 'error' ? console.error : console.info;
+    logFn('[auth/session] ' + reason, { ...logBase, ...extra });
+    return res.status(200).json({ session: null });
+  };
 
   try {
-    const context = await buildAuthContext(req, { optional: false });
+    if (!accessToken) {
+      return respondWithNullSession('missing_bearer');
+    }
+
+    let context;
+    try {
+      context = await buildAuthContext(req, { optional: false });
+    } catch (authError) {
+      return respondWithNullSession('invalid_token', {
+        error: authError?.message || authError,
+      });
+    }
+
     const user = context?.user || null;
     if (!user) {
-      console.warn('[auth/session] context missing user', { ...logBase, outcome: 'no_user' });
-      return res.status(401).json({
-        error: 'not_authenticated',
-        message: 'Invalid or expired session.',
-        authenticated: false,
-        mode,
-      });
+      return respondWithNullSession('no_user');
     }
 
     const responsePayload = {
@@ -895,46 +907,18 @@ router.get('/session', async (req, res) => {
 
     return res.json(responsePayload);
   } catch (error) {
-    let status = 500;
-    let code = 'session_error';
-    let message = 'Unable to verify session.';
-    const errorMessage = error?.message || 'unknown_error';
-
-    if (errorMessage === 'missing_token') {
-      status = 401;
-      code = 'not_authenticated';
-      message = 'No authenticated session detected.';
-    } else if (errorMessage === 'invalid_token') {
-      status = 401;
-      code = 'invalid_token';
-      message = 'Invalid or expired session token.';
-    } else if (errorMessage === 'supabase_not_configured') {
-      status = 503;
-      code = 'auth_unavailable';
-      message = 'Authentication service unavailable.';
-    }
-
-    console.warn('[auth/session] failure', {
+    console.error('[auth/session] failure', {
       ...logBase,
-      outcome: 'error',
-      status,
-      code,
-      error: errorMessage,
+      outcome: 'exception',
+      error: error?.message || error,
     });
-
-    return res.status(status).json({
-      error: code,
-      message,
-      authenticated: false,
-      mode,
-    });
+    return res.status(200).json({ session: null });
   }
 });
 
 /**
  * Manual verification (local):
  * curl -H "Authorization: Bearer <ACCESS>" http://localhost:8888/api/auth/session
- * curl --cookie "access_token=<TOKEN>" http://localhost:8888/api/auth/session
  */
 
 // ============================================================================
