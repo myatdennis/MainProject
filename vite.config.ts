@@ -187,8 +187,35 @@ export default async () => {
               return 'vendor';
             }
 
-            if (id.includes('/src/pages/Admin/AdminSurveyBuilder') || id.includes('/src/components/SurveyBuilder')) {
+            if (
+              id.includes('/src/pages/Admin/AdminSurvey') ||
+              id.includes('/src/pages/Admin/AdminSurveys') ||
+              id.includes('/src/pages/Admin/AdminQueueMonitor') ||
+              id.includes('/src/components/Survey') ||
+              id.includes('/src/components/SurveyBuilder') ||
+              id.includes('/src/dal/surveys') ||
+              id.includes('/src/services/survey')
+            ) {
               return 'admin-surveys';
+            }
+            if (
+              id.includes('/src/components/ui/') ||
+              id.includes('/src/components/SEO') ||
+              id.includes('/src/components/LoadingComponents') ||
+              id.includes('/src/context/') ||
+              id.includes('/src/config/') ||
+              id.includes('/src/hooks/useAnalyticsDashboard') ||
+              id.includes('/src/dal/orgs') ||
+              id.includes('/src/dal/analytics') ||
+              id.includes('/src/dal/adminCourses') ||
+              id.includes('/src/dal/clientCourses') ||
+              id.includes('/src/dal/http') ||
+              id.includes('/src/dal/sync') ||
+              id.includes('/src/lib/secureStorage') ||
+              id.includes('/src/state/runtimeStatus') ||
+              id.includes('/src/utils/apiClient')
+            ) {
+              return 'admin-shared';
             }
             if (id.includes('/src/pages/Admin/AdminCourseBuilder') || id.includes('/src/components/CourseBuilder')) {
               return 'admin-courses';

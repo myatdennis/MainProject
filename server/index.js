@@ -194,11 +194,21 @@ const MAX_DEMO_FILE_BYTES = parseInt(process.env.DEMO_DATA_MAX_BYTES || '', 10) 
 
 const supabaseEnv = getSupabaseConfig();
 const initialDemoModeMetadata = describeDemoMode();
+const supabaseUrlHost = (() => {
+  if (!supabaseEnv.url) return null;
+  try {
+    return new URL(supabaseEnv.url).host || null;
+  } catch (_error) {
+    return null;
+  }
+})();
 logger.info('demo_mode_configuration', { metadata: initialDemoModeMetadata });
 logger.info('startup_supabase_config', {
   supabaseConfigured: supabaseEnv.configured,
   devFallback: Boolean(DEV_FALLBACK),
   demoMode: initialDemoModeMetadata.enabled ? initialDemoModeMetadata.source || 'enabled' : 'disabled',
+  supabaseUrlHost,
+  serviceRoleKeyPresent: Boolean(supabaseEnv.serviceRoleKey),
 });
 if (supabaseEnv.configured && DEV_FALLBACK) {
   logger.warn('dev_fallback_overrides_supabase', {
@@ -1356,21 +1366,16 @@ const supabaseServiceRoleKey = supabaseEnv.serviceRoleKey;
 const supabaseAnonKey = supabaseEnv.anonKey;
 const missingSupabaseEnvVars = [...supabaseEnv.missing];
 
-// Log Supabase configuration for diagnostics
-const supabaseUrlHost = (() => {
-  if (!supabaseUrl) return null;
-  try {
-    return new URL(supabaseUrl).host || null;
-  } catch (_error) {
-    return null;
-  }
-})();
-
 logger.info('diagnostics_supabase_env', {
   supabaseUrlConfigured: Boolean(supabaseUrl),
   supabaseUrlHost,
   hasServiceRoleKey: Boolean(supabaseServiceRoleKey),
   serviceKeySource: supabaseEnv.serviceKeySource || null,
+});
+
+console.log('[supabase] startup', {
+  host: supabaseUrlHost || '(not set)',
+  serviceRoleKeyPresent: Boolean(supabaseServiceRoleKey),
 });
 
 let supabase = supabaseUrl && supabaseServiceRoleKey ? createClient(supabaseUrl, supabaseServiceRoleKey) : null;
@@ -2730,8 +2735,17 @@ const logAdminCoursesError = (req, err, label) => {
     params: req?.params ?? null,
     query: req?.query ?? null,
     bodySummary: summarizeRequestBody(req?.body ?? null),
+    error: err
+      ? {
+          message: err.message ?? null,
+          code: err.code ?? null,
+          details: err.details ?? null,
+          hint: err.hint ?? null,
+          stack: err.stack ?? null,
+        }
+      : null,
   };
-  console.error(`[admin-courses] ${label}`, meta, err);
+  console.error(`[admin-courses] ${label}`, meta);
   try {
     writeErrorDiagnostics(req, err, { meta: { surface: 'admin_courses', label } });
   } catch (_) {
@@ -4763,13 +4777,36 @@ app.get('/api/admin/courses', async (req, res) => {
   );
 
   const isPlatformAdmin = Boolean(context.isPlatformAdmin);
-  const adminOrgIds = Array.isArray(context.memberships)
+  let adminOrgIds = Array.isArray(context.memberships)
     ? context.memberships
         .filter((membership) => String(membership.role || '').toLowerCase() === 'admin' && membership.orgId)
         .map((membership) => normalizeOrgIdValue(membership.orgId))
         .filter(Boolean)
     : [];
-  const allowedOrgIdSet = new Set(adminOrgIds);
+  let allowedOrgIdSet = new Set(adminOrgIds);
+
+  if (!isPlatformAdmin && adminOrgIds.length === 0 && supabase) {
+    try {
+      const { data: adminMemberships, error: adminMembershipsError } = await supabase
+        .from('organization_memberships')
+        .select('organization_id, org_id, role, status')
+        .eq('user_id', context.userId)
+        .eq('status', 'active');
+
+      if (adminMembershipsError) throw adminMembershipsError;
+
+      adminOrgIds = (adminMemberships || [])
+        .filter((membership) => String(membership.role || '').toLowerCase() === 'admin')
+        .map((membership) => pickOrgId(membership.organization_id, membership.org_id))
+        .filter(Boolean);
+
+      allowedOrgIdSet = new Set(adminOrgIds);
+    } catch (membershipLookupError) {
+      logAdminCoursesError(req, membershipLookupError, 'Failed to load admin memberships');
+      res.status(500).json({ error: 'Unable to verify admin organization memberships' });
+      return;
+    }
+  }
 
   const restrictToAllowed = !isPlatformAdmin && !requestedOrgId;
 
@@ -4950,6 +4987,11 @@ app.get('/api/admin/courses', async (req, res) => {
 
     res.json(responseBody);
   } catch (error) {
+    console.error('[admin.courses] supabase_query_failed', {
+      requestId: req.requestId,
+      message: error?.message || String(error),
+      stack: error?.stack || null,
+    });
     logAdminCoursesError(req, error, 'Failed to fetch courses');
     res.status(500).json({ error: 'Unable to fetch courses' });
   }
@@ -11853,8 +11895,99 @@ app.post('/api/analytics/journeys', async (req, res) => {
   }
 });
 
+const clampJourneyLimit = (value) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 1000;
+  return Math.min(Math.max(Math.floor(parsed), 1), 5000);
+};
+
+const parseIsoTimestamp = (value) => {
+  if (!value) return null;
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return null;
+  return parsed.toISOString();
+};
+
+const extractProgressFromPayload = (payload) => {
+  if (!payload || typeof payload !== 'object') return null;
+  const candidates = [
+    payload.progress,
+    payload.progressPercent,
+    payload.progress_percentage,
+    payload.completion,
+    payload.completionPercent,
+  ];
+  for (const candidate of candidates) {
+    const numeric = Number(candidate);
+    if (Number.isFinite(numeric)) {
+      return Math.max(0, Math.min(100, numeric));
+    }
+  }
+  return null;
+};
+
+const summarizeEventsAsJourneys = (events) => {
+  const journeys = new Map();
+
+  for (const event of events) {
+    if (!event?.user_id || !event?.course_id) continue;
+    const key = `${event.user_id}:${event.course_id}`;
+    let summary = journeys.get(key);
+    if (!summary) {
+      summary = {
+        user_id: event.user_id,
+        course_id: event.course_id,
+        org_id: event.org_id ?? null,
+        started_at: event.created_at,
+        last_active_at: event.created_at,
+        completed_at: null,
+        progress_percentage: 0,
+        total_events: 0,
+        sessions: new Set(),
+        eventTypes: new Set(),
+      };
+      journeys.set(key, summary);
+    }
+    summary.org_id = summary.org_id || event.org_id || null;
+    if (!summary.started_at || new Date(event.created_at) < new Date(summary.started_at)) {
+      summary.started_at = event.created_at;
+    }
+    if (!summary.last_active_at || new Date(event.created_at) > new Date(summary.last_active_at)) {
+      summary.last_active_at = event.created_at;
+    }
+    summary.total_events += 1;
+    if (event.session_id) summary.sessions.add(event.session_id);
+    if (event.event_type) summary.eventTypes.add(event.event_type);
+    if (!summary.completed_at && event.event_type === 'course_completed') {
+      summary.completed_at = event.created_at;
+    }
+    const progressCandidate = extractProgressFromPayload(event.payload);
+    if (progressCandidate !== null) {
+      summary.progress_percentage = Math.max(summary.progress_percentage ?? 0, progressCandidate);
+    }
+  }
+
+  return Array.from(journeys.values())
+    .map((summary) => ({
+      user_id: summary.user_id,
+      course_id: summary.course_id,
+      org_id: summary.org_id,
+      started_at: summary.started_at,
+      last_active_at: summary.last_active_at,
+      completed_at: summary.completed_at,
+      progress_percentage: summary.progress_percentage ?? 0,
+      total_events: summary.total_events,
+      sessions_count: summary.sessions.size,
+      event_types: Array.from(summary.eventTypes),
+    }))
+    .sort((a, b) => new Date(b.last_active_at).getTime() - new Date(a.last_active_at).getTime());
+};
+
 app.get('/api/analytics/journeys', async (req, res) => {
   const { user_id, course_id } = req.query;
+  const org_id = (req.query?.org_id || req.query?.orgId || '').toString().trim();
+  const sinceIso = parseIsoTimestamp(req.query?.since || req.query?.since_at);
+  const limit = clampJourneyLimit(req.query?.limit);
 
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
     let data = Array.from(e2eStore.learnerJourneys.values());
@@ -11864,6 +11997,9 @@ app.get('/api/analytics/journeys', async (req, res) => {
     if (course_id) {
       data = data.filter((journey) => journey.course_id === course_id);
     }
+    if (org_id) {
+      data = data.filter((journey) => journey.org_id === org_id);
+    }
     res.json({ data, demo: true });
     return;
   }
@@ -11872,8 +12008,10 @@ app.get('/api/analytics/journeys', async (req, res) => {
 
   try {
     let query = supabase
-      .from('learner_journeys')
-      .select('*');
+      .from('analytics_events')
+      .select('user_id,course_id,org_id,event_type,session_id,created_at,payload')
+      .order('created_at', { ascending: false })
+      .limit(limit);
 
     if (user_id) {
       query = query.eq('user_id', user_id);
@@ -11883,14 +12021,91 @@ app.get('/api/analytics/journeys', async (req, res) => {
       query = query.eq('course_id', course_id);
     }
 
+    if (org_id) {
+      query = query.eq('org_id', org_id);
+    }
+
+    if (sinceIso) {
+      query = query.gte('created_at', sinceIso);
+    }
+
     const { data, error } = await query;
     if (error) throw error;
-    res.json({ data });
+
+    const events = Array.isArray(data) ? data : [];
+    const payload = summarizeEventsAsJourneys(events);
+
+    res.json({
+      data: payload,
+      meta: {
+        scannedEvents: events.length,
+        limit,
+        since: sinceIso,
+        filters: {
+          user_id: user_id || null,
+          course_id: course_id || null,
+          org_id: org_id || null,
+        },
+      },
+    });
   } catch (error) {
-    console.error('Failed to fetch learner journeys:', error);
+    console.error('[analytics.journeys] fetch_failed', {
+      requestId: req.requestId,
+      message: error?.message || error,
+      stack: error?.stack,
+    });
     res.status(500).json({ error: 'Unable to fetch learner journeys' });
   }
 });
+
+if (NODE_ENV !== 'production') {
+  app.get('/api/dev/diagnostics/rls/courses', async (_req, res) => {
+    if (!supabase) {
+      res.status(503).json({ ok: false, error: 'supabase_not_configured' });
+      return;
+    }
+
+    const diagnostics = {
+      table: 'courses',
+      supabaseUrlHost,
+      serviceRoleKeyPresent: Boolean(supabaseServiceRoleKey),
+      rlsEnabled: false,
+      checkedAt: new Date().toISOString(),
+    };
+
+    try {
+      const { data, error } = await supabase
+        .from('pg_policies')
+        .select('schemaname,tablename,policyname,roles,cmd,permissive')
+        .eq('tablename', 'courses');
+      if (error) {
+        diagnostics.policiesError = { message: error.message, code: error.code };
+      } else {
+        diagnostics.policies = data || [];
+        diagnostics.rlsEnabled = Array.isArray(data) && data.length > 0;
+      }
+    } catch (err) {
+      diagnostics.policiesError = { message: err?.message || String(err) };
+    }
+
+    try {
+      const { data, error } = await supabase.from('courses').select('id').limit(1);
+      if (error) {
+        diagnostics.selectProbe = { ok: false, error: { message: error.message, code: error.code } };
+      } else {
+        diagnostics.selectProbe = {
+          ok: true,
+          rowCount: Array.isArray(data) ? data.length : 0,
+          sampleIds: Array.isArray(data) ? data.map((row) => row.id).filter(Boolean) : [],
+        };
+      }
+    } catch (err) {
+      diagnostics.selectProbe = { ok: false, error: { message: err?.message || String(err) } };
+    }
+
+    res.json({ ok: true, diagnostics });
+  });
+}
 
 const distPath = path.resolve(__dirname, '../dist');
 
