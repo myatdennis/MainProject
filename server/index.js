@@ -4528,7 +4528,10 @@ const handleLogin = async (req, res) => {
       });
     }
 
-    const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
+    const normalizedEmail =
+      typeof normalizeEmail === 'function'
+        ? normalizeEmail(email)
+        : String(email ?? '').trim().toLowerCase();
     const { data, error: authError } = await withTimeout(
       supabaseAuthClient.auth.signInWithPassword({
         email: normalizedEmail,
