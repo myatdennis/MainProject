@@ -387,215 +387,62 @@ router.use((req, _res, next) => {
 // ============================================================================
 
 router.post('/login', async (req, res) => {
-  const origin = req.headers.origin || 'unknown';
-  if (process.env.DEBUG_AUTH === 'true') {
-    console.log('[DEBUG_AUTH] Entered /api/auth/login', {
-      method: req.method,
-      url: req.originalUrl,
-      host: req.headers.host,
-      x_forwarded_host: req.headers['x-forwarded-host'],
-      hostname: req.hostname
-    });
-  }
-  try {
-    const { email, password } = req.body;
-    const supabaseUrlHost = (() => {
-      try {
-        const rawUrl = process.env.SUPABASE_URL || '';
-        if (!rawUrl) return null;
-        return new URL(rawUrl).host || null;
-      } catch {
-        return null;
-      }
-    })();
-    const passwordLength = typeof password === 'string' ? password.length : null;
-    const hasLeadingOrTrailingWhitespace =
-      typeof password === 'string' ? password.trim() !== password : null;
-    const containsNewline = typeof password === 'string' ? /\r|\n/.test(password) : null;
-    const contentType = req.headers['content-type'] || null;
-    const originHeader = req.headers?.origin || null;
-    const logDevDiagnostics = (extra = {}) => {
-      if (!devLoginDiagnosticsEnabled) return;
-      console.debug('[AUTH LOGIN][dev-diagnostics]', {
-        email: email || null,
-        passwordLength,
-        hasLeadingOrTrailingWhitespace,
-        containsNewline,
-        contentType,
-        supabaseUrlHost,
-        originHeader,
-        ...extra,
-      });
-    };
-    logDevDiagnostics({ signInWithPasswordAttempted: false, supabaseErrorStatus: null, supabaseErrorCode: null });
-    const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip;
-    if (!email || !password) {
-      logDevDiagnostics({ signInWithPasswordAttempted: false, supabaseErrorStatus: null, supabaseErrorCode: null });
-      const payload = {
-        code: 'MISSING_CREDENTIALS',
-        error: 'missing_credentials',
-        message: 'Email and password are required',
-      };
-      if (devLoginDiagnosticsEnabled) {
-        console.info('[AUTH LOGIN][dev]', {
-          email: email || null,
-          reason: 'missing_credentials',
-        });
-      }
-      return res.status(400).json(payload);
-    }
-    if (process.env.DEBUG_AUTH === 'true') {
-      console.log('[DEBUG_AUTH] login input', { email, ip });
-    }
-    const normalizedEmail = normalizeEmail(email);
-    const diagnostics = devLoginDiagnosticsEnabled
-      ? {
-          email: normalizedEmail,
-          origin,
-          ip,
-          contentType,
-          supabaseUrlHost,
-        }
-      : null;
+  const requestId = req.requestId || req.headers['x-request-id'] || null;
+  const clientIp = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip || null;
 
-    let userRecord = null;
-    if (supabase) {
-      try {
-        const { data: users, error: queryError } = await supabase
-          .from('users')
-          .select('id, role, organization_id, is_active')
-          .eq('email', normalizedEmail)
-          .limit(1);
-        if (queryError) {
-          console.warn('[AUTH LOGIN PROFILE QUERY ERROR]', {
-            email: normalizedEmail,
-            ip,
-            error: queryError.message || queryError,
-            at: 'supabase.from(users).select',
-          });
-        } else if (users && users.length > 0) {
-          userRecord = users[0];
-        }
-      } catch (profileError) {
-        if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Profile lookup error', { profileError });
-        console.error('[AUTH LOGIN PROFILE ERROR]', {
-          email: normalizedEmail,
-          ip,
-          error: profileError instanceof Error ? profileError.message : profileError,
-          at: 'profile lookup',
-        });
-      }
-    }
-    if (diagnostics) {
-      diagnostics.userId = userRecord?.id || null;
-      if (userRecord?.id) {
-        try {
-          const membershipRows = await getUserMemberships(userRecord.id, { logPrefix: '[auth-login]' });
-          const membershipRoles = Array.isArray(membershipRows)
-            ? Array.from(new Set(membershipRows.map((row) => row?.role || row?.organization_role || 'member').filter(Boolean)))
-            : [];
-          diagnostics.membershipCount = Array.isArray(membershipRows) ? membershipRows.length : 0;
-          diagnostics.membershipRoles = membershipRoles;
-        } catch {
-          diagnostics.membershipCount = diagnostics.membershipCount ?? 0;
-          diagnostics.membershipRoles = diagnostics.membershipRoles ?? [];
-        }
-      } else {
-        diagnostics.membershipCount = diagnostics.membershipCount ?? 0;
-        diagnostics.membershipRoles = diagnostics.membershipRoles ?? [];
-      }
-    }
-    if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Attempting Supabase login', { normalizedEmail, origin, ip });
-    logDevDiagnostics({ signInWithPasswordAttempted: true, supabaseErrorStatus: null, supabaseErrorCode: null });
-    if (!supabase || !supabaseAuthClient) {
-      if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Supabase client missing');
-      const configError = buildAuthConfigError();
-      logDevDiagnostics({
-        signInWithPasswordAttempted: false,
-        supabaseErrorStatus: configError?.status ?? null,
-        supabaseErrorCode: configError?.code || null,
+  try {
+    const { email, password } = req.body || {};
+    if (!email || !password) {
+      return res.status(400).json({
+        error: 'missing_credentials',
+        message: 'Email and password are required.',
       });
+    }
+
+    if (!supabase || !supabaseAuthClient) {
+      const configError = buildAuthConfigError();
       return res.status(configError.status).json(configError);
     }
+
+    const normalizedEmail = normalizeEmail(email);
     const { data, error: authError } = await supabaseAuthClient.auth.signInWithPassword({
       email: normalizedEmail,
       password,
     });
+
     if (authError || !data?.user || !data.session) {
-      logDevDiagnostics({
-        signInWithPasswordAttempted: true,
-        supabaseErrorStatus: typeof authError?.status === 'number' ? authError.status : null,
-        supabaseErrorCode: authError?.code || authError?.name || null,
-      });
-      const detailMessage = authError?.message || 'unknown error';
-      // Safe log for failed login (mask password)
-      console.warn('[AUTH LOGIN FAILURE]', {
+      console.warn('[AUTH LOGIN] invalid credentials', {
+        requestId,
         email: normalizedEmail,
-        ip,
-        error: detailMessage,
-        at: 'supabaseAuthClient.auth.signInWithPassword',
+        ip: clientIp,
+        error: authError?.message || authError || null,
       });
-      if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Supabase auth failed', { detailMessage });
-      return sendInvalidCredentials();
-    }
-    if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Supabase auth success', { userId: data.user.id });
-    logDevDiagnostics({ signInWithPasswordAttempted: true, supabaseErrorStatus: null, supabaseErrorCode: null });
-    if (userRecord && userRecord.is_active === false) {
-      if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Profile marked inactive');
-      console.warn('[AUTH LOGIN INACTIVE]', {
-        email: normalizedEmail,
-        ip,
-        at: 'userRecord.is_active === false',
+      return res.status(401).json({
+        error: 'invalid_credentials',
+        message: 'The email or password you entered is incorrect.',
       });
-      const payload = {
-        code: 'ACCOUNT_DISABLED',
-        error: 'account_disabled',
-        message: 'Your account has been disabled',
-      };
-      emitDevLoginLog('invalid_password');
-      return res.status(403).json(payload);
     }
-    const supabaseUser = data.user;
-    const membershipRows = await getUserMemberships(supabaseUser.id, { logPrefix: '[auth-login]' });
-    if (diagnostics) {
-      diagnostics.userId = supabaseUser.id;
-      diagnostics.membershipCount = Array.isArray(membershipRows) ? membershipRows.length : 0;
-      diagnostics.membershipRoles = Array.isArray(membershipRows)
-        ? Array.from(new Set(membershipRows.map((row) => row?.role || row?.organization_role || 'member').filter(Boolean)))
-        : [];
-    }
-    const userPayload = buildUserPayloadFromSupabase(supabaseUser, membershipRows);
+
+    const membershipRows = await getUserMemberships(data.user.id, { logPrefix: '[auth-login]' });
+    const userPayload = buildUserPayloadFromSupabase(data.user, membershipRows);
     const tokens = buildTokenResponseFromSession(data.session);
 
-    if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Tokens issued', { userId: userPayload.userId });
-
-    return res.json({
+    return res.status(200).json({
       user: userPayload,
       memberships: userPayload.memberships,
       organizationIds: userPayload.organizationIds,
       ...tokens,
     });
   } catch (error) {
-    // Mask sensitive info in logs
-    const safeError = error instanceof Error ? error.message : error;
-    const safeEmail = req.body?.email ? String(req.body.email).replace(/(.{2}).+(@.*)/, '$1***$2') : undefined;
-    console.error('[AUTH LOGIN ERROR]', {
-      error: safeError,
-      email: safeEmail,
-      ip: req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip,
-      at: 'catch',
+    console.error('[AUTH LOGIN] unexpected error', {
+      requestId,
+      ip: clientIp,
+      error: error instanceof Error ? error.message : error,
     });
-    const payload = {
-      code: 'LOGIN_FAILED',
+    return res.status(500).json({
       error: 'login_failed',
-      message: 'An unexpected error occurred during login. Please try again.',
-    };
-    logDevDiagnostics({
-      signInWithPasswordAttempted: true,
-      supabaseErrorStatus: typeof error?.status === 'number' ? error.status : null,
-      supabaseErrorCode: error instanceof Error ? error.name : null,
+      message: 'Unable to complete login. Please try again.',
     });
-    return res.status(500).json(payload);
   }
 });
 
