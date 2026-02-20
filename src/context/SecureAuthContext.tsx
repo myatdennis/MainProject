@@ -80,8 +80,143 @@ interface SessionResponsePayload {
   expiresAt?: number | null;
   refreshExpiresAt?: number | null;
   activeOrgId?: string | null;
+  role?: string | null;
+  platformRole?: string | null;
+  isPlatformAdmin?: boolean;
   mfaRequired?: boolean;
 }
+
+type SupabaseSessionLike = {
+  access_token?: string;
+  refresh_token?: string;
+  expires_at?: number | null;
+  refresh_expires_at?: number | null;
+  accessToken?: string;
+  refreshToken?: string;
+  expiresAt?: number | null;
+  refreshExpiresAt?: number | null;
+  user?: Record<string, any> | null;
+  role?: string | null;
+  platform_role?: string | null;
+  platformRole?: string | null;
+  isPlatformAdmin?: boolean;
+};
+
+const coerceString = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed || null;
+};
+
+const coerceNumber = (value: unknown): number | null => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+};
+
+const isSupabaseSessionLike = (value: unknown): value is SupabaseSessionLike => {
+  if (!value || typeof value !== 'object') return false;
+  return 'access_token' in value || 'accessToken' in value || 'refresh_token' in value || 'refreshToken' in value;
+};
+
+const normalizeSessionResponsePayload = (payload: unknown): SessionResponsePayload | null => {
+  if (!payload || typeof payload !== 'object') {
+    return null;
+  }
+
+  const source = payload as Record<string, any>;
+  const sessionContainer = source.session && typeof source.session === 'object' ? source.session : null;
+  const supabaseSession: SupabaseSessionLike | null = isSupabaseSessionLike(sessionContainer)
+    ? (sessionContainer as SupabaseSessionLike)
+    : isSupabaseSessionLike(source.session?.session)
+    ? (source.session.session as SupabaseSessionLike)
+    : isSupabaseSessionLike(source)
+    ? (source as SupabaseSessionLike)
+    : null;
+
+  const rawUser = (sessionContainer && sessionContainer.user) || source.user || supabaseSession?.user || null;
+  if (!rawUser) {
+    return null;
+  }
+
+  const derivedRole =
+    source.role ?? sessionContainer?.role ?? rawUser.role ?? rawUser.platformRole ?? rawUser.platform_role ?? null;
+  const derivedPlatformRole =
+    source.platformRole ??
+    sessionContainer?.platformRole ??
+    sessionContainer?.platform_role ??
+    rawUser.platformRole ??
+    rawUser.platform_role ??
+    null;
+
+  const normalizedUser = { ...rawUser };
+  if (derivedRole && !normalizedUser.role) {
+    normalizedUser.role = derivedRole;
+  }
+  if (derivedPlatformRole && !normalizedUser.platformRole) {
+    normalizedUser.platformRole = derivedPlatformRole;
+  }
+
+  const accessToken =
+    source.accessToken ??
+    sessionContainer?.accessToken ??
+    sessionContainer?.access_token ??
+    supabaseSession?.access_token ??
+    supabaseSession?.accessToken ??
+    null;
+  const refreshToken =
+    source.refreshToken ??
+    sessionContainer?.refreshToken ??
+    sessionContainer?.refresh_token ??
+    supabaseSession?.refresh_token ??
+    supabaseSession?.refreshToken ??
+    null;
+
+  const expiresAt =
+    source.expiresAt ??
+    sessionContainer?.expiresAt ??
+    sessionContainer?.expires_at ??
+    coerceNumber(supabaseSession?.expires_at ?? supabaseSession?.expiresAt);
+  const refreshExpiresAt =
+    source.refreshExpiresAt ??
+    sessionContainer?.refreshExpiresAt ??
+    sessionContainer?.refresh_expires_at ??
+    coerceNumber(supabaseSession?.refresh_expires_at ?? supabaseSession?.refreshExpiresAt);
+
+  const derivedIsPlatformAdminSource =
+    source.isPlatformAdmin ?? sessionContainer?.isPlatformAdmin ?? supabaseSession?.isPlatformAdmin ?? normalizedUser.isPlatformAdmin;
+  const derivedIsPlatformAdmin =
+    typeof derivedIsPlatformAdminSource === 'boolean'
+      ? derivedIsPlatformAdminSource
+      : Boolean(
+          (coerceString(derivedRole)?.toLowerCase() === 'admin') ||
+            coerceString(derivedPlatformRole) === 'platform_admin',
+        );
+
+  if (derivedIsPlatformAdmin) {
+    normalizedUser.isPlatformAdmin = true;
+  }
+
+  const normalized: SessionResponsePayload = {
+    user: normalizedUser,
+    memberships: source.memberships ?? sessionContainer?.memberships ?? undefined,
+    organizationIds: source.organizationIds ?? sessionContainer?.organizationIds ?? undefined,
+    accessToken: accessToken ?? null,
+    refreshToken: refreshToken ?? null,
+    expiresAt: expiresAt ?? null,
+    refreshExpiresAt: refreshExpiresAt ?? null,
+    activeOrgId: source.activeOrgId ?? sessionContainer?.activeOrgId ?? normalizedUser.organizationId ?? null,
+    role: derivedRole ?? normalizedUser.role ?? null,
+    platformRole: derivedPlatformRole ?? normalizedUser.platformRole ?? null,
+    isPlatformAdmin: derivedIsPlatformAdmin,
+    mfaRequired: source.mfaRequired ?? sessionContainer?.mfaRequired ?? false,
+  };
+
+  return normalized;
+};
 
 const dedupeStrings = (values: Array<string | null | undefined>): string[] => {
   const seen = new Set<string>();
@@ -511,7 +646,8 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       return null;
     }
     try {
-      return (await response.json()) as SessionResponsePayload;
+      const parsed = await response.json();
+      return normalizeSessionResponsePayload(parsed);
     } catch {
       return null;
     }
@@ -534,8 +670,12 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
   const isNoTokenUnauthorized = (status: number, payload: unknown) => {
     if (status !== 401) return false;
-    const message = extractMessage(payload)?.toLowerCase() ?? '';
-    return message.includes('no token provided');
+    const normalizedPayload = normalizeSessionResponsePayload(payload);
+    if (normalizedPayload === null) {
+      const message = extractMessage(payload)?.toLowerCase() ?? '';
+      return message.includes('no token provided');
+    }
+    return false;
   };
   const isServerOrNetworkErrorStatus = (status?: number | null) => {
     if (status === 0) return true;
@@ -1261,7 +1401,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         };
       }
 
-      const payload = await requestJsonWithClock<SessionResponsePayload>('/api/auth/login', {
+      const rawPayload = await requestJsonWithClock<unknown>('/api/auth/login', {
         method: 'POST',
         allowAnonymous: true,
         headers: buildSessionAuditHeaders(),
@@ -1273,7 +1413,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       });
 
       // If MFA required, backend should respond with mfaRequired
-      if (payload?.mfaRequired) {
+      if ((rawPayload as { mfaRequired?: boolean } | null)?.mfaRequired) {
         return {
           success: false,
           mfaRequired: true,
@@ -1282,15 +1422,24 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         };
       }
 
-      applySessionPayload(payload ?? null, {
+      const normalizedPayload = normalizeSessionResponsePayload(rawPayload);
+      if (!normalizedPayload) {
+        return {
+          success: false,
+          error: 'Authentication failed. Please try again.',
+          errorType: 'unknown_error',
+        };
+      }
+
+      applySessionPayload(normalizedPayload, {
         surface: type,
         persistTokens: true,
         reason: `${type}_login_success`,
       });
       setAuthStatus('authenticated');
 
-      if (type === 'admin' && payload?.user) {
-        logAuditAction('admin_login', { email: payload.user.email, id: payload.user.id });
+      if (type === 'admin' && normalizedPayload.user) {
+        logAuditAction('admin_login', { email: normalizedPayload.user.email, id: normalizedPayload.user.id });
       }
 
       logAuthSessionState(`${type}-login_success`, getUserSession());
@@ -1377,13 +1526,18 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         console.log('REGISTER payload', { ...payload, password: payload?.password ? '***' : payload?.password });
       }
 
-      const responsePayload = await requestJsonWithClock<SessionResponsePayload>('/api/auth/register', {
+      const rawResponsePayload = await requestJsonWithClock<unknown>('/api/auth/register', {
         method: 'POST',
         allowAnonymous: true,
         headers: buildSessionAuditHeaders(),
         body: payload,
       });
-      applySessionPayload(responsePayload ?? null, { surface: 'lms', persistTokens: true, reason: 'register_success' });
+      const normalizedResponse = normalizeSessionResponsePayload(rawResponsePayload);
+      applySessionPayload(normalizedResponse ?? null, {
+        surface: 'lms',
+        persistTokens: true,
+        reason: 'register_success',
+      });
       setAuthStatus('authenticated');
 
       return { success: true };

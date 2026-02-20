@@ -704,10 +704,8 @@ router.post('/logout', async (req, res) => {
 router.get('/session', async (req, res) => {
   const requestId = req.requestId || req.headers['x-request-id'] || req.headers['x-amzn-trace-id'] || null;
   const accessToken = getBearerToken(req);
-  const mode = accessToken ? 'bearer' : 'none';
   const logBase = {
     event: 'auth_session',
-    mode,
     requestId,
     hasBearer: Boolean(accessToken),
     origin: req.headers?.origin || null,
@@ -717,7 +715,7 @@ router.get('/session', async (req, res) => {
     const level = reason === 'exception' ? 'error' : 'info';
     const logFn = level === 'error' ? console.error : console.info;
     logFn('[auth/session] ' + reason, { ...logBase, ...extra });
-    return res.status(200).json({ session: null });
+    return res.status(200).json({ ok: true, session: null });
   };
 
   try {
@@ -739,31 +737,69 @@ router.get('/session', async (req, res) => {
       return respondWithNullSession('no_user');
     }
 
-    const responsePayload = {
-      user,
-      memberships: Array.isArray(user.memberships) ? user.memberships : [],
-      organizationIds: Array.isArray(user.organizationIds) ? user.organizationIds : [],
-      activeOrgId: context.activeOrgId || user.organizationId || null,
-      role: user.role || null,
-      authenticated: true,
-      mode,
-    };
+    let role = null;
+    let platformRole = null;
+
+    if (supabase && user?.id) {
+      try {
+        const { data: profileRow, error: profileError } = await supabase
+          .from('user_profiles')
+          .select('role, platform_role')
+          .eq('user_id', user.id)
+          .maybeSingle();
+
+        if (!profileError && profileRow) {
+          role = profileRow.role ?? null;
+          platformRole = profileRow.platform_role ?? null;
+        } else {
+          const { data: userRow, error: userLookupError } = await supabase
+            .from('users')
+            .select('role, platform_role')
+            .eq('id', user.id)
+            .maybeSingle();
+          if (!userLookupError && userRow) {
+            role = userRow.role ?? role;
+            platformRole = userRow.platform_role ?? platformRole;
+          }
+        }
+      } catch (lookupException) {
+        console.warn('[auth/session] profile lookup failed', {
+          ...logBase,
+          outcome: 'profile_lookup_failed',
+          error: lookupException?.message || lookupException,
+        });
+      }
+    }
+
+    role = role ?? user.role ?? null;
+    platformRole = platformRole ?? user.platformRole ?? user.platform_role ?? null;
+    const isPlatformAdmin =
+      (typeof role === 'string' && role.toLowerCase() === 'admin') ||
+      (typeof platformRole === 'string' && platformRole === 'platform_admin');
 
     console.info('[auth/session] success', {
       ...logBase,
       outcome: 'ok',
       userId: user.id || null,
-      orgCount: responsePayload.organizationIds.length,
+      isPlatformAdmin,
     });
 
-    return res.json(responsePayload);
+    return res.status(200).json({
+      ok: true,
+      session: {
+        user,
+        role,
+        platformRole,
+        isPlatformAdmin,
+      },
+    });
   } catch (error) {
     console.error('[auth/session] failure', {
       ...logBase,
       outcome: 'exception',
       error: error?.message || error,
     });
-    return res.status(200).json({ session: null });
+    return res.status(200).json({ ok: true, session: null });
   }
 });
 

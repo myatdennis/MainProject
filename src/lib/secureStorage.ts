@@ -290,6 +290,20 @@ const persistTokenValue = (key: TokenCacheKey, value: string | null) => {
   const secureKey = secureTokenKeyMap[key];
   if (!secureKey) return;
 
+  const persistLocal = () => {
+    const local = getBrowserLocalStorage();
+    if (!local) return;
+    try {
+      if (value && value.trim()) {
+        local.setItem(key, value);
+      } else {
+        local.removeItem(key);
+      }
+    } catch (error) {
+      warn('[secureStorage] Failed to persist auth token to localStorage.', error);
+    }
+  };
+
   try {
     if (value) {
       secureSet(secureKey, value);
@@ -302,6 +316,7 @@ const persistTokenValue = (key: TokenCacheKey, value: string | null) => {
         console.debug('[secureStorage] persisted token', { key: secureKey, action: 'cleared' });
       }
     }
+    persistLocal();
   } catch (error) {
     warn('[secureStorage] Failed to persist auth token to secure storage.', error);
   }
@@ -320,8 +335,27 @@ const readTokenValue = (key: TokenCacheKey): string | null => {
 
   const stored = secureGet<string>(secureKey);
   const normalized = stored && stored.trim().length > 0 ? stored : null;
-  tokenCache[key] = normalized ?? null;
-  return normalized;
+  if (normalized) {
+    tokenCache[key] = normalized;
+    return normalized;
+  }
+
+  const local = getBrowserLocalStorage();
+  if (local) {
+    try {
+      const localValue = local.getItem(key);
+      if (localValue && localValue.trim().length > 0) {
+        tokenCache[key] = localValue;
+        secureSet(secureKey, localValue);
+        return localValue;
+      }
+    } catch (error) {
+      warn('[secureStorage] Failed to read token from localStorage.', error);
+    }
+  }
+
+  tokenCache[key] = null;
+  return null;
 };
 
 type TokenTelemetryEvent =

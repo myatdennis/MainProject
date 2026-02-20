@@ -102,15 +102,15 @@ export const buildAuthHeaders = async (): Promise<AuthHeaders> => {
         const preferredOrgId =
           userSession.activeOrgId || userSession.organizationId || getActiveOrgPreference();
         if (preferredOrgId) headers['X-Org-Id'] = String(preferredOrgId);
-
-        const token = getAccessToken();
-        if (token && !headers.Authorization) {
-          headers.Authorization = `Bearer ${token}`;
-          authSource = 'secureStorage';
-        }
       } else {
         const fallbackOrg = getActiveOrgPreference();
         if (fallbackOrg) headers['X-Org-Id'] = String(fallbackOrg);
+      }
+
+      const token = getAccessToken();
+      if (token && !headers.Authorization) {
+        headers.Authorization = `Bearer ${token}`;
+        authSource = 'secureStorage';
       }
     } catch (err) {
       console.warn('[requestContext] Failed to read secure storage:', err);

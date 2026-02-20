@@ -245,6 +245,15 @@ const applySessionBootstrap = (payload: SessionBootstrapPayload | null, reason: 
 };
 
 const resolveAccessToken = async (): Promise<AccessTokenResult> => {
+  try {
+    const stored = getStoredAccessToken();
+    if (stored) {
+      return { token: stored, source: 'secureStorage' };
+    }
+  } catch (error) {
+    console.warn('[apiClient] Failed to read stored access token', error);
+  }
+
   if (hasSupabaseConfig()) {
     try {
       const supabase = await getSupabase();
@@ -264,15 +273,6 @@ const resolveAccessToken = async (): Promise<AccessTokenResult> => {
         console.debug('[apiClient] Supabase token lookup failed', error);
       }
     }
-  }
-
-  try {
-    const stored = getStoredAccessToken();
-    if (stored) {
-      return { token: stored, source: 'secureStorage' };
-    }
-  } catch (error) {
-    console.warn('[apiClient] Failed to read stored access token', error);
   }
 
   return { token: null, source: null };
