@@ -381,6 +381,20 @@ app.get('/api/health/db', async (_req, res) => {
   }
 });
 
+// ✅ PUBLIC runtime status (no auth)
+// This endpoint is used by the frontend to decide if the API is reachable.
+// It should NOT require a Bearer token.
+app.get('/api/runtime-status', (_req, res) => {
+  res.json({
+    ok: true,
+    env: process.env.NODE_ENV || process.env.ENV || 'production',
+    timestamp: new Date().toISOString(),
+    version: process.env.APP_VERSION || process.env.VERSION || '0.0.0',
+    apiHealthy: true,
+    supabaseConfigured: Boolean(process.env.SUPABASE_URL),
+  });
+});
+
 const OFFLINE_QUEUE_STATE_FILE = process.env.OFFLINE_QUEUE_STATE_FILE
   ? path.resolve(process.env.OFFLINE_QUEUE_STATE_FILE)
   : path.join(__dirname, 'diagnostics', 'offline-queue.json');
