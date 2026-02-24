@@ -459,32 +459,6 @@ const AdminCourseBuilder = () => {
     lessonAutosaveState.pending ||
     lessonAutosaveState.status === 'saving' ||
     lessonAutosaveState.status === 'error';
-  const publishDisabled =
-    !hasCourseModules || !effectiveValidationSummary.isValid || saveStatus === 'saving' || lessonAutosaveBlocking;
-  const publishIssueCount = effectiveValidationSummary.issues.length;
-  const publishButtonTitle = !hasCourseModules
-    ? 'Add modules and lessons before publishing'
-    : !effectiveValidationSummary.isValid
-    ? 'Resolve validation issues before publishing'
-    : saveStatus === 'saving'
-    ? 'Please wait for the current operation to finish'
-    : lessonAutosaveBlocking
-    ? lessonAutosaveState.status === 'error'
-      ? 'Resolve lesson autosave errors before publishing'
-      : 'Lesson autosave in progress. Publishing will resume once it completes.'
-    : '';
-  const publishDevHint =
-    import.meta.env.DEV && !effectiveValidationSummary.isValid && publishIssueCount > 0
-      ? `Fix ${publishIssueCount} ${publishIssueCount === 1 ? 'issue' : 'issues'}`
-      : null;
-  const saveButtonDisabled = saveStatus === 'saving' || lessonAutosaveBlocking;
-  const saveButtonTitle = saveButtonDisabled
-    ? lessonAutosaveBlocking
-      ? lessonAutosaveState.status === 'error'
-        ? 'Resolve lesson autosave errors before saving.'
-        : 'Lesson autosave in progress. Please wait.'
-      : 'Please wait for the current operation to finish'
-    : '';
   const firstNavigableIssue = useMemo(
     () => effectiveValidationSummary.issues.find((issue) => issue.moduleId || issue.lessonId) ?? null,
     [effectiveValidationSummary.issues],
@@ -1273,6 +1247,33 @@ const AdminCourseBuilder = () => {
         return null;
     }
   }, [confirmDialog, course.lastUpdated, course.title, lastSaveTime]);
+
+  const publishIssueCount = effectiveValidationSummary.issues.length;
+  const publishDisabled =
+    !hasCourseModules || !effectiveValidationSummary.isValid || saveStatus === 'saving' || lessonAutosaveBlocking;
+  const publishButtonTitle = !hasCourseModules
+    ? 'Add modules and lessons before publishing'
+    : !effectiveValidationSummary.isValid
+    ? 'Resolve validation issues before publishing'
+    : saveStatus === 'saving'
+    ? 'Please wait for the current operation to finish'
+    : lessonAutosaveBlocking
+    ? lessonAutosaveState.status === 'error'
+      ? 'Resolve lesson autosave errors before publishing'
+      : 'Lesson autosave in progress. Publishing will resume once it completes.'
+    : '';
+  const publishDevHint =
+    import.meta.env.DEV && !effectiveValidationSummary.isValid && publishIssueCount > 0
+      ? `Fix ${publishIssueCount} ${publishIssueCount === 1 ? 'issue' : 'issues'}`
+      : null;
+  const saveButtonDisabled = saveStatus === 'saving' || lessonAutosaveBlocking;
+  const saveButtonTitle = saveButtonDisabled
+    ? lessonAutosaveBlocking
+      ? lessonAutosaveState.status === 'error'
+        ? 'Resolve lesson autosave errors before saving.'
+        : 'Lesson autosave in progress. Please wait.'
+      : 'Please wait for the current operation to finish'
+    : '';
 
   useEffect(() => {
     if (!confirmDialog) return;
