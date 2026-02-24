@@ -31,13 +31,6 @@ export default async () => {
     console.info(`[vite] Attempting to start dev server on port ${requestedPort} (strictPort: false)`);
   }
 
-  const netlifyContext = (process.env.CONTEXT || '').toLowerCase();
-  const enablePreviewSourceMaps =
-    netlifyContext === 'deploy-preview' ||
-    netlifyContext === 'branch-deploy' ||
-    process.env.BUILD_SOURCEMAP === 'true' ||
-    process.env.VITE_SOURCEMAP === 'true';
-
   return defineConfig({
     define: {
       ...(process.env.NODE_ENV === 'development'
@@ -158,6 +151,10 @@ export default async () => {
       exclude: ['lucide-react'],
     },
     build: {
+      sourcemap: true,
+      minify: false, // TEMP: keep bundles readable while debugging
+      target: 'es2015',
+      chunkSizeWarningLimit: 1000,
       rollupOptions: {
         output: {
           entryFileNames: 'assets/[name].[hash].js',
@@ -232,10 +229,6 @@ export default async () => {
           },
         },
       },
-      target: 'es2015',
-      minify: 'esbuild',
-      sourcemap: enablePreviewSourceMaps,
-      chunkSizeWarningLimit: 1000,
     },
   });
 };

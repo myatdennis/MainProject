@@ -2767,6 +2767,120 @@ const logAdminCoursesError = (req, err, label) => {
   }
 };
 
+const TABLE_VERIFICATION_TTL_MS = 5 * 60 * 1000;
+const SCHEMA_REFRESH_DEBOUNCE_MS = 5000;
+const tableVerificationCache = new Map();
+let lastSchemaRefreshAttempt = 0;
+
+const isSchemaMismatchError = (error) => {
+  if (!error) return false;
+  if (isMissingRelationError(error) || isMissingColumnError(error)) return true;
+  const message = String(error?.message || '').toLowerCase();
+  return message.includes('cached schema') || message.includes('schema cache');
+};
+
+const refreshSupabaseSchemaCache = async (label) => {
+  if (!supabase) return false;
+  const now = Date.now();
+  if (now - lastSchemaRefreshAttempt < SCHEMA_REFRESH_DEBOUNCE_MS) {
+    return false;
+  }
+  lastSchemaRefreshAttempt = now;
+  try {
+    const { error } = await supabase.rpc('refresh_schema');
+    if (error) throw error;
+    logger.info('supabase_schema_cache_refreshed', { label });
+    return true;
+  } catch (error) {
+    logger.warn('supabase_schema_cache_refresh_failed', {
+      label,
+      message: error?.message ?? String(error),
+      code: error?.code ?? null,
+    });
+    return false;
+  }
+};
+
+const executeWithSchemaRetry = async (label, operation) => {
+  let attempt = 0;
+  let lastError = null;
+  // Attempt twice: initial + one retry after schema refresh
+  while (attempt < 2) {
+    try {
+      return await operation();
+    } catch (error) {
+      lastError = error;
+      if (!isSchemaMismatchError(error)) {
+        throw error;
+      }
+      logger.warn('supabase_schema_retry', {
+        label,
+        attempt,
+        code: error?.code ?? null,
+        message: error?.message ?? null,
+      });
+      const refreshed = await refreshSupabaseSchemaCache(label);
+      if (!refreshed) {
+        break;
+      }
+    }
+    attempt += 1;
+  }
+  throw lastError;
+};
+
+const runSupabaseQueryWithRetry = async (label, buildQuery) => {
+  return executeWithSchemaRetry(label, async () => {
+    const result = await buildQuery();
+    if (result?.error) throw result.error;
+    return result;
+  });
+};
+
+const ensureTablesReady = async (label, definitions = []) => {
+  if (!supabase) return { ok: true };
+  for (const definition of definitions) {
+    const table = definition.table;
+    if (!table) continue;
+    const columns = Array.isArray(definition.columns) ? definition.columns : [];
+    const cacheKey = `${table}:${columns.slice().sort().join(',')}`;
+    const lastCheck = tableVerificationCache.get(cacheKey);
+    if (lastCheck && Date.now() - lastCheck < TABLE_VERIFICATION_TTL_MS) {
+      continue;
+    }
+    try {
+      await executeWithSchemaRetry(`${label}.${table}.verify`, async () => {
+        const selectList = columns.length ? columns.join(',') : 'id';
+        const result = await supabase.from(table).select(selectList, { head: true }).limit(1);
+        if (result.error) throw result.error;
+      });
+      tableVerificationCache.set(cacheKey, Date.now());
+    } catch (error) {
+      if (isSchemaMismatchError(error)) {
+        logger.error('supabase_table_verification_failed', {
+          label,
+          table,
+          columns,
+          code: error?.code ?? null,
+          message: error?.message ?? null,
+        });
+        return { ok: false, table, error };
+      }
+      throw error;
+    }
+  }
+  return { ok: true };
+};
+
+const respondSchemaUnavailable = (res, label, status) => {
+  res.status(503).json({
+    error: 'schema_unavailable',
+    message: `Required database table "${status.table}" is unavailable for ${label}.`,
+    table: status.table,
+    label,
+  });
+};
+
 
 const ensureSupabase = (res) => {
   if (!supabase) {
@@ -5857,6 +5971,12 @@ app.put('/api/admin/courses/:id', async (req, res) => {
 });
 
 // Batch import endpoint (best-effort transactional behavior in E2E/DEV fallback)
+const COURSE_IMPORT_TABLES = [
+  { table: 'courses', columns: ['id', 'slug', 'organization_id'] },
+  { table: 'modules', columns: ['id', 'course_id'] },
+  { table: 'lessons', columns: ['id', 'module_id'] },
+];
+
 app.post('/api/admin/courses/import', async (req, res) => {
   normalizeLegacyOrgInput(req.body, { surface: 'admin.courses.import', requestId: req.requestId });
   const items = Array.isArray(req.body?.items) ? req.body.items : [];
@@ -5950,14 +6070,18 @@ app.post('/api/admin/courses/import', async (req, res) => {
 
   // Supabase-backed path: sequential upsert (no transaction here)
   if (!ensureSupabase(res)) return;
+  const schemaStatus = await ensureTablesReady('admin.courses.import', COURSE_IMPORT_TABLES);
+  if (!schemaStatus.ok) {
+    respondSchemaUnavailable(res, 'admin.courses.import', schemaStatus);
+    return;
+  }
   try {
     const results = [];
     for (const payload of items) {
       const { course, modules = [] } = payload || {};
       if (!course?.title) throw new Error('Course title is required');
-      const upsertRes = await supabase
-        .from('courses')
-        .upsert({
+      const upsertRes = await runSupabaseQueryWithRetry('admin.courses.import.upsert_course', () =>
+        supabase.from('courses').upsert({
           id: course.id ?? undefined,
           slug: course.slug ?? undefined,
           title: course.title,
@@ -5966,60 +6090,50 @@ app.post('/api/admin/courses/import', async (req, res) => {
           version: course.version ?? 1,
           organization_id: course.organizationId ?? course.org_id ?? null,
           meta_json: { ...(course.meta ?? {}), ...(course.external_id ? { external_id: course.external_id } : {}) },
-        })
-        .select('*')
-        .single();
-      if (upsertRes.error) throw upsertRes.error;
+        }).select('*').single(),
+      );
       const courseRow = upsertRes.data;
       // naive: clear and reinsert modules/lessons for this course
-      const existingModulesRes = await supabase
-        .from('modules')
-        .select('id')
-        .eq('course_id', courseRow.id);
-      if (existingModulesRes.error) throw existingModulesRes.error;
+      const existingModulesRes = await runSupabaseQueryWithRetry('admin.courses.import.fetch_modules', () =>
+        supabase.from('modules').select('id').eq('course_id', courseRow.id),
+      );
       const existingModuleIds = (existingModulesRes.data || []).map((row) => row.id);
 
       if (existingModuleIds.length > 0) {
-        const deleteLessonsRes = await supabase
-          .from('lessons')
-          .delete()
-          .in('module_id', existingModuleIds);
-        if (deleteLessonsRes.error) throw deleteLessonsRes.error;
+        await runSupabaseQueryWithRetry('admin.courses.import.delete_lessons', () =>
+          supabase.from('lessons').delete().in('module_id', existingModuleIds),
+        );
       }
 
-      const deleteModulesRes = await supabase
-        .from('modules')
-        .delete()
-        .eq('course_id', courseRow.id);
-      if (deleteModulesRes.error) throw deleteModulesRes.error;
+      await runSupabaseQueryWithRetry('admin.courses.import.delete_modules', () =>
+        supabase.from('modules').delete().eq('course_id', courseRow.id),
+      );
 
       for (const [moduleIndex, module] of (modules || []).entries()) {
-        const modIns = await supabase
-          .from('modules')
-          .insert({
+        const modIns = await runSupabaseQueryWithRetry('admin.courses.import.insert_module', () =>
+          supabase.from('modules').insert({
             id: module.id ?? undefined,
             course_id: courseRow.id,
             order_index: module.order_index ?? moduleIndex,
             title: module.title,
             description: module.description ?? null,
-          })
-          .select('*')
-          .single();
-        if (modIns.error) throw modIns.error;
+          }).select('*').single(),
+        );
         const modRow = modIns.data;
         for (const [lessonIndex, lesson] of (module.lessons || []).entries()) {
-          const lesIns = await supabase.from('lessons').insert({
-            id: lesson.id ?? undefined,
-            module_id: modRow.id,
-            order_index: lesson.order_index ?? lessonIndex,
-            type: lesson.type,
-            title: lesson.title,
-            description: lesson.description ?? null,
-            duration_s: lesson.duration_s ?? null,
-            content_json: lesson.content_json ?? lesson.content ?? {},
-            completion_rule_json: lesson.completion_rule_json ?? lesson.completionRule ?? null,
-          });
-          if (lesIns.error) throw lesIns.error;
+          await runSupabaseQueryWithRetry('admin.courses.import.insert_lesson', () =>
+            supabase.from('lessons').insert({
+              id: lesson.id ?? undefined,
+              module_id: modRow.id,
+              order_index: lesson.order_index ?? lessonIndex,
+              type: lesson.type,
+              title: lesson.title,
+              description: lesson.description ?? null,
+              duration_s: lesson.duration_s ?? null,
+              content_json: lesson.content_json ?? lesson.content ?? {},
+              completion_rule_json: lesson.completion_rule_json ?? lesson.completionRule ?? null,
+            }),
+          );
         }
       }
       results.push({ id: courseRow.id, slug: courseRow.slug, title: courseRow.title });
@@ -8681,9 +8795,26 @@ app.get('/api/client/certificates', async (req, res) => {
 });
 
 // Organization management
+const ADMIN_ORG_TABLES = [
+  { table: 'organizations', columns: ['id', 'name', 'status', 'subscription', 'created_at'] },
+  { table: 'organization_memberships', columns: ['org_id', 'user_id', 'role', 'status'] },
+  { table: 'organization_profiles', columns: ['org_id', 'name'] },
+  { table: 'organization_branding', columns: ['org_id'] },
+];
+
+const ensureAdminOrgSchemaOrRespond = async (res, label) => {
+  const status = await ensureTablesReady(label, ADMIN_ORG_TABLES);
+  if (!status.ok) {
+    respondSchemaUnavailable(res, label, status);
+    return false;
+  }
+  return true;
+};
+
 app.get('/api/admin/organizations', async (req, res) => {
   if (!ensureSupabase(res)) return;
   if (!(await requireAdminAccess(req, res))) return;
+  if (!(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.list'))) return;
 
   const context = requireUserContext(req, res);
   if (!context) return;
@@ -8730,21 +8861,19 @@ app.get('/api/admin/organizations', async (req, res) => {
   const sort = allowedSortFields.has(String(req.query.sort)) ? String(req.query.sort) : 'created_at';
   const ascending = String(req.query.direction).toLowerCase() === 'asc';
 
-  try {
+  const buildOrgQuery = () => {
     let query = supabase
       .from('organizations')
       .select(
         'id,name,slug,type,description,logo,contact_person,contact_email,contact_phone,subscription,status,total_learners,active_learners,completion_rate,modules,timezone,onboarding_status,created_at,updated_at',
-        { count: 'exact' }
+        { count: 'exact' },
       )
       .order(sort, { ascending })
       .range(from, to);
 
     if (search) {
       const term = sanitizeIlike(search);
-      query = query.or(
-        `name.ilike.%${term}%,contact_person.ilike.%${term}%,contact_email.ilike.%${term}%`
-      );
+      query = query.or(`name.ilike.%${term}%,contact_person.ilike.%${term}%,contact_email.ilike.%${term}%`);
     }
 
     if (statuses.length) {
@@ -8760,9 +8889,11 @@ app.get('/api/admin/organizations', async (req, res) => {
     } else if (!isPlatformAdmin) {
       query = query.in('id', adminOrgIds);
     }
+    return query;
+  };
 
-    const { data, error, count } = await query;
-    if (error) throw error;
+  try {
+    const { data, count } = await runSupabaseQueryWithRetry('admin.organizations.list', () => buildOrgQuery());
 
     let progressMap = {};
     if (includeProgress && Array.isArray(data) && data.length > 0) {
@@ -8772,14 +8903,12 @@ app.get('/api/admin/organizations', async (req, res) => {
         const rows = await withCache(
           cacheKey,
           async () => {
-            const { data: progressData, error: progressError } = await supabase
-              .from('org_onboarding_progress_vw')
-              .select('*')
-              .in('org_id', ids);
-            if (progressError) throw progressError;
-            return progressData || [];
+            const result = await runSupabaseQueryWithRetry('admin.organizations.progress', () =>
+              supabase.from('org_onboarding_progress_vw').select('*').in('org_id', ids),
+            );
+            return result.data || [];
           },
-          { ttlSeconds: 60 }
+          { ttlSeconds: 60 },
         );
         progressMap = (rows || []).reduce((acc, row) => {
           acc[row.org_id] = row;
@@ -8807,6 +8936,7 @@ app.get('/api/admin/organizations', async (req, res) => {
 app.post('/api/admin/organizations', async (req, res) => {
   if (!ensureSupabase(res)) return;
   if (!(await requireAdminAccess(req, res))) return;
+  if (!(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.create'))) return;
   const payload = req.body || {};
 
   if (!payload.name || !payload.contact_email || !payload.subscription) {
@@ -8815,9 +8945,8 @@ app.post('/api/admin/organizations', async (req, res) => {
   }
 
   try {
-    const { data, error } = await supabase
-      .from('organizations')
-      .insert({
+    const result = await runSupabaseQueryWithRetry('admin.organizations.create', () =>
+      supabase.from('organizations').insert({
         id: payload.id ?? undefined,
         name: payload.name,
         type: payload.type ?? null,
@@ -8853,12 +8982,10 @@ app.post('/api/admin/organizations', async (req, res) => {
         modules: payload.modules ?? {},
         notes: payload.notes ?? null,
         tags: payload.tags ?? []
-      })
-      .select('*')
-      .single();
+      }).select('*').single(),
+    );
 
-    if (error) throw error;
-    res.status(201).json({ data });
+    res.status(201).json({ data: result.data });
   } catch (error) {
     logRouteError('POST /api/admin/organizations', error);
     res.status(500).json({ error: 'Unable to create organization' });
@@ -8867,19 +8994,17 @@ app.post('/api/admin/organizations', async (req, res) => {
 
 app.get('/api/admin/organizations/:id', async (req, res) => {
   if (!ensureSupabase(res)) return;
+  if (!(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.detail'))) return;
   const { id } = req.params;
 
   const access = await requireOrgAccess(req, res, id, { write: false, requireOrgAdmin: true });
   if (!access) return;
 
   try {
-    const { data, error } = await supabase
-      .from('organizations')
-      .select('*')
-      .eq('id', id)
-      .maybeSingle();
-
-    if (error) throw error;
+    const result = await runSupabaseQueryWithRetry('admin.organizations.detail', () =>
+      supabase.from('organizations').select('*').eq('id', id).maybeSingle(),
+    );
+    const data = result.data;
     if (!data) {
       res.status(404).json({ error: 'Organization not found' });
       return;
@@ -8894,6 +9019,7 @@ app.get('/api/admin/organizations/:id', async (req, res) => {
 
 app.put('/api/admin/organizations/:id', async (req, res) => {
   if (!ensureSupabase(res)) return;
+  if (!(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.update'))) return;
   const { id } = req.params;
   const patch = req.body || {};
 
@@ -8938,15 +9064,10 @@ app.put('/api/admin/organizations/:id', async (req, res) => {
       tags: patch.tags
     };
 
-    const { data, error } = await supabase
-      .from('organizations')
-      .update(updatePayload)
-      .eq('id', id)
-      .select('*')
-      .single();
-
-    if (error) throw error;
-    res.json({ data });
+    const result = await runSupabaseQueryWithRetry('admin.organizations.update', () =>
+      supabase.from('organizations').update(updatePayload).eq('id', id).select('*').single(),
+    );
+    res.json({ data: result.data });
   } catch (error) {
     logRouteError('PUT /api/admin/organizations/:id', error);
     res.status(500).json({ error: 'Unable to update organization' });
@@ -8955,14 +9076,16 @@ app.put('/api/admin/organizations/:id', async (req, res) => {
 
 app.delete('/api/admin/organizations/:id', async (req, res) => {
   if (!ensureSupabase(res)) return;
+  if (!(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.delete'))) return;
   const { id } = req.params;
 
   const access = await requireOrgAccess(req, res, id, { write: true, requireOrgAdmin: true });
   if (!access) return;
 
   try {
-    const { error } = await supabase.from('organizations').delete().eq('id', id);
-    if (error) throw error;
+    await runSupabaseQueryWithRetry('admin.organizations.delete', () =>
+      supabase.from('organizations').delete().eq('id', id),
+    );
     res.status(204).end();
   } catch (error) {
     logRouteError('DELETE /api/admin/organizations/:id', error);
@@ -8973,6 +9096,7 @@ app.delete('/api/admin/organizations/:id', async (req, res) => {
 // Organization memberships
 app.get('/api/admin/organizations/:orgId/members', async (req, res) => {
   if (!ensureSupabase(res)) return;
+  if (!(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.members.list'))) return;
   const { orgId } = req.params;
 
   const context = requireUserContext(req, res);
@@ -8998,6 +9122,7 @@ app.get('/api/admin/organizations/:orgId/members', async (req, res) => {
 
 app.post('/api/admin/organizations/:orgId/members', async (req, res) => {
   if (!ensureSupabase(res)) return;
+  if (!(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.members.create'))) return;
   const { orgId } = req.params;
   const { userId, role = 'member', status, inviteEmail } = req.body || {};
 
@@ -9048,6 +9173,7 @@ app.post('/api/admin/organizations/:orgId/members', async (req, res) => {
 
 app.patch('/api/admin/organizations/:orgId/members/:membershipId', async (req, res) => {
   if (!ensureSupabase(res)) return;
+  if (!(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.members.update'))) return;
   const { orgId, membershipId } = req.params;
   const { role, status } = req.body || {};
 
@@ -9135,6 +9261,7 @@ app.patch('/api/admin/organizations/:orgId/members/:membershipId', async (req, r
 
 app.delete('/api/admin/organizations/:orgId/members/:membershipId', async (req, res) => {
   if (!ensureSupabase(res)) return;
+  if (!(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.members.delete'))) return;
   const { orgId, membershipId } = req.params;
 
   const context = requireUserContext(req, res);
@@ -9180,6 +9307,7 @@ app.delete('/api/admin/organizations/:orgId/members/:membershipId', async (req, 
 
 app.get('/api/admin/organizations/:orgId/users', async (req, res) => {
   if (!ensureSupabase(res)) return;
+  if (!(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.users.list'))) return;
   const { orgId } = req.params;
 
   const context = requireUserContext(req, res);
@@ -10734,6 +10862,7 @@ app.post(
 );
 app.get('/api/admin/documents', async (req, res) => {
   if (!ensureSupabase(res)) return;
+  if (!(await ensureDocumentsSchemaOrRespond(res, 'admin.documents.list'))) return;
   const context = requireUserContext(req, res);
   if (!context) return;
 
@@ -10762,11 +10891,8 @@ app.get('/api/admin/documents', async (req, res) => {
     }
   }
 
-  try {
-    let query = supabase
-      .from('documents')
-      .select('*')
-      .order('created_at', { ascending: false });
+  const buildDocumentsQuery = () => {
+    let query = supabase.from('documents').select('*').order('created_at', { ascending: false });
 
     if (visibility) {
       query = query.eq('visibility', visibility);
@@ -10788,11 +10914,12 @@ app.get('/api/admin/documents', async (req, res) => {
     if (search) {
       query = query.ilike('name', `%${search}%`);
     }
+    return query;
+  };
 
-    const { data, error } = await query;
-
-    if (error) throw error;
-    res.json({ data });
+  try {
+    const { data } = await runSupabaseQueryWithRetry('admin.documents.list', () => buildDocumentsQuery());
+    res.json({ data: data ?? [] });
   } catch (error) {
     console.error('Failed to fetch documents:', error);
     res.status(500).json({ error: 'Unable to fetch documents' });
@@ -10801,6 +10928,7 @@ app.get('/api/admin/documents', async (req, res) => {
 
 app.post('/api/admin/documents', async (req, res) => {
   if (!ensureSupabase(res)) return;
+  if (!(await ensureDocumentsSchemaOrRespond(res, 'admin.documents.create'))) return;
   normalizeLegacyOrgInput(req.body, { surface: 'admin.documents.create', requestId: req.requestId });
   const context = requireUserContext(req, res);
   if (!context) return;
@@ -11075,8 +11203,23 @@ app.post('/api/media/assets/:assetId/sign', authenticate, async (req, res) => {
 });
 
 // Surveys
+const ADMIN_SURVEY_TABLES = [
+  { table: 'surveys', columns: ['id', 'title', 'status', 'updated_at'] },
+  { table: 'survey_assignments', columns: ['survey_id', 'organization_id'] },
+];
+
+const ensureAdminSurveySchemaOrRespond = async (res, label) => {
+  const status = await ensureTablesReady(label, ADMIN_SURVEY_TABLES);
+  if (!status.ok) {
+    respondSchemaUnavailable(res, label, status);
+    return false;
+  }
+  return true;
+};
+
 app.get('/api/admin/surveys', async (_req, res) => {
   if (!ensureSupabase(res)) return;
+  if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.list'))) return;
 
   try {
     if (!supabase) {
@@ -11084,12 +11227,9 @@ app.get('/api/admin/surveys', async (_req, res) => {
       return;
     }
 
-    const { data, error } = await supabase
-      .from('surveys')
-      .select('*')
-      .order('updated_at', { ascending: false });
-
-    if (error) throw error;
+    const { data } = await runSupabaseQueryWithRetry('admin.surveys.list', () =>
+      supabase.from('surveys').select('*').order('updated_at', { ascending: false }),
+    );
 
     const ids = (data || []).map((survey) => survey.id).filter(Boolean);
     const assignmentMap = await fetchSurveyAssignmentsMap(ids);
@@ -11103,6 +11243,7 @@ app.get('/api/admin/surveys', async (_req, res) => {
 
 app.get('/api/admin/surveys/:id', async (req, res) => {
   if (!ensureSupabase(res)) return;
+  if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.detail'))) return;
   const { id } = req.params;
 
   try {
@@ -11126,6 +11267,7 @@ app.get('/api/admin/surveys/:id', async (req, res) => {
 
 app.post('/api/admin/surveys', async (req, res) => {
   if (!ensureSupabase(res)) return;
+  if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.upsert'))) return;
   const payload = req.body || {};
 
   if (!payload.title) {
@@ -11143,13 +11285,9 @@ app.post('/api/admin/surveys', async (req, res) => {
     const { assignedTo } = normalizeAssignedTargets(payload);
     const insertPayload = buildSurveyPersistencePayload(payload);
 
-    const { data, error } = await supabase
-      .from('surveys')
-      .upsert(insertPayload)
-      .select('*')
-      .single();
-
-    if (error) throw error;
+    const { data } = await runSupabaseQueryWithRetry('admin.surveys.upsert', () =>
+      supabase.from('surveys').upsert(insertPayload).select('*').single(),
+    );
 
     await syncSurveyAssignments(data.id, assignedTo);
     const survey = await loadSurveyWithAssignments(data.id);
@@ -11162,6 +11300,7 @@ app.post('/api/admin/surveys', async (req, res) => {
 
 app.put('/api/admin/surveys/:id', async (req, res) => {
   if (!ensureSupabase(res)) return;
+  if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.update'))) return;
   const { id } = req.params;
   const patch = req.body || {};
 
@@ -11180,14 +11319,9 @@ app.put('/api/admin/surveys/:id', async (req, res) => {
     const updatePayload = buildSurveyPersistencePayload({ ...patch, id });
     delete updatePayload.id;
 
-    const { data, error } = await supabase
-      .from('surveys')
-      .update(updatePayload)
-      .eq('id', id)
-      .select('*')
-      .single();
-
-    if (error) throw error;
+    const { data } = await runSupabaseQueryWithRetry('admin.surveys.update', () =>
+      supabase.from('surveys').update(updatePayload).eq('id', id).select('*').single(),
+    );
 
     if (assignmentUpdateRequested) {
       await syncSurveyAssignments(id, assignedTo);
@@ -11202,6 +11336,7 @@ app.put('/api/admin/surveys/:id', async (req, res) => {
 
 app.delete('/api/admin/surveys/:id', async (req, res) => {
   if (!ensureSupabase(res)) return;
+  if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.delete'))) return;
   const { id } = req.params;
 
   try {
@@ -11211,9 +11346,10 @@ app.delete('/api/admin/surveys/:id', async (req, res) => {
       return;
     }
 
-    await supabase.from('survey_assignments').delete().eq('survey_id', id);
-    const { error } = await supabase.from('surveys').delete().eq('id', id);
-    if (error) throw error;
+    await runSupabaseQueryWithRetry('admin.surveys.delete.assignments', () =>
+      supabase.from('survey_assignments').delete().eq('survey_id', id),
+    );
+    await runSupabaseQueryWithRetry('admin.surveys.delete', () => supabase.from('surveys').delete().eq('id', id));
     res.status(204).end();
   } catch (error) {
     console.error('Failed to delete survey:', error);

@@ -22,6 +22,49 @@ interface AIContentAssistantProps {
   onDismissSuggestion: (suggestionId: string) => void;
 }
 
+function getIconForType(type: string) {
+  switch (type) {
+    case 'content':
+      return <Lightbulb className="h-4 w-4" />;
+    case 'structure':
+      return <Target className="h-4 w-4" />;
+    case 'engagement':
+      return <Zap className="h-4 w-4" />;
+    case 'accessibility':
+      return <Users className="h-4 w-4" />;
+    case 'performance':
+      return <Clock className="h-4 w-4" />;
+    default:
+      return <Sparkles className="h-4 w-4" />;
+  }
+}
+
+function getColorForPriority(priority: string) {
+  switch (priority) {
+    case 'high':
+      return 'border-red-200 bg-red-50';
+    case 'medium':
+      return 'border-yellow-200 bg-yellow-50';
+    case 'low':
+      return 'border-blue-200 bg-blue-50';
+    default:
+      return 'border-gray-200 bg-gray-50';
+  }
+}
+
+function getEffortColor(effort: string) {
+  switch (effort) {
+    case 'low':
+      return 'text-green-600 bg-green-100';
+    case 'medium':
+      return 'text-yellow-600 bg-yellow-100';
+    case 'high':
+      return 'text-red-600 bg-red-100';
+    default:
+      return 'text-gray-600 bg-gray-100';
+  }
+}
+
 const AIContentAssistant: React.FC<AIContentAssistantProps> = ({
   course,
   onApplySuggestion,
@@ -176,35 +219,6 @@ const AIContentAssistant: React.FC<AIContentAssistantProps> = ({
       analyzeContent();
     }
   }, [course.id, course.title, course.modules, analyzeContent]);
-
-  const getIconForType = (type: string) => {
-    switch (type) {
-      case 'content': return <Lightbulb className="h-4 w-4" />;
-      case 'structure': return <Target className="h-4 w-4" />;
-      case 'engagement': return <Zap className="h-4 w-4" />;
-      case 'accessibility': return <Users className="h-4 w-4" />;
-      case 'performance': return <Clock className="h-4 w-4" />;
-      default: return <Sparkles className="h-4 w-4" />;
-    }
-  };
-
-  const getColorForPriority = (priority: string) => {
-    switch (priority) {
-      case 'high': return 'border-red-200 bg-red-50';
-      case 'medium': return 'border-yellow-200 bg-yellow-50';
-      case 'low': return 'border-blue-200 bg-blue-50';
-      default: return 'border-gray-200 bg-gray-50';
-    }
-  };
-
-  const getEffortColor = (effort: string) => {
-    switch (effort) {
-      case 'low': return 'text-green-600 bg-green-100';
-      case 'medium': return 'text-yellow-600 bg-yellow-100';
-      case 'high': return 'text-red-600 bg-red-100';
-      default: return 'text-gray-600 bg-gray-100';
-    }
-  };
 
   const filteredSuggestions = suggestions.filter(suggestion => 
     activeTab === 'all' || suggestion.priority === activeTab
