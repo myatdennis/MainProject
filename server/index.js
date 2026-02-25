@@ -1602,24 +1602,26 @@ const lookupOrgIdBySlug = async (slugCandidate) => {
 const coerceOrgIdentifierToUuid = async (req, identifier) => {
   const normalized = normalizeOrgIdValue(identifier);
   if (!normalized) return null;
-  if (isUuid(normalized)) return normalized;
-  if (!supabase) {
-    // In demo/dev fallback we allow non-UUID identifiers to pass through.
+
+  // If Supabase isn't available or the identifier already looks like a UUID, return it unchanged.
+  if (!supabase || isUuid(normalized)) {
     return normalized;
   }
+
   const slugCandidate = normalized.toLowerCase();
   try {
     const resolvedId = await lookupOrgIdBySlug(slugCandidate);
-    if (!resolvedId) {
-      logOrgResolutionEvent('warn', req, { event: 'slug_not_found', identifier: normalized });
-      throw new InvalidOrgIdentifierError(normalized);
+    if (resolvedId) {
+      logOrgResolutionEvent('info', req, {
+        event: 'slug_resolved',
+        identifier: normalized,
+        resolvedOrgId: resolvedId,
+      });
+      return resolvedId;
     }
-    logOrgResolutionEvent('info', req, { event: 'slug_resolved', identifier: normalized, resolvedOrgId: resolvedId });
-    return resolvedId;
+    logOrgResolutionEvent('info', req, { event: 'slug_passthrough', identifier: normalized });
+    return normalized;
   } catch (error) {
-    if (error instanceof InvalidOrgIdentifierError) {
-      throw error;
-    }
     console.error('[org-resolver] lookup_failed', {
       requestId: req?.requestId ?? null,
       identifier: normalized,
@@ -1630,7 +1632,7 @@ const coerceOrgIdentifierToUuid = async (req, identifier) => {
         hint: error?.hint ?? null,
       },
     });
-    throw error;
+    return normalized;
   }
 };
 
@@ -1696,28 +1698,19 @@ function getHeaderOrgId(req, { requireMembership = true } = {}) {
   if (!req || !req.headers) return null;
   for (const key of ORG_HEADER_KEYS) {
     const value = req.headers[key];
-    if (typeof value === 'string') {
-      const trimmed = value.trim();
-      if (!trimmed) continue;
-      if (!isUuid(trimmed)) {
-        console.warn('[headers] Ignoring non-uuid org id header', {
-          header: key,
-          value: trimmed,
-          requestId: req.requestId ?? null,
-        });
-        continue;
-      }
-      if (requireMembership && !userHasOrgMembership(req, trimmed)) {
-        console.warn('[headers] Ignoring org id header without membership', {
-          header: key,
-          value: trimmed,
-          requestId: req.requestId ?? null,
-          userId: req.user?.userId || req.user?.id || null,
-        });
-        continue;
-      }
-      return trimmed;
+    if (typeof value !== 'string') continue;
+    const normalized = normalizeOrgIdValue(value);
+    if (!normalized) continue;
+    if (requireMembership && !userHasOrgMembership(req, normalized)) {
+      console.warn('[headers] Ignoring org id header without membership', {
+        header: key,
+        value: normalized,
+        requestId: req.requestId ?? null,
+        userId: req.user?.userId || req.user?.id || null,
+      });
+      continue;
     }
+    return normalized;
   }
   return null;
 }
@@ -5830,6 +5823,20 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
         try {
           console.log('[srv] rpcRes for upsert_course_full', { error: rpcRes?.error ?? null, data: rpcRes?.data ?? null });
         } catch (_) {}
+        if (rpcRes.error) {
+          const rpcErrorMeta = {
+            code: rpcRes.error?.code ?? null,
+            message: rpcRes.error?.message ?? null,
+            details: rpcRes.error?.details ?? null,
+            hint: rpcRes.error?.hint ?? null,
+          };
+          console.error('[admin-courses] upsert_course_full_rpc_error', {
+            requestId: req?.requestId ?? null,
+            courseId: course?.id ?? null,
+            orgId: organizationId ?? null,
+            error: rpcErrorMeta,
+          });
+        }
         if (rpcRes.error && isCourseSlugConstraintError(rpcRes.error)) {
           const suggestion = buildSlugSuggestion(course.slug);
           await respondWithCourseSlugConflict({
@@ -5854,6 +5861,20 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
           return;
         }
       } catch (rpcErr) {
+        const rpcErrorMeta = rpcErr && typeof rpcErr === 'object'
+          ? {
+              code: rpcErr.code ?? null,
+              message: rpcErr.message ?? null,
+              details: rpcErr.details ?? null,
+              hint: rpcErr.hint ?? null,
+            }
+          : { code: null, message: rpcErr, details: null, hint: null };
+        console.error('[admin-courses] upsert_course_full_rpc_exception', {
+          requestId: req?.requestId ?? null,
+          courseId: course?.id ?? null,
+          orgId: organizationId ?? null,
+          error: rpcErrorMeta,
+        });
         const handled = maybeHandleMissingCourseVersion(rpcErr);
         if (!handled) {
           console.warn('RPC upsert_course_full failed, falling back to client-side sequence:', rpcErr);

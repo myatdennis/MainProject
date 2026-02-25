@@ -100,6 +100,49 @@ export class CourseValidationError extends Error {
   }
 }
 
+const PERSISTED_COURSE_IDS_KEY = 'courseService.persistedCourseIds';
+const persistedCourseIds = new Set<string>();
+const supportsLocalStorage = () => typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
+const hydratePersistedCourseIds = () => {
+  if (!supportsLocalStorage()) return;
+  try {
+    const raw = window.localStorage.getItem(PERSISTED_COURSE_IDS_KEY);
+    if (!raw) return;
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      parsed.forEach((value) => {
+        if (typeof value === 'string' && value.trim()) {
+          persistedCourseIds.add(value.trim());
+        }
+      });
+    }
+  } catch (error) {
+    console.warn('[CourseService] Failed to hydrate persisted course ids', error);
+  }
+};
+const persistCourseIdsSnapshot = () => {
+  if (!supportsLocalStorage()) return;
+  try {
+    window.localStorage.setItem(PERSISTED_COURSE_IDS_KEY, JSON.stringify(Array.from(persistedCourseIds)));
+  } catch (error) {
+    console.warn('[CourseService] Failed to persist course ids snapshot', error);
+  }
+};
+hydratePersistedCourseIds();
+const markCoursePersisted = (id?: string | null) => {
+  if (typeof id === 'string' && id.trim()) {
+    const trimmed = id.trim();
+    if (!persistedCourseIds.has(trimmed)) {
+      persistedCourseIds.add(trimmed);
+      persistCourseIdsSnapshot();
+    }
+  }
+};
+const hasPersistedCourseRecord = (id?: string | null): boolean => {
+  if (typeof id !== 'string') return false;
+  return persistedCourseIds.has(id.trim());
+};
+
 const formatZodIssues = (error: ZodError, context: string): string[] => {
   return error.issues.map((issue) => {
     const path = issue.path && issue.path.length > 0 ? `${context}.${issue.path.join('.')}` : context;
@@ -235,6 +278,7 @@ export const mapCourseRecord = (course: SupabaseCourseRecord): NormalizedCourse 
     (normalizedCourse as Record<string, any>).organizationId = resolvedOrganizationId;
   }
   stampCanonicalOrgId(normalizedCourse as Record<string, any>, resolvedOrganizationId);
+  markCoursePersisted(normalizedCourse.id);
 
   return normalizedCourse;
 };
@@ -376,11 +420,6 @@ const mapCompletionRule = (lesson: Lesson): LessonInput['completionRule'] => {
 // Legacy metadata builder retained for reference; module resources can be attached via metadata when needed.
 
 
-const isClientGeneratedCourseId = (value?: string | null): boolean => {
-  if (!value) return true;
-  return value.startsWith('course-');
-};
-
 const buildCoursePayload = (course: NormalizedCourse) => {
   const organizationId = resolveOrgIdFromCarrier(course);
   return {
@@ -498,7 +537,8 @@ export class CourseService {
     body.course = canonicalCourse;
     modules = CourseService.withOrgContextForModules(modules, canonicalOrgId);
     body.modules = modules;
-    const isCreateOperation = isClientGeneratedCourseId(course.id);
+    const hasRemoteRecord = hasPersistedCourseRecord(course.id);
+    const isCreateOperation = !hasRemoteRecord;
     if (isCreateOperation) {
       delete (body.course as Record<string, unknown>).id;
     }
@@ -644,7 +684,11 @@ export class CourseService {
   ): Promise<NormalizedCourse | null> {
     const normalizedCourse = normalizeCourse(course);
     const action = options.action ?? 'course.save';
-    const identifiers = createActionIdentifiers(action, { courseId: normalizedCourse.id });
+    const identifiers = createActionIdentifiers(action, {
+      courseId: normalizedCourse.id,
+      orgId: normalizedCourse.organizationId ?? undefined,
+      attempt: Date.now(),
+    });
     const idempotencyKey = options.idempotencyKey ?? identifiers.idempotencyKey;
     // Single upsert with full graph (course + modules + lessons)
     await CourseService.upsertCourse(normalizedCourse, { idempotencyKey });
@@ -654,7 +698,10 @@ export class CourseService {
       (await CourseService.fetchCourseStructure(normalizedCourse.id)) ||
       (normalizedCourse.slug ? await CourseService.fetchCourseStructure(normalizedCourse.slug) : null);
 
-    return refreshed ?? normalizedCourse;
+    const authoritative = refreshed ?? normalizedCourse;
+    markCoursePersisted(authoritative.id);
+
+    return authoritative;
   }
 
   static async loadCourseFromDatabase(
