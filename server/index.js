@@ -1525,6 +1525,14 @@ const e2eStore = {
 
 
 // --- Org ID Compatibility Helpers (must be above all usage) ---
+class InvalidOrgIdentifierError extends Error {
+  constructor(identifier) {
+    super('invalid_org');
+    this.code = 'invalid_org';
+    this.identifier = identifier;
+  }
+}
+
 const DEFAULT_SANDBOX_ORG_ID =
   process.env.E2E_SANDBOX_ORG_ID ||
   process.env.DEMO_SANDBOX_ORG_ID ||
@@ -1561,6 +1569,70 @@ function pickOrgId(...candidates) {
   }
   return null;
 }
+
+const respondInvalidOrg = (res, identifier) => {
+  res.status(400).json({
+    error: 'invalid_org',
+    identifier,
+    message: 'Organization not found. Please select a valid organization.',
+  });
+};
+
+const logOrgResolutionEvent = (level, req, metadata = {}) => {
+  try {
+    const logger = typeof console[level] === 'function' ? console[level] : console.log;
+    logger('[org-resolver]', {
+      requestId: req?.requestId ?? null,
+      ...metadata,
+    });
+  } catch (_) {}
+};
+
+const lookupOrgIdBySlug = async (slugCandidate) => {
+  if (!supabase) return null;
+  const { data, error } = await supabase
+    .from('organizations')
+    .select('id, slug')
+    .ilike('slug', slugCandidate)
+    .maybeSingle();
+  if (error) throw error;
+  return data?.id ?? null;
+};
+
+const coerceOrgIdentifierToUuid = async (req, identifier) => {
+  const normalized = normalizeOrgIdValue(identifier);
+  if (!normalized) return null;
+  if (isUuid(normalized)) return normalized;
+  if (!supabase) {
+    // In demo/dev fallback we allow non-UUID identifiers to pass through.
+    return normalized;
+  }
+  const slugCandidate = normalized.toLowerCase();
+  try {
+    const resolvedId = await lookupOrgIdBySlug(slugCandidate);
+    if (!resolvedId) {
+      logOrgResolutionEvent('warn', req, { event: 'slug_not_found', identifier: normalized });
+      throw new InvalidOrgIdentifierError(normalized);
+    }
+    logOrgResolutionEvent('info', req, { event: 'slug_resolved', identifier: normalized, resolvedOrgId: resolvedId });
+    return resolvedId;
+  } catch (error) {
+    if (error instanceof InvalidOrgIdentifierError) {
+      throw error;
+    }
+    console.error('[org-resolver] lookup_failed', {
+      requestId: req?.requestId ?? null,
+      identifier: normalized,
+      error: {
+        message: error?.message ?? null,
+        code: error?.code ?? null,
+        details: error?.details ?? null,
+        hint: error?.hint ?? null,
+      },
+    });
+    throw error;
+  }
+};
 
 function userHasOrgMembership(req, orgId) {
   if (!req || !orgId) return false;
@@ -1605,11 +1677,17 @@ const resolveOrgIdForCourseRequest = async (req, context, candidates = []) => {
   const headerOrgId = getHeaderOrgId(req, { requireMembership: !context.isPlatformAdmin });
   const normalizedCandidates = [...candidates, headerOrgId, context.requestedOrgId];
   let orgId = pickOrgId(...normalizedCandidates);
+  if (orgId) {
+    orgId = await coerceOrgIdentifierToUuid(req, orgId);
+  }
   if (!orgId && context.isPlatformAdmin) {
     if (!req[PLATFORM_ADMIN_ORG_CACHE_KEY]) {
       req[PLATFORM_ADMIN_ORG_CACHE_KEY] = await fetchPrimaryOrgIdForUser(context.userId);
     }
     orgId = req[PLATFORM_ADMIN_ORG_CACHE_KEY] ?? null;
+    if (orgId) {
+      orgId = await coerceOrgIdentifierToUuid(req, orgId);
+    }
   }
   return orgId || null;
 };
@@ -3124,6 +3202,23 @@ const requireOrgAccess = async (
 ) => {
   const context = requireUserContext(req, res);
   if (!context) return null;
+
+  let normalizedOrgId;
+  try {
+    normalizedOrgId = await coerceOrgIdentifierToUuid(req, orgId);
+  } catch (err) {
+    if (err instanceof InvalidOrgIdentifierError) {
+      respondInvalidOrg(res, err.identifier);
+      return null;
+    }
+    throw err;
+  }
+  orgId = normalizedOrgId || orgId;
+
+  if (!orgId) {
+    res.status(400).json({ error: 'org_required', message: 'Organization identifier is required' });
+    return null;
+  }
 
   if (allowPlatformAdmin && context.isPlatformAdmin) {
     return { userId: context.userId, role: 'platform_admin', membership: null };
@@ -5549,7 +5644,16 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
     req.user?.activeOrgId,
     req.user?.organizationId,
   ];
-  let organizationId = await resolveOrgIdForCourseRequest(req, context, orgCandidates);
+  let organizationId;
+  try {
+    organizationId = await resolveOrgIdForCourseRequest(req, context, orgCandidates);
+  } catch (orgErr) {
+    if (orgErr instanceof InvalidOrgIdentifierError) {
+      respondInvalidOrg(res, orgErr.identifier);
+      return;
+    }
+    throw orgErr;
+  }
   if (organizationId) {
     course.organization_id = organizationId;
     course.organizationId = organizationId;
@@ -6324,7 +6428,16 @@ app.post('/api/admin/courses/import', async (req, res) => {
         req.user?.activeOrgId,
         req.user?.organizationId,
       ];
-      const resolvedOrgId = await resolveOrgIdForCourseRequest(req, context, orgCandidates);
+      let resolvedOrgId;
+      try {
+        resolvedOrgId = await resolveOrgIdForCourseRequest(req, context, orgCandidates);
+      } catch (orgErr) {
+        if (orgErr instanceof InvalidOrgIdentifierError) {
+          respondInvalidOrg(res, orgErr.identifier);
+          return;
+        }
+        throw orgErr;
+      }
       if (!resolvedOrgId) {
         res.status(400).json({ error: 'org_required', message: 'Organization required to create course' });
         return;
