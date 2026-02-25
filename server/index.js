@@ -1579,6 +1579,41 @@ function userHasOrgMembership(req, orgId) {
   return false;
 }
 
+const PLATFORM_ADMIN_ORG_CACHE_KEY = Symbol('platformAdminOrgCache');
+
+const fetchPrimaryOrgIdForUser = async (userId) => {
+  if (!userId || !supabase) return null;
+  try {
+    const { data, error } = await supabase
+      .from('organization_memberships')
+      .select('org_id')
+      .eq('user_id', userId)
+      .eq('status', 'active')
+      .order('created_at', { ascending: true })
+      .limit(1)
+      .maybeSingle();
+    if (error) throw error;
+    return data?.org_id ?? null;
+  } catch (err) {
+    console.error('[admin-courses] primary_org_lookup_failed', { userId, error: err });
+    return null;
+  }
+};
+
+const resolveOrgIdForCourseRequest = async (req, context, candidates = []) => {
+  if (!context) return pickOrgId(...candidates);
+  const headerOrgId = getHeaderOrgId(req, { requireMembership: !context.isPlatformAdmin });
+  const normalizedCandidates = [...candidates, headerOrgId, context.requestedOrgId];
+  let orgId = pickOrgId(...normalizedCandidates);
+  if (!orgId && context.isPlatformAdmin) {
+    if (!req[PLATFORM_ADMIN_ORG_CACHE_KEY]) {
+      req[PLATFORM_ADMIN_ORG_CACHE_KEY] = await fetchPrimaryOrgIdForUser(context.userId);
+    }
+    orgId = req[PLATFORM_ADMIN_ORG_CACHE_KEY] ?? null;
+  }
+  return orgId || null;
+};
+
 function getHeaderOrgId(req, { requireMembership = true } = {}) {
   if (!req || !req.headers) return null;
   for (const key of ORG_HEADER_KEYS) {
@@ -2741,14 +2776,27 @@ const handleCourseVersionColumnError = (error) => {
   return false;
 };
 
-const logAdminCoursesError = (req, err, label) => {
+const logAdminCoursesError = (req, err, label, extraMeta = {}) => {
   const endpoint = req?.method && req?.originalUrl ? `${req.method} ${req.originalUrl}` : req?.path || 'unknown';
+  const safeExtra = extraMeta && typeof extraMeta === 'object' ? extraMeta : {};
+  const { organizationId: extraOrgId, ...restExtraMeta } = safeExtra;
+  const fallbackOrg = normalizeOrgIdValue(
+    extraOrgId ??
+      req?.activeOrgId ??
+      req?.body?.organization_id ??
+      req?.body?.org_id ??
+      req?.body?.orgId ??
+      null,
+  );
   const meta = {
     endpoint,
     requestId: req?.requestId ?? null,
+    userId: extraMeta.userId ?? req?.user?.userId ?? req?.user?.id ?? null,
+    organizationId: fallbackOrg ?? null,
     params: req?.params ?? null,
     query: req?.query ?? null,
     bodySummary: summarizeRequestBody(req?.body ?? null),
+    ...restExtraMeta,
     error: err
       ? {
           message: err.message ?? null,
@@ -2765,6 +2813,30 @@ const logAdminCoursesError = (req, err, label) => {
   } catch (_) {
     // swallow diagnostics errors
   }
+};
+
+const logAdminCourseWriteFailure = (req, label, payload, error, meta = {}) => {
+  const safePayload = payload && typeof payload === 'object' ? payload : null;
+  const payloadKeys =
+    safePayload && !Array.isArray(safePayload) ? Object.keys(safePayload).slice(0, 50) : [];
+  const err =
+    error && typeof error === 'object'
+      ? {
+          message: error.message ?? null,
+          code: error.code ?? null,
+          details: error.details ?? null,
+          hint: error.hint ?? null,
+        }
+      : null;
+  console.error('[admin-courses] update failed', {
+    label,
+    requestId: req?.requestId ?? null,
+    courseId: meta.courseId ?? null,
+    moduleId: meta.moduleId ?? null,
+    lessonId: meta.lessonId ?? null,
+    payloadKeys,
+    err,
+  });
 };
 
 const TABLE_VERIFICATION_TTL_MS = 5 * 60 * 1000;
@@ -2984,7 +3056,7 @@ const normalizeLegacyOrgInput = (payload, { surface = 'unknown', requestId = nul
 
 const getRequestContext = (req) => {
   if (!req.user) {
-    return { userId: null, userRole: null, memberships: [], organizationIds: [] };
+    return { userId: null, userRole: null, memberships: [], organizationIds: [], requestedOrgId: null };
   }
 
   return {
@@ -2993,6 +3065,7 @@ const getRequestContext = (req) => {
     memberships: req.user.memberships || [],
     organizationIds: Array.isArray(req.user.organizationIds) ? req.user.organizationIds : [],
     isPlatformAdmin: Boolean(req.user.isPlatformAdmin),
+    requestedOrgId: normalizeOrgIdValue(req.activeOrgId ?? req.user?.activeOrgId ?? null),
   };
 };
 
@@ -5291,17 +5364,28 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
   const context = requireUserContext(req, res);
   if (!context) return;
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
-    const organizationId = pickOrgId(
+    const headerOrgId = getHeaderOrgId(req, { requireMembership: false });
+    let organizationId = pickOrgId(
       courseLocal?.organization_id,
       courseLocal?.org_id,
       courseLocal?.organizationId,
       req.body?.organization_id,
       req.body?.org_id,
       req.body?.orgId,
-      req.body?.organizationId
+      req.body?.organizationId,
+      headerOrgId,
+      context.requestedOrgId,
     );
+    if (!organizationId && context.isPlatformAdmin) {
+      organizationId =
+        normalizeOrgIdValue(context.memberships?.[0]?.orgId) ??
+        normalizeOrgIdValue(context.organizationIds?.[0]) ??
+        null;
+    }
     if (!organizationId && !context.isPlatformAdmin) {
-      res.status(400).json({ error: 'organization_id_required', message: 'Provide organizationId when creating or updating a course.' });
+      res
+        .status(400)
+        .json({ error: 'org_required', message: 'Organization required to create course' });
       return;
     }
     if (organizationId) {
@@ -5453,8 +5537,7 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
 
   let { course, modules = [] } = req.body || {};
   modules = Array.isArray(modules) ? modules : [];
-  const headerOrgId = getHeaderOrgId(req);
-  let organizationId = pickOrgId(
+  const orgCandidates = [
     course?.organization_id,
     course?.org_id,
     course?.organizationId,
@@ -5465,8 +5548,18 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
     req.activeOrgId,
     req.user?.activeOrgId,
     req.user?.organizationId,
-    headerOrgId
-  );
+  ];
+  let organizationId = await resolveOrgIdForCourseRequest(req, context, orgCandidates);
+  if (organizationId) {
+    course.organization_id = organizationId;
+    course.organizationId = organizationId;
+    course.org_id = organizationId;
+    if (req.body?.course) {
+      req.body.course.organization_id = organizationId;
+      req.body.course.organizationId = organizationId;
+      req.body.course.org_id = organizationId;
+    }
+  }
   // Lightweight request tracing to aid debugging in CI/local runs
   try {
     console.log(
@@ -5510,6 +5603,16 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
     req.body.course.slug = normalizedSlug;
   }
 
+  const desiredStatus = typeof course?.status === 'string' ? course.status.toLowerCase() : 'draft';
+  if (desiredStatus === 'published') {
+    const shapedForValidation = shapeCourseForValidation({ ...course, modules });
+    const validation = validatePublishableCourse(shapedForValidation, { intent: 'publish' });
+    if (!validation.isValid) {
+      res.status(422).json({ error: 'validation_failed', issues: validation.issues });
+      return;
+    }
+  }
+
   try {
     const meta = course.meta ?? {};
     const resolvedCourseVersion = typeof course?.version === 'number' ? course.version : 1;
@@ -5549,10 +5652,20 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
       if (!organizationId && existing.data?.organization_id) {
         organizationId = existing.data.organization_id;
       }
+      if (organizationId && !course.organization_id) {
+        course.organization_id = organizationId;
+        course.organizationId = organizationId;
+        course.org_id = organizationId;
+        if (req.body?.course) {
+          req.body.course.organization_id = organizationId;
+          req.body.course.organizationId = organizationId;
+          req.body.course.org_id = organizationId;
+        }
+      }
     }
 
-    if (!organizationId && !context.isPlatformAdmin) {
-      res.status(400).json({ error: 'organization_id_required', message: 'Provide organizationId when creating or updating a course.' });
+    if (!organizationId) {
+      res.status(400).json({ error: 'org_required', message: 'Organization required to create course' });
       return;
     }
 
@@ -5661,6 +5774,20 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
         break;
       }
 
+      const errMeta = {
+        message: courseRes.error?.message ?? null,
+        code: courseRes.error?.code ?? null,
+        details: courseRes.error?.details ?? null,
+        hint: courseRes.error?.hint ?? null,
+      };
+      console.error('[admin-courses] course_upsert_error', {
+        requestId: req?.requestId ?? null,
+        courseId: course?.id ?? courseRow?.id ?? null,
+        error: errMeta,
+      });
+      logAdminCourseWriteFailure(req, 'courses.upsert', upsertPayload, courseRes.error, {
+        courseId: course?.id ?? courseRow?.id ?? null,
+      });
       if (isCourseSlugConstraintError(courseRes.error)) {
         const suggestion = buildSlugSuggestion(course.slug);
         await respondWithCourseSlugConflict({
@@ -5764,7 +5891,17 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
         .filter((id) => !incomingModuleIds.includes(id));
 
       if (modulesToDelete.length > 0) {
-        await supabase.from('modules').delete().in('id', modulesToDelete);
+        const { error: deleteModulesError } = await supabase.from('modules').delete().in('id', modulesToDelete);
+        if (deleteModulesError) {
+          logAdminCourseWriteFailure(
+            req,
+            'modules.delete',
+            { count: modulesToDelete.length },
+            deleteModulesError,
+            { courseId: courseRow.id },
+          );
+          throw deleteModulesError;
+        }
       }
 
       for (const [moduleIndex, module] of modulesForPersistence.entries()) {
@@ -5806,6 +5943,13 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
         }
 
         if (!moduleRow) {
+          logAdminCourseWriteFailure(
+            req,
+            'modules.upsert',
+            module,
+            moduleError || new Error('Failed to upsert module'),
+            { courseId: courseRow.id, moduleId: module.id ?? null },
+          );
           throw moduleError || new Error('Failed to upsert module');
         }
 
@@ -5823,7 +5967,20 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
             .filter((id) => !incomingLessonIds.includes(id));
 
           if (lessonsToDelete.length > 0) {
-            await supabase.from('lessons').delete().in('id', lessonsToDelete);
+            const { error: deleteLessonsError } = await supabase
+              .from('lessons')
+              .delete()
+              .in('id', lessonsToDelete);
+            if (deleteLessonsError) {
+              logAdminCourseWriteFailure(
+                req,
+                'lessons.delete',
+                { count: lessonsToDelete.length },
+                deleteLessonsError,
+                { courseId: courseRow.id, moduleId: moduleRow.id },
+              );
+              throw deleteLessonsError;
+            }
           }
 
           const buildLessonUpsertPayload = (lessonInput, moduleRowPayload, moduleData, lessonIndex) => {
@@ -5889,6 +6046,13 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
               if (!lessonError) {
                 break;
               }
+              logAdminCourseWriteFailure(
+                req,
+                'lessons.upsert',
+                lessonPayload,
+                lessonError,
+                { courseId: courseRow.id, moduleId: moduleRow.id, lessonId: lesson.id ?? null },
+              );
               if (maybeHandleLessonColumnError(lessonError)) {
                 lessonPayload = buildLessonUpsertPayload(lesson, moduleRow, module, lessonIndex);
                 continue;
@@ -5897,11 +6061,31 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
             }
           }
         } else {
-          await supabase.from('lessons').delete().eq('module_id', moduleRow.id);
+          const { error: purgeLessonsError } = await supabase.from('lessons').delete().eq('module_id', moduleRow.id);
+          if (purgeLessonsError) {
+            logAdminCourseWriteFailure(
+              req,
+              'lessons.delete_module',
+              { moduleId: moduleRow.id },
+              purgeLessonsError,
+              { courseId: courseRow.id, moduleId: moduleRow.id },
+            );
+            throw purgeLessonsError;
+          }
         }
       }
     } else {
-      await supabase.from('modules').delete().eq('course_id', courseRow.id);
+      const { error: purgeModulesError } = await supabase.from('modules').delete().eq('course_id', courseRow.id);
+      if (purgeModulesError) {
+        logAdminCourseWriteFailure(
+          req,
+          'modules.delete_course',
+          { courseId: courseRow.id },
+          purgeModulesError,
+          { courseId: courseRow.id },
+        );
+        throw purgeModulesError;
+      }
     }
 
     const refreshed = await supabase
@@ -5948,16 +6132,23 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
         details: error?.details ?? null,
         hint: error?.hint ?? null,
         stack: error?.stack ?? null,
+        organizationId,
+        requestId: req.requestId ?? null,
       });
     } catch (_) {}
-    logAdminCoursesError(req, error, 'Failed to upsert course');
+    logAdminCoursesError(req, error, 'Failed to upsert course', {
+      userId: context?.userId ?? null,
+      organizationId,
+    });
     // Provide more details to the client for debugging
     const errorMessage = error?.message || 'Unable to save course';
     const errorDetails = error?.details || error?.hint || null;
-    res.status(500).json({ 
+    res.status(500).json({
       error: errorMessage,
       details: errorDetails,
-      timestamp: new Date().toISOString()
+      code: error?.code ?? null,
+      hint: error?.hint ?? null,
+      timestamp: new Date().toISOString(),
     });
   }
 }
@@ -5984,6 +6175,8 @@ app.post('/api/admin/courses/import', async (req, res) => {
     res.status(400).json({ error: 'items array is required' });
     return;
   }
+  const context = requireUserContext(req, res);
+  if (!context) return;
 
   // In demo/E2E, snapshot and rollback on failure
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
@@ -5993,6 +6186,38 @@ app.post('/api/admin/courses/import', async (req, res) => {
       for (const payload of items) {
         const { course, modules = [] } = payload || {};
         if (!course?.title) throw new Error('Course title is required');
+
+        const headerOrgId = getHeaderOrgId(req, { requireMembership: false });
+        let resolvedOrgId = pickOrgId(
+          course?.organization_id,
+          course?.org_id,
+          course?.organizationId,
+          payload?.organization_id,
+          payload?.org_id,
+          payload?.organizationId,
+          headerOrgId,
+          context.requestedOrgId,
+        );
+        if (!resolvedOrgId && context.isPlatformAdmin) {
+          resolvedOrgId =
+            normalizeOrgIdValue(context.memberships?.[0]?.orgId) ??
+            normalizeOrgIdValue(context.organizationIds?.[0]) ??
+            null;
+        }
+        if (!resolvedOrgId) {
+          res.status(400).json({ error: 'org_required', message: 'Organization required to create course' });
+          return;
+        }
+        const access = await requireOrgAccess(req, res, resolvedOrgId, { write: true, requireOrgAdmin: true });
+        if (!access) return;
+        if (String(course.status || '').toLowerCase() === 'published') {
+          const shaped = shapeCourseForValidation({ ...course, modules });
+          const validation = validatePublishableCourse(shaped, { intent: 'publish' });
+          if (!validation.isValid) {
+            res.status(422).json({ error: 'validation_failed', issues: validation.issues });
+            return;
+          }
+        }
 
         // Reuse the same logic as the single upsert route: upsert by id/slug/external_id
         let existingId = null;
@@ -6022,6 +6247,9 @@ app.post('/api/admin/courses/import', async (req, res) => {
           version: course.version ?? 1,
           meta_json: { ...(course.meta ?? {}), ...(incomingExternalId ? { external_id: incomingExternalId } : {}) },
           published_at: null,
+          organization_id: resolvedOrgId,
+          organizationId: resolvedOrgId,
+          org_id: resolvedOrgId,
           modules: [],
         };
         const modulesArr = modules || [];
@@ -6062,7 +6290,9 @@ app.post('/api/admin/courses/import', async (req, res) => {
       // Rollback
       e2eStore.courses = snapshot;
       persistE2EStore();
-      logAdminCoursesError(req, err, 'E2E import failed');
+      logAdminCoursesError(req, err, 'E2E import failed', {
+        userId: context?.userId ?? null,
+      });
       res.status(400).json({ error: 'Import failed', details: String(err?.message || err) });
     }
     return;
@@ -6080,6 +6310,38 @@ app.post('/api/admin/courses/import', async (req, res) => {
     for (const payload of items) {
       const { course, modules = [] } = payload || {};
       if (!course?.title) throw new Error('Course title is required');
+      const orgCandidates = [
+        course?.organization_id,
+        course?.org_id,
+        course?.organizationId,
+        payload?.organization_id,
+        payload?.org_id,
+        payload?.organizationId,
+        req.body?.organization_id,
+        req.body?.org_id,
+        req.body?.organizationId,
+        req.activeOrgId,
+        req.user?.activeOrgId,
+        req.user?.organizationId,
+      ];
+      const resolvedOrgId = await resolveOrgIdForCourseRequest(req, context, orgCandidates);
+      if (!resolvedOrgId) {
+        res.status(400).json({ error: 'org_required', message: 'Organization required to create course' });
+        return;
+      }
+      const access = await requireOrgAccess(req, res, resolvedOrgId, { write: true, requireOrgAdmin: true });
+      if (!access) return;
+      if (String(course.status || '').toLowerCase() === 'published') {
+        const shaped = shapeCourseForValidation({ ...course, modules });
+        const validation = validatePublishableCourse(shaped, { intent: 'publish' });
+        if (!validation.isValid) {
+          res.status(422).json({ error: 'validation_failed', issues: validation.issues });
+          return;
+        }
+      }
+      course.organization_id = resolvedOrgId;
+      course.organizationId = resolvedOrgId;
+      course.org_id = resolvedOrgId;
       const upsertRes = await runSupabaseQueryWithRetry('admin.courses.import.upsert_course', () =>
         supabase.from('courses').upsert({
           id: course.id ?? undefined,
@@ -6088,7 +6350,7 @@ app.post('/api/admin/courses/import', async (req, res) => {
           description: course.description ?? null,
           status: course.status ?? 'draft',
           version: course.version ?? 1,
-          organization_id: course.organizationId ?? course.org_id ?? null,
+          organization_id: resolvedOrgId,
           meta_json: { ...(course.meta ?? {}), ...(course.external_id ? { external_id: course.external_id } : {}) },
         }).select('*').single(),
       );
@@ -6140,7 +6402,10 @@ app.post('/api/admin/courses/import', async (req, res) => {
     }
     res.status(201).json({ data: results });
   } catch (error) {
-    logAdminCoursesError(req, error, 'Import failed');
+    logAdminCoursesError(req, error, 'Import failed', {
+      userId: context?.userId ?? null,
+      organizationId: context?.requestedOrgId ?? null,
+    });
     res.status(500).json({
       error: 'Import failed',
       details: error?.message || error?.hint || null,
