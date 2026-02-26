@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { secureGet, secureSet, secureRemove } from './secureStorage';
 
 export const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
@@ -8,7 +9,8 @@ export const supabase = createClient(
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,
-      storageKey: 'thc-supabase-auth'
+      storageKey: 'thc-supabase-auth',
+      storage: createSecureSupabaseAuthStorage(),
     }
   }
 );
@@ -35,4 +37,34 @@ export function getSupabase(): SupabaseClient | null {
 
 if (import.meta.env?.DEV && typeof window !== 'undefined') {
   (window as any).__supabase = supabase;
+}
+
+function createSecureSupabaseAuthStorage() {
+  const prefix = 'thc-supabase-auth';
+  const withPrefix = (key: string) => `${prefix}:${key}`;
+
+  return {
+    getItem(key: string) {
+      try {
+        return secureGet<string>(withPrefix(key));
+      } catch (error) {
+        console.warn('[supabaseClient] secure storage getItem failed', key, error);
+        return null;
+      }
+    },
+    setItem(key: string, value: string) {
+      try {
+        secureSet(withPrefix(key), value);
+      } catch (error) {
+        console.warn('[supabaseClient] secure storage setItem failed', { key, error });
+      }
+    },
+    removeItem(key: string) {
+      try {
+        secureRemove(withPrefix(key));
+      } catch (error) {
+        console.warn('[supabaseClient] secure storage removeItem failed', { key, error });
+      }
+    },
+  };
 }
