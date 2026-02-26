@@ -1,6 +1,5 @@
 // Version-safe import for lru-cache across major versions (Node ESM)
-import * as Lru from 'lru-cache';
-const LRUCache = /** @type {any} */ (Lru && (Lru.LRUCache || Lru.default || Lru));
+import { LRUCache } from 'lru-cache';
 import Redis from 'ioredis';
 import { logger } from '../lib/logger.js';
 

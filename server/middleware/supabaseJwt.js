@@ -1,6 +1,6 @@
 import jwt from 'jsonwebtoken';
 import { createPublicKey } from 'crypto';
-import LRUCache from 'lru-cache';
+import { LRUCache } from 'lru-cache';
 import nodeFetch from 'node-fetch';
 import { extractTokenFromHeader } from '../utils/jwt.js';
 
