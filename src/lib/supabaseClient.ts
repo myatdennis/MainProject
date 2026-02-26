@@ -37,9 +37,11 @@ export function getSupabase(): SupabaseClient | null {
   return supabase;
 }
 
-if (import.meta.env?.DEV && typeof window !== 'undefined') {
+if (typeof window !== 'undefined') {
   (window as any).__supabase = supabase;
-  (window as any).supabase = supabase;
+  if (import.meta.env?.DEV) {
+    (window as any).supabase = supabase;
+  }
 }
 
 logSupabaseAuthDiagnostics(supabaseAuthStorage);

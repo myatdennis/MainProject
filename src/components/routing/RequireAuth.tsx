@@ -3,8 +3,8 @@ import { Link, Navigate, useLocation } from 'react-router-dom';
 import { useSecureAuth } from '../../context/SecureAuthContext';
 import LoadingSpinner from '../ui/LoadingSpinner';
 import Button from '../ui/Button';
-import apiRequest, { ApiError } from '../../utils/apiClient';
 import buildSessionAuditHeaders from '../../utils/sessionAuditHeaders';
+import { apiJson, ApiResponseError, AuthExpiredError, NotAuthenticatedError } from '../../lib/apiClient';
 
 type AuthMode = 'admin' | 'lms';
 
@@ -293,7 +293,7 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
       setAdminGateError(null);
       logGuardEvent('admin_gate_check', { reason });
 
-      apiRequest<AdminCapabilityPayload>('/api/admin/me', {
+      apiJson<AdminCapabilityPayload>('/admin/me', {
         signal: controller.signal,
         headers: buildSessionAuditHeaders(),
       })
@@ -327,25 +327,50 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
             return;
           }
 
-          if (error instanceof ApiError) {
-            const body = (error.body ?? null) as AdminCapabilityPayload | { message?: string } | null;
-            const reasonCode =
-              body?.access?.reason ||
-              (typeof body?.message === 'string' ? body.message : null) ||
-              (body && typeof (body as { error?: string }).error === 'string' ? (body as { error?: string }).error : null) ||
-              `status_${error.status}`;
+          const deriveReasonFromPayload = (payload: AdminCapabilityPayload | null, fallback: string) => {
+            if (!payload) return fallback;
+            return (
+              payload.access?.reason ||
+              payload.error ||
+              payload.message ||
+              (payload.context && typeof payload.context === 'object' && 'reason' in payload.context
+                ? String((payload.context as { reason?: string }).reason)
+                : null) ||
+              fallback
+            );
+          };
+
+          if (error instanceof ApiResponseError) {
+            let parsed: AdminCapabilityPayload | null = null;
+            if (error.body) {
+              try {
+                parsed = JSON.parse(error.body) as AdminCapabilityPayload;
+              } catch {
+                parsed = null;
+              }
+            }
+            const reasonCode = deriveReasonFromPayload(parsed, `status_${error.status}`);
 
             if (error.status === 401 || error.status === 403) {
-              setAdminCapability({ status: 'denied', payload: body ?? null, reason: reasonCode });
+              setAdminCapability({ status: 'denied', payload: parsed, reason: reasonCode });
               logGuardEvent('admin_capability_denied', { reason: reasonCode });
               setAdminGateStatus('unauthorized');
               setAdminGateError(reasonCode);
             } else {
-              setAdminCapability({ status: 'error', payload: body ?? null, reason: reasonCode });
+              setAdminCapability({ status: 'error', payload: parsed, reason: reasonCode });
               logGuardEvent('admin_capability_error', { reason: reasonCode });
               setAdminGateStatus('error');
               setAdminGateError(reasonCode);
             }
+            return;
+          }
+
+          if (error instanceof NotAuthenticatedError || error instanceof AuthExpiredError) {
+            const reasonCode = 'session_missing';
+            setAdminCapability({ status: 'denied', payload: null, reason: reasonCode });
+            logGuardEvent('admin_capability_denied', { reason: reasonCode });
+            setAdminGateStatus('unauthorized');
+            setAdminGateError(reasonCode);
             return;
           }
 

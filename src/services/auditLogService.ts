@@ -1,8 +1,8 @@
 // src/services/auditLogService.ts
 // Simple audit logging service for admin actions
-import apiRequest from '../utils/apiClient';
-import buildSessionAuditHeaders from '../utils/sessionAuditHeaders';
 import { getSupabase } from '../lib/supabaseClient';
+import buildSessionAuditHeaders from '../utils/sessionAuditHeaders';
+import { apiFetch } from '../lib/apiClient';
 
 export type AuditAction = 'admin_login' | 'admin_logout' | 'user_update' | 'role_change' | 'settings_change';
 
@@ -28,16 +28,14 @@ export function logAuditBestEffort(action: AuditAction, details: Record<string, 
     if (!sessionReady) {
       return;
     }
-    await apiRequest('/api/audit-log', {
+    await apiFetch('/audit-log', {
       method: 'POST',
-      body: {
+      body: JSON.stringify({
         action,
         details,
         timestamp: new Date().toISOString(),
-      },
+      }),
       headers: buildSessionAuditHeaders(),
-      allowAnonymous: false,
-      timeoutMs: 4000,
     }).catch(() => {});
   })();
 }

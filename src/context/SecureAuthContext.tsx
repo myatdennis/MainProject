@@ -21,6 +21,7 @@ import { queueRefresh } from '../lib/refreshQueue';
 import apiRequest, { ApiError, apiRequestRaw } from '../utils/apiClient';
 import buildSessionAuditHeaders from '../utils/sessionAuditHeaders';
 import { getSupabase, hasSupabaseConfig } from '../lib/supabaseClient';
+import { apiFetch, AuthExpiredError, NotAuthenticatedError } from '../lib/apiClient';
 
 // MFA helpers
 
@@ -61,6 +62,27 @@ const logAuthDebug = (label: string, payload: Record<string, unknown>) => {
 };
 const logSessionResult = (status: string) => logAuthDebug('[auth] session result', { status });
 const logRefreshResult = (status: string) => logAuthDebug('[auth] refresh result', { status });
+
+const readSupabaseSessionTokens = async (): Promise<{ accessToken: string | null; refreshToken: string | null }> => {
+  const supabaseClient = getSupabase();
+  if (!supabaseClient) {
+    return { accessToken: null, refreshToken: null };
+  }
+  try {
+    const { data, error } = await supabaseClient.auth.getSession();
+    if (error) {
+      console.warn('[SecureAuth] Supabase getSession failed', error);
+      return { accessToken: null, refreshToken: null };
+    }
+    return {
+      accessToken: data?.session?.access_token ?? null,
+      refreshToken: data?.session?.refresh_token ?? null,
+    };
+  } catch (sessionError) {
+    console.warn('[SecureAuth] Supabase session lookup failed', sessionError);
+    return { accessToken: null, refreshToken: null };
+  }
+};
 
 
 type SessionSurface = 'admin' | 'lms';
@@ -757,12 +779,18 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       let storedAccessToken: string | null = null;
       let storedRefreshToken: string | null = null;
       try {
-        storedAccessToken = getAccessToken();
-        storedRefreshToken = getRefreshToken();
+        const { accessToken, refreshToken } = await readSupabaseSessionTokens();
+        storedAccessToken = accessToken;
+        storedRefreshToken = refreshToken;
       } catch (tokenError) {
-        console.warn('[SecureAuth] Failed to inspect stored tokens for session fetch', tokenError);
+        console.warn('[SecureAuth] Failed to inspect Supabase session for fetch', tokenError);
       }
       const hasStoredToken = Boolean(storedAccessToken || storedRefreshToken);
+      if (!hasStoredToken) {
+        logAuthDebug('[auth] session_fetch_skipped_no_supabase_token', { surface });
+        continueAsGuest(surface ? `${surface}_session_no_supabase_token` : 'session_no_supabase_token');
+        return false;
+      }
       if (import.meta.env.DEV) {
         logAuthDebug('[auth] session_fetch_request', {
           surface,
@@ -771,14 +799,27 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           hasRefreshToken: Boolean(storedRefreshToken),
         });
       }
+      let response: Response;
       try {
-        const response = await apiRequestRaw('/api/auth/session', {
+        response = await apiFetch('/auth/session', {
           method: 'GET',
           signal,
-          requireAuth: hasStoredToken,
-          allowAnonymous: !hasStoredToken,
-          credentials: 'include',
         });
+      } catch (error) {
+        if (error instanceof NotAuthenticatedError) {
+          continueAsGuest(surface ? `${surface}_session_no_supabase_token` : 'session_no_supabase_token');
+          return false;
+        }
+        if (error instanceof AuthExpiredError) {
+          handleSessionUnauthorized({
+            silent: true,
+            reason: surface ? `${surface}_session_expired` : 'session_expired',
+          });
+          continueAsGuest(surface ? `${surface}_session_expired` : 'session_expired');
+          return false;
+        }
+        throw error;
+      }
         if (import.meta.env.DEV) {
           const authHeader = response.headers.get('authorization') || '';
           if (!authHeader) {
@@ -787,17 +828,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         }
         captureServerClock(headersToRecord(response.headers));
         const payload = await parseSessionPayload(response);
-        const noTokenUnauth = !hasStoredToken && isNoTokenUnauthorized(response.status, payload);
-
-        if (noTokenUnauth) {
-          handleSessionUnauthorized({
-            silent: true,
-            reason: surface ? `${surface}_session_no_token` : 'session_no_token',
-          });
-          continueAsGuest(surface ? `${surface}_session_no_token` : 'session_no_token');
-          return false;
-        }
-
         if (response.status === 401 || response.status === 403) {
           if (import.meta.env.DEV) {
             logAuthDebug('[auth] session_fetch_unauthorized', {
@@ -1111,23 +1141,25 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       setBootstrapError(null);
       setAuthInitializing(true);
 
-      const hasStoredToken = Boolean(getAccessToken());
+      let storedAccessToken: string | null = null;
       try {
-        const response = await apiRequestRaw('/api/auth/session', {
+        const { accessToken } = await readSupabaseSessionTokens();
+        storedAccessToken = accessToken;
+      } catch (sessionError) {
+        console.warn('[SecureAuth] Failed to inspect Supabase session during bootstrap', sessionError);
+      }
+      const hasStoredToken = Boolean(storedAccessToken);
+      if (!hasStoredToken) {
+        continueAsGuest('bootstrap_no_supabase_token');
+        return;
+      }
+      try {
+        const response = await apiFetch('/auth/session', {
           method: 'GET',
           signal,
-          requireAuth: hasStoredToken,
-          allowAnonymous: !hasStoredToken,
-          credentials: 'include',
         });
         captureServerClock(headersToRecord(response.headers));
         const payload = await parseSessionPayload(response);
-
-        const noTokenUnauth = !hasStoredToken && isNoTokenUnauthorized(response.status, payload);
-        if (noTokenUnauth) {
-          continueAsGuest('bootstrap_no_token');
-          return;
-        }
 
         if (response.status === 401 || response.status === 403) {
           const refreshFn = refreshTokenCallbackRef.current;
@@ -1171,14 +1203,15 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           logSessionResult('aborted');
           return;
         }
+        if (error instanceof NotAuthenticatedError) {
+          continueAsGuest('bootstrap_no_supabase_token');
+          return;
+        }
+        if (error instanceof AuthExpiredError) {
+          continueAsGuest('bootstrap_unauthenticated');
+          return;
+        }
         if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
-          const noTokenUnauth =
-            error.status === 401 && !hasStoredToken && isNoTokenUnauthorized(error.status, error.body);
-          if (noTokenUnauth) {
-            continueAsGuest('bootstrap_no_token');
-            return;
-          }
-
           const refreshFn = refreshTokenCallbackRef.current;
           if (refreshFn) {
             const recovered = await refreshFn({ reason: 'user_retry' });

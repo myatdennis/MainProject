@@ -6,8 +6,9 @@ import { loginSchema, emailSchema } from '../../utils/validators';
 import { sanitizeText } from '../../utils/sanitize';
 import useRuntimeStatus from '../../hooks/useRuntimeStatus';
 import type { RuntimeStatus } from '../../state/runtimeStatus';
-import apiRequest, { ApiError } from '../../utils/apiClient';
+import { ApiError } from '../../utils/apiClient';
 import { supabase } from '../../lib/supabaseClient';
+import { apiJson, ApiResponseError, AuthExpiredError, NotAuthenticatedError } from '../../lib/apiClient';
 
 interface AdminCapabilityResponse {
   user?: Record<string, any>;
@@ -102,7 +103,7 @@ const AdminLogin: React.FC = () => {
 
   const verifyAdminCapability = async (): Promise<CapabilityCheckResult> => {
     try {
-      const response = await apiRequest<AdminCapabilityResponse>('/api/admin/me');
+      const response = await apiJson<AdminCapabilityResponse>('/admin/me');
       if (response?.access?.allowed) {
         return { allowed: true, user: response.user };
       }
@@ -110,12 +111,24 @@ const AdminLogin: React.FC = () => {
       return { allowed: false, reason };
     } catch (capabilityError) {
       let fallbackReason = 'admin_capability_error';
-      if (capabilityError instanceof ApiError) {
-        if (capabilityError.status === 401) {
+      if (
+        capabilityError instanceof ApiResponseError ||
+        capabilityError instanceof AuthExpiredError ||
+        capabilityError instanceof NotAuthenticatedError
+      ) {
+        if (capabilityError instanceof ApiResponseError) {
+          if (capabilityError.status === 401) {
+            return { allowed: false, reason: 'not_authorized' };
+          }
+          try {
+            const parsedBody = capabilityError.body ? (JSON.parse(capabilityError.body) as AdminCapabilityResponse) : null;
+            fallbackReason = parsedBody?.access?.reason || parsedBody?.error || parsedBody?.message || fallbackReason;
+          } catch {
+            // noop; fallbackReason stays default
+          }
+        } else {
           return { allowed: false, reason: 'not_authorized' };
         }
-        const body = capabilityError.body as AdminCapabilityResponse | undefined;
-        fallbackReason = body?.access?.reason || body?.error || body?.message || fallbackReason;
       }
       console.warn('[AdminLogin] capability check failed', capabilityError);
       return { allowed: false, reason: fallbackReason };
