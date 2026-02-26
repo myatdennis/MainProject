@@ -37,6 +37,7 @@ export function getSupabase(): SupabaseClient | null {
 
 if (import.meta.env?.DEV && typeof window !== 'undefined') {
   (window as any).__supabase = supabase;
+  (window as any).supabase = supabase;
 }
 
 function createSecureSupabaseAuthStorage() {
