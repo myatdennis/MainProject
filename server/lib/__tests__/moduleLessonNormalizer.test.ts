@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { normalizeModuleLessonPayloads } from '../moduleLessonNormalizer.js';
 
-const fakePickOrgId = (...candidates) => {
+const fakePickOrgId = (...candidates: any[]) => {
   for (const candidate of candidates) {
     if (typeof candidate === 'string') {
       const trimmed = candidate.trim();
