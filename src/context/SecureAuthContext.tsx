@@ -996,11 +996,28 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         lastRefreshAttemptRef.current = now;
 
         try {
+          const sessionSnapshot = getUserSession();
+          const refreshToken =
+            sessionSnapshot?.refresh_token ??
+            sessionSnapshot?.refreshToken ??
+            getRefreshToken() ??
+            null;
+          if (!refreshToken) {
+            console.warn('[SecureAuth] No refresh token available for /api/auth/refresh request');
+            refreshStatus = 'unauthenticated';
+            return false;
+          }
+          const refreshHeaders = {
+            ...buildSessionAuditHeaders(),
+            'Content-Type': 'application/json',
+          };
+          const refreshBody = JSON.stringify({ refreshToken });
+
           const payload = await apiRequest<SessionResponsePayload | null>('/api/auth/refresh', {
             method: 'POST',
             allowAnonymous: true,
-            headers: buildSessionAuditHeaders(),
-            body: { reason },
+            headers: refreshHeaders,
+            body: refreshBody,
           });
 
           if (payload?.user) {

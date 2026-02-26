@@ -4,7 +4,7 @@ import { LRUCache } from 'lru-cache';
 import nodeFetch from 'node-fetch';
 import { extractTokenFromHeader } from '../utils/jwt.js';
 
-const JWT_AUTH_BYPASS_PATHS = ['/api/health', '/api/auth/login'];
+const JWT_AUTH_BYPASS_PATHS = ['/api/health', '/api/auth/login', '/api/auth/refresh'];
 const DEV_FALLBACK_ENABLED = String(process.env.DEV_FALLBACK || '').toLowerCase() === 'true';
 const E2E_MODE = String(process.env.E2E_TEST_MODE || '').toLowerCase() === 'true';
 const DEFAULT_SUPABASE_ISSUER = 'https://eprsgmfzqjptfywoecuy.supabase.co/auth/v1';

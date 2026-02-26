@@ -4953,7 +4953,13 @@ app.get('/api/auth/verify', authenticate, (req, res) => {
 
 // Token refresh endpoint
 app.post('/api/auth/refresh', async (req, res) => {
-  const { refreshToken } = req.body || {};
+  console.log('[refresh] content-type', req.headers['content-type']);
+  console.log('[refresh] body', req.body);
+  const body = req.body || {};
+  const refreshToken =
+    (typeof body.refreshToken === 'string' && body.refreshToken.trim()) ||
+    (typeof body.refresh_token === 'string' && body.refresh_token.trim()) ||
+    null;
 
   if (!refreshToken) {
     res.status(400).json({ error: 'Refresh token required' });
