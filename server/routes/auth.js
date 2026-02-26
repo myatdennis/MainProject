@@ -16,6 +16,7 @@ import {
   buildAuthContext,
 } from '../middleware/auth.js';
 import supabase, { supabaseAuthClient } from '../lib/supabaseClient.js';
+import { getUserMemberships } from '../utils/memberships.js';
 
 import { clearAuthCookies } from '../utils/authCookies.js';
 
@@ -294,7 +295,7 @@ const buildSessionResponse = (userPayload, tokens = {}) => ({
   refreshExpiresAt: tokens.refreshExpiresAt ?? null,
 });
 
-const refreshSessionFromToken = async (req, refreshToken) => {
+const refreshSessionFromToken = async (refreshToken) => {
   if (!isJwtSecretConfigured) {
     const jwtError = buildJwtConfigError();
     return {
@@ -310,9 +311,9 @@ const refreshSessionFromToken = async (req, refreshToken) => {
   if (!refreshToken) {
     return {
       ok: false,
-      status: 401,
+      status: 400,
       error: 'missing_refresh_token',
-      message: 'Refresh token is required',
+      message: 'refreshToken is required',
     };
   }
 
@@ -322,7 +323,7 @@ const refreshSessionFromToken = async (req, refreshToken) => {
       return {
         ok: false,
         status: 401,
-        error: 'Invalid token',
+        error: 'invalid_refresh_token',
         message: 'Refresh token is invalid or expired',
       };
     }
@@ -331,12 +332,15 @@ const refreshSessionFromToken = async (req, refreshToken) => {
       email: payload.email,
       role: payload.role,
     });
-
-
     const userPayload = buildDemoUserPayloadFromToken(payload);
     return {
       ok: true,
-      body: buildSessionResponse(userPayload, tokens),
+      body: {
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+        expiresIn: null,
+        user: userPayload,
+      },
     };
   }
 
@@ -352,26 +356,33 @@ const refreshSessionFromToken = async (req, refreshToken) => {
     };
   }
 
-  const { data, error } = await supabaseAuthClient.auth.refreshSession({ refresh_token: refreshToken });
-  if (error || !data?.session || !data.user) {
+  try {
+    const { data, error } = await supabaseAuthClient.auth.refreshSession({ refresh_token: refreshToken });
+    if (error || !data?.session) {
+      return {
+        ok: false,
+        status: 401,
+        error: 'invalid_refresh_token',
+        message: error?.message || 'Unable to refresh session',
+      };
+    }
+    return {
+      ok: true,
+      body: {
+        accessToken: data.session.access_token,
+        refreshToken: data.session.refresh_token ?? refreshToken,
+        expiresIn: data.session.expires_in ?? null,
+        user: data.user ?? null,
+      },
+    };
+  } catch (error) {
     return {
       ok: false,
-      status: 401,
-      error: 'Invalid token',
-      message: error?.message || 'Unable to refresh session',
+      status: 500,
+      error: 'refresh_failed',
+      message: error instanceof Error ? error.message : 'Unable to refresh session',
     };
   }
-
-  const membershipRows = await getUserMemberships(data.user.id, { logPrefix: '[auth-refresh]' });
-  const userPayload = buildUserPayloadFromSupabase(data.user, membershipRows);
-  const tokens = buildTokenResponseFromSession(data.session);
-
-
-
-  return {
-    ok: true,
-    body: buildSessionResponse(userPayload, tokens),
-  };
 };
 
 const router = express.Router();
@@ -640,70 +651,35 @@ router.post('/register', authLimiter, async (req, res) => {
 // ============================================================================
 
 router.post('/refresh', async (req, res) => {
-  console.log('[refresh] content-type', req.headers['content-type']);
-  console.log('[refresh] body', req.body);
-  if (process.env.DEBUG_AUTH === 'true') {
-    console.log('[DEBUG_AUTH] Entered /api/auth/refresh', {
-      method: req.method,
-      url: req.originalUrl,
-      host: req.headers.host,
-      x_forwarded_host: req.headers['x-forwarded-host'],
-      hostname: req.hostname
-    });
-  }
   try {
-    const refreshTokenCamel =
+    const refreshToken =
       typeof req.body?.refreshToken === 'string' ? req.body.refreshToken.trim() : '';
-    const refreshTokenSnake =
-      typeof req.body?.refresh_token === 'string' ? req.body.refresh_token.trim() : '';
-    const refreshToken = refreshTokenCamel || refreshTokenSnake || null;
     if (!refreshToken) {
-      if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] No refresh_token, rejecting');
-      console.warn('[AUTH REFRESH FAILURE] Missing refresh token payload', {
-        ip: req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip,
-        at: 'refresh_request_validation',
-      });
-      return res.status(401).json({
-        code: 'MISSING_REFRESH_TOKEN',
+      return res.status(400).json({
         error: 'missing_refresh_token',
-        message: 'Refresh token is required',
+        code: 'MISSING_REFRESH_TOKEN',
+        message: 'refreshToken is required',
       });
     }
-    const result = await refreshSessionFromToken(req, refreshToken);
+    const result = await refreshSessionFromToken(refreshToken);
     if (!result.ok) {
-      if ((result.status || 401) === 401 && result.error !== 'missing_refresh_token') {
-        clearAuthCookies(req, res);
-      }
-      if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Refresh failed', { error: result.error, message: result.message });
-      // Log refresh failure (mask token)
-      console.warn('[AUTH REFRESH FAILURE]', {
-        error: result.error,
-        message: result.message,
-        ip: req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip,
-        at: 'refreshSessionFromToken',
-      });
-      // Defensive: always return a structured error
       return res.status(result.status || 401).json({
         error: result.error || 'refresh_failed',
         code: result.code || result.error || 'refresh_failed',
         message: result.message || 'Unable to refresh session',
       });
     }
-    if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] Refresh success');
     return res.json(result.body);
   } catch (error) {
-    // Mask sensitive info in logs
-    const safeError = error instanceof Error ? error.message : error;
     console.error('[AUTH REFRESH ERROR]', {
-      error: safeError,
+      error: error instanceof Error ? error.message : error,
       ip: req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.ip,
-      at: 'catch',
+      at: 'refresh_catch',
     });
-    clearAuthCookies(req, res);
     res.status(500).json({
       code: 'REFRESH_FAILED',
       error: 'refresh_failed',
-      message: 'An unexpected error occurred during refresh. Please try again.',
+      message: 'Unable to refresh session. Please try again.',
     });
   }
 });

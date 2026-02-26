@@ -25,7 +25,7 @@ if (REDIS_URL) {
 
 const memoryCache = new LRUCache({
   max: MAX_MEMORY_KEYS,
-  ttl: DEFAULT_TTL_SECONDS * 1000,
+  ttl: DEFAULT_TTL_SECONDS * 1_000,
 });
 
 const serialize = (value) => {

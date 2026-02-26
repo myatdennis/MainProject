@@ -61,13 +61,6 @@ const logAuthDebug = (label: string, payload: Record<string, unknown>) => {
 };
 const logSessionResult = (status: string) => logAuthDebug('[auth] session result', { status });
 const logRefreshResult = (status: string) => logAuthDebug('[auth] refresh result', { status });
-const logSafeTokenPreview = (label: string, token: string | null) => {
-  if (!isDevEnvironment) return;
-  console.debug(label, {
-    length: token ? token.length : 0,
-    suffix: token ? token.slice(-6) : null,
-  });
-};
 
 
 type SessionSurface = 'admin' | 'lms';
@@ -460,23 +453,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   });
   const [orgResolutionStatus, setOrgResolutionStatus] = useState<OrgResolutionStatus>('idle');
   const [sessionMetaVersion, setSessionMetaVersion] = useState(0);
-  const syncSupabaseSession = useCallback((accessToken?: string | null, refreshToken?: string | null) => {
-    const supabaseClient = getSupabase();
-    if (!supabaseClient || !accessToken || !refreshToken) return;
-    try {
-      void supabaseClient.auth
-        .setSession({ access_token: accessToken, refresh_token: refreshToken })
-        .then(() => {
-          logSafeTokenPreview('[SecureAuth] supabase_access_synced', accessToken);
-          logSafeTokenPreview('[SecureAuth] supabase_refresh_synced', refreshToken);
-        })
-        .catch((error) => {
-          console.warn('[SecureAuth] Failed to sync Supabase session', error);
-        });
-    } catch (error) {
-      console.warn('[SecureAuth] Unable to invoke Supabase session sync', error);
-    }
-  }, []);
   const bootstrappedRef = useRef(false);
   const hasAttemptedRefreshRef = useRef(false);
   const refreshAttemptedRef = useRef(false);
@@ -607,16 +583,11 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       setUserSession(session);
 
       if (persistTokens) {
-        const nextAccessToken = payload.accessToken ?? null;
-        const nextRefreshToken = payload.refreshToken ?? null;
         if (payload.accessToken !== undefined) {
-          setAccessToken(nextAccessToken, tokenReason);
+          setAccessToken(payload.accessToken, tokenReason);
         }
         if (payload.refreshToken !== undefined) {
-          setRefreshToken(nextRefreshToken, tokenReason);
-        }
-        if (nextAccessToken && nextRefreshToken) {
-          syncSupabaseSession(nextAccessToken, nextRefreshToken);
+          setRefreshToken(payload.refreshToken, tokenReason);
         }
         if (payload.expiresAt || payload.refreshExpiresAt) {
           const issuedAt = getSkewedNow();
@@ -638,7 +609,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       setOrganizationIds,
       setActiveOrgIdState,
       setIsAuthenticated,
-      syncSupabaseSession,
     ],
   );
 
@@ -1066,7 +1036,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             refreshStatus = 'unauthenticated';
             return false;
           }
-          logSafeTokenPreview('[SecureAuth] refresh_token_selected', refreshToken);
 
           const refreshHeaders = {
             ...buildSessionAuditHeaders(),
@@ -1384,14 +1353,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     },
     [resolveSession, sessionStatus, updateSurfaceAuthStatus],
   );
-
-  useEffect(() => {
-    const cachedAccess = getAccessToken();
-    const cachedRefresh = getRefreshToken();
-    if (cachedAccess && cachedRefresh) {
-      syncSupabaseSession(cachedAccess, cachedRefresh);
-    }
-  }, [sessionMetaVersion, syncSupabaseSession]);
 
   // ============================================================================
   // Logout

@@ -1,4 +1,5 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { secureGet, secureSet, secureRemove } from './secureStorage';
 
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
@@ -10,6 +11,35 @@ let supabase: SupabaseClient | null = null;
 let warnedMissingConfig = false;
 
 export const hasSupabaseConfig = () => Boolean(supabaseUrl && supabaseAnonKey);
+
+const SUPABASE_STORAGE_PREFIX = 'supabase:auth:';
+const buildStorageKey = (key: string) => `${SUPABASE_STORAGE_PREFIX}${key}`;
+
+const supabaseAuthStorage = {
+  getItem(key: string) {
+    try {
+      const value = secureGet<string>(buildStorageKey(key));
+      return value ?? null;
+    } catch (error) {
+      console.warn('[supabaseClient] storage.getItem failed', { key, error });
+      return null;
+    }
+  },
+  setItem(key: string, value: string) {
+    try {
+      secureSet(buildStorageKey(key), value);
+    } catch (error) {
+      console.warn('[supabaseClient] storage.setItem failed', { key, error });
+    }
+  },
+  removeItem(key: string) {
+    try {
+      secureRemove(buildStorageKey(key));
+    } catch (error) {
+      console.warn('[supabaseClient] storage.removeItem failed', { key, error });
+    }
+  },
+};
 
 export function getSupabase(): SupabaseClient | null {
   if (!hasSupabaseConfig()) {
@@ -25,8 +55,9 @@ export function getSupabase(): SupabaseClient | null {
   supabase = createClient(supabaseUrl, supabaseAnonKey, {
     auth: {
       persistSession: true,
+      storage: supabaseAuthStorage,
       autoRefreshToken: true,
-      detectSessionInUrl: true,
+      detectSessionInUrl: false,
     },
   });
 
