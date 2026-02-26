@@ -14,8 +14,8 @@ const SUPABASE_JWT_ISSUER = (configuredIssuer || derivedIssuer || DEFAULT_SUPABA
 const hasCustomIssuerConfig = Boolean((process.env.SUPABASE_JWT_ISSUER || '').trim() || derivedIssuer);
 const resolvedSupabaseUrl = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
 const SUPABASE_JWKS_URL = resolvedSupabaseUrl
-  ? `${resolvedSupabaseUrl}/auth/v1/certs`
-  : (process.env.SUPABASE_JWT_ISSUER || DEFAULT_SUPABASE_ISSUER).replace(/\/+$/, '') + '/certs';
+  ? `${resolvedSupabaseUrl}/auth/v1/keys`
+  : (process.env.SUPABASE_JWT_ISSUER || DEFAULT_SUPABASE_ISSUER).replace(/\/+$/, '') + '/keys';
 const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
 const JWKS_CACHE_TTL_MS = Number(process.env.SUPABASE_JWKS_CACHE_MS || SIX_HOURS_MS);
 const JWKS_CACHE_KEY = 'supabase_jwks';
