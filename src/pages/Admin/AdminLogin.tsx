@@ -8,6 +8,7 @@ import useRuntimeStatus from '../../hooks/useRuntimeStatus';
 import type { RuntimeStatus } from '../../state/runtimeStatus';
 import apiRequest, { ApiError } from '../../utils/apiClient';
 import { getAccessToken } from '../../lib/secureStorage';
+import { supabase } from '../../lib/supabaseClient';
 
 interface AdminCapabilityResponse {
   user?: Record<string, any>;
@@ -264,6 +265,28 @@ const AdminLogin: React.FC = () => {
     }
     setIsLoading(false);
     if (result.success) {
+      if (import.meta.env?.DEV && supabase) {
+        try {
+          const { data, error } = await supabase.auth.signInWithPassword({
+            email: sanitizedEmail,
+            password: sanitizedPassword,
+          });
+          if (error) throw error;
+          console.log(
+            'signIn session?',
+            !!data.session,
+            data.session?.access_token?.slice(0, 20),
+          );
+          const { data: sessionData } = await supabase.auth.getSession();
+          console.log(
+            'getSession after signIn?',
+            !!sessionData.session,
+            sessionData.session?.access_token?.slice(0, 20),
+          );
+        } catch (sessionDebugError) {
+          console.warn('[AdminLogin] Supabase session debug failed', sessionDebugError);
+        }
+      }
       await handleCapabilityGate();
     } else if (result.mfaRequired) {
       setMfaRequired(true);

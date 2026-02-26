@@ -20,7 +20,7 @@ import { loginSchema, emailSchema, registerSchema } from '../utils/validators';
 import { queueRefresh } from '../lib/refreshQueue';
 import apiRequest, { ApiError, apiRequestRaw } from '../utils/apiClient';
 import buildSessionAuditHeaders from '../utils/sessionAuditHeaders';
-import { getSupabase } from '../lib/supabaseClient';
+import { getSupabase, hasSupabaseConfig } from '../lib/supabaseClient';
 
 // MFA helpers
 
@@ -324,7 +324,7 @@ interface AuthState {
 interface LoginResult {
   success: boolean;
   error?: string;
-  errorType?: 'invalid_credentials' | 'network_error' | 'validation_error' | 'unknown_error';
+  errorType?: 'invalid_credentials' | 'network_error' | 'validation_error' | 'unknown_error' | 'supabase_auth_error';
   mfaRequired?: boolean;
   mfaEmail?: string;
 }
@@ -1427,9 +1427,51 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     hasLoggedAppLoadRef.current = true;
   }, [sessionStatus, user]);
 
-  // ============================================================================
-  // Login
-  // ============================================================================
+// ============================================================================
+// Login
+// ============================================================================
+
+  const ensureSupabaseAdminSession = useCallback(
+    async (email: string, password: string): Promise<{ ok: boolean; error?: string }> => {
+      if (!hasSupabaseConfig()) {
+        return { ok: true };
+      }
+      const supabase = getSupabase();
+      if (!supabase) {
+        return { ok: false, error: 'Supabase authentication is unavailable. Please try again.' };
+      }
+
+      const normalizedEmail = email.trim().toLowerCase();
+
+      try {
+        const { data: existing } = await supabase.auth.getSession();
+        if (existing?.session?.access_token) {
+          return { ok: true };
+        }
+
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: normalizedEmail,
+          password,
+        });
+        if (error) {
+          console.warn('[SecureAuth] Supabase admin sign-in failed', {
+            message: error.message,
+            status: (error as any)?.status,
+          });
+          return { ok: false, error: error.message || 'Unable to establish Supabase session. Please try again.' };
+        }
+        if (!data?.session?.access_token) {
+          console.warn('[SecureAuth] Supabase admin session missing access token');
+          return { ok: false, error: 'Unable to establish Supabase session. Please try again.' };
+        }
+        return { ok: true };
+      } catch (supabaseError) {
+        console.warn('[SecureAuth] Supabase admin sign-in threw', supabaseError);
+        return { ok: false, error: 'Unable to establish Supabase session. Please try again.' };
+      }
+    },
+    [],
+  );
 
   const login = useCallback(async (
     email: string,
@@ -1448,12 +1490,14 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         };
       }
 
+      const normalizedEmail = email.toLowerCase().trim();
+
       const rawPayload = await requestJsonWithClock<unknown>('/api/auth/login', {
         method: 'POST',
         allowAnonymous: true,
         headers: buildSessionAuditHeaders(),
         body: {
-          email: email.toLowerCase().trim(),
+          email: normalizedEmail,
           password,
           mfaCode,
         },
@@ -1476,6 +1520,17 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           error: 'Authentication failed. Please try again.',
           errorType: 'unknown_error',
         };
+      }
+
+      if (type === 'admin') {
+        const supabaseSessionResult = await ensureSupabaseAdminSession(normalizedEmail, password);
+        if (!supabaseSessionResult.ok) {
+          return {
+            success: false,
+            error: supabaseSessionResult.error || 'Unable to establish Supabase session. Please try again.',
+            errorType: 'supabase_auth_error',
+          };
+        }
       }
 
       applySessionPayload(normalizedPayload, {
@@ -1542,7 +1597,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         errorType: 'unknown_error',
       };
     }
-  }, [applySessionPayload, requestJsonWithClock]);
+  }, [applySessionPayload, ensureSupabaseAdminSession, requestJsonWithClock]);
 
   const register = useCallback(async (input: RegisterInput): Promise<RegisterResult> => {
     try {

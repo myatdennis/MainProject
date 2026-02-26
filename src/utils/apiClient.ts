@@ -244,6 +244,13 @@ const refreshSupabaseSession = async (): Promise<boolean> => {
   try {
     const supabase = getSupabase();
     if (!supabase) return false;
+    const { data: existing } = await supabase.auth.getSession();
+    if (!existing?.session) {
+      if (devMode) {
+        console.debug('[apiClient] refreshSession skipped: no active Supabase session');
+      }
+      return false;
+    }
     const { data, error } = await supabase.auth.refreshSession();
     if (error) {
       console.warn('[apiClient] supabase.auth.refreshSession error', error);
@@ -434,6 +441,7 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
 
   const method = options.method ?? 'GET';
   const url = buildApiUrl(path);
+  const pathname = extractPathname(url);
 
   const requiresSession =
     shouldRequireSession(url, {
@@ -497,6 +505,13 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
   }
   const debugAuthSource: AuthHeaderSource | 'custom' =
     hasAuthorization && authSource === 'none' ? 'custom' : hasAuthorization ? authSource : 'none';
+
+  if (devMode && pathname === '/api/admin/me') {
+    console.debug('[apiClient][dev] /api/admin/me Authorization', {
+      attached: hasAuthorization,
+      source: debugAuthSource,
+    });
+  }
 
   const canLog = shouldLogDebug(url) && typeof console !== 'undefined' && typeof console.debug === 'function';
   const debugPayload = canLog
