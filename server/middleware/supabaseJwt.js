@@ -5,10 +5,8 @@ import { extractTokenFromHeader } from '../utils/jwt.js';
 const JWT_AUTH_BYPASS_PATHS = ['/api/health', '/api/auth/login', '/api/auth/refresh'];
 const DEV_FALLBACK_ENABLED = String(process.env.DEV_FALLBACK || '').toLowerCase() === 'true';
 const E2E_MODE = String(process.env.E2E_TEST_MODE || '').toLowerCase() === 'true';
-const rawSupabaseBaseUrl = (process.env.SUPABASE_URL || '').trim();
-if (!rawSupabaseBaseUrl) {
-  throw new Error('[supabaseJwt] SUPABASE_URL environment variable is required for JWT validation.');
-}
+const DEFAULT_SUPABASE_PROJECT_URL = 'https://eprsgmfzqjptfywoecuy.supabase.co';
+const rawSupabaseBaseUrl = (process.env.SUPABASE_URL || DEFAULT_SUPABASE_PROJECT_URL).trim() || DEFAULT_SUPABASE_PROJECT_URL;
 
 const buildSupabaseUrl = (path) => {
   try {
