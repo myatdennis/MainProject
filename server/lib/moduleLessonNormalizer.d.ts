@@ -1,9 +1,14 @@
+<<<<<<< HEAD
 export interface NormalizeDiagnostics {
+=======
+export type ModuleNormalizationDiagnostics = {
+>>>>>>> a6944c9 (ddqdq)
   modulesMissingCourseId: number;
   modulesMissingOrgId: number;
   lessonsMissingModuleId: number;
   lessonsMissingCourseId: number;
   lessonsMissingOrgId: number;
+<<<<<<< HEAD
 }
 
 export interface NormalizeOptions {
@@ -20,3 +25,26 @@ export function normalizeModuleLessonPayloads(
 export function shouldLogModuleNormalization(diagnostics: NormalizeDiagnostics): boolean;
 
 export function coerceTextId(...candidates: any[]): string | null;
+=======
+};
+
+export type ModuleNormalizerOptions = {
+  courseId?: string | null;
+  organizationId?: string | null;
+  pickOrgId?: (...candidates: unknown[]) => string | null;
+};
+
+export declare function coerceTextId(...candidates: Array<string | null | undefined>): string | null;
+
+export declare function normalizeModuleLessonPayloads(
+  modulesInput: unknown,
+  options?: ModuleNormalizerOptions,
+): {
+  modules: any[];
+  diagnostics: ModuleNormalizationDiagnostics;
+};
+
+export declare function shouldLogModuleNormalization(
+  diagnostics?: ModuleNormalizationDiagnostics | null,
+): boolean;
+>>>>>>> a6944c9 (ddqdq)
