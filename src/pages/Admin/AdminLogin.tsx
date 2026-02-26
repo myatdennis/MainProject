@@ -44,6 +44,22 @@ const AdminLogin: React.FC = () => {
   const [authError, setAuthError] = useState('');
   const [capabilityFallbackActive, setCapabilityFallbackActive] = useState(false);
   const [capabilityRetrying, setCapabilityRetrying] = useState(false);
+  const [devDebug, setDevDebug] = useState<{
+    sessionCheckedAt: string | null;
+    sessionHasToken: boolean;
+    accessTokenLength: number;
+    headerAlg: string | null;
+    headerKid: string | null;
+    lastLabel: string | null;
+    lastApiCall?: { path: string; status: number | 'error'; note?: string; timestamp: string };
+  }>({
+    sessionCheckedAt: null,
+    sessionHasToken: false,
+    accessTokenLength: 0,
+    headerAlg: null,
+    headerKid: null,
+    lastLabel: null,
+  });
   const navigate = useNavigate();
   const location = useLocation();
   const landingLogRef = useRef(false);
@@ -101,9 +117,63 @@ const AdminLogin: React.FC = () => {
     }
   };
 
+  const updateDevSessionSnapshot = useCallback(
+    async (label: string) => {
+      if (!import.meta.env.DEV) return;
+      try {
+        const { data } = await supabase.auth.getSession();
+        const token = data?.session?.access_token ?? null;
+        let alg: string | null = null;
+        let kid: string | null = null;
+        if (token) {
+          const headerChunk = token.split('.')[0] || '';
+          try {
+            const decoded = JSON.parse(atob(headerChunk));
+            alg = decoded?.alg ?? null;
+            kid = decoded?.kid ?? null;
+          } catch {
+            alg = null;
+            kid = null;
+          }
+        }
+        setDevDebug((prev) => ({
+          ...prev,
+          sessionCheckedAt: new Date().toISOString(),
+          sessionHasToken: Boolean(token),
+          accessTokenLength: token?.length ?? 0,
+          headerAlg: alg,
+          headerKid: kid,
+          lastLabel: label,
+        }));
+      } catch (error) {
+        console.warn('[AdminLogin][debug] snapshot failed', error);
+      }
+    },
+    [],
+  );
+
+  const recordDevApiEvent = useCallback((path: string, status: number | 'error', note?: string) => {
+    if (!import.meta.env.DEV) return;
+    setDevDebug((prev) => ({
+      ...prev,
+      lastApiCall: {
+        path,
+        status,
+        note,
+        timestamp: new Date().toISOString(),
+      },
+    }));
+  }, []);
+
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    updateDevSessionSnapshot('initial_render');
+  }, [updateDevSessionSnapshot]);
+
   const verifyAdminCapability = async (): Promise<CapabilityCheckResult> => {
     try {
       const response = await apiJson<AdminCapabilityResponse>('/admin/me');
+      recordDevApiEvent('/admin/me', 200);
       if (response?.access?.allowed) {
         return { allowed: true, user: response.user };
       }
@@ -118,6 +188,7 @@ const AdminLogin: React.FC = () => {
       ) {
         if (capabilityError instanceof ApiResponseError) {
           if (capabilityError.status === 401) {
+            recordDevApiEvent('/admin/me', 401, 'not_authorized');
             return { allowed: false, reason: 'not_authorized' };
           }
           try {
@@ -126,7 +197,9 @@ const AdminLogin: React.FC = () => {
           } catch {
             // noop; fallbackReason stays default
           }
+          recordDevApiEvent('/admin/me', capabilityError.status, fallbackReason);
         } else {
+          recordDevApiEvent('/admin/me', 'error', capabilityError.message);
           return { allowed: false, reason: 'not_authorized' };
         }
       }
@@ -272,6 +345,7 @@ const AdminLogin: React.FC = () => {
           sessionHasAccessToken: Boolean(data?.session?.access_token),
           sessionError: error?.message ?? null,
         });
+        await updateDevSessionSnapshot('post-login-success');
       } catch (sessionCheckError) {
         console.warn('[AdminLogin] session verification failed', sessionCheckError);
       }
@@ -559,6 +633,28 @@ const AdminLogin: React.FC = () => {
                 )}
               </button>
             </form>
+          )}
+
+          {import.meta.env.DEV && (
+            <div className="mt-6 rounded-2xl border border-slate/40 bg-white/70 p-4 text-left text-xs text-gray">
+              <h3 className="text-sm font-semibold text-charcoal mb-2">Login Debug (DEV only)</h3>
+              <div className="space-y-1">
+                <div>Session checked: {devDebug.sessionCheckedAt ?? 'n/a'}</div>
+                <div>Has access_token: {devDebug.sessionHasToken ? 'yes' : 'no'}</div>
+                <div>Token length: {devDebug.accessTokenLength}</div>
+                <div>header.alg: {devDebug.headerAlg ?? 'n/a'}</div>
+                <div>header.kid: {devDebug.headerKid ?? 'n/a'}</div>
+                <div>Last label: {devDebug.lastLabel ?? '—'}</div>
+                <div>
+                  Last API:{' '}
+                  {devDebug.lastApiCall
+                    ? `${devDebug.lastApiCall.path} → ${devDebug.lastApiCall.status} @ ${devDebug.lastApiCall.timestamp}${
+                        devDebug.lastApiCall.note ? ` (${devDebug.lastApiCall.note})` : ''
+                      }`
+                    : '—'}
+                </div>
+              </div>
+            </div>
           )}
 
           <div className="mt-6 text-center">

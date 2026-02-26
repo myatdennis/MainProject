@@ -330,6 +330,7 @@ type PreparedRequest = {
   linkedSignals: AbortSignal[];
   abortForwarder: () => void;
   timeoutId: ReturnType<typeof setTimeout> | null;
+  timeoutMs: number;
   credentials: RequestCredentials;
 };
 
@@ -425,6 +426,7 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
     linkedSignals,
     abortForwarder,
     timeoutId,
+    timeoutMs,
     credentials: 'omit',
   };
 
@@ -472,7 +474,11 @@ const executeFetch = async (input: PreparedRequest): Promise<Response> => {
         body,
         signal: controller.signal,
       },
-      { requireAuth: attachAuth && requiresSession },
+      {
+        requireAuth: attachAuth && requiresSession,
+        timeoutMs: input.timeoutMs,
+        requestLabel: extractPathname(url),
+      },
     );
   } catch (error: any) {
     if (timeoutId) clearTimeout(timeoutId);

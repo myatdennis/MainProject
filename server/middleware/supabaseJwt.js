@@ -29,7 +29,7 @@ const textEncoder = typeof TextEncoder !== 'undefined' ? new TextEncoder() : nul
 
 const hasCustomIssuerConfig = true;
 const AUDIENCE = 'authenticated';
-const JWKS_CACHE_TTL_MS = Number(process.env.SUPABASE_JWKS_CACHE_MS || 6 * 60 * 60 * 1000);
+const JWKS_CACHE_TTL_MS = Number(process.env.SUPABASE_JWKS_CACHE_MS || 10 * 60 * 1000);
 const jwksCache = new LRUCache({
   max: 1,
   ttl: JWKS_CACHE_TTL_MS,

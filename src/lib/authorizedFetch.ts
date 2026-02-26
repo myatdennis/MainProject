@@ -74,8 +74,47 @@ const refreshSupabaseSession = async (): Promise<boolean> => {
   }
 };
 
+const DEFAULT_TIMEOUT_MS = 12_000;
+
 export type AuthorizedFetchOptions = {
   requireAuth?: boolean;
+  timeoutMs?: number;
+  requestLabel?: string;
+};
+
+const createAbortController = (timeoutMs: number, externalSignal?: AbortSignal) => {
+  const controller = new AbortController();
+  const timeoutId =
+    timeoutMs > 0
+      ? setTimeout(() => {
+          controller.abort(new DOMException('Request timed out', 'AbortError'));
+        }, timeoutMs)
+      : null;
+
+  const handleExternalAbort = () => {
+    controller.abort(
+      externalSignal?.reason instanceof DOMException ? externalSignal.reason : new DOMException('Aborted', 'AbortError'),
+    );
+  };
+
+  if (externalSignal) {
+    if (externalSignal.aborted) {
+      handleExternalAbort();
+    } else {
+      externalSignal.addEventListener('abort', handleExternalAbort);
+    }
+  }
+
+  const cleanup = () => {
+    if (timeoutId) {
+      clearTimeout(timeoutId);
+    }
+    if (externalSignal) {
+      externalSignal.removeEventListener('abort', handleExternalAbort);
+    }
+  };
+
+  return { controller, cleanup };
 };
 
 export default async function authorizedFetch(
@@ -84,6 +123,8 @@ export default async function authorizedFetch(
   options: AuthorizedFetchOptions = {},
 ): Promise<Response> {
   const requireAuth = options.requireAuth !== false && !isPublicEndpoint(url);
+  const timeoutMs = typeof options.timeoutMs === 'number' ? options.timeoutMs : DEFAULT_TIMEOUT_MS;
+  const requestLabel = options.requestLabel || extractPathname(url);
   let attempt = 0;
 
   while (attempt < 2) {
@@ -102,14 +143,29 @@ export default async function authorizedFetch(
       });
     }
 
-    const response = await fetch(url, { ...init, headers });
+    const { controller, cleanup } = createAbortController(timeoutMs, init.signal);
+    let response: Response;
+    try {
+      response = await fetch(url, { ...init, headers, signal: controller.signal });
+    } catch (error: any) {
+      cleanup();
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        if (devMode) {
+          console.warn('[authorizedFetch] request aborted', { url, requestLabel, attempt });
+        }
+        throw error;
+      }
+      throw error;
+    } finally {
+      cleanup();
+    }
     if (response.status !== 401 || !requireAuth) {
       return response;
     }
 
     if (attempt === 0) {
       if (devMode) {
-        console.debug('[authorizedFetch] 401 received. Attempting Supabase refresh.', { url });
+        console.debug('[authorizedFetch] 401 received. Attempting Supabase refresh.', { url, requestLabel });
       }
       const refreshed = await refreshSupabaseSession();
       attempt += 1;
