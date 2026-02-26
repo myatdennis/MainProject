@@ -12,10 +12,16 @@ let warnedMissingConfig = false;
 
 export const hasSupabaseConfig = () => Boolean(supabaseUrl && supabaseAnonKey);
 
+type SupabaseStorageAdapter = {
+  getItem: (key: string) => string | null | Promise<string | null>;
+  setItem: (key: string, value: string) => void | Promise<void>;
+  removeItem: (key: string) => void | Promise<void>;
+};
+
 const SUPABASE_STORAGE_PREFIX = 'supabase:auth:';
 const buildStorageKey = (key: string) => `${SUPABASE_STORAGE_PREFIX}${key}`;
 
-const supabaseAuthStorage = {
+const createSecureSupabaseStorage = (): SupabaseStorageAdapter => ({
   getItem(key: string) {
     try {
       const value = secureGet<string>(buildStorageKey(key));
@@ -39,7 +45,9 @@ const supabaseAuthStorage = {
       console.warn('[supabaseClient] storage.removeItem failed', { key, error });
     }
   },
-};
+});
+
+const supabaseAuthStorage = createSecureSupabaseStorage();
 
 export function getSupabase(): SupabaseClient | null {
   if (!hasSupabaseConfig()) {
