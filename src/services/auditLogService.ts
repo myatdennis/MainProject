@@ -38,11 +38,7 @@ export function logAuditBestEffort(action: AuditAction, details: Record<string, 
       headers: buildSessionAuditHeaders(),
       allowAnonymous: false,
       timeoutMs: 4000,
-    }).catch((error) => {
-      if (import.meta.env?.DEV) {
-        console.warn('Audit log failed:', error);
-      }
-    });
+    }).catch(() => {});
   })();
 }
 

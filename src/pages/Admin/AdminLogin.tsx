@@ -7,7 +7,6 @@ import { sanitizeText } from '../../utils/sanitize';
 import useRuntimeStatus from '../../hooks/useRuntimeStatus';
 import type { RuntimeStatus } from '../../state/runtimeStatus';
 import apiRequest, { ApiError } from '../../utils/apiClient';
-import { getAccessToken } from '../../lib/secureStorage';
 import { supabase } from '../../lib/supabaseClient';
 
 interface AdminCapabilityResponse {
@@ -112,25 +111,14 @@ const AdminLogin: React.FC = () => {
     } catch (capabilityError) {
       let fallbackReason = 'admin_capability_error';
       if (capabilityError instanceof ApiError) {
+        if (capabilityError.status === 401) {
+          return { allowed: false, reason: 'not_authorized' };
+        }
         const body = capabilityError.body as AdminCapabilityResponse | undefined;
         fallbackReason = body?.access?.reason || body?.error || body?.message || fallbackReason;
       }
-      console.warn('[AdminLogin] capability check failed, falling back to session endpoint', capabilityError);
-      try {
-        const hasStoredToken = Boolean(getAccessToken());
-        const fallback = await apiRequest<{ user?: Record<string, any> }>('/api/auth/session', {
-          requireAuth: hasStoredToken,
-          allowAnonymous: !hasStoredToken,
-        });
-        const user = fallback?.user;
-        if (user?.isPlatformAdmin) {
-          return { allowed: true, user };
-        }
-        return { allowed: false, reason: fallbackReason };
-      } catch (sessionError) {
-        console.error('[AdminLogin] capability fallback failed', sessionError);
-      }
-      return { allowed: false, reason: 'admin_capability_error' };
+      console.warn('[AdminLogin] capability check failed', capabilityError);
+      return { allowed: false, reason: fallbackReason };
     }
   };
 

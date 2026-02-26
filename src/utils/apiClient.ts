@@ -1,8 +1,9 @@
-import buildAuthHeaders, { clearSupabaseAuthSnapshot, type AuthHeaderSource } from './requestContext';
+import buildAuthHeaders, { clearSupabaseAuthSnapshot } from './requestContext';
 import { buildApiUrl, assertNoDoubleApi } from '../config/apiBase';
 import { shouldRequireSession, getActiveSession } from '../lib/sessionGate';
-import { clearAuth, getAccessToken } from '../lib/secureStorage';
-import { getSupabase, hasSupabaseConfig } from '../lib/supabaseClient';
+import { clearAuth } from '../lib/secureStorage';
+import { getSupabase } from '../lib/supabaseClient';
+import authorizedFetch, { NotAuthenticatedError } from '../lib/authorizedFetch';
 
 export class ApiError extends Error {
   status: number;
@@ -33,18 +34,10 @@ type ApiRequestOptions = {
 };
 
 type InternalRequestOptions = ApiRequestOptions & {
-  __retriedAfterRefresh?: boolean;
 };
 const devMode = Boolean(
   (import.meta as any)?.env?.DEV ?? (typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production'),
 );
-const logTokenPreview = (label: string, token: string | null) => {
-  if (!devMode) return;
-  console.debug(label, {
-    length: token ? token.length : 0,
-    suffix: token ? token.slice(-6) : null,
-  });
-};
 
 const isJsonResponse = (contentType: string | null) =>
   !!contentType && contentType.toLowerCase().includes('application/json');
@@ -181,88 +174,6 @@ const assertNotThrottled = (url: string) => {
   return key;
 };
 
-type AccessTokenResult = {
-  token: string | null;
-  source: AuthHeaderSource | null;
-};
-
-const buildNotAuthenticatedError = (url: string) =>
-  new ApiError('Please log in again.', 401, url, {
-    code: 'not_authenticated',
-    message: 'Please log in again.',
-  });
-
-/**
- * Always fetch the latest Supabase session before making a request.
- * This satisfies the requirement to avoid caching bearer tokens anywhere else.
- */
-const fetchLatestSupabaseToken = async (): Promise<AccessTokenResult> => {
-  let token: string | null = null;
-  let source: AuthHeaderSource | null = null;
-
-  if (hasSupabaseConfig()) {
-    try {
-      const supabase = getSupabase();
-      if (supabase) {
-        const { data, error } = await supabase.auth.getSession();
-        if (error) {
-          if (devMode) {
-            console.debug('[apiClient] supabase.auth.getSession error', error);
-          }
-        } else if (data?.session?.access_token) {
-          token = data.session.access_token;
-          source = 'supabase';
-        }
-      }
-    } catch (error) {
-      console.warn('[apiClient] Failed to fetch Supabase session', error);
-    }
-  }
-
-  if (!token) {
-    try {
-      const stored = getAccessToken();
-      if (stored) {
-        token = stored;
-        source = 'secureStorage';
-      }
-    } catch (error) {
-      console.warn('[apiClient] Failed to read stored access token', error);
-    }
-  }
-
-  logTokenPreview('[apiClient] auth_token_selected', token);
-  return { token, source };
-};
-
-/**
- * Supabase refresh helper invoked after a 401. We do not persist the new token—
- * instead, the next request will call getSession again.
- */
-const refreshSupabaseSession = async (): Promise<boolean> => {
-  if (!hasSupabaseConfig()) return false;
-  try {
-    const supabase = getSupabase();
-    if (!supabase) return false;
-    const { data: existing } = await supabase.auth.getSession();
-    if (!existing?.session) {
-      if (devMode) {
-        console.debug('[apiClient] refreshSession skipped: no active Supabase session');
-      }
-      return false;
-    }
-    const { data, error } = await supabase.auth.refreshSession();
-    if (error) {
-      console.warn('[apiClient] supabase.auth.refreshSession error', error);
-      return false;
-    }
-    return Boolean(data?.session?.access_token);
-  } catch (error) {
-    console.warn('[apiClient] Failed to refresh Supabase session', error);
-    return false;
-  }
-};
-
 /**
  * Centralized auth failure handler: clears local state, signs out, and redirects.
  */
@@ -280,48 +191,23 @@ const handleAuthFailure = async () => {
   }
 };
 
-const SESSION_ENDPOINT_REGEX = /\/api\/auth\/session/i;
-
-const containsNoTokenMessage = (payload: unknown): boolean => {
-  const checkValue = (value: unknown) =>
-    typeof value === 'string' && value.toLowerCase().includes('no token provided');
-  if (!payload) return false;
-  if (checkValue(payload)) return true;
-  if (typeof payload === 'object') {
-    const data = payload as Record<string, unknown>;
-    return ['message', 'error', 'code', 'detail'].some((key) => checkValue(data[key]));
-  }
-  return false;
-};
-
-const isSessionPath = (target: string): boolean => SESSION_ENDPOINT_REGEX.test(extractPathname(target));
+const buildNotAuthenticatedError = (url: string) =>
+  new ApiError('Please log in again.', 401, url, {
+    code: 'not_authenticated',
+    message: 'Please log in again.',
+  });
 
 type UnauthorizedMeta = {
-  hasAuthorization?: boolean;
   credentials?: RequestCredentials;
 };
 
 const logUnauthorized = (url: string, status: number, body: unknown, meta?: UnauthorizedMeta) => {
-  if (status === 401 && isSessionPath(url) && containsNoTokenMessage(body)) {
-    return;
-  }
-  if (status === 401 && SESSION_ENDPOINT_REGEX.test(extractPathname(url))) {
-    const bodyDetails =
-      body && typeof body === 'object'
-        ? {
-            message: (body as Record<string, unknown>).message,
-            code: (body as Record<string, unknown>).code,
-          }
-        : { message: typeof body === 'string' ? body : undefined, code: undefined };
-    console.debug('[apiRequest][session-unauthorized]', {
-      url,
-      hasAuthorization: Boolean(meta?.hasAuthorization),
-      credentialsEnabled: meta?.credentials ? meta.credentials !== 'omit' : true,
-      ...bodyDetails,
-    });
-  }
-
-  console.warn('[apiRequest] Unauthorized:', { url, status, body });
+  console.warn('[apiRequest] Unauthorized:', {
+    url,
+    status,
+    body,
+    credentialsEnabled: meta?.credentials ? meta.credentials !== 'omit' : true,
+  });
 };
 
 const mergeHeadersSafely = (
@@ -342,11 +228,6 @@ const mergeHeadersSafely = (
   }
 
   return merged;
-};
-
-const readAuthSource = (headers: Record<string, string>): AuthHeaderSource => {
-  const meta = (headers as { __authSource?: AuthHeaderSource }).__authSource;
-  return meta ?? 'none';
 };
 
 const DEFAULT_TIMEOUT_MS = 15_000;
@@ -444,11 +325,11 @@ type PreparedRequest = {
   headers: Record<string, string>;
   body?: BodyInit;
   requiresSession: boolean;
+  attachAuth: boolean;
   controller: AbortController;
   linkedSignals: AbortSignal[];
   abortForwarder: () => void;
   timeoutId: ReturnType<typeof setTimeout> | null;
-  hasAuthorization: boolean;
   credentials: RequestCredentials;
 };
 
@@ -470,30 +351,15 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
 
   // Build auth headers for EVERY request
   const authHeaders = await buildAuthHeaders();
+  delete authHeaders.Authorization;
   const publicEndpoint = isPublicEndpoint(path);
-  let token: string | null = null;
-  let source: AuthHeaderSource | null = null;
-  if (!publicEndpoint) {
-    const tokenResult = await fetchLatestSupabaseToken();
-    token = tokenResult.token;
-    source = tokenResult.source;
-    if (token) {
-      authHeaders.Authorization = `Bearer ${token}`;
-    } else {
-      delete authHeaders.Authorization;
-    }
-  } else {
-    delete authHeaders.Authorization;
-  }
-
-  let authSource: AuthHeaderSource | 'custom' =
-    token && source ? source : readAuthSource(authHeaders);
+  const attachAuth = !publicEndpoint;
 
   const baseHeaders: Record<string, string> = {};
   const headers = mergeHeadersSafely(baseHeaders, authHeaders, options.headers);
 
   if (import.meta.env?.DEV) {
-    headers['X-Debug-Auth'] = headers.Authorization ? authSource ?? 'none' : 'none';
+    headers['X-Debug-Auth'] = attachAuth ? 'supabase' : 'public';
   }
   const methodAllowsBody = !['GET', 'HEAD'].includes(method);
 
@@ -521,29 +387,11 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
       body = rawBody as BodyInit;
     }
   }
-  const hasAuthorization = Boolean(headers.Authorization);
-  if (requiresSession && !publicEndpoint && !hasAuthorization && devMode) {
-    console.warn('[apiClient] Missing Supabase access token for request', { path });
-  }
-  if (!['secureStorage', 'supabase'].includes(authSource) && hasAuthorization) {
-    authSource = 'custom';
-  }
-  const debugAuthSource: AuthHeaderSource | 'custom' =
-    hasAuthorization && authSource === 'none' ? 'custom' : hasAuthorization ? authSource : 'none';
-
-  if (devMode && pathname === '/api/admin/me') {
-    console.debug('[apiClient][dev] /api/admin/me Authorization', {
-      attached: hasAuthorization,
-      source: debugAuthSource,
-    });
-  }
-
   const canLog = shouldLogDebug(url) && typeof console !== 'undefined' && typeof console.debug === 'function';
   const debugPayload = canLog
     ? {
         url,
-        hasAuthorization,
-        authSource: debugAuthSource,
+        authMode: attachAuth ? 'supabase' : 'public',
         authHeaders: redactHeaders(authHeaders),
         mergedHeaders: redactHeaders(headers),
       }
@@ -572,11 +420,11 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
     headers,
     body,
     requiresSession,
+    attachAuth,
     controller,
     linkedSignals,
     abortForwarder,
     timeoutId,
-    hasAuthorization,
     credentials: 'omit',
   };
 
@@ -593,36 +441,48 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
       parsed = null;
     }
 
-    if (parsed?.pathname && /\/api\/auth\/session$/i.test(parsed.pathname)) {
-      console.debug('[apiRequest][session]', {
-        finalUrl: url,
-        credentials: preparedRequest.credentials,
-        hasAuthHeader: hasAuthorization,
-        originUsedToParse: originForUrl,
-      });
-    }
   }
 
   return preparedRequest;
 };
 
 const executeFetch = async (input: PreparedRequest): Promise<Response> => {
-  const { url, method, headers, body, controller, linkedSignals, abortForwarder, timeoutId, credentials } = input;
+  const {
+    url,
+    method,
+    headers,
+    body,
+    controller,
+    linkedSignals,
+    abortForwarder,
+    timeoutId,
+    credentials,
+    attachAuth,
+    requiresSession,
+  } = input;
 
   let res: Response;
   try {
-    res = await fetch(url, {
-      method,
-      credentials,
-      headers,
-      body,
-      signal: controller.signal,
-    });
+    res = await authorizedFetch(
+      url,
+      {
+        method,
+        credentials,
+        headers,
+        body,
+        signal: controller.signal,
+      },
+      { requireAuth: attachAuth && requiresSession },
+    );
   } catch (error: any) {
     if (timeoutId) clearTimeout(timeoutId);
     linkedSignals.forEach((signal) => signal.removeEventListener('abort', abortForwarder));
     if (error?.name === 'AbortError') {
       throw new ApiError('Request timed out', 0, url, { message: 'The request exceeded the allowed time.' });
+    }
+    if (error instanceof NotAuthenticatedError) {
+      await handleAuthFailure();
+      throw buildNotAuthenticatedError(url);
     }
     throw error;
   }
@@ -636,19 +496,6 @@ const internalAuthorizedFetch = async (
   options: InternalRequestOptions = {},
 ): Promise<Response> => {
   const prepared = await prepareRequest(path, options);
-  const requiresSession = prepared.requiresSession;
-
-  if (requiresSession && !prepared.hasAuthorization) {
-    if (!options.__retriedAfterRefresh) {
-      const refreshed = await refreshSupabaseSession();
-      if (refreshed) {
-        const retryOptions: InternalRequestOptions = { ...options, __retriedAfterRefresh: true };
-        return sendRequest(path, retryOptions);
-      }
-    }
-    await handleAuthFailure();
-    throw buildNotAuthenticatedError(prepared.url);
-  }
 
   let throttleKey: string | null = null;
   try {
@@ -666,23 +513,9 @@ const internalAuthorizedFetch = async (
 
   const contentType = res.headers.get('content-type');
   if (res.status === 401) {
-    // Per the new auth contract: refresh once, then force logout if we still receive 401.
-    let retried = false;
-    if (!options.__retriedAfterRefresh) {
-      if (devMode) {
-        console.debug('[apiClient] 401 received; attempting Supabase refresh before retry', { path });
-      }
-      retried = await refreshSupabaseSession();
-      if (retried) {
-        const retryOptions: InternalRequestOptions = { ...options, __retriedAfterRefresh: true };
-        return internalAuthorizedFetch(path, retryOptions);
-      }
-    }
-
     await handleAuthFailure();
     const body = isJsonResponse(contentType) ? await safeParseJson(res) : await safeReadText(res);
     logUnauthorized(prepared.url, res.status, body, {
-      hasAuthorization: prepared.hasAuthorization,
       credentials: prepared.credentials,
     });
     throw new ApiError('Unauthorized', res.status, prepared.url, body);
@@ -723,14 +556,6 @@ export async function apiRequest<T = unknown>(path: string, options: ApiRequestO
   try {
     res = await internalAuthorizedFetch(path, options);
   } catch (error) {
-    if (
-      error instanceof ApiError &&
-      error.status === 401 &&
-      isSessionPath(path) &&
-      containsNoTokenMessage(error.body)
-    ) {
-      return null as T;
-    }
     throw error;
   }
 
@@ -751,10 +576,6 @@ export async function apiRequest<T = unknown>(path: string, options: ApiRequestO
 }
 
 export async function apiRequestRaw(path: string, options: ApiRequestOptions = {}): Promise<Response> {
-  return internalAuthorizedFetch(path, options);
-}
-
-export async function authorizedFetch(path: string, options: ApiRequestOptions = {}): Promise<Response> {
   return internalAuthorizedFetch(path, options);
 }
 
