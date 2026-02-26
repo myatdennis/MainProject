@@ -1,1 +1,4 @@
-export function isAllowedWsOrigin(origin: string | undefined, opts: { isProduction: boolean }): boolean;
+export function isAllowedWsOrigin(
+  origin: string | undefined | null,
+  options?: { isProduction?: boolean }
+): { allowed: boolean; reason: string };
