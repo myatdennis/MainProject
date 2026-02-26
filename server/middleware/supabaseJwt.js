@@ -77,13 +77,40 @@ const resolveTokenFromRequest = (req) => {
   return null;
 };
 
-const mapClaimsToUser = (claims) => ({
-  id: claims.sub,
-  email: claims.email || claims.user_email || null,
-  app_metadata: claims.app_metadata || {},
-  user_metadata: claims.user_metadata || {},
-  role: claims.role || claims?.app_metadata?.role || null,
-});
+const mapClaimsToUser = (claims) => {
+  const appMetadata = claims.app_metadata || {};
+  const userMetadata = claims.user_metadata || {};
+  const derivedRole =
+    claims.role ||
+    appMetadata.role ||
+    userMetadata.role ||
+    appMetadata.platform_role ||
+    userMetadata.platform_role ||
+    null;
+  const platformRole = appMetadata.platform_role || userMetadata.platform_role || null;
+  const organizationIds = Array.isArray(appMetadata.organization_ids)
+    ? appMetadata.organization_ids
+    : Array.isArray(claims.organization_ids)
+    ? claims.organization_ids
+    : [];
+  const memberships = Array.isArray(appMetadata.memberships) ? appMetadata.memberships : [];
+  const permissions = Array.isArray(appMetadata.permissions) ? appMetadata.permissions : [];
+  return {
+    id: claims.sub,
+    userId: claims.sub,
+    email: claims.email || claims.user_email || null,
+    role: derivedRole ? String(derivedRole).toLowerCase() : null,
+    platformRole: platformRole ? String(platformRole).toLowerCase() : null,
+    isPlatformAdmin:
+      String(derivedRole || '').toLowerCase() === 'admin' ||
+      String(platformRole || '').toLowerCase() === 'platform_admin',
+    organizationIds,
+    memberships,
+    permissions,
+    app_metadata: appMetadata,
+    user_metadata: userMetadata,
+  };
+};
 
 const verifyHs256Token = async (token) => {
   try {
@@ -178,8 +205,12 @@ export default async function supabaseJwtMiddleware(req, res, next) {
   try {
     const claims = await verifySupabaseToken(token);
     req.supabaseJwtClaims = claims;
-    req.supabaseJwtUser = mapClaimsToUser(claims);
+    const supabaseUser = mapClaimsToUser(claims);
+    req.supabaseJwtUser = supabaseUser;
     req.supabaseJwtToken = token;
+    if (!req.user) {
+      req.user = supabaseUser;
+    }
     return next();
   } catch (error) {
     const code = error?.message || 'token_verification_failed';

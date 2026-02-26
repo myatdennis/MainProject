@@ -1164,6 +1164,19 @@ const shouldBypassApiAuth = (path, method = 'GET') => {
   return matchesBypassPrefix(path, API_AUTH_BYPASS_PREFIXES);
 };
 
+const requireSupabaseUser = (req, res, next) => {
+  if (!req.user && req.supabaseJwtUser) {
+    req.user = req.supabaseJwtUser;
+  }
+  if (!req.user) {
+    return res.status(401).json({
+      error: 'Authentication required',
+      message: 'Supabase session required for admin access.',
+    });
+  }
+  return next();
+};
+
 const ensureAuthenticatedForHandler = (req, res) => {
   if (req.user) return Promise.resolve(true);
   return new Promise((resolve) => {
@@ -1419,7 +1432,7 @@ app.use('/api/admin/analytics', adminAnalyticsRoutes);
 app.use('/api/admin/analytics/export', adminAnalyticsExport);
 app.use('/api/admin/analytics/summary', adminAnalyticsSummary);
 app.use('/api/admin/users', adminUsersRouter);
-app.use('/api/admin/courses', authenticate, requireAdmin, adminCoursesRouter);
+app.use('/api/admin/courses', authenticate, requireSupabaseUser, requireAdmin, adminCoursesRouter);
 
 // All organization workspace endpoints require authentication
 app.use('/api/orgs', authenticate);
@@ -3555,7 +3568,7 @@ const isActiveAdminMembership = (membership) => {
   return status === 'active' || status === 'accepted';
 };
 
-app.get('/api/admin/me', (req, res) => {
+app.get('/api/admin/me', requireSupabaseUser, (req, res) => {
   const context = requireUserContext(req, res);
   if (!context) return;
 
@@ -12355,8 +12368,9 @@ app.post('/api/analytics/events', optionalAuthenticate, async (req, res) => {
   }
 });
 
-app.post('/api/audit-log', async (req, res) => {
+app.post('/api/audit-log', requireSupabaseUser, async (req, res) => {
   const { action, details = {}, timestamp, userId, user_id, orgId, org_id } = req.body || {};
+  const sessionUserId = req.user?.userId || req.user?.id || null;
 
   const normalizedAction = typeof action === 'string' ? action.trim() : '';
   if (!normalizedAction) {
@@ -12369,7 +12383,7 @@ app.post('/api/audit-log', async (req, res) => {
     id: `audit-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     action: normalizedAction,
     details,
-    user_id: userId ?? user_id ?? null,
+    user_id: sessionUserId ?? userId ?? user_id ?? null,
     organization_id: normalizedOrgId ?? null,
     timestamp: timestamp || new Date().toISOString(),
   };
