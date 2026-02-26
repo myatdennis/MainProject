@@ -349,6 +349,14 @@ const logTokenTelemetry = (event: TokenTelemetryEvent, reason?: string) => {
   });
 };
 
+const logTokenPreview = (label: string, token: string | null) => {
+  if (!shouldLogTokenTelemetry()) return;
+  console.debug('[SecureAuth] ' + label, {
+    length: token ? token.length : 0,
+    suffix: token ? token.slice(-6) : null,
+  });
+};
+
 // ============================================================================
 // Token Helpers
 // ============================================================================
@@ -359,6 +367,7 @@ export function setAccessToken(token: string | null, reason?: string): void {
     logTokenTelemetry('clear_access_token', reason ?? 'set_access_token:null');
     return;
   }
+  logTokenPreview('access_token_set', token);
   persistTokenValue(ACCESS_TOKEN_LOCAL_KEY, token);
   logTokenTelemetry('set_access_token', reason);
 }
@@ -386,6 +395,7 @@ export function setRefreshToken(token: string | null, reason?: string): void {
     logTokenTelemetry('clear_refresh_token', reason ?? 'set_refresh_token:null');
     return;
   }
+  logTokenPreview('refresh_token_set', token);
   persistTokenValue(REFRESH_TOKEN_LOCAL_KEY, token);
   logTokenTelemetry('set_refresh_token', reason);
 }

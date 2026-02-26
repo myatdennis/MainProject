@@ -1,7 +1,7 @@
 import buildAuthHeaders, { clearSupabaseAuthSnapshot, type AuthHeaderSource } from './requestContext';
 import { buildApiUrl, assertNoDoubleApi } from '../config/apiBase';
 import { shouldRequireSession, getActiveSession } from '../lib/sessionGate';
-import { clearAuth } from '../lib/secureStorage';
+import { clearAuth, getAccessToken } from '../lib/secureStorage';
 import { getSupabase, hasSupabaseConfig } from '../lib/supabaseClient';
 
 export class ApiError extends Error {
@@ -34,6 +34,16 @@ type ApiRequestOptions = {
 
 type InternalRequestOptions = ApiRequestOptions & {
   __retriedAfterRefresh?: boolean;
+};
+const devMode = Boolean(
+  (import.meta as any)?.env?.DEV ?? (typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production'),
+);
+const logTokenPreview = (label: string, token: string | null) => {
+  if (!devMode) return;
+  console.debug(label, {
+    length: token ? token.length : 0,
+    suffix: token ? token.slice(-6) : null,
+  });
 };
 
 const isJsonResponse = (contentType: string | null) =>
@@ -187,25 +197,42 @@ const buildNotAuthenticatedError = (url: string) =>
  * This satisfies the requirement to avoid caching bearer tokens anywhere else.
  */
 const fetchLatestSupabaseToken = async (): Promise<AccessTokenResult> => {
-  if (!hasSupabaseConfig()) {
-    return { token: null, source: null };
-  }
-  try {
-    const supabase = await getSupabase();
-    if (!supabase) return { token: null, source: null };
-    const { data, error } = await supabase.auth.getSession();
-    if (error) {
-      if (import.meta.env?.DEV) {
-        console.debug('[apiClient] supabase.auth.getSession error', error);
+  let token: string | null = null;
+  let source: AuthHeaderSource | null = null;
+
+  if (hasSupabaseConfig()) {
+    try {
+      const supabase = getSupabase();
+      if (supabase) {
+        const { data, error } = await supabase.auth.getSession();
+        if (error) {
+          if (devMode) {
+            console.debug('[apiClient] supabase.auth.getSession error', error);
+          }
+        } else if (data?.session?.access_token) {
+          token = data.session.access_token;
+          source = 'supabase';
+        }
       }
-      return { token: null, source: null };
+    } catch (error) {
+      console.warn('[apiClient] Failed to fetch Supabase session', error);
     }
-    const token = data?.session?.access_token ?? null;
-    return { token, source: token ? 'supabase' : null };
-  } catch (error) {
-    console.warn('[apiClient] Failed to fetch Supabase session', error);
-    return { token: null, source: null };
   }
+
+  if (!token) {
+    try {
+      const stored = getAccessToken();
+      if (stored) {
+        token = stored;
+        source = 'secureStorage';
+      }
+    } catch (error) {
+      console.warn('[apiClient] Failed to read stored access token', error);
+    }
+  }
+
+  logTokenPreview('[apiClient] auth_token_selected', token);
+  return { token, source };
 };
 
 /**
@@ -215,7 +242,7 @@ const fetchLatestSupabaseToken = async (): Promise<AccessTokenResult> => {
 const refreshSupabaseSession = async (): Promise<boolean> => {
   if (!hasSupabaseConfig()) return false;
   try {
-    const supabase = await getSupabase();
+    const supabase = getSupabase();
     if (!supabase) return false;
     const { data, error } = await supabase.auth.refreshSession();
     if (error) {
@@ -401,8 +428,6 @@ type PreparedRequest = {
   hasAuthorization: boolean;
   credentials: RequestCredentials;
 };
-
-const devMode = Boolean((import.meta as any)?.env?.DEV ?? (typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production'));
 
 const prepareRequest = async (path: string, options: InternalRequestOptions = {}): Promise<PreparedRequest> => {
   assertNoDoubleApi(path);
