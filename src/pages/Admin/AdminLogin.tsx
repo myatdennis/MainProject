@@ -265,27 +265,14 @@ const AdminLogin: React.FC = () => {
     }
     setIsLoading(false);
     if (result.success) {
-      if (import.meta.env?.DEV && supabase) {
-        try {
-          const { data, error } = await supabase.auth.signInWithPassword({
-            email: sanitizedEmail,
-            password: sanitizedPassword,
-          });
-          if (error) throw error;
-          console.log(
-            'signIn session?',
-            !!data.session,
-            data.session?.access_token?.slice(0, 20),
-          );
-          const { data: sessionData } = await supabase.auth.getSession();
-          console.log(
-            'getSession after signIn?',
-            !!sessionData.session,
-            sessionData.session?.access_token?.slice(0, 20),
-          );
-        } catch (sessionDebugError) {
-          console.warn('[AdminLogin] Supabase session debug failed', sessionDebugError);
-        }
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        console.info('[AdminLogin] session_verified', {
+          sessionHasAccessToken: Boolean(data?.session?.access_token),
+          sessionError: error?.message ?? null,
+        });
+      } catch (sessionCheckError) {
+        console.warn('[AdminLogin] session verification failed', sessionCheckError);
       }
       await handleCapabilityGate();
     } else if (result.mfaRequired) {

@@ -6,7 +6,7 @@ import * as secureStorage from '../../lib/secureStorage';
 import type { SessionMetadata, UserSession } from '../../lib/secureStorage';
 
 vi.mock('../../services/auditLogService', () => ({
-  logAuditAction: vi.fn(),
+  logAuditBestEffort: vi.fn(),
 }));
 
 const mockPost = vi.hoisted(() => vi.fn());

@@ -399,6 +399,22 @@ const extractPathname = (target: string): string => {
   }
 };
 
+const PUBLIC_ENDPOINTS = new Set([
+  '/api/auth/login',
+  '/api/auth/register',
+  '/api/auth/refresh',
+  '/api/mfa/challenge',
+  '/api/mfa/verify',
+  '/api/health',
+]);
+const PUBLIC_ENDPOINT_PREFIXES = ['/api/diagnostics'];
+
+const isPublicEndpoint = (target: string): boolean => {
+  const normalized = extractPathname(target);
+  if (PUBLIC_ENDPOINTS.has(normalized)) return true;
+  return PUBLIC_ENDPOINT_PREFIXES.some((prefix) => normalized.startsWith(prefix));
+};
+
 const enforceAdminPrivileges = (
   url: string,
   allowAnonymous: boolean | undefined,
@@ -454,9 +470,18 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
 
   // Build auth headers for EVERY request
   const authHeaders = await buildAuthHeaders();
-  const { token, source } = await fetchLatestSupabaseToken();
-  if (token) {
-    authHeaders.Authorization = `Bearer ${token}`;
+  const publicEndpoint = isPublicEndpoint(path);
+  let token: string | null = null;
+  let source: AuthHeaderSource | null = null;
+  if (!publicEndpoint) {
+    const tokenResult = await fetchLatestSupabaseToken();
+    token = tokenResult.token;
+    source = tokenResult.source;
+    if (token) {
+      authHeaders.Authorization = `Bearer ${token}`;
+    } else {
+      delete authHeaders.Authorization;
+    }
   } else {
     delete authHeaders.Authorization;
   }
@@ -497,8 +522,8 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
     }
   }
   const hasAuthorization = Boolean(headers.Authorization);
-  if (requiresSession && !hasAuthorization) {
-    throw buildNotAuthenticatedError(url);
+  if (requiresSession && !publicEndpoint && !hasAuthorization && devMode) {
+    console.warn('[apiClient] Missing Supabase access token for request', { path });
   }
   if (!['secureStorage', 'supabase'].includes(authSource) && hasAuthorization) {
     authSource = 'custom';
@@ -606,7 +631,10 @@ const executeFetch = async (input: PreparedRequest): Promise<Response> => {
   return res;
 };
 
-const sendRequest = async (path: string, options: InternalRequestOptions = {}): Promise<Response> => {
+const internalAuthorizedFetch = async (
+  path: string,
+  options: InternalRequestOptions = {},
+): Promise<Response> => {
   const prepared = await prepareRequest(path, options);
   const requiresSession = prepared.requiresSession;
 
@@ -641,10 +669,13 @@ const sendRequest = async (path: string, options: InternalRequestOptions = {}): 
     // Per the new auth contract: refresh once, then force logout if we still receive 401.
     let retried = false;
     if (!options.__retriedAfterRefresh) {
+      if (devMode) {
+        console.debug('[apiClient] 401 received; attempting Supabase refresh before retry', { path });
+      }
       retried = await refreshSupabaseSession();
       if (retried) {
         const retryOptions: InternalRequestOptions = { ...options, __retriedAfterRefresh: true };
-        return sendRequest(path, retryOptions);
+        return internalAuthorizedFetch(path, retryOptions);
       }
     }
 
@@ -690,7 +721,7 @@ const sendRequest = async (path: string, options: InternalRequestOptions = {}): 
 export async function apiRequest<T = unknown>(path: string, options: ApiRequestOptions = {}): Promise<T> {
   let res: Response;
   try {
-    res = await sendRequest(path, options);
+    res = await internalAuthorizedFetch(path, options);
   } catch (error) {
     if (
       error instanceof ApiError &&
@@ -719,11 +750,12 @@ export async function apiRequest<T = unknown>(path: string, options: ApiRequestO
   return text as unknown as T;
 }
 
-export async function apiRequestRaw(
-  path: string,
-  options: ApiRequestOptions = {},
-): Promise<Response> {
-  return sendRequest(path, options);
+export async function apiRequestRaw(path: string, options: ApiRequestOptions = {}): Promise<Response> {
+  return internalAuthorizedFetch(path, options);
+}
+
+export async function authorizedFetch(path: string, options: ApiRequestOptions = {}): Promise<Response> {
+  return internalAuthorizedFetch(path, options);
 }
 
 export default apiRequest;
