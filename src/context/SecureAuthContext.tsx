@@ -898,7 +898,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         });
         continueAsGuest('session_bootstrap_empty');
         return false;
-      } catch (error: unknown) {
+      } catch (error) {
         if (error instanceof ApiError) {
           const noTokenUnauth =
             error.status === 401 && !hasStoredToken && isNoTokenUnauthorized(error.status, error.body);
