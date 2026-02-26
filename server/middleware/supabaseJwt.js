@@ -1,4 +1,4 @@
-import { createRemoteJWKSet, jwtVerify } from 'jose';
+import { createRemoteJWKSet, decodeProtectedHeader, jwtVerify } from 'jose';
 import { LRUCache } from 'lru-cache';
 import { extractTokenFromHeader } from '../utils/jwt.js';
 
@@ -23,6 +23,9 @@ const buildSupabaseUrl = (path) => {
 const SUPABASE_JWKS_URL = new URL('/auth/v1/.well-known/jwks.json', rawSupabaseBaseUrl);
 const SUPABASE_EXPECTED_ISSUER = new URL('/auth/v1', rawSupabaseBaseUrl).toString().replace(/\/+$/, '');
 console.log('[JWT] JWKS URL:', SUPABASE_JWKS_URL.toString());
+const SUPABASE_JWT_SECRET = (process.env.SUPABASE_JWT_SECRET || '').trim();
+let cachedHs256Secret;
+const textEncoder = typeof TextEncoder !== 'undefined' ? new TextEncoder() : null;
 
 const hasCustomIssuerConfig = true;
 const AUDIENCE = 'authenticated';
@@ -32,12 +35,38 @@ const jwksCache = new LRUCache({
   ttl: JWKS_CACHE_TTL_MS,
 });
 const JWKS_CACHE_KEY = 'remote_jwks';
+const getHs256SecretKey = () => {
+  if (!SUPABASE_JWT_SECRET) {
+    throw new Error('supabase_jwt_secret_missing');
+  }
+  if (!cachedHs256Secret) {
+    if (!textEncoder) {
+      throw new Error('text_encoder_unavailable');
+    }
+    cachedHs256Secret = textEncoder.encode(SUPABASE_JWT_SECRET);
+  }
+  return cachedHs256Secret;
+};
 const getRemoteJwks = () => {
   const cached = jwksCache.get(JWKS_CACHE_KEY);
   if (cached) return cached;
   const client = createRemoteJWKSet(SUPABASE_JWKS_URL);
   jwksCache.set(JWKS_CACHE_KEY, client);
   return client;
+};
+const logIssuerMismatch = (error) => {
+  if (error?.code === 'ERR_JWT_CLAIM_INVALID' && error?.claim === 'iss') {
+    console.warn('[supabaseJwt] issuer_mismatch', {
+      expected: SUPABASE_EXPECTED_ISSUER,
+      received: error?.claimValue,
+    });
+  }
+};
+const ensureValidPayload = (payload) => {
+  if (!payload || !payload.sub) {
+    throw new Error('invalid_payload');
+  }
+  return payload;
 };
 
 const shouldBypass = (path = '') => JWT_AUTH_BYPASS_PATHS.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
@@ -56,7 +85,23 @@ const mapClaimsToUser = (claims) => ({
   role: claims.role || claims?.app_metadata?.role || null,
 });
 
-const verifySupabaseToken = async (token) => {
+const verifyHs256Token = async (token) => {
+  try {
+    const secretKey = getHs256SecretKey();
+    const { payload } = await jwtVerify(token, secretKey, {
+      algorithms: ['HS256'],
+      audience: AUDIENCE,
+      issuer: SUPABASE_EXPECTED_ISSUER,
+      clockTolerance: 5,
+    });
+    return ensureValidPayload(payload);
+  } catch (error) {
+    logIssuerMismatch(error);
+    throw error;
+  }
+};
+
+const verifyRs256Token = async (token) => {
   try {
     const remoteJwks = getRemoteJwks();
     const { payload } = await jwtVerify(token, remoteJwks, {
@@ -65,20 +110,49 @@ const verifySupabaseToken = async (token) => {
       issuer: SUPABASE_EXPECTED_ISSUER,
       clockTolerance: 5,
     });
-    if (!payload || !payload.sub) {
-      throw new Error('invalid_payload');
-    }
-    return payload;
+    return ensureValidPayload(payload);
   } catch (error) {
+    logIssuerMismatch(error);
     if (error?.code && String(error.code).startsWith('ERR_JWKS')) {
       jwksCache.delete(JWKS_CACHE_KEY);
-      console.error('[supabaseJwt] JWKS verification failed', {
+      console.error('[supabaseJwt] jwks_fetch_failed', {
         message: error.message,
         code: error.code,
       });
     }
     throw error;
   }
+};
+
+const getTokenAlgorithm = (token) => {
+  try {
+    const header = decodeProtectedHeader(token);
+    return typeof header?.alg === 'string' ? header.alg : '';
+  } catch (error) {
+    console.warn('[supabaseJwt] token validation failed', 'header_decode_failed');
+    throw error;
+  }
+};
+
+const verifySupabaseToken = async (token) => {
+  const alg = getTokenAlgorithm(token);
+  const normalizedAlg = alg.toUpperCase();
+  if (!normalizedAlg) {
+    console.warn('[supabaseJwt] alg_mismatch', { alg: 'missing' });
+    throw new Error('alg_missing');
+  }
+  if (normalizedAlg === 'NONE') {
+    console.warn('[supabaseJwt] alg_mismatch', { alg: 'none' });
+    throw new Error('alg_none_not_allowed');
+  }
+  if (normalizedAlg === 'HS256') {
+    return verifyHs256Token(token);
+  }
+  if (normalizedAlg === 'RS256') {
+    return verifyRs256Token(token);
+  }
+  console.warn('[supabaseJwt] alg_mismatch', { alg });
+  throw new Error('alg_not_supported');
 };
 
 const shouldSkipAuthInDev = (DEV_FALLBACK_ENABLED || E2E_MODE) && !hasCustomIssuerConfig;
@@ -94,6 +168,7 @@ export default async function supabaseJwtMiddleware(req, res, next) {
 
   const token = resolveTokenFromRequest(req);
   if (!token) {
+    console.warn('[supabaseJwt] token_missing');
     return res.status(401).json({
       error: 'Authentication required',
       message: 'No bearer token provided in the Authorization header',
