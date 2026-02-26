@@ -316,6 +316,9 @@ const buildUserPayload = (user, memberships) => {
 };
 
 const resolveAccessTokenFromRequest = (req) => {
+  if (req.supabaseJwtToken) {
+    return { token: req.supabaseJwtToken, source: 'supabase-jwt' };
+  }
   const authorizationHeader = req.headers?.authorization;
   const headerToken = extractTokenFromHeader(authorizationHeader);
   if (headerToken) {
@@ -328,6 +331,7 @@ const resolveAccessTokenFromRequest = (req) => {
 
 export async function buildAuthContext(req, { optional = false } = {}) {
   const { token } = resolveAccessTokenFromRequest(req);
+  const preValidatedUser = req.supabaseJwtUser || null;
 
   if (!token && allowDemoBypassForRequest(req)) {
     console.warn('[auth] Granting demo auto-auth bypass for request', {
@@ -362,12 +366,14 @@ export async function buildAuthContext(req, { optional = false } = {}) {
     throw new Error('missing_token');
   }
 
-  if (!supabase) {
-    if (optional && !STRICT_AUTH) return null;
-    throw new Error('supabase_not_configured');
+  let supabaseUser = preValidatedUser;
+  if (!supabaseUser) {
+    if (!supabase) {
+      if (optional && !STRICT_AUTH) return null;
+      throw new Error('supabase_not_configured');
+    }
+    supabaseUser = await loadSupabaseUser(token);
   }
-
-  const supabaseUser = await loadSupabaseUser(token);
   if (!supabaseUser) {
     if (optional) return null;
     throw new Error('invalid_token');

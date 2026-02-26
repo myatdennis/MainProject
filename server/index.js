@@ -66,6 +66,7 @@ import {
   COURSE_MODULES_NO_LESSONS_FIELDS,
 } from './constants/courseSelect.js';
 import { courseUpsertPayloadSchema } from '../shared/contracts/courseContract.js';
+import sql from './db.js';
 
 // Resolve __dirname in ESM
 const __filename = fileURLToPath(import.meta.url);
@@ -352,6 +353,17 @@ const ANALYTICS_PII_FIELDS = new Set([
   'title',
 ]);
 
+const getSupabaseProjectRef = (url) => {
+  if (!url) return null;
+  try {
+    const { hostname } = new URL(url);
+    if (!hostname) return null;
+    const [subdomain] = hostname.split('.');
+    return subdomain || null;
+  } catch {
+    return null;
+  }
+};
 
 const cookiePolicySnapshot = describeCookiePolicy();
 log('info', 'http_cookie_policy', cookiePolicySnapshot);
@@ -379,6 +391,46 @@ app.get('/api/health/db', async (_req, res) => {
       message: error instanceof Error ? error.message : 'db_health_failed',
     });
   }
+});
+
+app.get('/api/admin/courses/health/upsert-course-rpc', authenticate, requireAdmin, async (_req, res) => {
+  const supabaseUrl = process.env.SUPABASE_URL || null;
+  const projectRef = getSupabaseProjectRef(supabaseUrl);
+  let rpcExists = null;
+  let rpcError = null;
+
+  if (!process.env.DATABASE_URL) {
+    rpcError = 'DATABASE_URL not configured';
+  } else {
+    try {
+      const rows = await sql`
+        select exists (
+          select 1
+          from pg_proc p
+          join pg_namespace n on n.oid = p.pronamespace
+          where n.nspname = 'public'
+            and p.proname = 'upsert_course_full'
+            and pg_get_function_identity_arguments(p.oid) = 'jsonb, jsonb'
+        ) as exists
+      `;
+      rpcExists = Boolean(rows?.[0]?.exists);
+    } catch (error) {
+      rpcError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  res.json({
+    data: {
+      supabaseUrl,
+      projectRef,
+      rpc: {
+        name: 'public.upsert_course_full',
+        args: ['jsonb', 'jsonb'],
+        exists: rpcExists,
+        error: rpcError,
+      },
+    },
+  });
 });
 
 // ✅ PUBLIC runtime status (no auth)
@@ -1007,9 +1059,6 @@ app.options('*', corsMiddleware);
 app.use(express.json({ limit: '10mb' }));
 app.use(attachRequestId);
 
-// Health + diagnostics routes should respond even if downstream middleware fails,
-// but they still need the shared CORS policy so browsers accept the responses.
-app.use('/', healthRouter);
 app.get('/api/health/stream', (req, res) => {
   res.status(200);
   res.setHeader('Content-Type', 'text/event-stream');
@@ -1065,6 +1114,9 @@ app.use(securityHeaders);
 // Auth routes (login, refresh, logout) must run before CSRF enforcement so they can issue tokens
 // without requiring the SPA to fetch a CSRF token first.
 app.use('/api/auth', authRoutes);
+
+// Health endpoints remain public and must be registered before JWT protection.
+app.use('/', healthRouter);
 
 app.use(setDoubleSubmitCSRF);
 
@@ -3662,29 +3714,6 @@ const isCourseSlugConstraintError = (error) => {
   return false;
 };
 
-const buildSlugSuggestion = (slug) => {
-  if (!slug) return `course-${randomUUID().slice(0, 8)}`;
-  const match = slug.match(/^(.*?)-(\d+)$/);
-  if (match) {
-    const [, prefix, suffix] = match;
-    const next = Number.parseInt(suffix, 10);
-    if (Number.isFinite(next)) {
-      return `${prefix}-${next + 1}`;
-    }
-  }
-  return `${slug}-2`;
-};
-
-const logSlugConflict = ({ courseId, orgId, attemptedSlug, suggestion, requestId }) => {
-  console.warn('[admin.courses] slug_conflict', {
-    courseId: courseId ?? null,
-    orgId: orgId ?? null,
-    attemptedSlug: attemptedSlug ?? null,
-    suggestion,
-    requestId: requestId ?? null,
-  });
-};
-
 const buildInviteLink = (token) => {
   const base = INVITE_LINK_BASE?.replace(/\/$/, '') || 'https://the-huddle.co';
   return `${base}/invite/${token}`;
@@ -3731,8 +3760,9 @@ async function ensureUniqueOrgSlug(desiredSlug) {
   }
 }
 
-async function ensureUniqueCourseSlug(desiredSlug, { excludeCourseId = null } = {}) {
-  const baseSlug = slugify(desiredSlug) || `course-${randomUUID().slice(0, 8)}`;
+async function ensureUniqueCourseSlug(desiredSlug, { excludeCourseId = null, baseSlug: baseOverride = null } = {}) {
+  const normalizedDesired = slugify(desiredSlug) || `course-${randomUUID().slice(0, 8)}`;
+  const baseSlug = slugify(baseOverride || normalizedDesired) || normalizedDesired;
   const normalizedExclude = excludeCourseId ? String(excludeCourseId).toLowerCase() : null;
   const candidateAvailable = async (candidate) => {
     if (supabase && !(DEV_FALLBACK || E2E_TEST_MODE)) {
@@ -3768,7 +3798,7 @@ async function ensureUniqueCourseSlug(desiredSlug, { excludeCourseId = null } = 
     return true;
   };
 
-  for (let suffix = 0; suffix < 25; suffix += 1) {
+  for (let suffix = 0; suffix < 50; suffix += 1) {
     const candidate = suffix === 0 ? baseSlug : `${baseSlug}-${suffix + 1}`;
     if (await candidateAvailable(candidate)) {
       return candidate;
@@ -5493,32 +5523,10 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
           ? courseLocal.title || courseLocal.name || courseLocal.id || `course-${Date.now().toString(36)}`
           : rawSlugInput;
       const normalizedSlug = slugify(slugSource) || `course-${Date.now().toString(36)}`;
-      const normalizedSlugLower = normalizedSlug.toLowerCase();
-      if (!slugNeedsDerivation) {
-        const duplicate = Array.from(e2eStore.courses.values()).find((entry) => {
-          if (!entry || !entry.slug) return false;
-          if (String(entry.slug).toLowerCase() !== normalizedSlugLower) return false;
-          if (courseLocal?.id && String(entry.id) === String(courseLocal.id)) return false;
-          return true;
-        });
-        if (duplicate) {
-          const suggestion = buildSlugSuggestion(normalizedSlug);
-          await respondWithCourseSlugConflict({
-            req,
-            res,
-            courseId: courseLocal.id ?? null,
-            organizationId,
-            attemptedSlug: normalizedSlug,
-            suggestion,
-          });
-          return;
-        }
-      }
-      const derivedSlug = slugNeedsDerivation
-        ? await ensureUniqueCourseSlug(normalizedSlug, {
-            excludeCourseId: courseLocal.id ?? null,
-          })
-        : normalizedSlug;
+      const derivedSlug = await ensureUniqueCourseSlug(normalizedSlug, {
+        excludeCourseId: courseLocal.id ?? null,
+        baseSlug: normalizedSlug,
+      });
       courseLocal.slug = derivedSlug;
 
       // Demo-mode idempotency: respect client-provided idempotency keys in E2E/demo fallback
@@ -5689,16 +5697,56 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
     res.status(400).json({ error: 'Course title is required' });
     return;
   }
+  const updateCourseSlug = (nextSlug) => {
+    if (course) {
+      course.slug = nextSlug;
+      if (req.body?.course) {
+        req.body.course.slug = nextSlug;
+      }
+    }
+  };
+  const slugRetryState = {
+    base: null,
+    attempts: 0,
+    max: 5,
+  };
+  const applyUniqueSlug = async (baseSlug) => {
+    const targetBase = slugify(baseSlug) || `course-${randomUUID().slice(0, 8)}`;
+    const nextSlug = await ensureUniqueCourseSlug(targetBase, {
+      excludeCourseId: course?.id ?? courseIdFromParams ?? null,
+      baseSlug: targetBase,
+    });
+    slugRetryState.base = targetBase;
+    updateCourseSlug(nextSlug);
+    return nextSlug;
+  };
+  const applyNextSlugAfterConflict = async () => {
+    if (slugRetryState.attempts >= slugRetryState.max) {
+      return false;
+    }
+    const targetBase =
+      slugRetryState.base || slugify(course?.slug || `course-${randomUUID().slice(0, 8)}`) || `course-${randomUUID().slice(0, 8)}`;
+    const nextSlug = await ensureUniqueCourseSlug(targetBase, {
+      excludeCourseId: course?.id ?? courseIdFromParams ?? null,
+      baseSlug: targetBase,
+    });
+    if (nextSlug === course?.slug) {
+      slugRetryState.attempts = slugRetryState.max;
+      return false;
+    }
+    slugRetryState.base = targetBase;
+    slugRetryState.attempts += 1;
+    updateCourseSlug(nextSlug);
+    return true;
+  };
+
   const rawSlugInput = typeof course?.slug === 'string' ? course.slug.trim() : '';
   const slugNeedsDerivation = !rawSlugInput || rawSlugInput === 'new-course';
   const slugSource = slugNeedsDerivation
     ? course?.title || course?.name || course?.id || `course-${randomUUID().slice(0, 8)}`
     : rawSlugInput;
   const normalizedSlug = slugify(slugSource) || `course-${randomUUID().slice(0, 8)}`;
-  course.slug = normalizedSlug;
-  if (req.body?.course) {
-    req.body.course.slug = normalizedSlug;
-  }
+  await applyUniqueSlug(normalizedSlug);
 
   const desiredStatus = typeof course?.status === 'string' ? course.status.toLowerCase() : 'draft';
   if (desiredStatus === 'published') {
@@ -5812,128 +5860,145 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
       }
     }
 
-    // If Supabase supports the upsert_course_full RPC, try a single transactional upsert
-    if (includeCourseVersionField) {
-      try {
+    const attemptRpcUpsert = async () => {
+      if (!includeCourseVersionField) return false;
+      while (true) {
         const rpcPayload = buildCourseRecordPayload(true);
         try {
           console.log('[srv] Attempting RPC upsert_course_full', { rpcPayload, moduleCount: Array.isArray(modules) ? modules.length : 0 });
         } catch (_) {}
-        const rpcRes = await supabase.rpc('upsert_course_full', { p_course: rpcPayload, p_modules: modules });
         try {
-          console.log('[srv] rpcRes for upsert_course_full', { error: rpcRes?.error ?? null, data: rpcRes?.data ?? null });
-        } catch (_) {}
-        if (rpcRes.error) {
-          const rpcErrorMeta = {
-            code: rpcRes.error?.code ?? null,
-            message: rpcRes.error?.message ?? null,
-            details: rpcRes.error?.details ?? null,
-            hint: rpcRes.error?.hint ?? null,
-          };
-          console.error('[admin-courses] upsert_course_full_rpc_error', {
+          const rpcRes = await supabase.rpc('upsert_course_full', { p_course: rpcPayload, p_modules: modules });
+          try {
+            console.log('[srv] rpcRes for upsert_course_full', { error: rpcRes?.error ?? null, data: rpcRes?.data ?? null });
+          } catch (_) {}
+          if (rpcRes.error) {
+            const rpcErrorMeta = {
+              code: rpcRes.error?.code ?? null,
+              message: rpcRes.error?.message ?? null,
+              details: rpcRes.error?.details ?? null,
+              hint: rpcRes.error?.hint ?? null,
+            };
+            console.error('[admin-courses] upsert_course_full_rpc_error', {
+              requestId: req?.requestId ?? null,
+              courseId: course?.id ?? null,
+              orgId: organizationId ?? null,
+              error: rpcErrorMeta,
+            });
+            if (isCourseSlugConstraintError(rpcRes.error)) {
+              const incremented = await applyNextSlugAfterConflict();
+              if (incremented) {
+                continue;
+              }
+            }
+          }
+          if (!rpcRes.error && rpcRes.data) {
+            const sel = await supabase
+              .from('courses')
+              .select(COURSE_WITH_MODULES_LESSONS_SELECT)
+              .eq('id', rpcRes.data)
+              .single();
+            if (sel.error) throw sel.error;
+            res.status(201).json({ data: sel.data });
+            return true;
+          }
+          break;
+        } catch (rpcErr) {
+          const rpcErrorMeta = rpcErr && typeof rpcErr === 'object'
+            ? {
+                code: rpcErr.code ?? null,
+                message: rpcErr.message ?? null,
+                details: rpcErr.details ?? null,
+                hint: rpcErr.hint ?? null,
+              }
+            : { code: null, message: rpcErr, details: null, hint: null };
+          console.error('[admin-courses] upsert_course_full_rpc_exception', {
             requestId: req?.requestId ?? null,
             courseId: course?.id ?? null,
             orgId: organizationId ?? null,
             error: rpcErrorMeta,
           });
-        }
-        if (rpcRes.error && isCourseSlugConstraintError(rpcRes.error)) {
-          const suggestion = buildSlugSuggestion(course.slug);
-          await respondWithCourseSlugConflict({
-            req,
-            res,
-            courseId: course.id ?? null,
-            organizationId,
-            attemptedSlug: course.slug,
-            suggestion,
-            idempotencyKey,
-          });
-          return;
-        }
-        if (!rpcRes.error && rpcRes.data) {
-          const sel = await supabase
-            .from('courses')
-            .select(COURSE_WITH_MODULES_LESSONS_SELECT)
-            .eq('id', rpcRes.data)
-            .single();
-          if (sel.error) throw sel.error;
-          res.status(201).json({ data: sel.data });
-          return;
-        }
-      } catch (rpcErr) {
-        const rpcErrorMeta = rpcErr && typeof rpcErr === 'object'
-          ? {
-              code: rpcErr.code ?? null,
-              message: rpcErr.message ?? null,
-              details: rpcErr.details ?? null,
-              hint: rpcErr.hint ?? null,
+          const handled = maybeHandleMissingCourseVersion(rpcErr);
+          if (!handled) {
+            if (isCourseSlugConstraintError(rpcErr)) {
+              const incremented = await applyNextSlugAfterConflict();
+              if (incremented) {
+                continue;
+              }
             }
-          : { code: null, message: rpcErr, details: null, hint: null };
-        console.error('[admin-courses] upsert_course_full_rpc_exception', {
-          requestId: req?.requestId ?? null,
-          courseId: course?.id ?? null,
-          orgId: organizationId ?? null,
-          error: rpcErrorMeta,
-        });
-        const handled = maybeHandleMissingCourseVersion(rpcErr);
-        if (!handled) {
-          console.warn('RPC upsert_course_full failed, falling back to client-side sequence:', rpcErr);
-        } else {
-          console.warn('RPC upsert_course_full skipped course version field due to missing column');
+            console.warn('RPC upsert_course_full failed, falling back to client-side sequence:', rpcErr);
+          } else {
+            console.warn('RPC upsert_course_full skipped course version field due to missing column');
+          }
+          break;
         }
       }
+      return false;
+    };
+
+    const rpcSucceeded = await attemptRpcUpsert();
+    if (rpcSucceeded) {
+      return;
     }
 
     // Upsert course row first to obtain courseRow.id
     let courseRow = null;
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const upsertPayload = buildCourseRecordPayload(includeCourseVersionField);
-      try {
-        console.log('[srv] Performing course upsert', { upsertPayload });
-      } catch (_) {}
+    let lastCourseError = null;
+    while (!courseRow) {
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const upsertPayload = buildCourseRecordPayload(includeCourseVersionField);
+        try {
+          console.log('[srv] Performing course upsert', { upsertPayload });
+        } catch (_) {}
 
-      const courseRes = await supabase.from('courses').upsert(upsertPayload).select('*').single();
+        const courseRes = await supabase.from('courses').upsert(upsertPayload).select('*').single();
 
-      if (!courseRes.error) {
-        courseRow = courseRes.data;
-        break;
-      }
+        if (!courseRes.error) {
+          courseRow = courseRes.data;
+          lastCourseError = null;
+          break;
+        }
 
-      const errMeta = {
-        message: courseRes.error?.message ?? null,
-        code: courseRes.error?.code ?? null,
-        details: courseRes.error?.details ?? null,
-        hint: courseRes.error?.hint ?? null,
-      };
-      console.error('[admin-courses] course_upsert_error', {
-        requestId: req?.requestId ?? null,
-        courseId: course?.id ?? courseRow?.id ?? null,
-        error: errMeta,
-      });
-      logAdminCourseWriteFailure(req, 'courses.upsert', upsertPayload, courseRes.error, {
-        courseId: course?.id ?? courseRow?.id ?? null,
-      });
-      if (isCourseSlugConstraintError(courseRes.error)) {
-        const suggestion = buildSlugSuggestion(course.slug);
-        await respondWithCourseSlugConflict({
-          req,
-          res,
-          courseId: course.id ?? null,
-          organizationId,
-          attemptedSlug: course.slug,
-          suggestion,
-          idempotencyKey,
+        lastCourseError = courseRes.error;
+        const errMeta = {
+          message: courseRes.error?.message ?? null,
+          code: courseRes.error?.code ?? null,
+          details: courseRes.error?.details ?? null,
+          hint: courseRes.error?.hint ?? null,
+        };
+        console.error('[admin-courses] course_upsert_error', {
+          requestId: req?.requestId ?? null,
+          courseId: course?.id ?? courseRow?.id ?? null,
+          error: errMeta,
         });
-        return;
+        logAdminCourseWriteFailure(req, 'courses.upsert', upsertPayload, courseRes.error, {
+          courseId: course?.id ?? courseRow?.id ?? null,
+        });
+
+        if (isCourseSlugConstraintError(courseRes.error)) {
+          break;
+        }
+
+        if (includeCourseVersionField && maybeHandleMissingCourseVersion(courseRes.error)) {
+          continue;
+        }
+        throw courseRes.error;
       }
 
-      if (includeCourseVersionField && maybeHandleMissingCourseVersion(courseRes.error)) {
-        continue;
-      }
-      throw courseRes.error;
-    }
+      if (courseRow) break;
 
-    if (!courseRow) {
+      if (lastCourseError && isCourseSlugConstraintError(lastCourseError)) {
+        const incremented = await applyNextSlugAfterConflict();
+        if (incremented) {
+          lastCourseError = null;
+          continue;
+        }
+      }
+
+      if (lastCourseError) {
+        throw lastCourseError;
+      }
+
       throw new Error('Failed to upsert course record');
     }
 
@@ -6232,24 +6297,6 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
 
     res.status(201).json({ data: refreshed.data });
   } catch (error) {
-    if (isCourseSlugConstraintError(error)) {
-      const attemptedSlug =
-        (course && course.slug) ||
-        (req.body?.course && req.body.course.slug) ||
-        courseLocal?.slug ||
-        null;
-      const suggestion = buildSlugSuggestion(attemptedSlug);
-      await respondWithCourseSlugConflict({
-        req,
-        res,
-        courseId: course?.id ?? null,
-        organizationId,
-        attemptedSlug,
-        suggestion,
-        idempotencyKey: req.body?.idempotency_key ?? req.body?.client_event_id ?? null,
-      });
-      return;
-    }
     try {
       console.error('[admin-courses] upsert_error_detail', {
         message: error?.message ?? null,

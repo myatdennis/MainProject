@@ -86,6 +86,8 @@ const parseUploadKey = (key: string) => {
   return { moduleId, lessonId };
 };
 const LESSON_AUTOSAVE_DELAY = 900;
+const AUTOSAVE_BACKOFF_STEPS_MS = [5000, 15000, 30000, 60000] as const;
+const AUTOSAVE_MAX_FAILURES = 5;
 const generateStableLessonId = (): string => {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
@@ -972,6 +974,8 @@ const AdminCourseBuilder = () => {
     if (!course.id || !course.title?.trim()) return;
     if (autoSaveLockRef.current) return;
     if (lessonAutosaveState.pending || lessonAutosaveState.status === 'saving') return;
+    if (autoSaveHaltedRef.current) return;
+    if (autoSaveBackoffUntilRef.current > Date.now()) return;
     console.log('COURSE STATE', course.modules);
     const diff = computeCourseDiff(lastPersistedRef.current, course);
     if (!diff.hasChanges) return;
@@ -1055,7 +1059,15 @@ const AdminCourseBuilder = () => {
     return () => {
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     };
-  }, [course, lessonAutosaveState.pending, lessonAutosaveState.status, runtimeStatus, resolveOrganizationId, showToast]);
+  }, [
+    course,
+    lessonAutosaveState.pending,
+    lessonAutosaveState.status,
+    runtimeStatus,
+    resolveOrganizationId,
+    showToast,
+    autoSaveRetryNonce,
+  ]);
 
   useEffect(() => {
     const diff = computeCourseDiff(lastPersistedRef.current, course);
@@ -1209,6 +1221,13 @@ const AdminCourseBuilder = () => {
   const autoSaveLockRef = useRef<boolean>(false);
   const lastAutoSaveGateModeRef = useRef<GateMode>('remote');
   const lastLocalOnlyReasonRef = useRef<string | null>(null);
+  const autoSaveFailureRef = useRef<{ count: number }>({ count: 0 });
+  const autoSaveBackoffUntilRef = useRef(0);
+  const autoSaveBackoffTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoSaveHaltedRef = useRef(false);
+  const autoSaveWarningIssuedRef = useRef(false);
+  const autoSavePauseLoggedRef = useRef(false);
+  const [autoSaveRetryNonce, setAutoSaveRetryNonce] = useState(0);
   const [confirmDialog, setConfirmDialog] = useState<BuilderConfirmAction | null>(null);
 
   const confirmDialogContent = useMemo<ConfirmDialogConfig | null>(() => {
@@ -1248,6 +1267,89 @@ const AdminCourseBuilder = () => {
     }
   }, [confirmDialog, course.lastUpdated, course.title, lastSaveTime]);
 
+  const clearAutoSaveBackoffTimer = useCallback(() => {
+    if (autoSaveBackoffTimerRef.current) {
+      clearTimeout(autoSaveBackoffTimerRef.current);
+      autoSaveBackoffTimerRef.current = null;
+    }
+  }, []);
+
+  const scheduleAutoSaveRetry = useCallback(
+    (delayMs: number) => {
+      if (autoSaveHaltedRef.current) return;
+      clearAutoSaveBackoffTimer();
+      autoSaveBackoffTimerRef.current = window.setTimeout(() => {
+        autoSaveBackoffTimerRef.current = null;
+        autoSaveBackoffUntilRef.current = 0;
+        setAutoSaveRetryNonce((prev) => prev + 1);
+      }, Math.max(0, delayMs));
+    },
+    [clearAutoSaveBackoffTimer],
+  );
+
+  const resetAutoSaveFailures = useCallback(() => {
+    autoSaveFailureRef.current.count = 0;
+    autoSaveBackoffUntilRef.current = 0;
+    autoSaveHaltedRef.current = false;
+    autoSaveWarningIssuedRef.current = false;
+    autoSavePauseLoggedRef.current = false;
+    clearAutoSaveBackoffTimer();
+  }, [clearAutoSaveBackoffTimer]);
+
+  const handleAutoSaveFailure = useCallback(
+    (error: unknown) => {
+      if (autoSaveHaltedRef.current) return;
+
+      if (error instanceof ApiError && error.status === 401) {
+        autoSaveHaltedRef.current = true;
+        autoSaveBackoffUntilRef.current = Number.POSITIVE_INFINITY;
+        clearAutoSaveBackoffTimer();
+        if (!autoSavePauseLoggedRef.current) {
+          console.warn('[AdminCourseBuilder] Auto-save paused after authentication failure.');
+          autoSavePauseLoggedRef.current = true;
+        }
+        handleAuthRequired('course.auto-save');
+        return;
+      }
+
+      const state = autoSaveFailureRef.current;
+      state.count += 1;
+      const scheduleIndex = Math.min(state.count - 1, AUTOSAVE_BACKOFF_STEPS_MS.length - 1);
+      const delay = AUTOSAVE_BACKOFF_STEPS_MS[scheduleIndex];
+      autoSaveBackoffUntilRef.current = Date.now() + delay;
+
+      if (!autoSaveWarningIssuedRef.current) {
+        console.warn(
+          `[AdminCourseBuilder] Auto-save failed (${state.count}/${AUTOSAVE_MAX_FAILURES}). Retrying in ${Math.round(
+            delay / 1000,
+          )}s.`,
+        );
+        autoSaveWarningIssuedRef.current = true;
+      }
+
+      if (state.count >= AUTOSAVE_MAX_FAILURES) {
+        autoSaveHaltedRef.current = true;
+        autoSaveBackoffUntilRef.current = Number.POSITIVE_INFINITY;
+        clearAutoSaveBackoffTimer();
+        if (!autoSavePauseLoggedRef.current) {
+          console.warn(
+            '[AdminCourseBuilder] Auto-save halted after repeated failures. Changes remain stored locally until you retry.',
+          );
+          autoSavePauseLoggedRef.current = true;
+        }
+        showToast(
+          'Auto-save paused after repeated failures. Use Save once you are back online.',
+          'warning',
+          7000,
+        );
+        return;
+      }
+
+      scheduleAutoSaveRetry(delay);
+    },
+    [handleAuthRequired, scheduleAutoSaveRetry, showToast],
+  );
+
   const publishIssueCount = effectiveValidationSummary.issues.length;
   const publishDisabled =
     !hasCourseModules || !effectiveValidationSummary.isValid || saveStatus === 'saving' || lessonAutosaveBlocking;
@@ -1285,6 +1387,13 @@ const AdminCourseBuilder = () => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [confirmDialog]);
+
+  useEffect(
+    () => () => {
+      clearAutoSaveBackoffTimer();
+    },
+    [clearAutoSaveBackoffTimer],
+  );
   
   // Inline editing state
   const [inlineEditing, setInlineEditing] = useState<{moduleId: string, lessonId: string} | null>(null);
@@ -1567,6 +1676,7 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
           return 'course.save';
       }
     })();
+    const isAutoSaveAttempt = derivedAction === 'course.auto-save';
     const gate = gateOverride ?? evaluateRuntimeGate(runtimeAction, runtimeStatus);
 
     if (lessonIntegrityIssues.length > 0) {
@@ -1630,6 +1740,9 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
           status,
           message: error instanceof Error ? error.message : String(error),
         });
+        if (isAutoSaveAttempt && !(error instanceof SlugConflictError)) {
+          handleAutoSaveFailure(error);
+        }
         if (error instanceof SlugConflictError) {
           const nextCourseState = { ...preparedCourse, slug: error.suggestion };
           courseStore.saveCourse(nextCourseState, { skipRemoteSync: true });
@@ -1650,6 +1763,7 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
     courseStore.saveCourse(mergedWithFallback, { skipRemoteSync: true });
     setCourse(mergedWithFallback);
     if (remoteSynced) {
+      resetAutoSaveFailures();
       lastPersistedRef.current = mergedWithFallback;
       await markDraftSynced(mergedWithFallback.id, mergedWithFallback);
     }

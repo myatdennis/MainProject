@@ -6,7 +6,7 @@ import {
   parseDurationToMinutes,
   formatMinutes,
 } from '../utils/courseNormalization';
-import apiRequest from '../utils/apiClient';
+import apiRequest, { ApiError } from '../utils/apiClient';
 import migrateLessonContent from '../utils/contentMigrator';
 import {
   moduleSchema,
@@ -32,6 +32,7 @@ import { cloneWithCanonicalOrgId, resolveOrgIdFromCarrier, stampCanonicalOrgId }
 import { normalizeLessonForPersistence } from '../utils/lessonContent';
 import type { CourseValidationIssue } from '../validation/courseValidation';
 import { parseSlugConflictError, SlugConflictError } from '../utils/slugConflict';
+import { getSupabase } from '../lib/supabaseClient';
 
 export type SupabaseCourseRecord = {
   id: string;
@@ -103,6 +104,12 @@ export class CourseValidationError extends Error {
 const PERSISTED_COURSE_IDS_KEY = 'courseService.persistedCourseIds';
 const persistedCourseIds = new Set<string>();
 const supportsLocalStorage = () => typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
+const isClientGeneratedCourseId = (value?: string | null): boolean => {
+  if (typeof value !== 'string') return true;
+  const trimmed = value.trim();
+  if (!trimmed) return true;
+  return trimmed.startsWith('course-');
+};
 const hydratePersistedCourseIds = () => {
   if (!supportsLocalStorage()) return;
   try {
@@ -118,6 +125,29 @@ const hydratePersistedCourseIds = () => {
     }
   } catch (error) {
     console.warn('[CourseService] Failed to hydrate persisted course ids', error);
+  }
+};
+
+const withSupabaseAuthRetry = async <T>(operation: () => Promise<T>): Promise<T> => {
+  let retried = false;
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    try {
+      return await operation();
+    } catch (error) {
+      const isUnauthorized = error instanceof ApiError && error.status === 401;
+      if (!retried && isUnauthorized) {
+        retried = true;
+        try {
+          const supabase = await getSupabase();
+          await supabase?.auth.refreshSession();
+          continue;
+        } catch (refreshError) {
+          console.warn('[CourseService] Failed to refresh Supabase session after 401', refreshError);
+        }
+      }
+      throw error;
+    }
   }
 };
 const persistCourseIdsSnapshot = () => {
@@ -537,7 +567,9 @@ export class CourseService {
     body.course = canonicalCourse;
     modules = CourseService.withOrgContextForModules(modules, canonicalOrgId);
     body.modules = modules;
-    const hasRemoteRecord = hasPersistedCourseRecord(course.id);
+    const hasRemoteRecord =
+      Boolean(course.id) &&
+      (hasPersistedCourseRecord(course.id) || !isClientGeneratedCourseId(course.id));
     const isCreateOperation = !hasRemoteRecord;
     if (isCreateOperation) {
       delete (body.course as Record<string, unknown>).id;
@@ -691,12 +723,14 @@ export class CourseService {
     });
     const idempotencyKey = options.idempotencyKey ?? identifiers.idempotencyKey;
     // Single upsert with full graph (course + modules + lessons)
-    await CourseService.upsertCourse(normalizedCourse, { idempotencyKey });
+    await withSupabaseAuthRetry(() => CourseService.upsertCourse(normalizedCourse, { idempotencyKey }));
 
     // Reload fresh graph to get server-assigned IDs and order
     const refreshed =
-      (await CourseService.fetchCourseStructure(normalizedCourse.id)) ||
-      (normalizedCourse.slug ? await CourseService.fetchCourseStructure(normalizedCourse.slug) : null);
+      (await withSupabaseAuthRetry(() => CourseService.fetchCourseStructure(normalizedCourse.id))) ||
+      (normalizedCourse.slug
+        ? await withSupabaseAuthRetry(() => CourseService.fetchCourseStructure(normalizedCourse.slug))
+        : null);
 
     const authoritative = refreshed ?? normalizedCourse;
     markCoursePersisted(authoritative.id);

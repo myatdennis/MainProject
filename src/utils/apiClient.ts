@@ -1,18 +1,7 @@
 import buildAuthHeaders, { clearSupabaseAuthSnapshot, type AuthHeaderSource } from './requestContext';
 import { buildApiUrl, assertNoDoubleApi } from '../config/apiBase';
 import { shouldRequireSession, getActiveSession } from '../lib/sessionGate';
-import { queueRefresh } from '../lib/refreshQueue';
-import {
-  getAccessToken as getStoredAccessToken,
-  getRefreshToken,
-  setAccessToken,
-  setRefreshToken,
-  setSessionMetadata,
-  clearAuth,
-  setUserSession,
-  setActiveOrgPreference,
-} from '../lib/secureStorage';
-import type { UserSession, SessionMetadata } from '../lib/secureStorage';
+import { clearAuth } from '../lib/secureStorage';
 import { getSupabase, hasSupabaseConfig } from '../lib/supabaseClient';
 
 export class ApiError extends Error {
@@ -182,15 +171,6 @@ const assertNotThrottled = (url: string) => {
   return key;
 };
 
-type SessionBootstrapPayload = {
-  user?: UserSession | null;
-  accessToken?: string | null;
-  refreshToken?: string | null;
-  expiresAt?: number | null;
-  refreshExpiresAt?: number | null;
-  activeOrgId?: string | null;
-};
-
 type AccessTokenResult = {
   token: string | null;
   source: AuthHeaderSource | null;
@@ -202,169 +182,68 @@ const buildNotAuthenticatedError = (url: string) =>
     message: 'Please log in again.',
   });
 
-const buildNetworkError = (url: string) =>
-  new ApiError('Network error—please try again.', 0, url, {
-    code: 'network_error',
-    message: 'Network error—please try again.',
-  });
+/**
+ * Always fetch the latest Supabase session before making a request.
+ * This satisfies the requirement to avoid caching bearer tokens anywhere else.
+ */
+const fetchLatestSupabaseToken = async (): Promise<AccessTokenResult> => {
+  if (!hasSupabaseConfig()) {
+    return { token: null, source: null };
+  }
+  try {
+    const supabase = await getSupabase();
+    if (!supabase) return { token: null, source: null };
+    const { data, error } = await supabase.auth.getSession();
+    if (error) {
+      if (import.meta.env?.DEV) {
+        console.debug('[apiClient] supabase.auth.getSession error', error);
+      }
+      return { token: null, source: null };
+    }
+    const token = data?.session?.access_token ?? null;
+    return { token, source: token ? 'supabase' : null };
+  } catch (error) {
+    console.warn('[apiClient] Failed to fetch Supabase session', error);
+    return { token: null, source: null };
+  }
+};
 
-const applySessionBootstrap = (payload: SessionBootstrapPayload | null, reason: string): boolean => {
-  if (!payload?.user) {
+/**
+ * Supabase refresh helper invoked after a 401. We do not persist the new token—
+ * instead, the next request will call getSession again.
+ */
+const refreshSupabaseSession = async (): Promise<boolean> => {
+  if (!hasSupabaseConfig()) return false;
+  try {
+    const supabase = await getSupabase();
+    if (!supabase) return false;
+    const { data, error } = await supabase.auth.refreshSession();
+    if (error) {
+      console.warn('[apiClient] supabase.auth.refreshSession error', error);
+      return false;
+    }
+    return Boolean(data?.session?.access_token);
+  } catch (error) {
+    console.warn('[apiClient] Failed to refresh Supabase session', error);
     return false;
   }
-
-  setUserSession(payload.user);
-
-  if (payload.activeOrgId !== undefined) {
-    setActiveOrgPreference(payload.activeOrgId);
-  }
-
-  const metadata: SessionMetadata = {};
-
-  if (payload.accessToken) {
-    setAccessToken(payload.accessToken, reason);
-    metadata.accessIssuedAt = Date.now();
-    if (payload.expiresAt) {
-      metadata.accessExpiresAt = payload.expiresAt;
-    }
-  }
-
-  if (payload.refreshToken) {
-    setRefreshToken(payload.refreshToken, reason);
-    metadata.refreshIssuedAt = Date.now();
-    if (payload.refreshExpiresAt) {
-      metadata.refreshExpiresAt = payload.refreshExpiresAt;
-    }
-  }
-
-  if (Object.keys(metadata).length > 0) {
-    setSessionMetadata(metadata);
-  }
-
-  return true;
 };
 
-const resolveAccessToken = async (): Promise<AccessTokenResult> => {
+/**
+ * Centralized auth failure handler: clears local state, signs out, and redirects.
+ */
+const handleAuthFailure = async () => {
+  clearSupabaseAuthSnapshot();
+  clearAuth();
   try {
-    const stored = getStoredAccessToken();
-    if (stored) {
-      return { token: stored, source: 'secureStorage' };
-    }
+    const supabase = await getSupabase();
+    await supabase?.auth.signOut();
   } catch (error) {
-    console.warn('[apiClient] Failed to read stored access token', error);
+    console.warn('[apiClient] Failed to sign out from Supabase', error);
   }
-
-  if (hasSupabaseConfig()) {
-    try {
-      const supabase = await getSupabase();
-      if (supabase) {
-        const { data, error } = await supabase.auth.getSession();
-        if (!error) {
-          const token = data?.session?.access_token ?? null;
-          if (token) {
-            return { token, source: 'supabase' };
-          }
-        } else if (import.meta.env?.DEV) {
-          console.debug('[apiClient] Supabase session error', error.message || error);
-        }
-      }
-    } catch (error) {
-      if (import.meta.env?.DEV) {
-        console.debug('[apiClient] Supabase token lookup failed', error);
-      }
-    }
+  if (typeof window !== 'undefined' && window.location) {
+    window.location.replace('/admin/login');
   }
-
-  return { token: null, source: null };
-};
-
-const bootstrapSessionFromServer = async (): Promise<boolean> => {
-  const sessionPath = '/api/auth/session';
-  const sessionUrl = buildApiUrl(sessionPath);
-  let response: Response;
-  try {
-    response = await apiRequestRaw(sessionPath, {
-      method: 'GET',
-      allowAnonymous: true,
-      requireAuth: false,
-    });
-  } catch (error) {
-    if (error instanceof ApiError) {
-      if (error.status === 401 || error.status === 403) {
-        throw buildNotAuthenticatedError(sessionUrl);
-      }
-      if (error.status === 0) {
-        throw buildNetworkError(sessionUrl);
-      }
-      throw error;
-    }
-    throw buildNetworkError(sessionUrl);
-  }
-
-  if (response.status === 401 || response.status === 403) {
-    throw buildNotAuthenticatedError(sessionUrl);
-  }
-
-  const contentType = response.headers.get('content-type');
-  const payload = (isJsonResponse(contentType) ? await safeParseJson(response) : await safeReadText(response)) as
-    | SessionBootstrapPayload
-    | null;
-
-  if (!response.ok) {
-    throw new ApiError(`Failed to load session (${response.status})`, response.status, sessionUrl, payload);
-  }
-
-  return applySessionBootstrap(payload, 'api_client_session_bootstrap');
-};
-
-const ensureSessionViaRefresh = async (): Promise<boolean> => {
-  const refreshUrl = buildApiUrl('/api/auth/refresh');
-  const refreshToken = getRefreshToken();
-
-  return queueRefresh(async () => {
-    let response: Response;
-    try {
-      response = await fetch(refreshUrl, {
-        method: 'POST',
-        ...(refreshToken
-          ? { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ refreshToken }) }
-          : {}),
-        credentials: 'omit',
-      });
-    } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') {
-        throw buildNetworkError(refreshUrl);
-      }
-      if (error instanceof TypeError) {
-        throw buildNetworkError(refreshUrl);
-      }
-      throw error;
-    }
-
-    const contentType = response.headers.get('content-type');
-    const payload = (isJsonResponse(contentType) ? await safeParseJson(response) : await safeReadText(response)) as
-      | SessionBootstrapPayload
-      | null;
-
-    if (!refreshToken && response.status === 400) {
-      throw buildNotAuthenticatedError(refreshUrl);
-    }
-
-    if (response.status === 401 || response.status === 403) {
-      throw new ApiError('Please log in again.', response.status, refreshUrl, {
-        code: 'not_authenticated',
-        message: 'Please log in again.',
-        details: payload,
-      });
-    }
-
-    if (!response.ok) {
-      throw new ApiError(`Refresh failed with status ${response.status}`, response.status, refreshUrl, payload);
-    }
-
-    const applied = applySessionBootstrap(payload, 'api_client_refresh');
-    return applied;
-  });
 };
 
 const SESSION_ENDPOINT_REGEX = /\/api\/auth\/session/i;
@@ -440,111 +319,7 @@ const DEFAULT_TIMEOUT_MS = 15_000;
 const SENSITIVE_HEADERS = ['authorization', 'cookie', 'set-cookie', 'x-csrf-token', 'csrf', 'x-supabase-key', 'apikey'];
 const ADMIN_PATH_PATTERN = /\/api\/admin\b/i;
 const AUTH_ENDPOINT_REGEX = /\/api\/auth\/(login|refresh|session)/i;
-const REFRESH_ENDPOINT_REGEX = /\/api\/auth\/refresh\b/i;
 const ABSOLUTE_URL_REGEX = /^https?:\/\//i;
-const REFRESH_CHANNEL_NAME = 'auth';
-const REFRESH_WAIT_TIMEOUT = 5000;
-
-type RefreshEvent = {
-  type: 'REFRESH';
-  status: 'started' | 'success' | 'failure';
-  ts: number;
-  sourceId?: string;
-};
-
-const refreshChannel =
-  typeof window !== 'undefined' && typeof BroadcastChannel !== 'undefined'
-    ? new BroadcastChannel(REFRESH_CHANNEL_NAME)
-    : null;
-
-const REFRESH_SOURCE_ID =
-  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : `auth-refresh-${Math.random().toString(16).slice(2)}`;
-
-let refreshInProgress = false;
-let refreshWaiters: Array<(ok: boolean) => void> = [];
-
-const notifyRefreshWaiters = (ok: boolean) => {
-  if (refreshWaiters.length === 0) return;
-  const pending = [...refreshWaiters];
-  refreshWaiters = [];
-  pending.forEach((resolve) => {
-    try {
-      resolve(ok);
-    } catch (error) {
-      console.warn('[apiRequest] Failed to notify refresh waiter', error);
-    }
-  });
-};
-
-const applyRefreshEventLocally = (event: RefreshEvent) => {
-  if (!event || typeof event !== 'object') return;
-  if (event.type !== 'REFRESH') return;
-  if (event.status === 'started') {
-    refreshInProgress = true;
-    return;
-  }
-  const ok = event.status === 'success';
-  refreshInProgress = false;
-  notifyRefreshWaiters(ok);
-};
-
-const handleExternalRefreshEvent = (event: unknown) => {
-  if (!event || typeof event !== 'object') return;
-  const payload = event as RefreshEvent;
-  if (payload.sourceId && payload.sourceId === REFRESH_SOURCE_ID) {
-    return;
-  }
-  applyRefreshEventLocally(payload);
-};
-
-const broadcastRefreshEvent = (status: RefreshEvent['status']) => {
-  const payload: RefreshEvent = { type: 'REFRESH', status, ts: Date.now(), sourceId: REFRESH_SOURCE_ID };
-  applyRefreshEventLocally(payload);
-  try {
-    refreshChannel?.postMessage(payload);
-  } catch (error) {
-    console.warn('[apiRequest] Failed to broadcast refresh event via channel', error);
-  }
-};
-
-if (refreshChannel) {
-  refreshChannel.addEventListener('message', (event) => handleExternalRefreshEvent(event.data));
-}
-
-const waitForRefreshCompletion = (): Promise<boolean> => {
-  if (!refreshInProgress) {
-    return Promise.resolve(false);
-  }
-
-  return new Promise<boolean>((resolve) => {
-    const callback = (ok: boolean) => {
-      cleanup();
-      resolve(ok);
-    };
-
-    const timeoutId = setTimeout(() => {
-      cleanup();
-      resolve(false);
-    }, REFRESH_WAIT_TIMEOUT);
-
-    const cleanup = () => {
-      clearTimeout(timeoutId);
-      refreshWaiters = refreshWaiters.filter((fn) => fn !== callback);
-    };
-
-    refreshWaiters.push(callback);
-  });
-};
-
-const markRefreshStarted = () => {
-  broadcastRefreshEvent('started');
-};
-
-const markRefreshFinished = (ok: boolean) => {
-  broadcastRefreshEvent(ok ? 'success' : 'failure');
-};
 
 const redactHeaders = (headers?: Headers | Record<string, string> | null): Record<string, string> => {
   if (!headers) return {};
@@ -646,23 +421,21 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
 
   // Build auth headers for EVERY request
   const authHeaders = await buildAuthHeaders();
-  let overrideAuthSource: AuthHeaderSource | null = null;
-
-  if (!authHeaders.Authorization) {
-    const { token, source } = await resolveAccessToken();
-    if (token) {
-      authHeaders.Authorization = `Bearer ${token}`;
-      overrideAuthSource = source;
-    }
+  const { token, source } = await fetchLatestSupabaseToken();
+  if (token) {
+    authHeaders.Authorization = `Bearer ${token}`;
+  } else {
+    delete authHeaders.Authorization;
   }
 
-  let authSource: AuthHeaderSource | 'custom' = overrideAuthSource ?? readAuthSource(authHeaders);
+  let authSource: AuthHeaderSource | 'custom' =
+    token && source ? source : readAuthSource(authHeaders);
 
   const baseHeaders: Record<string, string> = {};
   const headers = mergeHeadersSafely(baseHeaders, authHeaders, options.headers);
 
   if (import.meta.env?.DEV) {
-    headers['X-Debug-Auth'] = authHeaders.Authorization ? (overrideAuthSource ?? readAuthSource(authHeaders) ?? 'none') : 'none';
+    headers['X-Debug-Auth'] = headers.Authorization ? authSource ?? 'none' : 'none';
   }
   const methodAllowsBody = !['GET', 'HEAD'].includes(method);
 
@@ -691,6 +464,9 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
     }
   }
   const hasAuthorization = Boolean(headers.Authorization);
+  if (requiresSession && !hasAuthorization) {
+    throw buildNotAuthenticatedError(url);
+  }
   if (!['secureStorage', 'supabase'].includes(authSource) && hasAuthorization) {
     authSource = 'custom';
   }
@@ -790,46 +566,20 @@ const executeFetch = async (input: PreparedRequest): Promise<Response> => {
   return res;
 };
 
-const isRefreshPath = (url: string): boolean => {
-  const pathname = extractPathname(url);
-  return REFRESH_ENDPOINT_REGEX.test(pathname);
-};
-
 const sendRequest = async (path: string, options: InternalRequestOptions = {}): Promise<Response> => {
   const prepared = await prepareRequest(path, options);
-  const isAdminRequest = ADMIN_PATH_PATTERN.test(extractPathname(prepared.url));
-  let activeSession = getActiveSession();
-  if (import.meta.env?.VITEST && isAdminRequest) {
-    console.debug('[apiClient][admin-check]', {
-      hasSessionBeforeRefresh: Boolean(activeSession),
-      hasAuthHeader: prepared.hasAuthorization,
-    });
-  }
-  const isRefreshRequest = isRefreshPath(prepared.url);
   const requiresSession = prepared.requiresSession;
 
-  if (requiresSession && !activeSession && !prepared.hasAuthorization) {
-    try {
-      const refreshed = await ensureSessionViaRefresh();
+  if (requiresSession && !prepared.hasAuthorization) {
+    if (!options.__retriedAfterRefresh) {
+      const refreshed = await refreshSupabaseSession();
       if (refreshed) {
-        await bootstrapSessionFromServer();
+        const retryOptions: InternalRequestOptions = { ...options, __retriedAfterRefresh: true };
+        return sendRequest(path, retryOptions);
       }
-      activeSession = getActiveSession();
-    } catch (error) {
-      if (error instanceof ApiError) {
-        throw error;
-      }
-      throw buildNetworkError(prepared.url);
     }
-
-    if (!activeSession) {
-      if (isAdminRequest) {
-        throw new ApiError('Authentication required', 401, prepared.url, {
-          message: 'Please sign in to continue.',
-        });
-      }
-      throw buildNotAuthenticatedError(prepared.url);
-    }
+    await handleAuthFailure();
+    throw buildNotAuthenticatedError(prepared.url);
   }
 
   let throttleKey: string | null = null;
@@ -839,40 +589,26 @@ const sendRequest = async (path: string, options: InternalRequestOptions = {}): 
     throw error;
   }
 
-  if (isRefreshRequest) {
-    markRefreshStarted();
-  }
-
   let res: Response;
   try {
     res = await executeFetch(prepared);
   } catch (error) {
-    if (isRefreshRequest) {
-      markRefreshFinished(false);
-    }
     throw error;
-  }
-
-  if (isRefreshRequest) {
-    markRefreshFinished(res.ok);
   }
 
   const contentType = res.headers.get('content-type');
   if (res.status === 401) {
-    const canWaitForRefresh =
-      !options.__retriedAfterRefresh &&
-      !isRefreshRequest &&
-      refreshInProgress;
-
-    if (canWaitForRefresh) {
-      const refreshResult = await waitForRefreshCompletion();
-      if (refreshResult) {
+    // Per the new auth contract: refresh once, then force logout if we still receive 401.
+    let retried = false;
+    if (!options.__retriedAfterRefresh) {
+      retried = await refreshSupabaseSession();
+      if (retried) {
         const retryOptions: InternalRequestOptions = { ...options, __retriedAfterRefresh: true };
         return sendRequest(path, retryOptions);
       }
     }
 
-    clearSupabaseAuthSnapshot();
+    await handleAuthFailure();
     const body = isJsonResponse(contentType) ? await safeParseJson(res) : await safeReadText(res);
     logUnauthorized(prepared.url, res.status, body, {
       hasAuthorization: prepared.hasAuthorization,
