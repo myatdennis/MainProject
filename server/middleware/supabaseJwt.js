@@ -1,4 +1,5 @@
 import { createRemoteJWKSet, jwtVerify } from 'jose';
+import { LRUCache } from 'lru-cache';
 import { extractTokenFromHeader } from '../utils/jwt.js';
 
 const JWT_AUTH_BYPASS_PATHS = ['/api/health', '/api/auth/login', '/api/auth/refresh'];
@@ -19,13 +20,25 @@ const buildSupabaseUrl = (path) => {
   }
 };
 
-const SUPABASE_JWKS_URL = buildSupabaseUrl('/auth/v1/.well-known/jwks.json');
-const SUPABASE_EXPECTED_ISSUER = buildSupabaseUrl('/auth/v1').toString().replace(/\/+$/, '');
+const SUPABASE_JWKS_URL = new URL('/auth/v1/.well-known/jwks.json', rawSupabaseBaseUrl);
+const SUPABASE_EXPECTED_ISSUER = new URL('/auth/v1', rawSupabaseBaseUrl).toString().replace(/\/+$/, '');
 console.log('[JWT] JWKS URL:', SUPABASE_JWKS_URL.toString());
 
 const hasCustomIssuerConfig = true;
 const AUDIENCE = 'authenticated';
-const remoteJwks = createRemoteJWKSet(SUPABASE_JWKS_URL);
+const JWKS_CACHE_TTL_MS = Number(process.env.SUPABASE_JWKS_CACHE_MS || 6 * 60 * 60 * 1000);
+const jwksCache = new LRUCache({
+  max: 1,
+  ttl: JWKS_CACHE_TTL_MS,
+});
+const JWKS_CACHE_KEY = 'remote_jwks';
+const getRemoteJwks = () => {
+  const cached = jwksCache.get(JWKS_CACHE_KEY);
+  if (cached) return cached;
+  const client = createRemoteJWKSet(SUPABASE_JWKS_URL);
+  jwksCache.set(JWKS_CACHE_KEY, client);
+  return client;
+};
 
 const shouldBypass = (path = '') => JWT_AUTH_BYPASS_PATHS.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
 
@@ -45,6 +58,7 @@ const mapClaimsToUser = (claims) => ({
 
 const verifySupabaseToken = async (token) => {
   try {
+    const remoteJwks = getRemoteJwks();
     const { payload } = await jwtVerify(token, remoteJwks, {
       algorithms: ['RS256'],
       audience: AUDIENCE,
@@ -56,6 +70,13 @@ const verifySupabaseToken = async (token) => {
     }
     return payload;
   } catch (error) {
+    if (error?.code && String(error.code).startsWith('ERR_JWKS')) {
+      jwksCache.delete(JWKS_CACHE_KEY);
+      console.error('[supabaseJwt] JWKS verification failed', {
+        message: error.message,
+        code: error.code,
+      });
+    }
     throw error;
   }
 };
