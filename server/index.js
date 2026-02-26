@@ -12747,9 +12747,13 @@ try {
 
   wss.on('connection', (ws, req) => {
     const originHeader = req.headers.origin;
-
-    if (!isAllowedWsOrigin(originHeader)) {
-      console.warn('[WS] Connection blocked – origin not allowed', { origin: originHeader || '(none)' });
+    const { allowed, reason } = isAllowedWsOrigin(originHeader);
+    console.info('[WS] Origin evaluation', {
+      origin: originHeader || '(none)',
+      allowed,
+      reason,
+    });
+    if (!allowed) {
       try {
         ws.close(1008, 'Origin not allowed');
       } catch (e) {

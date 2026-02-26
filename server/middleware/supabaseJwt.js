@@ -16,7 +16,8 @@ const resolvedSupabaseUrl = (process.env.SUPABASE_URL || '').replace(/\/+$/, '')
 const SUPABASE_JWKS_URL = resolvedSupabaseUrl
   ? `${resolvedSupabaseUrl}/auth/v1/certs`
   : (process.env.SUPABASE_JWT_ISSUER || DEFAULT_SUPABASE_ISSUER).replace(/\/+$/, '') + '/certs';
-const JWKS_CACHE_TTL_MS = Number(process.env.SUPABASE_JWKS_CACHE_MS || 5 * 60 * 1000);
+const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
+const JWKS_CACHE_TTL_MS = Number(process.env.SUPABASE_JWKS_CACHE_MS || SIX_HOURS_MS);
 const JWKS_CACHE_KEY = 'supabase_jwks';
 const AUDIENCE = 'authenticated';
 
@@ -31,9 +32,15 @@ const fetchWithTimeout = async (url, timeoutMs = 5000) => {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   const fetcher = typeof fetch === 'function' ? fetch : nodeFetch;
+  const anonKey = process.env.SUPABASE_ANON_KEY || '';
   const headers = {
     Accept: 'application/json',
-    ...(process.env.SUPABASE_ANON_KEY ? { apikey: process.env.SUPABASE_ANON_KEY } : {}),
+    ...(anonKey
+      ? {
+          apikey: anonKey,
+          Authorization: `Bearer ${anonKey}`,
+        }
+      : {}),
   };
   try {
     const response = await fetcher(url, { signal: controller.signal, headers });
