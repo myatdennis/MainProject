@@ -1,73 +1,46 @@
+import { createRemoteJWKSet, jwtVerify } from 'jose';
 import { LRUCache } from 'lru-cache';
-import { createLocalJWKSet, jwtVerify } from 'jose';
-import nodeFetch from 'node-fetch';
 import { extractTokenFromHeader } from '../utils/jwt.js';
 
 const JWT_AUTH_BYPASS_PATHS = ['/api/health', '/api/auth/login', '/api/auth/refresh'];
 const DEV_FALLBACK_ENABLED = String(process.env.DEV_FALLBACK || '').toLowerCase() === 'true';
 const E2E_MODE = String(process.env.E2E_TEST_MODE || '').toLowerCase() === 'true';
-const DEFAULT_SUPABASE_ISSUER = 'https://eprsgmfzqjptfywoecuy.supabase.co/auth/v1';
-const configuredIssuer = (process.env.SUPABASE_JWT_ISSUER || '').trim();
-const ENV_SUPABASE_URL = (process.env.SUPABASE_URL || '').trim();
-const derivedIssuer = ENV_SUPABASE_URL ? `${ENV_SUPABASE_URL.replace(/\/+$/, '')}/auth/v1` : '';
-const SUPABASE_JWT_ISSUER = (configuredIssuer || derivedIssuer || DEFAULT_SUPABASE_ISSUER).replace(/\/+$/, '');
-const hasCustomIssuerConfig = Boolean((process.env.SUPABASE_JWT_ISSUER || '').trim() || derivedIssuer);
-const resolvedSupabaseUrl = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
-const SUPABASE_JWKS_URL = resolvedSupabaseUrl
-  ? `${resolvedSupabaseUrl}/auth/v1/keys`
-  : (process.env.SUPABASE_JWT_ISSUER || DEFAULT_SUPABASE_ISSUER).replace(/\/+$/, '') + '/keys';
-const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
-const JWKS_CACHE_TTL_MS = Number(process.env.SUPABASE_JWKS_CACHE_MS || SIX_HOURS_MS);
-const JWKS_CACHE_KEY = 'supabase_jwks';
-const AUDIENCE = 'authenticated';
+const rawSupabaseBaseUrl = (process.env.SUPABASE_URL || '').trim();
+if (!rawSupabaseBaseUrl) {
+  throw new Error('[supabaseJwt] SUPABASE_URL environment variable is required for JWT validation.');
+}
 
-const jwksCache = new LRUCache({
-  max: 2,
-  ttl: JWKS_CACHE_TTL_MS,
-});
-
-const shouldBypass = (path = '') => JWT_AUTH_BYPASS_PATHS.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
-
-const fetchWithTimeout = async (url, timeoutMs = 5000) => {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-  const fetcher = typeof fetch === 'function' ? fetch : nodeFetch;
-  const anonKey = process.env.SUPABASE_ANON_KEY || '';
-  const headers = {
-    Accept: 'application/json',
-    ...(anonKey
-      ? {
-          apikey: anonKey,
-          Authorization: `Bearer ${anonKey}`,
-        }
-      : {}),
-  };
+const buildSupabaseUrl = (path) => {
   try {
-    const response = await fetcher(url, { signal: controller.signal, headers });
-    if (!response.ok) {
-      console.error('[supabaseJwt] jwks_fetch_failed', { status: response.status });
-      throw new Error(`jwks_fetch_failed:${response.status}`);
-    }
-    return await response.json();
-  } finally {
-    clearTimeout(timeoutId);
+    return new URL(path, rawSupabaseBaseUrl);
+  } catch (error) {
+    throw new Error(
+      `[supabaseJwt] Invalid SUPABASE_URL "${rawSupabaseBaseUrl}". ${error instanceof Error ? error.message : String(error)}`
+    );
   }
 };
 
-const buildLocalJwksClient = async () => {
+const SUPABASE_JWKS_URL = new URL('/auth/v1/.well-known/jwks.json', rawSupabaseBaseUrl);
+const SUPABASE_EXPECTED_ISSUER = new URL('/auth/v1', rawSupabaseBaseUrl).toString().replace(/\/+$/, '');
+console.log('[JWT] JWKS URL:', SUPABASE_JWKS_URL.toString());
+
+const hasCustomIssuerConfig = true;
+const AUDIENCE = 'authenticated';
+const JWKS_CACHE_TTL_MS = Number(process.env.SUPABASE_JWKS_CACHE_MS || 6 * 60 * 60 * 1000);
+const jwksCache = new LRUCache({
+  max: 1,
+  ttl: JWKS_CACHE_TTL_MS,
+});
+const JWKS_CACHE_KEY = 'remote_jwks';
+const getRemoteJwks = () => {
   const cached = jwksCache.get(JWKS_CACHE_KEY);
-  if (cached) {
-    return cached;
-  }
-  const body = await fetchWithTimeout(SUPABASE_JWKS_URL);
-  const keys = Array.isArray(body?.keys) ? body.keys : [];
-  if (keys.length === 0) {
-    throw new Error('jwks_empty');
-  }
-  const client = createLocalJWKSet({ keys });
+  if (cached) return cached;
+  const client = createRemoteJWKSet(SUPABASE_JWKS_URL);
   jwksCache.set(JWKS_CACHE_KEY, client);
   return client;
 };
+
+const shouldBypass = (path = '') => JWT_AUTH_BYPASS_PATHS.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
 
 const resolveTokenFromRequest = (req) => {
   const headerToken = extractTokenFromHeader(req.headers?.authorization);
@@ -84,12 +57,12 @@ const mapClaimsToUser = (claims) => ({
 });
 
 const verifySupabaseToken = async (token) => {
-  const jwksClient = await buildLocalJwksClient();
   try {
-    const { payload } = await jwtVerify(token, jwksClient, {
+    const remoteJwks = getRemoteJwks();
+    const { payload } = await jwtVerify(token, remoteJwks, {
       algorithms: ['RS256'],
       audience: AUDIENCE,
-      issuer: SUPABASE_JWT_ISSUER,
+      issuer: SUPABASE_EXPECTED_ISSUER,
       clockTolerance: 5,
     });
     if (!payload || !payload.sub) {
@@ -99,6 +72,10 @@ const verifySupabaseToken = async (token) => {
   } catch (error) {
     if (error?.code && String(error.code).startsWith('ERR_JWKS')) {
       jwksCache.delete(JWKS_CACHE_KEY);
+      console.error('[supabaseJwt] JWKS verification failed', {
+        message: error.message,
+        code: error.code,
+      });
     }
     throw error;
   }
