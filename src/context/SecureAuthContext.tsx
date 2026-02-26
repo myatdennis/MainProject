@@ -20,6 +20,7 @@ import { loginSchema, emailSchema, registerSchema } from '../utils/validators';
 import { queueRefresh } from '../lib/refreshQueue';
 import apiRequest, { ApiError, apiRequestRaw } from '../utils/apiClient';
 import buildSessionAuditHeaders from '../utils/sessionAuditHeaders';
+import { getSupabase } from '../lib/supabaseClient';
 
 // MFA helpers
 
@@ -996,17 +997,46 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         lastRefreshAttemptRef.current = now;
 
         try {
-          const sessionSnapshot = getUserSession();
-          const refreshToken =
-            sessionSnapshot?.refresh_token ??
-            sessionSnapshot?.refreshToken ??
-            getRefreshToken() ??
+          let sessionSnapshot: UserSession | null = null;
+          try {
+            sessionSnapshot = getUserSession();
+          } catch (sessionError) {
+            console.warn('[SecureAuth] Failed to read cached user session for refresh payload', sessionError);
+          }
+
+          let refreshToken: string | null =
+            (sessionSnapshot as any)?.session?.refresh_token ??
+            (sessionSnapshot as any)?.session?.refreshToken ??
+            (sessionSnapshot as any)?.refresh_token ??
+            (sessionSnapshot as any)?.refreshToken ??
             null;
+
+          if (!refreshToken) {
+            try {
+              refreshToken = getRefreshToken();
+            } catch (storageError) {
+              console.warn('[SecureAuth] Failed to read stored refresh token', storageError);
+            }
+          }
+
+          if (!refreshToken) {
+            try {
+              const supabaseClient = await getSupabase();
+              if (supabaseClient) {
+                const { data } = await supabaseClient.auth.getSession();
+                refreshToken = data?.session?.refresh_token ?? refreshToken;
+              }
+            } catch (supabaseError) {
+              console.warn('[SecureAuth] Unable to read Supabase session for refresh token', supabaseError);
+            }
+          }
+
           if (!refreshToken) {
             console.warn('[SecureAuth] No refresh token available for /api/auth/refresh request');
             refreshStatus = 'unauthenticated';
             return false;
           }
+
           const refreshHeaders = {
             ...buildSessionAuditHeaders(),
             'Content-Type': 'application/json',

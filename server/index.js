@@ -4951,53 +4951,6 @@ app.get('/api/auth/verify', authenticate, (req, res) => {
   });
 });
 
-// Token refresh endpoint
-app.post('/api/auth/refresh', async (req, res) => {
-  console.log('[refresh] content-type', req.headers['content-type']);
-  console.log('[refresh] body', req.body);
-  const body = req.body || {};
-  const refreshToken =
-    (typeof body.refreshToken === 'string' && body.refreshToken.trim()) ||
-    (typeof body.refresh_token === 'string' && body.refresh_token.trim()) ||
-    null;
-
-  if (!refreshToken) {
-    res.status(400).json({ error: 'Refresh token required' });
-    return;
-  }
-
-  // Demo mode - just issue new tokens
-  if (E2E_TEST_MODE || DEV_FALLBACK || !supabase) {
-    res.json({
-      accessToken: `demo-token-${Date.now()}`,
-      refreshToken: `demo-refresh-${Date.now()}`,
-      expiresAt: Date.now() + 86400000
-    });
-    return;
-  }
-
-  // Supabase refresh
-  if (!ensureSupabase(res)) return;
-
-  try {
-    const { data, error } = await supabase.auth.refreshSession({ refresh_token: refreshToken });
-
-    if (error) {
-      res.status(401).json({ error: 'Invalid refresh token' });
-      return;
-    }
-
-    res.json({
-      accessToken: data.session.access_token,
-      refreshToken: data.session.refresh_token,
-      expiresAt: data.session.expires_at
-    });
-  } catch (error) {
-    console.error('Refresh error:', error);
-    res.status(500).json({ error: 'Token refresh failed' });
-  }
-});
-
 // Forgot password endpoint
 app.post('/api/auth/forgot-password', async (req, res) => {
   const { email } = req.body || {};

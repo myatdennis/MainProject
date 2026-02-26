@@ -640,6 +640,8 @@ router.post('/register', authLimiter, async (req, res) => {
 // ============================================================================
 
 router.post('/refresh', async (req, res) => {
+  console.log('[refresh] content-type', req.headers['content-type']);
+  console.log('[refresh] body', req.body);
   if (process.env.DEBUG_AUTH === 'true') {
     console.log('[DEBUG_AUTH] Entered /api/auth/refresh', {
       method: req.method,
@@ -650,8 +652,11 @@ router.post('/refresh', async (req, res) => {
     });
   }
   try {
-    const refreshTokenInput = typeof req.body?.refreshToken === 'string' ? req.body.refreshToken.trim() : '';
-    const refreshToken = refreshTokenInput || null;
+    const refreshTokenCamel =
+      typeof req.body?.refreshToken === 'string' ? req.body.refreshToken.trim() : '';
+    const refreshTokenSnake =
+      typeof req.body?.refresh_token === 'string' ? req.body.refresh_token.trim() : '';
+    const refreshToken = refreshTokenCamel || refreshTokenSnake || null;
     if (!refreshToken) {
       if (process.env.DEBUG_AUTH === 'true') console.log('[DEBUG_AUTH] No refresh_token, rejecting');
       console.warn('[AUTH REFRESH FAILURE] Missing refresh token payload', {
