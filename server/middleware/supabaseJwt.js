@@ -148,7 +148,7 @@ const verifySupabaseToken = async (token) => {
   if (normalizedAlg === 'HS256') {
     return verifyHs256Token(token);
   }
-  if (normalizedAlg === 'RS256') {
+  if (normalizedAlg === 'RS256' || normalizedAlg === 'ES256') {
     return verifyRs256Token(token);
   }
   console.warn('[supabaseJwt] alg_mismatch', { alg });
