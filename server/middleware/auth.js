@@ -158,6 +158,30 @@ const allowDemoBypassForRequest = (req) => {
   return isDevRequest(req);
 };
 
+const buildDemoAuthContextPayload = () => {
+  const demoUser = {
+    id: 'demo-admin',
+    email: 'demo-admin@localhost',
+    app_metadata: { platform_role: 'platform_admin' },
+  };
+  const memberships = [
+    {
+      orgId: 'demo-org',
+      role: 'owner',
+      status: 'active',
+      organizationName: 'Demo Org',
+      organizationStatus: 'active',
+    },
+  ];
+  const payload = buildUserPayload(demoUser, memberships);
+  return {
+    user: payload,
+    memberships,
+    membershipMap: buildMembershipMap(memberships),
+    activeOrgId: memberships[0].orgId,
+  };
+};
+
 const cacheGet = (store, key) => {
   const hit = store.get(key);
   if (!hit) return null;
@@ -339,25 +363,11 @@ export async function buildAuthContext(req, { optional = false } = {}) {
       host: req.headers?.host,
       origin: req.headers?.origin,
     });
-    const demoUser = {
-      id: 'demo-admin',
-      email: 'demo-admin@localhost',
-      app_metadata: { platform_role: 'platform_admin' },
-    };
-    const memberships = [
-      {
-        orgId: 'demo-org',
-        role: 'owner',
-        status: 'active',
-        organizationName: 'Demo Org',
-        organizationStatus: 'active',
-      },
-    ];
-    const payload = buildUserPayload(demoUser, memberships);
+    const demo = buildDemoAuthContextPayload();
     return {
-      user: payload,
-      membershipsMap: buildMembershipMap(memberships),
-      activeOrgId: memberships[0].orgId,
+      user: demo.user,
+      membershipsMap: demo.membershipMap,
+      activeOrgId: demo.activeOrgId,
     };
   }
 
@@ -375,6 +385,17 @@ export async function buildAuthContext(req, { optional = false } = {}) {
     supabaseUser = await loadSupabaseUser(token);
   }
   if (!supabaseUser) {
+    if (allowDemoBypassForRequest(req)) {
+      console.warn('[auth] Token validation failed; falling back to demo auto-auth context', {
+        path: req.originalUrl || req.url,
+      });
+      const demo = buildDemoAuthContextPayload();
+      return {
+        user: demo.user,
+        membershipsMap: demo.membershipMap,
+        activeOrgId: demo.activeOrgId,
+      };
+    }
     if (optional) return null;
     throw new Error('invalid_token');
   }

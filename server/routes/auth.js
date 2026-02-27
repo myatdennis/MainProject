@@ -464,6 +464,7 @@ const loginHandler = async (req, res) => {
     const role = profileRole || 'learner';
     const isPlatformAdmin = role === 'admin';
 
+    const tokens = buildTokenResponseFromSession(data.session);
     return res.status(200).json({
       ok: true,
       user: data.user,
@@ -473,6 +474,7 @@ const loginHandler = async (req, res) => {
         platformRole: isPlatformAdmin ? 'platform_admin' : null,
         isPlatformAdmin,
       },
+      ...tokens,
     });
   } catch (error) {
     console.error('[AUTH LOGIN] unexpected error', {

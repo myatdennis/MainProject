@@ -182,7 +182,7 @@ const verifySupabaseToken = async (token) => {
   throw new Error('alg_not_supported');
 };
 
-const shouldSkipAuthInDev = (DEV_FALLBACK_ENABLED || E2E_MODE) && !hasCustomIssuerConfig;
+const shouldSkipAuthInDev = DEV_FALLBACK_ENABLED || E2E_MODE;
 
 export default async function supabaseJwtMiddleware(req, res, next) {
   if (shouldBypass(req.path || req.originalUrl || '')) {

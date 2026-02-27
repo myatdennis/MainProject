@@ -9,6 +9,23 @@ vi.mock('../../services/auditLogService', () => ({
   logAuditBestEffort: vi.fn(),
 }));
 
+const supabaseAuthMock = vi.hoisted(() => ({
+  getSession: vi.fn(),
+  refreshSession: vi.fn(),
+  signOut: vi.fn(),
+  signInWithPassword: vi.fn(),
+}));
+
+vi.mock('../../lib/supabaseClient', () => {
+  const supabaseClient = { auth: supabaseAuthMock };
+  return {
+    __esModule: true,
+    supabase: supabaseClient,
+    getSupabase: () => supabaseClient,
+    hasSupabaseConfig: () => true,
+  };
+});
+
 const mockPost = vi.hoisted(() => vi.fn());
 const mockGet = vi.hoisted(() => vi.fn());
 const mockUse = vi.hoisted(() => vi.fn());
@@ -53,6 +70,13 @@ const storedState = {
   user: null as UserSession | null,
   metadata: null as SessionMetadata | null,
 };
+
+const adminUser = {
+  id: 'user-1',
+  email: 'admin@the-huddle.co',
+  role: 'admin',
+  organizationId: 'org-1',
+} as UserSession;
 
 const spies = {
   setUserSession: vi.spyOn(secureStorage, 'setUserSession'),
@@ -106,34 +130,58 @@ const defaultRawHandler = (path: string) => {
 };
 
 describe('SecureAuthContext', () => {
-    beforeEach(() => {
-      resetSecureState();
-      Object.values(spies).forEach((spy) => spy.mockClear());
-      setupSecureStorageSpies();
-      mockPost.mockReset();
-      mockGet.mockReset();
-      mockUse.mockClear();
-      mockApiRequest.mockReset();
-      mockApiRequestRaw.mockReset();
-      mockApiRequestRaw.mockImplementation((path: string) => defaultRawHandler(path));
-      mockApiRequest.mockResolvedValue({ data: null });
+  beforeEach(() => {
+    resetSecureState();
+    Object.values(spies).forEach((spy) => spy.mockClear());
+    setupSecureStorageSpies();
+    mockPost.mockReset();
+    mockGet.mockReset();
+    mockUse.mockClear();
+    mockApiRequest.mockReset();
+    mockApiRequestRaw.mockReset();
+    mockApiRequestRaw.mockImplementation((path: string) => defaultRawHandler(path));
+    mockApiRequest.mockResolvedValue({ data: null });
+    supabaseAuthMock.getSession.mockResolvedValue({
+      data: {
+        session: {
+          access_token: 'supabase-test-token',
+          refresh_token: 'supabase-refresh-token',
+          user: adminUser,
+        },
+      },
+      error: null,
     });
+    supabaseAuthMock.refreshSession.mockResolvedValue({
+      data: { session: { access_token: 'supabase-test-token', refresh_token: 'supabase-refresh-token' } },
+      error: null,
+    });
+    supabaseAuthMock.signOut.mockResolvedValue({ error: null });
+    supabaseAuthMock.signInWithPassword.mockResolvedValue({
+      data: { session: { access_token: 'supabase-test-token', refresh_token: 'supabase-refresh-token' } },
+      error: null,
+    });
+  });
 
   it('stores session tokens and exposes authenticated user after login', async () => {
     const { result } = renderAuth();
     await waitFor(() => expect(result.current.authInitializing).toBe(false));
 
+    const bootstrapUser = {
+      id: 'user-1',
+      email: 'admin@thehuddle.co',
+      role: 'admin',
+      firstName: 'Admin',
+      lastName: 'User',
+      organizationId: 'org-1',
+    };
     mockApiRequestRaw.mockImplementation((path: string) => {
-      if (path === '/api/auth/login') {
+      if (path === '/api/auth/session') {
         return jsonResponse({
-          user: {
-            id: 'user-1',
-            email: 'admin@thehuddle.co',
-            role: 'admin',
-            firstName: 'Admin',
-            lastName: 'User',
-            organizationId: 'org-1',
-          },
+          user: bootstrapUser,
+          memberships: [],
+          organizationIds: ['org-1'],
+          accessToken: 'api-access',
+          refreshToken: 'api-refresh',
           expiresAt: Date.now() + 60_000,
           refreshExpiresAt: Date.now() + 120_000,
         });
@@ -181,12 +229,15 @@ describe('SecureAuthContext', () => {
 
     expect(refreshResult).toBe(true);
     expect(storedState.metadata).toMatchObject({ accessExpiresAt: 111, refreshExpiresAt: 222 });
-    expect(mockApiRequest).toHaveBeenCalledWith('/api/auth/refresh', {
-      method: 'POST',
-      allowAnonymous: true,
-      headers: expect.any(Object),
-      body: { reason: 'protected_401' },
-    });
+    expect(mockApiRequest).toHaveBeenCalledWith(
+      '/api/auth/refresh',
+      expect.objectContaining({
+        method: 'POST',
+        allowAnonymous: true,
+        headers: expect.objectContaining({ 'Content-Type': 'application/json' }),
+        body: JSON.stringify({ refreshToken: 'supabase-refresh-token' }),
+      }),
+    );
   });
 
   it('logout clears secure storage and resets auth booleans', async () => {
@@ -226,12 +277,10 @@ describe('SecureAuthContext', () => {
   });
 
   it('returns friendly errors on invalid credentials', async () => {
-    mockApiRequestRaw.mockImplementation((path: string) => {
-      if (path === '/api/auth/login') {
-        return Promise.reject(new MockApiError('Please log in again.', 401, path, { message: 'invalid' }));
-      }
-      return defaultRawHandler(path);
-    });
+    supabaseAuthMock.signInWithPassword.mockResolvedValueOnce({
+      data: null,
+      error: { message: 'Invalid login', status: 400 },
+    } as any);
 
     const { result } = renderAuth();
     await waitFor(() => expect(result.current.authInitializing).toBe(false));

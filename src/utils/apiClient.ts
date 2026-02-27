@@ -1,6 +1,6 @@
 import buildAuthHeaders, { clearSupabaseAuthSnapshot } from './requestContext';
 import { buildApiUrl, assertNoDoubleApi } from '../config/apiBase';
-import { shouldRequireSession } from '../lib/sessionGate';
+import { shouldRequireSession, getActiveSession } from '../lib/sessionGate';
 import { clearAuth } from '../lib/secureStorage';
 import { getSupabase } from '../lib/supabaseClient';
 import authorizedFetch, { NotAuthenticatedError, getAccessToken } from '../lib/authorizedFetch';
@@ -280,6 +280,45 @@ const extractPathname = (target: string): string => {
   }
 };
 
+const hasAdminPrivileges = (session: any): boolean => {
+  if (!session) return false;
+  const role = typeof session.role === 'string' ? session.role.toLowerCase() : '';
+  if (role === 'admin') return true;
+  if (session.isAdmin === true || session.isPlatformAdmin === true) return true;
+  if (Array.isArray(session.permissions)) {
+    if (session.permissions.some((perm) => typeof perm === 'string' && perm.toLowerCase().startsWith('admin'))) {
+      return true;
+    }
+  }
+  if (session.capabilities && typeof session.capabilities === 'object') {
+    const caps = session.capabilities;
+    if (caps.admin === true || caps.adminPortal === true) {
+      return true;
+    }
+  }
+  return false;
+};
+
+const enforceAdminPrivileges = (url: string, options?: InternalRequestOptions) => {
+  if (options?.allowAnonymous) {
+    return;
+  }
+  const pathname = extractPathname(url);
+  if (!ADMIN_PATH_PATTERN.test(pathname)) {
+    return;
+  }
+  const session = getActiveSession();
+  if (!session) {
+    return;
+  }
+  if (hasAdminPrivileges(session)) {
+    return;
+  }
+  throw new ApiError('Administrator privileges required', 403, url, {
+    message: 'You need administrator access to perform this action.',
+  });
+};
+
 const PUBLIC_ENDPOINTS = new Set([
   '/api/auth/login',
   '/api/auth/register',
@@ -316,7 +355,7 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
 
   const method = options.method ?? 'GET';
   const url = buildApiUrl(path);
-  const pathname = extractPathname(url);
+  enforceAdminPrivileges(url, options);
 
   const requiresSession =
     shouldRequireSession(url, {
@@ -326,12 +365,18 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
 
   // Build auth headers for EVERY request
   const authHeaders = await buildAuthHeaders();
-  delete authHeaders.Authorization;
   const publicEndpoint = isPublicEndpoint(path);
   const attachAuth = !publicEndpoint;
 
   const baseHeaders: Record<string, string> = {};
   const headers = mergeHeadersSafely(baseHeaders, authHeaders, options.headers);
+
+  if (attachAuth && requiresSession && !headers.Authorization) {
+    const token = await getAccessToken();
+    if (token) {
+      headers.Authorization = `Bearer ${token}`;
+    }
+  }
 
   if (import.meta.env?.DEV) {
     headers['X-Debug-Auth'] = attachAuth ? 'supabase' : 'public';
@@ -476,14 +521,6 @@ const internalAuthorizedFetch = async (
   options: InternalRequestOptions = {},
 ): Promise<Response> => {
   const prepared = await prepareRequest(path, options);
-
-  if (prepared.attachAuth && prepared.requiresSession) {
-    const token = await getAccessToken();
-    if (!token) {
-      await handleAuthFailure();
-      throw buildNotAuthenticatedError(prepared.url);
-    }
-  }
 
   let throttleKey: string | null = null;
   throttleKey = assertNotThrottled(prepared.url);

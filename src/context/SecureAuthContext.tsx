@@ -21,7 +21,7 @@ import { queueRefresh } from '../lib/refreshQueue';
 import apiRequest, { ApiError, apiRequestRaw } from '../utils/apiClient';
 import buildSessionAuditHeaders from '../utils/sessionAuditHeaders';
 import { getSupabase, hasSupabaseConfig } from '../lib/supabaseClient';
-import { apiFetch, AuthExpiredError, NotAuthenticatedError } from '../lib/apiClient';
+import { AuthExpiredError, NotAuthenticatedError } from '../lib/apiClient';
 
 // MFA helpers
 
@@ -78,19 +78,27 @@ const readSupabaseSessionTokens = async (
     }
     let session = data?.session ?? null;
 
-    if (
-      (!session || !session.access_token) &&
-      options.refreshIfMissing !== false
-    ) {
+    const shouldAttemptRefresh =
+      options.refreshIfMissing !== false &&
+      session !== null &&
+      !session.access_token &&
+      Boolean(session.refresh_token);
+
+    if (shouldAttemptRefresh) {
       try {
         const { data: refreshed, error: refreshError } = await supabaseClient.auth.refreshSession();
         if (refreshError) {
-          console.warn('[SecureAuth] Supabase refreshSession failed while ensuring session tokens', refreshError);
+          if (refreshError.name !== 'AuthSessionMissingError') {
+            console.warn('[SecureAuth] Supabase refreshSession failed while ensuring session tokens', refreshError);
+          }
         } else {
           session = refreshed?.session ?? session;
         }
       } catch (refreshException) {
-        console.warn('[SecureAuth] Supabase refreshSession threw while ensuring session tokens', refreshException);
+        const message = refreshException instanceof Error ? refreshException.name : '';
+        if (message !== 'AuthSessionMissingError') {
+          console.warn('[SecureAuth] Supabase refreshSession threw while ensuring session tokens', refreshException);
+        }
       }
     }
 
@@ -685,45 +693,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     return result;
   };
 
-  const parseSessionPayload = async (response: Response): Promise<SessionResponsePayload | null> => {
-    const contentType = response.headers.get('content-type') || '';
-    if (!contentType.includes('application/json')) {
-      return null;
-    }
-    try {
-      const parsed: unknown = await response.json();
-      const normalized = normalizeSessionResponsePayload(parsed);
-      if (normalized) {
-        return normalized;
-      }
-      if (parsed && typeof parsed === 'object' && 'authenticated' in parsed) {
-        const isAuthenticated = Boolean((parsed as { authenticated?: unknown }).authenticated);
-        if (!isAuthenticated) {
-          return null;
-        }
-        const supabaseClient = getSupabase();
-        if (supabaseClient) {
-          try {
-            const { data } = await supabaseClient.auth.getSession();
-            const supabaseSession = data?.session ?? null;
-            if (supabaseSession) {
-              const supabasePayload = normalizeSessionResponsePayload({ session: supabaseSession });
-              if (supabasePayload) {
-                return supabasePayload;
-              }
-            }
-          } catch (sessionError) {
-            console.warn('[SecureAuth] Unable to hydrate auth/session response from Supabase session', sessionError);
-          }
-        }
-        return { authenticatedOnly: true, user: null };
-      }
-      return null;
-    } catch {
-      return null;
-    }
-  };
-
   const extractMessage = (payload: unknown): string | undefined => {
     if (!payload) return undefined;
     if (typeof payload === 'string') return payload;
@@ -885,70 +854,11 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         });
       }
       try {
-        const response = await apiFetch('/auth/session', {
+        const payloadRaw = await requestJsonWithClock<unknown>('/api/auth/session', {
           method: 'GET',
           signal,
         });
-
-        if (import.meta.env.DEV) {
-          const authHeader = response.headers.get('authorization') || '';
-          if (!authHeader) {
-            console.warn('[SecureAuth][dev] Session bootstrap response missing Authorization header.');
-          }
-        }
-        captureServerClock(headersToRecord(response.headers));
-        const payload = await parseSessionPayload(response);
-        if (response.status === 401 || response.status === 403) {
-          if (import.meta.env.DEV) {
-            logAuthDebug('[auth] session_fetch_unauthorized', {
-              surface,
-              status: response.status,
-              hasStoredToken,
-              hasAccessToken: Boolean(storedAccessToken),
-              hasRefreshToken: Boolean(storedRefreshToken),
-            });
-          }
-          if (allowRefresh && hasStoredToken) {
-            const refreshFn = refreshTokenCallbackRef.current;
-            if (refreshFn) {
-              const recovered = await refreshFn({ reason: 'protected_401' });
-              if (recovered) {
-                return fetchServerSession({ surface, signal, silent, allowRefresh: false });
-              }
-            }
-          }
-          if (import.meta.env.DEV) {
-            console.debug('[SecureAuth][dev] session fetch unauthorized status', response.status);
-          }
-          handleSessionUnauthorized({
-            silent,
-            reason: surface ? `${surface}_session_unauthenticated` : 'session_unauthenticated',
-          });
-          continueAsGuest(surface ? `${surface}_session_unauthenticated` : 'session_unauthenticated');
-          return false;
-        }
-
-        if (!response.ok) {
-          const severeServerError = isServerOrNetworkErrorStatus(response.status);
-          if (severeServerError) {
-            lastSessionFetchResultRef.current = 'error';
-            if (import.meta.env.DEV) {
-              console.warn('[Auth] auth_restore: error', { status: response.status, surface, payload });
-            }
-            if (!silent) {
-              setBootstrapError('Unable to restore your session. Please refresh and try again.');
-            }
-            return false;
-          }
-
-          handleSessionUnauthorized({
-            silent: true,
-            reason: surface ? `${surface}_session_http_${response.status}` : 'session_http_error',
-          });
-          continueAsGuest(surface ? `${surface}_session_http_${response.status}` : 'session_http_error');
-          return false;
-        }
-
+        const payload = normalizeSessionResponsePayload(payloadRaw);
         if (payload?.user) {
           applySessionPayload(payload, {
             surface,
@@ -982,6 +892,13 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           return false;
         }
         if (error instanceof ApiError) {
+          if (import.meta.env.DEV) {
+            logAuthDebug('[auth] session_fetch_unauthorized_error', {
+              surface,
+              status: error.status,
+              hasStoredToken,
+            });
+          }
           const noTokenUnauth =
             error.status === 401 && !hasStoredToken && isNoTokenUnauthorized(error.status, error.body);
           if (noTokenUnauth) {
@@ -1241,41 +1158,11 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         return;
       }
       try {
-        const response = await apiFetch('/auth/session', {
+        const payloadRaw = await requestJsonWithClock<unknown>('/api/auth/session', {
           method: 'GET',
           signal,
         });
-        captureServerClock(headersToRecord(response.headers));
-        const payload = await parseSessionPayload(response);
-
-        if (response.status === 401 || response.status === 403) {
-          const refreshFn = refreshTokenCallbackRef.current;
-          if (refreshFn) {
-            const recovered = await refreshFn({ reason: 'user_retry' });
-            if (recovered) {
-              setAuthStatus('authenticated');
-              setBootstrapError(null);
-              logSessionResult('authenticated');
-              return;
-            }
-          }
-          continueAsGuest('bootstrap_unauthenticated');
-          return;
-        }
-
-        if (!response.ok) {
-          const severeServerError = isServerOrNetworkErrorStatus(response.status);
-          if (severeServerError) {
-            lastSessionFetchResultRef.current = 'error';
-            setBootstrapError('Unable to restore your session. Please try again.');
-            setAuthStatus('error');
-            logSessionResult('error');
-            return;
-          }
-
-          continueAsGuest(`bootstrap_http_${response.status}`);
-          return;
-        }
+        const payload = normalizeSessionResponsePayload(payloadRaw);
 
         if (payload?.user) {
           applySessionPayload(payload, { persistTokens: false, reason: 'bootstrap_success' });
@@ -1298,29 +1185,37 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           continueAsGuest('bootstrap_unauthenticated');
           return;
         }
-        if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
-          const refreshFn = refreshTokenCallbackRef.current;
-          if (refreshFn) {
-            const recovered = await refreshFn({ reason: 'user_retry' });
-            if (recovered) {
-              setAuthStatus('authenticated');
-              setBootstrapError(null);
-              logSessionResult('authenticated');
-              return;
+        if (error instanceof ApiError) {
+          if (error.status === 401 || error.status === 403) {
+            const refreshFn = refreshTokenCallbackRef.current;
+            if (refreshFn) {
+              const recovered = await refreshFn({ reason: 'user_retry' });
+              if (recovered) {
+                setAuthStatus('authenticated');
+                setBootstrapError(null);
+                logSessionResult('authenticated');
+                return;
+              }
             }
+
+            continueAsGuest('bootstrap_unauthenticated');
+            return;
           }
 
-          continueAsGuest('bootstrap_unauthenticated');
-          return;
-        }
-        const severeServerError = error instanceof ApiError ? isServerOrNetworkErrorStatus(error.status) : true;
-        if (severeServerError) {
+          const severeServerError = isServerOrNetworkErrorStatus(error.status);
+          if (severeServerError) {
+            lastSessionFetchResultRef.current = 'error';
+            setBootstrapError('Network issue while restoring your session. Please retry.');
+            setAuthStatus('error');
+            logSessionResult('error');
+          } else {
+            continueAsGuest('bootstrap_http_error');
+          }
+        } else {
           lastSessionFetchResultRef.current = 'error';
           setBootstrapError('Network issue while restoring your session. Please retry.');
           setAuthStatus('error');
           logSessionResult('error');
-        } else {
-          continueAsGuest('bootstrap_http_error');
         }
       } finally {
         clearBootstrapFailOpenTimer();

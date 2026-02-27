@@ -8,6 +8,22 @@ import { ApiError } from '../../utils/apiClient';
 const apiRequestMock = vi.hoisted(() => vi.fn());
 const apiRequestRawMock = vi.hoisted(() => vi.fn());
 
+const supabaseAuthMock = vi.hoisted(() => ({
+  getSession: vi.fn(),
+  refreshSession: vi.fn(),
+  signOut: vi.fn(),
+}));
+
+vi.mock('../../lib/supabaseClient', () => {
+  const supabaseClient = { auth: supabaseAuthMock };
+  return {
+    __esModule: true,
+    getSupabase: () => supabaseClient,
+    supabase: supabaseClient,
+    hasSupabaseConfig: () => true,
+  };
+});
+
 vi.mock('../../utils/apiClient', async () => {
   const actual = await vi.importActual<typeof import('../../utils/apiClient')>('../../utils/apiClient');
   return {
@@ -48,6 +64,15 @@ const AuthProbe = () => {
 
 describe('SecureAuthContext bootstrap', () => {
   beforeEach(() => {
+    supabaseAuthMock.getSession.mockResolvedValue({
+      data: { session: { access_token: 'supabase-test-token', refresh_token: 'supabase-refresh-token' } },
+      error: null,
+    });
+    supabaseAuthMock.refreshSession.mockResolvedValue({
+      data: { session: { access_token: 'supabase-test-token', refresh_token: 'supabase-refresh-token' } },
+      error: null,
+    });
+    supabaseAuthMock.signOut.mockResolvedValue({ error: null });
     apiRequestMock.mockReset();
     apiRequestMock.mockResolvedValue({ data: {} });
     apiRequestRawMock.mockReset();
@@ -97,7 +122,7 @@ describe('SecureAuthContext bootstrap', () => {
     );
 
     const user = userEvent.setup();
-    const retryButton = screen.getByRole('button', { name: /retry/i });
+    const retryButton = await screen.findByRole('button', { name: /retry/i });
     await user.click(retryButton);
     await waitFor(() => expect(screen.getByTestId('user-email').textContent).toBe('admin@the-huddle.co'));
   });

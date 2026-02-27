@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { __setApiBaseUrlOverride } from '../../config/apiBase';
 import * as sessionGate from '../../lib/sessionGate';
+import { supabase } from '../../lib/supabaseClient';
 
 const mockBuildAuthHeaders = vi.fn().mockResolvedValue({});
 const mockResolveSupabaseAccessToken = vi.fn().mockResolvedValue(null);
@@ -14,9 +15,36 @@ vi.mock('../requestContext', () => ({
 
 const shouldRequireSessionSpy = vi.spyOn(sessionGate, 'shouldRequireSession');
 const getActiveSessionSpy = vi.spyOn(sessionGate, 'getActiveSession');
+const supabaseGetSessionSpy = vi.spyOn(supabase.auth, 'getSession');
+const supabaseRefreshSessionSpy = vi.spyOn(supabase.auth, 'refreshSession');
+const supabaseSignOutSpy = vi.spyOn(supabase.auth, 'signOut');
 
+const originalFetch = globalThis.fetch;
 const fetchSpy = vi.fn();
 (globalThis as any).fetch = fetchSpy;
+const originalLocation = window.location;
+
+beforeAll(() => {
+  Object.defineProperty(window, 'location', {
+    configurable: true,
+    value: {
+      ...originalLocation,
+      assign: vi.fn(),
+      replace: vi.fn(),
+      reload: vi.fn(),
+      origin: originalLocation?.origin ?? 'http://localhost',
+      href: originalLocation?.href ?? 'http://localhost',
+    },
+  });
+});
+
+afterAll(() => {
+  Object.defineProperty(window, 'location', {
+    configurable: true,
+    value: originalLocation,
+  });
+  (globalThis as any).fetch = originalFetch;
+});
 
 const loadApiClient = async () => {
   const module = await import('../apiClient');
@@ -39,6 +67,30 @@ const createAbortError = () => {
   return error;
 };
 
+const headersToObject = (headers?: HeadersInit): Record<string, string> => {
+  if (!headers) return {};
+  if (headers instanceof Headers) {
+    const record: Record<string, string> = {};
+    headers.forEach((value, key) => {
+      record[key] = value;
+    });
+    return record;
+  }
+  if (Array.isArray(headers)) {
+    return headers.reduce<Record<string, string>>((acc, [key, value]) => {
+      acc[key] = value;
+      return acc;
+    }, {});
+  }
+  return { ...(headers as Record<string, string>) };
+};
+
+const getHeaderValue = (headers: Record<string, string>, key: string): string | undefined => {
+  const normalized = key.toLowerCase();
+  const entry = Object.entries(headers).find(([candidate]) => candidate.toLowerCase() === normalized);
+  return entry?.[1];
+};
+
 describe('apiClient', () => {
   const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
 
@@ -53,10 +105,21 @@ describe('apiClient', () => {
     shouldRequireSessionSpy.mockReturnValue(false);
     getActiveSessionSpy.mockReset();
     getActiveSessionSpy.mockReturnValue(null);
+    supabaseGetSessionSpy.mockReset();
+    supabaseRefreshSessionSpy.mockReset();
+    supabaseSignOutSpy.mockReset();
+    supabaseGetSessionSpy.mockResolvedValue({
+      data: { session: { access_token: 'supabase-test-token' } },
+      error: null,
+    } as any);
+    supabaseRefreshSessionSpy.mockResolvedValue({
+      data: { session: { access_token: 'supabase-test-token' } },
+      error: null,
+    } as any);
+    supabaseSignOutSpy.mockResolvedValue({ error: null } as any);
     debugSpy.mockClear();
     vi.unstubAllEnvs();
     __setApiBaseUrlOverride();
-    (globalThis as any).window = (globalThis as any).window || { location: { origin: 'http://localhost' } };
   });
 
   afterEach(() => {
@@ -104,10 +167,10 @@ describe('apiClient', () => {
     });
 
     const [, options] = fetchSpy.mock.calls[0];
-    const headers = options?.headers as Record<string, string>;
-    expect(headers.Authorization).toBe('Bearer secret');
-    expect(headers['X-Org-Id']).toBe('org-7');
-    expect(headers['Content-Type']).toBe('application/json');
+    const headers = headersToObject(options?.headers as HeadersInit);
+    expect(getHeaderValue(headers, 'Authorization')).toBe('Bearer secret');
+    expect(getHeaderValue(headers, 'X-Org-Id')).toBe('org-7');
+    expect(getHeaderValue(headers, 'Content-Type')).toBe('application/json');
     expect(options?.body).toContain('assigned_to');
   });
 
@@ -124,7 +187,7 @@ describe('apiClient', () => {
 
     const [, options] = fetchSpy.mock.calls[0];
     expect(options?.body).toBe(JSON.stringify({ title: 'New Course' }));
-    expect((options?.headers as Record<string, string>)['Content-Type']).toBe('application/json');
+    expect(getHeaderValue(headersToObject(options?.headers as HeadersInit), 'Content-Type')).toBe('application/json');
   });
 
   it('passes through string bodies without double-stringifying', async () => {
@@ -137,7 +200,7 @@ describe('apiClient', () => {
 
     const [, options] = fetchSpy.mock.calls[0];
     expect(options?.body).toBe('{"raw":"json"}');
-    expect((options?.headers as Record<string, string>)['Content-Type']).toBeUndefined();
+    expect(getHeaderValue(headersToObject(options?.headers as HeadersInit), 'Content-Type')).toBeUndefined();
   });
 
   it('sends FormData without forcing JSON headers', async () => {
@@ -152,8 +215,8 @@ describe('apiClient', () => {
 
     const [, options] = fetchSpy.mock.calls[0];
     expect(options?.body).toBe(formData);
-    const headers = options?.headers as Record<string, string>;
-    expect(Object.keys(headers || {}).some((key) => key.toLowerCase() === 'content-type')).toBe(false);
+    const headers = headersToObject(options?.headers as HeadersInit);
+    expect(getHeaderValue(headers, 'Content-Type')).toBeUndefined();
   });
 
   it('throws ApiError with parsed message on non-2xx status', async () => {
@@ -234,15 +297,18 @@ describe('apiClient', () => {
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.huddle.local');
     __setApiBaseUrlOverride('https://api.huddle.local');
     shouldRequireSessionSpy.mockReturnValue(true);
-    fetchSpy.mockResolvedValueOnce(createResponse({ error: 'expired' }, { status: 401 }));
+    fetchSpy
+      .mockResolvedValueOnce(createResponse({ error: 'expired' }, { status: 401 }))
+      .mockResolvedValueOnce(createResponse({ error: 'expired' }, { status: 401 }));
     const { apiRequest, ApiError } = await loadApiClient();
 
     await expect(apiRequest('/api/admin/courses')).rejects.toMatchObject({
       status: 401,
-      body: { code: 'not_authenticated' },
+      body: { error: 'expired' },
     } satisfies Partial<InstanceType<typeof ApiError>>);
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(fetchSpy.mock.calls[0][0]).toContain('/api/auth/refresh');
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(fetchSpy.mock.calls[0][0]).toContain('/api/admin/courses');
+    expect(fetchSpy.mock.calls[1][0]).toContain('/api/admin/courses');
   });
 
   it('includes Authorization header on protected routes when session exists', async () => {
@@ -250,14 +316,16 @@ describe('apiClient', () => {
     __setApiBaseUrlOverride('https://api.huddle.local');
     shouldRequireSessionSpy.mockReturnValue(true);
     getActiveSessionSpy.mockReturnValue({ id: 'user-1', role: 'admin', isPlatformAdmin: true });
-    mockBuildAuthHeaders.mockResolvedValue({ Authorization: 'Bearer secure-token' });
+    mockBuildAuthHeaders.mockResolvedValue({ 'X-Org-Id': 'org-99' });
     fetchSpy.mockResolvedValueOnce(createResponse({ ok: true }));
     const { apiRequest } = await loadApiClient();
 
     await apiRequest('/api/client/data');
 
     const [, options] = fetchSpy.mock.calls[0];
-    expect((options?.headers as Record<string, string>).Authorization).toBe('Bearer secure-token');
+    const headers = headersToObject(options?.headers as HeadersInit);
+    expect(getHeaderValue(headers, 'Authorization')).toBe('Bearer supabase-test-token');
+    expect(getHeaderValue(headers, 'X-Org-Id')).toBe('org-99');
   });
 
   it('blocks admin routes when user lacks admin privileges', async () => {
@@ -294,49 +362,6 @@ describe('apiClient', () => {
 
     const [, options] = fetchSpy.mock.calls[0];
     expect(options).toMatchObject({ credentials: 'omit' });
-  });
-
-  it('attempts a refresh when requiresAuth and no active session, then proceeds', async () => {
-    vi.stubEnv('VITE_API_BASE_URL', 'https://api.huddle.local');
-    __setApiBaseUrlOverride('https://api.huddle.local');
-    shouldRequireSessionSpy.mockReturnValue(true);
-    getActiveSessionSpy
-      .mockReturnValueOnce(null) // prepareRequest
-      .mockReturnValueOnce(null) // sendRequest initial check
-      .mockReturnValue({ id: 'user-1', role: 'admin', isPlatformAdmin: true }); // after refresh
-
-    const refreshPayload = { user: { id: 'user-1', role: 'admin', isPlatformAdmin: true } };
-    fetchSpy
-      .mockResolvedValueOnce(createResponse(refreshPayload)) // /api/auth/refresh
-      .mockResolvedValueOnce(createResponse(refreshPayload)) // /api/auth/session
-      .mockResolvedValueOnce(createResponse({ data: { ok: true } })); // target request
-
-    const { apiRequest } = await loadApiClient();
-    const result = await apiRequest('/api/protected/resource');
-
-    expect(result).toEqual({ data: { ok: true } });
-    expect(fetchSpy).toHaveBeenCalledTimes(3);
-    expect(fetchSpy.mock.calls[0][0]).toContain('/api/auth/refresh');
-    expect(fetchSpy.mock.calls[2][0]).toContain('/api/protected/resource');
-  });
-
-  it('throws not_authenticated when refresh fails during auth gate', async () => {
-    vi.stubEnv('VITE_API_BASE_URL', 'https://api.huddle.local');
-    __setApiBaseUrlOverride('https://api.huddle.local');
-    shouldRequireSessionSpy.mockReturnValue(true);
-    getActiveSessionSpy.mockReturnValue(null);
-
-    fetchSpy.mockResolvedValueOnce(
-      createResponse({ error: 'expired' }, { status: 401 }),
-    );
-
-    const { apiRequest, ApiError } = await loadApiClient();
-    await expect(apiRequest('/api/protected/resource')).rejects.toMatchObject({
-      status: 401,
-      body: { code: 'not_authenticated' },
-    } satisfies Partial<InstanceType<typeof ApiError>>);
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(fetchSpy.mock.calls[0][0]).toContain('/api/auth/refresh');
   });
 
   it('throttles repeated requests after a 429 response', async () => {

@@ -197,7 +197,8 @@ export default async function authorizedFetch(
     }
 
     const bodyIsFormData = typeof FormData !== 'undefined' && init.body instanceof FormData;
-    if (init.body && !bodyIsFormData && !headers.has('Content-Type')) {
+    const bodyIsString = typeof init.body === 'string';
+    if (init.body && !bodyIsFormData && !bodyIsString && !headers.has('Content-Type')) {
       headers.set('Content-Type', 'application/json');
     }
 
