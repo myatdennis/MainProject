@@ -28,7 +28,7 @@ interface CapabilityCheckResult {
 
 
 const AdminLogin: React.FC = () => {
-  const { login, isAuthenticated, forgotPassword, authInitializing, verifyMfa } = useSecureAuth();
+  const { login, logout, isAuthenticated, forgotPassword, authInitializing, verifyMfa } = useSecureAuth();
   const runtimeStatus = useRuntimeStatus();
   const supabaseReady = runtimeStatus.supabaseConfigured && runtimeStatus.supabaseHealthy;
   const [email, setEmail] = useState('mya@the-huddle.co');
@@ -208,11 +208,28 @@ const AdminLogin: React.FC = () => {
     updateDevSessionSnapshot('initial_render');
   }, [updateDevSessionSnapshot]);
 
+  const requireAdminSignOut = useCallback(async () => {
+    try {
+      await logout('admin');
+    } finally {
+      navigate('/admin/login', { replace: true });
+    }
+  }, [logout, navigate]);
+
+  const computeAdminAllowed = (payload?: AdminCapabilityResponse | null) => {
+    if (!payload) return false;
+    const accessAllowed = payload.access?.allowed === true;
+    const adminRole = payload.user?.role === 'admin';
+    const userFlag = payload.user?.isAdmin === true;
+    const adminPortal = payload.access?.adminPortal === true;
+    return accessAllowed || adminRole || userFlag || adminPortal;
+  };
+
   const verifyAdminCapability = async (): Promise<CapabilityCheckResult> => {
     try {
       const response = await apiJson<AdminCapabilityResponse>('/admin/me');
       recordDevApiEvent('/admin/me', 200);
-      if (response?.access?.allowed) {
+      if (computeAdminAllowed(response)) {
         return { allowed: true, user: response.user };
       }
       const reason = response?.access?.reason || response?.error || response?.message || 'not_authorized';
@@ -226,7 +243,12 @@ const AdminLogin: React.FC = () => {
       ) {
         if (capabilityError instanceof ApiResponseError) {
           if (capabilityError.status === 401) {
-            recordDevApiEvent('/admin/me', 401, 'not_authorized');
+            recordDevApiEvent('/admin/me', 401, 'unauthenticated');
+            await requireAdminSignOut();
+            return { allowed: false, reason: 'unauthenticated' };
+          }
+          if (capabilityError.status === 403) {
+            recordDevApiEvent('/admin/me', 403, 'not_authorized');
             return { allowed: false, reason: 'not_authorized' };
           }
           try {
@@ -238,10 +260,15 @@ const AdminLogin: React.FC = () => {
           recordDevApiEvent('/admin/me', capabilityError.status, fallbackReason);
         } else {
           recordDevApiEvent('/admin/me', 'error', capabilityError.message);
-          return { allowed: false, reason: 'not_authorized' };
+          await requireAdminSignOut();
+          return { allowed: false, reason: 'unauthenticated' };
         }
       }
       console.warn('[AdminLogin] capability check failed', capabilityError);
+      if (capabilityError instanceof AuthExpiredError || capabilityError instanceof NotAuthenticatedError) {
+        await requireAdminSignOut();
+        return { allowed: false, reason: 'unauthenticated' };
+      }
       return { allowed: false, reason: fallbackReason };
     }
   };

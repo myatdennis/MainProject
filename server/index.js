@@ -3628,6 +3628,8 @@ app.get('/api/admin/me', requireSupabaseUser, (req, res) => {
     });
   }
 
+  const accessAllowed = hasAdminAccess;
+
   res.json({
     user: {
       id: context.userId,
@@ -3635,6 +3637,11 @@ app.get('/api/admin/me', requireSupabaseUser, (req, res) => {
       role: userPayload.role || context.userRole || null,
       platformRole: userPayload.platformRole || null,
       isPlatformAdmin: Boolean(context.isPlatformAdmin || userPayload.isPlatformAdmin),
+      isAdmin: Boolean(
+        (userPayload.role || context.userRole) === 'admin' ||
+          context.isPlatformAdmin ||
+          accessAllowed,
+      ),
       activeOrgId: resolvedActiveOrgId,
       organizationIds: context.organizationIds || [],
       memberships,
@@ -3643,7 +3650,16 @@ app.get('/api/admin/me', requireSupabaseUser, (req, res) => {
       permissions,
     },
     access: {
-      allowed: true,
+      allowed: accessAllowed,
+      adminPortal: accessAllowed,
+      admin: accessAllowed,
+      isAdmin: accessAllowed,
+      capabilities: {
+        adminPortal: accessAllowed,
+        admin: accessAllowed,
+      },
+      scopes: accessAllowed ? ['admin'] : [],
+      permissions: accessAllowed ? ['admin:*'] : [],
       via: context.isPlatformAdmin ? 'platform' : 'org_admin',
       reason: context.isPlatformAdmin ? 'platform_admin' : 'org_admin_membership',
       orgAdminCount: adminOrgIds.length,
