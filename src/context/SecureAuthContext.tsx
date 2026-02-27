@@ -857,6 +857,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         const payloadRaw = await requestJsonWithClock<unknown>('/api/auth/session', {
           method: 'GET',
           signal,
+          requireAuth: true,
         });
         const payload = normalizeSessionResponsePayload(payloadRaw);
         if (payload?.user) {
@@ -1161,6 +1162,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         const payloadRaw = await requestJsonWithClock<unknown>('/api/auth/session', {
           method: 'GET',
           signal,
+          requireAuth: true,
         });
         const payload = normalizeSessionResponsePayload(payloadRaw);
 
