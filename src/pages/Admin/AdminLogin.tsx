@@ -43,6 +43,9 @@ const AdminLogin: React.FC = () => {
   const [mfaError, setMfaError] = useState('');
   const [authError, setAuthError] = useState('');
   const [capabilityFallbackActive, setCapabilityFallbackActive] = useState(false);
+  const [showNotAuthorizedPanel, setShowNotAuthorizedPanel] = useState(false);
+  const [deniedUserSnapshot, setDeniedUserSnapshot] = useState<{ id: string | null; email: string | null } | null>(null);
+  const [copyUserInfoStatus, setCopyUserInfoStatus] = useState<'idle' | 'copied' | 'error'>('idle');
   const [capabilityRetrying, setCapabilityRetrying] = useState(false);
   const [devDebug, setDevDebug] = useState<{
     sessionCheckedAt: string | null;
@@ -108,6 +111,8 @@ const AdminLogin: React.FC = () => {
 
   const capabilityErrorMessage = (reason?: string) => {
     switch (reason) {
+      case 'admin_privileges_required':
+        return 'Administrator privileges are required for this portal.';
       case 'admin_capability_error':
         return 'We could not confirm your admin access. Please try again or contact support.';
       case 'org_admin_required':
@@ -116,6 +121,39 @@ const AdminLogin: React.FC = () => {
         return 'Your account is not authorized for the Admin Portal.';
     }
   };
+
+  const captureDeniedUserSnapshot = useCallback(async () => {
+    try {
+      const { data } = await supabase.auth.getSession();
+      setDeniedUserSnapshot({
+        id: data?.session?.user?.id ?? null,
+        email: data?.session?.user?.email ?? null,
+      });
+    } catch (snapshotError) {
+      console.warn('[AdminLogin] unable to capture denied user snapshot', snapshotError);
+      setDeniedUserSnapshot(null);
+    }
+  }, []);
+
+  const handleCopyDeniedUserInfo = useCallback(async () => {
+    if (!navigator?.clipboard) {
+      setCopyUserInfoStatus('error');
+      return;
+    }
+    if (!deniedUserSnapshot) {
+      await captureDeniedUserSnapshot();
+    }
+    const payload = deniedUserSnapshot || { id: null, email: null };
+    const text = `User ID: ${payload.id || 'unknown'}\nEmail: ${payload.email || 'unknown'}`;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopyUserInfoStatus('copied');
+      setTimeout(() => setCopyUserInfoStatus('idle'), 3000);
+    } catch (copyError) {
+      console.warn('[AdminLogin] Copy user info failed', copyError);
+      setCopyUserInfoStatus('error');
+    }
+  }, [captureDeniedUserSnapshot, deniedUserSnapshot]);
 
   const updateDevSessionSnapshot = useCallback(
     async (label: string) => {
@@ -258,10 +296,22 @@ const AdminLogin: React.FC = () => {
     },
   ];
 
+  const normalizeCapabilityReason = (value?: string | null) => {
+    const normalized = (value || '').toLowerCase();
+    if (normalized.includes('administrator privileges required')) {
+      return 'admin_privileges_required';
+    }
+    if (normalized.includes('not authorized')) {
+      return 'not_authorized';
+    }
+    return value;
+  };
+
   const handleCapabilityGate = useCallback(async () => {
     setCapabilityFallbackActive(false);
     const capability = await verifyAdminCapability();
     if (capability.allowed) {
+      setShowNotAuthorizedPanel(false);
       navigateToAdminLanding({ replace: true });
       return true;
     }
@@ -270,9 +320,14 @@ const AdminLogin: React.FC = () => {
       setCapabilityFallbackActive(true);
       return false;
     }
-    setAuthError(capabilityErrorMessage(capability.reason));
+    const normalizedReason = normalizeCapabilityReason(capability.reason);
+    setShowNotAuthorizedPanel(normalizedReason === 'admin_privileges_required' || normalizedReason === 'not_authorized');
+    if (normalizedReason === 'admin_privileges_required') {
+      void captureDeniedUserSnapshot();
+    }
+    setAuthError(capabilityErrorMessage(normalizedReason));
     return false;
-  }, [navigateToAdminLanding, verifyAdminCapability, capabilityErrorMessage]);
+  }, [captureDeniedUserSnapshot, capabilityErrorMessage, navigateToAdminLanding, verifyAdminCapability]);
 
   const handleRetryCapability = useCallback(async () => {
     setCapabilityRetrying(true);
@@ -325,6 +380,8 @@ const AdminLogin: React.FC = () => {
         if (loginError.status === 401) {
           setError('Invalid email or password. Please try again.');
         } else if (loginError.status === 403) {
+          setShowNotAuthorizedPanel(true);
+          void captureDeniedUserSnapshot();
           setAuthError('Your account is not authorized for the Admin Portal.');
         } else {
           const friendlyMessage =
@@ -446,6 +503,25 @@ const AdminLogin: React.FC = () => {
                 <AlertTriangle className="h-5 w-5 text-deepred" />
                 <span className="text-deepred text-small">{authError || error}</span>
               </div>
+              {showNotAuthorizedPanel && (
+                <div className="mt-4 space-y-3 rounded-lg border border-slate/40 bg-white/80 p-4">
+                  <p className="font-heading text-charcoal text-small">Ask an admin to add you to admin_users allowlist table.</p>
+                  <p className="text-xs text-gray">
+                    Copy your Supabase user ID and email below so an existing admin can grant access.
+                  </p>
+                  <button
+                    type="button"
+                    className="inline-flex items-center justify-center rounded-lg bg-slate text-white px-3 py-2 text-xs font-semibold hover:brightness-95 disabled:opacity-60"
+                    onClick={handleCopyDeniedUserInfo}
+                  >
+                    Copy User ID
+                  </button>
+                  {copyUserInfoStatus === 'copied' && <p className="text-emerald-600 text-xs">User info copied.</p>}
+                  {copyUserInfoStatus === 'error' && (
+                    <p className="text-deepred text-xs">Could not copy to clipboard. Please screenshot this screen.</p>
+                  )}
+                </div>
+              )}
               {capabilityFallbackActive && (
                 <div className="mt-4 flex flex-wrap gap-3">
                   <button

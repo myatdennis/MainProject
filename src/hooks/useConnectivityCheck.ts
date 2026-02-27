@@ -30,6 +30,21 @@ const DEFAULT_SNAPSHOT: ConnectivitySnapshot = {
 const MIN_SUCCESS_INTERVAL_MS = 60000;
 const MAX_BACKOFF_MS = 60000;
 const BASE_BACKOFF_MS = 2000;
+const HEALTH_TIMEOUT_MS = 4000;
+
+const fetchWithTimeout = async (
+  url: string,
+  options: RequestInit = {},
+  timeoutMs: number = HEALTH_TIMEOUT_MS,
+): Promise<Response> => {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+};
 
 export const useConnectivityCheck = ({ healthPath = '/api/health', intervalMs = 30000, enabled = true }: ConnectivityOptions = {}) => {
   const [snapshot, setSnapshot] = useState<ConnectivitySnapshot>(DEFAULT_SNAPSHOT);
@@ -67,7 +82,11 @@ export const useConnectivityCheck = ({ healthPath = '/api/health', intervalMs = 
     const apiPingUrl = resolveApiUrl('/api/health');
 
     try {
-      const ping = await fetch(apiPingUrl, { method: 'GET', credentials: 'omit' });
+      const ping = await fetchWithTimeout(
+        apiPingUrl,
+        { method: 'GET', credentials: 'omit' },
+        HEALTH_TIMEOUT_MS,
+      );
       next.serverReachable = ping.ok;
     } catch (error) {
       next.lastError = error instanceof Error ? error.message : 'Server unreachable';
@@ -76,7 +95,11 @@ export const useConnectivityCheck = ({ healthPath = '/api/health', intervalMs = 
     const targetHealthUrl = /^https?:/i.test(healthPath) ? healthPath : resolveApiUrl(healthPath);
 
     try {
-      const healthResponse = await fetch(targetHealthUrl, { method: 'GET', credentials: 'omit' });
+      const healthResponse = await fetchWithTimeout(
+        targetHealthUrl,
+        { method: 'GET', credentials: 'omit' },
+        HEALTH_TIMEOUT_MS,
+      );
       next.apiHealthy = healthResponse.ok;
       next.roundTripMs = Math.round(performance.now() - startedAt);
       if (!healthResponse.ok) {
