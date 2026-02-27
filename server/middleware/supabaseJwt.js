@@ -128,11 +128,11 @@ const verifyHs256Token = async (token) => {
   }
 };
 
-const verifyRs256Token = async (token) => {
+const verifyAsymmetricToken = async (token, algorithm) => {
   try {
     const remoteJwks = getRemoteJwks();
     const { payload } = await jwtVerify(token, remoteJwks, {
-      algorithms: ['RS256'],
+      algorithms: [algorithm],
       audience: AUDIENCE,
       issuer: SUPABASE_EXPECTED_ISSUER,
       clockTolerance: 5,
@@ -176,7 +176,7 @@ const verifySupabaseToken = async (token) => {
     return verifyHs256Token(token);
   }
   if (normalizedAlg === 'RS256' || normalizedAlg === 'ES256') {
-    return verifyRs256Token(token);
+    return verifyAsymmetricToken(token, normalizedAlg);
   }
   console.warn('[supabaseJwt] alg_mismatch', { alg });
   throw new Error('alg_not_supported');
@@ -221,3 +221,5 @@ export default async function supabaseJwtMiddleware(req, res, next) {
     });
   }
 }
+
+export { verifySupabaseToken };

@@ -16,6 +16,7 @@ import {
 } from '../middleware/auth.js';
 import supabase, { supabaseAuthClient } from '../lib/supabaseClient.js';
 import { getUserMemberships } from '../utils/memberships.js';
+import { verifySupabaseToken } from '../middleware/supabaseJwt.js';
 
 import { clearAuthCookies } from '../utils/authCookies.js';
 
@@ -711,29 +712,50 @@ router.post('/logout', async (req, res) => {
   }
 });
 
-router.get('/session', (req, res) => {
+router.get('/session', async (req, res) => {
   const requestId = req.requestId || req.headers['x-request-id'] || req.headers['x-amzn-trace-id'] || null;
-  const authHeader = req.headers.authorization || '';
-  const hasBearer = typeof authHeader === 'string' && /^Bearer\s+.+/i.test(authHeader);
+  const bearerToken = getBearerToken(req);
+  const origin = req.headers?.origin || null;
 
-  const logPayload = {
-    event: 'auth_session',
-    requestId,
-    origin: req.headers?.origin || null,
-    hasBearer,
-  };
-
-  if (!hasBearer) {
-    console.info('[auth/session] missing_bearer', logPayload);
+  if (!bearerToken) {
+    console.info('[auth/session] missing_bearer', { requestId, origin });
     return res.status(200).json({ ok: true, authenticated: false, session: null });
   }
 
-  console.info('[auth/session] acknowledged', logPayload);
-  return res.status(200).json({
-    ok: true,
-    authenticated: true,
-    session: null,
-  });
+  try {
+    const claims = await verifySupabaseToken(bearerToken);
+    const user = {
+      id: claims.sub || null,
+      email: claims.email || claims.user_email || null,
+      role: claims.role || claims.app_metadata?.role || null,
+      platformRole: claims.app_metadata?.platform_role || claims.user_metadata?.platform_role || null,
+    };
+
+    console.info('[auth/session] verified', {
+      requestId,
+      origin,
+      userId: user.id,
+      role: user.role || null,
+      platformRole: user.platformRole || null,
+    });
+
+    return res.status(200).json({
+      ok: true,
+      authenticated: true,
+      session: {
+        user,
+        role: user.role || null,
+        platformRole: user.platformRole || null,
+      },
+    });
+  } catch (error) {
+    console.warn('[auth/session] invalid_token', {
+      requestId,
+      origin,
+      error: error?.message || error,
+    });
+    return res.status(200).json({ ok: true, authenticated: false, session: null, error: 'invalid_token' });
+  }
 });
 
 /**

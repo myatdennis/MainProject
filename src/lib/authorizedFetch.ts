@@ -68,19 +68,30 @@ const isPublicEndpoint = (target: string): boolean => {
 };
 
 const resolveSupabaseAccessToken = async (): Promise<string> => {
-  try {
+  const readToken = async () => {
     const { data, error } = await supabase.auth.getSession();
     if (error) {
       throw new NotAuthenticatedError(error.message || 'Supabase session lookup failed');
     }
-    const token = data?.session?.access_token ?? null;
-    if (!token) {
-      if (devMode) {
-        console.warn('[authorizedFetch] Supabase session missing access_token');
-      }
-      throw new NotAuthenticatedError('Supabase session is missing an access_token');
+    return data?.session?.access_token ?? null;
+  };
+
+  try {
+    let token = await readToken();
+    if (token) {
+      return token;
     }
-    return token;
+
+    if (devMode) {
+      console.warn('[authorizedFetch] Supabase session missing access_token, attempting refresh.');
+    }
+
+    token = await refreshSupabaseSession();
+    if (token) {
+      return token;
+    }
+
+    throw new NotAuthenticatedError('Supabase session is missing an access_token');
   } catch (error) {
     if (devMode && !(error instanceof NotAuthenticatedError)) {
       console.warn('[authorizedFetch] Failed to resolve Supabase session', error);
@@ -89,17 +100,21 @@ const resolveSupabaseAccessToken = async (): Promise<string> => {
   }
 };
 
-const refreshSupabaseSession = async (): Promise<boolean> => {
+const refreshSupabaseSession = async (): Promise<string | null> => {
   try {
     const { data, error } = await supabase.auth.refreshSession();
     if (error) {
       console.warn('[authorizedFetch] supabase.auth.refreshSession error', error);
-      return false;
+      return null;
     }
-    return Boolean(data?.session?.access_token);
+    const refreshedToken = data?.session?.access_token ?? null;
+    if (!refreshedToken && devMode) {
+      console.warn('[authorizedFetch] refreshSession returned without access_token');
+    }
+    return refreshedToken;
   } catch (error) {
     console.warn('[authorizedFetch] Failed to refresh Supabase session', error);
-    return false;
+    return null;
   }
 };
 

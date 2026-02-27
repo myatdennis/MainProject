@@ -63,7 +63,9 @@ const logAuthDebug = (label: string, payload: Record<string, unknown>) => {
 const logSessionResult = (status: string) => logAuthDebug('[auth] session result', { status });
 const logRefreshResult = (status: string) => logAuthDebug('[auth] refresh result', { status });
 
-const readSupabaseSessionTokens = async (): Promise<{ accessToken: string | null; refreshToken: string | null }> => {
+const readSupabaseSessionTokens = async (
+  options: { refreshIfMissing?: boolean } = {},
+): Promise<{ accessToken: string | null; refreshToken: string | null }> => {
   const supabaseClient = getSupabase();
   if (!supabaseClient) {
     return { accessToken: null, refreshToken: null };
@@ -74,9 +76,27 @@ const readSupabaseSessionTokens = async (): Promise<{ accessToken: string | null
       console.warn('[SecureAuth] Supabase getSession failed', error);
       return { accessToken: null, refreshToken: null };
     }
+    let session = data?.session ?? null;
+
+    if (
+      (!session || !session.access_token) &&
+      options.refreshIfMissing !== false
+    ) {
+      try {
+        const { data: refreshed, error: refreshError } = await supabaseClient.auth.refreshSession();
+        if (refreshError) {
+          console.warn('[SecureAuth] Supabase refreshSession failed while ensuring session tokens', refreshError);
+        } else {
+          session = refreshed?.session ?? session;
+        }
+      } catch (refreshException) {
+        console.warn('[SecureAuth] Supabase refreshSession threw while ensuring session tokens', refreshException);
+      }
+    }
+
     return {
-      accessToken: data?.session?.access_token ?? null,
-      refreshToken: data?.session?.refresh_token ?? null,
+      accessToken: session?.access_token ?? null,
+      refreshToken: session?.refresh_token ?? null,
     };
   } catch (sessionError) {
     console.warn('[SecureAuth] Supabase session lookup failed', sessionError);
@@ -800,6 +820,18 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     },
     [applySessionPayload, clearBootstrapFailOpenTimer, setAuthInitializing, setAuthStatus, setBootstrapError],
   );
+  const forceLogout = useCallback(
+    async (reason: string) => {
+      try {
+        const supabaseClient = getSupabase();
+        await supabaseClient?.auth.signOut();
+      } catch (signOutError) {
+        console.warn('[SecureAuth] forceLogout signOut failed', signOutError);
+      }
+      continueAsGuest(reason);
+    },
+    [continueAsGuest],
+  );
   const scheduleBootstrapFailOpen = useCallback(() => {
     if (typeof window === 'undefined') {
       return;
@@ -807,9 +839,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     clearBootstrapFailOpenTimer();
     bootstrapFailOpenTimerRef.current = window.setTimeout(() => {
       console.warn('[SecureAuth] bootstrap timeout fail-open');
-      continueAsGuest('bootstrap_timeout_fail_open');
-    }, 2500);
-  }, [clearBootstrapFailOpenTimer, continueAsGuest]);
+      void forceLogout('bootstrap_timeout_fail_open');
+    }, 5000);
+  }, [clearBootstrapFailOpenTimer, forceLogout]);
   useEffect(
     () => () => {
       clearBootstrapFailOpenTimer();
@@ -832,7 +864,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       let storedAccessToken: string | null = null;
       let storedRefreshToken: string | null = null;
       try {
-        const { accessToken, refreshToken } = await readSupabaseSessionTokens();
+        const { accessToken, refreshToken } = await readSupabaseSessionTokens({ refreshIfMissing: true });
         storedAccessToken = accessToken;
         storedRefreshToken = refreshToken;
       } catch (tokenError) {
@@ -841,7 +873,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       const hasStoredToken = Boolean(storedAccessToken || storedRefreshToken);
       if (!hasStoredToken) {
         logAuthDebug('[auth] session_fetch_skipped_no_supabase_token', { surface });
-        continueAsGuest(surface ? `${surface}_session_no_supabase_token` : 'session_no_supabase_token');
+        await forceLogout(surface ? `${surface}_session_no_supabase_token` : 'session_no_supabase_token');
         return false;
       }
       if (import.meta.env.DEV) {
@@ -1031,7 +1063,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         return false;
       }
     },
-    [applySessionPayload, captureServerClock, continueAsGuest, handleSessionUnauthorized],
+    [applySessionPayload, captureServerClock, continueAsGuest, forceLogout, handleSessionUnauthorized],
   );
 
   // ============================================================================
@@ -1198,14 +1230,14 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
       let storedAccessToken: string | null = null;
       try {
-        const { accessToken } = await readSupabaseSessionTokens();
+        const { accessToken } = await readSupabaseSessionTokens({ refreshIfMissing: true });
         storedAccessToken = accessToken;
       } catch (sessionError) {
         console.warn('[SecureAuth] Failed to inspect Supabase session during bootstrap', sessionError);
       }
       const hasStoredToken = Boolean(storedAccessToken);
       if (!hasStoredToken) {
-        continueAsGuest('bootstrap_no_supabase_token');
+        await forceLogout('bootstrap_no_supabase_token');
         return;
       }
       try {
@@ -1296,7 +1328,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         setAuthInitializing(false);
       }
     },
-    [applySessionPayload, captureServerClock, clearBootstrapFailOpenTimer, continueAsGuest, scheduleBootstrapFailOpen],
+    [applySessionPayload, captureServerClock, clearBootstrapFailOpenTimer, continueAsGuest, forceLogout, scheduleBootstrapFailOpen],
   );
 
   const runBootstrapRef = useRef(runBootstrap);

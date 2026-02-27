@@ -97,7 +97,7 @@ const baseCorsOptions = {
     }
     return callback(null, false);
   },
-  credentials: false,
+  credentials: true,
   allowedHeaders: allowHeaders,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   optionsSuccessStatus: 204,

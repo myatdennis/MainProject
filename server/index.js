@@ -3573,6 +3573,8 @@ app.get('/api/admin/me', requireSupabaseUser, (req, res) => {
   if (!context) return;
 
   const userPayload = req.user || {};
+  const normalizedRole = typeof userPayload.role === 'string' ? userPayload.role.toLowerCase() : null;
+  const platformRole = typeof userPayload.platformRole === 'string' ? userPayload.platformRole.toLowerCase() : null;
   const rawMemberships = Array.isArray(userPayload.memberships) ? userPayload.memberships : context.memberships || [];
   const memberships = rawMemberships.map((membership) => normalizeMembershipForAdminResponse(membership));
   const adminMemberships = memberships.filter(isActiveAdminMembership);
@@ -3588,6 +3590,33 @@ app.get('/api/admin/me', requireSupabaseUser, (req, res) => {
   const permissions = Array.isArray(userPayload.permissions)
     ? userPayload.permissions
     : Array.from(req.userPermissions || []);
+
+  console.info('[adminAccess] capability_check', {
+    userId: context.userId,
+    role: normalizedRole,
+    platformRole,
+    adminOrgIds,
+    requestId: req.requestId,
+  });
+
+  const hasAdminAccess =
+    normalizedRole === 'admin' ||
+    platformRole === 'platform_admin' ||
+    adminOrgIds.length > 0;
+
+  if (!hasAdminAccess) {
+    console.warn('[adminAccess] denied', {
+      userId: context.userId,
+      role: normalizedRole,
+      platformRole,
+      adminOrgIds,
+      requestId: req.requestId,
+    });
+    return res.status(403).json({
+      error: 'not_authorized',
+      message: 'Admin access required.',
+    });
+  }
 
   if (shouldLogAuthDebug) {
     console.info('[adminAccess] /api/admin/me granted', {
