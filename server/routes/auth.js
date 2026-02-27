@@ -13,7 +13,6 @@ import {
   isCanonicalAdminEmail,
   resolveUserRole,
   mapMembershipRows,
-  buildAuthContext,
 } from '../middleware/auth.js';
 import supabase, { supabaseAuthClient } from '../lib/supabaseClient.js';
 import { getUserMemberships } from '../utils/memberships.js';
@@ -712,94 +711,29 @@ router.post('/logout', async (req, res) => {
   }
 });
 
-router.get('/session', async (req, res) => {
+router.get('/session', (req, res) => {
   const requestId = req.requestId || req.headers['x-request-id'] || req.headers['x-amzn-trace-id'] || null;
-  const accessToken = getBearerToken(req);
-  const logBase = {
+  const authHeader = req.headers.authorization || '';
+  const hasBearer = typeof authHeader === 'string' && /^Bearer\s+.+/i.test(authHeader);
+
+  const logPayload = {
     event: 'auth_session',
     requestId,
-    hasBearer: Boolean(accessToken),
     origin: req.headers?.origin || null,
+    hasBearer,
   };
 
-  const respondWithNullSession = (reason, extra = {}) => {
-    const level = reason === 'exception' ? 'error' : 'info';
-    const logFn = level === 'error' ? console.error : console.info;
-    logFn('[auth/session] ' + reason, { ...logBase, ...extra });
-    return res.status(200).json({ ok: true, session: null });
-  };
-
-  try {
-    if (!accessToken) {
-      return respondWithNullSession('missing_bearer');
-    }
-
-    let context;
-    try {
-      context = await buildAuthContext(req, { optional: false });
-    } catch (authError) {
-      return respondWithNullSession('invalid_token', {
-        error: authError?.message || authError,
-      });
-    }
-
-    const user = context?.user || null;
-    if (!user) {
-      return respondWithNullSession('no_user');
-    }
-
-    let role = null;
-    let platformRole = null;
-
-    if (supabase && user?.id) {
-      try {
-        const { data: profileRow, error: profileError } = await supabase
-          .from('user_profiles')
-          .select('role, platform_role, platformRole')
-          .eq('id', user.id)
-          .maybeSingle();
-
-        if (!profileError && profileRow) {
-          role = profileRow.role ?? null;
-          platformRole = profileRow.platform_role ?? profileRow.platformRole ?? null;
-        }
-      } catch (lookupException) {
-        console.warn('[auth/session] profile lookup failed', {
-          ...logBase,
-          outcome: 'profile_lookup_failed',
-          error: lookupException?.message || lookupException,
-        });
-      }
-    }
-
-    role = role ?? user.role ?? 'learner';
-    platformRole = platformRole ?? null;
-    const isPlatformAdmin = typeof role === 'string' && role.toLowerCase() === 'admin';
-
-    console.info('[auth/session] success', {
-      ...logBase,
-      outcome: 'ok',
-      userId: user.id || null,
-      isPlatformAdmin,
-    });
-
-    return res.status(200).json({
-      ok: true,
-      session: {
-        user,
-        role,
-        platformRole,
-        isPlatformAdmin,
-      },
-    });
-  } catch (error) {
-    console.error('[auth/session] failure', {
-      ...logBase,
-      outcome: 'exception',
-      error: error?.message || error,
-    });
-    return res.status(200).json({ ok: true, session: null });
+  if (!hasBearer) {
+    console.info('[auth/session] missing_bearer', logPayload);
+    return res.status(200).json({ ok: true, authenticated: false, session: null });
   }
+
+  console.info('[auth/session] acknowledged', logPayload);
+  return res.status(200).json({
+    ok: true,
+    authenticated: true,
+    session: null,
+  });
 });
 
 /**

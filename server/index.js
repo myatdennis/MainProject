@@ -12368,9 +12368,14 @@ app.post('/api/analytics/events', optionalAuthenticate, async (req, res) => {
   }
 });
 
-app.post('/api/audit-log', requireSupabaseUser, async (req, res) => {
+app.post('/api/audit-log', async (req, res) => {
   const { action, details = {}, timestamp, userId, user_id, orgId, org_id } = req.body || {};
-  const sessionUserId = req.user?.userId || req.user?.id || null;
+  const sessionUser = req.user || req.supabaseJwtUser || null;
+  if (!sessionUser) {
+    console.info('[audit-log] missing authenticated user; acknowledging best-effort');
+    return res.status(202).json({ ok: true, stored: false, reason: 'unauthenticated' });
+  }
+  const sessionUserId = sessionUser?.userId || sessionUser?.id || null;
 
   const normalizedAction = typeof action === 'string' ? action.trim() : '';
   if (!normalizedAction) {

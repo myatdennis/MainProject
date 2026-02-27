@@ -1,5 +1,5 @@
 import { decodeProtectedHeader, createRemoteJWKSet, jwtVerify, JWTPayload } from 'jose';
-import LRUCache from 'lru-cache';
+import { LRUCache } from 'lru-cache';
 
 const rawSupabaseUrl = (process.env.SUPABASE_URL ?? '').trim();
 const SUPABASE_URL = rawSupabaseUrl ? rawSupabaseUrl.replace(/\/+$/, '') : '';
@@ -16,15 +16,16 @@ const jwksCache = new LRUCache<string, ReturnType<typeof createRemoteJWKSet>>({
   max: 1,
   ttl: JWKS_CACHE_TTL_MS,
 });
+const JWKS_CACHE_KEY = 'supabase';
 
 function getRemoteJwks() {
   if (!SUPABASE_JWKS_URL) {
     throw new Error('[supabaseJwt] SUPABASE_URL is not set; cannot resolve JWKS endpoint.');
   }
-  const cached = jwksCache.get("supabase");
+  const cached = jwksCache.get(JWKS_CACHE_KEY);
   if (cached) return cached;
   const client = createRemoteJWKSet(SUPABASE_JWKS_URL);
-  jwksCache.set("supabase", client);
+  jwksCache.set(JWKS_CACHE_KEY, client);
   return client;
 }
 
@@ -81,9 +82,9 @@ export async function verifySupabaseJwt(
     // Asymmetric (Supabase default): ES256 or RS256 (sometimes others)
     if (alg === "ES256" || alg === "RS256") {
       const remoteJwks = getRemoteJwks();
-
+      const allowedAlgorithms = alg === "ES256" ? ["ES256"] : ["RS256"];
       const { payload } = await jwtVerify(token, remoteJwks, {
-        algorithms: ["ES256", "RS256"],
+        algorithms: allowedAlgorithms,
         issuer,
         audience,
         clockTolerance,
@@ -96,7 +97,7 @@ export async function verifySupabaseJwt(
     // If JWKS fetch/parse fails, clear cache so next request refetches
     const code = err?.code ?? "";
     if (typeof code === "string" && code.startsWith("ERR_JWKS")) {
-      jwksCache.delete("supabase");
+      jwksCache.delete(JWKS_CACHE_KEY);
     }
 
     // Create clear messages

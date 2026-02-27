@@ -49,7 +49,7 @@ const isLoginRoute = () => {
     return false;
   }
   const pathname = window.location.pathname || '';
-  return pathname.startsWith('/login') || pathname.startsWith('/admin/login') || pathname.startsWith('/lms/login');
+  return pathname.startsWith('/admin/login');
 };
 const isDevEnvironment = Boolean(import.meta.env?.DEV);
 const logAuthDebug = (label: string, payload: Record<string, unknown>) => {
@@ -107,6 +107,7 @@ interface SessionResponsePayload {
   platformRole?: string | null;
   isPlatformAdmin?: boolean;
   mfaRequired?: boolean;
+  authenticatedOnly?: boolean;
 }
 
 type SupabaseSessionLike = {
@@ -482,6 +483,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   const lastRefreshAttemptRef = useRef(0);
   const lastRefreshSuccessRef = useRef(0);
   const bootstrapControllerRef = useRef<AbortController | null>(null);
+  const bootstrapFailOpenTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastSessionReloadRef = useRef(0);
   const hasLoggedAppLoadRef = useRef(false);
   const hasAuthenticatedSessionRef = useRef(false);
@@ -669,8 +671,34 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       return null;
     }
     try {
-      const parsed = await response.json();
-      return normalizeSessionResponsePayload(parsed);
+      const parsed: unknown = await response.json();
+      const normalized = normalizeSessionResponsePayload(parsed);
+      if (normalized) {
+        return normalized;
+      }
+      if (parsed && typeof parsed === 'object' && 'authenticated' in parsed) {
+        const isAuthenticated = Boolean((parsed as { authenticated?: unknown }).authenticated);
+        if (!isAuthenticated) {
+          return null;
+        }
+        const supabaseClient = getSupabase();
+        if (supabaseClient) {
+          try {
+            const { data } = await supabaseClient.auth.getSession();
+            const supabaseSession = data?.session ?? null;
+            if (supabaseSession) {
+              const supabasePayload = normalizeSessionResponsePayload({ session: supabaseSession });
+              if (supabasePayload) {
+                return supabasePayload;
+              }
+            }
+          } catch (sessionError) {
+            console.warn('[SecureAuth] Unable to hydrate auth/session response from Supabase session', sessionError);
+          }
+        }
+        return { authenticatedOnly: true, user: null };
+      }
+      return null;
     } catch {
       return null;
     }
@@ -750,18 +778,43 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   );
 
   const [bootstrapError, setBootstrapError] = useState<string | null>(null);
+  const clearBootstrapFailOpenTimer = useCallback(() => {
+    if (bootstrapFailOpenTimerRef.current) {
+      clearTimeout(bootstrapFailOpenTimerRef.current);
+      bootstrapFailOpenTimerRef.current = null;
+    }
+  }, []);
   const continueAsGuest = useCallback(
     (reason: string) => {
       if (import.meta.env.DEV) {
         console.info('[Auth] auth_restore: logged_out, continuing as guest.', { reason });
       }
+      clearBootstrapFailOpenTimer();
       applySessionPayload(null, { persistTokens: true, reason });
       setAuthStatus('unauthenticated');
+      setSessionStatus('ready');
+      setAuthInitializing(false);
       setBootstrapError(null);
       lastSessionFetchResultRef.current = 'unauthenticated';
       logSessionResult('unauthenticated');
     },
-    [applySessionPayload, setAuthStatus, setBootstrapError],
+    [applySessionPayload, clearBootstrapFailOpenTimer, setAuthInitializing, setAuthStatus, setBootstrapError],
+  );
+  const scheduleBootstrapFailOpen = useCallback(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    clearBootstrapFailOpenTimer();
+    bootstrapFailOpenTimerRef.current = window.setTimeout(() => {
+      console.warn('[SecureAuth] bootstrap timeout fail-open');
+      continueAsGuest('bootstrap_timeout_fail_open');
+    }, 2500);
+  }, [clearBootstrapFailOpenTimer, continueAsGuest]);
+  useEffect(
+    () => () => {
+      clearBootstrapFailOpenTimer();
+    },
+    [clearBootstrapFailOpenTimer],
   );
 
   const fetchServerSession = useCallback(
@@ -1131,6 +1184,11 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
   const runBootstrap = useCallback(
     async (signal?: AbortSignal) => {
+      if (isLoginRoute()) {
+        continueAsGuest('bootstrap_login_route');
+        return;
+      }
+      scheduleBootstrapFailOpen();
       const bootstrapRunCount = ++bootstrapRunCountRef.current;
       logAuthDebug('[auth] bootstrap start', { count: bootstrapRunCount });
       setAuthStatus('booting');
@@ -1233,11 +1291,12 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           continueAsGuest('bootstrap_http_error');
         }
       } finally {
+        clearBootstrapFailOpenTimer();
         setSessionStatus('ready');
         setAuthInitializing(false);
       }
     },
-    [applySessionPayload, captureServerClock, continueAsGuest],
+    [applySessionPayload, captureServerClock, clearBootstrapFailOpenTimer, continueAsGuest, scheduleBootstrapFailOpen],
   );
 
   const runBootstrapRef = useRef(runBootstrap);
@@ -1250,8 +1309,15 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       if (!force && bootstrappedRef.current) {
         return;
       }
+      if (isLoginRoute()) {
+        bootstrappedRef.current = true;
+        clearBootstrapFailOpenTimer();
+        continueAsGuest('bootstrap_login_route');
+        return;
+      }
       bootstrappedRef.current = true;
       bootstrapControllerRef.current?.abort();
+      clearBootstrapFailOpenTimer();
       const controller = new AbortController();
       bootstrapControllerRef.current = controller;
       const runner = runBootstrapRef.current;
@@ -1261,7 +1327,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         });
       }
     },
-    [],
+    [clearBootstrapFailOpenTimer, continueAsGuest],
   );
 
   const retryBootstrap = useCallback(() => {
@@ -1283,13 +1349,15 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     if (bootstrappedRef.current) {
       return () => {
         bootstrapControllerRef.current?.abort();
+        clearBootstrapFailOpenTimer();
       };
     }
     startBootstrap();
     return () => {
       bootstrapControllerRef.current?.abort();
+      clearBootstrapFailOpenTimer();
     };
-  }, [startBootstrap]);
+  }, [clearBootstrapFailOpenTimer, startBootstrap]);
 
   const reloadSession = useCallback(
     (options?: { surface?: SessionSurface; force?: boolean }): Promise<boolean> => {

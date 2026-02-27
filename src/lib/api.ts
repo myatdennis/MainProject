@@ -1,12 +1,46 @@
-import apiRequest, { ApiRequestOptions } from '../utils/apiClient';
+import { apiFetch } from './apiClient';
+
+export type LegacyApiOptions = RequestInit & {
+  timeoutMs?: number;
+  requestLabel?: string;
+};
+
+const isSerializableBody = (value: unknown) => {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  return !(value instanceof FormData || value instanceof Blob || value instanceof ArrayBuffer);
+};
 
 /**
  * Lightweight compatibility wrapper used across the app as `api`.
- * Keeps the older `api(path, opts)` call-site shape intact while reusing apiClient.
+ * Maintains the previous fetch-like shape while ensuring Supabase auth headers
+ * are always attached via apiFetch/authorizedFetch.
  */
-export const api = async <T = any>(path: string, options: ApiRequestOptions = {}): Promise<T> => {
-  return await apiRequest<T>(path, options);
+export const api = async (path: string, options: LegacyApiOptions = {}) => {
+  const { timeoutMs, requestLabel, body, headers, ...rest } = options;
+  const nextHeaders = new Headers(headers);
+  let resolvedBody: BodyInit | undefined = body as BodyInit | undefined;
+
+  if (body != null && isSerializableBody(body)) {
+    resolvedBody = JSON.stringify(body);
+    if (!nextHeaders.has('Content-Type')) {
+      nextHeaders.set('Content-Type', 'application/json');
+    }
+  }
+
+  return apiFetch(
+    path,
+    {
+      ...rest,
+      headers: nextHeaders,
+      body: resolvedBody,
+    },
+    {
+      timeoutMs,
+      requestLabel,
+    },
+  );
 };
 
 export default api;
-// Export default already provides `api` compatibility. Keep this module minimal.

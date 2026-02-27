@@ -504,18 +504,9 @@ const internalAuthorizedFetch = async (
   const prepared = await prepareRequest(path, options);
 
   let throttleKey: string | null = null;
-  try {
-    throttleKey = assertNotThrottled(prepared.url);
-  } catch (error) {
-    throw error;
-  }
+  throttleKey = assertNotThrottled(prepared.url);
 
-  let res: Response;
-  try {
-    res = await executeFetch(prepared);
-  } catch (error) {
-    throw error;
-  }
+  const res = await executeFetch(prepared);
 
   const contentType = res.headers.get('content-type');
   if (res.status === 401) {
@@ -558,13 +549,7 @@ const internalAuthorizedFetch = async (
 };
 
 export async function apiRequest<T = unknown>(path: string, options: ApiRequestOptions = {}): Promise<T> {
-  let res: Response;
-  try {
-    res = await internalAuthorizedFetch(path, options);
-  } catch (error) {
-    throw error;
-  }
-
+  const res = await internalAuthorizedFetch(path, options);
   const contentType = res.headers.get('content-type');
 
   // No content

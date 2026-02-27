@@ -67,7 +67,7 @@ export const useConnectivityCheck = ({ healthPath = '/api/health', intervalMs = 
     const apiPingUrl = resolveApiUrl('/api/health');
 
     try {
-      const ping = await fetch(apiPingUrl, { method: 'HEAD', credentials: 'omit' });
+      const ping = await fetch(apiPingUrl, { method: 'GET', credentials: 'omit' });
       next.serverReachable = ping.ok;
     } catch (error) {
       next.lastError = error instanceof Error ? error.message : 'Server unreachable';

@@ -21,6 +21,32 @@ const PUBLIC_ENDPOINTS = new Set([
 ]);
 const PUBLIC_ENDPOINT_PREFIXES = ['/api/diagnostics'];
 
+const API_BASE =
+  (typeof import.meta !== 'undefined' && (import.meta as any)?.env?.VITE_API_BASE_URL) ||
+  (typeof process !== 'undefined' ? process.env?.VITE_API_BASE_URL : '') ||
+  '';
+
+const normalizeUrl = (target: string): string => {
+  if (!target) return target;
+  const absolutePattern = /^https?:\/\//i;
+  if (absolutePattern.test(target)) {
+    return target;
+  }
+  if (typeof window !== 'undefined' && target.startsWith('/')) {
+    try {
+      return new URL(target, window.location.origin).toString();
+    } catch {
+      return target;
+    }
+  }
+  if (API_BASE) {
+    const base = API_BASE.replace(/\/+$/, '');
+    const path = target.startsWith('/') ? target : `/${target}`;
+    return `${base}${path}`;
+  }
+  return target;
+};
+
 const extractPathname = (target: string): string => {
   try {
     if (/^https?:\/\//i.test(target)) {
@@ -49,6 +75,9 @@ const resolveSupabaseAccessToken = async (): Promise<string> => {
     }
     const token = data?.session?.access_token ?? null;
     if (!token) {
+      if (devMode) {
+        console.warn('[authorizedFetch] Supabase session missing access_token');
+      }
       throw new NotAuthenticatedError('Supabase session is missing an access_token');
     }
     return token;
@@ -84,16 +113,26 @@ export type AuthorizedFetchOptions = {
 
 const createAbortController = (timeoutMs: number, externalSignal?: AbortSignal) => {
   const controller = new AbortController();
+  const buildAbortError = (message: string) => {
+    if (typeof DOMException !== 'undefined') {
+      return new DOMException(message, 'AbortError');
+    }
+    const error = new Error(message);
+    error.name = 'AbortError';
+    return error;
+  };
   const timeoutId =
     timeoutMs > 0
       ? setTimeout(() => {
-          controller.abort(new DOMException('Request timed out', 'AbortError'));
+          controller.abort(buildAbortError('Request timed out'));
         }, timeoutMs)
       : null;
 
   const handleExternalAbort = () => {
     controller.abort(
-      externalSignal?.reason instanceof DOMException ? externalSignal.reason : new DOMException('Aborted', 'AbortError'),
+      externalSignal?.reason instanceof Error
+        ? externalSignal.reason
+        : buildAbortError('Aborted'),
     );
   };
 
@@ -136,6 +175,11 @@ export default async function authorizedFetch(
       headers.set('Authorization', `Bearer ${token}`);
     }
 
+    const bodyIsFormData = typeof FormData !== 'undefined' && init.body instanceof FormData;
+    if (init.body && !bodyIsFormData && !headers.has('Content-Type')) {
+      headers.set('Content-Type', 'application/json');
+    }
+
     if (devMode && extractPathname(url) === '/api/admin/me') {
       console.debug('[authorizedFetch][dev] /api/admin/me Authorization', {
         attached: Boolean(token),
@@ -145,8 +189,9 @@ export default async function authorizedFetch(
 
     const { controller, cleanup } = createAbortController(timeoutMs, init.signal);
     let response: Response;
+    const targetUrl = normalizeUrl(url);
     try {
-      response = await fetch(url, { ...init, headers, signal: controller.signal });
+      response = await fetch(targetUrl, { ...init, headers, signal: controller.signal });
     } catch (error: any) {
       cleanup();
       if (error instanceof DOMException && error.name === 'AbortError') {
