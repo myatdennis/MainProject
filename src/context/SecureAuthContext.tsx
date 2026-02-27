@@ -799,27 +799,12 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           hasRefreshToken: Boolean(storedRefreshToken),
         });
       }
-      let response: Response;
       try {
-        response = await apiFetch('/auth/session', {
+        const response = await apiFetch('/auth/session', {
           method: 'GET',
           signal,
         });
-      } catch (error) {
-        if (error instanceof NotAuthenticatedError) {
-          continueAsGuest(surface ? `${surface}_session_no_supabase_token` : 'session_no_supabase_token');
-          return false;
-        }
-        if (error instanceof AuthExpiredError) {
-          handleSessionUnauthorized({
-            silent: true,
-            reason: surface ? `${surface}_session_expired` : 'session_expired',
-          });
-          continueAsGuest(surface ? `${surface}_session_expired` : 'session_expired');
-          return false;
-        }
-        throw error;
-      }
+
         if (import.meta.env.DEV) {
           const authHeader = response.headers.get('authorization') || '';
           if (!authHeader) {
@@ -899,6 +884,18 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         continueAsGuest('session_bootstrap_empty');
         return false;
       } catch (error) {
+        if (error instanceof NotAuthenticatedError) {
+          continueAsGuest(surface ? `${surface}_session_no_supabase_token` : 'session_no_supabase_token');
+          return false;
+        }
+        if (error instanceof AuthExpiredError) {
+          handleSessionUnauthorized({
+            silent: true,
+            reason: surface ? `${surface}_session_expired` : 'session_expired',
+          });
+          continueAsGuest(surface ? `${surface}_session_expired` : 'session_expired');
+          return false;
+        }
         if (error instanceof ApiError) {
           const noTokenUnauth =
             error.status === 401 && !hasStoredToken && isNoTokenUnauthorized(error.status, error.body);
