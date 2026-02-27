@@ -47,7 +47,7 @@ const flushQueue = async (): Promise<void> => {
       try {
         await apiFetch('/audit-log', {
           method: 'POST',
-          body: JSON.stringify(nextEvent),
+          body: nextEvent,
           headers: buildSessionAuditHeaders(),
         });
         pendingQueue.shift();
