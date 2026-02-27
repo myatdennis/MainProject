@@ -28,6 +28,18 @@ const ensureSqlClient = () => {
     // DATABASE_URL.
   })
 
+  try {
+    const url = connectionString ? new URL(connectionString) : null
+    if (url) {
+      const host = url.hostname
+      const database = url.pathname.replace(/^\//, '') || undefined
+      const user = url.username || undefined
+      console.log('[DB CONNECTED]', { host, database, user })
+    }
+  } catch (error) {
+    console.warn('[server/db] Unable to log database connection metadata', error)
+  }
+
   return sqlClient
 }
 

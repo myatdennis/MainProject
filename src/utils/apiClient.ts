@@ -3,7 +3,7 @@ import { buildApiUrl, assertNoDoubleApi } from '../config/apiBase';
 import { shouldRequireSession, getActiveSession } from '../lib/sessionGate';
 import { clearAuth } from '../lib/secureStorage';
 import { getSupabase } from '../lib/supabaseClient';
-import authorizedFetch, { NotAuthenticatedError } from '../lib/authorizedFetch';
+import authorizedFetch, { NotAuthenticatedError, getAccessToken } from '../lib/authorizedFetch';
 
 export class ApiError extends Error {
   status: number;
@@ -502,6 +502,14 @@ const internalAuthorizedFetch = async (
   options: InternalRequestOptions = {},
 ): Promise<Response> => {
   const prepared = await prepareRequest(path, options);
+
+  if (prepared.attachAuth && prepared.requiresSession) {
+    const token = await getAccessToken();
+    if (!token) {
+      await handleAuthFailure();
+      throw buildNotAuthenticatedError(prepared.url);
+    }
+  }
 
   let throttleKey: string | null = null;
   throttleKey = assertNotThrottled(prepared.url);

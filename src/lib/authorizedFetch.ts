@@ -67,17 +67,23 @@ const isPublicEndpoint = (target: string): boolean => {
   return PUBLIC_ENDPOINT_PREFIXES.some((prefix) => pathname.startsWith(prefix));
 };
 
-const resolveSupabaseAccessToken = async (): Promise<string> => {
-  const readToken = async () => {
+export const getAccessToken = async (): Promise<string | null> => {
+  try {
     const { data, error } = await supabase.auth.getSession();
     if (error) {
-      throw new NotAuthenticatedError(error.message || 'Supabase session lookup failed');
+      console.warn('[authorizedFetch] Supabase getSession failed', error);
+      return null;
     }
     return data?.session?.access_token ?? null;
-  };
+  } catch (sessionError) {
+    console.warn('[authorizedFetch] Supabase session lookup failed', sessionError);
+    return null;
+  }
+};
 
+const resolveSupabaseAccessToken = async (): Promise<string> => {
   try {
-    let token = await readToken();
+    let token = await getAccessToken();
     if (token) {
       return token;
     }
