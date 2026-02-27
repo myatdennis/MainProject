@@ -1,6 +1,6 @@
 import buildAuthHeaders, { clearSupabaseAuthSnapshot } from './requestContext';
 import { buildApiUrl, assertNoDoubleApi } from '../config/apiBase';
-import { shouldRequireSession, getActiveSession } from '../lib/sessionGate';
+import { shouldRequireSession } from '../lib/sessionGate';
 import { clearAuth } from '../lib/secureStorage';
 import { getSupabase } from '../lib/supabaseClient';
 import authorizedFetch, { NotAuthenticatedError, getAccessToken } from '../lib/authorizedFetch';
@@ -296,29 +296,6 @@ const isPublicEndpoint = (target: string): boolean => {
   return PUBLIC_ENDPOINT_PREFIXES.some((prefix) => normalized.startsWith(prefix));
 };
 
-const enforceAdminPrivileges = (
-  url: string,
-  allowAnonymous: boolean | undefined,
-  session: ReturnType<typeof getActiveSession>,
-) => {
-  if (allowAnonymous || !session) return;
-  const pathname = extractPathname(url);
-  if (!ADMIN_PATH_PATTERN.test(pathname)) {
-    return;
-  }
-
-  const hasAdminAccess =
-    session?.isPlatformAdmin ||
-    session?.platformRole === 'platform_admin' ||
-    String(session?.role || '').toLowerCase() === 'admin';
-
-  if (!hasAdminAccess) {
-    throw new ApiError('Administrator privileges required', 403, url, {
-      message: 'You need administrator access to perform this action.',
-    });
-  }
-};
-
 type PreparedRequest = {
   url: string;
   method: string;
@@ -346,9 +323,6 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
       requireAuth: options.requireAuth,
       allowAnonymous: options.allowAnonymous,
     }) && options.allowAnonymous !== true;
-  const activeSession = getActiveSession();
-
-  enforceAdminPrivileges(url, options.allowAnonymous, activeSession);
 
   // Build auth headers for EVERY request
   const authHeaders = await buildAuthHeaders();
