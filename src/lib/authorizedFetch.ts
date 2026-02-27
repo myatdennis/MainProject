@@ -132,7 +132,7 @@ export type AuthorizedFetchOptions = {
   requestLabel?: string;
 };
 
-const createAbortController = (timeoutMs: number, externalSignal?: AbortSignal) => {
+const createAbortController = (timeoutMs: number, externalSignal?: AbortSignal | null) => {
   const controller = new AbortController();
   const buildAbortError = (message: string) => {
     if (typeof DOMException !== 'undefined') {
@@ -182,7 +182,12 @@ export default async function authorizedFetch(
   init: RequestInit = {},
   options: AuthorizedFetchOptions = {},
 ): Promise<Response> {
-  const requireAuth = options.requireAuth !== false && !isPublicEndpoint(url);
+  const requireAuth =
+    options.requireAuth === true
+      ? true
+      : options.requireAuth === false
+      ? false
+      : !isPublicEndpoint(url);
   const timeoutMs = typeof options.timeoutMs === 'number' ? options.timeoutMs : DEFAULT_TIMEOUT_MS;
   const requestLabel = options.requestLabel || extractPathname(url);
   let attempt = 0;
