@@ -9,16 +9,12 @@ import type { RuntimeStatus } from '../../state/runtimeStatus';
 import { ApiError } from '../../utils/apiClient';
 import { supabase } from '../../lib/supabaseClient';
 import { apiJson, ApiResponseError, AuthExpiredError, NotAuthenticatedError } from '../../lib/apiClient';
+import { hasAdminPortalAccess, type AdminAccessPayload } from '../../lib/adminAccess';
 
-interface AdminCapabilityResponse {
-  user?: Record<string, any>;
-  access?: {
-    allowed?: boolean;
-    reason?: string | null;
-  };
+type AdminCapabilityResponse = AdminAccessPayload & {
   error?: string;
   message?: string;
-}
+};
 
 interface CapabilityCheckResult {
   allowed: boolean;
@@ -217,12 +213,7 @@ const AdminLogin: React.FC = () => {
   }, [logout, navigate]);
 
   const computeAdminAllowed = (payload?: AdminCapabilityResponse | null) => {
-    if (!payload) return false;
-    const accessAllowed = payload.access?.allowed === true;
-    const adminRole = payload.user?.role === 'admin';
-    const userFlag = payload.user?.isAdmin === true;
-    const adminPortal = payload.access?.adminPortal === true;
-    return accessAllowed || adminRole || userFlag || adminPortal;
+    return hasAdminPortalAccess(payload ?? null);
   };
 
   const verifyAdminCapability = async (): Promise<CapabilityCheckResult> => {

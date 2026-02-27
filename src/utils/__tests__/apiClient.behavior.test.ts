@@ -307,8 +307,8 @@ describe('apiClient', () => {
       body: { error: 'expired' },
     } satisfies Partial<InstanceType<typeof ApiError>>);
     expect(fetchSpy).toHaveBeenCalledTimes(2);
-    expect(fetchSpy.mock.calls[0][0]).toContain('/api/admin/courses');
-    expect(fetchSpy.mock.calls[1][0]).toContain('/api/admin/courses');
+    expect(fetchSpy.mock.calls[0][0]).toContain('/api/admin/me');
+    expect(fetchSpy.mock.calls[1][0]).toContain('/api/admin/me');
   });
 
   it('includes Authorization header on protected routes when session exists', async () => {
@@ -328,18 +328,19 @@ describe('apiClient', () => {
     expect(getHeaderValue(headers, 'X-Org-Id')).toBe('org-99');
   });
 
-  it('blocks admin routes when user lacks admin privileges', async () => {
+  it('propagates server 403 when user lacks admin privileges', async () => {
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.huddle.local');
     __setApiBaseUrlOverride('https://api.huddle.local');
     shouldRequireSessionSpy.mockReturnValue(true);
     getActiveSessionSpy.mockReturnValue({ id: 'user-2', role: 'member' });
+    fetchSpy.mockResolvedValueOnce(createResponse({ message: 'You need administrator access to perform this action.' }, { status: 403 }));
     const { apiRequest, ApiError } = await loadApiClient();
 
     await expect(apiRequest('/api/admin/users')).rejects.toMatchObject({
       status: 403,
       body: { message: 'You need administrator access to perform this action.' },
     } satisfies Partial<InstanceType<typeof ApiError>>);
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
   it('allows privileged requests to proceed when explicitly marked anonymous', async () => {

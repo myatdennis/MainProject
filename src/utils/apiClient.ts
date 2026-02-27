@@ -1,9 +1,16 @@
 import buildAuthHeaders, { clearSupabaseAuthSnapshot } from './requestContext';
 import { buildApiUrl, assertNoDoubleApi } from '../config/apiBase';
-import { shouldRequireSession, getActiveSession } from '../lib/sessionGate';
+import { shouldRequireSession } from '../lib/sessionGate';
 import { clearAuth } from '../lib/secureStorage';
 import { getSupabase } from '../lib/supabaseClient';
 import authorizedFetch, { NotAuthenticatedError, getAccessToken } from '../lib/authorizedFetch';
+import {
+  hasAdminPortalAccess,
+  getAdminAccessSnapshot,
+  setAdminAccessSnapshot,
+  isAdminAccessSnapshotFresh,
+  type AdminAccessPayload,
+} from '../lib/adminAccess';
 
 export class ApiError extends Error {
   status: number;
@@ -31,13 +38,14 @@ type ApiRequestOptions = {
   allowAnonymous?: boolean;
   noTransform?: boolean;
   credentials?: RequestCredentials;
+  skipAdminGateCheck?: boolean;
 };
 
-type InternalRequestOptions = ApiRequestOptions & {
-};
+type InternalRequestOptions = ApiRequestOptions & {};
 const devMode = Boolean(
   (import.meta as any)?.env?.DEV ?? (typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production'),
 );
+let adminAccessInFlight: Promise<AdminAccessPayload | null> | null = null;
 
 const isJsonResponse = (contentType: string | null) =>
   !!contentType && contentType.toLowerCase().includes('application/json');
@@ -280,45 +288,6 @@ const extractPathname = (target: string): string => {
   }
 };
 
-const hasAdminPrivileges = (session: any): boolean => {
-  if (!session) return false;
-  const role = typeof session.role === 'string' ? session.role.toLowerCase() : '';
-  if (role === 'admin') return true;
-  if (session.isAdmin === true || session.isPlatformAdmin === true) return true;
-  if (Array.isArray(session.permissions)) {
-    if (session.permissions.some((perm) => typeof perm === 'string' && perm.toLowerCase().startsWith('admin'))) {
-      return true;
-    }
-  }
-  if (session.capabilities && typeof session.capabilities === 'object') {
-    const caps = session.capabilities;
-    if (caps.admin === true || caps.adminPortal === true) {
-      return true;
-    }
-  }
-  return false;
-};
-
-const enforceAdminPrivileges = (url: string, options?: InternalRequestOptions) => {
-  if (options?.allowAnonymous) {
-    return;
-  }
-  const pathname = extractPathname(url);
-  if (!ADMIN_PATH_PATTERN.test(pathname)) {
-    return;
-  }
-  const session = getActiveSession();
-  if (!session) {
-    return;
-  }
-  if (hasAdminPrivileges(session)) {
-    return;
-  }
-  throw new ApiError('Administrator privileges required', 403, url, {
-    message: 'You need administrator access to perform this action.',
-  });
-};
-
 const PUBLIC_ENDPOINTS = new Set([
   '/api/auth/login',
   '/api/auth/register',
@@ -355,7 +324,6 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
 
   const method = options.method ?? 'GET';
   const url = buildApiUrl(path);
-  enforceAdminPrivileges(url, options);
 
   const requiresSession =
     shouldRequireSession(url, {
@@ -520,6 +488,7 @@ const internalAuthorizedFetch = async (
   path: string,
   options: InternalRequestOptions = {},
 ): Promise<Response> => {
+  await ensureAdminAccessForRequest(path, options);
   const prepared = await prepareRequest(path, options);
 
   let throttleKey: string | null = null;
@@ -568,7 +537,8 @@ const internalAuthorizedFetch = async (
 };
 
 export async function apiRequest<T = unknown>(path: string, options: ApiRequestOptions = {}): Promise<T> {
-  const res = await internalAuthorizedFetch(path, options);
+  const { skipAdminGateCheck, ...rest } = options;
+  const res = await internalAuthorizedFetch(path, { ...rest, skipAdminGateCheck });
   const contentType = res.headers.get('content-type');
 
   // No content
@@ -586,7 +556,62 @@ export async function apiRequest<T = unknown>(path: string, options: ApiRequestO
 }
 
 export async function apiRequestRaw(path: string, options: ApiRequestOptions = {}): Promise<Response> {
-  return internalAuthorizedFetch(path, options);
+  const { skipAdminGateCheck, ...rest } = options;
+  return internalAuthorizedFetch(path, { ...rest, skipAdminGateCheck });
+}
+
+async function ensureAdminAccessForRequest(path: string, options?: InternalRequestOptions): Promise<void> {
+  if (options?.skipAdminGateCheck || options?.allowAnonymous) {
+    return;
+  }
+  const pathname = extractPathname(path);
+  if (!ADMIN_PATH_PATTERN.test(pathname) || pathname === '/api/admin/me') {
+    return;
+  }
+
+  const cached = getAdminAccessSnapshot();
+  const cachedPayload = cached?.payload ?? null;
+  const cachedIsFresh = cached && isAdminAccessSnapshotFresh();
+  if (cachedIsFresh && hasAdminPortalAccess(cachedPayload)) {
+    return;
+  }
+
+  try {
+    const payload = await fetchAdminAccessPayload();
+    if (payload && hasAdminPortalAccess(payload)) {
+      return;
+    }
+    throw new ApiError('Administrator privileges required', 403, path, {
+      message: 'You need administrator access to perform this action.',
+    });
+  } catch (error) {
+    if (error instanceof ApiError) {
+      throw error;
+    }
+    throw new ApiError('Administrator privileges required', 403, path, {
+      message: 'You need administrator access to perform this action.',
+    });
+  }
+}
+
+async function fetchAdminAccessPayload(): Promise<AdminAccessPayload | null> {
+  if (!adminAccessInFlight) {
+    adminAccessInFlight = (async () => {
+      try {
+        const payload = await apiRequest<AdminAccessPayload>('/api/admin/me', {
+          skipAdminGateCheck: true,
+        });
+        setAdminAccessSnapshot(payload);
+        return payload;
+      } catch (error) {
+        setAdminAccessSnapshot(null);
+        throw error;
+      } finally {
+        adminAccessInFlight = null;
+      }
+    })();
+  }
+  return adminAccessInFlight;
 }
 
 export default apiRequest;

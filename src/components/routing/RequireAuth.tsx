@@ -5,6 +5,7 @@ import LoadingSpinner from '../ui/LoadingSpinner';
 import Button from '../ui/Button';
 import buildSessionAuditHeaders from '../../utils/sessionAuditHeaders';
 import { apiJson, ApiResponseError, AuthExpiredError, NotAuthenticatedError } from '../../lib/apiClient';
+import { hasAdminPortalAccess, setAdminAccessSnapshot, getAdminAccessSnapshot } from '../../lib/adminAccess';
 
 type AuthMode = 'admin' | 'lms';
 
@@ -33,6 +34,9 @@ interface AdminCapabilityPayload {
     allowed?: boolean;
     via?: string;
     reason?: string | null;
+    adminPortal?: boolean;
+    admin?: boolean;
+    capabilities?: Record<string, boolean | undefined>;
   };
   context?: Record<string, unknown> | null;
   error?: string;
@@ -79,6 +83,8 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
   const [adminGateStatus, setAdminGateStatus] = useState<'checking' | 'allowed' | 'unauthorized' | 'error'>(
     mode === 'admin' ? 'checking' : 'allowed',
   );
+  const adminAccessPayload = adminCapability.payload ?? getAdminAccessSnapshot()?.payload ?? null;
+  const adminPortalAllowed = hasAdminPortalAccess(adminAccessPayload);
   const [adminGateError, setAdminGateError] = useState<string | null>(null);
   const adminGateKeyRef = useRef<string | null>(null);
   const adminGateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -304,12 +310,22 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
 
           const access = payload?.access;
           const user = payload?.user;
+          const portalAllowed = hasAdminPortalAccess(payload);
+          setAdminAccessSnapshot(payload);
 
           if (!access || !user) {
             setAdminCapability({ status: 'error', payload: payload ?? null, reason: 'malformed_payload' });
             logGuardEvent('admin_capability_error', { reason: 'malformed_payload' });
             setAdminGateStatus('error');
             setAdminGateError('malformed_payload');
+            return;
+          }
+
+          if (!portalAllowed) {
+            setAdminCapability({ status: 'denied', payload, reason: access.reason ?? 'access_denied' });
+            logGuardEvent('admin_capability_denied', { reason: access.reason ?? 'access_denied' });
+            setAdminGateStatus('unauthorized');
+            setAdminGateError(access.reason ?? 'access_denied');
             return;
           }
 
@@ -349,6 +365,9 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
                 parsed = null;
               }
             }
+            if (parsed) {
+              setAdminAccessSnapshot(parsed);
+            }
             const reasonCode = deriveReasonFromPayload(parsed, `status_${error.status}`);
 
             if (error.status === 401 || error.status === 403) {
@@ -366,6 +385,7 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
           }
 
           if (error instanceof NotAuthenticatedError || error instanceof AuthExpiredError) {
+            setAdminAccessSnapshot(null);
             const reasonCode = 'session_missing';
             setAdminCapability({ status: 'denied', payload: null, reason: reasonCode });
             logGuardEvent('admin_capability_denied', { reason: reasonCode });
@@ -625,22 +645,8 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
         surfaceStatus: effectiveSurfaceState,
         hasSession,
         role: user?.role ?? null,
+        adminPortalAllowed,
       });
-    }
-    if (!isAuthenticated.admin) {
-      if (isOnModeLoginPath) {
-        logGuardEvent('allow_admin_login_route', { reason: 'already_on_login_route' });
-        return null;
-      }
-      logRedirectOnce('/admin/login', 'missing_admin_session_with_user');
-      logGuardEvent('redirect_admin_login_unauthenticated', { reason: 'missing_admin_session_with_user' });
-      return (
-        <Navigate
-          to="/admin/login"
-          state={{ from: location, reason: 'non_admin_user' }}
-          replace
-        />
-      );
     }
   } else {
     if (!isAuthenticated.lms) {

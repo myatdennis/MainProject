@@ -19,6 +19,7 @@ import { cloneWithCanonicalOrgId, resolveOrgIdFromCarrier, stampCanonicalOrgId }
 import { nanoid } from 'nanoid';
 import { canonicalizeLessonContent } from '../utils/lessonContent';
 import { SlugConflictError } from '../utils/slugConflict';
+import { getAdminAccessSnapshot, hasAdminPortalAccess } from '../lib/adminAccess';
 
 // Course data types
 export interface ScenarioChoice {
@@ -1437,9 +1438,11 @@ export const courseStore = {
         return;
       }
       const adminSurfaceDetected = isAdminSurface();
-      const treatAsAdmin = adminSurfaceDetected;
-      restrictToOrg = !adminSurfaceDetected;
-      const adminMode = !restrictToOrg;
+      const adminAccessSnapshot = getAdminAccessSnapshot();
+      const adminPortalAccessGranted = hasAdminPortalAccess(adminAccessSnapshot?.payload ?? null);
+      const treatAsAdmin = adminSurfaceDetected || adminPortalAccessGranted;
+      restrictToOrg = !treatAsAdmin;
+      const adminMode = treatAsAdmin;
       let runtimeStatus = getRuntimeStatus();
       try {
         runtimeStatus = await refreshRuntimeStatus();
@@ -1449,7 +1452,7 @@ export const courseStore = {
       supabaseOperational = runtimeStatus.supabaseConfigured && runtimeStatus.supabaseHealthy;
       const apiReachable = runtimeStatus.apiReachable ?? runtimeStatus.apiHealthy;
       const apiAuthRequired = runtimeStatus.apiAuthRequired;
-  canUseAdminApi = adminMode && apiReachable;
+      canUseAdminApi = adminMode && apiReachable;
       console.log('[courseStore.init] Runtime status snapshot:', runtimeStatus);
       // Prefer admin list (richer shape) but gracefully fall back to published-only
       let dbCourses: Course[] = [];
@@ -1467,9 +1470,20 @@ export const courseStore = {
         } catch (adminError) {
           const status = adminError instanceof ApiError ? adminError.status : undefined;
           if (status === 401 || status === 403) {
-            adminLoadStatus = 'unauthorized';
-            adminLoadError = 'unauthorized';
-            console.warn('[courseStore.init] admin_courses_error (unauthorized)', { status });
+            const snapshot = getAdminAccessSnapshot();
+            const snapshotAllows = snapshot ? hasAdminPortalAccess(snapshot.payload ?? null) : null;
+            if (snapshotAllows === true) {
+              adminLoadStatus = 'error';
+              adminLoadError = adminError instanceof Error ? adminError.message : 'admin_courses_error';
+              console.warn('[courseStore.init] admin_courses_error (admin_access_conflict)', {
+                status,
+                message: adminLoadError,
+              });
+            } else {
+              adminLoadStatus = 'unauthorized';
+              adminLoadError = 'unauthorized';
+              console.warn('[courseStore.init] admin_courses_error (unauthorized)', { status });
+            }
           } else {
             adminLoadStatus = 'error';
             adminLoadError = adminError instanceof Error ? adminError.message : 'admin_courses_error';
