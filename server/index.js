@@ -3492,55 +3492,6 @@ const sortActionItems = (items) =>
     return dueA - dueB;
   });
 
-const requireAdminAccess = async (req, res) => {
-  const context = getRequestContext(req);
-  const isOrgAdmin = Array.isArray(context.memberships)
-    ? context.memberships.some((membership) => String(membership.role || '').toLowerCase() === 'admin')
-    : false;
-
-  let isPlatformAdmin = Boolean(context.isPlatformAdmin || context.userRole === 'admin');
-
-  if (!isPlatformAdmin && context.userId && supabase) {
-    try {
-      const { data: profile, error } = await supabase.from('user_profiles').select('role').eq('id', context.userId).maybeSingle();
-      if (!error && profile?.role) {
-        const normalizedRole = String(profile.role).toLowerCase();
-        if (normalizedRole === 'admin') {
-          isPlatformAdmin = true;
-          context.userRole = 'admin';
-          context.isPlatformAdmin = true;
-          if (req.user) {
-            req.user.role = 'admin';
-            req.user.isPlatformAdmin = true;
-          }
-        }
-      }
-    } catch (error) {
-      console.warn('[adminAccess] profile lookup failed', {
-        userId: context.userId,
-        error: error?.message || error,
-      });
-    }
-  }
-
-  if (isPlatformAdmin || isOrgAdmin) {
-    return true;
-  }
-
-  if (shouldLogAuthDebug) {
-    console.warn('[adminAccess] denied', {
-      path: req?.originalUrl,
-      userId: context.userId,
-      resolvedRole: context.userRole,
-      orgIds: context.organizationIds,
-      memberships: context.memberships?.map((m) => ({ orgId: m.orgId, role: m.role })) || [],
-    });
-  }
-
-  res.status(403).json({ error: 'Platform admin access required' });
-  return false;
-};
-
 const normalizeMembershipForAdminResponse = (membership = {}) => {
   const resolveOrgId = membership.orgId || membership.organizationId || membership.org_id || membership.organization_id;
   const role = membership.role ? String(membership.role).toLowerCase() : null;
