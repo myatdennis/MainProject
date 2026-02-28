@@ -35,6 +35,7 @@ if (axios?.defaults) {
 
 const MIN_REFRESH_INTERVAL_MS = 60 * 1000;
 const SESSION_RELOAD_THROTTLE_MS = 45 * 1000;
+const BOOTSTRAP_FAIL_OPEN_MS = 2500;
 
 const isNavigatorOffline = () => typeof navigator !== 'undefined' && navigator.onLine === false;
 const resolveLoginPath = () => {
@@ -813,7 +814,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     bootstrapFailOpenTimerRef.current = window.setTimeout(() => {
       console.warn('[SecureAuth] bootstrap timeout fail-open');
       void forceLogout('bootstrap_timeout_fail_open');
-    }, 5000);
+    }, BOOTSTRAP_FAIL_OPEN_MS);
   }, [clearBootstrapFailOpenTimer, forceLogout]);
   useEffect(
     () => () => {

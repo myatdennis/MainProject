@@ -1,4 +1,4 @@
-import { apiFetch } from './apiClient';
+import { apiFetchRaw } from './apiClient';
 
 export type LegacyApiOptions = RequestInit & {
   timeoutMs?: number;
@@ -29,7 +29,7 @@ export const api = async (path: string, options: LegacyApiOptions = {}) => {
     }
   }
 
-  return apiFetch(
+  return apiFetchRaw(
     path,
     {
       ...rest,

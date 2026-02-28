@@ -560,6 +560,12 @@ export async function apiRequestRaw(path: string, options: ApiRequestOptions = {
   return internalAuthorizedFetch(path, { ...rest, skipAdminGateCheck });
 }
 
+const throwAdminDenied = (path: string): never => {
+  throw new ApiError('Administrator privileges required', 403, path, {
+    message: 'You need administrator access to perform this action.',
+  });
+};
+
 async function ensureAdminAccessForRequest(path: string, options?: InternalRequestOptions): Promise<void> {
   if (options?.skipAdminGateCheck || options?.allowAnonymous) {
     return;
@@ -571,9 +577,11 @@ async function ensureAdminAccessForRequest(path: string, options?: InternalReque
 
   const cached = getAdminAccessSnapshot();
   const cachedPayload = cached?.payload ?? null;
-  const cachedIsFresh = cached && isAdminAccessSnapshotFresh();
-  if (cachedIsFresh && hasAdminPortalAccess(cachedPayload)) {
+  if (cachedPayload && hasAdminPortalAccess(cachedPayload)) {
     return;
+  }
+  if (cached && isAdminAccessSnapshotFresh()) {
+    throwAdminDenied(path);
   }
 
   try {
@@ -581,16 +589,12 @@ async function ensureAdminAccessForRequest(path: string, options?: InternalReque
     if (payload && hasAdminPortalAccess(payload)) {
       return;
     }
-    throw new ApiError('Administrator privileges required', 403, path, {
-      message: 'You need administrator access to perform this action.',
-    });
+    throwAdminDenied(path);
   } catch (error) {
     if (error instanceof ApiError) {
       throw error;
     }
-    throw new ApiError('Administrator privileges required', 403, path, {
-      message: 'You need administrator access to perform this action.',
-    });
+    throwAdminDenied(path);
   }
 }
 

@@ -1469,29 +1469,17 @@ export const courseStore = {
           }
         } catch (adminError) {
           const status = adminError instanceof ApiError ? adminError.status : undefined;
-          if (status === 401 || status === 403) {
-            const snapshot = getAdminAccessSnapshot();
-            const snapshotAllows = snapshot ? hasAdminPortalAccess(snapshot.payload ?? null) : null;
-            if (snapshotAllows === true) {
-              adminLoadStatus = 'error';
-              adminLoadError = adminError instanceof Error ? adminError.message : 'admin_courses_error';
-              console.warn('[courseStore.init] admin_courses_error (admin_access_conflict)', {
-                status,
-                message: adminLoadError,
-              });
-            } else {
-              adminLoadStatus = 'unauthorized';
-              adminLoadError = 'unauthorized';
-              console.warn('[courseStore.init] admin_courses_error (unauthorized)', { status });
-            }
-          } else {
-            adminLoadStatus = 'error';
-            adminLoadError = adminError instanceof Error ? adminError.message : 'admin_courses_error';
-            console.warn('[courseStore.init] admin_courses_error', {
-              status,
-              message: adminError instanceof Error ? adminError.message : String(adminError),
-            });
-          }
+          adminLoadStatus = 'error';
+          adminLoadError =
+            status === 401 || status === 403
+              ? 'admin_courses_auth_error'
+              : adminError instanceof Error
+              ? adminError.message
+              : 'admin_courses_error';
+          console.warn('[courseStore.init] admin_courses_error', {
+            status,
+            message: adminLoadError,
+          });
           dbCourses = [];
         }
       } else if (adminMode && !apiReachable) {

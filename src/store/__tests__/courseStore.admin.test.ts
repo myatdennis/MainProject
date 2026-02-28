@@ -181,9 +181,9 @@ describe('courseStore admin catalog phase transitions', () => {
     expect(finalState.phase).toBe('ready');
   });
 
-  it('reports unauthorized when admin API responds with 401/403', async () => {
+  it('treats admin API auth failures as errors without marking unauthorized', async () => {
     const { ApiError } = await import('../../utils/apiClient');
-  adminCoursesMock.getAllCoursesFromDatabase.mockRejectedValue(new ApiError(401, 'unauthorized', null));
+    adminCoursesMock.getAllCoursesFromDatabase.mockRejectedValue(new ApiError(401, 'unauthorized', null));
     const courseStore = await importCourseStore();
     const { seen, unsubscribe } = captureTransitions(courseStore);
 
@@ -193,7 +193,7 @@ describe('courseStore admin catalog phase transitions', () => {
     const finalState = courseStore.getAdminCatalogState();
     expect(seen.at(0)?.phase).toBe('loading');
     expect(seen.at(-1)?.phase).toBe('ready');
-    expect(finalState.adminLoadStatus).toBe('unauthorized');
+    expect(finalState.adminLoadStatus).toBe('error');
     expect(finalState.phase).toBe('ready');
   });
 

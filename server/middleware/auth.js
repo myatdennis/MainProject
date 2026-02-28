@@ -25,20 +25,59 @@ const writableOrgRoles = new Set(['owner', 'admin', 'manager', 'editor']);
 
 const fetchUserProfileRole = async (userId) => {
   if (!userId || !supabase) {
-    return null;
+    return { role: null, isAdmin: false };
   }
   try {
-    const { data, error } = await supabase.from('user_profiles').select('role').eq('id', userId).maybeSingle();
+    const { data, error } = await supabase
+      .from('user_profiles')
+      .select('role, is_admin')
+      .eq('id', userId)
+      .maybeSingle();
     if (error) {
       throw error;
     }
-    return data?.role ? String(data.role).toLowerCase() : null;
+    return {
+      role: data?.role ? String(data.role).toLowerCase() : null,
+      isAdmin: data?.is_admin === true,
+    };
   } catch (error) {
     console.warn('[auth] Failed to fetch user profile role', {
       userId,
       error: error?.message || error,
     });
-    return null;
+    return { role: null, isAdmin: false };
+  }
+};
+
+const syncUserProfileFlags = async (user) => {
+  if (!supabase || !user?.id) {
+    return;
+  }
+  const normalizedRole = user.role ? String(user.role).toLowerCase() : null;
+  const normalizedPlatformRole = user.platformRole ? String(user.platformRole).toLowerCase() : null;
+  const normalizedEmail = user.email ? normalizeEmail(user.email) : null;
+  const isAdmin =
+    normalizedRole === 'admin' ||
+    normalizedPlatformRole === 'platform_admin' ||
+    (normalizedEmail ? isCanonicalAdminEmail(normalizedEmail) : false);
+
+  try {
+    await supabase
+      .from('user_profiles')
+      .upsert(
+        {
+          id: user.id,
+          email: user.email ?? null,
+          role: normalizedRole,
+          is_admin: isAdmin,
+        },
+        { onConflict: 'id' }
+      );
+  } catch (error) {
+    console.warn('[auth] Failed to sync user profile flags', {
+      userId: user.id,
+      error: error?.message || error,
+    });
   }
 };
 
@@ -81,7 +120,7 @@ const resolveUserRole = (user = {}, memberships = []) => {
   return 'learner';
 };
 
-export { normalizeEmail, PRIMARY_ADMIN_EMAIL, isCanonicalAdminEmail, resolveUserRole };
+export { normalizeEmail, PRIMARY_ADMIN_EMAIL, isCanonicalAdminEmail, resolveUserRole, syncUserProfileFlags };
 
 // ============================================================================
 // Authentication Middleware
@@ -531,12 +570,12 @@ export async function requireAdmin(req, res, next) {
   let isPlatformAdmin = Boolean(req.user.isPlatformAdmin || req.user.platformRole === 'platform_admin');
 
   if (!isPlatformAdmin && userId) {
-    const profileRole = await fetchUserProfileRole(userId);
-    if (profileRole) {
-      resolvedRole = profileRole;
-      if (profileRole === 'admin') {
-        isPlatformAdmin = true;
-      }
+    const profileFlags = await fetchUserProfileRole(userId);
+    if (profileFlags.role) {
+      resolvedRole = profileFlags.role;
+    }
+    if (profileFlags.isAdmin || profileFlags.role === 'admin') {
+      isPlatformAdmin = true;
     }
   }
 

@@ -1,6 +1,7 @@
 import { createRemoteJWKSet, decodeProtectedHeader, jwtVerify } from 'jose';
 import { LRUCache } from 'lru-cache';
 import { extractTokenFromHeader } from '../utils/jwt.js';
+import { syncUserProfileFlags } from './auth.js';
 
 const JWT_AUTH_BYPASS_PATHS = ['/api/health', '/api/auth/login', '/api/auth/refresh'];
 const DEV_FALLBACK_ENABLED = String(process.env.DEV_FALLBACK || '').toLowerCase() === 'true';
@@ -206,6 +207,7 @@ export default async function supabaseJwtMiddleware(req, res, next) {
     const claims = await verifySupabaseToken(token);
     req.supabaseJwtClaims = claims;
     const supabaseUser = mapClaimsToUser(claims);
+    syncUserProfileFlags(supabaseUser);
     req.supabaseJwtUser = supabaseUser;
     req.supabaseJwtToken = token;
     if (!req.user) {

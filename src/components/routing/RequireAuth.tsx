@@ -6,6 +6,7 @@ import Button from '../ui/Button';
 import buildSessionAuditHeaders from '../../utils/sessionAuditHeaders';
 import { apiJson, ApiResponseError, AuthExpiredError, NotAuthenticatedError } from '../../lib/apiClient';
 import { hasAdminPortalAccess, setAdminAccessSnapshot, getAdminAccessSnapshot } from '../../lib/adminAccess';
+import { supabase } from '../../lib/supabaseClient';
 
 type AuthMode = 'admin' | 'lms';
 
@@ -64,6 +65,7 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
     loadSession,
     user,
     organizationIds,
+    logout,
   } = useSecureAuth();
   const location = useLocation();
   const sessionRequestRef = useRef(false);
@@ -88,6 +90,7 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
   const [adminGateError, setAdminGateError] = useState<string | null>(null);
   const adminGateKeyRef = useRef<string | null>(null);
   const adminGateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [copyIdentityStatus, setCopyIdentityStatus] = useState<'idle' | 'copied' | 'error'>('idle');
 
   const logGuardEvent = useCallback(
     (event: string, payload: Record<string, unknown> = {}) => {
@@ -371,6 +374,9 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
             const reasonCode = deriveReasonFromPayload(parsed, `status_${error.status}`);
 
             if (error.status === 401 || error.status === 403) {
+              if (error.status === 401) {
+                void logout('admin');
+              }
               setAdminCapability({ status: 'denied', payload: parsed, reason: reasonCode });
               logGuardEvent('admin_capability_denied', { reason: reasonCode });
               setAdminGateStatus('unauthorized');
@@ -409,6 +415,28 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
   const handleAdminGateRetry = useCallback(() => {
     beginAdminCapabilityCheck('manual_retry');
   }, [beginAdminCapabilityCheck]);
+
+  const handleCopyAdminIdentity = useCallback(async () => {
+    if (!navigator?.clipboard) {
+      setCopyIdentityStatus('error');
+      return;
+    }
+    try {
+      const { data } = await supabase.auth.getSession();
+      const supabaseUser = data?.session?.user;
+      const payload = {
+        id: supabaseUser?.id ?? user?.id ?? 'unknown',
+        email: supabaseUser?.email ?? user?.email ?? 'unknown',
+      };
+      await navigator.clipboard.writeText(`User ID: ${payload.id}\nEmail: ${payload.email}`);
+      setCopyIdentityStatus('copied');
+      setTimeout(() => setCopyIdentityStatus('idle'), 3000);
+    } catch (error) {
+      console.warn('[RequireAuth] Failed to copy admin identity', error);
+      setCopyIdentityStatus('error');
+      setTimeout(() => setCopyIdentityStatus('idle'), 3000);
+    }
+  }, [user?.email, user?.id]);
 
   useEffect(() => {
     if (mode !== 'admin') {
@@ -606,17 +634,29 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
             {adminGateError ? (
               <span className="mt-2 block text-sm text-ink/60">Details: {adminGateError}</span>
             ) : null}
+            <span className="mt-4 block text-sm text-ink/70">
+              Ask an admin to add you to the <code className="rounded bg-cloud px-1 py-0.5 text-ink">admin_users</code> allowlist table.
+            </span>
           </p>
-          <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:justify-center">
-            <Button onClick={handleAdminGateRetry} isFullWidth={true}>
+          <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:justify-center">
+            <Button onClick={handleAdminGateRetry} isFullWidth={true} className="sm:flex-1">
               Try again
             </Button>
-            <Button asChild variant="ghost" isFullWidth={true}>
+            <Button onClick={handleCopyAdminIdentity} variant="secondary" isFullWidth={true} className="sm:flex-1">
+              Copy User ID
+            </Button>
+            <Button asChild variant="ghost" isFullWidth={true} className="sm:flex-1">
               <Link to={loginPathByMode.admin} state={{ from: location, reason: adminGateStatus }}>
                 Go to admin login
               </Link>
             </Button>
           </div>
+          {copyIdentityStatus === 'copied' ? (
+            <p className="mt-3 text-xs text-emerald-600">Admin identity copied.</p>
+          ) : null}
+          {copyIdentityStatus === 'error' ? (
+            <p className="mt-3 text-xs text-rose-600">Unable to copy user info. Please try again.</p>
+          ) : null}
         </div>
       </div>
     );
