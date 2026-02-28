@@ -69,8 +69,14 @@ const navigation: AdminNavItem[] = [
 ];
 
 const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
-  const { isAuthenticated, user: authUser, authInitializing, logout: legacyLogout } = useSecureAuth();
-  const { user, logout } = useSecureAuth();
+  const {
+    isAuthenticated,
+    user: authUser,
+    authInitializing,
+    logout: legacyLogout,
+    sessionStatus,
+    user,
+  } = useSecureAuth();
   const { showToast } = useToast();
   const runtimeStatus = useRuntimeStatus();
   const {
@@ -189,15 +195,19 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
   );
 
   useEffect(() => {
-    if (authInitializing) return;
-    if (!isAuthenticated?.admin && location.pathname !== '/admin/login') {
-      logAuthRedirect('AdminLayout.auth_guard', {
-        path: location.pathname,
-        reason: 'missing_admin_session',
-      });
-      navigate('/admin/login');
+    if (authInitializing || sessionStatus !== 'ready') {
+      return;
     }
-  }, [authInitializing, isAuthenticated?.admin, location.pathname, navigate]);
+    if (!hasSession || !hasAdminPortalAccess(getAdminAccessSnapshot()?.payload ?? null)) {
+      if (location.pathname !== '/admin/login') {
+        logAuthRedirect('AdminLayout.auth_guard', {
+          path: location.pathname,
+          reason: 'missing_admin_session',
+        });
+        navigate('/admin/login');
+      }
+    }
+  }, [authInitializing, sessionStatus, hasSession, location.pathname, navigate]);
 
   useEffect(() => {
     if (!menuOpen) {
