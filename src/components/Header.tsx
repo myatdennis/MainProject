@@ -7,6 +7,7 @@ import cn from '../utils/cn';
 import { logAuthRedirect } from '../utils/logAuthRedirect';
 import RealtimeNotifications from './RealtimeNotifications';
 import { useSecureAuth } from '../context/SecureAuthContext';
+import { getCurrentAdminAccessState } from '../lib/adminAccessState';
 
 const Header = () => {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -21,7 +22,7 @@ const Header = () => {
     { name: 'Contact', href: '/contact' },
   ];
   const navigate = useNavigate();
-  const { user, isAuthenticated, authInitializing, logout } = useSecureAuth();
+  const { user, isAuthenticated, authInitializing, logout, sessionStatus } = useSecureAuth();
   const userMenuRef = useRef<HTMLDivElement | null>(null);
   const userMenuButtonRef = useRef<HTMLButtonElement | null>(null);
   const isLoggedIn = Boolean(user) && (isAuthenticated?.admin || isAuthenticated?.lms);
@@ -43,6 +44,7 @@ const Header = () => {
 
   const isAdminRole = (user?.role ?? '').toLowerCase() === 'admin' || Boolean(user?.isPlatformAdmin);
   const roleLabel = isAdminRole ? 'Admin' : 'Learner';
+  const { adminPortalAllowed } = getCurrentAdminAccessState();
   const canAccessAdmin = Boolean(isAuthenticated?.admin);
   const canAccessLms = Boolean(isAuthenticated?.lms);
   const primaryWorkspacePath = canAccessAdmin ? '/admin/dashboard' : '/lms/dashboard';
@@ -79,9 +81,25 @@ const Header = () => {
   }, [canAccessAdmin, isLoggedIn, logout, navigate]);
 
   const handleAdminCtaClick = useCallback(() => {
-    logAuthRedirect('Header.admin_cta', { target: '/admin/login' });
+    const gateState = {
+      sessionStatus,
+      hasSession: Boolean(user),
+      adminPortalAllowed,
+      isAdminRole,
+    };
+    if (import.meta.env?.DEV) {
+      console.debug('[Header] admin_cta_gate_state', gateState);
+    }
+    if (sessionStatus !== 'ready') {
+      return;
+    }
+    if (gateState.hasSession && adminPortalAllowed) {
+      navigate('/admin/courses');
+      return;
+    }
+    logAuthRedirect('Header.admin_cta', { target: '/admin/login', gateState });
     navigate('/admin/login');
-  }, [navigate]);
+  }, [sessionStatus, user, adminPortalAllowed, isAdminRole, navigate]);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 8);

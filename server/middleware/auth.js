@@ -185,11 +185,11 @@ const isDevRequest = (req) => {
 };
 
 const allowDemoBypassForRequest = (req) => {
-  if (!demoAutoAuthEnabled) {
-    return false;
-  }
   if (E2E_TEST_MODE) {
     return true;
+  }
+  if (!demoAutoAuthEnabled) {
+    return false;
   }
   if (!DEV_FALLBACK) {
     return false;
