@@ -41,7 +41,7 @@ import { refreshRuntimeStatus } from '../../state/runtimeStatus';
 import ApiStatusBanner from '../system/ApiStatusBanner';
 import { useToast } from '../../context/ToastContext';
 import { logAuthRedirect } from '../../utils/logAuthRedirect';
-import { getAdminAccessSnapshot, hasAdminPortalAccess } from '../../lib/adminAccess';
+import { useAdminAccessState } from '../../lib/adminAccessState';
 
 interface AdminLayoutProps {
   children?: ReactNode;
@@ -78,7 +78,15 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
     sessionStatus,
     user,
   } = useSecureAuth();
-  const hasSession = Boolean(user);
+  const {
+    adminPortalAllowed: adminPortalAllowedRaw,
+    hasSession,
+    sessionStatus: adminSessionStatus,
+    authInitializing: adminAuthInitializing,
+  } = useAdminAccessState();
+  const normalizedSessionStatus = adminSessionStatus ?? sessionStatus;
+  const normalizedAuthInitializing = adminAuthInitializing ?? authInitializing;
+  const adminPortalAllowed = adminPortalAllowedRaw || Boolean(isAuthenticated?.admin);
   const { showToast } = useToast();
   const runtimeStatus = useRuntimeStatus();
   const {
@@ -196,11 +204,8 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
     [isOrgSelectionRequired, showToast],
   );
 
-  const adminAccessSnapshot = getAdminAccessSnapshot();
-  const adminPortalAllowed = hasAdminPortalAccess(adminAccessSnapshot?.payload ?? null);
-
   useEffect(() => {
-    if (authInitializing || sessionStatus !== 'ready') {
+    if (normalizedAuthInitializing || normalizedSessionStatus !== 'ready') {
       return;
     }
     if (!hasSession || !adminPortalAllowed) {
@@ -212,7 +217,14 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
         navigate('/admin/login');
       }
     }
-  }, [authInitializing, sessionStatus, hasSession, adminPortalAllowed, location.pathname, navigate]);
+  }, [
+    normalizedAuthInitializing,
+    normalizedSessionStatus,
+    hasSession,
+    adminPortalAllowed,
+    location.pathname,
+    navigate,
+  ]);
 
   useEffect(() => {
     if (!(import.meta.env?.DEV || process.env?.NODE_ENV !== 'production')) {
@@ -220,12 +232,12 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
     }
     console.debug('[AdminLayout] gate_state', {
       path: location.pathname,
-      authInitializing,
-      sessionStatus,
+      authInitializing: normalizedAuthInitializing,
+      sessionStatus: normalizedSessionStatus,
       hasSession,
       adminPortalAllowed,
     });
-  }, [authInitializing, sessionStatus, hasSession, adminPortalAllowed, location.pathname]);
+  }, [normalizedAuthInitializing, normalizedSessionStatus, hasSession, adminPortalAllowed, location.pathname]);
 
   useEffect(() => {
     if (!menuOpen) {
@@ -311,7 +323,7 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
 
   const activeUser = user ?? authUser;
 
-  if (authInitializing || sessionStatus !== 'ready') {
+  if (normalizedAuthInitializing || normalizedSessionStatus !== 'ready') {
     return (
       <div className="flex min-h-screen items-center justify-center bg-softwhite">
         <LoadingSpinner size="lg" />
@@ -319,7 +331,7 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
     );
   }
 
-  if (!isAuthenticated?.admin || !adminPortalAllowed) {
+  if (!hasSession || !adminPortalAllowed) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-softwhite text-sm text-slate/80">
         Checking admin access…

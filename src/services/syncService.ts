@@ -63,6 +63,7 @@ class SyncService {
   private realtimeChannels: { name: string; channel: { unsubscribe: () => void } }[] = [];
   private wsHandlersAttached = false;
   private lastWsEnabled: boolean | null = null;
+  private authSubscription: { unsubscribe: () => void } | null = null;
 
   constructor() {
     if (typeof window !== 'undefined') {
@@ -84,6 +85,22 @@ class SyncService {
 
     // Initialize real-time Supabase listeners
     void this.initializeRealtimeSync();
+    const supabaseClient = getSupabase();
+    if (supabaseClient) {
+      const { data } = supabaseClient.auth.onAuthStateChange((event, session) => {
+        if (session?.access_token) {
+          void this.initializeRealtimeSync();
+        } else if (event === 'SIGNED_OUT') {
+          this.cleanupRealtimeChannels();
+        }
+      });
+      this.authSubscription = data?.subscription ?? null;
+    }
+    if (typeof window !== 'undefined') {
+      window.addEventListener('beforeunload', () => {
+        this.authSubscription?.unsubscribe();
+      });
+    }
 
     // Initialize WebSocket client if configured (fast realtime fallback)
     try {
@@ -159,6 +176,14 @@ class SyncService {
       const supabase = await getSupabase();
       if (!supabase) {
         console.log('Supabase client not available for realtime sync');
+        this.cleanupRealtimeChannels();
+        return;
+      }
+      const { data: sessionData } = await supabase.auth.getSession();
+      if (!sessionData?.session?.access_token) {
+        if (import.meta.env.DEV) {
+          console.info('[SyncService] Skipping realtime setup until Supabase session is available.');
+        }
         this.cleanupRealtimeChannels();
         return;
       }

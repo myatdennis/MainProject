@@ -20,7 +20,7 @@ import { loginSchema, emailSchema, registerSchema } from '../utils/validators';
 import { queueRefresh } from '../lib/refreshQueue';
 import apiRequest, { ApiError, apiRequestRaw } from '../utils/apiClient';
 import buildSessionAuditHeaders from '../utils/sessionAuditHeaders';
-import { getSupabase, hasSupabaseConfig } from '../lib/supabaseClient';
+import { getSupabase, hasSupabaseConfig, captureAuthDiagnostics } from '../lib/supabaseClient';
 import { AuthExpiredError, NotAuthenticatedError } from '../lib/apiClient';
 
 // MFA helpers
@@ -1545,6 +1545,8 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             errorType: 'supabase_auth_error',
           };
         }
+
+        captureAuthDiagnostics('admin_sign_in_success');
 
         const bootstrapSuccess = await fetchServerSession({ surface: 'admin' });
         if (!bootstrapSuccess) {

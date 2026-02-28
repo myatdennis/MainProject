@@ -87,7 +87,7 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
     mode === 'admin' ? 'checking' : 'allowed',
   );
   const adminAccessPayload = adminCapability.payload ?? getAdminAccessSnapshot()?.payload ?? null;
-  const adminPortalAllowed = hasAdminPortalAccess(adminAccessPayload);
+  const adminPortalAllowed = hasAdminPortalAccess(adminAccessPayload) || Boolean(isAuthenticated?.admin);
   const [adminGateError, setAdminGateError] = useState<string | null>(null);
   const adminGateKeyRef = useRef<string | null>(null);
   const adminGateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);

@@ -30,6 +30,8 @@ vi.mock('../../lib/supabaseClient', () => {
     supabase: supabaseClient,
     getSupabase: () => supabaseClient,
     hasSupabaseConfig: () => true,
+    captureAuthDiagnostics: vi.fn(),
+    debugAuthStorage: vi.fn(),
   };
 });
 
