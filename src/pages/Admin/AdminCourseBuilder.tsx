@@ -812,7 +812,6 @@ const AdminCourseBuilder = () => {
         const existing = courseStore.getCourse(courseId);
         if (existing) {
           if (cancelled) return;
-          console.log('COURSE STATE', existing.modules);
           setCourse(existing);
           lastPersistedRef.current = existing;
           lastLoadedCourseIdRef.current = courseId;
@@ -839,7 +838,6 @@ const AdminCourseBuilder = () => {
             };
             courseStore.saveCourse(nextCourseState, { skipRemoteSync: true });
             lastPersistedRef.current = nextCourseState;
-            console.log('COURSE STATE', nextCourseState.modules);
             return nextCourseState;
           });
           lastLoadedCourseIdRef.current = courseId;
@@ -918,7 +916,6 @@ const AdminCourseBuilder = () => {
       if (!course.modules || course.modules.length === 0) {
         return;
       }
-      console.log('COURSE STATE', course.modules);
       // Debounce saves to avoid too frequent localStorage writes
       const timeoutId = setTimeout(() => {
         try {
@@ -980,7 +977,6 @@ const AdminCourseBuilder = () => {
     if (lessonAutosaveState.pending || lessonAutosaveState.status === 'saving') return;
     if (autoSaveHaltedRef.current) return;
     if (autoSaveBackoffUntilRef.current > Date.now()) return;
-    console.log('COURSE STATE', course.modules);
     const diff = computeCourseDiff(lastPersistedRef.current, course);
     if (!diff.hasChanges) return;
     if (!course.modules || course.modules.length === 0) {

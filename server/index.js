@@ -86,6 +86,7 @@ const getMetricsSnapshot = () => ({
 
 const shouldLogAuthDebug =
   NODE_ENV !== 'production' || String(process.env.ENABLE_AUTH_DEBUG || '').toLowerCase() === 'true';
+const ENABLE_COURSE_RPC_UPSERT = parseFlag(process.env.ENABLE_COURSE_RPC_UPSERT);
 
 const fatalEnvError = (message) => {
   console.error(`[env] ${message}`);
@@ -1937,10 +1938,59 @@ const lessonColumnSupport = {
   completionRuleJson: true,
   organizationId: true,
   courseId: true,
+  clientTempId: true,
 };
 
 const moduleColumnSupport = {
   organizationId: true,
+  description: true,
+  clientTempId: true,
+};
+
+const coerceNullableText = (value) => {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed || null;
+};
+
+const normalizeModuleLessonIdentifiers = (modulesInput = []) => {
+  if (!Array.isArray(modulesInput)) return;
+  for (const module of modulesInput) {
+    if (!module || typeof module !== 'object') continue;
+    const rawModuleId = coerceNullableText(module.id);
+    const existingModuleClientTempId = coerceNullableText(module.client_temp_id);
+    if (!isUuid(rawModuleId)) {
+      const generatedModuleId = randomUUID();
+      module.client_temp_id = existingModuleClientTempId ?? rawModuleId ?? null;
+      module.id = generatedModuleId;
+    } else {
+      module.id = rawModuleId;
+      module.client_temp_id = existingModuleClientTempId;
+    }
+
+    const lessons = Array.isArray(module.lessons) ? module.lessons : [];
+    for (const lesson of lessons) {
+      if (!lesson || typeof lesson !== 'object') continue;
+      const rawLessonId = coerceNullableText(lesson.id);
+      const existingLessonClientTempId = coerceNullableText(lesson.client_temp_id);
+      if (!isUuid(rawLessonId)) {
+        const generatedLessonId = randomUUID();
+        lesson.client_temp_id = existingLessonClientTempId ?? rawLessonId ?? null;
+        lesson.id = generatedLessonId;
+      } else {
+        lesson.id = rawLessonId;
+        lesson.client_temp_id = existingLessonClientTempId;
+      }
+
+      const rawLessonModuleId = coerceNullableText(lesson.module_id);
+      if (!rawLessonModuleId || !isUuid(rawLessonModuleId)) {
+        lesson.module_id = module.id;
+      } else {
+        lesson.module_id = rawLessonModuleId;
+      }
+    }
+    module.lessons = lessons;
+  }
 };
 
 const formatLegacyDuration = (seconds) => {
@@ -2004,6 +2054,13 @@ const maybeHandleLessonColumnError = (error) => {
         return true;
       }
       return false;
+    case 'client_temp_id':
+      if (lessonColumnSupport.clientTempId) {
+        lessonColumnSupport.clientTempId = false;
+        logger.warn('lessons_client_temp_id_column_missing', { code: error.code ?? null });
+        return true;
+      }
+      return false;
     default:
       return false;
   }
@@ -2015,6 +2072,16 @@ const maybeHandleModuleColumnError = (error) => {
   if (missingColumn === 'organization_id' && moduleColumnSupport.organizationId) {
     moduleColumnSupport.organizationId = false;
     logger.warn('modules_organization_column_missing', { code: error?.code ?? null });
+    return true;
+  }
+  if (missingColumn === 'description' && moduleColumnSupport.description) {
+    moduleColumnSupport.description = false;
+    logger.warn('modules_description_column_missing', { code: error?.code ?? null });
+    return true;
+  }
+  if (missingColumn === 'client_temp_id' && moduleColumnSupport.clientTempId) {
+    moduleColumnSupport.clientTempId = false;
+    logger.warn('modules_client_temp_id_column_missing', { code: error?.code ?? null });
     return true;
   }
   return false;
@@ -5824,7 +5891,7 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
       return false;
     };
 
-    const rpcSucceeded = await attemptRpcUpsert();
+    const rpcSucceeded = ENABLE_COURSE_RPC_UPSERT ? await attemptRpcUpsert() : false;
     if (rpcSucceeded) {
       return;
     }
@@ -5956,8 +6023,10 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
       courseId: courseRow.id,
     });
     const modulesForPersistence = persistenceNormalization.modules;
+    normalizeModuleLessonIdentifiers(modulesForPersistence);
 
     const incomingModuleIds = modulesForPersistence.map((module) => module.id).filter(Boolean);
+    const incomingModuleIdSet = new Set(incomingModuleIds);
     if (incomingModuleIds.length > 0) {
       const { data: existingModules } = await supabase
         .from('modules')
@@ -5966,7 +6035,7 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
 
       const modulesToDelete = (existingModules || [])
         .map((row) => row.id)
-        .filter((id) => !incomingModuleIds.includes(id));
+        .filter((id) => !incomingModuleIdSet.has(id));
 
       if (modulesToDelete.length > 0) {
         const { error: deleteModulesError } = await supabase.from('modules').delete().in('id', modulesToDelete);
@@ -5984,13 +6053,19 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
 
       for (const [moduleIndex, module] of modulesForPersistence.entries()) {
         const buildModuleUpsertPayload = () => {
-          const payload = {
-            id: module.id,
-            course_id: module.course_id ?? courseRow.id,
-            order_index: module.order_index ?? moduleIndex,
-            title: module.title,
-            description: module.description ?? null,
-          };
+        const payload = {
+          id: module.id,
+          course_id: module.course_id ?? courseRow.id,
+          order_index: module.order_index ?? moduleIndex,
+          title: module.title,
+        };
+        const moduleClientTempId = coerceNullableText(module.client_temp_id);
+        if (moduleColumnSupport.clientTempId && moduleClientTempId) {
+          payload.client_temp_id = moduleClientTempId;
+        }
+        if (moduleColumnSupport.description) {
+          payload.description = module.description ?? null;
+        }
           const moduleOrgId = pickOrgId(
             module.organization_id,
             module.org_id,
@@ -6032,7 +6107,8 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
         }
 
         const lessons = module.lessons || [];
-        const incomingLessonIds = lessons.map((lesson) => lesson.id);
+        const incomingLessonIds = lessons.map((lesson) => lesson.id).filter(Boolean);
+        const incomingLessonIdSet = new Set(incomingLessonIds);
 
         if (incomingLessonIds.length > 0) {
           const { data: existingLessons } = await supabase
@@ -6042,7 +6118,7 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
 
           const lessonsToDelete = (existingLessons || [])
             .map((row) => row.id)
-            .filter((id) => !incomingLessonIds.includes(id));
+            .filter((id) => !incomingLessonIdSet.has(id));
 
           if (lessonsToDelete.length > 0) {
             const { error: deleteLessonsError } = await supabase
@@ -6075,6 +6151,10 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
               title: lessonInput.title,
               description: lessonInput.description ?? null,
             };
+            const lessonClientTempId = coerceNullableText(lessonInput.client_temp_id);
+            if (lessonColumnSupport.clientTempId && lessonClientTempId) {
+              payload.client_temp_id = lessonClientTempId;
+            }
             if (lessonColumnSupport.durationSeconds) {
               payload.duration_s = baseDuration;
             }
