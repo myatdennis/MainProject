@@ -79,7 +79,6 @@ const AdminLogin: React.FC = () => {
   const location = useLocation();
   const landingLogRef = useRef(false);
   const hasSession = Boolean(user);
-  const hasSession = Boolean(user);
 
   const landingTarget = useMemo(() => {
     let rawReturnTo: string | null = null;
