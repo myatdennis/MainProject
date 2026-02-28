@@ -79,7 +79,7 @@ export const flushAuditQueue = async (): Promise<void> => {
     while (queue.length > 0) {
       const event = queue[0];
       try {
-        await authorizedFetch('/audit-log', {
+        await authorizedFetch('/api/audit-log', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(event),

@@ -38,6 +38,7 @@ import adminAnalyticsRoutes from './routes/admin-analytics.js';
 import adminAnalyticsExport from './routes/admin-analytics-export.js';
 import adminAnalyticsSummary from './routes/admin-analytics-summary.js';
 import { apiLimiter, securityHeaders, authenticate, requireAdmin, optionalAuthenticate } from './middleware/auth.js';
+import requireAdminAccess from './middleware/requireAdminAccess.js';
 import supabaseJwtMiddleware from './middleware/supabaseJwt.js';
 import { setDoubleSubmitCSRF, getCSRFToken } from './middleware/csrf.js';
 import adminUsersRouter from './routes/admin-users.js';
@@ -3568,15 +3569,8 @@ const isActiveAdminMembership = (membership) => {
   return status === 'active' || status === 'accepted';
 };
 
-app.get('/api/admin/me', requireSupabaseUser, (req, res) => {
-  const user = req.supabaseJwtUser || req.user;
-  if (!user) {
-    return res.status(401).json({
-      error: 'Authentication required',
-      message: 'Supabase session required for admin access.',
-    });
-  }
-
+app.get('/api/admin/me', requireAdminAccess, (req, res) => {
+  const user = req.supabaseJwtUser;
   const adminPortalAllowed = req.adminPortalAllowed === true;
 
   res.json({
