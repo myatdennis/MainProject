@@ -328,6 +328,7 @@ const AdminCourseBuilder = () => {
     lessonId: null,
     message: null,
   });
+  const [autoSaveRetryNonce, setAutoSaveRetryNonce] = useState(0);
   const lessonAutosaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [showAssignmentModal, setShowAssignmentModal] = useState(false);
   const [hasPendingChanges, setHasPendingChanges] = useState(false);
@@ -1230,7 +1231,6 @@ const AdminCourseBuilder = () => {
   const autoSaveHaltedRef = useRef(false);
   const autoSaveWarningIssuedRef = useRef(false);
   const autoSavePauseLoggedRef = useRef(false);
-  const [autoSaveRetryNonce, setAutoSaveRetryNonce] = useState(0);
   const [confirmDialog, setConfirmDialog] = useState<BuilderConfirmAction | null>(null);
 
   const confirmDialogContent = useMemo<ConfirmDialogConfig | null>(() => {
@@ -3736,7 +3736,7 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
 
   return (
     <>
-      <div className="p-6">
+      <div className="p-6" data-testid="admin-course-builder">
         <div className="max-w-7xl mx-auto">
           <div className="xl:grid xl:grid-cols-[minmax(0,1fr)_420px] gap-6 items-start">
             <div className="order-2 xl:order-1 space-y-8">
