@@ -8,6 +8,7 @@ import ProgressBar from '../../components/ui/ProgressBar';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import EmptyState from '../../components/ui/EmptyState';
 import { LoadingSpinner } from '../../components/LoadingComponents';
+import { logAuthRedirect } from '../../utils/logAuthRedirect';
 import useRuntimeStatus from '../../hooks/useRuntimeStatus';
 import { courseStore, AdminCatalogState } from '../../store/courseStore';
 import {
@@ -197,6 +198,7 @@ const AdminDashboard = () => {
   }, [navigate]);
 
   const handleSwitchAccount = useCallback(() => {
+    logAuthRedirect('AdminDashboard.switch_account', { path: '/admin/login' });
     navigate('/admin/login');
   }, [navigate]);
 

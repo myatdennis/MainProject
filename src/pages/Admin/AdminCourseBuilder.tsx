@@ -70,6 +70,7 @@ import useSwipeNavigation from '../../hooks/useSwipeNavigation';
 import VersionControl from '../../components/VersionControl';
 import { ModuleIssueBadge, LessonIssueTag } from '../../components/Admin/ValidationIssueIndicators';
 import { useToast } from '../../context/ToastContext';
+import { logAuthRedirect } from '../../utils/logAuthRedirect';
 import { useSecureAuth } from '../../context/SecureAuthContext';
 import type { CourseAssignment } from '../../types/assignment';
 import { getDraftSnapshot, deleteDraftSnapshot, markDraftSynced, type DraftSnapshot } from '../../dal/courseDrafts';
@@ -500,7 +501,9 @@ const AdminCourseBuilder = () => {
         icon: AlertTriangle,
         actionLabel: 'Go to login',
         onAction: () => {
-          window.location.href = `/admin/login?reauth=1&from=${encodeURIComponent(window.location.pathname)}`;
+          const target = `/admin/login?reauth=1&from=${encodeURIComponent(window.location.pathname)}`;
+          logAuthRedirect('AdminCourseBuilder.auth_required', { target });
+          window.location.href = target;
         },
       });
       showToast(

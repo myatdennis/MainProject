@@ -10,7 +10,13 @@ import { ApiError } from '../../utils/apiClient';
 import { supabase } from '../../lib/supabaseClient';
 import { apiJson, ApiResponseError, AuthExpiredError, NotAuthenticatedError } from '../../lib/apiClient';
 import { flushAuditQueue } from '../../dal/auditLog';
-import { hasAdminPortalAccess, type AdminAccessPayload, getAdminAccessSnapshot } from '../../lib/adminAccess';
+import {
+  hasAdminPortalAccess,
+  type AdminAccessPayload,
+  getAdminAccessSnapshot,
+  setAdminAccessSnapshot,
+} from '../../lib/adminAccess';
+import { logAuthRedirect } from '../../utils/logAuthRedirect';
 
 type AdminCapabilityResponse = AdminAccessPayload & {
   error?: string;
@@ -21,11 +27,20 @@ interface CapabilityCheckResult {
   allowed: boolean;
   user?: Record<string, any>;
   reason?: string;
+  payload?: AdminCapabilityResponse | null;
 }
 
-
 const AdminLogin: React.FC = () => {
-  const { login, logout, isAuthenticated, forgotPassword, authInitializing, verifyMfa } = useSecureAuth();
+  const {
+    login,
+    logout,
+    isAuthenticated,
+    forgotPassword,
+    authInitializing,
+    verifyMfa,
+    sessionStatus,
+    user,
+  } = useSecureAuth();
   const runtimeStatus = useRuntimeStatus();
   const supabaseReady = runtimeStatus.supabaseConfigured && runtimeStatus.supabaseHealthy;
   const [email, setEmail] = useState('mya@the-huddle.co');
@@ -63,6 +78,8 @@ const AdminLogin: React.FC = () => {
   const navigate = useNavigate();
   const location = useLocation();
   const landingLogRef = useRef(false);
+  const hasSession = Boolean(user);
+  const hasSession = Boolean(user);
 
   const landingTarget = useMemo(() => {
     let rawReturnTo: string | null = null;
@@ -343,16 +360,22 @@ const AdminLogin: React.FC = () => {
   }, [captureDeniedUserSnapshot, capabilityErrorMessage, navigateToAdminLanding, verifyAdminCapability]);
 
   useEffect(() => {
-    if (!isAuthenticated.admin) {
+    if (sessionStatus !== 'ready') {
+      return;
+    }
+    if (!hasSession) {
       return;
     }
     const snapshot = getAdminAccessSnapshot();
     if (hasAdminPortalAccess(snapshot?.payload ?? null)) {
+      logAuthRedirect('AdminLogin.autoredirect.cached_access', {
+        target: landingTarget.chosenTarget,
+      });
       navigateToAdminLanding({ replace: true });
       return;
     }
     void handleCapabilityGate();
-  }, [handleCapabilityGate, isAuthenticated.admin, navigateToAdminLanding]);
+  }, [handleCapabilityGate, hasSession, navigateToAdminLanding, sessionStatus, landingTarget.chosenTarget]);
 
   const handleRetryCapability = useCallback(async () => {
     setCapabilityRetrying(true);

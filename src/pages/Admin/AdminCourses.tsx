@@ -49,6 +49,7 @@ import { LoadingSpinner } from '../../components/LoadingComponents';
 
 import { LazyImage } from '../../components/PerformanceComponents';
 import CourseAssignmentModal from '../../components/CourseAssignmentModal';
+import { logAuthRedirect } from '../../utils/logAuthRedirect';
 
 
 const AdminCourses = () => {
@@ -198,6 +199,7 @@ const AdminCourses = () => {
   };
 
   const handleSwitchAccount = useCallback(() => {
+    logAuthRedirect('AdminCourses.switch_account', { path: '/admin/login' });
     navigate('/admin/login');
   }, [navigate]);
 

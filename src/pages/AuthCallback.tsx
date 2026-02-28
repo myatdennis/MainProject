@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { logAuthRedirect } from '../utils/logAuthRedirect';
 
 const resolveLoginPath = () => {
   if (typeof window === 'undefined' || !window.location) {
@@ -14,7 +15,9 @@ const AuthCallback = () => {
   useEffect(() => {
     if (typeof window === 'undefined') return;
     setMessage('Please log in again.');
-    window.location.assign(resolveLoginPath());
+    const target = resolveLoginPath();
+    logAuthRedirect('AuthCallback.redirect', { target });
+    window.location.assign(target);
   }, []);
 
   return (

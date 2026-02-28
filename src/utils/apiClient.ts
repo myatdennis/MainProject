@@ -11,6 +11,7 @@ import {
   isAdminAccessSnapshotFresh,
   type AdminAccessPayload,
 } from '../lib/adminAccess';
+import { logAuthRedirect } from './logAuthRedirect';
 
 export class ApiError extends Error {
   status: number;
@@ -195,6 +196,10 @@ const handleAuthFailure = async () => {
     console.warn('[apiClient] Failed to sign out from Supabase', error);
   }
   if (typeof window !== 'undefined' && window.location) {
+    logAuthRedirect('apiClient.handleAuthFailure', {
+      pathname: window.location.pathname,
+      reason: 'api_auth_failure',
+    });
     window.location.replace('/admin/login');
   }
 };

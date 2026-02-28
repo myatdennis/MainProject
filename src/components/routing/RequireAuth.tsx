@@ -7,6 +7,7 @@ import buildSessionAuditHeaders from '../../utils/sessionAuditHeaders';
 import { apiJson, ApiResponseError, AuthExpiredError, NotAuthenticatedError } from '../../lib/apiClient';
 import { hasAdminPortalAccess, setAdminAccessSnapshot, getAdminAccessSnapshot } from '../../lib/adminAccess';
 import { supabase } from '../../lib/supabaseClient';
+import { logAuthRedirect } from '../../utils/logAuthRedirect';
 
 type AuthMode = 'admin' | 'lms';
 
@@ -699,6 +700,13 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
     if (location.pathname !== targetPath) {
       logRedirectOnce(targetPath, 'missing_session');
       logGuardEvent('redirect_login', { target: targetPath, reason: 'missing_session' });
+      logAuthRedirect('RequireAuth.redirect_missing_session', {
+        path: location.pathname,
+        target: targetPath,
+        sessionStatus,
+        orgResolutionStatus,
+        surfaceStatus: effectiveSurfaceState,
+      });
       return <Navigate to={targetPath} state={{ from: location, reason: 'missing_session' }} replace />;
     }
     logGuardEvent('render_login_route', { reason: 'missing_session', target: targetPath });

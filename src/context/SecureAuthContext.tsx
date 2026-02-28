@@ -28,6 +28,7 @@ import { AuthExpiredError, NotAuthenticatedError } from '../lib/apiClient';
 import { enqueueAudit, flushAuditQueue } from '../dal/auditLog';
 import axios from 'axios';
 import { toast } from 'react-hot-toast';
+import { logAuthRedirect } from '../utils/logAuthRedirect';
 
 if (axios?.defaults) {
   axios.defaults.withCredentials = true;
@@ -1103,6 +1104,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
               if (typeof window !== 'undefined') {
                 toast.error('Your session expired. Please sign in again.', { id: 'session-expired' });
                 const loginPath = resolveLoginPath();
+                logAuthRedirect('SecureAuthContext.refresh_rejected', { target: loginPath });
                 window.location.assign(loginPath);
               }
               refreshStatus = 'unauthenticated';
@@ -1273,6 +1275,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     setBootstrapError(null);
     const fallbackPath = resolveLoginPath();
     if (typeof window !== 'undefined') {
+      logAuthRedirect('SecureAuthContext.onGoToLogin', { target: fallbackPath });
       window.location.assign(fallbackPath);
     }
   }, [applySessionPayload]);
@@ -1880,6 +1883,10 @@ const renderAuthState = ({
     if (!isLoginRoute()) {
       if (typeof window !== 'undefined') {
         const target = resolveLoginPath();
+        logAuthRedirect('SecureAuthContext.renderAuthState.unauthenticated', {
+          target,
+          pathname,
+        });
         window.location.assign(target);
       }
       return <BootstrapRedirecting message="Redirecting to login…" />;

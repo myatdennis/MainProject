@@ -40,6 +40,7 @@ import useRuntimeStatus from '../../hooks/useRuntimeStatus';
 import { refreshRuntimeStatus } from '../../state/runtimeStatus';
 import ApiStatusBanner from '../system/ApiStatusBanner';
 import { useToast } from '../../context/ToastContext';
+import { logAuthRedirect } from '../../utils/logAuthRedirect';
 
 interface AdminLayoutProps {
   children?: ReactNode;
@@ -190,6 +191,10 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
   useEffect(() => {
     if (authInitializing) return;
     if (!isAuthenticated?.admin && location.pathname !== '/admin/login') {
+      logAuthRedirect('AdminLayout.auth_guard', {
+        path: location.pathname,
+        reason: 'missing_admin_session',
+      });
       navigate('/admin/login');
     }
   }, [authInitializing, isAuthenticated?.admin, location.pathname, navigate]);
@@ -269,6 +274,7 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
       if (typeof legacyLogout === 'function') {
         await legacyLogout('admin');
       }
+      logAuthRedirect('AdminLayout.handleLogout', { path: location.pathname });
       navigate('/admin/login');
     } catch (err) {
       console.error('Logout failed', err);

@@ -4,6 +4,7 @@ import { Menu, X, Search, Zap, ChevronDown, LogOut, LayoutDashboard } from 'luci
 import Button from './ui/Button';
 import Input from './ui/Input';
 import cn from '../utils/cn';
+import { logAuthRedirect } from '../utils/logAuthRedirect';
 import RealtimeNotifications from './RealtimeNotifications';
 import { useSecureAuth } from '../context/SecureAuthContext';
 
@@ -70,8 +71,17 @@ const Header = () => {
     } catch (error) {
       console.warn('[Header] logout failed (continuing)', error);
     }
-    navigate(surface === 'admin' ? '/admin/login' : '/lms/login');
+    const target = surface === 'admin' ? '/admin/login' : '/lms/login';
+    if (surface === 'admin') {
+      logAuthRedirect('Header.handleLogout', { target });
+    }
+    navigate(target);
   }, [canAccessAdmin, isLoggedIn, logout, navigate]);
+
+  const handleAdminCtaClick = useCallback(() => {
+    logAuthRedirect('Header.admin_cta', { target: '/admin/login' });
+    navigate('/admin/login');
+  }, [navigate]);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 8);
@@ -169,7 +179,7 @@ const Header = () => {
               </Link>
               <button
                 type="button"
-                onClick={() => navigate('/admin/login')}
+                onClick={handleAdminCtaClick}
                 className="inline-flex h-11 items-center justify-center rounded-lg px-5 text-sm font-heading font-semibold shadow-card-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-skyblue focus-visible:ring-offset-2 focus-visible:ring-offset-softwhite btn-cta"
               >
                 Admin Portal
@@ -292,7 +302,10 @@ const Header = () => {
                   </Link>
                   <Link
                     to="/admin/login"
-                    onClick={() => setIsMenuOpen(false)}
+                    onClick={() => {
+                      logAuthRedirect('Header.mobile_admin_cta', { target: '/admin/login' });
+                      setIsMenuOpen(false);
+                    }}
                     className="inline-flex h-11 items-center justify-center rounded-lg text-sm font-heading font-semibold shadow-card-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-skyblue focus-visible:ring-offset-2 focus-visible:ring-offset-softwhite btn-cta"
                   >
                     Admin
