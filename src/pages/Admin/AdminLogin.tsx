@@ -10,7 +10,7 @@ import { ApiError } from '../../utils/apiClient';
 import { supabase } from '../../lib/supabaseClient';
 import { apiJson, ApiResponseError, AuthExpiredError, NotAuthenticatedError } from '../../lib/apiClient';
 import { flushAuditQueue } from '../../dal/auditLog';
-import { hasAdminPortalAccess, type AdminAccessPayload } from '../../lib/adminAccess';
+import { hasAdminPortalAccess, type AdminAccessPayload, getAdminAccessSnapshot } from '../../lib/adminAccess';
 
 type AdminCapabilityResponse = AdminAccessPayload & {
   error?: string;
@@ -99,12 +99,6 @@ const AdminLogin: React.FC = () => {
     },
     [landingTarget, navigate],
   );
-
-  useEffect(() => {
-    if (isAuthenticated.admin) {
-      navigateToAdminLanding({ replace: true });
-    }
-  }, [isAuthenticated.admin, navigateToAdminLanding]);
 
   const capabilityErrorMessage = (reason?: string) => {
     switch (reason) {
@@ -347,6 +341,18 @@ const AdminLogin: React.FC = () => {
     setAuthError(capabilityErrorMessage(normalizedReason));
     return false;
   }, [captureDeniedUserSnapshot, capabilityErrorMessage, navigateToAdminLanding, verifyAdminCapability]);
+
+  useEffect(() => {
+    if (!isAuthenticated.admin) {
+      return;
+    }
+    const snapshot = getAdminAccessSnapshot();
+    if (hasAdminPortalAccess(snapshot?.payload ?? null)) {
+      navigateToAdminLanding({ replace: true });
+      return;
+    }
+    void handleCapabilityGate();
+  }, [handleCapabilityGate, isAuthenticated.admin, navigateToAdminLanding]);
 
   const handleRetryCapability = useCallback(async () => {
     setCapabilityRetrying(true);

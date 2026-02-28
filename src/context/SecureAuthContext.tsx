@@ -84,21 +84,19 @@ const readSupabaseSessionTokens = async (
     }
     let session = data?.session ?? null;
 
+    const hasRefreshToken = Boolean(session?.refresh_token);
     const shouldAttemptRefresh =
-      options.refreshIfMissing !== false &&
-      session !== null &&
-      !session.access_token &&
-      Boolean(session.refresh_token);
+      options.refreshIfMissing !== false && session !== null && !session.access_token && hasRefreshToken;
 
-    if (shouldAttemptRefresh) {
+    if (shouldAttemptRefresh && hasRefreshToken) {
       try {
         const { data: refreshed, error: refreshError } = await supabaseClient.auth.refreshSession();
         if (refreshError) {
           if (refreshError.name !== 'AuthSessionMissingError') {
             console.warn('[SecureAuth] Supabase refreshSession failed while ensuring session tokens', refreshError);
           }
-        } else {
-          session = refreshed?.session ?? session;
+        } else if (refreshed?.session) {
+          session = refreshed.session;
         }
       } catch (refreshException) {
         const message = refreshException instanceof Error ? refreshException.name : '';
@@ -859,7 +857,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         });
       }
       try {
-        const payloadRaw = await requestJsonWithClock<unknown>('/api/auth/session', {
+        const payloadRaw = await requestJsonWithClock<unknown>('/auth/session', {
           method: 'GET',
           signal,
           requireAuth: true,
@@ -1164,7 +1162,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         return;
       }
       try {
-        const payloadRaw = await requestJsonWithClock<unknown>('/api/auth/session', {
+        const payloadRaw = await requestJsonWithClock<unknown>('/auth/session', {
           method: 'GET',
           signal,
           requireAuth: true,

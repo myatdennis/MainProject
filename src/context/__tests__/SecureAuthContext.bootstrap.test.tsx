@@ -80,7 +80,7 @@ describe('SecureAuthContext bootstrap', () => {
 
   it('surfaces bootstrap error when refresh fails and spinner stops', async () => {
     apiRequestRawMock.mockImplementation((path: string) => {
-      if (path.includes('/api/auth/session')) {
+      if (path.includes('/auth/session')) {
         throw networkError(path);
       }
       if (path.includes('/api/auth/refresh')) {
@@ -102,7 +102,7 @@ describe('SecureAuthContext bootstrap', () => {
   it('allows retryBootstrap to clear error and restore session', async () => {
     let sessionCalls = 0;
     apiRequestRawMock.mockImplementation((path: string) => {
-      if (path.includes('/api/auth/session')) {
+      if (path.includes('/auth/session')) {
         sessionCalls += 1;
         if (sessionCalls === 1) {
           throw networkError(path);
@@ -130,7 +130,7 @@ describe('SecureAuthContext bootstrap', () => {
   it('updates session state when refresh succeeds after bootstrap failure', async () => {
     let sessionAttempts = 0;
     apiRequestRawMock.mockImplementation((path: string) => {
-      if (path.includes('/api/auth/session')) {
+      if (path.includes('/auth/session')) {
         sessionAttempts += 1;
         if (sessionAttempts === 1) {
           throw new ApiError('Unauthorized', 401, path, { message: 'expired' });
@@ -150,7 +150,7 @@ describe('SecureAuthContext bootstrap', () => {
     );
 
     await waitFor(() => expect(screen.getByTestId('user-email').textContent).toBe('admin@the-huddle.co'));
-    expect(apiRequestRawMock).toHaveBeenCalledWith('/api/auth/session', expect.any(Object));
+    expect(apiRequestRawMock).toHaveBeenCalledWith('/auth/session', expect.any(Object));
     expect(apiRequestMock).toHaveBeenCalledWith('/api/auth/refresh', expect.any(Object));
   });
 });

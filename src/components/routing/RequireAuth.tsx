@@ -476,14 +476,11 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
     adminGateStatus,
     hasSession,
   });
+  const adminGateTransitionRef = useRef<string | null>(null);
 
   useEffect(() => {
     adminGateStateRef.current = {
-      waiting:
-        mode === 'admin' &&
-        hasSession &&
-        effectiveSurfaceState !== 'ready' &&
-        (sessionStatus !== 'ready' || orgResolutionStatus !== 'ready' || adminGateStatus === 'checking'),
+      waiting: mode === 'admin' && hasSession && adminGateStatus === 'checking',
       sessionStatus,
       orgResolutionStatus,
       effectiveSurfaceState,
@@ -491,6 +488,38 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
       hasSession,
     };
   }, [mode, hasSession, sessionStatus, orgResolutionStatus, effectiveSurfaceState, adminGateStatus]);
+
+  useEffect(() => {
+    if (!ROUTE_GUARD_DEBUG || mode !== 'admin') {
+      return;
+    }
+    const snapshotSignature = JSON.stringify({
+      adminPortalAllowed: adminPortalAllowed ? true : false,
+      adminGateStatus,
+      sessionStatus,
+      orgResolutionStatus,
+      surfaceStatus: effectiveSurfaceState,
+    });
+    if (adminGateTransitionRef.current === snapshotSignature) {
+      return;
+    }
+    adminGateTransitionRef.current = snapshotSignature;
+    console.debug('[RequireAuth][admin] gate_transition', {
+      adminPortalAllowed,
+      adminGateStatus,
+      sessionStatus,
+      orgResolutionStatus,
+      surfaceStatus: effectiveSurfaceState,
+    });
+  }, [
+    ROUTE_GUARD_DEBUG,
+    mode,
+    adminPortalAllowed,
+    adminGateStatus,
+    sessionStatus,
+    orgResolutionStatus,
+    effectiveSurfaceState,
+  ]);
 
   useEffect(() => {
     if (mode !== 'admin') {
@@ -501,10 +530,7 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
       return;
     }
 
-    const waiting =
-      hasSession &&
-      adminGateStatus === 'checking' &&
-      (sessionStatus !== 'ready' || orgResolutionStatus !== 'ready' || effectiveSurfaceState !== 'ready');
+    const waiting = hasSession && adminGateStatus === 'checking';
 
     adminGateStateRef.current.waiting = waiting;
 
@@ -601,14 +627,11 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
     return MEMBER_ROLES.has(normalizeRole(user.role));
   }, [ADMIN_ROLES, MEMBER_ROLES, activeMembership, hasActiveMembership, user]);
 
-  const waitingForAdminGate =
-    mode === 'admin' &&
-    hasSession &&
-    adminGateStatus === 'checking' &&
-    (sessionStatus !== 'ready' || orgResolutionStatus !== 'ready' || effectiveSurfaceState !== 'ready');
+  const statusesReady = sessionStatus === 'ready' && orgResolutionStatus === 'ready' && effectiveSurfaceState === 'ready';
+  const waitingForAdminGate = mode === 'admin' && hasSession && adminGateStatus === 'checking';
 
   const shouldShowSpinner =
-    sessionStatus !== 'ready' || (hasSession && (waitingForSurface || waitingForOrgContext || waitingForAdminGate));
+    !statusesReady || (hasSession && (waitingForSurface || waitingForOrgContext)) || waitingForAdminGate;
 
   if (shouldShowSpinner) {
     return (
@@ -618,7 +641,12 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
     );
   }
 
-  if (mode === 'admin' && hasSession && (adminGateStatus === 'unauthorized' || adminGateStatus === 'error')) {
+  if (
+    mode === 'admin' &&
+    hasSession &&
+    statusesReady &&
+    (adminGateStatus === 'unauthorized' || adminGateStatus === 'error')
+  ) {
     const heading = adminGateStatus === 'unauthorized' ? 'Admin access required' : 'Unable to verify admin access';
     const description =
       adminGateStatus === 'unauthorized'

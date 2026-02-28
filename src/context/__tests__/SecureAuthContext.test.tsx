@@ -126,7 +126,7 @@ const jsonResponse = (payload: any, init: ResponseInit = {}) =>
   });
 
 const defaultRawHandler = (path: string) => {
-  if (path === '/api/auth/session') {
+  if (path === '/auth/session') {
     return jsonResponse({
       user: storedState.user,
       expiresAt: Date.now() + 60_000,
@@ -182,7 +182,7 @@ describe('SecureAuthContext', () => {
       organizationId: 'org-1',
     };
     mockApiRequestRaw.mockImplementation((path: string) => {
-      if (path === '/api/auth/session') {
+      if (path === '/auth/session') {
         return jsonResponse({
           user: bootstrapUser,
           memberships: [],
@@ -223,7 +223,7 @@ describe('SecureAuthContext', () => {
       if (path === '/api/auth/refresh') {
         return Promise.resolve({ user: storedState.user, expiresAt: 111, refreshExpiresAt: 222 });
       }
-      if (path === '/api/auth/session') {
+      if (path === '/auth/session') {
         return Promise.resolve({ user: storedState.user });
       }
       return Promise.resolve({ user: null });
@@ -255,7 +255,7 @@ describe('SecureAuthContext', () => {
       organizationId: 'org-1',
     } as UserSession;
     mockApiRequestRaw.mockImplementation((path: string) => {
-      if (path === '/api/auth/session') {
+      if (path === '/auth/session') {
         return jsonResponse({
           user: storedState.user,
           expiresAt: Date.now() + 60_000,
