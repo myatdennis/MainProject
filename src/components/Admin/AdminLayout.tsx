@@ -77,6 +77,7 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
     sessionStatus,
     user,
   } = useSecureAuth();
+  const hasSession = Boolean(user);
   const { showToast } = useToast();
   const runtimeStatus = useRuntimeStatus();
   const {
