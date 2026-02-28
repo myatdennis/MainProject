@@ -25,7 +25,7 @@ import { AuthExpiredError, NotAuthenticatedError } from '../lib/apiClient';
 
 // MFA helpers
 
-import { logAuditBestEffort } from '../dal/auditLog';
+import { enqueueAudit, flushAuditQueue } from '../dal/auditLog';
 import axios from 'axios';
 import { toast } from 'react-hot-toast';
 
@@ -1402,7 +1402,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       console.warn('[SecureAuth] Logout request failed (continuing with local cleanup)', error);
     } finally {
       if (user?.role === 'admin') {
-        logAuditBestEffort('admin_logout', { email: user.email, id: user.id });
+        enqueueAudit({ action: 'admin_logout', details: { email: user.email, id: user.id } });
       }
 
       clearAuth('manual_logout');
@@ -1426,7 +1426,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         });
       }
     }
-  }, [buildSessionAuditHeaders, logAuditBestEffort, user]);
+  }, [buildSessionAuditHeaders, user]);
 
   useEffect(() => {
     if (authInitializing) {
@@ -1537,10 +1537,14 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           };
         }
 
-        logAuditBestEffort('admin_login', {
-          email: sessionData.session?.user?.email ?? normalizedEmail,
-          id: sessionData.session?.user?.id ?? null,
+        enqueueAudit({
+          action: 'admin_login',
+          details: {
+            email: sessionData.session?.user?.email ?? normalizedEmail,
+            id: sessionData.session?.user?.id ?? null,
+          },
         });
+        void flushAuditQueue();
 
         logAuthSessionState('admin-login_success', getUserSession());
         setAuthStatus('authenticated');
@@ -1585,7 +1589,11 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       setAuthStatus('authenticated');
 
       if (type === 'admin' && normalizedPayload.user) {
-        logAuditBestEffort('admin_login', { email: normalizedPayload.user.email, id: normalizedPayload.user.id });
+        enqueueAudit({
+          action: 'admin_login',
+          details: { email: normalizedPayload.user.email, id: normalizedPayload.user.id },
+        });
+        void flushAuditQueue();
       }
 
       logAuthSessionState(`${type}-login_success`, getUserSession());

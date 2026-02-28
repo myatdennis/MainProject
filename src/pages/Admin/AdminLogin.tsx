@@ -9,6 +9,7 @@ import type { RuntimeStatus } from '../../state/runtimeStatus';
 import { ApiError } from '../../utils/apiClient';
 import { supabase } from '../../lib/supabaseClient';
 import { apiJson, ApiResponseError, AuthExpiredError, NotAuthenticatedError } from '../../lib/apiClient';
+import { flushAuditQueue } from '../../dal/auditLog';
 import { hasAdminPortalAccess, type AdminAccessPayload } from '../../lib/adminAccess';
 
 type AdminCapabilityResponse = AdminAccessPayload & {
@@ -421,6 +422,7 @@ const AdminLogin: React.FC = () => {
           sessionError: error?.message ?? null,
         });
         await updateDevSessionSnapshot('post-login-success');
+        await flushAuditQueue();
       } catch (sessionCheckError) {
         console.warn('[AdminLogin] session verification failed', sessionCheckError);
       }
@@ -458,6 +460,7 @@ const AdminLogin: React.FC = () => {
       const result = await login(mfaEmail, password, 'admin', mfaCode);
       setIsLoading(false);
       if (result.success) {
+        await flushAuditQueue();
         const allowed = await handleCapabilityGate();
         if (allowed) {
           setMfaRequired(false);

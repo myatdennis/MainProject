@@ -3569,112 +3569,38 @@ const isActiveAdminMembership = (membership) => {
 };
 
 app.get('/api/admin/me', requireSupabaseUser, (req, res) => {
-  const context = requireUserContext(req, res);
-  if (!context) return;
-
-  const userPayload = req.user || {};
-  const normalizedRole = typeof userPayload.role === 'string' ? userPayload.role.toLowerCase() : null;
-  const platformRole = typeof userPayload.platformRole === 'string' ? userPayload.platformRole.toLowerCase() : null;
-  const rawMemberships = Array.isArray(userPayload.memberships) ? userPayload.memberships : context.memberships || [];
-  const memberships = rawMemberships.map((membership) => normalizeMembershipForAdminResponse(membership));
-  const adminMemberships = memberships.filter(isActiveAdminMembership);
-  const adminOrgIds = Array.from(new Set(adminMemberships.map((membership) => membership.orgId).filter(Boolean)));
-  const resolvedActiveOrgId = pickOrgId(
-    req.activeOrgId,
-    userPayload.activeOrgId,
-    userPayload.organizationId,
-    adminOrgIds[0],
-    context.organizationIds?.[0],
-  );
-
-  const permissions = Array.isArray(userPayload.permissions)
-    ? userPayload.permissions
-    : Array.from(req.userPermissions || []);
-
-  console.info('[adminAccess] capability_check', {
-    userId: context.userId,
-    role: normalizedRole,
-    platformRole,
-    adminOrgIds,
-    requestId: req.requestId,
-  });
-
-  const hasAdminAccess =
-    normalizedRole === 'admin' ||
-    platformRole === 'platform_admin' ||
-    adminOrgIds.length > 0;
-
-  if (!hasAdminAccess) {
-    console.warn('[adminAccess] denied', {
-      userId: context.userId,
-      role: normalizedRole,
-      platformRole,
-      adminOrgIds,
-      requestId: req.requestId,
-    });
-    return res.status(403).json({
-      error: 'not_authorized',
-      message: 'Admin access required.',
+  const user = req.supabaseJwtUser || req.user;
+  if (!user) {
+    return res.status(401).json({
+      error: 'Authentication required',
+      message: 'Supabase session required for admin access.',
     });
   }
 
-  if (shouldLogAuthDebug) {
-    console.info('[adminAccess] /api/admin/me granted', {
-      userId: context.userId,
-      via: context.isPlatformAdmin ? 'platform_admin' : 'org_admin',
-      adminOrgIds,
-      activeOrgId: resolvedActiveOrgId,
-      requestId: req.requestId,
-    });
-  }
-
-  const accessAllowed = hasAdminAccess;
+  const adminPortalAllowed = req.adminPortalAllowed === true;
 
   res.json({
+    adminPortalAllowed,
     user: {
-      id: context.userId,
-      email: userPayload.email || null,
-      role: userPayload.role || context.userRole || null,
-      platformRole: userPayload.platformRole || null,
-      isPlatformAdmin: Boolean(context.isPlatformAdmin || userPayload.isPlatformAdmin),
-      isAdmin: Boolean(
-        (userPayload.role || context.userRole) === 'admin' ||
-          context.isPlatformAdmin ||
-          accessAllowed,
-      ),
-      activeOrgId: resolvedActiveOrgId,
-      organizationIds: context.organizationIds || [],
-      memberships,
-      adminOrgIds,
-      activeMembership: memberships.find((membership) => membership.orgId === resolvedActiveOrgId) ?? null,
-      permissions,
+      id: user.id,
+      email: user.email || null,
+      isAdmin: adminPortalAllowed,
+      role: adminPortalAllowed ? 'admin' : 'authenticated',
     },
     access: {
-      allowed: accessAllowed,
-      adminPortal: accessAllowed,
-      admin: accessAllowed,
-      isAdmin: accessAllowed,
+      allowed: adminPortalAllowed,
+      adminPortal: adminPortalAllowed,
+      admin: adminPortalAllowed,
+      isAdmin: adminPortalAllowed,
       capabilities: {
-        adminPortal: accessAllowed,
-        admin: accessAllowed,
+        adminPortal: adminPortalAllowed,
+        admin: adminPortalAllowed,
       },
-      scopes: accessAllowed ? ['admin'] : [],
-      permissions: accessAllowed ? ['admin:*'] : [],
-      via: context.isPlatformAdmin ? 'platform' : 'org_admin',
-      reason: context.isPlatformAdmin ? 'platform_admin' : 'org_admin_membership',
-      orgAdminCount: adminOrgIds.length,
+      scopes: adminPortalAllowed ? ['admin'] : [],
+      permissions: adminPortalAllowed ? ['admin:*'] : [],
+      via: adminPortalAllowed ? 'platform' : 'profile',
+      reason: adminPortalAllowed ? 'is_admin' : 'not_admin',
       timestamp: new Date().toISOString(),
-    },
-    diagnostics: {
-      membership: req.membershipDiagnostics || null,
-    },
-    context: {
-      surface: 'admin',
-      requestOrgId: pickOrgId(
-        req.query?.orgId,
-        req.query?.organizationId,
-        getHeaderOrgId(req, { requireMembership: false }),
-      ),
     },
   });
 });

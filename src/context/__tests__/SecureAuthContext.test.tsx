@@ -5,8 +5,15 @@ import { ApiError as MockApiError } from '../../utils/apiClient';
 import * as secureStorage from '../../lib/secureStorage';
 import type { SessionMetadata, UserSession } from '../../lib/secureStorage';
 
-vi.mock('../../services/auditLogService', () => ({
-  logAuditBestEffort: vi.fn(),
+const auditMocks = vi.hoisted(() => ({
+  enqueueAudit: vi.fn(),
+  flushAuditQueue: vi.fn(),
+}));
+
+vi.mock('../../dal/auditLog', () => ({
+  __esModule: true,
+  enqueueAudit: auditMocks.enqueueAudit,
+  flushAuditQueue: auditMocks.flushAuditQueue,
 }));
 
 const supabaseAuthMock = vi.hoisted(() => ({

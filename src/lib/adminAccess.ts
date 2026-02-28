@@ -1,4 +1,5 @@
 export interface AdminAccessPayload {
+  adminPortalAllowed?: boolean;
   access?: {
     adminPortal?: boolean;
     admin?: boolean;
@@ -18,7 +19,13 @@ const ADMIN_ACCESS_TTL_MS = 2 * 60 * 1000;
 let snapshot: Snapshot | null = null;
 
 export const hasAdminPortalAccess = (payload?: AdminAccessPayload | null): boolean => {
-  if (!payload || !payload.access) {
+  if (!payload) {
+    return false;
+  }
+  if (payload.adminPortalAllowed === true) {
+    return true;
+  }
+  if (!payload.access) {
     return false;
   }
   const access = payload.access;
