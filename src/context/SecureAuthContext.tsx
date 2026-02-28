@@ -66,15 +66,20 @@ const logRefreshResult = (status: string) => logAuthDebug('[auth] refresh result
 const readSupabaseSessionTokens = async (
   options: { refreshIfMissing?: boolean } = {},
 ): Promise<{ accessToken: string | null; refreshToken: string | null }> => {
+  // First try secureStorage to avoid unnecessary network calls
+  const fallbackAccess = getAccessToken();
+  const fallbackRefresh = getRefreshToken();
+
   const supabaseClient = getSupabase();
   if (!supabaseClient) {
-    return { accessToken: null, refreshToken: null };
+    return { accessToken: fallbackAccess, refreshToken: fallbackRefresh };
   }
+
   try {
     const { data, error } = await supabaseClient.auth.getSession();
     if (error) {
       console.warn('[SecureAuth] Supabase getSession failed', error);
-      return { accessToken: null, refreshToken: null };
+      return { accessToken: fallbackAccess, refreshToken: fallbackRefresh };
     }
     let session = data?.session ?? null;
 
@@ -102,13 +107,12 @@ const readSupabaseSessionTokens = async (
       }
     }
 
-    return {
-      accessToken: session?.access_token ?? null,
-      refreshToken: session?.refresh_token ?? null,
-    };
+    const accessToken = session?.access_token ?? fallbackAccess ?? null;
+    const refreshToken = session?.refresh_token ?? fallbackRefresh ?? null;
+    return { accessToken, refreshToken };
   } catch (sessionError) {
     console.warn('[SecureAuth] Supabase session lookup failed', sessionError);
-    return { accessToken: null, refreshToken: null };
+    return { accessToken: fallbackAccess, refreshToken: fallbackRefresh };
   }
 };
 
