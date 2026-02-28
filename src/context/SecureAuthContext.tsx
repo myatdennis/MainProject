@@ -673,7 +673,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       silent = false,
       reason = 'session_unauthenticated',
       message,
-    }: { silent?: boolean; reason?: string; message?: string } = {}) => {
+      shouldRedirect = true,
+    }: { silent?: boolean; reason?: string; message?: string; shouldRedirect?: boolean } = {}) => {
+      setShouldRedirectToLogin(shouldRedirect);
       const hadSession = hasAuthenticatedSessionRef.current;
       applySessionPayload(null, { persistTokens: true, reason });
       setAuthStatus('unauthenticated');
@@ -771,6 +773,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   );
 
   const [bootstrapError, setBootstrapError] = useState<string | null>(null);
+  const [shouldRedirectToLogin, setShouldRedirectToLogin] = useState(true);
   const clearBootstrapFailOpenTimer = useCallback(() => {
     if (bootstrapFailOpenTimerRef.current) {
       clearTimeout(bootstrapFailOpenTimerRef.current);
@@ -778,7 +781,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     }
   }, []);
   const continueAsGuest = useCallback(
-    (reason: string) => {
+    (reason: string, options?: { redirect?: boolean }) => {
+      const redirect = options?.redirect ?? true;
+      setShouldRedirectToLogin(redirect);
       if (import.meta.env.DEV) {
         console.info('[Auth] auth_restore: logged_out, continuing as guest.', { reason });
       }
@@ -880,11 +885,17 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         handleSessionUnauthorized({
           silent,
           reason: 'session_bootstrap_empty',
+          shouldRedirect: false,
         });
-        continueAsGuest('session_bootstrap_empty');
+        continueAsGuest('session_bootstrap_empty', { redirect: false });
         return false;
       } catch (error) {
         if (error instanceof NotAuthenticatedError) {
+          handleSessionUnauthorized({
+            silent: true,
+            reason: surface ? `${surface}_session_no_supabase_token` : 'session_no_supabase_token',
+            shouldRedirect: true,
+          });
           continueAsGuest(surface ? `${surface}_session_no_supabase_token` : 'session_no_supabase_token');
           return false;
         }
@@ -892,6 +903,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           handleSessionUnauthorized({
             silent: true,
             reason: surface ? `${surface}_session_expired` : 'session_expired',
+            shouldRedirect: true,
           });
           continueAsGuest(surface ? `${surface}_session_expired` : 'session_expired');
           return false;
@@ -910,6 +922,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             handleSessionUnauthorized({
               silent: true,
               reason: surface ? `${surface}_session_no_token` : 'session_no_token',
+              shouldRedirect: true,
             });
             continueAsGuest(surface ? `${surface}_session_no_token` : 'session_no_token');
             return false;
@@ -930,6 +943,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             handleSessionUnauthorized({
               silent,
               reason: surface ? `${surface}_session_unauthenticated` : 'session_unauthenticated',
+              shouldRedirect: true,
             });
             continueAsGuest(surface ? `${surface}_session_unauthenticated` : 'session_unauthenticated_api_error');
             return false;
@@ -950,8 +964,11 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             silent,
             reason: surface ? `${surface}_session_http_${error.status ?? 'unknown'}` : 'session_http_api_error',
             message: (error.body as { message?: string } | undefined)?.message,
+            shouldRedirect: false,
           });
-          continueAsGuest(surface ? `${surface}_session_http_${error.status ?? 'unknown'}` : 'session_http_api_error');
+          continueAsGuest(surface ? `${surface}_session_http_${error.status ?? 'unknown'}` : 'session_http_api_error', {
+            redirect: false,
+          });
           return false;
         }
         if (error instanceof DOMException && error.name === 'AbortError') {
@@ -1216,7 +1233,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             setAuthStatus('error');
             logSessionResult('error');
           } else {
-            continueAsGuest('bootstrap_http_error');
+            continueAsGuest('bootstrap_http_error', { redirect: false });
           }
         } else {
           lastSessionFetchResultRef.current = 'error';
@@ -1827,6 +1844,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         onRetry: retryBootstrap,
         onGoToLogin,
         children,
+        shouldRedirectToLogin,
       })}
     </AuthContext.Provider>
   );
@@ -1838,12 +1856,14 @@ const renderAuthState = ({
   onRetry,
   onGoToLogin,
   children,
+  shouldRedirectToLogin,
 }: {
   authStatus: 'booting' | 'authenticated' | 'unauthenticated' | 'error';
   bootstrapError: string | null;
   onRetry: () => void;
   onGoToLogin: () => void;
   children: ReactNode;
+  shouldRedirectToLogin: boolean;
 }) => {
   const pathname =
     typeof window !== 'undefined' && window.location ? window.location.pathname || '' : '';
@@ -1880,7 +1900,8 @@ const renderAuthState = ({
     if (!isAuthenticatedUser && (isPublicAuthPath || isMarketingLanding)) {
       return <>{children}</>;
     }
-    if (!isLoginRoute()) {
+    const onLoginRoute = isLoginRoute();
+    if (!onLoginRoute && shouldRedirectToLogin) {
       if (typeof window !== 'undefined') {
         const target = resolveLoginPath();
         logAuthRedirect('SecureAuthContext.renderAuthState.unauthenticated', {

@@ -752,6 +752,14 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
     }
   }
 
+  if (mode === 'admin' && adminPortalAllowed && isOnModeLoginPath) {
+    logAuthRedirect('RequireAuth.admin_on_login', {
+      path: location.pathname,
+      target: '/admin',
+    });
+    return <Navigate to="/admin" replace />;
+  }
+
   logGuardEvent('allow', { path: location.pathname, adminCapabilityStatus: adminCapability.status });
   return <>{children}</>;
 };
