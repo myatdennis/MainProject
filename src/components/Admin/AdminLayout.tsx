@@ -70,14 +70,7 @@ const navigation: AdminNavItem[] = [
 ];
 
 const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
-  const {
-    isAuthenticated,
-    user: authUser,
-    authInitializing,
-    logout: legacyLogout,
-    sessionStatus,
-    user,
-  } = useSecureAuth();
+  const { isAuthenticated, user: authUser, authInitializing, logout, sessionStatus, user } = useSecureAuth();
   const {
     adminPortalAllowed: adminPortalAllowedRaw,
     hasSession,
@@ -310,9 +303,8 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
 
   const handleLogout = async () => {
     try {
-      await logout();
-      if (typeof legacyLogout === 'function') {
-        await legacyLogout('admin');
+      if (typeof logout === 'function') {
+        await logout('admin');
       }
       logAuthRedirect('AdminLayout.handleLogout', { path: location.pathname });
       navigate('/admin/login');

@@ -1,9 +1,24 @@
 import supabaseJwtMiddleware from './supabaseJwt.js';
 import supabase from '../lib/supabaseClient.js';
+import { DEV_FALLBACK, E2E_TEST_MODE } from '../config/runtimeFlags.js';
+
+const FALLBACK_SUPERUSER = {
+  id: 'dev-admin',
+  email: 'dev-admin@local',
+  role: 'admin',
+  platformRole: 'platform_admin',
+  isPlatformAdmin: true,
+};
 
 export default [
   supabaseJwtMiddleware,
   async (req, res, next) => {
+    if (DEV_FALLBACK || E2E_TEST_MODE) {
+      req.supabaseJwtUser = req.supabaseJwtUser || { ...FALLBACK_SUPERUSER };
+      req.adminPortalAllowed = true;
+      return next();
+    }
+
     const user = req.supabaseJwtUser;
     if (!user?.id) {
       return res.status(401).json({

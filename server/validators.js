@@ -250,7 +250,7 @@ export const courseUpsertSchema = z.object({
               id: z.string().min(1).optional(),
               title: z.string().min(1),
               description: z.string().nullable().optional(),
-              type: z.enum(['video', 'quiz', 'reflection', 'text', 'resource']),
+              type: z.enum(['video', 'quiz', 'reflection', 'text', 'resource', 'interactive', 'document', 'scenario', 'download']),
               order_index: z.number().int().nonnegative().optional(),
               orderIndex: z.number().int().nonnegative().optional(),
               duration_s: z.number().int().nonnegative().nullable().optional(),

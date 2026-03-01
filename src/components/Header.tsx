@@ -28,10 +28,12 @@ const Header = () => {
     hasSession: adminHasSession,
     sessionStatus: adminSessionStatus,
     authInitializing: adminAuthInitializing,
+    snapshot: adminAccessSnapshot,
   } = useAdminAccessState();
   const userMenuRef = useRef<HTMLDivElement | null>(null);
   const userMenuButtonRef = useRef<HTMLButtonElement | null>(null);
   const isLoggedIn = Boolean(user) && (isAuthenticated?.admin || isAuthenticated?.lms);
+  const notificationsEnabled = Boolean(isAuthenticated?.lms) && !authInitializing;
   const displayName = useMemo(() => {
     if (!user) return '';
     const composed = `${user.firstName || ''} ${user.lastName || ''}`.trim();
@@ -55,6 +57,7 @@ const Header = () => {
   const canAccessAdmin = Boolean(isAuthenticated?.admin);
   const canAccessLms = Boolean(isAuthenticated?.lms);
   const primaryWorkspacePath = canAccessAdmin ? '/admin/dashboard' : '/lms/dashboard';
+  const adminAccessResolved = Boolean(adminAccessSnapshot?.payload);
 
   const handleToggleUserMenu = useCallback(() => {
     if (!isLoggedIn || authInitializing) {
@@ -105,9 +108,17 @@ const Header = () => {
       navigate('/admin/courses');
       return;
     }
-    logAuthRedirect('Header.admin_cta', { target: '/admin/login', gateState });
+    if (gateHasSession && !adminPortalAllowed && !adminAccessResolved) {
+      console.debug('[Header] admin_cta awaiting access snapshot', gateState);
+      return;
+    }
+    logAuthRedirect('Header.admin_cta', {
+      target: '/admin/login',
+      gateState,
+      reason: gateHasSession ? 'admin_not_allowed' : 'no_session',
+    });
     navigate('/admin/login');
-  }, [adminHasSession, adminPortalAllowed, gateAuthInitializing, gateSessionStatus, isAdminRole, navigate, user]);
+  }, [adminAccessResolved, adminHasSession, adminPortalAllowed, gateAuthInitializing, gateSessionStatus, isAdminRole, navigate, user]);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 8);
@@ -176,7 +187,7 @@ const Header = () => {
 
         <div className="flex items-center gap-3">
           {isLoggedIn && (
-            <RealtimeNotifications enabled={!authInitializing} limit={20} />
+            <RealtimeNotifications enabled={notificationsEnabled} limit={20} />
           )}
           <div className="hidden md:flex items-center gap-2 rounded-full border border-mist bg-white px-3 py-1.5 shadow-sm">
             <Search className="h-4 w-4 text-slate/70" />

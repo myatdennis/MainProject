@@ -181,7 +181,7 @@ const RealtimeNotifications: React.FC<RealtimeNotificationsProps> = ({
   limit = 25,
   refreshIntervalMs = DEFAULT_REFRESH_MS,
 }) => {
-  const { user, authInitializing } = useSecureAuth();
+  const { user, authInitializing, isAuthenticated } = useSecureAuth();
   const { showToast } = useToast();
   const normalizedOverride = useMemo(
     () => (overrideUserId ? String(overrideUserId).trim().toLowerCase() : undefined),
@@ -189,7 +189,8 @@ const RealtimeNotifications: React.FC<RealtimeNotificationsProps> = ({
   );
   const authUserId = useMemo(() => (user?.id ? String(user.id).trim().toLowerCase() : undefined), [user?.id]);
   const effectiveUserId = normalizedOverride ?? authUserId;
-  const canFetch = enabled && Boolean(effectiveUserId) && !authInitializing;
+  const canFetchLearner = Boolean(isAuthenticated?.lms);
+  const canFetch = enabled && canFetchLearner && Boolean(effectiveUserId) && !authInitializing;
   const normalizedLimit = Math.min(Math.max(limit, 1), MAX_NOTIFICATIONS);
 
   const [isOpen, setIsOpen] = useState(false);
