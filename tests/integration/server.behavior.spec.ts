@@ -21,6 +21,8 @@ const adminContextHeaders = async () => ({
   'x-user-role': 'admin',
 });
 
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
 describe('Server demo-mode behavior', () => {
   let server: TestServerHandle | null = null;
 
@@ -149,6 +151,45 @@ describe('Server demo-mode behavior', () => {
     expect(Array.isArray(clientJson.data?.modules)).toBe(true);
     expect(clientJson.data.modules[0]?.lessons).toHaveLength(1);
   }, 20000);
+
+  it('normalizes non-UUID module and lesson ids before persistence', async () => {
+    const headers = await adminContextHeaders();
+    const res = await server!.fetch('/api/admin/courses', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        course: {
+          title: `Temp UUID Course ${Date.now()}`,
+          status: 'draft',
+        },
+        modules: [
+          {
+            id: 'mod-temp-e2e',
+            title: 'Temp Module',
+            description: 'demo',
+            lessons: [
+              {
+                id: 'les-temp-e2e',
+                title: 'Temp Lesson',
+                type: 'text',
+                content: { textContent: 'demo' },
+              },
+            ],
+          },
+        ],
+      }),
+    });
+    expect([200, 201]).toContain(res.status);
+    const body = await res.json();
+    const module = body?.data?.modules?.[0];
+    expect(module).toBeTruthy();
+    expect(UUID_REGEX.test(module.id)).toBe(true);
+    expect(module.client_temp_id).toBe('mod-temp-e2e');
+    const lesson = module?.lessons?.[0];
+    expect(lesson).toBeTruthy();
+    expect(UUID_REGEX.test(lesson.id)).toBe(true);
+    expect(lesson.client_temp_id).toBe('les-temp-e2e');
+  });
 
   it('rejects admin course creation when no auth token is provided', async () => {
     const res = await server!.fetch('/api/admin/courses', {

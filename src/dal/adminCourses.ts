@@ -8,7 +8,7 @@ export { CourseValidationError };
 
 export async function syncCourseToDatabase(
   course: Course,
-  options: { idempotencyKey?: string; action?: IdempotentAction } = {},
+  options: { idempotencyKey?: string; action?: IdempotentAction; signal?: AbortSignal } = {},
 ): Promise<NormalizedCourse | null> {
   return CourseService.syncCourseToDatabase(course, options);
 }

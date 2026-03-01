@@ -20,6 +20,7 @@ import { nanoid } from 'nanoid';
 import { canonicalizeLessonContent } from '../utils/lessonContent';
 import { SlugConflictError } from '../utils/slugConflict';
 import { getAdminAccessSnapshot, hasAdminPortalAccess } from '../lib/adminAccess';
+import isUuid from '../utils/isUuid';
 
 // Course data types
 export interface ScenarioChoice {
@@ -121,18 +122,71 @@ const _saveCoursesToLocalStorage = (_courses: { [key: string]: Course }): void =
   // persistence handled via CourseService / API gateway
 };
 
-export const createModuleId = (): string => `mod-${nanoid(10)}`;
-export const createLessonId = (): string => `les-${nanoid(10)}`;
+const randomUuid = (): string => {
+  if (typeof globalThis !== 'undefined' && typeof globalThis.crypto?.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID();
+  }
+  return nanoid(32);
+};
 
-export const sanitizeModuleGraph = (modules: Module[] = []): Module[] =>
-  modules.map((module, moduleIndex) => {
-    const moduleId = module.id || createModuleId();
+export const createModuleId = (): string => randomUuid();
+export const createLessonId = (): string => randomUuid();
+
+const normalizeIdentifier = (
+  value: string | null | undefined,
+  generator: () => string,
+  existingClientTemp?: string | null,
+) => {
+  const trimmed = typeof value === 'string' ? value.trim() : '';
+  if (trimmed && isUuid(trimmed)) {
+    return { id: trimmed, clientTempId: existingClientTemp ?? null, replaced: false, original: trimmed };
+  }
+  const generated = generator();
+  return {
+    id: generated,
+    clientTempId: existingClientTemp ?? (trimmed || null),
+    replaced: true,
+    original: trimmed || null,
+  };
+};
+
+export const sanitizeModuleGraph = (modules: Module[] = []): Module[] => {
+  const moduleIdMap = new Map<string, string>();
+
+  return modules.map((module, moduleIndex) => {
+    const { id: moduleId, clientTempId, original, replaced } = normalizeIdentifier(
+      module.id,
+      createModuleId,
+      (module as any)?.client_temp_id ?? null,
+    );
+    if (replaced && original) {
+      moduleIdMap.set(original, moduleId);
+    }
+    moduleIdMap.set(moduleId, moduleId);
+
     const normalizedLessons = (module.lessons || []).map((lesson, lessonIndex) => {
-      const lessonId = lesson.id || createLessonId();
-      const resolvedModuleId = lesson.module_id || (lesson as any).moduleId || moduleId;
+      const {
+        id: lessonId,
+        clientTempId: lessonTempId,
+        original: lessonOriginalId,
+        replaced: lessonReplaced,
+      } = normalizeIdentifier(lesson.id, createLessonId, (lesson as any)?.client_temp_id ?? null);
+      if (lessonReplaced && lessonOriginalId) {
+        moduleIdMap.set(lessonOriginalId, lessonId);
+      }
+      const requestedModuleRef =
+        typeof lesson.module_id === 'string'
+          ? lesson.module_id.trim()
+          : typeof (lesson as any).moduleId === 'string'
+          ? (lesson as any).moduleId.trim()
+          : '';
+      const resolvedModuleId =
+        moduleIdMap.get(requestedModuleRef) ?? moduleIdMap.get(moduleId) ?? moduleId;
+
       return {
         ...lesson,
         id: lessonId,
+        client_temp_id: lessonTempId ?? null,
         module_id: resolvedModuleId,
         moduleId: resolvedModuleId,
         order: lesson.order ?? lessonIndex + 1,
@@ -143,10 +197,12 @@ export const sanitizeModuleGraph = (modules: Module[] = []): Module[] =>
     return {
       ...module,
       id: moduleId,
+      client_temp_id: clientTempId ?? null,
       order: module.order ?? moduleIndex + 1,
       lessons: normalizedLessons,
     };
   });
+};
 
 const createCoursePayloadForApi = (course: Course): Course => {
   const { clone } = cloneWithCanonicalOrgId(course, { removeAliases: true });
@@ -1847,15 +1903,7 @@ export const courseStore = {
 };
 
 // Helper function to generate unique IDs
-export const generateId = (prefix: string = 'item'): string => {
-  if (prefix === 'module') {
-    return createModuleId();
-  }
-  if (prefix === 'lesson') {
-    return createLessonId();
-  }
-  return `${prefix}-${nanoid(8)}`;
-};
+export const generateId = (_prefix: string = 'item'): string => randomUuid();
 
 // Helper function to calculate total course duration
 export const calculateCourseDuration = (modules: Module[]): string => {

@@ -96,6 +96,55 @@ const generateStableLessonId = (): string => {
   return createLessonId();
 };
 
+type ApiErrorInfo = {
+  status: number | null;
+  code: string | null;
+  message: string | null;
+};
+
+const extractApiErrorInfo = (error: unknown): ApiErrorInfo | null => {
+  if (!(error instanceof ApiError)) return null;
+  const body = (typeof error.body === 'object' && error.body !== null ? error.body : null) as Record<
+    string,
+    unknown
+  > | null;
+  const code =
+    typeof body?.code === 'string'
+      ? body.code
+      : typeof body?.error_code === 'string'
+      ? (body?.error_code as string)
+      : null;
+  const messageCandidates = [
+    typeof body?.error === 'string' ? (body.error as string) : null,
+    typeof body?.message === 'string' ? (body.message as string) : null,
+    typeof body?.detail === 'string' ? (body.detail as string) : null,
+  ];
+  const message = messageCandidates.find((value) => Boolean(value)) ?? error.message ?? null;
+  return {
+    status: typeof error.status === 'number' ? error.status : null,
+    code,
+    message,
+  };
+};
+
+const formatApiErrorToast = (info: ApiErrorInfo, context: string): string => {
+  const parts: string[] = [];
+  if (info.status) {
+    parts.push(String(info.status));
+  }
+  if (info.code) {
+    parts.push(info.code);
+  }
+  const prefix = parts.length ? `${parts.join(' · ')} ` : '';
+  const detail = info.message ?? 'Please try again.';
+  return `${context} failed. ${prefix}${detail}`.trim();
+};
+
+const nextRequestToken = () =>
+  typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+
 type BuilderConfirmAction = 'discard' | 'reset' | 'delete';
 type ConfirmTone = 'info' | 'warning' | 'danger';
 
@@ -333,6 +382,9 @@ const AdminCourseBuilder = () => {
   const [showAssignmentModal, setShowAssignmentModal] = useState(false);
   const [hasPendingChanges, setHasPendingChanges] = useState(false);
   const lastPersistedRef = useRef<Course | null>(null);
+  const autoSaveRequestAbortRef = useRef<AbortController | null>(null);
+  const autoSaveRequestIdRef = useRef<string | null>(null);
+  const lastAutoSaveErrorRef = useRef<{ status: number | null; code: string | null; message: string | null; timestamp: number } | null>(null);
   const [initializing, setInitializing] = useState(isEditing);
   const lastLoadedCourseIdRef = useRef<string | null>(null);
   const draftCheckIdRef = useRef<string | null>(null);
@@ -1030,12 +1082,24 @@ const AdminCourseBuilder = () => {
     autoSaveTimerRef.current = setTimeout(async () => {
       autoSaveLockRef.current = true;
       setSaveStatus((s) => (s === 'saving' ? s : 'saving'));
+      const gate = evaluateRuntimeGate('course.auto-save', runtimeStatus);
+      const controller = new AbortController();
+      if (autoSaveRequestAbortRef.current) {
+        autoSaveRequestAbortRef.current.abort();
+      }
+      autoSaveRequestAbortRef.current = controller;
+      const requestToken = nextRequestToken();
+      autoSaveRequestIdRef.current = requestToken;
       try {
         const result = await persistCourse(course, {
           action: 'course.auto-save',
           gate,
           skipValidation: true,
+          abortSignal: controller.signal,
         });
+        if (autoSaveRequestIdRef.current !== requestToken) {
+          return;
+        }
         if (result.remoteSynced) {
           setSaveStatus('saved');
           setLastSaveTime(new Date());
@@ -1044,6 +1108,12 @@ const AdminCourseBuilder = () => {
           setSaveStatus('idle');
         }
       } catch (err) {
+        if (autoSaveRequestIdRef.current !== requestToken) {
+          return;
+        }
+        if (controller.signal.aborted) {
+          return;
+        }
         if (err instanceof SlugConflictError) {
           console.warn('⚠️ Remote auto-sync skipped: slug conflict requires user action.');
         } else {
@@ -1052,12 +1122,24 @@ const AdminCourseBuilder = () => {
         setSaveStatus('error');
         setTimeout(() => setSaveStatus('idle'), 4000);
       } finally {
+        if (autoSaveRequestIdRef.current === requestToken) {
+          autoSaveRequestAbortRef.current = null;
+          autoSaveRequestIdRef.current = null;
+        }
         autoSaveLockRef.current = false;
       }
     }, 1000);
 
     return () => {
-      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = null;
+      }
+      if (autoSaveRequestAbortRef.current) {
+        autoSaveRequestAbortRef.current.abort();
+        autoSaveRequestAbortRef.current = null;
+      }
+      autoSaveRequestIdRef.current = null;
     };
   }, [
     course,
@@ -1299,7 +1381,17 @@ const AdminCourseBuilder = () => {
     (error: unknown) => {
       if (autoSaveHaltedRef.current) return;
 
-      if (error instanceof ApiError && error.status === 401) {
+      const apiInfo = extractApiErrorInfo(error);
+      if (apiInfo) {
+        const now = Date.now();
+        const last = lastAutoSaveErrorRef.current;
+        if (!last || last.code !== apiInfo.code || last.status !== apiInfo.status || now - last.timestamp > 15000) {
+          lastAutoSaveErrorRef.current = { ...apiInfo, timestamp: now };
+          showToast(formatApiErrorToast(apiInfo, 'Autosave'), 'error', 6000);
+        }
+      }
+
+      if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
         autoSaveHaltedRef.current = true;
         autoSaveBackoffUntilRef.current = Number.POSITIVE_INFINITY;
         clearAutoSaveBackoffTimer();
@@ -1330,23 +1422,25 @@ const AdminCourseBuilder = () => {
         autoSaveHaltedRef.current = true;
         autoSaveBackoffUntilRef.current = Number.POSITIVE_INFINITY;
         clearAutoSaveBackoffTimer();
-        if (!autoSavePauseLoggedRef.current) {
-          console.warn(
-            '[AdminCourseBuilder] Auto-save halted after repeated failures. Changes remain stored locally until you retry.',
-          );
-          autoSavePauseLoggedRef.current = true;
-        }
-        showToast(
-          'Auto-save paused after repeated failures. Use Save once you are back online.',
-          'warning',
-          7000,
-        );
+        autoSavePauseLoggedRef.current = true;
+        setStatusBanner({
+          tone: 'warning',
+          title: 'Auto-save paused',
+          description: 'Auto-save hit repeated server errors. Resolve the issue or retry now.',
+          icon: AlertTriangle,
+          actionLabel: 'Retry save',
+          onAction: () => {
+            resetAutoSaveFailures();
+            setStatusBanner(null);
+            setAutoSaveRetryNonce((prev) => prev + 1);
+          },
+        });
         return;
       }
 
       scheduleAutoSaveRetry(delay);
     },
-    [handleAuthRequired, scheduleAutoSaveRetry, showToast],
+    [clearAutoSaveBackoffTimer, handleAuthRequired, resetAutoSaveFailures, scheduleAutoSaveRetry, setStatusBanner, showToast],
   );
 
   const publishIssueCount = effectiveValidationSummary.issues.length;
@@ -1618,6 +1712,7 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
     gate?: RuntimeGateResult;
     action?: IdempotentAction;
     skipValidation?: boolean;
+    abortSignal?: AbortSignal;
   };
 
   type PersistCourseResult = {
@@ -1637,7 +1732,8 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
   ): Promise<PersistCourseResult> => {
     const resolvedOptions: PersistCourseOptions =
       typeof options === 'string' ? { statusOverride: options } : options ?? {};
-    const { statusOverride, intentOverride, gate: gateOverride, action, skipValidation } = resolvedOptions;
+    const { statusOverride, intentOverride, gate: gateOverride, action, skipValidation, abortSignal } =
+      resolvedOptions;
 
     const enforcedCourse = enforceStableModuleGraph(nextCourse);
     const { course: sanitizedNextCourse, issues: lessonIntegrityIssues } = ensureLessonIntegrity(enforcedCourse);
@@ -1727,7 +1823,10 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
       const isCreateOperation = isClientGeneratedId(lastPersistedRef.current?.id) || !lastPersistedRef.current;
       try {
         const { clone: apiCourse } = cloneWithCanonicalOrgId(preparedCourse, { removeAliases: true });
-        const persisted = await syncCourseToDatabase(apiCourse as Course, { action: derivedAction });
+        const persisted = await syncCourseToDatabase(apiCourse as Course, {
+          action: derivedAction,
+          signal: abortSignal,
+        });
         merged = persisted ? mergePersistedCourse(preparedCourse, persisted) : preparedCourse;
         remoteSynced = true;
         logDev(isCreateOperation ? 'autosave_post_success' : 'autosave_put_success', {
@@ -1739,7 +1838,7 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
           status,
           message: error instanceof Error ? error.message : String(error),
         });
-        if (isAutoSaveAttempt && !(error instanceof SlugConflictError)) {
+        if (isAutoSaveAttempt && !(error instanceof SlugConflictError) && !(abortSignal?.aborted)) {
           handleAutoSaveFailure(error);
         }
         if (error instanceof SlugConflictError) {
@@ -1816,7 +1915,12 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
         if (error instanceof ApiError && error.status === 401) {
           handleAuthRequired('save-course');
         }
-        showToast(networkFallback('Unable to save course. Please try again.'), isOffline() ? 'warning' : 'error', 5000);
+        const apiInfo = extractApiErrorInfo(error);
+        if (apiInfo) {
+          showToast(formatApiErrorToast(apiInfo, 'Save'), 'error', 6000);
+        } else {
+          showToast(networkFallback('Unable to save course. Please try again.'), isOffline() ? 'warning' : 'error', 5000);
+        }
       }
       setSaveStatus('error');
       setTimeout(() => setSaveStatus('idle'), 5000);

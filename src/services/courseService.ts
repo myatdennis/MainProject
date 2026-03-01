@@ -542,7 +542,10 @@ export class CourseService {
     return modules;
   }
 
-  private static async upsertCourse(course: NormalizedCourse, options: { idempotencyKey?: string } = {}): Promise<void> {
+  private static async upsertCourse(
+    course: NormalizedCourse,
+    options: { idempotencyKey?: string; signal?: AbortSignal } = {},
+  ): Promise<void> {
     const payload = buildCoursePayload(course);
     let modules = CourseService.buildModulesPayloadForUpsert(course);
     const body: Record<string, unknown> = { course: payload, modules };
@@ -582,6 +585,7 @@ export class CourseService {
       await apiRequest(endpoint, {
         method,
         body,
+        signal: options.signal,
       });
     } catch (error) {
       const slugConflict = parseSlugConflictError(error, course.slug);
@@ -592,10 +596,16 @@ export class CourseService {
     }
   }
 
-  private static async fetchCourseStructure(identifier: string): Promise<NormalizedCourse | null> {
+  private static async fetchCourseStructure(
+    identifier: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<NormalizedCourse | null> {
     try {
       const queryParam = '?includeDrafts=true';
-      const json = await apiRequest<{ data: SupabaseCourseRecord | null }>(`/api/client/courses/${identifier}${queryParam}`, { noTransform: true });
+      const json = await apiRequest<{ data: SupabaseCourseRecord | null }>(
+        `/api/client/courses/${identifier}${queryParam}`,
+        { noTransform: true, signal: options.signal },
+      );
       if (!json.data) return null;
       return mapCourseRecord(json.data);
     } catch (error) {
@@ -712,7 +722,7 @@ export class CourseService {
 
   static async syncCourseToDatabase(
     course: Course,
-    options: { idempotencyKey?: string; action?: IdempotentAction } = {},
+    options: { idempotencyKey?: string; action?: IdempotentAction; signal?: AbortSignal } = {},
   ): Promise<NormalizedCourse | null> {
     const normalizedCourse = normalizeCourse(course);
     const action = options.action ?? 'course.save';
@@ -722,14 +732,21 @@ export class CourseService {
       attempt: Date.now(),
     });
     const idempotencyKey = options.idempotencyKey ?? identifiers.idempotencyKey;
+    const { signal } = options;
     // Single upsert with full graph (course + modules + lessons)
-    await withSupabaseAuthRetry(() => CourseService.upsertCourse(normalizedCourse, { idempotencyKey }));
+    await withSupabaseAuthRetry(() =>
+      CourseService.upsertCourse(normalizedCourse, { idempotencyKey, signal }),
+    );
 
     // Reload fresh graph to get server-assigned IDs and order
     const refreshed =
-      (await withSupabaseAuthRetry(() => CourseService.fetchCourseStructure(normalizedCourse.id))) ||
+      (await withSupabaseAuthRetry(() =>
+        CourseService.fetchCourseStructure(normalizedCourse.id, { signal }),
+      )) ||
       (normalizedCourse.slug
-        ? await withSupabaseAuthRetry(() => CourseService.fetchCourseStructure(normalizedCourse.slug))
+        ? await withSupabaseAuthRetry(() =>
+            CourseService.fetchCourseStructure(normalizedCourse.slug, { signal }),
+          )
         : null);
 
     const authoritative = refreshed ?? normalizedCourse;
@@ -757,7 +774,7 @@ export class CourseService {
         if (slugCandidate && slugCandidate !== normalizedIdentifier) {
           const slugJson = await apiRequest<{ data: SupabaseCourseRecord | null }>(
             `/api/client/courses/${slugCandidate}${queryParam}`,
-            { noTransform: true },
+            { noTransform: true, signal: options.signal },
           );
           if (slugJson.data) {
             return mapCourseRecord(slugJson.data);

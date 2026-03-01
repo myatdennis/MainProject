@@ -86,7 +86,9 @@ const getMetricsSnapshot = () => ({
 
 const shouldLogAuthDebug =
   NODE_ENV !== 'production' || String(process.env.ENABLE_AUTH_DEBUG || '').toLowerCase() === 'true';
-const ENABLE_COURSE_RPC_UPSERT = parseFlag(process.env.ENABLE_COURSE_RPC_UPSERT);
+const ENABLE_COURSE_RPC_UPSERT =
+  typeof process.env.ENABLE_COURSE_RPC_UPSERT === 'string' &&
+  process.env.ENABLE_COURSE_RPC_UPSERT.trim().toLowerCase() === 'true';
 
 const fatalEnvError = (message) => {
   console.error(`[env] ${message}`);
@@ -1954,7 +1956,8 @@ const coerceNullableText = (value) => {
 };
 
 const normalizeModuleLessonIdentifiers = (modulesInput = []) => {
-  if (!Array.isArray(modulesInput)) return;
+  const result = { modulesNormalized: 0, lessonsNormalized: 0 };
+  if (!Array.isArray(modulesInput)) return result;
   for (const module of modulesInput) {
     if (!module || typeof module !== 'object') continue;
     const rawModuleId = coerceNullableText(module.id);
@@ -1963,6 +1966,7 @@ const normalizeModuleLessonIdentifiers = (modulesInput = []) => {
       const generatedModuleId = randomUUID();
       module.client_temp_id = existingModuleClientTempId ?? rawModuleId ?? null;
       module.id = generatedModuleId;
+      result.modulesNormalized += 1;
     } else {
       module.id = rawModuleId;
       module.client_temp_id = existingModuleClientTempId;
@@ -1977,6 +1981,7 @@ const normalizeModuleLessonIdentifiers = (modulesInput = []) => {
         const generatedLessonId = randomUUID();
         lesson.client_temp_id = existingLessonClientTempId ?? rawLessonId ?? null;
         lesson.id = generatedLessonId;
+        result.lessonsNormalized += 1;
       } else {
         lesson.id = rawLessonId;
         lesson.client_temp_id = existingLessonClientTempId;
@@ -1991,6 +1996,7 @@ const normalizeModuleLessonIdentifiers = (modulesInput = []) => {
     }
     module.lessons = lessons;
   }
+  return result;
 };
 
 const formatLegacyDuration = (seconds) => {
@@ -6023,7 +6029,18 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
       courseId: courseRow.id,
     });
     const modulesForPersistence = persistenceNormalization.modules;
-    normalizeModuleLessonIdentifiers(modulesForPersistence);
+    const idNormalization = normalizeModuleLessonIdentifiers(modulesForPersistence);
+    if (
+      idNormalization.modulesNormalized > 0 ||
+      idNormalization.lessonsNormalized > 0
+    ) {
+      console.info('[admin-courses] normalized_temp_ids', {
+        requestId: req?.requestId ?? null,
+        courseId: courseRow.id,
+        modulesNormalized: idNormalization.modulesNormalized,
+        lessonsNormalized: idNormalization.lessonsNormalized,
+      });
+    }
 
     const incomingModuleIds = modulesForPersistence.map((module) => module.id).filter(Boolean);
     const incomingModuleIdSet = new Set(incomingModuleIds);

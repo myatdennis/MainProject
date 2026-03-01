@@ -83,6 +83,7 @@ export interface Course {
 
 export interface Module {
   id: TextIdentifier;
+  client_temp_id?: string | null;
   title: string;
   description: string;
   duration: string;
@@ -105,6 +106,9 @@ export interface Chapter {
 
 export interface Lesson {
   id: TextIdentifier;
+  client_temp_id?: string | null;
+  module_id?: TextIdentifier;
+  moduleId?: TextIdentifier;
   chapterId?: TextIdentifier; // optional for backward compatibility
   title: string;
   description?: string; // optional for backward compatibility
