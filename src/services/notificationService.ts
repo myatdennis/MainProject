@@ -1,4 +1,4 @@
-import apiRequest, { type ApiRequestOptions } from '../utils/apiClient';
+import apiRequest, { ApiError, type ApiRequestOptions } from '../utils/apiClient';
 
 export type Notification = {
   id: string;
@@ -15,8 +15,41 @@ export type Notification = {
   messageId?: string | null;
 };
 
-const apiFetch = async <T>(path: string, options: ApiRequestOptions = {}) =>
-  apiRequest<T>(path, options);
+const devLogEnabled =
+  typeof process !== 'undefined'
+    ? process.env.NODE_ENV !== 'production'
+    : Boolean((import.meta as any)?.env?.DEV);
+
+const logNotificationFetch = (label: string, path: string) => {
+  if (!devLogEnabled) return;
+  // eslint-disable-next-line no-console
+  console.debug(`[notifications.fetch:${label}]`, path);
+};
+
+const isSchemaMissingError = (error: unknown) => {
+  if (!(error instanceof ApiError)) return false;
+  const body = (error.body ?? {}) as Record<string, any>;
+  const code = typeof body.code === 'string' ? body.code : null;
+  return code === 'PGRST205';
+};
+
+const handleSchemaMissing = <T>(error: unknown, label: string, fallback: T) => {
+  if (isSchemaMissingError(error)) {
+    const apiError = error as ApiError;
+    const body = (apiError.body ?? {}) as Record<string, any>;
+    console.warn(`[notifications.disabled:${label}] treating notifications as disabled`, {
+      status: apiError.status,
+      code: body.code ?? null,
+    });
+    return fallback;
+  }
+  throw error;
+};
+
+const apiFetch = async <T>(label: string, path: string, options: ApiRequestOptions = {}) => {
+  logNotificationFetch(label, path);
+  return apiRequest<T>(path, options);
+};
 
 const mapNotification = (record: any): Notification => ({
   id: record.id,
@@ -45,14 +78,18 @@ export const listNotifications = async (opts?: { organizationId?: string; userId
 
   const path = `/api/admin/notifications${params.toString() ? `?${params.toString()}` : ''}`;
 
-  const json = await apiFetch<{ data: any[] }>(path);
-  const items = (json.data ?? []).map(mapNotification);
+  try {
+    const json = await apiFetch<{ data: any[] }>('admin.list', path);
+    const items = (json.data ?? []).map(mapNotification);
 
-  return items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } catch (error) {
+    return handleSchemaMissing(error, 'admin.list', [] as Notification[]);
+  }
 };
 
 export const addNotification = async (notification: Omit<Notification, 'id' | 'createdAt'>) => {
-  const json = await apiFetch<{ data: any }>('/api/admin/notifications', {
+  const json = await apiFetch<{ data: any }>('admin.create', '/api/admin/notifications', {
     method: 'POST',
     body: {
       title: notification.title,
@@ -67,7 +104,7 @@ export const addNotification = async (notification: Omit<Notification, 'id' | 'c
 };
 
 export const markNotificationRead = async (id: string, read = true) => {
-  const json = await apiFetch<{ data: any }>(`/api/admin/notifications/${id}/read`, {
+  const json = await apiFetch<{ data: any }>('admin.markRead', `/api/admin/notifications/${id}/read`, {
     method: 'POST',
     body: { read }
   });
@@ -76,7 +113,7 @@ export const markNotificationRead = async (id: string, read = true) => {
 };
 
 export const deleteNotification = async (id: string) => {
-  await apiFetch<void>(`/api/admin/notifications/${id}`, {
+  await apiFetch<void>('admin.delete', `/api/admin/notifications/${id}`, {
     method: 'DELETE',
     expectedStatus: [200, 204],
     rawResponse: true
@@ -101,15 +138,37 @@ const buildLearnerNotificationsPath = (opts?: { limit?: number; unreadOnly?: boo
 };
 
 export const listLearnerNotifications = async (opts?: { limit?: number; unreadOnly?: boolean }) => {
-  const json = await apiFetch<{ data: any[] }>(buildLearnerNotificationsPath(opts));
-  return (json.data ?? []).map(mapNotification);
+  const path = buildLearnerNotificationsPath(opts);
+  try {
+    const json = await apiFetch<{ data: any[] }>('learner.list', path);
+    return (json.data ?? []).map(mapNotification);
+  } catch (error) {
+    return handleSchemaMissing(error, 'learner.list', [] as Notification[]);
+  }
 };
 
 export const markLearnerNotificationRead = async (id: string) => {
-  const json = await apiFetch<{ data: any }>(`/api/learner/notifications/${id}/read`, {
-    method: 'POST',
-  });
-  return mapNotification(json.data);
+  try {
+    const json = await apiFetch<{ data: any }>(
+      'learner.markRead',
+      `/api/learner/notifications/${id}/read`,
+      {
+        method: 'POST',
+      },
+    );
+    return mapNotification(json.data);
+  } catch (error) {
+    return handleSchemaMissing(
+      error,
+      'learner.markRead',
+      mapNotification({
+        id,
+        title: 'Notification',
+        created_at: new Date().toISOString(),
+        read: true,
+      }),
+    );
+  }
 };
 
 export const markLearnerNotificationsRead = async (ids: string[]) => {
