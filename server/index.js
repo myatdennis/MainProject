@@ -86,9 +86,8 @@ const getMetricsSnapshot = () => ({
 
 const shouldLogAuthDebug =
   NODE_ENV !== 'production' || String(process.env.ENABLE_AUTH_DEBUG || '').toLowerCase() === 'true';
-const ENABLE_COURSE_RPC_UPSERT =
-  typeof process.env.ENABLE_COURSE_RPC_UPSERT === 'string' &&
-  process.env.ENABLE_COURSE_RPC_UPSERT.trim().toLowerCase() === 'true';
+const ENABLE_COURSE_RPC_UPSERT = parseFlag(process.env.ENABLE_COURSE_RPC_UPSERT);
+const ENABLE_NOTIFICATIONS = parseFlag(process.env.ENABLE_NOTIFICATIONS);
 
 const fatalEnvError = (message) => {
   console.error(`[env] ${message}`);
@@ -2103,6 +2102,51 @@ const logModuleNormalizationDiagnostics = (diagnostics, context = {}) => {
   });
 };
 
+const logCourseRequestEvent = (event, meta = {}) => {
+  logger.info(event, {
+    requestId: meta.requestId ?? null,
+    userId: meta.userId ?? null,
+    orgId: meta.orgId ?? null,
+    courseId: meta.courseId ?? null,
+    statusCode: meta.status ?? null,
+    errorCode: meta.errorCode ?? null,
+    message: meta.message ?? null,
+  });
+};
+
+const buildValidationIssue = (path, expected, received) => ({
+  path,
+  expected,
+  received,
+});
+
+const collectInvalidIdentifierIssues = (modulesInput = []) => {
+  const issues = [];
+  if (!Array.isArray(modulesInput)) return issues;
+  modulesInput.forEach((module, moduleIndex) => {
+    if (!module || typeof module !== 'object') return;
+    const moduleId = coerceNullableText(module.id);
+    if (!isUuid(moduleId)) {
+      issues.push(buildValidationIssue(`modules[${moduleIndex}].id`, 'uuid', moduleId ?? null));
+    }
+    const lessons = Array.isArray(module.lessons) ? module.lessons : [];
+    lessons.forEach((lesson, lessonIndex) => {
+      if (!lesson || typeof lesson !== 'object') return;
+      const lessonId = coerceNullableText(lesson.id);
+      if (!isUuid(lessonId)) {
+        issues.push(
+          buildValidationIssue(
+            `modules[${moduleIndex}].lessons[${lessonIndex}].id`,
+            'uuid',
+            lessonId ?? null,
+          ),
+        );
+      }
+    });
+  });
+  return issues;
+};
+
 const buildNotificationSelectColumns = () => {
   const base = ['id', 'title', 'body', 'org_id', 'user_id', 'created_at', 'read', 'updated_at'];
   OPTIONAL_NOTIFICATION_COLUMNS.forEach((column) => {
@@ -2113,22 +2157,66 @@ const buildNotificationSelectColumns = () => {
   return base.join(',');
 };
 
+const NOTIFICATIONS_TABLE_MISSING_CODE = 'PGRST205';
+const isNotificationsTableMissingError = (error) =>
+  Boolean(error && typeof error.code === 'string' && error.code === NOTIFICATIONS_TABLE_MISSING_CODE);
+
+const logNotificationsMissingTable = (label, context = {}) => {
+  logger.warn('notifications_table_missing', { label, ...context });
+};
+
+const buildDisabledNotificationsResponse = (page = 1, pageSize = 25) => ({
+  data: [],
+  pagination: {
+    page,
+    pageSize,
+    total: 0,
+    hasMore: false,
+  },
+  notificationsDisabled: true,
+});
+
 async function runNotificationQuery(queryFactory, attempt = 0) {
+  if (!ENABLE_NOTIFICATIONS || !supabase) {
+    return [];
+  }
   const selectColumns = buildNotificationSelectColumns();
   const query = queryFactory(selectColumns);
-  const { data, error } = await query;
+  try {
+    const { data, error } = await query;
 
-  if (error && isMissingColumnError(error) && attempt < OPTIONAL_NOTIFICATION_COLUMNS.length) {
-    const missingColumn = normalizeColumnIdentifier(extractMissingColumnName(error));
-    if (missingColumn && OPTIONAL_NOTIFICATION_COLUMN_SET.has(missingColumn) && !notificationColumnSuppression.has(missingColumn)) {
-      notificationColumnSuppression.add(missingColumn);
-      logger.warn('notifications_optional_column_missing', { column: missingColumn, code: error.code });
-      return runNotificationQuery(queryFactory, attempt + 1);
+    if (error && isMissingColumnError(error) && attempt < OPTIONAL_NOTIFICATION_COLUMNS.length) {
+      const missingColumn = normalizeColumnIdentifier(extractMissingColumnName(error));
+      if (
+        missingColumn &&
+        OPTIONAL_NOTIFICATION_COLUMN_SET.has(missingColumn) &&
+        !notificationColumnSuppression.has(missingColumn)
+      ) {
+        notificationColumnSuppression.add(missingColumn);
+        logger.warn('notifications_optional_column_missing', { column: missingColumn, code: error.code });
+        return runNotificationQuery(queryFactory, attempt + 1);
+      }
     }
-  }
 
-  if (error) throw error;
-  return data || [];
+    if (error) {
+      if (isNotificationsTableMissingError(error)) {
+        logNotificationsMissingTable('learner.query', { code: error.code });
+        return [];
+      }
+      throw error;
+    }
+    return data || [];
+  } catch (error) {
+    if (isNotificationsTableMissingError(error)) {
+      logNotificationsMissingTable('learner.query.catch', {});
+      return [];
+    }
+    logger.warn('notifications_fetch_failed', {
+      label: 'learner.query',
+      message: error?.message || String(error),
+    });
+    return [];
+  }
 }
 
 // Hardened guard for dev-only helpers so they never leak to real environments.
@@ -4736,7 +4824,9 @@ const normalizeUserProfileUpdatePayload = (userId, input = {}, opts = {}) => {
 // identify environment and connectivity issues during deployment and support.
 app.get('/api/diagnostics', async (req, res) => {
   // Only expose detailed diagnostics in non-production or when DEBUG_DIAG=true
-  const allowDiag = (process.env.DEBUG_DIAG || '').toLowerCase() === 'true' || (process.env.NODE_ENV || '').toLowerCase() !== 'production';
+  const allowDiag =
+    (process.env.DEBUG_DIAG || '').toLowerCase() === 'true' ||
+    (process.env.NODE_ENV || '').toLowerCase() !== 'production';
   if (!allowDiag) {
     res.status(403).json({ error: 'Diagnostics disabled' });
     return;
@@ -4752,8 +4842,8 @@ app.get('/api/diagnostics', async (req, res) => {
     cookieDomain: !!process.env.COOKIE_DOMAIN,
     corsAllowedConfigured: resolvedCorsOrigins.length > 0,
     devFallbackMode: DEV_FALLBACK,
-    e2eMode: E2E_TEST_MODE
-    ,enforceHttpsEnabled: (process.env.ENFORCE_HTTPS || '').toLowerCase() === 'true'
+    e2eMode: E2E_TEST_MODE,
+    enforceHttpsEnabled: (process.env.ENFORCE_HTTPS || '').toLowerCase() === 'true',
   };
 
   // Optionally check DB connectivity if Database URL is configured and allowed
@@ -4787,6 +4877,89 @@ app.get('/api/diagnostics', async (req, res) => {
 
   diagnostics.dbReachable = dbReachable;
   res.json(diagnostics);
+});
+
+app.get('/api/diagnostics/schema', async (req, res) => {
+  const context = requireUserContext(req, res);
+  if (!context) return;
+  if (context.userRole !== 'admin') {
+    res.status(403).json({ error: 'admin_required', message: 'Schema diagnostics require admin access' });
+    return;
+  }
+
+  const requiredTables = new Set([
+    'courses',
+    'modules',
+    'lessons',
+    'course_assignments',
+    'user_course_progress',
+    'user_lesson_progress',
+    'quiz_attempts',
+  ]);
+  if (ENABLE_NOTIFICATIONS) {
+    requiredTables.add('notifications');
+  }
+  const requiredColumns = new Map([
+    ['modules', ['description', 'client_temp_id']],
+    ['lessons', ['content_json', 'client_temp_id']],
+  ]);
+  if (ENABLE_NOTIFICATIONS) {
+    requiredColumns.set('notifications', ['title', 'type', 'created_at']);
+  }
+  const requiredFunctions = ENABLE_COURSE_RPC_UPSERT ? ['upsert_course_full'] : [];
+
+  try {
+    const tableRows = await sql`
+      select table_name
+      from information_schema.tables
+      where table_schema = 'public'
+    `;
+    const tableSet = new Set(tableRows.map((row) => row.table_name));
+    const missingTables = Array.from(requiredTables).filter((table) => !tableSet.has(table));
+
+    const columnRows = await sql`
+      select table_name, column_name
+      from information_schema.columns
+      where table_schema = 'public'
+    `;
+    const columnMap = new Map();
+    for (const row of columnRows) {
+      if (!columnMap.has(row.table_name)) {
+        columnMap.set(row.table_name, new Set());
+      }
+      columnMap.get(row.table_name).add(row.column_name);
+    }
+    const missingColumns = {};
+    for (const [table, columns] of requiredColumns.entries()) {
+      const available = columnMap.get(table) || new Set();
+      const missing = columns.filter((col) => !available.has(col));
+      if (missing.length > 0) {
+        missingColumns[table] = missing;
+      }
+    }
+
+    const functionRows = await sql`
+      select proname
+      from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'public'
+    `;
+    const fnSet = new Set(functionRows.map((row) => row.proname));
+    const missingFunctions = requiredFunctions.filter((fn) => !fnSet.has(fn));
+
+    const ok = missingTables.length === 0 && Object.keys(missingColumns).length === 0 && missingFunctions.length === 0;
+    res.json({
+      ok,
+      missingTables,
+      missingColumns,
+      missingFunctions,
+    });
+  } catch (error) {
+    logger.error('schema_diagnostics_failed', {
+      message: error?.message || error,
+    });
+    res.status(500).json({ ok: false, error: 'schema_check_failed', message: error?.message || String(error) });
+  }
 });
 
 // Simple in-memory topic subscriptions for WS clients
@@ -5442,6 +5615,11 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
   if (!valid) return;
   const context = requireUserContext(req, res);
   if (!context) return;
+  const baseLogMeta = {
+    requestId: req.requestId ?? null,
+    userId: context.userId ?? null,
+    courseId: courseLocal?.id ?? courseIdFromParams ?? null,
+  };
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
     const headerOrgId = getHeaderOrgId(req, { requireMembership: false });
     let organizationId = pickOrgId(
@@ -5593,6 +5771,7 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
   if (!ensureSupabase(res)) return;
 
   let { course, modules = [] } = req.body || {};
+  baseLogMeta.courseId = course?.id ?? courseIdFromParams ?? baseLogMeta.courseId ?? null;
   modules = Array.isArray(modules) ? modules : [];
   const orgCandidates = [
     course?.organization_id,
@@ -5626,6 +5805,12 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
       req.body.course.org_id = organizationId;
     }
   }
+  logCourseRequestEvent('admin.courses.upsert.start', {
+    ...baseLogMeta,
+    orgId: organizationId ?? null,
+    courseId: course?.id ?? courseIdFromParams ?? null,
+    status: null,
+  });
   // Lightweight request tracing to aid debugging in CI/local runs
   try {
     console.log(
@@ -11791,6 +11976,10 @@ app.delete('/api/admin/surveys/:id', async (req, res) => {
 app.get('/api/learner/notifications', async (req, res) => {
   const context = requireUserContext(req, res);
   if (!context) return;
+  if (!ENABLE_NOTIFICATIONS) {
+    res.json({ data: [], notificationsDisabled: true });
+    return;
+  }
 
   const limit = clampNumber(parseInt(req.query.limit, 10) || 20, 1, 100);
   const sinceIso = typeof req.query.since === 'string' ? req.query.since : null;
@@ -11876,6 +12065,11 @@ app.get('/api/learner/notifications', async (req, res) => {
 
     res.json({ data: merged.slice(0, limit) });
   } catch (error) {
+    if (isNotificationsTableMissingError(error)) {
+      logNotificationsMissingTable('learner.fetch', { code: error.code });
+      res.json({ data: [], degraded: true, notificationsDisabled: true });
+      return;
+    }
     if (isMissingColumnError(error)) {
       logger.warn('learner_notifications_schema_mismatch', {
         code: error.code,
@@ -11891,6 +12085,10 @@ app.get('/api/learner/notifications', async (req, res) => {
 
 // Notifications
 app.get('/api/admin/notifications', async (req, res) => {
+  if (!ENABLE_NOTIFICATIONS) {
+    res.json(buildDisabledNotificationsResponse());
+    return;
+  }
   if (!ensureSupabase(res)) return;
   const context = requireUserContext(req, res);
   if (!context) return;
@@ -11948,7 +12146,14 @@ app.get('/api/admin/notifications', async (req, res) => {
     }
 
     const { data, error, count } = await query;
-    if (error) throw error;
+    if (error) {
+      if (isNotificationsTableMissingError(error)) {
+        logNotificationsMissingTable('admin.list', { code: error.code });
+        res.json(buildDisabledNotificationsResponse(page, pageSize));
+        return;
+      }
+      throw error;
+    }
 
     res.json({
       data,
@@ -11960,12 +12165,21 @@ app.get('/api/admin/notifications', async (req, res) => {
       },
     });
   } catch (error) {
+    if (isNotificationsTableMissingError(error)) {
+      logNotificationsMissingTable('admin.list.catch', { message: error?.message });
+      res.json(buildDisabledNotificationsResponse(page, pageSize));
+      return;
+    }
     console.error('Failed to fetch notifications:', error);
     res.status(500).json({ error: 'Unable to fetch notifications' });
   }
 });
 
 app.post('/api/admin/notifications', async (req, res) => {
+  if (!ENABLE_NOTIFICATIONS) {
+    res.status(202).json({ data: null, notificationsDisabled: true });
+    return;
+  }
   if (!ensureSupabase(res)) return;
   const payload = req.body || {};
   const context = requireUserContext(req, res);
@@ -12015,7 +12229,14 @@ app.post('/api/admin/notifications', async (req, res) => {
       .select('*')
       .single();
 
-    if (error) throw error;
+    if (error) {
+      if (isNotificationsTableMissingError(error)) {
+        logNotificationsMissingTable('admin.create', { code: error.code });
+        res.status(202).json({ data: null, notificationsDisabled: true });
+        return;
+      }
+      throw error;
+    }
 
     if (!scheduledFor && notificationDispatcher?.enqueueDispatch) {
       notificationDispatcher.enqueueDispatch({
@@ -12027,12 +12248,21 @@ app.post('/api/admin/notifications', async (req, res) => {
 
     res.status(201).json({ data });
   } catch (error) {
+    if (isNotificationsTableMissingError(error)) {
+      logNotificationsMissingTable('admin.create.catch', { message: error?.message });
+      res.status(202).json({ data: null, notificationsDisabled: true });
+      return;
+    }
     console.error('Failed to create notification:', error);
     res.status(500).json({ error: 'Unable to create notification' });
   }
 });
 
 app.post('/api/admin/notifications/:id/read', async (req, res) => {
+  if (!ENABLE_NOTIFICATIONS) {
+    res.json({ data: null, notificationsDisabled: true });
+    return;
+  }
   if (!ensureSupabase(res)) return;
   const { id } = req.params;
   const { read = true } = req.body || {};
@@ -12047,7 +12277,14 @@ app.post('/api/admin/notifications/:id/read', async (req, res) => {
       .eq('id', id)
       .maybeSingle();
 
-    if (existing.error) throw existing.error;
+    if (existing.error) {
+      if (isNotificationsTableMissingError(existing.error)) {
+        logNotificationsMissingTable('admin.markRead.lookup', { code: existing.error.code });
+        res.json({ data: null, notificationsDisabled: true });
+        return;
+      }
+      throw existing.error;
+    }
     const note = existing.data;
     if (!note) {
       res.status(404).json({ error: 'Notification not found' });
@@ -12076,15 +12313,31 @@ app.post('/api/admin/notifications/:id/read', async (req, res) => {
       .select('*')
       .single();
 
-    if (error) throw error;
+    if (error) {
+      if (isNotificationsTableMissingError(error)) {
+        logNotificationsMissingTable('admin.markRead.update', { code: error.code });
+        res.json({ data: null, notificationsDisabled: true });
+        return;
+      }
+      throw error;
+    }
     res.json({ data });
   } catch (error) {
+    if (isNotificationsTableMissingError(error)) {
+      logNotificationsMissingTable('admin.markRead.catch', { message: error?.message });
+      res.json({ data: null, notificationsDisabled: true });
+      return;
+    }
     console.error('Failed to update notification status:', error);
     res.status(500).json({ error: 'Unable to update notification' });
   }
 });
 
 app.delete('/api/admin/notifications/:id', async (req, res) => {
+  if (!ENABLE_NOTIFICATIONS) {
+    res.status(204).end();
+    return;
+  }
   if (!ensureSupabase(res)) return;
   const { id } = req.params;
   const context = requireUserContext(req, res);
@@ -12098,7 +12351,14 @@ app.delete('/api/admin/notifications/:id', async (req, res) => {
       .eq('id', id)
       .maybeSingle();
 
-    if (existing.error) throw existing.error;
+    if (existing.error) {
+      if (isNotificationsTableMissingError(existing.error)) {
+        logNotificationsMissingTable('admin.delete.lookup', { code: existing.error.code });
+        res.status(204).end();
+        return;
+      }
+      throw existing.error;
+    }
     const note = existing.data;
     if (!note) {
       res.status(204).end();
@@ -12121,9 +12381,21 @@ app.delete('/api/admin/notifications/:id', async (req, res) => {
     }
 
     const { error } = await supabase.from('notifications').delete().eq('id', id);
-    if (error) throw error;
+    if (error) {
+      if (isNotificationsTableMissingError(error)) {
+        logNotificationsMissingTable('admin.delete.exec', { code: error.code });
+        res.status(204).end();
+        return;
+      }
+      throw error;
+    }
     res.status(204).end();
   } catch (error) {
+    if (isNotificationsTableMissingError(error)) {
+      logNotificationsMissingTable('admin.delete.catch', { message: error?.message });
+      res.status(204).end();
+      return;
+    }
     console.error('Failed to delete notification:', error);
     res.status(500).json({ error: 'Unable to delete notification' });
   }

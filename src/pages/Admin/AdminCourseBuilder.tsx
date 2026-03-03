@@ -87,8 +87,8 @@ const parseUploadKey = (key: string) => {
   return { moduleId, lessonId };
 };
 const LESSON_AUTOSAVE_DELAY = 900;
-const AUTOSAVE_BACKOFF_STEPS_MS = [5000, 15000, 30000, 60000] as const;
-const AUTOSAVE_MAX_FAILURES = 5;
+const AUTOSAVE_BACKOFF_STEPS_MS = [2000, 5000, 12000] as const;
+const AUTOSAVE_MAX_FAILURES = 3;
 const generateStableLessonId = (): string => {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
@@ -1377,6 +1377,20 @@ const AdminCourseBuilder = () => {
     clearAutoSaveBackoffTimer();
   }, [clearAutoSaveBackoffTimer]);
 
+  const isRetryableAutoSaveError = useCallback((error: unknown) => {
+    if (error instanceof SlugConflictError) return false;
+    if (error instanceof ApiError) {
+      if (typeof error.status !== 'number') return true;
+      if (error.status >= 500) return true;
+      if (error.status === 0 || error.status === 408 || error.status === 429) return true;
+      return false;
+    }
+    if (error && typeof (error as any).name === 'string' && (error as any).name === 'AbortError') {
+      return false;
+    }
+    return true;
+  }, []);
+
   const handleAutoSaveFailure = useCallback(
     (error: unknown) => {
       if (autoSaveHaltedRef.current) return;
@@ -1400,6 +1414,35 @@ const AdminCourseBuilder = () => {
           autoSavePauseLoggedRef.current = true;
         }
         handleAuthRequired('course.auto-save');
+        return;
+      }
+
+      if (!isRetryableAutoSaveError(error)) {
+        autoSaveHaltedRef.current = true;
+        autoSaveBackoffUntilRef.current = Number.POSITIVE_INFINITY;
+        clearAutoSaveBackoffTimer();
+        autoSavePauseLoggedRef.current = true;
+        showToast(
+          apiInfo?.message ?? 'Draft saved locally. Fix the highlighted issue, then retry.',
+          'warning',
+          6000,
+        );
+        setStatusBanner({
+          tone: 'warning',
+          title: 'Draft saved locally',
+          description:
+            apiInfo?.message ??
+            'Autosave paused after a validation or request error. Resolve the issue, then retry.',
+          icon: AlertTriangle,
+          actionLabel: 'Retry now',
+          onAction: () => {
+            resetAutoSaveFailures();
+            setStatusBanner(null);
+            autoSaveHaltedRef.current = false;
+            autoSaveBackoffUntilRef.current = 0;
+            setAutoSaveRetryNonce((prev) => prev + 1);
+          },
+        });
         return;
       }
 
@@ -1440,7 +1483,15 @@ const AdminCourseBuilder = () => {
 
       scheduleAutoSaveRetry(delay);
     },
-    [clearAutoSaveBackoffTimer, handleAuthRequired, resetAutoSaveFailures, scheduleAutoSaveRetry, setStatusBanner, showToast],
+    [
+      clearAutoSaveBackoffTimer,
+      handleAuthRequired,
+      isRetryableAutoSaveError,
+      resetAutoSaveFailures,
+      scheduleAutoSaveRetry,
+      setStatusBanner,
+      showToast,
+    ],
   );
 
   const publishIssueCount = effectiveValidationSummary.issues.length;

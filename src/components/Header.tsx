@@ -33,7 +33,9 @@ const Header = () => {
   const userMenuRef = useRef<HTMLDivElement | null>(null);
   const userMenuButtonRef = useRef<HTMLButtonElement | null>(null);
   const isLoggedIn = Boolean(user) && (isAuthenticated?.admin || isAuthenticated?.lms);
-  const notificationsEnabled = Boolean(isAuthenticated?.lms) && !authInitializing;
+  const notificationsFeatureEnabled =
+    (import.meta.env?.VITE_ENABLE_NOTIFICATIONS ?? '').toString().trim().toLowerCase() !== 'false';
+  const notificationsEnabled = notificationsFeatureEnabled && Boolean(isAuthenticated?.lms) && !authInitializing;
   const displayName = useMemo(() => {
     if (!user) return '';
     const composed = `${user.firstName || ''} ${user.lastName || ''}`.trim();
