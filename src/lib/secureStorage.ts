@@ -674,8 +674,12 @@ export function migrateFromLocalStorage(): void {
     
     // Clear any other sensitive data patterns
     const sensitivePatterns = ['token', 'auth', 'password', 'session', 'secret'];
-    Object.keys(window.localStorage).forEach(key => {
-      if (sensitivePatterns.some(pattern => key.toLowerCase().includes(pattern))) {
+    const isAllowedAuthStorageKey = (key: string) => AUTH_ALLOWED_KEYS.has(key) || SUPABASE_AUTH_TOKEN_REGEX.test(key);
+    Object.keys(window.localStorage).forEach((key) => {
+      if (isAllowedAuthStorageKey(key)) {
+        return;
+      }
+      if (sensitivePatterns.some((pattern) => key.toLowerCase().includes(pattern))) {
         console.warn(`⚠️ Removing potentially sensitive data from localStorage: ${key}`);
         window.localStorage.removeItem(key);
         removedKeys.push(key);

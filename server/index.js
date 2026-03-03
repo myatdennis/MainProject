@@ -6858,120 +6858,91 @@ app.get('/api/client/me', authenticate, async (req, res) => {
 
 // Assignments listing for client: return active assignments for a user
 app.get('/api/client/assignments', authenticate, async (req, res) => {
-  const queryUserId =
-    typeof req.query.user_id === 'string'
-      ? req.query.user_id
-      : typeof req.query.userId === 'string'
-      ? req.query.userId
-      : '';
-  const normalizedQueryUserId = queryUserId ? queryUserId.toString().trim().toLowerCase() : '';
-  const sessionUserId = (req.user && (req.user.userId || req.user.id)) || '';
-  const normalizedSessionUserId = sessionUserId ? sessionUserId.toString().trim().toLowerCase() : '';
-  const isAdminUser = (req.user?.role || '').toLowerCase() === 'admin';
-  const targetUserId = isAdminUser && normalizedQueryUserId ? normalizedQueryUserId : normalizedSessionUserId;
-  const includeCompletedAssignments =
-    String(req.query.includeCompleted || req.query.include_completed || 'true').toLowerCase() === 'true';
-  const requestId = req.requestId;
+  const context = requireUserContext(req, res);
+  if (!context) return;
 
-  if (!targetUserId) {
-    res.status(401).json({ error: 'not_authenticated', message: 'Authentication required to fetch assignments' });
+  const requestId = req.requestId;
+  const normalizedUserId = String(context.userId || '')
+    .trim()
+    .toLowerCase();
+
+  if (!normalizedUserId) {
+    res.status(401).json({ data: [], count: 0, orgId: null, error: 'not_authenticated' });
     return;
   }
 
-  if (!isAdminUser && normalizedQueryUserId && normalizedQueryUserId !== normalizedSessionUserId) {
-    logger.warn('client_assignments_user_override_blocked', {
-      requestId,
-      requestedUserId: normalizedQueryUserId,
-      sessionUserId: normalizedSessionUserId,
-    });
-  }
+  const parseBoolean = (value, defaultValue = true) => {
+    if (value === undefined || value === null) return defaultValue;
+    const normalized = String(value).trim().toLowerCase();
+    return ['1', 'true', 'yes', 'on'].includes(normalized);
+  };
 
-  const resolvedOrgFilter = (() => {
-    if (isAdminUser) {
-      const orgParam =
-        typeof req.query.orgId === 'string'
-          ? req.query.orgId
-          : typeof req.query.organizationId === 'string'
-          ? req.query.organizationId
-          : '';
-      return orgParam ? orgParam.trim() : null;
-    }
-    if (req.user?.organizationId) {
-      return String(req.user.organizationId).trim();
-    }
-    return null;
-  })();
+  const includeCompletedAssignments = parseBoolean(
+    req.query.include_completed ?? req.query.includeCompleted ?? undefined,
+    true,
+  );
 
-  const respond = (rows = [], meta = {}) =>
-    res.json({
+  const requestedOrgId = pickOrgId(
+    req.query.organization_id,
+    req.query.organizationId,
+    req.query.org_id,
+    req.query.orgId,
+  );
+
+  const resolvedOrgId =
+    normalizeOrgIdValue(requestedOrgId) || context.requestedOrgId || normalizeOrgIdValue(req.activeOrgId) || null;
+
+  const respond = (status, rows, extra = {}) =>
+    res.status(status).json({
       data: rows,
-      meta: {
-        requestId,
-        userId: targetUserId,
-        orgFilter: resolvedOrgFilter,
-        ...meta,
-      },
+      count: Array.isArray(rows) ? rows.length : 0,
+      orgId: resolvedOrgId,
+      ...extra,
     });
 
   if (!supabase) {
     if (E2E_TEST_MODE || DEV_FALLBACK) {
       const rows = (e2eStore.assignments || []).filter((assignment) => {
         if (!assignment || assignment.active === false) return false;
-        return String(assignment.user_id || '').toLowerCase() === targetUserId;
+        return String(assignment.user_id || '').toLowerCase() === normalizedUserId;
       });
-      respond(rows, { source: 'demo' });
+      respond(200, rows);
       return;
     }
-    respond([], { source: 'disabled' });
+    respond(200, []);
     return;
   }
 
   try {
-    const tablesToTry = ['course_assignments', 'assignments'];
-    let assignments = [];
+    let query = supabase
+      .from('course_assignments')
+      .select('*')
+      .eq('user_id', normalizedUserId)
+      .order('updated_at', { ascending: false, nullsFirst: false })
+      .order('created_at', { ascending: false, nullsFirst: false });
 
-    for (const table of tablesToTry) {
-      let query = supabase
-        .from(table)
-        .select('*')
-        .eq('user_id', targetUserId)
-        .order('updated_at', { ascending: false });
-
-      if (table === 'assignments') {
-        if (includeCompletedAssignments) {
-          query = query.or('active.eq.true,status.eq.completed,status.eq.in-progress,status.eq.assigned');
-        } else {
-          query = query.eq('active', true);
-        }
-      }
-
-      if (resolvedOrgFilter) {
-        if (table === 'assignments') {
-          query = query.or(`organization_id.eq.${resolvedOrgFilter},organization_id.is.null`);
-        }
-      }
-
-      const { data, error } = await query;
-      if (error) {
-        const missingRelation = typeof error.message === 'string' && /relation/.test(error.message);
-        if (missingRelation) {
-          continue;
-        }
-        throw error;
-      }
-
-      assignments = data || [];
-      break;
+    if (!includeCompletedAssignments) {
+      query = query.eq('active', true).in('status', ['assigned', 'in-progress']);
     }
 
-    respond(assignments, { source: 'supabase' });
-  } catch (err) {
+    if (resolvedOrgId) {
+      query = query.eq('organization_id', resolvedOrgId);
+    }
+
+    const { data, error } = await query;
+    if (error) {
+      throw error;
+    }
+
+    respond(200, data || []);
+  } catch (error) {
     logger.error('client_assignments_fetch_failed', {
       requestId,
-      userId: targetUserId,
-      error: err instanceof Error ? err.message : err,
+      userId: normalizedUserId,
+      code: error?.code,
+      message: error?.message,
     });
-    respond([], { warning: 'fetch_failed', source: 'fallback' });
+    respond(500, [], { error: 'fetch_failed' });
   }
 });
 

@@ -6,7 +6,7 @@ import { getUserSession, secureGet, secureSet, secureRemove } from '../lib/secur
 import apiRequest, { ApiError as RequestError } from './apiClient';
 
 const STORAGE_KEY = 'huddle_course_assignments_v1';
-const ASSIGNMENTS_TABLE = 'assignments';
+const ASSIGNMENTS_TABLE = 'course_assignments';
 let assignmentsTableUnavailable = false;
 let assignmentsTableWarningLogged = false;
 
@@ -394,6 +394,7 @@ export const mapAssignmentsFromApiRows = (rows: any[]): CourseAssignment[] => {
         const courseId = row.course_id ?? row.courseId;
         const userIdRaw = row.user_id ?? row.userId ?? '';
         const dueDate = row.due_date ?? row.dueAt ?? row.due_at ?? null;
+        const organizationId = row.organization_id ?? row.organizationId ?? null;
         return mapSupabaseAssignment({
           id: row.id,
           course_id: courseId,
@@ -405,6 +406,7 @@ export const mapAssignmentsFromApiRows = (rows: any[]): CourseAssignment[] => {
           assigned_by: row.assigned_by ?? null,
           created_at: row.created_at ?? new Date().toISOString(),
           updated_at: row.updated_at ?? new Date().toISOString(),
+          organization_id: organizationId,
         } as SupabaseAssignmentRow);
       } catch (error) {
         console.warn('[assignmentStorage] Skipping malformed assignment row from API response:', error);
@@ -414,11 +416,11 @@ export const mapAssignmentsFromApiRows = (rows: any[]): CourseAssignment[] => {
     .filter((row): row is CourseAssignment => Boolean(row));
 };
 
-const fetchAssignmentsViaApi = async (): Promise<CourseAssignment[]> => {
+const fetchAssignmentsViaApi = async (): Promise<{ rows: CourseAssignment[]; failed: boolean }> => {
   const sessionUserId = getSessionUserId();
   if (!sessionUserId) {
     console.info('[assignmentStorage] Cannot fetch assignments via API without an authenticated session.');
-    return [];
+    return { rows: [], failed: true };
   }
   try {
     const params = new URLSearchParams({
@@ -427,16 +429,16 @@ const fetchAssignmentsViaApi = async (): Promise<CourseAssignment[]> => {
     const response = await apiRequest<{ data?: any[] }>(`/api/client/assignments?${params.toString()}`);
     const rows = Array.isArray(response?.data) ? response.data : [];
     if (!rows.length) {
-      return [];
+      return { rows: [], failed: false };
     }
-  return mapAssignmentsFromApiRows(rows);
+    return { rows: mapAssignmentsFromApiRows(rows), failed: false };
   } catch (error) {
     if (error instanceof RequestError && (error.status === 401 || error.status === 403)) {
       console.warn('[assignmentStorage] Remote assignments request rejected (unauthorized).');
-      return [];
+      return { rows: [], failed: false };
     }
     console.warn('[assignmentStorage] Failed to load assignments via API:', error);
-    return [];
+    return { rows: [], failed: true };
   }
 };
 
@@ -448,78 +450,32 @@ export const getAssignmentsForUser = async (userId?: string | null): Promise<Cou
   }
 
   const sessionUserId = getSessionUserId();
+  const loadLocalForUser = () => loadLocalAssignments().filter((record) => record.userId === normalized);
+
   if (!sessionUserId) {
     console.info('[assignmentStorage] Skipping remote assignment fetch (no authenticated session).');
-  } else if (sessionUserId !== normalized) {
+    return loadLocalForUser();
+  }
+
+  if (sessionUserId !== normalized) {
     console.warn('[assignmentStorage] Requested user does not match authenticated session; using local fallback.');
-  } else {
-    const apiAssignments = await fetchAssignmentsViaApi();
-    if (apiAssignments.length > 0) {
-      return apiAssignments;
-    }
+    return loadLocalForUser();
   }
 
-  try {
-    const supabase = await getAuthedSupabaseClient();
-    if (supabase) {
-      const { data, error } = await supabase
-        .from(ASSIGNMENTS_TABLE)
-        .select('*')
-        .eq('user_id', normalized)
-        .order('updated_at', { ascending: false });
-
-      if (error) {
-        if (handleAssignmentsTableMissing('getAssignmentsForUser', error)) {
-          return loadLocalAssignments().filter((record) => record.userId === normalized);
-        }
-        throw new Error(error.message);
-      }
-
-      if (data && data.length > 0) {
-        return data.map(mapSupabaseAssignment);
-      }
-    } else if (supabaseReady()) {
-      console.info('[assignmentStorage] Skipping direct Supabase fetch (no authenticated session).');
-    }
-  } catch (error) {
-    console.warn('[assignmentStorage] Supabase fetch failed, falling back to local assignments:', error);
+  const { rows, failed } = await fetchAssignmentsViaApi();
+  if (!failed) {
+    return rows;
   }
 
-  return loadLocalAssignments().filter((record) => record.userId === normalized);
+  return loadLocalForUser();
 };
 
 export const getAssignment = async (
   courseId: string,
   userId: string
 ): Promise<CourseAssignment | undefined> => {
-  const normalized = userId.toLowerCase();
-
-  return withSupabaseFallback<CourseAssignment | undefined>(
-    async () => {
-      const supabase = await getSupabase();
-      if (!supabase) throw new Error('Supabase unavailable');
-      const { data, error } = await supabase
-        .from(ASSIGNMENTS_TABLE)
-        .select('*')
-        .eq('course_id', courseId)
-        .eq('user_id', normalized);
-
-      if (error) {
-        if (handleAssignmentsTableMissing('getAssignment', error)) {
-          return loadLocalAssignments().find(
-            (record) => record.courseId === courseId && record.userId === normalized,
-          );
-        }
-        throw new Error(error.message);
-      }
-
-      const record = Array.isArray(data) ? data[0] : data;
-      return record ? mapSupabaseAssignment(record as SupabaseAssignmentRow) : undefined;
-    },
-    () => loadLocalAssignments().find(
-      (record) => record.courseId === courseId && record.userId === normalized
-    )
-  );
+  const assignments = await getAssignmentsForUser(userId);
+  return assignments.find((record) => record.courseId === courseId);
 };
 
 export const updateAssignmentProgress = async (

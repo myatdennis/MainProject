@@ -139,4 +139,31 @@ describe('assignmentStorage session enforcement', () => {
     expect(result).toEqual([]);
     expect(mockApiRequest).toHaveBeenCalledTimes(1);
   });
+
+  it('falls back to local assignments when API request fails', async () => {
+    mockGetUserSession.mockReturnValue({ id: 'user-123' });
+    mockApiRequest.mockRejectedValue(new Error('network down'));
+
+    const cachedAssignment: CourseAssignment = {
+      id: 'assign-1',
+      courseId: 'course-1',
+      userId: 'user-123',
+      organizationId: null,
+      status: 'assigned',
+      progress: 0,
+      dueDate: null,
+      note: null,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+      assignedBy: null,
+      active: true,
+    };
+    secureStore.set('huddle_course_assignments_v1', [cachedAssignment]);
+
+    const { getAssignmentsForUser } = await importModule();
+    const result = await getAssignmentsForUser('user-123');
+
+    expect(mockApiRequest).toHaveBeenCalledTimes(1);
+    expect(result).toEqual([cachedAssignment]);
+  });
 });

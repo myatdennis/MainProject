@@ -1289,8 +1289,32 @@ const ensureAssignmentScopedCatalog = async (
   try {
     const assignments = await getAssignmentsForUser(userId);
     if (!assignments || assignments.length === 0) {
-      emitCatalogDiagnostic('assignment_scope_empty', { userId });
+      emitCatalogDiagnostic('assignment_scope_empty', { userId, orgId });
       const cached = cacheKey ? loadCachedCatalog(cacheKey) : null;
+
+      if (cached && hasAnyCourses(cached)) {
+        console.info('[courseStore] Using cached catalog for prior assignments.');
+        saveCachedCatalog(cacheKey, cached);
+        setLearnerCatalogState({
+          status: 'ok',
+          lastUpdatedAt: Date.now(),
+          lastError: null,
+          detail: 'fallback_cached',
+        });
+        return cached;
+      }
+
+      // When org-scoped learners have no assignments, prefer a true empty catalog so the UI
+      // can show the “No assignments yet” state instead of default/guest content.
+      if (orgId) {
+        setLearnerCatalogState({
+          status: 'empty',
+          lastUpdatedAt: Date.now(),
+          lastError: null,
+          detail: 'no_assignments',
+        });
+        return {};
+      }
 
       const fallback = (() => {
         if (DEFAULT_CATALOG_ALLOWED) {
@@ -1302,10 +1326,6 @@ const ensureAssignmentScopedCatalog = async (
 
         if (hasAnyCourses(currentCourses)) {
           return { source: 'published' as const, catalog: currentCourses };
-        }
-
-        if (hasAnyCourses(cached)) {
-          return { source: 'cached' as const, catalog: cached as { [key: string]: Course } };
         }
 
         return { source: 'empty' as const, catalog: {} as { [key: string]: Course } };

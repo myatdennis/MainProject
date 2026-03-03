@@ -60,14 +60,18 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
     sessionStatus,
     surfaceAuthStatus,
     orgResolutionStatus,
+    membershipStatus,
+    hasActiveMembership,
     isAuthenticated,
     memberships,
     activeOrgId,
     setActiveOrganization,
+    setRequestedOrgHint,
     loadSession,
     user,
     organizationIds,
     logout,
+    lastActiveOrgId,
   } = useSecureAuth();
   const location = useLocation();
   const sessionRequestRef = useRef(false);
@@ -83,6 +87,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   const waitingForSurface = hasSession && effectiveSurfaceState === 'checking';
   const waitingForOrgContext =
     mode === 'admin' && hasSession && memberships.length > 0 && !activeOrgId && orgResolutionStatus !== 'ready';
+  const waitingForMembership = hasSession && (membershipStatus === 'idle' || membershipStatus === 'loading');
   const [adminCapability, setAdminCapability] = useState<AdminCapabilityState>({ status: 'idle', payload: null });
   const [adminGateStatus, setAdminGateStatus] = useState<'checking' | 'allowed' | 'unauthorized' | 'error'>(
     mode === 'admin' ? 'checking' : 'allowed',
@@ -103,6 +108,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
         surface: mode,
         path: location.pathname,
         sessionStatus,
+        membershipStatus,
         surfaceStatus: effectiveSurfaceState,
         orgResolutionStatus,
         hasSession,
@@ -111,7 +117,17 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
       };
       console.info(`[RequireAuth][${mode}] ${event}`, meta);
     },
-    [ROUTE_GUARD_DEBUG, location.pathname, mode, sessionStatus, effectiveSurfaceState, orgResolutionStatus, hasSession, user?.role],
+    [
+      ROUTE_GUARD_DEBUG,
+      location.pathname,
+      mode,
+      sessionStatus,
+      membershipStatus,
+      effectiveSurfaceState,
+      orgResolutionStatus,
+      hasSession,
+      user?.role,
+    ],
   );
 
   useEffect(() => {
@@ -176,7 +192,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
     return memberships.find((membership) => membership.orgId === activeOrgId) ?? null;
   }, [activeOrgId, memberships]);
 
-  const requestedOrgId = useMemo(() => {
+  const requestedOrgParam = useMemo(() => {
     if (!location.search) {
       return null;
     }
@@ -188,6 +204,10 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
       return null;
     }
   }, [location.search]);
+
+  useEffect(() => {
+    setRequestedOrgHint(requestedOrgParam ?? null);
+  }, [requestedOrgParam, setRequestedOrgHint]);
 
   const requestSessionLoad = useCallback(
     (reason: 'initial' | 'retry', options?: { force?: boolean }) => {
@@ -244,21 +264,21 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
     if (sessionStatus !== 'ready') {
       return;
     }
-    if (!requestedOrgId || requestedOrgId === activeOrgId) {
+    if (!requestedOrgParam || requestedOrgParam === activeOrgId) {
       return;
     }
     if (!memberships.length) {
       return;
     }
-    const hasMembership = memberships.some((membership) => membership.orgId === requestedOrgId);
+    const hasMembership = memberships.some((membership) => membership.orgId === requestedOrgParam);
     if (!hasMembership) {
       return;
     }
-    logGuardEvent('apply_requested_org', { requestedOrgId });
-    setActiveOrganization(requestedOrgId).catch((error) => {
+    logGuardEvent('apply_requested_org', { requestedOrgId: requestedOrgParam });
+    setActiveOrganization(requestedOrgParam).catch((error) => {
       console.warn('[RequireAuth] Failed to switch active organization', error);
     });
-  }, [requestedOrgId, memberships, activeOrgId, setActiveOrganization, logGuardEvent, sessionStatus]);
+  }, [requestedOrgParam, memberships, activeOrgId, setActiveOrganization, logGuardEvent, sessionStatus]);
 
   useEffect(() => {
     if (authInitializing || sessionStatus !== 'ready') {
@@ -601,39 +621,14 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
     logGuardEvent,
   ]);
 
-  const normalizeRole = (role?: string | null) => (role ? role.trim().toLowerCase() : '');
-  const ADMIN_ROLES = useMemo(() => new Set(['owner', 'admin', 'manager', 'editor', 'platform_admin']), []);
-  const MEMBER_ROLES = useMemo(() => new Set(['member', 'viewer', 'learner', 'instructor', 'coach', 'participant']), []);
-
-  const hasActiveMembership = useMemo(() => {
-    return memberships.some((membership) => (membership.status ?? 'active').toLowerCase() === 'active');
-  }, [memberships]);
-
-  const lmsRoleEligible = useMemo(() => {
-    if (!user) {
-      return false;
-    }
-    if (user.isPlatformAdmin || ADMIN_ROLES.has(normalizeRole(user.role))) {
-      return true;
-    }
-    if (
-      activeMembership &&
-      (activeMembership.status ?? 'active').toLowerCase() === 'active' &&
-      MEMBER_ROLES.has(normalizeRole(activeMembership.role))
-    ) {
-      return true;
-    }
-    if (hasActiveMembership) {
-      return true;
-    }
-    return MEMBER_ROLES.has(normalizeRole(user.role));
-  }, [ADMIN_ROLES, MEMBER_ROLES, activeMembership, hasActiveMembership, user]);
 
   const statusesReady = sessionStatus === 'ready' && orgResolutionStatus === 'ready' && effectiveSurfaceState === 'ready';
   const waitingForAdminGate = mode === 'admin' && hasSession && adminGateStatus === 'checking';
 
   const shouldShowSpinner =
-    !statusesReady || (hasSession && (waitingForSurface || waitingForOrgContext)) || waitingForAdminGate;
+    !statusesReady ||
+    (hasSession && (waitingForSurface || waitingForOrgContext || waitingForMembership)) ||
+    waitingForAdminGate;
 
   if (shouldShowSpinner) {
     return (
@@ -743,7 +738,8 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
       logGuardEvent('render_login_route', { reason: 'missing_lms_session', target: lmsTarget });
       return null;
     }
-    if (!lmsRoleEligible) {
+    const shouldRedirectForMembership = hasSession && membershipStatus === 'ready' && !hasActiveMembership;
+    if (shouldRedirectForMembership) {
       const membershipSnapshot = memberships.map((membership) => ({
         orgId: membership.orgId,
         role: membership.role ?? null,
@@ -755,9 +751,11 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
         userId: user?.id ?? null,
         userRole: user?.role ?? null,
         sessionStatus,
+        membershipStatus,
         surfaceStatus: effectiveSurfaceState,
         activeOrgId,
-        requestedOrgId,
+        requestedOrgId: requestedOrgParam,
+        lastActiveOrgId,
         membershipCount: memberships.length,
         membershipSnapshot,
         hasActiveMembership,
@@ -768,13 +766,20 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
       logGuardEvent('redirect_unauthorized', {
         reason: 'no_active_membership',
         activeOrgId,
-        requestedOrgId,
+        requestedOrgId: requestedOrgParam,
+        lastActiveOrgId,
         memberships: memberships.length,
       });
       return (
         <Navigate
           to="/unauthorized"
-          state={{ from: location, reason: 'no_active_membership', surface: 'lms', activeOrgId, requestedOrgId }}
+          state={{
+            from: location,
+            reason: 'no_active_membership',
+            surface: 'lms',
+            activeOrgId,
+            requestedOrgId: requestedOrgParam,
+          }}
           replace
         />
       );

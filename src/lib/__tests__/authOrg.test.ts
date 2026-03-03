@@ -1,0 +1,58 @@
+import { describe, it, expect } from 'vitest';
+import { resolvePreferredOrgId, type MembershipLike } from '../authOrg';
+
+const buildMembership = (overrides: Partial<MembershipLike>): MembershipLike => ({
+  orgId: 'org-default',
+  status: 'active',
+  acceptedAt: '2024-01-01T00:00:00Z',
+  createdAt: '2023-01-01T00:00:00Z',
+  ...overrides,
+});
+
+describe('resolvePreferredOrgId', () => {
+  it('prefers requested org when membership matches', () => {
+    const memberships = [
+      buildMembership({ orgId: 'org-1', acceptedAt: '2024-01-05T00:00:00Z' }),
+      buildMembership({ orgId: 'org-2', acceptedAt: '2025-01-01T00:00:00Z' }),
+    ];
+
+    const result = resolvePreferredOrgId({
+      memberships,
+      requestedOrgId: 'org-1',
+      lastActiveOrgId: 'org-2',
+    });
+
+    expect(result.activeOrgId).toBe('org-1');
+    expect(result.hasActiveMembership).toBe(true);
+  });
+
+  it('falls back to last active org when requested is invalid', () => {
+    const memberships = [
+      buildMembership({ orgId: 'org-5', acceptedAt: '2022-01-01T00:00:00Z' }),
+      buildMembership({ orgId: 'org-6', acceptedAt: '2023-01-01T00:00:00Z' }),
+    ];
+
+    const result = resolvePreferredOrgId({
+      memberships,
+      requestedOrgId: 'org-missing',
+      lastActiveOrgId: 'org-6',
+    });
+
+    expect(result.activeOrgId).toBe('org-6');
+  });
+
+  it('falls back to most recently accepted membership when no hints provided', () => {
+    const memberships = [
+      buildMembership({ orgId: 'legacy', acceptedAt: '2020-01-01T00:00:00Z' }),
+      buildMembership({ orgId: 'newest', acceptedAt: '2026-02-02T00:00:00Z' }),
+    ];
+
+    const result = resolvePreferredOrgId({
+      memberships,
+      requestedOrgId: null,
+      lastActiveOrgId: null,
+    });
+
+    expect(result.activeOrgId).toBe('newest');
+  });
+});

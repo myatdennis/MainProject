@@ -31,6 +31,8 @@ import axios from 'axios';
 import { toast } from 'react-hot-toast';
 import { logAuthRedirect } from '../utils/logAuthRedirect';
 import { resolveLoginPath, isLoginPath, isAdminSurface } from '../utils/surface';
+import { resolvePreferredOrgId } from '../lib/authOrg';
+import { createMembershipSelfHealTracker } from '../lib/membershipSelfHeal';
 
 if (axios?.defaults) {
   axios.defaults.withCredentials = true;
@@ -346,23 +348,6 @@ const normalizeMemberships = (rows: Array<Record<string, any>> | undefined): Use
 };
 
 
-const pickValidOrgId = (candidate: string | null | undefined, memberships: UserMembership[], fallback?: string | null): string | null => {
-  const isValid = (orgId: string | null | undefined) =>
-    Boolean(orgId) && memberships.some((membership) => membership.orgId === orgId && membership.status !== 'revoked');
-
-  if (isValid(candidate)) {
-    return candidate as string;
-  }
-  if (isValid(fallback)) {
-    return fallback as string;
-  }
-  const activeMembership = memberships.find((membership) => membership.status === 'active');
-  if (activeMembership) {
-    return activeMembership.orgId;
-  }
-  return memberships[0]?.orgId ?? null;
-};
-
 const computeAuthState = (user: UserSession | null, surface?: SessionSurface): AuthState => {
   if (!user) {
     return { lms: false, admin: false };
@@ -438,12 +423,16 @@ interface AuthContextType {
   authInitializing: boolean;
   authStatus: 'booting' | 'authenticated' | 'unauthenticated' | 'error';
   sessionStatus: 'idle' | 'loading' | 'ready';
+  membershipStatus: 'idle' | 'loading' | 'ready' | 'error';
+  hasActiveMembership: boolean;
   surfaceAuthStatus: Record<SessionSurface, SurfaceAuthStatus>;
   orgResolutionStatus: OrgResolutionStatus;
   user: UserSession | null;
   memberships: UserMembership[];
   organizationIds: string[];
   activeOrgId: string | null;
+  lastActiveOrgId: string | null;
+  requestedOrgId?: string | null;
   login: (email: string, password: string, type: 'lms' | 'admin', mfaCode?: string) => Promise<LoginResult>;
   register: (input: RegisterInput) => Promise<RegisterResult>;
   sendMfaChallenge: (email: string) => Promise<boolean>;
@@ -452,6 +441,7 @@ interface AuthContextType {
   refreshToken: (options?: RefreshOptions) => Promise<boolean>;
   forgotPassword: (email: string) => Promise<boolean>;
   setActiveOrganization: (orgId: string | null) => Promise<void>;
+  setRequestedOrgHint: (orgId: string | null) => void;
   reloadSession: (options?: { surface?: SessionSurface; force?: boolean }) => Promise<boolean>;
   loadSession: (options?: { surface?: SessionSurface }) => Promise<boolean>;
   retryBootstrap: () => void;
@@ -466,12 +456,17 @@ const defaultAuthContext: AuthContextType = {
   authInitializing: true,
   authStatus: 'booting',
   sessionStatus: 'idle',
+  membershipStatus: 'idle',
+  hasActiveMembership: false,
   surfaceAuthStatus: { admin: 'idle', lms: 'idle' },
   orgResolutionStatus: 'idle',
   user: null,
   memberships: [],
   organizationIds: [],
   activeOrgId: null,
+  lastActiveOrgId: null,
+  requestedOrgId: null,
+  setRequestedOrgHint() {},
   async login() {
     return {
       success: false,
@@ -531,8 +526,27 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   });
   const [user, setUser] = useState<UserSession | null>(null);
   const [memberships, setMemberships] = useState<UserMembership[]>([]);
+  const [membershipStatus, setMembershipStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
   const [organizationIds, setOrganizationIds] = useState<string[]>([]);
   const [activeOrgId, setActiveOrgIdState] = useState<string | null>(null);
+  const [hasActiveMembership, setHasActiveMembership] = useState(false);
+  const [requestedOrgHint, setRequestedOrgHintState] = useState<string | null>(null);
+  const [lastActiveOrgId, setLastActiveOrgIdState] = useState<string | null>(() => getActiveOrgPreference());
+  useEffect(() => {
+    const active = memberships.some(
+      (membership) => (membership.status ?? 'active').toLowerCase() === 'active' && Boolean(membership.orgId),
+    );
+    setHasActiveMembership(active);
+  }, [memberships]);
+
+  const setRequestedOrgHint = useCallback((orgId: string | null) => {
+    if (!orgId) {
+      setRequestedOrgHintState(null);
+      return;
+    }
+    setRequestedOrgHintState(orgId.trim() || null);
+  }, []);
+
   const [authInitializing, setAuthInitializing] = useState(true);
   const [authStatus, setAuthStatus] = useState<'booting' | 'authenticated' | 'unauthenticated' | 'error'>('booting');
   const [sessionStatus, setSessionStatus] = useState<'idle' | 'loading' | 'ready'>('idle');
@@ -557,6 +571,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   const lastSessionFetchResultRef = useRef<'idle' | 'authenticated' | 'unauthenticated' | 'error'>('idle');
   const bootstrapRunCountRef = useRef(0);
   const refreshRunCountRef = useRef(0);
+  const membershipSelfHealTrackerRef = useRef(createMembershipSelfHealTracker());
   type FetchServerSessionFn = (options?: {
     surface?: SessionSurface;
     signal?: AbortSignal;
@@ -621,8 +636,11 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         lastSessionFetchResultRef.current = 'unauthenticated';
         setUser(null);
         setMemberships([]);
+        setMembershipStatus('idle');
         setOrganizationIds([]);
         setActiveOrgIdState(null);
+        setLastActiveOrgIdState(null);
+        clearActiveOrgPreference();
         setIsAuthenticated({ lms: false, admin: false });
         if (persistTokens) {
           clearAuth(tokenReason);
@@ -640,6 +658,14 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           ? dedupeStrings(payload.organizationIds)
           : dedupeStrings(normalizedMemberships.map((membership) => membership.orgId));
 
+      const preferredOrg = resolvePreferredOrgId({
+        memberships: normalizedMemberships,
+        requestedOrgId: requestedOrgHint,
+        lastActiveOrgId: lastActiveOrgId ?? getActiveOrgPreference(),
+      });
+      setLastActiveOrgIdState(preferredOrg.activeOrgId ?? null);
+      setActiveOrgPreference(preferredOrg.activeOrgId ?? null);
+
       const session: UserSession = {
         id: payload.user.id,
         email: payload.user.email ?? payload.user.user_email ?? '',
@@ -654,22 +680,22 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         organizationId: payload.user.organizationId ?? payload.user.organization_id ?? orgIds[0] ?? null,
         organizationIds: orgIds,
         memberships: normalizedMemberships,
-        activeOrgId: payload.activeOrgId ?? payload.user.activeOrgId ?? payload.user.organizationId ?? null,
+        activeOrgId: preferredOrg.activeOrgId ?? payload.activeOrgId ?? payload.user.activeOrgId ?? payload.user.organizationId ?? null,
         platformRole: payload.user.platformRole ?? payload.user.platform_role ?? null,
         isPlatformAdmin: Boolean(payload.user.isPlatformAdmin ?? payload.user.platformRole === 'platform_admin'),
         appMetadata: payload.user.appMetadata ?? payload.user.app_metadata ?? null,
         userMetadata: payload.user.userMetadata ?? payload.user.user_metadata ?? null,
       };
 
-  const storedPreference = getActiveOrgPreference();
-  const preferredOrg = pickValidOrgId(session.activeOrgId, normalizedMemberships, storedPreference);
-  setActiveOrgPreference(preferredOrg);
-      session.activeOrgId = preferredOrg;
+      if (session.activeOrgId) {
+        session.organizationId = session.activeOrgId;
+      }
 
       setUser(session);
       setMemberships(normalizedMemberships);
+      setMembershipStatus('ready');
       setOrganizationIds(orgIds);
-      setActiveOrgIdState(preferredOrg);
+      setActiveOrgIdState(session.activeOrgId ?? null);
       setIsAuthenticated(computeAuthState(session, surface));
       setUserSession(session);
 
@@ -693,14 +719,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         }
       }
     },
-    [
-      getSkewedNow,
-      setUser,
-      setMemberships,
-      setOrganizationIds,
-      setActiveOrgIdState,
-      setIsAuthenticated,
-    ],
+    [getSkewedNow, lastActiveOrgId, requestedOrgHint, setUser, setMemberships, setMembershipStatus, setOrganizationIds, setActiveOrgIdState, setIsAuthenticated],
   );
 
   const handleSessionUnauthorized = useCallback(
@@ -898,6 +917,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         });
       }
       try {
+        setMembershipStatus('loading');
         const payloadRaw = await requestJsonWithClock<unknown>('/auth/session', {
           method: 'GET',
           signal,
@@ -986,6 +1006,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
           if (error.code === 'timeout' || isServerOrNetworkErrorStatus(error.status)) {
             lastSessionFetchResultRef.current = 'error';
+            setMembershipStatus('error');
             if (!silent) {
               setBootstrapError('Network issue while restoring your session. Please retry.');
             }
@@ -995,12 +1016,14 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             return false;
           }
 
+        setMembershipStatus('error');
           handleSessionUnauthorized({
             silent,
             reason: surface ? `${surface}_session_http_${error.status ?? 'unknown'}` : 'session_http_api_error',
             message: (error.body as { message?: string } | undefined)?.message,
             shouldRedirect: false,
           });
+          setMembershipStatus('error');
           continueAsGuest(surface ? `${surface}_session_http_${error.status ?? 'unknown'}` : 'session_http_api_error', {
             redirect: false,
           });
@@ -1008,6 +1031,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         }
         if (error instanceof DOMException && error.name === 'AbortError') {
           lastSessionFetchResultRef.current = 'error';
+          setMembershipStatus('error');
           if (!silent) {
             setBootstrapError('Session check canceled. Please retry.');
           }
@@ -1018,6 +1042,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         }
         if (typeof axios.isCancel === 'function' && axios.isCancel(error)) {
           lastSessionFetchResultRef.current = 'error';
+          setMembershipStatus('error');
           if (!silent) {
             setBootstrapError('Session check canceled. Please retry.');
           }
@@ -1029,6 +1054,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         if (!silent) {
           setBootstrapError('Network issue while restoring your session. Please check your connection and retry.');
         }
+        setMembershipStatus('error');
         lastSessionFetchResultRef.current = 'error';
         console.warn('[SecureAuth] Failed to reload session', error);
         if (import.meta.env.DEV) {
@@ -1371,6 +1397,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     async (orgId: string | null) => {
       const normalized = orgId && memberships.some((membership) => membership.orgId === orgId) ? orgId : null;
       setActiveOrgPreference(normalized);
+      setLastActiveOrgIdState(normalized);
       setActiveOrgIdState(normalized);
       setUser((prev) => {
         if (!prev) return prev;
@@ -1534,9 +1561,16 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           sessionStatus,
           surfaceAuthStatus,
           orgResolutionStatus,
+          membershipStatus,
+          membershipCount: memberships.length,
+          hasActiveMembership,
           hasSession,
+          activeOrgId,
+          requestedOrgId: requestedOrgHint,
+          lastActiveOrgId,
           storageMode: AUTH_STORAGE_MODE,
           lastRedirect,
+          redirectReason: reason,
           timestamp: new Date().toISOString(),
         };
         window.__HUDDLE_AUTH_DEBUG__ = payload;
@@ -1561,12 +1595,83 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         }
       }
     },
-    [authStatus, orgResolutionStatus, sessionStatus, surfaceAuthStatus, user],
+    [
+      authStatus,
+      orgResolutionStatus,
+      sessionStatus,
+      surfaceAuthStatus,
+      user,
+      membershipStatus,
+      memberships,
+      hasActiveMembership,
+      activeOrgId,
+      requestedOrgHint,
+      lastActiveOrgId,
+    ],
   );
 
   useEffect(() => {
     publishAuthDebugSnapshot('state_change');
   }, [publishAuthDebugSnapshot]);
+
+  useEffect(() => {
+    if (authInitializing) {
+      return;
+    }
+    if (membershipStatus !== 'ready') {
+      return;
+    }
+    if (!user?.id) {
+      return;
+    }
+    if (!user.organizationId && !user.activeOrgId) {
+      return;
+    }
+    if (memberships.length > 0) {
+      return;
+    }
+    const normalizedRole = String(user.role ?? '').toLowerCase();
+    if (normalizedRole === 'admin') {
+      return;
+    }
+    const orgId = user.activeOrgId ?? user.organizationId ?? null;
+    if (!orgId) {
+      return;
+    }
+    const tracker = membershipSelfHealTrackerRef.current;
+    if (!tracker.shouldAttempt(user.id, orgId)) {
+      return;
+    }
+    const supabaseClient = getSupabase();
+    if (!supabaseClient) {
+      return;
+    }
+
+    let cancelled = false;
+    const heal = async () => {
+      try {
+        const { data, error } = await supabaseClient.rpc('ensure_active_membership');
+        if (error) {
+          throw error;
+        }
+        if (!cancelled && data?.ensured) {
+          await fetchServerSession({ surface: 'lms', silent: true });
+        }
+      } catch (error) {
+        console.warn('[SecureAuth] membership_self_heal_failed', {
+          userId: user.id,
+          orgId,
+          error: error instanceof Error ? error.message : error,
+        });
+      }
+    };
+
+    void heal();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [authInitializing, fetchServerSession, membershipStatus, memberships, user]);
 
 // ============================================================================
 // Login
@@ -1923,12 +2028,16 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     authInitializing,
     authStatus,
     sessionStatus,
+    membershipStatus,
+    hasActiveMembership,
     surfaceAuthStatus,
     orgResolutionStatus,
     user,
     memberships,
     organizationIds,
     activeOrgId,
+    lastActiveOrgId,
+    requestedOrgId: requestedOrgHint,
     login,
     register,
     logout,
@@ -1937,6 +2046,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     sendMfaChallenge,
     verifyMfa,
     setActiveOrganization,
+    setRequestedOrgHint,
     reloadSession,
     loadSession,
     retryBootstrap,

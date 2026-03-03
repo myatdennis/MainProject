@@ -32,13 +32,27 @@ const attachDiagnostics = (rows, diagnostics) => {
 
 const getDiagnostics = (rows) => (rows && rows[DIAGNOSTIC_KEY]) || null;
 
+const ACTIVE_STATUSES = new Set(['active']);
+
+const isAcceptedMembership = (row = {}) => {
+  const normalizedStatus = String(row.status ?? 'active').toLowerCase();
+  const isActiveFlag = row.is_active;
+  const acceptedAt = row.accepted_at ?? row.created_at ?? null;
+  const activeStatus = ACTIVE_STATUSES.has(normalizedStatus);
+  const activeFlag = isActiveFlag === undefined || isActiveFlag === null || isActiveFlag === true;
+  return activeStatus && activeFlag && Boolean(acceptedAt);
+};
+
 const mapMembershipRecord = (row = {}) => {
   const resolvedOrgId = normalizeOrgId(row.organization_id ?? row.org_id);
   return {
     organization_id: resolvedOrgId,
     org_id: resolvedOrgId,
+    orgId: resolvedOrgId,
+    organizationId: resolvedOrgId,
     role: row.role || 'member',
     status: row.status || 'active',
+    is_active: row.is_active ?? true,
     organization_name: row.organization_name ?? row.org_name ?? null,
     organization_slug: row.organization_slug ?? row.org_slug ?? null,
     org_slug: row.org_slug ?? row.organization_slug ?? null,
@@ -48,22 +62,26 @@ const mapMembershipRecord = (row = {}) => {
     accepted_at: row.accepted_at ?? row.created_at ?? null,
     last_seen_at: row.last_seen_at ?? null,
     created_at: row.created_at ?? null,
+    updated_at: row.updated_at ?? null,
   };
 };
+
+const filterActiveMemberships = (rows = []) => rows.filter((row) => isAcceptedMembership(row));
 
 const fetchMembershipsFromBaseTables = async (userId, logPrefix) => {
   if (!supabase || !userId) return [];
   try {
     const { data: membershipRows, error } = await supabase
       .from('organization_memberships')
-      .select('org_id, role, created_at, updated_at')
-      .eq('user_id', userId);
+      .select('org_id, organization_id, role, status, is_active, accepted_at, created_at, updated_at, profile_id, user_id')
+      .or(`user_id.eq.${userId},profile_id.eq.${userId}`);
 
     if (error) {
       throw error;
     }
 
     const rows = Array.isArray(membershipRows) ? membershipRows : [];
+    const filteredRows = filterActiveMemberships(rows);
     const orgIds = Array.from(new Set(rows.map((row) => normalizeOrgId(row?.org_id)).filter(Boolean)));
 
     let orgMap = new Map();
@@ -79,18 +97,19 @@ const fetchMembershipsFromBaseTables = async (userId, logPrefix) => {
       orgMap = new Map((organizations || []).map((org) => [org.id, org]));
     }
 
-    return rows.map((row) => {
+    return filteredRows.map((row) => {
       const organization = orgMap.get(normalizeOrgId(row?.org_id)) || {};
       return mapMembershipRecord({
         org_id: row?.org_id,
         role: row?.role,
-        status: 'active',
+        status: row?.status ?? 'active',
+        is_active: row?.is_active ?? true,
         organization_name: organization.name || null,
         organization_slug: organization.slug || null,
         organization_status: organization.status || null,
         subscription: organization.subscription ?? null,
         features: organization.features ?? null,
-        accepted_at: row?.created_at || null,
+        accepted_at: row?.accepted_at || row?.created_at || null,
         last_seen_at: row?.updated_at || null,
         org_slug: organization.slug || null,
       });
@@ -141,7 +160,19 @@ export const getUserMemberships = async (userId, { logPrefix = '[memberships]' }
       return [];
     }
 
-    return data.map((row) => mapMembershipRecord(row));
+    const normalizedRows = data.map((row) => mapMembershipRecord(row));
+    const filtered = filterActiveMemberships(normalizedRows);
+    if (filtered.length === 0) {
+      const fallbackRows = await fetchMembershipsFromBaseTables(userId, logPrefix);
+      return attachDiagnostics(fallbackRows, {
+        code: 'empty_view_result',
+        message: 'membership view returned no active rows',
+        fallback: 'base_tables',
+        timestamp: new Date().toISOString(),
+      });
+    }
+
+    return filtered;
   } catch (error) {
     console.error(`${logPrefix} membership_lookup_error`, {
       userId,
