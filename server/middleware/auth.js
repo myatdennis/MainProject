@@ -4,7 +4,7 @@
  */
 
 import rateLimit from 'express-rate-limit';
-import supabase, { supabaseAuthClient } from '../lib/supabaseClient.js';
+import supabase, { supabaseAuthClient, supabaseEnv } from '../lib/supabaseClient.js';
 import { extractTokenFromHeader } from '../utils/jwt.js';
 import { getActiveOrgFromRequest } from '../utils/authCookies.js';
 import { getUserMemberships, getMembershipDiagnostics } from '../utils/memberships.js';
@@ -22,6 +22,14 @@ const tokenCache = new Map();
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const writableOrgRoles = new Set(['owner', 'admin', 'manager', 'editor']);
+const databaseHostForLogs = (() => {
+  try {
+    if (!process.env.DATABASE_URL) return null;
+    return new URL(process.env.DATABASE_URL).host || null;
+  } catch {
+    return null;
+  }
+})();
 
 const fetchUserProfileRole = async (userId) => {
   if (!userId || !supabase) {
@@ -479,16 +487,31 @@ export async function buildAuthContext(req, { optional = false } = {}) {
   const membershipMap = buildMembershipMap(memberships);
   const activeOrgId = determineActiveOrgId(req, memberships);
 
+  const requestedOrgId = getRequestedOrgId(req);
+  const membershipOrgIds = memberships.map((m) => m.orgId).filter(Boolean);
   const snapshot = {
     userId: supabaseUser.id,
     email: supabaseUser.email ?? null,
     membershipStatus,
     membershipCount: memberships.length,
     activeOrgId,
-    requestedOrgId: getRequestedOrgId(req),
+    requestedOrgId,
     diagnostics: membershipDiagnostics ?? null,
   };
-  console.info('[auth] membership_snapshot', snapshot);
+  const supabaseHost = supabaseEnv?.urlHost ?? null;
+  const membershipSummaryLine = [
+    '[auth] membership_snapshot',
+    `userId=${supabaseUser.id}`,
+    `email=${supabaseUser.email ?? 'unknown'}`,
+    `membershipStatus=${membershipStatus}`,
+    `membershipCount=${memberships.length}`,
+    `orgIds=[${membershipOrgIds.join(',')}]`,
+    `requestedOrgId=${requestedOrgId ?? 'none'}`,
+    `activeOrgId=${activeOrgId ?? 'none'}`,
+    `supabaseHost=${supabaseHost ?? 'not-set'}`,
+    `dbHost=${databaseHostForLogs ?? 'not-set'}`,
+  ].join(' ');
+  console.info(membershipSummaryLine);
 
   return {
     user: userPayload,

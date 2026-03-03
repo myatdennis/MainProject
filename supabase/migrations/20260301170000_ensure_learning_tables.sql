@@ -16,15 +16,32 @@ create index if not exists course_assignments_course_id_idx on public.course_ass
 create index if not exists course_assignments_user_id_idx on public.course_assignments(user_id);
 alter table public.course_assignments enable row level security;
 
-create policy if not exists "course_assignments_user_select"
-  on public.course_assignments
-  for select
-  using (user_id = auth.uid());
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'course_assignments'
+      AND policyname = 'course_assignments_user_select'
+  ) THEN
+    CREATE POLICY "course_assignments_user_select"
+      ON public.course_assignments
+      FOR SELECT
+      USING (user_id = auth.uid());
+  END IF;
 
-create policy if not exists "course_assignments_service_all"
-  on public.course_assignments
-  using (auth.role() = 'service_role')
-  with check (auth.role() = 'service_role');
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'course_assignments'
+      AND policyname = 'course_assignments_service_all'
+  ) THEN
+    CREATE POLICY "course_assignments_service_all"
+      ON public.course_assignments
+      USING (auth.role() = 'service_role')
+      WITH CHECK (auth.role() = 'service_role');
+  END IF;
+END $$;
 
 create table if not exists public.user_course_progress (
   id uuid primary key default gen_random_uuid(),
@@ -43,15 +60,31 @@ create unique index if not exists user_course_progress_unique on public.user_cou
 create index if not exists user_course_progress_course_idx on public.user_course_progress(course_id);
 alter table public.user_course_progress enable row level security;
 
-create policy if not exists "user_course_progress_self"
-  on public.user_course_progress
-  for select using (user_id = auth.uid())
-  with check (user_id = auth.uid());
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'user_course_progress'
+      AND policyname = 'user_course_progress_self'
+  ) THEN
+    CREATE POLICY "user_course_progress_self"
+      ON public.user_course_progress
+      FOR SELECT USING (user_id = auth.uid());
+  END IF;
 
-create policy if not exists "user_course_progress_service"
-  on public.user_course_progress
-  using (auth.role() = 'service_role')
-  with check (auth.role() = 'service_role');
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'user_course_progress'
+      AND policyname = 'user_course_progress_service'
+  ) THEN
+    CREATE POLICY "user_course_progress_service"
+      ON public.user_course_progress
+      USING (auth.role() = 'service_role')
+      WITH CHECK (auth.role() = 'service_role');
+  END IF;
+END $$;
 
 create table if not exists public.user_lesson_progress (
   id uuid primary key default gen_random_uuid(),
@@ -69,15 +102,31 @@ create table if not exists public.user_lesson_progress (
 create unique index if not exists user_lesson_progress_unique on public.user_lesson_progress(user_id, lesson_id);
 alter table public.user_lesson_progress enable row level security;
 
-create policy if not exists "user_lesson_progress_self"
-  on public.user_lesson_progress
-  for select using (user_id = auth.uid())
-  with check (user_id = auth.uid());
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'user_lesson_progress'
+      AND policyname = 'user_lesson_progress_self'
+  ) THEN
+    CREATE POLICY "user_lesson_progress_self"
+      ON public.user_lesson_progress
+      FOR SELECT USING (user_id = auth.uid());
+  END IF;
 
-create policy if not exists "user_lesson_progress_service"
-  on public.user_lesson_progress
-  using (auth.role() = 'service_role')
-  with check (auth.role() = 'service_role');
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'user_lesson_progress'
+      AND policyname = 'user_lesson_progress_service'
+  ) THEN
+    CREATE POLICY "user_lesson_progress_service"
+      ON public.user_lesson_progress
+      USING (auth.role() = 'service_role')
+      WITH CHECK (auth.role() = 'service_role');
+  END IF;
+END $$;
 
 create table if not exists public.quiz_attempts (
   id uuid primary key default gen_random_uuid(),
@@ -94,12 +143,28 @@ create index if not exists quiz_attempts_lesson_idx on public.quiz_attempts(less
 create index if not exists quiz_attempts_user_idx on public.quiz_attempts(user_id);
 alter table public.quiz_attempts enable row level security;
 
-create policy if not exists "quiz_attempts_self"
-  on public.quiz_attempts
-  for select using (user_id = auth.uid())
-  with check (user_id = auth.uid());
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'quiz_attempts'
+      AND policyname = 'quiz_attempts_self'
+  ) THEN
+    CREATE POLICY "quiz_attempts_self"
+      ON public.quiz_attempts
+      FOR SELECT USING (user_id = auth.uid());
+  END IF;
 
-create policy if not exists "quiz_attempts_service"
-  on public.quiz_attempts
-  using (auth.role() = 'service_role')
-  with check (auth.role() = 'service_role');
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND tablename = 'quiz_attempts'
+      AND policyname = 'quiz_attempts_service'
+  ) THEN
+    CREATE POLICY "quiz_attempts_service"
+      ON public.quiz_attempts
+      USING (auth.role() = 'service_role')
+      WITH CHECK (auth.role() = 'service_role');
+  END IF;
+END $$;

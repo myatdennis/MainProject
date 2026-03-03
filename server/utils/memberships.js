@@ -105,6 +105,11 @@ const mapMembershipRecord = (row = {}) => {
 
 const filterActiveMemberships = (rows = []) => rows.filter((row) => isAcceptedMembership(row));
 
+const membershipColumnState = {
+  detectionPromise: null,
+  columns: new Set(),
+};
+
 const detectOrganizationColumns = async () => {
   if (!process.env.DATABASE_URL) {
     return new Set();
@@ -118,6 +123,25 @@ const detectOrganizationColumns = async () => {
     return new Set(rows.map((row) => row.column_name));
   } catch (error) {
     console.warn('[memberships] organization column detection failed', {
+      message: error?.message || error,
+    });
+    return new Set();
+  }
+};
+
+const detectMembershipColumns = async () => {
+  if (!process.env.DATABASE_URL) {
+    return new Set();
+  }
+  try {
+    const rows = await sql`
+      select column_name
+      from information_schema.columns
+      where table_schema = 'public' and table_name = 'organization_memberships'
+    `;
+    return new Set(rows.map((row) => row.column_name));
+  } catch (error) {
+    console.warn('[memberships] membership column detection failed', {
       message: error?.message || error,
     });
     return new Set();
@@ -145,6 +169,26 @@ const ensureOrganizationColumnMetadata = async () => {
 const ORGANIZATION_BASE_COLUMNS = ['id', 'name', 'status', 'subscription'];
 let cachedOrganizationSelectClause = null;
 
+const ensureMembershipColumnMetadata = async () => {
+  if (membershipColumnState.detectionPromise) {
+    return membershipColumnState.detectionPromise;
+  }
+  membershipColumnState.detectionPromise = detectMembershipColumns()
+    .then((columns) => {
+      membershipColumnState.columns = columns;
+      return columns;
+    })
+    .catch((error) => {
+      console.warn('[memberships] membership column detection error', {
+        message: error?.message || error,
+      });
+      return membershipColumnState.columns;
+    });
+  return membershipColumnState.detectionPromise;
+};
+
+const hasMembershipProfileColumn = () => membershipColumnState.columns.has('profile_id');
+
 const getOrganizationSelectClause = async () => {
   if (cachedOrganizationSelectClause) {
     return cachedOrganizationSelectClause;
@@ -162,22 +206,71 @@ const getOrganizationSelectClause = async () => {
 
 // kick off metadata detection without blocking startup
 ensureOrganizationColumnMetadata().catch(() => {});
+ensureMembershipColumnMetadata().catch(() => {});
+
+const getMembershipSelectColumns = async () => {
+  await ensureMembershipColumnMetadata();
+  const baseColumns = [
+    'organization_id',
+    'role',
+    'status',
+    'is_active',
+    'accepted_at',
+    'created_at',
+    'updated_at',
+    'user_id',
+    'id',
+  ];
+  if (membershipColumnState.columns.has('profile_id')) {
+    baseColumns.push('profile_id');
+  }
+  return baseColumns.join(',');
+};
+
+const buildMembershipMatchFilter = (userId) => {
+  const normalized = String(userId || '').trim();
+  if (!normalized) {
+    return '';
+  }
+  if (hasMembershipProfileColumn()) {
+    return `user_id.eq.${normalized},profile_id.eq.${normalized}`;
+  }
+  return `user_id.eq.${normalized}`;
+};
+
+export const getMembershipColumnCapabilities = async () => {
+  await ensureMembershipColumnMetadata();
+  return {
+    hasProfileId: hasMembershipProfileColumn(),
+  };
+};
+
+export const buildMembershipFilterString = async (userId) => {
+  await ensureMembershipColumnMetadata();
+  return buildMembershipMatchFilter(userId);
+};
 
 const fetchMembershipsFromBaseTables = async (userId, logPrefix) => {
   if (!supabase || !userId) {
     return { rows: [], error: new Error('supabase_unavailable') };
   }
   try {
-    const { data: membershipRows, error } = await supabase
+    const selectClause = await getMembershipSelectColumns();
+    const filter = await buildMembershipFilterString(userId);
+    let query = supabase
       .from('organization_memberships')
-      .select(
-        'organization_id, role, status, is_active, accepted_at, created_at, updated_at, profile_id, user_id',
-      )
+      .select(selectClause)
       .eq('status', 'active')
-      .is('is_active', true)
-      .not('accepted_at', 'is', null)
-      .or(`user_id.eq.${userId},profile_id.eq.${userId}`);
+      .eq('is_active', true)
+      .not('accepted_at', 'is', null);
 
+    if (filter) {
+      query = query.or(filter);
+    } else {
+      query = query.eq('user_id', userId);
+    }
+
+    const { data: membershipRows, error } = await query;
     if (error) {
       throw error;
     }

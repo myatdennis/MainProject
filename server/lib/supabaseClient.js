@@ -9,9 +9,12 @@ const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
 const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
 
-const supabase = supabaseUrl && supabaseServiceKey ? createClient(supabaseUrl, supabaseServiceKey) : null;
+const supabaseAdminClient = supabaseUrl && supabaseServiceKey ? createClient(supabaseUrl, supabaseServiceKey) : null;
 
-const supabaseAuthClient = supabaseUrl && supabaseAnonKey ? createClient(supabaseUrl, supabaseAnonKey) : null;
+const supabaseUserClient = supabaseUrl && supabaseAnonKey ? createClient(supabaseUrl, supabaseAnonKey) : null;
+
+const supabase = supabaseAdminClient;
+const supabaseAuthClient = supabaseUserClient;
 
 /**
  * Lightweight, non-secret diagnostics used by health routes.
@@ -33,7 +36,7 @@ export const supabaseEnv = {
 };
 
 export default supabase;
-export { supabaseAuthClient };
+export { supabaseAuthClient, supabaseAdminClient, supabaseUserClient };
 
 export function isSupabaseConfigured() {
   return supabase !== null;

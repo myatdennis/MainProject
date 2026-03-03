@@ -60,6 +60,7 @@ import { sendEmail } from './services/emailService.js';
 import { createMediaService } from './services/mediaService.js';
 import { isJwtSecretConfigured } from './utils/jwt.js';
 import { writeErrorDiagnostics, summarizeRequestBody } from './utils/errorDiagnostics.js';
+import { getMembershipColumnCapabilities, buildMembershipFilterString } from './utils/memberships.js';
 import {
   COURSE_WITH_MODULES_LESSONS_SELECT,
   MODULE_LESSONS_FOREIGN_TABLE,
@@ -191,6 +192,32 @@ const ensureEnvironmentIsValid = () => {
 
 ensureEnvironmentIsValid();
 
+const requireCriticalSchema = async () => {
+  if (!process.env.DATABASE_URL) {
+    console.warn('[schema] DATABASE_URL missing; skipping critical schema verification.');
+    return;
+  }
+  try {
+    const rows = await sql`
+      select column_name
+      from information_schema.columns
+      where table_schema = 'public' and table_name = 'organization_memberships'
+    `;
+    const columnNames = rows.map((row) => row.column_name);
+    const requiredColumns = ['organization_id', 'user_id'];
+    const missing = requiredColumns.filter((column) => !columnNames.includes(column));
+    if (missing.length) {
+      fatalEnvError(
+        `organization_memberships table missing required column(s): ${missing.join(
+          ', ',
+        )}. Run latest migrations before starting the server.`,
+      );
+    }
+  } catch (error) {
+    fatalEnvError(`Failed to verify organization_memberships schema: ${error?.message || error}`);
+  }
+};
+
 const runSchemaDoctor = async () => {
   if (!process.env.DATABASE_URL) {
     logger.warn('schema_doctor_skipped', { reason: 'missing_database_url' });
@@ -232,6 +259,7 @@ const runSchemaDoctor = async () => {
   }
 };
 
+await requireCriticalSchema();
 await runSchemaDoctor();
 
 // Persistent storage file for demo mode
@@ -245,6 +273,14 @@ const supabaseUrlHost = (() => {
   if (!supabaseEnv.url) return null;
   try {
     return new URL(supabaseEnv.url).host || null;
+  } catch (_error) {
+    return null;
+  }
+})();
+const databaseHost = (() => {
+  try {
+    if (!process.env.DATABASE_URL) return null;
+    return new URL(process.env.DATABASE_URL).host || null;
   } catch (_error) {
     return null;
   }
@@ -1510,6 +1546,7 @@ const supabaseUrl = supabaseEnv.url;
 const supabaseServiceRoleKey = supabaseEnv.serviceRoleKey;
 const supabaseAnonKey = supabaseEnv.anonKey;
 const missingSupabaseEnvVars = [...supabaseEnv.missing];
+const DEBUG_MEMBERSHIP_TOKEN = process.env.DEBUG_MEMBERSHIP_TOKEN || null;
 
 logger.info('diagnostics_supabase_env', {
   supabaseUrlConfigured: Boolean(supabaseUrl),
@@ -5022,6 +5059,71 @@ app.get('/api/diagnostics/schema', async (req, res) => {
       message: error?.message || error,
     });
     res.status(500).json({ ok: false, error: 'schema_check_failed', message: error?.message || String(error) });
+  }
+});
+
+app.get('/api/debug/memberships', async (req, res) => {
+  if (!DEBUG_MEMBERSHIP_TOKEN) {
+    return res.status(404).json({ error: 'disabled' });
+  }
+  const providedToken = typeof req.headers['x-debug-token'] === 'string' ? req.headers['x-debug-token'] : null;
+  if (providedToken !== DEBUG_MEMBERSHIP_TOKEN) {
+    return res.status(403).json({ error: 'forbidden' });
+  }
+  if (!supabase) {
+    return res.status(503).json({ error: 'supabase_unconfigured' });
+  }
+  const userIdParam = typeof req.query.userId === 'string' ? req.query.userId : '';
+  const userId = userIdParam.trim();
+  if (!userId) {
+    return res.status(400).json({ error: 'user_id_required' });
+  }
+  try {
+    const capabilities = await getMembershipColumnCapabilities();
+    const selectColumns = [
+      'id',
+      'organization_id',
+      'user_id',
+      'role',
+      'status',
+      'is_active',
+      'accepted_at',
+      'created_at',
+      'updated_at',
+    ];
+    if (capabilities.hasProfileId) {
+      selectColumns.push('profile_id');
+    }
+    const filter = await buildMembershipFilterString(userId);
+    let query = supabase
+      .from('organization_memberships')
+      .select(selectColumns.join(','))
+      .eq('status', 'active')
+      .eq('is_active', true)
+      .not('accepted_at', 'is', null);
+    if (filter) {
+      query = query.or(filter);
+    } else {
+      query = query.eq('user_id', userId);
+    }
+    const { data, error } = await query;
+    if (error) {
+      throw error;
+    }
+    res.json({
+      userId,
+      supabaseUrlHost,
+      dbHost: databaseHost,
+      membershipCount: Array.isArray(data) ? data.length : 0,
+      membershipRows: data || [],
+    });
+  } catch (error) {
+    logger.error('debug_memberships_failed', {
+      userId,
+      message: error?.message ?? String(error),
+      code: error?.code ?? null,
+    });
+    res.status(500).json({ error: 'debug_memberships_failed', message: error?.message ?? String(error) });
   }
 });
 

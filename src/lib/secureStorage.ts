@@ -120,6 +120,13 @@ const recordStorageProbe = (mode: string, error?: unknown) => {
 
 const AUTH_ALLOWED_KEYS = new Set(['secure_thc-supabase-auth', 'thc-supabase-auth']);
 const SUPABASE_AUTH_TOKEN_REGEX = /^sb-.*-auth-token$/i;
+const isAllowedAuthStorageKey = (key: string) =>
+  AUTH_ALLOWED_KEYS.has(key) || SUPABASE_AUTH_TOKEN_REGEX.test(key);
+let lastStorageCleanupReport: { removed: string[]; preserved: string[] } = { removed: [], preserved: [] };
+export function logStorageCleanupReport(): void {
+  if (typeof console === 'undefined') return;
+  console.info('[secureStorage] cleanup_report', lastStorageCleanupReport);
+}
 
 const getBrowserSessionStorage = (): StorageLike | null => {
   if (typeof window === 'undefined' || typeof window.sessionStorage === 'undefined') {
@@ -650,6 +657,7 @@ export function migrateFromLocalStorage(): void {
       return;
     }
     const removedKeys: string[] = [];
+    const preservedKeys: string[] = [];
     // Migrate user data
     const oldUser = window.localStorage.getItem('user');
     if (oldUser) {
@@ -734,9 +742,9 @@ export function migrateFromLocalStorage(): void {
     
     // Clear any other sensitive data patterns
     const sensitivePatterns = ['token', 'auth', 'password', 'session', 'secret'];
-    const isAllowedAuthStorageKey = (key: string) => AUTH_ALLOWED_KEYS.has(key) || SUPABASE_AUTH_TOKEN_REGEX.test(key);
     Object.keys(window.localStorage).forEach((key) => {
       if (isAllowedAuthStorageKey(key)) {
+        preservedKeys.push(key);
         return;
       }
       if (sensitivePatterns.some((pattern) => key.toLowerCase().includes(pattern))) {
@@ -747,6 +755,14 @@ export function migrateFromLocalStorage(): void {
     });
     if (removedKeys.length > 0) {
       console.log('[secureStorage] Cleared sensitive localStorage entries:', removedKeys);
+    }
+    const dedupe = (values: string[]) => Array.from(new Set(values));
+    lastStorageCleanupReport = {
+      removed: dedupe(removedKeys),
+      preserved: dedupe(preservedKeys),
+    };
+    if (import.meta.env?.DEV) {
+      logStorageCleanupReport();
     }
   } catch (error) {
     console.error('Migration failed:', error);
@@ -768,6 +784,9 @@ export function auditLocalStorage(): string[] {
   }
 
   Object.keys(window.localStorage).forEach(key => {
+    if (isAllowedAuthStorageKey(key)) {
+      return;
+    }
     if (sensitivePatterns.some(pattern => key.toLowerCase().includes(pattern))) {
       warnings.push(key);
     }
