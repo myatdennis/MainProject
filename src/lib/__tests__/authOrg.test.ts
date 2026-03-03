@@ -24,6 +24,7 @@ describe('resolvePreferredOrgId', () => {
 
     expect(result.activeOrgId).toBe('org-1');
     expect(result.hasActiveMembership).toBe(true);
+    expect(result.source).toBe('requested');
   });
 
   it('falls back to last active org when requested is invalid', () => {
@@ -39,6 +40,7 @@ describe('resolvePreferredOrgId', () => {
     });
 
     expect(result.activeOrgId).toBe('org-6');
+    expect(result.source).toBe('lastActive');
   });
 
   it('falls back to most recently accepted membership when no hints provided', () => {
@@ -54,5 +56,6 @@ describe('resolvePreferredOrgId', () => {
     });
 
     expect(result.activeOrgId).toBe('newest');
+    expect(result.source).toBe('membership');
   });
 });

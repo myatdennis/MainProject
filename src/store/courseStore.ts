@@ -7,7 +7,7 @@ import {
 import { fetchPublishedCourses, fetchCourse } from '../dal/clientCourses';
 import { Course, Module, Lesson } from '../types/courseTypes';
 import { slugify, normalizeCourse } from '../utils/courseNormalization';
-import { getUserSession, getActiveOrgPreference } from '../lib/secureStorage';
+import { getActiveOrgPreference } from '../lib/secureStorage';
 import { getAssignmentsForUser } from '../utils/assignmentStorage';
 import type { CourseAssignment } from '../types/assignment';
 import { refreshRuntimeStatus, getRuntimeStatus } from '../state/runtimeStatus';
@@ -21,6 +21,7 @@ import { canonicalizeLessonContent } from '../utils/lessonContent';
 import { SlugConflictError } from '../utils/slugConflict';
 import isUuid from '../utils/isUuid';
 import { isAdminSurface } from '../utils/surface';
+import { resolveOrgContextFromBridge } from './courseStoreOrgBridge';
 
 // Course data types
 export interface ScenarioChoice {
@@ -1150,40 +1151,36 @@ const setLearnerCatalogState = (update: Partial<LearnerCatalogState>) => {
   notifySubscribers();
 };
 
-const resolveOrgContext = (): { orgId: string | null; role: string | null; userId: string | null } => {
-  if (typeof window === 'undefined') {
-    return { orgId: null, role: null, userId: null };
-  }
-  try {
-    const session = getUserSession();
-    if (session) {
-      const activeMembership = session.memberships?.find((membership) => membership?.status === 'active');
-      const membershipOrgId =
-        resolveOrgIdFromCarrier(
-          session.activeOrgId,
-          (session as Record<string, any>).organization_id,
-          session.organizationId,
-          activeMembership ?? null,
-          ...(session.memberships || [])
-        ) || null;
-      const storedPreference = getActiveOrgPreference();
+type ResolvedOrgContext = {
+  orgId: string | null;
+  role: string | null;
+  userId: string | null;
+  status: 'idle' | 'loading' | 'ready' | 'error';
+};
+
+const resolveOrgContext = (): ResolvedOrgContext => {
+  const storedPreference = resolveOrgIdFromCarrier(getActiveOrgPreference());
+  const resolverSnapshot = resolveOrgContextFromBridge();
+  if (resolverSnapshot) {
+    if (resolverSnapshot.status && resolverSnapshot.status !== 'ready') {
       return {
-        orgId: resolveOrgIdFromCarrier(storedPreference) ?? membershipOrgId,
-        role: session.role ?? null,
-        userId: session.id ?? null,
+        orgId: null,
+        role: null,
+        userId: null,
+        status: resolverSnapshot.status,
       };
     }
-  } catch (error) {
-    console.warn('[courseStore] Failed to read secure session for org context:', error);
+    return {
+      orgId: resolverSnapshot.orgId ?? storedPreference ?? null,
+      role: resolverSnapshot.role ?? null,
+      userId: resolverSnapshot.userId ?? null,
+      status: 'ready',
+    };
   }
-
-  const storedPreference = getActiveOrgPreference();
-  const normalizedPreference = resolveOrgIdFromCarrier(storedPreference);
-  if (normalizedPreference) {
-    return { orgId: normalizedPreference, role: null, userId: null };
+  if (storedPreference) {
+    return { orgId: storedPreference, role: null, userId: null, status: 'ready' };
   }
-
-  return { orgId: null, role: null, userId: null };
+  return { orgId: null, role: null, userId: null, status: 'idle' };
 };
 
 const hasLocalProgressForCourse = (course: Course): boolean => {
@@ -1495,7 +1492,13 @@ export const courseStore = {
       console.log('[courseStore.init] Starting initialization...');
       const orgContext = resolveOrgContext();
       if (!orgContext.userId) {
-        console.info('[courseStore.init] No authenticated session detected; loading local defaults without hitting API.');
+        if (orgContext.status === 'loading') {
+          console.info(
+            '[courseStore.init] Auth context still loading (membershipStatus=loading); awaiting resolved org before catalog fetch.',
+          );
+        } else {
+          console.info('[courseStore.init] No authenticated session detected; loading local defaults without hitting API.');
+        }
         courses = getDefaultCourses();
         return;
       }
@@ -1562,7 +1565,16 @@ export const courseStore = {
             if (orgContext.orgId) {
               dbCourses = await fetchPublishedCourses({ orgId: orgContext.orgId, assignedOnly: true });
             } else {
-              console.warn('[courseStore.init] Missing organizationId; loading full published catalog for learner context.');
+              if (orgContext.status === 'ready') {
+                console.warn(
+                  '[courseStore.init] Missing organizationId; loading full published catalog for learner context.',
+                );
+              } else {
+                console.info(
+                  '[courseStore.init] Organization context not resolved yet (status=%s); temporarily loading global catalog.',
+                  orgContext.status,
+                );
+              }
               dbCourses = await fetchPublishedCourses();
             }
           } else {

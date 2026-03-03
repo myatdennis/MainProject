@@ -33,6 +33,7 @@ import { logAuthRedirect } from '../utils/logAuthRedirect';
 import { resolveLoginPath, isLoginPath, isAdminSurface } from '../utils/surface';
 import { resolvePreferredOrgId } from '../lib/authOrg';
 import { createMembershipSelfHealTracker } from '../lib/membershipSelfHeal';
+import { registerCourseStoreOrgResolver } from '../store/courseStoreOrgBridge';
 
 if (axios?.defaults) {
   axios.defaults.withCredentials = true;
@@ -157,6 +158,13 @@ type SessionSurface = 'admin' | 'lms';
 type RefreshReason = 'protected_401' | 'user_retry';
 type SurfaceAuthStatus = 'idle' | 'checking' | 'ready' | 'error';
 type OrgResolutionStatus = 'idle' | 'resolving' | 'ready' | 'error';
+type ActiveOrgSource =
+  | 'requested_hint'
+  | 'preference'
+  | 'membership_default'
+  | 'session_payload'
+  | 'user_payload'
+  | 'none';
 
 interface RefreshOptions {
   reason?: RefreshReason;
@@ -589,6 +597,8 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   const bootstrapRunCountRef = useRef(0);
   const refreshRunCountRef = useRef(0);
   const membershipSelfHealTrackerRef = useRef(createMembershipSelfHealTracker());
+  const lastActiveOrgSourceRef = useRef<ActiveOrgSource>('none');
+  const lastAppliedActiveOrgIdRef = useRef<string | null>(null);
   const membershipFetchRequestIdRef = useRef(0);
   type FetchServerSessionFn = (options?: {
     surface?: SessionSurface;
@@ -689,6 +699,16 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       });
       setLastActiveOrgIdState(preferredOrg.activeOrgId ?? null);
       setActiveOrgPreference(preferredOrg.activeOrgId ?? null);
+      let activeOrgSource: ActiveOrgSource = 'none';
+      if (preferredOrg.activeOrgId) {
+        if (preferredOrg.source === 'requested') {
+          activeOrgSource = 'requested_hint';
+        } else if (preferredOrg.source === 'lastActive') {
+          activeOrgSource = 'preference';
+        } else if (preferredOrg.source === 'membership') {
+          activeOrgSource = 'membership_default';
+        }
+      }
 
       const session: UserSession = {
         id: payload.user.id,
@@ -704,7 +724,12 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         organizationId: payload.user.organizationId ?? payload.user.organization_id ?? orgIds[0] ?? null,
         organizationIds: orgIds,
         memberships: normalizedMemberships,
-        activeOrgId: preferredOrg.activeOrgId ?? payload.activeOrgId ?? payload.user.activeOrgId ?? payload.user.organizationId ?? null,
+        activeOrgId:
+          preferredOrg.activeOrgId ??
+          payload.activeOrgId ??
+          payload.user.activeOrgId ??
+          payload.user.organizationId ??
+          null,
         platformRole: payload.user.platformRole ?? payload.user.platform_role ?? null,
         isPlatformAdmin: Boolean(payload.user.isPlatformAdmin ?? payload.user.platformRole === 'platform_admin'),
         appMetadata: payload.user.appMetadata ?? payload.user.app_metadata ?? null,
@@ -713,6 +738,12 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
       if (session.activeOrgId) {
         session.organizationId = session.activeOrgId;
+      } else if (activeOrgSource === 'none') {
+        if (payload.activeOrgId) {
+          activeOrgSource = 'session_payload';
+        } else if (payload.user.activeOrgId || payload.user.organizationId) {
+          activeOrgSource = 'user_payload';
+        }
       }
 
       setUser(session);
@@ -721,6 +752,8 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       setActiveOrgIdState(session.activeOrgId ?? null);
       setIsAuthenticated(computeAuthState(session, surface));
       setUserSession(session);
+      lastAppliedActiveOrgIdRef.current = session.activeOrgId ?? null;
+      lastActiveOrgSourceRef.current = activeOrgSource;
 
       if (persistTokens) {
         if (payload.accessToken !== undefined) {
@@ -1045,6 +1078,21 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           if (!silent) {
             setBootstrapError(null);
           }
+          const rawMemberships = Array.isArray(payload.memberships) ? payload.memberships : [];
+          const firstMembershipOrgId =
+            rawMemberships.find((row) => row?.orgId || row?.organizationId || row?.organization_id)?.orgId ??
+            rawMemberships.find((row) => row?.organizationId || row?.organization_id)?.organizationId ??
+            rawMemberships.find((row) => row?.organization_id)?.organization_id ??
+            null;
+          const diagLine = [
+            `userId=${payload.user.id ?? 'unknown'}`,
+            'membershipStatus=ready',
+            `membershipCount=${rawMemberships.length}`,
+            `activeOrgId=${lastAppliedActiveOrgIdRef.current ?? 'none'}`,
+            `activeOrgSource=${lastActiveOrgSourceRef.current}`,
+            `firstMembershipOrg=${firstMembershipOrgId ?? 'none'}`,
+          ].join(' ');
+          console.info('[SecureAuth] session_applied', diagLine);
           finalizeMeta({
             statusCode: 200,
             membershipCount,
@@ -1683,6 +1731,12 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         }
         const hasSession = Boolean(user);
         const lastRedirect = window.__HUDDLE_LAST_AUTH_REDIRECT__ ?? null;
+        let secureSessionStored = false;
+        try {
+          secureSessionStored = Boolean(window.localStorage?.getItem('secure_user_session'));
+        } catch {
+          secureSessionStored = false;
+        }
         const payload = {
           pathname,
           surfaceStatus,
@@ -1700,10 +1754,16 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           storageMode: AUTH_STORAGE_MODE,
           lastRedirect,
           lastMembershipFetch: lastMembershipFetchMeta,
+          secureUserSessionKeyPresent: secureSessionStored,
           redirectReason: reason,
           timestamp: new Date().toISOString(),
         };
-        window.__HUDDLE_AUTH_DEBUG__ = payload;
+        const debugSnapshot: typeof payload & { dump?: () => void } = { ...payload };
+        debugSnapshot.dump = () => {
+          const { dump, ...rest } = debugSnapshot;
+          console.info('[SecureAuth][debug] dump', rest);
+        };
+        window.__HUDDLE_AUTH_DEBUG__ = debugSnapshot;
         const signature = JSON.stringify({
           pathname,
           surfaceStatus,
@@ -1744,6 +1804,17 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   useEffect(() => {
     publishAuthDebugSnapshot('state_change');
   }, [publishAuthDebugSnapshot]);
+
+  useEffect(() => {
+    registerCourseStoreOrgResolver(() => ({
+      orgId: activeOrgId ?? user?.activeOrgId ?? user?.organizationId ?? null,
+      role: user?.role ?? null,
+      userId: user?.id ?? null,
+    }));
+    return () => {
+      registerCourseStoreOrgResolver(null);
+    };
+  }, [activeOrgId, user?.activeOrgId, user?.organizationId, user?.role, user?.id]);
 
 // ============================================================================
 // Login

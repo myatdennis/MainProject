@@ -354,7 +354,6 @@ export function secureClear(): void {
 // ============================================================================
 
 const SESSION_METADATA_KEY = 'session_metadata';
-const USER_SESSION_KEY = 'user_session';
 const ACCESS_TOKEN_KEY = 'access_token';
 const REFRESH_TOKEN_KEY = 'refresh_token';
 const ACCESS_TOKEN_LOCAL_KEY = '__auth_access_token_v1__';
@@ -536,25 +535,18 @@ export function clearSessionMetadata(): void {
   secureRemove(SESSION_METADATA_KEY);
 }
 
-/**
- * Store user session data
- */
-export function setUserSession(user: UserSession): void {
-  secureSet(USER_SESSION_KEY, user);
+let inMemoryUserSession: UserSession | null = null;
+
+export function setUserSession(user: UserSession | null): void {
+  inMemoryUserSession = user ? { ...user } : null;
 }
 
-/**
- * Get user session data
- */
 export function getUserSession(): UserSession | null {
-  return secureGet<UserSession>(USER_SESSION_KEY);
+  return inMemoryUserSession;
 }
 
-/**
- * Clear user session
- */
 export function clearUserSession(): void {
-  secureRemove(USER_SESSION_KEY);
+  inMemoryUserSession = null;
 }
 
 /**
@@ -662,6 +654,12 @@ export function migrateFromLocalStorage(): void {
       window.localStorage.removeItem('huddle_active_org');
       removedKeys.push('huddle_active_org');
       console.log('✅ Migrated active organization preference to secure storage');
+    }
+
+    if (window.localStorage.getItem('secure_user_session')) {
+      window.localStorage.removeItem('secure_user_session');
+      removedKeys.push('secure_user_session');
+      console.log('🧹 Removed legacy secure_user_session entry from localStorage');
     }
 
     ['huddle_user_profiles_v1', 'huddle_org_profiles_v1', 'huddle_orgs_v1'].forEach((key) => {
@@ -838,6 +836,7 @@ export function __dangerouslyResetSecureStorageStateForTests(): void {
   warningFlags.fallback = false;
   warningFlags.sessionUnavailable = false;
   warningFlags.persistentUnavailable = false;
+  inMemoryUserSession = null;
 
   const storage = getBrowserSessionStorage();
   if (storage) {

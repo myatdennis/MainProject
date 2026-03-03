@@ -30,9 +30,12 @@ export interface PreferredOrgInput {
   lastActiveOrgId?: string | null;
 }
 
+export type PreferredOrgSource = 'requested' | 'lastActive' | 'membership' | 'none';
+
 export interface PreferredOrgResult {
   activeOrgId: string | null;
   hasActiveMembership: boolean;
+  source: PreferredOrgSource;
 }
 
 export const resolvePreferredOrgId = ({
@@ -44,20 +47,25 @@ export const resolvePreferredOrgId = ({
   const normalizedRequested = requestedOrgId?.trim() || null;
   const normalizedLast = lastActiveOrgId?.trim() || null;
   const hasActiveMembership = activeMemberships.length > 0;
+  let source: PreferredOrgSource = 'none';
   const matches = (orgId: string | null | undefined) =>
     Boolean(orgId) && activeMemberships.some((membership) => membership.orgId === orgId);
 
   let activeOrgId: string | null = null;
   if (matches(normalizedRequested)) {
     activeOrgId = normalizedRequested as string;
+    source = 'requested';
   } else if (matches(normalizedLast)) {
     activeOrgId = normalizedLast as string;
+    source = 'lastActive';
   } else if (activeMemberships[0]?.orgId) {
     activeOrgId = activeMemberships[0].orgId;
+    source = 'membership';
   }
 
   return {
     activeOrgId,
     hasActiveMembership,
+    source,
   };
 };
