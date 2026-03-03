@@ -20,6 +20,48 @@ type StorageLike = {
 
 const memoryStorage = new Map<string, string>();
 
+let nativeLocalStorageSetItem: ((key: string, value: string) => void) | null = null;
+let nativeLocalStorageGetItem: ((key: string) => string | null) | null = null;
+let nativeLocalStorageRemoveItem: ((key: string) => void) | null = null;
+
+const ensureNativeLocalStorage = () => {
+  if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') {
+    return false;
+  }
+  if (!nativeLocalStorageSetItem) {
+    nativeLocalStorageSetItem = window.localStorage.setItem.bind(window.localStorage);
+    nativeLocalStorageGetItem = window.localStorage.getItem.bind(window.localStorage);
+    nativeLocalStorageRemoveItem = window.localStorage.removeItem.bind(window.localStorage);
+  }
+  return true;
+};
+
+const isWindowLocalStorage = (storage: StorageLike): storage is Storage =>
+  typeof window !== 'undefined' && typeof window.localStorage !== 'undefined' && storage === window.localStorage;
+
+const nativeSafeSetItem = (storage: StorageLike, key: string, value: string) => {
+  if (isWindowLocalStorage(storage) && ensureNativeLocalStorage() && nativeLocalStorageSetItem) {
+    nativeLocalStorageSetItem(key, value);
+    return;
+  }
+  storage.setItem(key, value);
+};
+
+const nativeSafeGetItem = (storage: StorageLike, key: string): string | null => {
+  if (isWindowLocalStorage(storage) && ensureNativeLocalStorage() && nativeLocalStorageGetItem) {
+    return nativeLocalStorageGetItem(key);
+  }
+  return storage.getItem(key);
+};
+
+const nativeSafeRemoveItem = (storage: StorageLike, key: string) => {
+  if (isWindowLocalStorage(storage) && ensureNativeLocalStorage() && nativeLocalStorageRemoveItem) {
+    nativeLocalStorageRemoveItem(key);
+    return;
+  }
+  storage.removeItem(key);
+};
+
 const memoryStorageAdapter: StorageLike = {
   get length() {
     return memoryStorage.size;
@@ -256,7 +298,8 @@ export function secureSet(key: string, value: any): void {
   try {
     const stringified = JSON.stringify(value);
     const encrypted = encrypt(stringified);
-    getStorage().setItem(STORAGE_PREFIX + key, encrypted);
+    const storage = getStorage();
+    nativeSafeSetItem(storage, STORAGE_PREFIX + key, encrypted);
   } catch (error) {
     console.error('Failed to securely store data:', error);
   }
@@ -267,7 +310,8 @@ export function secureSet(key: string, value: any): void {
  */
 export function secureGet<T>(key: string): T | null {
   try {
-    const encrypted = getStorage().getItem(STORAGE_PREFIX + key);
+    const storage = getStorage();
+    const encrypted = nativeSafeGetItem(storage, STORAGE_PREFIX + key);
     if (!encrypted) return null;
     
     const decrypted = decrypt(encrypted);
@@ -284,7 +328,8 @@ export function secureGet<T>(key: string): T | null {
  * Remove data from secure storage
  */
 export function secureRemove(key: string): void {
-  getStorage().removeItem(STORAGE_PREFIX + key);
+  const storage = getStorage();
+  nativeSafeRemoveItem(storage, STORAGE_PREFIX + key);
 }
 
 /**
@@ -300,8 +345,8 @@ export function secureClear(): void {
       keysToRemove.push(key);
     }
   }
-  keysToRemove.forEach((key) => storage.removeItem(key));
-  storage.removeItem(SESSION_KEY_NAME);
+  keysToRemove.forEach((key) => nativeSafeRemoveItem(storage, key));
+  nativeSafeRemoveItem(storage, SESSION_KEY_NAME);
 }
 
 // ============================================================================
@@ -685,7 +730,7 @@ export function installLocalStorageGuards(): void {
   if ((window as any)[LOCAL_STORAGE_GUARD_FLAG]) {
     return;
   }
-  const originalSetItem = window.localStorage.setItem.bind(window.localStorage);
+  ensureNativeLocalStorage();
   window.localStorage.setItem = (key: string, value: string) => {
     const matchesSensitivePattern = BLOCKED_LOCAL_STORAGE_PATTERNS.some((pattern) => pattern.test(key));
     const authKeyAllowed = AUTH_ALLOWED_KEYS.has(key) || SUPABASE_AUTH_TOKEN_REGEX.test(key);
@@ -693,14 +738,14 @@ export function installLocalStorageGuards(): void {
       if (import.meta.env?.DEV) {
         console.info('[secureStorage] allowing auth key write', { key });
       }
-      return originalSetItem(key, value);
+      return nativeLocalStorageSetItem ? nativeLocalStorageSetItem(key, value) : undefined;
     }
     if (matchesSensitivePattern) {
       const message = `[secureStorage] Blocked attempt to write sensitive key "${key}" to localStorage. Use secureStorage utilities instead.`;
       console.error(message);
       throw new Error(message);
     }
-    return originalSetItem(key, value);
+    return nativeLocalStorageSetItem ? nativeLocalStorageSetItem(key, value) : window.localStorage.setItem(key, value);
   };
   (window as any)[LOCAL_STORAGE_GUARD_FLAG] = true;
 }
