@@ -1151,6 +1151,14 @@ const setLearnerCatalogState = (update: Partial<LearnerCatalogState>) => {
   notifySubscribers();
 };
 
+const delay = (ms: number) =>
+  new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+const ORG_CONTEXT_MAX_WAIT_MS = 3500;
+const ORG_CONTEXT_POLL_INTERVAL_MS = 175;
+
 type ResolvedOrgContext = {
   orgId: string | null;
   role: string | null;
@@ -1490,15 +1498,29 @@ export const courseStore = {
     });
     try {
       console.log('[courseStore.init] Starting initialization...');
-      const orgContext = resolveOrgContext();
+      let orgContext = resolveOrgContext();
+      if (orgContext.status === 'loading') {
+        console.info('[courseStore.init] Org context is still resolving; waiting before catalog fetch.');
+        const waitStart = Date.now();
+        while (orgContext.status === 'loading' && Date.now() - waitStart < ORG_CONTEXT_MAX_WAIT_MS) {
+          // eslint-disable-next-line no-await-in-loop
+          await delay(ORG_CONTEXT_POLL_INTERVAL_MS);
+          orgContext = resolveOrgContext();
+        }
+        if (orgContext.status === 'loading') {
+          console.warn(
+            '[courseStore.init] Org context still loading after wait window; proceeding with latest snapshot.',
+          );
+        }
+      }
       if (!orgContext.userId) {
         if (orgContext.status === 'loading') {
           console.info(
-            '[courseStore.init] Auth context still loading (membershipStatus=loading); awaiting resolved org before catalog fetch.',
+            '[courseStore.init] Auth context still loading; deferring catalog initialization until memberships resolve.',
           );
-        } else {
-          console.info('[courseStore.init] No authenticated session detected; loading local defaults without hitting API.');
+          return;
         }
+        console.info('[courseStore.init] No authenticated session detected; loading local defaults without hitting API.');
         courses = getDefaultCourses();
         return;
       }
@@ -1564,17 +1586,15 @@ export const courseStore = {
           if (restrictToOrg) {
             if (orgContext.orgId) {
               dbCourses = await fetchPublishedCourses({ orgId: orgContext.orgId, assignedOnly: true });
+            } else if (orgContext.status === 'loading') {
+              console.info(
+                '[courseStore.init] Organization context still loading; delaying learner catalog fetch until ready.',
+              );
+              return;
             } else {
-              if (orgContext.status === 'ready') {
-                console.warn(
-                  '[courseStore.init] Missing organizationId; loading full published catalog for learner context.',
-                );
-              } else {
-                console.info(
-                  '[courseStore.init] Organization context not resolved yet (status=%s); temporarily loading global catalog.',
-                  orgContext.status,
-                );
-              }
+              console.warn(
+                '[courseStore.init] Missing organizationId; loading full published catalog for learner context.',
+              );
               dbCourses = await fetchPublishedCourses();
             }
           } else {

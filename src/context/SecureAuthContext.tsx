@@ -1084,15 +1084,16 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             rawMemberships.find((row) => row?.organizationId || row?.organization_id)?.organizationId ??
             rawMemberships.find((row) => row?.organization_id)?.organization_id ??
             null;
+          const diagMembershipStatus: 'idle' | 'loading' | 'ready' | 'error' = 'ready';
           const diagLine = [
             `userId=${payload.user.id ?? 'unknown'}`,
-            'membershipStatus=ready',
+            `membershipStatus=${diagMembershipStatus}`,
             `membershipCount=${rawMemberships.length}`,
             `activeOrgId=${lastAppliedActiveOrgIdRef.current ?? 'none'}`,
             `activeOrgSource=${lastActiveOrgSourceRef.current}`,
             `firstMembershipOrg=${firstMembershipOrgId ?? 'none'}`,
           ].join(' ');
-          console.info('[SecureAuth] session_applied', diagLine);
+          console.info('[SecureAuth] membership_applied', diagLine);
           finalizeMeta({
             statusCode: 200,
             membershipCount,
@@ -1806,15 +1807,37 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   }, [publishAuthDebugSnapshot]);
 
   useEffect(() => {
-    registerCourseStoreOrgResolver(() => ({
-      orgId: activeOrgId ?? user?.activeOrgId ?? user?.organizationId ?? null,
-      role: user?.role ?? null,
-      userId: user?.id ?? null,
-    }));
+    registerCourseStoreOrgResolver(() => {
+      const sessionReady = sessionStatus === 'ready';
+      const membershipReady = membershipStatus === 'ready';
+      const membershipErrored = membershipStatus === 'error';
+      if (!sessionReady) {
+        return {
+          status: 'loading',
+          orgId: null,
+          role: null,
+          userId: null,
+        };
+      }
+      if (!membershipReady) {
+        return {
+          status: membershipErrored ? 'error' : 'loading',
+          orgId: null,
+          role: null,
+          userId: user?.id ?? null,
+        };
+      }
+      return {
+        status: 'ready',
+        orgId: activeOrgId ?? user?.activeOrgId ?? user?.organizationId ?? null,
+        role: user?.role ?? null,
+        userId: user?.id ?? null,
+      };
+    });
     return () => {
       registerCourseStoreOrgResolver(null);
     };
-  }, [activeOrgId, user?.activeOrgId, user?.organizationId, user?.role, user?.id]);
+  }, [activeOrgId, membershipStatus, sessionStatus, user?.activeOrgId, user?.organizationId, user?.role, user?.id]);
 
 // ============================================================================
 // Login

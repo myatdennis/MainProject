@@ -740,6 +740,14 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
     }
     const shouldRedirectForMembership = hasSession && membershipStatus === 'ready' && !hasActiveMembership;
     if (shouldRedirectForMembership) {
+      console.warn('[RequireAuth][lms] redirect_no_active_membership', {
+        path: location.pathname,
+        membershipStatus,
+        membershipCount: memberships.length,
+        activeOrgId,
+        requestedOrgId: requestedOrgParam,
+        hasSession,
+      });
       const membershipSnapshot = memberships.map((membership) => ({
         orgId: membership.orgId,
         role: membership.role ?? null,
