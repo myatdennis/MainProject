@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi, type Mock } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import RequireAuth from '../RequireAuth';
 
@@ -80,5 +81,19 @@ describe('RequireAuth guard', () => {
     });
 
     expect(screen.getByTestId('protected-content')).toBeInTheDocument();
+  });
+
+  it('renders membership error state and retries session load', async () => {
+    const user = userEvent.setup();
+    const reloadSession = vi.fn().mockResolvedValue(true);
+    renderGuard({
+      membershipStatus: 'error',
+      hasActiveMembership: false,
+      memberships: [],
+      reloadSession,
+    });
+    expect(screen.getByText(/Trouble loading your account/)).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /retry now/i }));
+    expect(reloadSession).toHaveBeenCalledWith({ surface: 'lms', force: true });
   });
 });

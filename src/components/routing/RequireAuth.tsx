@@ -68,6 +68,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
     setActiveOrganization,
     setRequestedOrgHint,
     loadSession,
+    reloadSession,
     user,
     organizationIds,
     logout,
@@ -98,6 +99,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   const adminGateKeyRef = useRef<string | null>(null);
   const adminGateTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [copyIdentityStatus, setCopyIdentityStatus] = useState<'idle' | 'copied' | 'error'>('idle');
+  const [membershipRetrying, setMembershipRetrying] = useState(false);
 
   const logGuardEvent = useCallback(
     (event: string, payload: Record<string, unknown> = {}) => {
@@ -129,6 +131,21 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
       user?.role,
     ],
   );
+
+  const handleMembershipRetry = useCallback(async () => {
+    if (membershipRetrying) {
+      return;
+    }
+    setMembershipRetrying(true);
+    logGuardEvent('membership_retry', { surface: mode });
+    try {
+      await reloadSession({ surface: mode, force: true });
+    } catch (error) {
+      console.warn('[RequireAuth] membership_retry_failed', error);
+    } finally {
+      setMembershipRetrying(false);
+    }
+  }, [membershipRetrying, mode, reloadSession, logGuardEvent]);
 
   useEffect(() => {
     const isDev =
@@ -714,6 +731,31 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
     }
     logGuardEvent('render_login_route', { reason: 'missing_session', target: targetPath });
     return null;
+  }
+
+  if (mode === 'lms' && membershipStatus === 'error') {
+    logGuardEvent('render_membership_error', {
+      membershipStatus,
+      membershipCount: memberships.length,
+      activeOrgId,
+    });
+    return (
+      <div className="flex min-h-[60vh] items-center justify-center bg-softwhite px-6 py-16">
+        <div className="w-full max-w-xl rounded-3xl border border-ink/5 bg-white p-10 text-center shadow-soft">
+          <h2 className="font-heading text-2xl text-ink">Trouble loading your account</h2>
+          <p className="mt-3 text-base text-ink/80">We couldn't confirm your organization membership. Please retry the check or sign out and back in.</p>
+          <div className="mt-8 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:justify-center">
+            <Button onClick={handleMembershipRetry} isFullWidth={true} className="sm:flex-1" disabled={membershipRetrying}>
+              {membershipRetrying ? 'Retrying...' : 'Retry now'}
+            </Button>
+            <Button onClick={() => logout('lms')} variant="ghost" isFullWidth={true} className="sm:flex-1">
+              Sign out
+            </Button>
+          </div>
+          <p className="mt-4 text-xs text-ink/60">If this keeps happening, please contact support.</p>
+        </div>
+      </div>
+    );
   }
 
   if (mode === 'admin') {

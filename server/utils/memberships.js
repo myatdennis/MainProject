@@ -1,7 +1,43 @@
 import supabase from '../lib/supabaseClient.js';
+import sql from '../db.js';
 
 const MEMBERSHIP_VIEW_NAME = 'user_organizations_vw';
 const VIEW_COLUMNS = '*';
+const OPTIONAL_ORG_COLUMNS = ['slug', 'logo_url', 'created_at', 'updated_at', 'features'];
+let organizationColumnDetectionPromise = null;
+let organizationColumnSet = new Set();
+
+const sanitizeErrorPayload = (error) => {
+  if (!error || typeof error !== 'object') {
+    return { message: String(error ?? 'unknown_error') };
+  }
+  return {
+    message: error.message ?? String(error),
+    code: error.code ?? null,
+    details: error.details ?? null,
+    hint: error.hint ?? null,
+  };
+};
+
+const buildDiagnostics = (overrides = {}) => {
+  const primaryCode = overrides.code || null;
+  const codes = Array.isArray(overrides.codes)
+    ? overrides.codes.filter(Boolean)
+    : primaryCode
+      ? [primaryCode]
+      : [];
+  return {
+    code: primaryCode,
+    codes,
+    severity: overrides.severity || 'info',
+    fallback: overrides.fallback || null,
+    message: overrides.message || null,
+    source: overrides.source || 'memberships',
+    timestamp: new Date().toISOString(),
+    error: overrides.error ? sanitizeErrorPayload(overrides.error) : null,
+    details: overrides.details || null,
+  };
+};
 
 const isViewMissingError = (error) =>
   Boolean(
@@ -56,6 +92,8 @@ const mapMembershipRecord = (row = {}) => {
     organization_slug: row.organization_slug ?? row.org_slug ?? null,
     org_slug: row.org_slug ?? row.organization_slug ?? null,
     organization_status: row.organization_status ?? null,
+    organization_logo_url: row.organization_logo_url ?? row.logo_url ?? null,
+    logo_url: row.logo_url ?? row.organization_logo_url ?? null,
     subscription: row.subscription ?? null,
     features: row.features ?? null,
     accepted_at: row.accepted_at ?? row.created_at ?? null,
@@ -67,14 +105,77 @@ const mapMembershipRecord = (row = {}) => {
 
 const filterActiveMemberships = (rows = []) => rows.filter((row) => isAcceptedMembership(row));
 
+const detectOrganizationColumns = async () => {
+  if (!process.env.DATABASE_URL) {
+    return new Set();
+  }
+  try {
+    const rows = await sql`
+      select column_name
+      from information_schema.columns
+      where table_schema = 'public' and table_name = 'organizations'
+    `;
+    return new Set(rows.map((row) => row.column_name));
+  } catch (error) {
+    console.warn('[memberships] organization column detection failed', {
+      message: error?.message || error,
+    });
+    return new Set();
+  }
+};
+
+const ensureOrganizationColumnMetadata = async () => {
+  if (organizationColumnDetectionPromise) {
+    return organizationColumnDetectionPromise;
+  }
+  organizationColumnDetectionPromise = detectOrganizationColumns()
+    .then((columns) => {
+      organizationColumnSet = columns;
+      return columns;
+    })
+    .catch((error) => {
+      console.warn('[memberships] organization column detection error', {
+        message: error?.message || error,
+      });
+      return organizationColumnSet;
+    });
+  return organizationColumnDetectionPromise;
+};
+
+const ORGANIZATION_BASE_COLUMNS = ['id', 'name', 'status', 'subscription'];
+let cachedOrganizationSelectClause = null;
+
+const getOrganizationSelectClause = async () => {
+  if (cachedOrganizationSelectClause) {
+    return cachedOrganizationSelectClause;
+  }
+  const columnsSet = await ensureOrganizationColumnMetadata();
+  const columns = [...ORGANIZATION_BASE_COLUMNS];
+  OPTIONAL_ORG_COLUMNS.forEach((column) => {
+    if (columnsSet.has(column) && !columns.includes(column)) {
+      columns.push(column);
+    }
+  });
+  cachedOrganizationSelectClause = columns.join(',');
+  return cachedOrganizationSelectClause;
+};
+
+// kick off metadata detection without blocking startup
+ensureOrganizationColumnMetadata().catch(() => {});
+
 const fetchMembershipsFromBaseTables = async (userId, logPrefix) => {
-  if (!supabase || !userId) return [];
+  if (!supabase || !userId) {
+    return { rows: [], error: new Error('supabase_unavailable') };
+  }
   try {
     const { data: membershipRows, error } = await supabase
       .from('organization_memberships')
       .select(
         'organization_id, role, status, is_active, accepted_at, created_at, updated_at, profile_id, user_id',
       )
+      .eq('status', 'active')
+      .is('is_active', true)
+      .not('accepted_at', 'is', null)
       .or(`user_id.eq.${userId},profile_id.eq.${userId}`);
 
     if (error) {
@@ -87,9 +188,10 @@ const fetchMembershipsFromBaseTables = async (userId, logPrefix) => {
 
     let orgMap = new Map();
     if (orgIds.length > 0) {
+      const selectClause = await getOrganizationSelectClause();
       const { data: organizations, error: orgError } = await supabase
         .from('organizations')
-        .select('id,name,slug,status,subscription,features')
+        .select(selectClause)
         .in('id', orgIds);
 
       if (orgError) {
@@ -110,22 +212,28 @@ const fetchMembershipsFromBaseTables = async (userId, logPrefix) => {
         organization_status: organization.status || null,
         subscription: organization.subscription ?? null,
         features: organization.features ?? null,
+        organization_logo_url: organization.logo_url ?? null,
+        logo_url: organization.logo_url ?? null,
         accepted_at: row?.accepted_at || row?.created_at || null,
         last_seen_at: row?.updated_at || null,
         org_slug: organization.slug || null,
       });
     });
+
+    return { rows: filteredRows, error: null };
   } catch (error) {
     console.warn(`${logPrefix} membership_base_fallback_failed`, {
       userId,
       error: error instanceof Error ? error.message : error,
     });
-    return [];
+    return { rows: [], error };
   }
 };
 
 export const getUserMemberships = async (userId, { logPrefix = '[memberships]' } = {}) => {
-  if (!supabase || !userId) return [];
+  if (!supabase || !userId) {
+    return attachDiagnostics([], buildDiagnostics({ code: 'membership_query_error', severity: 'error', message: 'Supabase client unavailable' }));
+  }
   try {
     const { data, error } = await supabase.from(MEMBERSHIP_VIEW_NAME).select(VIEW_COLUMNS).eq('user_id', userId);
 
@@ -136,41 +244,63 @@ export const getUserMemberships = async (userId, { logPrefix = '[memberships]' }
           code: error.code,
           message: error.message,
         });
-        const fallbackRows = await fetchMembershipsFromBaseTables(userId, logPrefix);
-        return attachDiagnostics(fallbackRows, {
+        const fallbackResult = await fetchMembershipsFromBaseTables(userId, logPrefix);
+        const diag = buildDiagnostics({
           code: error.code || 'view_unavailable',
-          message: error.message,
+          severity: fallbackResult.error ? 'error' : 'warn',
           fallback: 'base_tables',
-          timestamp: new Date().toISOString(),
+          message: fallbackResult.error ? fallbackResult.error.message : error.message,
+          error: fallbackResult.error ?? error,
         });
+        return attachDiagnostics(fallbackResult.rows, diag);
       }
       console.warn(`${logPrefix} membership_view_query_failed`, {
         userId,
         code: error.code,
         message: error.message,
       });
-      return attachDiagnostics([], {
-        code: error.code || 'view_query_failed',
-        message: error.message,
-        fallback: 'none',
-        timestamp: new Date().toISOString(),
-      });
+      return attachDiagnostics(
+        [],
+        buildDiagnostics({
+          code: error.code || 'view_query_failed',
+          severity: 'error',
+          fallback: 'none',
+          message: error.message,
+          error,
+        }),
+      );
     }
 
     if (!Array.isArray(data)) {
-      return [];
+      return attachDiagnostics(
+        [],
+        buildDiagnostics({
+          code: 'membership_query_error',
+          severity: 'error',
+          message: 'membership view returned invalid payload',
+        }),
+      );
     }
 
     const normalizedRows = data.map((row) => mapMembershipRecord(row));
     const filtered = filterActiveMemberships(normalizedRows);
     if (filtered.length === 0) {
-      const fallbackRows = await fetchMembershipsFromBaseTables(userId, logPrefix);
-      return attachDiagnostics(fallbackRows, {
-        code: 'empty_view_result',
-        message: 'membership view returned no active rows',
-        fallback: 'base_tables',
-        timestamp: new Date().toISOString(),
-      });
+      const fallbackResult = await fetchMembershipsFromBaseTables(userId, logPrefix);
+      const diag = fallbackResult.error
+        ? buildDiagnostics({
+            code: 'membership_query_error',
+            severity: 'error',
+            fallback: 'base_tables',
+            message: fallbackResult.error?.message || 'membership view empty and base query failed',
+            error: fallbackResult.error,
+          })
+        : buildDiagnostics({
+            code: 'empty_view_result',
+            severity: 'warn',
+            fallback: 'base_tables',
+            message: 'membership view returned no active rows',
+          });
+      return attachDiagnostics(fallbackResult.rows, diag);
     }
 
     return filtered;
@@ -179,7 +309,15 @@ export const getUserMemberships = async (userId, { logPrefix = '[memberships]' }
       userId,
       error: error instanceof Error ? error.message : error,
     });
-    return [];
+    return attachDiagnostics(
+      [],
+      buildDiagnostics({
+        code: 'membership_query_error',
+        severity: 'error',
+        message: error instanceof Error ? error.message : String(error),
+        error,
+      }),
+    );
   }
 };
 

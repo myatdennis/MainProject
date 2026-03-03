@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { Course } from '../../types/courseTypes';
 import type { AdminCatalogState } from '../courseStore';
+import type { OrgContextSnapshot } from '../courseStoreOrgBridge';
 
 const adminCoursesMock = vi.hoisted(() => ({
   CourseValidationError: class extends Error {},
@@ -73,6 +74,30 @@ const courseDraftsMock = vi.hoisted(() => ({
 }));
 vi.mock('../../dal/courseDrafts', () => courseDraftsMock);
 
+const orgBridgeMock = vi.hoisted(() => {
+  let snapshot: OrgContextSnapshot | null = {
+    status: 'ready',
+    orgId: 'org-1',
+    role: 'admin',
+    userId: 'admin-1',
+  };
+  return {
+    resolveOrgContextFromBridge: vi.fn(() => snapshot),
+    registerCourseStoreOrgResolver: vi.fn(),
+    setSnapshot: (next: OrgContextSnapshot | null) => {
+      snapshot = next;
+    },
+  };
+});
+vi.mock('../courseStoreOrgBridge', () => ({
+  resolveOrgContextFromBridge: orgBridgeMock.resolveOrgContextFromBridge,
+  registerCourseStoreOrgResolver: orgBridgeMock.registerCourseStoreOrgResolver,
+}));
+
+const setOrgContextSnapshot = (next: OrgContextSnapshot | null) => {
+  orgBridgeMock.setSnapshot(next);
+};
+
 const defaultRuntimeStatus = {
   supabaseConfigured: true,
   supabaseHealthy: true,
@@ -144,6 +169,12 @@ beforeEach(() => {
   secureStorageMock.getUserSession.mockReturnValue(adminSession);
   secureStorageMock.getActiveOrgPreference.mockReturnValue(null);
   setRuntimeStatusSnapshot();
+  setOrgContextSnapshot({
+    status: 'ready',
+    orgId: adminSession.activeOrgId,
+    role: adminSession.role,
+    userId: adminSession.id,
+  });
 });
 
 describe('courseStore admin catalog phase transitions', () => {
@@ -237,6 +268,12 @@ describe('courseStore learner catalog fallbacks', () => {
       activeOrgId: 'org-learner',
       memberships: [{ orgId: 'org-learner', status: 'active' }],
     });
+    setOrgContextSnapshot({
+      status: 'ready',
+      orgId: 'org-learner',
+      role: 'learner',
+      userId: 'learner-101',
+    });
     assignmentStorageMock.getAssignmentsForUser.mockResolvedValue([]);
     clientCoursesMock.fetchPublishedCourses.mockResolvedValue([]);
 
@@ -244,8 +281,8 @@ describe('courseStore learner catalog fallbacks', () => {
     await courseStore.init();
 
     const learnerState = courseStore.getLearnerCatalogState();
-    expect(learnerState.status).toBe('ok');
-    expect(learnerState.detail).toBe('fallback_default');
-    expect(courseStore.getAllCourses().length).toBeGreaterThan(0);
+    expect(learnerState.status).toBe('empty');
+    expect(learnerState.detail).toBe('no_assignments');
+    expect(courseStore.getAllCourses().length).toBe(0);
   });
 });

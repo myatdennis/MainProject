@@ -5,7 +5,16 @@
 // Example DATABASE_URL:
 //  postgresql://postgres:[YOUR_PASSWORD]@db.miqzywzuqzeffqpiupjm.supabase.co:5432/postgres?sslmode=verify-full&sslrootcert=/path/to/root.crt
 
+import dns from 'dns'
 import postgres from 'postgres'
+
+if (typeof dns.setDefaultResultOrder === 'function') {
+  try {
+    dns.setDefaultResultOrder('ipv4first')
+  } catch (error) {
+    console.warn('[server/db] Failed to set DNS default result order', error)
+  }
+}
 
 let sqlClient = null
 
@@ -19,8 +28,16 @@ const ensureSqlClient = () => {
     console.warn('[server/db] WARNING: DATABASE_URL is not set. Create a .env or export DATABASE_URL before starting the server.')
   }
 
+  const sslConfig =
+    connectionString && !connectionString.includes('localhost')
+      ? {
+          rejectUnauthorized: false,
+        }
+      : undefined
+
   sqlClient = postgres(connectionString || '', {
     max: 5,
+    ssl: sslConfig,
     // If you need to pass custom SSL options you can do so via the
     // connection string query params (sslmode, sslrootcert) or by
     // passing an `ssl` option here. Most Supabase instances work with

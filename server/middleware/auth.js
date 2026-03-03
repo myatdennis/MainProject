@@ -212,7 +212,7 @@ const buildDemoAuthContextPayload = () => {
       organizationStatus: 'active',
     },
   ];
-  const payload = buildUserPayload(demoUser, memberships);
+  const payload = buildUserPayload(demoUser, memberships, { membershipStatus: 'ready' });
   return {
     user: payload,
     memberships,
@@ -267,6 +267,16 @@ const buildMembershipMap = (memberships = []) => {
     }
   });
   return map;
+};
+
+const membershipDiagnosticsIndicateError = (diagnostics) =>
+  Boolean(diagnostics && (diagnostics.severity === 'error' || diagnostics.code === 'membership_query_error'));
+
+const deriveMembershipStatusLabel = (memberships = [], diagnostics = null) => {
+  if (membershipDiagnosticsIndicateError(diagnostics)) {
+    return 'error';
+  }
+  return 'ready';
 };
 
 const coerceUuid = (value) => {
@@ -344,20 +354,30 @@ async function loadMemberships(userId) {
   return mapped;
 }
 
-const buildUserPayload = (user, memberships) => {
+const buildUserPayload = (user, memberships, { membershipStatus = 'ready' } = {}) => {
   const organizationIds = memberships.filter((m) => m.status === 'active').map((m) => m.orgId);
   const platformRole = derivePlatformRole(user);
   let inferredRole = resolveUserRole(user, memberships);
 
   if (inferredRole === 'admin' && memberships.length === 0 && !platformRole) {
-    console.warn('[auth] Suppressing admin role due to missing memberships', {
-      userId: user?.id ?? null,
-      email: user?.email ?? null,
-      membershipCount: memberships.length,
-      platformRole,
-      reason: 'no_memberships',
-    });
-    inferredRole = 'learner';
+    if (membershipStatus === 'error') {
+      console.warn('[auth] Preserving admin role despite missing memberships', {
+        userId: user?.id ?? null,
+        email: user?.email ?? null,
+        membershipCount: memberships.length,
+        platformRole,
+        reason: 'membership_lookup_error',
+      });
+    } else {
+      console.warn('[auth] Suppressing admin role due to missing memberships', {
+        userId: user?.id ?? null,
+        email: user?.email ?? null,
+        membershipCount: memberships.length,
+        platformRole,
+        reason: 'no_memberships',
+      });
+      inferredRole = 'learner';
+    }
   }
 
   const rolePermissions = getPermissionsForRole(inferredRole);
@@ -379,6 +399,11 @@ const buildUserPayload = (user, memberships) => {
     appMetadata: user.app_metadata || {},
     userMetadata: user.user_metadata || {},
   };
+};
+
+export const __testables = {
+  buildUserPayload,
+  deriveMembershipStatusLabel,
 };
 
 const resolveAccessTokenFromRequest = (req) => {
@@ -410,6 +435,8 @@ export async function buildAuthContext(req, { optional = false } = {}) {
       user: demo.user,
       membershipsMap: demo.membershipMap,
       activeOrgId: demo.activeOrgId,
+      membershipDiagnostics: null,
+      membershipStatus: 'ready',
     };
   }
 
@@ -436,6 +463,8 @@ export async function buildAuthContext(req, { optional = false } = {}) {
         user: demo.user,
         membershipsMap: demo.membershipMap,
         activeOrgId: demo.activeOrgId,
+        membershipDiagnostics: null,
+        membershipStatus: 'ready',
       };
     }
     if (optional) return null;
@@ -443,23 +472,31 @@ export async function buildAuthContext(req, { optional = false } = {}) {
   }
 
   const memberships = await loadMemberships(supabaseUser.id);
-  const userPayload = buildUserPayload(supabaseUser, memberships);
+  const membershipDiagnostics =
+    (memberships && memberships.__diagnostics && { ...memberships.__diagnostics }) || null;
+  const membershipStatus = deriveMembershipStatusLabel(memberships, membershipDiagnostics);
+  const userPayload = buildUserPayload(supabaseUser, memberships, { membershipStatus });
   const membershipMap = buildMembershipMap(memberships);
   const activeOrgId = determineActiveOrgId(req, memberships);
 
-  const membershipDiagnostics =
-    (memberships && memberships.__diagnostics && { ...memberships.__diagnostics }) || null;
-
   const snapshot = {
     userId: supabaseUser.id,
+    email: supabaseUser.email ?? null,
+    membershipStatus,
     membershipCount: memberships.length,
     activeOrgId,
     requestedOrgId: getRequestedOrgId(req),
-    diagnosticsCode: membershipDiagnostics?.code ?? null,
+    diagnostics: membershipDiagnostics ?? null,
   };
   console.info('[auth] membership_snapshot', snapshot);
 
-  return { user: userPayload, membershipsMap: membershipMap, activeOrgId, membershipDiagnostics };
+  return {
+    user: userPayload,
+    membershipsMap: membershipMap,
+    activeOrgId,
+    membershipDiagnostics,
+    membershipStatus,
+  };
 }
 
 /**
@@ -479,6 +516,7 @@ export async function authenticate(req, res, next) {
     req.orgMemberships = context.membershipsMap;
     req.activeOrgId = context.activeOrgId;
     req.membershipDiagnostics = context.membershipDiagnostics || null;
+    req.membershipStatus = context.membershipStatus || 'ready';
     req.userPermissions = new Set(Array.isArray(context.user.permissions) ? context.user.permissions : []);
     return next();
   } catch (error) {
@@ -523,6 +561,7 @@ export async function optionalAuthenticate(req, res, next) {
       req.orgMemberships = context.membershipsMap;
       req.activeOrgId = context.activeOrgId;
       req.membershipDiagnostics = context.membershipDiagnostics || null;
+      req.membershipStatus = context.membershipStatus || 'ready';
       req.userPermissions = new Set(Array.isArray(context.user.permissions) ? context.user.permissions : []);
     }
   } catch (error) {

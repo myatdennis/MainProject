@@ -191,29 +191,48 @@ const ensureEnvironmentIsValid = () => {
 
 ensureEnvironmentIsValid();
 
-const assertMembershipSchema = async () => {
+const runSchemaDoctor = async () => {
   if (!process.env.DATABASE_URL) {
-    console.warn('[schema] DATABASE_URL missing; skipping membership column assertion.');
+    logger.warn('schema_doctor_skipped', { reason: 'missing_database_url' });
     return;
   }
+  const checks = [
+    { table: 'organization_memberships', column: 'organization_id', level: 'error' },
+    { table: 'organizations', column: 'features', level: 'warn' },
+    { table: 'course_assignments', column: 'updated_at', level: 'warn' },
+  ];
   try {
     const rows = await sql`
-      select column_name
+      select table_name, column_name
       from information_schema.columns
-      where table_schema = 'public' and table_name = 'organization_memberships'
+      where table_schema = 'public' and (
+        (table_name = 'organization_memberships' and column_name = 'organization_id') or
+        (table_name = 'organizations' and column_name = 'features') or
+        (table_name = 'course_assignments' and column_name = 'updated_at')
+      )
     `;
-    const columnNames = rows.map((row) => row.column_name);
-    if (!columnNames.includes('organization_id')) {
-      fatalEnvError(
-        "organization_memberships.organization_id column missing. Run latest migrations before starting the server.",
-      );
-    }
+    const hasColumn = (table, column) =>
+      rows.some((row) => row.table_name === table && row.column_name === column);
+    checks.forEach((check) => {
+      const ok = hasColumn(check.table, check.column);
+      const payload = { table: check.table, column: check.column, ok };
+      if (ok) {
+        logger.info('schema_doctor_check', payload);
+      } else if (check.level === 'error') {
+        logger.error('schema_doctor_check_failed', payload);
+      } else {
+        logger.warn('schema_doctor_check_warn', payload);
+      }
+    });
   } catch (error) {
-    console.warn('[schema] Failed to verify organization_memberships schema', error);
+    logger.error('schema_doctor_unreachable', {
+      message: error?.message || String(error),
+      code: error?.code || null,
+    });
   }
 };
 
-await assertMembershipSchema();
+await runSchemaDoctor();
 
 // Persistent storage file for demo mode
 const STORAGE_FILE = path.join(__dirname, 'demo-data.json');

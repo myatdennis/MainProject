@@ -362,7 +362,7 @@ describe('apiClient', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 
-  it('omits browser credentials for fetch requests', async () => {
+  it('sends browser credentials for API requests to preserve cookies', async () => {
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.huddle.local');
     __setApiBaseUrlOverride('https://api.huddle.local');
     const { apiRequest } = await loadApiClient();
@@ -371,7 +371,7 @@ describe('apiClient', () => {
     await apiRequest('/courses');
 
     const [, options] = fetchSpy.mock.calls[0];
-    expect(options).toMatchObject({ credentials: 'omit' });
+    expect(options).toMatchObject({ credentials: 'include' });
   });
 
   it('throttles repeated requests after a 429 response', async () => {
