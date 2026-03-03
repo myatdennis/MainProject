@@ -12,6 +12,7 @@ import {
   type AdminAccessPayload,
 } from '../lib/adminAccess';
 import { logAuthRedirect } from './logAuthRedirect';
+import { isAdminSurface } from './surface';
 
 export class ApiError extends Error {
   status: number;
@@ -294,24 +295,6 @@ const extractPathname = (target: string): string => {
   }
 };
 
-const isBrowserEnvironment = typeof window !== 'undefined' && typeof window.location !== 'undefined';
-
-const isAdminSurfaceLocation = (): boolean => {
-  if (!isBrowserEnvironment) return false;
-  try {
-    const pathname = window.location?.pathname?.toLowerCase?.() || '';
-    return pathname.startsWith('/admin');
-  } catch {
-    return false;
-  }
-};
-
-const shouldBlockAdminRequest = (pathname: string): boolean => {
-  if (!isBrowserEnvironment) return false;
-  if (!ADMIN_API_PATTERN.test(pathname)) return false;
-  return !isAdminSurfaceLocation();
-};
-
 const logDevHttpError = (target: string, status: number, body: unknown) => {
   if (!devMode) return;
   if (status !== 422 && status < 500) return;
@@ -366,7 +349,7 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
   const url = buildApiUrl(path);
   const pathname = extractPathname(path);
 
-  if (shouldBlockAdminRequest(pathname)) {
+  if (ADMIN_API_PATTERN.test(pathname) && typeof window !== 'undefined' && !isAdminSurface()) {
     const errorPayload = {
       error: 'admin_required',
       message: `Blocked request to admin API from non-admin route: ${pathname}`,
@@ -374,7 +357,7 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
     if (devMode) {
       throw new Error(errorPayload.message);
     }
-    const surface = isBrowserEnvironment ? window.location?.pathname : 'ssr';
+    const surface = typeof window !== 'undefined' ? window.location?.pathname : 'ssr';
     console.warn('[apiRequest] blocked_admin_request', { pathname, surface });
     throw new ApiError(errorPayload.message, 403, pathname, errorPayload);
   }

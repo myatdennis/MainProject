@@ -19,8 +19,8 @@ import { cloneWithCanonicalOrgId, resolveOrgIdFromCarrier, stampCanonicalOrgId }
 import { nanoid } from 'nanoid';
 import { canonicalizeLessonContent } from '../utils/lessonContent';
 import { SlugConflictError } from '../utils/slugConflict';
-import { getAdminAccessSnapshot, hasAdminPortalAccess } from '../lib/adminAccess';
 import isUuid from '../utils/isUuid';
+import { isAdminSurface } from '../utils/surface';
 
 // Course data types
 export interface ScenarioChoice {
@@ -1186,20 +1186,6 @@ const resolveOrgContext = (): { orgId: string | null; role: string | null; userI
   return { orgId: null, role: null, userId: null };
 };
 
-const isAdminSurface = (): boolean => {
-  if (typeof window === 'undefined' || typeof window.location === 'undefined') {
-    return false;
-  }
-
-  try {
-    const pathname = window.location.pathname ? window.location.pathname.toLowerCase() : '';
-    return pathname.startsWith('/admin');
-  } catch (error) {
-    console.warn('[courseStore] Failed to inspect route for admin surface detection:', error);
-    return false;
-  }
-};
-
 const hasLocalProgressForCourse = (course: Course): boolean => {
   if (typeof window === 'undefined') {
     return false;
@@ -1494,9 +1480,7 @@ export const courseStore = {
         return;
       }
       const adminSurfaceDetected = isAdminSurface();
-      const adminAccessSnapshot = getAdminAccessSnapshot();
-      const adminPortalAccessGranted = hasAdminPortalAccess(adminAccessSnapshot?.payload ?? null);
-      const treatAsAdmin = adminSurfaceDetected || adminPortalAccessGranted;
+      const treatAsAdmin = adminSurfaceDetected;
       restrictToOrg = !treatAsAdmin;
       const adminMode = treatAsAdmin;
       let runtimeStatus = getRuntimeStatus();

@@ -6813,6 +6813,50 @@ app.post('/api/admin/courses/import', async (req, res) => {
 });
 
 // Assignments listing for client: return active assignments for a user
+app.get('/api/client/me', authenticate, async (req, res) => {
+  const context = requireUserContext(req, res);
+  if (!context) return;
+  const sessionUser = req.user || {};
+  const memberships = Array.isArray(sessionUser.memberships) ? sessionUser.memberships : [];
+  const organizations = memberships.map((membership) => ({
+    orgId: membership?.orgId || membership?.org_id || null,
+    role: membership?.role ?? null,
+    status: membership?.status ?? null,
+  }));
+  const email = sessionUser.email || sessionUser.user?.email || null;
+  const displayName =
+    sessionUser.displayName ||
+    sessionUser.fullName ||
+    sessionUser.user_metadata?.full_name ||
+    sessionUser.user?.user_metadata?.full_name ||
+    null;
+  const normalizedRoles = Array.isArray(sessionUser.roles)
+    ? sessionUser.roles.map((role) => String(role || '').toLowerCase())
+    : [];
+  const portalAccess = {
+    admin: Boolean(sessionUser.isPlatformAdmin || normalizedRoles.includes('admin')),
+    learner: true,
+    client: true,
+  };
+  const orgIdCandidate =
+    context.requestedOrgId ||
+    sessionUser.activeOrgId ||
+    sessionUser.organizationId ||
+    (organizations.find((org) => Boolean(org.orgId))?.orgId ?? null);
+  res.json({
+    data: {
+      userId: context.userId,
+      email,
+      displayName,
+      role: context.userRole ?? sessionUser.role ?? null,
+      orgId: orgIdCandidate ?? null,
+      organizations,
+      portalAccess,
+    },
+  });
+});
+
+// Assignments listing for client: return active assignments for a user
 app.get('/api/client/assignments', authenticate, async (req, res) => {
   const queryUserId =
     typeof req.query.user_id === 'string'

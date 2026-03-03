@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import apiRequest from '../utils/apiClient';
 import { queryKeys } from '../query/queryKeys';
 import { getUserSession } from '../lib/secureStorage';
+import { isAdminSurface } from '../utils/surface';
 
 export interface UserProfileLegacy {
   id: string;
@@ -12,8 +13,25 @@ export interface UserProfileLegacy {
   organizationId?: string;
 }
 
-interface RemoteProfileResponse {
-  data?: UserProfileLegacy | null;
+interface ClientMeResponse {
+  data?: {
+    userId: string;
+    email?: string | null;
+    displayName?: string | null;
+    role?: string | null;
+    orgId?: string | null;
+  } | null;
+}
+
+interface AdminMeResponse {
+  user?: {
+    id?: string;
+    email?: string;
+    firstName?: string;
+    lastName?: string;
+    role?: string;
+    organizationId?: string | null;
+  };
 }
 
 const readSessionUser = (): UserProfileLegacy | null => {
@@ -38,12 +56,39 @@ const readSessionUser = (): UserProfileLegacy | null => {
 
 // Fetcher attempts remote first; if remote fails returns legacy local copy.
 const fetchUserProfile = async (): Promise<UserProfileLegacy | null> => {
-  // Attempt remote endpoint (if implemented). If not available gracefully fallback.
-  try {
-    const json = await apiRequest<RemoteProfileResponse>('/api/client/profile', { method: 'GET', noTransform: true });
-    if (json?.data) return json.data;
-  } catch (e: any) {
-    // Swallow 404 / network and fallback
+  const adminSurface = isAdminSurface();
+  if (adminSurface) {
+    try {
+      const json = await apiRequest<AdminMeResponse>('/api/admin/me', { noTransform: true });
+      if (json?.user?.id) {
+        return {
+          id: json.user.id,
+          email: json.user.email,
+          firstName: json.user.firstName,
+          lastName: json.user.lastName,
+          role: json.user.role,
+          organizationId: json.user.organizationId ?? undefined,
+        };
+      }
+    } catch {
+      // swallow and fall through
+    }
+  } else {
+    try {
+      const json = await apiRequest<ClientMeResponse>('/api/client/me', { noTransform: true });
+      if (json?.data?.userId) {
+        return {
+          id: json.data.userId,
+          email: json.data.email ?? undefined,
+          firstName: json.data.displayName ?? undefined,
+          lastName: undefined,
+          role: json.data.role ?? undefined,
+          organizationId: json.data.orgId ?? undefined,
+        };
+      }
+    } catch {
+      // swallow and fall through
+    }
   }
   return readSessionUser();
 };

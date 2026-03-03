@@ -1,30 +1,4 @@
 import { useEffect, Suspense, lazy, useRef, useContext } from 'react';
-// Load admin routes eagerly so they always share the main React instance in dev/prod.
-import AdminDashboard from './pages/Admin/AdminDashboard';
-import AdminHealth from './pages/Admin/AdminHealth';
-import AdminCourses from './pages/Admin/AdminCourses';
-import AdminCourseBuilder from './pages/Admin/AdminCourseBuilder';
-import AdminCourseDetail from './pages/Admin/AdminCourseDetail';
-import AdminCourseEdit from './pages/Admin/AdminCourseEdit';
-import AdminCourseAssign from './pages/Admin/AdminCourseAssign';
-import AdminCourseSettings from './pages/Admin/AdminCourseSettings';
-import AdminSurveys from './pages/Admin/AdminSurveys';
-import AdminAnalytics from './pages/Admin/AdminAnalytics';
-import AdminSurveyBuilder from './pages/Admin/AdminSurveyBuilder';
-import AdminSurveyAnalytics from './pages/Admin/AdminSurveyAnalytics';
-import AdminOrganizations from './pages/Admin/AdminOrganizations';
-import AdminOrganizationProfile from './pages/Admin/AdminOrganizationProfile';
-import AdminOrganizationCreate from './pages/Admin/AdminOrganizationNew';
-import AdminUsers from './pages/Admin/AdminUsers';
-import AdminUserProfile from './pages/Admin/AdminUserProfile';
-import AdminDocuments from './pages/Admin/AdminDocuments';
-import AdminPerformanceDashboard from './pages/Admin/AdminPerformanceDashboard';
-import AdminSettings from './pages/Admin/AdminSettings';
-import AdminQueueMonitor from './pages/Admin/AdminQueueMonitor';
-import AdminLeadershipInsights from './pages/Admin/AdminLeadershipInsights';
-import AdminProfilePage from './pages/Admin/AdminProfilePage';
-import AdminLayout from './components/Admin/AdminLayout';
-// (removed duplicate import)
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { courseStore } from './store/courseStore';
 import { LoadingSpinner } from './components/LoadingComponents';
@@ -67,9 +41,6 @@ import LMSCourseCompletion from './pages/LMS/LMSCourseCompletion';
 import LMSLessonView from './pages/LMS/LMSLessonView';
 import NotFound from './pages/NotFound';
 import AIBot from './components/AIBot/AIBot';
-import AdminCoursesImport from './pages/Admin/AdminCoursesImport';
-import AdminCourseBulkPlaceholder from './pages/Admin/Course/AdminCourseBulkPlaceholder';
-import AdminCourseNewPlaceholder from './pages/Admin/Course/AdminCourseNewPlaceholder';
 import InviteAccept from './pages/InviteAccept';
 import AuthCallback from './pages/AuthCallback';
 
@@ -84,6 +55,34 @@ const ResourcePage = lazy(() => import('./pages/ResourcePage'));
 const TestimonialsPage = lazy(() => import('./pages/TestimonialsPage'));
 const ContactPage = lazy(() => import('./pages/ContactPage'));
 const ClientPortalPage = lazy(() => import('./pages/ClientPortalPage'));
+const Unauthorized = lazy(() => import('./pages/Unauthorized'));
+const AdminDashboard = lazy(() => import('./pages/Admin/AdminDashboard'));
+const AdminHealth = lazy(() => import('./pages/Admin/AdminHealth'));
+const AdminCourses = lazy(() => import('./pages/Admin/AdminCourses'));
+const AdminCourseBuilder = lazy(() => import('./pages/Admin/AdminCourseBuilder'));
+const AdminCourseDetail = lazy(() => import('./pages/Admin/AdminCourseDetail'));
+const AdminCourseEdit = lazy(() => import('./pages/Admin/AdminCourseEdit'));
+const AdminCourseAssign = lazy(() => import('./pages/Admin/AdminCourseAssign'));
+const AdminCourseSettings = lazy(() => import('./pages/Admin/AdminCourseSettings'));
+const AdminSurveys = lazy(() => import('./pages/Admin/AdminSurveys'));
+const AdminAnalytics = lazy(() => import('./pages/Admin/AdminAnalytics'));
+const AdminSurveyBuilder = lazy(() => import('./pages/Admin/AdminSurveyBuilder'));
+const AdminSurveyAnalytics = lazy(() => import('./pages/Admin/AdminSurveyAnalytics'));
+const AdminOrganizations = lazy(() => import('./pages/Admin/AdminOrganizations'));
+const AdminOrganizationProfile = lazy(() => import('./pages/Admin/AdminOrganizationProfile'));
+const AdminOrganizationCreate = lazy(() => import('./pages/Admin/AdminOrganizationNew'));
+const AdminUsers = lazy(() => import('./pages/Admin/AdminUsers'));
+const AdminUserProfile = lazy(() => import('./pages/Admin/AdminUserProfile'));
+const AdminDocuments = lazy(() => import('./pages/Admin/AdminDocuments'));
+const AdminPerformanceDashboard = lazy(() => import('./pages/Admin/AdminPerformanceDashboard'));
+const AdminSettings = lazy(() => import('./pages/Admin/AdminSettings'));
+const AdminQueueMonitor = lazy(() => import('./pages/Admin/AdminQueueMonitor'));
+const AdminLeadershipInsights = lazy(() => import('./pages/Admin/AdminLeadershipInsights'));
+const AdminProfilePage = lazy(() => import('./pages/Admin/AdminProfilePage'));
+const AdminLayout = lazy(() => import('./components/Admin/AdminLayout'));
+const AdminCoursesImport = lazy(() => import('./pages/Admin/AdminCoursesImport'));
+const AdminCourseBulkPlaceholder = lazy(() => import('./pages/Admin/Course/AdminCourseBulkPlaceholder'));
+const AdminCourseNewPlaceholder = lazy(() => import('./pages/Admin/Course/AdminCourseNewPlaceholder'));
 
 const AdminProtectedLayout = () => (
   <RequireAuth mode="admin">
@@ -211,6 +210,7 @@ function AppContent() {
                 <Route path="/client-portal" element={<ClientPortalPage />} />
                 <Route path="/invite/:token" element={<InviteAccept />} />
                 <Route path="/auth/callback" element={<AuthCallback />} />
+                <Route path="/unauthorized" element={<Unauthorized />} />
                 <Route path="/client-portal/org/:orgId/*" element={<OrgWorkspaceProtectedLayout />} />
                 <Route path="/client/*" element={<ClientProtectedLayout />}>
                   <Route index element={<Navigate to="dashboard" replace />} />
