@@ -27,6 +27,7 @@ vi.mock('../../lib/supabaseClient', () => {
   const supabaseClient = { auth: supabaseAuthMock };
   return {
     __esModule: true,
+    AUTH_STORAGE_MODE: 'secure',
     supabase: supabaseClient,
     getSupabase: () => supabaseClient,
     hasSupabaseConfig: () => true,

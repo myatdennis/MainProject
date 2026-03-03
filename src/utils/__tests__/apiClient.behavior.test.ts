@@ -91,6 +91,13 @@ const getHeaderValue = (headers: Record<string, string>, key: string): string | 
   return entry?.[1];
 };
 
+const setPathname = (pathname: string) => {
+  Object.assign(window.location, {
+    pathname,
+    href: `${window.location.origin}${pathname}`,
+  });
+};
+
 describe('apiClient', () => {
   const debugSpy = vi.spyOn(console, 'debug').mockImplementation(() => {});
 
@@ -120,6 +127,7 @@ describe('apiClient', () => {
     debugSpy.mockClear();
     vi.unstubAllEnvs();
     __setApiBaseUrlOverride();
+    setPathname('/admin/dashboard');
   });
 
   afterEach(() => {
@@ -347,6 +355,7 @@ describe('apiClient', () => {
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.huddle.local');
     __setApiBaseUrlOverride('https://api.huddle.local');
     const { apiRequest } = await loadApiClient();
+    setPathname('/');
     fetchSpy.mockResolvedValueOnce(createResponse({ data: [] }));
 
     await apiRequest('/api/admin/courses', { allowAnonymous: true });

@@ -349,7 +349,8 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
   const url = buildApiUrl(path);
   const pathname = extractPathname(path);
 
-  if (ADMIN_API_PATTERN.test(pathname) && typeof window !== 'undefined' && !isAdminSurface()) {
+  const adminGuardActive = !options.skipAdminGateCheck && !options.allowAnonymous;
+  if (adminGuardActive && ADMIN_API_PATTERN.test(pathname) && typeof window !== 'undefined' && !isAdminSurface()) {
     const errorPayload = {
       error: 'admin_required',
       message: `Blocked request to admin API from non-admin route: ${pathname}`,

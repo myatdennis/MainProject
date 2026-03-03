@@ -51,8 +51,11 @@ const warn = (message: string, error?: unknown) => {
   }
 };
 
-let warnedFallback = false;
-let warnedPersistentUnavailable = false;
+const warningFlags = {
+  fallback: false,
+  persistentUnavailable: false,
+  sessionUnavailable: false,
+};
 let storageProbeMode: string | null = null;
 
 const recordStorageProbe = (mode: string, error?: unknown) => {
@@ -73,6 +76,27 @@ const recordStorageProbe = (mode: string, error?: unknown) => {
   }
 };
 
+const AUTH_ALLOWED_KEYS = new Set(['secure_thc-supabase-auth', 'thc-supabase-auth']);
+const SUPABASE_AUTH_TOKEN_REGEX = /^sb-.*-auth-token$/i;
+
+const getBrowserSessionStorage = (): StorageLike | null => {
+  if (typeof window === 'undefined' || typeof window.sessionStorage === 'undefined') {
+    return null;
+  }
+  try {
+    const testKey = '__secure_storage_session_probe__';
+    window.sessionStorage.setItem(testKey, testKey);
+    window.sessionStorage.removeItem(testKey);
+    return window.sessionStorage;
+  } catch (error) {
+    if (!warningFlags.sessionUnavailable) {
+      warn('[secureStorage] sessionStorage is not accessible; falling back to in-memory storage.', error);
+      warningFlags.sessionUnavailable = true;
+    }
+    return null;
+  }
+};
+
 const getBrowserPersistentStorage = (): StorageLike | null => {
   if (typeof window === 'undefined') {
     return null;
@@ -85,9 +109,9 @@ const getBrowserPersistentStorage = (): StorageLike | null => {
       recordStorageProbe('localStorage');
       return window.localStorage;
     } catch (error) {
-      if (!warnedPersistentUnavailable) {
+      if (!warningFlags.persistentUnavailable) {
         warn('[secureStorage] localStorage is not accessible; attempting sessionStorage fallback.', error);
-        warnedPersistentUnavailable = true;
+        warningFlags.persistentUnavailable = true;
       }
       recordStorageProbe('localStorage-failed', error);
     }
@@ -113,9 +137,9 @@ const getStorage = (): StorageLike => {
   if (storage) {
     return storage;
   }
-  if (!warnedFallback) {
+  if (!warningFlags.fallback) {
     warn('[secureStorage] Using in-memory storage fallback. Data will be cleared on reload.');
-    warnedFallback = true;
+    warningFlags.fallback = true;
   }
   recordStorageProbe('memory-fallback');
   return memoryStorageAdapter;
@@ -663,7 +687,15 @@ export function installLocalStorageGuards(): void {
   }
   const originalSetItem = window.localStorage.setItem.bind(window.localStorage);
   window.localStorage.setItem = (key: string, value: string) => {
-    if (BLOCKED_LOCAL_STORAGE_PATTERNS.some((pattern) => pattern.test(key))) {
+    const matchesSensitivePattern = BLOCKED_LOCAL_STORAGE_PATTERNS.some((pattern) => pattern.test(key));
+    const authKeyAllowed = AUTH_ALLOWED_KEYS.has(key) || SUPABASE_AUTH_TOKEN_REGEX.test(key);
+    if (matchesSensitivePattern && authKeyAllowed) {
+      if (import.meta.env?.DEV) {
+        console.info('[secureStorage] allowing auth key write', { key });
+      }
+      return originalSetItem(key, value);
+    }
+    if (matchesSensitivePattern) {
       const message = `[secureStorage] Blocked attempt to write sensitive key "${key}" to localStorage. Use secureStorage utilities instead.`;
       console.error(message);
       throw new Error(message);
@@ -754,8 +786,9 @@ export function exportSecureData(): Record<string, any> {
 
 export function __dangerouslyResetSecureStorageStateForTests(): void {
   memoryStorage.clear();
-  warnedFallback = false;
-  warnedSessionUnavailable = false;
+  warningFlags.fallback = false;
+  warningFlags.sessionUnavailable = false;
+  warningFlags.persistentUnavailable = false;
 
   const storage = getBrowserSessionStorage();
   if (storage) {

@@ -238,6 +238,40 @@
         "org_id": "demo-org",
         "modules": []
       }
+    ],
+    [
+      "e2e-course-1772557492388",
+      {
+        "id": "e2e-course-1772557492388",
+        "slug": "integration-test-course-6",
+        "title": "Integration Test Course",
+        "description": null,
+        "status": "draft",
+        "version": 1,
+        "meta_json": {},
+        "published_at": null,
+        "organization_id": "demo-org",
+        "organizationId": "demo-org",
+        "org_id": "demo-org",
+        "modules": []
+      }
+    ],
+    [
+      "e2e-course-1772558041652",
+      {
+        "id": "e2e-course-1772558041652",
+        "slug": "integration-test-course-7",
+        "title": "Integration Test Course",
+        "description": null,
+        "status": "draft",
+        "version": 1,
+        "meta_json": {},
+        "published_at": null,
+        "organization_id": "demo-org",
+        "organizationId": "demo-org",
+        "org_id": "demo-org",
+        "modules": []
+      }
     ]
   ],
   "surveys": [],
