@@ -538,7 +538,7 @@ const AdminLogin: React.FC = () => {
           </p>
           <p className="mt-3 text-small text-gray">
             Learners should continue to the{' '}
-            <Link to="/lms/login" className="text-skyblue underline-offset-2 hover:underline">
+            <Link to="/login" className="text-skyblue underline-offset-2 hover:underline">
               learning portal
             </Link>
             .

@@ -1,13 +1,6 @@
 import { useEffect, useState } from 'react';
 import { logAuthRedirect } from '../utils/logAuthRedirect';
-
-const resolveLoginPath = () => {
-  if (typeof window === 'undefined' || !window.location) {
-    return '/lms/login';
-  }
-  const pathname = window.location.pathname || '';
-  return pathname.startsWith('/admin') ? '/admin/login' : '/lms/login';
-};
+import { resolveLoginPath } from '../utils/surface';
 
 const AuthCallback = () => {
   const [message, setMessage] = useState('Redirecting you to the login page…');

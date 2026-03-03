@@ -9,6 +9,7 @@ import {
 } from '../dal/offlineQueue';
 import { getSessionMetadata, type SessionMetadata } from '../lib/secureStorage';
 import type { ApiError } from '../utils/apiClient';
+import { isAdminSurface } from '../utils/surface';
 
 interface HealthSnapshot {
   healthy: boolean;
@@ -119,6 +120,7 @@ const DevDebugPanel = () => {
   const [queueStats, setQueueStats] = useState<QueueStats | null>(null);
   const [sessionMeta, setSessionMeta] = useState<SessionMetadata | null>(null);
   const [isOnline, setIsOnline] = useState(() => (typeof navigator !== 'undefined' ? navigator.onLine : true));
+  const [lastRedirect, setLastRedirect] = useState<{ context: string; meta: Record<string, unknown>; timestamp: number } | null>(null);
 
   const fetchHealth = useCallback(async () => {
     if (!DEBUG_ENABLED) return;
@@ -193,7 +195,25 @@ const DevDebugPanel = () => {
     };
   }, []);
 
+  useEffect(() => {
+    if (!DEBUG_ENABLED || typeof window === 'undefined') return;
+    const updateRedirectMeta = () => {
+      const payload = window.__HUDDLE_LAST_AUTH_REDIRECT__ ?? null;
+      setLastRedirect(payload);
+    };
+    updateRedirectMeta();
+    const interval = window.setInterval(updateRedirectMeta, 1500);
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, []);
+
   const uptime = useMemo(() => (health ? formatDuration(health.uptime * 1000) : '—'), [health]);
+  const pathname = typeof window !== 'undefined' && window.location ? window.location.pathname || 'unknown' : 'ssr';
+  const surface = isAdminSurface(pathname) ? 'admin' : 'client';
+  const rawRedirectMeta = (lastRedirect?.meta ?? {}) as Record<string, unknown>;
+  const lastRedirectTarget = typeof rawRedirectMeta.target === 'string' ? (rawRedirectMeta.target as string) : 'n/a';
+  const lastRedirectLabel = lastRedirect ? `${lastRedirect.context} → ${lastRedirectTarget}` : 'none';
 
   if (!DEBUG_ENABLED) {
     return null;
@@ -222,6 +242,31 @@ const DevDebugPanel = () => {
               <p className="text-[10px] text-slate-500">{health?.requestId || 'no-req-id'}</p>
             </div>
           </header>
+
+          <section className="mb-4 border-b border-slate-800 pb-3">
+            <p className="mb-2 text-[11px] uppercase tracking-[0.2em] text-slate-500">Route / Auth</p>
+            <div className="space-y-1 text-[11px] text-slate-300">
+              <p>
+                Path:{' '}
+                <span className="text-white">{pathname}</span>
+              </p>
+              <p>
+                Surface:{' '}
+                <span className="text-white">{surface}</span>
+              </p>
+              <p>
+                Supabase session:{' '}
+                <span className="text-white">{user ? 'present' : 'missing'}</span>
+              </p>
+              <p>
+                Last redirect:{' '}
+                <span className="text-white">
+                  {lastRedirectLabel}
+                  {lastRedirect?.timestamp ? ` @ ${new Date(lastRedirect.timestamp).toLocaleTimeString()}` : ''}
+                </span>
+              </p>
+            </div>
+          </section>
 
           <section className="mb-4 space-y-2">
             <div className="flex items-center justify-between">

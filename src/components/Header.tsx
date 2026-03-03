@@ -85,7 +85,7 @@ const Header = () => {
     } catch (error) {
       console.warn('[Header] logout failed (continuing)', error);
     }
-    const target = surface === 'admin' ? '/admin/login' : '/lms/login';
+    const target = surface === 'admin' ? '/admin/login' : '/login';
     if (surface === 'admin') {
       logAuthRedirect('Header.handleLogout', { target });
     }
@@ -209,7 +209,7 @@ const Header = () => {
           {!isLoggedIn && (
             <>
               <Link
-                to="/lms/login"
+                to="/login"
                 className={cn(
                   'hidden sm:inline-flex h-11 items-center justify-center rounded-lg border border-skyblue/30 px-4 text-sm font-semibold text-skyblue transition-colors hover:bg-skyblue/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-skyblue focus-visible:ring-offset-2 focus-visible:ring-offset-softwhite'
                 )}
@@ -333,7 +333,7 @@ const Header = () => {
               {!isLoggedIn ? (
                 <>
                   <Link
-                    to="/lms/login"
+                    to="/login"
                     onClick={() => setIsMenuOpen(false)}
                     className="inline-flex h-11 items-center justify-center rounded-lg border border-skyblue/30 text-sm font-semibold text-skyblue transition hover:bg-skyblue/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-skyblue focus-visible:ring-offset-2 focus-visible:ring-offset-softwhite"
                   >

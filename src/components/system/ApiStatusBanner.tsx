@@ -38,7 +38,7 @@ const ApiStatusBanner: FC<ApiStatusBannerProps> = ({
   if (!offline && !requiresAuth) {
     return null;
   }
-  const loginHref = surface === 'admin' ? '/admin/login' : '/lms/login';
+  const loginHref = surface === 'admin' ? '/admin/login' : '/login';
   const surfaceLabel = surface === 'admin' ? 'Admin' : 'Learner';
 
   const title = offline ? 'API unreachable — offline mode' : 'Signed out — please log in';

@@ -52,28 +52,64 @@ const warn = (message: string, error?: unknown) => {
 };
 
 let warnedFallback = false;
-let warnedSessionUnavailable = false;
+let warnedPersistentUnavailable = false;
+let storageProbeMode: string | null = null;
 
-const getBrowserSessionStorage = (): StorageLike | null => {
-  if (typeof window === 'undefined' || typeof window.sessionStorage === 'undefined') {
-    return null;
+const recordStorageProbe = (mode: string, error?: unknown) => {
+  if (storageProbeMode === mode) {
+    return;
   }
-  try {
-    const testKey = '__secure_storage_probe__';
-    window.sessionStorage.setItem(testKey, testKey);
-    window.sessionStorage.removeItem(testKey);
-    return window.sessionStorage;
-  } catch (error) {
-    if (!warnedSessionUnavailable) {
-      warn('[secureStorage] sessionStorage is not accessible; falling back to in-memory storage.', error);
-      warnedSessionUnavailable = true;
-    }
-    return null;
+  storageProbeMode = mode;
+  if (typeof console === 'undefined') return;
+  const payload: Record<string, unknown> = {
+    mode,
+    timestamp: new Date().toISOString(),
+  };
+  if (error instanceof Error) {
+    payload.error = error.message;
+  }
+  if (import.meta?.env?.DEV) {
+    console.info('[secureStorage] storage_probe', payload);
   }
 };
 
+const getBrowserPersistentStorage = (): StorageLike | null => {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  if (typeof window.localStorage !== 'undefined') {
+    try {
+      const testKey = '__secure_storage_probe__';
+      window.localStorage.setItem(testKey, testKey);
+      window.localStorage.removeItem(testKey);
+      recordStorageProbe('localStorage');
+      return window.localStorage;
+    } catch (error) {
+      if (!warnedPersistentUnavailable) {
+        warn('[secureStorage] localStorage is not accessible; attempting sessionStorage fallback.', error);
+        warnedPersistentUnavailable = true;
+      }
+      recordStorageProbe('localStorage-failed', error);
+    }
+  }
+
+  if (typeof window.sessionStorage !== 'undefined') {
+    try {
+      const testKey = '__secure_storage_probe__';
+      window.sessionStorage.setItem(testKey, testKey);
+      window.sessionStorage.removeItem(testKey);
+      recordStorageProbe('sessionStorage');
+      return window.sessionStorage;
+    } catch (error) {
+      recordStorageProbe('sessionStorage-failed', error);
+    }
+  }
+
+  return null;
+};
+
 const getStorage = (): StorageLike => {
-  const storage = getBrowserSessionStorage();
+  const storage = getBrowserPersistentStorage();
   if (storage) {
     return storage;
   }
@@ -81,6 +117,7 @@ const getStorage = (): StorageLike => {
     warn('[secureStorage] Using in-memory storage fallback. Data will be cleared on reload.');
     warnedFallback = true;
   }
+  recordStorageProbe('memory-fallback');
   return memoryStorageAdapter;
 };
 

@@ -13,6 +13,7 @@ import { getApiBaseUrl } from './config/apiBase';
 import { registerApiNavigationGuard } from './utils/apiNavigationGuard';
 import { toast } from 'react-hot-toast';
 import AppErrorBoundary from './components/errors/AppErrorBoundary';
+import { resolveLoginPath } from './utils/surface';
 
 const devConsole = {
   log: (...args: unknown[]) => {
@@ -154,13 +155,7 @@ class SecureAuthErrorBoundary extends React.Component<{ children: React.ReactNod
     window.location.reload();
   };
 
-  getLoginDestination = () => {
-    if (typeof window === 'undefined' || !window.location) {
-      return '/lms/login';
-    }
-    const pathname = window.location.pathname || '';
-    return pathname.startsWith('/admin') ? '/admin/login' : '/lms/login';
-  };
+  getLoginDestination = () => resolveLoginPath();
 
   handleGoToLogin = () => {
     window.location.assign(this.getLoginDestination());

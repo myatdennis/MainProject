@@ -45,7 +45,7 @@ const LMSLogin: React.FC = () => {
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (isAuthenticated.lms) navigate('/lms/dashboard');
+    if (isAuthenticated.lms) navigate('/client/dashboard');
   }, [isAuthenticated.lms, navigate]);
 
   useEffect(() => {
@@ -93,7 +93,7 @@ const LMSLogin: React.FC = () => {
     setIsLoading(false);
     
     if (result.success) {
-      navigate('/lms/dashboard');
+      navigate('/client/dashboard');
     } else {
       setMessage(result.error || 'Sign-in failed.');
       setMessageType('error');

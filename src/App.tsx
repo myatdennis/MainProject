@@ -11,6 +11,7 @@ import SupabaseStatusBanner from './components/SupabaseStatusBanner';
 import ConnectionDiagnostic from './components/ConnectionDiagnostic';
 import TroubleshootingGuide from './components/TroubleshootingGuide';
 import RequireAuth from './components/routing/RequireAuth';
+import ClientRequireAuth from './components/routing/ClientRequireAuth';
 import DevDebugPanel from './components/DevDebugPanel';
 import { useSecureAuth } from './context/SecureAuthContext';
 import ToastContext from './context/ToastContext';
@@ -91,19 +92,19 @@ const AdminProtectedLayout = () => (
 );
 
 const LmsProtectedLayout = () => (
-  <RequireAuth mode="lms">
+  <RequireAuth mode="lms" loginPathOverride="/login">
     <LMSLayout />
   </RequireAuth>
 );
 
 const ClientProtectedLayout = () => (
-  <RequireAuth mode="lms">
+  <ClientRequireAuth>
     <ClientLayout />
-  </RequireAuth>
+  </ClientRequireAuth>
 );
 
 const OrgWorkspaceProtectedLayout = () => (
-  <RequireAuth mode="lms">
+  <RequireAuth mode="lms" loginPathOverride="/login">
     <OrgWorkspaceLayout />
   </RequireAuth>
 );
@@ -224,8 +225,8 @@ function AppContent() {
                   <Route path="*" element={<Navigate to="dashboard" replace />} />
                 </Route>
                 {/* Public auth routes */}
-                <Route path="/login" element={<Navigate to="/lms/login" replace />} />
-                <Route path="/lms/login" element={<LMSLogin />} />
+                <Route path="/login" element={<LMSLogin />} />
+                <Route path="/lms/login" element={<Navigate to="/login" replace />} />
                 <Route path="/admin/login" element={<AdminLogin />} />
                 <Route path="/courses/*" element={<LegacyCourseRedirect />} />
                 <Route path="/lms" element={<Navigate to="/lms/dashboard" replace />} />

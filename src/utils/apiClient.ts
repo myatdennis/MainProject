@@ -12,7 +12,7 @@ import {
   type AdminAccessPayload,
 } from '../lib/adminAccess';
 import { logAuthRedirect } from './logAuthRedirect';
-import { isAdminSurface } from './surface';
+import { isAdminSurface, resolveLoginPath } from './surface';
 
 export class ApiError extends Error {
   status: number;
@@ -201,7 +201,7 @@ const handleAuthFailure = async () => {
       pathname: window.location.pathname,
       reason: 'api_auth_failure',
     });
-    window.location.replace('/admin/login');
+    window.location.replace(resolveLoginPath());
   }
 };
 

@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useEffect, useCallback, useRef, type ReactNode } from 'react';
+import type { Session } from '@supabase/supabase-js';
 import {
   setSessionMetadata,
   setUserSession,
@@ -20,7 +21,7 @@ import { loginSchema, emailSchema, registerSchema } from '../utils/validators';
 import { queueRefresh } from '../lib/refreshQueue';
 import apiRequest, { ApiError, apiRequestRaw } from '../utils/apiClient';
 import buildSessionAuditHeaders from '../utils/sessionAuditHeaders';
-import { getSupabase, hasSupabaseConfig, captureAuthDiagnostics } from '../lib/supabaseClient';
+import { getSupabase, hasSupabaseConfig, captureAuthDiagnostics, AUTH_STORAGE_MODE, debugAuthStorage } from '../lib/supabaseClient';
 import { AuthExpiredError, NotAuthenticatedError } from '../lib/apiClient';
 
 // MFA helpers
@@ -29,6 +30,7 @@ import { enqueueAudit, flushAuditQueue } from '../dal/auditLog';
 import axios from 'axios';
 import { toast } from 'react-hot-toast';
 import { logAuthRedirect } from '../utils/logAuthRedirect';
+import { resolveLoginPath, isLoginPath, isAdminSurface } from '../utils/surface';
 
 if (axios?.defaults) {
   axios.defaults.withCredentials = true;
@@ -39,20 +41,6 @@ const SESSION_RELOAD_THROTTLE_MS = 45 * 1000;
 const BOOTSTRAP_FAIL_OPEN_MS = 2500;
 
 const isNavigatorOffline = () => typeof navigator !== 'undefined' && navigator.onLine === false;
-const resolveLoginPath = () => {
-  if (typeof window === 'undefined' || !window.location) {
-    return '/lms/login';
-  }
-  const pathname = window.location.pathname || '';
-  return pathname.startsWith('/admin') ? '/admin/login' : '/lms/login';
-};
-const isLoginRoute = () => {
-  if (typeof window === 'undefined' || !window.location) {
-    return false;
-  }
-  const pathname = window.location.pathname || '';
-  return pathname.startsWith('/admin/login');
-};
 const isDevEnvironment = Boolean(import.meta.env?.DEV);
 const logAuthDebug = (label: string, payload: Record<string, unknown>) => {
   if (!isDevEnvironment) return;
@@ -64,6 +52,38 @@ const logAuthDebug = (label: string, payload: Record<string, unknown>) => {
 };
 const logSessionResult = (status: string) => logAuthDebug('[auth] session result', { status });
 const logRefreshResult = (status: string) => logAuthDebug('[auth] refresh result', { status });
+
+const collectSupabaseStorageKeys = () => {
+  if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') {
+    return [];
+  }
+  try {
+    const keys: string[] = [];
+    for (let i = 0; i < window.localStorage.length; i += 1) {
+      const key = window.localStorage.key(i);
+      if (!key) continue;
+      if (key.includes('sb-') || key.includes('thc-supabase-auth') || key.startsWith('secure_')) {
+        keys.push(key);
+      }
+    }
+    return keys;
+  } catch {
+    return [];
+  }
+};
+
+const logSupabaseLoginDebug = (context: 'admin' | 'lms', session?: { user?: { id?: string | null } } | null) => {
+  if (!import.meta.env?.DEV) {
+    return;
+  }
+  const keys = collectSupabaseStorageKeys();
+  console.info(`[SecureAuth] ${context}_supabase_sign_in_success`, {
+    userId: session?.user?.id ?? null,
+    storageMode: AUTH_STORAGE_MODE,
+    storageKeys: keys,
+  });
+  debugAuthStorage(`${context}_supabase_sign_in_success`);
+};
 
 const readSupabaseSessionTokens = async (
   options: { refreshIfMissing?: boolean } = {},
@@ -531,6 +551,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   }) => Promise<boolean>;
   const fetchServerSessionRef = useRef<FetchServerSessionFn | null>(null);
   const refreshTokenCallbackRef = useRef<((options?: RefreshOptions) => Promise<boolean>) | null>(null);
+  const authDebugSignatureRef = useRef<string | null>(null);
 
   const updateSurfaceAuthStatus = useCallback((surface: SessionSurface | undefined, status: SurfaceAuthStatus) => {
     if (!surface) {
@@ -1156,7 +1177,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
   const runBootstrap = useCallback(
     async (signal?: AbortSignal) => {
-      if (isLoginRoute()) {
+      if (isLoginPath()) {
         continueAsGuest('bootstrap_login_route');
         return;
       }
@@ -1260,7 +1281,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       if (!force && bootstrappedRef.current) {
         return;
       }
-      if (isLoginRoute()) {
+      if (isLoginPath()) {
         bootstrappedRef.current = true;
         clearBootstrapFailOpenTimer();
         continueAsGuest('bootstrap_login_route');
@@ -1477,6 +1498,51 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     hasLoggedAppLoadRef.current = true;
   }, [sessionStatus, user]);
 
+  const publishAuthDebugSnapshot = useCallback(
+    (reason: string) => {
+      if (typeof window === 'undefined') {
+        return;
+      }
+      const pathname = window.location?.pathname ?? '';
+      const surface = isAdminSurface(pathname) ? 'admin' : 'client';
+      const hasSession = Boolean(user);
+      const lastRedirect = window.__HUDDLE_LAST_AUTH_REDIRECT__ ?? null;
+      const payload = {
+        pathname,
+        surface,
+        authStatus,
+        sessionStatus,
+        surfaceStatus: surfaceAuthStatus,
+        orgResolutionStatus,
+        hasSession,
+        storageMode: AUTH_STORAGE_MODE,
+        lastRedirect,
+        timestamp: new Date().toISOString(),
+      };
+      window.__HUDDLE_AUTH_DEBUG__ = payload;
+      const signature = JSON.stringify({
+        pathname,
+        surface,
+        authStatus,
+        sessionStatus,
+        hasSession,
+        orgResolutionStatus,
+        surfaceStatus,
+      });
+      if (authDebugSignatureRef.current !== signature) {
+        authDebugSignatureRef.current = signature;
+        if (import.meta.env?.DEV) {
+          console.info('[SecureAuth][debug] auth_state_update', { reason, payload });
+        }
+      }
+    },
+    [authStatus, orgResolutionStatus, sessionStatus, surfaceAuthStatus, user],
+  );
+
+  useEffect(() => {
+    publishAuthDebugSnapshot('state_change');
+  }, [publishAuthDebugSnapshot]);
+
 // ============================================================================
 // Login
 // ============================================================================
@@ -1499,18 +1565,18 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       }
 
       const normalizedEmail = email.toLowerCase().trim();
-
-      if (type === 'admin') {
+      type SupabaseSignInOutcome = { success: true; session: Session | null } | (LoginResult & { success: false });
+      const performSupabaseSignIn = async (context: 'admin' | 'lms'): Promise<SupabaseSignInOutcome> => {
         const supabaseClient = getSupabase();
         if (!supabaseClient) {
           return {
             success: false,
             error: 'Supabase authentication is unavailable. Please try again.',
-            errorType: 'network_error',
+            errorType: 'supabase_auth_error',
           };
         }
         try {
-          const { error: signInError } = await supabaseClient.auth.signInWithPassword({
+          const { data, error: signInError } = await supabaseClient.auth.signInWithPassword({
             email: normalizedEmail,
             password,
           });
@@ -1523,6 +1589,22 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
               errorType: statusCode === 400 ? 'invalid_credentials' : 'supabase_auth_error',
             };
           }
+          const { data: sessionCheck, error: sessionError } = await supabaseClient.auth.getSession();
+          const supabaseSession = sessionCheck?.session ?? data?.session ?? null;
+          console.info(`[${context === 'admin' ? 'AdminLogin' : 'ClientLogin'}] supabase_session`, {
+            sessionHasAccessToken: Boolean(supabaseSession?.access_token),
+            sessionError: sessionError?.message ?? null,
+          });
+          if (!supabaseSession?.access_token) {
+            return {
+              success: false,
+              error: 'Unable to establish Supabase session. Please try again.',
+              errorType: 'supabase_auth_error',
+            };
+          }
+          logSupabaseLoginDebug(context, supabaseSession);
+          captureAuthDiagnostics(`${context}_sign_in_success`);
+          return { success: true, session: supabaseSession };
         } catch (supabaseError) {
           const message =
             supabaseError instanceof Error ? supabaseError.message : 'Unable to sign in with Supabase right now.';
@@ -1532,21 +1614,13 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             errorType: 'network_error',
           };
         }
+      };
 
-        const { data: sessionData, error: sessionError } = await supabaseClient.auth.getSession();
-        console.info('[AdminLogin] supabase_session', {
-          sessionHasAccessToken: Boolean(sessionData?.session?.access_token),
-          sessionError: sessionError?.message ?? null,
-        });
-        if (sessionError || !sessionData?.session?.access_token) {
-          return {
-            success: false,
-            error: 'Unable to establish Supabase session. Please try again.',
-            errorType: 'supabase_auth_error',
-          };
+      if (type === 'admin') {
+        const supabaseOutcome = await performSupabaseSignIn('admin');
+        if (!supabaseOutcome.success) {
+          return supabaseOutcome;
         }
-
-        captureAuthDiagnostics('admin_sign_in_success');
 
         const bootstrapSuccess = await fetchServerSession({ surface: 'admin' });
         if (!bootstrapSuccess) {
@@ -1560,8 +1634,8 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         enqueueAudit({
           action: 'admin_login',
           details: {
-            email: sessionData.session?.user?.email ?? normalizedEmail,
-            id: sessionData.session?.user?.id ?? null,
+            email: supabaseOutcome.session?.user?.email ?? normalizedEmail,
+            id: supabaseOutcome.session?.user?.id ?? null,
           },
         });
         void flushAuditQueue();
@@ -1569,6 +1643,11 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         logAuthSessionState('admin-login_success', getUserSession());
         setAuthStatus('authenticated');
         return { success: true };
+      }
+
+      const supabaseOutcome = await performSupabaseSignIn('lms');
+      if (!supabaseOutcome.success) {
+        return supabaseOutcome;
       }
 
       const rawPayload = await requestJsonWithClock<unknown>('/api/auth/login', {
@@ -1871,9 +1950,7 @@ const renderAuthState = ({
     typeof window !== 'undefined' && window.location ? window.location.pathname || '' : '';
   const isAuthenticatedUser = authStatus === 'authenticated';
   const isPublicAuthPath =
-    pathname === '/login' ||
-    pathname.startsWith('/lms/login') ||
-    pathname.startsWith('/admin/login') ||
+    isLoginPath(pathname) ||
     pathname.startsWith('/auth/callback') ||
     pathname.startsWith('/invite/');
   const isMarketingLanding = pathname === '/';
@@ -1902,7 +1979,7 @@ const renderAuthState = ({
     if (!isAuthenticatedUser && (isPublicAuthPath || isMarketingLanding)) {
       return <>{children}</>;
     }
-    const onLoginRoute = isLoginRoute();
+    const onLoginRoute = isLoginPath();
     if (!onLoginRoute && shouldRedirectToLogin) {
       if (typeof window !== 'undefined') {
         const target = resolveLoginPath();

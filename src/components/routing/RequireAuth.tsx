@@ -14,11 +14,12 @@ type AuthMode = 'admin' | 'lms';
 interface RequireAuthProps {
   mode: AuthMode;
   children: ReactNode;
+  loginPathOverride?: string;
 }
 
 const loginPathByMode: Record<AuthMode, string> = {
   admin: '/admin/login',
-  lms: '/lms/login',
+  lms: '/login',
 };
 
 const ADMIN_GATE_TIMEOUT_MS = 15000;
@@ -51,7 +52,7 @@ interface AdminCapabilityState {
   reason?: string;
 }
 
-export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
+export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthProps) => {
   const env = import.meta.env as Record<string, string | boolean | undefined>;
   const ROUTE_GUARD_DEBUG = Boolean(env?.DEV || env?.VITE_ENABLE_ROUTE_GUARD_DEBUG === 'true');
   const {
@@ -73,7 +74,7 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
   const retryRef = useRef(false);
   const adminCheckAbortRef = useRef<AbortController | null>(null);
   const redirectLogRef = useRef<string | null>(null);
-  const currentLoginPath = loginPathByMode[mode];
+  const currentLoginPath = loginPathOverride ?? loginPathByMode[mode];
   const isOnModeLoginPath = location.pathname === currentLoginPath;
   const hasSession = Boolean(user);
   const surfaceState = surfaceAuthStatus?.[mode] ?? 'idle';
@@ -692,6 +693,13 @@ export const RequireAuth = ({ mode, children }: RequireAuthProps) => {
   }
 
   if (!hasSession) {
+    if (authInitializing || sessionStatus !== 'ready') {
+      return (
+        <div className="flex min-h-[60vh] items-center justify-center bg-softwhite">
+          <LoadingSpinner size="lg" />
+        </div>
+      );
+    }
     const targetPath = currentLoginPath;
     if (isOnModeLoginPath) {
       logGuardEvent('bypass_login_gate', { reason: 'missing_session_on_login_path', target: targetPath });

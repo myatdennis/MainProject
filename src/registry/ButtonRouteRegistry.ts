@@ -39,7 +39,7 @@ export const GLOBAL_NAVIGATION: ButtonRouteEntry[] = [
   { id: 'header-resources', label: 'Resources', roles: ['*'], location: 'Header', targetRoute: '/resources', created: true, status: 'working' },
   { id: 'header-testimonials', label: 'Testimonials', roles: ['*'], location: 'Header', targetRoute: '/testimonials', created: true, status: 'working' },
   { id: 'header-contact', label: 'Contact', roles: ['*'], location: 'Header', targetRoute: '/contact', created: true, status: 'working' },
-  { id: 'header-client-login', label: 'Client Login', roles: ['*'], location: 'Header', targetRoute: '/lms/login', created: true, status: 'working' },
+  { id: 'header-client-login', label: 'Client Login', roles: ['*'], location: 'Header', targetRoute: '/login', created: true, status: 'working' },
   { id: 'header-admin-login', label: 'Admin', roles: ['*'], location: 'Header', targetRoute: '/admin/login', created: true, status: 'working' },
   { id: 'header-book-call', label: 'Book Discovery Call', roles: ['*'], location: 'Header', action: 'open-booking-widget', created: true, status: 'working' },
 

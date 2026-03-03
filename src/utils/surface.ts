@@ -29,3 +29,21 @@ export const assertAdminSurface = (label = 'admin_api'): void => {
   }
   console.warn(message);
 };
+
+export const resolveLoginPath = (pathnameOverride?: string): '/admin/login' | '/login' => {
+  return isAdminSurface(pathnameOverride) ? '/admin/login' : '/login';
+};
+
+export const isClientLoginPath = (pathnameOverride?: string): boolean => {
+  const pathname = getPathname(pathnameOverride);
+  return pathname.startsWith('/login') || pathname.startsWith('/lms/login');
+};
+
+export const isLoginPath = (pathnameOverride?: string): boolean => {
+  const pathname = getPathname(pathnameOverride);
+  if (!pathname) return false;
+  if (pathname.startsWith('/admin/login')) {
+    return true;
+  }
+  return isClientLoginPath(pathnameOverride);
+};

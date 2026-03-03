@@ -62,7 +62,7 @@ const LMSLayout = ({ children }: LMSLayoutProps) => {
     }
 
     if (!isAuthenticated.lms) {
-      navigate('/lms/login');
+      navigate('/login');
     }
   }, [isAuthenticated.lms, navigate, supabaseConfigured]);
 
@@ -95,7 +95,7 @@ const LMSLayout = ({ children }: LMSLayoutProps) => {
 
   const handleLogout = async () => {
     await logout('lms');
-    navigate('/lms/login');
+    navigate('/login');
   };
 
   return (

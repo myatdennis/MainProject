@@ -4311,7 +4311,7 @@ async function loadInviteByToken(token) {
   return data;
 }
 
-const INVITE_LOGIN_URL = process.env.CLIENT_INVITE_LOGIN_URL || '/lms/login';
+const INVITE_LOGIN_URL = process.env.CLIENT_INVITE_LOGIN_URL || '/login';
 
 function buildPublicInvitePayload(invite, orgSummary) {
   return {

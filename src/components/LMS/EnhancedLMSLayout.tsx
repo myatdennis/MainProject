@@ -51,7 +51,7 @@ const EnhancedLMSLayout: React.FC<EnhancedLMSLayoutProps> = ({ children }) => {
   // Check authentication
   useEffect(() => {
     if (!isAuthenticated.lms) {
-      navigate('/lms/login');
+      navigate('/login');
     }
   }, [isAuthenticated.lms, navigate]);
 
@@ -72,7 +72,7 @@ const EnhancedLMSLayout: React.FC<EnhancedLMSLayoutProps> = ({ children }) => {
     }
     
     await logout('lms');
-    navigate('/lms/login');
+    navigate('/login');
   };
 
   return (

@@ -9,7 +9,7 @@ type SupabaseStorageAdapter = {
 
 const AUTH_KEYS = ['thc-supabase-auth', 'thc-supabase-auth:thc-supabase-auth'];
 
-const AUTH_STORAGE_MODE = (import.meta.env.VITE_AUTH_STORAGE_MODE || 'secure').toLowerCase();
+export const AUTH_STORAGE_MODE = (import.meta.env.VITE_AUTH_STORAGE_MODE || 'secure').toLowerCase();
 const supabaseAuthStorage: SupabaseStorageAdapter =
   AUTH_STORAGE_MODE === 'plain' ? createPlainSupabaseAuthStorage() : createSecureSupabaseAuthStorage();
 
