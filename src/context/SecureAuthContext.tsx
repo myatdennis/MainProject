@@ -544,6 +544,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<UserSession | null>(null);
   const [memberships, setMemberships] = useState<UserMembership[]>([]);
   const [membershipStatus, setMembershipStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const lastMembershipStatusRef = useRef<'idle' | 'loading' | 'ready' | 'error'>(membershipStatus);
   const [lastMembershipFetchMeta, setLastMembershipFetchMeta] = useState<MembershipFetchMeta>({
     requestId: 0,
     startedAt: null,
@@ -1805,6 +1806,20 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   useEffect(() => {
     publishAuthDebugSnapshot('state_change');
   }, [publishAuthDebugSnapshot]);
+
+  useEffect(() => {
+    if (membershipStatus === 'ready' && lastMembershipStatusRef.current !== 'ready') {
+      if (typeof window !== 'undefined') {
+        const detail = {
+          activeOrgId: activeOrgId ?? null,
+          membershipCount: memberships.length,
+          userId: user?.id ?? null,
+        };
+        window.dispatchEvent(new CustomEvent('huddle:auth_ready', { detail }));
+      }
+    }
+    lastMembershipStatusRef.current = membershipStatus;
+  }, [membershipStatus, activeOrgId, memberships.length, user?.id]);
 
   useEffect(() => {
     registerCourseStoreOrgResolver(() => {

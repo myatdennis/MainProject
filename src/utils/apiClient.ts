@@ -1,5 +1,5 @@
 import buildAuthHeaders, { clearSupabaseAuthSnapshot } from './requestContext';
-import { buildApiUrl, assertNoDoubleApi } from '../config/apiBase';
+import { buildApiUrl, assertNoDoubleApi, getApiOrigin } from '../config/apiBase';
 import { shouldRequireSession } from '../lib/sessionGate';
 import { clearAuth } from '../lib/secureStorage';
 import { getSupabase } from '../lib/supabaseClient';
@@ -13,6 +13,7 @@ import {
 } from '../lib/adminAccess';
 import { logAuthRedirect } from './logAuthRedirect';
 import { isAdminSurface, resolveLoginPath } from './surface';
+import { getCSRFToken } from './csrfToken';
 
 export class ApiError extends Error {
   status: number;
@@ -251,6 +252,68 @@ const AUTH_ENDPOINT_REGEX = /\/api\/auth\/(login|refresh|session)/i;
 const ABSOLUTE_URL_REGEX = /^https?:\/\//i;
 const ADMIN_API_PATTERN = /^\/api\/admin\//i;
 
+const API_ORIGIN_FOR_CREDENTIALS = (() => {
+  try {
+    return getApiOrigin();
+  } catch {
+    return '';
+  }
+})();
+
+const ensureOriginComparable = (origin?: string | null): string | null => {
+  if (!origin) return null;
+  return origin.replace(/\/+$/, '');
+};
+
+const resolveRequestOrigin = (target: string): string | null => {
+  try {
+    if (ABSOLUTE_URL_REGEX.test(target)) {
+      return new URL(target).origin;
+    }
+    if (typeof window !== 'undefined' && window.location?.origin) {
+      return new URL(target, window.location.origin).origin;
+    }
+    if (API_ORIGIN_FOR_CREDENTIALS) {
+      return new URL(target, API_ORIGIN_FOR_CREDENTIALS).origin;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+};
+
+const shouldAttachCredentials = (target: string): boolean => {
+  if (!target) return false;
+  const isRelative = !ABSOLUTE_URL_REGEX.test(target) && target.startsWith('/');
+  if (isRelative) {
+    return true;
+  }
+  const origin = ensureOriginComparable(resolveRequestOrigin(target));
+  const normalizedApiOrigin = ensureOriginComparable(API_ORIGIN_FOR_CREDENTIALS);
+  if (origin && normalizedApiOrigin && origin === normalizedApiOrigin) {
+    return true;
+  }
+  if (origin && /^https:\/\/api\.the-huddle\.co$/i.test(origin)) {
+    return true;
+  }
+  if (!normalizedApiOrigin && typeof window !== 'undefined') {
+    const windowOrigin = ensureOriginComparable(window.location?.origin || '');
+    if (windowOrigin && origin === windowOrigin) {
+      return true;
+    }
+  }
+  return false;
+};
+
+const resolveCSRFToken = (): string | null => {
+  try {
+    if (typeof document === 'undefined') return null;
+    return getCSRFToken();
+  } catch {
+    return null;
+  }
+};
+
 const redactHeaders = (headers?: Headers | Record<string, string> | null): Record<string, string> => {
   if (!headers) return {};
 
@@ -384,6 +447,13 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
     }
   }
 
+  if (!headers['X-CSRF-Token']) {
+    const csrfToken = resolveCSRFToken();
+    if (csrfToken) {
+      headers['X-CSRF-Token'] = csrfToken;
+    }
+  }
+
   if (import.meta.env?.DEV) {
     headers['X-Debug-Auth'] = attachAuth ? 'supabase' : 'public';
   }
@@ -440,6 +510,8 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
     console.debug('[apiRequest][auth-debug]', debugPayload);
   }
 
+  const credentialMode: RequestCredentials = shouldAttachCredentials(url) ? 'include' : 'omit';
+
   const preparedRequest: PreparedRequest = {
     url,
     method,
@@ -452,7 +524,7 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
     abortForwarder,
     timeoutId,
     timeoutMs,
-    credentials: 'omit',
+    credentials: credentialMode,
   };
 
   if (devMode) {
@@ -533,6 +605,15 @@ const internalAuthorizedFetch = async (
   throttleKey = assertNotThrottled(prepared.url);
 
   const res = await executeFetch(prepared);
+
+  if (devMode && extractPathname(prepared.url) === '/api/auth/session') {
+    const hasSetCookie = res.headers.has('set-cookie');
+    console.info('[apiClient] auth_session_response', {
+      status: res.status,
+      hasSetCookieHeader: hasSetCookie,
+      credentialsMode: prepared.credentials,
+    });
+  }
 
   const contentType = res.headers.get('content-type');
   if (res.status === 401) {

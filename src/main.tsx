@@ -8,7 +8,12 @@ import serviceWorkerManager from './utils/ServiceWorkerManager';
 import { SecureAuthProvider } from './context/SecureAuthContext';
 import { ToastProvider } from './context/ToastContext';
 import { ensureRuntimeStatusPolling } from './state/runtimeStatus';
-import { migrateFromLocalStorage, checkStorageSecurity, installLocalStorageGuards } from './lib/secureStorage';
+import {
+  migrateFromLocalStorage,
+  checkStorageSecurity,
+  installLocalStorageGuards,
+  cleanupLegacySensitiveKeys,
+} from './lib/secureStorage';
 import { getApiBaseUrl } from './config/apiBase';
 import { registerApiNavigationGuard } from './utils/apiNavigationGuard';
 import { toast } from 'react-hot-toast';
@@ -79,6 +84,7 @@ if (import.meta.env?.DEV && typeof window !== 'undefined') {
 if (typeof window !== 'undefined') {
   try {
     migrateFromLocalStorage();
+    cleanupLegacySensitiveKeys();
     installLocalStorageGuards();
     checkStorageSecurity();
   } catch (error) {

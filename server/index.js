@@ -1189,7 +1189,9 @@ const defaultCookieSecure = process.env.NODE_ENV === 'production';
 
 logger.info('diagnostics_cookies_and_cors', {
   allowedOrigins: Array.from(diagnosticsAllowedOrigins),
-  cookieDomain: process.env.COOKIE_DOMAIN || null,
+  resolvedCorsOrigins,
+  corsAllowCredentials: true,
+  cookieDomain: process.env.COOKIE_DOMAIN || '.the-huddle.co',
   cookieSameSite: defaultCookieSameSite,
   cookieSecureDefault: defaultCookieSecure,
 });

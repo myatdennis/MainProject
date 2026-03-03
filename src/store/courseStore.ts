@@ -1130,6 +1130,24 @@ const notifySubscribers = () => {
   });
 };
 
+const AUTH_READY_EVENT = 'huddle:auth_ready';
+let awaitingAuthReadyBootstrap = false;
+const queueAuthReadyBootstrap = (reinitializer: () => void) => {
+  if (typeof window === 'undefined') return;
+  if (awaitingAuthReadyBootstrap) return;
+  awaitingAuthReadyBootstrap = true;
+  const handler = () => {
+    awaitingAuthReadyBootstrap = false;
+    window.removeEventListener(AUTH_READY_EVENT, handler);
+    try {
+      reinitializer();
+    } catch (error) {
+      console.error('[courseStore] auth_ready bootstrap failed', error);
+    }
+  };
+  window.addEventListener(AUTH_READY_EVENT, handler, { once: true });
+};
+
 const setAdminCatalogState = (update: Partial<AdminCatalogState> | ((state: AdminCatalogState) => AdminCatalogState)) => {
   const nextState = typeof update === 'function' ? update(adminCatalogState) : { ...adminCatalogState, ...update };
   if (shallowEqualState(adminCatalogState, nextState)) {
@@ -1150,14 +1168,6 @@ const setLearnerCatalogState = (update: Partial<LearnerCatalogState>) => {
   learnerCatalogState = nextState;
   notifySubscribers();
 };
-
-const delay = (ms: number) =>
-  new Promise<void>((resolve) => {
-    setTimeout(resolve, ms);
-  });
-
-const ORG_CONTEXT_MAX_WAIT_MS = 3500;
-const ORG_CONTEXT_POLL_INTERVAL_MS = 175;
 
 type ResolvedOrgContext = {
   orgId: string | null;
@@ -1500,24 +1510,22 @@ export const courseStore = {
       console.log('[courseStore.init] Starting initialization...');
       let orgContext = resolveOrgContext();
       if (orgContext.status === 'loading') {
-        console.info('[courseStore.init] Org context is still resolving; waiting before catalog fetch.');
-        const waitStart = Date.now();
-        while (orgContext.status === 'loading' && Date.now() - waitStart < ORG_CONTEXT_MAX_WAIT_MS) {
-          // eslint-disable-next-line no-await-in-loop
-          await delay(ORG_CONTEXT_POLL_INTERVAL_MS);
-          orgContext = resolveOrgContext();
-        }
-        if (orgContext.status === 'loading') {
-          console.warn(
-            '[courseStore.init] Org context still loading after wait window; proceeding with latest snapshot.',
-          );
-        }
+        console.info(
+          '[courseStore.init] Org context still resolving (membershipStatus=loading); awaiting auth_ready event before catalog fetch.',
+        );
+        queueAuthReadyBootstrap(() => {
+          void courseStore.init();
+        });
+        return;
       }
       if (!orgContext.userId) {
         if (orgContext.status === 'loading') {
           console.info(
             '[courseStore.init] Auth context still loading; deferring catalog initialization until memberships resolve.',
           );
+          queueAuthReadyBootstrap(() => {
+            void courseStore.init();
+          });
           return;
         }
         console.info('[courseStore.init] No authenticated session detected; loading local defaults without hitting API.');
@@ -1590,6 +1598,9 @@ export const courseStore = {
               console.info(
                 '[courseStore.init] Organization context still loading; delaying learner catalog fetch until ready.',
               );
+              queueAuthReadyBootstrap(() => {
+                void courseStore.init();
+              });
               return;
             } else {
               console.warn(

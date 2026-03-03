@@ -139,24 +139,33 @@ const getBrowserSessionStorage = (): StorageLike | null => {
   }
 };
 
+const getLocalStorageOnly = (): StorageLike | null => {
+  if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') {
+    return null;
+  }
+  try {
+    const testKey = '__secure_storage_probe__';
+    window.localStorage.setItem(testKey, testKey);
+    window.localStorage.removeItem(testKey);
+    return window.localStorage;
+  } catch (error) {
+    if (!warningFlags.persistentUnavailable) {
+      warn('[secureStorage] localStorage is not accessible; attempting sessionStorage fallback.', error);
+      warningFlags.persistentUnavailable = true;
+    }
+    recordStorageProbe('localStorage-failed', error);
+    return null;
+  }
+};
+
 const getBrowserPersistentStorage = (): StorageLike | null => {
   if (typeof window === 'undefined') {
     return null;
   }
-  if (typeof window.localStorage !== 'undefined') {
-    try {
-      const testKey = '__secure_storage_probe__';
-      window.localStorage.setItem(testKey, testKey);
-      window.localStorage.removeItem(testKey);
-      recordStorageProbe('localStorage');
-      return window.localStorage;
-    } catch (error) {
-      if (!warningFlags.persistentUnavailable) {
-        warn('[secureStorage] localStorage is not accessible; attempting sessionStorage fallback.', error);
-        warningFlags.persistentUnavailable = true;
-      }
-      recordStorageProbe('localStorage-failed', error);
-    }
+  const local = getLocalStorageOnly();
+  if (local) {
+    recordStorageProbe('localStorage');
+    return local;
   }
 
   if (typeof window.sessionStorage !== 'undefined') {
@@ -298,8 +307,11 @@ export function secureSet(key: string, value: any): void {
   try {
     const stringified = JSON.stringify(value);
     const encrypted = encrypt(stringified);
-    const storage = getStorage();
-    nativeSafeSetItem(storage, STORAGE_PREFIX + key, encrypted);
+    const storage = selectPrimaryStorageForKey(key);
+    nativeSafeSetItem(storage, mapSecureKeyToStorageName(key), encrypted);
+    if (SENSITIVE_SECURE_KEYS.has(key)) {
+      removeFromSecondaryStorage(key);
+    }
   } catch (error) {
     console.error('Failed to securely store data:', error);
   }
@@ -310,8 +322,18 @@ export function secureSet(key: string, value: any): void {
  */
 export function secureGet<T>(key: string): T | null {
   try {
-    const storage = getStorage();
-    const encrypted = nativeSafeGetItem(storage, STORAGE_PREFIX + key);
+    const storage = selectPrimaryStorageForKey(key);
+    let encrypted = nativeSafeGetItem(storage, mapSecureKeyToStorageName(key));
+    if (!encrypted && SENSITIVE_SECURE_KEYS.has(key)) {
+      const fallbackStorage = selectSecondaryStorageForKey(key);
+      if (fallbackStorage) {
+        encrypted = nativeSafeGetItem(fallbackStorage, mapSecureKeyToStorageName(key));
+        if (encrypted) {
+          nativeSafeSetItem(storage, mapSecureKeyToStorageName(key), encrypted);
+          nativeSafeRemoveItem(fallbackStorage, mapSecureKeyToStorageName(key));
+        }
+      }
+    }
     if (!encrypted) return null;
     
     const decrypted = decrypt(encrypted);
@@ -328,8 +350,11 @@ export function secureGet<T>(key: string): T | null {
  * Remove data from secure storage
  */
 export function secureRemove(key: string): void {
-  const storage = getStorage();
-  nativeSafeRemoveItem(storage, STORAGE_PREFIX + key);
+  const storage = selectPrimaryStorageForKey(key);
+  nativeSafeRemoveItem(storage, mapSecureKeyToStorageName(key));
+  if (SENSITIVE_SECURE_KEYS.has(key)) {
+    removeFromSecondaryStorage(key);
+  }
 }
 
 /**
@@ -337,16 +362,24 @@ export function secureRemove(key: string): void {
  */
 export function secureClear(): void {
   // Only clear items with our prefix
-  const storage = getStorage();
-  const keysToRemove: string[] = [];
-  for (let i = 0; i < storage.length; i += 1) {
-    const key = storage.key(i);
-    if (key && key.startsWith(STORAGE_PREFIX)) {
-      keysToRemove.push(key);
+  const storages = new Set<StorageLike>([
+    selectPrimaryStorageForKey(),
+    getBrowserSessionStorage() ?? undefined,
+    getBrowserPersistentStorage() ?? undefined,
+    selectSecondaryStorageForKey(ACCESS_TOKEN_KEY) ?? undefined,
+  ].filter(Boolean) as StorageLike[]);
+
+  storages.forEach((storage) => {
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < storage.length; i += 1) {
+      const key = storage.key(i);
+      if (key && key.startsWith(STORAGE_PREFIX)) {
+        keysToRemove.push(key);
+      }
     }
-  }
-  keysToRemove.forEach((key) => nativeSafeRemoveItem(storage, key));
-  nativeSafeRemoveItem(storage, SESSION_KEY_NAME);
+    keysToRemove.forEach((key) => nativeSafeRemoveItem(storage, key));
+    nativeSafeRemoveItem(storage, SESSION_KEY_NAME);
+  });
 }
 
 // ============================================================================
@@ -358,6 +391,35 @@ const ACCESS_TOKEN_KEY = 'access_token';
 const REFRESH_TOKEN_KEY = 'refresh_token';
 const ACCESS_TOKEN_LOCAL_KEY = '__auth_access_token_v1__';
 const REFRESH_TOKEN_LOCAL_KEY = '__auth_refresh_token_v1__';
+
+const SENSITIVE_SECURE_KEYS = new Set<string>([ACCESS_TOKEN_KEY, REFRESH_TOKEN_KEY, SESSION_METADATA_KEY]);
+const mapSecureKeyToStorageName = (key: string) => STORAGE_PREFIX + key;
+const LEGACY_SENSITIVE_LOCAL_KEYS = Array.from(SENSITIVE_SECURE_KEYS).map((key) => mapSecureKeyToStorageName(key));
+const DENIED_LOCAL_STORAGE_KEYS = new Set(['secure_access_token', 'secure_refresh_token', 'secure_session_metadata']);
+
+const selectPrimaryStorageForKey = (key?: string): StorageLike => {
+  if (key && SENSITIVE_SECURE_KEYS.has(key)) {
+    return getBrowserSessionStorage() ?? memoryStorageAdapter;
+  }
+  return getBrowserPersistentStorage() ?? getBrowserSessionStorage() ?? memoryStorageAdapter;
+};
+
+const selectSecondaryStorageForKey = (key?: string): StorageLike | null => {
+  if (key && SENSITIVE_SECURE_KEYS.has(key)) {
+    return getLocalStorageOnly();
+  }
+  return null;
+};
+
+const removeFromSecondaryStorage = (key: string) => {
+  if (!SENSITIVE_SECURE_KEYS.has(key)) {
+    return;
+  }
+  const fallbackStorage = selectSecondaryStorageForKey(key);
+  if (fallbackStorage) {
+    nativeSafeRemoveItem(fallbackStorage, mapSecureKeyToStorageName(key));
+  }
+};
 
 type TokenCacheKey = typeof ACCESS_TOKEN_LOCAL_KEY | typeof REFRESH_TOKEN_LOCAL_KEY;
 
@@ -720,8 +782,25 @@ export function auditLocalStorage(): string[] {
 export function checkStorageSecurity(): void {
   const warnings = auditLocalStorage();
   if (warnings.length > 0) {
-    console.warn('⚠️ SECURITY WARNING: Sensitive data detected in localStorage:', warnings);
+    const warningList = warnings.join(', ');
+    console.warn(`⚠️ SECURITY WARNING: Sensitive data detected in localStorage: ${warningList}`);
     console.warn('Consider migrating to secure storage with migrateFromLocalStorage()');
+  }
+}
+
+export function cleanupLegacySensitiveKeys(): void {
+  if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') {
+    return;
+  }
+  const removed: string[] = [];
+  LEGACY_SENSITIVE_LOCAL_KEYS.forEach((key) => {
+    if (window.localStorage.getItem(key) !== null) {
+      window.localStorage.removeItem(key);
+      removed.push(key);
+    }
+  });
+  if (removed.length > 0 && import.meta.env?.DEV) {
+    console.info('[secureStorage] Cleared legacy sensitive keys:', removed);
   }
 }
 
@@ -734,6 +813,15 @@ export function installLocalStorageGuards(): void {
   }
   ensureNativeLocalStorage();
   window.localStorage.setItem = (key: string, value: string) => {
+    if (DENIED_LOCAL_STORAGE_KEYS.has(key)) {
+      if (import.meta.env?.DEV) {
+        console.warn(`[secureStorage] Denied legacy sensitive key write: ${key}`);
+        if (typeof console.trace === 'function') {
+          console.trace('[secureStorage] denied_local_write');
+        }
+      }
+      return;
+    }
     const matchesSensitivePattern = BLOCKED_LOCAL_STORAGE_PATTERNS.some((pattern) => pattern.test(key));
     const authKeyAllowed = AUTH_ALLOWED_KEYS.has(key) || SUPABASE_AUTH_TOKEN_REGEX.test(key);
     if (matchesSensitivePattern && authKeyAllowed) {

@@ -5,8 +5,7 @@
 
 import { useState, useEffect } from 'react';
 import { ApiError, apiRequest } from '../utils/apiClient';
-
-const CSRF_COOKIE_NAME = 'csrf_token';
+import { CSRF_COOKIE_NAME, getCSRFCookie, getCSRFToken } from '../utils/csrfToken';
 
 // ============================================================================
 // CSRF Token Hook
@@ -78,20 +77,4 @@ export function useCSRFToken() {
 /**
  * Get CSRF token from cookie
  */
-export function getCSRFCookie(): string | null {
-  const cookies = document.cookie.split(';');
-  for (const cookie of cookies) {
-    const [name, value] = cookie.trim().split('=');
-    if (name === CSRF_COOKIE_NAME) {
-      return decodeURIComponent(value);
-    }
-  }
-  return null;
-}
-
-/**
- * Get current CSRF token
- */
-export function getCSRFToken(): string | null {
-  return getCSRFCookie();
-}
+export { getCSRFCookie, getCSRFToken } from '../utils/csrfToken';

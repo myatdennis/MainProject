@@ -8,16 +8,10 @@ const normalizeOrigins = (value = '') =>
 
 const NETLIFY_PREVIEW_REGEX = /^https:\/\/[a-z0-9-]+--the-huddleco\.netlify\.app$/i;
 
-const devDefaults = [
-  'http://localhost:5174',
-  'http://localhost:5175',
-  'http://127.0.0.1:5174',
-  'http://127.0.0.1:5175',
-  'http://localhost:8888',
-];
-
-const requiredProdOrigins = ['https://the-huddle.co', 'https://www.the-huddle.co', 'https://api.the-huddle.co'];
-const prodDefaults = requiredProdOrigins;
+const STATIC_ALLOWED_ORIGINS = ['https://the-huddle.co', 'https://www.the-huddle.co', 'http://localhost:5173'];
+const devDefaults = STATIC_ALLOWED_ORIGINS;
+const requiredProdOrigins = ['https://the-huddle.co', 'https://www.the-huddle.co'];
+const prodDefaults = STATIC_ALLOWED_ORIGINS;
 
 const envOrigins = normalizeOrigins(process.env.CORS_ALLOWED_ORIGINS || '');
 const baseOrigins =
@@ -41,18 +35,23 @@ if (!envOrigins.length) {
   );
 }
 
-const isAllowedOrigin = (origin) => {
+const resolveCorsOriginDecision = (origin) => {
+  if (!origin) {
+    return { allowed: false, reason: 'missing_origin', resolvedOrigin: null };
+  }
   if (resolvedCorsOrigins.includes(origin)) {
-    return { allowed: true, reason: 'allowlist' };
+    return { allowed: true, reason: 'allowlist', resolvedOrigin: origin };
   }
   if ((process.env.NODE_ENV || '').toLowerCase() === 'production' && NETLIFY_PREVIEW_REGEX.test(origin)) {
-    return { allowed: true, reason: 'netlify_preview' };
+    return { allowed: true, reason: 'netlify_preview', resolvedOrigin: origin };
   }
   if ((process.env.NODE_ENV || '').toLowerCase() !== 'production' && isLocalDevOrigin(origin)) {
-    return { allowed: true, reason: 'local_dev' };
+    return { allowed: true, reason: 'local_dev', resolvedOrigin: origin };
   }
-  return { allowed: false, reason: 'not_allowlisted' };
+  return { allowed: false, reason: 'not_allowlisted', resolvedOrigin: null };
 };
+
+const isAllowedOrigin = (origin) => resolveCorsOriginDecision(origin);
 
 const logOriginDecision = (origin, decision) => {
   if (!origin) return;
@@ -85,15 +84,64 @@ const allowHeaders = [
   'x-csrf-token',
 ];
 
+const setHeader = (res, key, value) => {
+  if (typeof res.setHeader === 'function') {
+    res.setHeader(key, value);
+  } else if (typeof res.header === 'function') {
+    res.header(key, value);
+  } else {
+    res[key] = value;
+  }
+};
+
+const getHeader = (res, key) => {
+  if (typeof res.getHeader === 'function') {
+    return res.getHeader(key);
+  }
+  if (typeof res.get === 'function') {
+    return res.get(key);
+  }
+  return undefined;
+};
+
+const ensureVaryOrigin = (res) => {
+  const existing = getHeader(res, 'Vary');
+  if (!existing) {
+    setHeader(res, 'Vary', 'Origin');
+    return;
+  }
+  const values = Array.isArray(existing)
+    ? existing
+    : String(existing)
+        .split(',')
+        .map((value) => value.trim())
+        .filter(Boolean);
+  if (!values.includes('Origin')) {
+    values.push('Origin');
+    setHeader(res, 'Vary', values.join(', '));
+  }
+};
+
+const appendCorsResponseHeaders = (req, res) => {
+  ensureVaryOrigin(res);
+  const origin = req?.headers?.origin;
+  const decision = resolveCorsOriginDecision(origin);
+  if (decision.allowed && decision.resolvedOrigin) {
+    setHeader(res, 'Access-Control-Allow-Origin', decision.resolvedOrigin);
+    setHeader(res, 'Access-Control-Allow-Credentials', 'true');
+  }
+  return decision;
+};
+
 const baseCorsOptions = {
   origin(origin, callback) {
     if (!origin) {
       return callback(null, true);
     }
-    const decision = isAllowedOrigin(origin);
+    const decision = resolveCorsOriginDecision(origin);
     logOriginDecision(origin, decision);
     if (decision.allowed) {
-      return callback(null, true);
+      return callback(null, decision.resolvedOrigin || origin);
     }
     return callback(null, false);
   },
@@ -109,6 +157,7 @@ const healthCorsOptions = {
 };
 
 const corsMiddleware = (req, res, next) => {
+  appendCorsResponseHeaders(req, res);
   if (isHealthRequest(req)) {
     return cors(healthCorsOptions)(req, res, next);
   }
@@ -116,3 +165,4 @@ const corsMiddleware = (req, res, next) => {
 };
 
 export default corsMiddleware;
+export { resolveCorsOriginDecision };
