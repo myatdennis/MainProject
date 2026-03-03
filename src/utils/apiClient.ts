@@ -293,6 +293,22 @@ const extractPathname = (target: string): string => {
   }
 };
 
+const logDevHttpError = (target: string, status: number, body: unknown) => {
+  if (!devMode) return;
+  if (status !== 422 && status < 500) return;
+  const safeBody =
+    typeof body === 'string' ? body : body && typeof body === 'object' ? body : { payload: body };
+  try {
+    console.warn('[apiClient][dev][response]', {
+      pathname: extractPathname(target),
+      status,
+      body: safeBody,
+    });
+  } catch {
+    console.warn('[apiClient][dev][response]', status, target, safeBody);
+  }
+};
+
 const PUBLIC_ENDPOINTS = new Set([
   '/api/auth/login',
   '/api/auth/register',
@@ -531,6 +547,7 @@ const internalAuthorizedFetch = async (
 
   if (!res.ok) {
     const body = isJsonResponse(contentType) ? await safeParseJson(res) : await safeReadText(res);
+    logDevHttpError(prepared.url, res.status, body);
     throw new ApiError(`Request failed with status ${res.status}`, res.status, prepared.url, body);
   }
 

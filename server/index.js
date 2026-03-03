@@ -605,6 +605,8 @@ app.post('/api/admin/courses/:id/assign', async (req, res) => {
       : '';
 
   if (!organizationId) {
+    res.locals = res.locals || {};
+    res.locals.errorCode = 'organization_required';
     res.status(400).json({ error: 'organization_id is required' });
     return;
   }
@@ -633,6 +635,20 @@ app.post('/api/admin/courses/:id/assign', async (req, res) => {
 
   const access = await requireOrgAccess(req, res, organizationId, { write: true, requireOrgAdmin: true });
   if (!access && context.userRole !== 'admin') return;
+  const assignLogMeta = {
+    requestId: req.requestId ?? null,
+    userId: context.userId ?? null,
+    courseId: id,
+    orgId: organizationId,
+  };
+  logCourseRequestEvent('admin.courses.assign.start', assignLogMeta);
+  res.once('finish', () => {
+    logCourseRequestEvent('admin.courses.assign.finish', {
+      ...assignLogMeta,
+      status: res.statusCode ?? null,
+      errorCode: res.locals?.errorCode ?? null,
+    });
+  });
 
   const dueProvided = hasBodyKey('due_at') || hasBodyKey('dueAt');
   const rawDueAt = body.due_at ?? body.dueAt ?? null;
@@ -948,6 +964,8 @@ app.post('/api/admin/courses/:id/assign', async (req, res) => {
     });
   } catch (error) {
     logAdminCoursesError(req, error, `Failed to assign course ${id}`);
+    res.locals = res.locals || {};
+    res.locals.errorCode = error?.code ?? 'assignment_failed';
     res.status(500).json({ error: 'Unable to assign course' });
   }
 });
@@ -5811,6 +5829,14 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
     courseId: course?.id ?? courseIdFromParams ?? null,
     status: null,
   });
+  res.once('finish', () => {
+    logCourseRequestEvent('admin.courses.upsert.finish', {
+      ...baseLogMeta,
+      orgId: organizationId ?? null,
+      status: res.statusCode ?? null,
+      errorCode: res.locals?.errorCode ?? null,
+    });
+  });
   // Lightweight request tracing to aid debugging in CI/local runs
   try {
     console.log(
@@ -5838,6 +5864,26 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
     courseId: course?.id ?? courseIdFromParams ?? null,
   });
   modules = initialNormalization.modules;
+  const identifierIssues = collectInvalidIdentifierIssues(modules);
+  if (identifierIssues.length > 0) {
+    res.locals = res.locals || {};
+    res.locals.errorCode = 'invalid_identifier';
+    logCourseRequestEvent('admin.courses.upsert.invalid_ids', {
+      ...baseLogMeta,
+      orgId: organizationId ?? null,
+      status: 422,
+      errorCode: 'invalid_identifier',
+      message: 'Module or lesson identifiers are not UUID values.',
+    });
+    res.status(422).json({
+      error: 'invalid_identifier',
+      code: 'invalid_identifier',
+      message: 'Module and lesson ids must be UUID strings.',
+      issues: identifierIssues,
+      requestId: req.requestId ?? null,
+    });
+    return;
+  }
 
   if (!course?.title) {
     res.status(400).json({ error: 'Course title is required' });
@@ -6467,6 +6513,8 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
 
     res.status(201).json({ data: refreshed.data });
   } catch (error) {
+    res.locals = res.locals || {};
+    res.locals.errorCode = error?.code ?? 'upsert_failed';
     try {
       console.error('[admin-courses] upsert_error_detail', {
         message: error?.message ?? null,
@@ -6960,18 +7008,38 @@ app.post('/api/admin/courses/:id/publish', async (req, res) => {
   normalizeLegacyOrgInput(req.body, { surface: 'admin.courses.publish', requestId: req.requestId });
 
   const idempotencyKey = req.body?.idempotency_key ?? req.body?.client_event_id ?? null;
+  const publishLogMeta = {
+    requestId: req.requestId ?? null,
+    userId: context.userId ?? null,
+    courseId: id,
+    orgId: null,
+  };
+  logCourseRequestEvent('admin.courses.publish.start', publishLogMeta);
+  res.once('finish', () => {
+    logCourseRequestEvent('admin.courses.publish.finish', {
+      ...publishLogMeta,
+      orgId: publishLogMeta.orgId ?? null,
+      status: res.statusCode ?? null,
+      errorCode: res.locals?.errorCode ?? null,
+    });
+  });
 
   try {
     if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
       const existing = e2eStore.courses.get(id);
       if (!existing) {
+        res.locals = res.locals || {};
+        res.locals.errorCode = 'not_found';
         res.status(404).json({ error: 'Course not found', code: 'not_found' });
         return;
       }
+      publishLogMeta.orgId = existing.organization_id || existing.org_id || existing.organizationId || null;
 
       const shaped = shapeCourseForValidation(existing);
       const validation = validatePublishableCourse(shaped, { intent: 'publish' });
       if (!validation.isValid) {
+        res.locals = res.locals || {};
+        res.locals.errorCode = 'validation_failed';
         res.status(422).json({ error: 'validation_failed', code: 'validation_failed', issues: validation.issues });
         return;
       }
@@ -7002,15 +7070,20 @@ app.post('/api/admin/courses/:id/publish', async (req, res) => {
 
     if (existing.error) throw existing.error;
     if (!existing.data) {
+      res.locals = res.locals || {};
+      res.locals.errorCode = 'not_found';
       res.status(404).json({ error: 'Course not found', code: 'not_found' });
       return;
     }
 
     const courseOrgId = existing.data.organization_id || existing.data.org_id || null;
+    publishLogMeta.orgId = courseOrgId;
     if (courseOrgId) {
       const access = await requireOrgAccess(req, res, courseOrgId, { write: true, requireOrgAdmin: true });
       if (!access) return;
     } else if (!context.isPlatformAdmin) {
+      res.locals = res.locals || {};
+      res.locals.errorCode = 'org_required';
       res.status(403).json({ error: 'Organization membership required to publish', code: 'org_required' });
       return;
     }
@@ -7018,6 +7091,8 @@ app.post('/api/admin/courses/:id/publish', async (req, res) => {
     const incomingVersion = typeof req.body?.version === 'number' ? req.body.version : null;
     const currentVersion = typeof existing.data.version === 'number' ? existing.data.version : null;
     if (incomingVersion !== null && currentVersion !== null && incomingVersion !== currentVersion) {
+      res.locals = res.locals || {};
+      res.locals.errorCode = 'version_conflict';
       res.status(409).json({
         error: 'version_conflict',
         code: 'version_conflict',
@@ -7030,6 +7105,8 @@ app.post('/api/admin/courses/:id/publish', async (req, res) => {
     const shaped = shapeCourseForValidation(existing.data);
     const validation = validatePublishableCourse(shaped, { intent: 'publish' });
     if (!validation.isValid) {
+      res.locals = res.locals || {};
+      res.locals.errorCode = 'validation_failed';
       res.status(422).json({ error: 'validation_failed', code: 'validation_failed', issues: validation.issues });
       return;
     }
@@ -7103,6 +7180,8 @@ app.post('/api/admin/courses/:id/publish', async (req, res) => {
     res.json({ data: updated.data });
   } catch (error) {
     logAdminCoursesError(req, error, `Failed to publish course ${id}`);
+    res.locals = res.locals || {};
+    res.locals.errorCode = error?.code ?? 'publish_failed';
     res.status(500).json({ error: 'Unable to publish course', code: 'publish_failed' });
   }
 });
