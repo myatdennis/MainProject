@@ -744,6 +744,27 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
       return null;
     }
     if (!lmsRoleEligible) {
+      const membershipSnapshot = memberships.map((membership) => ({
+        orgId: membership.orgId,
+        role: membership.role ?? null,
+        status: membership.status ?? null,
+        active: membership.orgId === activeOrgId,
+      }));
+      const eligibilitySnapshot = {
+        path: location.pathname,
+        userId: user?.id ?? null,
+        userRole: user?.role ?? null,
+        sessionStatus,
+        surfaceStatus: effectiveSurfaceState,
+        activeOrgId,
+        requestedOrgId,
+        membershipCount: memberships.length,
+        membershipSnapshot,
+        hasActiveMembership,
+        activeMembershipOrgId: activeMembership?.orgId ?? null,
+        reason: 'no_active_membership',
+      };
+      console.warn('[RequireAuth][lms] unauthorized_snapshot', eligibilitySnapshot);
       logGuardEvent('redirect_unauthorized', {
         reason: 'no_active_membership',
         activeOrgId,

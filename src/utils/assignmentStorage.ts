@@ -6,6 +6,46 @@ import { getUserSession, secureGet, secureSet, secureRemove } from '../lib/secur
 import apiRequest, { ApiError as RequestError } from './apiClient';
 
 const STORAGE_KEY = 'huddle_course_assignments_v1';
+const ASSIGNMENTS_TABLE = 'assignments';
+let assignmentsTableUnavailable = false;
+let assignmentsTableWarningLogged = false;
+
+const isAssignmentsTableMissingError = (error: unknown): boolean => {
+  if (!error) {
+    return false;
+  }
+  const code = typeof (error as { code?: string })?.code === 'string' ? (error as { code?: string }).code : null;
+  const messageCandidate =
+    typeof (error as { message?: string })?.message === 'string'
+      ? (error as { message?: string }).message
+      : error instanceof Error
+      ? error.message
+      : '';
+  const message = (messageCandidate ?? '').toLowerCase();
+  if (code === 'PGRST205') {
+    return true;
+  }
+  if (!message) return false;
+  return (
+    message.includes(`could not find the table 'public.${ASSIGNMENTS_TABLE}`) ||
+    message.includes(`relation \"public.${ASSIGNMENTS_TABLE}`)
+  );
+};
+
+const handleAssignmentsTableMissing = (context: string, error: unknown): boolean => {
+  if (!isAssignmentsTableMissingError(error)) {
+    return false;
+  }
+  assignmentsTableUnavailable = true;
+  if (!assignmentsTableWarningLogged) {
+    assignmentsTableWarningLogged = true;
+    console.warn(
+      `[assignmentStorage] Supabase table "${ASSIGNMENTS_TABLE}" is missing; disabling remote assignment sync (${context}).`,
+      error,
+    );
+  }
+  return true;
+};
 
 const supabaseReady = () => hasSupabaseConfig() || isSupabaseOperational();
 
@@ -164,11 +204,12 @@ const syncLocalAssignmentsToSupabase = async () => {
         active: assignment.active ?? true,
       }));
 
-      const { error } = await supabase
-        .from('assignments')
-        .upsert(payload, { onConflict: 'course_id,user_id' });
+      const { error } = await supabase.from(ASSIGNMENTS_TABLE).upsert(payload, { onConflict: 'course_id,user_id' });
 
       if (error) {
+        if (handleAssignmentsTableMissing('sync', error)) {
+          return;
+        }
         throw new Error(error.message);
       }
 
@@ -221,6 +262,9 @@ const withSupabaseFallback = async <T>(
   supabaseFn: () => Promise<T>,
   localFn: () => Promise<T> | T
 ): Promise<T> => {
+  if (assignmentsTableUnavailable) {
+    return await Promise.resolve(localFn());
+  }
   if (!supabaseReady()) {
     return await Promise.resolve(localFn());
   }
@@ -290,11 +334,14 @@ export async function legacyAddAssignments(
       const supabase = await getSupabase();
       if (!supabase) throw new Error('Supabase unavailable');
       const { data, error } = await supabase
-        .from('assignments')
+        .from(ASSIGNMENTS_TABLE)
         .upsert(payload, { onConflict: 'course_id,user_id' })
         .select();
 
       if (error) {
+        if (handleAssignmentsTableMissing('legacyAddAssignments', error)) {
+          throw error;
+        }
         throw new Error(error.message);
       }
 
@@ -416,12 +463,15 @@ export const getAssignmentsForUser = async (userId?: string | null): Promise<Cou
     const supabase = await getAuthedSupabaseClient();
     if (supabase) {
       const { data, error } = await supabase
-        .from('assignments')
+        .from(ASSIGNMENTS_TABLE)
         .select('*')
         .eq('user_id', normalized)
         .order('updated_at', { ascending: false });
 
       if (error) {
+        if (handleAssignmentsTableMissing('getAssignmentsForUser', error)) {
+          return loadLocalAssignments().filter((record) => record.userId === normalized);
+        }
         throw new Error(error.message);
       }
 
@@ -449,12 +499,17 @@ export const getAssignment = async (
       const supabase = await getSupabase();
       if (!supabase) throw new Error('Supabase unavailable');
       const { data, error } = await supabase
-        .from('assignments')
+        .from(ASSIGNMENTS_TABLE)
         .select('*')
         .eq('course_id', courseId)
         .eq('user_id', normalized);
 
       if (error) {
+        if (handleAssignmentsTableMissing('getAssignment', error)) {
+          return loadLocalAssignments().find(
+            (record) => record.courseId === courseId && record.userId === normalized,
+          );
+        }
         throw new Error(error.message);
       }
 
@@ -483,7 +538,7 @@ export const updateAssignmentProgress = async (
       const supabase = await getSupabase();
       if (!supabase) throw new Error('Supabase unavailable');
       const { data, error } = await supabase
-        .from('assignments')
+        .from(ASSIGNMENTS_TABLE)
         .update({
           progress: clampedProgress,
           status,
@@ -494,6 +549,25 @@ export const updateAssignmentProgress = async (
         .select();
 
       if (error) {
+        if (handleAssignmentsTableMissing('updateAssignmentProgress', error)) {
+          const localAssignments = loadLocalAssignments();
+          const index = localAssignments.findIndex(
+            (record) => record.courseId === courseId && record.userId === normalized,
+          );
+          if (index !== -1) {
+            const updated: CourseAssignment = {
+              ...localAssignments[index],
+              progress: clampedProgress,
+              status,
+              updatedAt: now,
+            };
+            localAssignments[index] = updated;
+            persistLocalAssignments(localAssignments);
+            emitLocalEvent('assignment_updated', updated);
+            return updated;
+          }
+          return undefined;
+        }
         throw new Error(error.message);
       }
 
