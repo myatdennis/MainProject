@@ -194,6 +194,15 @@ type SupabaseSessionLike = {
   isPlatformAdmin?: boolean;
 };
 
+type MembershipFetchMeta = {
+  requestId: number;
+  startedAt: number | null;
+  finishedAt: number | null;
+  statusCode: number | null;
+  membershipCount: number | null;
+  reason?: string | null;
+};
+
 const coerceString = (value: unknown): string | null => {
   if (typeof value !== 'string') return null;
   const trimmed = value.trim();
@@ -527,6 +536,14 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   const [user, setUser] = useState<UserSession | null>(null);
   const [memberships, setMemberships] = useState<UserMembership[]>([]);
   const [membershipStatus, setMembershipStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
+  const [lastMembershipFetchMeta, setLastMembershipFetchMeta] = useState<MembershipFetchMeta>({
+    requestId: 0,
+    startedAt: null,
+    finishedAt: null,
+    statusCode: null,
+    membershipCount: null,
+    reason: null,
+  });
   const [organizationIds, setOrganizationIds] = useState<string[]>([]);
   const [activeOrgId, setActiveOrgIdState] = useState<string | null>(null);
   const [hasActiveMembership, setHasActiveMembership] = useState(false);
@@ -572,16 +589,23 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   const bootstrapRunCountRef = useRef(0);
   const refreshRunCountRef = useRef(0);
   const membershipSelfHealTrackerRef = useRef(createMembershipSelfHealTracker());
+  const membershipFetchRequestIdRef = useRef(0);
   type FetchServerSessionFn = (options?: {
     surface?: SessionSurface;
     signal?: AbortSignal;
     silent?: boolean;
     allowRefresh?: boolean;
+    skipMembershipSelfHeal?: boolean;
   }) => Promise<boolean>;
   const fetchServerSessionRef = useRef<FetchServerSessionFn | null>(null);
   const refreshTokenCallbackRef = useRef<((options?: RefreshOptions) => Promise<boolean>) | null>(null);
   const authDebugSignatureRef = useRef<string | null>(null);
-
+  const recordMembershipFetchMeta = useCallback((meta: Partial<MembershipFetchMeta>) => {
+    setLastMembershipFetchMeta((prev) => ({
+      ...prev,
+      ...meta,
+    }));
+  }, []);
   const updateSurfaceAuthStatus = useCallback((surface: SessionSurface | undefined, status: SurfaceAuthStatus) => {
     if (!surface) {
       return;
@@ -693,7 +717,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
       setUser(session);
       setMemberships(normalizedMemberships);
-      setMembershipStatus('ready');
       setOrganizationIds(orgIds);
       setActiveOrgIdState(session.activeOrgId ?? null);
       setIsAuthenticated(computeAuthState(session, surface));
@@ -826,6 +849,56 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     [captureServerClock],
   );
 
+  const triggerMembershipSelfHeal = useCallback(
+    async ({
+      userId: providedUserId,
+      orgId: providedOrgId,
+      reason,
+    }: { userId?: string | null; orgId?: string | null; reason?: string } = {}): Promise<boolean> => {
+      const tracker = membershipSelfHealTrackerRef.current;
+      const userId = providedUserId ?? user?.id ?? null;
+      const orgId =
+        providedOrgId ??
+        requestedOrgHint ??
+        lastActiveOrgId ??
+        user?.activeOrgId ??
+        user?.organizationId ??
+        null;
+      if (!userId || !orgId) {
+        return false;
+      }
+      if (!tracker.shouldAttempt(userId, orgId)) {
+        return false;
+      }
+      try {
+        const payload = await requestJsonWithClock<{ ensured?: boolean }>('/api/auth/self-heal-membership', {
+          method: 'POST',
+          requireAuth: true,
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            reason: reason ?? 'auto',
+          }),
+        });
+        const ensured = Boolean((payload as { ensured?: boolean } | null | undefined)?.ensured);
+        if (!ensured && import.meta.env?.DEV) {
+          console.info('[SecureAuth] membership_self_heal_noop', { userId, orgId, reason: reason ?? 'auto' });
+        }
+        return ensured;
+      } catch (error) {
+        console.warn('[SecureAuth] membership_self_heal_request_failed', {
+          userId,
+          orgId,
+          reason,
+          error: error instanceof Error ? error.message : error,
+        });
+        return false;
+      }
+    },
+    [lastActiveOrgId, requestJsonWithClock, requestedOrgHint, user],
+  );
+
   const [bootstrapError, setBootstrapError] = useState<string | null>(null);
   const [shouldRedirectToLogin, setShouldRedirectToLogin] = useState(true);
   const clearBootstrapFailOpenTimer = useCallback(() => {
@@ -887,11 +960,13 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       signal,
       silent,
       allowRefresh = true,
+      skipMembershipSelfHeal = false,
     }: {
       surface?: SessionSurface;
       signal?: AbortSignal;
       silent?: boolean;
       allowRefresh?: boolean;
+      skipMembershipSelfHeal?: boolean;
     } = {}): Promise<boolean> => {
       let storedAccessToken: string | null = null;
       let storedRefreshToken: string | null = null;
@@ -903,8 +978,21 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         console.warn('[SecureAuth] Failed to inspect Supabase session for fetch', tokenError);
       }
       const hasStoredToken = Boolean(storedAccessToken || storedRefreshToken);
+      const requestId = ++membershipFetchRequestIdRef.current;
+      const startedAt = Date.now();
+      const finalizeMeta = (meta: Partial<MembershipFetchMeta>) => {
+        recordMembershipFetchMeta({
+          requestId,
+          startedAt,
+          finishedAt: Date.now(),
+          statusCode: meta.statusCode ?? null,
+          membershipCount: meta.membershipCount ?? null,
+          reason: meta.reason ?? null,
+        });
+      };
       if (!hasStoredToken) {
         logAuthDebug('[auth] session_fetch_skipped_no_supabase_token', { surface });
+        finalizeMeta({ statusCode: 401, reason: 'no_supabase_token' });
         await forceLogout(surface ? `${surface}_session_no_supabase_token` : 'session_no_supabase_token');
         return false;
       }
@@ -918,12 +1006,34 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       }
       try {
         setMembershipStatus('loading');
-        const payloadRaw = await requestJsonWithClock<unknown>('/auth/session', {
-          method: 'GET',
-          signal,
-          requireAuth: true,
-        });
-        const payload = normalizeSessionResponsePayload(payloadRaw);
+        const fetchPayload = async () => {
+          const payloadRaw = await requestJsonWithClock<unknown>('/auth/session', {
+            method: 'GET',
+            signal,
+            requireAuth: true,
+          });
+          return normalizeSessionResponsePayload(payloadRaw);
+        };
+        let payload = await fetchPayload();
+        let membershipCount = payload?.memberships?.length ?? 0;
+        if (payload?.user && membershipCount === 0 && !skipMembershipSelfHeal) {
+          const healed = await triggerMembershipSelfHeal({
+            userId: payload.user.id,
+            orgId:
+              payload.activeOrgId ||
+              payload.user?.activeOrgId ||
+              payload.user?.organizationId ||
+              null,
+            reason: 'session_fetch_empty',
+          });
+          if (healed) {
+            if (signal?.aborted) {
+              throw new DOMException('Aborted', 'AbortError');
+            }
+            payload = await fetchPayload();
+            membershipCount = payload?.memberships?.length ?? 0;
+          }
+        }
         if (payload?.user) {
           applySessionPayload(payload, {
             surface,
@@ -931,21 +1041,28 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             reason: surface ? `${surface}_session_bootstrap` : 'session_bootstrap',
           });
           setAuthStatus('authenticated');
+          setMembershipStatus('ready');
           if (!silent) {
             setBootstrapError(null);
           }
+          finalizeMeta({
+            statusCode: 200,
+            membershipCount,
+            reason: membershipCount === 0 ? 'empty_memberships' : null,
+          });
           return true;
         }
-
         handleSessionUnauthorized({
           silent,
           reason: 'session_bootstrap_empty',
           shouldRedirect: false,
         });
+        finalizeMeta({ statusCode: 200, membershipCount: 0, reason: 'session_bootstrap_empty' });
         continueAsGuest('session_bootstrap_empty', { redirect: false });
         return false;
       } catch (error) {
         if (error instanceof NotAuthenticatedError) {
+          finalizeMeta({ statusCode: 401, reason: 'not_authenticated' });
           handleSessionUnauthorized({
             silent: true,
             reason: surface ? `${surface}_session_no_supabase_token` : 'session_no_supabase_token',
@@ -955,6 +1072,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           return false;
         }
         if (error instanceof AuthExpiredError) {
+          finalizeMeta({ statusCode: 401, reason: 'session_expired' });
           handleSessionUnauthorized({
             silent: true,
             reason: surface ? `${surface}_session_expired` : 'session_expired',
@@ -974,6 +1092,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           const noTokenUnauth =
             error.status === 401 && !hasStoredToken && isNoTokenUnauthorized(error.status, error.body);
           if (noTokenUnauth) {
+            finalizeMeta({ statusCode: error.status, reason: 'no_token' });
             handleSessionUnauthorized({
               silent: true,
               reason: surface ? `${surface}_session_no_token` : 'session_no_token',
@@ -983,12 +1102,13 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             return false;
           }
           if (error.status === 401 || error.status === 403) {
+            finalizeMeta({ statusCode: error.status, reason: 'unauthorized' });
             if (allowRefresh && hasStoredToken) {
               const refreshFn = refreshTokenCallbackRef.current;
               if (refreshFn) {
                 const recovered = await refreshFn({ reason: 'protected_401' });
                 if (recovered) {
-                  return fetchServerSession({ surface, signal, silent, allowRefresh: false });
+                  return fetchServerSession({ surface, signal, silent, allowRefresh: false, skipMembershipSelfHeal });
                 }
               }
             }
@@ -1003,7 +1123,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             continueAsGuest(surface ? `${surface}_session_unauthenticated` : 'session_unauthenticated_api_error');
             return false;
           }
-
           if (error.code === 'timeout' || isServerOrNetworkErrorStatus(error.status)) {
             lastSessionFetchResultRef.current = 'error';
             setMembershipStatus('error');
@@ -1013,17 +1132,17 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             if (import.meta.env.DEV) {
               console.warn('[Auth] auth_restore: error (timeout/network)', { surface, status: error.status });
             }
+            finalizeMeta({ statusCode: error.status ?? 0, reason: 'network_error' });
             return false;
           }
-
-        setMembershipStatus('error');
+          setMembershipStatus('error');
           handleSessionUnauthorized({
             silent,
             reason: surface ? `${surface}_session_http_${error.status ?? 'unknown'}` : 'session_http_api_error',
             message: (error.body as { message?: string } | undefined)?.message,
             shouldRedirect: false,
           });
-          setMembershipStatus('error');
+          finalizeMeta({ statusCode: error.status ?? 0, reason: 'session_http_error' });
           continueAsGuest(surface ? `${surface}_session_http_${error.status ?? 'unknown'}` : 'session_http_api_error', {
             redirect: false,
           });
@@ -1038,6 +1157,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           if (import.meta.env.DEV) {
             console.warn('[Auth] auth_restore: error (abort)', { surface });
           }
+          finalizeMeta({ statusCode: 0, reason: 'abort' });
           return false;
         }
         if (typeof axios.isCancel === 'function' && axios.isCancel(error)) {
@@ -1049,6 +1169,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           if (import.meta.env.DEV) {
             console.warn('[Auth] auth_restore: error (axios cancel)', { surface });
           }
+          finalizeMeta({ statusCode: 0, reason: 'axios_cancel' });
           return false;
         }
         if (!silent) {
@@ -1060,12 +1181,20 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         if (import.meta.env.DEV) {
           console.warn('[Auth] auth_restore: error (network)', { surface });
         }
+        finalizeMeta({ statusCode: 0, reason: 'unknown_error' });
         return false;
       }
     },
-    [applySessionPayload, captureServerClock, continueAsGuest, forceLogout, handleSessionUnauthorized],
+    [
+      applySessionPayload,
+      continueAsGuest,
+      forceLogout,
+      handleSessionUnauthorized,
+      recordMembershipFetchMeta,
+      requestJsonWithClock,
+      triggerMembershipSelfHeal,
+    ],
   );
-
   // ============================================================================
   // Token Refresh
   // ============================================================================
@@ -1570,6 +1699,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           lastActiveOrgId,
           storageMode: AUTH_STORAGE_MODE,
           lastRedirect,
+          lastMembershipFetch: lastMembershipFetchMeta,
           redirectReason: reason,
           timestamp: new Date().toISOString(),
         };
@@ -1607,71 +1737,13 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       activeOrgId,
       requestedOrgHint,
       lastActiveOrgId,
+      lastMembershipFetchMeta,
     ],
   );
 
   useEffect(() => {
     publishAuthDebugSnapshot('state_change');
   }, [publishAuthDebugSnapshot]);
-
-  useEffect(() => {
-    if (authInitializing) {
-      return;
-    }
-    if (membershipStatus !== 'ready') {
-      return;
-    }
-    if (!user?.id) {
-      return;
-    }
-    if (!user.organizationId && !user.activeOrgId) {
-      return;
-    }
-    if (memberships.length > 0) {
-      return;
-    }
-    const normalizedRole = String(user.role ?? '').toLowerCase();
-    if (normalizedRole === 'admin') {
-      return;
-    }
-    const orgId = user.activeOrgId ?? user.organizationId ?? null;
-    if (!orgId) {
-      return;
-    }
-    const tracker = membershipSelfHealTrackerRef.current;
-    if (!tracker.shouldAttempt(user.id, orgId)) {
-      return;
-    }
-    const supabaseClient = getSupabase();
-    if (!supabaseClient) {
-      return;
-    }
-
-    let cancelled = false;
-    const heal = async () => {
-      try {
-        const { data, error } = await supabaseClient.rpc('ensure_active_membership');
-        if (error) {
-          throw error;
-        }
-        if (!cancelled && data?.ensured) {
-          await fetchServerSession({ surface: 'lms', silent: true });
-        }
-      } catch (error) {
-        console.warn('[SecureAuth] membership_self_heal_failed', {
-          userId: user.id,
-          orgId,
-          error: error instanceof Error ? error.message : error,
-        });
-      }
-    };
-
-    void heal();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [authInitializing, fetchServerSession, membershipStatus, memberships, user]);
 
 // ============================================================================
 // Login

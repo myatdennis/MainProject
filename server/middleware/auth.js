@@ -242,14 +242,14 @@ const cacheSet = (store, key, value, ttlMs = MEMBERSHIP_CACHE_MS) => {
 
 export const mapMembershipRows = (rows = []) =>
   rows.map((row) => {
-    const orgId = row.organization_id ?? row.org_id ?? null;
+    const orgId = row.organization_id ?? null;
     return {
       orgId,
       organizationId: orgId,
       role: row.role || null,
       status: row.status || 'active',
       organizationName: row.organizationName ?? row.organization_name ?? row.org_name ?? null,
-      organizationSlug: row.organizationSlug ?? row.organization_slug ?? row.org_slug ?? null,
+      organizationSlug: row.organizationSlug ?? row.organization_slug ?? null,
       organizationStatus: row.organizationStatus ?? row.organization_status ?? null,
       subscription: row.subscription ?? null,
       features: row.features ?? null,
@@ -351,8 +351,11 @@ const buildUserPayload = (user, memberships) => {
 
   if (inferredRole === 'admin' && memberships.length === 0 && !platformRole) {
     console.warn('[auth] Suppressing admin role due to missing memberships', {
-      userId: user?.id,
-      email: user?.email,
+      userId: user?.id ?? null,
+      email: user?.email ?? null,
+      membershipCount: memberships.length,
+      platformRole,
+      reason: 'no_memberships',
     });
     inferredRole = 'learner';
   }
@@ -446,6 +449,15 @@ export async function buildAuthContext(req, { optional = false } = {}) {
 
   const membershipDiagnostics =
     (memberships && memberships.__diagnostics && { ...memberships.__diagnostics }) || null;
+
+  const snapshot = {
+    userId: supabaseUser.id,
+    membershipCount: memberships.length,
+    activeOrgId,
+    requestedOrgId: getRequestedOrgId(req),
+    diagnosticsCode: membershipDiagnostics?.code ?? null,
+  };
+  console.info('[auth] membership_snapshot', snapshot);
 
   return { user: userPayload, membershipsMap: membershipMap, activeOrgId, membershipDiagnostics };
 }

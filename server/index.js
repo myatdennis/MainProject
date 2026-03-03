@@ -191,6 +191,30 @@ const ensureEnvironmentIsValid = () => {
 
 ensureEnvironmentIsValid();
 
+const assertMembershipSchema = async () => {
+  if (!process.env.DATABASE_URL) {
+    console.warn('[schema] DATABASE_URL missing; skipping membership column assertion.');
+    return;
+  }
+  try {
+    const rows = await sql`
+      select column_name
+      from information_schema.columns
+      where table_schema = 'public' and table_name = 'organization_memberships'
+    `;
+    const columnNames = rows.map((row) => row.column_name);
+    if (!columnNames.includes('organization_id')) {
+      fatalEnvError(
+        "organization_memberships.organization_id column missing. Run latest migrations before starting the server.",
+      );
+    }
+  } catch (error) {
+    console.warn('[schema] Failed to verify organization_memberships schema', error);
+  }
+};
+
+await assertMembershipSchema();
+
 // Persistent storage file for demo mode
 const STORAGE_FILE = path.join(__dirname, 'demo-data.json');
 // Safety guard to avoid loading extremely large demo files that could trigger OOM (exit 137)

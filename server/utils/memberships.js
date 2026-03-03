@@ -44,10 +44,9 @@ const isAcceptedMembership = (row = {}) => {
 };
 
 const mapMembershipRecord = (row = {}) => {
-  const resolvedOrgId = normalizeOrgId(row.organization_id ?? row.org_id);
+  const resolvedOrgId = normalizeOrgId(row.organization_id);
   return {
     organization_id: resolvedOrgId,
-    org_id: resolvedOrgId,
     orgId: resolvedOrgId,
     organizationId: resolvedOrgId,
     role: row.role || 'member',
@@ -73,7 +72,9 @@ const fetchMembershipsFromBaseTables = async (userId, logPrefix) => {
   try {
     const { data: membershipRows, error } = await supabase
       .from('organization_memberships')
-      .select('org_id, organization_id, role, status, is_active, accepted_at, created_at, updated_at, profile_id, user_id')
+      .select(
+        'organization_id, role, status, is_active, accepted_at, created_at, updated_at, profile_id, user_id',
+      )
       .or(`user_id.eq.${userId},profile_id.eq.${userId}`);
 
     if (error) {
@@ -82,7 +83,7 @@ const fetchMembershipsFromBaseTables = async (userId, logPrefix) => {
 
     const rows = Array.isArray(membershipRows) ? membershipRows : [];
     const filteredRows = filterActiveMemberships(rows);
-    const orgIds = Array.from(new Set(rows.map((row) => normalizeOrgId(row?.org_id)).filter(Boolean)));
+    const orgIds = Array.from(new Set(rows.map((row) => normalizeOrgId(row?.organization_id)).filter(Boolean)));
 
     let orgMap = new Map();
     if (orgIds.length > 0) {
@@ -98,9 +99,9 @@ const fetchMembershipsFromBaseTables = async (userId, logPrefix) => {
     }
 
     return filteredRows.map((row) => {
-      const organization = orgMap.get(normalizeOrgId(row?.org_id)) || {};
+      const organization = orgMap.get(normalizeOrgId(row?.organization_id)) || {};
       return mapMembershipRecord({
-        org_id: row?.org_id,
+        organization_id: row?.organization_id,
         role: row?.role,
         status: row?.status ?? 'active',
         is_active: row?.is_active ?? true,

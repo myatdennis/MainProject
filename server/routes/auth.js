@@ -806,6 +806,47 @@ router.get('/verify', async (req, res) => {
   });
 });
 
+router.post('/self-heal-membership', async (req, res) => {
+  if (!supabase) {
+    return res.status(503).json({
+      code: 'SUPABASE_UNAVAILABLE',
+      error: 'supabase_unavailable',
+      message: 'Membership self-heal is unavailable.',
+    });
+  }
+
+  const userId = req.user?.userId;
+  if (!userId) {
+    return res.status(401).json({
+      code: 'NOT_AUTHENTICATED',
+      error: 'not_authenticated',
+      message: 'You must be signed in to use this endpoint.',
+    });
+  }
+
+  try {
+    const { data, error } = await supabase.rpc('ensure_active_membership');
+    if (error) {
+      throw error;
+    }
+    res.json({
+      ensured: Boolean(data?.ensured),
+      orgId: data?.org_id || data?.orgId || null,
+      reason: data?.reason || null,
+    });
+  } catch (error) {
+    console.warn('[auth/self-heal-membership] failed', {
+      userId,
+      error: error?.message || error,
+    });
+    res.status(500).json({
+      code: 'MEMBERSHIP_SELF_HEAL_FAILED',
+      error: 'membership_self_heal_failed',
+      message: 'Unable to ensure membership.',
+    });
+  }
+});
+
 // ============================================================================
 // Get Current User
 // ============================================================================
