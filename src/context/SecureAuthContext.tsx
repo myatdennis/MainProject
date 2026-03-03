@@ -104,6 +104,20 @@ const readSupabaseSessionTokens = async (
       return { accessToken: fallbackAccess, refreshToken: fallbackRefresh };
     }
     let session = data?.session ?? null;
+    if (import.meta.env?.DEV) {
+      let surfaceStatus: 'admin' | 'client' = 'client';
+      if (typeof window !== 'undefined') {
+        try {
+          surfaceStatus = isAdminSurface(window.location?.pathname ?? '') ? 'admin' : 'client';
+        } catch {
+          surfaceStatus = 'client';
+        }
+      }
+      console.info('[SecureAuth] boot', {
+        surfaceStatus,
+        hasSession: Boolean(session?.access_token),
+      });
+    }
 
     const hasRefreshToken = Boolean(session?.refresh_token);
     const shouldAttemptRefresh =
@@ -1503,36 +1517,47 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       if (typeof window === 'undefined') {
         return;
       }
-      const pathname = window.location?.pathname ?? '';
-      const surface = isAdminSurface(pathname) ? 'admin' : 'client';
-      const hasSession = Boolean(user);
-      const lastRedirect = window.__HUDDLE_LAST_AUTH_REDIRECT__ ?? null;
-      const payload = {
-        pathname,
-        surface,
-        authStatus,
-        sessionStatus,
-        surfaceStatus: surfaceAuthStatus,
-        orgResolutionStatus,
-        hasSession,
-        storageMode: AUTH_STORAGE_MODE,
-        lastRedirect,
-        timestamp: new Date().toISOString(),
-      };
-      window.__HUDDLE_AUTH_DEBUG__ = payload;
-      const signature = JSON.stringify({
-        pathname,
-        surface,
-        authStatus,
-        sessionStatus,
-        hasSession,
-        orgResolutionStatus,
-        surfaceStatus,
-      });
-      if (authDebugSignatureRef.current !== signature) {
-        authDebugSignatureRef.current = signature;
+      try {
+        const pathname = window.location?.pathname ?? '';
+        let surfaceStatus: 'admin' | 'client' = 'client';
+        try {
+          surfaceStatus = isAdminSurface(pathname) ? 'admin' : 'client';
+        } catch {
+          surfaceStatus = 'client';
+        }
+        const hasSession = Boolean(user);
+        const lastRedirect = window.__HUDDLE_LAST_AUTH_REDIRECT__ ?? null;
+        const payload = {
+          pathname,
+          surfaceStatus,
+          authStatus,
+          sessionStatus,
+          surfaceAuthStatus,
+          orgResolutionStatus,
+          hasSession,
+          storageMode: AUTH_STORAGE_MODE,
+          lastRedirect,
+          timestamp: new Date().toISOString(),
+        };
+        window.__HUDDLE_AUTH_DEBUG__ = payload;
+        const signature = JSON.stringify({
+          pathname,
+          surfaceStatus,
+          authStatus,
+          sessionStatus,
+          hasSession,
+          orgResolutionStatus,
+          surfaceAuthStatus,
+        });
+        if (authDebugSignatureRef.current !== signature) {
+          authDebugSignatureRef.current = signature;
+          if (import.meta.env?.DEV) {
+            console.info('[SecureAuth][debug] auth_state_update', { reason, payload });
+          }
+        }
+      } catch (error) {
         if (import.meta.env?.DEV) {
-          console.info('[SecureAuth][debug] auth_state_update', { reason, payload });
+          console.warn('[SecureAuth][debug] snapshot_failed', error);
         }
       }
     },
