@@ -248,6 +248,7 @@ const SENSITIVE_HEADERS = ['authorization', 'cookie', 'set-cookie', 'x-csrf-toke
 const ADMIN_PATH_PATTERN = /\/api\/admin\b/i;
 const AUTH_ENDPOINT_REGEX = /\/api\/auth\/(login|refresh|session)/i;
 const ABSOLUTE_URL_REGEX = /^https?:\/\//i;
+const ADMIN_API_PATTERN = /^\/api\/admin\//i;
 
 const redactHeaders = (headers?: Headers | Record<string, string> | null): Record<string, string> => {
   if (!headers) return {};
@@ -291,6 +292,24 @@ const extractPathname = (target: string): string => {
   } catch {
     return target;
   }
+};
+
+const isBrowserEnvironment = typeof window !== 'undefined' && typeof window.location !== 'undefined';
+
+const isAdminSurfaceLocation = (): boolean => {
+  if (!isBrowserEnvironment) return false;
+  try {
+    const pathname = window.location?.pathname?.toLowerCase?.() || '';
+    return pathname.startsWith('/admin');
+  } catch {
+    return false;
+  }
+};
+
+const shouldBlockAdminRequest = (pathname: string): boolean => {
+  if (!isBrowserEnvironment) return false;
+  if (!ADMIN_API_PATTERN.test(pathname)) return false;
+  return !isAdminSurfaceLocation();
 };
 
 const logDevHttpError = (target: string, status: number, body: unknown) => {
@@ -345,6 +364,20 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
 
   const method = options.method ?? 'GET';
   const url = buildApiUrl(path);
+  const pathname = extractPathname(path);
+
+  if (shouldBlockAdminRequest(pathname)) {
+    const errorPayload = {
+      error: 'admin_required',
+      message: `Blocked request to admin API from non-admin route: ${pathname}`,
+    };
+    if (devMode) {
+      throw new Error(errorPayload.message);
+    }
+    const surface = isBrowserEnvironment ? window.location?.pathname : 'ssr';
+    console.warn('[apiRequest] blocked_admin_request', { pathname, surface });
+    throw new ApiError(errorPayload.message, 403, pathname, errorPayload);
+  }
 
   const requiresSession =
     shouldRequireSession(url, {
