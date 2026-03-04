@@ -184,6 +184,10 @@ interface SessionResponsePayload {
   isPlatformAdmin?: boolean;
   mfaRequired?: boolean;
   authenticatedOnly?: boolean;
+  membershipStatus?: 'ready' | 'degraded' | 'error' | 'unknown';
+  membershipDegraded?: boolean;
+  membershipCount?: number | null;
+  schemaHealth?: Record<string, any> | null;
 }
 
 type SupabaseSessionLike = {
@@ -322,7 +326,31 @@ const normalizeSessionResponsePayload = (payload: unknown): SessionResponsePaylo
     platformRole: derivedPlatformRole ?? normalizedUser.platformRole ?? null,
     isPlatformAdmin: derivedIsPlatformAdmin,
     mfaRequired: source.mfaRequired ?? sessionContainer?.mfaRequired ?? false,
+    membershipStatus: source.membershipStatus ?? sessionContainer?.membershipStatus ?? undefined,
+    membershipDegraded: source.membershipDegraded ?? sessionContainer?.membershipDegraded ?? undefined,
+    membershipCount:
+      typeof source.membershipCount === 'number'
+        ? source.membershipCount
+        : typeof sessionContainer?.membershipCount === 'number'
+        ? (sessionContainer.membershipCount as number)
+        : Array.isArray(source.memberships ?? sessionContainer?.memberships)
+        ? (source.memberships ?? sessionContainer?.memberships)?.length ?? null
+        : null,
+    schemaHealth: source.schemaHealth ?? sessionContainer?.schemaHealth ?? null,
   };
+
+  const normalizedMembershipStatus = normalizeMembershipStatusFlag(
+    normalized.membershipStatus,
+    normalized.membershipDegraded
+  );
+  normalized.membershipStatus = normalizedMembershipStatus;
+  normalized.membershipDegraded = normalizedMembershipStatus !== 'ready';
+  if (
+    normalized.membershipCount == null &&
+    Array.isArray(normalized.memberships)
+  ) {
+    normalized.membershipCount = normalized.memberships.length;
+  }
 
   return normalized;
 };
@@ -338,6 +366,26 @@ const dedupeStrings = (values: Array<string | null | undefined>): string[] => {
     result.push(trimmed);
   });
   return result;
+};
+
+const normalizeMembershipStatusFlag = (
+  status?: string | null,
+  degradedFlag?: boolean | null
+): 'ready' | 'degraded' | 'error' => {
+  if (degradedFlag) {
+    return 'degraded';
+  }
+  const normalized = typeof status === 'string' ? status.trim().toLowerCase() : null;
+  if (!normalized) {
+    return 'ready';
+  }
+  if (normalized === 'degraded') {
+    return 'degraded';
+  }
+  if (normalized === 'error') {
+    return 'error';
+  }
+  return normalized === 'ready' ? 'ready' : 'ready';
 };
 
 const normalizeMemberships = (rows: Array<Record<string, any>> | undefined): UserMembership[] => {
@@ -439,8 +487,8 @@ interface AuthContextType {
   isAuthenticated: AuthState;
   authInitializing: boolean;
   authStatus: 'booting' | 'authenticated' | 'unauthenticated' | 'error';
-  sessionStatus: 'idle' | 'loading' | 'ready';
-  membershipStatus: 'idle' | 'loading' | 'ready' | 'error';
+  sessionStatus: 'loading' | 'authenticated' | 'unauthenticated';
+  membershipStatus: 'idle' | 'loading' | 'ready' | 'error' | 'degraded';
   hasActiveMembership: boolean;
   surfaceAuthStatus: Record<SessionSurface, SurfaceAuthStatus>;
   orgResolutionStatus: OrgResolutionStatus;
@@ -472,7 +520,7 @@ const defaultAuthContext: AuthContextType = {
   isAuthenticated: { lms: false, admin: false },
   authInitializing: true,
   authStatus: 'booting',
-  sessionStatus: 'idle',
+  sessionStatus: 'loading',
   membershipStatus: 'idle',
   hasActiveMembership: false,
   surfaceAuthStatus: { admin: 'idle', lms: 'idle' },
@@ -543,8 +591,8 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   });
   const [user, setUser] = useState<UserSession | null>(null);
   const [memberships, setMemberships] = useState<UserMembership[]>([]);
-  const [membershipStatus, setMembershipStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle');
-  const lastMembershipStatusRef = useRef<'idle' | 'loading' | 'ready' | 'error'>(membershipStatus);
+  const [membershipStatus, setMembershipStatus] = useState<'idle' | 'loading' | 'ready' | 'error' | 'degraded'>('idle');
+  const lastMembershipStatusRef = useRef<'idle' | 'loading' | 'ready' | 'error' | 'degraded'>(membershipStatus);
   const [lastMembershipFetchMeta, setLastMembershipFetchMeta] = useState<MembershipFetchMeta>({
     requestId: 0,
     startedAt: null,
@@ -575,7 +623,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
   const [authInitializing, setAuthInitializing] = useState(true);
   const [authStatus, setAuthStatus] = useState<'booting' | 'authenticated' | 'unauthenticated' | 'error'>('booting');
-  const [sessionStatus, setSessionStatus] = useState<'idle' | 'loading' | 'ready'>('idle');
+  const [sessionStatus, setSessionStatus] = useState<'loading' | 'authenticated' | 'unauthenticated'>('loading');
   const [surfaceAuthStatus, setSurfaceAuthStatus] = useState<Record<SessionSurface, SurfaceAuthStatus>>({
     admin: 'idle',
     lms: 'idle',
@@ -687,7 +735,13 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       hasAuthenticatedSessionRef.current = true;
       hadAuthenticatedSessionRef.current = true;
       lastSessionFetchResultRef.current = 'authenticated';
-      const normalizedMemberships = normalizeMemberships(payload.memberships);
+      const membershipStateFromPayload = normalizeMembershipStatusFlag(
+        payload.membershipStatus,
+        payload.membershipDegraded
+      );
+      setMembershipStatus(membershipStateFromPayload);
+      const membershipsTrusted = membershipStateFromPayload === 'ready';
+      const normalizedMemberships = membershipsTrusted ? normalizeMemberships(payload.memberships) : [];
       const orgIds =
         payload.organizationIds && payload.organizationIds.length > 0
           ? dedupeStrings(payload.organizationIds)
@@ -951,7 +1005,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       clearBootstrapFailOpenTimer();
       applySessionPayload(null, { persistTokens: true, reason });
       setAuthStatus('unauthenticated');
-      setSessionStatus('ready');
+      setSessionStatus('unauthenticated');
       setAuthInitializing(false);
       setBootstrapError(null);
       lastSessionFetchResultRef.current = 'unauthenticated';
@@ -1049,8 +1103,14 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           return normalizeSessionResponsePayload(payloadRaw);
         };
         let payload = await fetchPayload();
-        let membershipCount = payload?.memberships?.length ?? 0;
-        if (payload?.user && membershipCount === 0 && !skipMembershipSelfHeal) {
+        let membershipStateFromPayload = normalizeMembershipStatusFlag(
+          payload?.membershipStatus,
+          payload?.membershipDegraded
+        );
+        const membershipTrusted = membershipStateFromPayload === 'ready';
+        let membershipCount =
+          membershipTrusted && Array.isArray(payload?.memberships) ? payload?.memberships?.length ?? 0 : 0;
+        if (payload?.user && membershipTrusted && membershipCount === 0 && !skipMembershipSelfHeal) {
           const healed = await triggerMembershipSelfHeal({
             userId: payload.user.id,
             orgId:
@@ -1065,27 +1125,42 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
               throw new DOMException('Aborted', 'AbortError');
             }
             payload = await fetchPayload();
-            membershipCount = payload?.memberships?.length ?? 0;
+            membershipStateFromPayload = normalizeMembershipStatusFlag(
+              payload?.membershipStatus,
+              payload?.membershipDegraded
+            );
+            membershipCount =
+              membershipStateFromPayload === 'ready' && Array.isArray(payload?.memberships)
+                ? payload?.memberships?.length ?? 0
+                : 0;
           }
         }
         if (payload?.user) {
-          applySessionPayload(payload, {
+          const normalizedPayload: SessionResponsePayload = {
+            ...payload,
+            memberships: membershipTrusted ? payload.memberships ?? [] : [],
+            membershipStatus: membershipStateFromPayload,
+            membershipDegraded: membershipStateFromPayload !== 'ready',
+            membershipCount: membershipTrusted ? membershipCount : null,
+          };
+          applySessionPayload(normalizedPayload, {
             surface,
             persistTokens: false,
             reason: surface ? `${surface}_session_bootstrap` : 'session_bootstrap',
           });
           setAuthStatus('authenticated');
-          setMembershipStatus('ready');
           if (!silent) {
             setBootstrapError(null);
           }
-          const rawMemberships = Array.isArray(payload.memberships) ? payload.memberships : [];
+          const rawMemberships =
+            membershipTrusted && Array.isArray(payload.memberships) ? payload.memberships : [];
           const firstMembershipOrgId =
             rawMemberships.find((row) => row?.orgId || row?.organizationId || row?.organization_id)?.orgId ??
             rawMemberships.find((row) => row?.organizationId || row?.organization_id)?.organizationId ??
             rawMemberships.find((row) => row?.organization_id)?.organization_id ??
             null;
-          const diagMembershipStatus: 'idle' | 'loading' | 'ready' | 'error' = 'ready';
+          const diagMembershipStatus: 'idle' | 'loading' | 'ready' | 'error' =
+            membershipStateFromPayload === 'ready' ? 'ready' : 'error';
           const diagLine = [
             `userId=${payload.user.id ?? 'unknown'}`,
             `membershipStatus=${diagMembershipStatus}`,
@@ -1097,8 +1172,11 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           console.info('[SecureAuth] membership_applied', diagLine);
           finalizeMeta({
             statusCode: 200,
-            membershipCount,
-            reason: membershipCount === 0 ? 'empty_memberships' : null,
+            membershipCount: membershipTrusted ? membershipCount : null,
+            reason:
+              membershipTrusted && membershipCount === 0 ? 'empty_memberships' : membershipStateFromPayload === 'ready'
+              ? null
+              : membershipStateFromPayload,
           });
           return true;
         }
@@ -1483,7 +1561,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         }
       } finally {
         clearBootstrapFailOpenTimer();
-        setSessionStatus('ready');
+        setSessionStatus(hasAuthenticatedSessionRef.current ? 'authenticated' : 'unauthenticated');
         setAuthInitializing(false);
       }
     },
@@ -1634,9 +1712,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       try {
         const result = await resolveSession({ surface: options?.surface });
         setAuthInitializing(false);
+        setSessionStatus(result ? 'authenticated' : 'unauthenticated');
         return result;
       } finally {
-        setSessionStatus('ready');
         if (options?.surface) {
           updateSurfaceAuthStatus(options.surface, 'ready');
         }
@@ -1708,7 +1786,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   }, [authInitializing, user, memberships, activeOrgId]);
 
   useEffect(() => {
-    if (sessionStatus !== 'ready') {
+    if (sessionStatus !== 'authenticated') {
       return;
     }
     if (hasLoggedAppLoadRef.current) {
@@ -1823,8 +1901,8 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
   useEffect(() => {
     registerCourseStoreOrgResolver(() => {
-      const sessionReady = sessionStatus === 'ready';
-      const membershipReady = membershipStatus === 'ready';
+      const sessionReady = sessionStatus === 'authenticated';
+      const membershipReady = membershipStatus === 'ready' || membershipStatus === 'degraded';
       const membershipErrored = membershipStatus === 'error';
       if (!sessionReady) {
         return {

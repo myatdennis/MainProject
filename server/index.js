@@ -238,7 +238,7 @@ function setMembershipSchemaHealth(status, reason = null) {
   }
 }
 
-const requireCriticalSchema = async () => {
+async function requireCriticalSchema () {
   if (!process.env.DATABASE_URL) {
     console.warn('[schema] DATABASE_URL missing; skipping critical schema verification.');
     setMembershipSchemaHealth('degraded', 'database_url_missing');
@@ -273,7 +273,7 @@ const requireCriticalSchema = async () => {
       dbHost: databaseHost,
     });
   }
-};
+}
 
 const runSchemaDoctor = async () => {
   if (!process.env.DATABASE_URL) {
@@ -316,7 +316,13 @@ const runSchemaDoctor = async () => {
   }
 };
 
-await requireCriticalSchema();
+try {
+  await requireCriticalSchema();
+} catch (error) {
+  const reason = error?.message || 'schema_probe_failed';
+  setMembershipSchemaHealth('degraded', reason);
+  logger.warn('membership_schema_probe_failed', { reason, message: reason });
+}
 await runSchemaDoctor();
 
 // Persistent storage file for demo mode
@@ -436,7 +442,7 @@ app.get('/health', (_req, res) => {
 import healthRouter from './routes/health.js';
 import corsMiddleware, { resolvedCorsOrigins } from './middleware/cors.js';
 import { getCookieOptions } from './middleware/cookieOptions.js';
-import { describeCookiePolicy } from './utils/authCookies.js';
+import { describeCookiePolicy, getActiveOrgFromRequest } from './utils/authCookies.js';
 import { env } from './utils/env.js';
 import { log } from './utils/logger.js';
 import { handleError } from './utils/errorHandler.js';
@@ -495,7 +501,7 @@ const cookiePolicySnapshot = describeCookiePolicy();
 log('info', 'http_cookie_policy', cookiePolicySnapshot);
 log('info', 'http_cors_policy', {
   allowedOrigins: resolvedCorsOrigins,
-  allowCredentials: false,
+  allowCredentials: true,
 });
 
 app.get('/api/health/db', async (_req, res) => {
@@ -1199,7 +1205,6 @@ logger.info('server_port', { port: PORT });
 // Core middleware ordering: CORS -> JSON -> request metadata.
 app.use(cookieParser());
 app.use(corsMiddleware);
-app.options('*', corsMiddleware);
 app.use(express.json({ limit: '10mb' }));
 app.use(attachRequestId);
 
@@ -9579,11 +9584,21 @@ app.post('/api/analytics/events/batch', async (req, res) => {
   const parsed = validateOr400(analyticsBatchSchema, req, res);
   if (!parsed) return;
   const events = parsed.events;
+  const allowHeaderWithoutMembership = req.membershipStatus && req.membershipStatus !== 'ready';
+  const headerOrgId = getHeaderOrgId(req, { requireMembership: !allowHeaderWithoutMembership }) || null;
+  const cookieOrgId = headerOrgId ? null : getActiveOrgFromRequest(req);
 
   const normalizedEvents = events.map((evt) => {
-    const normalizedOrgId = typeof (evt.org_id ?? evt.orgId) === 'string'
-      ? (evt.org_id ?? evt.orgId).trim()
-      : null;
+    const payloadOrgId =
+      typeof (evt.org_id ?? evt.orgId) === 'string' ? (evt.org_id ?? evt.orgId).trim() : null;
+    const normalizedOrgId = resolveAnalyticsOrgId(
+      headerOrgId,
+      payloadOrgId,
+      cookieOrgId,
+      req.activeOrgId,
+      req.user?.activeOrgId,
+      req.user?.organizationId,
+    );
     const normalizedClientEventId = evt.clientEventId || evt.client_event_id || `analytics-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     return {
       ...evt,
@@ -9596,13 +9611,17 @@ app.post('/api/analytics/events/batch', async (req, res) => {
     };
   });
 
-  const invalidOrgEvents = normalizedEvents.filter((evt) => !isUuid(typeof evt.org_id === 'string' ? evt.org_id : ''));
-  if (invalidOrgEvents.length) {
-    res.status(400).json({
-      error: 'org_id is required for all analytics events',
-      invalid: invalidOrgEvents.map((evt) => evt.client_event_id),
+  const missingOrgEvents = normalizedEvents.filter((evt) => !isUuid(evt.org_id || ''));
+  if (missingOrgEvents.length) {
+    const warningKey = req.user?.userId || req.user?.id || `anon:${req.ip ?? 'unknown'}`;
+    analyticsOrgWarning(warningKey, {
+      requestId: req.requestId,
+      userId: req.user?.userId || req.user?.id || null,
+      headerOrgId,
+      cookieOrgId,
+      membershipStatus: req.membershipStatus || 'unknown',
+      missingCount: missingOrgEvents.length,
     });
-    return;
   }
 
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
@@ -12784,6 +12803,31 @@ app.get('/api/analytics/events', optionalAuthenticate, async (req, res) => {
   }
 });
 
+const resolveAnalyticsOrgId = (...candidates) => {
+  for (const candidate of candidates) {
+    const normalized = normalizeOrgIdValue(candidate);
+    if (normalized && isUuid(normalized)) {
+      return normalized;
+    }
+  }
+  return null;
+};
+
+const analyticsOrgWarning = (() => {
+  const interval = 10 * 60_000;
+  const lastWarnings = new Map();
+  return (subject, meta = {}) => {
+    const key = subject || 'anonymous';
+    const now = Date.now();
+    const last = lastWarnings.get(key) || 0;
+    if (now - last < interval) {
+      return;
+    }
+    lastWarnings.set(key, now);
+    logger.warn('analytics_event_missing_org', { subject: key, ...meta });
+  };
+})();
+
 app.post('/api/analytics/events', optionalAuthenticate, async (req, res) => {
   const parseResult = analyticsEventIngestSchema.safeParse(req.body || {});
   if (!parseResult.success) {
@@ -12808,22 +12852,30 @@ app.post('/api/analytics/events', optionalAuthenticate, async (req, res) => {
     receivedKeys: Object.keys(req.body || {}),
   });
 
-  const trustedHeaderOrgId = getHeaderOrgId(req) || null;
-  const derivedOrgId = req.activeOrgId || req.user?.activeOrgId || req.user?.organizationId || trustedHeaderOrgId;
-
-  let normalizedOrgCandidate = typeof org_id === 'string' ? org_id.trim() : '';
-  if (!isUuid(normalizedOrgCandidate) && isUuid(derivedOrgId)) {
-    normalizedOrgCandidate = derivedOrgId;
-  }
-  const resolvedOrgId = isUuid(normalizedOrgCandidate) ? normalizedOrgCandidate : null;
+  const allowHeaderWithoutMembership = req.membershipStatus && req.membershipStatus !== 'ready';
+  const headerOrgId = getHeaderOrgId(req, { requireMembership: !allowHeaderWithoutMembership }) || null;
+  const cookieOrgId = headerOrgId ? null : getActiveOrgFromRequest(req);
+  const payloadOrgId = typeof org_id === 'string' ? org_id.trim() : null;
+  const resolvedOrgId = resolveAnalyticsOrgId(
+    headerOrgId,
+    payloadOrgId,
+    cookieOrgId,
+    req.activeOrgId,
+    req.user?.activeOrgId,
+    req.user?.organizationId,
+  );
   const orgMissing = !resolvedOrgId;
 
   if (orgMissing) {
-    logger.warn('analytics_event_missing_org', {
+    const membershipStatus = req.membershipStatus || 'unknown';
+    const warningKey = req.user?.userId || req.user?.id || `anon:${req.ip ?? 'unknown'}`;
+    analyticsOrgWarning(warningKey, {
       requestId: req.requestId,
       userId: req.user?.userId || req.user?.id || null,
-      headerOrgId: trustedHeaderOrgId,
-      derivedOrgId,
+      headerOrgId,
+      payloadOrgId,
+      cookieOrgId,
+      membershipStatus,
     });
   }
 

@@ -198,7 +198,7 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
   );
 
   useEffect(() => {
-    if (normalizedAuthInitializing || normalizedSessionStatus !== 'ready') {
+    if (normalizedAuthInitializing || normalizedSessionStatus !== 'authenticated') {
       return;
     }
     if (!hasSession || !adminPortalAllowed) {
@@ -315,7 +315,7 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
 
   const activeUser = user ?? authUser;
 
-  if (normalizedAuthInitializing || normalizedSessionStatus !== 'ready') {
+  if (normalizedAuthInitializing || normalizedSessionStatus !== 'authenticated') {
     return (
       <div className="flex min-h-screen items-center justify-center bg-softwhite">
         <LoadingSpinner size="lg" />

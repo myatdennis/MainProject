@@ -14,6 +14,7 @@ import {
   isAllowlistedAdminEmail,
   resolveUserRole,
   mapMembershipRows,
+  buildAuthContext,
 } from '../middleware/auth.js';
 import supabase, { supabaseAuthClient } from '../lib/supabaseClient.js';
 import { getUserMemberships } from '../utils/memberships.js';
@@ -729,57 +730,57 @@ router.post('/logout', async (req, res) => {
 
 router.get('/session', async (req, res) => {
   const requestId = req.requestId || req.headers['x-request-id'] || req.headers['x-amzn-trace-id'] || null;
-  const bearerToken = getBearerToken(req);
   const origin = req.headers?.origin || null;
   const schemaHealth = req.app?.locals?.schemaHealth || null;
   const schemaMembershipStatus = schemaHealth?.membership?.status || 'unknown';
-  const membershipStatus = schemaMembershipStatus === 'ok' ? 'unknown' : schemaMembershipStatus;
-  const membershipCount = membershipStatus === 'ready' ? 0 : null;
-
-  if (!bearerToken) {
-    console.info('[auth/session] missing_bearer', { requestId, origin });
-    return res.status(200).json({
-      ok: true,
-      authenticated: false,
-      session: null,
-      schemaHealth,
-      membershipStatus,
-      membershipCount,
-    });
-  }
+  const schemaDegraded = schemaMembershipStatus && schemaMembershipStatus !== 'ok';
 
   try {
-    const claims = await verifySupabaseToken(bearerToken);
-    const user = {
-      id: claims.sub || null,
-      email: claims.email || claims.user_email || null,
-      role: claims.role || claims.app_metadata?.role || null,
-      platformRole: claims.app_metadata?.platform_role || claims.user_metadata?.platform_role || null,
-    };
-    const allowlistedAdmin = isAllowlistedAdminEmail(user.email);
-    if (allowlistedAdmin) {
-      user.role = user.role || 'admin';
-      user.platformRole = user.platformRole || 'platform_admin';
+    const context = await buildAuthContext(req, { optional: true });
+    if (!context) {
+      const membershipStatus = schemaDegraded ? 'degraded' : 'unknown';
+      return res.status(200).json({
+        ok: true,
+        authenticated: false,
+        session: null,
+        schemaHealth,
+        membershipStatus,
+        membershipDegraded: membershipStatus !== 'ready',
+        membershipCount: null,
+        activeOrgId: null,
+        platformRole: null,
+      });
     }
+
+    const membershipStatus = context.membershipStatus || (schemaDegraded ? 'degraded' : 'ready');
+    const membershipDegraded = membershipStatus !== 'ready';
+    const membershipCount = membershipDegraded ? null : context.membershipCount ?? null;
+    const sessionPayload = {
+      user: context.user,
+      role: context.user.role || null,
+      platformRole: context.user.platformRole || null,
+      memberships: membershipDegraded ? null : context.user.memberships || [],
+      activeOrgId: context.activeOrgId || null,
+    };
 
     console.info('[auth/session] verified', {
       requestId,
       origin,
-      userId: user.id,
-      role: user.role || null,
-      platformRole: user.platformRole || null,
+      userId: context.user?.id || null,
+      role: context.user?.role || null,
+      platformRole: context.user?.platformRole || null,
+      membershipStatus,
     });
 
     return res.status(200).json({
       ok: true,
       authenticated: true,
-      session: {
-        user,
-        role: user.role || null,
-        platformRole: user.platformRole || null,
-      },
+      session: sessionPayload,
       membershipStatus,
+      membershipDegraded,
       membershipCount,
+      activeOrgId: sessionPayload.activeOrgId,
+      platformRole: sessionPayload.platformRole,
       schemaHealth,
     });
   } catch (error) {
@@ -788,6 +789,7 @@ router.get('/session', async (req, res) => {
       origin,
       error: error?.message || error,
     });
+    const membershipStatus = schemaDegraded ? 'degraded' : 'unknown';
     return res.status(200).json({
       ok: true,
       authenticated: false,
@@ -795,7 +797,10 @@ router.get('/session', async (req, res) => {
       error: 'invalid_token',
       schemaHealth,
       membershipStatus,
-      membershipCount,
+      membershipDegraded: membershipStatus !== 'ready',
+      membershipCount: null,
+      activeOrgId: null,
+      platformRole: null,
     });
   }
 });

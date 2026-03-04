@@ -122,6 +122,9 @@ const ensureVaryOrigin = (res) => {
   }
 };
 
+const allowedMethodsHeader = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'].join(', ');
+const allowedHeadersHeader = allowHeaders.join(', ');
+
 const appendCorsResponseHeaders = (req, res) => {
   ensureVaryOrigin(res);
   const origin = req?.headers?.origin;
@@ -156,12 +159,53 @@ const healthCorsOptions = {
   origin: true,
 };
 
-const corsMiddleware = (req, res, next) => {
-  appendCorsResponseHeaders(req, res);
-  if (isHealthRequest(req)) {
-    return cors(healthCorsOptions)(req, res, next);
+const handlePreflight = (req, res, decision) => {
+  if (req.method !== 'OPTIONS') {
+    return false;
   }
-  return cors(baseCorsOptions)(req, res, next);
+  if (decision.allowed && decision.resolvedOrigin) {
+    setHeader(res, 'Access-Control-Allow-Methods', allowedMethodsHeader);
+    setHeader(res, 'Access-Control-Allow-Headers', allowedHeadersHeader);
+    setHeader(res, 'Access-Control-Max-Age', '86400');
+    res.status(204).end();
+    return true;
+  }
+  res.status(403).json({
+    ok: false,
+    error: 'origin_not_allowed',
+    message: 'The requested origin is not allowed.',
+  });
+  return true;
+};
+
+const baseHandler = cors(baseCorsOptions);
+const healthHandler = cors(healthCorsOptions);
+
+const corsMiddleware = (req, res, next) => {
+  const decision = appendCorsResponseHeaders(req, res);
+  if (decision.allowed === false && req.headers?.origin) {
+    // For disallowed origins send consistent response (preflight handled separately)
+    if (req.method === 'OPTIONS') {
+      if (handlePreflight(req, res, decision)) {
+        return;
+      }
+    } else {
+      return res.status(403).json({
+        ok: false,
+        error: 'origin_not_allowed',
+        message: 'The requested origin is not allowed.',
+      });
+    }
+  }
+
+  if (handlePreflight(req, res, decision)) {
+    return;
+  }
+
+  if (isHealthRequest(req)) {
+    return healthHandler(req, res, next);
+  }
+  return baseHandler(req, res, next);
 };
 
 export default corsMiddleware;

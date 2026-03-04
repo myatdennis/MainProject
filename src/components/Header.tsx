@@ -103,7 +103,7 @@ const Header = () => {
     if (import.meta.env?.DEV) {
       console.debug('[Header] admin_cta_gate_state', gateState);
     }
-    if (gateAuthInitializing || gateSessionStatus !== 'ready') {
+    if (gateAuthInitializing || gateSessionStatus !== 'authenticated') {
       return;
     }
     if (gateHasSession && adminPortalAllowed) {

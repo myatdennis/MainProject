@@ -19,7 +19,7 @@ const createAuthState = (overrides: Record<string, unknown> = {}) => ({
   isAuthenticated: { lms: true, admin: false },
   authInitializing: false,
   authStatus: 'authenticated',
-  sessionStatus: 'ready',
+  sessionStatus: 'authenticated',
   membershipStatus: 'ready',
   hasActiveMembership: true,
   surfaceAuthStatus: { admin: 'ready', lms: 'ready' },

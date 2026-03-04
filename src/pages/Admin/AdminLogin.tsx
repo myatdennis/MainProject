@@ -359,7 +359,7 @@ const AdminLogin: React.FC = () => {
   }, [captureDeniedUserSnapshot, capabilityErrorMessage, navigateToAdminLanding, verifyAdminCapability]);
 
   useEffect(() => {
-    if (sessionStatus !== 'ready') {
+    if (sessionStatus !== 'authenticated') {
       return;
     }
     if (!hasSession) {

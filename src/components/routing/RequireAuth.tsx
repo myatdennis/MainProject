@@ -82,9 +82,12 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   const currentLoginPath = loginPathOverride ?? loginPathByMode[mode];
   const isOnModeLoginPath = location.pathname === currentLoginPath;
   const hasSession = Boolean(user);
+  const sessionLoading = sessionStatus === 'loading';
+  const sessionAuthenticated = sessionStatus === 'authenticated';
+  const sessionUnauthenticated = sessionStatus === 'unauthenticated';
   const surfaceState = surfaceAuthStatus?.[mode] ?? 'idle';
   const effectiveSurfaceState =
-    surfaceState === 'idle' && sessionStatus === 'ready' && orgResolutionStatus === 'ready' ? 'ready' : surfaceState;
+    surfaceState === 'idle' && sessionAuthenticated && orgResolutionStatus === 'ready' ? 'ready' : surfaceState;
   const waitingForSurface = hasSession && effectiveSurfaceState === 'checking';
   const waitingForOrgContext =
     mode === 'admin' && hasSession && memberships.length > 0 && !activeOrgId && orgResolutionStatus !== 'ready';
@@ -228,7 +231,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
 
   const requestSessionLoad = useCallback(
     (reason: 'initial' | 'retry', options?: { force?: boolean }) => {
-      if (!options?.force && sessionStatus === 'ready') {
+      if (!options?.force && sessionStatus === 'authenticated') {
         return;
       }
       if (sessionRequestRef.current) {
@@ -262,15 +265,15 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   }, []);
 
   useEffect(() => {
-    if (sessionStatus !== 'ready') {
+    if (sessionLoading) {
       requestSessionLoad('initial');
     } else {
       sessionRequestRef.current = false;
     }
-  }, [sessionStatus, requestSessionLoad]);
+  }, [sessionLoading, requestSessionLoad]);
 
   useEffect(() => {
-    if (sessionStatus !== 'ready' || hasSession || retryRef.current) {
+    if (sessionStatus !== 'authenticated' || hasSession || retryRef.current) {
       return;
     }
     retryRef.current = true;
@@ -278,7 +281,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   }, [sessionStatus, hasSession, requestSessionLoad]);
 
   useEffect(() => {
-    if (sessionStatus !== 'ready') {
+    if (sessionStatus !== 'authenticated') {
       return;
     }
     if (!requestedOrgParam || requestedOrgParam === activeOrgId) {
@@ -298,7 +301,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   }, [requestedOrgParam, memberships, activeOrgId, setActiveOrganization, logGuardEvent, sessionStatus]);
 
   useEffect(() => {
-    if (authInitializing || sessionStatus !== 'ready') {
+    if (authInitializing || sessionStatus !== 'authenticated') {
       return;
     }
     if (activeOrgId) {
@@ -329,7 +332,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
       if (mode !== 'admin') {
         return;
       }
-      if (sessionStatus !== 'ready' || !hasSession) {
+      if (sessionStatus !== 'authenticated' || !hasSession) {
         return;
       }
 
@@ -485,7 +488,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
       adminGateKeyRef.current = null;
       return () => {};
     }
-    if (sessionStatus !== 'ready' || !hasSession) {
+    if (sessionStatus !== 'authenticated' || !hasSession) {
       adminGateKeyRef.current = null;
       return () => {};
     }
@@ -639,7 +642,8 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   ]);
 
 
-  const statusesReady = sessionStatus === 'ready' && orgResolutionStatus === 'ready' && effectiveSurfaceState === 'ready';
+  const statusesReady =
+    sessionAuthenticated && orgResolutionStatus === 'ready' && effectiveSurfaceState === 'ready';
   const waitingForAdminGate = mode === 'admin' && hasSession && adminGateStatus === 'checking';
 
   const shouldShowSpinner =
@@ -705,12 +709,15 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   }
 
   if (!hasSession) {
-    if (authInitializing || sessionStatus !== 'ready') {
+    if (authInitializing || sessionLoading) {
       return (
         <div className="flex min-h-[60vh] items-center justify-center bg-softwhite">
           <LoadingSpinner size="lg" />
         </div>
       );
+    }
+    if (!sessionUnauthenticated) {
+      return null;
     }
     const targetPath = currentLoginPath;
     if (isOnModeLoginPath) {
@@ -845,7 +852,21 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   }
 
   logGuardEvent('allow', { path: location.pathname, adminCapabilityStatus: adminCapability.status });
-  return <>{children}</>;
+  const membershipBanner =
+    membershipStatus === 'degraded' ? (
+      <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+        <strong className="font-semibold">Membership sync delayed.</strong>{' '}
+        We're having trouble confirming your organization membership. You still have access, but assignments may be
+        limited until the connection is restored.
+      </div>
+    ) : null;
+
+  return (
+    <>
+      {membershipBanner}
+      {children}
+    </>
+  );
 };
 
 export default RequireAuth;

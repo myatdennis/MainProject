@@ -1,6 +1,7 @@
 import apiRequest, { ApiError } from '../../utils/apiClient';
 import type { AnalyticsEvent, LearnerJourney } from '../analyticsService';
-import { getAccessToken, getUserSession, getActiveOrgPreference } from '../../lib/secureStorage';
+import { getAccessToken, getUserSession } from '../../lib/secureStorage';
+import { buildOrgHeaders, resolveActiveOrgId } from '../../utils/orgHeaders';
 
 const parseEnvAnalyticsFlag = (): boolean => {
   try {
@@ -45,19 +46,6 @@ const hasAuthSession = () => {
     return Boolean(token || session?.id);
   } catch {
     return false;
-  }
-};
-
-const resolveOrgId = (): string | null => {
-  try {
-    const preference = getActiveOrgPreference();
-    if (preference) {
-      return preference;
-    }
-    const session = getUserSession();
-    return session?.activeOrgId || session?.organizationId || null;
-  } catch {
-    return null;
   }
 };
 
@@ -142,7 +130,11 @@ export const analyticsApiClient = {
   fetchEvents: async () => {
     if (!ensureAnalyticsReady()) return { data: [] };
     try {
-      return await apiRequest<{ data: any[] }>('/api/analytics/events');
+      const headers = buildOrgHeaders();
+      return await apiRequest<{ data: any[] }>('/api/analytics/events', {
+        headers,
+        credentials: 'include',
+      });
     } catch (error) {
       return handleAnalyticsFailure(error, { data: [] }, 'fetchEvents');
     }
@@ -150,7 +142,11 @@ export const analyticsApiClient = {
   fetchJourneys: async () => {
     if (!ensureAnalyticsReady()) return { data: [] };
     try {
-      return await apiRequest<{ data: any[] }>('/api/analytics/journeys');
+      const headers = buildOrgHeaders();
+      return await apiRequest<{ data: any[] }>('/api/analytics/journeys', {
+        headers,
+        credentials: 'include',
+      });
     } catch (error) {
       return handleAnalyticsFailure(error, { data: [] }, 'fetchJourneys');
     }
@@ -158,14 +154,13 @@ export const analyticsApiClient = {
   persistEvent: async (event: AnalyticsEvent) => {
     if (!ensureAnalyticsReady()) return;
     try {
-      const derivedOrgId = event.orgId ?? resolveOrgId();
-      const headers: Record<string, string> | undefined = derivedOrgId
-        ? { 'X-Org-Id': derivedOrgId }
-        : undefined;
+      const derivedOrgId = event.orgId ?? resolveActiveOrgId();
+      const headers = buildOrgHeaders(derivedOrgId);
 
       await apiRequest('/api/analytics/events', {
         method: 'POST',
         headers,
+        credentials: 'include',
         body: {
           // Server expects org-scoped analytics payloads. Keys map directly
           // onto the analytics_events table: id -> client_event_id, *_id fields,
@@ -192,8 +187,11 @@ export const analyticsApiClient = {
   persistJourney: async (journey: LearnerJourney) => {
     if (!ensureAnalyticsReady()) return;
     try {
+      const headers = buildOrgHeaders();
       await apiRequest('/api/analytics/journeys', {
         method: 'POST',
+        headers,
+        credentials: 'include',
         body: {
           user_id: journey.userId,
           course_id: journey.courseId,
@@ -220,8 +218,13 @@ export const analyticsApiClient = {
   fetchCourseEngagement: async () => {
     if (!ensureAnalyticsReady()) return { data: [] };
     try {
+      const headers = buildOrgHeaders();
       return await apiRequest<{ data: { course_id: string; avg_progress: number; active_users: number }[] }>(
-        '/api/analytics/course-engagement'
+        '/api/analytics/course-engagement',
+        {
+          headers,
+          credentials: 'include',
+        }
       );
     } catch (error) {
       return handleAnalyticsFailure(error, { data: [] }, 'fetchCourseEngagement');

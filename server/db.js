@@ -9,7 +9,7 @@ import { setDefaultResultOrder } from 'node:dns'
 import dns from 'node:dns/promises'
 import postgres from 'postgres'
 
-const FORCE_DB_IPV4 = String(process.env.FORCE_DB_IPV4 ?? 'true').toLowerCase() !== 'false'
+const FORCE_DB_IPV4 = String(process.env.FORCE_DB_IPV4 ?? (process.env.NODE_ENV === 'production' ? 'true' : 'false')).toLowerCase() !== 'false'
 
 if (typeof setDefaultResultOrder === 'function') {
   try {
@@ -27,7 +27,10 @@ async function initializeConnectionMetadata (rawConnectionString) {
     connectionString: rawConnectionString || '',
     forcedIpv4: false,
     originalHost: null,
-    resolvedHost: null
+    resolvedHost: null,
+    finalHostUsed: null,
+    lookupError: null,
+    error: null
   }
 
   if (!rawConnectionString) {
@@ -37,34 +40,45 @@ async function initializeConnectionMetadata (rawConnectionString) {
   try {
     const url = new URL(rawConnectionString)
     metadata.originalHost = url.hostname
-    metadata.resolvedHost = url.hostname
+    metadata.connectionString = url.toString()
 
-    if (!FORCE_DB_IPV4 || !shouldForceIpv4(url.hostname) || typeof dns.lookup !== 'function') {
-      return metadata
+    if (FORCE_DB_IPV4 && shouldForceIpv4(url.hostname) && typeof dns.lookup === 'function') {
+      try {
+        const lookupResult = await dns.lookup(url.hostname, { family: 4, all: false })
+        if (lookupResult?.address) {
+          url.hostname = lookupResult.address
+          url.host = `${lookupResult.address}${url.port ? `:${url.port}` : ''}`
+          metadata.connectionString = url.toString()
+          metadata.resolvedHost = lookupResult.address
+          metadata.forcedIpv4 = true
+        }
+      } catch (error) {
+        metadata.lookupError = error
+        console.warn('[server/db] IPv4 lookup failed; using original host', {
+          host: metadata.originalHost,
+          message: error?.message || String(error)
+        })
+      }
     }
 
     try {
-      const lookupResult = await dns.lookup(url.hostname, { family: 4, verbatim: false })
-      if (lookupResult?.address) {
-        url.hostname = lookupResult.address
-        url.host = `${lookupResult.address}${url.port ? `:${url.port}` : ''}`
-        metadata.connectionString = url.toString()
-        metadata.resolvedHost = lookupResult.address
-        metadata.forcedIpv4 = true
-        console.info('[server/db] Forced IPv4 host for DATABASE_URL', {
-          originalHost: metadata.originalHost,
-          resolvedHost: metadata.resolvedHost
-        })
-      }
-    } catch (error) {
-      console.warn('[server/db] Unable to resolve IPv4 host for DATABASE_URL', {
-        host: url.hostname,
-        message: error?.message || String(error)
-      })
+      const finalUrl = new URL(metadata.connectionString)
+      metadata.finalHostUsed = finalUrl.hostname
+    } catch {
+      metadata.finalHostUsed = metadata.resolvedHost ?? metadata.originalHost
     }
   } catch (error) {
-    console.warn('[server/db] Failed to parse DATABASE_URL', error)
+    metadata.error = error
+    console.error('[server/db] Failed to parse DATABASE_URL', error)
   }
+
+  console.info('[server/db] connection_metadata', {
+    forcedIpv4: metadata.forcedIpv4,
+    originalHost: metadata.originalHost,
+    resolvedHost: metadata.resolvedHost,
+    finalHostUsed: metadata.finalHostUsed,
+    lookupError: metadata.lookupError ? metadata.lookupError.message : null
+  })
 
   return metadata
 }
@@ -90,32 +104,47 @@ const ensureSqlClient = () => {
         }
       : undefined
 
-  sqlClient = postgres(connectionString || '', {
-    max: 5,
-    ssl: sslConfig,
-    // If you need to pass custom SSL options you can do so via the
-    // connection string query params (sslmode, sslrootcert) or by
-    // passing an `ssl` option here. Most Supabase instances work with
-    // `sslmode=verify-full&sslrootcert=/path/to/root.crt` set in the
-    // DATABASE_URL.
-  })
-
   try {
-    const url = connectionString ? new URL(connectionString) : null
-    if (url) {
-      const host = url.hostname
-      const database = url.pathname.replace(/^\//, '') || undefined
-      const user = url.username || undefined
-      console.log('[DB CONNECTED]', {
-        host,
-        database,
-        user,
-        forcedIpv4: connectionMetadata.forcedIpv4 || false,
-        originalHost: connectionMetadata.originalHost
-      })
-    }
+    sqlClient = postgres(connectionString || '', {
+      max: 5,
+      ssl: sslConfig,
+      // If you need to pass custom SSL options you can do so via the
+      // connection string query params (sslmode, sslrootcert) or by
+      // passing an `ssl` option here. Most Supabase instances work with
+      // `sslmode=verify-full&sslrootcert=/path/to/root.crt` set in the
+      // DATABASE_URL.
+    })
   } catch (error) {
-    console.warn('[server/db] Unable to log database connection metadata', error)
+    console.error('db_client_init_failed', {
+      message: error?.message || String(error)
+    })
+    throw error
+  }
+
+  if (!connectionMetadata.error) {
+    try {
+      const url = connectionString ? new URL(connectionString) : null
+      if (url) {
+        const host = url.hostname
+        const database = url.pathname.replace(/^\//, '') || undefined
+        const user = url.username || undefined
+        console.info('db_client_ready', {
+          host,
+          database,
+          user,
+          forcedIpv4: connectionMetadata.forcedIpv4 || false,
+          originalHost: connectionMetadata.originalHost,
+          finalHostUsed: connectionMetadata.finalHostUsed
+        })
+      }
+    } catch (error) {
+      console.warn('[server/db] Unable to log database connection metadata', error)
+    }
+  } else {
+    console.warn('[server/db] Connection metadata reported an error', {
+      message: connectionMetadata.error?.message || String(connectionMetadata.error),
+      originalHost: connectionMetadata.originalHost
+    })
   }
 
   return sqlClient

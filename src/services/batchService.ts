@@ -1,5 +1,6 @@
 import apiRequest from '../utils/apiClient';
 import buildSessionAuditHeaders from '../utils/sessionAuditHeaders';
+import { buildOrgHeaders } from '../utils/orgHeaders';
 
 // Types for progress and analytics events
 export type ProgressEvent = {
@@ -126,7 +127,13 @@ export async function flushAnalytics() {
   try {
     const res = await apiRequest<{ accepted: string[]; duplicates?: string[]; failed?: Array<{ id: string; reason: string }> }>(
       '/api/analytics/events/batch',
-      { method: 'POST', body: { events: batch }, timeoutMs: 10000 }
+      {
+        method: 'POST',
+        body: { events: batch },
+        timeoutMs: 10000,
+        headers: buildOrgHeaders(),
+        credentials: 'include',
+      }
     );
     const failed = (res.failed || []).map((f) => f.id);
     if (failed.length > 0) {

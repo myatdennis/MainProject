@@ -103,7 +103,7 @@ const LMSCourses = () => {
       });
   }, [progressRefreshToken]);
 
-  const canSyncProgress = sessionStatus === 'ready' && orgResolutionStatus === 'ready';
+  const canSyncProgress = sessionStatus === 'authenticated' && orgResolutionStatus === 'ready';
   const hasCatalogLoaded = learnerCatalogState.status !== 'idle' || publishedCourses.length > 0;
 
   const handleRetryCatalog = useCallback(async () => {

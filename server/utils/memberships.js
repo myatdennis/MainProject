@@ -47,6 +47,8 @@ const buildDiagnostics = (overrides = {}) => {
     timestamp: new Date().toISOString(),
     error: overrides.error ? sanitizeErrorPayload(overrides.error) : null,
     details: overrides.details || null,
+    healthImpact: overrides.healthImpact || (overrides.severity === 'error' ? 'degraded' : 'ok'),
+    dbHost: databaseHost,
   };
 };
 

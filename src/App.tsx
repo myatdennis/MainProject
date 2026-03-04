@@ -135,7 +135,7 @@ function AppContent() {
   const courseInitKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (sessionStatus !== 'ready') {
+    if (sessionStatus !== 'authenticated') {
       return;
     }
     if (user && orgResolutionStatus !== 'ready') {
