@@ -5,15 +5,15 @@
 // Example DATABASE_URL:
 //  postgresql://postgres:[YOUR_PASSWORD]@db.miqzywzuqzeffqpiupjm.supabase.co:5432/postgres?sslmode=verify-full&sslrootcert=/path/to/root.crt
 
-import dns from 'dns'
+import { setDefaultResultOrder } from 'node:dns'
+import dns from 'node:dns/promises'
 import postgres from 'postgres'
 
-const dnsPromises = dns.promises || null
 const FORCE_DB_IPV4 = String(process.env.FORCE_DB_IPV4 ?? 'true').toLowerCase() !== 'false'
 
-if (typeof dns.setDefaultResultOrder === 'function') {
+if (typeof setDefaultResultOrder === 'function') {
   try {
-    dns.setDefaultResultOrder('ipv4first')
+    setDefaultResultOrder('ipv4first')
   } catch (error) {
     console.warn('[server/db] Failed to set DNS default result order', error)
   }
@@ -39,12 +39,12 @@ async function initializeConnectionMetadata (rawConnectionString) {
     metadata.originalHost = url.hostname
     metadata.resolvedHost = url.hostname
 
-    if (!FORCE_DB_IPV4 || !shouldForceIpv4(url.hostname) || !dnsPromises?.lookup) {
+    if (!FORCE_DB_IPV4 || !shouldForceIpv4(url.hostname) || typeof dns.lookup !== 'function') {
       return metadata
     }
 
     try {
-      const lookupResult = await dnsPromises.lookup(url.hostname, { family: 4, verbatim: false })
+      const lookupResult = await dns.lookup(url.hostname, { family: 4, verbatim: false })
       if (lookupResult?.address) {
         url.hostname = lookupResult.address
         url.host = `${lookupResult.address}${url.port ? `:${url.port}` : ''}`

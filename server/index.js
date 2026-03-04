@@ -192,6 +192,52 @@ const ensureEnvironmentIsValid = () => {
 
 ensureEnvironmentIsValid();
 
+const supabaseEnv = getSupabaseConfig();
+const initialDemoModeMetadata = describeDemoMode();
+const supabaseUrlHost = (() => {
+  if (!supabaseEnv.url) return null;
+  try {
+    return new URL(supabaseEnv.url).host || null;
+  } catch (_error) {
+    return null;
+  }
+})();
+const databaseHost = (() => {
+  try {
+    if (!process.env.DATABASE_URL) return null;
+    return new URL(process.env.DATABASE_URL).host || null;
+  } catch (_error) {
+    return null;
+  }
+})();
+
+const schemaHealth = {
+  membership: {
+    status: 'unknown',
+    reason: null,
+    checkedAt: null,
+  },
+};
+
+function setMembershipSchemaHealth(status, reason = null) {
+  schemaHealth.membership = {
+    status,
+    reason,
+    checkedAt: new Date().toISOString(),
+  };
+  const payload = {
+    status,
+    reason,
+    supabaseHost: supabaseUrlHost,
+    dbHost: databaseHost,
+  };
+  if (status === 'ok') {
+    logger.info('membership_schema_status_ok', payload);
+  } else {
+    logger.warn('membership_schema_status_changed', payload);
+  }
+}
+
 const requireCriticalSchema = async () => {
   if (!process.env.DATABASE_URL) {
     console.warn('[schema] DATABASE_URL missing; skipping critical schema verification.');
@@ -220,8 +266,9 @@ const requireCriticalSchema = async () => {
     }
     setMembershipSchemaHealth('ok', null);
   } catch (error) {
-    setMembershipSchemaHealth('degraded', error?.message || 'schema_check_failed');
-    console.warn('[schema] Failed to verify organization_memberships schema', {
+    const reason = error?.message || 'schema_check_failed';
+    setMembershipSchemaHealth('degraded', reason);
+    console.warn('[schema] membership schema degraded', {
       message: error?.message || error,
       dbHost: databaseHost,
     });
@@ -277,43 +324,6 @@ const STORAGE_FILE = path.join(__dirname, 'demo-data.json');
 // Safety guard to avoid loading extremely large demo files that could trigger OOM (exit 137)
 const MAX_DEMO_FILE_BYTES = parseInt(process.env.DEMO_DATA_MAX_BYTES || '', 10) || 25 * 1024 * 1024; // 25MB default
 
-const supabaseEnv = getSupabaseConfig();
-const initialDemoModeMetadata = describeDemoMode();
-const supabaseUrlHost = (() => {
-  if (!supabaseEnv.url) return null;
-  try {
-    return new URL(supabaseEnv.url).host || null;
-  } catch (_error) {
-    return null;
-  }
-})();
-const databaseHost = (() => {
-  try {
-    if (!process.env.DATABASE_URL) return null;
-    return new URL(process.env.DATABASE_URL).host || null;
-  } catch (_error) {
-    return null;
-  }
-})();
-const schemaHealth = {
-  membership: {
-    status: 'ok',
-    message: null,
-  },
-};
-const setMembershipSchemaHealth = (status, message = null) => {
-  schemaHealth.membership = { status, message };
-  if (status === 'ok') {
-    logger.info('membership_schema_status_ok', { supabaseHost: supabaseUrlHost, dbHost: databaseHost });
-  } else {
-    logger.warn('membership_schema_status_changed', {
-      status,
-      message,
-      supabaseHost: supabaseUrlHost,
-      dbHost: databaseHost,
-    });
-  }
-};
 logger.info('demo_mode_configuration', { metadata: initialDemoModeMetadata });
 logger.info('startup_supabase_config', {
   supabaseConfigured: supabaseEnv.configured,
@@ -418,6 +428,10 @@ function savePersistedData(data) {
 const app = express();
 app.locals.schemaHealth = schemaHealth;
 app.set('etag', false);
+
+app.get('/health', (_req, res) => {
+  res.status(200).json({ ok: true, schemaHealth });
+});
 
 import healthRouter from './routes/health.js';
 import corsMiddleware, { resolvedCorsOrigins } from './middleware/cors.js';
