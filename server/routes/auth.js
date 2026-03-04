@@ -11,6 +11,7 @@ import {
   authLimiter,
   normalizeEmail,
   isCanonicalAdminEmail,
+  isAllowlistedAdminEmail,
   resolveUserRole,
   mapMembershipRows,
 } from '../middleware/auth.js';
@@ -247,11 +248,13 @@ const buildTokenResponseFromSession = (session) => {
   };
 };
 
-const buildUserPayloadFromSupabase = (supabaseUser, memberships = []) => {
+const buildUserPayloadFromSupabase = (supabaseUser, memberships = [], { membershipStatus = 'ready' } = {}) => {
   const normalizedEmail = normalizeEmail(supabaseUser?.email || '');
   const membershipPayload = mapMembershipRows(memberships);
   const organizationIds = membershipPayload.filter((m) => m.status === 'active').map((m) => m.orgId);
-  const platformRole = supabaseUser.app_metadata?.platform_role || null;
+  const allowlistedAdmin = isAllowlistedAdminEmail(normalizedEmail);
+  const platformRole =
+    supabaseUser.app_metadata?.platform_role || (allowlistedAdmin ? 'platform_admin' : null);
   let role = resolveUserRole(
     {
       email: normalizedEmail,
@@ -262,12 +265,21 @@ const buildUserPayloadFromSupabase = (supabaseUser, memberships = []) => {
     membershipPayload,
   );
 
+  const membershipDataTrusted = membershipStatus === 'ready';
   if (role === 'admin' && membershipPayload.length === 0 && !platformRole) {
-    console.warn('[AUTH ROUTES] Suppressing admin role due to missing memberships', {
-      userId: supabaseUser.id,
-      email: normalizedEmail,
-    });
-    role = 'learner';
+    if (!membershipDataTrusted) {
+      console.warn('[AUTH ROUTES] Preserving admin role with unverified memberships', {
+        userId: supabaseUser.id,
+        email: normalizedEmail,
+        membershipStatus,
+      });
+    } else {
+      console.warn('[AUTH ROUTES] Suppressing admin role due to missing memberships', {
+        userId: supabaseUser.id,
+        email: normalizedEmail,
+      });
+      role = 'learner';
+    }
   }
 
   return {
@@ -461,8 +473,9 @@ const loginHandler = async (req, res) => {
       }
     }
 
-    const role = profileRole || 'learner';
-    const isPlatformAdmin = role === 'admin';
+    const allowlistedAdmin = isAllowlistedAdminEmail(normalizedEmail);
+    const role = allowlistedAdmin ? 'admin' : profileRole || 'learner';
+    const isPlatformAdmin = allowlistedAdmin || role === 'admin';
 
     const tokens = buildTokenResponseFromSession(data.session);
     return res.status(200).json({
@@ -719,10 +732,20 @@ router.get('/session', async (req, res) => {
   const bearerToken = getBearerToken(req);
   const origin = req.headers?.origin || null;
   const schemaHealth = req.app?.locals?.schemaHealth || null;
+  const schemaMembershipStatus = schemaHealth?.membership?.status || 'unknown';
+  const membershipStatus = schemaMembershipStatus === 'ok' ? 'unknown' : schemaMembershipStatus;
+  const membershipCount = membershipStatus === 'ready' ? 0 : null;
 
   if (!bearerToken) {
     console.info('[auth/session] missing_bearer', { requestId, origin });
-    return res.status(200).json({ ok: true, authenticated: false, session: null, schemaHealth });
+    return res.status(200).json({
+      ok: true,
+      authenticated: false,
+      session: null,
+      schemaHealth,
+      membershipStatus,
+      membershipCount,
+    });
   }
 
   try {
@@ -733,6 +756,11 @@ router.get('/session', async (req, res) => {
       role: claims.role || claims.app_metadata?.role || null,
       platformRole: claims.app_metadata?.platform_role || claims.user_metadata?.platform_role || null,
     };
+    const allowlistedAdmin = isAllowlistedAdminEmail(user.email);
+    if (allowlistedAdmin) {
+      user.role = user.role || 'admin';
+      user.platformRole = user.platformRole || 'platform_admin';
+    }
 
     console.info('[auth/session] verified', {
       requestId,
@@ -750,6 +778,8 @@ router.get('/session', async (req, res) => {
         role: user.role || null,
         platformRole: user.platformRole || null,
       },
+      membershipStatus,
+      membershipCount,
       schemaHealth,
     });
   } catch (error) {
@@ -758,7 +788,15 @@ router.get('/session', async (req, res) => {
       origin,
       error: error?.message || error,
     });
-    return res.status(200).json({ ok: true, authenticated: false, session: null, error: 'invalid_token', schemaHealth });
+    return res.status(200).json({
+      ok: true,
+      authenticated: false,
+      session: null,
+      error: 'invalid_token',
+      schemaHealth,
+      membershipStatus,
+      membershipCount,
+    });
   }
 });
 

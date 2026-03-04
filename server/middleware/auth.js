@@ -13,6 +13,11 @@ import { getPermissionsForRole, mergePermissions } from '../../shared/permission
 
 const normalizeEmail = (value = '') => value.trim().toLowerCase();
 const PRIMARY_ADMIN_EMAIL = normalizeEmail(process.env.PRIMARY_ADMIN_EMAIL || 'mya@the-huddle.co');
+const ADMIN_EMAIL_ALLOWLIST = new Set(
+  [PRIMARY_ADMIN_EMAIL, ...(process.env.ADMIN_EMAILS || '').split(',')]
+    .map((email) => normalizeEmail(email || ''))
+    .filter(Boolean),
+);
 const STRICT_AUTH = String(process.env.STRICT_AUTH || 'false').toLowerCase() === 'true';
 const MEMBERSHIP_CACHE_MS = Number(process.env.AUTH_MEMBERSHIP_CACHE_MS || 60_000);
 const TOKEN_CACHE_LIMIT = Number(process.env.AUTH_TOKEN_CACHE_LIMIT || 5000);
@@ -57,6 +62,11 @@ const fetchUserProfileRole = async (userId) => {
   }
 };
 
+const isAllowlistedAdminEmail = (email) => {
+  if (!email) return false;
+  return ADMIN_EMAIL_ALLOWLIST.has(normalizeEmail(email));
+};
+
 const syncUserProfileFlags = async (user) => {
   if (!supabase || !user?.id) {
     return;
@@ -67,7 +77,7 @@ const syncUserProfileFlags = async (user) => {
   const isAdmin =
     normalizedRole === 'admin' ||
     normalizedPlatformRole === 'platform_admin' ||
-    (normalizedEmail ? isCanonicalAdminEmail(normalizedEmail) : false);
+    (normalizedEmail ? isAllowlistedAdminEmail(normalizedEmail) : false);
 
   try {
     await supabase
@@ -106,12 +116,16 @@ const derivePlatformRole = (user = {}) => {
     return String(metadataRole).toLowerCase();
   }
 
+  if (isAllowlistedAdminEmail(user.email)) {
+    return 'platform_admin';
+  }
+
   return null;
 };
 
 const resolveUserRole = (user = {}, memberships = []) => {
   const email = normalizeEmail(user.email || '');
-  if (email && isCanonicalAdminEmail(email)) {
+  if (email && isAllowlistedAdminEmail(email)) {
     return 'admin';
   }
 
@@ -128,7 +142,14 @@ const resolveUserRole = (user = {}, memberships = []) => {
   return 'learner';
 };
 
-export { normalizeEmail, PRIMARY_ADMIN_EMAIL, isCanonicalAdminEmail, resolveUserRole, syncUserProfileFlags };
+export {
+  normalizeEmail,
+  PRIMARY_ADMIN_EMAIL,
+  isCanonicalAdminEmail,
+  isAllowlistedAdminEmail,
+  resolveUserRole,
+  syncUserProfileFlags,
+};
 
 // ============================================================================
 // Authentication Middleware
@@ -366,15 +387,16 @@ const buildUserPayload = (user, memberships, { membershipStatus = 'ready' } = {}
   const organizationIds = memberships.filter((m) => m.status === 'active').map((m) => m.orgId);
   const platformRole = derivePlatformRole(user);
   let inferredRole = resolveUserRole(user, memberships);
+  const membershipDataTrusted = membershipStatus === 'ready';
 
   if (inferredRole === 'admin' && memberships.length === 0 && !platformRole) {
-    if (membershipStatus === 'error') {
-      console.warn('[auth] Preserving admin role despite missing memberships', {
+    if (!membershipDataTrusted) {
+      console.warn('[auth] Preserving admin role despite unverified memberships', {
         userId: user?.id ?? null,
         email: user?.email ?? null,
         membershipCount: memberships.length,
         platformRole,
-        reason: 'membership_lookup_error',
+        membershipStatus,
       });
     } else {
       console.warn('[auth] Suppressing admin role due to missing memberships', {
@@ -482,7 +504,12 @@ export async function buildAuthContext(req, { optional = false } = {}) {
   const memberships = await loadMemberships(supabaseUser.id);
   const membershipDiagnostics =
     (memberships && memberships.__diagnostics && { ...memberships.__diagnostics }) || null;
-  const membershipStatus = deriveMembershipStatusLabel(memberships, membershipDiagnostics);
+  const schemaHealthStatus = req?.app?.locals?.schemaHealth?.membership?.status || 'unknown';
+  let membershipStatus = deriveMembershipStatusLabel(memberships, membershipDiagnostics);
+  if (schemaHealthStatus && schemaHealthStatus !== 'ok' && membershipStatus === 'ready') {
+    membershipStatus = schemaHealthStatus;
+  }
+  const effectiveMembershipCount = membershipStatus === 'ready' ? memberships.length : null;
   const userPayload = buildUserPayload(supabaseUser, memberships, { membershipStatus });
   const membershipMap = buildMembershipMap(memberships);
   const activeOrgId = determineActiveOrgId(req, memberships);
@@ -493,7 +520,7 @@ export async function buildAuthContext(req, { optional = false } = {}) {
     userId: supabaseUser.id,
     email: supabaseUser.email ?? null,
     membershipStatus,
-    membershipCount: memberships.length,
+    membershipCount: effectiveMembershipCount,
     activeOrgId,
     requestedOrgId,
     diagnostics: membershipDiagnostics ?? null,
@@ -504,7 +531,7 @@ export async function buildAuthContext(req, { optional = false } = {}) {
     `userId=${supabaseUser.id}`,
     `email=${supabaseUser.email ?? 'unknown'}`,
     `membershipStatus=${membershipStatus}`,
-    `membershipCount=${memberships.length}`,
+    `membershipCount=${effectiveMembershipCount ?? 'unknown'}`,
     `orgIds=[${membershipOrgIds.join(',')}]`,
     `requestedOrgId=${requestedOrgId ?? 'none'}`,
     `activeOrgId=${activeOrgId ?? 'none'}`,
