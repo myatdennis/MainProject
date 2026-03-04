@@ -6,6 +6,17 @@ const VIEW_COLUMNS = '*';
 const OPTIONAL_ORG_COLUMNS = ['slug', 'logo_url', 'created_at', 'updated_at', 'features'];
 let organizationColumnDetectionPromise = null;
 let organizationColumnSet = new Set();
+let membershipColumnDetectionPromise = null;
+let membershipColumnSet = new Set();
+const databaseHost =
+  (() => {
+    try {
+      if (!process.env.DATABASE_URL) return null;
+      return new URL(process.env.DATABASE_URL).host || null;
+    } catch (_error) {
+      return null;
+    }
+  })() || null;
 
 const sanitizeErrorPayload = (error) => {
   if (!error || typeof error !== 'object') {
@@ -124,6 +135,7 @@ const detectOrganizationColumns = async () => {
   } catch (error) {
     console.warn('[memberships] organization column detection failed', {
       message: error?.message || error,
+      dbHost: databaseHost,
     });
     return new Set();
   }
@@ -143,6 +155,7 @@ const detectMembershipColumns = async () => {
   } catch (error) {
     console.warn('[memberships] membership column detection failed', {
       message: error?.message || error,
+      dbHost: databaseHost,
     });
     return new Set();
   }
@@ -160,6 +173,7 @@ const ensureOrganizationColumnMetadata = async () => {
     .catch((error) => {
       console.warn('[memberships] organization column detection error', {
         message: error?.message || error,
+        dbHost: databaseHost,
       });
       return organizationColumnSet;
     });
@@ -181,6 +195,7 @@ const ensureMembershipColumnMetadata = async () => {
     .catch((error) => {
       console.warn('[memberships] membership column detection error', {
         message: error?.message || error,
+        dbHost: databaseHost,
       });
       return membershipColumnState.columns;
     });

@@ -718,10 +718,11 @@ router.get('/session', async (req, res) => {
   const requestId = req.requestId || req.headers['x-request-id'] || req.headers['x-amzn-trace-id'] || null;
   const bearerToken = getBearerToken(req);
   const origin = req.headers?.origin || null;
+  const schemaHealth = req.app?.locals?.schemaHealth || null;
 
   if (!bearerToken) {
     console.info('[auth/session] missing_bearer', { requestId, origin });
-    return res.status(200).json({ ok: true, authenticated: false, session: null });
+    return res.status(200).json({ ok: true, authenticated: false, session: null, schemaHealth });
   }
 
   try {
@@ -749,6 +750,7 @@ router.get('/session', async (req, res) => {
         role: user.role || null,
         platformRole: user.platformRole || null,
       },
+      schemaHealth,
     });
   } catch (error) {
     console.warn('[auth/session] invalid_token', {
@@ -756,7 +758,7 @@ router.get('/session', async (req, res) => {
       origin,
       error: error?.message || error,
     });
-    return res.status(200).json({ ok: true, authenticated: false, session: null, error: 'invalid_token' });
+    return res.status(200).json({ ok: true, authenticated: false, session: null, error: 'invalid_token', schemaHealth });
   }
 });
 

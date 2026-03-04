@@ -195,6 +195,7 @@ ensureEnvironmentIsValid();
 const requireCriticalSchema = async () => {
   if (!process.env.DATABASE_URL) {
     console.warn('[schema] DATABASE_URL missing; skipping critical schema verification.');
+    setMembershipSchemaHealth('degraded', 'database_url_missing');
     return;
   }
   try {
@@ -207,14 +208,23 @@ const requireCriticalSchema = async () => {
     const requiredColumns = ['organization_id', 'user_id'];
     const missing = requiredColumns.filter((column) => !columnNames.includes(column));
     if (missing.length) {
-      fatalEnvError(
-        `organization_memberships table missing required column(s): ${missing.join(
-          ', ',
-        )}. Run latest migrations before starting the server.`,
+      setMembershipSchemaHealth(
+        'degraded',
+        `Missing columns: ${missing.join(', ')}`,
       );
+      logger.warn('organization_memberships_schema_missing_columns', {
+        missing,
+        dbHost: databaseHost,
+      });
+      return;
     }
+    setMembershipSchemaHealth('ok', null);
   } catch (error) {
-    fatalEnvError(`Failed to verify organization_memberships schema: ${error?.message || error}`);
+    setMembershipSchemaHealth('degraded', error?.message || 'schema_check_failed');
+    console.warn('[schema] Failed to verify organization_memberships schema', {
+      message: error?.message || error,
+      dbHost: databaseHost,
+    });
   }
 };
 
@@ -285,6 +295,25 @@ const databaseHost = (() => {
     return null;
   }
 })();
+const schemaHealth = {
+  membership: {
+    status: 'ok',
+    message: null,
+  },
+};
+const setMembershipSchemaHealth = (status, message = null) => {
+  schemaHealth.membership = { status, message };
+  if (status === 'ok') {
+    logger.info('membership_schema_status_ok', { supabaseHost: supabaseUrlHost, dbHost: databaseHost });
+  } else {
+    logger.warn('membership_schema_status_changed', {
+      status,
+      message,
+      supabaseHost: supabaseUrlHost,
+      dbHost: databaseHost,
+    });
+  }
+};
 logger.info('demo_mode_configuration', { metadata: initialDemoModeMetadata });
 logger.info('startup_supabase_config', {
   supabaseConfigured: supabaseEnv.configured,
@@ -387,6 +416,7 @@ function savePersistedData(data) {
 }
 
 const app = express();
+app.locals.schemaHealth = schemaHealth;
 app.set('etag', false);
 
 import healthRouter from './routes/health.js';
@@ -5053,12 +5083,15 @@ app.get('/api/diagnostics/schema', async (req, res) => {
       missingTables,
       missingColumns,
       missingFunctions,
+      schemaHealth,
     });
   } catch (error) {
     logger.error('schema_diagnostics_failed', {
       message: error?.message || error,
     });
-    res.status(500).json({ ok: false, error: 'schema_check_failed', message: error?.message || String(error) });
+    res
+      .status(500)
+      .json({ ok: false, error: 'schema_check_failed', message: error?.message || String(error), schemaHealth });
   }
 });
 

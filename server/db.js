@@ -8,6 +8,9 @@
 import dns from 'dns'
 import postgres from 'postgres'
 
+const dnsPromises = dns.promises || null
+const FORCE_DB_IPV4 = String(process.env.FORCE_DB_IPV4 ?? 'true').toLowerCase() !== 'false'
+
 if (typeof dns.setDefaultResultOrder === 'function') {
   try {
     dns.setDefaultResultOrder('ipv4first')
@@ -16,6 +19,58 @@ if (typeof dns.setDefaultResultOrder === 'function') {
   }
 }
 
+const isIpv4Literal = (host) => /^\d+\.\d+\.\d+\.\d+$/.test(host || '')
+const shouldForceIpv4 = (host) => Boolean(host) && host !== 'localhost' && host !== '127.0.0.1' && !isIpv4Literal(host)
+
+async function initializeConnectionMetadata (rawConnectionString) {
+  const metadata = {
+    connectionString: rawConnectionString || '',
+    forcedIpv4: false,
+    originalHost: null,
+    resolvedHost: null
+  }
+
+  if (!rawConnectionString) {
+    return metadata
+  }
+
+  try {
+    const url = new URL(rawConnectionString)
+    metadata.originalHost = url.hostname
+    metadata.resolvedHost = url.hostname
+
+    if (!FORCE_DB_IPV4 || !shouldForceIpv4(url.hostname) || !dnsPromises?.lookup) {
+      return metadata
+    }
+
+    try {
+      const lookupResult = await dnsPromises.lookup(url.hostname, { family: 4, verbatim: false })
+      if (lookupResult?.address) {
+        url.hostname = lookupResult.address
+        url.host = `${lookupResult.address}${url.port ? `:${url.port}` : ''}`
+        metadata.connectionString = url.toString()
+        metadata.resolvedHost = lookupResult.address
+        metadata.forcedIpv4 = true
+        console.info('[server/db] Forced IPv4 host for DATABASE_URL', {
+          originalHost: metadata.originalHost,
+          resolvedHost: metadata.resolvedHost
+        })
+      }
+    } catch (error) {
+      console.warn('[server/db] Unable to resolve IPv4 host for DATABASE_URL', {
+        host: url.hostname,
+        message: error?.message || String(error)
+      })
+    }
+  } catch (error) {
+    console.warn('[server/db] Failed to parse DATABASE_URL', error)
+  }
+
+  return metadata
+}
+
+const connectionMetadata = await initializeConnectionMetadata(process.env.DATABASE_URL || '')
+
 let sqlClient = null
 
 const ensureSqlClient = () => {
@@ -23,7 +78,7 @@ const ensureSqlClient = () => {
     return sqlClient
   }
 
-  const connectionString = process.env.DATABASE_URL
+  const connectionString = connectionMetadata.connectionString
   if (!connectionString) {
     console.warn('[server/db] WARNING: DATABASE_URL is not set. Create a .env or export DATABASE_URL before starting the server.')
   }
@@ -51,7 +106,13 @@ const ensureSqlClient = () => {
       const host = url.hostname
       const database = url.pathname.replace(/^\//, '') || undefined
       const user = url.username || undefined
-      console.log('[DB CONNECTED]', { host, database, user })
+      console.log('[DB CONNECTED]', {
+        host,
+        database,
+        user,
+        forcedIpv4: connectionMetadata.forcedIpv4 || false,
+        originalHost: connectionMetadata.originalHost
+      })
     }
   } catch (error) {
     console.warn('[server/db] Unable to log database connection metadata', error)
