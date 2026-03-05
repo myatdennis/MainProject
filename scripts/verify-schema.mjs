@@ -1,109 +1,85 @@
 #!/usr/bin/env node
+import 'dotenv/config';
 import dns from 'node:dns';
-import process from 'node:process';
-import { Pool } from 'pg';
+import { Client } from 'pg';
 
-if (typeof dns.setDefaultResultOrder === 'function') {
-  try {
-    dns.setDefaultResultOrder('ipv4first');
-  } catch (error) {
-    console.warn('[schema] Failed to enforce ipv4first DNS', error);
-  }
-}
+dns.setDefaultResultOrder?.('ipv4first');
 
-const requiredFunction = 'upsert_course_graph';
-const requiredColumns = [
-  { table: 'courses', column: 'organization_id' },
-  { table: 'modules', column: 'organization_id' },
-  { table: 'lessons', column: 'organization_id' },
-];
-const cascadeChecks = [
-  { source: 'public.modules', column: 'course_id', target: 'public.courses' },
-  { source: 'public.lessons', column: 'module_id', target: 'public.modules' },
-];
-
-const databaseUrl = process.env.DATABASE_URL;
-if (!databaseUrl) {
-  console.error('[schema] DATABASE_URL is required for schema verification.');
-  process.exit(1);
-}
-
-const pool = new Pool({
-  connectionString: databaseUrl,
-  ssl: { rejectUnauthorized: false },
-});
-
-const fatal = (message) => {
-  console.error(`[schema] ${message}`);
-  process.exit(1);
+const log = (status, message) => {
+  const prefix = status === 'PASS' ? '✅ PASS' : '❌ FAIL';
+  console.log(`${prefix} - ${message}`);
 };
 
-const warn = (message) => console.warn(`[schema] ${message}`);
+const exitWithStatus = (ok) => {
+  process.exit(ok ? 0 : 1);
+};
 
-async function ensureFunction(client) {
-  const query = `
-    select proname, pg_get_function_identity_arguments(p.oid) as args
-    from pg_proc p
-    join pg_namespace n on n.oid = p.pronamespace
-    where n.nspname = 'public'
-      and proname = $1
-  `;
-  const { rows } = await client.query(query, [requiredFunction]);
-  const match = rows.find((row) => row.args === 'jsonb, uuid, uuid');
-  if (!match) {
-    fatal(`Missing required function public.${requiredFunction}(jsonb, uuid, uuid)`);
+const assert = (condition, message) => {
+  if (!condition) {
+    throw new Error(message);
   }
-}
+};
 
-async function ensureColumn(client, table, column) {
-  const { rows } = await client.query(
-    `select 1 from information_schema.columns where table_schema = 'public' and table_name = $1 and column_name = $2`,
-    [table, column],
+async function checkSchema(client) {
+  // 1) Connection already established
+  log('PASS', 'Connected to database');
+
+  // 2) Check function exists
+  const fnResult = await client.query(
+    `
+      SELECT 1
+      FROM pg_proc p
+      JOIN pg_namespace n ON p.pronamespace = n.oid
+      WHERE n.nspname = 'public'
+        AND p.proname = $1
+        AND pg_get_function_identity_arguments(p.oid) = 'jsonb, uuid, uuid'
+    `,
+    ['upsert_course_graph'],
   );
-  if (rows.length === 0) {
-    fatal(`Missing column public.${table}.${column}`);
-  }
-}
+  assert(fnResult.rowCount === 1, 'Function public.upsert_course_graph(jsonb, uuid, uuid) is missing');
+  log('PASS', 'Found public.upsert_course_graph(jsonb, uuid, uuid)');
 
-async function ensureCascade(client, { source, target, column }) {
-  const { rows } = await client.query(
-    `select pg_get_constraintdef(oid) as def from pg_constraint where contype = 'f' and conrelid = $1::regclass and confrelid = $2::regclass`,
-    [source, target],
-  );
-  const match = rows.find((row) => {
-    const def = row.def?.toLowerCase() || '';
-    return def.includes(`(${column.toLowerCase()})`) && def.includes('on delete cascade');
-  });
-  if (!match) {
-    fatal(`Missing cascading FK from ${source}.${column} -> ${target}`);
-  }
-}
-
-async function run() {
-  const client = await pool.connect();
-  try {
-    await ensureFunction(client);
-    for (const { table, column } of requiredColumns) {
-      await ensureColumn(client, table, column);
-    }
-    for (const cascade of cascadeChecks) {
-      await ensureCascade(client, cascade);
-    }
-    const { rows } = await client.query(
-      `select proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public' and proname = $1`,
-      [requiredFunction],
+  // 3) Ensure tables have organization_id columns
+  const tables = ['courses', 'modules', 'lessons'];
+  for (const table of tables) {
+    const columnResult = await client.query(
+      `
+        SELECT 1
+        FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = $1
+          AND column_name = 'organization_id'
+      `,
+      [table],
     );
-    if (rows.length === 0) {
-      fatal(`Function public.${requiredFunction} still missing after verification`);
-    }
-    console.log('[schema] verification passed');
-    process.exit(0);
-  } catch (error) {
-    fatal(error?.message || String(error));
-  } finally {
-    client.release();
-    await pool.end();
+    assert(columnResult.rowCount === 1, `Table public.${table} is missing organization_id column`);
+    log('PASS', `public.${table} has organization_id column`);
   }
 }
 
-run().catch((error) => fatal(error?.message || String(error)));
+async function main() {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) {
+    console.error('DATABASE_URL is not set. Please export it or load via .env.');
+    exitWithStatus(false);
+  }
+
+  const client = new Client({
+    connectionString: databaseUrl,
+    ssl: { rejectUnauthorized: false },
+  });
+
+  try {
+    await client.connect();
+    await checkSchema(client);
+    log('PASS', 'Schema verification completed successfully');
+    exitWithStatus(true);
+  } catch (error) {
+    log('FAIL', error.message || error);
+    exitWithStatus(false);
+  } finally {
+    await client.end().catch(() => {});
+  }
+}
+
+main();

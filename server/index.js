@@ -4,6 +4,7 @@ import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import dns from 'node:dns';
+dns.setDefaultResultOrder('ipv4first');
 import { createClient } from '@supabase/supabase-js';
 import { WebSocketServer } from 'ws';
 import cookieParser from 'cookie-parser';
@@ -12736,6 +12737,26 @@ app.post('/api/analytics/events', optionalAuthenticate, async (req, res) => {
   const payloadOrgId = normalizeOrgIdValue(org_id ?? req.body?.orgId ?? null);
   const resolvedOrgId = headerOrgId || cookieOrgId || payloadOrgId || null;
 
+  const sanitizedPayload = scrubAnalyticsPayload(payload ?? {});
+
+  const normalizedEvent = event_type.trim();
+  const rawClientEventId = typeof id === 'string' ? id.trim() : null;
+  const normalizedClientEventId = rawClientEventId || null;
+  const useCustomPrimaryKey = normalizedClientEventId ? isUuid(normalizedClientEventId) : false;
+
+  function respondQueued(meta = {}, statusCode = 202) {
+    if (!res.headersSent) {
+      res.status(statusCode);
+    }
+    return res.json({ status: 'queued', stored: false, missingOrgContext: false, ...meta });
+  }
+  function respondStored(meta = {}) {
+    if (!res.headersSent) {
+      res.status(200);
+    }
+    return res.json({ status: 'stored', stored: true, missingOrgContext: false, ...meta });
+  }
+
   if (!resolvedOrgId) {
     const warningKey = req.user?.userId || req.user?.id || `anon:${req.ip ?? 'unknown'}`;
     analyticsOrgWarning(warningKey, {
@@ -12746,22 +12767,9 @@ app.post('/api/analytics/events', optionalAuthenticate, async (req, res) => {
       cookieOrgId,
       membershipStatus: req.membershipStatus || 'unknown',
     });
-    res.status(202);
     respondQueued({ missingOrgContext: true, skipped: 'missing_org' });
     return;
   }
-
-  const sanitizedPayload = scrubAnalyticsPayload(payload ?? {});
-
-  const normalizedEvent = event_type.trim();
-  const rawClientEventId = typeof id === 'string' ? id.trim() : null;
-  const normalizedClientEventId = rawClientEventId || null;
-  const useCustomPrimaryKey = normalizedClientEventId ? isUuid(normalizedClientEventId) : false;
-
-  const respondQueued = (meta = {}) =>
-    res.json({ status: 'queued', stored: false, missingOrgContext: false, ...meta });
-  const respondStored = (meta = {}) =>
-    res.json({ status: 'stored', stored: true, missingOrgContext: false, ...meta });
 
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
     const eventId = useCustomPrimaryKey
