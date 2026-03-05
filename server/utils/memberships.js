@@ -230,8 +230,6 @@ const ensureMembershipColumnMetadata = async () => {
   return membershipColumnState.detectionPromise;
 };
 
-const hasMembershipProfileColumn = () => membershipColumnState.columns.has('profile_id');
-
 const getOrganizationSelectClause = async () => {
   if (cachedOrganizationSelectClause) {
     return cachedOrganizationSelectClause;
@@ -264,9 +262,6 @@ const getMembershipSelectColumns = async () => {
     'user_id',
     'id',
   ];
-  if (membershipColumnState.columns.has('profile_id')) {
-    baseColumns.push('profile_id');
-  }
   if (membershipColumnState.columns.has('org_id')) {
     baseColumns.push('org_id');
   }
@@ -278,17 +273,7 @@ const buildMembershipMatchFilter = (userId) => {
   if (!normalized) {
     return '';
   }
-  if (hasMembershipProfileColumn()) {
-    return `user_id.eq.${normalized},profile_id.eq.${normalized}`;
-  }
   return `user_id.eq.${normalized}`;
-};
-
-export const getMembershipColumnCapabilities = async () => {
-  await ensureMembershipColumnMetadata();
-  return {
-    hasProfileId: hasMembershipProfileColumn(),
-  };
 };
 
 export const buildMembershipFilterString = async (userId) => {

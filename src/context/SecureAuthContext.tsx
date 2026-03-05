@@ -23,6 +23,7 @@ import apiRequest, { ApiError, apiRequestRaw } from '../utils/apiClient';
 import buildSessionAuditHeaders from '../utils/sessionAuditHeaders';
 import { getSupabase, hasSupabaseConfig, captureAuthDiagnostics, AUTH_STORAGE_MODE, debugAuthStorage } from '../lib/supabaseClient';
 import { AuthExpiredError, NotAuthenticatedError } from '../lib/apiClient';
+import { setGlobalActiveOrgIdForApi } from '../lib/orgContext';
 
 // MFA helpers
 
@@ -631,6 +632,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         detail: { activeOrgId },
       }),
     );
+  }, [activeOrgId]);
+  useEffect(() => {
+    setGlobalActiveOrgIdForApi(activeOrgId ?? null);
   }, [activeOrgId]);
 
   const setRequestedOrgHint = useCallback((orgId: string | null) => {

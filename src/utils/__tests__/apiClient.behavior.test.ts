@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { __setApiBaseUrlOverride } from '../../config/apiBase';
 import * as sessionGate from '../../lib/sessionGate';
 import { supabase } from '../../lib/supabaseClient';
+import { __setTestOrgContext } from '../../lib/orgContext';
 
 const mockBuildAuthHeaders = vi.fn().mockResolvedValue({});
 const mockResolveSupabaseAccessToken = vi.fn().mockResolvedValue(null);
@@ -128,6 +129,7 @@ describe('apiClient', () => {
     vi.unstubAllEnvs();
     __setApiBaseUrlOverride();
     setPathname('/admin/dashboard');
+    __setTestOrgContext('00000000-0000-0000-0000-000000000000');
   });
 
   afterEach(() => {
@@ -135,6 +137,7 @@ describe('apiClient', () => {
     if ((window as any).__API_DEBUG__) {
       delete (window as any).__API_DEBUG__;
     }
+    __setTestOrgContext(null);
   });
 
   it('uses VITE_API_BASE_URL for absolute requests', async () => {

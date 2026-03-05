@@ -1,4 +1,5 @@
 import { supabase } from './supabaseClient';
+import { LEGACY_ORG_HEADER_NAME, ORG_HEADER_NAME, resolveOrgHeaderForRequest } from './orgContext';
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() ?? '';
 
@@ -124,13 +125,30 @@ const withAuthHeaders = (init: RequestInit, token: string): RequestInit => {
   return { ...init, headers, body };
 };
 
+const applyOrgHeadersIfNeeded = (init: RequestInit, path: string): RequestInit => {
+  let orgId: string | null = null;
+  try {
+    orgId = resolveOrgHeaderForRequest(path);
+  } catch (error) {
+    throw error;
+  }
+  if (!orgId) {
+    return init;
+  }
+  const headers = new Headers(init.headers ?? undefined);
+  headers.set(ORG_HEADER_NAME, orgId);
+  headers.set(LEGACY_ORG_HEADER_NAME, orgId);
+  return { ...init, headers };
+};
+
 export async function apiFetchRaw(path: string, init: RequestInit = {}, options: ApiFetchOptions = {}) {
   const url = joinUrl(requireApiBase(), path);
   let attempt = 0;
   let token = await ensureAccessToken();
 
   while (attempt < 2) {
-    const requestInit = withAuthHeaders(init, token);
+    let requestInit = withAuthHeaders(init, token);
+    requestInit = applyOrgHeadersIfNeeded(requestInit, path);
     const { controller, cleanup } = createAbortController(options.timeoutMs, init.signal ?? null);
 
     let response: Response;

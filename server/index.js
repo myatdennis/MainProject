@@ -39,7 +39,14 @@ import authRoutes from './routes/auth.js';
 import adminAnalyticsRoutes from './routes/admin-analytics.js';
 import adminAnalyticsExport from './routes/admin-analytics-export.js';
 import adminAnalyticsSummary from './routes/admin-analytics-summary.js';
-import { apiLimiter, securityHeaders, authenticate, requireAdmin, optionalAuthenticate } from './middleware/auth.js';
+import {
+  apiLimiter,
+  securityHeaders,
+  authenticate,
+  requireAdmin,
+  optionalAuthenticate,
+  resolveOrganizationContext,
+} from './middleware/auth.js';
 import requireAdminAccess from './middleware/requireAdminAccess.js';
 import supabaseJwtMiddleware from './middleware/supabaseJwt.js';
 import { setDoubleSubmitCSRF, getCSRFToken } from './middleware/csrf.js';
@@ -62,7 +69,7 @@ import { sendEmail } from './services/emailService.js';
 import { createMediaService } from './services/mediaService.js';
 import { isJwtSecretConfigured } from './utils/jwt.js';
 import { writeErrorDiagnostics, summarizeRequestBody } from './utils/errorDiagnostics.js';
-import getUserMemberships, { getMembershipColumnCapabilities, buildMembershipFilterString } from './utils/memberships.js';
+import getUserMemberships, { buildMembershipFilterString } from './utils/memberships.js';
 import {
   COURSE_WITH_MODULES_LESSONS_SELECT,
   MODULE_LESSONS_FOREIGN_TABLE,
@@ -1595,7 +1602,7 @@ app.patch('/api/admin/users/:userId', async (req, res) => {
 app.use('/api/mfa', mfaRoutes);
 
 // Enforce authentication + admin role on every /api/admin/* route before specific routers/handlers
-app.use('/api/admin', authenticate, requireAdmin);
+app.use('/api/admin', authenticate, requireAdmin, resolveOrganizationContext);
 
 // Admin analytics endpoints (aggregates, exports, AI summary)
 app.use('/api/admin/analytics', adminAnalyticsRoutes);
@@ -5279,7 +5286,6 @@ app.get('/api/debug/memberships', async (req, res) => {
     return res.status(400).json({ error: 'user_id_required' });
   }
   try {
-    const capabilities = await getMembershipColumnCapabilities();
     const selectColumns = [
       'id',
       'organization_id',
@@ -5291,9 +5297,6 @@ app.get('/api/debug/memberships', async (req, res) => {
       'created_at',
       'updated_at',
     ];
-    if (capabilities.hasProfileId) {
-      selectColumns.push('profile_id');
-    }
     const filter = await buildMembershipFilterString(userId);
     let query = supabase
       .from('organization_memberships')
@@ -6612,6 +6615,14 @@ app.post('/api/admin/courses/import', async (req, res) => {
   }
   const context = requireUserContext(req, res);
   if (!context) return;
+  const resolvedOrganizationId = req.organizationId ?? null;
+  if (!resolvedOrganizationId) {
+    res.status(400).json({
+      error: 'organization_context_required',
+      message: 'An active organization context is required to import courses.',
+    });
+    return;
+  }
   const globalOverwriteFlag = parseBooleanFlag(req.body?.overwrite);
   const validationIssues = [];
   const normalizedItems = rawItems.map((raw, index) => {
@@ -6650,27 +6661,7 @@ app.post('/api/admin/courses/import', async (req, res) => {
         const { course, modules = [] } = payload || {};
         if (!course?.title) throw new Error('Course title is required');
 
-        const headerOrgId = getHeaderOrgId(req, { requireMembership: false });
-        let resolvedOrgId = pickOrgId(
-          course?.organization_id,
-          course?.org_id,
-          course?.organizationId,
-          payload?.organization_id,
-          payload?.org_id,
-          payload?.organizationId,
-          headerOrgId,
-          context.requestedOrgId,
-        );
-        if (!resolvedOrgId && context.isPlatformAdmin) {
-          resolvedOrgId =
-            normalizeOrgIdValue(context.memberships?.[0]?.orgId) ??
-            normalizeOrgIdValue(context.organizationIds?.[0]) ??
-            null;
-        }
-        if (!resolvedOrgId) {
-          res.status(400).json({ error: 'org_required', message: 'Organization required to create course' });
-          return;
-        }
+        const resolvedOrgId = resolvedOrganizationId;
         const access = await requireOrgAccess(req, res, resolvedOrgId, { write: true, requireOrgAdmin: true });
         if (!access) return;
         if (String(course.status || '').toLowerCase() === 'published') {
@@ -6721,6 +6712,7 @@ app.post('/api/admin/courses/import', async (req, res) => {
           const moduleObj = {
             id: moduleId,
             course_id: id,
+            organization_id: resolvedOrgId,
             title: module.title,
             description: module.description ?? null,
             order_index: module.order_index ?? moduleIndex,
@@ -6772,41 +6764,7 @@ app.post('/api/admin/courses/import', async (req, res) => {
     const results = [];
     for (const entry of normalizedItems) {
       const { course, modules } = entry;
-      const orgCandidates = [
-        course?.organization_id,
-        course?.org_id,
-        course?.organizationId,
-        req.body?.organization_id,
-        req.body?.org_id,
-        req.body?.organizationId,
-        req.body?.organization_id,
-        req.body?.org_id,
-        req.body?.organizationId,
-        req.activeOrgId,
-        req.user?.activeOrgId,
-        req.user?.organizationId,
-        ...(Array.isArray(context.memberships)
-          ? context.memberships.map((membership) => membership?.orgId ?? membership?.organization_id ?? membership?.org_id ?? null)
-          : []),
-      ];
-      let resolvedOrgId;
-      try {
-        resolvedOrgId = await resolveOrgIdForCourseRequest(req, context, orgCandidates);
-      } catch (orgErr) {
-        if (orgErr instanceof InvalidOrgIdentifierError) {
-          respondInvalidOrg(res, orgErr.identifier);
-          return;
-        }
-        throw orgErr;
-      }
-      if (!resolvedOrgId) {
-        res.status(403).json({
-          error: 'org_scope_required',
-          message:
-            'We could not determine which organization this import belongs to. Include organization_id in the payload or ask an admin to grant you membership.',
-        });
-        return;
-      }
+      const resolvedOrgId = resolvedOrganizationId;
       const access = await requireOrgAccess(req, res, resolvedOrgId, { write: true, requireOrgAdmin: true });
       if (!access) return;
       if (String(course.status || '').toLowerCase() === 'published') {
@@ -6846,6 +6804,7 @@ app.post('/api/admin/courses/import', async (req, res) => {
       }
       const modulesForRpc = modules.map((module, moduleIndex) => ({
         id: module.id ?? undefined,
+        organization_id: resolvedOrgId,
         title: module.title,
         description: module.description ?? null,
         order_index: module.order_index ?? moduleIndex + 1,

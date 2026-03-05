@@ -632,6 +632,39 @@ export async function optionalAuthenticate(req, res, next) {
   next();
 }
 
+export function resolveOrganizationContext(req, res, next) {
+  const requestedOrgId = getRequestedOrgId(req);
+  const activeOrgId = req.activeOrgId ?? null;
+  const orgIds = Array.isArray(req.user?.organizationIds) ? req.user.organizationIds.filter(Boolean) : [];
+
+  if (orgIds.length === 0 && req.orgMemberships instanceof Map) {
+    orgIds.push(...Array.from(req.orgMemberships.keys()).filter(Boolean));
+  }
+
+  const resolvedOrgId = requestedOrgId || activeOrgId || (orgIds.length ? orgIds[0] : null);
+
+  console.info('[auth] resolved_org_context', {
+    userId: req.user?.id ?? req.user?.userId ?? null,
+    requestedOrgId: requestedOrgId ?? null,
+    activeOrgId: activeOrgId ?? null,
+    resolvedOrgId,
+  });
+
+  if (!resolvedOrgId) {
+    return res.status(400).json({
+      error: 'organization_context_required',
+      message: 'Organization context is required for this operation.',
+    });
+  }
+
+  req.organizationId = resolvedOrgId;
+  res.locals.organizationId = resolvedOrgId;
+  req.requestedOrgId = requestedOrgId ?? null;
+  req.resolvedOrgId = resolvedOrgId;
+
+  return next();
+}
+
 // ============================================================================
 // Authorization Middleware
 // ============================================================================

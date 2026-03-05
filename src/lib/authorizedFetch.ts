@@ -1,4 +1,5 @@
 import { supabase } from './supabaseClient';
+import { LEGACY_ORG_HEADER_NAME, ORG_HEADER_NAME, resolveOrgHeaderForRequest } from './orgContext';
 
 export class NotAuthenticatedError extends Error {
   constructor(message = 'Supabase session is unavailable') {
@@ -199,6 +200,16 @@ export default async function authorizedFetch(
     if (requireAuth) {
       token = await resolveSupabaseAccessToken();
       headers.set('Authorization', `Bearer ${token}`);
+    }
+
+    try {
+      const orgId = resolveOrgHeaderForRequest(url);
+      if (orgId) {
+        headers.set(ORG_HEADER_NAME, orgId);
+        headers.set(LEGACY_ORG_HEADER_NAME, orgId);
+      }
+    } catch (error) {
+      throw error;
     }
 
     const bodyIsFormData = typeof FormData !== 'undefined' && init.body instanceof FormData;
