@@ -570,6 +570,7 @@ export async function authenticate(req, res, next) {
     }
 
     req.user = context.user;
+    req.userId = context.user?.userId ?? context.user?.id ?? null;
     req.orgMemberships = context.membershipsMap;
     req.activeOrgId = context.activeOrgId;
     req.membershipDiagnostics = context.membershipDiagnostics || null;

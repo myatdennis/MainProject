@@ -53,6 +53,8 @@ const LearnerDashboard = () => {
   const [enrolledCourses, setEnrolledCourses] = useState<Course[]>([]);
   const [progressData, setProgressData] = useState<Map<string, LearnerProgress>>(new Map());
   const [isLoading, setIsLoading] = useState(true);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [bootAttempt, setBootAttempt] = useState(0);
   const [searchQuery, setSearchQuery] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'in-progress' | 'not-started' | 'completed'>('all');
   const debouncedSearchQuery = useDebounce(searchQuery, 250);
@@ -71,6 +73,7 @@ const LearnerDashboard = () => {
 
     const run = async () => {
       setIsLoading(true);
+      setCatalogError(null);
       try {
         if (courseStore.getAllCourses().length === 0 && typeof courseStore.init === 'function') {
           await courseStore.init();
@@ -112,10 +115,11 @@ const LearnerDashboard = () => {
 
         setProgressData(progressMap);
       } catch (error) {
-        console.error('Failed to load learner courses:', error);
+        console.error('[LearnerDashboard] boot_failed', error);
         if (isMounted) {
           setEnrolledCourses([]);
           setProgressData(new Map());
+          setCatalogError('Courses unavailable. Retry.');
         }
       } finally {
         if (isMounted) {
@@ -129,7 +133,12 @@ const LearnerDashboard = () => {
     return () => {
       isMounted = false;
     };
-  }, [learnerId]);
+  }, [learnerId, bootAttempt]);
+
+  const handleRetryBoot = () => {
+    setCatalogError(null);
+    setBootAttempt((attempt) => attempt + 1);
+  };
 
   useEffect(() => {
     let isMounted = true;
@@ -374,6 +383,14 @@ const LearnerDashboard = () => {
         keywords="learning dashboard, course progress, online education, skills development"
       />
       <div className="mx-auto max-w-7xl px-6 py-10 lg:px-12">
+        {catalogError && (
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-900 shadow-card-sm">
+            <div>Courses unavailable. Retry.</div>
+            <Button variant="secondary" onClick={handleRetryBoot}>
+              Retry
+            </Button>
+          </div>
+        )}
         <div className="grid gap-6 lg:grid-cols-[2fr,1fr]">
           <Card tone="gradient" withBorder={false} className="overflow-hidden">
             <div className="relative z-10 flex flex-col gap-5 text-charcoal">

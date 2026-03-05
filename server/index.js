@@ -161,15 +161,55 @@ const warnOnPlaceholderSecrets = () => {
   }
 };
 
-const logRouteError = (route, error) => {
-  logger.error('api_route_error', {
-    route,
-    message: error?.message || String(error),
-    code: error?.code,
-    details: error?.details,
-    hint: error?.hint,
-    stack: error?.stack,
-  });
+const serializeErrorObject = (error) => {
+  if (!error || typeof error !== 'object') {
+    return { message: error ? String(error) : null };
+  }
+  try {
+    return JSON.parse(JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
+  } catch {
+    const entry = {};
+    Object.getOwnPropertyNames(error).forEach((key) => {
+      entry[key] = error[key];
+    });
+    return entry;
+  }
+};
+
+const logStructuredError = (label, error, meta = {}) => {
+  const enrichedMeta =
+    meta && typeof meta === 'object'
+      ? { ...meta }
+      : {};
+  if (enrichedMeta.queryName == null && error && typeof error === 'object' && 'queryName' in error) {
+    enrichedMeta.queryName = error.queryName;
+  }
+  if (enrichedMeta.sql == null && error && typeof error === 'object' && 'sql' in error) {
+    enrichedMeta.sql = error.sql;
+  }
+  const payload = {
+    label,
+    message: error?.message ?? String(error),
+    code: error?.code ?? null,
+    hint: error?.hint ?? null,
+    details: error?.details ?? null,
+    stack: error?.stack ?? null,
+    ...enrichedMeta,
+  };
+  const serializedMeta = JSON.stringify(payload, null, 2);
+  console.error(`[error] ${label} meta`, serializedMeta);
+  try {
+    const raw = serializeErrorObject(error);
+    console.error(`[error] ${label} raw`, JSON.stringify(raw, null, 2));
+  } catch {
+    console.error(`[error] ${label} raw`, String(error));
+  }
+  return payload;
+};
+
+const logRouteError = (route, error, meta = {}) => {
+  const payload = logStructuredError(route, error, { route, ...meta });
+  logger.error('api_route_error', payload);
 };
 
 const ORG_HEADER_KEYS = ['x-org-id', 'x-organization-id', 'x_org_id', 'x_organization_id'];
@@ -3399,17 +3439,9 @@ const logAdminCoursesError = (req, err, label, extraMeta = {}) => {
     query: req?.query ?? null,
     bodySummary: summarizeRequestBody(req?.body ?? null),
     ...restExtraMeta,
-    error: err
-      ? {
-          message: err.message ?? null,
-          code: err.code ?? null,
-          details: err.details ?? null,
-          hint: err.hint ?? null,
-          stack: err.stack ?? null,
-        }
-      : null,
+    queryName: restExtraMeta?.queryName ?? null,
   };
-  console.error(`[admin-courses] ${label}`, meta, err);
+  logStructuredError(`[admin-courses] ${label}`, err, meta);
   try {
     writeErrorDiagnostics(req, err, { meta: { surface: 'admin_courses', label } });
   } catch (_) {
@@ -6615,7 +6647,25 @@ app.post('/api/admin/courses/import', async (req, res) => {
   }
   const context = requireUserContext(req, res);
   if (!context) return;
-  const resolvedOrganizationId = req.organizationId ?? null;
+  const platformAdminOverride =
+    context.isPlatformAdmin || String(req.user?.platformRole || '').toLowerCase() === 'platform_admin';
+  const baseOrgCandidate = req.organizationId ?? null;
+  const overrideCandidates = [
+    req.body?.organization_id,
+    req.body?.org_id,
+    req.body?.organizationId,
+    context.requestedOrgId,
+    baseOrgCandidate,
+  ];
+  let resolvedOrganizationId = baseOrgCandidate;
+  if (platformAdminOverride) {
+    try {
+      const override = await resolveOrgIdForCourseRequest(req, context, overrideCandidates);
+      resolvedOrganizationId = override ?? baseOrgCandidate ?? null;
+    } catch (overrideError) {
+      console.warn('[admin.courses.import] org_override_failed', overrideError);
+    }
+  }
   if (!resolvedOrganizationId) {
     res.status(400).json({
       error: 'organization_context_required',
@@ -6661,7 +6711,30 @@ app.post('/api/admin/courses/import', async (req, res) => {
         const { course, modules = [] } = payload || {};
         if (!course?.title) throw new Error('Course title is required');
 
-        const resolvedOrgId = resolvedOrganizationId;
+        let resolvedOrgId = resolvedOrganizationId;
+        if (platformAdminOverride) {
+          const orgOverrideCandidates = [
+            course?.organization_id,
+            course?.org_id,
+            course?.organizationId,
+            payload?.organization_id,
+            payload?.org_id,
+            payload?.organizationId,
+            req.body?.organization_id,
+            req.body?.org_id,
+            req.body?.organizationId,
+            context.requestedOrgId,
+            resolvedOrganizationId,
+          ];
+          try {
+            const override = await resolveOrgIdForCourseRequest(req, context, orgOverrideCandidates);
+            if (override) {
+              resolvedOrgId = override;
+            }
+          } catch (overrideError) {
+            console.warn('[admin.courses.import] e2e_org_override_failed', overrideError);
+          }
+        }
         const access = await requireOrgAccess(req, res, resolvedOrgId, { write: true, requireOrgAdmin: true });
         if (!access) return;
         if (String(course.status || '').toLowerCase() === 'published') {
@@ -6764,7 +6837,30 @@ app.post('/api/admin/courses/import', async (req, res) => {
     const results = [];
     for (const entry of normalizedItems) {
       const { course, modules } = entry;
-      const resolvedOrgId = resolvedOrganizationId;
+      let resolvedOrgId = resolvedOrganizationId;
+      if (platformAdminOverride) {
+        const orgCandidates = [
+          course?.organization_id,
+          course?.org_id,
+          course?.organizationId,
+          entry?.organization_id,
+          entry?.org_id,
+          entry?.organizationId,
+          req.body?.organization_id,
+          req.body?.org_id,
+          req.body?.organizationId,
+          context.requestedOrgId,
+          resolvedOrganizationId,
+        ];
+        try {
+          const override = await resolveOrgIdForCourseRequest(req, context, orgCandidates);
+          if (override) {
+            resolvedOrgId = override;
+          }
+        } catch (overrideError) {
+          console.warn('[admin.courses.import] org_override_failed', overrideError);
+        }
+      }
       const access = await requireOrgAccess(req, res, resolvedOrgId, { write: true, requireOrgAdmin: true });
       if (!access) return;
       if (String(course.status || '').toLowerCase() === 'published') {
@@ -7526,6 +7622,10 @@ app.get('/api/client/courses', async (req, res) => {
       }
     }
 
+    // NOTE: Production Supabase previously referenced organization_memberships.org_id inside user_organizations_vw,
+    // causing Postgres 42703 (undefined column "org_id") during the published courses fetch.
+    // TODO: Keep user_organizations_vw aligned with organization_memberships.organization_id so this query remains stable.
+    const queryName = 'client_courses_published';
     let courseQuery = supabase
       .from('courses')
       .select(COURSE_WITH_MODULES_LESSONS_SELECT)
@@ -7547,23 +7647,40 @@ app.get('/api/client/courses', async (req, res) => {
 
     const { data, error } = await courseQuery;
 
-    if (error) throw error;
+    if (error) {
+      error.queryName = queryName;
+      throw error;
+    }
     res.json({ data });
   } catch (error) {
-    const errorCode = typeof error?.code === 'string' ? error.code : null;
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    console.error('[client/courses] published_fetch_failed', {
+    logStructuredError('[client/courses] published_fetch_failed', error, {
+      route: '/api/client/courses',
+      queryName: error?.queryName ?? 'client_courses_published',
       assignedOnly,
       orgId: assignmentOrgId ?? null,
-      code: errorCode,
-      message: errorMessage,
     });
     if (DEV_FALLBACK) {
       console.warn('[client/courses] Falling back to demo dataset because Supabase query failed.');
       await respondWithDemoCourses();
       return;
     }
-    res.json({ data: [], meta: { warning: 'catalog_unavailable', code: errorCode } });
+    res.json({
+      data: [],
+      meta: {
+        warning: 'catalog_unavailable',
+        code: error?.code ?? null,
+        message: error?.message ?? null,
+        hint: error?.hint ?? null,
+        queryName: error?.queryName ?? 'client_courses_published',
+      },
+      diagnosticBanner: {
+        ok: false,
+        code: error?.code ?? null,
+        message: error?.message ?? null,
+        hint: error?.hint ?? null,
+        queryName: error?.queryName ?? 'client_courses_published',
+      },
+    });
   }
 });
 
@@ -13020,16 +13137,32 @@ app.post('/api/audit-log', async (req, res) => {
   }
 });
 
-app.post('/api/analytics/journeys', async (req, res) => {
-  const { user_id, course_id, journey } = req.body || {};
+app.post('/api/analytics/journeys', authenticate, resolveOrganizationContext, async (req, res) => {
+  const sessionUserId = req.userId ?? null;
+  const sessionOrgId = req.organizationId ?? null;
+  if (!sessionUserId) {
+    res.status(401).json({ error: 'authentication_required' });
+    return;
+  }
+  if (!sessionOrgId) {
+    res.status(400).json({ error: 'organization_context_required' });
+    return;
+  }
+  const allowOverride = String(req.user?.platformRole || '').toLowerCase() === 'platform_admin';
+  const rawUserId = typeof req.body?.user_id === 'string' ? req.body.user_id.trim() : null;
+  const rawOrgId = typeof req.body?.organization_id === 'string' ? req.body.organization_id.trim() : null;
+  const userId = allowOverride && rawUserId ? rawUserId : sessionUserId;
+  const organizationId = allowOverride && rawOrgId ? rawOrgId : sessionOrgId;
 
-  if (!user_id || !course_id) {
-    res.status(400).json({ error: 'user_id and course_id are required' });
+  const { course_id, journey } = req.body || {};
+
+  if (!course_id) {
+    res.status(400).json({ error: 'course_id_required' });
     return;
   }
 
   const payload = {
-    user_id,
+    user_id: userId,
     course_id,
     started_at: journey?.startedAt ?? new Date().toISOString(),
     last_active_at: journey?.lastActiveAt ?? new Date().toISOString(),
@@ -13042,10 +13175,11 @@ app.post('/api/analytics/journeys', async (req, res) => {
     drop_off_points: journey?.dropOffPoints ?? [],
     path_taken: journey?.pathTaken ?? [],
     updated_at: new Date().toISOString(),
+    organization_id: organizationId,
   };
 
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
-    const key = `${user_id}:${course_id}`;
+    const key = `${userId}:${course_id}`;
     e2eStore.learnerJourneys.set(key, { id: key, ...payload });
     persistE2EStore();
     res.status(201).json({ data: e2eStore.learnerJourneys.get(key), demo: true });
@@ -13064,7 +13198,12 @@ app.post('/api/analytics/journeys', async (req, res) => {
     if (error) throw error;
     res.status(201).json({ data });
   } catch (error) {
-    console.error('Failed to upsert learner journey:', error);
+    logStructuredError('[analytics.journeys] upsert_failed', error, {
+      route: '/api/analytics/journeys',
+      userId,
+      organizationId,
+      course_id,
+    });
     res.status(500).json({ error: 'Unable to save learner journey' });
   }
 });
@@ -13157,30 +13296,49 @@ const summarizeEventsAsJourneys = (events) => {
     .sort((a, b) => new Date(b.last_active_at).getTime() - new Date(a.last_active_at).getTime());
 };
 
-app.get('/api/analytics/journeys', async (req, res) => {
-  const { user_id, course_id } = req.query;
-  const org_id = (req.query?.org_id || req.query?.orgId || '').toString().trim();
+app.get('/api/analytics/journeys', authenticate, resolveOrganizationContext, async (req, res) => {
+  const sessionUserId = req.userId ?? null;
+  const sessionOrgId = req.organizationId ?? null;
+  if (!sessionUserId) {
+    res.status(401).json({ error: 'authentication_required' });
+    return;
+  }
+  if (!sessionOrgId) {
+    res.status(400).json({ error: 'organization_context_required' });
+    return;
+  }
+  const allowOverride = String(req.user?.platformRole || '').toLowerCase() === 'platform_admin';
+  const queryUserId = typeof req.query?.user_id === 'string' ? req.query.user_id.trim() : null;
+  const queryOrgId =
+    typeof req.query?.org_id === 'string'
+      ? req.query.org_id.trim()
+      : typeof req.query?.orgId === 'string'
+        ? req.query.orgId.trim()
+        : null;
+  const effectiveUserId = allowOverride && queryUserId ? queryUserId : sessionUserId;
+  const effectiveOrgId = allowOverride && queryOrgId ? queryOrgId : sessionOrgId;
+  const course_id = typeof req.query?.course_id === 'string' ? req.query.course_id.trim() : null;
   const sinceIso = parseIsoTimestamp(req.query?.since || req.query?.since_at);
   const limit = clampJourneyLimit(req.query?.limit);
   console.log('[analytics.journeys] request', {
     requestId: req.requestId,
-    user_id: user_id || null,
+    user_id: effectiveUserId,
     course_id: course_id || null,
-    org_id: org_id || null,
+    org_id: effectiveOrgId,
     since: sinceIso,
     limit,
   });
 
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
     let data = Array.from(e2eStore.learnerJourneys.values());
-    if (user_id) {
-      data = data.filter((journey) => journey.user_id === user_id);
+    if (effectiveUserId) {
+      data = data.filter((journey) => journey.user_id === effectiveUserId);
     }
     if (course_id) {
       data = data.filter((journey) => journey.course_id === course_id);
     }
-    if (org_id) {
-      data = data.filter((journey) => journey.org_id === org_id);
+    if (effectiveOrgId) {
+      data = data.filter((journey) => journey.org_id === effectiveOrgId);
     }
     res.json({ data, demo: true });
     return;
@@ -13195,16 +13353,16 @@ app.get('/api/analytics/journeys', async (req, res) => {
       .order('created_at', { ascending: false })
       .limit(limit);
 
-    if (user_id) {
-      query = query.eq('user_id', user_id);
+    if (effectiveUserId) {
+      query = query.eq('user_id', effectiveUserId);
     }
 
     if (course_id) {
       query = query.eq('course_id', course_id);
     }
 
-    if (org_id) {
-      query = query.eq('org_id', org_id);
+    if (effectiveOrgId) {
+      query = query.eq('org_id', effectiveOrgId);
     }
 
     if (sinceIso) {
@@ -13224,20 +13382,19 @@ app.get('/api/analytics/journeys', async (req, res) => {
         limit,
         since: sinceIso,
         filters: {
-          user_id: user_id || null,
+          user_id: effectiveUserId,
           course_id: course_id || null,
-          org_id: org_id || null,
+          org_id: effectiveOrgId,
         },
       },
     });
   } catch (error) {
-    console.error('[analytics.journeys] fetch_failed', {
-      requestId: req.requestId,
-      message: error?.message || error,
-      stack: error?.stack,
+    logStructuredError('[analytics.journeys] fetch_failed', error, {
+      route: '/api/analytics/journeys',
+      userId: effectiveUserId,
+      orgId: effectiveOrgId,
     });
-    console.error('ANALYTICS JOURNEYS ERROR:', error);
-    res.status(500).json({ error: 'Unable to fetch learner journeys' });
+    res.json({ data: [], meta: { warning: 'journeys_unavailable' } });
   }
 });
 

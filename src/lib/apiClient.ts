@@ -189,6 +189,26 @@ export async function apiFetch<T = unknown>(path: string, init: RequestInit = {}
   const response = await apiFetchRaw(path, init, options);
   const text = await response.text();
   if (!response.ok) {
+    let parsedBody: any = null;
+    try {
+      parsedBody = text ? JSON.parse(text) : null;
+    } catch {
+      parsedBody = null;
+    }
+    const errorPayload =
+      parsedBody && typeof parsedBody === 'object'
+        ? parsedBody
+        : text || null;
+    const logPayload = {
+      path,
+      status: response.status,
+      statusText: response.statusText,
+      code: parsedBody?.code ?? parsedBody?.error ?? null,
+      message: parsedBody?.message ?? null,
+      hint: parsedBody?.hint ?? null,
+      body: errorPayload,
+    };
+    console.error('[apiFetch] non_ok_response', logPayload);
     throw new ApiResponseError(response.status, response.statusText, text);
   }
   if (!text) {
