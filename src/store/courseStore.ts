@@ -1508,7 +1508,7 @@ export const courseStore = {
     });
     try {
       console.log('[courseStore.init] Starting initialization...');
-      let orgContext = resolveOrgContext();
+      const orgContext = resolveOrgContext();
       if (orgContext.status === 'loading') {
         console.info(
           '[courseStore.init] Org context still resolving (membershipStatus=loading); awaiting auth_ready event before catalog fetch.',

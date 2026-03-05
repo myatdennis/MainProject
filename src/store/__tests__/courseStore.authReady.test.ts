@@ -43,7 +43,6 @@ vi.mock('../courseStoreOrgBridge', () => ({
   registerCourseStoreOrgResolver: vi.fn(),
 }));
 
-// eslint-disable-next-line import/first
 import { courseStore } from '../courseStore';
 
 describe('courseStore auth_ready bridge', () => {

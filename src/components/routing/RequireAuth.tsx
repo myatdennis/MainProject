@@ -854,10 +854,21 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   logGuardEvent('allow', { path: location.pathname, adminCapabilityStatus: adminCapability.status });
   const membershipBanner =
     membershipStatus === 'degraded' ? (
-      <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-        <strong className="font-semibold">Membership sync delayed.</strong>{' '}
-        We're having trouble confirming your organization membership. You still have access, but assignments may be
-        limited until the connection is restored.
+      <div className="mb-4 flex flex-col gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <strong className="font-semibold">Membership sync delayed.</strong>{' '}
+          We're having trouble confirming your organization membership. Select your organization again or retry the check
+          below—your access stays active, but some assignments may be limited until we reconnect.
+        </div>
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={handleMembershipRetry}
+          disabled={membershipRetrying}
+          className="self-start rounded-full border border-amber-300 bg-white px-4 py-1 text-amber-900 hover:bg-amber-100 sm:self-auto"
+        >
+          {membershipRetrying ? 'Retrying...' : 'Retry now'}
+        </Button>
       </div>
     ) : null;
 

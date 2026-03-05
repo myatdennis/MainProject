@@ -3,6 +3,7 @@ import express from 'express';
 import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import dns from 'node:dns';
 import { createClient } from '@supabase/supabase-js';
 import { WebSocketServer } from 'ws';
 import cookieParser from 'cookie-parser';
@@ -19,10 +20,10 @@ import {
   pickId,
   pickOrder,
   validateOr400,
-  courseUpsertSchema,
   analyticsBatchSchema,
   analyticsEventIngestSchema,
 } from './validators.js';
+import { validateCoursePayload } from './validators/coursePayload.js';
 import { logger } from './lib/logger.js';
 import { isAllowedWsOrigin } from './lib/wsOrigins.js';
 import { withCache, invalidateCacheKeys } from './services/cacheService.js';
@@ -68,7 +69,15 @@ import {
   COURSE_MODULES_NO_LESSONS_FIELDS,
 } from './constants/courseSelect.js';
 import { courseUpsertPayloadSchema } from '../shared/contracts/courseContract.js';
-import sql from './db.js';
+import sql, { pool } from './db.js';
+
+if (typeof dns.setDefaultResultOrder === 'function') {
+  try {
+    dns.setDefaultResultOrder('ipv4first');
+  } catch (error) {
+    console.warn('[server] Failed to set DNS default result order', error);
+  }
+}
 
 // Resolve __dirname in ESM
 const __filename = fileURLToPath(import.meta.url);
@@ -87,7 +96,6 @@ const getMetricsSnapshot = () => ({
 
 const shouldLogAuthDebug =
   NODE_ENV !== 'production' || String(process.env.ENABLE_AUTH_DEBUG || '').toLowerCase() === 'true';
-const ENABLE_COURSE_RPC_UPSERT = parseFlag(process.env.ENABLE_COURSE_RPC_UPSERT);
 const ENABLE_NOTIFICATIONS = parseFlag(process.env.ENABLE_NOTIFICATIONS);
 
 const fatalEnvError = (message) => {
@@ -435,8 +443,17 @@ const app = express();
 app.locals.schemaHealth = schemaHealth;
 app.set('etag', false);
 
-app.get('/health', (_req, res) => {
-  res.status(200).json({ ok: true, schemaHealth });
+app.get('/health', async (_req, res) => {
+  try {
+    await pool.query('select 1');
+    res.json({ status: 'ok', database: 'connected' });
+  } catch (error) {
+    console.error('[health] database_check_failed', {
+      message: error?.message || String(error),
+      code: error?.code || null,
+    });
+    res.status(500).json({ status: 'error', database: 'disconnected' });
+  }
 });
 
 import healthRouter from './routes/health.js';
@@ -1706,11 +1723,18 @@ const checkSupabaseHealth = async () => {
     recordSupabaseHealth('ok', latencyMs);
     return { status: 'ok', latencyMs };
   } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown Supabase error';
+    const supabaseError = {
+      message: error?.message || String(error),
+      code: error?.code || null,
+      details: error?.details || null,
+      hint: error?.hint || null,
+      stack: error?.stack || null,
+    };
     const latencyMs = Date.now() - start;
-    recordSupabaseHealth('error', latencyMs, message);
-    logger.warn('supabase_health_failed', { message, latencyMs });
-    return { status: 'error', latencyMs, message };
+    recordSupabaseHealth('error', latencyMs, supabaseError.message);
+    console.error('[supabase error]', supabaseError);
+    logger.warn('supabase_health_failed', { ...supabaseError, latencyMs });
+    return { status: 'error', latencyMs, message: supabaseError.message };
   } finally {
     clearTimeout(timeout);
   }
@@ -1931,6 +1955,70 @@ function getHeaderOrgId(req, { requireMembership = true } = {}) {
   }
   return null;
 }
+
+const collectOrgIdsFromContext = (context = {}, req = {}) => {
+  const ids = new Set();
+  const push = (candidate) => {
+    const normalized = normalizeOrgIdValue(candidate);
+    if (normalized) {
+      ids.add(normalized);
+    }
+  };
+  const membershipSources = [
+    ...(Array.isArray(context.memberships) ? context.memberships : []),
+    ...(Array.isArray(req.user?.memberships) ? req.user.memberships : []),
+  ];
+  membershipSources.forEach((membership) => {
+    if (!membership) return;
+    push(membership.orgId ?? membership.organization_id ?? membership.org_id ?? null);
+  });
+  const orgIdSources = [
+    ...(Array.isArray(context.organizationIds) ? context.organizationIds : []),
+    ...(Array.isArray(req.user?.organizationIds) ? req.user.organizationIds : []),
+  ];
+  orgIdSources.forEach(push);
+  push(context.requestedOrgId);
+  push(req.activeOrgId);
+  push(req.user?.activeOrgId);
+  push(req.user?.organizationId);
+  return ids;
+};
+
+const resolveOrgScopeForRequest = async (req, context, { queryOrgId = null } = {}) => {
+  const membershipIds = collectOrgIdsFromContext(context, req);
+  const headerOrgId = getHeaderOrgId(req, { requireMembership: !context?.isPlatformAdmin });
+  const candidateIdentifiers = [
+    queryOrgId,
+    headerOrgId,
+    req.activeOrgId,
+    req.user?.activeOrgId,
+    context?.requestedOrgId,
+    req.user?.organizationId,
+  ];
+  let resolvedOrgId = null;
+  for (const candidate of candidateIdentifiers) {
+    if (!candidate) continue;
+    const coerced = await coerceOrgIdentifierToUuid(req, candidate);
+    if (coerced) {
+      resolvedOrgId = coerced;
+      break;
+    }
+  }
+  const membershipList = Array.from(membershipIds);
+  const membershipSet = new Set(membershipList);
+  const scopedOrgIds = resolvedOrgId ? [resolvedOrgId] : membershipList;
+  const primaryOrgId =
+    resolvedOrgId ??
+    (context?.requestedOrgId && membershipSet.has(context.requestedOrgId) ? context.requestedOrgId : null) ??
+    (scopedOrgIds.length === 1 ? scopedOrgIds[0] : null);
+  return {
+    resolvedOrgId,
+    scopedOrgIds,
+    membershipSet,
+    primaryOrgId,
+    headerOrgId,
+  };
+};
 
 function hydrateSandboxOrgFields(e2eStore) {
   for (const [courseId, course] of e2eStore.courses.entries()) {
@@ -5055,7 +5143,7 @@ app.get('/api/diagnostics/schema', async (req, res) => {
   if (ENABLE_NOTIFICATIONS) {
     requiredColumns.set('notifications', ['title', 'type', 'created_at']);
   }
-  const requiredFunctions = ENABLE_COURSE_RPC_UPSERT ? ['upsert_course_full'] : [];
+  const requiredFunctions = ['upsert_course_graph'];
 
   try {
     const tableRows = await sql`
@@ -5827,9 +5915,17 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
     req.body.course = courseLocal;
   }
 
-  // Validate incoming payload (accepting existing client shape)
-  const valid = validateOr400(courseUpsertSchema, req, res);
-  if (!valid) return;
+  const payloadValidation = validateCoursePayload({ course: courseLocal, modules: modulesLocal });
+  if (!payloadValidation.ok) {
+    res.status(422).json({
+      error: { code: 'VALIDATION_ERROR', issues: payloadValidation.issues },
+      requestId: req.requestId ?? null,
+    });
+    return;
+  }
+  ({ course: courseLocal, modules: modulesLocal } = payloadValidation.data);
+  req.body.course = courseLocal;
+  req.body.modules = modulesLocal;
   const context = requireUserContext(req, res);
   if (!context) return;
   const baseLogMeta = {
@@ -6160,23 +6256,7 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
       }
       return flagged;
     };
-    const buildCourseRecordPayload = (includeVersion = includeCourseVersionField) => {
-      const payload = {
-        id: course.id ?? undefined,
-        slug: course.slug ?? undefined,
-        title: course.title || course.name,
-        description: course.description ?? null,
-        status: course.status ?? 'draft',
-        organization_id: organizationId,
-        meta_json: meta,
-      };
-      if (includeVersion) {
-        payload.version = resolvedCourseVersion;
-      }
-      return payload;
-    };
 
-    // Optional optimistic version check to avoid overwriting newer versions
     if (course.id) {
       const existing = await supabase.from('courses').select('id, version, organization_id').eq('id', course.id).maybeSingle();
       if (existing.error) throw existing.error;
@@ -6210,21 +6290,25 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
       if (!access) return;
     }
 
-    // Optional idempotency: if the client provided an idempotency key (or client_event_id),
-    // record it in the `idempotency_keys` table to avoid duplicate processing on retries.
-    // If the key already exists, treat as idempotent and return a 409 indicating duplicate.
     const idempotencyKey = req.body?.idempotency_key ?? req.body?.client_event_id ?? null;
     if (idempotencyKey) {
       try {
-        await supabase.from('idempotency_keys').insert({ id: idempotencyKey, key_type: 'course_upsert', resource_id: null, payload: { course: course, modules: modules } });
+        await supabase.from('idempotency_keys').insert({
+          id: idempotencyKey,
+          key_type: 'course_upsert',
+          resource_id: null,
+          payload: { course, modules },
+        });
       } catch (ikErr) {
-        // Duplicate idempotency key: try to fetch the recorded idempotency row and return
         console.warn(`Idempotency key ${idempotencyKey} already exists`);
         try {
-          const { data: existing, error: fetchErr } = await supabase.from('idempotency_keys').select('*').eq('id', idempotencyKey).maybeSingle();
+          const { data: existing, error: fetchErr } = await supabase
+            .from('idempotency_keys')
+            .select('*')
+            .eq('id', idempotencyKey)
+            .maybeSingle();
           if (!fetchErr && existing) {
             if (existing.resource_id) {
-              // If we have a resource_id, try to fetch and return the created resource
               const { data: courseRow, error: courseFetchErr } = await supabase
                 .from('courses')
                 .select(COURSE_WITH_MODULES_LESSONS_SELECT)
@@ -6234,484 +6318,162 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
                 res.status(200).json({ data: courseRow, idempotent: true });
                 return;
               }
-              // Resource id present but resource not yet queryable
               res.status(409).json({ error: 'idempotency_conflict', message: 'Duplicate idempotency key (resource not available yet)' });
               return;
             }
-            // Key exists but resource_id not set yet; indicate conflict/processing
             res.status(409).json({ error: 'idempotency_conflict', message: 'Duplicate idempotency key (processing)' });
             return;
           }
         } catch (fetchErr) {
           console.warn('Failed to lookup existing idempotency key row', fetchErr);
         }
-        // Fallback response
         res.status(409).json({ error: 'idempotency_conflict', message: 'Duplicate idempotency key' });
         return;
       }
     }
 
-    const attemptRpcUpsert = async () => {
-      if (!includeCourseVersionField) return false;
-      while (true) {
-        const rpcPayload = buildCourseRecordPayload(true);
-        try {
-          console.log('[srv] Attempting RPC upsert_course_full', { rpcPayload, moduleCount: Array.isArray(modules) ? modules.length : 0 });
-        } catch (_) {}
-        try {
-          const rpcRes = await supabase.rpc('upsert_course_full', { p_course: rpcPayload, p_modules: modules });
-          try {
-            console.log('[srv] rpcRes for upsert_course_full', { error: rpcRes?.error ?? null, data: rpcRes?.data ?? null });
-          } catch (_) {}
-          if (rpcRes.error) {
-            const rpcErrorMeta = {
-              code: rpcRes.error?.code ?? null,
-              message: rpcRes.error?.message ?? null,
-              details: rpcRes.error?.details ?? null,
-              hint: rpcRes.error?.hint ?? null,
-            };
-            console.error('[admin-courses] upsert_course_full_rpc_error', {
-              requestId: req?.requestId ?? null,
-              courseId: course?.id ?? null,
-              orgId: organizationId ?? null,
-              error: rpcErrorMeta,
-            });
-            if (isCourseSlugConstraintError(rpcRes.error)) {
-              const incremented = await applyNextSlugAfterConflict();
-              if (incremented) {
-                continue;
-              }
-            }
-          }
-          if (!rpcRes.error && rpcRes.data) {
-            const sel = await supabase
-              .from('courses')
-              .select(COURSE_WITH_MODULES_LESSONS_SELECT)
-              .eq('id', rpcRes.data)
-              .single();
-            if (sel.error) throw sel.error;
-            res.status(201).json({ data: sel.data });
-            return true;
-          }
-          break;
-        } catch (rpcErr) {
-          const rpcErrorMeta = rpcErr && typeof rpcErr === 'object'
-            ? {
-                code: rpcErr.code ?? null,
-                message: rpcErr.message ?? null,
-                details: rpcErr.details ?? null,
-                hint: rpcErr.hint ?? null,
-              }
-            : { code: null, message: rpcErr, details: null, hint: null };
-          console.error('[admin-courses] upsert_course_full_rpc_exception', {
-            requestId: req?.requestId ?? null,
-            courseId: course?.id ?? null,
-            orgId: organizationId ?? null,
-            error: rpcErrorMeta,
-          });
-          const handled = maybeHandleMissingCourseVersion(rpcErr);
-          if (!handled) {
-            if (isCourseSlugConstraintError(rpcErr)) {
-              const incremented = await applyNextSlugAfterConflict();
-              if (incremented) {
-                continue;
-              }
-            }
-            console.warn('RPC upsert_course_full failed, falling back to client-side sequence:', rpcErr);
-          } else {
-            console.warn('RPC upsert_course_full skipped course version field due to missing column');
-          }
-          break;
-        }
-      }
-      return false;
-    };
-
-    const rpcSucceeded = ENABLE_COURSE_RPC_UPSERT ? await attemptRpcUpsert() : false;
-    if (rpcSucceeded) {
-      return;
-    }
-
-    // Upsert course row first to obtain courseRow.id
-    let courseRow = null;
-    let lastCourseError = null;
-    while (!courseRow) {
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        const upsertPayload = buildCourseRecordPayload(includeCourseVersionField);
-        try {
-          console.log('[srv] Performing course upsert', { upsertPayload });
-        } catch (_) {}
-
-        const courseRes = await supabase.from('courses').upsert(upsertPayload).select('*').single();
-
-        if (!courseRes.error) {
-          courseRow = courseRes.data;
-          lastCourseError = null;
-          break;
-        }
-
-        lastCourseError = courseRes.error;
-        const errMeta = {
-          message: courseRes.error?.message ?? null,
-          code: courseRes.error?.code ?? null,
-          details: courseRes.error?.details ?? null,
-          hint: courseRes.error?.hint ?? null,
-        };
-        console.error('[admin-courses] course_upsert_error', {
-          requestId: req?.requestId ?? null,
-          courseId: course?.id ?? courseRow?.id ?? null,
-          error: errMeta,
-        });
-        logAdminCourseWriteFailure(req, 'courses.upsert', upsertPayload, courseRes.error, {
-          courseId: course?.id ?? courseRow?.id ?? null,
-        });
-
-        if (isCourseSlugConstraintError(courseRes.error)) {
-          break;
-        }
-
-        if (includeCourseVersionField && maybeHandleMissingCourseVersion(courseRes.error)) {
-          continue;
-        }
-        throw courseRes.error;
-      }
-
-      if (courseRow) break;
-
-      if (lastCourseError && isCourseSlugConstraintError(lastCourseError)) {
-        const incremented = await applyNextSlugAfterConflict();
-        if (incremented) {
-          lastCourseError = null;
-          continue;
-        }
-      }
-
-      if (lastCourseError) {
-        throw lastCourseError;
-      }
-
-      throw new Error('Failed to upsert course record');
-    }
-
-    // E2E fallback when Supabase isn't configured: keep an in-memory course store
-    if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
-      const id = course.id ?? `e2e-course-${Date.now()}`;
-      const courseObj = {
-        id,
-        organization_id: course.organizationId ?? null,
-        slug: course.slug ?? id,
-        title: course.title,
-        description: course.description ?? null,
-        status: course.status ?? 'draft',
-        version: course.version ?? 1,
-        meta_json: meta,
-        published_at: meta.published_at ?? null,
-        due_date: meta.due_date ?? null,
-        modules: []
-      };
-
-      const modulesArr = modules || [];
-      for (const [moduleIndex, module] of modulesArr.entries()) {
-        const moduleId = module.id ?? `e2e-mod-${Date.now()}-${moduleIndex}`;
-        const moduleObj = {
-          id: moduleId,
-          course_id: id,
-          order_index: module.order_index ?? moduleIndex,
-          title: module.title,
-          description: module.description ?? null,
-          lessons: []
-        };
-
-        const lessons = module.lessons || [];
-        for (const [lessonIndex, lesson] of lessons.entries()) {
-          const lessonId = lesson.id ?? `e2e-less-${Date.now()}-${moduleIndex}-${lessonIndex}`;
-          const lessonObj = {
-            id: lessonId,
-            module_id: moduleId,
-            order_index: lesson.order_index ?? lessonIndex,
-            type: lesson.type,
-            title: lesson.title,
-            description: lesson.description ?? null,
-            duration_s: lesson.duration_s ?? null,
-            content_json: lesson.content_json ?? {},
-            completion_rule_json: lesson.completion_rule_json ?? null
-          };
-          moduleObj.lessons.push(lessonObj);
-        }
-
-        courseObj.modules.push(moduleObj);
-      }
-
-      e2eStore.courses.set(id, courseObj);
-
-      res.status(201).json({ data: courseObj });
-      return;
-    }
-
     const persistenceNormalization = normalizeModuleLessonPayloads(modules, {
-      courseId: courseRow.id,
-      organizationId: organizationId ?? courseRow.organization_id ?? null,
+      courseId: course?.id ?? courseIdFromParams ?? null,
+      organizationId,
       pickOrgId,
     });
     logModuleNormalizationDiagnostics(persistenceNormalization.diagnostics, {
       requestId: req.requestId,
       source: 'course_upsert.persist',
-      courseId: courseRow.id,
+      courseId: course?.id ?? courseIdFromParams ?? null,
     });
     const modulesForPersistence = persistenceNormalization.modules;
     const idNormalization = normalizeModuleLessonIdentifiers(modulesForPersistence);
-    if (
-      idNormalization.modulesNormalized > 0 ||
-      idNormalization.lessonsNormalized > 0
-    ) {
+    if (idNormalization.modulesNormalized > 0 || idNormalization.lessonsNormalized > 0) {
       console.info('[admin-courses] normalized_temp_ids', {
         requestId: req?.requestId ?? null,
-        courseId: courseRow.id,
+        courseId: course?.id ?? courseIdFromParams ?? null,
         modulesNormalized: idNormalization.modulesNormalized,
         lessonsNormalized: idNormalization.lessonsNormalized,
       });
     }
+    const moduleCount = modulesForPersistence.length;
+    const lessonCount = modulesForPersistence.reduce((sum, mod) => sum + ((mod.lessons && mod.lessons.length) || 0), 0);
 
-    const incomingModuleIds = modulesForPersistence.map((module) => module.id).filter(Boolean);
-    const incomingModuleIdSet = new Set(incomingModuleIds);
-    if (incomingModuleIds.length > 0) {
-      const { data: existingModules } = await supabase
-        .from('modules')
-        .select('id')
-        .eq('course_id', courseRow.id);
+    const buildCourseGraphPayload = () => {
+      const payload = {
+        id: course.id ?? undefined,
+        slug: course.slug ?? undefined,
+        title: course.title || course.name,
+        description: course.description ?? null,
+        status: course.status ?? 'draft',
+        meta_json: meta,
+        modules: modulesForPersistence.map((module, moduleIndex) => ({
+          id: module.id ?? undefined,
+          title: module.title,
+          description: module.description ?? null,
+          order_index: module.order_index ?? moduleIndex,
+          lessons: (module.lessons || []).map((lesson, lessonIndex) => ({
+            id: lesson.id ?? undefined,
+            type: lesson.type,
+            title: lesson.title,
+            description: lesson.description ?? null,
+            order_index: lesson.order_index ?? lessonIndex,
+            duration_s: lesson.duration_s ?? null,
+            content_json: lesson.content_json ?? lesson.content ?? {},
+            completion_rule_json: lesson.completion_rule_json ?? lesson.completionRule ?? null,
+          })),
+        })),
+      };
+      if (includeCourseVersionField) {
+        payload.version = resolvedCourseVersion;
+      }
+      return payload;
+    };
 
-      const modulesToDelete = (existingModules || [])
-        .map((row) => row.id)
-        .filter((id) => !incomingModuleIdSet.has(id));
-
-      if (modulesToDelete.length > 0) {
-        const { error: deleteModulesError } = await supabase.from('modules').delete().in('id', modulesToDelete);
-        if (deleteModulesError) {
-          logAdminCourseWriteFailure(
-            req,
-            'modules.delete',
-            { count: modulesToDelete.length },
-            deleteModulesError,
-            { courseId: courseRow.id },
-          );
-          throw deleteModulesError;
+    const rpcBaseInput = {
+      p_actor: context.userId ?? null,
+      p_org: organizationId,
+    };
+    const executeRpcUpsert = async () => {
+      const rpcPayload = buildCourseGraphPayload();
+      const startedAt = Date.now();
+      logCourseRequestEvent('admin.courses.upsert.rpc_attempt', {
+        ...baseLogMeta,
+        orgId: organizationId,
+        moduleCount,
+        lessonCount,
+      });
+      console.info('[course.save_attempt]', {
+        requestId: req.requestId ?? null,
+        userId: context.userId ?? null,
+        orgId: organizationId,
+        courseId: course?.id ?? null,
+        moduleCount,
+        lessonCount,
+      });
+      const rpcRes = await supabase.rpc('upsert_course_graph', { ...rpcBaseInput, p_course: rpcPayload });
+      if (rpcRes.error) {
+        const durationMs = Date.now() - startedAt;
+        console.error('[course.save_error]', {
+          requestId: req.requestId ?? null,
+          userId: context.userId ?? null,
+          orgId: organizationId,
+          courseId: course?.id ?? null,
+          moduleCount,
+          lessonCount,
+          durationMs,
+          error: rpcRes.error,
+        });
+        res.locals = res.locals || {};
+        res.locals.errorCode = rpcRes.error?.code ?? 'upsert_failed';
+        throw rpcRes.error;
+      }
+      const durationMs = Date.now() - startedAt;
+      const savedCourse = rpcRes.data;
+      console.info('[course.save_success]', {
+        requestId: req.requestId ?? null,
+        userId: context.userId ?? null,
+        orgId: organizationId,
+        courseId: savedCourse?.id ?? null,
+        moduleCount,
+        lessonCount,
+        durationMs,
+      });
+      logCourseRequestEvent('admin.courses.upsert.rpc_success', {
+        ...baseLogMeta,
+        orgId: organizationId,
+        courseId: savedCourse?.id ?? null,
+        durationMs,
+      });
+      if (idempotencyKey && savedCourse?.id) {
+        try {
+          await supabase.from('idempotency_keys').update({ resource_id: savedCourse.id }).eq('id', idempotencyKey);
+        } catch (updErr) {
+          console.warn('Failed to update idempotency_keys with resource id', updErr);
         }
       }
+      res.status(course?.id ? 200 : 201).json({ data: savedCourse });
+      return true;
+    };
 
-      for (const [moduleIndex, module] of modulesForPersistence.entries()) {
-        const buildModuleUpsertPayload = () => {
-        const payload = {
-          id: module.id,
-          course_id: module.course_id ?? courseRow.id,
-          order_index: module.order_index ?? moduleIndex,
-          title: module.title,
-        };
-        const moduleClientTempId = coerceNullableText(module.client_temp_id);
-        if (moduleColumnSupport.clientTempId && moduleClientTempId) {
-          payload.client_temp_id = moduleClientTempId;
+    while (true) {
+      try {
+        const succeeded = await executeRpcUpsert();
+        if (succeeded) {
+          return;
         }
-        if (moduleColumnSupport.description) {
-          payload.description = module.description ?? null;
+      } catch (error) {
+        const handledVersion = includeCourseVersionField && maybeHandleMissingCourseVersion(error);
+        if (handledVersion) {
+          continue;
         }
-          const moduleOrgId = pickOrgId(
-            module.organization_id,
-            module.org_id,
-            module.organizationId,
-            organizationId ?? courseRow.organization_id ?? null,
-          );
-          if (moduleColumnSupport.organizationId && moduleOrgId) {
-            payload.organization_id = moduleOrgId;
-          }
-          return payload;
-        };
-
-        let moduleRow = null;
-        let moduleError = null;
-        for (let attempt = 0; attempt < 2; attempt += 1) {
-          const modulePayload = buildModuleUpsertPayload();
-          const moduleRes = await supabase.from('modules').upsert(modulePayload).select('*').single();
-          if (!moduleRes.error) {
-            moduleRow = moduleRes.data;
-            moduleError = null;
-            break;
-          }
-          moduleError = moduleRes.error;
-          if (maybeHandleModuleColumnError(moduleError)) {
+        if (isCourseSlugConstraintError(error)) {
+          const incremented = await applyNextSlugAfterConflict();
+          if (incremented) {
             continue;
           }
-          throw moduleError;
         }
-
-        if (!moduleRow) {
-          logAdminCourseWriteFailure(
-            req,
-            'modules.upsert',
-            module,
-            moduleError || new Error('Failed to upsert module'),
-            { courseId: courseRow.id, moduleId: module.id ?? null },
-          );
-          throw moduleError || new Error('Failed to upsert module');
-        }
-
-        const lessons = module.lessons || [];
-        const incomingLessonIds = lessons.map((lesson) => lesson.id).filter(Boolean);
-        const incomingLessonIdSet = new Set(incomingLessonIds);
-
-        if (incomingLessonIds.length > 0) {
-          const { data: existingLessons } = await supabase
-            .from('lessons')
-            .select('id')
-            .eq('module_id', moduleRow.id);
-
-          const lessonsToDelete = (existingLessons || [])
-            .map((row) => row.id)
-            .filter((id) => !incomingLessonIdSet.has(id));
-
-          if (lessonsToDelete.length > 0) {
-            const { error: deleteLessonsError } = await supabase
-              .from('lessons')
-              .delete()
-              .in('id', lessonsToDelete);
-            if (deleteLessonsError) {
-              logAdminCourseWriteFailure(
-                req,
-                'lessons.delete',
-                { count: lessonsToDelete.length },
-                deleteLessonsError,
-                { courseId: courseRow.id, moduleId: moduleRow.id },
-              );
-              throw deleteLessonsError;
-            }
-          }
-
-          const buildLessonUpsertPayload = (lessonInput, moduleRowPayload, moduleData, lessonIndex) => {
-            const baseDuration =
-              typeof lessonInput.duration_s === 'number' && Number.isFinite(lessonInput.duration_s)
-                ? lessonInput.duration_s
-                : null;
-            const contentPayload = lessonInput.content_json ?? lessonInput.content ?? {};
-            const payload = {
-              id: lessonInput.id,
-              module_id: moduleRowPayload.id,
-              order_index: lessonInput.order_index ?? lessonIndex,
-              type: lessonInput.type,
-              title: lessonInput.title,
-              description: lessonInput.description ?? null,
-            };
-            const lessonClientTempId = coerceNullableText(lessonInput.client_temp_id);
-            if (lessonColumnSupport.clientTempId && lessonClientTempId) {
-              payload.client_temp_id = lessonClientTempId;
-            }
-            if (lessonColumnSupport.durationSeconds) {
-              payload.duration_s = baseDuration;
-            }
-            if (lessonColumnSupport.durationText) {
-              const legacyDuration = lessonInput.duration ?? (baseDuration != null ? formatLegacyDuration(baseDuration) : null);
-              if (legacyDuration) {
-                payload.duration = legacyDuration;
-              }
-            }
-            if (lessonColumnSupport.contentJson) {
-              payload.content_json = contentPayload || {};
-            }
-            if (lessonColumnSupport.contentLegacy) {
-              payload.content = contentPayload || {};
-            }
-            if (lessonColumnSupport.completionRuleJson && lessonInput.completion_rule_json) {
-              payload.completion_rule_json = lessonInput.completion_rule_json;
-            }
-            const resolvedLessonOrgId = pickOrgId(
-              lessonInput.organization_id,
-              lessonInput.org_id,
-              lessonInput.organizationId,
-              moduleData?.organization_id,
-              moduleRowPayload?.organization_id,
-              organizationId ?? courseRow.organization_id ?? null,
-            );
-            if (lessonColumnSupport.organizationId && resolvedLessonOrgId) {
-              payload.organization_id = resolvedLessonOrgId;
-            }
-            const resolvedLessonCourseId = coerceTextId(
-              lessonInput.course_id,
-              lessonInput.courseId,
-              moduleData?.course_id,
-              moduleRowPayload?.course_id,
-              courseRow.id,
-            );
-            if (lessonColumnSupport.courseId && resolvedLessonCourseId) {
-              payload.course_id = resolvedLessonCourseId;
-            }
-            return payload;
-          };
-
-          for (const [lessonIndex, lesson] of lessons.entries()) {
-            let lessonPayload = buildLessonUpsertPayload(lesson, moduleRow, module, lessonIndex);
-            for (let attempt = 0; attempt < 2; attempt += 1) {
-              const { error: lessonError } = await supabase.from('lessons').upsert(lessonPayload);
-              if (!lessonError) {
-                break;
-              }
-              logAdminCourseWriteFailure(
-                req,
-                'lessons.upsert',
-                lessonPayload,
-                lessonError,
-                { courseId: courseRow.id, moduleId: moduleRow.id, lessonId: lesson.id ?? null },
-              );
-              if (maybeHandleLessonColumnError(lessonError)) {
-                lessonPayload = buildLessonUpsertPayload(lesson, moduleRow, module, lessonIndex);
-                continue;
-              }
-              throw lessonError;
-            }
-          }
-        } else {
-          const { error: purgeLessonsError } = await supabase.from('lessons').delete().eq('module_id', moduleRow.id);
-          if (purgeLessonsError) {
-            logAdminCourseWriteFailure(
-              req,
-              'lessons.delete_module',
-              { moduleId: moduleRow.id },
-              purgeLessonsError,
-              { courseId: courseRow.id, moduleId: moduleRow.id },
-            );
-            throw purgeLessonsError;
-          }
-        }
-      }
-    } else {
-      const { error: purgeModulesError } = await supabase.from('modules').delete().eq('course_id', courseRow.id);
-      if (purgeModulesError) {
-        logAdminCourseWriteFailure(
-          req,
-          'modules.delete_course',
-          { courseId: courseRow.id },
-          purgeModulesError,
-          { courseId: courseRow.id },
-        );
-        throw purgeModulesError;
+        throw error;
       }
     }
-
-    const refreshed = await supabase
-      .from('courses')
-      .select(COURSE_WITH_MODULES_LESSONS_SELECT)
-      .eq('id', courseRow.id)
-      .single();
-
-    if (refreshed.error) throw refreshed.error;
-
-    // If an idempotency key was provided, record the resulting resource id
-    if (idempotencyKey) {
-      try {
-        await supabase.from('idempotency_keys').update({ resource_id: refreshed.data?.id }).eq('id', idempotencyKey);
-      } catch (updErr) {
-        console.warn('Failed to update idempotency_keys with resource id', updErr);
-      }
-    }
-
-    res.status(201).json({ data: refreshed.data });
   } catch (error) {
+
     res.locals = res.locals || {};
     res.locals.errorCode = error?.code ?? 'upsert_failed';
     try {
@@ -7228,6 +6990,12 @@ app.post('/api/admin/courses/:id/publish', async (req, res) => {
     courseId: id,
     orgId: null,
   };
+  const publishStartedAt = Date.now();
+  console.info('[course.publish_attempt]', {
+    requestId: publishLogMeta.requestId,
+    userId: publishLogMeta.userId,
+    courseId: publishLogMeta.courseId,
+  });
   logCourseRequestEvent('admin.courses.publish.start', publishLogMeta);
   res.once('finish', () => {
     logCourseRequestEvent('admin.courses.publish.finish', {
@@ -7272,6 +7040,14 @@ app.post('/api/admin/courses/:id/publish', async (req, res) => {
         console.warn('Failed to broadcast course publish event', bErr);
       }
 
+      console.info('[course.publish_success]', {
+        requestId: publishLogMeta.requestId,
+        userId: publishLogMeta.userId,
+        orgId: publishLogMeta.orgId,
+        courseId: id,
+        mode: 'demo',
+        durationMs: Date.now() - publishStartedAt,
+      });
       res.json({ data: existing });
       return;
     }
@@ -7391,8 +7167,28 @@ app.post('/api/admin/courses/:id/publish', async (req, res) => {
       console.warn('Failed to broadcast course publish event', bErr);
     }
 
+    console.info('[course.publish_success]', {
+      requestId: publishLogMeta.requestId,
+      userId: publishLogMeta.userId,
+      orgId: publishLogMeta.orgId,
+      courseId: id,
+      mode: 'supabase',
+      durationMs: Date.now() - publishStartedAt,
+    });
     res.json({ data: updated.data });
   } catch (error) {
+    console.error('[course.publish_error]', {
+      requestId: publishLogMeta.requestId,
+      userId: publishLogMeta.userId,
+      orgId: publishLogMeta.orgId,
+      courseId: id,
+      durationMs: Date.now() - publishStartedAt,
+      error: {
+        message: error?.message ?? null,
+        code: error?.code ?? null,
+        details: error?.details ?? null,
+      },
+    });
     logAdminCoursesError(req, error, `Failed to publish course ${id}`);
     res.locals = res.locals || {};
     res.locals.errorCode = error?.code ?? 'publish_failed';
@@ -7457,20 +7253,43 @@ app.delete('/api/admin/courses/:id', async (req, res) => {
 
 app.get('/api/client/courses', async (req, res) => {
   const assignedOnly = String(req.query.assigned || 'false').toLowerCase() === 'true';
-  const orgIdRaw = typeof req.query.orgId === 'string' ? req.query.orgId.trim() : null;
+  const queryOrgParam =
+    typeof req.query.orgId === 'string'
+      ? req.query.orgId
+      : typeof req.query.organizationId === 'string'
+        ? req.query.organizationId
+        : null;
+  const context = requireUserContext(req, res);
+  if (!context) return;
 
-  if (assignedOnly && !orgIdRaw) {
-    res.status(400).json({ error: 'orgId is required when assigned=true' });
+  const orgScope = await resolveOrgScopeForRequest(req, context, { queryOrgId: queryOrgParam });
+  const { resolvedOrgId, scopedOrgIds, membershipSet, primaryOrgId } = orgScope;
+
+  if (resolvedOrgId && !context.isPlatformAdmin && !membershipSet.has(resolvedOrgId)) {
+    res.status(403).json({ error: 'org_forbidden', message: 'You do not have access to this organization.' });
     return;
   }
 
-  const orgId = orgIdRaw;
+  if (!context.isPlatformAdmin && scopedOrgIds.length === 0) {
+    res.status(403).json({ error: 'org_membership_required', message: 'Organization membership required.' });
+    return;
+  }
+
+  const assignmentOrgId = resolvedOrgId ?? primaryOrgId;
+  if (assignedOnly && !assignmentOrgId && !context.isPlatformAdmin) {
+    res.status(400).json({
+      error: 'org_required',
+      message: 'Specify an orgId or set an active organization to view assignments.',
+    });
+    return;
+  }
+
   const sessionUserId =
     (req.user && (req.user.userId || req.user.id || req.user.sub)) || null;
   const normalizedSessionUserId = sessionUserId ? String(sessionUserId).trim().toLowerCase() : null;
 
   const resolveAssignmentCourseIds = async () => {
-    if (!assignedOnly || !orgId) {
+    if (!assignedOnly || !assignmentOrgId) {
       return null;
     }
 
@@ -7488,7 +7307,7 @@ app.get('/api/client/courses', async (req, res) => {
         }
         if (!targetUser && normalizedSessionUserId) {
           // only include org-level assignments with null user scope when caller belongs to org
-          const isOrgMatch = String(assignment.organization_id || '').trim() === orgId;
+          const isOrgMatch = String(assignment.organization_id || '').trim() === assignmentOrgId;
           if (!isOrgMatch) {
             return;
           }
@@ -7513,7 +7332,7 @@ app.get('/api/client/courses', async (req, res) => {
       let query = supabase
         .from(table)
         .select('course_id,organization_id,user_id,active')
-        .eq('organization_id', orgId);
+        .eq('organization_id', assignmentOrgId);
       if (normalizedSessionUserId) {
         query = query.or(
           `user_id.eq.${normalizedSessionUserId},user_id.is.null`
@@ -7542,12 +7361,22 @@ app.get('/api/client/courses', async (req, res) => {
     // In dev/demo mode, show ALL courses (not just published)
     let courses = Array.from(e2eStore.courses.values());
 
-    if (assignedOnly && orgId) {
+    if (!context.isPlatformAdmin && scopedOrgIds.length > 0) {
+      const scopedOrgIdSet = new Set(scopedOrgIds);
+      courses = courses.filter((course) => {
+        const courseOrgId = pickOrgId(course.organization_id, course.org_id, course.organizationId);
+        const normalizedCourseOrg = normalizeOrgIdValue(courseOrgId);
+        if (!normalizedCourseOrg) return false;
+        return scopedOrgIdSet.has(normalizedCourseOrg);
+      });
+    }
+
+    if (assignedOnly && assignmentOrgId) {
       const demoAssignments = (e2eStore.assignments || []).filter(
         (asn) =>
           asn &&
           asn.active !== false &&
-          String(asn.organization_id || '').trim() === orgId &&
+          String(asn.organization_id || '').trim() === assignmentOrgId &&
           (!normalizedSessionUserId ||
             asn.user_id === null ||
             String(asn.user_id).trim().toLowerCase() === normalizedSessionUserId)
@@ -7606,7 +7435,7 @@ app.get('/api/client/courses', async (req, res) => {
   if (!ensureSupabase(res)) return;
   try {
     let assignmentCourseIds = null;
-    if (assignedOnly && orgId) {
+    if (assignedOnly && assignmentOrgId) {
       assignmentCourseIds = await resolveAssignmentCourseIds();
       if (assignedOnly && Array.isArray(assignmentCourseIds) && assignmentCourseIds.length === 0) {
         res.json({ data: [] });
@@ -7622,8 +7451,15 @@ app.get('/api/client/courses', async (req, res) => {
       .order('order_index', { ascending: true, foreignTable: 'modules' })
       .order('order_index', { ascending: true, foreignTable: MODULE_LESSONS_FOREIGN_TABLE });
 
-    if (assignedOnly && orgId && Array.isArray(assignmentCourseIds)) {
+    if (assignedOnly && assignmentOrgId && Array.isArray(assignmentCourseIds)) {
       courseQuery = courseQuery.in('id', assignmentCourseIds);
+    }
+    if (!context.isPlatformAdmin || scopedOrgIds.length > 0) {
+      if (scopedOrgIds.length === 1) {
+        courseQuery = courseQuery.eq('organization_id', scopedOrgIds[0]);
+      } else if (scopedOrgIds.length > 1) {
+        courseQuery = courseQuery.in('organization_id', scopedOrgIds);
+      }
     }
 
     const { data, error } = await courseQuery;
@@ -7635,7 +7471,7 @@ app.get('/api/client/courses', async (req, res) => {
     const errorMessage = error instanceof Error ? error.message : String(error);
     console.error('[client/courses] published_fetch_failed', {
       assignedOnly,
-      orgId,
+      orgId: assignmentOrgId ?? null,
       code: errorCode,
       message: errorMessage,
     });
@@ -7651,6 +7487,17 @@ app.get('/api/client/courses', async (req, res) => {
 app.get('/api/client/courses/:identifier', async (req, res) => {
   const { identifier } = req.params;
   const includeDrafts = String(req.query.includeDrafts || '').toLowerCase() === 'true';
+  const context = requireUserContext(req, res);
+  if (!context) return;
+  const orgScope = await resolveOrgScopeForRequest(req, context);
+  const { membershipSet, scopedOrgIds } = orgScope;
+  const allowAllOrgAccess = context.isPlatformAdmin || scopedOrgIds.length === 0;
+  const isOrgAllowed = (orgId) => {
+    if (allowAllOrgAccess) return true;
+    const normalized = normalizeOrgIdValue(orgId);
+    if (!normalized) return false;
+    return membershipSet.has(normalized);
+  };
 
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
     try {
@@ -7663,6 +7510,12 @@ app.get('/api/client/courses/:identifier', async (req, res) => {
       // (ignore the includeDrafts query param)
 
       const normalizedCourse = ensureOrgFieldCompatibility(course, { fallbackOrgId: DEFAULT_SANDBOX_ORG_ID }) || course;
+      const courseOrgId =
+        normalizedCourse.organization_id ?? normalizedCourse.org_id ?? normalizedCourse.organizationId ?? null;
+      if (!isOrgAllowed(courseOrgId)) {
+        res.json({ data: null });
+        return;
+      }
       const data = {
         id: normalizedCourse.id,
         slug: normalizedCourse.slug ?? normalizedCourse.id,
@@ -7731,6 +7584,11 @@ app.get('/api/client/courses/:identifier', async (req, res) => {
       if (error && error.code !== 'PGRST116') throw error;
     }
     if (data) {
+      const courseOrgId = data.organization_id ?? data.org_id ?? data.organizationId ?? null;
+      if (!isOrgAllowed(courseOrgId)) {
+        res.json({ data: null });
+        return;
+      }
       const hydrated = await ensureCourseStructureLoaded(data, { includeLessons: true });
       res.json({ data: hydrated });
       return;
@@ -9586,19 +9444,12 @@ app.post('/api/analytics/events/batch', async (req, res) => {
   const events = parsed.events;
   const allowHeaderWithoutMembership = req.membershipStatus && req.membershipStatus !== 'ready';
   const headerOrgId = getHeaderOrgId(req, { requireMembership: !allowHeaderWithoutMembership }) || null;
-  const cookieOrgId = headerOrgId ? null : getActiveOrgFromRequest(req);
+  const cookieOrgId = getActiveOrgFromRequest(req);
 
   const normalizedEvents = events.map((evt) => {
     const payloadOrgId =
       typeof (evt.org_id ?? evt.orgId) === 'string' ? (evt.org_id ?? evt.orgId).trim() : null;
-    const normalizedOrgId = resolveAnalyticsOrgId(
-      headerOrgId,
-      payloadOrgId,
-      cookieOrgId,
-      req.activeOrgId,
-      req.user?.activeOrgId,
-      req.user?.organizationId,
-    );
+    const normalizedOrgId = headerOrgId || cookieOrgId || normalizeOrgIdValue(payloadOrgId) || null;
     const normalizedClientEventId = evt.clientEventId || evt.client_event_id || `analytics-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
     return {
       ...evt,
@@ -9623,12 +9474,13 @@ app.post('/api/analytics/events/batch', async (req, res) => {
       missingCount: missingOrgEvents.length,
     });
   }
+  const eventsWithOrg = normalizedEvents.filter((evt) => isUuid(evt.org_id || ''));
 
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
     const accepted = [];
     const duplicates = [];
     const failed = [];
-    for (const evt of normalizedEvents) {
+    for (const evt of eventsWithOrg) {
       const id = evt.client_event_id || `${Date.now()}-${Math.random().toString(36).slice(2)}`;
       if (e2eStore.progressEvents.has(id)) { // reuse idempotency set
         duplicates.push(id);
@@ -9642,18 +9494,44 @@ app.post('/api/analytics/events/batch', async (req, res) => {
         failed.push({ id, reason: 'exception' });
       }
     }
-    res.json({ accepted, duplicates, failed });
+    res.json({
+      accepted,
+      duplicates,
+      failed,
+      meta: {
+        skippedMissingOrg: missingOrgEvents.length,
+      },
+    });
     return;
   }
 
   // Supabase placeholder: just accept (Phase 3 persistence)
   if (!ensureSupabase(res)) return;
   try {
-    const accepted = normalizedEvents.map((e) => e.client_event_id || `${Date.now()}-${Math.random().toString(36).slice(2)}`);
-    res.json({ accepted, duplicates: [], failed: [] });
+    const accepted = eventsWithOrg.map(
+      (e) => e.client_event_id || `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    res.json({
+      accepted,
+      duplicates: [],
+      failed: [],
+      meta: {
+        skippedMissingOrg: missingOrgEvents.length,
+      },
+    });
   } catch (error) {
     console.error('Failed to process analytics batch:', error);
-    res.status(200).json({ accepted: [], duplicates: [], failed: normalizedEvents.map((evt) => ({ id: evt.client_event_id || 'unknown', reason: 'exception' })) });
+    res.status(200).json({
+      accepted: [],
+      duplicates: [],
+      failed: eventsWithOrg.map((evt) => ({
+        id: evt.client_event_id || 'unknown',
+        reason: 'exception',
+      })),
+      meta: {
+        skippedMissingOrg: missingOrgEvents.length,
+      },
+    });
   }
 });
 
@@ -12854,20 +12732,11 @@ app.post('/api/analytics/events', optionalAuthenticate, async (req, res) => {
 
   const allowHeaderWithoutMembership = req.membershipStatus && req.membershipStatus !== 'ready';
   const headerOrgId = getHeaderOrgId(req, { requireMembership: !allowHeaderWithoutMembership }) || null;
-  const cookieOrgId = headerOrgId ? null : getActiveOrgFromRequest(req);
-  const payloadOrgId = typeof org_id === 'string' ? org_id.trim() : null;
-  const resolvedOrgId = resolveAnalyticsOrgId(
-    headerOrgId,
-    payloadOrgId,
-    cookieOrgId,
-    req.activeOrgId,
-    req.user?.activeOrgId,
-    req.user?.organizationId,
-  );
-  const orgMissing = !resolvedOrgId;
+  const cookieOrgId = getActiveOrgFromRequest(req);
+  const payloadOrgId = normalizeOrgIdValue(org_id ?? req.body?.orgId ?? null);
+  const resolvedOrgId = headerOrgId || cookieOrgId || payloadOrgId || null;
 
-  if (orgMissing) {
-    const membershipStatus = req.membershipStatus || 'unknown';
+  if (!resolvedOrgId) {
     const warningKey = req.user?.userId || req.user?.id || `anon:${req.ip ?? 'unknown'}`;
     analyticsOrgWarning(warningKey, {
       requestId: req.requestId,
@@ -12875,8 +12744,11 @@ app.post('/api/analytics/events', optionalAuthenticate, async (req, res) => {
       headerOrgId,
       payloadOrgId,
       cookieOrgId,
-      membershipStatus,
+      membershipStatus: req.membershipStatus || 'unknown',
     });
+    res.status(202);
+    respondQueued({ missingOrgContext: true, skipped: 'missing_org' });
+    return;
   }
 
   const sanitizedPayload = scrubAnalyticsPayload(payload ?? {});
@@ -12887,9 +12759,9 @@ app.post('/api/analytics/events', optionalAuthenticate, async (req, res) => {
   const useCustomPrimaryKey = normalizedClientEventId ? isUuid(normalizedClientEventId) : false;
 
   const respondQueued = (meta = {}) =>
-    res.json({ status: 'queued', stored: false, missingOrgContext: orgMissing, ...meta });
+    res.json({ status: 'queued', stored: false, missingOrgContext: false, ...meta });
   const respondStored = (meta = {}) =>
-    res.json({ status: 'stored', stored: true, missingOrgContext: orgMissing, ...meta });
+    res.json({ status: 'stored', stored: true, missingOrgContext: false, ...meta });
 
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
     const eventId = useCustomPrimaryKey

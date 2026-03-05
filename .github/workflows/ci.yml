@@ -10,6 +10,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      CI_DATABASE_URL: ${{ secrets.CI_DATABASE_URL }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -29,6 +31,16 @@ jobs:
 
       - name: Check lockfile sync
         run: npm run check:lock
+
+      - name: Verify Supabase schema
+        if: ${{ env.CI_DATABASE_URL != '' }}
+        env:
+          DATABASE_URL: ${{ env.CI_DATABASE_URL }}
+        run: npm run -s verify:schema
+
+      - name: Skip schema verification (missing secret)
+        if: ${{ env.CI_DATABASE_URL == '' }}
+        run: echo 'CI_DATABASE_URL secret not configured; skipping schema verification step.'
 
       - name: Server typecheck
         run: npm run typecheck:server

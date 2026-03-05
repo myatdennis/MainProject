@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { DndContext, PointerSensor, TouchSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
@@ -80,6 +81,7 @@ import { cloneWithCanonicalOrgId, resolveOrgIdFromCarrier, stampCanonicalOrgId }
 import { buildIssueTargets, getIssueTargetsOrEmpty } from '../../utils/validationIssues';
 import type { IssueTargets } from '../../utils/validationIssues';
 import { SlugConflictError } from '../../utils/slugConflict';
+import { invalidateCourseQueries } from '../../lib/courseQueryKeys';
 
 const buildUploadKey = (moduleId: string, lessonId: string) => `${moduleId}::${lessonId}`;
 const parseUploadKey = (key: string) => {
@@ -346,6 +348,7 @@ type LessonAutosaveState = {
 };
 
 const AdminCourseBuilder = () => {
+  const queryClient = useQueryClient();
   const { courseId } = useParams();
   const { activeOrgId, user: authUser } = useSecureAuth();
   const navigate = useNavigate();
@@ -2163,6 +2166,12 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
       logPublishGuard('info', 'publish_complete');
       clearValidationIssues();
       setTimeout(() => setSaveStatus('idle'), 3000);
+      invalidateCourseQueries(queryClient, { orgId: activeOrgId ?? null, courseId: latestPersisted.id ?? null, slug: latestPersisted.slug ?? courseSlug ?? null });
+      courseStore
+        .init()
+        .catch((refreshError) =>
+          console.warn('[AdminCourseBuilder] catalog refresh after publish failed', refreshError),
+        );
     } catch (error) {
       if (error instanceof SlugConflictError) {
         setSaveStatus('error');

@@ -2,6 +2,7 @@ import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { MemoryRouter, Routes, Route } from 'react-router-dom';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('../../../store/courseStore', () => {
   const mockCourseStore = {
@@ -132,11 +133,15 @@ describe('AdminCourseBuilder', () => {
   it('renders without throwing and exposes the builder root element', async () => {
     const { default: AdminCourseBuilder } = await import('../AdminCourseBuilder');
 
+    const queryClient = new QueryClient();
+
     render(
       <MemoryRouter initialEntries={[{ pathname: '/admin/course-builder/new' }]}>
-        <Routes>
-          <Route path="/admin/course-builder/:courseId" element={<AdminCourseBuilder />} />
-        </Routes>
+        <QueryClientProvider client={queryClient}>
+          <Routes>
+            <Route path="/admin/course-builder/:courseId" element={<AdminCourseBuilder />} />
+          </Routes>
+        </QueryClientProvider>
       </MemoryRouter>
     );
 

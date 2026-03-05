@@ -1,7 +1,8 @@
 import React, { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { HelmetProvider } from 'react-helmet-async';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { QueryClientProvider } from '@tanstack/react-query';
+import queryClient from './lib/queryClient';
 import App from './App';
 import './index.css';
 import serviceWorkerManager from './utils/ServiceWorkerManager';
@@ -206,15 +207,6 @@ class SecureAuthErrorBoundary extends React.Component<{ children: React.ReactNod
     );
   }
 }
-
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      retry: 1,
-      staleTime: 60 * 1000,
-    },
-  },
-});
 
 const rootElement = document.getElementById('root');
 

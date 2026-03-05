@@ -30,6 +30,20 @@ const sanitizeErrorPayload = (error) => {
   };
 };
 
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const retryQuery = async (queryFn, retries = 3) => {
+  try {
+    return await queryFn();
+  } catch (error) {
+    if (retries <= 0) {
+      throw error;
+    }
+    await wait(2000);
+    return retryQuery(queryFn, retries - 1);
+  }
+};
+
 const buildDiagnostics = (overrides = {}) => {
   const primaryCode = overrides.code || null;
   const codes = Array.isArray(overrides.codes)
@@ -128,11 +142,13 @@ const detectOrganizationColumns = async () => {
     return new Set();
   }
   try {
-    const rows = await sql`
+    const rows = await retryQuery(
+      () => sql`
       select column_name
       from information_schema.columns
       where table_schema = 'public' and table_name = 'organizations'
-    `;
+    `,
+    );
     return new Set(rows.map((row) => row.column_name));
   } catch (error) {
     console.warn('[memberships] organization column detection failed', {
@@ -148,11 +164,13 @@ const detectMembershipColumns = async () => {
     return new Set();
   }
   try {
-    const rows = await sql`
+    const rows = await retryQuery(
+      () => sql`
       select column_name
       from information_schema.columns
       where table_schema = 'public' and table_name = 'organization_memberships'
-    `;
+    `,
+    );
     return new Set(rows.map((row) => row.column_name));
   } catch (error) {
     console.warn('[memberships] membership column detection failed', {

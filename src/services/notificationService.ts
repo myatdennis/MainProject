@@ -22,7 +22,6 @@ const devLogEnabled =
 
 const logNotificationFetch = (label: string, path: string) => {
   if (!devLogEnabled) return;
-  // eslint-disable-next-line no-console
   console.debug(`[notifications.fetch:${label}]`, path);
 };
 

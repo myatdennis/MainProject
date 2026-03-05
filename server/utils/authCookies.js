@@ -2,8 +2,6 @@ import { ACCESS_TOKEN_TTL_SECONDS, REFRESH_TOKEN_TTL_SECONDS } from './tokenUtil
 
 const ACCESS_TOKEN_COOKIE = process.env.ACCESS_TOKEN_COOKIE_NAME || 'access_token';
 const REFRESH_TOKEN_COOKIE = process.env.REFRESH_TOKEN_COOKIE_NAME || 'refresh_token';
-const DEFAULT_COOKIE_DOMAIN = process.env.COOKIE_FALLBACK_DOMAIN || '.the-huddle.co';
-const COOKIE_DOMAIN = (process.env.COOKIE_DOMAIN || '').trim() || '';
 const ACTIVE_ORG_COOKIE = process.env.ACTIVE_ORG_COOKIE_NAME || 'active_org';
 
 const parseBoolean = (value, fallback = false) => {
@@ -21,26 +19,8 @@ const parseBoolean = (value, fallback = false) => {
 };
 
 const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production';
-const secureByDefault = isProduction ? true : parseBoolean(process.env.COOKIE_SECURE, false);
-const allowedSameSite = new Set(['lax', 'strict', 'none']);
-const rawSameSite = (process.env.COOKIE_SAMESITE || '').trim().toLowerCase();
-const sameSite = isProduction
-  ? 'none'
-  : allowedSameSite.has(rawSameSite)
-    ? rawSameSite
-    : secureByDefault
-      ? 'none'
-      : 'lax';
-
-const normalizeDomain = (value) => {
-  if (!value || typeof value !== 'string') return '';
-  const trimmed = value.trim().toLowerCase();
-  if (!trimmed) return '';
-  return trimmed.startsWith('.') ? trimmed : `.${trimmed.replace(/^\.+/, '')}`;
-};
-
-const envCookieDomain = normalizeDomain(process.env.COOKIE_DOMAIN);
-const fallbackCookieDomain = normalizeDomain(DEFAULT_COOKIE_DOMAIN);
+const secureByDefault = true;
+const sameSite = 'lax';
 
 const hostMatchesDomain = (host, domain) => {
   if (!host || !domain) return false;
@@ -72,15 +52,9 @@ function getRequestHost(req) {
 
 // Per-request cookie domain logic
 function resolveCookieDomain(req) {
-  if (process.env.NODE_ENV !== 'production') return undefined;
   const host = getRequestHost(req);
-  if (envCookieDomain) {
-    return envCookieDomain;
-  }
-  if (host && fallbackCookieDomain && hostMatchesDomain(host, fallbackCookieDomain)) {
-    return fallbackCookieDomain;
-  }
-  return undefined;
+  if (!host) return undefined;
+  return hostMatchesDomain(host, '.the-huddle.co') ? '.the-huddle.co' : undefined;
 }
 function resolveCookieSameSite() {
   return sameSite;
@@ -116,7 +90,7 @@ export const describeCookiePolicy = () => ({
   production: isProduction,
   secure: resolveCookieSecure(),
   sameSite: resolveCookieSameSite(),
-  domain: envCookieDomain || (isProduction ? fallbackCookieDomain || undefined : undefined),
+  domain: '.the-huddle.co',
   path: '/',
 });
 

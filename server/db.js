@@ -8,8 +8,10 @@
 import { setDefaultResultOrder } from 'node:dns'
 import dns from 'node:dns/promises'
 import postgres from 'postgres'
+import pg from 'pg'
 
 const FORCE_DB_IPV4 = String(process.env.FORCE_DB_IPV4 ?? (process.env.NODE_ENV === 'production' ? 'true' : 'false')).toLowerCase() !== 'false'
+const { Pool } = pg
 
 if (typeof setDefaultResultOrder === 'function') {
   try {
@@ -84,6 +86,53 @@ async function initializeConnectionMetadata (rawConnectionString) {
 }
 
 const connectionMetadata = await initializeConnectionMetadata(process.env.DATABASE_URL || '')
+const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const createPool = () => {
+  const connectionString = connectionMetadata.connectionString || process.env.DATABASE_URL || ''
+  const pool = new Pool({
+    connectionString,
+    ssl:
+      connectionString && !connectionString.includes('localhost')
+        ? { rejectUnauthorized: false }
+        : undefined,
+    family: 4,
+    max: Number(process.env.DB_POOL_MAX || 10),
+    idleTimeoutMillis: Number(process.env.DB_POOL_IDLE_TIMEOUT || 30000),
+    connectionTimeoutMillis: Number(process.env.DB_POOL_CONNECT_TIMEOUT || 10000),
+  })
+
+  pool.on('error', (error) => {
+    console.error('[server/db] pool_error', {
+      message: error?.message || String(error),
+      code: error?.code || null,
+      stack: error?.stack || null,
+    })
+  })
+
+  return pool
+}
+
+export const pool = createPool()
+
+export async function testConnection (retries = 3) {
+  try {
+    const client = await pool.connect()
+    client.release()
+    return true
+  } catch (error) {
+    if (retries <= 0) {
+      console.error('[server/db] connection_test_failed', {
+        message: error?.message || String(error),
+        code: error?.code || null,
+        stack: error?.stack || null,
+      })
+      throw error
+    }
+    await wait(2000)
+    return testConnection(retries - 1)
+  }
+}
 
 let sqlClient = null
 
@@ -160,5 +209,7 @@ const sql = new Proxy(function sqlProxy () {}, {
     return typeof value === 'function' ? value.bind(client) : value
   }
 })
+
+await testConnection()
 
 export default sql

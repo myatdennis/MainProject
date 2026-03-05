@@ -33,6 +33,8 @@ import { normalizeLessonForPersistence } from '../utils/lessonContent';
 import type { CourseValidationIssue } from '../validation/courseValidation';
 import { parseSlugConflictError, SlugConflictError } from '../utils/slugConflict';
 import { getSupabase } from '../lib/supabaseClient';
+import queryClient from '../lib/queryClient';
+import { invalidateCourseQueries } from '../lib/courseQueryKeys';
 
 export type SupabaseCourseRecord = {
   id: string;
@@ -130,7 +132,6 @@ const hydratePersistedCourseIds = () => {
 
 const withSupabaseAuthRetry = async <T>(operation: () => Promise<T>): Promise<T> => {
   let retried = false;
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
       return await operation();
@@ -751,6 +752,17 @@ export class CourseService {
 
     const authoritative = refreshed ?? normalizedCourse;
     markCoursePersisted(authoritative.id);
+    try {
+      invalidateCourseQueries(queryClient, {
+        orgId: authoritative.organizationId ?? normalizedCourse.organizationId ?? null,
+        courseId: authoritative.id ?? null,
+        slug: authoritative.slug ?? normalizedCourse.slug ?? null,
+      });
+    } catch (invalidationError) {
+      if (import.meta.env?.DEV) {
+        console.warn('[CourseService] Failed to invalidate course queries', invalidationError);
+      }
+    }
 
     return authoritative;
   }

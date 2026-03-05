@@ -42,6 +42,7 @@ if (axios?.defaults) {
 const MIN_REFRESH_INTERVAL_MS = 60 * 1000;
 const SESSION_RELOAD_THROTTLE_MS = 45 * 1000;
 const BOOTSTRAP_FAIL_OPEN_MS = 2500;
+const MEMBERSHIP_RETRY_DELAYS_MS = [2000, 5000, 10000, 30000, 60000] as const;
 
 const isNavigatorOffline = () => typeof navigator !== 'undefined' && navigator.onLine === false;
 const isDevEnvironment = Boolean(import.meta.env?.DEV);
@@ -593,6 +594,8 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   const [memberships, setMemberships] = useState<UserMembership[]>([]);
   const [membershipStatus, setMembershipStatus] = useState<'idle' | 'loading' | 'ready' | 'error' | 'degraded'>('idle');
   const lastMembershipStatusRef = useRef<'idle' | 'loading' | 'ready' | 'error' | 'degraded'>(membershipStatus);
+  const membershipStatusRef = useRef<'idle' | 'loading' | 'ready' | 'error' | 'degraded'>(membershipStatus);
+  const membershipsSnapshotRef = useRef<UserMembership[]>([]);
   const [lastMembershipFetchMeta, setLastMembershipFetchMeta] = useState<MembershipFetchMeta>({
     requestId: 0,
     startedAt: null,
@@ -602,6 +605,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     reason: null,
   });
   const [organizationIds, setOrganizationIds] = useState<string[]>([]);
+  const organizationIdsSnapshotRef = useRef<string[]>([]);
   const [activeOrgId, setActiveOrgIdState] = useState<string | null>(null);
   const [hasActiveMembership, setHasActiveMembership] = useState(false);
   const [requestedOrgHint, setRequestedOrgHintState] = useState<string | null>(null);
@@ -612,6 +616,22 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     );
     setHasActiveMembership(active);
   }, [memberships]);
+  useEffect(() => {
+    membershipsSnapshotRef.current = memberships;
+  }, [memberships]);
+  useEffect(() => {
+    organizationIdsSnapshotRef.current = organizationIds;
+  }, [organizationIds]);
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    window.dispatchEvent(
+      new CustomEvent('huddle:active_org_update', {
+        detail: { activeOrgId },
+      }),
+    );
+  }, [activeOrgId]);
 
   const setRequestedOrgHint = useCallback((orgId: string | null) => {
     if (!orgId) {
@@ -649,6 +669,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   const lastActiveOrgSourceRef = useRef<ActiveOrgSource>('none');
   const lastAppliedActiveOrgIdRef = useRef<string | null>(null);
   const membershipFetchRequestIdRef = useRef(0);
+  const membershipCacheRef = useRef<UserMembership[]>([]);
+  const membershipRetryTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const membershipRetryAttemptRef = useRef(0);
   type FetchServerSessionFn = (options?: {
     surface?: SessionSurface;
     signal?: AbortSignal;
@@ -657,6 +680,52 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     skipMembershipSelfHeal?: boolean;
   }) => Promise<boolean>;
   const fetchServerSessionRef = useRef<FetchServerSessionFn | null>(null);
+  const clearMembershipRetryBackoff = useCallback(() => {
+    if (membershipRetryTimerRef.current) {
+      clearTimeout(membershipRetryTimerRef.current);
+      membershipRetryTimerRef.current = null;
+    }
+    membershipRetryAttemptRef.current = 0;
+  }, []);
+  const scheduleMembershipRetryBackoff = useCallback(function scheduleRetry(reason: string) {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    if (membershipRetryTimerRef.current) {
+      return;
+    }
+    const attempt = membershipRetryAttemptRef.current;
+    const delay = MEMBERSHIP_RETRY_DELAYS_MS[Math.min(attempt, MEMBERSHIP_RETRY_DELAYS_MS.length - 1)];
+    membershipRetryAttemptRef.current = Math.min(attempt + 1, MEMBERSHIP_RETRY_DELAYS_MS.length - 1);
+    membershipRetryTimerRef.current = window.setTimeout(async () => {
+      membershipRetryTimerRef.current = null;
+      const fetchFn = fetchServerSessionRef.current;
+      if (!fetchFn) {
+        scheduleRetry('retry_waiting_for_fetch');
+        return;
+      }
+      try {
+        await fetchFn({ surface: 'lms', silent: true, allowRefresh: false, skipMembershipSelfHeal: true });
+      } catch (retryError) {
+        console.warn('[SecureAuth] membership retry backoff failed', retryError);
+      } finally {
+        if (membershipStatusRef.current !== 'ready') {
+          scheduleRetry('retry_followup');
+        }
+      }
+    }, delay);
+  }, []);
+  useEffect(() => {
+    membershipStatusRef.current = membershipStatus;
+    if (membershipStatus === 'ready') {
+      clearMembershipRetryBackoff();
+    }
+  }, [membershipStatus, clearMembershipRetryBackoff]);
+  useEffect(() => {
+    return () => {
+      clearMembershipRetryBackoff();
+    };
+  }, [clearMembershipRetryBackoff]);
   const refreshTokenCallbackRef = useRef<((options?: RefreshOptions) => Promise<boolean>) | null>(null);
   const authDebugSignatureRef = useRef<string | null>(null);
   const recordMembershipFetchMeta = useCallback((meta: Partial<MembershipFetchMeta>) => {
@@ -724,6 +793,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         setActiveOrgIdState(null);
         setLastActiveOrgIdState(null);
         clearActiveOrgPreference();
+        membershipCacheRef.current = [];
+        organizationIdsSnapshotRef.current = [];
+        clearMembershipRetryBackoff();
         setIsAuthenticated({ lms: false, admin: false });
         if (persistTokens) {
           clearAuth(tokenReason);
@@ -741,14 +813,35 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       );
       setMembershipStatus(membershipStateFromPayload);
       const membershipsTrusted = membershipStateFromPayload === 'ready';
-      const normalizedMemberships = membershipsTrusted ? normalizeMemberships(payload.memberships) : [];
-      const orgIds =
-        payload.organizationIds && payload.organizationIds.length > 0
-          ? dedupeStrings(payload.organizationIds)
-          : dedupeStrings(normalizedMemberships.map((membership) => membership.orgId));
+      const normalizedMembershipsFromPayload = normalizeMemberships(payload.memberships);
+      let resolvedMemberships: UserMembership[] = [];
+      if (membershipsTrusted) {
+        resolvedMemberships = normalizedMembershipsFromPayload;
+      } else if (normalizedMembershipsFromPayload.length > 0) {
+        resolvedMemberships = normalizedMembershipsFromPayload;
+      } else if (membershipCacheRef.current.length > 0) {
+        resolvedMemberships = [...membershipCacheRef.current];
+      } else if (membershipsSnapshotRef.current.length > 0) {
+        resolvedMemberships = [...membershipsSnapshotRef.current];
+      }
+      if (resolvedMemberships.length > 0) {
+        membershipCacheRef.current = resolvedMemberships;
+      }
+      const orgIdSources: string[] = [];
+      if (Array.isArray(payload.organizationIds) && payload.organizationIds.length > 0) {
+        orgIdSources.push(...payload.organizationIds);
+      }
+      if (resolvedMemberships.length > 0) {
+        orgIdSources.push(...resolvedMemberships.map((membership) => membership.orgId));
+      }
+      if (orgIdSources.length === 0 && organizationIdsSnapshotRef.current.length > 0) {
+        orgIdSources.push(...organizationIdsSnapshotRef.current);
+      }
+      const orgIds = dedupeStrings(orgIdSources);
+      organizationIdsSnapshotRef.current = orgIds;
 
       const preferredOrg = resolvePreferredOrgId({
-        memberships: normalizedMemberships,
+        memberships: resolvedMemberships,
         requestedOrgId: requestedOrgHint,
         lastActiveOrgId: lastActiveOrgId ?? getActiveOrgPreference(),
       });
@@ -778,7 +871,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         lastName: payload.user.lastName ?? payload.user.last_name ?? payload.user.user_metadata?.last_name,
         organizationId: payload.user.organizationId ?? payload.user.organization_id ?? orgIds[0] ?? null,
         organizationIds: orgIds,
-        memberships: normalizedMemberships,
+        memberships: resolvedMemberships,
         activeOrgId:
           preferredOrg.activeOrgId ??
           payload.activeOrgId ??
@@ -802,13 +895,14 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       }
 
       setUser(session);
-      setMemberships(normalizedMemberships);
+      setMemberships(resolvedMemberships);
       setOrganizationIds(orgIds);
       setActiveOrgIdState(session.activeOrgId ?? null);
       setIsAuthenticated(computeAuthState(session, surface));
       setUserSession(session);
       lastAppliedActiveOrgIdRef.current = session.activeOrgId ?? null;
       lastActiveOrgSourceRef.current = activeOrgSource;
+      clearMembershipRetryBackoff();
 
       if (persistTokens) {
         if (payload.accessToken !== undefined) {
@@ -830,7 +924,18 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         }
       }
     },
-    [getSkewedNow, lastActiveOrgId, requestedOrgHint, setUser, setMemberships, setMembershipStatus, setOrganizationIds, setActiveOrgIdState, setIsAuthenticated],
+    [
+      clearMembershipRetryBackoff,
+      getSkewedNow,
+      lastActiveOrgId,
+      requestedOrgHint,
+      setUser,
+      setMemberships,
+      setMembershipStatus,
+      setOrganizationIds,
+      setActiveOrgIdState,
+      setIsAuthenticated,
+    ],
   );
 
   const handleSessionUnauthorized = useCallback(
@@ -1253,9 +1358,10 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           }
           if (error.code === 'timeout' || isServerOrNetworkErrorStatus(error.status)) {
             lastSessionFetchResultRef.current = 'error';
-            setMembershipStatus('error');
+            setMembershipStatus('degraded');
+            scheduleMembershipRetryBackoff('network_error');
             if (!silent) {
-              setBootstrapError('Network issue while restoring your session. Please retry.');
+              setBootstrapError('Network issue while restoring your session. We will keep retrying in the background.');
             }
             if (import.meta.env.DEV) {
               console.warn('[Auth] auth_restore: error (timeout/network)', { surface, status: error.status });
@@ -1303,7 +1409,8 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         if (!silent) {
           setBootstrapError('Network issue while restoring your session. Please check your connection and retry.');
         }
-        setMembershipStatus('error');
+        setMembershipStatus('degraded');
+        scheduleMembershipRetryBackoff('unknown_error');
         lastSessionFetchResultRef.current = 'error';
         console.warn('[SecureAuth] Failed to reload session', error);
         if (import.meta.env.DEV) {
@@ -1320,6 +1427,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       handleSessionUnauthorized,
       recordMembershipFetchMeta,
       requestJsonWithClock,
+      scheduleMembershipRetryBackoff,
       triggerMembershipSelfHeal,
     ],
   );
@@ -1838,10 +1946,11 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           redirectReason: reason,
           timestamp: new Date().toISOString(),
         };
-        const debugSnapshot: typeof payload & { dump?: () => void } = { ...payload };
+        const debugSnapshot: typeof payload & { dump?: () => Record<string, unknown> } = { ...payload };
         debugSnapshot.dump = () => {
           const { dump, ...rest } = debugSnapshot;
           console.info('[SecureAuth][debug] dump', rest);
+          return rest;
         };
         window.__HUDDLE_AUTH_DEBUG__ = debugSnapshot;
         const signature = JSON.stringify({
@@ -2474,7 +2583,10 @@ export function useSecureAuth(): AuthContextType {
       warnedMissingProvider = true;
       console.error('[SecureAuth] Provider not found in React tree. Falling back to guest session.');
       if (import.meta.env.DEV) {
-        console.info('💡 Restart the dev server (npm run dev:full) to clear duplicate React bundles causing this context drift.', new Error().stack);
+        console.info(
+          '💡 Restart the dev server (npm run dev:full) to clear duplicate React bundles causing this context drift.',
+          new Error().stack,
+        );
       }
     }
     return defaultAuthContext;

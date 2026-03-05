@@ -38,6 +38,78 @@ if (!parseEnvAnalyticsFlag()) {
   disableAnalytics('env_override');
 }
 
+const pendingOrgEvents = new Map<string, AnalyticsEvent>();
+let pendingOrgFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+const enqueuePendingOrgEvent = (event: AnalyticsEvent, reason: string) => {
+  pendingOrgEvents.set(event.id, event);
+  if (import.meta.env?.DEV) {
+    console.info('[analyticsApiClient] queued analytics event until org is available', {
+      eventId: event.id,
+      reason,
+    });
+  }
+  schedulePendingOrgFlush();
+};
+
+function schedulePendingOrgFlush() {
+  if (typeof window === 'undefined') return;
+  if (pendingOrgFlushTimer) return;
+  pendingOrgFlushTimer = window.setTimeout(() => {
+    pendingOrgFlushTimer = null;
+    void flushPendingOrgEvents();
+  }, 2000);
+}
+
+const sendAnalyticsEvent = async (event: AnalyticsEvent, orgId: string | null) => {
+  const headers = buildOrgHeaders(orgId);
+  await apiRequest('/api/analytics/events', {
+    method: 'POST',
+    headers,
+    credentials: 'include',
+    body: {
+      id: event.id,
+      user_id: event.userId && event.userId !== 'system' ? event.userId : null,
+      org_id: orgId ?? null,
+      course_id: event.courseId ?? null,
+      lesson_id: event.lessonId ?? null,
+      module_id: event.moduleId ?? null,
+      event_type: event.type,
+      session_id: event.sessionId,
+      user_agent: event.userAgent,
+      payload: event.data,
+    },
+  });
+};
+
+async function flushPendingOrgEvents() {
+  if (pendingOrgEvents.size === 0) return;
+  const resolvedOrgId = resolveActiveOrgId();
+  if (!resolvedOrgId) {
+    schedulePendingOrgFlush();
+    return;
+  }
+  const pending = Array.from(pendingOrgEvents.values());
+  pendingOrgEvents.clear();
+  for (const queued of pending) {
+    try {
+      await sendAnalyticsEvent(queued, resolvedOrgId);
+    } catch (error) {
+      handleAnalyticsFailure(error, { skipped: true }, 'persistEvent', {
+        payloadSummary: summarizePayloadKeys(queued.data),
+      });
+      enqueuePendingOrgEvent(queued, 'flush_retry');
+      break;
+    }
+  }
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('huddle:active_org_update', () => {
+    void flushPendingOrgEvents();
+  });
+}
+
 const hasAuthSession = () => {
   if (typeof window === 'undefined') return false;
   try {
@@ -155,29 +227,12 @@ export const analyticsApiClient = {
     if (!ensureAnalyticsReady()) return;
     try {
       const derivedOrgId = event.orgId ?? resolveActiveOrgId();
-      const headers = buildOrgHeaders(derivedOrgId);
-
-      await apiRequest('/api/analytics/events', {
-        method: 'POST',
-        headers,
-        credentials: 'include',
-        body: {
-          // Server expects org-scoped analytics payloads. Keys map directly
-          // onto the analytics_events table: id -> client_event_id, *_id fields,
-          // event_type, session_id, user_agent, and payload (arbitrary JSON).
-          // Optional fields may be null when not applicable.
-          id: event.id,
-          user_id: event.userId && event.userId !== 'system' ? event.userId : null,
-          org_id: derivedOrgId ?? null,
-          course_id: event.courseId ?? null,
-          lesson_id: event.lessonId ?? null,
-          module_id: event.moduleId ?? null,
-          event_type: event.type,
-          session_id: event.sessionId,
-          user_agent: event.userAgent,
-          payload: event.data,
-        },
-      });
+      if (!derivedOrgId) {
+        enqueuePendingOrgEvent(event, 'missing_org');
+        return;
+      }
+      await sendAnalyticsEvent(event, derivedOrgId);
+      await flushPendingOrgEvents();
     } catch (error) {
       handleAnalyticsFailure(error, { skipped: true }, 'persistEvent', {
         payloadSummary: summarizePayloadKeys(event.data),
