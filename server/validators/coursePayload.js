@@ -75,7 +75,7 @@ const courseSchema = z.object({
   meta: z.record(z.any()).optional(),
 });
 
-const coursePayloadSchema = z.object({
+export const coursePayloadSchema = z.object({
   course: courseSchema,
   modules: z.array(moduleSchema).default([]),
 });

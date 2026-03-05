@@ -1,0 +1,99 @@
+{
+  "items": [
+    {
+      "course": {
+        "slug": "inclusive-leadership-101",
+        "title": "Inclusive Leadership 101",
+        "description": "A foundational course on building inclusive teams and leading with empathy.",
+        "status": "draft",
+        "version": 1,
+        "meta": {
+          "audience": "People managers",
+          "estimated_minutes": 35
+        }
+      },
+      "modules": [
+        {
+          "title": "Foundations of Inclusion",
+          "description": "Grounding concepts and shared language for inclusive leadership.",
+          "order_index": 1,
+          "lessons": [
+            {
+              "title": "What Inclusion Looks Like",
+              "type": "text",
+              "order_index": 1,
+              "content_json": {
+                "body": {
+                  "introduction": "Inclusive leadership celebrates every voice.",
+                  "key_points": [
+                    "Psychological safety",
+                    "Shared language",
+                    "Equitable decision making"
+                  ]
+                }
+              }
+            },
+            {
+              "title": "Quick Knowledge Check",
+              "type": "quiz",
+              "order_index": 2,
+              "content_json": {
+                "quiz": {
+                  "questions": [
+                    {
+                      "prompt": "Which action best supports belonging during meetings?",
+                      "choices": [
+                        { "id": "choice-a", "text": "Rotate facilitation so every voice is heard", "correct": true },
+                        { "id": "choice-b", "text": "Let the loudest contributors lead" },
+                        { "id": "choice-c", "text": "Skip check-ins to save time" }
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "title": "Applying Inclusive Behaviors",
+          "description": "Practice responding with empathy in real scenarios.",
+          "order_index": 2,
+          "lessons": [
+            {
+              "title": "Guided Reflection",
+              "type": "reflection",
+              "order_index": 1,
+              "content_json": {
+                "prompts": [
+                  "When did you last witness inclusive behavior?",
+                  "How will you amplify quieter voices this week?"
+                ]
+              }
+            },
+            {
+              "title": "Handling Real-Time Feedback",
+              "type": "interactive",
+              "order_index": 2,
+              "content_json": {
+                "elements": [
+                  {
+                    "id": "scene-1",
+                    "data": [
+                      {
+                        "text": "A teammate shares that your team ritual excludes part-time employees.",
+                        "choices": [
+                          { "id": "choice-1", "text": "Thank them and ask for suggestions" },
+                          { "id": "choice-2", "text": "Explain why the ritual cannot change" }
+                        ]
+                      }
+                    ]
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

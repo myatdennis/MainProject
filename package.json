@@ -24,6 +24,8 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "typecheck:server": "tsc --project tsconfig.server.json --noEmit",
+    "course:template": "node -e \"console.log('Course import template: docs/course-import-template.json')\"",
+    "course:validate": "node scripts/validate-course-import.mjs",
     "scan:placeholders": "node scripts/scan_placeholders.js",
     "test": "vitest",
     "test:ui": "vitest --ui",
@@ -157,7 +159,8 @@
     "vite": "^7.2.4",
     "vite-bundle-analyzer": "^1.2.3",
     "vitest": "^3.2.4",
-    "ws": "^8.13.0"
+    "ws": "^8.13.0",
+    "zod-to-json-schema": "^3.25.1"
   },
   "engines": {
     "node": ">=20.0.0"

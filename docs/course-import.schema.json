@@ -1,0 +1,273 @@
+{
+  "$ref": "#/definitions/CoursePayload",
+  "definitions": {
+    "CoursePayload": {
+      "type": "object",
+      "properties": {
+        "course": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "slug": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 191,
+              "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+            },
+            "title": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 280
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "description": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "maxLength": 5000
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "draft",
+                "published",
+                "archived"
+              ]
+            },
+            "version": {
+              "type": "integer",
+              "exclusiveMinimum": 0
+            },
+            "org_id": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "not": {}
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "organization_id": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "not": {}
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "organizationId": {
+              "anyOf": [
+                {
+                  "anyOf": [
+                    {
+                      "not": {}
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "external_id": {
+              "type": "string"
+            },
+            "meta": {
+              "type": "object",
+              "additionalProperties": {}
+            }
+          },
+          "required": [
+            "title"
+          ],
+          "additionalProperties": false
+        },
+        "modules": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "title": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 280
+              },
+              "description": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "maxLength": 4000
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "order_index": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
+              "orderIndex": {
+                "type": "integer",
+                "exclusiveMinimum": 0
+              },
+              "lessons": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "title": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 280
+                    },
+                    "description": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "maxLength": 4000
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "order_index": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "orderIndex": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "text",
+                        "quiz",
+                        "interactive",
+                        "reflection",
+                        "video",
+                        "resource",
+                        "document",
+                        "scenario",
+                        "download"
+                      ]
+                    },
+                    "duration_s": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "durationSeconds": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 0
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "content_json": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "content": {
+                      "type": "object",
+                      "additionalProperties": {}
+                    },
+                    "completion_rule_json": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": {}
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "completionRule": {
+                      "anyOf": [
+                        {
+                          "type": "object",
+                          "additionalProperties": {}
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "title",
+                    "type"
+                  ],
+                  "additionalProperties": false
+                },
+                "default": []
+              }
+            },
+            "required": [
+              "title"
+            ],
+            "additionalProperties": false
+          },
+          "default": []
+        }
+      },
+      "required": [
+        "course"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

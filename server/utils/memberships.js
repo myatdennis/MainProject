@@ -107,11 +107,19 @@ const isAcceptedMembership = (row = {}) => {
 };
 
 const mapMembershipRecord = (row = {}) => {
-  const resolvedOrgId = normalizeOrgId(row.organization_id);
+  const rawOrgId =
+    row.organization_id ??
+    row.org_id ??
+    row.organizationId ??
+    row.orgId ??
+    row.organization?.id ??
+    null;
+  const resolvedOrgId = normalizeOrgId(rawOrgId);
   return {
     organization_id: resolvedOrgId,
     orgId: resolvedOrgId,
     organizationId: resolvedOrgId,
+    org_id: resolvedOrgId,
     role: row.role || 'member',
     status: row.status || 'active',
     is_active: row.is_active ?? true,
@@ -259,6 +267,9 @@ const getMembershipSelectColumns = async () => {
   if (membershipColumnState.columns.has('profile_id')) {
     baseColumns.push('profile_id');
   }
+  if (membershipColumnState.columns.has('org_id')) {
+    baseColumns.push('org_id');
+  }
   return baseColumns.join(',');
 };
 
@@ -292,18 +303,22 @@ const fetchMembershipsFromBaseTables = async (userId, logPrefix) => {
   try {
     const selectClause = await getMembershipSelectColumns();
     const filter = await buildMembershipFilterString(userId);
-    let query = supabase
-      .from('organization_memberships')
-      .select(selectClause)
-      .eq('status', 'active')
-      .eq('is_active', true)
-      .not('accepted_at', 'is', null);
+    const activityFilter = 'status.eq.active,is_active.eq.true,accepted_at.not.is.null';
+    let query = supabase.from('organization_memberships').select(selectClause);
+    query = query.or(activityFilter);
 
     if (filter) {
       query = query.or(filter);
     } else {
       query = query.eq('user_id', userId);
     }
+
+    console.info(`${logPrefix} membership_base_query`, {
+      userId,
+      select: selectClause,
+      userFilter: filter || `user_id.eq.${userId}`,
+      activityFilter,
+    });
 
     const { data: membershipRows, error } = await query;
     if (error) {
@@ -363,6 +378,11 @@ export const getUserMemberships = async (userId, { logPrefix = '[memberships]' }
     return attachDiagnostics([], buildDiagnostics({ code: 'membership_query_error', severity: 'error', message: 'Supabase client unavailable' }));
   }
   try {
+    console.info(`${logPrefix} membership_view_query`, {
+      view: MEMBERSHIP_VIEW_NAME,
+      columns: VIEW_COLUMNS,
+      userId,
+    });
     const { data, error } = await supabase.from(MEMBERSHIP_VIEW_NAME).select(VIEW_COLUMNS).eq('user_id', userId);
 
     if (error) {

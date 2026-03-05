@@ -62,7 +62,7 @@ import { sendEmail } from './services/emailService.js';
 import { createMediaService } from './services/mediaService.js';
 import { isJwtSecretConfigured } from './utils/jwt.js';
 import { writeErrorDiagnostics, summarizeRequestBody } from './utils/errorDiagnostics.js';
-import { getMembershipColumnCapabilities, buildMembershipFilterString } from './utils/memberships.js';
+import getUserMemberships, { getMembershipColumnCapabilities, buildMembershipFilterString } from './utils/memberships.js';
 import {
   COURSE_WITH_MODULES_LESSONS_SELECT,
   MODULE_LESSONS_FOREIGN_TABLE,
@@ -336,6 +336,7 @@ await runSchemaDoctor();
 
 // Persistent storage file for demo mode
 const STORAGE_FILE = path.join(__dirname, 'demo-data.json');
+const COURSE_IMPORT_TEMPLATE_PATH = path.join(__dirname, '../docs/course-import-template.json');
 // Safety guard to avoid loading extremely large demo files that could trigger OOM (exit 137)
 const MAX_DEMO_FILE_BYTES = parseInt(process.env.DEMO_DATA_MAX_BYTES || '', 10) || 25 * 1024 * 1024; // 25MB default
 
@@ -1602,6 +1603,64 @@ app.use('/api/admin/analytics/export', adminAnalyticsExport);
 app.use('/api/admin/analytics/summary', adminAnalyticsSummary);
 app.use('/api/admin/users', adminUsersRouter);
 app.use('/api/admin/courses', authenticate, requireSupabaseUser, requireAdmin, adminCoursesRouter);
+
+app.get('/api/admin/courses/import/template', requireAdminAccess, (_req, res) => {
+  try {
+    const contents = fs.readFileSync(COURSE_IMPORT_TEMPLATE_PATH, 'utf-8');
+    res.setHeader('Content-Type', 'application/json');
+    res.send(contents);
+  } catch (error) {
+    console.error('[admin.courses.import.template] failed_to_load', error);
+    res.status(500).json({
+      error: 'template_unavailable',
+      message: 'Unable to load course import template.',
+    });
+  }
+});
+
+app.get('/api/admin/diagnostics/memberships', requireAdminAccess, async (req, res) => {
+  const context = requireUserContext(req, res);
+  if (!context) return;
+  const userId = context.userId;
+  const allowedColumns = new Set(['org_id', 'organization_id']);
+  const runColumnProbe = async (column) => {
+    if (!allowedColumns.has(column)) {
+      return { ok: false, rows: [], error: `unsupported_column:${column}` };
+    }
+    const text = `select ${column} as organization_id from organization_memberships where user_id = $1 and status = 'active' limit 5`;
+    try {
+      const { rows } = await pool.query(text, [userId]);
+      return { ok: true, rows };
+    } catch (error) {
+      return { ok: false, rows: [], error: error?.message || String(error) };
+    }
+  };
+
+  const [queryOrgId, queryOrganizationId] = await Promise.all([
+    runColumnProbe('org_id'),
+    runColumnProbe('organization_id'),
+  ]);
+
+  let rawMembershipRows = [];
+  try {
+    const rows = await getUserMemberships(userId, { logPrefix: '[admin-diagnostics]' });
+    rawMembershipRows = Array.isArray(rows) ? rows.slice(0, 5) : [];
+  } catch (error) {
+    console.warn('[admin-diagnostics] membership_fetch_failed', {
+      userId,
+      message: error?.message || String(error),
+    });
+  }
+
+  res.json({
+    supabaseUrlEnv: process.env.SUPABASE_URL || null,
+    dbHostUsed: databaseHost,
+    userId,
+    queryA_org_id: queryOrgId,
+    queryB_organization_id: queryOrganizationId,
+    rawMembershipRows,
+  });
+});
 
 // All organization workspace endpoints require authentication
 app.use('/api/orgs', authenticate);
@@ -6522,13 +6581,65 @@ const COURSE_IMPORT_TABLES = [
 
 app.post('/api/admin/courses/import', async (req, res) => {
   normalizeLegacyOrgInput(req.body, { surface: 'admin.courses.import', requestId: req.requestId });
-  const items = Array.isArray(req.body?.items) ? req.body.items : [];
-  if (items.length === 0) {
-    res.status(400).json({ error: 'items array is required' });
+  const parseBooleanFlag = (value) => {
+    if (typeof value === 'boolean') return value;
+    if (typeof value === 'string') {
+      const normalized = value.trim().toLowerCase();
+      if (!normalized) return false;
+      return ['true', '1', 'yes', 'y', 'on'].includes(normalized);
+    }
+    return false;
+  };
+  const extractImportItems = (body) => {
+    if (Array.isArray(body?.items)) {
+      return { entries: body.items, sourceLabel: 'items' };
+    }
+    if (Array.isArray(body?.courses)) {
+      return {
+        entries: body.courses.map((course) => ({ course })),
+        sourceLabel: 'courses',
+      };
+    }
+    if (body?.course) {
+      return { entries: [body], sourceLabel: 'items' };
+    }
+    return { entries: [], sourceLabel: 'items' };
+  };
+  const { entries: rawItems, sourceLabel } = extractImportItems(req.body);
+  if (rawItems.length === 0) {
+    res.status(400).json({ error: 'items_required', message: 'Provide an "items" or "courses" array with course data.' });
     return;
   }
   const context = requireUserContext(req, res);
   if (!context) return;
+  const globalOverwriteFlag = parseBooleanFlag(req.body?.overwrite);
+  const validationIssues = [];
+  const normalizedItems = rawItems.map((raw, index) => {
+    const payload = {
+      course: raw?.course ?? raw ?? {},
+      modules: Array.isArray(raw?.modules) ? raw.modules : [],
+    };
+    const validation = validateCoursePayload(payload);
+    if (!validation.ok) {
+      const issues = validation.issues.map((issue) => ({
+        path: `${sourceLabel}[${index}].${issue.path || ''}`.replace(/\.$/, ''),
+        message: issue.message,
+        code: issue.code || 'invalid',
+      }));
+      validationIssues.push({ index, issues });
+      return null;
+    }
+    return {
+      index,
+      course: validation.data.course,
+      modules: validation.data.modules,
+      overwrite: parseBooleanFlag(raw?.overwrite) || globalOverwriteFlag,
+    };
+  });
+  if (validationIssues.length > 0) {
+    res.status(422).json({ error: 'validation_failed', issues: validationIssues });
+    return;
+  }
 
   // In demo/E2E, snapshot and rollback on failure
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
@@ -6659,22 +6770,24 @@ app.post('/api/admin/courses/import', async (req, res) => {
   }
   try {
     const results = [];
-    for (const payload of items) {
-      const { course, modules = [] } = payload || {};
-      if (!course?.title) throw new Error('Course title is required');
+    for (const entry of normalizedItems) {
+      const { course, modules } = entry;
       const orgCandidates = [
         course?.organization_id,
         course?.org_id,
         course?.organizationId,
-        payload?.organization_id,
-        payload?.org_id,
-        payload?.organizationId,
+        req.body?.organization_id,
+        req.body?.org_id,
+        req.body?.organizationId,
         req.body?.organization_id,
         req.body?.org_id,
         req.body?.organizationId,
         req.activeOrgId,
         req.user?.activeOrgId,
         req.user?.organizationId,
+        ...(Array.isArray(context.memberships)
+          ? context.memberships.map((membership) => membership?.orgId ?? membership?.organization_id ?? membership?.org_id ?? null)
+          : []),
       ];
       let resolvedOrgId;
       try {
@@ -6687,7 +6800,11 @@ app.post('/api/admin/courses/import', async (req, res) => {
         throw orgErr;
       }
       if (!resolvedOrgId) {
-        res.status(400).json({ error: 'org_required', message: 'Organization required to create course' });
+        res.status(403).json({
+          error: 'org_scope_required',
+          message:
+            'We could not determine which organization this import belongs to. Include organization_id in the payload or ask an admin to grant you membership.',
+        });
         return;
       }
       const access = await requireOrgAccess(req, res, resolvedOrgId, { write: true, requireOrgAdmin: true });
@@ -6703,63 +6820,69 @@ app.post('/api/admin/courses/import', async (req, res) => {
       course.organization_id = resolvedOrgId;
       course.organizationId = resolvedOrgId;
       course.org_id = resolvedOrgId;
-      const upsertRes = await runSupabaseQueryWithRetry('admin.courses.import.upsert_course', () =>
-        supabase.from('courses').upsert({
-          id: course.id ?? undefined,
-          slug: course.slug ?? undefined,
-          title: course.title,
-          description: course.description ?? null,
-          status: course.status ?? 'draft',
-          version: course.version ?? 1,
-          organization_id: resolvedOrgId,
-          meta_json: { ...(course.meta ?? {}), ...(course.external_id ? { external_id: course.external_id } : {}) },
-        }).select('*').single(),
-      );
-      const courseRow = upsertRes.data;
-      // naive: clear and reinsert modules/lessons for this course
-      const existingModulesRes = await runSupabaseQueryWithRetry('admin.courses.import.fetch_modules', () =>
-        supabase.from('modules').select('id').eq('course_id', courseRow.id),
-      );
-      const existingModuleIds = (existingModulesRes.data || []).map((row) => row.id);
-
-      if (existingModuleIds.length > 0) {
-        await runSupabaseQueryWithRetry('admin.courses.import.delete_lessons', () =>
-          supabase.from('lessons').delete().in('module_id', existingModuleIds),
-        );
+      const slugSource = course.slug || course.title || course.id || `course-${randomUUID().slice(0, 8)}`;
+      course.slug = slugify(slugSource);
+      const { data: existingCourse, error: existingError } = await supabase
+        .from('courses')
+        .select('id, slug')
+        .eq('organization_id', resolvedOrgId)
+        .eq('slug', course.slug)
+        .maybeSingle();
+      if (existingError) {
+        throw existingError;
       }
-
-      await runSupabaseQueryWithRetry('admin.courses.import.delete_modules', () =>
-        supabase.from('modules').delete().eq('course_id', courseRow.id),
-      );
-
-      for (const [moduleIndex, module] of (modules || []).entries()) {
-        const modIns = await runSupabaseQueryWithRetry('admin.courses.import.insert_module', () =>
-          supabase.from('modules').insert({
-            id: module.id ?? undefined,
-            course_id: courseRow.id,
-            order_index: module.order_index ?? moduleIndex,
-            title: module.title,
-            description: module.description ?? null,
-          }).select('*').single(),
-        );
-        const modRow = modIns.data;
-        for (const [lessonIndex, lesson] of (module.lessons || []).entries()) {
-          await runSupabaseQueryWithRetry('admin.courses.import.insert_lesson', () =>
-            supabase.from('lessons').insert({
-              id: lesson.id ?? undefined,
-              module_id: modRow.id,
-              order_index: lesson.order_index ?? lessonIndex,
-              type: lesson.type,
-              title: lesson.title,
-              description: lesson.description ?? null,
-              duration_s: lesson.duration_s ?? null,
-              content_json: lesson.content_json ?? lesson.content ?? {},
-              completion_rule_json: lesson.completion_rule_json ?? lesson.completionRule ?? null,
-            }),
-          );
-        }
+      if (existingCourse && !entry.overwrite) {
+        res.status(409).json({
+          error: 'slug_conflict',
+          message:
+            'A course with this slug already exists in the selected organization. Choose a different slug or set "overwrite": true to replace it.',
+          slug: course.slug,
+          courseIndex: entry.index,
+        });
+        return;
       }
-      results.push({ id: courseRow.id, slug: courseRow.slug, title: courseRow.title });
+      if (existingCourse && entry.overwrite) {
+        course.id = course.id ?? existingCourse.id;
+      }
+      const modulesForRpc = modules.map((module, moduleIndex) => ({
+        id: module.id ?? undefined,
+        title: module.title,
+        description: module.description ?? null,
+        order_index: module.order_index ?? moduleIndex + 1,
+        lessons: (module.lessons || []).map((lesson, lessonIndex) => ({
+          id: lesson.id ?? undefined,
+          type: lesson.type,
+          title: lesson.title,
+          description: lesson.description ?? null,
+          order_index: lesson.order_index ?? lessonIndex + 1,
+          duration_s: lesson.duration_s ?? null,
+          content_json: lesson.content_json ?? lesson.content ?? {},
+          completion_rule_json: lesson.completion_rule_json ?? lesson.completionRule ?? null,
+        })),
+      }));
+      const rpcPayload = {
+        id: course.id ?? undefined,
+        slug: course.slug,
+        title: course.title,
+        description: course.description ?? null,
+        status: course.status ?? 'draft',
+        version: course.version ?? 1,
+        meta_json: course.meta ?? {},
+        modules: modulesForRpc,
+      };
+      const rpcRes = await supabase.rpc('upsert_course_graph', {
+        p_actor: context.userId ?? null,
+        p_org: resolvedOrgId,
+        p_course: rpcPayload,
+      });
+      if (rpcRes.error) {
+        throw rpcRes.error;
+      }
+      results.push({
+        id: rpcRes.data?.id ?? course.id ?? null,
+        slug: rpcRes.data?.slug ?? course.slug,
+        title: rpcRes.data?.title ?? course.title,
+      });
     }
     res.status(201).json({ data: results });
   } catch (error) {
