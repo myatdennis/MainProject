@@ -405,9 +405,9 @@ const corsOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
   .split(',')
   .map((value) => value.trim())
   .filter(Boolean);
-const inferredCookieDomain = process.env.COOKIE_DOMAIN || (isProduction ? '(request hostname derived)' : null);
-const cookieSameSite = isProduction ? 'none' : 'lax';
-const cookieSecure = isProduction;
+const inferredCookieDomain = process.env.COOKIE_DOMAIN || cookiePolicySnapshot.domain || '(request hostname derived)';
+const cookieSameSite = cookiePolicySnapshot.sameSite;
+const cookieSecure = cookiePolicySnapshot.secure;
 logger.info('startup_env_diagnostics', {
   nodeEnv: process.env.NODE_ENV || 'development',
   port: Number(process.env.PORT) || 8888,
@@ -749,6 +749,39 @@ const buildHealthPayload = async (overrides = {}) => {
     },
     ...overrides,
   };
+};
+
+const resolveAppVersion = () =>
+  process.env.APP_VERSION ||
+  process.env.VERCEL_GIT_COMMIT_SHA ||
+  process.env.GIT_SHA ||
+  process.env.HEROKU_RELEASE_VERSION ||
+  'dev';
+
+const respondWithHealthPayload = async (_req, res) => {
+  try {
+    await pool.query('select 1');
+    const payload = await buildHealthPayload();
+    res.status(200).json({
+      ok: true,
+      timestamp: new Date().toISOString(),
+      version: resolveAppVersion(),
+      status: payload.status,
+      supabase: payload.supabase,
+      offlineQueue: payload.offlineQueue,
+      storage: payload.storage,
+      realtime: payload.realtime,
+      metrics: payload.metrics,
+    });
+  } catch (error) {
+    logger.warn('health_check_failed', { message: error?.message || String(error), code: error?.code || null });
+    res.status(500).json({
+      ok: false,
+      code: error?.code ?? 'health_check_failed',
+      message: error?.message ?? 'Unable to verify system health.',
+      timestamp: new Date().toISOString(),
+    });
+  }
 };
 
 app.post('/api/admin/courses/:id/assign', async (req, res) => {
@@ -1234,9 +1267,9 @@ if (isProduction) {
 const PORT = Number(process.env.PORT) || 3000;
 logger.info('server_port', { port: PORT });
 
-// Core middleware ordering: CORS -> JSON -> request metadata.
-app.use(cookieParser());
+// Core middleware ordering: CORS -> cookies -> JSON -> request metadata.
 app.use(corsMiddleware);
+app.use(cookieParser());
 app.use(express.json({ limit: '10mb' }));
 app.use(attachRequestId);
 
@@ -1257,18 +1290,7 @@ app.use('/api/admin/surveys', createCorsRouteLogger('/api/admin/surveys'));
 app.use('/api/admin/organizations', createCorsRouteLogger('/api/admin/organizations'));
 app.use(['/api/health', '/api/health/'], createCorsRouteLogger('/api/health'));
 
-app.get('/health', async (_req, res) => {
-  try {
-    await pool.query('select 1');
-    res.json({ status: 'ok', database: 'connected' });
-  } catch (error) {
-    console.error('[health] database_check_failed', {
-      message: error?.message || String(error),
-      code: error?.code || null,
-    });
-    res.status(500).json({ status: 'error', database: 'disconnected' });
-  }
-});
+app.get(['/api/health', '/health'], respondWithHealthPayload);
 
 app.get('/api/health/db', async (_req, res) => {
   try {
@@ -3455,9 +3477,12 @@ const LESSON_PROGRESS_LEGACY_ORG_COLUMN = 'org_id';
 
 const getLessonProgressOrgColumn = () => {
   const preference = schemaSupportFlags.lessonProgressOrgColumn;
-  if (preference === 'missing') return null;
-  if (preference === LESSON_PROGRESS_LEGACY_ORG_COLUMN) return LESSON_PROGRESS_LEGACY_ORG_COLUMN;
-  if (preference === LESSON_PROGRESS_CANONICAL_ORG_COLUMN) return LESSON_PROGRESS_CANONICAL_ORG_COLUMN;
+  if (preference === 'missing') {
+    return null;
+  }
+  if (preference === LESSON_PROGRESS_LEGACY_ORG_COLUMN) {
+    return LESSON_PROGRESS_LEGACY_ORG_COLUMN;
+  }
   return LESSON_PROGRESS_CANONICAL_ORG_COLUMN;
 };
 
@@ -3488,11 +3513,13 @@ const handleLessonOrgColumnMissing = (missingColumn) => {
 
 const attachLessonOrgScope = (record, orgId) => {
   if (!record || !orgId) return;
-  const column = getLessonProgressOrgColumn();
-  if (!column) return;
-  record[column] = orgId;
-  if (column === LESSON_PROGRESS_LEGACY_ORG_COLUMN) {
+  record.organization_id = orgId;
+  if (schemaSupportFlags.lessonProgressOrgColumn === LESSON_PROGRESS_LEGACY_ORG_COLUMN) {
     // TODO: remove org_id/profile_id compatibility after launch stabilization
+    delete record.organization_id;
+    record.org_id = orgId;
+  } else {
+    delete record.org_id;
   }
 };
 
@@ -6849,11 +6876,292 @@ app.post('/api/admin/courses/import', async (req, res) => {
   });
 
   const globalOverwriteFlag = parseBooleanFlag(req.body?.overwrite);
+  const publishModeInput =
+    typeof req.body?.publishMode === 'string'
+      ? req.body.publishMode.trim().toLowerCase()
+      : null;
+  const publishFlag = parseBooleanFlag(req.body?.publish ?? req.body?.publishCourses);
+  const publishRequested = publishFlag || publishModeInput === 'published';
+  const canonicalizeStatus = (value, fallback = 'draft') => {
+    const normalized = typeof value === 'string' ? value.trim().toLowerCase() : '';
+    if (normalized === 'published' || normalized === 'draft' || normalized === 'archived') {
+      return normalized;
+    }
+    return fallback;
+  };
   const validationIssues = [];
+  const normalizeQuizOption = (option, index = 0) => {
+    if (typeof option === 'string') {
+      return { text: option, correct: false };
+    }
+    if (!option || typeof option !== 'object') {
+      return null;
+    }
+    const textCandidate =
+      (typeof option.text === 'string' && option.text.trim()) ||
+      (typeof option.label === 'string' && option.label.trim()) ||
+      (typeof option.title === 'string' && option.title.trim()) ||
+      null;
+    if (!textCandidate) {
+      return null;
+    }
+    return {
+      text: textCandidate,
+      correct: option.correct === true || option.isCorrect === true || option.answer === true || option.value === true,
+      id: option.id || option.value || `choice-${index}`,
+    };
+  };
+  const finalizeQuizOptions = (options = [], source = {}) => {
+    if (!options.length) return null;
+    if (!options.some((option) => option && option.correct)) {
+      const correctIndex =
+        typeof source.correctAnswerIndex === 'number'
+          ? source.correctAnswerIndex
+          : typeof source.correctChoiceIndex === 'number'
+          ? source.correctChoiceIndex
+          : undefined;
+      if (typeof correctIndex === 'number' && options[correctIndex]) {
+        options[correctIndex].correct = true;
+      }
+      if (typeof source.correctAnswerId === 'string') {
+        options.forEach((option) => {
+          if (String(option?.id ?? '').toLowerCase() === source.correctAnswerId.toLowerCase()) {
+            option.correct = true;
+          }
+        });
+      }
+      if (typeof source.answer === 'string') {
+        options.forEach((option) => {
+          if (String(option?.id ?? option?.value ?? option.text).toLowerCase() === source.answer.toLowerCase()) {
+            option.correct = true;
+          }
+        });
+      }
+      if (typeof source.correctAnswer === 'string' || typeof source.correct_option_id === 'string') {
+        const target = (source.correctAnswer || source.correct_option_id || '').toString().toLowerCase();
+        if (target) {
+          options.forEach((option) => {
+            if (String(option?.id ?? option?.value ?? option.text).toLowerCase() === target) {
+              option.correct = true;
+            }
+          });
+        }
+      }
+    }
+    return options.some((option) => option.correct) ? options : null;
+  };
+  const normalizeQuizQuestion = (candidate, index = 0) => {
+    if (!candidate) return null;
+    if (typeof candidate === 'string') {
+      return null;
+    }
+    if (Array.isArray(candidate?.items)) {
+      const nested = candidate.items
+        .map((item, nestedIndex) => normalizeQuizQuestion(item, nestedIndex))
+        .filter(Boolean);
+      return nested.length > 0 ? nested : null;
+    }
+    if (candidate?.question && Array.isArray(candidate.question?.items)) {
+      const nested = candidate.question.items
+        .map((item, nestedIndex) => normalizeQuizQuestion(item, nestedIndex))
+        .filter(Boolean);
+      return nested.length > 0 ? nested : null;
+    }
+    const source = candidate.props || candidate.data || candidate.content || candidate;
+    let itemsLooksLikeQuestionArray = false;
+    if (Array.isArray(source?.items)) {
+      itemsLooksLikeQuestionArray = source.items.some(
+        (item) =>
+          (typeof item?.prompt === 'string' && item.prompt.trim()) ||
+          (typeof item?.question === 'string' && item.question.trim()) ||
+          (Array.isArray(item?.choices) && item.choices.length > 0) ||
+          (Array.isArray(item?.options) && item.options.length > 0),
+      );
+      if (itemsLooksLikeQuestionArray) {
+        const nested = source.items
+          .map((item, nestedIndex) => normalizeQuizQuestion(item, nestedIndex))
+          .filter(Boolean);
+        if (nested.length > 0) {
+          return nested;
+        }
+      }
+    }
+    const prompt =
+      (typeof source?.prompt === 'string' && source.prompt.trim()) ||
+      (typeof source?.question === 'string' && source.question.trim()) ||
+      (typeof source?.text === 'string' && source.text.trim()) ||
+      (typeof candidate?.heading === 'string' && candidate.heading.trim()) ||
+      (typeof candidate?.title === 'string' && candidate.title.trim()) ||
+      null;
+    if (!prompt) return null;
+    const rawOptions =
+      (Array.isArray(source?.options) && source.options) ||
+      (Array.isArray(source?.choices) && source.choices) ||
+      (Array.isArray(source?.answers) && source.answers) ||
+      (Array.isArray(source?.responses) && source.responses) ||
+      (!itemsLooksLikeQuestionArray && Array.isArray(source?.items) ? source.items : null) ||
+      null;
+    if (!rawOptions || rawOptions.length === 0) {
+      return null;
+    }
+    const normalizedOptions = rawOptions.map((option, optionIndex) => normalizeQuizOption(option, optionIndex)).filter(Boolean);
+    const finalizedOptions = finalizeQuizOptions(normalizedOptions, source);
+    if (!finalizedOptions) {
+      return null;
+    }
+    return {
+      prompt,
+      options: finalizedOptions,
+    };
+  };
+  const collectQuizQuestionsFromBlocks = (lesson) => {
+    const blocksSources = [
+      Array.isArray(lesson?.content?.blocks) ? lesson.content.blocks : null,
+      Array.isArray(lesson?.content_json?.blocks) ? lesson.content_json.blocks : null,
+      Array.isArray(lesson?.blocks) ? lesson.blocks : null,
+      Array.isArray(lesson?.content?.body?.blocks) ? lesson.content.body.blocks : null,
+      Array.isArray(lesson?.content_json?.body?.blocks) ? lesson.content_json.body.blocks : null,
+    ].filter(Boolean);
+    if (!blocksSources.length) return [];
+    const questions = [];
+    blocksSources.forEach((blocks) => {
+      blocks.forEach((block, blockIndex) => {
+        const normalized = normalizeQuizQuestion(block, blockIndex);
+        if (Array.isArray(normalized)) {
+          normalized.forEach((question) => question && questions.push(question));
+        } else if (normalized) {
+          questions.push(normalized);
+        } else {
+          const source = block?.props || block?.data || block;
+          if (Array.isArray(source?.items)) {
+            source.items.forEach((item, nestedIndex) => {
+              const nested = normalizeQuizQuestion(item, nestedIndex);
+              if (Array.isArray(nested)) {
+                nested.forEach((question) => question && questions.push(question));
+              } else if (nested) {
+                questions.push(nested);
+              }
+            });
+          }
+        }
+      });
+    });
+    return questions;
+  };
+  const deriveQuizQuestions = (lesson) => {
+    const questions = [];
+    const mergeQuestions = (source) => {
+      if (!Array.isArray(source)) return;
+      source.forEach((item, index) => {
+        const normalized = normalizeQuizQuestion(item, index);
+        if (Array.isArray(normalized)) {
+          normalized.forEach((question) => question && questions.push(question));
+        } else if (normalized) {
+          questions.push(normalized);
+        }
+      });
+    };
+    mergeQuestions(lesson?.questions);
+    mergeQuestions(lesson?.content?.questions);
+    mergeQuestions(lesson?.content?.quiz?.questions);
+    mergeQuestions(lesson?.content_json?.questions);
+    mergeQuestions(lesson?.content_json?.quiz?.questions);
+    mergeQuestions(lesson?.content?.items);
+    mergeQuestions(lesson?.content_json?.items);
+    const blockDerived = collectQuizQuestionsFromBlocks(lesson);
+    blockDerived.forEach((question) => questions.push(question));
+    return questions.filter(Boolean);
+  };
+  const assignQuizQuestions = (lesson, questions) => {
+    if (!lesson || !Array.isArray(questions) || questions.length === 0) return;
+    if (!lesson.content || typeof lesson.content !== 'object') {
+      lesson.content = {};
+    }
+    lesson.content.questions = questions;
+    lesson.content.body =
+      typeof lesson.content.body === 'object'
+        ? { ...lesson.content.body, questions }
+        : { questions };
+    const existingBody =
+      lesson.content_json && typeof lesson.content_json.body === 'object' ? lesson.content_json.body : {};
+    lesson.content_json = {
+      ...(lesson.content_json && typeof lesson.content_json === 'object' ? lesson.content_json : {}),
+      body: {
+        ...(existingBody && typeof existingBody === 'object' ? existingBody : {}),
+        questions,
+      },
+    };
+  };
+  const assignInteractiveElements = (lesson, elements) => {
+    if (!lesson || !Array.isArray(elements) || elements.length === 0) return;
+    if (!lesson.content || typeof lesson.content !== 'object') {
+      lesson.content = {};
+    }
+    lesson.content.branchingElements = elements;
+    lesson.content.body =
+      typeof lesson.content.body === 'object'
+        ? { ...lesson.content.body, elements }
+        : { elements };
+    const existingBody =
+      lesson.content_json && typeof lesson.content_json.body === 'object' ? lesson.content_json.body : {};
+    lesson.content_json = {
+      ...(lesson.content_json && typeof lesson.content_json === 'object' ? lesson.content_json : {}),
+      body: {
+        ...(existingBody && typeof existingBody === 'object' ? existingBody : {}),
+        elements,
+      },
+    };
+  };
+  const normalizeLessonForImport = (lesson = {}) => {
+    if (!lesson || typeof lesson !== 'object') return lesson;
+    const next = { ...lesson };
+    if (typeof next.type === 'string') {
+      const normalizedType = next.type.trim().toLowerCase();
+      if (normalizedType === 'assessment' || normalizedType === 'knowledge_check' || normalizedType === 'knowledge-check') {
+        next.type = 'quiz';
+      } else if (normalizedType === 'branching' || normalizedType === 'choose_your_path' || normalizedType === 'choose-your-path') {
+        next.type = 'interactive';
+      }
+    }
+    if (next.type === 'quiz') {
+      const quizQuestions = deriveQuizQuestions(next);
+      if (quizQuestions.length > 0) {
+        assignQuizQuestions(next, quizQuestions);
+        // Example: a lesson with { type: 'quiz', content: { blocks: [{ props: { prompt, choices } }] } }
+        // becomes lesson.content.questions = [{ prompt, options: [...] }] before validation.
+      }
+    }
+    if (next.type === 'interactive') {
+      const branchingSource =
+        next.branchingElements ||
+        next.content?.branchingElements ||
+        next.content?.interactive?.branchingElements ||
+        next.content?.branches ||
+        next.content?.nodes ||
+        next.content_json?.branchingElements ||
+        next.content_json?.interactive?.branchingElements ||
+        next.content_json?.branches ||
+        next.content_json?.nodes ||
+        null;
+      if (Array.isArray(branchingSource)) {
+        assignInteractiveElements(next, branchingSource);
+      }
+    }
+    return next;
+  };
+
+  const normalizeModuleForImport = (module = {}) => {
+    const lessons = Array.isArray(module?.lessons) ? module.lessons : [];
+    return {
+      ...module,
+      lessons: lessons.map((lesson) => normalizeLessonForImport(lesson)),
+    };
+  };
+
   const normalizedItems = rawItems.map((rawEntry) => {
     const payload = {
       course: rawEntry?.course ?? rawEntry ?? {},
-      modules: Array.isArray(rawEntry?.modules) ? rawEntry.modules : [],
+      modules: Array.isArray(rawEntry?.modules) ? rawEntry.modules.map((m) => normalizeModuleForImport(m)) : [],
     };
     const validation = validateCoursePayload(payload);
     if (!validation.ok) {
@@ -6887,7 +7195,7 @@ app.post('/api/admin/courses/import', async (req, res) => {
       requestId: req.requestId ?? null,
       orgId: resolvedOrganizationId,
       entryCount: rawItems.length,
-      issues: details,
+      details,
     });
     respondImportError({
       res,
@@ -7038,7 +7346,14 @@ app.post('/api/admin/courses/import', async (req, res) => {
     for (const entry of preparedEntries) {
       const { course, modules, index: courseIndex } = entry;
       const resolvedOrgId = resolvedOrganizationId;
-      if (String(course.status || '').toLowerCase() === 'published') {
+      const userProvidedStatus = typeof course.status === 'string' && course.status.trim().length > 0;
+      let normalizedStatus = canonicalizeStatus(course.status, publishRequested ? 'published' : 'draft');
+      if (!userProvidedStatus && publishRequested) {
+        normalizedStatus = 'published';
+      }
+      course.status = normalizedStatus;
+
+      if (course.status === 'published') {
         const shaped = shapeCourseForValidation({ ...course, modules });
         const validation = validatePublishableCourse(shaped, { intent: 'publish' });
         if (!validation.isValid) {
@@ -7158,12 +7473,16 @@ app.post('/api/admin/courses/import', async (req, res) => {
         id: rpcRes.data?.id ?? course.id ?? null,
         slug: rpcRes.data?.slug ?? course.slug,
         title: rpcRes.data?.title ?? course.title,
+        status: rpcRes.data?.status ?? course.status ?? 'draft',
+        organization_id: rpcRes.data?.organization_id ?? resolvedOrgId,
+        published_at: rpcRes.data?.published_at ?? null,
       });
       logCourseImportEvent('import_persist_success', {
         requestId: req.requestId ?? null,
         orgId: resolvedOrgId,
         slug: course.slug,
         courseId: rpcRes.data?.id ?? course.id ?? null,
+        status: rpcRes.data?.status ?? course.status ?? null,
         courseIndex: entry.index,
       });
     }
@@ -7172,7 +7491,15 @@ app.post('/api/admin/courses/import', async (req, res) => {
       orgId: resolvedOrganizationId,
       imported: results.length,
     });
-    res.status(201).json({ ok: true, data: results, requestId: req.requestId ?? null });
+    res.status(201).json({
+      ok: true,
+      data: results,
+      meta: {
+        publishMode: publishRequested ? 'published' : 'draft',
+        imported: results.length,
+      },
+      requestId: req.requestId ?? null,
+    });
   } catch (error) {
     logCourseImportEvent('import_failed', {
       requestId: req.requestId ?? null,
@@ -7930,7 +8257,29 @@ app.get('/api/client/courses', async (req, res) => {
       error.queryName = queryName;
       throw error;
     }
-    res.status(200).json({ ok: true, data: data || [], requestId });
+    const list = Array.isArray(data) ? data : [];
+    const responseMeta = {
+      orgId: assignmentOrgId ?? (scopedOrgIds.length === 1 ? scopedOrgIds[0] : null),
+      scopedOrgCount: scopedOrgIds.length,
+      assignedOnly,
+      count: list.length,
+    };
+    if (list.length === 0) {
+      logger.warn('[client/courses] empty_catalog', {
+        requestId,
+        orgId: responseMeta.orgId,
+        assignedOnly,
+        scopedOrgCount: responseMeta.scopedOrgCount,
+      });
+    } else if (process.env.NODE_ENV !== 'production') {
+      logger.info('[client/courses] catalog_loaded', {
+        requestId,
+        orgId: responseMeta.orgId,
+        assignedOnly,
+        count: list.length,
+      });
+    }
+    res.status(200).json({ ok: true, data: list, requestId, meta: responseMeta });
   } catch (error) {
     logStructuredError('[client/courses] published_fetch_failed', error, {
       route: '/api/client/courses',

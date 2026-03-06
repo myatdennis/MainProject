@@ -31,16 +31,7 @@ interface CapabilityCheckResult {
 }
 
 const AdminLogin: React.FC = () => {
-  const {
-    login,
-    logout,
-    isAuthenticated,
-    forgotPassword,
-    authInitializing,
-    verifyMfa,
-    sessionStatus,
-    user,
-  } = useSecureAuth();
+  const { login, isAuthenticated, forgotPassword, authInitializing, verifyMfa, sessionStatus, user } = useSecureAuth();
   const runtimeStatus = useRuntimeStatus();
   const supabaseReady = runtimeStatus.supabaseConfigured && runtimeStatus.supabaseHealthy;
   const [email, setEmail] = useState('mya@the-huddle.co');
@@ -215,13 +206,15 @@ const AdminLogin: React.FC = () => {
     updateDevSessionSnapshot('initial_render');
   }, [updateDevSessionSnapshot]);
 
-  const requireAdminSignOut = useCallback(async () => {
-    try {
-      await logout('admin');
-    } finally {
-      navigate('/admin/login', { replace: true });
-    }
-  }, [logout, navigate]);
+  const markSessionExpired = useCallback(
+    (context: string) => {
+      logAuthDiagnostic('AdminLogin.session_expired', { context, path: location.pathname });
+      setCapabilityFallbackActive(true);
+      setShowNotAuthorizedPanel(false);
+      setAuthError('Your session expired. Please sign in again.');
+    },
+    [location.pathname],
+  );
 
   const computeAdminAllowed = (payload?: AdminCapabilityResponse | null) => {
     return hasAdminPortalAccess(payload ?? null);
@@ -246,7 +239,7 @@ const AdminLogin: React.FC = () => {
         if (capabilityError instanceof ApiResponseError) {
           if (capabilityError.status === 401) {
             recordDevApiEvent('/admin/me', 401, 'unauthenticated');
-            await requireAdminSignOut();
+            markSessionExpired('admin_me_401');
             return { allowed: false, reason: 'unauthenticated' };
           }
           if (capabilityError.status === 403) {
@@ -262,13 +255,13 @@ const AdminLogin: React.FC = () => {
           recordDevApiEvent('/admin/me', capabilityError.status, fallbackReason);
         } else {
           recordDevApiEvent('/admin/me', 'error', capabilityError.message);
-          await requireAdminSignOut();
+          markSessionExpired('admin_me_generic_auth_error');
           return { allowed: false, reason: 'unauthenticated' };
         }
       }
       console.warn('[AdminLogin] capability check failed', capabilityError);
       if (capabilityError instanceof AuthExpiredError || capabilityError instanceof NotAuthenticatedError) {
-        await requireAdminSignOut();
+        markSessionExpired('admin_me_token_missing');
         return { allowed: false, reason: 'unauthenticated' };
       }
       return { allowed: false, reason: fallbackReason };
@@ -358,15 +351,18 @@ const AdminLogin: React.FC = () => {
     return false;
   }, [captureDeniedUserSnapshot, capabilityErrorMessage, navigateToAdminLanding, verifyAdminCapability]);
 
+  const autoRedirectedRef = useRef(false);
+
   useEffect(() => {
-    if (sessionStatus !== 'authenticated') {
+    if (autoRedirectedRef.current) {
       return;
     }
-    if (!hasSession) {
+    if (sessionStatus !== 'authenticated' || !hasSession) {
       return;
     }
     const snapshot = getAdminAccessSnapshot();
     if (hasAdminPortalAccess(snapshot?.payload ?? null)) {
+      autoRedirectedRef.current = true;
       logAuthDiagnostic('AdminLogin.autoredirect.cached_access', {
         target: landingTarget.chosenTarget,
       });

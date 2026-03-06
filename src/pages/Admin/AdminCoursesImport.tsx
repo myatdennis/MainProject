@@ -105,6 +105,7 @@ const AdminCoursesImport: React.FC = () => {
   const [fileName, setFileName] = useState<string | null>(null);
   const [items, setItems] = useState<ImportItem[]>([]);
   const [existingSlugs, setExistingSlugs] = useState<Set<string>>(new Set());
+  const [autoPublish, setAutoPublish] = useState(true);
   const [importing, setImporting] = useState(false);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
@@ -221,13 +222,18 @@ const AdminCoursesImport: React.FC = () => {
     if (items.length === 0) return;
     setImporting(true);
     try {
-      const payload = { items };
+      const payload = { items, publishMode: autoPublish ? 'published' : 'draft' };
       const res = await apiRequest<{ data: Array<{ id: string; slug?: string; title: string }> }>(
         '/api/admin/courses/import',
         { method: 'POST', body: payload, noTransform: true }
       );
       const count = Array.isArray((res as any)?.data) ? (res as any).data.length : items.length;
-      showToast(`Imported ${count} course(s) successfully`, 'success');
+      showToast(
+        autoPublish
+          ? `Imported and published ${count} course${count === 1 ? '' : 's'} successfully`
+          : `Imported ${count} course${count === 1 ? '' : 's'} as drafts`,
+        'success',
+      );
       navigate('/admin/courses');
     } catch (e: any) {
       const msg = e?.body?.error || e?.message || 'Import failed';
@@ -235,7 +241,7 @@ const AdminCoursesImport: React.FC = () => {
     } finally {
       setImporting(false);
     }
-  }, [items, navigate, showToast]);
+  }, [autoPublish, items, navigate, showToast]);
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
@@ -244,6 +250,22 @@ const AdminCoursesImport: React.FC = () => {
       </div>
       <h1 className="text-2xl font-bold text-gray-900 mb-2">Import Courses</h1>
       <p className="text-gray-600 mb-6">Upload JSON or CSV to create/update courses. We’ll preview changes before saving.</p>
+      <div className="mb-4 flex items-center gap-3 rounded-2xl border border-cloud bg-white px-4 py-3 text-sm shadow-sm">
+        <label className="flex flex-1 items-start gap-3 text-left">
+          <input
+            type="checkbox"
+            className="mt-1 h-4 w-4 rounded border-mist text-skyblue focus:ring-skyblue"
+            checked={autoPublish}
+            onChange={(event) => setAutoPublish(event.target.checked)}
+          />
+          <span className="text-gray-700">
+            Publish courses immediately after import
+            <span className="block text-xs text-slate/70">
+              Uncheck if you’d like to review the imported drafts before they appear in the learner catalog.
+            </span>
+          </span>
+        </label>
+      </div>
 
       <div
         className={`bg-white p-6 rounded-lg shadow-sm border ${dragActive ? 'border-sky-400 ring-2 ring-sky-200' : 'border-gray-200'}`}
