@@ -6890,6 +6890,18 @@ app.post('/api/admin/courses/import', async (req, res) => {
     return fallback;
   };
   const validationIssues = [];
+  const ensureLessonContentContainers = (lesson) => {
+    if (!lesson || typeof lesson !== 'object') return;
+    if (!lesson.content || typeof lesson.content !== 'object') {
+      lesson.content = {};
+    }
+    if (!lesson.content_json || typeof lesson.content_json !== 'object') {
+      lesson.content_json = {};
+    }
+    if (!lesson.content_json.body || typeof lesson.content_json.body !== 'object') {
+      lesson.content_json.body = {};
+    }
+  };
   const normalizeQuizOption = (option, index = 0) => {
     if (typeof option === 'string') {
       return { text: option, correct: false };
@@ -7062,21 +7074,25 @@ app.post('/api/admin/courses/import', async (req, res) => {
       });
     };
     mergeQuestions(lesson?.questions);
+    mergeQuestions(lesson?.quizQuestions);
     mergeQuestions(lesson?.content?.questions);
     mergeQuestions(lesson?.content?.quiz?.questions);
+    mergeQuestions(lesson?.content?.items);
+    mergeQuestions(lesson?.content?.body?.questions);
+    mergeQuestions(lesson?.content?.body?.blocks);
     mergeQuestions(lesson?.content_json?.questions);
     mergeQuestions(lesson?.content_json?.quiz?.questions);
-    mergeQuestions(lesson?.content?.items);
     mergeQuestions(lesson?.content_json?.items);
+    mergeQuestions(lesson?.content_json?.body?.questions);
+    mergeQuestions(lesson?.content_json?.body?.blocks);
+    mergeQuestions(collectLessonItems(lesson));
     const blockDerived = collectQuizQuestionsFromBlocks(lesson);
     blockDerived.forEach((question) => questions.push(question));
     return questions.filter(Boolean);
   };
   const assignQuizQuestions = (lesson, questions) => {
     if (!lesson || !Array.isArray(questions) || questions.length === 0) return;
-    if (!lesson.content || typeof lesson.content !== 'object') {
-      lesson.content = {};
-    }
+    ensureLessonContentContainers(lesson);
     lesson.content.questions = questions;
     lesson.content.body =
       typeof lesson.content.body === 'object'
@@ -7094,9 +7110,7 @@ app.post('/api/admin/courses/import', async (req, res) => {
   };
   const assignInteractiveElements = (lesson, elements) => {
     if (!lesson || !Array.isArray(elements) || elements.length === 0) return;
-    if (!lesson.content || typeof lesson.content !== 'object') {
-      lesson.content = {};
-    }
+    ensureLessonContentContainers(lesson);
     lesson.content.branchingElements = elements;
     lesson.content.body =
       typeof lesson.content.body === 'object'
@@ -7112,9 +7126,91 @@ app.post('/api/admin/courses/import', async (req, res) => {
       },
     };
   };
-  const normalizeLessonForImport = (lesson = {}) => {
+  const normalizeBranchNode = (node, index = 0) => {
+    if (!node || typeof node !== 'object') return null;
+    const source = node.props || node.data || node;
+    const prompt =
+      (typeof source?.prompt === 'string' && source.prompt.trim()) ||
+      (typeof source?.question === 'string' && source.question.trim()) ||
+      (typeof source?.text === 'string' && source.text.trim()) ||
+      (typeof node?.title === 'string' && node.title.trim()) ||
+      null;
+    if (!prompt) return null;
+    const rawOptions =
+      (Array.isArray(source?.choices) && source.choices) ||
+      (Array.isArray(source?.options) && source.options) ||
+      (Array.isArray(source?.responses) && source.responses) ||
+      (Array.isArray(source?.nodes) && source.nodes) ||
+      (Array.isArray(source?.branches) && source.branches) ||
+      null;
+    if (!rawOptions || rawOptions.length === 0) return null;
+    const options = rawOptions
+      .map((option, optionIndex) => {
+        if (typeof option === 'string') {
+          return { text: option, nextNodeId: null };
+        }
+        if (!option || typeof option !== 'object') {
+          return null;
+        }
+        const text =
+          (typeof option.text === 'string' && option.text.trim()) ||
+          (typeof option.label === 'string' && option.label.trim()) ||
+          (typeof option.title === 'string' && option.title.trim()) ||
+          null;
+        if (!text) return null;
+        return {
+          id: option.id || option.value || `${index}-${optionIndex}`,
+          text,
+          nextNodeId: option.to || option.next || option.target || option.nextNodeId || null,
+        };
+      })
+      .filter(Boolean);
+    if (options.length === 0) return null;
+    return {
+      id: source.id || node.id || `node-${index}`,
+      prompt,
+      options,
+    };
+  };
+
+  const deriveBranchingElements = (lesson) => {
+    const candidates = [
+      Array.isArray(lesson?.branchingElements) ? lesson.branchingElements : null,
+      Array.isArray(lesson?.branches) ? lesson.branches : null,
+      Array.isArray(lesson?.nodes) ? lesson.nodes : null,
+      Array.isArray(lesson?.content?.branchingElements) ? lesson.content.branchingElements : null,
+      Array.isArray(lesson?.content?.branches) ? lesson.content.branches : null,
+      Array.isArray(lesson?.content?.nodes) ? lesson.content.nodes : null,
+      Array.isArray(lesson?.content?.interactive?.branchingElements)
+        ? lesson.content.interactive.branchingElements
+        : null,
+      Array.isArray(lesson?.content_json?.branchingElements) ? lesson.content_json.branchingElements : null,
+      Array.isArray(lesson?.content_json?.interactive?.branchingElements)
+        ? lesson.content_json.interactive.branchingElements
+        : null,
+      Array.isArray(lesson?.content_json?.nodes) ? lesson.content_json.nodes : null,
+      Array.isArray(lesson?.content_json?.body?.nodes) ? lesson.content_json.body.nodes : null,
+      Array.isArray(lesson?.content_json?.body?.branches) ? lesson.content_json.body.branches : null,
+    ].filter(Boolean);
+    const blockNodes = collectLessonFallbackBlocks(lesson)
+      .map((block) => {
+        const dataNodes =
+          (Array.isArray(block?.props?.nodes) && block.props.nodes) ||
+          (Array.isArray(block?.data?.nodes) && block.data.nodes) ||
+          null;
+        return dataNodes || null;
+      })
+      .filter(Boolean);
+    candidates.push(...blockNodes);
+    const flattened = candidates.flat().filter(Boolean);
+    const normalized = flattened.map((node, index) => normalizeBranchNode(node, index)).filter(Boolean);
+    return normalized;
+  };
+
+  const normalizeLessonForImport = (lesson = {}, { moduleIndex = 0, lessonIndex = 0 } = {}) => {
     if (!lesson || typeof lesson !== 'object') return lesson;
     const next = { ...lesson };
+    ensureLessonContentContainers(next);
     if (typeof next.type === 'string') {
       const normalizedType = next.type.trim().toLowerCase();
       if (normalizedType === 'assessment' || normalizedType === 'knowledge_check' || normalizedType === 'knowledge-check') {
@@ -7132,36 +7228,40 @@ app.post('/api/admin/courses/import', async (req, res) => {
       }
     }
     if (next.type === 'interactive') {
-      const branchingSource =
-        next.branchingElements ||
-        next.content?.branchingElements ||
-        next.content?.interactive?.branchingElements ||
-        next.content?.branches ||
-        next.content?.nodes ||
-        next.content_json?.branchingElements ||
-        next.content_json?.interactive?.branchingElements ||
-        next.content_json?.branches ||
-        next.content_json?.nodes ||
-        null;
-      if (Array.isArray(branchingSource)) {
+      const branchingSource = deriveBranchingElements(next);
+      if (Array.isArray(branchingSource) && branchingSource.length > 0) {
         assignInteractiveElements(next, branchingSource);
       }
     }
+    const derivedQuestionsCount = Array.isArray(next.content?.questions) ? next.content.questions.length : 0;
+    const derivedBranchCount = Array.isArray(next.content?.branchingElements)
+      ? next.content.branchingElements.length
+      : 0;
+    logCourseImportEvent('lesson_normalization', {
+      requestId: req.requestId ?? null,
+      moduleIndex,
+      lessonIndex,
+      lessonType: next.type ?? null,
+      derivedQuestionsCount,
+      derivedBranchCount,
+    });
     return next;
   };
 
-  const normalizeModuleForImport = (module = {}) => {
+  const normalizeModuleForImport = (module = {}, { moduleIndex = 0 } = {}) => {
     const lessons = Array.isArray(module?.lessons) ? module.lessons : [];
     return {
       ...module,
-      lessons: lessons.map((lesson) => normalizeLessonForImport(lesson)),
+      lessons: lessons.map((lesson, lessonIndex) => normalizeLessonForImport(lesson, { moduleIndex, lessonIndex })),
     };
   };
 
   const normalizedItems = rawItems.map((rawEntry) => {
     const payload = {
       course: rawEntry?.course ?? rawEntry ?? {},
-      modules: Array.isArray(rawEntry?.modules) ? rawEntry.modules.map((m) => normalizeModuleForImport(m)) : [],
+      modules: Array.isArray(rawEntry?.modules)
+        ? rawEntry.modules.map((m, moduleIndex) => normalizeModuleForImport(m, { moduleIndex }))
+        : [],
     };
     const validation = validateCoursePayload(payload);
     if (!validation.ok) {
