@@ -1899,7 +1899,13 @@ function normalizeOrgIdValue(value) {
     return String(value);
   }
   if (value && typeof value === 'object') {
-    const candidate = value.organization_id ?? value.org_id ?? value.id ?? null;
+    const candidate =
+      value.organization_id ??
+      value.organizationId ??
+      value.orgId ??
+      value.org_id ?? // TODO: remove org_id/profile_id compatibility after launch stabilization
+      value.id ??
+      null;
     if (typeof candidate === 'string') {
       const trimmed = candidate.trim();
       return trimmed || null;
@@ -7431,6 +7437,7 @@ app.delete('/api/admin/courses/:id', async (req, res) => {
 });
 
 app.get('/api/client/courses', async (req, res) => {
+  const requestId = req.requestId ?? null;
   const assignedOnly = String(req.query.assigned || 'false').toLowerCase() === 'true';
   const queryOrgParam =
     typeof req.query.orgId === 'string'
@@ -7443,22 +7450,36 @@ app.get('/api/client/courses', async (req, res) => {
 
   const orgScope = await resolveOrgScopeForRequest(req, context, { queryOrgId: queryOrgParam });
   const { resolvedOrgId, scopedOrgIds, membershipSet, primaryOrgId } = orgScope;
+  const requestOrgId = req.organizationId || null;
+  const effectiveOrgId = requestOrgId || resolvedOrgId || primaryOrgId || null;
 
-  if (resolvedOrgId && !context.isPlatformAdmin && !membershipSet.has(resolvedOrgId)) {
-    res.status(403).json({ error: 'org_forbidden', message: 'You do not have access to this organization.' });
+  if (effectiveOrgId && !context.isPlatformAdmin && !membershipSet.has(effectiveOrgId)) {
+    res.status(403).json({
+      ok: false,
+      code: 'org_forbidden',
+      message: 'You do not have access to this organization.',
+      requestId,
+    });
     return;
   }
 
   if (!context.isPlatformAdmin && scopedOrgIds.length === 0) {
-    res.status(403).json({ error: 'org_membership_required', message: 'Organization membership required.' });
+    res.status(403).json({
+      ok: false,
+      code: 'org_membership_required',
+      message: 'Organization membership required.',
+      requestId,
+    });
     return;
   }
 
-  const assignmentOrgId = resolvedOrgId ?? primaryOrgId;
+  const assignmentOrgId = effectiveOrgId ?? primaryOrgId;
   if (assignedOnly && !assignmentOrgId && !context.isPlatformAdmin) {
     res.status(400).json({
-      error: 'org_required',
+      ok: false,
+      code: 'org_required',
       message: 'Specify an orgId or set an active organization to view assignments.',
+      requestId,
     });
     return;
   }
@@ -7603,11 +7624,12 @@ app.get('/api/client/courses', async (req, res) => {
         })),
       };
     });
-    res.json({ data });
+    return data;
   };
 
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
-    await respondWithDemoCourses();
+    const demoData = await respondWithDemoCourses();
+    res.status(200).json({ ok: true, data: demoData, requestId });
     return;
   }
 
@@ -7617,7 +7639,7 @@ app.get('/api/client/courses', async (req, res) => {
     if (assignedOnly && assignmentOrgId) {
       assignmentCourseIds = await resolveAssignmentCourseIds();
       if (assignedOnly && Array.isArray(assignmentCourseIds) && assignmentCourseIds.length === 0) {
-        res.json({ data: [] });
+        res.status(200).json({ ok: true, data: [], requestId });
         return;
       }
     }
@@ -7651,35 +7673,22 @@ app.get('/api/client/courses', async (req, res) => {
       error.queryName = queryName;
       throw error;
     }
-    res.json({ data });
+    res.status(200).json({ ok: true, data: data || [], requestId });
   } catch (error) {
     logStructuredError('[client/courses] published_fetch_failed', error, {
       route: '/api/client/courses',
       queryName: error?.queryName ?? 'client_courses_published',
       assignedOnly,
       orgId: assignmentOrgId ?? null,
+      requestId,
     });
-    if (DEV_FALLBACK) {
-      console.warn('[client/courses] Falling back to demo dataset because Supabase query failed.');
-      await respondWithDemoCourses();
-      return;
-    }
-    res.json({
-      data: [],
-      meta: {
-        warning: 'catalog_unavailable',
-        code: error?.code ?? null,
-        message: error?.message ?? null,
-        hint: error?.hint ?? null,
-        queryName: error?.queryName ?? 'client_courses_published',
-      },
-      diagnosticBanner: {
-        ok: false,
-        code: error?.code ?? null,
-        message: error?.message ?? null,
-        hint: error?.hint ?? null,
-        queryName: error?.queryName ?? 'client_courses_published',
-      },
+    res.status(500).json({
+      ok: false,
+      code: error?.code ?? 'catalog_fetch_failed',
+      message: error?.message ?? 'Unable to fetch courses.',
+      hint: error?.hint ?? null,
+      requestId,
+      queryName: error?.queryName ?? 'client_courses_published',
     });
   }
 });

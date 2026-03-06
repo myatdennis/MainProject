@@ -107,13 +107,7 @@ const isAcceptedMembership = (row = {}) => {
 };
 
 const mapMembershipRecord = (row = {}) => {
-  const rawOrgId =
-    row.organization_id ??
-    row.org_id ??
-    row.organizationId ??
-    row.orgId ??
-    row.organization?.id ??
-    null;
+  const rawOrgId = row.organization_id ?? row.organizationId ?? row.orgId ?? row.organization?.id ?? row.org_id ?? null;
   const resolvedOrgId = normalizeOrgId(rawOrgId);
   return {
     organization_id: resolvedOrgId,
@@ -264,6 +258,7 @@ const getMembershipSelectColumns = async () => {
   ];
   if (membershipColumnState.columns.has('org_id')) {
     baseColumns.push('org_id');
+    // TODO: remove org_id/profile_id compatibility after launch stabilization
   }
   return baseColumns.join(',');
 };

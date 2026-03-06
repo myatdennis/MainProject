@@ -1,11 +1,12 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { useRoutePrefetch } from '../../hooks/useRoutePrefetch';
 import { ArrowUpRight, BookOpen, Clock, Users, Award, Inbox, Sparkles } from 'lucide-react';
 import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
 import ProgressBar from '../../components/ui/ProgressBar';
+import { LoadingSpinner } from '../../components/LoadingComponents';
 import { courseStore } from '../../store/courseStore';
 import { useUserProfile } from '../../hooks/useUserProfile';
 import { normalizeCourse } from '../../utils/courseNormalization';
@@ -19,6 +20,18 @@ import { getPreferredLessonId, getFirstLessonId } from '../../utils/courseNaviga
 import { syncService } from '../../dal/sync';
 import type { CourseAssignment } from '../../types/assignment';
 import { isSupabaseOperational, subscribeRuntimeStatus } from '../../state/runtimeStatus';
+import apiRequest, { ApiError } from '../../utils/apiClient';
+import { useSecureAuth } from '../../context/SecureAuthContext';
+
+type BootStepName = 'session' | 'membership' | 'courses' | 'analytics';
+type BootStepStatus = 'idle' | 'running' | 'success' | 'error' | 'timeout';
+
+type BootStepState = {
+  status: BootStepStatus;
+  error: string | null;
+};
+
+const ORDERED_BOOT_STEPS: BootStepName[] = ['session', 'membership', 'courses', 'analytics'];
 
 const ClientDashboard = () => {
   // Prefetch critical user flows for fast navigation
@@ -28,7 +41,9 @@ const ClientDashboard = () => {
     '/lms/dashboard',
   ]);
   const navigate = useNavigate();
+  const location = useLocation();
   const { user } = useUserProfile();
+  const { sessionStatus, membershipStatus } = useSecureAuth();
   const learnerId = useMemo(() => {
     if (user?.email) return user.email.toLowerCase();
     if (user?.id) return String(user.id).toLowerCase();
@@ -36,20 +51,80 @@ const ClientDashboard = () => {
   }, [user]);
   const [assignments, setAssignments] = useState<CourseAssignment[]>([]);
   const [assignmentsLoading, setAssignmentsLoading] = useState(true);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [analyticsError, setAnalyticsError] = useState<string | null>(null);
+  const [bootAttempt, setBootAttempt] = useState(0);
+  const [bootSteps, setBootSteps] = useState<Record<BootStepName, BootStepState>>({
+    session: { status: 'running', error: null },
+    membership: { status: 'idle', error: null },
+    courses: { status: 'idle', error: null },
+    analytics: { status: 'idle', error: null },
+  });
+  const showDebugOverlay = useMemo(() => new URLSearchParams(location.search).get('debug') === '1', [location.search]);
+  const updateBootStep = useCallback(
+    (step: BootStepName, status: BootStepStatus, error: string | null = null) => {
+      setBootSteps((prev) => {
+        if (prev[step]?.status === status && prev[step]?.error === error) {
+          return prev;
+        }
+        return {
+          ...prev,
+          [step]: { status, error },
+        };
+      });
+    },
+    [],
+  );
   const [progressRefreshToken, setProgressRefreshToken] = useState(0);
+
+  useEffect(() => {
+    if (sessionStatus === 'loading') {
+      updateBootStep('session', 'running');
+    } else if (sessionStatus === 'authenticated') {
+      updateBootStep('session', 'success');
+    } else if (sessionStatus === 'unauthenticated') {
+      updateBootStep('session', 'error', 'Session not authenticated');
+    }
+  }, [sessionStatus, updateBootStep]);
+
+  useEffect(() => {
+    if (membershipStatus === 'idle' || membershipStatus === 'loading') {
+      updateBootStep('membership', 'running');
+      return;
+    }
+    if (membershipStatus === 'ready' || membershipStatus === 'degraded') {
+      updateBootStep('membership', 'success', membershipStatus === 'degraded' ? 'Membership degraded' : null);
+      return;
+    }
+    if (membershipStatus === 'error') {
+      updateBootStep('membership', 'error', 'Unable to load memberships');
+    }
+  }, [membershipStatus, updateBootStep]);
 
   useEffect(() => {
     let isMounted = true;
     let pollHandle: number | null = null;
 
-    const refreshAssignments = async () => {
+    const refreshAssignments = async (reason: 'boot' | 'poll' = 'poll') => {
+      if (reason === 'boot') {
+        updateBootStep('courses', 'running');
+        setCatalogError(null);
+      }
       try {
         const records = await getAssignmentsForUser(learnerId);
         if (isMounted) {
           setAssignments(records);
         }
+        if (reason === 'boot') {
+          updateBootStep('courses', 'success');
+        }
       } catch (error) {
         console.error('Failed to load assignments:', error);
+        const friendlyMessage = 'Assignments unavailable. Retry.';
+        updateBootStep('courses', 'error', friendlyMessage);
+        if (reason === 'boot' && isMounted) {
+          setCatalogError(friendlyMessage);
+        }
       } finally {
         if (isMounted) {
           setAssignmentsLoading(false);
@@ -75,7 +150,7 @@ const ClientDashboard = () => {
     };
 
     setAssignmentsLoading(true);
-    void refreshAssignments();
+    void refreshAssignments('boot');
     ensurePolling(!isSupabaseOperational());
     const runtimeUnsub = subscribeRuntimeStatus((status) => {
       ensurePolling(!(status.supabaseConfigured && status.supabaseHealthy));
@@ -104,7 +179,15 @@ const ClientDashboard = () => {
       unsubscribeUpdate?.();
       unsubscribeDelete?.();
     };
-  }, [learnerId]);
+  }, [learnerId, bootAttempt, updateBootStep]);
+
+  const handleRetryBoot = () => {
+    setCatalogError(null);
+    setAnalyticsError(null);
+    setBootAttempt((attempt) => attempt + 1);
+    updateBootStep('courses', 'running');
+    updateBootStep('analytics', 'running');
+  };
 
   const courses = useMemo(
     () =>
@@ -171,6 +254,91 @@ const ClientDashboard = () => {
 
   const completedCount = assignments.filter((record) => record.status === 'completed').length;
   const inProgressCount = assignments.filter((record) => record.status === 'in-progress').length;
+  const bannerCandidates = [catalogError, analyticsError].filter(Boolean);
+  const bannerError = bannerCandidates.length > 0 ? bannerCandidates.join(' ') : null;
+
+  const essentialReady =
+    bootSteps.session.status === 'success' && bootSteps.membership.status === 'success';
+  const essentialError =
+    bootSteps.session.status === 'error' || bootSteps.membership.status === 'error';
+  const runningStepName = ORDERED_BOOT_STEPS.find((step) => bootSteps[step].status === 'running');
+  const loadingLabelMap: Record<BootStepName, string> = {
+    session: 'Validating session…',
+    membership: 'Resolving organization access…',
+    courses: 'Loading assignments…',
+    analytics: 'Preparing analytics…',
+  };
+  const spinnerLabel = runningStepName ? loadingLabelMap[runningStepName] : 'Preparing your portal…';
+  const lastCriticalError = bootSteps.session.error || bootSteps.membership.error;
+
+  useEffect(() => {
+    if (!essentialReady) {
+      updateBootStep('analytics', 'idle');
+      return;
+    }
+    let cancelled = false;
+    const controller = new AbortController();
+    updateBootStep('analytics', 'running');
+    setAnalyticsError(null);
+    (async () => {
+      try {
+        await apiRequest('/api/analytics/journeys?limit=1', {
+          method: 'GET',
+          credentials: 'include',
+          signal: controller.signal,
+        });
+        if (!cancelled) {
+          updateBootStep('analytics', 'success');
+        }
+      } catch (error) {
+        if (cancelled) return;
+        const friendlyMessage = 'Analytics unavailable. Showing limited view.';
+        if (error instanceof ApiError) {
+          updateBootStep('analytics', 'error', error.message || friendlyMessage);
+        } else if ((error as Error)?.name === 'AbortError') {
+          updateBootStep('analytics', 'timeout', 'Analytics request timed out');
+        } else {
+          updateBootStep('analytics', 'error', friendlyMessage);
+        }
+        setAnalyticsError(friendlyMessage);
+      }
+    })();
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [essentialReady, bootAttempt, updateBootStep]);
+
+  if (essentialError) {
+    return (
+      <div className="min-h-screen bg-softwhite">
+        <div className="mx-auto max-w-2xl px-6 py-16 text-center">
+          <LoadingSpinner size="lg" text={lastCriticalError || 'Unable to initialize session.'} className="py-10" />
+          <div className="mt-6 flex justify-center">
+            <Button variant="secondary" onClick={handleRetryBoot}>
+              Retry
+            </Button>
+          </div>
+        </div>
+        {showDebugOverlay && (
+          <BootDebugOverlay steps={bootSteps} onRetry={handleRetryBoot} />
+        )}
+      </div>
+    );
+  }
+
+  if (!essentialReady) {
+    return (
+      <div className="min-h-screen bg-softwhite">
+        <div className="mx-auto max-w-4xl px-6 py-16 text-center">
+          <LoadingSpinner size="lg" text={spinnerLabel} className="py-10" />
+        </div>
+        {showDebugOverlay && (
+          <BootDebugOverlay steps={bootSteps} onRetry={handleRetryBoot} />
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-7xl px-6 py-10 lg:px-12">
@@ -304,6 +472,49 @@ const ClientDashboard = () => {
             Go to LMS
           </Button>
         </Card>
+      </div>
+    </div>
+    {showDebugOverlay && <BootDebugOverlay steps={bootSteps} onRetry={handleRetryBoot} />}
+  );
+};
+type BootDebugOverlayProps = {
+  steps: Record<BootStepName, BootStepState>;
+  onRetry: () => void;
+};
+
+const statusColorMap: Record<BootStepStatus, string> = {
+  idle: 'text-slate-400',
+  running: 'text-blue-600',
+  success: 'text-emerald-600',
+  error: 'text-rose-600',
+  timeout: 'text-amber-600',
+};
+
+const BootDebugOverlay = ({ steps, onRetry }: BootDebugOverlayProps) => {
+  if (!steps) return null;
+  const entries = ORDERED_BOOT_STEPS.map((name) => ({ name, ...steps[name] }));
+  return (
+    <div className="fixed bottom-4 right-4 z-50 w-full max-w-md rounded-2xl border border-slate/30 bg-white/95 p-4 shadow-2xl backdrop-blur">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate/70">Boot Steps</p>
+        </div>
+        <Button size="sm" variant="secondary" onClick={onRetry}>
+          Retry
+        </Button>
+      </div>
+      <div className="max-h-72 overflow-y-auto pr-2">
+        <ol className="space-y-2 text-xs">
+          {entries.map((step) => (
+            <li key={step.name} className="rounded-lg border border-slate/20 px-3 py-2">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold capitalize">{step.name}</span>
+                <span className={statusColorMap[step.status]}>{step.status}</span>
+              </div>
+              {step.error && <p className="mt-1 text-[11px] text-rose-700">{step.error}</p>}
+            </li>
+          ))}
+        </ol>
       </div>
     </div>
   );

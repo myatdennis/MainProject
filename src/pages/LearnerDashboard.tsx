@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   ArrowUpRight,
   BarChart3,
@@ -32,6 +32,7 @@ import Input from '../components/ui/Input';
 import Badge from '../components/ui/Badge';
 import ProgressBar from '../components/ui/ProgressBar';
 import { useUserProfile } from '../hooks/useUserProfile';
+import { mapErrorToBootMeta, useBootTrace, type BootStep, type BootStepError } from '../hooks/useBootTrace';
 
 const filterOptions: Array<{ value: 'all' | 'in-progress' | 'not-started' | 'completed'; label: string }> = [
   { value: 'all', label: 'All' },
@@ -50,6 +51,7 @@ type CourseStats = {
 
 const LearnerDashboard = () => {
   const navigate = useNavigate();
+  const location = useLocation();
   const [enrolledCourses, setEnrolledCourses] = useState<Course[]>([]);
   const [progressData, setProgressData] = useState<Map<string, LearnerProgress>>(new Map());
   const [isLoading, setIsLoading] = useState(true);
@@ -62,11 +64,18 @@ const LearnerDashboard = () => {
   const [progressRefreshToken, setProgressRefreshToken] = useState(0);
 
   const { user } = useUserProfile();
+  const { steps, resetTrace, startStep, markStepSuccess, markStepError, runningStep, lastErrorStep } = useBootTrace();
   const learnerId = useMemo(() => {
     if (user?.email) return user.email.toLowerCase();
     if (user?.id) return String(user.id).toLowerCase();
     return 'local-user';
   }, [user]);
+  const showDebugOverlay = useMemo(() => {
+    const params = new URLSearchParams(location.search);
+    return params.get('debug') === '1';
+  }, [location.search]);
+  const runningStepLabel = runningStep?.name ?? 'Initializing';
+  const bannerError = catalogError ?? lastErrorStep?.error?.message ?? null;
 
   useEffect(() => {
     let isMounted = true;
@@ -74,17 +83,23 @@ const LearnerDashboard = () => {
     const run = async () => {
       setIsLoading(true);
       setCatalogError(null);
+      resetTrace();
+      const initStepId = startStep('courseStore.init');
+      let assignmentsStepId: string | null = null;
       try {
         if (courseStore.getAllCourses().length === 0 && typeof courseStore.init === 'function') {
           await courseStore.init();
         }
+        markStepSuccess(initStepId);
 
+        assignmentsStepId = startStep('assignments.load');
         const storedCourses = courseStore.getAllCourses();
         const normalizedCourses = storedCourses
           .map((course) => normalizeCourse(course))
           .filter((course) => course.status === 'published');
 
         const assignmentRecords = await getAssignmentsForUser(learnerId);
+        markStepSuccess(assignmentsStepId);
         const mergedCourses = [...normalizedCourses];
         assignmentRecords.forEach((record) => {
           if (!mergedCourses.some((course) => course.id === record.courseId)) {
@@ -116,6 +131,12 @@ const LearnerDashboard = () => {
         setProgressData(progressMap);
       } catch (error) {
         console.error('[LearnerDashboard] boot_failed', error);
+        const errorMeta = mapErrorToBootMeta(error);
+        if (assignmentsStepId) {
+          markStepError(assignmentsStepId, errorMeta);
+        } else {
+          markStepError(initStepId, errorMeta);
+        }
         if (isMounted) {
           setEnrolledCourses([]);
           setProgressData(new Map());
@@ -133,9 +154,10 @@ const LearnerDashboard = () => {
     return () => {
       isMounted = false;
     };
-  }, [learnerId, bootAttempt]);
+  }, [learnerId, bootAttempt, resetTrace, startStep, markStepSuccess, markStepError]);
 
   const handleRetryBoot = () => {
+    resetTrace();
     setCatalogError(null);
     setBootAttempt((attempt) => attempt + 1);
   };
@@ -364,13 +386,24 @@ const LearnerDashboard = () => {
           keywords="learning dashboard, course progress, online education, skills development"
         />
         <div className="mx-auto max-w-7xl px-6 py-12 lg:px-12">
-          <LoadingSpinner size="lg" text="Loading your courses..." className="py-20" />
+          <LoadingSpinner size="lg" text={`Loading step: ${runningStepLabel}`} className="py-20" />
           <div className="mt-10 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
             {[1, 2, 3, 4, 5, 6].map((i) => (
               <CourseCardSkeleton key={i} />
             ))}
           </div>
+          {bannerError && (
+            <div className="mt-6 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-900 shadow-card-sm">
+              <span>{bannerError}</span>
+              <Button variant="secondary" onClick={handleRetryBoot}>
+                Retry
+              </Button>
+            </div>
+          )}
         </div>
+        {showDebugOverlay && (
+          <BootDebugOverlay steps={steps} lastError={lastErrorStep?.error ?? null} onRetry={handleRetryBoot} />
+        )}
       </div>
     );
   }
@@ -383,9 +416,9 @@ const LearnerDashboard = () => {
         keywords="learning dashboard, course progress, online education, skills development"
       />
       <div className="mx-auto max-w-7xl px-6 py-10 lg:px-12">
-        {catalogError && (
+        {bannerError && (
           <div className="mb-6 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-amber-200 bg-amber-50/80 px-4 py-3 text-sm text-amber-900 shadow-card-sm">
-            <div>Courses unavailable. Retry.</div>
+            <div>{bannerError}</div>
             <Button variant="secondary" onClick={handleRetryBoot}>
               Retry
             </Button>
@@ -571,6 +604,9 @@ const LearnerDashboard = () => {
           </div>
         </section>
       </div>
+      {showDebugOverlay && (
+        <BootDebugOverlay steps={steps} lastError={lastErrorStep?.error ?? null} onRetry={handleRetryBoot} />
+      )}
     </div>
   );
 };
@@ -737,6 +773,68 @@ const CourseTile = ({
         </div>
       </div>
     </Card>
+  );
+};
+
+type BootDebugOverlayProps = {
+  steps: BootStep[];
+  lastError: BootStepError | null;
+  onRetry: () => void;
+};
+
+const statusColorMap: Record<'running' | 'ok' | 'error', string> = {
+  running: 'text-blue-600',
+  ok: 'text-emerald-600',
+  error: 'text-rose-600',
+};
+
+const BootDebugOverlay = ({ steps, lastError, onRetry }: BootDebugOverlayProps) => {
+  if (!steps.length) return null;
+  return (
+    <div className="fixed bottom-4 right-4 z-50 w-full max-w-md rounded-2xl border border-slate/30 bg-white/95 p-4 shadow-2xl backdrop-blur">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate/70">Boot Trace</p>
+          <p className="text-sm text-slate/80">
+            Last step: {steps[steps.length - 1]?.name} ({steps[steps.length - 1]?.status})
+          </p>
+        </div>
+        <Button size="sm" variant="secondary" onClick={onRetry}>
+          Retry
+        </Button>
+      </div>
+      <div className="max-h-72 overflow-y-auto pr-2">
+        <ol className="space-y-2 text-xs">
+          {steps.map((step) => (
+            <li key={step.id} className="rounded-lg border border-slate/20 px-3 py-2">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold">{step.name}</span>
+                <span className={statusColorMap[step.status]}>{step.status}</span>
+              </div>
+              <div className="mt-1 flex flex-wrap gap-2 text-[10px] text-slate/70">
+                <span>start: {new Date(step.startedAt).toLocaleTimeString()}</span>
+                {step.finishedAt && <span>end: {new Date(step.finishedAt).toLocaleTimeString()}</span>}
+              </div>
+              {step.error?.message && (
+                <p className="mt-1 text-[11px] text-rose-700">
+                  {step.error.message} {step.error.code ? `(code: ${step.error.code})` : ''}
+                </p>
+              )}
+            </li>
+          ))}
+        </ol>
+      </div>
+      {lastError && (
+        <div className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-[11px] text-rose-700">
+          <p className="font-semibold">Last error</p>
+          <p>{lastError.message}</p>
+          <p className="mt-1 text-rose-500">
+            status: {lastError.status ?? 'n/a'} | code: {lastError.code ?? 'n/a'}
+          </p>
+          {lastError.hint && <p className="mt-1 text-rose-500">{lastError.hint}</p>}
+        </div>
+      )}
+    </div>
   );
 };
 

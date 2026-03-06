@@ -876,7 +876,7 @@ router.post('/self-heal-membership', async (req, res) => {
     }
     res.json({
       ensured: Boolean(data?.ensured),
-      orgId: data?.org_id || data?.orgId || null,
+      orgId: data?.organization_id ?? data?.organizationId ?? data?.orgId ?? data?.org_id ?? null, // TODO: remove org_id/profile_id compatibility after launch stabilization
       reason: data?.reason || null,
     });
   } catch (error) {
