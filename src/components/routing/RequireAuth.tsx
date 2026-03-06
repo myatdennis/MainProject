@@ -787,59 +787,21 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
       logGuardEvent('render_login_route', { reason: 'missing_lms_session', target: lmsTarget });
       return null;
     }
-    const shouldRedirectForMembership = hasSession && membershipStatus === 'ready' && !hasActiveMembership;
-    if (shouldRedirectForMembership) {
-      console.warn('[RequireAuth][lms] redirect_no_active_membership', {
-        path: location.pathname,
-        membershipStatus,
-        membershipCount: memberships.length,
-        activeOrgId,
-        requestedOrgId: requestedOrgParam,
-        hasSession,
-      });
-      const membershipSnapshot = memberships.map((membership) => ({
-        orgId: membership.orgId,
-        role: membership.role ?? null,
-        status: membership.status ?? null,
-        active: membership.orgId === activeOrgId,
-      }));
-      const eligibilitySnapshot = {
-        path: location.pathname,
-        userId: user?.id ?? null,
-        userRole: user?.role ?? null,
-        sessionStatus,
-        membershipStatus,
-        surfaceStatus: effectiveSurfaceState,
-        activeOrgId,
-        requestedOrgId: requestedOrgParam,
-        lastActiveOrgId,
-        membershipCount: memberships.length,
-        membershipSnapshot,
-        hasActiveMembership,
-        activeMembershipOrgId: activeMembership?.orgId ?? null,
-        reason: 'no_active_membership',
-      };
-      console.warn('[RequireAuth][lms] unauthorized_snapshot', eligibilitySnapshot);
-      logGuardEvent('redirect_unauthorized', {
+    const hasMembershipContext = memberships.length > 0 || Boolean(activeOrgId);
+    const shouldShowMembershipWarning =
+      hasSession &&
+      sessionAuthenticated &&
+      (membershipStatus === 'ready' || membershipStatus === 'degraded') &&
+      !hasActiveMembership &&
+      hasMembershipContext;
+
+    if (shouldShowMembershipWarning) {
+      logGuardEvent('membership_warning', {
         reason: 'no_active_membership',
         activeOrgId,
-        requestedOrgId: requestedOrgParam,
-        lastActiveOrgId,
-        memberships: memberships.length,
+        membershipCount: memberships.length,
+        membershipStatus,
       });
-      return (
-        <Navigate
-          to="/unauthorized"
-          state={{
-            from: location,
-            reason: 'no_active_membership',
-            surface: 'lms',
-            activeOrgId,
-            requestedOrgId: requestedOrgParam,
-          }}
-          replace
-        />
-      );
     }
   }
 
@@ -875,6 +837,27 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   return (
     <>
       {membershipBanner}
+      {mode === 'lms' &&
+        sessionAuthenticated &&
+        (membershipStatus === 'ready' || membershipStatus === 'degraded') &&
+        !hasActiveMembership &&
+        (memberships.length > 0 || activeOrgId) && (
+          <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            <strong className="font-semibold">Access limited.</strong> We couldn't confirm your active organization right
+            now, but your session is still valid. You can continue browsing limited content or retry the membership check.
+            <div className="mt-3 flex flex-wrap gap-3">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={handleMembershipRetry}
+                disabled={membershipRetrying}
+                className="rounded-full border border-amber-300 bg-white px-4 py-1 text-amber-900 hover:bg-amber-100"
+              >
+                {membershipRetrying ? 'Retrying...' : 'Retry membership check'}
+              </Button>
+            </div>
+          </div>
+        )}
       {children}
     </>
   );
