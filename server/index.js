@@ -7026,14 +7026,21 @@ app.post('/api/admin/courses/import', async (req, res) => {
       options: finalizedOptions,
     };
   };
-  const collectQuizQuestionsFromBlocks = (lesson) => {
-    const blocksSources = [
-      Array.isArray(lesson?.content?.blocks) ? lesson.content.blocks : null,
-      Array.isArray(lesson?.content_json?.blocks) ? lesson.content_json.blocks : null,
+  const collectLessonFallbackBlocks = (lesson) => {
+    const sources = [
       Array.isArray(lesson?.blocks) ? lesson.blocks : null,
+      Array.isArray(lesson?.content?.blocks) ? lesson.content.blocks : null,
       Array.isArray(lesson?.content?.body?.blocks) ? lesson.content.body.blocks : null,
+      Array.isArray(lesson?.content_json?.blocks) ? lesson.content_json.blocks : null,
       Array.isArray(lesson?.content_json?.body?.blocks) ? lesson.content_json.body.blocks : null,
+      Array.isArray(lesson?.content?.interactive?.blocks) ? lesson.content.interactive.blocks : null,
+      Array.isArray(lesson?.content_json?.interactive?.blocks) ? lesson.content_json.interactive.blocks : null,
     ].filter(Boolean);
+    return sources.flat().filter(Boolean);
+  };
+
+  const collectQuizQuestionsFromBlocks = (lesson) => {
+    const blocksSources = collectLessonFallbackBlocks(lesson);
     if (!blocksSources.length) return [];
     const questions = [];
     blocksSources.forEach((blocks) => {
