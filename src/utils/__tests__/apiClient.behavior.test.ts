@@ -169,6 +169,7 @@ describe('apiClient', () => {
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.huddle.local');
     __setApiBaseUrlOverride('https://api.huddle.local');
     mockBuildAuthHeaders.mockResolvedValue({ Authorization: 'Bearer secret', 'X-Org-Id': 'org-7' });
+    __setTestOrgContext('org-7');
     const { apiRequest } = await loadApiClient();
     fetchSpy.mockResolvedValueOnce(createResponse({ data: [] }));
 

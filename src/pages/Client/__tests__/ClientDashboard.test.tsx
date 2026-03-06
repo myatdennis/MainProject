@@ -26,6 +26,14 @@ vi.mock('../../../hooks/useUserProfile', () => ({
   }),
 }));
 
+vi.mock('../../../context/SecureAuthContext', () => ({
+  useSecureAuth: () => ({
+    sessionStatus: 'authenticated',
+    membershipStatus: 'ready',
+    membershipCount: 0,
+  }),
+}));
+
 const getAssignmentsForUserMock = vi.fn(async () => []);
 
 vi.mock('../../../utils/assignmentStorage', () => ({

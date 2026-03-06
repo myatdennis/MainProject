@@ -341,7 +341,8 @@ const ClientDashboard = () => {
   }
 
   return (
-    <div className="max-w-7xl px-6 py-10 lg:px-12">
+    <>
+      <div className="max-w-7xl px-6 py-10 lg:px-12">
       <Card tone="gradient" withBorder={false} className="overflow-hidden">
         <div className="relative z-10 flex flex-col gap-4 text-charcoal md:flex-row md:items-center md:justify-between">
           <div>
@@ -475,6 +476,7 @@ const ClientDashboard = () => {
       </div>
     </div>
     {showDebugOverlay && <BootDebugOverlay steps={bootSteps} onRetry={handleRetryBoot} />}
+    </>
   );
 };
 type BootDebugOverlayProps = {
