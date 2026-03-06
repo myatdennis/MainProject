@@ -7114,6 +7114,24 @@ app.post('/api/admin/courses/import', asyncHandler(async (req, res) => {
     });
     return questions;
   };
+  const collectLessonItems = (lesson) => {
+    const directSources = [
+      Array.isArray(lesson?.items) ? lesson.items : null,
+      Array.isArray(lesson?.content?.items) ? lesson.content.items : null,
+      Array.isArray(lesson?.content?.body?.items) ? lesson.content.body.items : null,
+      Array.isArray(lesson?.content_json?.items) ? lesson.content_json.items : null,
+      Array.isArray(lesson?.content_json?.body?.items) ? lesson.content_json.body.items : null,
+    ].filter(Boolean);
+    const blockItems = collectLessonFallbackBlocks(lesson)
+      .map((block) => {
+        const propsItems = Array.isArray(block?.props?.items) ? block.props.items : null;
+        if (propsItems) return propsItems;
+        const dataItems = Array.isArray(block?.data?.items) ? block.data.items : null;
+        return dataItems || null;
+      })
+      .filter(Boolean);
+    return [...directSources, ...blockItems].flat().filter(Boolean);
+  };
   const deriveQuizQuestions = (lesson) => {
     const questions = [];
     const mergeQuestions = (source) => {
@@ -7637,6 +7655,7 @@ app.post('/api/admin/courses/import', asyncHandler(async (req, res) => {
         slug: course.slug,
         courseId: rpcRes.data?.id ?? course.id ?? null,
         status: rpcRes.data?.status ?? course.status ?? null,
+        organizationId: rpcRes.data?.organization_id ?? resolvedOrgId,
         courseIndex: entry.index,
       });
     }
@@ -8191,6 +8210,17 @@ app.get('/api/client/courses', asyncHandler(async (req, res) => {
   }
 
   const assignmentOrgId = effectiveOrgId ?? primaryOrgId;
+  logger.info('[client/courses] request_context', {
+    requestId,
+    assignedOnly,
+    requestedOrgId: queryOrgParam,
+    resolvedOrgId,
+    primaryOrgId,
+    requestOrgId,
+    effectiveOrgId,
+    scopedOrgIds,
+    membershipCount: membershipSet.size,
+  });
   if (assignedOnly && !assignmentOrgId && !context.isPlatformAdmin) {
     res.status(400).json({
       ok: false,
@@ -8416,21 +8446,19 @@ app.get('/api/client/courses', asyncHandler(async (req, res) => {
       orgId: assignmentOrgId ?? (scopedOrgIds.length === 1 ? scopedOrgIds[0] : null),
       scopedOrgCount: scopedOrgIds.length,
       assignedOnly,
+      assignmentFilterActive: assignedOnly && Array.isArray(assignmentCourseIds),
+      assignmentCourseCount: Array.isArray(assignmentCourseIds) ? assignmentCourseIds.length : null,
       count: list.length,
     };
     if (list.length === 0) {
       logger.warn('[client/courses] empty_catalog', {
         requestId,
-        orgId: responseMeta.orgId,
-        assignedOnly,
-        scopedOrgCount: responseMeta.scopedOrgCount,
+        ...responseMeta,
       });
     } else if (process.env.NODE_ENV !== 'production') {
       logger.info('[client/courses] catalog_loaded', {
         requestId,
-        orgId: responseMeta.orgId,
-        assignedOnly,
-        count: list.length,
+        ...responseMeta,
       });
     }
     res.status(200).json({ ok: true, data: list, requestId, meta: responseMeta });

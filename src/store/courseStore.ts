@@ -1322,19 +1322,7 @@ const ensureAssignmentScopedCatalog = async (
         return cached;
       }
 
-      // When org-scoped learners have no assignments, prefer a true empty catalog so the UI
-      // can show the “No assignments yet” state instead of default/guest content.
-      if (orgId) {
-        setLearnerCatalogState({
-          status: 'empty',
-          lastUpdatedAt: Date.now(),
-          lastError: null,
-          detail: 'no_assignments',
-        });
-        return {};
-      }
-
-      const fallback = (() => {
+      let fallback = (() => {
         if (DEFAULT_CATALOG_ALLOWED) {
           const defaults = getDefaultCourses();
           if (hasAnyCourses(defaults)) {
@@ -1348,6 +1336,9 @@ const ensureAssignmentScopedCatalog = async (
 
         return { source: 'empty' as const, catalog: {} as { [key: string]: Course } };
       })();
+      if (orgId && fallback.source === 'default') {
+        fallback = { source: 'empty' as const, catalog: {} as { [key: string]: Course } };
+      }
 
       if (fallback.source !== 'empty' && cacheKey) {
         saveCachedCatalog(cacheKey, fallback.catalog);
@@ -1357,14 +1348,18 @@ const ensureAssignmentScopedCatalog = async (
         `[courseStore] No assignments (200 empty) — using fallback catalog: ${fallback.source}`,
       );
 
+      const detail = (() => {
+        if (fallback.source === 'empty') return orgId ? 'no_assignments' : 'no_assignments_global';
+        if (fallback.source === 'default') return 'fallback_default' as const;
+        if (fallback.source === 'published') return 'fallback_published' as const;
+        return 'fallback_default' as const;
+      })();
+
       setLearnerCatalogState({
         status: fallback.source === 'empty' ? 'empty' : 'ok',
         lastUpdatedAt: Date.now(),
         lastError: null,
-        detail:
-          fallback.source === 'empty'
-            ? 'no_assignments'
-            : (`fallback_${fallback.source}` as 'fallback_default' | 'fallback_published' | 'fallback_cached'),
+        detail,
       });
 
       return fallback.catalog;
@@ -1609,7 +1604,7 @@ export const courseStore = {
         try {
           if (restrictToOrg) {
             if (orgContext.orgId) {
-              dbCourses = await fetchPublishedCourses({ orgId: orgContext.orgId, assignedOnly: true });
+              dbCourses = await fetchPublishedCourses({ orgId: orgContext.orgId });
             } else {
               console.warn(
                 '[courseStore.init] Missing organizationId; loading full published catalog for learner context.',

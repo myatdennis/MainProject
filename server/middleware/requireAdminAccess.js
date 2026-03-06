@@ -10,6 +10,34 @@ const FALLBACK_SUPERUSER = {
   isPlatformAdmin: true,
 };
 
+const fetchAdminAllowlistEntry = async (userId, email) => {
+  if (!supabase) {
+    return { entry: null, error: new Error('SUPABASE_NOT_CONFIGURED') };
+  }
+  const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : null;
+  if (!userId && !normalizedEmail) {
+    return { entry: null, error: null };
+  }
+  let query = supabase
+    .from('admin_users')
+    .select('user_id,email,is_active')
+    .eq('is_active', true)
+    .limit(1);
+  if (userId && normalizedEmail) {
+    query = query.or(`user_id.eq.${userId},email.eq.${normalizedEmail}`);
+  } else if (userId) {
+    query = query.eq('user_id', userId);
+  } else if (normalizedEmail) {
+    query = query.eq('email', normalizedEmail);
+  }
+  const { data, error } = await query;
+  if (error) {
+    return { entry: null, error };
+  }
+  const entry = Array.isArray(data) && data.length > 0 ? data[0] : null;
+  return { entry, error: null };
+};
+
 const ensureAdminAccess = async (req, res) => {
   if (DEV_FALLBACK || E2E_TEST_MODE) {
     req.supabaseJwtUser = req.supabaseJwtUser || { ...FALLBACK_SUPERUSER };
@@ -27,16 +55,29 @@ const ensureAdminAccess = async (req, res) => {
     return false;
   }
 
-  if (!supabase) {
-    res.status(503).json({
-      code: 'SUPABASE_NOT_CONFIGURED',
-      error: 'Service unavailable',
-      message: 'Supabase service role client is not configured.',
-    });
-    return false;
-  }
-
   try {
+    if (!supabase) {
+      res.status(503).json({
+        code: 'SUPABASE_NOT_CONFIGURED',
+        error: 'Service unavailable',
+        message: 'Supabase service role client is not configured.',
+      });
+      return false;
+    }
+
+    const { entry: allowlistEntry, error: allowlistError } = await fetchAdminAllowlistEntry(
+      user.id,
+      user.email,
+    );
+    if (allowlistError) {
+      throw allowlistError;
+    }
+    if (allowlistEntry) {
+      req.adminPortalAllowed = true;
+      req.adminAllowlistEntry = allowlistEntry;
+      return true;
+    }
+
     const { data, error } = await supabase
       .from('user_profiles')
       .select('is_admin')
