@@ -28,3 +28,21 @@ export const logAuthRedirect = (context: string, meta: AuthRedirectMeta = {}) =>
     // no-op
   }
 };
+
+export const logAuthDiagnostic = (context: string, meta: AuthRedirectMeta = {}) => {
+  try {
+    console.debug('[AUTH_DIAGNOSTIC]', { context, ...meta });
+    if (typeof window !== 'undefined') {
+      window.__HUDDLE_AUTH_DEBUG__ = {
+        ...(window.__HUDDLE_AUTH_DEBUG__ || {}),
+        lastDiagnostic: {
+          context,
+          meta,
+          timestamp: Date.now(),
+        },
+      };
+    }
+  } catch {
+    // no-op
+  }
+};

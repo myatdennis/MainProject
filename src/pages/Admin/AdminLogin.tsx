@@ -16,7 +16,7 @@ import {
   getAdminAccessSnapshot,
   setAdminAccessSnapshot,
 } from '../../lib/adminAccess';
-import { logAuthRedirect } from '../../utils/logAuthRedirect';
+import { logAuthDiagnostic, logAuthRedirect } from '../../utils/logAuthRedirect';
 
 type AdminCapabilityResponse = AdminAccessPayload & {
   error?: string;
@@ -367,7 +367,7 @@ const AdminLogin: React.FC = () => {
     }
     const snapshot = getAdminAccessSnapshot();
     if (hasAdminPortalAccess(snapshot?.payload ?? null)) {
-      logAuthRedirect('AdminLogin.autoredirect.cached_access', {
+      logAuthDiagnostic('AdminLogin.autoredirect.cached_access', {
         target: landingTarget.chosenTarget,
       });
       navigateToAdminLanding({ replace: true });

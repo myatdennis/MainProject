@@ -492,22 +492,8 @@ const app = express();
 app.locals.schemaHealth = schemaHealth;
 app.set('etag', false);
 
-app.get('/health', async (_req, res) => {
-  try {
-    await pool.query('select 1');
-    res.json({ status: 'ok', database: 'connected' });
-  } catch (error) {
-    console.error('[health] database_check_failed', {
-      message: error?.message || String(error),
-      code: error?.code || null,
-    });
-    res.status(500).json({ status: 'error', database: 'disconnected' });
-  }
-});
-
 import healthRouter from './routes/health.js';
 import corsMiddleware, { resolvedCorsOrigins, corsAllowedHeaders } from './middleware/cors.js';
-import { getCookieOptions } from './middleware/cookieOptions.js';
 import { describeCookiePolicy, getActiveOrgFromRequest } from './utils/authCookies.js';
 import { env } from './utils/env.js';
 import { log } from './utils/logger.js';
@@ -569,27 +555,6 @@ log('info', 'http_cors_policy', {
   allowedOrigins: resolvedCorsOrigins,
   allowCredentials: true,
   allowedHeaders: corsAllowedHeaders,
-});
-
-app.get('/api/health/db', async (_req, res) => {
-  try {
-    const result = await checkSupabaseHealth();
-    const ok = result.status === 'ok';
-    const statusCode = ok ? 200 : result.status === 'disabled' ? 503 : 502;
-    res.status(statusCode).json({
-      ok,
-      status: result.status,
-      latencyMs: result.latencyMs ?? null,
-      message: result.message ?? null,
-      demoFallback: Boolean(DEV_FALLBACK || E2E_TEST_MODE),
-    });
-  } catch (error) {
-    res.status(500).json({
-      ok: false,
-      status: 'error',
-      message: error instanceof Error ? error.message : 'db_health_failed',
-    });
-  }
 });
 
 app.get('/api/admin/courses/health/upsert-course-rpc', authenticate, requireAdmin, async (_req, res) => {
@@ -1274,6 +1239,57 @@ app.use(cookieParser());
 app.use(corsMiddleware);
 app.use(express.json({ limit: '10mb' }));
 app.use(attachRequestId);
+
+const createCorsRouteLogger = (label) => (req, res, next) => {
+  const origin = req.headers?.origin ?? null;
+  res.on('finish', () => {
+    logger.info('cors_route_trace', {
+      route: label,
+      origin,
+      requestId: req.requestId ?? null,
+      statusCode: res.statusCode,
+    });
+  });
+  next();
+};
+
+app.use('/api/admin/surveys', createCorsRouteLogger('/api/admin/surveys'));
+app.use('/api/admin/organizations', createCorsRouteLogger('/api/admin/organizations'));
+app.use(['/api/health', '/api/health/'], createCorsRouteLogger('/api/health'));
+
+app.get('/health', async (_req, res) => {
+  try {
+    await pool.query('select 1');
+    res.json({ status: 'ok', database: 'connected' });
+  } catch (error) {
+    console.error('[health] database_check_failed', {
+      message: error?.message || String(error),
+      code: error?.code || null,
+    });
+    res.status(500).json({ status: 'error', database: 'disconnected' });
+  }
+});
+
+app.get('/api/health/db', async (_req, res) => {
+  try {
+    const result = await checkSupabaseHealth();
+    const ok = result.status === 'ok';
+    const statusCode = ok ? 200 : result.status === 'disabled' ? 503 : 502;
+    res.status(statusCode).json({
+      ok,
+      status: result.status,
+      latencyMs: result.latencyMs ?? null,
+      message: result.message ?? null,
+      demoFallback: Boolean(DEV_FALLBACK || E2E_TEST_MODE),
+    });
+  } catch (error) {
+    res.status(500).json({
+      ok: false,
+      status: 'error',
+      message: error instanceof Error ? error.message : 'db_health_failed',
+    });
+  }
+});
 
 app.get('/api/health/stream', (req, res) => {
   res.status(200);

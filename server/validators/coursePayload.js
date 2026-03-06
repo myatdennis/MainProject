@@ -31,6 +31,11 @@ const lessonTypeAliases = new Map(
     ['check-knowledge', 'quiz'],
     ['check knowledge', 'quiz'],
     ['checkknowledge', 'quiz'],
+    ['scenario', 'interactive'],
+    ['branching', 'interactive'],
+    ['choose_your_path', 'interactive'],
+    ['choose-your-path', 'interactive'],
+    ['choose your path', 'interactive'],
   ].map(([alias, canonical]) => [alias.toLowerCase(), canonical]),
 );
 
@@ -218,6 +223,92 @@ const deriveQuestionsFromBlocks = (lesson) => {
   return questions.length > 0 ? questions : null;
 };
 
+const extractElementsFromPath = (source, path) => {
+  let cursor = source;
+  for (const key of path) {
+    if (!cursor || typeof cursor !== 'object') {
+      return null;
+    }
+    cursor = cursor[key];
+  }
+  return Array.isArray(cursor) && cursor.length > 0 ? cursor : null;
+};
+
+const deriveElementsFromLesson = (lesson) => {
+  const direct =
+    (Array.isArray(lesson?.elements) && lesson.elements) ||
+    extractElementsFromPath(lesson, ['content', 'elements']) ||
+    extractElementsFromPath(lesson, ['content_json', 'elements']) ||
+    extractElementsFromPath(lesson, ['content', 'body', 'elements']) ||
+    extractElementsFromPath(lesson, ['content_json', 'body', 'elements']);
+  if (direct && direct.length > 0) return direct;
+  const blocks =
+    (Array.isArray(lesson?.content?.blocks) && lesson.content.blocks) ||
+    (Array.isArray(lesson?.content_json?.blocks) && lesson.content_json.blocks) ||
+    null;
+  if (!blocks || blocks.length === 0) return null;
+  const elements = blocks
+    .map((block, index) => {
+      if (!block || typeof block !== 'object') return null;
+      const id =
+        (typeof block.id === 'string' && block.id.trim()) ||
+        (block.props && typeof block.props.id === 'string' && block.props.id.trim()) ||
+        `block-${index + 1}`;
+      const dataNodes =
+        (Array.isArray(block.data) && block.data) ||
+        (Array.isArray(block.steps) && block.steps) ||
+        (Array.isArray(block.nodes) && block.nodes) ||
+        null;
+      if (!id || !dataNodes || dataNodes.length === 0) return null;
+      const normalizedNodes = dataNodes
+        .map((node) => {
+          if (!node || typeof node !== 'object') return null;
+          const text =
+            (typeof node.text === 'string' && node.text.trim()) ||
+            (typeof node.title === 'string' && node.title.trim()) ||
+            null;
+          if (!text) return null;
+          const choices = Array.isArray(node.choices)
+            ? node.choices
+            : Array.isArray(node.options)
+            ? node.options
+            : Array.isArray(node.responses)
+            ? node.responses
+            : null;
+          if (!choices || choices.length === 0) return null;
+          const normalizedChoices = choices
+            .map((choice) => {
+              if (!choice || typeof choice !== 'object') return null;
+              const label =
+                (typeof choice.text === 'string' && choice.text.trim()) ||
+                (typeof choice.label === 'string' && choice.label.trim()) ||
+                null;
+              if (!label) return null;
+              return {
+                id: choice.id || choice.value || `${id}-choice-${Math.random().toString(36).slice(2, 8)}`,
+                text: label,
+                to: choice.to || choice.next || null,
+              };
+            })
+            .filter(Boolean);
+          if (normalizedChoices.length === 0) return null;
+          return {
+            id: node.id || `${id}-node-${Math.random().toString(36).slice(2, 8)}`,
+            text,
+            choices: normalizedChoices,
+          };
+        })
+        .filter(Boolean);
+      if (normalizedNodes.length === 0) return null;
+      return {
+        id,
+        data: normalizedNodes,
+      };
+    })
+    .filter(Boolean);
+  return elements.length > 0 ? elements : null;
+};
+
 const normalizeLessonInput = (lesson) => {
   if (!lesson || typeof lesson !== 'object') return lesson ?? {};
   const normalized = { ...lesson };
@@ -255,6 +346,35 @@ const normalizeLessonInput = (lesson) => {
       }
       // Example normalization: a block payload with { type: 'quiz-question', props: { prompt, choices } }
       // is converted into lesson.content_json.body.questions for validation.
+    }
+  }
+  if (normalized.type === 'interactive') {
+    let elements =
+      (Array.isArray(normalized?.elements) && normalized.elements) ||
+      deriveElementsFromLesson(normalized);
+    if (elements && elements.length > 0) {
+      const nextBody = {
+        ...(normalized.content_json?.body && typeof normalized.content_json.body === 'object'
+          ? normalized.content_json.body
+          : normalized.content_json && typeof normalized.content_json === 'object'
+          ? normalized.content_json
+          : {}),
+        elements,
+      };
+      normalized.content_json = {
+        ...(normalized.content_json || {}),
+        body: nextBody,
+      };
+      if (normalized.content && typeof normalized.content === 'object') {
+        normalized.content = {
+          ...normalized.content,
+          body: {
+            ...(normalized.content?.body && typeof normalized.content.body === 'object' ? normalized.content.body : {}),
+            elements,
+          },
+        };
+      }
+      // Example: interactive lesson with { elements:[...] } moves into content_json.body.elements
     }
   }
   return normalized;

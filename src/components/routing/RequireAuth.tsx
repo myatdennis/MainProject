@@ -416,9 +416,6 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
             const reasonCode = deriveReasonFromPayload(parsed, `status_${error.status}`);
 
             if (error.status === 401 || error.status === 403) {
-              if (error.status === 401) {
-                void logout('admin');
-              }
               setAdminCapability({ status: 'denied', payload: parsed, reason: reasonCode });
               logGuardEvent('admin_capability_denied', { reason: reasonCode });
               setAdminGateStatus('unauthorized');

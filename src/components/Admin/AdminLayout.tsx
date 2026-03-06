@@ -40,7 +40,7 @@ import useRuntimeStatus from '../../hooks/useRuntimeStatus';
 import { refreshRuntimeStatus } from '../../state/runtimeStatus';
 import ApiStatusBanner from '../system/ApiStatusBanner';
 import { useToast } from '../../context/ToastContext';
-import { logAuthRedirect } from '../../utils/logAuthRedirect';
+import { logAuthRedirect, logAuthDiagnostic } from '../../utils/logAuthRedirect';
 import { useAdminAccessState } from '../../lib/adminAccessState';
 
 interface AdminLayoutProps {
@@ -198,15 +198,17 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
   );
 
   useEffect(() => {
-    if (normalizedAuthInitializing || normalizedSessionStatus !== 'authenticated') {
+    if (normalizedAuthInitializing) {
       return;
     }
     if (!hasSession || !adminPortalAllowed) {
-      if (location.pathname !== '/admin/login') {
-        logAuthRedirect('AdminLayout.auth_guard', {
-          path: location.pathname,
-          reason: 'missing_admin_session',
-        });
+      logAuthDiagnostic('AdminLayout.auth_guard', {
+        path: location.pathname,
+        reason: !hasSession ? 'missing_session' : 'admin_access_pending',
+        sessionStatus: normalizedSessionStatus,
+      });
+      const onLoginRoute = location.pathname === '/admin/login';
+      if (normalizedSessionStatus === 'unauthenticated' && !onLoginRoute) {
         navigate('/admin/login');
       }
     }

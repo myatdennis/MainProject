@@ -20,7 +20,7 @@ const parseBoolean = (value, fallback = false) => {
 
 const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production';
 const secureByDefault = true;
-const sameSite = 'lax';
+const sameSite = 'none'; // enables cross-site cookies via api.the-huddle.co <-> the-huddle.co
 
 const hostMatchesDomain = (host, domain) => {
   if (!host || !domain) return false;
