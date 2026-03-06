@@ -311,7 +311,8 @@ const ClientDashboard = () => {
 
   if (essentialError) {
     return (
-      <div className="min-h-screen bg-softwhite">
+      <>
+        <div className="min-h-screen bg-softwhite">
         <div className="mx-auto max-w-2xl px-6 py-16 text-center">
           <LoadingSpinner size="lg" text={lastCriticalError || 'Unable to initialize session.'} className="py-10" />
           <div className="mt-6 flex justify-center">
@@ -320,23 +321,22 @@ const ClientDashboard = () => {
             </Button>
           </div>
         </div>
-        {showDebugOverlay && (
-          <BootDebugOverlay steps={bootSteps} onRetry={handleRetryBoot} />
-        )}
-      </div>
+        </div>
+        {showDebugOverlay && <BootDebugOverlay steps={bootSteps} onRetry={handleRetryBoot} />}
+      </>
     );
   }
 
   if (!essentialReady) {
     return (
-      <div className="min-h-screen bg-softwhite">
+      <>
+        <div className="min-h-screen bg-softwhite">
         <div className="mx-auto max-w-4xl px-6 py-16 text-center">
           <LoadingSpinner size="lg" text={spinnerLabel} className="py-10" />
         </div>
-        {showDebugOverlay && (
-          <BootDebugOverlay steps={bootSteps} onRetry={handleRetryBoot} />
-        )}
-      </div>
+        </div>
+        {showDebugOverlay && <BootDebugOverlay steps={bootSteps} onRetry={handleRetryBoot} />}
+      </>
     );
   }
 

@@ -3699,13 +3699,15 @@ const getRequestContext = (req) => {
     return { userId: null, userRole: null, memberships: [], organizationIds: [], requestedOrgId: null };
   }
 
+  const normalizedActiveOrg = normalizeOrgIdValue(req.activeOrgId ?? req.user?.activeOrgId ?? null);
   return {
     userId: req.user.userId || req.user.id || null,
     userRole: (req.user.role || req.user.platformRole || '').toLowerCase(),
     memberships: req.user.memberships || [],
     organizationIds: Array.isArray(req.user.organizationIds) ? req.user.organizationIds : [],
     isPlatformAdmin: Boolean(req.user.isPlatformAdmin),
-    requestedOrgId: normalizeOrgIdValue(req.activeOrgId ?? req.user?.activeOrgId ?? null),
+    requestedOrgId: normalizedActiveOrg,
+    activeOrganizationId: normalizedActiveOrg,
   };
 };
 
@@ -6653,32 +6655,49 @@ app.post('/api/admin/courses/import', async (req, res) => {
   }
   const context = requireUserContext(req, res);
   if (!context) return;
-  const platformAdminOverride =
-    context.isPlatformAdmin || String(req.user?.platformRole || '').toLowerCase() === 'platform_admin';
-  const baseOrgCandidate = req.organizationId ?? null;
-  const overrideCandidates = [
-    req.body?.organization_id,
-    req.body?.org_id,
-    req.body?.organizationId,
-    context.requestedOrgId,
-    baseOrgCandidate,
-  ];
-  let resolvedOrganizationId = baseOrgCandidate;
-  if (platformAdminOverride) {
-    try {
-      const override = await resolveOrgIdForCourseRequest(req, context, overrideCandidates);
-      resolvedOrganizationId = override ?? baseOrgCandidate ?? null;
-    } catch (overrideError) {
-      console.warn('[admin.courses.import] org_override_failed', overrideError);
-    }
-  }
+  const normalizedRequestOrgId = normalizeOrgIdValue(req.organizationId ?? null);
+  const contextActiveOrgId = normalizeOrgIdValue(context.activeOrganizationId ?? context.requestedOrgId ?? null);
+  const membershipOrgIds = Array.isArray(context.memberships)
+    ? context.memberships
+        .map((membership) =>
+          normalizeOrgIdValue(
+            pickOrgId(
+              membership.organization_id,
+              membership.organizationId,
+              membership.org_id,
+              membership.orgId,
+            ),
+          ),
+        )
+        .filter(Boolean)
+    : [];
+  const userScopedOrgIds = Array.isArray(context.organizationIds)
+    ? context.organizationIds.map((orgId) => normalizeOrgIdValue(orgId)).filter(Boolean)
+    : [];
+  const resolvedOrganizationId =
+    normalizedRequestOrgId ||
+    contextActiveOrgId ||
+    membershipOrgIds[0] ||
+    userScopedOrgIds[0] ||
+    null;
   if (!resolvedOrganizationId) {
     res.status(400).json({
-      error: 'organization_context_required',
-      message: 'An active organization context is required to import courses.',
+      ok: false,
+      code: 'org_required',
+      message: 'Active organization required for import.',
+      requestId: req.requestId ?? null,
     });
     return;
   }
+  console.info('[admin.courses.import] start', {
+    requestId: req.requestId ?? null,
+    userId: context.userId ?? null,
+    resolvedOrgId: resolvedOrganizationId,
+    entryCount: rawItems.length,
+  });
+  const access = await requireOrgAccess(req, res, resolvedOrganizationId, { write: true, requireOrgAdmin: true });
+  if (!access) return;
+
   const globalOverwriteFlag = parseBooleanFlag(req.body?.overwrite);
   const validationIssues = [];
   const normalizedItems = rawItems.map((raw, index) => {
@@ -6707,42 +6726,18 @@ app.post('/api/admin/courses/import', async (req, res) => {
     res.status(422).json({ error: 'validation_failed', issues: validationIssues });
     return;
   }
+  const preparedEntries = normalizedItems.filter(Boolean);
 
   // In demo/E2E, snapshot and rollback on failure
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
     const snapshot = new Map(e2eStore.courses);
     const results = [];
     try {
-      for (const payload of items) {
+      for (const payload of preparedEntries) {
         const { course, modules = [] } = payload || {};
         if (!course?.title) throw new Error('Course title is required');
 
-        let resolvedOrgId = resolvedOrganizationId;
-        if (platformAdminOverride) {
-          const orgOverrideCandidates = [
-            course?.organization_id,
-            course?.org_id,
-            course?.organizationId,
-            payload?.organization_id,
-            payload?.org_id,
-            payload?.organizationId,
-            req.body?.organization_id,
-            req.body?.org_id,
-            req.body?.organizationId,
-            context.requestedOrgId,
-            resolvedOrganizationId,
-          ];
-          try {
-            const override = await resolveOrgIdForCourseRequest(req, context, orgOverrideCandidates);
-            if (override) {
-              resolvedOrgId = override;
-            }
-          } catch (overrideError) {
-            console.warn('[admin.courses.import] e2e_org_override_failed', overrideError);
-          }
-        }
-        const access = await requireOrgAccess(req, res, resolvedOrgId, { write: true, requireOrgAdmin: true });
-        if (!access) return;
+        const resolvedOrgId = resolvedOrganizationId;
         if (String(course.status || '').toLowerCase() === 'published') {
           const shaped = shapeCourseForValidation({ ...course, modules });
           const validation = validatePublishableCourse(shaped, { intent: 'publish' });
@@ -6781,7 +6776,7 @@ app.post('/api/admin/courses/import', async (req, res) => {
           meta_json: { ...(course.meta ?? {}), ...(incomingExternalId ? { external_id: incomingExternalId } : {}) },
           published_at: null,
           organization_id: resolvedOrgId,
-          organizationId: resolvedOrgId,
+          organizationId: resolvedOrgId, // TODO: remove org_id/organizationId compatibility after launch stabilization
           org_id: resolvedOrgId,
           modules: [],
         };
@@ -6841,34 +6836,9 @@ app.post('/api/admin/courses/import', async (req, res) => {
   }
   try {
     const results = [];
-    for (const entry of normalizedItems) {
+    for (const entry of preparedEntries) {
       const { course, modules } = entry;
-      let resolvedOrgId = resolvedOrganizationId;
-      if (platformAdminOverride) {
-        const orgCandidates = [
-          course?.organization_id,
-          course?.org_id,
-          course?.organizationId,
-          entry?.organization_id,
-          entry?.org_id,
-          entry?.organizationId,
-          req.body?.organization_id,
-          req.body?.org_id,
-          req.body?.organizationId,
-          context.requestedOrgId,
-          resolvedOrganizationId,
-        ];
-        try {
-          const override = await resolveOrgIdForCourseRequest(req, context, orgCandidates);
-          if (override) {
-            resolvedOrgId = override;
-          }
-        } catch (overrideError) {
-          console.warn('[admin.courses.import] org_override_failed', overrideError);
-        }
-      }
-      const access = await requireOrgAccess(req, res, resolvedOrgId, { write: true, requireOrgAdmin: true });
-      if (!access) return;
+      const resolvedOrgId = resolvedOrganizationId;
       if (String(course.status || '').toLowerCase() === 'published') {
         const shaped = shapeCourseForValidation({ ...course, modules });
         const validation = validatePublishableCourse(shaped, { intent: 'publish' });
@@ -6878,7 +6848,7 @@ app.post('/api/admin/courses/import', async (req, res) => {
         }
       }
       course.organization_id = resolvedOrgId;
-      course.organizationId = resolvedOrgId;
+      course.organizationId = resolvedOrgId; // TODO: remove org_id/organizationId compatibility after launch stabilization
       course.org_id = resolvedOrgId;
       const slugSource = course.slug || course.title || course.id || `course-${randomUUID().slice(0, 8)}`;
       course.slug = slugify(slugSource);
@@ -7507,7 +7477,8 @@ app.get('/api/client/courses', async (req, res) => {
         }
         if (!targetUser && normalizedSessionUserId) {
           // only include org-level assignments with null user scope when caller belongs to org
-          const isOrgMatch = String(assignment.organization_id || '').trim() === assignmentOrgId;
+          const assignmentOrg = pickOrgId(assignment.organization_id, assignment.org_id);
+          const isOrgMatch = String(assignmentOrg || '').trim() === assignmentOrgId;
           if (!isOrgMatch) {
             return;
           }
@@ -7528,29 +7499,49 @@ app.get('/api/client/courses', async (req, res) => {
     }
 
     const tablesToTry = ['assignments', 'course_assignments'];
+    const orgColumnCandidates = [
+      { column: 'organization_id', select: 'course_id,organization_id,user_id,active' },
+      {
+        column: 'org_id',
+        select: 'course_id,org_id,user_id,active',
+        // TODO: remove org_id compatibility after launch stabilization
+      },
+    ];
+
     for (const table of tablesToTry) {
-      let query = supabase
-        .from(table)
-        .select('course_id,organization_id,user_id,active')
-        .eq('organization_id', assignmentOrgId);
-      if (normalizedSessionUserId) {
-        query = query.or(
-          `user_id.eq.${normalizedSessionUserId},user_id.is.null`
-        );
-      } else {
-        query = query.is('user_id', null);
-      }
-      const { data, error } = await query;
-      if (error) {
-        const missingRelation = typeof error.message === 'string' && /relation/.test(error.message);
-        if (missingRelation) {
-          continue;
+      let tableResults = null;
+
+      for (const candidate of orgColumnCandidates) {
+        let query = supabase.from(table).select(candidate.select).eq(candidate.column, assignmentOrgId);
+        if (normalizedSessionUserId) {
+          query = query.or(`user_id.eq.${normalizedSessionUserId},user_id.is.null`);
+        } else {
+          query = query.is('user_id', null);
         }
-        throw error;
-      }
-      pushIds(data || []);
-      if (ids.size > 0 || table === tablesToTry[tablesToTry.length - 1]) {
+
+        const { data, error } = await query;
+        if (error) {
+          const missingRelation = typeof error.message === 'string' && /relation/.test(error.message);
+          const missingColumn =
+            error.code === '42703' || (typeof error.message === 'string' && /column .* does not exist/i.test(error.message));
+          if (missingRelation) {
+            tableResults = null;
+            break;
+          }
+          if (missingColumn) {
+            continue;
+          }
+          throw error;
+        }
+        tableResults = data || [];
         break;
+      }
+
+      if (tableResults) {
+        pushIds(tableResults);
+        if (ids.size > 0 || table === tablesToTry[tablesToTry.length - 1]) {
+          break;
+        }
       }
     }
 
