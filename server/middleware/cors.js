@@ -73,15 +73,19 @@ const allowHeaders = [
   'Authorization',
   'X-Requested-With',
   'X-Org-Id',
+  'X-Organization-Id',
   'X-User-Role',
   'X-User-Id',
   'X-Runtime-Status',
   'X-CSRF-Token',
   'x-org-id',
+  'x-organization-id',
   'x-user-role',
   'x-user-id',
   'x-runtime-status',
   'x-csrf-token',
+  'X-Request-Id',
+  'x-request-id',
 ];
 
 const setHeader = (res, key, value) => {
@@ -209,4 +213,4 @@ const corsMiddleware = (req, res, next) => {
 };
 
 export default corsMiddleware;
-export { resolveCorsOriginDecision };
+export { resolveCorsOriginDecision, allowHeaders as corsAllowedHeaders };

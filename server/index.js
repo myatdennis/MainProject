@@ -506,7 +506,7 @@ app.get('/health', async (_req, res) => {
 });
 
 import healthRouter from './routes/health.js';
-import corsMiddleware, { resolvedCorsOrigins } from './middleware/cors.js';
+import corsMiddleware, { resolvedCorsOrigins, corsAllowedHeaders } from './middleware/cors.js';
 import { getCookieOptions } from './middleware/cookieOptions.js';
 import { describeCookiePolicy, getActiveOrgFromRequest } from './utils/authCookies.js';
 import { env } from './utils/env.js';
@@ -568,6 +568,7 @@ log('info', 'http_cookie_policy', cookiePolicySnapshot);
 log('info', 'http_cors_policy', {
   allowedOrigins: resolvedCorsOrigins,
   allowCredentials: true,
+  allowedHeaders: corsAllowedHeaders,
 });
 
 app.get('/api/health/db', async (_req, res) => {
@@ -3400,7 +3401,10 @@ const getPayloadSize = (req) => {
 
 const schemaSupportFlags = {
   lessonProgress: 'unknown',
+  lessonProgressOrgColumn: 'unknown',
   courseProgress: 'unknown',
+  courseProgressPercentColumn: 'unknown',
+  courseProgressTimeColumn: 'unknown',
 };
 
 let courseVersionColumnAvailable = true;
@@ -7797,8 +7801,10 @@ app.get('/api/client/courses', async (req, res) => {
   }
 });
 
-app.get('/api/client/courses/:identifier', async (req, res) => {
-  const { identifier } = req.params;
+const isUuidIdentifier = (value) => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+
+app.get('/api/client/courses/:courseIdentifier', async (req, res) => {
+  const { courseIdentifier } = req.params;
   const includeDrafts = String(req.query.includeDrafts || '').toLowerCase() === 'true';
   const context = requireUserContext(req, res);
   if (!context) return;
@@ -7814,7 +7820,7 @@ app.get('/api/client/courses/:identifier', async (req, res) => {
 
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
     try {
-      const course = e2eFindCourse(identifier);
+      const course = e2eFindCourse(courseIdentifier);
       if (!course) {
         res.json({ data: null });
         return;
@@ -7890,10 +7896,13 @@ app.get('/api/client/courses/:identifier', async (req, res) => {
     return query;
   };
   try {
-    let { data, error } = await buildQuery('id', identifier);
+    const queryName = 'client_course_detail';
+    const identifierType = isUuidIdentifier(courseIdentifier) ? 'uuid' : 'slug';
+    const identifierValue = courseIdentifier;
+    let { data, error } = identifierType === 'uuid' ? await buildQuery('id', identifierValue) : { data: null, error: null };
     if (error && error.code !== 'PGRST116') throw error;
     if (!data) {
-      ({ data, error } = await buildQuery('slug', identifier));
+      ({ data, error } = await buildQuery('slug', identifierValue));
       if (error && error.code !== 'PGRST116') throw error;
     }
     if (data) {
@@ -7903,13 +7912,26 @@ app.get('/api/client/courses/:identifier', async (req, res) => {
         return;
       }
       const hydrated = await ensureCourseStructureLoaded(data, { includeLessons: true });
-      res.json({ data: hydrated });
+      res.json({ ok: true, data: hydrated, requestId: req.requestId ?? null });
       return;
     }
-    res.json({ data: null });
+    res.json({ ok: true, data: null, requestId: req.requestId ?? null });
   } catch (error) {
-    console.error(`Failed to fetch course ${identifier}:`, error);
-    res.status(500).json({ error: 'Unable to load course' });
+    logStructuredError('[client/courses] detail_fetch_failed', error, {
+      route: '/api/client/courses/:courseIdentifier',
+      queryName: 'client_course_detail',
+      identifier: courseIdentifier,
+      identifierType,
+      requestId: req.requestId ?? null,
+    });
+    res.status(500).json({
+      ok: false,
+      code: error?.code ?? 'course_fetch_failed',
+      message: error?.message ?? 'Unable to load course.',
+      hint: error?.hint ?? null,
+      requestId: req.requestId ?? null,
+      queryName: 'client_course_detail',
+    });
   }
 });
 
@@ -8895,40 +8917,72 @@ app.post('/api/learner/progress', authenticate, async (req, res) => {
       updated_at: nowIso,
     });
 
-    const upsertLessonProgressModern = async () => {
-      const payload = lessonList.map((lesson) => ({
+    const buildLessonPayload = (lesson, { legacy = false } = {}) => {
+      const includeOrgId = schemaSupportFlags.lessonProgressOrgColumn !== 'missing';
+      const base = {
         user_id: userId,
-        org_id: null,
         course_id: courseId,
         lesson_id: lesson.lessonId,
-        progress: clampPercent(lesson.progressPercent),
-        completed: Boolean(lesson.completed ?? lesson.progressPercent >= 100),
-        time_spent_seconds: Math.max(0, Math.round(lesson.positionSeconds ?? 0)),
-      }));
+      };
+      if (includeOrgId) {
+        base.org_id = null;
+      }
+      if (legacy) {
+        base.percent = clampPercent(lesson.progressPercent);
+        base.status = Boolean(lesson.completed ?? lesson.progressPercent >= 100) ? 'completed' : 'in_progress';
+        base.time_spent_s = Math.max(0, Math.round(lesson.positionSeconds ?? 0));
+        base.updated_at = nowIso;
+      } else {
+        base.progress = clampPercent(lesson.progressPercent);
+        base.completed = Boolean(lesson.completed ?? lesson.progressPercent >= 100);
+        base.time_spent_seconds = Math.max(0, Math.round(lesson.positionSeconds ?? 0));
+      }
+      return base;
+    };
+
+    const upsertLessonProgressModern = async () => {
+      const payload = lessonList.map((lesson) => buildLessonPayload(lesson, { legacy: false }));
       const { data, error } = await supabase
         .from('user_lesson_progress')
         .upsert(payload, { onConflict: 'user_id,lesson_id' })
         .select('*');
-      if (error) throw error;
+      if (error) {
+        if (schemaSupportFlags.lessonProgressOrgColumn !== 'missing' && isMissingColumnError(error)) {
+          const missingColumn = normalizeColumnIdentifier(extractMissingColumnName(error));
+          if (missingColumn && missingColumn.toLowerCase() === 'org_id') {
+            schemaSupportFlags.lessonProgressOrgColumn = 'missing';
+            logger.warn('lesson_progress_org_column_missing', {
+              code: error.code ?? null,
+              message: error.message ?? null,
+            });
+            return upsertLessonProgressModern();
+          }
+        }
+        throw error;
+      }
       return (data || []).map((row) => normalizeLessonRecord(row));
     };
 
     const upsertLessonProgressLegacy = async () => {
-      const payload = lessonList.map((lesson) => ({
-        user_id: userId,
-        org_id: null,
-        course_id: courseId,
-        lesson_id: lesson.lessonId,
-        percent: clampPercent(lesson.progressPercent),
-        status: Boolean(lesson.completed ?? lesson.progressPercent >= 100) ? 'completed' : 'in_progress',
-        time_spent_s: Math.max(0, Math.round(lesson.positionSeconds ?? 0)),
-        updated_at: nowIso,
-      }));
+      const payload = lessonList.map((lesson) => buildLessonPayload(lesson, { legacy: true }));
       const { data, error } = await supabase
         .from('user_lesson_progress')
         .upsert(payload, { onConflict: 'user_id,lesson_id' })
         .select('*');
-      if (error) throw error;
+      if (error) {
+        if (schemaSupportFlags.lessonProgressOrgColumn !== 'missing' && isMissingColumnError(error)) {
+          const missingColumn = normalizeColumnIdentifier(extractMissingColumnName(error));
+          if (missingColumn && missingColumn.toLowerCase() === 'org_id') {
+            schemaSupportFlags.lessonProgressOrgColumn = 'missing';
+            logger.warn('lesson_progress_org_column_missing', {
+              code: error.code ?? null,
+              message: error.message ?? null,
+            });
+            return upsertLessonProgressLegacy();
+          }
+        }
+        throw error;
+      }
       return (data || []).map((row) => normalizeLessonRecord(row));
     };
 
@@ -8989,14 +9043,20 @@ app.post('/api/learner/progress', authenticate, async (req, res) => {
     };
 
     const upsertCourseProgressLegacy = async () => {
+      const includePercent = schemaSupportFlags.courseProgressPercentColumn !== 'missing';
+      const includeTime = schemaSupportFlags.courseProgressTimeColumn !== 'missing';
       const payload = {
         user_id_uuid: userId,
         user_id: userId,
         course_id: courseId,
-        percent: clampPercent(courseProgress.percent),
         status: (courseProgress.percent ?? 0) >= 100 ? 'completed' : 'in_progress',
-        time_spent_s: Math.max(0, Math.round(courseProgress.totalTimeSeconds ?? 0)),
       };
+      if (includePercent) {
+        payload.percent = clampPercent(courseProgress.percent);
+      }
+      if (includeTime) {
+        payload.time_spent_s = Math.max(0, Math.round(courseProgress.totalTimeSeconds ?? 0));
+      }
       try {
         const { data, error } = await supabase
           .from('user_course_progress')
@@ -9006,6 +9066,27 @@ app.post('/api/learner/progress', authenticate, async (req, res) => {
         if (error) throw error;
         return data;
       } catch (error) {
+        if (isMissingColumnError(error)) {
+          const missingColumn = normalizeColumnIdentifier(extractMissingColumnName(error));
+          if (missingColumn) {
+            if (missingColumn.toLowerCase() === 'percent' && includePercent) {
+              schemaSupportFlags.courseProgressPercentColumn = 'missing';
+              logger.warn('course_progress_percent_column_missing', {
+                code: error?.code ?? null,
+                message: error?.message ?? null,
+              });
+              return upsertCourseProgressLegacy();
+            }
+            if ((missingColumn.toLowerCase() === 'time_spent_s' || missingColumn.toLowerCase() === 'time_spent_seconds') && includeTime) {
+              schemaSupportFlags.courseProgressTimeColumn = 'missing';
+              logger.warn('course_progress_time_column_missing', {
+                code: error?.code ?? null,
+                message: error?.message ?? null,
+              });
+              return upsertCourseProgressLegacy();
+            }
+          }
+        }
         if (isUserCourseProgressUuidColumnMissing(error) || isConflictConstraintMissing(error)) {
           logger.warn('user_course_progress_uuid_legacy_fallback', {
             code: error?.code ?? null,
@@ -9090,6 +9171,37 @@ app.post('/api/learner/progress', authenticate, async (req, res) => {
       },
     });
   } catch (error) {
+    if (isMissingColumnError(error)) {
+      const missingColumn = normalizeColumnIdentifier(extractMissingColumnName(error)) || 'unknown_column';
+      logger.warn('learner_progress_schema_missing', {
+        ...baseLogMeta,
+        missingColumn,
+        code: error?.code ?? null,
+        message: error?.message ?? null,
+      });
+      const completedLessons = lessonList.filter((lesson) =>
+        Boolean(lesson.completed ?? lesson.progressPercent >= 100),
+      ).length;
+      const computedPercent =
+        lessonList.length > 0
+          ? clampPercent((completedLessons / lessonList.length) * 100)
+          : clampPercent(courseProgress.percent);
+      res.status(202).json({
+        success: true,
+        degraded: true,
+        reason: 'schema_missing_column',
+        missingColumn,
+        requestId,
+        data: {
+          userId,
+          courseId,
+          computedPercent,
+          completedLessons,
+          totalLessons: lessonList.length,
+        },
+      });
+      return;
+    }
     const message = error?.message || 'Unable to sync progress';
     respondWithError(500, 'progress_sync_failed', message, error);
   }
@@ -9160,17 +9272,22 @@ app.get('/api/learner/progress', authenticate, async (req, res) => {
       },
     });
   } catch (error) {
-    if (isMissingRelationError(error)) {
-      logger.warn('learner_progress_table_missing', {
+    if (isMissingRelationError(error) || isMissingColumnError(error)) {
+      const missingColumn = isMissingColumnError(error)
+        ? normalizeColumnIdentifier(extractMissingColumnName(error))
+        : null;
+      logger.warn('learner_progress_storage_missing', {
         code: error.code ?? null,
         message: error.message ?? null,
+        missingColumn,
         requestId: req.requestId ?? null,
       });
       res.json({
         data: {
           lessons: lessonIds.map((lessonId) => buildLessonRow(lessonId, null)),
         },
-        fallback: 'empty_progress',
+        fallback: isMissingColumnError(error) ? 'schema_missing_column' : 'empty_progress',
+        missingColumn,
       });
       return;
     }
@@ -13309,15 +13426,38 @@ app.post('/api/analytics/journeys', authenticate, resolveOrganizationContext, as
       .single();
 
     if (error) throw error;
-    res.status(201).json({ data });
+    res.status(201).json({ ok: true, data, requestId: req.requestId ?? null });
   } catch (error) {
+    const tableMissing =
+      error?.code === 'PGRST205' ||
+      (typeof error?.message === 'string' && /learner_journeys/i.test(error.message));
+    if (tableMissing) {
+      console.warn('[analytics.journeys] learner_journeys_unavailable', {
+        route: '/api/analytics/journeys',
+        requestId: req.requestId ?? null,
+      });
+      res.status(200).json({
+        ok: true,
+        disabled: true,
+        requestId: req.requestId ?? null,
+        meta: { reason: 'journeys_unavailable' },
+      });
+      return;
+    }
     logStructuredError('[analytics.journeys] upsert_failed', error, {
       route: '/api/analytics/journeys',
       userId,
       organizationId,
       course_id,
     });
-    res.status(500).json({ error: 'Unable to save learner journey' });
+    res.status(500).json({
+      ok: false,
+      code: error?.code ?? 'journey_upsert_failed',
+      message: error?.message ?? 'Unable to save learner journey.',
+      hint: error?.hint ?? null,
+      requestId: req.requestId ?? null,
+      queryName: 'analytics_journeys_upsert',
+    });
   }
 });
 
@@ -13489,7 +13629,9 @@ app.get('/api/analytics/journeys', authenticate, resolveOrganizationContext, asy
     const payload = summarizeEventsAsJourneys(events);
 
     res.json({
+      ok: true,
       data: payload,
+      requestId: req.requestId ?? null,
       meta: {
         scannedEvents: events.length,
         limit,
@@ -13502,12 +13644,35 @@ app.get('/api/analytics/journeys', authenticate, resolveOrganizationContext, asy
       },
     });
   } catch (error) {
+    const tableMissing =
+      error?.code === 'PGRST205' ||
+      (typeof error?.message === 'string' && /learner_journeys/i.test(error.message));
+    if (tableMissing) {
+      console.warn('[analytics.journeys] learner_journeys_unavailable', {
+        route: '/api/analytics/journeys',
+        requestId: req.requestId ?? null,
+      });
+      res.status(200).json({
+        ok: true,
+        data: [],
+        requestId: req.requestId ?? null,
+        meta: { disabled: true, reason: 'journeys_unavailable' },
+      });
+      return;
+    }
     logStructuredError('[analytics.journeys] fetch_failed', error, {
       route: '/api/analytics/journeys',
       userId: effectiveUserId,
       orgId: effectiveOrgId,
     });
-    res.json({ data: [], meta: { warning: 'journeys_unavailable' } });
+    res.status(500).json({
+      ok: false,
+      code: error?.code ?? 'journey_fetch_failed',
+      message: error?.message ?? 'Unable to load learner journeys.',
+      hint: error?.hint ?? null,
+      requestId: req.requestId ?? null,
+      queryName: 'analytics_journeys_fetch',
+    });
   }
 });
 
