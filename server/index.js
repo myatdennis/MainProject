@@ -3175,6 +3175,33 @@ const normalizeSnapshotPayload = (body = {}, fallbackUserId) => {
   };
 };
 
+const resolveOrgIdFromRequest = (req, context) => {
+  const normalizedRequestOrgId = normalizeOrgIdValue(
+    req.organizationId ??
+      req.activeOrgId ??
+      req.headers?.['x-organization-id'] ??
+      req.headers?.['x-org-id'] ??
+      null,
+  );
+  const contextActiveOrgId = normalizeOrgIdValue(context?.activeOrganizationId ?? context?.requestedOrgId ?? null);
+  const membershipOrgIds = Array.isArray(context?.memberships)
+    ? context.memberships
+        .map((membership) =>
+          pickOrgId(
+            membership.organization_id,
+            membership.organizationId,
+            membership.org_id,
+            membership.orgId,
+          ),
+        )
+        .filter(Boolean)
+    : [];
+  const scopedOrgIds = Array.isArray(context?.organizationIds)
+    ? context.organizationIds.map((orgId) => normalizeOrgIdValue(orgId)).filter(Boolean)
+    : [];
+  return normalizedRequestOrgId || contextActiveOrgId || membershipOrgIds[0] || scopedOrgIds[0] || null;
+};
+
 const buildLessonRow = (lessonId, record) => {
   const percentValue = clampPercent(
     record?.percent ??
@@ -3405,6 +3432,52 @@ const schemaSupportFlags = {
   courseProgress: 'unknown',
   courseProgressPercentColumn: 'unknown',
   courseProgressTimeColumn: 'unknown',
+};
+
+const LESSON_PROGRESS_CANONICAL_ORG_COLUMN = 'organization_id';
+const LESSON_PROGRESS_LEGACY_ORG_COLUMN = 'org_id';
+
+const getLessonProgressOrgColumn = () => {
+  const preference = schemaSupportFlags.lessonProgressOrgColumn;
+  if (preference === 'missing') return null;
+  if (preference === LESSON_PROGRESS_LEGACY_ORG_COLUMN) return LESSON_PROGRESS_LEGACY_ORG_COLUMN;
+  if (preference === LESSON_PROGRESS_CANONICAL_ORG_COLUMN) return LESSON_PROGRESS_CANONICAL_ORG_COLUMN;
+  return LESSON_PROGRESS_CANONICAL_ORG_COLUMN;
+};
+
+const handleLessonOrgColumnMissing = (missingColumn) => {
+  if (!missingColumn) return false;
+  const lower = missingColumn.toLowerCase();
+  if (lower === LESSON_PROGRESS_CANONICAL_ORG_COLUMN) {
+    schemaSupportFlags.lessonProgressOrgColumn =
+      schemaSupportFlags.lessonProgressOrgColumn === LESSON_PROGRESS_LEGACY_ORG_COLUMN
+        ? 'missing'
+        : LESSON_PROGRESS_LEGACY_ORG_COLUMN;
+    logger.warn('lesson_progress_org_column_missing', {
+      missingColumn: lower,
+      fallback: schemaSupportFlags.lessonProgressOrgColumn,
+    });
+    return true;
+  }
+  if (lower === LESSON_PROGRESS_LEGACY_ORG_COLUMN) {
+    schemaSupportFlags.lessonProgressOrgColumn = LESSON_PROGRESS_CANONICAL_ORG_COLUMN;
+    logger.warn('lesson_progress_legacy_org_column_missing', {
+      missingColumn: lower,
+      fallback: schemaSupportFlags.lessonProgressOrgColumn,
+    });
+    return true;
+  }
+  return false;
+};
+
+const attachLessonOrgScope = (record, orgId) => {
+  if (!record || !orgId) return;
+  const column = getLessonProgressOrgColumn();
+  if (!column) return;
+  record[column] = orgId;
+  if (column === LESSON_PROGRESS_LEGACY_ORG_COLUMN) {
+    // TODO: remove org_id/profile_id compatibility after launch stabilization
+  }
 };
 
 let courseVersionColumnAvailable = true;
@@ -7866,6 +7939,7 @@ const isUuidIdentifier = (value) => typeof value === 'string' && /^[0-9a-f]{8}-[
 app.get('/api/client/courses/:courseIdentifier', async (req, res) => {
   const { courseIdentifier } = req.params;
   const includeDrafts = String(req.query.includeDrafts || '').toLowerCase() === 'true';
+  const requestId = req.requestId ?? null;
   const context = requireUserContext(req, res);
   if (!context) return;
   const orgScope = await resolveOrgScopeForRequest(req, context);
@@ -7876,6 +7950,20 @@ app.get('/api/client/courses/:courseIdentifier', async (req, res) => {
     const normalized = normalizeOrgIdValue(orgId);
     if (!normalized) return false;
     return membershipSet.has(normalized);
+  };
+  const applyOrgScopeFilter = (query) => {
+    if (allowAllOrgAccess) return query;
+    if (scopedOrgIds.length === 1) {
+      return query.eq('organization_id', scopedOrgIds[0]);
+    }
+    if (scopedOrgIds.length > 1) {
+      return query.in('organization_id', scopedOrgIds);
+    }
+    const fallbackOrg = normalizeOrgIdValue(context.activeOrganizationId ?? context.requestedOrgId ?? null);
+    if (fallbackOrg) {
+      return query.eq('organization_id', fallbackOrg);
+    }
+    return query;
   };
 
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
@@ -7934,11 +8022,18 @@ app.get('/api/client/courses/:courseIdentifier', async (req, res) => {
           })),
         })),
       };
-      res.json({ data });
+      res.json({ ok: true, data, requestId });
       return;
     } catch (error) {
       console.error(`E2E fetch course ${identifier} failed:`, error);
-      res.status(500).json({ error: 'Unable to load course' });
+      res.status(500).json({
+        ok: false,
+        code: 'course_fetch_failed',
+        message: 'Unable to load course.',
+        hint: null,
+        requestId,
+        queryName: 'client_course_detail',
+      });
       return;
     }
   }
@@ -7953,11 +8048,13 @@ app.get('/api/client/courses/:courseIdentifier', async (req, res) => {
       .order('order_index', { ascending: true, foreignTable: MODULE_LESSONS_FOREIGN_TABLE })
       .maybeSingle();
     if (!includeDrafts) query = query.eq('status', 'published');
+    query = applyOrgScopeFilter(query);
     return query;
   };
+  const queryName = 'client_course_detail';
+  let identifierType = 'slug';
   try {
-    const queryName = 'client_course_detail';
-    const identifierType = isUuidIdentifier(courseIdentifier) ? 'uuid' : 'slug';
+    identifierType = isUuidIdentifier(courseIdentifier) ? 'uuid' : 'slug';
     const identifierValue = courseIdentifier;
     let { data, error } = identifierType === 'uuid' ? await buildQuery('id', identifierValue) : { data: null, error: null };
     if (error && error.code !== 'PGRST116') throw error;
@@ -7968,29 +8065,29 @@ app.get('/api/client/courses/:courseIdentifier', async (req, res) => {
     if (data) {
       const courseOrgId = data.organization_id ?? data.org_id ?? data.organizationId ?? null;
       if (!isOrgAllowed(courseOrgId)) {
-        res.json({ data: null });
+        res.status(200).json({ ok: true, data: null, requestId });
         return;
       }
       const hydrated = await ensureCourseStructureLoaded(data, { includeLessons: true });
-      res.json({ ok: true, data: hydrated, requestId: req.requestId ?? null });
+      res.json({ ok: true, data: hydrated, requestId });
       return;
     }
-    res.json({ ok: true, data: null, requestId: req.requestId ?? null });
+    res.json({ ok: true, data: null, requestId });
   } catch (error) {
     logStructuredError('[client/courses] detail_fetch_failed', error, {
       route: '/api/client/courses/:courseIdentifier',
-      queryName: 'client_course_detail',
+      queryName,
       identifier: courseIdentifier,
       identifierType,
-      requestId: req.requestId ?? null,
+      requestId,
     });
     res.status(500).json({
       ok: false,
       code: error?.code ?? 'course_fetch_failed',
       message: error?.message ?? 'Unable to load course.',
       hint: error?.hint ?? null,
-      requestId: req.requestId ?? null,
-      queryName: 'client_course_detail',
+      requestId,
+      queryName,
     });
   }
 });
@@ -8820,7 +8917,15 @@ app.post('/api/learner/progress', authenticate, async (req, res) => {
   let snapshot = normalizeSnapshotPayload(req.body || {});
 
   if (!snapshot) {
-    res.status(400).json({ error: 'invalid_progress_payload', message: 'Invalid progress snapshot payload' });
+    res.status(400).json({
+      ok: false,
+      code: 'invalid_progress_payload',
+      message: 'Invalid progress snapshot payload',
+      hint: null,
+      requestId: req.requestId ?? null,
+      queryName: 'learner_progress_snapshot',
+      details: null,
+    });
     return;
   }
 
@@ -8829,8 +8934,13 @@ app.post('/api/learner/progress', authenticate, async (req, res) => {
 
   if (!effectiveUserId) {
     res.status(401).json({
-      error: 'unauthenticated_progress',
+      ok: false,
+      code: 'unauthenticated_progress',
       message: 'Missing authenticated user id for progress update',
+      hint: null,
+      requestId: req.requestId ?? null,
+      queryName: 'learner_progress_snapshot',
+      details: null,
     });
     return;
   }
@@ -8854,6 +8964,11 @@ app.post('/api/learner/progress', authenticate, async (req, res) => {
     payloadBytes,
   };
 
+  const context = requireUserContext(req, res);
+  if (!context) return;
+  const resolvedOrgId = resolveOrgIdFromRequest(req, context);
+  baseLogMeta.orgId = resolvedOrgId;
+
   const logSnapshotSuccess = (mode) => {
     logger.info('learner_progress_snapshot_success', {
       ...baseLogMeta,
@@ -8865,7 +8980,7 @@ app.post('/api/learner/progress', authenticate, async (req, res) => {
 
   logger.info('learner_progress_snapshot_received', baseLogMeta);
 
-  const respondWithError = (status, code, message, error) => {
+  const respondWithError = (status, code, message, error, queryName = 'learner_progress_snapshot') => {
     if (error) {
       logger.error('learner_progress_snapshot_failed', {
         ...baseLogMeta,
@@ -8876,7 +8991,15 @@ app.post('/api/learner/progress', authenticate, async (req, res) => {
         meta: { surface: 'learner_progress_snapshot' },
       });
     }
-    res.status(status).json({ error: code, message });
+    res.status(status).json({
+      ok: false,
+      code,
+      message,
+      hint: error?.hint ?? null,
+      requestId,
+      queryName,
+      details: error?.details ?? null,
+    });
   };
 
   if (DEV_FALLBACK || E2E_TEST_MODE) {
@@ -8901,6 +9024,7 @@ app.post('/api/learner/progress', authenticate, async (req, res) => {
           time_spent_s: Math.max(0, Math.round(lesson.positionSeconds ?? 0)),
           resume_at_s: Math.max(0, Math.round(lesson.positionSeconds ?? 0)),
           updated_at: lesson.lastAccessedAt || nowIso,
+          organization_id: resolvedOrgId ?? null,
         };
         e2eStore.lessonProgress.set(key, record);
         try {
@@ -8922,6 +9046,7 @@ app.post('/api/learner/progress', authenticate, async (req, res) => {
         updated_at: nowIso,
         last_lesson_id: courseProgress.lastLessonId ?? null,
         completed_at: courseProgress.completedAt ?? courseProgress.completed_at ?? null,
+        organization_id: resolvedOrgId ?? null,
       };
       e2eStore.courseProgress.set(`${userId}:${courseId}`, courseRecord);
       persistE2EStore();
@@ -8963,6 +9088,7 @@ app.post('/api/learner/progress', authenticate, async (req, res) => {
       status: row.completed ? 'completed' : 'in_progress',
       time_spent_s: Math.max(0, Math.round(row.time_spent_seconds ?? row.time_spent_s ?? 0)),
       last_accessed_at: row.updated_at ?? row.created_at ?? nowIso,
+      organization_id: row.organization_id ?? row.org_id ?? resolvedOrgId ?? null,
     });
 
     const courseRecordForBroadcast = () => ({
@@ -8975,17 +9101,17 @@ app.post('/api/learner/progress', authenticate, async (req, res) => {
       last_lesson_id: courseProgress.lastLessonId ?? null,
       completed_at: courseProgress.completedAt ?? courseProgress.completed_at ?? null,
       updated_at: nowIso,
+      organization_id: resolvedOrgId ?? null,
     });
 
     const buildLessonPayload = (lesson, { legacy = false } = {}) => {
-      const includeOrgId = schemaSupportFlags.lessonProgressOrgColumn !== 'missing';
       const base = {
         user_id: userId,
         course_id: courseId,
         lesson_id: lesson.lessonId,
       };
-      if (includeOrgId) {
-        base.org_id = null;
+      if (resolvedOrgId) {
+        attachLessonOrgScope(base, resolvedOrgId);
       }
       if (legacy) {
         base.percent = clampPercent(lesson.progressPercent);
@@ -9007,14 +9133,9 @@ app.post('/api/learner/progress', authenticate, async (req, res) => {
         .upsert(payload, { onConflict: 'user_id,lesson_id' })
         .select('*');
       if (error) {
-        if (schemaSupportFlags.lessonProgressOrgColumn !== 'missing' && isMissingColumnError(error)) {
+        if (isMissingColumnError(error)) {
           const missingColumn = normalizeColumnIdentifier(extractMissingColumnName(error));
-          if (missingColumn && missingColumn.toLowerCase() === 'org_id') {
-            schemaSupportFlags.lessonProgressOrgColumn = 'missing';
-            logger.warn('lesson_progress_org_column_missing', {
-              code: error.code ?? null,
-              message: error.message ?? null,
-            });
+          if (handleLessonOrgColumnMissing(missingColumn)) {
             return upsertLessonProgressModern();
           }
         }
@@ -9030,14 +9151,9 @@ app.post('/api/learner/progress', authenticate, async (req, res) => {
         .upsert(payload, { onConflict: 'user_id,lesson_id' })
         .select('*');
       if (error) {
-        if (schemaSupportFlags.lessonProgressOrgColumn !== 'missing' && isMissingColumnError(error)) {
+        if (isMissingColumnError(error)) {
           const missingColumn = normalizeColumnIdentifier(extractMissingColumnName(error));
-          if (missingColumn && missingColumn.toLowerCase() === 'org_id') {
-            schemaSupportFlags.lessonProgressOrgColumn = 'missing';
-            logger.warn('lesson_progress_org_column_missing', {
-              code: error.code ?? null,
-              message: error.message ?? null,
-            });
+          if (handleLessonOrgColumnMissing(missingColumn)) {
             return upsertLessonProgressLegacy();
           }
         }
@@ -9073,6 +9189,7 @@ app.post('/api/learner/progress', authenticate, async (req, res) => {
         course_id: courseId,
         progress: clampPercent(courseProgress.percent),
         completed: (courseProgress.percent ?? 0) >= 100,
+        organization_id: resolvedOrgId ?? null,
       };
       try {
         const { data, error } = await supabase
@@ -9110,6 +9227,7 @@ app.post('/api/learner/progress', authenticate, async (req, res) => {
         user_id: userId,
         course_id: courseId,
         status: (courseProgress.percent ?? 0) >= 100 ? 'completed' : 'in_progress',
+        organization_id: resolvedOrgId ?? null,
       };
       if (includePercent) {
         payload.percent = clampPercent(courseProgress.percent);
@@ -9193,6 +9311,7 @@ app.post('/api/learner/progress', authenticate, async (req, res) => {
           last_lesson_id: courseProgress.lastLessonId ?? null,
           completed_at: courseProgress.completedAt ?? courseProgress.completed_at ?? null,
           updated_at: courseRow.updated_at ?? nowIso,
+          organization_id: courseRow.organization_id ?? resolvedOrgId ?? null,
         }
       : courseRecordForBroadcast();
 
@@ -9274,13 +9393,32 @@ app.get('/api/learner/progress', authenticate, async (req, res) => {
   const sessionUserId = coerceString(req.user?.userId, req.user?.id);
   const isAdminUser = (req.user?.role || '').toLowerCase() === 'admin';
   const effectiveUserId = requestedUserId || sessionUserId;
+  const context = requireUserContext(req, res);
+  if (!context) return;
+  const resolvedOrgId = resolveOrgIdFromRequest(req, context);
 
   if (!effectiveUserId) {
-    res.status(400).json({ error: 'userId is required' });
+    res.status(400).json({
+      ok: false,
+      code: 'user_id_required',
+      message: 'userId is required',
+      hint: null,
+      requestId: req.requestId ?? null,
+      queryName: 'learner_progress_fetch',
+      details: null,
+    });
     return;
   }
   if (lessonIds.length === 0) {
-    res.status(400).json({ error: 'lessonIds is required' });
+    res.status(400).json({
+      ok: false,
+      code: 'lesson_ids_required',
+      message: 'lessonIds is required',
+      hint: null,
+      requestId: req.requestId ?? null,
+      queryName: 'learner_progress_fetch',
+      details: null,
+    });
     return;
   }
 
@@ -9309,11 +9447,13 @@ app.get('/api/learner/progress', authenticate, async (req, res) => {
   if (!ensureSupabase(res)) return;
 
   try {
-    const { data, error } = await supabase
-      .from('user_lesson_progress')
-      .select('*')
-      .eq('user_id', normalizedUserId)
-      .in('lesson_id', lessonIds);
+    let progressQuery = supabase.from('user_lesson_progress').select('*').eq('user_id', normalizedUserId).in('lesson_id', lessonIds);
+    const orgColumn = getLessonProgressOrgColumn();
+    if (resolvedOrgId && orgColumn) {
+      progressQuery = progressQuery.eq(orgColumn, resolvedOrgId);
+    }
+
+    const { data, error } = await progressQuery;
 
     if (error) throw error;
 
@@ -9449,6 +9589,8 @@ app.post('/api/client/progress/course', authenticate, async (req, res) => {
     return;
   }
 
+  const resolvedOrgId = resolveOrgIdFromRequest(req, context);
+
   if (bodyUserId && bodyUserId !== canonicalUserId) {
     logger.warn('progress_course_user_mismatch', {
       providedUserId: bodyUserId,
@@ -9519,6 +9661,7 @@ app.post('/api/client/progress/course', authenticate, async (req, res) => {
       course_id,
       progress: normalizedPercent,
       completed: normalizedCompleted,
+      organization_id: resolvedOrgId ?? null,
     };
     const upsertCourseProgress = async (payload, conflictTarget) =>
       supabase.from('user_course_progress').upsert(payload, { onConflict: conflictTarget }).select('*').single();

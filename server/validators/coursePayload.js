@@ -19,6 +19,21 @@ const stringField = (min = 1, max = 1000) =>
     .min(min, { message: `Must be at least ${min} character${min === 1 ? '' : 's'}` })
     .max(max, { message: `Must be ${max} characters or fewer` });
 
+const lessonTypeAliases = new Map(
+  [
+    ['quiz', 'quiz'],
+    ['assessment', 'quiz'],
+    ['knowledge_check', 'quiz'],
+    ['knowledge-check', 'quiz'],
+    ['knowledge check', 'quiz'],
+    ['knowledgecheck', 'quiz'],
+    ['check_knowledge', 'quiz'],
+    ['check-knowledge', 'quiz'],
+    ['check knowledge', 'quiz'],
+    ['checkknowledge', 'quiz'],
+  ].map(([alias, canonical]) => [alias.toLowerCase(), canonical]),
+);
+
 const baseLessonSchema = z.object({
   id: z.string().min(1).optional(),
   title: stringField(1, 280),
@@ -112,6 +127,152 @@ const getLessonContentBody = (lesson) => {
   return {};
 };
 
+const canonicalizeLessonType = (type) => {
+  if (typeof type !== 'string') return type;
+  const normalized = type.trim().toLowerCase();
+  const slugified = normalized.replace(/[\s-]+/g, '_');
+  if (lessonTypeAliases.has(normalized)) {
+    return lessonTypeAliases.get(normalized);
+  }
+  if (lessonTypeAliases.has(slugified)) {
+    return lessonTypeAliases.get(slugified);
+  }
+  return type;
+};
+
+const extractQuestionsFromPath = (source, path) => {
+  let cursor = source;
+  for (const key of path) {
+    if (!cursor || typeof cursor !== 'object') {
+      return null;
+    }
+    cursor = cursor[key];
+  }
+  return Array.isArray(cursor) && cursor.length > 0 ? cursor : null;
+};
+
+const normalizeBlockQuestion = (block) => {
+  if (!block || typeof block !== 'object') return null;
+  const source = block.props || block.data || block;
+  const prompt =
+    (typeof source?.prompt === 'string' && source.prompt.trim()) ||
+    (typeof source?.question === 'string' && source.question.trim()) ||
+    (typeof source?.text === 'string' && source.text.trim()) ||
+    (typeof block?.heading === 'string' && block.heading.trim()) ||
+    (typeof block?.title === 'string' && block.title.trim()) ||
+    null;
+  const rawChoices =
+    (Array.isArray(source?.choices) && source.choices) ||
+    (Array.isArray(source?.options) && source.options) ||
+    (Array.isArray(source?.answers) && source.answers) ||
+    (Array.isArray(source?.responses) && source.responses) ||
+    null;
+  if (!prompt || !rawChoices || rawChoices.length === 0) return null;
+  const options = rawChoices
+    .map((choice) => {
+      if (typeof choice === 'string') {
+        return { text: choice, correct: false };
+      }
+      if (!choice || typeof choice !== 'object') return null;
+      const textCandidate =
+        (typeof choice.text === 'string' && choice.text.trim()) ||
+        (typeof choice.label === 'string' && choice.label.trim()) ||
+        (typeof choice.title === 'string' && choice.title.trim()) ||
+        null;
+      if (!textCandidate) return null;
+      return {
+        text: textCandidate,
+        correct: choice.correct === true || choice.isCorrect === true || choice.answer === true,
+      };
+    })
+    .filter(Boolean);
+  if (options.length < 2) return null;
+  if (!options.some((option) => option.correct)) {
+    const correctIndex =
+      typeof source?.correctAnswerIndex === 'number' ? source.correctAnswerIndex : undefined;
+    if (typeof correctIndex === 'number' && options[correctIndex]) {
+      options[correctIndex].correct = true;
+    }
+  }
+  if (!options.some((option) => option.correct) && typeof source?.correctChoiceId === 'string') {
+    options.forEach((option) => {
+      if (String(option?.id ?? option?.value ?? option.text).toLowerCase() === source.correctChoiceId.toLowerCase()) {
+        option.correct = true;
+      }
+    });
+  }
+  if (!options.some((option) => option.correct)) return null;
+  return { prompt, options };
+};
+
+const deriveQuestionsFromBlocks = (lesson) => {
+  const candidateBlocks =
+    (Array.isArray(lesson?.content?.blocks) && lesson.content.blocks) ||
+    (Array.isArray(lesson?.content_json?.blocks) && lesson.content_json.blocks) ||
+    (Array.isArray(lesson?.blocks) && lesson.blocks) ||
+    (Array.isArray(lesson?.content?.body?.blocks) && lesson.content.body.blocks) ||
+    (Array.isArray(lesson?.content_json?.body?.blocks) && lesson.content_json.body.blocks) ||
+    null;
+  if (!candidateBlocks || candidateBlocks.length === 0) return null;
+  const questions = candidateBlocks.map((block) => normalizeBlockQuestion(block)).filter(Boolean);
+  return questions.length > 0 ? questions : null;
+};
+
+const normalizeLessonInput = (lesson) => {
+  if (!lesson || typeof lesson !== 'object') return lesson ?? {};
+  const normalized = { ...lesson };
+  if (normalized.type) {
+    normalized.type = canonicalizeLessonType(normalized.type);
+  }
+  if (normalized.type === 'quiz') {
+    const existingBody = getLessonContentBody(normalized);
+    let questions =
+      (Array.isArray(existingBody?.questions) && existingBody.questions) ||
+      extractQuestionsFromPath(normalized, ['content', 'questions']) ||
+      extractQuestionsFromPath(normalized, ['content', 'quiz', 'questions']) ||
+      extractQuestionsFromPath(normalized, ['content_json', 'quiz', 'questions']) ||
+      deriveQuestionsFromBlocks(normalized);
+    if (!questions && Array.isArray(normalized?.questions)) {
+      questions = normalized.questions;
+    }
+    if (questions && questions.length > 0) {
+      const nextBody = {
+        ...(existingBody && typeof existingBody === 'object' ? existingBody : {}),
+        questions,
+      };
+      normalized.content_json = {
+        ...(normalized.content_json || {}),
+        body: nextBody,
+      };
+      if (normalized.content && typeof normalized.content === 'object') {
+        normalized.content = {
+          ...normalized.content,
+          body: {
+            ...(normalized.content?.body && typeof normalized.content.body === 'object' ? normalized.content.body : {}),
+            questions,
+          },
+        };
+      }
+      // Example normalization: a block payload with { type: 'quiz-question', props: { prompt, choices } }
+      // is converted into lesson.content_json.body.questions for validation.
+    }
+  }
+  return normalized;
+};
+
+const normalizeCoursePayloadInput = (payload) => {
+  const modules = Array.isArray(payload?.modules) ? payload.modules : [];
+  return {
+    ...payload,
+    modules: modules.map((module) => ({
+      ...module,
+      lessons: Array.isArray(module?.lessons)
+        ? module.lessons.map((lesson) => normalizeLessonInput(lesson))
+        : [],
+    })),
+  };
+};
+
 const hasQuizQuestions = (lesson) => {
   const body = getLessonContentBody(lesson);
   const questionsSource = Array.isArray(body?.questions)
@@ -189,7 +350,8 @@ const hasScenarioElements = (lesson) => {
 };
 
 export function validateCoursePayload(payload) {
-  const parsed = coursePayloadSchema.safeParse(payload || {});
+  const normalizedInput = normalizeCoursePayloadInput(payload || {});
+  const parsed = coursePayloadSchema.safeParse(normalizedInput);
   if (!parsed.success) {
     const issues = parsed.error.issues.map((issue) => ({
       path: issue.path.join('.'),
