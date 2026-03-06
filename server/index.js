@@ -405,6 +405,8 @@ const corsOrigins = (process.env.CORS_ALLOWED_ORIGINS || '')
   .split(',')
   .map((value) => value.trim())
   .filter(Boolean);
+const cookiePolicySnapshot = describeCookiePolicy();
+log('info', 'http_cookie_policy', cookiePolicySnapshot);
 const inferredCookieDomain = process.env.COOKIE_DOMAIN || cookiePolicySnapshot.domain || '(request hostname derived)';
 const cookieSameSite = cookiePolicySnapshot.sameSite;
 const cookieSecure = cookiePolicySnapshot.secure;
@@ -549,8 +551,6 @@ const getSupabaseProjectRef = (url) => {
   }
 };
 
-const cookiePolicySnapshot = describeCookiePolicy();
-log('info', 'http_cookie_policy', cookiePolicySnapshot);
 log('info', 'http_cors_policy', {
   allowedOrigins: resolvedCorsOrigins,
   allowCredentials: true,
