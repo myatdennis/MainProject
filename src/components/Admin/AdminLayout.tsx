@@ -95,6 +95,7 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const menuButtonRef = useRef<HTMLButtonElement | null>(null);
+  const logoutInFlightRef = useRef(false);
   const location = useLocation();
   const navigate = useNavigate();
   const accountEmail = user?.email ?? authUser?.email ?? 'Admin';
@@ -303,17 +304,30 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
     };
   }, [ADMIN_MENU_DEBUG, logMenuEvent]);
 
-  const handleLogout = async () => {
+  const handleLogout = useCallback(async () => {
+    if (logoutInFlightRef.current) {
+      logAuthDiagnostic('AdminLayout.logout_skip', { reason: 'in_flight', path: location.pathname });
+      return;
+    }
+    logoutInFlightRef.current = true;
+    logAuthDiagnostic('AdminLayout.logout_start', { path: location.pathname });
     try {
       if (typeof logout === 'function') {
         await logout('admin');
       }
-      logAuthRedirect('AdminLayout.handleLogout', { path: location.pathname });
-      navigate('/admin/login');
+      logAuthDiagnostic('AdminLayout.logout_success', { path: location.pathname });
     } catch (err) {
       console.error('Logout failed', err);
+      logAuthDiagnostic('AdminLayout.logout_error', {
+        path: location.pathname,
+        message: err instanceof Error ? err.message : String(err),
+      });
+    } finally {
+      logAuthRedirect('AdminLayout.handleLogout', { path: location.pathname });
+      navigate('/admin/login');
+      logoutInFlightRef.current = false;
     }
-  };
+  }, [location.pathname, logout, navigate]);
 
   const activeUser = user ?? authUser;
 

@@ -351,26 +351,80 @@ const AdminLogin: React.FC = () => {
     return false;
   }, [captureDeniedUserSnapshot, capabilityErrorMessage, navigateToAdminLanding, verifyAdminCapability]);
 
-  const autoRedirectedRef = useRef(false);
+  const cachedRedirectSuccessRef = useRef(false);
+  const cachedRedirectAttemptedRef = useRef(false);
+  const cachedRedirectKeyRef = useRef<string | null>(null);
+  const capabilityProbeInFlightRef = useRef(false);
+
+  const cachedRedirectSnapshotKey = useMemo(() => {
+    const userId = user?.id ?? 'anon';
+    return `${sessionStatus}:${hasSession ? '1' : '0'}:${landingTarget.chosenTarget}:${userId}`;
+  }, [hasSession, landingTarget.chosenTarget, sessionStatus, user?.id]);
 
   useEffect(() => {
-    if (autoRedirectedRef.current) {
-      return;
-    }
     if (sessionStatus !== 'authenticated' || !hasSession) {
       return;
     }
+    if (location.pathname === landingTarget.chosenTarget) {
+      logAuthDiagnostic('AdminLogin.cached_redirect_skip_same_target', { target: landingTarget.chosenTarget });
+      return;
+    }
+    if (cachedRedirectKeyRef.current === cachedRedirectSnapshotKey) {
+      logAuthDiagnostic('AdminLogin.cached_redirect_skip_duplicate', { target: landingTarget.chosenTarget });
+      return;
+    }
+    if (cachedRedirectSuccessRef.current) {
+      return;
+    }
+
     const snapshot = getAdminAccessSnapshot();
     if (hasAdminPortalAccess(snapshot?.payload ?? null)) {
-      autoRedirectedRef.current = true;
-      logAuthDiagnostic('AdminLogin.autoredirect.cached_access', {
+      cachedRedirectSuccessRef.current = true;
+      cachedRedirectAttemptedRef.current = true;
+      cachedRedirectKeyRef.current = cachedRedirectSnapshotKey;
+      logAuthDiagnostic('AdminLogin.cached_redirect_start', {
         target: landingTarget.chosenTarget,
       });
       navigateToAdminLanding({ replace: true });
+      logAuthDiagnostic('AdminLogin.cached_redirect_success', {
+        target: landingTarget.chosenTarget,
+      });
       return;
     }
-    void handleCapabilityGate();
-  }, [handleCapabilityGate, hasSession, navigateToAdminLanding, sessionStatus, landingTarget.chosenTarget]);
+    if (cachedRedirectAttemptedRef.current) {
+      logAuthDiagnostic('AdminLogin.cached_redirect_skip_duplicate', {
+        target: landingTarget.chosenTarget,
+        reason: 'probe_already_attempted',
+      });
+      return;
+    }
+    cachedRedirectAttemptedRef.current = true;
+    if (capabilityProbeInFlightRef.current) {
+      logAuthDiagnostic('AdminLogin.cached_redirect_probe_deferred', { reason: 'in_flight' });
+      return;
+    }
+    capabilityProbeInFlightRef.current = true;
+    logAuthDiagnostic('AdminLogin.cached_redirect_probe_start', { via: 'auto_redirect' });
+    (async () => {
+      try {
+        const allowed = await handleCapabilityGate();
+        logAuthDiagnostic(
+          allowed ? 'AdminLogin.cached_redirect_probe_success' : 'AdminLogin.cached_redirect_probe_deferred',
+          { via: 'auto_redirect', result: allowed ? 'allowed' : 'deferred_or_denied' },
+        );
+      } finally {
+        capabilityProbeInFlightRef.current = false;
+      }
+    })();
+  }, [
+    handleCapabilityGate,
+    hasSession,
+    landingTarget.chosenTarget,
+    cachedRedirectSnapshotKey,
+    location.pathname,
+    navigateToAdminLanding,
+    sessionStatus,
+  ]);
 
   const handleRetryCapability = useCallback(async () => {
     setCapabilityRetrying(true);

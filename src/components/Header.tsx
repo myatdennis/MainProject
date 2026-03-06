@@ -4,7 +4,7 @@ import { Menu, X, Search, Zap, ChevronDown, LogOut, LayoutDashboard } from 'luci
 import Button from './ui/Button';
 import Input from './ui/Input';
 import cn from '../utils/cn';
-import { logAuthRedirect } from '../utils/logAuthRedirect';
+import { logAuthRedirect, logAuthDiagnostic } from '../utils/logAuthRedirect';
 import RealtimeNotifications from './RealtimeNotifications';
 import { useSecureAuth } from '../context/SecureAuthContext';
 import { useAdminAccessState } from '../lib/adminAccessState';
@@ -32,6 +32,7 @@ const Header = () => {
   } = useAdminAccessState();
   const userMenuRef = useRef<HTMLDivElement | null>(null);
   const userMenuButtonRef = useRef<HTMLButtonElement | null>(null);
+  const logoutInFlightRef = useRef(false);
   const isLoggedIn = Boolean(user) && (isAuthenticated?.admin || isAuthenticated?.lms);
   const notificationsFeatureEnabled =
     (import.meta.env?.VITE_ENABLE_NOTIFICATIONS ?? '').toString().trim().toLowerCase() !== 'false';
@@ -78,18 +79,32 @@ const Header = () => {
 
   const handleLogout = useCallback(async () => {
     if (!isLoggedIn) return;
+    if (logoutInFlightRef.current) {
+      logAuthDiagnostic('Header.logout_skip', { reason: 'in_flight' });
+      return;
+    }
+    logoutInFlightRef.current = true;
     setUserMenuOpen(false);
     const surface: 'admin' | 'lms' = canAccessAdmin ? 'admin' : 'lms';
+    const target = surface === 'admin' ? '/admin/login' : '/login';
+    logAuthDiagnostic('Header.logout_start', { surface, target });
     try {
       await logout(surface);
+      logAuthDiagnostic('Header.logout_success', { surface, target });
     } catch (error) {
       console.warn('[Header] logout failed (continuing)', error);
+      logAuthDiagnostic('Header.logout_error', {
+        surface,
+        target,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    } finally {
+      if (surface === 'admin') {
+        logAuthRedirect('Header.handleLogout', { target });
+      }
+      navigate(target);
+      logoutInFlightRef.current = false;
     }
-    const target = surface === 'admin' ? '/admin/login' : '/login';
-    if (surface === 'admin') {
-      logAuthRedirect('Header.handleLogout', { target });
-    }
-    navigate(target);
   }, [canAccessAdmin, isLoggedIn, logout, navigate]);
 
   const handleAdminCtaClick = useCallback(() => {

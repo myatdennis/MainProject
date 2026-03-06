@@ -1285,6 +1285,7 @@ const ensureAssignmentScopedCatalog = async (
   currentCourses: { [key: string]: Course },
   userId: string | null,
   orgId: string | null,
+  { skipDiagnostics }: { skipDiagnostics?: boolean } = {},
 ): Promise<{ [key: string]: Course }> => {
   if (!userId) {
     setLearnerCatalogState({
@@ -1304,7 +1305,9 @@ const ensureAssignmentScopedCatalog = async (
   try {
     const assignments = await getAssignmentsForUser(userId);
     if (!assignments || assignments.length === 0) {
-      emitCatalogDiagnostic('assignment_scope_empty', { userId, orgId });
+      if (!skipDiagnostics) {
+        emitCatalogDiagnostic('assignment_scope_empty', { userId, orgId, phase: 'post_fetch' });
+      }
       const cached = cacheKey ? loadCachedCatalog(cacheKey) : null;
 
       if (cached && hasAnyCourses(cached)) {
@@ -1589,19 +1592,24 @@ export const courseStore = {
         restrictToOrg || (!restrictToOrg && (adminLoadStatus === 'error' || adminLoadStatus === 'api_unreachable'));
 
       if ((!dbCourses || dbCourses.length === 0) && shouldLoadPublishedCatalog) {
+        const learnerContextReadyForFallback =
+          !restrictToOrg ||
+          (orgContext.orgId !== null && (orgContext.status === 'ready' || orgContext.status === 'idle'));
+        if (!learnerContextReadyForFallback) {
+          console.info(
+            '[courseStore.init] Deferring published catalog fallback until auth/org context is ready.',
+          );
+          queueAuthReadyBootstrap(() => {
+            void courseStore.init();
+          });
+          return;
+        }
+
         console.log('[courseStore.init] Loading published catalog as fallback...');
         try {
           if (restrictToOrg) {
             if (orgContext.orgId) {
               dbCourses = await fetchPublishedCourses({ orgId: orgContext.orgId, assignedOnly: true });
-            } else if (orgContext.status === 'loading') {
-              console.info(
-                '[courseStore.init] Organization context still loading; delaying learner catalog fetch until ready.',
-              );
-              queueAuthReadyBootstrap(() => {
-                void courseStore.init();
-              });
-              return;
             } else {
               console.warn(
                 '[courseStore.init] Missing organizationId; loading full published catalog for learner context.',
@@ -1672,7 +1680,9 @@ export const courseStore = {
       }
 
       if (restrictToOrg) {
-        courses = await ensureAssignmentScopedCatalog(courses, orgContext.userId, orgContext.orgId);
+        courses = await ensureAssignmentScopedCatalog(courses, orgContext.userId, orgContext.orgId, {
+          skipDiagnostics: orgContext.status !== 'ready',
+        });
       }
     } catch (error) {
       console.error('Error initializing course store:', error);
