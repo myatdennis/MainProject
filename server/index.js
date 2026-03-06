@@ -106,6 +106,41 @@ const shouldLogAuthDebug =
   NODE_ENV !== 'production' || String(process.env.ENABLE_AUTH_DEBUG || '').toLowerCase() === 'true';
 const ENABLE_NOTIFICATIONS = parseFlag(process.env.ENABLE_NOTIFICATIONS);
 
+const describeUnhandledReason = (reason) => {
+  if (reason instanceof Error) {
+    return { type: reason.constructor.name, message: reason.message, stack: reason.stack };
+  }
+  const serialized =
+    typeof reason === 'object'
+      ? (() => {
+          try {
+            return JSON.stringify(reason);
+          } catch {
+            return String(reason);
+          }
+        })()
+      : String(reason);
+  return { type: typeof reason, value: serialized };
+};
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[process] unhandledRejection', describeUnhandledReason(reason));
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('[process] uncaughtException', describeUnhandledReason(error));
+});
+
+const asyncHandler = (handler) => (req, res, next) =>
+  Promise.resolve(handler(req, res, next)).catch((error) => {
+    console.error('[express] async_handler_error', {
+      path: req.originalUrl,
+      method: req.method,
+      reason: error instanceof Error ? error.message : error,
+    });
+    next(error);
+  });
+
 const fatalEnvError = (message) => {
   console.error(`[env] ${message}`);
   process.exit(1);
@@ -1690,21 +1725,25 @@ app.use('/api/admin/analytics/summary', adminAnalyticsSummary);
 app.use('/api/admin/users', adminUsersRouter);
 app.use('/api/admin/courses', authenticate, requireSupabaseUser, requireAdmin, adminCoursesRouter);
 
-app.get('/api/admin/courses/import/template', requireAdminAccess, (_req, res) => {
-  try {
-    const contents = fs.readFileSync(COURSE_IMPORT_TEMPLATE_PATH, 'utf-8');
-    res.setHeader('Content-Type', 'application/json');
-    res.send(contents);
-  } catch (error) {
-    console.error('[admin.courses.import.template] failed_to_load', error);
-    res.status(500).json({
-      error: 'template_unavailable',
-      message: 'Unable to load course import template.',
-    });
-  }
-});
+app.get(
+  '/api/admin/courses/import/template',
+  requireAdminAccess,
+  asyncHandler((_req, res) => {
+    try {
+      const contents = fs.readFileSync(COURSE_IMPORT_TEMPLATE_PATH, 'utf-8');
+      res.setHeader('Content-Type', 'application/json');
+      res.send(contents);
+    } catch (error) {
+      console.error('[admin.courses.import.template] failed_to_load', error);
+      res.status(500).json({
+        error: 'template_unavailable',
+        message: 'Unable to load course import template.',
+      });
+    }
+  }),
+);
 
-app.get('/api/admin/diagnostics/memberships', requireAdminAccess, async (req, res) => {
+app.get('/api/admin/diagnostics/memberships', requireAdminAccess, asyncHandler(async (req, res) => {
   const context = requireUserContext(req, res);
   if (!context) return;
   const userId = context.userId;
@@ -1746,7 +1785,7 @@ app.get('/api/admin/diagnostics/memberships', requireAdminAccess, async (req, re
     queryB_organization_id: queryOrganizationId,
     rawMembershipRows,
   });
-});
+}));
 
 // All organization workspace endpoints require authentication
 app.use('/api/orgs', authenticate);
@@ -4145,35 +4184,43 @@ const isActiveAdminMembership = (membership) => {
   return status === 'active' || status === 'accepted';
 };
 
-app.get('/api/admin/me', requireAdminAccess, (req, res) => {
-  const user = req.supabaseJwtUser;
-  const adminPortalAllowed = req.adminPortalAllowed === true;
+app.get(
+  '/api/admin/me',
+  requireAdminAccess,
+  asyncHandler((req, res) => {
+    const user = req.supabaseJwtUser;
+    const adminPortalAllowed = req.adminPortalAllowed === true;
 
-  res.json({
-    adminPortalAllowed,
-    user: {
-      id: user.id,
-      email: user.email || null,
-      isAdmin: adminPortalAllowed,
-      role: adminPortalAllowed ? 'admin' : 'authenticated',
-    },
-    access: {
-      allowed: adminPortalAllowed,
-      adminPortal: adminPortalAllowed,
-      admin: adminPortalAllowed,
-      isAdmin: adminPortalAllowed,
-      capabilities: {
-        adminPortal: adminPortalAllowed,
-        admin: adminPortalAllowed,
+    res.json({
+      ok: true,
+      requestId: req.requestId ?? null,
+      data: {
+        adminPortalAllowed,
+        user: {
+          id: user.id,
+          email: user.email || null,
+          isAdmin: adminPortalAllowed,
+          role: adminPortalAllowed ? 'admin' : 'authenticated',
+        },
+        access: {
+          allowed: adminPortalAllowed,
+          adminPortal: adminPortalAllowed,
+          admin: adminPortalAllowed,
+          isAdmin: adminPortalAllowed,
+          capabilities: {
+            adminPortal: adminPortalAllowed,
+            admin: adminPortalAllowed,
+          },
+          scopes: adminPortalAllowed ? ['admin'] : [],
+          permissions: adminPortalAllowed ? ['admin:*'] : [],
+          via: adminPortalAllowed ? 'platform' : 'profile',
+          reason: adminPortalAllowed ? 'is_admin' : 'not_admin',
+          timestamp: new Date().toISOString(),
+        },
       },
-      scopes: adminPortalAllowed ? ['admin'] : [],
-      permissions: adminPortalAllowed ? ['admin:*'] : [],
-      via: adminPortalAllowed ? 'platform' : 'profile',
-      reason: adminPortalAllowed ? 'is_admin' : 'not_admin',
-      timestamp: new Date().toISOString(),
-    },
-  });
-});
+    });
+  }),
+);
 
 const defaultOrgProfileRow = (orgId) => ({
   org_id: orgId,
@@ -6727,13 +6774,13 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
   }
 }
 
-app.post('/api/admin/courses', async (req, res) => {
+app.post('/api/admin/courses', asyncHandler(async (req, res) => {
   await handleAdminCourseUpsert(req, res);
-});
+}));
 
-app.put('/api/admin/courses/:id', async (req, res) => {
+app.put('/api/admin/courses/:id', asyncHandler(async (req, res) => {
   await handleAdminCourseUpsert(req, res, { courseIdFromParams: req.params.id });
-});
+}));
 
 // Batch import endpoint (best-effort transactional behavior in E2E/DEV fallback)
 const COURSE_IMPORT_TABLES = [
@@ -6767,7 +6814,7 @@ const respondImportError = ({
   });
 };
 
-app.post('/api/admin/courses/import', async (req, res) => {
+app.post('/api/admin/courses/import', asyncHandler(async (req, res) => {
   normalizeLegacyOrgInput(req.body, { surface: 'admin.courses.import', requestId: req.requestId });
   const parseBooleanFlag = (value) => {
     if (typeof value === 'boolean') return value;
@@ -7626,7 +7673,7 @@ app.post('/api/admin/courses/import', async (req, res) => {
       details: error?.details ?? error?.message ?? null,
     });
   }
-});
+}));
 
 // Assignments listing for client: return active assignments for a user
 app.get('/api/client/me', authenticate, async (req, res) => {
@@ -8106,7 +8153,7 @@ app.delete('/api/admin/courses/:id', async (req, res) => {
   }
 });
 
-app.get('/api/client/courses', async (req, res) => {
+app.get('/api/client/courses', asyncHandler(async (req, res) => {
   const requestId = req.requestId ?? null;
   const assignedOnly = String(req.query.assigned || 'false').toLowerCase() === 'true';
   const queryOrgParam =
@@ -8404,11 +8451,11 @@ app.get('/api/client/courses', async (req, res) => {
       queryName: error?.queryName ?? 'client_courses_published',
     });
   }
-});
+}));
 
 const isUuidIdentifier = (value) => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 
-app.get('/api/client/courses/:courseIdentifier', async (req, res) => {
+app.get('/api/client/courses/:courseIdentifier', asyncHandler(async (req, res) => {
   const { courseIdentifier } = req.params;
   const includeDrafts = String(req.query.includeDrafts || '').toLowerCase() === 'true';
   const requestId = req.requestId ?? null;
@@ -8562,7 +8609,7 @@ app.get('/api/client/courses/:courseIdentifier', async (req, res) => {
       queryName,
     });
   }
-});
+}));
 
 // Admin Modules (E2E fallback)
 app.post('/api/admin/modules', async (req, res) => {
@@ -9385,7 +9432,7 @@ app.post('/api/admin/lessons/reorder', async (req, res) => {
 });
 
 // Learner progress endpoint (used by progressService.ts)
-app.post('/api/learner/progress', authenticate, async (req, res) => {
+app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) => {
   let snapshot = normalizeSnapshotPayload(req.body || {});
 
   if (!snapshot) {
@@ -9535,12 +9582,15 @@ app.post('/api/learner/progress', authenticate, async (req, res) => {
       logSnapshotSuccess('demo');
 
       res.status(202).json({
-        success: true,
-        mode: 'demo',
+        ok: true,
+        requestId,
         data: {
           userId,
           courseId,
           updatedLessons: lessonList.length,
+        },
+        meta: {
+          mode: 'demo',
         },
       });
     } catch (error) {
@@ -9813,12 +9863,15 @@ app.post('/api/learner/progress', authenticate, async (req, res) => {
     logSnapshotSuccess('supabase');
 
     res.status(202).json({
-      success: true,
-      mode: 'supabase',
+      ok: true,
+      requestId,
       data: {
         userId,
         courseId,
         updatedLessons: lessonRows.length,
+      },
+      meta: {
+        mode: 'supabase',
       },
     });
   } catch (error) {
@@ -9838,10 +9891,7 @@ app.post('/api/learner/progress', authenticate, async (req, res) => {
           ? clampPercent((completedLessons / lessonList.length) * 100)
           : clampPercent(courseProgress.percent);
       res.status(202).json({
-        success: true,
-        degraded: true,
-        reason: 'schema_missing_column',
-        missingColumn,
+        ok: true,
         requestId,
         data: {
           userId,
@@ -9850,13 +9900,18 @@ app.post('/api/learner/progress', authenticate, async (req, res) => {
           completedLessons,
           totalLessons: lessonList.length,
         },
+        meta: {
+          degraded: true,
+          reason: 'schema_missing_column',
+          missingColumn,
+        },
       });
       return;
     }
     const message = error?.message || 'Unable to sync progress';
     respondWithError(500, 'progress_sync_failed', message, error);
   }
-});
+}));
 
 // GET learner progress endpoint (fetching progress)
 app.get('/api/learner/progress', authenticate, async (req, res) => {
@@ -9965,7 +10020,14 @@ app.get('/api/learner/progress', authenticate, async (req, res) => {
     }
     console.error('Failed to fetch learner progress:', error);
     writeErrorDiagnostics(req, error, { meta: { surface: 'learner_progress_commit' } });
-    res.status(500).json({ error: 'Unable to fetch progress' });
+    res.status(500).json({
+      ok: false,
+      code: 'progress_fetch_failed',
+      message: 'Unable to fetch progress',
+      requestId: req.requestId ?? null,
+      hint: error?.hint ?? null,
+      details: error?.message ?? null,
+    });
   }
 });
 
@@ -10717,7 +10779,7 @@ const ensureAdminOrgSchemaOrRespond = async (res, label) => {
   return true;
 };
 
-app.get('/api/admin/organizations', requireAdminAccess, async (req, res) => {
+app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req, res) => {
   if (!ensureSupabase(res)) return;
   if (!(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.list'))) return;
 
@@ -10836,9 +10898,9 @@ app.get('/api/admin/organizations', requireAdminAccess, async (req, res) => {
     logRouteError('GET /api/admin/organizations', error);
     res.status(500).json({ error: 'Unable to fetch organizations' });
   }
-});
+}));
 
-app.post('/api/admin/organizations', requireAdminAccess, async (req, res) => {
+app.post('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req, res) => {
   if (!ensureSupabase(res)) return;
   if (!(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.create'))) return;
   const payload = req.body || {};
@@ -10894,7 +10956,7 @@ app.post('/api/admin/organizations', requireAdminAccess, async (req, res) => {
     logRouteError('POST /api/admin/organizations', error);
     res.status(500).json({ error: 'Unable to create organization' });
   }
-});
+}));
 
 app.get('/api/admin/organizations/:id', async (req, res) => {
   if (!ensureSupabase(res)) return;
@@ -11869,7 +11931,7 @@ app.post('/api/orgs/:orgId/memberships/leave', async (req, res) => {
 });
 
 // Organization profile + branding admin APIs
-app.get('/api/admin/org-profiles', requireAdminAccess, async (req, res) => {
+app.get('/api/admin/org-profiles', requireAdminAccess, asyncHandler(async (req, res) => {
   if (!ensureSupabase(res)) return;
 
   const { search, status } = req.query || {};
@@ -11898,16 +11960,22 @@ app.get('/api/admin/org-profiles', requireAdminAccess, async (req, res) => {
     console.error('Failed to list organization profiles:', error);
     res.status(500).json({ error: 'Unable to list organization profiles' });
   }
-});
+}));
 
-app.get('/api/admin/org-profiles/:orgId', requireAdminAccess, (req, res) =>
-  handleOrgProfileBundleRequest(req, res),
+app.get(
+  '/api/admin/org-profiles/:orgId',
+  requireAdminAccess,
+  asyncHandler((req, res) => handleOrgProfileBundleRequest(req, res)),
 );
-app.get('/api/admin/org-profiles/:orgId/context', requireAdminAccess, (req, res) =>
-  handleOrgProfileBundleRequest(req, res, { mode: 'context' }),
+app.get(
+  '/api/admin/org-profiles/:orgId/context',
+  requireAdminAccess,
+  asyncHandler((req, res) => handleOrgProfileBundleRequest(req, res, { mode: 'context' })),
 );
-app.put('/api/admin/org-profiles/:orgId', requireAdminAccess, (req, res) =>
-  handleOrgProfileUpsert(req, res),
+app.put(
+  '/api/admin/org-profiles/:orgId',
+  requireAdminAccess,
+  asyncHandler((req, res) => handleOrgProfileUpsert(req, res)),
 );
 
 app.delete('/api/admin/org-profiles/:orgId', async (req, res) => {
@@ -12029,12 +12097,19 @@ app.delete('/api/admin/org-profiles/:orgId/contacts/:contactId', async (req, res
 });
 
 ['/api/admin/orgs/:orgId/profile', '/api/admin/organizations/:orgId/profile'].forEach((path) => {
-  app.get(path, (req, res) => handleOrgProfileBundleRequest(req, res, { mode: 'profile' }));
-  app.put(path, (req, res) => handleOrgProfileUpsert(req, res, (body) => ({ profile: body })));
+  app.get(
+    path,
+    asyncHandler((req, res) => handleOrgProfileBundleRequest(req, res, { mode: 'profile' })),
+  );
+  app.put(
+    path,
+    asyncHandler((req, res) => handleOrgProfileUpsert(req, res, (body) => ({ profile: body }))),
+  );
 });
 
-app.get('/api/admin/orgs/:orgId/profile/context', (req, res) =>
-  handleOrgProfileBundleRequest(req, res, { mode: 'context' }),
+app.get(
+  '/api/admin/orgs/:orgId/profile/context',
+  asyncHandler((req, res) => handleOrgProfileBundleRequest(req, res, { mode: 'context' })),
 );
 
 // User profile self-service endpoints
@@ -13124,7 +13199,7 @@ const ensureAdminSurveySchemaOrRespond = async (res, label) => {
   return true;
 };
 
-app.get('/api/admin/surveys', requireAdminAccess, async (_req, res) => {
+app.get('/api/admin/surveys', requireAdminAccess, asyncHandler(async (_req, res) => {
   if (!ensureSupabase(res)) return;
   if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.list'))) return;
 
@@ -13146,9 +13221,9 @@ app.get('/api/admin/surveys', requireAdminAccess, async (_req, res) => {
     console.error('Failed to fetch surveys:', error);
     res.status(500).json({ error: 'Unable to fetch surveys' });
   }
-});
+}));
 
-app.get('/api/admin/surveys/:id', async (req, res) => {
+app.get('/api/admin/surveys/:id', requireAdminAccess, asyncHandler(async (req, res) => {
   if (!ensureSupabase(res)) return;
   if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.detail'))) return;
   const { id } = req.params;
@@ -13170,7 +13245,7 @@ app.get('/api/admin/surveys/:id', async (req, res) => {
     console.error(`Failed to fetch survey ${id}:`, error);
     res.status(500).json({ error: 'Unable to fetch survey' });
   }
-});
+}));
 
 app.post('/api/admin/surveys', async (req, res) => {
   if (!ensureSupabase(res)) return;
@@ -14445,6 +14520,25 @@ const redactEnv = (input) => {
 // Example usage of shared utils
 log('info', 'Server started', { env: redactEnv(env) });
 
+app.use((err, req, res, next) => {
+  const payload = {
+    requestId: req.requestId || null,
+    path: req.originalUrl,
+    method: req.method,
+    message: err?.message || String(err),
+    code: err?.code || null,
+  };
+  console.error('[express] unhandled_error', payload);
+  if (res.headersSent) {
+    return next(err);
+  }
+  res.status(err?.status || err?.statusCode || 500).json({
+    ok: false,
+    code: err?.code || 'internal_error',
+    message: err?.message || 'Internal server error',
+    requestId: req.requestId || null,
+  });
+});
 
 // Use the structured API error handler for all errors
 app.use(apiErrorHandler);
