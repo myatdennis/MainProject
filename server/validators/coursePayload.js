@@ -80,6 +80,12 @@ export const coursePayloadSchema = z.object({
   modules: z.array(moduleSchema).default([]),
 });
 
+const describeValueType = (value) => {
+  if (Array.isArray(value)) return 'array';
+  if (value === null) return 'null';
+  return typeof value;
+};
+
 const lessonTypeRequiresQuestions = new Set(['quiz']);
 const lessonTypeRequiresScenario = new Set(['interactive', 'scenario']);
 
@@ -189,6 +195,7 @@ export function validateCoursePayload(payload) {
       path: issue.path.join('.'),
       message: issue.message,
       code: issue.code || 'invalid',
+      receivedValueType: describeValueType(issue.input),
     }));
     return { ok: false, issues };
   }
@@ -221,17 +228,24 @@ export function validateCoursePayload(payload) {
 
   const moduleOrders = new Set();
   normalizedModules.forEach((module, moduleIndex) => {
+    const originalModule = parsed.data.modules[moduleIndex] || module;
     if (typeof module.order_index !== 'number' || module.order_index < 1) {
       issues.push({
         path: `modules[${moduleIndex}].order_index`,
         message: 'Module order must be a positive integer',
         code: 'module.order.invalid',
+        receivedValueType: describeValueType(
+          originalModule?.order_index ?? originalModule?.orderIndex ?? module.order_index,
+        ),
       });
     } else if (moduleOrders.has(module.order_index)) {
       issues.push({
         path: `modules[${moduleIndex}].order_index`,
         message: 'Module order values must be unique',
         code: 'module.order.duplicate',
+        receivedValueType: describeValueType(
+          originalModule?.order_index ?? originalModule?.orderIndex ?? module.order_index,
+        ),
       });
     } else {
       moduleOrders.add(module.order_index);
@@ -239,17 +253,24 @@ export function validateCoursePayload(payload) {
 
     const lessonOrders = new Set();
     module.lessons.forEach((lesson, lessonIndex) => {
+      const originalLesson = originalModule?.lessons?.[lessonIndex] ?? lesson;
       if (typeof lesson.order_index !== 'number' || lesson.order_index < 1) {
         issues.push({
           path: `modules[${moduleIndex}].lessons[${lessonIndex}].order_index`,
           message: 'Lesson order must be a positive integer',
           code: 'lesson.order.invalid',
+          receivedValueType: describeValueType(
+            originalLesson?.order_index ?? originalLesson?.orderIndex ?? lesson.order_index,
+          ),
         });
       } else if (lessonOrders.has(lesson.order_index)) {
         issues.push({
           path: `modules[${moduleIndex}].lessons[${lessonIndex}].order_index`,
           message: 'Lesson order values must be unique within a module',
           code: 'lesson.order.duplicate',
+          receivedValueType: describeValueType(
+            originalLesson?.order_index ?? originalLesson?.orderIndex ?? lesson.order_index,
+          ),
         });
       } else {
         lessonOrders.add(lesson.order_index);
@@ -260,6 +281,7 @@ export function validateCoursePayload(payload) {
           path: `modules[${moduleIndex}].lessons[${lessonIndex}].type`,
           message: `Lesson type must be one of: ${allowedLessonTypes.join(', ')}`,
           code: 'lesson.type.invalid',
+          receivedValueType: describeValueType(originalLesson?.type ?? lesson.type),
         });
       }
 
@@ -270,6 +292,7 @@ export function validateCoursePayload(payload) {
             path: `modules[${moduleIndex}].lessons[${lessonIndex}].content`,
             message: quizCheck.reason,
             code: 'lesson.quiz.invalid',
+            receivedValueType: describeValueType(originalLesson?.content_json ?? originalLesson?.content ?? lesson),
           });
         }
       }
@@ -281,6 +304,7 @@ export function validateCoursePayload(payload) {
             path: `modules[${moduleIndex}].lessons[${lessonIndex}].content`,
             message: scenarioCheck.reason,
             code: 'lesson.interactive.invalid',
+            receivedValueType: describeValueType(originalLesson?.content_json ?? originalLesson?.content ?? lesson),
           });
         }
       }

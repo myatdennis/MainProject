@@ -6662,22 +6662,42 @@ app.post('/api/admin/courses/import', async (req, res) => {
     }
     return false;
   };
-  const extractImportItems = (body) => {
+  const normalizeImportEntries = (body) => {
+    const wrapCourseEntry = (entry, index) => {
+      if (!entry || typeof entry !== 'object') {
+        return { course: {}, modules: [], index };
+      }
+      if (entry.course || entry.modules) {
+        return {
+          course: entry.course ?? entry,
+          modules: Array.isArray(entry.modules) ? entry.modules : [],
+          index,
+        };
+      }
+      const { modules, ...courseFields } = entry;
+      return {
+        course: courseFields,
+        modules: Array.isArray(modules) ? modules : [],
+        index,
+      };
+    };
+
+    if (Array.isArray(body)) {
+      return { entries: body.map((item, index) => wrapCourseEntry(item, index)), sourceLabel: 'items' };
+    }
     if (Array.isArray(body?.items)) {
-      return { entries: body.items, sourceLabel: 'items' };
+      return { entries: body.items.map((item, idx) => wrapCourseEntry(item, idx)), sourceLabel: 'items' };
     }
     if (Array.isArray(body?.courses)) {
-      return {
-        entries: body.courses.map((course) => ({ course })),
-        sourceLabel: 'courses',
-      };
+      return { entries: body.courses.map((item, idx) => wrapCourseEntry(item, idx)), sourceLabel: 'courses' };
     }
-    if (body?.course) {
-      return { entries: [body], sourceLabel: 'items' };
+    if (body?.course || body?.title) {
+      return { entries: [wrapCourseEntry(body, 0)], sourceLabel: 'items' };
     }
     return { entries: [], sourceLabel: 'items' };
   };
-  const { entries: rawItems, sourceLabel } = extractImportItems(req.body);
+
+  const { entries: rawItems, sourceLabel } = normalizeImportEntries(req.body);
   if (rawItems.length === 0) {
     respondImportError({
       res,
@@ -6741,45 +6761,61 @@ app.post('/api/admin/courses/import', async (req, res) => {
 
   const globalOverwriteFlag = parseBooleanFlag(req.body?.overwrite);
   const validationIssues = [];
-  const normalizedItems = rawItems.map((raw, index) => {
+  const normalizedItems = rawItems.map((rawEntry) => {
     const payload = {
-      course: raw?.course ?? raw ?? {},
-      modules: Array.isArray(raw?.modules) ? raw.modules : [],
+      course: rawEntry?.course ?? rawEntry ?? {},
+      modules: Array.isArray(rawEntry?.modules) ? rawEntry.modules : [],
     };
     const validation = validateCoursePayload(payload);
     if (!validation.ok) {
       const issues = validation.issues.map((issue) => ({
-        path: `${sourceLabel}[${index}].${issue.path || ''}`.replace(/\.$/, ''),
+        courseIndex: rawEntry.index,
+        field: `${sourceLabel}[${rawEntry.index}].${issue.path || ''}`.replace(/\.$/, ''),
         message: issue.message,
         code: issue.code || 'invalid',
+        receivedValueType: issue?.receivedValueType ?? typeof issue?.receivedValue ?? undefined,
       }));
-      validationIssues.push({ index, issues });
+      validationIssues.push({ index: rawEntry.index, issues });
       return null;
     }
     return {
-      index,
+      index: rawEntry.index,
       course: validation.data.course,
       modules: validation.data.modules,
-      overwrite: parseBooleanFlag(raw?.overwrite) || globalOverwriteFlag,
+      overwrite: parseBooleanFlag(rawEntry?.overwrite) || globalOverwriteFlag,
     };
   });
+  logCourseImportEvent('import_normalized', {
+    requestId: req.requestId ?? null,
+    orgId: resolvedOrganizationId,
+    entryCount: rawItems.length,
+    normalizedCount: normalizedItems.length,
+    invalidCount: validationIssues.length,
+  });
   if (validationIssues.length > 0) {
+    const details = validationIssues.flatMap((issueGroup) => issueGroup.issues);
+    logCourseImportEvent('import_validation_failed', {
+      requestId: req.requestId ?? null,
+      orgId: resolvedOrganizationId,
+      entryCount: rawItems.length,
+      issues: details,
+    });
     respondImportError({
       res,
       status: 422,
       code: 'validation_failed',
       message: 'One or more courses failed validation.',
       requestId: req.requestId ?? null,
-      details: validationIssues,
+      details,
     });
     return;
   }
+  const preparedEntries = normalizedItems.filter(Boolean);
   logCourseImportEvent('import_validated', {
     requestId: req.requestId ?? null,
     orgId: resolvedOrganizationId,
     entryCount: preparedEntries.length,
   });
-  const preparedEntries = normalizedItems.filter(Boolean);
 
   // In demo/E2E, snapshot and rollback on failure
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
@@ -6787,7 +6823,7 @@ app.post('/api/admin/courses/import', async (req, res) => {
     const results = [];
     try {
       for (const payload of preparedEntries) {
-        const { course, modules = [] } = payload || {};
+        const { course, modules = [], index: courseIndex } = payload || {};
         if (!course?.title) throw new Error('Course title is required');
 
         const resolvedOrgId = resolvedOrganizationId;
@@ -6795,7 +6831,21 @@ app.post('/api/admin/courses/import', async (req, res) => {
           const shaped = shapeCourseForValidation({ ...course, modules });
           const validation = validatePublishableCourse(shaped, { intent: 'publish' });
           if (!validation.isValid) {
-            res.status(422).json({ error: 'validation_failed', issues: validation.issues });
+            const publishDetails = validation.issues.map((issue) => ({
+              courseIndex,
+              field: issue.path || issue.field || null,
+              message: issue.message,
+              code: issue.code || 'invalid',
+              receivedValueType: issue.receivedValueType ?? null,
+            }));
+            respondImportError({
+              res,
+              status: 422,
+              code: 'validation_failed',
+              message: 'Publish validation failed.',
+              requestId: req.requestId ?? null,
+              details: publishDetails,
+            });
             return;
           }
         }
@@ -6897,19 +6947,26 @@ app.post('/api/admin/courses/import', async (req, res) => {
   try {
     const results = [];
     for (const entry of preparedEntries) {
-      const { course, modules } = entry;
+      const { course, modules, index: courseIndex } = entry;
       const resolvedOrgId = resolvedOrganizationId;
       if (String(course.status || '').toLowerCase() === 'published') {
         const shaped = shapeCourseForValidation({ ...course, modules });
         const validation = validatePublishableCourse(shaped, { intent: 'publish' });
         if (!validation.isValid) {
+          const publishDetails = validation.issues.map((issue) => ({
+            courseIndex,
+            field: issue.path || issue.field || null,
+            message: issue.message,
+            code: issue.code || 'invalid',
+            receivedValueType: issue.receivedValueType ?? null,
+          }));
           respondImportError({
             res,
             status: 422,
             code: 'validation_failed',
             message: 'Publish validation failed.',
             requestId: req.requestId ?? null,
-            details: validation.issues,
+            details: publishDetails,
           });
           return;
         }
@@ -6990,6 +7047,7 @@ app.post('/api/admin/courses/import', async (req, res) => {
         slug: course.slug,
         courseId: course.id ?? null,
         moduleCount: modulesForRpc.length,
+        courseIndex: entry.index,
       });
       const rpcRes = await supabase.rpc('upsert_course_graph', {
         p_actor: context.userId ?? null,
@@ -7003,6 +7061,7 @@ app.post('/api/admin/courses/import', async (req, res) => {
           slug: course.slug,
           code: rpcRes.error?.code ?? null,
           message: rpcRes.error?.message ?? null,
+          courseIndex: entry.index,
         });
         throw rpcRes.error;
       }
@@ -7016,6 +7075,7 @@ app.post('/api/admin/courses/import', async (req, res) => {
         orgId: resolvedOrgId,
         slug: course.slug,
         courseId: rpcRes.data?.id ?? course.id ?? null,
+        courseIndex: entry.index,
       });
     }
     logCourseImportEvent('import_complete', {
