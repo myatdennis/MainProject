@@ -126,12 +126,7 @@ const withAuthHeaders = (init: RequestInit, token: string): RequestInit => {
 };
 
 const applyOrgHeadersIfNeeded = (init: RequestInit, path: string): RequestInit => {
-  let orgId: string | null = null;
-  try {
-    orgId = resolveOrgHeaderForRequest(path);
-  } catch (error) {
-    throw error;
-  }
+  const orgId = resolveOrgHeaderForRequest(path);
   if (!orgId) {
     return init;
   }

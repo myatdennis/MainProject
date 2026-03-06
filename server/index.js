@@ -10717,9 +10717,8 @@ const ensureAdminOrgSchemaOrRespond = async (res, label) => {
   return true;
 };
 
-app.get('/api/admin/organizations', async (req, res) => {
+app.get('/api/admin/organizations', requireAdminAccess, async (req, res) => {
   if (!ensureSupabase(res)) return;
-  if (!(await requireAdminAccess(req, res))) return;
   if (!(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.list'))) return;
 
   const context = requireUserContext(req, res);
@@ -10839,9 +10838,8 @@ app.get('/api/admin/organizations', async (req, res) => {
   }
 });
 
-app.post('/api/admin/organizations', async (req, res) => {
+app.post('/api/admin/organizations', requireAdminAccess, async (req, res) => {
   if (!ensureSupabase(res)) return;
-  if (!(await requireAdminAccess(req, res))) return;
   if (!(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.create'))) return;
   const payload = req.body || {};
 
@@ -11871,9 +11869,8 @@ app.post('/api/orgs/:orgId/memberships/leave', async (req, res) => {
 });
 
 // Organization profile + branding admin APIs
-app.get('/api/admin/org-profiles', async (req, res) => {
+app.get('/api/admin/org-profiles', requireAdminAccess, async (req, res) => {
   if (!ensureSupabase(res)) return;
-  if (!(await requireAdminAccess(req, res))) return;
 
   const { search, status } = req.query || {};
 
@@ -11903,11 +11900,15 @@ app.get('/api/admin/org-profiles', async (req, res) => {
   }
 });
 
-app.get('/api/admin/org-profiles/:orgId', (req, res) => handleOrgProfileBundleRequest(req, res));
-app.get('/api/admin/org-profiles/:orgId/context', (req, res) =>
+app.get('/api/admin/org-profiles/:orgId', requireAdminAccess, (req, res) =>
+  handleOrgProfileBundleRequest(req, res),
+);
+app.get('/api/admin/org-profiles/:orgId/context', requireAdminAccess, (req, res) =>
   handleOrgProfileBundleRequest(req, res, { mode: 'context' }),
 );
-app.put('/api/admin/org-profiles/:orgId', (req, res) => handleOrgProfileUpsert(req, res));
+app.put('/api/admin/org-profiles/:orgId', requireAdminAccess, (req, res) =>
+  handleOrgProfileUpsert(req, res),
+);
 
 app.delete('/api/admin/org-profiles/:orgId', async (req, res) => {
   if (!ensureSupabase(res)) return;
@@ -13123,7 +13124,7 @@ const ensureAdminSurveySchemaOrRespond = async (res, label) => {
   return true;
 };
 
-app.get('/api/admin/surveys', async (_req, res) => {
+app.get('/api/admin/surveys', requireAdminAccess, async (_req, res) => {
   if (!ensureSupabase(res)) return;
   if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.list'))) return;
 

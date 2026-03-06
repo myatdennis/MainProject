@@ -202,14 +202,10 @@ export default async function authorizedFetch(
       headers.set('Authorization', `Bearer ${token}`);
     }
 
-    try {
-      const orgId = resolveOrgHeaderForRequest(url);
-      if (orgId) {
-        headers.set(ORG_HEADER_NAME, orgId);
-        headers.set(LEGACY_ORG_HEADER_NAME, orgId);
-      }
-    } catch (error) {
-      throw error;
+    const orgId = resolveOrgHeaderForRequest(url);
+    if (orgId) {
+      headers.set(ORG_HEADER_NAME, orgId);
+      headers.set(LEGACY_ORG_HEADER_NAME, orgId);
     }
 
     const bodyIsFormData = typeof FormData !== 'undefined' && init.body instanceof FormData;
