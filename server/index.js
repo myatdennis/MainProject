@@ -25,6 +25,11 @@ import {
   analyticsEventIngestSchema,
 } from './validators.js';
 import { validateCoursePayload } from './validators/coursePayload.js';
+import {
+  normalizeImportEntries,
+  normalizeModuleForImport,
+  normalizeLessonForImport,
+} from './lib/courseImporter.js';
 import { logger } from './lib/logger.js';
 import { isAllowedWsOrigin } from './lib/wsOrigins.js';
 import { withCache, invalidateCacheKeys } from './services/cacheService.js';
@@ -2178,14 +2183,17 @@ const collectOrgIdsFromContext = (context = {}, req = {}) => {
 const resolveOrgScopeForRequest = async (req, context, { queryOrgId = null } = {}) => {
   const membershipIds = collectOrgIdsFromContext(context, req);
   const headerOrgId = getHeaderOrgId(req, { requireMembership: !context?.isPlatformAdmin });
-  const candidateIdentifiers = [
-    queryOrgId,
+  const candidateIdentifiers = [];
+  if (context?.isPlatformAdmin && queryOrgId) {
+    candidateIdentifiers.push(queryOrgId);
+  }
+  candidateIdentifiers.push(
     headerOrgId,
     req.activeOrgId,
     req.user?.activeOrgId,
     context?.requestedOrgId,
     req.user?.organizationId,
-  ];
+  );
   let resolvedOrgId = null;
   for (const candidate of candidateIdentifiers) {
     if (!candidate) continue;
@@ -2593,7 +2601,20 @@ const logNotificationsMissingTable = (label, context = {}) => {
   logger.warn('notifications_table_missing', { label, ...context });
 };
 
-const buildDisabledNotificationsResponse = (page = 1, pageSize = 25) => ({
+const mapNotificationRecord = (row) => {
+  if (!row || typeof row !== 'object') {
+    return row;
+  }
+  const resolvedOrgId = normalizeOrgIdValue(row.organization_id ?? row.org_id ?? null);
+  return {
+    ...row,
+    organization_id: resolvedOrgId,
+    org_id: row.org_id ?? resolvedOrgId ?? null, // TODO: remove org_id/profile_id compatibility after launch stabilization
+  };
+};
+
+const buildDisabledNotificationsResponse = (page = 1, pageSize = 25, requestId = null) => ({
+  ok: true,
   data: [],
   pagination: {
     page,
@@ -2602,6 +2623,7 @@ const buildDisabledNotificationsResponse = (page = 1, pageSize = 25) => ({
     hasMore: false,
   },
   notificationsDisabled: true,
+  requestId,
 });
 
 async function runNotificationQuery(queryFactory, attempt = 0) {
@@ -3253,30 +3275,58 @@ const normalizeSnapshotPayload = (body = {}, fallbackUserId) => {
 };
 
 const resolveOrgIdFromRequest = (req, context) => {
-  const normalizedRequestOrgId = normalizeOrgIdValue(
+  const rawHeaderOrg =
     req.organizationId ??
-      req.activeOrgId ??
-      req.headers?.['x-organization-id'] ??
-      req.headers?.['x-org-id'] ??
-      null,
-  );
-  const contextActiveOrgId = normalizeOrgIdValue(context?.activeOrganizationId ?? context?.requestedOrgId ?? null);
+    req.activeOrgId ??
+    req.headers?.['x-organization-id'] ??
+    req.headers?.['x-org-id'] ??
+    null;
+  const contextActiveOrgId = context?.activeOrganizationId ?? context?.requestedOrgId ?? null;
   const membershipOrgIds = Array.isArray(context?.memberships)
     ? context.memberships
         .map((membership) =>
-          pickOrgId(
-            membership.organization_id,
-            membership.organizationId,
-            membership.org_id,
-            membership.orgId,
+          normalizeOrgIdValue(
+            pickOrgId(
+              membership.organization_id,
+              membership.organizationId,
+              membership.org_id,
+              membership.orgId,
+            ),
           ),
         )
         .filter(Boolean)
     : [];
-  const scopedOrgIds = Array.isArray(context?.organizationIds)
+  const organizationIds = Array.isArray(context?.organizationIds)
     ? context.organizationIds.map((orgId) => normalizeOrgIdValue(orgId)).filter(Boolean)
     : [];
-  return normalizedRequestOrgId || contextActiveOrgId || membershipOrgIds[0] || scopedOrgIds[0] || null;
+  const membershipSet = new Set([...membershipOrgIds, ...organizationIds]);
+  const canUseOrg = (candidate) => {
+    const normalized = normalizeOrgIdValue(candidate);
+    if (!normalized) return null;
+    if (context?.isPlatformAdmin) {
+      return normalized;
+    }
+    return membershipSet.has(normalized) ? normalized : null;
+  };
+  const orderedCandidates = [
+    rawHeaderOrg,
+    contextActiveOrgId,
+    context?.requestedOrgId,
+    context?.user?.organizationId,
+  ];
+  for (const candidate of orderedCandidates) {
+    const allowed = canUseOrg(candidate);
+    if (allowed) {
+      return allowed;
+    }
+  }
+  if (membershipOrgIds.length > 0) {
+    return membershipOrgIds[0];
+  }
+  if (organizationIds.length > 0) {
+    return organizationIds[0];
+  }
+  return null;
 };
 
 const buildLessonRow = (lessonId, record) => {
@@ -3555,7 +3605,6 @@ const attachLessonOrgScope = (record, orgId) => {
   record.organization_id = orgId;
   if (schemaSupportFlags.lessonProgressOrgColumn === LESSON_PROGRESS_LEGACY_ORG_COLUMN) {
     // TODO: remove org_id/profile_id compatibility after launch stabilization
-    delete record.organization_id;
     record.org_id = orgId;
   } else {
     delete record.org_id;
@@ -4190,15 +4239,21 @@ app.get(
   asyncHandler((req, res) => {
     const user = req.supabaseJwtUser;
     const adminPortalAllowed = req.adminPortalAllowed === true;
+    const accessReason =
+      req.adminAccessReason ||
+      (adminPortalAllowed ? 'allowed' : req.adminPortalDeniedReason || 'not_authorized');
+    const allowlistEmail = req.adminAllowlistEntry?.email ?? null;
 
     res.json({
       ok: true,
       requestId: req.requestId ?? null,
       data: {
         adminPortalAllowed,
+         reason: accessReason,
         user: {
           id: user.id,
           email: user.email || null,
+          allowlistEmail,
           isAdmin: adminPortalAllowed,
           role: adminPortalAllowed ? 'admin' : 'authenticated',
         },
@@ -4213,8 +4268,11 @@ app.get(
           },
           scopes: adminPortalAllowed ? ['admin'] : [],
           permissions: adminPortalAllowed ? ['admin:*'] : [],
-          via: adminPortalAllowed ? 'platform' : 'profile',
-          reason: adminPortalAllowed ? 'is_admin' : 'not_admin',
+          via: adminPortalAllowed ? accessReason : 'denied',
+          reason: accessReason,
+          instructions: adminPortalAllowed
+            ? null
+            : 'Ask an existing admin to add you to admin_users allowlist.',
           timestamp: new Date().toISOString(),
         },
       },
@@ -6825,41 +6883,6 @@ app.post('/api/admin/courses/import', asyncHandler(async (req, res) => {
     }
     return false;
   };
-  const normalizeImportEntries = (body) => {
-    const wrapCourseEntry = (entry, index) => {
-      if (!entry || typeof entry !== 'object') {
-        return { course: {}, modules: [], index };
-      }
-      if (entry.course || entry.modules) {
-        return {
-          course: entry.course ?? entry,
-          modules: Array.isArray(entry.modules) ? entry.modules : [],
-          index,
-        };
-      }
-      const { modules, ...courseFields } = entry;
-      return {
-        course: courseFields,
-        modules: Array.isArray(modules) ? modules : [],
-        index,
-      };
-    };
-
-    if (Array.isArray(body)) {
-      return { entries: body.map((item, index) => wrapCourseEntry(item, index)), sourceLabel: 'items' };
-    }
-    if (Array.isArray(body?.items)) {
-      return { entries: body.items.map((item, idx) => wrapCourseEntry(item, idx)), sourceLabel: 'items' };
-    }
-    if (Array.isArray(body?.courses)) {
-      return { entries: body.courses.map((item, idx) => wrapCourseEntry(item, idx)), sourceLabel: 'courses' };
-    }
-    if (body?.course || body?.title) {
-      return { entries: [wrapCourseEntry(body, 0)], sourceLabel: 'items' };
-    }
-    return { entries: [], sourceLabel: 'items' };
-  };
-
   const { entries: rawItems, sourceLabel } = normalizeImportEntries(req.body);
   if (rawItems.length === 0) {
     respondImportError({
@@ -6937,403 +6960,32 @@ app.post('/api/admin/courses/import', asyncHandler(async (req, res) => {
     return fallback;
   };
   const validationIssues = [];
-  const ensureLessonContentContainers = (lesson) => {
-    if (!lesson || typeof lesson !== 'object') return;
-    if (!lesson.content || typeof lesson.content !== 'object') {
-      lesson.content = {};
-    }
-    if (!lesson.content_json || typeof lesson.content_json !== 'object') {
-      lesson.content_json = {};
-    }
-    if (!lesson.content_json.body || typeof lesson.content_json.body !== 'object') {
-      lesson.content_json.body = {};
-    }
-  };
-  const normalizeQuizOption = (option, index = 0) => {
-    if (typeof option === 'string') {
-      return { text: option, correct: false };
-    }
-    if (!option || typeof option !== 'object') {
-      return null;
-    }
-    const textCandidate =
-      (typeof option.text === 'string' && option.text.trim()) ||
-      (typeof option.label === 'string' && option.label.trim()) ||
-      (typeof option.title === 'string' && option.title.trim()) ||
-      null;
-    if (!textCandidate) {
-      return null;
-    }
-    return {
-      text: textCandidate,
-      correct: option.correct === true || option.isCorrect === true || option.answer === true || option.value === true,
-      id: option.id || option.value || `choice-${index}`,
-    };
-  };
-  const finalizeQuizOptions = (options = [], source = {}) => {
-    if (!options.length) return null;
-    if (!options.some((option) => option && option.correct)) {
-      const correctIndex =
-        typeof source.correctAnswerIndex === 'number'
-          ? source.correctAnswerIndex
-          : typeof source.correctChoiceIndex === 'number'
-          ? source.correctChoiceIndex
-          : undefined;
-      if (typeof correctIndex === 'number' && options[correctIndex]) {
-        options[correctIndex].correct = true;
-      }
-      if (typeof source.correctAnswerId === 'string') {
-        options.forEach((option) => {
-          if (String(option?.id ?? '').toLowerCase() === source.correctAnswerId.toLowerCase()) {
-            option.correct = true;
-          }
-        });
-      }
-      if (typeof source.answer === 'string') {
-        options.forEach((option) => {
-          if (String(option?.id ?? option?.value ?? option.text).toLowerCase() === source.answer.toLowerCase()) {
-            option.correct = true;
-          }
-        });
-      }
-      if (typeof source.correctAnswer === 'string' || typeof source.correct_option_id === 'string') {
-        const target = (source.correctAnswer || source.correct_option_id || '').toString().toLowerCase();
-        if (target) {
-          options.forEach((option) => {
-            if (String(option?.id ?? option?.value ?? option.text).toLowerCase() === target) {
-              option.correct = true;
-            }
-          });
-        }
-      }
-    }
-    return options.some((option) => option.correct) ? options : null;
-  };
-  const normalizeQuizQuestion = (candidate, index = 0) => {
-    if (!candidate) return null;
-    if (typeof candidate === 'string') {
-      return null;
-    }
-    if (Array.isArray(candidate?.items)) {
-      const nested = candidate.items
-        .map((item, nestedIndex) => normalizeQuizQuestion(item, nestedIndex))
-        .filter(Boolean);
-      return nested.length > 0 ? nested : null;
-    }
-    if (candidate?.question && Array.isArray(candidate.question?.items)) {
-      const nested = candidate.question.items
-        .map((item, nestedIndex) => normalizeQuizQuestion(item, nestedIndex))
-        .filter(Boolean);
-      return nested.length > 0 ? nested : null;
-    }
-    const source = candidate.props || candidate.data || candidate.content || candidate;
-    let itemsLooksLikeQuestionArray = false;
-    if (Array.isArray(source?.items)) {
-      itemsLooksLikeQuestionArray = source.items.some(
-        (item) =>
-          (typeof item?.prompt === 'string' && item.prompt.trim()) ||
-          (typeof item?.question === 'string' && item.question.trim()) ||
-          (Array.isArray(item?.choices) && item.choices.length > 0) ||
-          (Array.isArray(item?.options) && item.options.length > 0),
-      );
-      if (itemsLooksLikeQuestionArray) {
-        const nested = source.items
-          .map((item, nestedIndex) => normalizeQuizQuestion(item, nestedIndex))
-          .filter(Boolean);
-        if (nested.length > 0) {
-          return nested;
-        }
-      }
-    }
-    const prompt =
-      (typeof source?.prompt === 'string' && source.prompt.trim()) ||
-      (typeof source?.question === 'string' && source.question.trim()) ||
-      (typeof source?.text === 'string' && source.text.trim()) ||
-      (typeof candidate?.heading === 'string' && candidate.heading.trim()) ||
-      (typeof candidate?.title === 'string' && candidate.title.trim()) ||
-      null;
-    if (!prompt) return null;
-    const rawOptions =
-      (Array.isArray(source?.options) && source.options) ||
-      (Array.isArray(source?.choices) && source.choices) ||
-      (Array.isArray(source?.answers) && source.answers) ||
-      (Array.isArray(source?.responses) && source.responses) ||
-      (!itemsLooksLikeQuestionArray && Array.isArray(source?.items) ? source.items : null) ||
-      null;
-    if (!rawOptions || rawOptions.length === 0) {
-      return null;
-    }
-    const normalizedOptions = rawOptions.map((option, optionIndex) => normalizeQuizOption(option, optionIndex)).filter(Boolean);
-    const finalizedOptions = finalizeQuizOptions(normalizedOptions, source);
-    if (!finalizedOptions) {
-      return null;
-    }
-    return {
-      prompt,
-      options: finalizedOptions,
-    };
-  };
-  const collectLessonFallbackBlocks = (lesson) => {
-    const sources = [
-      Array.isArray(lesson?.blocks) ? lesson.blocks : null,
-      Array.isArray(lesson?.content?.blocks) ? lesson.content.blocks : null,
-      Array.isArray(lesson?.content?.body?.blocks) ? lesson.content.body.blocks : null,
-      Array.isArray(lesson?.content_json?.blocks) ? lesson.content_json.blocks : null,
-      Array.isArray(lesson?.content_json?.body?.blocks) ? lesson.content_json.body.blocks : null,
-      Array.isArray(lesson?.content?.interactive?.blocks) ? lesson.content.interactive.blocks : null,
-      Array.isArray(lesson?.content_json?.interactive?.blocks) ? lesson.content_json.interactive.blocks : null,
-    ].filter(Boolean);
-    return sources.flat().filter(Boolean);
-  };
-
-  const collectQuizQuestionsFromBlocks = (lesson) => {
-    const blocksSources = collectLessonFallbackBlocks(lesson);
-    if (!blocksSources.length) return [];
-    const questions = [];
-    blocksSources.forEach((blocks) => {
-      blocks.forEach((block, blockIndex) => {
-        const normalized = normalizeQuizQuestion(block, blockIndex);
-        if (Array.isArray(normalized)) {
-          normalized.forEach((question) => question && questions.push(question));
-        } else if (normalized) {
-          questions.push(normalized);
-        } else {
-          const source = block?.props || block?.data || block;
-          if (Array.isArray(source?.items)) {
-            source.items.forEach((item, nestedIndex) => {
-              const nested = normalizeQuizQuestion(item, nestedIndex);
-              if (Array.isArray(nested)) {
-                nested.forEach((question) => question && questions.push(question));
-              } else if (nested) {
-                questions.push(nested);
-              }
-            });
-          }
-        }
-      });
-    });
-    return questions;
-  };
-  const collectLessonItems = (lesson) => {
-    const directSources = [
-      Array.isArray(lesson?.items) ? lesson.items : null,
-      Array.isArray(lesson?.content?.items) ? lesson.content.items : null,
-      Array.isArray(lesson?.content?.body?.items) ? lesson.content.body.items : null,
-      Array.isArray(lesson?.content_json?.items) ? lesson.content_json.items : null,
-      Array.isArray(lesson?.content_json?.body?.items) ? lesson.content_json.body.items : null,
-    ].filter(Boolean);
-    const blockItems = collectLessonFallbackBlocks(lesson)
-      .map((block) => {
-        const propsItems = Array.isArray(block?.props?.items) ? block.props.items : null;
-        if (propsItems) return propsItems;
-        const dataItems = Array.isArray(block?.data?.items) ? block.data.items : null;
-        return dataItems || null;
-      })
-      .filter(Boolean);
-    return [...directSources, ...blockItems].flat().filter(Boolean);
-  };
-  const deriveQuizQuestions = (lesson) => {
-    const questions = [];
-    const mergeQuestions = (source) => {
-      if (!Array.isArray(source)) return;
-      source.forEach((item, index) => {
-        const normalized = normalizeQuizQuestion(item, index);
-        if (Array.isArray(normalized)) {
-          normalized.forEach((question) => question && questions.push(question));
-        } else if (normalized) {
-          questions.push(normalized);
-        }
-      });
-    };
-    mergeQuestions(lesson?.questions);
-    mergeQuestions(lesson?.quizQuestions);
-    mergeQuestions(lesson?.content?.questions);
-    mergeQuestions(lesson?.content?.quiz?.questions);
-    mergeQuestions(lesson?.content?.items);
-    mergeQuestions(lesson?.content?.body?.questions);
-    mergeQuestions(lesson?.content?.body?.blocks);
-    mergeQuestions(lesson?.content_json?.questions);
-    mergeQuestions(lesson?.content_json?.quiz?.questions);
-    mergeQuestions(lesson?.content_json?.items);
-    mergeQuestions(lesson?.content_json?.body?.questions);
-    mergeQuestions(lesson?.content_json?.body?.blocks);
-    mergeQuestions(collectLessonItems(lesson));
-    const blockDerived = collectQuizQuestionsFromBlocks(lesson);
-    blockDerived.forEach((question) => questions.push(question));
-    return questions.filter(Boolean);
-  };
-  const assignQuizQuestions = (lesson, questions) => {
-    if (!lesson || !Array.isArray(questions) || questions.length === 0) return;
-    ensureLessonContentContainers(lesson);
-    lesson.content.questions = questions;
-    lesson.content.body =
-      typeof lesson.content.body === 'object'
-        ? { ...lesson.content.body, questions }
-        : { questions };
-    const existingBody =
-      lesson.content_json && typeof lesson.content_json.body === 'object' ? lesson.content_json.body : {};
-    lesson.content_json = {
-      ...(lesson.content_json && typeof lesson.content_json === 'object' ? lesson.content_json : {}),
-      body: {
-        ...(existingBody && typeof existingBody === 'object' ? existingBody : {}),
-        questions,
-      },
-    };
-  };
-  const assignInteractiveElements = (lesson, elements) => {
-    if (!lesson || !Array.isArray(elements) || elements.length === 0) return;
-    ensureLessonContentContainers(lesson);
-    lesson.content.branchingElements = elements;
-    lesson.content.body =
-      typeof lesson.content.body === 'object'
-        ? { ...lesson.content.body, elements }
-        : { elements };
-    const existingBody =
-      lesson.content_json && typeof lesson.content_json.body === 'object' ? lesson.content_json.body : {};
-    lesson.content_json = {
-      ...(lesson.content_json && typeof lesson.content_json === 'object' ? lesson.content_json : {}),
-      body: {
-        ...(existingBody && typeof existingBody === 'object' ? existingBody : {}),
-        elements,
-      },
-    };
-  };
-  const normalizeBranchNode = (node, index = 0) => {
-    if (!node || typeof node !== 'object') return null;
-    const source = node.props || node.data || node;
-    const prompt =
-      (typeof source?.prompt === 'string' && source.prompt.trim()) ||
-      (typeof source?.question === 'string' && source.question.trim()) ||
-      (typeof source?.text === 'string' && source.text.trim()) ||
-      (typeof node?.title === 'string' && node.title.trim()) ||
-      null;
-    if (!prompt) return null;
-    const rawOptions =
-      (Array.isArray(source?.choices) && source.choices) ||
-      (Array.isArray(source?.options) && source.options) ||
-      (Array.isArray(source?.responses) && source.responses) ||
-      (Array.isArray(source?.nodes) && source.nodes) ||
-      (Array.isArray(source?.branches) && source.branches) ||
-      null;
-    if (!rawOptions || rawOptions.length === 0) return null;
-    const options = rawOptions
-      .map((option, optionIndex) => {
-        if (typeof option === 'string') {
-          return { text: option, nextNodeId: null };
-        }
-        if (!option || typeof option !== 'object') {
-          return null;
-        }
-        const text =
-          (typeof option.text === 'string' && option.text.trim()) ||
-          (typeof option.label === 'string' && option.label.trim()) ||
-          (typeof option.title === 'string' && option.title.trim()) ||
-          null;
-        if (!text) return null;
-        return {
-          id: option.id || option.value || `${index}-${optionIndex}`,
-          text,
-          nextNodeId: option.to || option.next || option.target || option.nextNodeId || null,
-        };
-      })
-      .filter(Boolean);
-    if (options.length === 0) return null;
-    return {
-      id: source.id || node.id || `node-${index}`,
-      prompt,
-      options,
-    };
-  };
-
-  const deriveBranchingElements = (lesson) => {
-    const candidates = [
-      Array.isArray(lesson?.branchingElements) ? lesson.branchingElements : null,
-      Array.isArray(lesson?.branches) ? lesson.branches : null,
-      Array.isArray(lesson?.nodes) ? lesson.nodes : null,
-      Array.isArray(lesson?.content?.branchingElements) ? lesson.content.branchingElements : null,
-      Array.isArray(lesson?.content?.branches) ? lesson.content.branches : null,
-      Array.isArray(lesson?.content?.nodes) ? lesson.content.nodes : null,
-      Array.isArray(lesson?.content?.interactive?.branchingElements)
-        ? lesson.content.interactive.branchingElements
-        : null,
-      Array.isArray(lesson?.content_json?.branchingElements) ? lesson.content_json.branchingElements : null,
-      Array.isArray(lesson?.content_json?.interactive?.branchingElements)
-        ? lesson.content_json.interactive.branchingElements
-        : null,
-      Array.isArray(lesson?.content_json?.nodes) ? lesson.content_json.nodes : null,
-      Array.isArray(lesson?.content_json?.body?.nodes) ? lesson.content_json.body.nodes : null,
-      Array.isArray(lesson?.content_json?.body?.branches) ? lesson.content_json.body.branches : null,
-    ].filter(Boolean);
-    const blockNodes = collectLessonFallbackBlocks(lesson)
-      .map((block) => {
-        const dataNodes =
-          (Array.isArray(block?.props?.nodes) && block.props.nodes) ||
-          (Array.isArray(block?.data?.nodes) && block.data.nodes) ||
-          null;
-        return dataNodes || null;
-      })
-      .filter(Boolean);
-    candidates.push(...blockNodes);
-    const flattened = candidates.flat().filter(Boolean);
-    const normalized = flattened.map((node, index) => normalizeBranchNode(node, index)).filter(Boolean);
-    return normalized;
-  };
-
-  const normalizeLessonForImport = (lesson = {}, { moduleIndex = 0, lessonIndex = 0 } = {}) => {
-    if (!lesson || typeof lesson !== 'object') return lesson;
-    const next = { ...lesson };
-    ensureLessonContentContainers(next);
-    if (typeof next.type === 'string') {
-      const normalizedType = next.type.trim().toLowerCase();
-      if (normalizedType === 'assessment' || normalizedType === 'knowledge_check' || normalizedType === 'knowledge-check') {
-        next.type = 'quiz';
-      } else if (normalizedType === 'branching' || normalizedType === 'choose_your_path' || normalizedType === 'choose-your-path') {
-        next.type = 'interactive';
-      }
-    }
-    if (next.type === 'quiz') {
-      const quizQuestions = deriveQuizQuestions(next);
-      if (quizQuestions.length > 0) {
-        assignQuizQuestions(next, quizQuestions);
-        // Example: a lesson with { type: 'quiz', content: { blocks: [{ props: { prompt, choices } }] } }
-        // becomes lesson.content.questions = [{ prompt, options: [...] }] before validation.
-      }
-    }
-    if (next.type === 'interactive') {
-      const branchingSource = deriveBranchingElements(next);
-      if (Array.isArray(branchingSource) && branchingSource.length > 0) {
-        assignInteractiveElements(next, branchingSource);
-      }
-    }
-    const derivedQuestionsCount = Array.isArray(next.content?.questions) ? next.content.questions.length : 0;
-    const derivedBranchCount = Array.isArray(next.content?.branchingElements)
-      ? next.content.branchingElements.length
-      : 0;
-    logCourseImportEvent('lesson_normalization', {
-      requestId: req.requestId ?? null,
-      moduleIndex,
-      lessonIndex,
-      lessonType: next.type ?? null,
-      derivedQuestionsCount,
-      derivedBranchCount,
-    });
-    return next;
-  };
-
-  const normalizeModuleForImport = (module = {}, { moduleIndex = 0 } = {}) => {
-    const lessons = Array.isArray(module?.lessons) ? module.lessons : [];
-    return {
-      ...module,
-      lessons: lessons.map((lesson, lessonIndex) => normalizeLessonForImport(lesson, { moduleIndex, lessonIndex })),
-    };
-  };
-
   const normalizedItems = rawItems.map((rawEntry) => {
+    const normalizedModules = Array.isArray(rawEntry?.modules)
+      ? rawEntry.modules.map((m, moduleIndex) => {
+          const normalizedModule = normalizeModuleForImport(m, { moduleIndex });
+          (normalizedModule.lessons || []).forEach((lesson, lessonIndex) => {
+            const derivedQuestionsCount = Array.isArray(lesson.content?.questions)
+              ? lesson.content.questions.length
+              : 0;
+            const derivedBranchCount = Array.isArray(lesson.content?.branchingElements)
+              ? lesson.content.branchingElements.length
+              : 0;
+            logCourseImportEvent('lesson_normalization', {
+              requestId: req.requestId ?? null,
+              moduleIndex,
+              lessonIndex,
+              lessonType: lesson.type ?? null,
+              derivedQuestionsCount,
+              derivedBranchCount,
+            });
+          });
+          return normalizedModule;
+        })
+      : [];
     const payload = {
       course: rawEntry?.course ?? rawEntry ?? {},
-      modules: Array.isArray(rawEntry?.modules)
-        ? rawEntry.modules.map((m, moduleIndex) => normalizeModuleForImport(m, { moduleIndex }))
-        : [],
+      modules: normalizedModules,
     };
     const validation = validateCoursePayload(payload);
     if (!validation.ok) {
@@ -9943,6 +9595,7 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
 
 // GET learner progress endpoint (fetching progress)
 app.get('/api/learner/progress', authenticate, async (req, res) => {
+  const requestId = req.requestId ?? null;
   const lessonIds = parseLessonIdsParam(req.query.lessonIds || req.query.lesson_ids);
   const requestedUserId = coerceString(req.query.userId, req.query.user_id, req.query.learnerId, req.query.learner_id);
   const sessionUserId = coerceString(req.user?.userId, req.user?.id);
@@ -9958,7 +9611,7 @@ app.get('/api/learner/progress', authenticate, async (req, res) => {
       code: 'user_id_required',
       message: 'userId is required',
       hint: null,
-      requestId: req.requestId ?? null,
+      requestId,
       queryName: 'learner_progress_fetch',
       details: null,
     });
@@ -9970,7 +9623,7 @@ app.get('/api/learner/progress', authenticate, async (req, res) => {
       code: 'lesson_ids_required',
       message: 'lessonIds is required',
       hint: null,
-      requestId: req.requestId ?? null,
+      requestId,
       queryName: 'learner_progress_fetch',
       details: null,
     });
@@ -9981,7 +9634,15 @@ app.get('/api/learner/progress', authenticate, async (req, res) => {
   const normalizedUserId = effectiveUserId.toLowerCase();
 
   if (!isAdminUser && normalizedSessionUserId && normalizedUserId !== normalizedSessionUserId) {
-    res.status(403).json({ error: 'forbidden', message: 'You can only view your own progress.' });
+    res.status(403).json({
+      ok: false,
+      code: 'forbidden',
+      message: 'You can only view your own progress.',
+      hint: null,
+      requestId,
+      queryName: 'learner_progress_fetch',
+      details: null,
+    });
     return;
   }
 
@@ -9992,8 +9653,13 @@ app.get('/api/learner/progress', authenticate, async (req, res) => {
     });
 
     res.json({
+      ok: true,
+      requestId,
       data: {
         lessons,
+      },
+      meta: {
+        mode: 'demo',
       },
     });
     return;
@@ -10022,6 +9688,8 @@ app.get('/api/learner/progress', authenticate, async (req, res) => {
     const lessons = lessonIds.map((lessonId) => byLessonId.get(lessonId) || buildLessonRow(lessonId, null));
 
     res.json({
+      ok: true,
+      requestId,
       data: {
         lessons,
       },
@@ -10038,11 +9706,16 @@ app.get('/api/learner/progress', authenticate, async (req, res) => {
         requestId: req.requestId ?? null,
       });
       res.json({
+        ok: true,
+        requestId,
         data: {
           lessons: lessonIds.map((lessonId) => buildLessonRow(lessonId, null)),
         },
-        fallback: isMissingColumnError(error) ? 'schema_missing_column' : 'empty_progress',
-        missingColumn,
+        meta: {
+          degraded: true,
+          reason: isMissingColumnError(error) ? 'schema_missing_column' : 'empty_progress',
+          missingColumn,
+        },
       });
       return;
     }
@@ -10052,7 +9725,7 @@ app.get('/api/learner/progress', authenticate, async (req, res) => {
       ok: false,
       code: 'progress_fetch_failed',
       message: 'Unable to fetch progress',
-      requestId: req.requestId ?? null,
+      requestId,
       hint: error?.hint ?? null,
       details: error?.message ?? null,
     });
@@ -13371,7 +13044,12 @@ app.get('/api/learner/notifications', async (req, res) => {
   const context = requireUserContext(req, res);
   if (!context) return;
   if (!ENABLE_NOTIFICATIONS) {
-    res.json({ data: [], notificationsDisabled: true });
+    res.json({
+      ok: true,
+      data: [],
+      notificationsDisabled: true,
+      requestId: req.requestId ?? null,
+    });
     return;
   }
 
@@ -13380,7 +13058,7 @@ app.get('/api/learner/notifications', async (req, res) => {
   const readFilter = typeof req.query.read === 'string' ? req.query.read.trim().toLowerCase() : null;
 
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
-    res.json({ data: [] });
+    res.json({ ok: true, data: [], requestId: req.requestId ?? null });
     return;
   }
 
@@ -13403,15 +13081,24 @@ app.get('/api/learner/notifications', async (req, res) => {
       : [];
 
     if (orgIds.length) {
-      queryFactories.push((selectColumns) =>
-        supabase
-          .from('notifications')
-          .select(selectColumns)
-          .in('org_id', orgIds)
-          .is('user_id', null)
-          .order('created_at', { ascending: false })
-          .limit(limit),
-      );
+    queryFactories.push((selectColumns) =>
+      supabase
+        .from('notifications')
+        .select(selectColumns)
+        .in('organization_id', orgIds)
+        .is('user_id', null)
+        .order('created_at', { ascending: false })
+        .limit(limit),
+    );
+    queryFactories.push((selectColumns) =>
+      supabase
+        .from('notifications')
+        .select(selectColumns)
+        .in('org_id', orgIds)
+        .is('user_id', null)
+        .order('created_at', { ascending: false })
+        .limit(limit),
+    );
     }
 
     queryFactories.push((selectColumns) =>
@@ -13457,11 +13144,21 @@ app.get('/api/learner/notifications', async (req, res) => {
       return bTs - aTs;
     });
 
-    res.json({ data: merged.slice(0, limit) });
+    res.json({
+      ok: true,
+      requestId: req.requestId ?? null,
+      data: merged.slice(0, limit).map(mapNotificationRecord),
+    });
   } catch (error) {
     if (isNotificationsTableMissingError(error)) {
       logNotificationsMissingTable('learner.fetch', { code: error.code });
-      res.json({ data: [], degraded: true, notificationsDisabled: true });
+      res.json({
+        ok: true,
+        data: [],
+        degraded: true,
+        notificationsDisabled: true,
+        requestId: req.requestId ?? null,
+      });
       return;
     }
     if (isMissingColumnError(error)) {
@@ -13469,18 +13166,29 @@ app.get('/api/learner/notifications', async (req, res) => {
         code: error.code,
         message: error.message,
       });
-      res.json({ data: [], degraded: true });
+      res.json({
+        ok: true,
+        data: [],
+        degraded: true,
+        reason: 'schema_missing_column',
+        requestId: req.requestId ?? null,
+      });
       return;
     }
     console.error('Failed to load learner notifications:', error);
-    res.status(500).json({ error: 'Unable to load notifications' });
+    res.status(500).json({
+      ok: false,
+      code: 'notifications_fetch_failed',
+      message: 'Unable to load notifications',
+      requestId: req.requestId ?? null,
+    });
   }
 });
 
 // Notifications
 app.get('/api/admin/notifications', async (req, res) => {
   if (!ENABLE_NOTIFICATIONS) {
-    res.json(buildDisabledNotificationsResponse());
+    res.json(buildDisabledNotificationsResponse(1, 25, req.requestId ?? null));
     return;
   }
   if (!ensureSupabase(res)) return;
@@ -13488,7 +13196,7 @@ app.get('/api/admin/notifications', async (req, res) => {
   if (!context) return;
 
   const isAdmin = context.userRole === 'admin';
-  const requestedOrgId = (req.query.org_id || req.query.orgId || '').toString().trim();
+  const requestedOrgId = normalizeOrgIdValue(req.query.org_id ?? req.query.orgId ?? null);
   const requestedUserId = (req.query.user_id || req.query.userId || '').toString().trim();
   const { page, pageSize, from, to } = parsePaginationParams(req, { defaultSize: 25, maxSize: 200 });
   const search = (req.query.search || '').toString().trim();
@@ -13506,14 +13214,17 @@ app.get('/api/admin/notifications', async (req, res) => {
 
     let query = supabase
       .from('notifications')
-      .select('id,title,body,org_id,user_id,created_at,read,dispatch_status,channels,metadata,scheduled_for,delivered_at', {
-        count: 'exact',
-      })
+      .select(
+        'id,title,body,organization_id,org_id,user_id,created_at,read,dispatch_status,channels,metadata,scheduled_for,delivered_at',
+        {
+          count: 'exact',
+        },
+      )
       .order('created_at', { ascending: false })
       .range(from, to);
 
     if (requestedOrgId) {
-      query = query.eq('org_id', requestedOrgId);
+      query = query.or(`organization_id.eq.${requestedOrgId},org_id.eq.${requestedOrgId}`);
     }
 
     if (requestedUserId) {
@@ -13543,14 +13254,16 @@ app.get('/api/admin/notifications', async (req, res) => {
     if (error) {
       if (isNotificationsTableMissingError(error)) {
         logNotificationsMissingTable('admin.list', { code: error.code });
-        res.json(buildDisabledNotificationsResponse(page, pageSize));
+      res.json(buildDisabledNotificationsResponse(page, pageSize, req.requestId ?? null));
         return;
       }
       throw error;
     }
 
     res.json({
-      data,
+      ok: true,
+      requestId: req.requestId ?? null,
+      data: (data || []).map(mapNotificationRecord),
       pagination: {
         page,
         pageSize,
@@ -13561,17 +13274,27 @@ app.get('/api/admin/notifications', async (req, res) => {
   } catch (error) {
     if (isNotificationsTableMissingError(error)) {
       logNotificationsMissingTable('admin.list.catch', { message: error?.message });
-      res.json(buildDisabledNotificationsResponse(page, pageSize));
+      res.json(buildDisabledNotificationsResponse(page, pageSize, req.requestId ?? null));
       return;
     }
     console.error('Failed to fetch notifications:', error);
-    res.status(500).json({ error: 'Unable to fetch notifications' });
+    res.status(500).json({
+      ok: false,
+      code: 'notifications_fetch_failed',
+      message: 'Unable to fetch notifications',
+      requestId: req.requestId ?? null,
+    });
   }
 });
 
 app.post('/api/admin/notifications', async (req, res) => {
   if (!ENABLE_NOTIFICATIONS) {
-    res.status(202).json({ data: null, notificationsDisabled: true });
+    res.status(202).json({
+      ok: true,
+      data: null,
+      notificationsDisabled: true,
+      requestId: req.requestId ?? null,
+    });
     return;
   }
   if (!ensureSupabase(res)) return;
@@ -13579,22 +13302,39 @@ app.post('/api/admin/notifications', async (req, res) => {
   const context = requireUserContext(req, res);
   if (!context) return;
   const isAdmin = context.userRole === 'admin';
+  const targetOrgId = normalizeOrgIdValue(payload.orgId ?? payload.organizationId ?? null);
 
   if (!payload.title) {
-    res.status(400).json({ error: 'title is required' });
+    res.status(400).json({
+      ok: false,
+      code: 'title_required',
+      message: 'title is required',
+      requestId: req.requestId ?? null,
+      queryName: 'admin_notifications_create',
+    });
     return;
   }
 
-  if (payload.orgId) {
-    const access = await requireOrgAccess(req, res, payload.orgId, { write: true });
+  if (targetOrgId) {
+    const access = await requireOrgAccess(req, res, targetOrgId, { write: true });
     if (!access && !isAdmin) return;
   } else if (payload.userId) {
     if (!isAdmin && payload.userId !== context.userId) {
-      res.status(403).json({ error: 'Cannot create notifications for another user' });
+      res.status(403).json({
+        ok: false,
+        code: 'forbidden',
+        message: 'Cannot create notifications for another user',
+        requestId: req.requestId ?? null,
+      });
       return;
     }
   } else if (!isAdmin) {
-    res.status(403).json({ error: 'Only admins can create global notifications' });
+    res.status(403).json({
+      ok: false,
+      code: 'forbidden',
+      message: 'Only admins can create global notifications',
+      requestId: req.requestId ?? null,
+    });
     return;
   }
 
@@ -13608,7 +13348,8 @@ app.post('/api/admin/notifications', async (req, res) => {
       id: payload.id ?? undefined,
       title: payload.title,
       body: payload.body ?? null,
-      org_id: payload.orgId ?? null,
+      organization_id: targetOrgId ?? null,
+      org_id: targetOrgId ?? null, // TODO: remove org_id/profile_id compatibility after launch stabilization
       user_id: payload.userId ?? null,
       read: payload.read ?? false,
       channels,
@@ -13626,7 +13367,12 @@ app.post('/api/admin/notifications', async (req, res) => {
     if (error) {
       if (isNotificationsTableMissingError(error)) {
         logNotificationsMissingTable('admin.create', { code: error.code });
-        res.status(202).json({ data: null, notificationsDisabled: true });
+        res.status(202).json({
+          ok: true,
+          data: null,
+          notificationsDisabled: true,
+          requestId: req.requestId ?? null,
+        });
         return;
       }
       throw error;
@@ -13640,21 +13386,35 @@ app.post('/api/admin/notifications', async (req, res) => {
       });
     }
 
-    res.status(201).json({ data });
+    res.status(201).json({
+      ok: true,
+      requestId: req.requestId ?? null,
+      data: mapNotificationRecord(data),
+    });
   } catch (error) {
     if (isNotificationsTableMissingError(error)) {
       logNotificationsMissingTable('admin.create.catch', { message: error?.message });
-      res.status(202).json({ data: null, notificationsDisabled: true });
+      res.status(202).json({
+        ok: true,
+        data: null,
+        notificationsDisabled: true,
+        requestId: req.requestId ?? null,
+      });
       return;
     }
     console.error('Failed to create notification:', error);
-    res.status(500).json({ error: 'Unable to create notification' });
+    res.status(500).json({
+      ok: false,
+      code: 'notifications_create_failed',
+      message: 'Unable to create notification',
+      requestId: req.requestId ?? null,
+    });
   }
 });
 
 app.post('/api/admin/notifications/:id/read', async (req, res) => {
   if (!ENABLE_NOTIFICATIONS) {
-    res.json({ data: null, notificationsDisabled: true });
+    res.json({ ok: true, data: null, notificationsDisabled: true, requestId: req.requestId ?? null });
     return;
   }
   if (!ensureSupabase(res)) return;
@@ -13667,35 +13427,52 @@ app.post('/api/admin/notifications/:id/read', async (req, res) => {
   try {
     const existing = await supabase
       .from('notifications')
-      .select('org_id, user_id')
+      .select('organization_id, org_id, user_id')
       .eq('id', id)
       .maybeSingle();
 
     if (existing.error) {
       if (isNotificationsTableMissingError(existing.error)) {
         logNotificationsMissingTable('admin.markRead.lookup', { code: existing.error.code });
-        res.json({ data: null, notificationsDisabled: true });
+        res.json({ ok: true, data: null, notificationsDisabled: true, requestId: req.requestId ?? null });
         return;
       }
       throw existing.error;
     }
     const note = existing.data;
     if (!note) {
-      res.status(404).json({ error: 'Notification not found' });
+      res.status(404).json({
+        ok: false,
+        code: 'not_found',
+        message: 'Notification not found',
+        requestId: req.requestId ?? null,
+      });
       return;
     }
+
+    const noteOrgId = normalizeOrgIdValue(note.organization_id ?? note.org_id ?? null);
 
     if (!isAdmin) {
       if (note.user_id) {
         if (note.user_id !== context.userId) {
-          res.status(403).json({ error: 'Cannot modify another user\'s notification' });
+          res.status(403).json({
+            ok: false,
+            code: 'forbidden',
+            message: 'Cannot modify another user\'s notification',
+            requestId: req.requestId ?? null,
+          });
           return;
         }
-      } else if (note.org_id) {
-        const access = await requireOrgAccess(req, res, note.org_id);
+      } else if (noteOrgId) {
+        const access = await requireOrgAccess(req, res, noteOrgId);
         if (!access) return;
       } else {
-        res.status(403).json({ error: 'Cannot modify global notification' });
+        res.status(403).json({
+          ok: false,
+          code: 'forbidden',
+          message: 'Cannot modify global notification',
+          requestId: req.requestId ?? null,
+        });
         return;
       }
     }
@@ -13715,21 +13492,30 @@ app.post('/api/admin/notifications/:id/read', async (req, res) => {
       }
       throw error;
     }
-    res.json({ data });
+    res.json({
+      ok: true,
+      requestId: req.requestId ?? null,
+      data: mapNotificationRecord(data),
+    });
   } catch (error) {
     if (isNotificationsTableMissingError(error)) {
       logNotificationsMissingTable('admin.markRead.catch', { message: error?.message });
-      res.json({ data: null, notificationsDisabled: true });
+      res.json({ ok: true, data: null, notificationsDisabled: true, requestId: req.requestId ?? null });
       return;
     }
     console.error('Failed to update notification status:', error);
-    res.status(500).json({ error: 'Unable to update notification' });
+    res.status(500).json({
+      ok: false,
+      code: 'notifications_update_failed',
+      message: 'Unable to update notification',
+      requestId: req.requestId ?? null,
+    });
   }
 });
 
 app.delete('/api/admin/notifications/:id', async (req, res) => {
   if (!ENABLE_NOTIFICATIONS) {
-    res.status(204).end();
+    res.status(200).json({ ok: true, data: null, notificationsDisabled: true, requestId: req.requestId ?? null });
     return;
   }
   if (!ensureSupabase(res)) return;
@@ -13741,7 +13527,7 @@ app.delete('/api/admin/notifications/:id', async (req, res) => {
   try {
     const existing = await supabase
       .from('notifications')
-      .select('org_id, user_id')
+      .select('organization_id, org_id, user_id')
       .eq('id', id)
       .maybeSingle();
 
@@ -13755,21 +13541,33 @@ app.delete('/api/admin/notifications/:id', async (req, res) => {
     }
     const note = existing.data;
     if (!note) {
-      res.status(204).end();
+      res.status(200).json({ ok: true, requestId: req.requestId ?? null });
       return;
     }
+
+    const noteOrgId = normalizeOrgIdValue(note.organization_id ?? note.org_id ?? null);
 
     if (!isAdmin) {
       if (note.user_id) {
         if (note.user_id !== context.userId) {
-          res.status(403).json({ error: 'Cannot delete another user\'s notification' });
+          res.status(403).json({
+            ok: false,
+            code: 'forbidden',
+            message: 'Cannot delete another user\'s notification',
+            requestId: req.requestId ?? null,
+          });
           return;
         }
-      } else if (note.org_id) {
-        const access = await requireOrgAccess(req, res, note.org_id, { write: true });
+      } else if (noteOrgId) {
+        const access = await requireOrgAccess(req, res, noteOrgId, { write: true });
         if (!access) return;
       } else {
-        res.status(403).json({ error: 'Cannot delete global notification' });
+        res.status(403).json({
+          ok: false,
+          code: 'forbidden',
+          message: 'Cannot delete global notification',
+          requestId: req.requestId ?? null,
+        });
         return;
       }
     }
@@ -13778,20 +13576,25 @@ app.delete('/api/admin/notifications/:id', async (req, res) => {
     if (error) {
       if (isNotificationsTableMissingError(error)) {
         logNotificationsMissingTable('admin.delete.exec', { code: error.code });
-        res.status(204).end();
+        res.status(200).json({ ok: true, requestId: req.requestId ?? null });
         return;
       }
       throw error;
     }
-    res.status(204).end();
+    res.status(200).json({ ok: true, requestId: req.requestId ?? null });
   } catch (error) {
     if (isNotificationsTableMissingError(error)) {
       logNotificationsMissingTable('admin.delete.catch', { message: error?.message });
-      res.status(204).end();
+      res.status(200).json({ ok: true, requestId: req.requestId ?? null });
       return;
     }
     console.error('Failed to delete notification:', error);
-    res.status(500).json({ error: 'Unable to delete notification' });
+    res.status(500).json({
+      ok: false,
+      code: 'notifications_delete_failed',
+      message: 'Unable to delete notification',
+      requestId: req.requestId ?? null,
+    });
   }
 });
 

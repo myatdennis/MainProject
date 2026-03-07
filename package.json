@@ -30,6 +30,7 @@
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:run": "vitest run",
+    "test:importer": "vitest run tests/importer/importer.spec.ts",
     "test:integration": "vitest run --config tests/vitest.integration.config.ts",
     "test:unit": "vitest run src/services/__tests__/batchService.test.ts",
     "test:diagnostics": "vitest run --config vitest.server.config.ts",

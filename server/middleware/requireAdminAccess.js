@@ -10,7 +10,7 @@ const FALLBACK_SUPERUSER = {
   isPlatformAdmin: true,
 };
 
-const fetchAdminAllowlistEntry = async (userId, email) => {
+const fetchAdminAllowlistEntry = async (userId, email, { requestId } = {}) => {
   if (!supabase) {
     return { entry: null, error: new Error('SUPABASE_NOT_CONFIGURED') };
   }
@@ -32,17 +32,45 @@ const fetchAdminAllowlistEntry = async (userId, email) => {
   }
   const { data, error } = await query;
   if (error) {
+    console.error('[requireAdminAccess] admin_users_query_failed', {
+      requestId,
+      userId,
+      email: normalizedEmail,
+      message: error?.message ?? null,
+      code: error?.code ?? null,
+    });
     return { entry: null, error };
   }
   const entry = Array.isArray(data) && data.length > 0 ? data[0] : null;
+  if (entry) {
+    console.info('[requireAdminAccess] admin_users_match', {
+      requestId,
+      userId,
+      email: normalizedEmail,
+    });
+  } else {
+    console.info('[requireAdminAccess] admin_users_miss', {
+      requestId,
+      userId,
+      email: normalizedEmail,
+    });
+  }
   return { entry, error: null };
+};
+
+const grantAdminAccess = (req, reason, meta = {}) => {
+  req.adminPortalAllowed = true;
+  req.adminAccessReason = reason;
+  if (meta.allowlistEntry) {
+    req.adminAllowlistEntry = meta.allowlistEntry;
+  }
+  return true;
 };
 
 const ensureAdminAccess = async (req, res) => {
   if (DEV_FALLBACK || E2E_TEST_MODE) {
     req.supabaseJwtUser = req.supabaseJwtUser || { ...FALLBACK_SUPERUSER };
-    req.adminPortalAllowed = true;
-    return true;
+    return grantAdminAccess(req, 'dev_fallback');
   }
 
   const user = req.supabaseJwtUser;
@@ -68,14 +96,13 @@ const ensureAdminAccess = async (req, res) => {
     const { entry: allowlistEntry, error: allowlistError } = await fetchAdminAllowlistEntry(
       user.id,
       user.email,
+      { requestId: req.requestId ?? null },
     );
     if (allowlistError) {
       throw allowlistError;
     }
     if (allowlistEntry) {
-      req.adminPortalAllowed = true;
-      req.adminAllowlistEntry = allowlistEntry;
-      return true;
+      return grantAdminAccess(req, 'allowlist', { allowlistEntry });
     }
 
     const { data, error } = await supabase
@@ -89,14 +116,21 @@ const ensureAdminAccess = async (req, res) => {
     }
 
     if (data?.is_admin === true) {
-      req.adminPortalAllowed = true;
-      return true;
+      return grantAdminAccess(req, 'profile_flag');
     }
 
+    req.adminPortalAllowed = false;
+    req.adminPortalDeniedReason = 'not_allowlisted';
+    console.warn('[requireAdminAccess] allowlist_and_profile_denied', {
+      requestId: req.requestId ?? null,
+      userId: user.id,
+      email: user.email ?? null,
+    });
     res.status(403).json({
       code: 'ADMIN_REQUIRED',
       error: 'Forbidden',
-      message: 'Administrator privileges required.',
+      message: 'Administrator privileges required. Ask an existing admin to add you to admin_users allowlist.',
+      reason: 'not_allowlisted',
     });
     return false;
   } catch (err) {
@@ -105,6 +139,7 @@ const ensureAdminAccess = async (req, res) => {
       code: 'ADMIN_LOOKUP_FAILED',
       error: 'Internal Server Error',
       message: 'Unable to verify administrator privileges.',
+      requestId: req.requestId ?? null,
     });
     return false;
   }

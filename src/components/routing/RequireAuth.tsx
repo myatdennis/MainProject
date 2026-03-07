@@ -5,7 +5,13 @@ import LoadingSpinner from '../ui/LoadingSpinner';
 import Button from '../ui/Button';
 import buildSessionAuditHeaders from '../../utils/sessionAuditHeaders';
 import { apiJson, ApiResponseError, AuthExpiredError, NotAuthenticatedError } from '../../lib/apiClient';
-import { hasAdminPortalAccess, setAdminAccessSnapshot, getAdminAccessSnapshot } from '../../lib/adminAccess';
+import {
+  hasAdminPortalAccess,
+  setAdminAccessSnapshot,
+  getAdminAccessSnapshot,
+  normalizeAdminAccessPayload,
+  type AdminAccessPayload,
+} from '../../lib/adminAccess';
 import { supabase } from '../../lib/supabaseClient';
 import { logAuthRedirect } from '../../utils/logAuthRedirect';
 
@@ -24,27 +30,7 @@ const loginPathByMode: Record<AuthMode, string> = {
 
 const ADMIN_GATE_TIMEOUT_MS = 15000;
 
-interface AdminCapabilityPayload {
-  user?: {
-    id?: string;
-    email?: string;
-    role?: string;
-    isPlatformAdmin?: boolean;
-    activeOrgId?: string | null;
-    adminOrgIds?: string[];
-  };
-  access?: {
-    allowed?: boolean;
-    via?: string;
-    reason?: string | null;
-    adminPortal?: boolean;
-    admin?: boolean;
-    capabilities?: Record<string, boolean | undefined>;
-  };
-  context?: Record<string, unknown> | null;
-  error?: string;
-  message?: string;
-}
+type AdminCapabilityPayload = AdminAccessPayload;
 
 interface AdminCapabilityState {
   status: 'idle' | 'checking' | 'granted' | 'denied' | 'error';
@@ -348,13 +334,22 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
         signal: controller.signal,
         headers: buildSessionAuditHeaders(),
       })
-        .then((payload) => {
+        .then((rawPayload) => {
+          const payload = normalizeAdminAccessPayload(rawPayload);
           if (controller.signal.aborted) {
             return;
           }
 
-          const access = payload?.access;
-          const user = payload?.user;
+          if (!payload) {
+            setAdminCapability({ status: 'error', payload: null, reason: 'malformed_payload' });
+            logGuardEvent('admin_capability_error', { reason: 'malformed_payload' });
+            setAdminGateStatus('error');
+            setAdminGateError('malformed_payload');
+            return;
+          }
+
+          const access = payload.access;
+          const user = (payload.user ?? null) as Record<string, unknown> | null;
           const portalAllowed = hasAdminPortalAccess(payload);
           setAdminAccessSnapshot(payload);
 
@@ -377,9 +372,11 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
           setAdminCapability({ status: 'granted', payload });
           logGuardEvent('admin_capability_granted', {
             via: access.via ?? 'unknown',
-            adminOrgs: user?.adminOrgIds?.length ?? 0,
+            adminOrgs: Array.isArray((user as any)?.adminOrgIds) ? (user as any).adminOrgIds.length : 0,
           });
-          applyServerActiveOrg(user?.activeOrgId ?? null);
+          const derivedActiveOrg =
+            typeof (user as any)?.activeOrgId === 'string' ? ((user as any).activeOrgId as string) : null;
+          applyServerActiveOrg(derivedActiveOrg);
           setAdminGateStatus('allowed');
           setAdminGateError(null);
         })
@@ -392,6 +389,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
             if (!payload) return fallback;
             return (
               payload.access?.reason ||
+              payload.reason ||
               payload.error ||
               payload.message ||
               (payload.context && typeof payload.context === 'object' && 'reason' in payload.context
@@ -405,7 +403,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
             let parsed: AdminCapabilityPayload | null = null;
             if (error.body) {
               try {
-                parsed = JSON.parse(error.body) as AdminCapabilityPayload;
+                parsed = normalizeAdminAccessPayload(JSON.parse(error.body) as AdminCapabilityPayload);
               } catch {
                 parsed = null;
               }

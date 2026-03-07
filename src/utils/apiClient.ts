@@ -9,6 +9,7 @@ import {
   getAdminAccessSnapshot,
   setAdminAccessSnapshot,
   isAdminAccessSnapshotFresh,
+  normalizeAdminAccessPayload,
   type AdminAccessPayload,
 } from '../lib/adminAccess';
 import { logAuthRedirect } from './logAuthRedirect';
@@ -725,8 +726,9 @@ async function fetchAdminAccessPayload(): Promise<AdminAccessPayload | null> {
         const payload = await apiRequest<AdminAccessPayload>('/api/admin/me', {
           skipAdminGateCheck: true,
         });
-        setAdminAccessSnapshot(payload);
-        return payload;
+        const normalized = normalizeAdminAccessPayload(payload);
+        setAdminAccessSnapshot(normalized);
+        return normalized;
       } catch (error) {
         setAdminAccessSnapshot(null);
         throw error;

@@ -15,6 +15,7 @@ import {
   type AdminAccessPayload,
   getAdminAccessSnapshot,
   setAdminAccessSnapshot,
+  normalizeAdminAccessPayload,
 } from '../../lib/adminAccess';
 import { logAuthDiagnostic, logAuthRedirect } from '../../utils/logAuthRedirect';
 
@@ -224,11 +225,13 @@ const AdminLogin: React.FC = () => {
     try {
       const response = await apiJson<AdminCapabilityResponse>('/admin/me');
       recordDevApiEvent('/admin/me', 200);
-      if (computeAdminAllowed(response)) {
-        return { allowed: true, user: response.user };
+      const payload = normalizeAdminAccessPayload(response);
+      if (computeAdminAllowed(payload)) {
+        return { allowed: true, user: payload?.user ?? null, payload };
       }
-      const reason = response?.access?.reason || response?.error || response?.message || 'not_authorized';
-      return { allowed: false, reason };
+      const reason =
+        payload?.access?.reason || payload?.reason || payload?.error || payload?.message || 'not_authorized';
+      return { allowed: false, reason, payload };
     } catch (capabilityError) {
       let fallbackReason = 'admin_capability_error';
       if (
@@ -237,22 +240,29 @@ const AdminLogin: React.FC = () => {
         capabilityError instanceof NotAuthenticatedError
       ) {
         if (capabilityError instanceof ApiResponseError) {
+          let parsedPayload: AdminCapabilityResponse | null = null;
+          if (capabilityError.body) {
+            try {
+              parsedPayload = normalizeAdminAccessPayload(
+                JSON.parse(capabilityError.body) as AdminCapabilityResponse,
+              );
+            } catch {
+              parsedPayload = null;
+            }
+          }
           if (capabilityError.status === 401) {
             recordDevApiEvent('/admin/me', 401, 'unauthenticated');
             markSessionExpired('admin_me_401');
-            return { allowed: false, reason: 'unauthenticated' };
+            return { allowed: false, reason: 'unauthenticated', payload: parsedPayload };
           }
           if (capabilityError.status === 403) {
             recordDevApiEvent('/admin/me', 403, 'not_authorized');
-            return { allowed: false, reason: 'not_authorized' };
+            return { allowed: false, reason: 'not_authorized', payload: parsedPayload };
           }
-          try {
-            const parsedBody = capabilityError.body ? (JSON.parse(capabilityError.body) as AdminCapabilityResponse) : null;
-            fallbackReason = parsedBody?.access?.reason || parsedBody?.error || parsedBody?.message || fallbackReason;
-          } catch {
-            // noop; fallbackReason stays default
-          }
+          fallbackReason =
+            parsedPayload?.access?.reason || parsedPayload?.reason || parsedPayload?.error || parsedPayload?.message || fallbackReason;
           recordDevApiEvent('/admin/me', capabilityError.status, fallbackReason);
+          return { allowed: false, reason: fallbackReason, payload: parsedPayload };
         } else {
           recordDevApiEvent('/admin/me', 'error', capabilityError.message);
           markSessionExpired('admin_me_generic_auth_error');

@@ -1281,6 +1281,19 @@ const saveCachedCatalog = (cacheKey: string | null, catalog: { [key: string]: Co
   }
 };
 
+const clearCatalogCacheEntry = (cacheKey: string | null) => {
+  if (!cacheKey || typeof window === 'undefined') return;
+  try {
+    const cache = readCatalogCache();
+    if (cache[cacheKey]) {
+      delete cache[cacheKey];
+      writeCatalogCache(cache);
+    }
+  } catch (error) {
+    console.warn('[courseStore] Failed to clear catalog cache entry:', error);
+  }
+};
+
 const ensureAssignmentScopedCatalog = async (
   currentCourses: { [key: string]: Course },
   userId: string | null,
@@ -1308,19 +1321,7 @@ const ensureAssignmentScopedCatalog = async (
       if (!skipDiagnostics) {
         emitCatalogDiagnostic('assignment_scope_empty', { userId, orgId, phase: 'post_fetch' });
       }
-      const cached = cacheKey ? loadCachedCatalog(cacheKey) : null;
-
-      if (cached && hasAnyCourses(cached)) {
-        console.info('[courseStore] Using cached catalog for prior assignments.');
-        saveCachedCatalog(cacheKey, cached);
-        setLearnerCatalogState({
-          status: 'ok',
-          lastUpdatedAt: Date.now(),
-          lastError: null,
-          detail: 'fallback_cached',
-        });
-        return cached;
-      }
+      clearCatalogCacheEntry(cacheKey);
 
       let fallback = (() => {
         if (DEFAULT_CATALOG_ALLOWED) {

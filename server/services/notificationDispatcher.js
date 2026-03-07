@@ -23,7 +23,7 @@ const fetchOrgRecipientEmails = async (supabase, orgId) => {
   const membershipQuery = await supabase
     .from('organization_memberships')
     .select('user_id')
-    .eq('org_id', orgId)
+    .or(`organization_id.eq.${orgId},org_id.eq.${orgId}`)
     .limit(500);
   if (membershipQuery.error) {
     logger.warn('notifications_fetch_org_members_failed', { orgId, message: membershipQuery.error.message });
@@ -66,11 +66,12 @@ export const setupNotificationDispatcher = ({ supabase, emailSender }) => {
       .update({ dispatch_status: 'processing' })
       .eq('id', notificationId);
 
+    const resolvedOrgId = notification.organization_id ?? notification.org_id ?? null;
     let recipients = [];
     if (notification.user_id) {
       recipients = await fetchUserEmails(supabase, [notification.user_id]);
-    } else if (notification.org_id) {
-      recipients = await fetchOrgRecipientEmails(supabase, notification.org_id);
+    } else if (resolvedOrgId) {
+      recipients = await fetchOrgRecipientEmails(supabase, resolvedOrgId);
     }
 
     if (sendEmail && emailSender && recipients.length) {
