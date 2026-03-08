@@ -162,21 +162,6 @@ const extractConflictDetails = (
   return { reason, message, details };
 };
 
-const extractConflictDetails = (
-  error: unknown,
-): { reason: string | null; message: string | null; details?: Record<string, unknown> | null } | null => {
-  if (!(error instanceof ApiError)) return null;
-  if (error.status !== 409) return null;
-  const body = (error.body && typeof error.body === 'object') ? (error.body as Record<string, any>) : null;
-  const details = body?.details && typeof body.details === 'object' ? (body.details as Record<string, unknown>) : null;
-  const reason =
-    (typeof details?.reason === 'string' && details.reason) ||
-    (typeof body?.reason === 'string' && body.reason) ||
-    null;
-  const message = typeof body?.message === 'string' ? body.message : error.message ?? null;
-  return { reason, message, details };
-};
-
 type BuilderConfirmAction = 'discard' | 'reset' | 'delete';
 type ConfirmTone = 'info' | 'warning' | 'danger';
 
