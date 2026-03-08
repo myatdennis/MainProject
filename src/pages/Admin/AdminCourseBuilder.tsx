@@ -147,6 +147,36 @@ const nextRequestToken = () =>
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
+const extractConflictDetails = (
+  error: unknown,
+): { reason: string | null; message: string | null; details?: Record<string, unknown> | null } | null => {
+  if (!(error instanceof ApiError)) return null;
+  if (error.status !== 409) return null;
+  const body = (error.body && typeof error.body === 'object') ? (error.body as Record<string, any>) : null;
+  const details = body?.details && typeof body.details === 'object' ? (body.details as Record<string, unknown>) : null;
+  const reason =
+    (typeof details?.reason === 'string' && details.reason) ||
+    (typeof body?.reason === 'string' && body.reason) ||
+    null;
+  const message = typeof body?.message === 'string' ? body.message : error.message ?? null;
+  return { reason, message, details };
+};
+
+const extractConflictDetails = (
+  error: unknown,
+): { reason: string | null; message: string | null; details?: Record<string, unknown> | null } | null => {
+  if (!(error instanceof ApiError)) return null;
+  if (error.status !== 409) return null;
+  const body = (error.body && typeof error.body === 'object') ? (error.body as Record<string, any>) : null;
+  const details = body?.details && typeof body.details === 'object' ? (body.details as Record<string, unknown>) : null;
+  const reason =
+    (typeof details?.reason === 'string' && details.reason) ||
+    (typeof body?.reason === 'string' && body.reason) ||
+    null;
+  const message = typeof body?.message === 'string' ? body.message : error.message ?? null;
+  return { reason, message, details };
+};
+
 type BuilderConfirmAction = 'discard' | 'reset' | 'delete';
 type ConfirmTone = 'info' | 'warning' | 'danger';
 
@@ -695,6 +725,9 @@ const AdminCourseBuilder = () => {
       console.info(`[AdminCourseBuilder] ${event}`);
     }
   }, []);
+  const logAutoSaveEvent = useCallback((event: string, meta: Record<string, unknown> = {}) => {
+    console.info('[AdminCourseBuilder.autosave]', { event, ...meta });
+  }, []);
 
   const findModuleIdForLesson = useCallback(
     (lessonId?: string | null): string | null => {
@@ -1028,10 +1061,20 @@ const AdminCourseBuilder = () => {
   // Debounced remote auto-sync (single upsert). Runs only when there are real changes vs lastPersistedRef.
   useEffect(() => {
     if (!course.id || !course.title?.trim()) return;
-    if (autoSaveLockRef.current) return;
+    if (autoSaveLockRef.current) {
+      logAutoSaveEvent('autosave_skip_inflight', { courseId: course.id, reason: 'lock' });
+      return;
+    }
     if (lessonAutosaveState.pending || lessonAutosaveState.status === 'saving') return;
     if (autoSaveHaltedRef.current) return;
-    if (autoSaveBackoffUntilRef.current > Date.now()) return;
+    if (autoSaveBackoffUntilRef.current > Date.now()) {
+      logAutoSaveEvent('autosave_skip_inflight', {
+        courseId: course.id,
+        reason: 'backoff',
+        retryAt: autoSaveBackoffUntilRef.current,
+      });
+      return;
+    }
     const diff = computeCourseDiff(lastPersistedRef.current, course);
     if (!diff.hasChanges) return;
     if (!course.modules || course.modules.length === 0) {
@@ -1094,6 +1137,7 @@ const AdminCourseBuilder = () => {
       const requestToken = nextRequestToken();
       autoSaveRequestIdRef.current = requestToken;
       try {
+        logAutoSaveEvent('autosave_start', { courseId: course.id, requestToken });
         const result = await persistCourse(course, {
           action: 'course.auto-save',
           gate,
@@ -1107,8 +1151,10 @@ const AdminCourseBuilder = () => {
           setSaveStatus('saved');
           setLastSaveTime(new Date());
           setTimeout(() => setSaveStatus('idle'), 2000);
+          logAutoSaveEvent('autosave_success', { courseId: course.id, requestToken, mode: 'remote' });
         } else {
           setSaveStatus('idle');
+          logAutoSaveEvent('autosave_success', { courseId: course.id, requestToken, mode: 'local' });
         }
       } catch (err) {
         if (autoSaveRequestIdRef.current !== requestToken) {
@@ -1117,7 +1163,40 @@ const AdminCourseBuilder = () => {
         if (controller.signal.aborted) {
           return;
         }
-        if (err instanceof SlugConflictError) {
+        const conflict = extractConflictDetails(err);
+        if (conflict) {
+          logAutoSaveEvent('autosave_conflict', {
+            courseId: course.id,
+            requestToken,
+            reason: conflict.reason ?? 'unknown',
+            message: conflict.message,
+          });
+          if (conflict.reason === 'stale_version') {
+            const latest = await refreshCourseFromServer(course.id, course);
+            if (latest) {
+              setSaveStatus('idle');
+              resetAutoSaveFailures();
+              setAutoSaveRetryNonce((prev) => prev + 1);
+            }
+            return;
+          }
+          if (
+            conflict.reason &&
+            conflict.reason.includes('idempotency')
+          ) {
+            autoSaveBackoffUntilRef.current = Date.now() + 1500;
+            scheduleAutoSaveRetry(1500);
+            setSaveStatus('idle');
+            return;
+          }
+        }
+        if (err instanceof CourseValidationError) {
+          logAutoSaveEvent('autosave_validation_failed', {
+            courseId: course.id,
+            requestToken,
+            issues: err.issues?.length ?? 0,
+          });
+        } else if (err instanceof SlugConflictError) {
           console.warn('⚠️ Remote auto-sync skipped: slug conflict requires user action.');
         } else {
           console.error('❌ Remote auto-sync failed:', err);
@@ -1152,6 +1231,10 @@ const AdminCourseBuilder = () => {
     resolveOrganizationId,
     showToast,
     autoSaveRetryNonce,
+    logAutoSaveEvent,
+    refreshCourseFromServer,
+    resetAutoSaveFailures,
+    scheduleAutoSaveRetry,
   ]);
 
   useEffect(() => {
@@ -1353,10 +1436,11 @@ const AdminCourseBuilder = () => {
 
   const clearAutoSaveBackoffTimer = useCallback(() => {
     if (autoSaveBackoffTimerRef.current) {
+      logAutoSaveEvent('autosave_retry_aborted', { retryAt: autoSaveBackoffUntilRef.current });
       clearTimeout(autoSaveBackoffTimerRef.current);
       autoSaveBackoffTimerRef.current = null;
     }
-  }, []);
+  }, [logAutoSaveEvent]);
 
   const scheduleAutoSaveRetry = useCallback(
     (delayMs: number) => {
@@ -1367,8 +1451,12 @@ const AdminCourseBuilder = () => {
         autoSaveBackoffUntilRef.current = 0;
         setAutoSaveRetryNonce((prev) => prev + 1);
       }, Math.max(0, delayMs));
+      logAutoSaveEvent('autosave_retry_scheduled', {
+        delayMs,
+        retryAt: Date.now() + delayMs,
+      });
     },
-    [clearAutoSaveBackoffTimer],
+    [clearAutoSaveBackoffTimer, logAutoSaveEvent],
   );
 
   const resetAutoSaveFailures = useCallback(() => {
@@ -1379,6 +1467,30 @@ const AdminCourseBuilder = () => {
     autoSavePauseLoggedRef.current = false;
     clearAutoSaveBackoffTimer();
   }, [clearAutoSaveBackoffTimer]);
+
+  const refreshCourseFromServer = useCallback(
+    async (courseId: string | null | undefined, localSnapshot: Course | null = course) => {
+      if (!courseId) return null;
+      try {
+        const refreshed = await loadCourseFromDatabase(courseId, { includeDrafts: true });
+        if (refreshed) {
+          const mergedCourse = mergePersistedCourse(localSnapshot ?? course, refreshed);
+          courseStore.saveCourse(mergedCourse as Course, { skipRemoteSync: true });
+          setCourse(mergedCourse as Course);
+          lastPersistedRef.current = mergedCourse as Course;
+          logAutoSaveEvent('autosave_recovered_from_stale_version', { courseId });
+          return mergedCourse as Course;
+        }
+      } catch (err) {
+        console.warn('[AdminCourseBuilder] refreshCourseFromServer_failed', {
+          courseId,
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+      return null;
+    },
+    [course, courseStore, logAutoSaveEvent, setCourse],
+  );
 
   const isRetryableAutoSaveError = useCallback((error: unknown) => {
     if (error instanceof SlugConflictError) return false;
@@ -1397,6 +1509,16 @@ const AdminCourseBuilder = () => {
   const handleAutoSaveFailure = useCallback(
     (error: unknown) => {
       if (autoSaveHaltedRef.current) return;
+
+      const conflict = extractConflictDetails(error);
+      if (conflict) {
+        logAutoSaveEvent('autosave_conflict', {
+          reason: conflict.reason ?? 'unknown',
+          message: conflict.message,
+          scope: 'failure_handler',
+        });
+        return;
+      }
 
       const apiInfo = extractApiErrorInfo(error);
       if (apiInfo) {
@@ -1494,6 +1616,7 @@ const AdminCourseBuilder = () => {
       scheduleAutoSaveRetry,
       setStatusBanner,
       showToast,
+      logAutoSaveEvent,
     ],
   );
 

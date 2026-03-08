@@ -25,11 +25,7 @@ import {
   analyticsEventIngestSchema,
 } from './validators.js';
 import { validateCoursePayload } from './validators/coursePayload.js';
-import {
-  normalizeImportEntries,
-  normalizeModuleForImport,
-  normalizeLessonForImport,
-} from './lib/courseImporter.js';
+import { normalizeImportEntries, normalizeModuleForImport } from './lib/courseImporter.js';
 import { logger } from './lib/logger.js';
 import { isAllowedWsOrigin } from './lib/wsOrigins.js';
 import { withCache, invalidateCacheKeys } from './services/cacheService.js';
@@ -6228,6 +6224,27 @@ app.get('/api/admin/courses/:identifier', async (req, res) => {
   res.json({ data: shapedCourse });
 });
 
+const logAdminCourseUpdateEvent = (event, meta = {}) => {
+  try {
+    console.info('[admin.courses.update]', { event, ...meta });
+  } catch (_) {
+    /* no-op */
+  }
+};
+
+const respondAdminCourseConflict = (res, { reason, message, requestId = null, details = null }) => {
+  res.status(409).json({
+    ok: false,
+    code: 'conflict',
+    message,
+    requestId,
+    details: {
+      reason,
+      ...(details || {}),
+    },
+  });
+};
+
 async function handleAdminCourseUpsert(req, res, options = {}) {
   const { courseIdFromParams = null } = options;
   if (courseIdFromParams && !isUuidIdentifier(courseIdFromParams)) {
@@ -6240,6 +6257,10 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
   req.body = req.body || {};
   normalizeLegacyOrgInput(req.body, { surface: 'admin.courses.upsert', requestId: req.requestId });
   let { course: courseLocal, modules: modulesLocal = [] } = req.body || {};
+  modulesLocal = Array.isArray(modulesLocal)
+    ? modulesLocal.map((module, moduleIndex) => normalizeModuleForImport(module, { moduleIndex }))
+    : [];
+  req.body.modules = modulesLocal;
   if (!courseLocal) {
     res.status(400).json({ error: 'course_required', message: 'Missing course object in request body.' });
     return;
@@ -6256,9 +6277,31 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
 
   const payloadValidation = validateCoursePayload({ course: courseLocal, modules: modulesLocal });
   if (!payloadValidation.ok) {
-    res.status(422).json({
-      error: { code: 'VALIDATION_ERROR', issues: payloadValidation.issues },
+    const details = (payloadValidation.issues || []).map((issue) => {
+      const moduleMatch = /modules\[(\d+)\]/.exec(issue.path || '');
+      const lessonMatch = /lessons\[(\d+)\]/.exec(issue.path || '');
+      return {
+        field: issue.path || null,
+        message: issue.message,
+        code: issue.code || 'validation_error',
+        receivedValueType: issue.receivedValueType ?? null,
+        moduleIndex: moduleMatch ? Number(moduleMatch[1]) : null,
+        lessonIndex: lessonMatch ? Number(lessonMatch[1]) : null,
+      };
+    });
+    logAdminCourseUpdateEvent('validation_failed', {
       requestId: req.requestId ?? null,
+      courseId: courseLocal?.id ?? courseIdFromParams ?? null,
+      orgId: courseLocal?.organization_id ?? req.activeOrgId ?? null,
+      slug: courseLocal?.slug ?? null,
+      detailsCount: details.length,
+    });
+    res.status(422).json({
+      ok: false,
+      code: 'validation_failed',
+      message: 'Course payload validation failed.',
+      requestId: req.requestId ?? null,
+      details,
     });
     return;
   }
@@ -6272,6 +6315,15 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
     userId: context.userId ?? null,
     courseId: courseLocal?.id ?? courseIdFromParams ?? null,
   };
+  const resolveCurrentOrgForLog = () =>
+    req.body?.course?.organization_id ??
+    req.body?.organization_id ??
+    courseLocal?.organization_id ??
+    courseLocal?.org_id ??
+    req.activeOrgId ??
+    context.activeOrganizationId ??
+    null;
+  const resolveCurrentSlugForLog = () => req.body?.course?.slug ?? courseLocal?.slug ?? null;
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
     const headerOrgId = getHeaderOrgId(req, { requireMembership: false });
     let organizationId = pickOrgId(
@@ -6331,8 +6383,17 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
             res.json({ data: existingCourse, idempotent: true });
             return;
           }
-          // Key exists but no resource recorded yet: indicate conflict/processing
-          res.status(409).json({ error: 'idempotency_conflict', message: 'Duplicate idempotency key (processing)' });
+          logAdminCourseUpdateEvent('conflict_detected', {
+            ...baseLogMeta,
+            orgId: resolveCurrentOrgForLog(),
+            slug: resolveCurrentSlugForLog(),
+            reason: 'demo_idempotency_processing',
+          });
+          respondAdminCourseConflict(res, {
+            reason: 'demo_idempotency_processing',
+            message: 'Duplicate idempotency key (processing)',
+            requestId: req.requestId ?? null,
+          });
           return;
         }
         // Reserve the idempotency key (null = in-flight)
@@ -6601,7 +6662,20 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
       if (existing.error) throw existing.error;
       const currVersion = existing.data?.version ?? null;
       if (currVersion !== null && typeof course.version === 'number' && course.version < currVersion) {
-        res.status(409).json({ error: 'version_conflict', message: `Course has newer version ${currVersion}` });
+        logAdminCourseUpdateEvent('conflict_detected', {
+          ...baseLogMeta,
+          orgId: organizationId ?? resolveCurrentOrgForLog(),
+          slug: course?.slug ?? resolveCurrentSlugForLog(),
+          reason: 'version_conflict',
+          currentVersion: currVersion,
+          incomingVersion: course.version,
+        });
+        respondAdminCourseConflict(res, {
+          reason: 'stale_version',
+          message: `Course has newer version ${currVersion}`,
+          requestId: req.requestId ?? null,
+          details: { currentVersion: currVersion, incomingVersion: course.version ?? null },
+        });
         return;
       }
       if (!organizationId && existing.data?.organization_id) {
@@ -6657,16 +6731,46 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
                 res.status(200).json({ data: courseRow, idempotent: true });
                 return;
               }
-              res.status(409).json({ error: 'idempotency_conflict', message: 'Duplicate idempotency key (resource not available yet)' });
+              logAdminCourseUpdateEvent('conflict_detected', {
+                ...baseLogMeta,
+                orgId: resolveCurrentOrgForLog(),
+                slug: resolveCurrentSlugForLog(),
+                reason: 'idempotency_resource_pending',
+              });
+              respondAdminCourseConflict(res, {
+                reason: 'idempotency_resource_pending',
+                message: 'Duplicate idempotency key (resource not available yet)',
+                requestId: req.requestId ?? null,
+              });
               return;
             }
-            res.status(409).json({ error: 'idempotency_conflict', message: 'Duplicate idempotency key (processing)' });
+            logAdminCourseUpdateEvent('conflict_detected', {
+              ...baseLogMeta,
+              orgId: resolveCurrentOrgForLog(),
+              slug: resolveCurrentSlugForLog(),
+              reason: 'idempotency_processing',
+            });
+            respondAdminCourseConflict(res, {
+              reason: 'idempotency_processing',
+              message: 'Duplicate idempotency key (processing)',
+              requestId: req.requestId ?? null,
+            });
             return;
           }
         } catch (fetchErr) {
           console.warn('Failed to lookup existing idempotency key row', fetchErr);
         }
-        res.status(409).json({ error: 'idempotency_conflict', message: 'Duplicate idempotency key' });
+        logAdminCourseUpdateEvent('conflict_detected', {
+          ...baseLogMeta,
+          orgId: resolveCurrentOrgForLog(),
+          slug: resolveCurrentSlugForLog(),
+          reason: 'idempotency_duplicate',
+        });
+        respondAdminCourseConflict(res, {
+          reason: 'idempotency_duplicate',
+          message: 'Duplicate idempotency key',
+          requestId: req.requestId ?? null,
+        });
         return;
       }
     }
