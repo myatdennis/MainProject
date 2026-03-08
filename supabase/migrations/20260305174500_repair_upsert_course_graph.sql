@@ -43,8 +43,10 @@ BEGIN
     description,
     status,
     meta_json,
+    key_takeaways,
     version,
-    updated_at
+    updated_at,
+    updated_by
   )
   VALUES (
     v_course_id,
@@ -54,8 +56,10 @@ BEGIN
     p_course->>'description',
     COALESCE(v_status, 'draft'),
     COALESCE(p_course->'meta_json', '{}'::jsonb),
+    COALESCE(p_course->'key_takeaways', p_course->'keyTakeaways', '[]'::jsonb),
     v_version,
-    v_now
+    v_now,
+    p_actor
   )
   ON CONFLICT (id) DO UPDATE
     SET slug = EXCLUDED.slug,
@@ -63,8 +67,10 @@ BEGIN
         description = EXCLUDED.description,
         status = EXCLUDED.status,
         meta_json = EXCLUDED.meta_json,
+        key_takeaways = EXCLUDED.key_takeaways,
         version = EXCLUDED.version,
         updated_at = v_now,
+        updated_by = p_actor,
         organization_id = p_org;
 
   WITH modules_input AS (
@@ -92,6 +98,7 @@ BEGIN
     INSERT INTO public.lessons (
       id,
       module_id,
+      course_id,
       organization_id,
       type,
       title,
@@ -106,6 +113,7 @@ BEGIN
     SELECT
       COALESCE((lesson.value->>'id')::uuid, gen_random_uuid()) AS lesson_id,
       mi.module_id,
+      v_course_id,
       p_org,
       COALESCE(lesson.value->>'type', 'text'),
       COALESCE(lesson.value->>'title', ''),

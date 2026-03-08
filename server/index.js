@@ -6245,6 +6245,31 @@ const respondAdminCourseConflict = (res, { reason, message, requestId = null, de
   });
 };
 
+const normalizeKeyTakeawaysInput = (input) => {
+  if (!input) return [];
+  if (Array.isArray(input)) {
+    return input
+      .map((entry) => {
+        if (typeof entry === 'string') {
+          const trimmed = entry.trim();
+          return trimmed ? trimmed : null;
+        }
+        return null;
+      })
+      .filter(Boolean);
+  }
+  if (typeof input === 'string') {
+    const trimmed = input.trim();
+    return trimmed ? [trimmed] : [];
+  }
+  if (typeof input === 'object' && input !== null) {
+    if (Array.isArray(input?.items)) {
+      return normalizeKeyTakeawaysInput(input.items);
+    }
+  }
+  return [];
+};
+
 async function handleAdminCourseUpsert(req, res, options = {}) {
   const { courseIdFromParams = null } = options;
   if (courseIdFromParams && !isUuidIdentifier(courseIdFromParams)) {
@@ -6273,6 +6298,20 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
     }
     courseLocal = { ...(courseLocal || {}), id: courseIdFromParams };
     req.body.course = courseLocal;
+  }
+
+  const normalizedKeyTakeaways = normalizeKeyTakeawaysInput(
+    courseLocal?.key_takeaways ??
+      courseLocal?.keyTakeaways ??
+      courseLocal?.meta?.key_takeaways ??
+      courseLocal?.meta?.keyTakeaways ??
+      [],
+  );
+  courseLocal.key_takeaways = normalizedKeyTakeaways;
+  courseLocal.keyTakeaways = normalizedKeyTakeaways;
+  if (req.body?.course) {
+    req.body.course.key_takeaways = normalizedKeyTakeaways;
+    req.body.course.keyTakeaways = normalizedKeyTakeaways;
   }
 
   const payloadValidation = validateCoursePayload({ course: courseLocal, modules: modulesLocal });
@@ -6798,6 +6837,11 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
     const moduleCount = modulesForPersistence.length;
     const lessonCount = modulesForPersistence.reduce((sum, mod) => sum + ((mod.lessons && mod.lessons.length) || 0), 0);
 
+    const normalizedPayloadKeyTakeaways = Array.isArray(course?.key_takeaways)
+      ? course.key_takeaways
+      : Array.isArray(course?.keyTakeaways)
+      ? course.keyTakeaways
+      : [];
     const buildCourseGraphPayload = () => {
       const payload = {
         id: course.id ?? undefined,
@@ -6806,11 +6850,14 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
         description: course.description ?? null,
         status: course.status ?? 'draft',
         meta_json: meta,
+        key_takeaways: normalizedPayloadKeyTakeaways,
         modules: modulesForPersistence.map((module, moduleIndex) => ({
           id: module.id ?? undefined,
           title: module.title,
           description: module.description ?? null,
           order_index: module.order_index ?? moduleIndex,
+          course_id: module.course_id ?? course.id ?? undefined,
+          organization_id: module.organization_id ?? organizationId ?? undefined,
           lessons: (module.lessons || []).map((lesson, lessonIndex) => ({
             id: lesson.id ?? undefined,
             type: lesson.type,
@@ -6820,6 +6867,9 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
             duration_s: lesson.duration_s ?? null,
             content_json: lesson.content_json ?? lesson.content ?? {},
             completion_rule_json: lesson.completion_rule_json ?? lesson.completionRule ?? null,
+            module_id: lesson.module_id ?? module.id ?? undefined,
+            course_id: lesson.course_id ?? course.id ?? undefined,
+            organization_id: lesson.organization_id ?? organizationId ?? undefined,
           })),
         })),
       };
