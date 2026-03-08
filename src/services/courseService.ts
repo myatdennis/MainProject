@@ -35,6 +35,7 @@ import { parseSlugConflictError, SlugConflictError } from '../utils/slugConflict
 import { getSupabase } from '../lib/supabaseClient';
 import queryClient from '../lib/queryClient';
 import { invalidateCourseQueries } from '../lib/courseQueryKeys';
+import isUuid from '../utils/isUuid';
 
 export type SupabaseCourseRecord = {
   id: string;
@@ -106,12 +107,6 @@ export class CourseValidationError extends Error {
 const PERSISTED_COURSE_IDS_KEY = 'courseService.persistedCourseIds';
 const persistedCourseIds = new Set<string>();
 const supportsLocalStorage = () => typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
-const isClientGeneratedCourseId = (value?: string | null): boolean => {
-  if (typeof value !== 'string') return true;
-  const trimmed = value.trim();
-  if (!trimmed) return true;
-  return trimmed.startsWith('course-');
-};
 const hydratePersistedCourseIds = () => {
   if (!supportsLocalStorage()) return;
   try {
@@ -172,6 +167,10 @@ const markCoursePersisted = (id?: string | null) => {
 const hasPersistedCourseRecord = (id?: string | null): boolean => {
   if (typeof id !== 'string') return false;
   return persistedCourseIds.has(id.trim());
+};
+const hasServerAssignedCourseId = (value?: string | null): value is string => {
+  if (typeof value !== 'string') return false;
+  return isUuid(value);
 };
 
 const formatZodIssues = (error: ZodError, context: string): string[] => {
@@ -571,11 +570,10 @@ export class CourseService {
     body.course = canonicalCourse;
     modules = CourseService.withOrgContextForModules(modules, canonicalOrgId);
     body.modules = modules;
-    const hasRemoteRecord =
-      Boolean(course.id) &&
-      (hasPersistedCourseRecord(course.id) || !isClientGeneratedCourseId(course.id));
+    const courseIdIsServerAssigned = hasServerAssignedCourseId(course.id);
+    const hasRemoteRecord = courseIdIsServerAssigned && hasPersistedCourseRecord(course.id);
     const isCreateOperation = !hasRemoteRecord;
-    if (isCreateOperation) {
+    if (!courseIdIsServerAssigned || isCreateOperation) {
       delete (body.course as Record<string, unknown>).id;
     }
 

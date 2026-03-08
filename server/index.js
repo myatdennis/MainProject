@@ -107,6 +107,10 @@ const getMetricsSnapshot = () => ({
   progressBatch: { lastSuccessAt: null, status: 'unknown' },
 });
 
+const isUuidIdentifier = (value) =>
+  typeof value === 'string' &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+
 const shouldLogAuthDebug =
   NODE_ENV !== 'production' || String(process.env.ENABLE_AUTH_DEBUG || '').toLowerCase() === 'true';
 const ENABLE_NOTIFICATIONS = parseFlag(process.env.ENABLE_NOTIFICATIONS);
@@ -6226,6 +6230,13 @@ app.get('/api/admin/courses/:identifier', async (req, res) => {
 
 async function handleAdminCourseUpsert(req, res, options = {}) {
   const { courseIdFromParams = null } = options;
+  if (courseIdFromParams && !isUuidIdentifier(courseIdFromParams)) {
+    res.status(400).json({
+      error: 'invalid_course_id',
+      message: 'Course ID must be a UUID.',
+    });
+    return;
+  }
   req.body = req.body || {};
   normalizeLegacyOrgInput(req.body, { surface: 'admin.courses.upsert', requestId: req.requestId });
   let { course: courseLocal, modules: modulesLocal = [] } = req.body || {};
@@ -8133,7 +8144,6 @@ app.get('/api/client/courses', asyncHandler(async (req, res) => {
   }
 }));
 
-const isUuidIdentifier = (value) => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
 
 app.get('/api/client/courses/:courseIdentifier', asyncHandler(async (req, res) => {
   const { courseIdentifier } = req.params;

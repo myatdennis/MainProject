@@ -44,8 +44,7 @@ BEGIN
     status,
     meta_json,
     version,
-    updated_at,
-    updated_by
+    updated_at
   )
   VALUES (
     v_course_id,
@@ -56,8 +55,7 @@ BEGIN
     COALESCE(v_status, 'draft'),
     COALESCE(p_course->'meta_json', '{}'::jsonb),
     v_version,
-    v_now,
-    p_actor
+    v_now
   )
   ON CONFLICT (id) DO UPDATE
     SET slug = EXCLUDED.slug,
@@ -67,7 +65,6 @@ BEGIN
         meta_json = EXCLUDED.meta_json,
         version = EXCLUDED.version,
         updated_at = v_now,
-        updated_by = p_actor,
         organization_id = p_org;
 
   WITH modules_input AS (
