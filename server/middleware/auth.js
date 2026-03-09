@@ -5,6 +5,7 @@
 
 import rateLimit from 'express-rate-limit';
 import supabase, { supabaseAuthClient, supabaseEnv } from '../lib/supabaseClient.js';
+import { getDatabaseConnectionInfo } from '../db.js';
 import { extractTokenFromHeader } from '../utils/jwt.js';
 import { getActiveOrgFromRequest } from '../utils/authCookies.js';
 import { getUserMemberships, getMembershipDiagnostics } from '../utils/memberships.js';
@@ -27,14 +28,11 @@ const tokenCache = new Map();
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const writableOrgRoles = new Set(['owner', 'admin', 'manager', 'editor']);
-const databaseHostForLogs = (() => {
-  try {
-    if (!process.env.DATABASE_URL) return null;
-    return new URL(process.env.DATABASE_URL).host || null;
-  } catch {
-    return null;
-  }
-})();
+const databaseConnectionInfo = getDatabaseConnectionInfo();
+const databaseHostForLogs =
+  databaseConnectionInfo.host && databaseConnectionInfo.port
+    ? `${databaseConnectionInfo.host}:${databaseConnectionInfo.port}`
+    : databaseConnectionInfo.host || null;
 
 const fetchUserProfileRole = async (userId) => {
   if (!userId || !supabase) {

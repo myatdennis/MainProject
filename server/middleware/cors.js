@@ -1,10 +1,27 @@
 import cors from 'cors';
 
+const isHttpOrigin = (origin) => {
+  if (!origin) return false;
+  try {
+    const url = new URL(origin);
+    return url.protocol === 'http:' || url.protocol === 'https:';
+  } catch {
+    return false;
+  }
+};
+
 const normalizeOrigins = (value = '') =>
   value
     .split(',')
     .map((entry) => entry.trim())
-    .filter(Boolean);
+    .filter(Boolean)
+    .filter((origin) => {
+      if (isHttpOrigin(origin)) {
+        return true;
+      }
+      console.warn('[cors] Ignoring invalid origin in CORS_ALLOWED_ORIGINS', { origin });
+      return false;
+    });
 
 const NETLIFY_PREVIEW_REGEX = /^https:\/\/[a-z0-9-]+--the-huddleco\.netlify\.app$/i;
 

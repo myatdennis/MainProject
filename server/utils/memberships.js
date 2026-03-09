@@ -1,5 +1,5 @@
 import supabase from '../lib/supabaseClient.js';
-import sql from '../db.js';
+import sql, { getDatabaseConnectionInfo } from '../db.js';
 
 const MEMBERSHIP_VIEW_NAME = 'user_organizations_vw';
 const VIEW_COLUMNS = '*';
@@ -8,15 +8,12 @@ let organizationColumnDetectionPromise = null;
 let organizationColumnSet = new Set();
 let membershipColumnDetectionPromise = null;
 let membershipColumnSet = new Set();
+const databaseConnectionInfo = getDatabaseConnectionInfo();
 const databaseHost =
-  (() => {
-    try {
-      if (!process.env.DATABASE_URL) return null;
-      return new URL(process.env.DATABASE_URL).host || null;
-    } catch (_error) {
-      return null;
-    }
-  })() || null;
+  databaseConnectionInfo.host && databaseConnectionInfo.port
+    ? `${databaseConnectionInfo.host}:${databaseConnectionInfo.port}`
+    : databaseConnectionInfo.host || null;
+const databaseConfigured = databaseConnectionInfo.connectionStringDefined;
 
 const sanitizeErrorPayload = (error) => {
   if (!error || typeof error !== 'object') {
@@ -140,7 +137,7 @@ const membershipColumnState = {
 };
 
 const detectOrganizationColumns = async () => {
-  if (!process.env.DATABASE_URL) {
+  if (!databaseConfigured) {
     return new Set();
   }
   try {
@@ -162,7 +159,7 @@ const detectOrganizationColumns = async () => {
 };
 
 const detectMembershipColumns = async () => {
-  if (!process.env.DATABASE_URL) {
+  if (!databaseConfigured) {
     return new Set();
   }
   try {

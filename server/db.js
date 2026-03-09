@@ -24,6 +24,8 @@ if (typeof setDefaultResultOrder === 'function') {
 const isIpv4Literal = (host) => /^\d+\.\d+\.\d+\.\d+$/.test(host || '')
 const shouldForceIpv4 = (host) => Boolean(host) && host !== 'localhost' && host !== '127.0.0.1' && !isIpv4Literal(host)
 
+const PG_PROTOCOLS = new Set(['postgres:', 'postgresql:']);
+
 const DB_CONNECTION_SOURCES = [
   { key: 'DATABASE_POOLER_URL', type: 'pooler' },
   { key: 'SUPABASE_DB_POOLER_URL', type: 'pooler' },
@@ -31,14 +33,48 @@ const DB_CONNECTION_SOURCES = [
   { key: 'DATABASE_URL', type: 'direct' }
 ]
 
+const validateConnectionString = (value, sourceKey) => {
+  if (!value) {
+    return false;
+  }
+  try {
+    const parsed = new URL(value);
+    const protocol = (parsed.protocol || '').toLowerCase();
+    if (!PG_PROTOCOLS.has(protocol)) {
+      throw new Error(`Unsupported protocol "${parsed.protocol || 'unknown'}" (expected postgres:// or postgresql://)`);
+    }
+    if (!parsed.hostname) {
+      throw new Error('Missing hostname');
+    }
+    if (!parsed.username) {
+      console.warn('[server/db] connection_string_missing_username', { env: sourceKey });
+    }
+    return true;
+  } catch (error) {
+    console.error('[server/db] invalid_connection_string', {
+      env: sourceKey,
+      message: error instanceof Error ? error.message : String(error)
+    });
+    return false;
+  }
+};
+
 const resolveConnectionSource = () => {
   for (const source of DB_CONNECTION_SOURCES) {
     const value = process.env[source.key]
     if (value && value.trim()) {
-      return { ...source, value: value.trim() }
+      const trimmed = value.trim()
+      if (!validateConnectionString(trimmed, source.key)) {
+        continue
+      }
+      return { ...source, value: trimmed }
     }
   }
-  return { key: 'DATABASE_URL', type: 'direct', value: process.env.DATABASE_URL || '' }
+  const fallback = process.env.DATABASE_URL || ''
+  if (fallback && validateConnectionString(fallback, 'DATABASE_URL')) {
+    return { key: 'DATABASE_URL', type: 'direct', value: fallback.trim() }
+  }
+  return { key: 'DATABASE_URL', type: 'direct', value: '' }
 }
 
 const connectionSource = resolveConnectionSource()
@@ -51,6 +87,7 @@ async function initializeConnectionMetadata (rawConnectionString, source = {}) {
   const metadata = {
     connectionString: rawConnectionString || '',
     forcedIpv4: false,
+    ipv4RewriteEligible: Boolean(FORCE_DB_IPV4 && source?.type !== 'pooler'),
     originalHost: null,
     originalPort: null,
     resolvedHost: null,
@@ -70,7 +107,7 @@ async function initializeConnectionMetadata (rawConnectionString, source = {}) {
     metadata.connectionString = url.toString()
     metadata.originalPort = url.port ? Number(url.port) : null
 
-    if (FORCE_DB_IPV4 && shouldForceIpv4(url.hostname) && typeof dns.lookup === 'function') {
+    if (metadata.ipv4RewriteEligible && shouldForceIpv4(url.hostname) && typeof dns.lookup === 'function') {
       try {
         const lookupResult = await dns.lookup(url.hostname, { family: 4, all: false })
         if (lookupResult?.address) {
@@ -103,6 +140,7 @@ async function initializeConnectionMetadata (rawConnectionString, source = {}) {
   console.info('[server/db] connection_metadata', {
     sourceEnv: metadata.source?.key ?? null,
     sourceType: metadata.source?.type ?? null,
+    ipv4RewriteEligible: metadata.ipv4RewriteEligible,
     forcedIpv4: metadata.forcedIpv4,
     originalHost: metadata.originalHost,
     originalPort: metadata.originalPort,
@@ -118,7 +156,7 @@ const connectionMetadata = await initializeConnectionMetadata(connectionSource.v
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 const createPool = () => {
-  const connectionString = connectionMetadata.connectionString || process.env.DATABASE_URL || ''
+  const connectionString = connectionMetadata.connectionString || ''
   const pool = new Pool({
     connectionString,
     ssl:
@@ -143,6 +181,17 @@ const createPool = () => {
 }
 
 export const pool = createPool()
+
+export const getDatabaseConnectionInfo = () => ({
+  sourceEnv: connectionMetadata.source?.key ?? null,
+  sourceType: connectionMetadata.source?.type ?? null,
+  host: connectionMetadata.finalHostUsed ?? connectionMetadata.originalHost ?? null,
+  port: connectionMetadata.originalPort ?? null,
+  forcedIpv4: connectionMetadata.forcedIpv4,
+  ipv4RewriteEligible: connectionMetadata.ipv4RewriteEligible,
+  connectionStringDefined: Boolean(connectionMetadata.connectionString),
+  usingPooler: connectionMetadata.source?.type === 'pooler'
+})
 
 export async function testConnection (retries = 3) {
   try {

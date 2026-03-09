@@ -78,7 +78,7 @@ import {
   COURSE_MODULES_NO_LESSONS_FIELDS,
 } from './constants/courseSelect.js';
 import { courseUpsertPayloadSchema } from '../shared/contracts/courseContract.js';
-import sql, { pool } from './db.js';
+import sql, { pool, getDatabaseConnectionInfo } from './db.js';
 
 if (typeof dns.setDefaultResultOrder === 'function') {
   try {
@@ -298,14 +298,11 @@ const supabaseUrlHost = (() => {
     return null;
   }
 })();
-const databaseHost = (() => {
-  try {
-    if (!process.env.DATABASE_URL) return null;
-    return new URL(process.env.DATABASE_URL).host || null;
-  } catch (_error) {
-    return null;
-  }
-})();
+const databaseConnectionInfo = getDatabaseConnectionInfo();
+const databaseHost =
+  databaseConnectionInfo.host && databaseConnectionInfo.port
+    ? `${databaseConnectionInfo.host}:${databaseConnectionInfo.port}`
+    : databaseConnectionInfo.host || null;
 
 const schemaHealth = {
   membership: {
@@ -335,8 +332,8 @@ function setMembershipSchemaHealth(status, reason = null) {
 }
 
 async function requireCriticalSchema () {
-  if (!process.env.DATABASE_URL) {
-    console.warn('[schema] DATABASE_URL missing; skipping critical schema verification.');
+  if (!databaseConnectionInfo.connectionStringDefined) {
+    console.warn('[schema] Database connection string missing; skipping critical schema verification.');
     setMembershipSchemaHealth('degraded', 'database_url_missing');
     return;
   }
@@ -372,7 +369,7 @@ async function requireCriticalSchema () {
 }
 
 const runSchemaDoctor = async () => {
-  if (!process.env.DATABASE_URL) {
+  if (!databaseConnectionInfo.connectionStringDefined) {
     logger.warn('schema_doctor_skipped', { reason: 'missing_database_url' });
     return;
   }
@@ -603,8 +600,8 @@ app.get('/api/admin/courses/health/upsert-course-rpc', authenticate, requireAdmi
   let rpcExists = null;
   let rpcError = null;
 
-  if (!process.env.DATABASE_URL) {
-    rpcError = 'DATABASE_URL not configured';
+  if (!databaseConnectionInfo.connectionStringDefined) {
+    rpcError = 'database_url_not_configured';
   } else {
     try {
       const rows = await sql`
@@ -798,12 +795,50 @@ const resolveAppVersion = () =>
   process.env.HEROKU_RELEASE_VERSION ||
   'dev';
 
-const respondWithHealthPayload = async (_req, res) => {
+const probeDatabaseHealth = async () => {
+  if (!databaseConnectionInfo.connectionStringDefined) {
+    return {
+      ok: false,
+      status: 'disabled',
+      code: 'database_url_missing',
+      message: 'Database connection string is not configured.',
+      host: databaseHost,
+      sourceEnv: databaseConnectionInfo.sourceEnv ?? null,
+    };
+  }
+  const startedAt = Date.now();
   try {
     await pool.query('select 1');
-    const payload = await buildHealthPayload();
-    res.status(200).json({
+    return {
       ok: true,
+      status: 'ok',
+      latencyMs: Date.now() - startedAt,
+      host: databaseHost,
+      sourceEnv: databaseConnectionInfo.sourceEnv ?? null,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: 'error',
+      code: error?.code ?? 'db_unavailable',
+      message: error?.message ?? 'Database connection unavailable.',
+      host: databaseHost,
+      sourceEnv: databaseConnectionInfo.sourceEnv ?? null,
+    };
+  }
+};
+
+const respondWithHealthPayload = async (_req, res) => {
+  try {
+    const dbHealth = await probeDatabaseHealth();
+    const overrides = { database: dbHealth };
+    if (!dbHealth.ok) {
+      overrides.status = 'degraded';
+    }
+    const payload = await buildHealthPayload(overrides);
+    const statusCode = dbHealth.ok ? 200 : 503;
+    res.status(statusCode).json({
+      ok: dbHealth.ok,
       timestamp: new Date().toISOString(),
       version: resolveAppVersion(),
       status: payload.status,
@@ -812,6 +847,7 @@ const respondWithHealthPayload = async (_req, res) => {
       storage: payload.storage,
       realtime: payload.realtime,
       metrics: payload.metrics,
+      database: payload.database ?? dbHealth,
     });
   } catch (error) {
     logger.warn('health_check_failed', { message: error?.message || String(error), code: error?.code || null });
@@ -4301,12 +4337,37 @@ const INVITE_TOKEN_TTL_HOURS = Number(process.env.CLIENT_INVITE_TTL_HOURS || pro
 const INVITE_BULK_LIMIT = Number(process.env.CLIENT_INVITE_BULK_LIMIT || 50);
 const INVITE_PASSWORD_MIN_CHARS = Number(process.env.CLIENT_INVITE_PASSWORD_MIN || 8);
 const INVITE_ACCEPTABLE_STATUSES = new Set(['pending', 'sent']);
+const resolveAbsoluteHttpUrl = (value, label) => {
+  if (!value) return null;
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      throw new Error('URL must use http or https protocol');
+    }
+    url.hash = '';
+    url.search = '';
+    return url.origin;
+  } catch (error) {
+    console.warn('[config] Ignoring invalid URL value', {
+      label,
+      value,
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return null;
+  }
+};
+
+const inviteLinkBaseCandidates = [
+  { key: 'CLIENT_PORTAL_URL', value: process.env.CLIENT_PORTAL_URL },
+  { key: 'APP_BASE_URL', value: process.env.APP_BASE_URL },
+  { key: 'PUBLIC_APP_URL', value: process.env.PUBLIC_APP_URL },
+  { key: 'VITE_SITE_URL', value: process.env.VITE_SITE_URL },
+];
+
 const INVITE_LINK_BASE =
-  process.env.CLIENT_PORTAL_URL ||
-  process.env.APP_BASE_URL ||
-  process.env.PUBLIC_APP_URL ||
-  process.env.VITE_SITE_URL ||
-  'https://the-huddle.co';
+  inviteLinkBaseCandidates
+    .map((candidate) => resolveAbsoluteHttpUrl(candidate.value, candidate.key))
+    .find((url) => Boolean(url)) || 'https://the-huddle.co';
 const DEFAULT_ORG_PLAN = process.env.DEFAULT_ORG_PLAN || 'standard';
 const DEFAULT_ORG_TIMEZONE = process.env.DEFAULT_ORG_TIMEZONE || 'UTC';
 
@@ -5405,7 +5466,7 @@ app.get('/api/diagnostics', async (req, res) => {
     supabaseConfigured: Boolean(supabase),
     supabaseUrlPresent: !!process.env.SUPABASE_URL || !!process.env.VITE_SUPABASE_URL,
     supabaseServiceRoleKeyPresent: !!process.env.SUPABASE_SERVICE_ROLE_KEY || !!process.env.SUPABASE_SERVICE_KEY,
-    databaseUrlPresent: !!process.env.DATABASE_URL,
+    databaseUrlPresent: databaseConnectionInfo.connectionStringDefined,
     jwtAccessSecretPresent: !!process.env.JWT_ACCESS_SECRET,
     jwtRefreshSecretPresent: !!process.env.JWT_REFRESH_SECRET,
     cookieDomain: !!process.env.COOKIE_DOMAIN,
