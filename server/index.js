@@ -7002,7 +7002,12 @@ app.post('/api/admin/courses', asyncHandler(async (req, res) => {
 }));
 
 app.put('/api/admin/courses/:id', asyncHandler(async (req, res) => {
-  await handleAdminCourseUpsert(req, res, { courseIdFromParams: req.params.id });
+  const { id } = req.params;
+  if (!isUuidIdentifier(id)) {
+    res.status(400).json({ error: 'invalid_course_id', message: 'Course ID must be a UUID.' });
+    return;
+  }
+  await handleAdminCourseUpsert(req, res, { courseIdFromParams: id });
 }));
 
 // Batch import endpoint (best-effort transactional behavior in E2E/DEV fallback)

@@ -147,6 +147,10 @@ const nextRequestToken = () =>
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
 
+const isUuid = (value?: string | null): boolean =>
+  typeof value === 'string' &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+
 const extractConflictDetails = (
   error: unknown,
 ): { reason: string | null; message: string | null; details?: Record<string, unknown> | null } | null => {
@@ -1123,12 +1127,15 @@ const AdminCourseBuilder = () => {
       autoSaveRequestIdRef.current = requestToken;
       try {
         logAutoSaveEvent('autosave_start', { courseId: course.id, requestToken });
-        const result = await persistCourse(course, {
-          action: 'course.auto-save',
-          gate,
-          skipValidation: true,
-          abortSignal: controller.signal,
-        });
+        const result = await persistCourse(
+          { ...course, slug: isEditing ? undefined : course.slug },
+          {
+            action: 'course.auto-save',
+            gate,
+            skipValidation: true,
+            abortSignal: controller.signal,
+          },
+        );
         if (autoSaveRequestIdRef.current !== requestToken) {
           return;
         }
@@ -1902,8 +1909,15 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
 
     const resolvedOrgId = resolveOrganizationId(sanitizedNextCourse);
 
+    const canonicalCourseId = isUuid(sanitizedNextCourse.id)
+      ? sanitizedNextCourse.id
+      : isUuid(lastPersistedRef.current?.id ?? null)
+      ? lastPersistedRef.current?.id
+      : sanitizedNextCourse.id;
+
     const preparedCourse: Course = {
       ...sanitizedNextCourse,
+      id: canonicalCourseId,
       status: statusOverride ?? nextCourse.status ?? 'draft',
       duration: calculateCourseDuration(sanitizedNextCourse.modules || []),
       lessons: countTotalLessons(sanitizedNextCourse.modules || []),
