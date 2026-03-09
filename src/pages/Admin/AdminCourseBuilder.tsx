@@ -406,6 +406,8 @@ const AdminCourseBuilder = () => {
   const lastPersistedRef = useRef<Course | null>(null);
   const autoSaveRequestAbortRef = useRef<AbortController | null>(null);
   const autoSaveRequestIdRef = useRef<string | null>(null);
+  const resetAutoSaveFailuresRef = useRef<(() => void) | null>(null);
+  const scheduleAutoSaveRetryRef = useRef<((delay: number) => void) | null>(null);
   const lastAutoSaveErrorRef = useRef<{ status: number | null; code: string | null; message: string | null; timestamp: number } | null>(null);
   const [initializing, setInitializing] = useState(isEditing);
   const lastLoadedCourseIdRef = useRef<string | null>(null);
@@ -1412,8 +1414,6 @@ const AdminCourseBuilder = () => {
   const autoSaveHaltedRef = useRef(false);
   const autoSaveWarningIssuedRef = useRef(false);
   const autoSavePauseLoggedRef = useRef(false);
-  const resetAutoSaveFailuresRef = useRef<(() => void) | null>(null);
-  const scheduleAutoSaveRetryRef = useRef<((delay: number) => void) | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<BuilderConfirmAction | null>(null);
 
   const confirmDialogContent = useMemo<ConfirmDialogConfig | null>(() => {

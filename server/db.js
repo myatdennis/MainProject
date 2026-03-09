@@ -60,24 +60,48 @@ const validateConnectionString = (value, sourceKey) => {
 };
 
 const resolveConnectionSource = () => {
+  const candidates = []
   for (const source of DB_CONNECTION_SOURCES) {
-    const value = process.env[source.key]
-    if (value && value.trim()) {
-      const trimmed = value.trim()
-      if (!validateConnectionString(trimmed, source.key)) {
-        continue
-      }
-      return { ...source, value: trimmed }
+    const raw = process.env[source.key]
+    if (!raw || !raw.trim()) {
+      candidates.push({ key: source.key, provided: false, valid: false, selected: false })
+      continue
     }
+    const trimmed = raw.trim()
+    const valid = validateConnectionString(trimmed, source.key)
+    candidates.push({ key: source.key, provided: true, valid, selected: false })
+    if (!valid) {
+      continue
+    }
+    candidates[candidates.length - 1].selected = true
+    return { ...source, value: trimmed, candidates }
   }
   const fallback = process.env.DATABASE_URL || ''
-  if (fallback && validateConnectionString(fallback, 'DATABASE_URL')) {
-    return { key: 'DATABASE_URL', type: 'direct', value: fallback.trim() }
+  const validFallback = Boolean(fallback && validateConnectionString(fallback, 'DATABASE_URL'))
+  candidates.push({
+    key: 'DATABASE_URL',
+    provided: Boolean(fallback),
+    valid: validFallback,
+    selected: validFallback
+  })
+  return {
+    key: 'DATABASE_URL',
+    type: 'direct',
+    value: validFallback ? fallback.trim() : '',
+    candidates
   }
-  return { key: 'DATABASE_URL', type: 'direct', value: '' }
 }
 
 const connectionSource = resolveConnectionSource()
+
+if (connectionSource.candidates) {
+  console.info('[server/db] connection_source_selected', {
+    selectedEnv: connectionSource.key,
+    sourceType: connectionSource.type,
+    hasValue: Boolean(connectionSource.value),
+    candidates: connectionSource.candidates
+  })
+}
 
 if (!connectionSource.value) {
   console.warn('[server/db] No database connection string detected. Set DATABASE_POOLER_URL (preferred) or DATABASE_URL.')
