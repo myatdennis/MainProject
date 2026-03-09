@@ -1192,7 +1192,7 @@ const AdminCourseBuilder = () => {
             const latest = await refreshCourseFromServer(course.id, course);
             if (latest) {
               setSaveStatus('idle');
-              resetAutoSaveFailures();
+              resetAutoSaveFailuresRef.current?.();
               setAutoSaveRetryNonce((prev) => prev + 1);
             }
             return;
@@ -1202,7 +1202,7 @@ const AdminCourseBuilder = () => {
             conflict.reason.includes('idempotency')
           ) {
             autoSaveBackoffUntilRef.current = Date.now() + 1500;
-            scheduleAutoSaveRetry(1500);
+            scheduleAutoSaveRetryRef.current?.(1500);
             setSaveStatus('idle');
             return;
           }
@@ -1250,8 +1250,8 @@ const AdminCourseBuilder = () => {
     autoSaveRetryNonce,
     logAutoSaveEvent,
     refreshCourseFromServer,
-    resetAutoSaveFailures,
-    scheduleAutoSaveRetry,
+    resetAutoSaveFailuresRef,
+    scheduleAutoSaveRetryRef,
   ]);
 
   useEffect(() => {
@@ -1412,6 +1412,8 @@ const AdminCourseBuilder = () => {
   const autoSaveHaltedRef = useRef(false);
   const autoSaveWarningIssuedRef = useRef(false);
   const autoSavePauseLoggedRef = useRef(false);
+  const resetAutoSaveFailuresRef = useRef<(() => void) | null>(null);
+  const scheduleAutoSaveRetryRef = useRef<((delay: number) => void) | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<BuilderConfirmAction | null>(null);
 
   const confirmDialogContent = useMemo<ConfirmDialogConfig | null>(() => {
@@ -1475,6 +1477,7 @@ const AdminCourseBuilder = () => {
     },
     [clearAutoSaveBackoffTimer, logAutoSaveEvent],
   );
+  scheduleAutoSaveRetryRef.current = scheduleAutoSaveRetry;
 
   const resetAutoSaveFailures = useCallback(() => {
     autoSaveFailureRef.current.count = 0;
@@ -1484,6 +1487,7 @@ const AdminCourseBuilder = () => {
     autoSavePauseLoggedRef.current = false;
     clearAutoSaveBackoffTimer();
   }, [clearAutoSaveBackoffTimer]);
+  resetAutoSaveFailuresRef.current = resetAutoSaveFailures;
 
   const isRetryableAutoSaveError = useCallback((error: unknown) => {
     if (error instanceof SlugConflictError) return false;
