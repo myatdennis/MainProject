@@ -1074,188 +1074,6 @@ const AdminCourseBuilder = () => {
     [course, courseStore, logAutoSaveEvent, setCourse],
   );
 
-  // Debounced remote auto-sync (single upsert). Runs only when there are real changes vs lastPersistedRef.
-  useEffect(() => {
-    if (!course.id || !course.title?.trim()) return;
-    if (autoSaveLockRef.current) {
-      logAutoSaveEvent('autosave_skip_inflight', { courseId: course.id, reason: 'lock' });
-      return;
-    }
-    if (lessonAutosaveState.pending || lessonAutosaveState.status === 'saving') return;
-    if (autoSaveHaltedRef.current) return;
-    if (autoSaveBackoffUntilRef.current > Date.now()) {
-      logAutoSaveEvent('autosave_skip_inflight', {
-        courseId: course.id,
-        reason: 'backoff',
-        retryAt: autoSaveBackoffUntilRef.current,
-      });
-      return;
-    }
-    const diff = computeCourseDiff(lastPersistedRef.current, course);
-    if (!diff.hasChanges) return;
-    if (!course.modules || course.modules.length === 0) {
-      return;
-    }
-
-    const gate = evaluateRuntimeGate('course.auto-save', runtimeStatus);
-    const isBrowserOnline = typeof navigator !== 'undefined' ? navigator.onLine !== false : true;
-    const apiReachable = runtimeStatus.apiReachable !== false && !runtimeStatus.apiAuthRequired;
-    const resolvedOrgId = resolveOrganizationId(course);
-    const canAttemptRemote = gate.mode === 'remote' && isBrowserOnline && apiReachable && Boolean(resolvedOrgId);
-    const derivedMode: GateMode = canAttemptRemote ? 'remote' : gate.mode === 'remote' ? 'local-only' : gate.mode;
-
-    if (!canAttemptRemote) {
-      const reason = !isBrowserOnline
-        ? 'offline'
-        : !apiReachable
-        ? runtimeStatus.apiAuthRequired
-          ? 'auth_required'
-          : 'api_unreachable'
-        : !resolvedOrgId
-        ? 'missing_org'
-        : gate.mode;
-      logDev('autosave_local_only', {
-        id: course.id,
-        reason,
-        gate: gate.mode,
-        online: isBrowserOnline,
-        apiReachable,
-        orgResolved: Boolean(resolvedOrgId),
-      });
-      lastLocalOnlyReasonRef.current = reason;
-
-      if (lastAutoSaveGateModeRef.current !== derivedMode) {
-        const toastMessage = !isBrowserOnline
-          ? 'You appear to be offline. Drafts are stored locally and will sync once you reconnect.'
-          : gate.reason ?? 'Drafts are stored locally until Huddle reconnects.';
-        showToast(toastMessage, gate.tone === 'danger' ? 'error' : 'warning', 6000);
-      }
-      lastAutoSaveGateModeRef.current = derivedMode;
-      return;
-    }
-
-    if (lastAutoSaveGateModeRef.current !== 'remote') {
-      showToast('Back online. Auto-sync resumed.', 'success', 3000);
-    }
-    lastAutoSaveGateModeRef.current = 'remote';
-    lastLocalOnlyReasonRef.current = null;
-
-    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-    autoSaveTimerRef.current = setTimeout(async () => {
-      autoSaveLockRef.current = true;
-      setSaveStatus((s) => (s === 'saving' ? s : 'saving'));
-      const gate = evaluateRuntimeGate('course.auto-save', runtimeStatus);
-      const controller = new AbortController();
-      if (autoSaveRequestAbortRef.current) {
-        autoSaveRequestAbortRef.current.abort();
-      }
-      autoSaveRequestAbortRef.current = controller;
-      const requestToken = nextRequestToken();
-      autoSaveRequestIdRef.current = requestToken;
-      try {
-        logAutoSaveEvent('autosave_start', { courseId: course.id, requestToken });
-        const result = await persistCourse(
-          { ...course, slug: isEditing ? undefined : course.slug },
-          {
-            action: 'course.auto-save',
-            gate,
-            skipValidation: true,
-            abortSignal: controller.signal,
-          },
-        );
-        if (autoSaveRequestIdRef.current !== requestToken) {
-          return;
-        }
-        if (result.remoteSynced) {
-          setSaveStatus('saved');
-          setLastSaveTime(new Date());
-          setTimeout(() => setSaveStatus('idle'), 2000);
-          logAutoSaveEvent('autosave_success', { courseId: course.id, requestToken, mode: 'remote' });
-        } else {
-          setSaveStatus('idle');
-          logAutoSaveEvent('autosave_success', { courseId: course.id, requestToken, mode: 'local' });
-        }
-      } catch (err) {
-        if (autoSaveRequestIdRef.current !== requestToken) {
-          return;
-        }
-        if (controller.signal.aborted) {
-          return;
-        }
-        const conflict = extractConflictDetails(err);
-        if (conflict) {
-          logAutoSaveEvent('autosave_conflict', {
-            courseId: course.id,
-            requestToken,
-            reason: conflict.reason ?? 'unknown',
-            message: conflict.message,
-          });
-          if (conflict.reason === 'stale_version') {
-            const latest = await refreshCourseFromServer(course.id, course);
-            if (latest) {
-              setSaveStatus('idle');
-              resetAutoSaveFailuresRef.current?.();
-              setAutoSaveRetryNonce((prev) => prev + 1);
-            }
-            return;
-          }
-          if (
-            conflict.reason &&
-            conflict.reason.includes('idempotency')
-          ) {
-            autoSaveBackoffUntilRef.current = Date.now() + 1500;
-            scheduleAutoSaveRetryRef.current?.(1500);
-            setSaveStatus('idle');
-            return;
-          }
-        }
-        if (err instanceof CourseValidationError) {
-          logAutoSaveEvent('autosave_validation_failed', {
-            courseId: course.id,
-            requestToken,
-            issues: err.issues?.length ?? 0,
-          });
-        } else if (err instanceof SlugConflictError) {
-          console.warn('⚠️ Remote auto-sync skipped: slug conflict requires user action.');
-        } else {
-          console.error('❌ Remote auto-sync failed:', err);
-        }
-        setSaveStatus('error');
-        setTimeout(() => setSaveStatus('idle'), 4000);
-      } finally {
-        if (autoSaveRequestIdRef.current === requestToken) {
-          autoSaveRequestAbortRef.current = null;
-          autoSaveRequestIdRef.current = null;
-        }
-        autoSaveLockRef.current = false;
-      }
-    }, 1000);
-
-    return () => {
-      if (autoSaveTimerRef.current) {
-        clearTimeout(autoSaveTimerRef.current);
-        autoSaveTimerRef.current = null;
-      }
-      if (autoSaveRequestAbortRef.current) {
-        autoSaveRequestAbortRef.current.abort();
-        autoSaveRequestAbortRef.current = null;
-      }
-      autoSaveRequestIdRef.current = null;
-    };
-  }, [
-    course,
-    lessonAutosaveState.pending,
-    lessonAutosaveState.status,
-    runtimeStatus,
-    resolveOrganizationId,
-    showToast,
-    autoSaveRetryNonce,
-    logAutoSaveEvent,
-    refreshCourseFromServer,
-    resetAutoSaveFailuresRef,
-    scheduleAutoSaveRetryRef,
-  ]);
-
   useEffect(() => {
     const diff = computeCourseDiff(lastPersistedRef.current, course);
     setHasPendingChanges(diff.hasChanges);
@@ -1814,6 +1632,147 @@ const enforceStableModuleGraph = (input: Course): Course => ({
 const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[] } => {
   let mutated = false;
   const issues: string[] = [];
+
+  const ensureTextContent = (lesson: Lesson): Lesson => {
+    if (lesson.type !== 'text') return lesson;
+    const nextLesson = { ...lesson };
+    const content = nextLesson.content ? { ...nextLesson.content } : {};
+    const body = typeof content.body === 'object' && content.body !== null ? { ...content.body } : {};
+
+    if (typeof content.textContent !== 'string' || !content.textContent.trim()) {
+      const fallback =
+        (typeof content.content === 'string' && content.content.trim()) ||
+        (typeof body.textContent === 'string' && body.textContent.trim()) ||
+        (typeof body.content === 'string' && body.content.trim()) ||
+        (typeof nextLesson.description === 'string' && nextLesson.description.trim()) ||
+        'Draft lesson content pending.';
+      content.textContent = fallback;
+      body.textContent = fallback;
+      body.content = body.content || fallback;
+      issues.push(`text_content_filled:${nextLesson.id}`);
+      nextLesson.content = { ...content, body };
+      return nextLesson;
+    }
+
+    return lesson;
+  };
+
+  const ensureVideoMetadata = (lesson: Lesson): Lesson => {
+    if (lesson.type !== 'video') return lesson;
+    const nextLesson = { ...lesson };
+    const content = nextLesson.content ? { ...nextLesson.content } : {};
+    const asset = content.videoAsset ? { ...content.videoAsset } : {};
+    let changed = false;
+
+    const fallbackSource =
+      asset.storagePath ||
+      asset.assetId ||
+      content.videoUrl ||
+      (typeof content.video === 'object' && content.video
+        ? content.video.url || content.video.source || content.video.embedUrl
+        : null) ||
+      `external://${nextLesson.id}`;
+
+    if (!asset.assetId && fallbackSource) {
+      asset.assetId = fallbackSource;
+      changed = true;
+    }
+    if (!asset.storagePath && fallbackSource) {
+      asset.storagePath = fallbackSource;
+      changed = true;
+    }
+    if (!asset.bucket) {
+      asset.bucket = fallbackSource.startsWith('external://') ? 'external' : 'course-videos';
+      changed = true;
+    }
+    if (!(typeof asset.bytes === 'number' && Number.isFinite(asset.bytes) && asset.bytes > 0)) {
+      const inferred =
+        typeof content.fileSize === 'number'
+          ? content.fileSize
+          : typeof content.fileSize === 'string'
+          ? Number.parseInt(content.fileSize, 10)
+          : null;
+      asset.bytes = inferred && inferred > 0 ? inferred : 1;
+      changed = true;
+    }
+    if (!asset.mimeType) {
+      asset.mimeType = content.mimeType || 'video/mp4';
+      changed = true;
+    }
+    if (!asset.source) {
+      asset.source = content.videoSourceType || (fallbackSource.startsWith('external://') ? 'external' : 'internal');
+      changed = true;
+    }
+    if (!asset.uploadedAt) {
+      asset.uploadedAt = new Date().toISOString();
+      changed = true;
+    }
+
+    if (changed) {
+      content.videoAsset = asset;
+      nextLesson.content = content;
+      issues.push(`video_metadata_filled:${nextLesson.id}`);
+      return nextLesson;
+    }
+    return lesson;
+  };
+
+  const ensureQuizIntegrity = (lesson: Lesson): { lesson: Lesson; valid: boolean } => {
+    if (lesson.type !== 'quiz') return { lesson, valid: true };
+    const nextLesson = { ...lesson };
+    const content = nextLesson.content ? { ...nextLesson.content } : {};
+    const questions = Array.isArray(content.questions) ? content.questions.map((q) => ({ ...q })) : [];
+    let valid = true;
+
+    const normalized = questions.map((question, index) => {
+      const normalizedQuestion = { ...question };
+      if (typeof normalizedQuestion.prompt !== 'string' || !normalizedQuestion.prompt.trim()) {
+        normalizedQuestion.prompt = `Question ${index + 1}`;
+        issues.push(`quiz_prompt_filled:${nextLesson.id}:${index}`);
+      }
+      if (!Array.isArray(normalizedQuestion.options) || normalizedQuestion.options.length < 2) {
+        normalizedQuestion.options = [
+          { text: 'Option A', correct: true },
+          { text: 'Option B', correct: false },
+        ];
+        issues.push(`quiz_options_filled:${nextLesson.id}:${index}`);
+      } else {
+        normalizedQuestion.options = normalizedQuestion.options.map((option, optionIdx) => {
+          const normalizedOption = { ...option };
+          if (typeof normalizedOption.text !== 'string' || !normalizedOption.text.trim()) {
+            normalizedOption.text = `Option ${optionIdx + 1}`;
+            issues.push(`quiz_option_text_filled:${nextLesson.id}:${index}:${optionIdx}`);
+          }
+          return normalizedOption;
+        });
+      }
+
+      const explicitIndex =
+        typeof normalizedQuestion.correctAnswerIndex === 'number' &&
+        normalizedQuestion.correctAnswerIndex >= 0 &&
+        normalizedQuestion.correctAnswerIndex < normalizedQuestion.options.length;
+      const hasMarkedOption = normalizedQuestion.options.some((option) => option?.correct || option?.isCorrect);
+
+      if (!explicitIndex && !hasMarkedOption) {
+        normalizedQuestion.correctAnswerIndex = 0;
+        normalizedQuestion.options = normalizedQuestion.options.map((option, optionIdx) => ({
+          ...option,
+          correct: optionIdx === 0,
+          isCorrect: optionIdx === 0,
+        }));
+        issues.push(`quiz_correct_answer_filled:${nextLesson.id}:${index}`);
+      }
+
+      if (!explicitIndex && !hasMarkedOption) {
+        valid = false;
+      }
+      return normalizedQuestion;
+    });
+
+    content.questions = normalized;
+    nextLesson.content = content;
+    return { lesson: nextLesson, valid };
+  };
   const normalizedModules = (input.modules || []).map((module) => {
     if (!module.lessons || module.lessons.length === 0) {
       return module;
@@ -1855,7 +1814,31 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
         nextLesson.order = desiredOrder;
         moduleMutated = true;
       }
-      return nextLesson;
+
+      let currentLesson = nextLesson;
+
+      const videoReady = ensureVideoMetadata(currentLesson);
+      if (videoReady !== currentLesson) {
+        moduleMutated = true;
+        currentLesson = videoReady;
+      }
+
+      const textReady = ensureTextContent(currentLesson);
+      if (textReady !== currentLesson) {
+        moduleMutated = true;
+        currentLesson = textReady;
+      }
+
+      const { lesson: quizReady, valid: quizValid } = ensureQuizIntegrity(currentLesson);
+      if (!quizValid) {
+        issues.push(`quiz_missing_required_fields:${module.id}:${quizReady.id}`);
+      }
+      if (quizReady !== currentLesson) {
+        moduleMutated = true;
+        currentLesson = quizReady;
+      }
+
+      return currentLesson;
     });
 
     if (moduleMutated) {
@@ -2052,6 +2035,188 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
   useEffect(() => {
     persistCourseRef.current = persistCourse;
   }, [persistCourse]);
+
+  // Debounced remote auto-sync (single upsert). Runs only when there are real changes vs lastPersistedRef.
+  useEffect(() => {
+    if (!course.id || !course.title?.trim()) return;
+    if (autoSaveLockRef.current) {
+      logAutoSaveEvent('autosave_skip_inflight', { courseId: course.id, reason: 'lock' });
+      return;
+    }
+    if (lessonAutosaveState.pending || lessonAutosaveState.status === 'saving') return;
+    if (autoSaveHaltedRef.current) return;
+    if (autoSaveBackoffUntilRef.current > Date.now()) {
+      logAutoSaveEvent('autosave_skip_inflight', {
+        courseId: course.id,
+        reason: 'backoff',
+        retryAt: autoSaveBackoffUntilRef.current,
+      });
+      return;
+    }
+    const diff = computeCourseDiff(lastPersistedRef.current, course);
+    if (!diff.hasChanges) return;
+    if (!course.modules || course.modules.length === 0) {
+      return;
+    }
+
+    const gate = evaluateRuntimeGate('course.auto-save', runtimeStatus);
+    const isBrowserOnline = typeof navigator !== 'undefined' ? navigator.onLine !== false : true;
+    const apiReachable = runtimeStatus.apiReachable !== false && !runtimeStatus.apiAuthRequired;
+    const resolvedOrgId = resolveOrganizationId(course);
+    const canAttemptRemote = gate.mode === 'remote' && isBrowserOnline && apiReachable && Boolean(resolvedOrgId);
+    const derivedMode: GateMode = canAttemptRemote ? 'remote' : gate.mode === 'remote' ? 'local-only' : gate.mode;
+
+    if (!canAttemptRemote) {
+      const reason = !isBrowserOnline
+        ? 'offline'
+        : !apiReachable
+        ? runtimeStatus.apiAuthRequired
+          ? 'auth_required'
+          : 'api_unreachable'
+        : !resolvedOrgId
+        ? 'missing_org'
+        : gate.mode;
+      logDev('autosave_local_only', {
+        id: course.id,
+        reason,
+        gate: gate.mode,
+        online: isBrowserOnline,
+        apiReachable,
+        orgResolved: Boolean(resolvedOrgId),
+      });
+      lastLocalOnlyReasonRef.current = reason;
+
+      if (lastAutoSaveGateModeRef.current !== derivedMode) {
+        const toastMessage = !isBrowserOnline
+          ? 'You appear to be offline. Drafts are stored locally and will sync once you reconnect.'
+          : gate.reason ?? 'Drafts are stored locally until Huddle reconnects.';
+        showToast(toastMessage, gate.tone === 'danger' ? 'error' : 'warning', 6000);
+      }
+      lastAutoSaveGateModeRef.current = derivedMode;
+      return;
+    }
+
+    if (lastAutoSaveGateModeRef.current !== 'remote') {
+      showToast('Back online. Auto-sync resumed.', 'success', 3000);
+    }
+    lastAutoSaveGateModeRef.current = 'remote';
+    lastLocalOnlyReasonRef.current = null;
+
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(async () => {
+      const persist = persistCourseRef.current;
+      if (!persist) return;
+      autoSaveLockRef.current = true;
+      setSaveStatus((s) => (s === 'saving' ? s : 'saving'));
+      const gate = evaluateRuntimeGate('course.auto-save', runtimeStatus);
+      const controller = new AbortController();
+      if (autoSaveRequestAbortRef.current) {
+        autoSaveRequestAbortRef.current.abort();
+      }
+      autoSaveRequestAbortRef.current = controller;
+      const requestToken = nextRequestToken();
+      autoSaveRequestIdRef.current = requestToken;
+      try {
+        logAutoSaveEvent('autosave_start', { courseId: course.id, requestToken });
+        const result = await persist(
+          { ...course, slug: isEditing ? undefined : course.slug },
+          {
+            action: 'course.auto-save',
+            gate,
+            skipValidation: true,
+            abortSignal: controller.signal,
+          },
+        );
+        if (autoSaveRequestIdRef.current !== requestToken) {
+          return;
+        }
+        if (result.remoteSynced) {
+          setSaveStatus('saved');
+          setLastSaveTime(new Date());
+          setTimeout(() => setSaveStatus('idle'), 2000);
+          logAutoSaveEvent('autosave_success', { courseId: course.id, requestToken, mode: 'remote' });
+        } else {
+          setSaveStatus('idle');
+          logAutoSaveEvent('autosave_success', { courseId: course.id, requestToken, mode: 'local' });
+        }
+      } catch (err) {
+        if (autoSaveRequestIdRef.current !== requestToken) {
+          return;
+        }
+        if (controller.signal.aborted) {
+          return;
+        }
+        const conflict = extractConflictDetails(err);
+        if (conflict) {
+          logAutoSaveEvent('autosave_conflict', {
+            courseId: course.id,
+            requestToken,
+            reason: conflict.reason ?? 'unknown',
+            message: conflict.message,
+          });
+          if (conflict.reason === 'stale_version') {
+            const latest = await refreshCourseFromServer(course.id, course);
+            if (latest) {
+              setSaveStatus('idle');
+              resetAutoSaveFailuresRef.current?.();
+              setAutoSaveRetryNonce((prev) => prev + 1);
+            }
+            return;
+          }
+          if (conflict.reason && conflict.reason.includes('idempotency')) {
+            autoSaveBackoffUntilRef.current = Date.now() + 1500;
+            scheduleAutoSaveRetryRef.current?.(1500);
+            setSaveStatus('idle');
+            return;
+          }
+        }
+        if (err instanceof CourseValidationError) {
+          logAutoSaveEvent('autosave_validation_failed', {
+            courseId: course.id,
+            requestToken,
+            issues: err.issues?.length ?? 0,
+          });
+        } else if (err instanceof SlugConflictError) {
+          console.warn('⚠️ Remote auto-sync skipped: slug conflict requires user action.');
+        } else {
+          console.error('❌ Remote auto-sync failed:', err);
+        }
+        setSaveStatus('error');
+        setTimeout(() => setSaveStatus('idle'), 4000);
+      } finally {
+        if (autoSaveRequestIdRef.current === requestToken) {
+          autoSaveRequestAbortRef.current = null;
+          autoSaveRequestIdRef.current = null;
+        }
+        autoSaveLockRef.current = false;
+      }
+    }, 1000);
+
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = null;
+      }
+      if (autoSaveRequestAbortRef.current) {
+        autoSaveRequestAbortRef.current.abort();
+        autoSaveRequestAbortRef.current = null;
+      }
+      autoSaveRequestIdRef.current = null;
+    };
+  }, [
+    course,
+    lessonAutosaveState.pending,
+    lessonAutosaveState.status,
+    runtimeStatus,
+    resolveOrganizationId,
+    showToast,
+    autoSaveRetryNonce,
+    logAutoSaveEvent,
+    refreshCourseFromServer,
+    resetAutoSaveFailuresRef,
+    scheduleAutoSaveRetryRef,
+    isEditing,
+  ]);
 
   const handleSave = async () => {
     setSaveStatus('saving');
