@@ -10,7 +10,7 @@ import dns from 'node:dns/promises'
 import postgres from 'postgres'
 import pg from 'pg'
 
-const FORCE_DB_IPV4 = String(process.env.FORCE_DB_IPV4 ?? (process.env.NODE_ENV === 'production' ? 'true' : 'false')).toLowerCase() !== 'false'
+const FORCE_DB_IPV4 = String(process.env.FORCE_DB_IPV4 ?? 'false').toLowerCase() === 'true'
 const { Pool } = pg
 
 if (typeof setDefaultResultOrder === 'function') {
@@ -24,15 +24,40 @@ if (typeof setDefaultResultOrder === 'function') {
 const isIpv4Literal = (host) => /^\d+\.\d+\.\d+\.\d+$/.test(host || '')
 const shouldForceIpv4 = (host) => Boolean(host) && host !== 'localhost' && host !== '127.0.0.1' && !isIpv4Literal(host)
 
-async function initializeConnectionMetadata (rawConnectionString) {
+const DB_CONNECTION_SOURCES = [
+  { key: 'DATABASE_POOLER_URL', type: 'pooler' },
+  { key: 'SUPABASE_DB_POOLER_URL', type: 'pooler' },
+  { key: 'SUPABASE_DB_URL', type: 'direct' },
+  { key: 'DATABASE_URL', type: 'direct' }
+]
+
+const resolveConnectionSource = () => {
+  for (const source of DB_CONNECTION_SOURCES) {
+    const value = process.env[source.key]
+    if (value && value.trim()) {
+      return { ...source, value: value.trim() }
+    }
+  }
+  return { key: 'DATABASE_URL', type: 'direct', value: process.env.DATABASE_URL || '' }
+}
+
+const connectionSource = resolveConnectionSource()
+
+if (!connectionSource.value) {
+  console.warn('[server/db] No database connection string detected. Set DATABASE_POOLER_URL (preferred) or DATABASE_URL.')
+}
+
+async function initializeConnectionMetadata (rawConnectionString, source = {}) {
   const metadata = {
     connectionString: rawConnectionString || '',
     forcedIpv4: false,
     originalHost: null,
+    originalPort: null,
     resolvedHost: null,
     finalHostUsed: null,
     lookupError: null,
-    error: null
+    error: null,
+    source
   }
 
   if (!rawConnectionString) {
@@ -43,6 +68,7 @@ async function initializeConnectionMetadata (rawConnectionString) {
     const url = new URL(rawConnectionString)
     metadata.originalHost = url.hostname
     metadata.connectionString = url.toString()
+    metadata.originalPort = url.port ? Number(url.port) : null
 
     if (FORCE_DB_IPV4 && shouldForceIpv4(url.hostname) && typeof dns.lookup === 'function') {
       try {
@@ -75,8 +101,11 @@ async function initializeConnectionMetadata (rawConnectionString) {
   }
 
   console.info('[server/db] connection_metadata', {
+    sourceEnv: metadata.source?.key ?? null,
+    sourceType: metadata.source?.type ?? null,
     forcedIpv4: metadata.forcedIpv4,
     originalHost: metadata.originalHost,
+    originalPort: metadata.originalPort,
     resolvedHost: metadata.resolvedHost,
     finalHostUsed: metadata.finalHostUsed,
     lookupError: metadata.lookupError ? metadata.lookupError.message : null
@@ -85,7 +114,7 @@ async function initializeConnectionMetadata (rawConnectionString) {
   return metadata
 }
 
-const connectionMetadata = await initializeConnectionMetadata(process.env.DATABASE_URL || '')
+const connectionMetadata = await initializeConnectionMetadata(connectionSource.value, connectionSource)
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 const createPool = () => {
@@ -143,7 +172,7 @@ const ensureSqlClient = () => {
 
   const connectionString = connectionMetadata.connectionString
   if (!connectionString) {
-    console.warn('[server/db] WARNING: DATABASE_URL is not set. Create a .env or export DATABASE_URL before starting the server.')
+    console.warn('[server/db] WARNING: database connection string is not set. Configure DATABASE_POOLER_URL or DATABASE_URL before starting the server.')
   }
 
   const sslConfig =
@@ -175,12 +204,16 @@ const ensureSqlClient = () => {
       const url = connectionString ? new URL(connectionString) : null
       if (url) {
         const host = url.hostname
+        const port = url.port ? Number(url.port) : undefined
         const database = url.pathname.replace(/^\//, '') || undefined
         const user = url.username || undefined
         console.info('db_client_ready', {
           host,
+          port,
           database,
           user,
+          connectionSource: connectionMetadata.source?.key ?? null,
+          usingPooler: connectionMetadata.source?.type === 'pooler',
           forcedIpv4: connectionMetadata.forcedIpv4 || false,
           originalHost: connectionMetadata.originalHost,
           finalHostUsed: connectionMetadata.finalHostUsed
@@ -210,6 +243,18 @@ const sql = new Proxy(function sqlProxy () {}, {
   }
 })
 
-await testConnection()
+export let dbStartupHealthy = false
+
+try {
+  await testConnection()
+  dbStartupHealthy = true
+  console.info('[server/db] initial_connection_ready')
+} catch (error) {
+  dbStartupHealthy = false
+  console.error('[server/db] initial_connection_failed', {
+    message: error?.message || String(error),
+    code: error?.code || null
+  })
+}
 
 export default sql

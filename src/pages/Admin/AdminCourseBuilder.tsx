@@ -1047,6 +1047,31 @@ const AdminCourseBuilder = () => {
     [activeOrgId, lastPersistedRef],
   );
 
+
+  const refreshCourseFromServer = useCallback(
+    async (courseId: string | null | undefined, localSnapshot: Course | null = course) => {
+      if (!courseId) return null;
+      try {
+        const refreshed = await loadCourseFromDatabase(courseId, { includeDrafts: true });
+        if (refreshed) {
+          const mergedCourse = mergePersistedCourse(localSnapshot ?? course, refreshed);
+          courseStore.saveCourse(mergedCourse as Course, { skipRemoteSync: true });
+          setCourse(mergedCourse as Course);
+          lastPersistedRef.current = mergedCourse as Course;
+          logAutoSaveEvent('autosave_recovered_from_stale_version', { courseId });
+          return mergedCourse as Course;
+        }
+      } catch (err) {
+        console.warn('[AdminCourseBuilder] refreshCourseFromServer_failed', {
+          courseId,
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+      return null;
+    },
+    [course, courseStore, logAutoSaveEvent, setCourse],
+  );
+
   // Debounced remote auto-sync (single upsert). Runs only when there are real changes vs lastPersistedRef.
   useEffect(() => {
     if (!course.id || !course.title?.trim()) return;
@@ -1459,30 +1484,6 @@ const AdminCourseBuilder = () => {
     autoSavePauseLoggedRef.current = false;
     clearAutoSaveBackoffTimer();
   }, [clearAutoSaveBackoffTimer]);
-
-  const refreshCourseFromServer = useCallback(
-    async (courseId: string | null | undefined, localSnapshot: Course | null = course) => {
-      if (!courseId) return null;
-      try {
-        const refreshed = await loadCourseFromDatabase(courseId, { includeDrafts: true });
-        if (refreshed) {
-          const mergedCourse = mergePersistedCourse(localSnapshot ?? course, refreshed);
-          courseStore.saveCourse(mergedCourse as Course, { skipRemoteSync: true });
-          setCourse(mergedCourse as Course);
-          lastPersistedRef.current = mergedCourse as Course;
-          logAutoSaveEvent('autosave_recovered_from_stale_version', { courseId });
-          return mergedCourse as Course;
-        }
-      } catch (err) {
-        console.warn('[AdminCourseBuilder] refreshCourseFromServer_failed', {
-          courseId,
-          message: err instanceof Error ? err.message : String(err),
-        });
-      }
-      return null;
-    },
-    [course, courseStore, logAutoSaveEvent, setCourse],
-  );
 
   const isRetryableAutoSaveError = useCallback((error: unknown) => {
     if (error instanceof SlugConflictError) return false;
