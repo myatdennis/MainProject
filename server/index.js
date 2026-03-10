@@ -110,6 +110,8 @@ const isUuidIdentifier = (value) =>
 const shouldLogAuthDebug =
   NODE_ENV !== 'production' || String(process.env.ENABLE_AUTH_DEBUG || '').toLowerCase() === 'true';
 const ENABLE_NOTIFICATIONS = parseFlag(process.env.ENABLE_NOTIFICATIONS);
+const ORG_ADMIN_ROLES = new Set(['admin', 'owner', 'org_admin', 'organization_admin', 'super_admin', 'admin_user']);
+const hasOrgAdminRole = (role) => ORG_ADMIN_ROLES.has(String(role || '').toLowerCase());
 
 const describeUnhandledReason = (reason) => {
   if (reason instanceof Error) {
@@ -2414,6 +2416,37 @@ const lessonColumnSupport = {
   clientTempId: true,
 };
 
+const applyLessonColumnSupport = (record = {}) => {
+  if (!lessonColumnSupport.durationSeconds && 'duration_s' in record) {
+    if (lessonColumnSupport.durationText && record.duration_s != null) {
+      record.duration = record.duration ?? formatLegacyDuration(record.duration_s);
+    }
+    delete record.duration_s;
+  }
+  if (!lessonColumnSupport.durationText && 'duration' in record) {
+    delete record.duration;
+  }
+  if (!lessonColumnSupport.contentJson && 'content_json' in record) {
+    delete record.content_json;
+  }
+  if (!lessonColumnSupport.contentLegacy && 'content' in record) {
+    delete record.content;
+  }
+  if (!lessonColumnSupport.completionRuleJson && 'completion_rule_json' in record) {
+    delete record.completion_rule_json;
+  }
+  if (!lessonColumnSupport.organizationId && 'organization_id' in record) {
+    delete record.organization_id;
+  }
+  if (!lessonColumnSupport.courseId && 'course_id' in record) {
+    delete record.course_id;
+  }
+  if (!lessonColumnSupport.clientTempId && 'client_temp_id' in record) {
+    delete record.client_temp_id;
+  }
+  return record;
+};
+
 const moduleColumnSupport = {
   organizationId: true,
   description: true,
@@ -3766,6 +3799,10 @@ const executeWithSchemaRetry = async (label, operation) => {
       return await operation();
     } catch (error) {
       lastError = error;
+      if (maybeHandleLessonColumnError && maybeHandleLessonColumnError(error)) {
+        attempt += 1;
+        continue;
+      }
       if (!isSchemaMismatchError(error)) {
         throw error;
       }
@@ -3791,6 +3828,35 @@ const runSupabaseQueryWithRetry = async (label, buildQuery) => {
     if (result?.error) throw result.error;
     return result;
   });
+};
+
+const ORG_PROGRESS_VIEW = 'org_onboarding_progress_vw';
+let orgProgressViewStatus = { checked: false, available: false };
+const ensureOrgProgressViewAvailable = async () => {
+  if (!supabase) return false;
+  if (orgProgressViewStatus.checked) {
+    return orgProgressViewStatus.available;
+  }
+  try {
+    const { error } = await supabase.from(ORG_PROGRESS_VIEW).select('org_id', { head: true }).limit(1);
+    if (error) throw error;
+    orgProgressViewStatus = { checked: true, available: true };
+    return true;
+  } catch (error) {
+    if (
+      isSchemaMismatchError(error) ||
+      error?.code === '42P01' ||
+      String(error?.message || '').toLowerCase().includes(ORG_PROGRESS_VIEW)
+    ) {
+      console.warn('[admin.organizations.progress] view_unavailable', {
+        code: error?.code ?? null,
+        message: error?.message ?? null,
+      });
+      orgProgressViewStatus = { checked: true, available: false };
+      return false;
+    }
+    throw error;
+  }
 };
 
 const ensureTablesReady = async (label, definitions = []) => {
@@ -4058,7 +4124,7 @@ const requireOrgAccess = async (
 
     const memberRole = String(membership.role || 'member').toLowerCase();
 
-    if (requireOrgAdmin && memberRole !== 'admin') {
+    if (requireOrgAdmin && !hasOrgAdminRole(memberRole)) {
       logDeniedOrgAccess(req, {
         reason: 'org_admin_required',
         orgId,
@@ -4261,8 +4327,8 @@ const normalizeMembershipForAdminResponse = (membership = {}) => {
 
 const isActiveAdminMembership = (membership) => {
   if (!membership) return false;
-  const role = String(membership.role || '').toLowerCase();
-  if (role !== 'admin') {
+  const role = membership.role ? String(membership.role).toLowerCase() : null;
+  if (!hasOrgAdminRole(role)) {
     return false;
   }
   const status = String(membership.status || 'active').toLowerCase();
@@ -5933,7 +5999,7 @@ app.get('/api/admin/courses', async (req, res) => {
   });
   let adminOrgIds = Array.isArray(context.memberships)
     ? context.memberships
-        .filter((membership) => String(membership.role || '').toLowerCase() === 'admin' && membership.orgId)
+        .filter((membership) => hasOrgAdminRole(membership.role) && membership.orgId)
         .map((membership) => normalizeOrgIdValue(membership.orgId))
         .filter(Boolean)
     : [];
@@ -5955,7 +6021,7 @@ app.get('/api/admin/courses', async (req, res) => {
       if (adminMembershipsError) throw adminMembershipsError;
 
       adminOrgIds = (adminMemberships || [])
-        .filter((membership) => String(membership.role || '').toLowerCase() === 'admin')
+        .filter((membership) => hasOrgAdminRole(membership.role))
         .map((membership) => pickOrgId(membership.organization_id, membership.org_id))
         .filter(Boolean);
 
@@ -6181,7 +6247,7 @@ app.get('/api/admin/courses/:identifier', async (req, res) => {
   const isPlatformAdmin = Boolean(context.isPlatformAdmin);
   const adminOrgIds = Array.isArray(context.memberships)
     ? context.memberships
-        .filter((membership) => String(membership.role || '').toLowerCase() === 'admin' && membership.orgId)
+        .filter((membership) => hasOrgAdminRole(membership.role) && membership.orgId)
         .map((membership) => normalizeOrgIdValue(membership.orgId))
         .filter(Boolean)
     : [];
@@ -6919,19 +6985,21 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
           order_index: module.order_index ?? moduleIndex,
           course_id: module.course_id ?? course.id ?? undefined,
           organization_id: module.organization_id ?? organizationId ?? undefined,
-          lessons: (module.lessons || []).map((lesson, lessonIndex) => ({
-            id: lesson.id ?? undefined,
-            type: lesson.type,
-            title: lesson.title,
-            description: lesson.description ?? null,
-            order_index: lesson.order_index ?? lessonIndex,
-            duration_s: lesson.duration_s ?? null,
-            content_json: lesson.content_json ?? lesson.content ?? {},
-            completion_rule_json: lesson.completion_rule_json ?? lesson.completionRule ?? null,
-            module_id: lesson.module_id ?? module.id ?? undefined,
-            course_id: lesson.course_id ?? course.id ?? undefined,
-            organization_id: lesson.organization_id ?? organizationId ?? undefined,
-          })),
+          lessons: (module.lessons || []).map((lesson, lessonIndex) =>
+            applyLessonColumnSupport({
+              id: lesson.id ?? undefined,
+              type: lesson.type,
+              title: lesson.title,
+              description: lesson.description ?? null,
+              order_index: lesson.order_index ?? lessonIndex,
+              duration_s: lesson.duration_s ?? null,
+              content_json: lesson.content_json ?? lesson.content ?? {},
+              completion_rule_json: lesson.completion_rule_json ?? lesson.completionRule ?? null,
+              module_id: lesson.module_id ?? module.id ?? undefined,
+              course_id: lesson.course_id ?? course.id ?? undefined,
+              organization_id: lesson.organization_id ?? organizationId ?? undefined,
+            }),
+          ),
         })),
       };
       if (includeCourseVersionField) {
@@ -7478,17 +7546,19 @@ app.post('/api/admin/courses/import', asyncHandler(async (req, res) => {
         title: module.title,
         description: module.description ?? null,
         order_index: module.order_index ?? moduleIndex + 1,
-        lessons: (module.lessons || []).map((lesson, lessonIndex) => ({
-          id: lesson.id ?? undefined,
-          organization_id: resolvedOrgId,
-          type: lesson.type,
-          title: lesson.title,
-          description: lesson.description ?? null,
-          order_index: lesson.order_index ?? lessonIndex + 1,
-          duration_s: lesson.duration_s ?? null,
-          content_json: lesson.content_json ?? lesson.content ?? {},
-          completion_rule_json: lesson.completion_rule_json ?? lesson.completionRule ?? null,
-        })),
+        lessons: (module.lessons || []).map((lesson, lessonIndex) =>
+          applyLessonColumnSupport({
+            id: lesson.id ?? undefined,
+            organization_id: resolvedOrgId,
+            type: lesson.type,
+            title: lesson.title,
+            description: lesson.description ?? null,
+            order_index: lesson.order_index ?? lessonIndex + 1,
+            duration_s: lesson.duration_s ?? null,
+            content_json: lesson.content_json ?? lesson.content ?? {},
+            completion_rule_json: lesson.completion_rule_json ?? lesson.completionRule ?? null,
+          }),
+        ),
       }));
       const rpcPayload = {
         id: course.id ?? undefined,
@@ -8976,6 +9046,7 @@ app.post('/api/admin/lessons', async (req, res) => {
       content_json: normalizedContent,
       completion_rule_json: completionRule ?? null,
     };
+    applyLessonColumnSupport(payload);
     const { data, error } = await supabase
       .from('lessons')
       .insert(payload)
@@ -9112,6 +9183,7 @@ app.patch('/api/admin/lessons/:id', async (req, res) => {
     if (typeof durationSeconds === 'number' || durationSeconds === null) patch.duration_s = durationSeconds;
     if (contentPayload !== undefined) patch.content_json = contentPayload ?? {};
     if (completionRule !== undefined) patch.completion_rule_json = completionRule;
+    applyLessonColumnSupport(patch);
     if (Object.keys(patch).length === 0) {
       respondLessonError(
         res,
@@ -10718,9 +10790,7 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
   if (!context) return;
 
   const adminMemberships = Array.isArray(context.memberships)
-    ? context.memberships.filter(
-        (membership) => String(membership.role || '').toLowerCase() === 'admin' && membership.orgId,
-      )
+    ? context.memberships.filter((membership) => hasOrgAdminRole(membership.role) && membership.orgId)
     : [];
   const adminOrgIds = adminMemberships.map((membership) => membership.orgId).filter(Boolean);
   const requestedOrgId = pickOrgId(
@@ -10794,25 +10864,40 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
     const { data, count } = await runSupabaseQueryWithRetry('admin.organizations.list', () => buildOrgQuery());
 
     let progressMap = {};
-    if (includeProgress && Array.isArray(data) && data.length > 0) {
+    const shouldFetchProgress = includeProgress && (await ensureOrgProgressViewAvailable());
+    if (shouldFetchProgress && Array.isArray(data) && data.length > 0) {
       const ids = data.map((org) => org.id).filter(Boolean);
       if (ids.length) {
-        const cacheKey = `org-progress:${ids.sort().join(',')}`;
-        const rows = await withCache(
-          cacheKey,
-          async () => {
-            const result = await runSupabaseQueryWithRetry('admin.organizations.progress', () =>
-              supabase.from('org_onboarding_progress_vw').select('*').in('org_id', ids),
-            );
-            return result.data || [];
-          },
-          { ttlSeconds: 60 },
-        );
-        progressMap = (rows || []).reduce((acc, row) => {
-          acc[row.org_id] = row;
-          return acc;
-        }, {});
+        try {
+          const cacheKey = `org-progress:${ids.sort().join(',')}`;
+          const rows = await withCache(
+            cacheKey,
+            async () => {
+              const result = await runSupabaseQueryWithRetry('admin.organizations.progress', () =>
+                supabase.from('org_onboarding_progress_vw').select('*').in('org_id', ids),
+              );
+              if (result.error) {
+                throw result.error;
+              }
+              return result.data || [];
+            },
+            { ttlSeconds: 60 },
+          );
+          progressMap = (rows || []).reduce((acc, row) => {
+            acc[row.org_id] = row;
+            return acc;
+          }, {});
+        } catch (progressError) {
+          console.warn('[admin.organizations.list] progress_lookup_failed', {
+            message: progressError?.message ?? null,
+            code: progressError?.code ?? null,
+            details: progressError?.details ?? null,
+          });
+          progressMap = {};
+        }
       }
+    } else if (includeProgress && !shouldFetchProgress) {
+      console.info('[admin.organizations.list] progress_view_unavailable; skipping includeProgress fetch.');
     }
 
     res.json({
@@ -10827,7 +10912,12 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
     });
   } catch (error) {
     logRouteError('GET /api/admin/organizations', error);
-    res.status(500).json({ error: 'Unable to fetch organizations' });
+    res.status(500).json({
+      error: 'Unable to fetch organizations',
+      code: error?.code ?? 'internal_error',
+      message: error?.message ?? 'Unexpected error while loading organizations',
+      requestId: req.requestId ?? null,
+    });
   }
 }));
 
@@ -12784,7 +12874,7 @@ app.get('/api/admin/documents', async (req, res) => {
   const isPlatformAdmin = Boolean(context.isPlatformAdmin);
   const adminOrgIds = Array.isArray(context.memberships)
     ? context.memberships
-        .filter((membership) => String(membership.role || '').toLowerCase() === 'admin' && membership.orgId)
+        .filter((membership) => hasOrgAdminRole(membership.role) && membership.orgId)
         .map((membership) => normalizeOrgIdValue(membership.orgId))
         .filter(Boolean)
     : [];

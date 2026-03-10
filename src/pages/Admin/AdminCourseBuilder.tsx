@@ -1681,6 +1681,12 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
       asset.storagePath = fallbackSource;
       changed = true;
     }
+    if (!content.videoUrl && fallbackSource && !fallbackSource.startsWith('external://')) {
+      content.videoUrl = fallbackSource;
+      changed = true;
+    } else if (!content.videoUrl && fallbackSource.startsWith('external://')) {
+      content.videoUrl = '';
+    }
     if (!asset.bucket) {
       asset.bucket = fallbackSource.startsWith('external://') ? 'external' : 'course-videos';
       changed = true;
@@ -1854,6 +1860,50 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
 
       return currentLesson;
     });
+
+    const hasPlayableVideo = normalizedLessons.some(
+      (lesson) =>
+        lesson.type === 'video' &&
+        Boolean(
+          lesson.content?.videoUrl ||
+            lesson.content?.videoAsset?.storagePath ||
+            lesson.content?.videoAsset?.assetId,
+        ),
+    );
+    const hasQuizWithQuestions = normalizedLessons.some(
+      (lesson) => lesson.type === 'quiz' && Array.isArray(lesson.content?.questions) && lesson.content.questions.length > 0,
+    );
+    const hasTextContent = normalizedLessons.some(
+      (lesson) =>
+        lesson.type === 'text' &&
+        typeof lesson.content?.textContent === 'string' &&
+        lesson.content.textContent.trim().length > 0,
+    );
+
+    if (!hasPlayableVideo && !hasQuizWithQuestions && !hasTextContent) {
+      const fallbackLesson: Lesson = {
+        id: generateStableLessonId(),
+        module_id: module.id,
+        moduleId: module.id,
+        title: 'Draft Lesson',
+        type: 'text',
+        order: normalizedLessons.length + 1,
+        order_index: normalizedLessons.length + 1,
+        content: {
+          textContent: 'Draft lesson content pending.',
+          body: {
+            title: 'Draft Lesson',
+            description: 'Auto-generated until content is added.',
+            content: 'Draft lesson content pending.',
+            textContent: 'Draft lesson content pending.',
+            schema_version: 1,
+          },
+        },
+      };
+      normalizedLessons.push(fallbackLesson);
+      issues.push(`module_publishable_filled:${module.id}`);
+      mutated = true;
+    }
 
     if (moduleMutated) {
       mutated = true;
