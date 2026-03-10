@@ -2301,7 +2301,7 @@ const getCourseOrgId = async (courseId) => {
 };
 
 const MODULE_SELECT_WITH_LESSONS =
-  'id,course_id,title,description,order_index,lessons:lessons!lessons_module_id_fkey(id,module_id,title,description,type,order_index,duration_s,content_json,completion_rule_json)';
+  'id,course_id,title,description,order_index,lessons:lessons!lessons_module_id_fkey(id,module_id,title,description,type,order_index,duration_s,content_json)';
 const MODULE_SELECT_NO_LESSONS = 'id,course_id,title,description,order_index';
 
 const normalizeModuleGraph = (modules, { includeLessons = false } = {}) => {
@@ -2410,10 +2410,41 @@ const lessonColumnSupport = {
   durationText: false,
   contentJson: true,
   contentLegacy: false,
-  completionRuleJson: true,
+  completionRuleJson: false,
   organizationId: true,
   courseId: true,
   clientTempId: true,
+};
+
+const extractCompletionRule = (record = {}) => {
+  if (!record || typeof record !== 'object') return undefined;
+  if (record.completion_rule_json !== undefined) return record.completion_rule_json;
+  if (record.completionRule !== undefined) return record.completionRule;
+  const contentSource = record.content_json ?? record.content ?? null;
+  if (contentSource && typeof contentSource === 'object' && contentSource.completionRule !== undefined) {
+    return contentSource.completionRule;
+  }
+  return undefined;
+};
+
+const attachCompletionRuleForResponse = (lesson = {}) => {
+  const completionRule = extractCompletionRule(lesson);
+  if (completionRule !== undefined) {
+    lesson.completion_rule_json = completionRule;
+    lesson.completionRule = completionRule;
+  }
+  return lesson;
+};
+
+const prepareLessonContentWithCompletionRule = (record = {}, completionRule) => {
+  if (completionRule === undefined) return record;
+  const target =
+    record.content_json && typeof record.content_json === 'object' ? { ...record.content_json } : record.content ?? {};
+  if (typeof target === 'object' && target !== null) {
+    target.completionRule = completionRule;
+    record.content_json = target;
+  }
+  return record;
 };
 
 const applyLessonColumnSupport = (record = {}) => {
@@ -2445,6 +2476,15 @@ const applyLessonColumnSupport = (record = {}) => {
     delete record.client_temp_id;
   }
   return record;
+};
+
+const prepareLessonPersistencePayload = (lesson = {}) => {
+  const clone = { ...lesson };
+  const completionRule = extractCompletionRule(clone);
+  prepareLessonContentWithCompletionRule(clone, completionRule);
+  delete clone.completion_rule_json;
+  delete clone.completionRule;
+  return applyLessonColumnSupport(clone);
 };
 
 const moduleColumnSupport = {
@@ -3489,9 +3529,9 @@ if (e2eStore.courses.size > 0) {
             duration_s: 1200,
             content_json: {
               videoUrl: 'https://www.ted.com/talks/brene_brown_the_power_of_vulnerability',
-              videoType: 'ted'
-            },
-            completion_rule_json: { requiredPercent: 85 }
+              videoType: 'ted',
+              completionRule: { requiredPercent: 85 },
+            }
           },
           {
             id: 'lesson-quiz',
@@ -3525,9 +3565,9 @@ if (e2eStore.courses.size > 0) {
                   ],
                   correctAnswer: 'a'
                 }
-              ]
-            },
-            completion_rule_json: { requiredScore: 70 }
+              ],
+              completionRule: { requiredScore: 70 },
+            }
           },
           {
             id: 'lesson-text',
@@ -3539,8 +3579,7 @@ if (e2eStore.courses.size > 0) {
             duration_s: 600,
             content_json: {
               body: '# Leadership Principles\n\n## 1. Lead with Empathy\n\nEmpathy is the foundation of inclusive leadership...\n\n## 2. Foster Psychological Safety\n\nCreate an environment where team members feel safe...\n\n## 3. Embrace Vulnerability\n\nAs Brené Brown teaches, vulnerability is not weakness...'
-            },
-            completion_rule_json: null
+            }
           },
           {
             id: 'lesson-resource',
@@ -3555,8 +3594,7 @@ if (e2eStore.courses.size > 0) {
               fileType: 'pdf',
               fileSize: '2.4 MB',
               fileName: 'Leadership Framework Guide.pdf'
-            },
-            completion_rule_json: null
+            }
           }
         ]
       }
@@ -6608,6 +6646,7 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
         const lessons = module.lessons || [];
         for (const [lessonIndex, lesson] of lessons.entries()) {
           const lessonId = lesson.id ?? `e2e-less-${Date.now()}-${moduleIndex}-${lessonIndex}`;
+          const completionRule = extractCompletionRule(lesson);
           const lessonObj = {
             id: lessonId,
             module_id: moduleId,
@@ -6617,8 +6656,8 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
             order_index: lesson.order_index ?? lessonIndex,
             duration_s: lesson.duration_s ?? null,
             content_json: lesson.content_json ?? lesson.content ?? {},
-            completion_rule_json: lesson.completion_rule_json ?? lesson.completionRule ?? null,
           };
+          prepareLessonContentWithCompletionRule(lessonObj, completionRule);
           moduleObj.lessons.push(lessonObj);
         }
         courseObj.modules.push(moduleObj);
@@ -6986,7 +7025,7 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
           course_id: module.course_id ?? course.id ?? undefined,
           organization_id: module.organization_id ?? organizationId ?? undefined,
           lessons: (module.lessons || []).map((lesson, lessonIndex) =>
-            applyLessonColumnSupport({
+            prepareLessonPersistencePayload({
               id: lesson.id ?? undefined,
               type: lesson.type,
               title: lesson.title,
@@ -6994,7 +7033,7 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
               order_index: lesson.order_index ?? lessonIndex,
               duration_s: lesson.duration_s ?? null,
               content_json: lesson.content_json ?? lesson.content ?? {},
-              completion_rule_json: lesson.completion_rule_json ?? lesson.completionRule ?? null,
+              completionRule: extractCompletionRule(lesson),
               module_id: lesson.module_id ?? module.id ?? undefined,
               course_id: lesson.course_id ?? course.id ?? undefined,
               organization_id: lesson.organization_id ?? organizationId ?? undefined,
@@ -7418,6 +7457,7 @@ app.post('/api/admin/courses/import', asyncHandler(async (req, res) => {
           const lessons = module.lessons || [];
           for (const [lessonIndex, lesson] of lessons.entries()) {
             const lessonId = lesson.id ?? `e2e-less-${Date.now()}-${moduleIndex}-${lessonIndex}-${Math.floor(Math.random()*1000)}`;
+            const completionRule = extractCompletionRule(lesson);
             const lessonObj = {
               id: lessonId,
               module_id: moduleId,
@@ -7427,8 +7467,8 @@ app.post('/api/admin/courses/import', asyncHandler(async (req, res) => {
               order_index: lesson.order_index ?? lesson.order ?? lessonIndex,
               duration_s: lesson.duration_s ?? null,
               content_json: lesson.content_json ?? lesson.content ?? {},
-              completion_rule_json: lesson.completion_rule_json ?? lesson.completionRule ?? null,
             };
+            prepareLessonContentWithCompletionRule(lessonObj, completionRule);
             moduleObj.lessons.push(lessonObj);
           }
           courseObj.modules.push(moduleObj);
@@ -7547,7 +7587,7 @@ app.post('/api/admin/courses/import', asyncHandler(async (req, res) => {
         description: module.description ?? null,
         order_index: module.order_index ?? moduleIndex + 1,
         lessons: (module.lessons || []).map((lesson, lessonIndex) =>
-          applyLessonColumnSupport({
+          prepareLessonPersistencePayload({
             id: lesson.id ?? undefined,
             organization_id: resolvedOrgId,
             type: lesson.type,
@@ -7556,7 +7596,7 @@ app.post('/api/admin/courses/import', asyncHandler(async (req, res) => {
             order_index: lesson.order_index ?? lessonIndex + 1,
             duration_s: lesson.duration_s ?? null,
             content_json: lesson.content_json ?? lesson.content ?? {},
-            completion_rule_json: lesson.completion_rule_json ?? lesson.completionRule ?? null,
+            completionRule: extractCompletionRule(lesson),
           }),
         ),
       }));
@@ -8331,17 +8371,20 @@ app.get('/api/client/courses', asyncHandler(async (req, res) => {
         title: m.title,
         description: m.description ?? null,
         order_index: m.order_index ?? m.order ?? 0,
-        lessons: (m.lessons || []).map((l) => ({
-          id: l.id,
-          module_id: m.id,
-          title: l.title,
-          description: l.description ?? null,
-          type: l.type,
-          order_index: l.order_index ?? l.order ?? 0,
-          duration_s: l.duration_s ?? null,
-          content_json: l.content_json ?? l.content ?? {},
-          completion_rule_json: l.completion_rule_json ?? l.completionRule ?? null,
-        })),
+        lessons: (m.lessons || []).map((l) => {
+          const lessonRecord = {
+            id: l.id,
+            module_id: m.id,
+            title: l.title,
+            description: l.description ?? null,
+            type: l.type,
+            order_index: l.order_index ?? l.order ?? 0,
+            duration_s: l.duration_s ?? null,
+            content_json: l.content_json ?? l.content ?? {},
+          };
+          attachCompletionRuleForResponse(lessonRecord);
+          return lessonRecord;
+        }),
         })),
       };
     });
@@ -8507,18 +8550,21 @@ app.get('/api/client/courses/:courseIdentifier', asyncHandler(async (req, res) =
           title: m.title,
           description: m.description ?? null,
           order_index: m.order_index ?? m.order ?? 0,
-          lessons: (m.lessons || []).map((l) => ({
-            id: l.id,
-            module_id: m.id,
-            title: l.title,
-            description: l.description ?? null,
-            type: l.type,
-            order_index: l.order_index ?? l.order ?? 0,
-            duration_s: l.duration_s ?? null,
-            content: l.content_json ?? l.content ?? {},
-            content_json: l.content_json ?? l.content ?? {},
-            completion_rule_json: l.completion_rule_json ?? l.completionRule ?? null,
-          })),
+          lessons: (m.lessons || []).map((l) => {
+            const lessonRecord = {
+              id: l.id,
+              module_id: m.id,
+              title: l.title,
+              description: l.description ?? null,
+              type: l.type,
+              order_index: l.order_index ?? l.order ?? 0,
+              duration_s: l.duration_s ?? null,
+              content: l.content_json ?? l.content ?? {},
+              content_json: l.content_json ?? l.content ?? {},
+            };
+            attachCompletionRuleForResponse(lessonRecord);
+            return lessonRecord;
+          }),
         })),
       };
       res.json({ ok: true, data, requestId });
@@ -8931,8 +8977,8 @@ app.post('/api/admin/lessons', async (req, res) => {
       order_index: orderIndex,
       duration_s: durationSeconds,
       content_json: normalizedContent,
-      completion_rule_json: completionRule ?? null,
     };
+    prepareLessonContentWithCompletionRule(lesson, completionRule);
     found.module.lessons = found.module.lessons || [];
     found.module.lessons.push(lesson);
     persistE2EStore();
@@ -9034,7 +9080,7 @@ app.post('/api/admin/lessons', async (req, res) => {
       }
     }
     logLessonEvent('info', 'admin_lessons_create_request', lessonLogMeta);
-    const payload = {
+    const payload = prepareLessonPersistencePayload({
       id: lessonId,
       module_id: moduleId,
       organization_id: resolvedOrgId ?? null,
@@ -9044,9 +9090,8 @@ app.post('/api/admin/lessons', async (req, res) => {
       order_index: orderIndex,
       duration_s: durationSeconds,
       content_json: normalizedContent,
-      completion_rule_json: completionRule ?? null,
-    };
-    applyLessonColumnSupport(payload);
+      completionRule,
+    });
     const { data, error } = await supabase
       .from('lessons')
       .insert(payload)
@@ -9167,7 +9212,9 @@ app.patch('/api/admin/lessons/:id', async (req, res) => {
     if (contentPayload !== undefined) {
       found.lesson.content_json = contentPayload ?? {};
     }
-    if (completionRule !== undefined) found.lesson.completion_rule_json = completionRule ?? null;
+    if (completionRule !== undefined) {
+      prepareLessonContentWithCompletionRule(found.lesson, completionRule);
+    }
     persistE2EStore();
     res.json({ data: found.lesson });
     logLessonEvent('info', 'admin_lessons_update_success', { ...lessonLogMeta, status: 200 });
@@ -9182,7 +9229,7 @@ app.patch('/api/admin/lessons/:id', async (req, res) => {
     if (typeof orderIndex === 'number') patch.order_index = orderIndex;
     if (typeof durationSeconds === 'number' || durationSeconds === null) patch.duration_s = durationSeconds;
     if (contentPayload !== undefined) patch.content_json = contentPayload ?? {};
-    if (completionRule !== undefined) patch.completion_rule_json = completionRule;
+    prepareLessonContentWithCompletionRule(patch, completionRule);
     applyLessonColumnSupport(patch);
     if (Object.keys(patch).length === 0) {
       respondLessonError(

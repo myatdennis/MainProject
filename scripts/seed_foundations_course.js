@@ -40,8 +40,7 @@ const foundationsCourse = {
             videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
             transcript: 'Welcome to our comprehensive course on inclusive leadership...',
             notes: 'Key concepts: empathy, psychological safety, authentic leadership'
-          },
-          completion_rule_json: null
+          }
         },
         {
           id: 'lesson-1-2',
@@ -53,8 +52,7 @@ const foundationsCourse = {
           content_json: {
             title: 'Meeting Dynamics Challenge',
             description: 'Practice identifying and addressing inclusion challenges in team meetings'
-          },
-          completion_rule_json: null
+          }
         },
         {
           id: 'lesson-1-3',
@@ -65,8 +63,7 @@ const foundationsCourse = {
           duration_s: 600, // 10 minutes
           content_json: {
             content: '<h2>What is Psychological Safety?</h2><p>Psychological safety is the belief that you won\'t be punished or humiliated for speaking up with ideas, questions, concerns, or mistakes.</p>'
-          },
-          completion_rule_json: null
+          }
         },
         {
           id: 'lesson-1-4',
@@ -78,8 +75,7 @@ const foundationsCourse = {
           content_json: {
             title: 'Leadership Reflection Worksheet',
             description: 'Complete this worksheet to reflect on your leadership journey'
-          },
-          completion_rule_json: null
+          }
         }
       ]
     }

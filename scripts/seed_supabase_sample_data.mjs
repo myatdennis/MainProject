@@ -225,8 +225,8 @@ const sampleLessons = [
       videoUrl: 'https://storage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
       transcript: 'Leaders narrate the behaviors that elevated trust inside Atlas Health Labs...',
       keyMoments: ['Invite dissent early', 'Share intent before feedback'],
+      completionRule: { type: 'watch', percent: 0.9 },
     },
-    completion_rule_json: { type: 'watch', percent: 0.9 },
   },
   {
     id: SAMPLE_IDS.lessons.awarenessSignals,

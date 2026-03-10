@@ -6,7 +6,7 @@
 
 | Step | Owner | Source files / endpoints | Storage | Notes |
 | --- | --- | --- | --- | --- |
-| Draft or import | Admin UI (`src/pages/Admin/CourseBuilderPage.tsx`, `src/pages/Admin/BrandKitPage.tsx`) | `/api/admin/courses` (server `courseUpsertSchema`), `/api/admin/modules`, `/api/admin/lessons` | `courses`, `modules`, `lessons` tables in Supabase | Rich text, video, worksheet, quiz, survey content is persisted inside `meta_json`, `content_json`, `completion_rule_json`. |
+| Draft or import | Admin UI (`src/pages/Admin/CourseBuilderPage.tsx`, `src/pages/Admin/BrandKitPage.tsx`) | `/api/admin/courses` (server `courseUpsertSchema`), `/api/admin/modules`, `/api/admin/lessons` | `courses`, `modules`, `lessons` tables in Supabase | Rich text, video, worksheet, quiz, survey content is persisted inside `meta_json` and `content_json` (lesson completion rules live inside `content_json.completionRule`). |
 | Media handling | Admin uploads via enhanced video/doc widgets | Server streams to Supabase Storage bucket `course-resources` (see `SUPABASE_DOCUMENTS_BUCKET`) | Storage object metadata stored back on lessons | Signed URLs refreshed via `DOCUMENT_URL_TTL_SECONDS` window. |
 | Versioning & validation | `courseUpsertSchema`, `lessonCreateSchema`, etc. in `server/validators.js` | In-memory `e2eStore` mirrors Supabase for demo/dev parity | Guarantees order indexes, slug uniqueness, and module <> lesson referential integrity before commit. |
 
@@ -45,7 +45,7 @@
 
 ## 4. Completion, certificates, and surveys
 
-1. **Completion detection** – When a learner crosses the `completion_rule_json` threshold for each lesson, the client posts a lesson progress payload (`percent`, `status`, `time_spent_s`). Course completion is derived when all published lessons are `status === 'completed'` or the course-level `percent` hits 100.
+1. **Completion detection** – When a learner crosses the `content_json.completionRule` threshold for each lesson, the client posts a lesson progress payload (`percent`, `status`, `time_spent_s`). Course completion is derived when all published lessons are `status === 'completed'` or the course-level `percent` hits 100.
 2. **Certificates** – `server/index.js` can enqueue certificate creation (writing to `certificates` table and sending transactional email). The audit hook ensures duplicates are not emitted if a learner replays the final lesson.
 3. **Surveys** – `surveys` + `survey_responses` tables pair with `server/routes/admin-analytics*.js` so post-course surveys surface in admin analytics. RLS is org-scoped, and the seed script plants example responses for both orgs so charts render instantly.
 

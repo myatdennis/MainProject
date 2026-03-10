@@ -223,17 +223,6 @@
                       "type": "object",
                       "additionalProperties": {}
                     },
-                    "completion_rule_json": {
-                      "anyOf": [
-                        {
-                          "type": "object",
-                          "additionalProperties": {}
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
-                    },
                     "completionRule": {
                       "anyOf": [
                         {

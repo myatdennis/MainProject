@@ -216,7 +216,7 @@ const normalizeOrganization = (row: Record<string, any>) => ({
 const moduleSelectColumns =
   "id, course_id, organization_id, title, description, order_index, metadata, created_at, updated_at";
 const lessonSelectColumns =
-  "id, module_id, course_id, organization_id, title, description, order_index, type, duration_s, content_json, completion_rule_json, created_at, updated_at";
+  "id, module_id, course_id, organization_id, title, description, order_index, type, duration_s, content_json, created_at, updated_at";
 
 const mapLesson = (row: Record<string, any>): LessonDto => {
   const moduleId =
@@ -226,6 +226,8 @@ const mapLesson = (row: Record<string, any>): LessonDto => {
   if (!content.type) {
     content.type = row.type ?? "text";
   }
+  const completionRule =
+    content && typeof content === "object" ? ((content as any).completionRule ?? null) : null;
 
   return {
     id: row.id,
@@ -236,7 +238,7 @@ const mapLesson = (row: Record<string, any>): LessonDto => {
     orderIndex: row.order_index ?? 0,
     durationSeconds: typeof row.duration_s === "number" ? row.duration_s : null,
     content: content as LessonDto["content"],
-    completionRule: row.completion_rule_json ?? null,
+    completionRule: completionRule ?? null,
     createdAt: row.created_at ?? null,
     updatedAt: row.updated_at ?? null,
   };
@@ -291,6 +293,37 @@ const normalizeJsonPayload = (value: unknown): Record<string, unknown> => {
     return value as Record<string, unknown>;
   }
   return {};
+};
+
+const normalizeCompletionRulePayload = (
+  value: unknown
+): Record<string, unknown> | null | undefined => {
+  if (value === null) return null;
+  if (value && typeof value === "object") {
+    return value as Record<string, unknown>;
+  }
+  if (value === undefined) return undefined;
+  return undefined;
+};
+
+const applyCompletionRuleToContentPayload = (
+  content: Record<string, unknown> | undefined,
+  completionRule: Record<string, unknown> | null | undefined,
+  options: { explicit?: boolean } = {}
+): Record<string, unknown> => {
+  const explicit = options.explicit ?? false;
+  const base = content && typeof content === "object" ? { ...content } : {};
+  if (!explicit && completionRule === undefined) {
+    return base;
+  }
+  if (completionRule === null) {
+    delete (base as Record<string, unknown>).completionRule;
+    return base;
+  }
+  if (completionRule !== undefined) {
+    (base as Record<string, unknown>).completionRule = completionRule;
+  }
+  return base;
 };
 
 const fetchCourseRecord = async (courseId: string): Promise<CourseRecord | Response> => {
@@ -640,8 +673,7 @@ const COURSE_DETAIL_SELECT = `
       duration,
       duration_s,
       order_index,
-      content_json,
-      completion_rule_json
+      content_json
     )
   )
 `;
@@ -1431,7 +1463,12 @@ const createLesson = async (req: Request, ctx: RequestContext) => {
 
     const orderIndex = parsed.data.orderIndex ?? (await nextLessonOrderIndex(context.module.id));
     const contentPayload = normalizeJsonPayload(parsed.data.content);
-    const completionRulePayload = normalizeJsonPayload(parsed.data.completionRule);
+    const completionRulePayload = normalizeCompletionRulePayload(parsed.data.completionRule);
+    const contentWithRule = applyCompletionRuleToContentPayload(
+      contentPayload,
+      completionRulePayload,
+      { explicit: parsed.data.completionRule !== undefined }
+    );
 
     const { data, error } = await supabase
       .from("lessons")
@@ -1445,8 +1482,7 @@ const createLesson = async (req: Request, ctx: RequestContext) => {
         order_index: orderIndex,
         type: parsed.data.type,
         duration_s: parsed.data.durationSeconds ?? null,
-        content_json: contentPayload,
-        completion_rule_json: completionRulePayload,
+        content_json: contentWithRule,
       })
       .select(lessonSelectColumns)
       .single();
@@ -1499,12 +1535,15 @@ const patchLesson = async (req: Request, ctx: RequestContext, lessonId: string) 
       update.duration_s = parsed.data.durationSeconds ?? null;
       hasMutations = true;
     }
-    if (parsed.data.content !== undefined) {
-      update.content_json = normalizeJsonPayload(parsed.data.content);
-      hasMutations = true;
-    }
-    if (parsed.data.completionRule !== undefined) {
-      update.completion_rule_json = normalizeJsonPayload(parsed.data.completionRule);
+    if (parsed.data.content !== undefined || parsed.data.completionRule !== undefined) {
+      const baseContent =
+        parsed.data.content !== undefined
+          ? normalizeJsonPayload(parsed.data.content)
+          : ((existing.content_json ?? existing.content ?? {}) as Record<string, unknown>);
+      const completionRulePayload = normalizeCompletionRulePayload(parsed.data.completionRule);
+      update.content_json = applyCompletionRuleToContentPayload(baseContent, completionRulePayload, {
+        explicit: parsed.data.completionRule !== undefined,
+      });
       hasMutations = true;
     }
 

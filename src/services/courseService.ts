@@ -217,7 +217,10 @@ const mapLessonRecord = (lesson: SupabaseLessonRecord): Lesson => {
       ? Math.round(durationValue / 60)
       : parseDurationToMinutes(typeof durationValue === 'string' ? durationValue : undefined);
   const content = (lesson as any).content_json ?? lesson.content ?? {};
-  const completionRule = (lesson as any).completion_rule_json ?? undefined;
+  const completionRule =
+    (lesson as any).completion_rule_json ??
+    ((content && typeof content === 'object' && 'completionRule' in content ? (content as any).completionRule : undefined) ??
+      undefined);
 
   return {
     id: lesson.id,
@@ -518,6 +521,9 @@ export class CourseService {
 
         const content = buildLessonContent(canonicalLesson, apiType);
         const completionRule = mapCompletionRule(canonicalLesson);
+        if (completionRule) {
+          (content as Record<string, unknown>).completionRule = completionRule;
+        }
 
         return {
           id: canonicalLesson.id,
@@ -527,7 +533,6 @@ export class CourseService {
           order_index: canonicalLesson.order ?? lessonIndex,
           duration_s: durationSeconds,
           content_json: content,
-          completion_rule_json: completionRule ?? null,
         };
       });
 

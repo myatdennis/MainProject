@@ -106,7 +106,6 @@ BEGIN
       order_index,
       duration_s,
       content_json,
-      completion_rule_json,
       created_at,
       updated_at
     )
@@ -120,8 +119,21 @@ BEGIN
       lesson.value->>'description',
       COALESCE((lesson.value->>'order_index')::integer, lesson.ordinality::integer - 1),
       (lesson.value->>'duration_s')::integer,
-      COALESCE(lesson.value->'content_json', lesson.value->'content', '{}'::jsonb),
-      COALESCE(lesson.value->'completion_rule_json', lesson.value->'completionRule', NULL),
+      CASE
+        WHEN lesson.value ? 'completion_rule_json' OR lesson.value ? 'completionRule' THEN
+          CASE
+            WHEN COALESCE(lesson.value->'completion_rule_json', lesson.value->'completionRule') IS NULL THEN
+              COALESCE(lesson.value->'content_json', lesson.value->'content', '{}'::jsonb) - 'completionRule'
+            ELSE
+              jsonb_set(
+                COALESCE(lesson.value->'content_json', lesson.value->'content', '{}'::jsonb),
+                '{completionRule}',
+                COALESCE(lesson.value->'completion_rule_json', lesson.value->'completionRule')
+              )
+          END
+        ELSE
+          COALESCE(lesson.value->'content_json', lesson.value->'content', '{}'::jsonb)
+      END,
       v_now,
       v_now
     FROM modules_input mi
@@ -160,7 +172,7 @@ BEGIN
                       'order_index', l.order_index,
                       'duration_s', l.duration_s,
                       'content_json', l.content_json,
-                      'completion_rule_json', l.completion_rule_json
+                      'completion_rule_json', COALESCE(l.content_json->'completionRule', NULL)
                     ) ORDER BY l.order_index
                   )
                   FROM public.lessons l

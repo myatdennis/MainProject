@@ -3,7 +3,7 @@
 This runbook explains how to import courses reliably and have them appear on the correct pages with durable persistence.
 
 ## Supported formats
-- JSON (preferred): `{ "courses": [ { title, slug?, description, status?, modules: [ { title, order?, lessons: [ { type, title, order?, duration_s?, content?, completion_rule_json? } ] } ] } ] }`
+- JSON (preferred): `{ "courses": [ { title, slug?, description, status?, modules: [ { title, order?, lessons: [ { type, title, order?, duration_s?, content?, completionRule? } ] } ] } ] }`
 - CSV: row-per-lesson with columns like `course_title, course_slug, course_description, module_title, module_order, lesson_title, lesson_type, lesson_order, lesson_duration_s`.
 - SCORM: Not supported in this demo build. (Planned)
 

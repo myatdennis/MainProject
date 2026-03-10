@@ -12,16 +12,7 @@ BEGIN
   END IF;
 END$$;
 
--- Add completion_rule_json if it doesn't exist
-DO $$
-BEGIN
-  IF NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public' AND table_name = 'lessons' AND column_name = 'completion_rule_json'
-  ) THEN
-    ALTER TABLE public.lessons ADD COLUMN completion_rule_json jsonb;
-  END IF;
-END$$;
+-- completion_rule_json was removed; completion rules now live inside content_json.
 
 -- Rename content to content_json if needed
 DO $$

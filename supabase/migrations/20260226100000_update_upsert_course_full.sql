@@ -141,8 +141,7 @@ begin
             description,
             order_index,
             duration_s,
-            content_json,
-            completion_rule_json
+            content_json
           )
           values (
             v_lesson_id,
@@ -152,8 +151,21 @@ begin
             nullif(l->>'description', ''),
             coalesce(nullif(l->>'order_index', '')::int, 0),
             coalesce((l->>'duration_s')::int, null),
-            coalesce(l->'content_json', '{}'::jsonb),
-            coalesce(l->'completion_rule_json', null)
+            case
+              when l ? 'completion_rule_json' or l ? 'completionRule' then
+                case
+                  when coalesce(l->'completion_rule_json', l->'completionRule') is null then
+                    coalesce(l->'content_json', '{}'::jsonb) - 'completionRule'
+                  else
+                    jsonb_set(
+                      coalesce(l->'content_json', '{}'::jsonb),
+                      '{completionRule}',
+                      coalesce(l->'completion_rule_json', l->'completionRule')
+                    )
+                end
+              else
+                coalesce(l->'content_json', '{}'::jsonb)
+            end
           )
           on conflict (id) do update set
             type = excluded.type,
@@ -161,8 +173,7 @@ begin
             description = excluded.description,
             order_index = excluded.order_index,
             duration_s = excluded.duration_s,
-            content_json = excluded.content_json,
-            completion_rule_json = excluded.completion_rule_json;
+            content_json = excluded.content_json;
         end loop;
       end if;
     end loop;

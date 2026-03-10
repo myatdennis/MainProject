@@ -31,11 +31,11 @@ const payload = {
           content_json: {
             videoUrl: 'https://www.ted.com/talks/heather_c_mcghee_racism_has_a_cost_for_everyone',
             videoType: 'ted',
-            transcript: 'TED Talk by Heather C. McGhee exploring the economic and social costs of racism.'
-          },
-          completion_rule_json: {
-            type: 'time_spent',
-            requiredSeconds: 720
+            transcript: 'TED Talk by Heather C. McGhee exploring the economic and social costs of racism.',
+            completionRule: {
+              type: 'time_spent',
+              requiredSeconds: 720
+            }
           }
         },
         {
@@ -60,11 +60,11 @@ const payload = {
                 ]
               }
             ],
-            passingScore: 70
-          },
-          completion_rule_json: {
-            type: 'quiz_score',
-            passingScore: 70
+            passingScore: 70,
+            completionRule: {
+              type: 'quiz_score',
+              passingScore: 70
+            }
           }
         },
         {
@@ -76,11 +76,11 @@ const payload = {
           description: 'Read about the proven benefits of inclusive workplace practices',
           duration_s: 900,
           content_json: {
-            content: '# The Business Case for Inclusion\n\nInclusive leadership drives measurable business outcomes...'
-          },
-          completion_rule_json: {
-            type: 'time_spent',
-            requiredSeconds: 600
+            content: '# The Business Case for Inclusion\n\nInclusive leadership drives measurable business outcomes...',
+            completionRule: {
+              type: 'time_spent',
+              requiredSeconds: 600
+            }
           }
         },
         {
@@ -94,10 +94,10 @@ const payload = {
           content_json: {
             resourceType: 'pdf',
             resourceUrl: '/resources/inclusive-leadership-framework.pdf',
-            fileSize: '2.5 MB'
-          },
-          completion_rule_json: {
-            type: 'manual'
+            fileSize: '2.5 MB',
+            completionRule: {
+              type: 'manual'
+            }
           }
         }
       ]

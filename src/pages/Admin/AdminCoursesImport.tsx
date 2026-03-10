@@ -160,16 +160,23 @@ const AdminCoursesImport: React.FC = () => {
               title: m.title || `Module ${mi + 1}`,
               description: m.description ?? null,
               order_index: Number.isFinite(m.order) ? m.order : mi,
-              lessons: (m.lessons || []).map((l: any, li: number) => ({
-                id: l.id,
-                title: l.title || `Lesson ${li + 1}`,
-                description: l.description ?? null,
-                type: l.type === 'document' ? 'resource' : l.type,
-                order_index: Number.isFinite(l.order) ? l.order : li,
-                duration_s: l.duration_s ?? null,
-                content: l.content || {},
-                completion_rule_json: l.completion_rule_json ?? l.completionRule ?? null,
-              })),
+              lessons: (m.lessons || []).map((l: any, li: number) => {
+                const content = { ...(l.content || {}) };
+                const completionRule =
+                  l.completion_rule_json ?? l.completionRule ?? (content && content.completionRule ? content.completionRule : null);
+                if (completionRule) {
+                  content.completionRule = completionRule;
+                }
+                return {
+                  id: l.id,
+                  title: l.title || `Lesson ${li + 1}`,
+                  description: l.description ?? null,
+                  type: l.type === 'document' ? 'resource' : l.type,
+                  order_index: Number.isFinite(l.order) ? l.order : li,
+                  duration_s: l.duration_s ?? null,
+                  content,
+                };
+              }),
             })),
           } as ImportItem;
           return mapped;

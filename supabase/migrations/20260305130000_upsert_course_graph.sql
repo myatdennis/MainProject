@@ -156,7 +156,7 @@ BEGIN
       v_now
     FROM jsonb_array_elements(COALESCE(p_course->'modules', '[]'::jsonb)) WITH ORDINALITY AS mod(value, ordinality)
   )
-  INSERT INTO public.lessons (id, module_id, organization_id, type, title, description, order_index, duration_s, content_json, completion_rule_json, created_at, updated_at)
+  INSERT INTO public.lessons (id, module_id, organization_id, type, title, description, order_index, duration_s, content_json, created_at, updated_at)
   SELECT
     COALESCE((les.value->>'id')::uuid, gen_random_uuid()) AS id,
     im.id AS module_id,
@@ -166,8 +166,21 @@ BEGIN
     les.value->>'description',
     COALESCE((les.value->>'order_index')::integer, les.ordinality::integer - 1),
     (les.value->>'duration_s')::integer,
-    COALESCE(les.value->'content_json', les.value->'content', '{}'::jsonb),
-    COALESCE(les.value->'completion_rule_json', les.value->'completionRule', NULL),
+    CASE
+      WHEN les.value ? 'completion_rule_json' OR les.value ? 'completionRule' THEN
+        CASE
+          WHEN COALESCE(les.value->'completion_rule_json', les.value->'completionRule') IS NULL THEN
+            COALESCE(les.value->'content_json', les.value->'content', '{}'::jsonb) - 'completionRule'
+          ELSE
+            jsonb_set(
+              COALESCE(les.value->'content_json', les.value->'content', '{}'::jsonb),
+              '{completionRule}',
+              COALESCE(les.value->'completion_rule_json', les.value->'completionRule')
+            )
+        END
+      ELSE
+        COALESCE(les.value->'content_json', les.value->'content', '{}'::jsonb)
+    END,
     v_now,
     v_now
   FROM jsonb_array_elements(COALESCE(p_course->'modules', '[]'::jsonb)) WITH ORDINALITY AS mod(value, ordinality)
@@ -204,7 +217,7 @@ BEGIN
                       'order_index', l.order_index,
                       'duration_s', l.duration_s,
                       'content_json', l.content_json,
-                      'completion_rule_json', l.completion_rule_json
+                      'completion_rule_json', COALESCE(l.content_json->'completionRule', NULL)
                     ) ORDER BY l.order_index
                   )
                   FROM public.lessons l
