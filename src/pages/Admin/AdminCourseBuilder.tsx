@@ -1721,8 +1721,22 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
     if (lesson.type !== 'quiz') return { lesson, valid: true };
     const nextLesson = { ...lesson };
     const content = nextLesson.content ? { ...nextLesson.content } : {};
-    const questions = Array.isArray(content.questions) ? content.questions.map((q) => ({ ...q })) : [];
+    let questions = Array.isArray(content.questions) ? content.questions.map((q) => ({ ...q })) : [];
     let valid = true;
+
+    if (!questions.length) {
+      questions = [
+        {
+          prompt: 'Sample question',
+          options: [
+            { text: 'Option A', correct: true, isCorrect: true },
+            { text: 'Option B', correct: false, isCorrect: false },
+          ],
+          correctAnswerIndex: 0,
+        },
+      ];
+      issues.push(`quiz_questions_seeded:${nextLesson.id}`);
+    }
 
     const normalized = questions.map((question, index) => {
       const normalizedQuestion = { ...question };
