@@ -1518,9 +1518,10 @@ export const courseStore = {
         return;
       }
       if (!orgContext.userId) {
-        if (orgContext.status === 'loading') {
+        if (orgContext.status === 'loading' || orgContext.status === 'idle') {
           console.info(
-            '[courseStore.init] Auth context still loading; deferring catalog initialization until memberships resolve.',
+            '[courseStore.init] Auth context not ready (status=%s); deferring catalog initialization until memberships resolve.',
+            orgContext.status,
           );
           queueAuthReadyBootstrap(() => {
             void courseStore.init();
@@ -1532,7 +1533,8 @@ export const courseStore = {
         return;
       }
       const adminSurfaceDetected = isAdminSurface();
-      const treatAsAdmin = adminSurfaceDetected;
+      const hasAdminRole = typeof orgContext.role === 'string' && orgContext.role.toLowerCase().includes('admin');
+      const treatAsAdmin = adminSurfaceDetected || hasAdminRole;
       restrictToOrg = !treatAsAdmin;
       const adminMode = treatAsAdmin;
       let runtimeStatus = getRuntimeStatus();
