@@ -1074,6 +1074,14 @@ const AdminCourseBuilder = () => {
     [course, courseStore, logAutoSaveEvent, setCourse],
   );
 
+  const initialRefreshMapRef = useRef<Record<string, boolean>>({});
+  useEffect(() => {
+    if (!course?.id) return;
+    if (initialRefreshMapRef.current[course.id]) return;
+    initialRefreshMapRef.current[course.id] = true;
+    void refreshCourseFromServer(course.id, course);
+  }, [course, course?.id, refreshCourseFromServer]);
+
   useEffect(() => {
     const diff = computeCourseDiff(lastPersistedRef.current, course);
     setHasPendingChanges(diff.hasChanges);
