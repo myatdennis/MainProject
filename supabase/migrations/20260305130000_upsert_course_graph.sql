@@ -90,6 +90,7 @@ DECLARE
   v_slug text;
   v_status text;
   v_now timestamptz := now();
+  _ignored integer;
 BEGIN
   IF p_org IS NULL THEN
     RAISE EXCEPTION 'org_id required';
@@ -182,7 +183,8 @@ BEGIN
     v_now
   FROM jsonb_array_elements(COALESCE(p_course->'modules', '[]'::jsonb)) WITH ORDINALITY AS mod(value, ordinality)
   JOIN inserted_modules im ON im.id = COALESCE((mod.value->>'id')::uuid, im.id)
-  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(mod.value->'lessons', '[]'::jsonb)) WITH ORDINALITY AS les(value, ordinality);
+  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(mod.value->'lessons', '[]'::jsonb)) WITH ORDINALITY AS les(value, ordinality)
+  RETURNING 1 INTO _ignored;
 
   RETURN (
     SELECT jsonb_build_object(

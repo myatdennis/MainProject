@@ -14,6 +14,7 @@ DECLARE
   v_status text;
   v_version integer;
   v_now timestamptz := now();
+  _ignored integer;
 BEGIN
   IF p_org IS NULL THEN
     RAISE EXCEPTION 'org_id required';
@@ -134,8 +135,8 @@ BEGIN
       v_now
     FROM modules_input mi
     CROSS JOIN LATERAL jsonb_array_elements(COALESCE(mi.module_json->'lessons', '[]'::jsonb)) WITH ORDINALITY AS lesson(value, ordinality)
-  );
-  PERFORM 1;
+  )
+  RETURNING 1 INTO _ignored;
 
   RETURN (
     SELECT jsonb_build_object(
