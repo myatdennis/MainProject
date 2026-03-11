@@ -90,7 +90,6 @@ DECLARE
   v_slug text;
   v_status text;
   v_now timestamptz := now();
-  _ignored integer;
 BEGIN
   IF p_org IS NULL THEN
     RAISE EXCEPTION 'org_id required';
@@ -105,6 +104,7 @@ BEGIN
   IF v_slug IS NULL THEN
     RAISE EXCEPTION 'slug required';
   END IF;
+
   v_status := NULLIF(p_course->>'status', '');
 
   INSERT INTO public.courses (
@@ -128,63 +128,93 @@ BEGIN
     v_now
   )
   ON CONFLICT (id) DO UPDATE
-    SET slug = EXCLUDED.slug,
-        title = EXCLUDED.title,
-        description = EXCLUDED.description,
-        status = EXCLUDED.status,
-        meta_json = EXCLUDED.meta_json,
-        updated_at = v_now,
-        organization_id = p_org
+  SET
+    slug = EXCLUDED.slug,
+    title = EXCLUDED.title,
+    description = EXCLUDED.description,
+    status = EXCLUDED.status,
+    meta_json = EXCLUDED.meta_json,
+    updated_at = v_now,
+    organization_id = p_org
   RETURNING id INTO v_course_id;
 
   -- Remove previous modules (cascade removes lessons)
   DELETE FROM public.modules
-  WHERE course_id = v_course_id AND organization_id = p_org;
+  WHERE course_id = v_course_id
+    AND organization_id = p_org;
 
-  WITH inserted_modules AS (
-    INSERT INTO public.modules (id, course_id, organization_id, title, description, order_index, created_at, updated_at)
+  WITH module_payload AS (
     SELECT
-      COALESCE((mod.value->>'id')::uuid, gen_random_uuid()) AS id,
+      COALESCE((mod.value->>'id')::uuid, gen_random_uuid()) AS module_id,
+      mod.value AS module_json,
+      mod.ordinality::integer AS module_ordinality
+    FROM jsonb_array_elements(COALESCE(p_course->'modules', '[]'::jsonb))
+      WITH ORDINALITY AS mod(value, ordinality)
+  ),
+  inserted_modules AS (
+    INSERT INTO public.modules (
+      id,
+      course_id,
+      organization_id,
+      title,
+      description,
+      order_index,
+      created_at,
+      updated_at
+    )
+    SELECT
+      mp.module_id,
       v_course_id,
       p_org,
-      COALESCE(mod.value->>'title', ''),
-      mod.value->>'description',
-      COALESCE((mod.value->>'order_index')::integer, mod.ordinality::integer - 1),
+      COALESCE(mp.module_json->>'title', ''),
+      mp.module_json->>'description',
+      COALESCE((mp.module_json->>'order_index')::integer, mp.module_ordinality - 1),
       v_now,
       v_now
-    FROM jsonb_array_elements(COALESCE(p_course->'modules', '[]'::jsonb)) WITH ORDINALITY AS mod(value, ordinality)
+    FROM module_payload mp
+    RETURNING id
   )
-  INSERT INTO public.lessons (id, module_id, organization_id, type, title, description, order_index, duration_s, content_json, created_at, updated_at)
+  INSERT INTO public.lessons (
+    id,
+    module_id,
+    course_id,
+    organization_id,
+    type,
+    title,
+    description,
+    order_index,
+    duration_s,
+    content_json,
+    created_at,
+    updated_at
+  )
   SELECT
     COALESCE((les.value->>'id')::uuid, gen_random_uuid()) AS id,
-    im.id AS module_id,
+    mp.module_id AS module_id,
+    v_course_id AS course_id,
     p_org,
     COALESCE(les.value->>'type', 'text'),
     COALESCE(les.value->>'title', ''),
     les.value->>'description',
     COALESCE((les.value->>'order_index')::integer, les.ordinality::integer - 1),
-    (les.value->>'duration_s')::integer,
+    COALESCE((les.value->>'duration_s')::integer, 0),
     CASE
       WHEN les.value ? 'completion_rule_json' OR les.value ? 'completionRule' THEN
-        CASE
-          WHEN COALESCE(les.value->'completion_rule_json', les.value->'completionRule') IS NULL THEN
-            COALESCE(les.value->'content_json', les.value->'content', '{}'::jsonb) - 'completionRule'
-          ELSE
-            jsonb_set(
-              COALESCE(les.value->'content_json', les.value->'content', '{}'::jsonb),
-              '{completionRule}',
-              COALESCE(les.value->'completion_rule_json', les.value->'completionRule')
-            )
-        END
+        jsonb_set(
+          COALESCE(les.value->'content_json', les.value->'content', '{}'::jsonb),
+          '{completionRule}',
+          COALESCE(les.value->'completion_rule_json', les.value->'completionRule', 'null'::jsonb),
+          true
+        )
       ELSE
         COALESCE(les.value->'content_json', les.value->'content', '{}'::jsonb)
     END,
     v_now,
     v_now
-  FROM jsonb_array_elements(COALESCE(p_course->'modules', '[]'::jsonb)) WITH ORDINALITY AS mod(value, ordinality)
-  JOIN inserted_modules im ON im.id = COALESCE((mod.value->>'id')::uuid, im.id)
-  CROSS JOIN LATERAL jsonb_array_elements(COALESCE(mod.value->'lessons', '[]'::jsonb)) WITH ORDINALITY AS les(value, ordinality)
-  RETURNING 1 INTO _ignored;
+  FROM module_payload mp
+  CROSS JOIN LATERAL jsonb_array_elements(
+    COALESCE(mp.module_json->'lessons', '[]'::jsonb)
+  ) WITH ORDINALITY AS les(value, ordinality);
 
   RETURN (
     SELECT jsonb_build_object(
@@ -217,23 +247,28 @@ BEGIN
                       'duration_s', l.duration_s,
                       'content_json', l.content_json,
                       'completion_rule_json', COALESCE(l.content_json->'completionRule', NULL)
-                    ) ORDER BY l.order_index
+                    )
+                    ORDER BY l.order_index
                   )
                   FROM public.lessons l
-                  WHERE l.module_id = m.id AND l.organization_id = p_org
+                  WHERE l.module_id = m.id
+                    AND l.organization_id = p_org
                 ),
                 '[]'::jsonb
               )
-            ) ORDER BY m.order_index
+            )
+            ORDER BY m.order_index
           )
           FROM public.modules m
-          WHERE m.course_id = c.id AND m.organization_id = p_org
+          WHERE m.course_id = c.id
+            AND m.organization_id = p_org
         ),
         '[]'::jsonb
       )
     )
     FROM public.courses c
-    WHERE c.id = v_course_id AND c.organization_id = p_org
+    WHERE c.id = v_course_id
+      AND c.organization_id = p_org
   );
 END;
 $$;

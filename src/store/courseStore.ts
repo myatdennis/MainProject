@@ -21,7 +21,7 @@ import { canonicalizeLessonContent } from '../utils/lessonContent';
 import { SlugConflictError } from '../utils/slugConflict';
 import isUuid from '../utils/isUuid';
 import { isAdminSurface } from '../utils/surface';
-import { resolveOrgContextFromBridge } from './courseStoreOrgBridge';
+import { resolveOrgContextFromBridge, isOrgResolverRegistered } from './courseStoreOrgBridge';
 
 // Course data types
 export interface ScenarioChoice {
@@ -1194,6 +1194,9 @@ const resolveOrgContext = (): ResolvedOrgContext => {
       userId: resolverSnapshot.userId ?? null,
       status: 'ready',
     };
+  }
+  if (!isOrgResolverRegistered()) {
+    return { orgId: null, role: null, userId: null, status: 'loading' };
   }
   if (storedPreference) {
     return { orgId: storedPreference, role: null, userId: null, status: 'ready' };

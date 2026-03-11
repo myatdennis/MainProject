@@ -10879,10 +10879,7 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
   const buildOrgQuery = () => {
     let query = supabase
       .from('organizations')
-      .select(
-        'id,name,slug,type,description,logo,contact_person,contact_email,contact_phone,subscription,status,total_learners,active_learners,completion_rate,modules,timezone,onboarding_status,created_at,updated_at',
-        { count: 'exact' },
-      )
+      .select('*', { count: 'exact' })
       .order(sort, { ascending })
       .range(from, to);
 

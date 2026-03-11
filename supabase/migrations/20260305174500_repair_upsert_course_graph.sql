@@ -14,7 +14,6 @@ DECLARE
   v_status text;
   v_version integer;
   v_now timestamptz := now();
-  _ignored integer;
 BEGIN
   IF p_org IS NULL THEN
     RAISE EXCEPTION 'org_id required';
@@ -86,57 +85,72 @@ BEGIN
     FROM jsonb_array_elements(COALESCE(p_course->'modules', '[]'::jsonb)) WITH ORDINALITY AS mod(value, ordinality)
   ),
   inserted_modules AS (
-    INSERT INTO public.modules (id, course_id, organization_id, title, description, order_index, created_at, updated_at)
-    SELECT module_id, course_id, organization_id, title, description, order_index, v_now, v_now
-    FROM modules_input
-    RETURNING id
-  ),
-  lessons_insert AS (
-    INSERT INTO public.lessons (
+    INSERT INTO public.modules (
       id,
-      module_id,
       course_id,
       organization_id,
-      type,
       title,
       description,
       order_index,
-      duration_s,
-      content_json,
       created_at,
       updated_at
     )
     SELECT
-      COALESCE((lesson.value->>'id')::uuid, gen_random_uuid()) AS lesson_id,
-      mi.module_id,
-      v_course_id,
-      p_org,
-      COALESCE(lesson.value->>'type', 'text'),
-      COALESCE(lesson.value->>'title', ''),
-      lesson.value->>'description',
-      COALESCE((lesson.value->>'order_index')::integer, lesson.ordinality::integer - 1),
-      (lesson.value->>'duration_s')::integer,
-      CASE
-        WHEN lesson.value ? 'completion_rule_json' OR lesson.value ? 'completionRule' THEN
-          CASE
-            WHEN COALESCE(lesson.value->'completion_rule_json', lesson.value->'completionRule') IS NULL THEN
-              COALESCE(lesson.value->'content_json', lesson.value->'content', '{}'::jsonb) - 'completionRule'
-            ELSE
-              jsonb_set(
-                COALESCE(lesson.value->'content_json', lesson.value->'content', '{}'::jsonb),
-                '{completionRule}',
-                COALESCE(lesson.value->'completion_rule_json', lesson.value->'completionRule')
-              )
-          END
-        ELSE
-          COALESCE(lesson.value->'content_json', lesson.value->'content', '{}'::jsonb)
-      END,
+      module_id,
+      course_id,
+      organization_id,
+      title,
+      description,
+      order_index,
       v_now,
       v_now
-    FROM modules_input mi
-    CROSS JOIN LATERAL jsonb_array_elements(COALESCE(mi.module_json->'lessons', '[]'::jsonb)) WITH ORDINALITY AS lesson(value, ordinality)
+    FROM modules_input
   )
-  RETURNING 1 INTO _ignored;
+  INSERT INTO public.lessons (
+    id,
+    module_id,
+    course_id,
+    organization_id,
+    type,
+    title,
+    description,
+    order_index,
+    duration_s,
+    content_json,
+    created_at,
+    updated_at
+  )
+  SELECT
+    COALESCE((lesson.value->>'id')::uuid, gen_random_uuid()) AS lesson_id,
+    mi.module_id,
+    v_course_id,
+    p_org,
+    COALESCE(lesson.value->>'type', 'text'),
+    COALESCE(lesson.value->>'title', ''),
+    lesson.value->>'description',
+    COALESCE((lesson.value->>'order_index')::integer, lesson.ordinality::integer - 1),
+    (lesson.value->>'duration_s')::integer,
+    CASE
+      WHEN lesson.value ? 'completion_rule_json' OR lesson.value ? 'completionRule' THEN
+        CASE
+          WHEN COALESCE(lesson.value->'completion_rule_json', lesson.value->'completionRule') IS NULL THEN
+            COALESCE(lesson.value->'content_json', lesson.value->'content', '{}'::jsonb) - 'completionRule'
+          ELSE
+            jsonb_set(
+              COALESCE(lesson.value->'content_json', lesson.value->'content', '{}'::jsonb),
+              '{completionRule}',
+              COALESCE(lesson.value->'completion_rule_json', lesson.value->'completionRule')
+            )
+        END
+      ELSE
+        COALESCE(lesson.value->'content_json', lesson.value->'content', '{}'::jsonb)
+    END,
+    v_now,
+    v_now
+  FROM modules_input mi
+  CROSS JOIN LATERAL jsonb_array_elements(
+    COALESCE(mi.module_json->'lessons', '[]'::jsonb)
+  ) WITH ORDINALITY AS lesson(value, ordinality);
 
   RETURN (
     SELECT jsonb_build_object(
