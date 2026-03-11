@@ -1,6 +1,3 @@
--- Enforce organization integrity and provide atomic course graph upsert RPC
-set check_function_bodies = off;
-
 -- Ensure modules/lessons carry org ownership matching the parent course
 DO $$
 BEGIN

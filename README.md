@@ -403,3 +403,43 @@ Run these quick checks after every deploy (replace `$API_BASE`, `$ACCESS_TOKEN`,
 3. `curl -sS -H "Authorization: Bearer $ACCESS_TOKEN" "$API_BASE/api/admin/me"` – confirms admin capability gating.
 4. `curl -sS -H "Authorization: Bearer $ACCESS_TOKEN" -H "X-Org-Id: $ORG_ID" "$API_BASE/api/admin/organizations"` – must return `200`; omit `X-Org-Id` to see the expected `400 org_required` guardrail.
 5. Visit `/admin/login`, authenticate, land on `/admin/courses`, then refresh to ensure the session persists without redirect loops.
+
+## Release Guardrails
+
+To keep Supabase schema drift or API regressions from sneaking into a release, the repo now includes four gatekeeper scripts:
+
+| Command | Purpose | Required env vars |
+| --- | --- | --- |
+| `npm run validate:migrations` | Replays every SQL file inside a rollback-only transaction and fails if a migration contains invalid SQL or `set check_function_bodies = off`. | `DATABASE_URL` |
+| `npm run schema:doctor` | Verifies that `courses`, `modules`, `lessons`, `organization_memberships`, and `user_course_progress` still expose the canonical LMS columns. | `DATABASE_URL` |
+| `npm run test:db-functions` | Executes smoke transactions against `upsert_course_graph` and `upsert_progress_batch`. | `DATABASE_URL`, `GUARD_ORG_ID` (fallback: first org in DB) |
+| `npm run test:api-smoke` | Exercises `/api/health`, admin CRUD, course import/publish, learner catalog, and progress batch endpoints. | `API_BASE_URL`, `ADMIN_BEARER_TOKEN`, `LEARNER_BEARER_TOKEN` (optional), `GUARD_ORG_ID` |
+
+### CI wiring
+
+Add the guardrails to your CI workflow before the build/deploy job. Example GitHub Actions snippet:
+
+```yaml
+jobs:
+  guardrails:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_POOLER_URL }}
+      API_BASE_URL: https://api.the-huddle.co/api
+      ADMIN_BEARER_TOKEN: ${{ secrets.ADMIN_BEARER_TOKEN }}
+      LEARNER_BEARER_TOKEN: ${{ secrets.LEARNER_BEARER_TOKEN }}
+      GUARD_ORG_ID: ${{ secrets.GUARD_ORG_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - run: npm run validate:migrations
+      - run: npm run schema:doctor
+      - run: npm run test:db-functions
+      - run: npm run test:api-smoke
+```
+
+If any step fails the pipeline should stop, preventing a deploy that would break the LMS schema or APIs.

@@ -1,7 +1,3 @@
--- Repair the upsert_course_graph RPC to handle modules/lessons deterministically
--- and persist version/status fields while keeping the operation atomic.
-set check_function_bodies = off;
-
 CREATE OR REPLACE FUNCTION public.upsert_course_graph(
   p_course jsonb,
   p_actor uuid,
@@ -73,6 +69,10 @@ BEGIN
         updated_by = p_actor,
         organization_id = p_org;
 
+  -- Remove previous modules (cascade removes lessons)
+  DELETE FROM public.modules
+  WHERE course_id = v_course_id AND organization_id = p_org;
+
   WITH modules_input AS (
     SELECT
       COALESCE((mod.value->>'id')::uuid, gen_random_uuid()) AS module_id,
@@ -83,10 +83,6 @@ BEGIN
       COALESCE((mod.value->>'order_index')::integer, mod.ordinality::integer - 1) AS order_index,
       mod.value AS module_json
     FROM jsonb_array_elements(COALESCE(p_course->'modules', '[]'::jsonb)) WITH ORDINALITY AS mod(value, ordinality)
-  ),
-  deleted AS (
-    DELETE FROM public.modules
-    WHERE course_id = v_course_id AND organization_id = p_org
   ),
   inserted_modules AS (
     INSERT INTO public.modules (id, course_id, organization_id, title, description, order_index, created_at, updated_at)
@@ -138,8 +134,8 @@ BEGIN
       v_now
     FROM modules_input mi
     CROSS JOIN LATERAL jsonb_array_elements(COALESCE(mi.module_json->'lessons', '[]'::jsonb)) WITH ORDINALITY AS lesson(value, ordinality)
-  )
-  SELECT 1;
+  );
+  PERFORM 1;
 
   RETURN (
     SELECT jsonb_build_object(
