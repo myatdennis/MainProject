@@ -1703,8 +1703,6 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
     } else if (!content.videoUrl && fallbackSource && !fallbackSource.startsWith('external://')) {
       content.videoUrl = fallbackSource;
       changed = true;
-    } else if (!content.videoUrl && fallbackSource.startsWith('external://')) {
-      content.videoUrl = '';
     }
     if (!asset.bucket) {
       asset.bucket = fallbackSource.startsWith('external://') ? 'external' : 'course-videos';

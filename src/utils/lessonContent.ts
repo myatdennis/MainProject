@@ -4,6 +4,26 @@ import migrateLessonContent from './contentMigrator';
 
 const ensureId = (prefix: string) => `${prefix}-${nanoid(8)}`;
 
+const SUPABASE_URL: string | undefined = (() => {
+  try {
+    if (typeof import.meta !== 'undefined' && import.meta.env?.VITE_SUPABASE_URL) {
+      return import.meta.env.VITE_SUPABASE_URL as string;
+    }
+  } catch {
+    // ignore
+  }
+  if (typeof process !== 'undefined' && typeof process.env === 'object') {
+    return process.env.SUPABASE_URL;
+  }
+  return undefined;
+})();
+
+const derivePublicSupabaseUrl = (bucket: string | undefined, path: string | undefined) => {
+  if (!SUPABASE_URL || !bucket || !path) return undefined;
+  const cleanedPath = path.replace(/^\/+/, '');
+  return `${SUPABASE_URL.replace(/\/+$/, '')}/storage/v1/object/public/${bucket}/${cleanedPath}`;
+};
+
 export const canonicalizeQuizQuestions = (questions: any[] = []): QuizQuestion[] => {
   return questions.map((question, questionIndex) => {
     const questionId = question?.id || ensureId(`q${questionIndex}`);
@@ -67,10 +87,12 @@ export const canonicalizeQuizQuestions = (questions: any[] = []): QuizQuestion[]
     const correctAnswerId =
       resolvedIndex >= 0 && optionsWithFlags[resolvedIndex] ? optionsWithFlags[resolvedIndex].id : null;
 
+    const canonicalType =
+      typeof question?.type === 'string' && question.type.length > 0 ? question.type : 'multiple_choice';
     return {
       ...question,
       id: questionId,
-      type: question?.type || 'multiple-choice',
+      type: canonicalType,
       text: question?.text || question?.question || question?.prompt || '',
       prompt: question?.prompt || question?.text || question?.question || '',
       options: optionsWithFlags,
@@ -146,6 +168,14 @@ const normalizeVideoAsset = (raw?: any): LessonVideoAsset | undefined => {
 
   if (!asset.signedUrl && typeof raw.signed_urls === 'object') {
     asset.signedUrl = raw.signed_urls?.read ?? raw.signed_urls?.default ?? null;
+  }
+
+  if ((!asset.signedUrl || asset.signedUrl.startsWith('external://')) && asset.bucket && asset.storagePath) {
+    const publicUrl = derivePublicSupabaseUrl(asset.bucket, asset.storagePath);
+    if (publicUrl) {
+      asset.publicUrl = publicUrl;
+      asset.signedUrl = asset.signedUrl && !asset.signedUrl.startsWith('external://') ? asset.signedUrl : publicUrl;
+    }
   }
 
   return asset;

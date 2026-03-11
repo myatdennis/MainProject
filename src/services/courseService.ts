@@ -398,6 +398,15 @@ const buildLessonResources = (lesson: Lesson): { label: string; url: string }[] 
 
 const buildLessonContent = (lesson: Lesson, apiType: LessonDto['type']): LessonInput['content'] => {
   const canonical = canonicalizeLessonContent(lesson.content ?? {});
+  if ((!canonical.videoUrl || canonical.videoUrl.length === 0) && canonical.videoAsset) {
+    const assetUrl =
+      canonical.videoAsset.signedUrl ||
+      canonical.videoAsset.publicUrl ||
+      (canonical.videoAsset.storagePath?.startsWith('http') ? canonical.videoAsset.storagePath : null);
+    if (assetUrl) {
+      canonical.videoUrl = assetUrl;
+    }
+  }
   canonical.type = apiType;
   canonical.schema_version = canonical.schema_version ?? CURRENT_CONTENT_SCHEMA_VERSION;
   const sanitized = sanitizeSerializable(canonical) || {};
@@ -547,6 +556,49 @@ export class CourseService {
     return modules;
   }
 
+  private static logLessonDiagnostics(modules: Array<Record<string, any>>) {
+    const diagnostics = modules.flatMap((mod) => {
+      const lessons = Array.isArray(mod.lessons) ? mod.lessons : [];
+      return lessons
+        .filter((lesson) => lesson.type === 'video' || lesson.type === 'quiz')
+        .map((lesson) => {
+          if (lesson.type === 'video') {
+            const asset = lesson.content?.videoAsset || null;
+            return {
+              moduleId: mod.id,
+              lessonId: lesson.id,
+              type: 'video',
+              videoUrl: lesson.content?.videoUrl ?? null,
+              videoAssetSource: asset?.source ?? null,
+              videoAssetSignedUrl: asset?.signedUrl ?? null,
+              videoAssetStoragePath: asset?.storagePath ?? null,
+            };
+          }
+          const questions = Array.isArray(lesson.content?.questions) ? lesson.content.questions : [];
+          return {
+            moduleId: mod.id,
+            lessonId: lesson.id,
+            type: 'quiz',
+            questionCount: questions.length,
+            questions: questions.map((question: any) => ({
+              id: question.id,
+              correctAnswer: question.correctAnswer ?? question.correctOptionIds?.[0] ?? null,
+              options: Array.isArray(question.options)
+                ? question.options.map((option: any) => ({
+                    id: option?.id ?? null,
+                    isCorrect: Boolean(option?.isCorrect || option?.correct),
+                  }))
+                : [],
+            })),
+          };
+        });
+    });
+
+    if (diagnostics.length > 0) {
+      console.info('[CourseService] lesson_payload_debug', diagnostics);
+    }
+  }
+
   private static async upsertCourse(
     course: NormalizedCourse,
     options: { idempotencyKey?: string; signal?: AbortSignal } = {},
@@ -575,6 +627,7 @@ export class CourseService {
     body.course = canonicalCourse;
     modules = CourseService.withOrgContextForModules(modules, canonicalOrgId);
     body.modules = modules;
+    CourseService.logLessonDiagnostics(modules as Record<string, any>[]);
     const courseIdIsServerAssigned = hasServerAssignedCourseId(course.id);
     const hasRemoteRecord = courseIdIsServerAssigned && hasPersistedCourseRecord(course.id);
     const isCreateOperation = !hasRemoteRecord;

@@ -245,6 +245,7 @@ export interface LessonVideoAsset {
   resumableToken?: string | null;
   signedUrl?: string | null;
   urlExpiresAt?: string | null;
+  publicUrl?: string | null;
 }
 
 export interface Caption {
