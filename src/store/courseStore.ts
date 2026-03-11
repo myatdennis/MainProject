@@ -1104,6 +1104,8 @@ let learnerCatalogState: LearnerCatalogState = {
 };
 
 let initPromise: Promise<void> | null = null;
+let awaitingOrgResolution = false;
+let awaitingRoleResolution = false;
 
 const storeSubscribers = new Set<() => void>();
 
@@ -1532,14 +1534,33 @@ export const courseStore = {
           return;
         }
         console.info('[courseStore.init] No authenticated session detected; loading local defaults without hitting API.');
+        awaitingRoleResolution = false;
+        awaitingOrgResolution = false;
         courses = getDefaultCourses();
         return;
       }
       const adminSurfaceDetected = isAdminSurface();
+      if (adminSurfaceDetected && !orgContext.role) {
+        if (!awaitingRoleResolution) {
+          awaitingRoleResolution = true;
+          console.info(
+            '[courseStore.init] Awaiting admin role resolution before loading catalog; retrying after auth_ready.',
+          );
+          queueAuthReadyBootstrap(() => {
+            awaitingRoleResolution = false;
+            void courseStore.init();
+          });
+        }
+        return;
+      }
+      awaitingRoleResolution = false;
       const hasAdminRole = typeof orgContext.role === 'string' && orgContext.role.toLowerCase().includes('admin');
       const treatAsAdmin = adminSurfaceDetected || hasAdminRole;
       restrictToOrg = !treatAsAdmin;
       const adminMode = treatAsAdmin;
+      if (!restrictToOrg || (restrictToOrg && orgContext.orgId)) {
+        awaitingOrgResolution = false;
+      }
       let runtimeStatus = getRuntimeStatus();
       try {
         runtimeStatus = await refreshRuntimeStatus();
@@ -1595,14 +1616,18 @@ export const courseStore = {
       if ((!dbCourses || dbCourses.length === 0) && shouldLoadPublishedCatalog) {
         const learnerContextReadyForFallback =
           !restrictToOrg ||
-          (orgContext.orgId !== null && (orgContext.status === 'ready' || orgContext.status === 'idle'));
+          (!!orgContext.orgId && (orgContext.status === 'ready' || orgContext.status === 'idle'));
         if (!learnerContextReadyForFallback) {
           console.info(
             '[courseStore.init] Deferring published catalog fallback until auth/org context is ready.',
           );
           queueAuthReadyBootstrap(() => {
+            awaitingOrgResolution = false;
             void courseStore.init();
           });
+          if (restrictToOrg && !orgContext.orgId) {
+            awaitingOrgResolution = true;
+          }
           return;
         }
 

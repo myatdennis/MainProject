@@ -118,7 +118,8 @@ async function initializeConnectionMetadata (rawConnectionString, source = {}) {
     finalHostUsed: null,
     lookupError: null,
     error: null,
-    source
+    source,
+    projectRef: null
   }
 
   if (!rawConnectionString) {
@@ -150,12 +151,33 @@ async function initializeConnectionMetadata (rawConnectionString, source = {}) {
       }
     }
 
+    const deriveProjectRefFromConnection = (connectionString) => {
+      try {
+        const parsed = new URL(connectionString)
+        if (parsed.username && parsed.username.includes('.')) {
+          const [, maybeRef] = parsed.username.split('.')
+          if (maybeRef && /^[a-z0-9]{15,}$/i.test(maybeRef)) {
+            return maybeRef.toLowerCase()
+          }
+        }
+        const hostMatch = parsed.hostname.match(/^(?:db\.)?([a-z0-9]{15,})\.supabase\.co$/i)
+        if (hostMatch) {
+          return hostMatch[1].toLowerCase()
+        }
+      } catch {
+        return null
+      }
+      return null
+    }
+
     try {
       const finalUrl = new URL(metadata.connectionString)
       metadata.finalHostUsed = finalUrl.hostname
     } catch {
       metadata.finalHostUsed = metadata.resolvedHost ?? metadata.originalHost
     }
+
+    metadata.projectRef = deriveProjectRefFromConnection(metadata.connectionString)
   } catch (error) {
     metadata.error = error
     console.error('[server/db] Failed to parse DATABASE_URL', error)
@@ -170,7 +192,8 @@ async function initializeConnectionMetadata (rawConnectionString, source = {}) {
     originalPort: metadata.originalPort,
     resolvedHost: metadata.resolvedHost,
     finalHostUsed: metadata.finalHostUsed,
-    lookupError: metadata.lookupError ? metadata.lookupError.message : null
+    lookupError: metadata.lookupError ? metadata.lookupError.message : null,
+    projectRef: metadata.projectRef
   })
 
   return metadata
@@ -214,7 +237,8 @@ export const getDatabaseConnectionInfo = () => ({
   forcedIpv4: connectionMetadata.forcedIpv4,
   ipv4RewriteEligible: connectionMetadata.ipv4RewriteEligible,
   connectionStringDefined: Boolean(connectionMetadata.connectionString),
-  usingPooler: connectionMetadata.source?.type === 'pooler'
+  usingPooler: connectionMetadata.source?.type === 'pooler',
+  projectRef: connectionMetadata.projectRef ?? null
 })
 
 export async function testConnection (retries = 3) {

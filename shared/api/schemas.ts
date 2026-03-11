@@ -1,15 +1,19 @@
 import { z } from 'zod';
 
-export const lessonContentSchema = z.object({
-  type: z.enum(['video', 'quiz', 'reflection', 'text', 'resource']),
-  body: z.record(z.any()).optional(),
-  resources: z.array(
-    z.object({
-      label: z.string().min(1),
-      url: z.string().url(),
-    })
-  ).optional(),
-});
+export const lessonContentSchema = z
+  .object({
+    type: z.enum(['video', 'quiz', 'reflection', 'text', 'resource']),
+    body: z.record(z.any()).optional(),
+    resources: z
+      .array(
+        z.object({
+          label: z.string().min(1),
+          url: z.string().url(),
+        }),
+      )
+      .optional(),
+  })
+  .passthrough();
 
 export const completionRuleSchema = z.object({
   type: z.enum(['time_spent', 'quiz_score', 'manual']),

@@ -305,6 +305,22 @@ const databaseHost =
   databaseConnectionInfo.host && databaseConnectionInfo.port
     ? `${databaseConnectionInfo.host}:${databaseConnectionInfo.port}`
     : databaseConnectionInfo.host || null;
+const deriveProjectRefFromHost = (host) => {
+  if (!host) return null;
+  const match = host.match(/^([a-z0-9]{15,})\.supabase\.(?:co|net)$/i);
+  return match ? match[1].toLowerCase() : null;
+};
+const supabaseProjectRef = deriveProjectRefFromHost(supabaseUrlHost);
+const databaseProjectRef = databaseConnectionInfo.projectRef ?? null;
+if (supabaseProjectRef && databaseProjectRef && supabaseProjectRef !== databaseProjectRef) {
+  console.warn('[env] Supabase URL and database connection appear to reference different project IDs.', {
+    supabaseProjectRef,
+    databaseProjectRef,
+    supabaseHost: supabaseUrlHost,
+    databaseHost: databaseConnectionInfo.host ?? null,
+    databaseSource: databaseConnectionInfo.sourceEnv ?? null,
+  });
+}
 
 const schemaHealth = {
   membership: {
@@ -2409,7 +2425,7 @@ const lessonColumnSupport = {
   durationSeconds: true,
   durationText: false,
   contentJson: true,
-  contentLegacy: false,
+  contentLegacy: true,
   completionRuleJson: false,
   organizationId: true,
   courseId: true,
@@ -2443,6 +2459,9 @@ const prepareLessonContentWithCompletionRule = (record = {}, completionRule) => 
   if (typeof target === 'object' && target !== null) {
     target.completionRule = completionRule;
     record.content_json = target;
+    if (record.content && typeof record.content === 'object') {
+      record.content = { ...record.content, completionRule };
+    }
   }
   return record;
 };

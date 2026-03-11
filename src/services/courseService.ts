@@ -399,18 +399,27 @@ const buildLessonResources = (lesson: Lesson): { label: string; url: string }[] 
 
 const buildLessonContent = (lesson: Lesson, apiType: LessonDto['type']): LessonInput['content'] => {
   const sanitized = sanitizeSerializable(lesson.content ?? {}) || {};
-  const canonicalBody = migrateLessonContent({ ...sanitized });
+  const canonicalBody = migrateLessonContent({ ...sanitized }) || {};
   if (canonicalBody.schema_version == null) {
     canonicalBody.schema_version = CURRENT_CONTENT_SCHEMA_VERSION;
   }
+  if (!canonicalBody.type) {
+    canonicalBody.type = apiType;
+  }
+  const bodyClone = { ...canonicalBody };
+  const passthrough = { ...canonicalBody };
   const content: LessonInput['content'] = {
+    ...passthrough,
     type: apiType,
-    body: typeof canonicalBody === 'object' && canonicalBody !== null ? canonicalBody : {},
+    body: bodyClone,
   };
 
   const resources = buildLessonResources(lesson);
   if (resources.length > 0) {
     content.resources = resources;
+    if (!Array.isArray(bodyClone.resources) || bodyClone.resources.length === 0) {
+      bodyClone.resources = resources;
+    }
   }
 
   return content;
@@ -533,6 +542,7 @@ export class CourseService {
           order_index: canonicalLesson.order ?? lessonIndex,
           duration_s: durationSeconds,
           content_json: content,
+          content,
         };
       });
 
