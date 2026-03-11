@@ -37,6 +37,7 @@ export interface Course {
   updatedAt?: string; // optional for backward compatibility
   publishedAt?: string;
   status: 'draft' | 'published' | 'archived';
+  version?: number;
   
   // Analytics and engagement
   enrollmentCount?: number; // optional for backward compatibility

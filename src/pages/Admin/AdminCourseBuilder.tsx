@@ -89,6 +89,17 @@ const parseUploadKey = (key: string) => {
   return { moduleId, lessonId };
 };
 const LESSON_AUTOSAVE_DELAY = 900;
+const AUTOSAVE_DEBOUNCE_MS = 1500;
+const AUTOSAVE_SUPERSEDED_CODE = 'autosave_superseded';
+
+const createAutosaveSupersededError = () => {
+  const error = new Error(AUTOSAVE_SUPERSEDED_CODE);
+  (error as Error & { code?: string }).code = AUTOSAVE_SUPERSEDED_CODE;
+  return error;
+};
+
+const isAutosaveSupersededError = (error: unknown): boolean =>
+  Boolean(error && typeof error === 'object' && (error as Record<string, unknown>).code === AUTOSAVE_SUPERSEDED_CODE);
 const AUTOSAVE_BACKOFF_STEPS_MS = [2000, 5000, 12000] as const;
 const AUTOSAVE_MAX_FAILURES = 3;
 const generateStableLessonId = (): string => {
@@ -382,6 +393,17 @@ const AdminCourseBuilder = () => {
     return createEmptyCourse();
   });
 
+  useEffect(() => {
+    if (!course?.id) {
+      courseStore.setEditingCourseId?.(null);
+      return;
+    }
+    courseStore.setEditingCourseId?.(course.id);
+    return () => {
+      courseStore.setEditingCourseId?.(null);
+    };
+  }, [course?.id]);
+
   const [activeTab, setActiveTab] = useState('overview');
   const [expandedModules, setExpandedModules] = useState<{ [key: string]: boolean }>({});
   const [editingLesson, setEditingLesson] = useState<{ moduleId: string; lessonId: string } | null>(null);
@@ -404,6 +426,9 @@ const AdminCourseBuilder = () => {
   const [showAssignmentModal, setShowAssignmentModal] = useState(false);
   const [hasPendingChanges, setHasPendingChanges] = useState(false);
   const lastPersistedRef = useRef<Course | null>(null);
+  const persistCourseRef = useRef<((course: Course, options?: Record<string, unknown>) => Promise<any>) | null>(null);
+  const latestCourseRef = useRef<Course | null>(course);
+  const dirtyRef = useRef(false);
   const autoSaveRequestAbortRef = useRef<AbortController | null>(null);
   const autoSaveRequestIdRef = useRef<string | null>(null);
   const resetAutoSaveFailuresRef = useRef<(() => void) | null>(null);
@@ -412,6 +437,7 @@ const AdminCourseBuilder = () => {
   const [initializing, setInitializing] = useState(isEditing);
   const lastLoadedCourseIdRef = useRef<string | null>(null);
   const draftCheckIdRef = useRef<string | null>(null);
+  const suppressNextDirtyRef = useRef(false);
   const isMobile = useIsMobile();
   const runtimeStatus = useRuntimeStatus();
   const supabaseConnected = runtimeStatus.supabaseConfigured && runtimeStatus.supabaseHealthy;
@@ -902,6 +928,7 @@ const AdminCourseBuilder = () => {
         if (cancelled) return;
 
         if (remote) {
+          suppressNextDirtyRef.current = true;
           setCourse((prev) => {
             const merged = mergePersistedCourse(prev, remote);
             const mergedModules =
@@ -1058,6 +1085,7 @@ const AdminCourseBuilder = () => {
         if (refreshed) {
           const mergedCourse = mergePersistedCourse(localSnapshot ?? course, refreshed);
           courseStore.saveCourse(mergedCourse as Course, { skipRemoteSync: true });
+          suppressNextDirtyRef.current = true;
           setCourse(mergedCourse as Course);
           lastPersistedRef.current = mergedCourse as Course;
           logAutoSaveEvent('autosave_recovered_from_stale_version', { courseId });
@@ -1088,72 +1116,9 @@ const AdminCourseBuilder = () => {
   }, [course]);
 
   useEffect(() => {
-    if (!editingLesson || !lessonAutosaveState.pending) {
-      if (lessonAutosaveTimerRef.current) {
-        clearTimeout(lessonAutosaveTimerRef.current);
-        lessonAutosaveTimerRef.current = null;
-      }
-      return;
-    }
+    latestCourseRef.current = course;
+  }, [course]);
 
-    if (lessonAutosaveTimerRef.current) {
-      clearTimeout(lessonAutosaveTimerRef.current);
-    }
-
-    lessonAutosaveTimerRef.current = window.setTimeout(async () => {
-      if (!editingLesson) return;
-      autoSaveLockRef.current = true;
-      setLessonAutosaveState((prev) => ({
-        ...prev,
-        status: 'saving',
-        moduleId: editingLesson.moduleId,
-        lessonId: editingLesson.lessonId,
-        message: null,
-      }));
-      try {
-        const gate = evaluateRuntimeGate('course.auto-save', runtimeStatus);
-        await persistCourseRef.current(course, { action: 'course.auto-save', gate, skipValidation: true });
-        setLessonAutosaveState({
-          status: 'idle',
-          pending: false,
-          moduleId: editingLesson.moduleId,
-          lessonId: editingLesson.lessonId,
-          message: null,
-        });
-      } catch (error) {
-        const status = error instanceof ApiError ? error.status : undefined;
-        const body = error instanceof ApiError ? error.body : undefined;
-        console.warn('lesson_save_failed', {
-          lessonId: editingLesson.lessonId,
-          moduleId: editingLesson.moduleId,
-          status,
-          body,
-        });
-        const fallbackMessage =
-          typeof navigator !== 'undefined' && navigator.onLine === false
-            ? 'Lesson changes are stored locally. Reconnect to sync with Huddle.'
-            : 'Lesson changes could not be saved. Please retry.';
-        setLessonAutosaveState({
-          status: 'error',
-          pending: false,
-          moduleId: editingLesson.moduleId,
-          lessonId: editingLesson.lessonId,
-          message: fallbackMessage,
-        });
-        showToast(fallbackMessage, 'error');
-      } finally {
-        autoSaveLockRef.current = false;
-        lessonAutosaveTimerRef.current = null;
-      }
-    }, LESSON_AUTOSAVE_DELAY);
-
-    return () => {
-      if (lessonAutosaveTimerRef.current) {
-        clearTimeout(lessonAutosaveTimerRef.current);
-        lessonAutosaveTimerRef.current = null;
-      }
-    };
-  }, [course, editingLesson, lessonAutosaveState.pending, runtimeStatus, showToast]);
 
   function createEmptyCourse(initialCourseId?: string): Course {
     // Smart defaults based on common course patterns
@@ -1228,18 +1193,292 @@ const AdminCourseBuilder = () => {
     };
   }
 
-  const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
-  const [lastSaveTime, setLastSaveTime] = useState<Date | null>(null);
-  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const autoSaveLockRef = useRef<boolean>(false);
-  const lastAutoSaveGateModeRef = useRef<GateMode>('remote');
-  const lastLocalOnlyReasonRef = useRef<string | null>(null);
-  const autoSaveFailureRef = useRef<{ count: number }>({ count: 0 });
-  const autoSaveBackoffUntilRef = useRef(0);
-  const autoSaveBackoffTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const autoSaveHaltedRef = useRef(false);
-  const autoSaveWarningIssuedRef = useRef(false);
-  const autoSavePauseLoggedRef = useRef(false);
+const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+const [lastSaveTime, setLastSaveTime] = useState<Date | null>(null);
+type AutosaveTimerState = {
+  timeout: NodeJS.Timeout;
+  reject: (reason?: unknown) => void;
+};
+const autosaveTimerRef = useRef<AutosaveTimerState | null>(null);
+const autoSaveLockRef = useRef<boolean>(false);
+const lastAutoSaveGateModeRef = useRef<GateMode>('remote');
+const lastLocalOnlyReasonRef = useRef<string | null>(null);
+const autoSaveFailureRef = useRef<{ count: number }>({ count: 0 });
+const autoSaveBackoffUntilRef = useRef(0);
+const autoSaveBackoffTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+const autoSaveHaltedRef = useRef(false);
+const autoSaveWarningIssuedRef = useRef(false);
+const autoSavePauseLoggedRef = useRef(false);
+const saveInFlightRef = useRef(false);
+  const cancelScheduledAutosave = useCallback(
+    (reason?: Error) => {
+      if (!autosaveTimerRef.current) return;
+      clearTimeout(autosaveTimerRef.current.timeout);
+      autosaveTimerRef.current.reject(reason ?? createAutosaveSupersededError());
+      autosaveTimerRef.current = null;
+    },
+    [],
+  );
+const scheduleAutosave = useCallback(
+    (executor: () => Promise<void>): Promise<void> => {
+      cancelScheduledAutosave();
+      return new Promise((resolve, reject) => {
+        const timeout = setTimeout(async () => {
+          try {
+            await executor();
+            resolve();
+          } catch (error) {
+            reject(error);
+          } finally {
+            if (autosaveTimerRef.current?.timeout === timeout) {
+              autosaveTimerRef.current = null;
+            }
+          }
+        }, AUTOSAVE_DEBOUNCE_MS);
+
+        autosaveTimerRef.current = {
+          timeout,
+          reject,
+        };
+      });
+    },
+    [cancelScheduledAutosave],
+  );
+
+  const flushAutosave = useCallback(async () => {
+    if (autoSaveHaltedRef.current) {
+      console.info('[COURSE SAVE BATCH]', { event: 'halted', dirty: dirtyRef.current });
+      return;
+    }
+
+    if (saveInFlightRef.current) {
+      console.info('[COURSE SAVE BATCH]', {
+        event: 'skip_inflight',
+        inFlight: saveInFlightRef.current,
+        dirty: dirtyRef.current,
+      });
+      return;
+    }
+
+    while (dirtyRef.current && !autoSaveHaltedRef.current) {
+      const snapshot = latestCourseRef.current;
+      if (!snapshot || !snapshot.id || !snapshot.title?.trim()) {
+        console.info('[COURSE SAVE BATCH]', { event: 'skip_missing_snapshot' });
+        break;
+      }
+
+      dirtyRef.current = false;
+      saveInFlightRef.current = true;
+      autoSaveLockRef.current = true;
+      setSaveStatus((s) => (s === 'saving' ? s : 'saving'));
+
+      const gate = evaluateRuntimeGate('course.auto-save', runtimeStatus);
+      const controller = new AbortController();
+      if (autoSaveRequestAbortRef.current) {
+        autoSaveRequestAbortRef.current.abort();
+      }
+      autoSaveRequestAbortRef.current = controller;
+
+      const requestToken = nextRequestToken();
+      autoSaveRequestIdRef.current = requestToken;
+      const persistHandler = persistCourseRef.current;
+      if (!persistHandler) {
+        console.warn('[AdminCourseBuilder] persistCourseRef missing; skipping autosave run');
+        autoSaveLockRef.current = false;
+        saveInFlightRef.current = false;
+        return;
+      }
+
+      try {
+        logAutoSaveEvent('autosave_start', { courseId: snapshot.id, requestToken });
+        const sendingVersion = snapshot.version ?? lastPersistedRef.current?.version ?? 1;
+        console.info('[COURSE SAVE DIRTY]', {
+          dirty: dirtyRef.current,
+          courseId: snapshot.id,
+          reason: 'flush_start',
+        });
+        console.info('[COURSE SAVE BATCH]', {
+          event: 'sending',
+          courseId: snapshot.id,
+          sendingVersion,
+          dirty: dirtyRef.current,
+          inFlight: saveInFlightRef.current,
+        });
+
+        const result = await persistHandler(
+          { ...snapshot, slug: isEditing ? undefined : snapshot.slug },
+          {
+            action: 'course.auto-save',
+            gate,
+            skipValidation: true,
+            abortSignal: controller.signal,
+          },
+        );
+
+        if (autoSaveRequestIdRef.current !== requestToken) {
+          continue;
+        }
+
+        if (result?.remoteSynced) {
+          setSaveStatus('saved');
+          setLastSaveTime(new Date());
+          setTimeout(() => setSaveStatus('idle'), 2000);
+          logAutoSaveEvent('autosave_success', { courseId: snapshot.id, requestToken, mode: 'remote' });
+        } else {
+          setSaveStatus('idle');
+          logAutoSaveEvent('autosave_success', { courseId: snapshot.id, requestToken, mode: 'local' });
+        }
+      } catch (err) {
+        if (autoSaveRequestIdRef.current !== requestToken) {
+          continue;
+        }
+        if (controller.signal.aborted) {
+          continue;
+        }
+        const conflict = extractConflictDetails(err);
+        if (conflict) {
+          logAutoSaveEvent('autosave_conflict', {
+            courseId: snapshot.id,
+            requestToken,
+            reason: conflict.reason ?? 'unknown',
+            message: conflict.message,
+          });
+          if (conflict.reason === 'stale_version') {
+            dirtyRef.current = true;
+            const latest = await refreshCourseFromServer(snapshot.id, snapshot);
+            if (latest) {
+              setSaveStatus('idle');
+              resetAutoSaveFailuresRef.current?.();
+              setAutoSaveRetryNonce((prev) => prev + 1);
+            }
+            continue;
+          }
+          if (conflict.reason && conflict.reason.includes('idempotency')) {
+            autoSaveBackoffUntilRef.current = Date.now() + 1500;
+            scheduleAutoSaveRetryRef.current?.(1500);
+            setSaveStatus('idle');
+            continue;
+          }
+        }
+        if (err instanceof CourseValidationError) {
+          logAutoSaveEvent('autosave_validation_failed', {
+            courseId: snapshot.id,
+            requestToken,
+            issues: err.issues?.length ?? 0,
+          });
+        } else if (err instanceof SlugConflictError) {
+          console.warn('⚠️ Remote auto-sync skipped: slug conflict requires user action.');
+        } else {
+          console.error('❌ Remote auto-sync failed:', err);
+        }
+        setSaveStatus('error');
+        setTimeout(() => setSaveStatus('idle'), 4000);
+      } finally {
+        if (autoSaveRequestIdRef.current === requestToken) {
+          autoSaveRequestAbortRef.current = null;
+          autoSaveRequestIdRef.current = null;
+        }
+        autoSaveLockRef.current = false;
+        saveInFlightRef.current = false;
+      }
+    }
+  }, [
+    evaluateRuntimeGate,
+    runtimeStatus,
+    isEditing,
+    logAutoSaveEvent,
+    refreshCourseFromServer,
+    resetAutoSaveFailuresRef,
+    scheduleAutoSaveRetryRef,
+    setAutoSaveRetryNonce,
+  ]);
+
+  useEffect(() => {
+    if (!editingLesson || !lessonAutosaveState.pending) {
+      if (lessonAutosaveTimerRef.current) {
+        clearTimeout(lessonAutosaveTimerRef.current);
+        lessonAutosaveTimerRef.current = null;
+      }
+      return;
+    }
+
+    if (lessonAutosaveTimerRef.current) {
+      clearTimeout(lessonAutosaveTimerRef.current);
+    }
+
+    lessonAutosaveTimerRef.current = window.setTimeout(async () => {
+      if (!editingLesson) return;
+      autoSaveLockRef.current = true;
+      setLessonAutosaveState((prev) => ({
+        ...prev,
+        status: 'saving',
+        moduleId: editingLesson.moduleId,
+        lessonId: editingLesson.lessonId,
+        message: null,
+      }));
+      try {
+        const gate = evaluateRuntimeGate('course.auto-save', runtimeStatus);
+        dirtyRef.current = true;
+        console.info('[COURSE SAVE DIRTY]', {
+          dirty: dirtyRef.current,
+          courseId: course.id,
+          reason: 'lesson_autosave',
+        });
+        await scheduleAutosave(() => flushAutosave()).catch((error) => {
+          if (isAutosaveSupersededError(error)) {
+            return;
+          }
+          throw error;
+        });
+        setLessonAutosaveState({
+          status: 'idle',
+          pending: false,
+          moduleId: editingLesson.moduleId,
+          lessonId: editingLesson.lessonId,
+          message: null,
+        });
+      } catch (error) {
+        const status = error instanceof ApiError ? error.status : undefined;
+        const body = error instanceof ApiError ? error.body : undefined;
+        console.warn('lesson_save_failed', {
+          lessonId: editingLesson.lessonId,
+          moduleId: editingLesson.moduleId,
+          status,
+          body,
+        });
+        const fallbackMessage =
+          typeof navigator !== 'undefined' && navigator.onLine === false
+            ? 'Lesson changes are stored locally. Reconnect to sync with Huddle.'
+            : 'Lesson changes could not be saved. Please retry.';
+        setLessonAutosaveState({
+          status: 'error',
+          pending: false,
+          moduleId: editingLesson.moduleId,
+          lessonId: editingLesson.lessonId,
+          message: fallbackMessage,
+        });
+        showToast(fallbackMessage, 'error');
+      } finally {
+        autoSaveLockRef.current = false;
+        lessonAutosaveTimerRef.current = null;
+      }
+    }, LESSON_AUTOSAVE_DELAY);
+
+    return () => {
+      if (lessonAutosaveTimerRef.current) {
+        clearTimeout(lessonAutosaveTimerRef.current);
+        lessonAutosaveTimerRef.current = null;
+      }
+    };
+  }, [
+    course,
+    editingLesson,
+    flushAutosave,
+    lessonAutosaveState.pending,
+    runtimeStatus,
+    scheduleAutosave,
+    showToast,
+  ]);
   const [confirmDialog, setConfirmDialog] = useState<BuilderConfirmAction | null>(null);
 
   const confirmDialogContent = useMemo<ConfirmDialogConfig | null>(() => {
@@ -1995,6 +2234,15 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
     const { course: sanitizedNextCourse, issues: lessonIntegrityIssues } = ensureLessonIntegrity(enforcedCourse);
 
     const resolvedOrgId = resolveOrganizationId(sanitizedNextCourse);
+    const resolvedVersion =
+      typeof sanitizedNextCourse.version === 'number'
+        ? sanitizedNextCourse.version
+        : typeof nextCourse.version === 'number'
+        ? nextCourse.version
+        : typeof lastPersistedRef.current?.version === 'number'
+        ? lastPersistedRef.current.version
+        : 1;
+    sanitizedNextCourse.version = resolvedVersion;
 
     const canonicalCourseId = isUuid(sanitizedNextCourse.id)
       ? sanitizedNextCourse.id
@@ -2004,6 +2252,7 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
 
     const preparedCourse: Course = {
       ...sanitizedNextCourse,
+      version: resolvedVersion,
       id: canonicalCourseId,
       status: statusOverride ?? nextCourse.status ?? 'draft',
       duration: calculateCourseDuration(sanitizedNextCourse.modules || []),
@@ -2086,6 +2335,17 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
       const isCreateOperation = isClientGeneratedId(lastPersistedRef.current?.id) || !lastPersistedRef.current;
       try {
         const { clone: apiCourse } = cloneWithCanonicalOrgId(preparedCourse, { removeAliases: true });
+        const latestVersion =
+          typeof preparedCourse.version === 'number'
+            ? preparedCourse.version
+            : typeof lastPersistedRef.current?.version === 'number'
+            ? lastPersistedRef.current.version
+            : 1;
+        (apiCourse as Course).version = latestVersion;
+        console.info('[COURSE SAVE]', {
+          courseId: preparedCourse.id,
+          sendingVersion: latestVersion,
+        });
         const persisted = await syncCourseToDatabase(apiCourse as Course, {
           action: derivedAction,
           signal: abortSignal,
@@ -2122,6 +2382,9 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
     const mergedWithFallback =
       merged.modules && merged.modules.length > 0 ? merged : { ...merged, modules: preparedCourse.modules };
     courseStore.saveCourse(mergedWithFallback, { skipRemoteSync: true });
+    if (remoteSynced) {
+      suppressNextDirtyRef.current = true;
+    }
     setCourse(mergedWithFallback);
     if (remoteSynced) {
       resetAutoSaveFailures();
@@ -2130,7 +2393,6 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
     }
     return { course: mergedWithFallback, gate, remoteSynced };
   };
-  const persistCourseRef = useRef(persistCourse);
   useEffect(() => {
     persistCourseRef.current = persistCourse;
   }, [persistCourse]);
@@ -2153,7 +2415,18 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
       return;
     }
     const diff = computeCourseDiff(lastPersistedRef.current, course);
-    if (!diff.hasChanges) return;
+    const suppressDirty = suppressNextDirtyRef.current;
+    if (suppressDirty) {
+      suppressNextDirtyRef.current = false;
+      logAutoSaveEvent('autosave_dirty_suppressed', { courseId: course.id, reason: 'remote_sync' });
+    }
+    if (!diff.hasChanges || suppressDirty) return;
+    dirtyRef.current = true;
+    console.info('[COURSE SAVE DIRTY]', {
+      dirty: dirtyRef.current,
+      courseId: course.id,
+      reason: 'diff_detected',
+    });
     if (!course.modules || course.modules.length === 0) {
       return;
     }
@@ -2201,101 +2474,15 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
     lastAutoSaveGateModeRef.current = 'remote';
     lastLocalOnlyReasonRef.current = null;
 
-    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-    autoSaveTimerRef.current = setTimeout(async () => {
-      const persist = persistCourseRef.current;
-      if (!persist) return;
-      autoSaveLockRef.current = true;
-      setSaveStatus((s) => (s === 'saving' ? s : 'saving'));
-      const gate = evaluateRuntimeGate('course.auto-save', runtimeStatus);
-      const controller = new AbortController();
-      if (autoSaveRequestAbortRef.current) {
-        autoSaveRequestAbortRef.current.abort();
+    scheduleAutosave(() => flushAutosave()).catch((error) => {
+      if (isAutosaveSupersededError(error)) {
+        return;
       }
-      autoSaveRequestAbortRef.current = controller;
-      const requestToken = nextRequestToken();
-      autoSaveRequestIdRef.current = requestToken;
-      try {
-        logAutoSaveEvent('autosave_start', { courseId: course.id, requestToken });
-        const result = await persist(
-          { ...course, slug: isEditing ? undefined : course.slug },
-          {
-            action: 'course.auto-save',
-            gate,
-            skipValidation: true,
-            abortSignal: controller.signal,
-          },
-        );
-        if (autoSaveRequestIdRef.current !== requestToken) {
-          return;
-        }
-        if (result.remoteSynced) {
-          setSaveStatus('saved');
-          setLastSaveTime(new Date());
-          setTimeout(() => setSaveStatus('idle'), 2000);
-          logAutoSaveEvent('autosave_success', { courseId: course.id, requestToken, mode: 'remote' });
-        } else {
-          setSaveStatus('idle');
-          logAutoSaveEvent('autosave_success', { courseId: course.id, requestToken, mode: 'local' });
-        }
-      } catch (err) {
-        if (autoSaveRequestIdRef.current !== requestToken) {
-          return;
-        }
-        if (controller.signal.aborted) {
-          return;
-        }
-        const conflict = extractConflictDetails(err);
-        if (conflict) {
-          logAutoSaveEvent('autosave_conflict', {
-            courseId: course.id,
-            requestToken,
-            reason: conflict.reason ?? 'unknown',
-            message: conflict.message,
-          });
-          if (conflict.reason === 'stale_version') {
-            const latest = await refreshCourseFromServer(course.id, course);
-            if (latest) {
-              setSaveStatus('idle');
-              resetAutoSaveFailuresRef.current?.();
-              setAutoSaveRetryNonce((prev) => prev + 1);
-            }
-            return;
-          }
-          if (conflict.reason && conflict.reason.includes('idempotency')) {
-            autoSaveBackoffUntilRef.current = Date.now() + 1500;
-            scheduleAutoSaveRetryRef.current?.(1500);
-            setSaveStatus('idle');
-            return;
-          }
-        }
-        if (err instanceof CourseValidationError) {
-          logAutoSaveEvent('autosave_validation_failed', {
-            courseId: course.id,
-            requestToken,
-            issues: err.issues?.length ?? 0,
-          });
-        } else if (err instanceof SlugConflictError) {
-          console.warn('⚠️ Remote auto-sync skipped: slug conflict requires user action.');
-        } else {
-          console.error('❌ Remote auto-sync failed:', err);
-        }
-        setSaveStatus('error');
-        setTimeout(() => setSaveStatus('idle'), 4000);
-      } finally {
-        if (autoSaveRequestIdRef.current === requestToken) {
-          autoSaveRequestAbortRef.current = null;
-          autoSaveRequestIdRef.current = null;
-        }
-        autoSaveLockRef.current = false;
-      }
-    }, 1000);
+      console.error('[AdminCourseBuilder] scheduled autosave failed', error);
+    });
 
     return () => {
-      if (autoSaveTimerRef.current) {
-        clearTimeout(autoSaveTimerRef.current);
-        autoSaveTimerRef.current = null;
-      }
+      cancelScheduledAutosave();
       if (autoSaveRequestAbortRef.current) {
         autoSaveRequestAbortRef.current.abort();
         autoSaveRequestAbortRef.current = null;
@@ -2315,6 +2502,9 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
     resetAutoSaveFailuresRef,
     scheduleAutoSaveRetryRef,
     isEditing,
+    scheduleAutosave,
+    cancelScheduledAutosave,
+    flushAutosave,
   ]);
 
   const handleSave = async () => {

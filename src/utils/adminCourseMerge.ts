@@ -82,6 +82,7 @@ export const mergePersistedCourse = (local: Course, persisted: NormalizedCourse)
     slug: (persisted as any).slug ?? local.slug,
     title: (persisted as any).name ?? local.title,
     status: persisted.status,
+    version: typeof (persisted as any).version === 'number' ? (persisted as any).version : local.version ?? 1,
     modules: mergedModules,
     duration: calculateCourseDuration(mergedModules),
     lessons: countTotalLessons(mergedModules),

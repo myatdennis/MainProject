@@ -209,11 +209,19 @@ const createCoursePayloadForApi = (course: Course): Course => {
   const { clone } = cloneWithCanonicalOrgId(course, { removeAliases: true });
   const sanitizedModules = sanitizeModuleGraph((clone as Course).modules || []);
   (clone as Course).modules = sanitizedModules;
+  const resolvedVersion =
+    typeof course.version === 'number' && Number.isFinite(course.version)
+      ? course.version
+      : typeof (clone as Course).version === 'number' && Number.isFinite((clone as Course).version)
+      ? (clone as Course).version
+      : 1;
+  (clone as Course).version = resolvedVersion;
   return clone as Course;
 };
 
 // Default course data
-const getDefaultCourses = (): { [key: string]: Course } => ({
+const getDefaultCourses = (): { [key: string]: Course } => {
+  const defaults: { [key: string]: Course } = {
   'foundations': {
     id: 'foundations',
     title: 'Foundations of Inclusive Leadership',
@@ -1064,10 +1072,20 @@ const getDefaultCourses = (): { [key: string]: Course } => ({
       }
     ]
   }
-});
+  };
+
+  Object.values(defaults).forEach((course) => {
+    if (typeof course.version !== 'number' || Number.isNaN(course.version)) {
+      course.version = 1;
+    }
+  });
+
+  return defaults;
+};
 
 // Initialize courses from localStorage or defaults
 let courses: { [key: string]: Course } = _loadCoursesFromLocalStorage();
+let editingCourseId: string | null = null;
 
 export type AdminLoadStatus = 'skipped' | 'success' | 'empty' | 'error' | 'unauthorized' | 'api_unreachable';
 type AdminCatalogPhase = 'idle' | 'loading' | 'ready';
@@ -1492,6 +1510,9 @@ const emitCatalogDiagnostic = (event: CatalogDiagnosticEvent, detail: Record<str
 
 // Store management functions
 export const courseStore = {
+  setEditingCourseId: (id: string | null): void => {
+    editingCourseId = id ?? null;
+  },
   init: (): Promise<void> => {
     if (initPromise) {
       return initPromise;
@@ -1658,9 +1679,25 @@ export const courseStore = {
       if (dbCourses.length > 0) {
         // Merge fetched courses with any existing locally persisted drafts instead of overwriting entirely.
         const merged: { [key: string]: Course } = { ...courses };
-        dbCourses.forEach((course: Course) => {
-          const existing = merged[course.id];
-          merged[course.id] = existing ? { ...existing, ...course } : course;
+        dbCourses.forEach((apiCourse: Course) => {
+          const courseWithVersion =
+            typeof apiCourse.version === 'number' && Number.isFinite(apiCourse.version)
+              ? apiCourse
+              : { ...apiCourse, version: 1 };
+          const existing = merged[courseWithVersion.id];
+          if (editingCourseId && courseWithVersion.id === editingCourseId && existing) {
+            return;
+          }
+          merged[courseWithVersion.id] = existing
+            ? {
+                ...existing,
+                ...courseWithVersion,
+                version:
+                  typeof courseWithVersion.version === 'number'
+                    ? courseWithVersion.version
+                    : existing.version,
+              }
+            : { ...courseWithVersion };
         });
         courses = merged;
         console.log(`[courseStore.init] Loaded ${dbCourses.length} courses from API (merged with ${Object.keys(merged).length - dbCourses.length} existing drafts)`);
@@ -1797,8 +1834,11 @@ export const courseStore = {
 
   saveCourse: (course: Course, options: { skipRemoteSync?: boolean } = {}): void => {
     const normalizedModules = sanitizeModuleGraph(course.modules || []);
+    const resolvedVersion =
+      typeof course.version === 'number' && Number.isFinite(course.version) ? course.version : 1;
     const nextCourse: Course = {
       ...course,
+      version: resolvedVersion,
       modules: normalizedModules,
       lastUpdated: new Date().toISOString(),
     };
@@ -1883,6 +1923,7 @@ export const courseStore = {
     const newCourse: Course = {
       id: generatedId,
       slug,
+      version: typeof courseData.version === 'number' && Number.isFinite(courseData.version) ? courseData.version : 1,
       title: courseData.title || 'New Course',
       description: courseData.description || '',
       status: 'draft',

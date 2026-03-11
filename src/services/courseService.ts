@@ -41,6 +41,7 @@ export type SupabaseCourseRecord = {
   slug?: string | null;
   title: string;
   name?: string | null;
+  version?: number | null;
   description?: string | null;
   status?: string | null;
   thumbnail?: string | null;
@@ -269,6 +270,7 @@ export const mapCourseRecord = (course: SupabaseCourseRecord): NormalizedCourse 
 
   const normalizedCourse = normalizeCourse({
     id: course.id,
+    version: typeof (course as any).version === 'number' ? (course as any).version : undefined,
     slug: course.slug || slugify(course.id || resolvedTitle || 'course'),
     title: resolvedTitle,
     description: course.description || meta.description || '',
@@ -308,6 +310,9 @@ export const mapCourseRecord = (course: SupabaseCourseRecord): NormalizedCourse 
 
   if (resolvedOrganizationId) {
     (normalizedCourse as Record<string, any>).organizationId = resolvedOrganizationId;
+  }
+  if (typeof (course as any).version === 'number') {
+    (normalizedCourse as Record<string, any>).version = (course as any).version;
   }
   stampCanonicalOrgId(normalizedCourse as Record<string, any>, resolvedOrganizationId);
   markCoursePersisted(normalizedCourse.id);
@@ -470,7 +475,7 @@ const buildCoursePayload = (course: NormalizedCourse) => {
     slug: course.slug || slugify(course.title || course.id),
     description: course.description,
     status: course.status || 'draft',
-    version: (course as any).version ?? 1,
+    version: course.version ?? (course as any).version ?? 1,
     organization_id: organizationId ?? undefined,
     meta: {
       thumbnail: course.thumbnail,
@@ -602,7 +607,7 @@ export class CourseService {
   private static async upsertCourse(
     course: NormalizedCourse,
     options: { idempotencyKey?: string; signal?: AbortSignal } = {},
-  ): Promise<void> {
+  ): Promise<SupabaseCourseRecord | null> {
     const payload = buildCoursePayload(course);
     let modules = CourseService.buildModulesPayloadForUpsert(course);
     const body: Record<string, unknown> = { course: payload, modules };
@@ -638,12 +643,21 @@ export class CourseService {
     const endpoint = isCreateOperation ? '/api/admin/courses' : `/api/admin/courses/${course.id}`;
     const method = isCreateOperation ? 'POST' : 'PUT';
 
+    let lastServerCourse: SupabaseCourseRecord | null = null;
+
     try {
-      await apiRequest(endpoint, {
+      const response = await apiRequest<{ data?: SupabaseCourseRecord; course?: SupabaseCourseRecord }>(endpoint, {
         method,
         body,
         signal: options.signal,
       });
+      const serverCourse = response?.course ?? response?.data ?? null;
+      const serverVersion =
+        serverCourse && typeof serverCourse.version === 'number' ? serverCourse.version : null;
+      if (serverVersion !== null) {
+        course.version = serverVersion;
+      }
+      lastServerCourse = serverCourse;
     } catch (error) {
       const slugConflict = parseSlugConflictError(error, course.slug);
       if (slugConflict) {
@@ -651,6 +665,8 @@ export class CourseService {
       }
       throw error;
     }
+
+    return lastServerCourse;
   }
 
   private static async fetchCourseStructure(
