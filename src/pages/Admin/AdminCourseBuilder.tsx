@@ -1672,7 +1672,15 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
     const asset = content.videoAsset ? { ...content.videoAsset } : {};
     let changed = false;
 
+    const assetSignedUrl =
+      asset.signedUrl ||
+      (asset as any)?.signed_url ||
+      (asset as any)?.publicUrl ||
+      (asset as any)?.public_url ||
+      null;
+
     const fallbackSource =
+      assetSignedUrl ||
       asset.storagePath ||
       asset.assetId ||
       content.videoUrl ||
@@ -1689,7 +1697,10 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
       asset.storagePath = fallbackSource;
       changed = true;
     }
-    if (!content.videoUrl && fallbackSource && !fallbackSource.startsWith('external://')) {
+    if (!content.videoUrl && assetSignedUrl) {
+      content.videoUrl = assetSignedUrl;
+      changed = true;
+    } else if (!content.videoUrl && fallbackSource && !fallbackSource.startsWith('external://')) {
       content.videoUrl = fallbackSource;
       changed = true;
     } else if (!content.videoUrl && fallbackSource.startsWith('external://')) {
@@ -1789,11 +1800,29 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
           isCorrect: optionIdx === 0,
         }));
         issues.push(`quiz_correct_answer_filled:${nextLesson.id}:${index}`);
+      } else if (!explicitIndex && hasMarkedOption) {
+        const flaggedIndex = normalizedQuestion.options.findIndex((option) => option?.correct || option?.isCorrect);
+        normalizedQuestion.correctAnswerIndex = flaggedIndex >= 0 ? flaggedIndex : 0;
       }
 
-      if (!explicitIndex && !hasMarkedOption) {
+      if (
+        normalizedQuestion.correctAnswerIndex == null ||
+        normalizedQuestion.correctAnswerIndex < 0 ||
+        normalizedQuestion.correctAnswerIndex >= normalizedQuestion.options.length
+      ) {
         valid = false;
       }
+
+      const finalCorrectIndex =
+        normalizedQuestion.correctAnswerIndex != null && normalizedQuestion.correctAnswerIndex >= 0
+          ? normalizedQuestion.correctAnswerIndex
+          : 0;
+      normalizedQuestion.options = normalizedQuestion.options.map((option, optionIdx) => ({
+        ...option,
+        correct: optionIdx === finalCorrectIndex,
+        isCorrect: optionIdx === finalCorrectIndex,
+      }));
+      normalizedQuestion.correctAnswer = normalizedQuestion.options[finalCorrectIndex]?.id ?? null;
       return normalizedQuestion;
     });
 
@@ -3650,15 +3679,20 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
                                 const nextOptions = (question.options || []).map((opt: any, idx: number) => {
                                   const base =
                                     typeof opt === 'object'
-                                      ? { ...opt }
+                                      ? { ...opt, id: opt.id || `${question.id}-opt-${idx}` }
                                       : { id: `${question.id}-opt-${idx}`, text: opt };
-                                  return idx === oIndex
-                                    ? { ...base, correct: true, isCorrect: true }
-                                    : { ...base, correct: false, isCorrect: false };
+                                  const flagged = idx === oIndex;
+                                  return {
+                                    ...base,
+                                    correct: flagged,
+                                    isCorrect: flagged,
+                                  };
                                 });
+                                const correctAnswerId = nextOptions[oIndex]?.id ?? null;
                                 updatedQuestions[qIndex] = {
                                   ...question,
                                   correctAnswerIndex: oIndex,
+                                  correctAnswer: correctAnswerId,
                                   options: nextOptions,
                                 };
                                 updateLesson(moduleId, lesson.id, {
@@ -3676,7 +3710,7 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
                                 const currentOption = updatedOptions[oIndex];
                                 updatedOptions[oIndex] =
                                   typeof currentOption === 'object'
-                                    ? { ...currentOption, text: e.target.value }
+                                    ? { ...currentOption, id: currentOption.id || optionId, text: e.target.value }
                                     : { id: optionId, text: e.target.value };
                                 updatedQuestions[qIndex] = { ...question, options: updatedOptions };
                                 updateLesson(moduleId, lesson.id, {
@@ -3689,13 +3723,34 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
                             <button
                               onClick={() => {
                                 const updatedQuestions = [...(lesson.content.questions || [])];
-                                const updatedOptions = (question.options || []).filter((_: any, i: number) => i !== oIndex);
-                                updatedQuestions[qIndex] = { 
-                                  ...question, 
-                                  options: updatedOptions,
-                                  correctAnswerIndex: (question.correctAnswerIndex || 0) > oIndex
-                                    ? (question.correctAnswerIndex || 0) - 1
-                                    : (question.correctAnswerIndex || 0)
+                                const updatedOptions = (question.options || [])
+                                  .filter((_: any, i: number) => i !== oIndex)
+                                  .map((opt: any, idx: number) =>
+                                    typeof opt === 'object'
+                                      ? { ...opt, id: opt.id || `${question.id}-opt-${idx}` }
+                                      : { id: `${question.id}-opt-${idx}`, text: opt },
+                                  );
+                                let nextCorrectIndex = question.correctAnswerIndex ?? 0;
+                                if (nextCorrectIndex >= updatedOptions.length) {
+                                  nextCorrectIndex = updatedOptions.length - 1;
+                                }
+                                if (nextCorrectIndex < 0) {
+                                  nextCorrectIndex = 0;
+                                }
+                                const normalizedOptions = updatedOptions.map((opt: any, idx: number) => {
+                                  const flagged = idx === nextCorrectIndex;
+                                  return {
+                                    ...opt,
+                                    correct: flagged,
+                                    isCorrect: flagged,
+                                  };
+                                });
+                                const nextCorrectAnswer = normalizedOptions[nextCorrectIndex]?.id ?? null;
+                                updatedQuestions[qIndex] = {
+                                  ...question,
+                                  options: normalizedOptions,
+                                  correctAnswerIndex: normalizedOptions.length ? nextCorrectIndex : undefined,
+                                  correctAnswer: normalizedOptions.length ? nextCorrectAnswer : undefined,
                                 };
                                 updateLesson(moduleId, lesson.id, {
                                   content: { ...lesson.content, questions: updatedQuestions }
@@ -4114,15 +4169,20 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
                                 const nextOptions = (question.options || []).map((opt: any, idx: number) => {
                                   const base =
                                     typeof opt === 'object'
-                                      ? { ...opt }
+                                      ? { ...opt, id: opt.id || `${question.id}-opt-${idx}` }
                                       : { id: `${question.id}-opt-${idx}`, text: opt };
-                                  return idx === oIndex
-                                    ? { ...base, correct: true, isCorrect: true }
-                                    : { ...base, correct: false, isCorrect: false };
+                                  const flagged = idx === oIndex;
+                                  return {
+                                    ...base,
+                                    correct: flagged,
+                                    isCorrect: flagged,
+                                  };
                                 });
+                                const correctAnswerId = nextOptions[oIndex]?.id ?? null;
                                 updatedQuestions[qIndex] = {
                                   ...question,
                                   correctAnswerIndex: oIndex,
+                                  correctAnswer: correctAnswerId,
                                   options: nextOptions,
                                 };
                                 updateLesson(moduleId, lesson.id, {
@@ -4140,7 +4200,7 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
                                 const currentOption = updatedOptions[oIndex];
                                 updatedOptions[oIndex] =
                                   typeof currentOption === 'object'
-                                    ? { ...currentOption, text: e.target.value }
+                                    ? { ...currentOption, id: currentOption.id || optionId, text: e.target.value }
                                     : { id: optionId, text: e.target.value };
                                 updatedQuestions[qIndex] = { ...question, options: updatedOptions };
                                 updateLesson(moduleId, lesson.id, {
@@ -4153,11 +4213,34 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
                             <button
                               onClick={() => {
                                 const updatedQuestions = [...(lesson.content.questions || [])];
-                                const updatedOptions = (question.options || []).filter((_: any, i: number) => i !== oIndex);
-                                updatedQuestions[qIndex] = { 
-                                  ...question, 
-                                  options: updatedOptions,
-                                  correctAnswerIndex: (question.correctAnswerIndex || 0) > oIndex ? (question.correctAnswerIndex || 0) - 1 : (question.correctAnswerIndex || 0)
+                                const updatedOptions = (question.options || [])
+                                  .filter((_: any, i: number) => i !== oIndex)
+                                  .map((opt: any, idx: number) =>
+                                    typeof opt === 'object'
+                                      ? { ...opt, id: opt.id || `${question.id}-opt-${idx}` }
+                                      : { id: `${question.id}-opt-${idx}`, text: opt },
+                                  );
+                                let nextCorrectIndex = question.correctAnswerIndex ?? 0;
+                                if (nextCorrectIndex >= updatedOptions.length) {
+                                  nextCorrectIndex = updatedOptions.length - 1;
+                                }
+                                if (nextCorrectIndex < 0) {
+                                  nextCorrectIndex = 0;
+                                }
+                                const normalizedOptions = updatedOptions.map((opt: any, idx: number) => {
+                                  const flagged = idx === nextCorrectIndex;
+                                  return {
+                                    ...opt,
+                                    correct: flagged,
+                                    isCorrect: flagged,
+                                  };
+                                });
+                                const nextCorrectAnswer = normalizedOptions[nextCorrectIndex]?.id ?? null;
+                                updatedQuestions[qIndex] = {
+                                  ...question,
+                                  options: normalizedOptions,
+                                  correctAnswerIndex: normalizedOptions.length ? nextCorrectIndex : undefined,
+                                  correctAnswer: normalizedOptions.length ? nextCorrectAnswer : undefined,
                                 };
                                 updateLesson(moduleId, lesson.id, {
                                   content: { ...lesson.content, questions: updatedQuestions }
@@ -4169,17 +4252,17 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
                             </button>
                           </div>
                         )})}
-                        <button
-                          onClick={() => {
-                            const updatedQuestions = [...(lesson.content.questions || [])];
-                            const updatedOptions = [
-                              ...(question.options || []),
-                              { id: `${question.id}-opt-${Date.now()}`, text: '', correct: false, isCorrect: false },
-                            ];
-                            updatedQuestions[qIndex] = { ...question, options: updatedOptions };
-                            updateLesson(moduleId, lesson.id, {
-                              content: { ...lesson.content, questions: updatedQuestions }
-                            });
+                            <button
+                              onClick={() => {
+                                const updatedQuestions = [...(lesson.content.questions || [])];
+                                const updatedOptions = [
+                                  ...(question.options || []),
+                                  { id: `${question.id}-opt-${Date.now()}`, text: '', correct: false, isCorrect: false },
+                                ];
+                                updatedQuestions[qIndex] = { ...question, options: updatedOptions };
+                                updateLesson(moduleId, lesson.id, {
+                                  content: { ...lesson.content, questions: updatedQuestions }
+                                });
                           }}
                           className="text-blue-600 hover:text-blue-700 text-sm"
                         >

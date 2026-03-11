@@ -7,7 +7,6 @@ import {
   formatMinutes,
 } from '../utils/courseNormalization';
 import apiRequest, { ApiError } from '../utils/apiClient';
-import migrateLessonContent from '../utils/contentMigrator';
 import {
   moduleSchema,
   modulePatchSchema,
@@ -29,7 +28,7 @@ import { CURRENT_CONTENT_SCHEMA_VERSION } from '../schema/contentSchema';
 import { ZodError } from 'zod';
 import { createActionIdentifiers, type IdempotentAction } from '../utils/idempotency';
 import { cloneWithCanonicalOrgId, resolveOrgIdFromCarrier, stampCanonicalOrgId } from '../utils/orgFieldUtils';
-import { normalizeLessonForPersistence } from '../utils/lessonContent';
+import { normalizeLessonForPersistence, canonicalizeLessonContent } from '../utils/lessonContent';
 import type { CourseValidationIssue } from '../validation/courseValidation';
 import { parseSlugConflictError, SlugConflictError } from '../utils/slugConflict';
 import { getSupabase } from '../lib/supabaseClient';
@@ -398,31 +397,22 @@ const buildLessonResources = (lesson: Lesson): { label: string; url: string }[] 
 };
 
 const buildLessonContent = (lesson: Lesson, apiType: LessonDto['type']): LessonInput['content'] => {
-  const sanitized = sanitizeSerializable(lesson.content ?? {}) || {};
-  const canonicalBody = migrateLessonContent({ ...sanitized }) || {};
-  if (canonicalBody.schema_version == null) {
-    canonicalBody.schema_version = CURRENT_CONTENT_SCHEMA_VERSION;
-  }
-  if (!canonicalBody.type) {
-    canonicalBody.type = apiType;
-  }
-  const bodyClone = { ...canonicalBody };
-  const passthrough = { ...canonicalBody };
-  const content: LessonInput['content'] = {
-    ...passthrough,
-    type: apiType,
-    body: bodyClone,
-  };
+  const canonical = canonicalizeLessonContent(lesson.content ?? {});
+  canonical.type = apiType;
+  canonical.schema_version = canonical.schema_version ?? CURRENT_CONTENT_SCHEMA_VERSION;
+  const sanitized = sanitizeSerializable(canonical) || {};
+  const base =
+    typeof sanitized === 'object' && sanitized !== null
+      ? (sanitized as LessonInput['content'])
+      : ({ type: apiType } as LessonInput['content']);
+  base.type = apiType;
 
   const resources = buildLessonResources(lesson);
   if (resources.length > 0) {
-    content.resources = resources;
-    if (!Array.isArray(bodyClone.resources) || bodyClone.resources.length === 0) {
-      bodyClone.resources = resources;
-    }
+    base.resources = resources;
   }
 
-  return content;
+  return base;
 };
 
 const mapCompletionRule = (lesson: Lesson): LessonInput['completionRule'] => {

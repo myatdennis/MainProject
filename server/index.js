@@ -10927,7 +10927,18 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
     const { data, count } = await runSupabaseQueryWithRetry('admin.organizations.list', () => buildOrgQuery());
 
     let progressMap = {};
-    const shouldFetchProgress = includeProgress && (await ensureOrgProgressViewAvailable());
+    let shouldFetchProgress = false;
+    if (includeProgress) {
+      try {
+        shouldFetchProgress = await ensureOrgProgressViewAvailable();
+      } catch (viewCheckError) {
+        console.warn('[admin.organizations.list] progress_view_check_failed', {
+          message: viewCheckError?.message ?? null,
+          code: viewCheckError?.code ?? null,
+        });
+        shouldFetchProgress = false;
+      }
+    }
     if (shouldFetchProgress && Array.isArray(data) && data.length > 0) {
       const ids = data.map((org) => org.id).filter(Boolean);
       if (ids.length) {

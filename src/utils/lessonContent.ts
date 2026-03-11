@@ -1,5 +1,5 @@
 import { nanoid } from 'nanoid';
-import type { Lesson, LessonContent, QuizQuestion, QuizOption } from '../types/courseTypes';
+import type { Lesson, LessonContent, QuizQuestion, QuizOption, LessonVideoAsset } from '../types/courseTypes';
 import migrateLessonContent from './contentMigrator';
 
 const ensureId = (prefix: string) => `${prefix}-${nanoid(8)}`;
@@ -21,14 +21,8 @@ export const canonicalizeQuizQuestions = (questions: any[] = []): QuizQuestion[]
           return {
             id: `${questionId}-opt-${optionIndex}`,
             text: option,
-            correct:
-              typeof question?.correctAnswerIndex === 'number'
-                ? question.correctAnswerIndex === optionIndex
-                : false,
-            isCorrect:
-              typeof question?.correctAnswerIndex === 'number'
-                ? question.correctAnswerIndex === optionIndex
-                : false,
+            correct: false,
+            isCorrect: false,
           };
         }
 
@@ -42,37 +36,119 @@ export const canonicalizeQuizQuestions = (questions: any[] = []): QuizQuestion[]
         }
 
         const resolvedId = option.id || `${questionId}-opt-${optionIndex}`;
-        const isCorrect =
-          option.correct ??
-          option.isCorrect ??
-          (typeof question?.correctAnswerIndex === 'number'
-            ? question.correctAnswerIndex === optionIndex
-            : false);
 
         return {
           ...option,
           id: resolvedId,
           text: option.text || option.label || option.value || `Option ${optionIndex + 1}`,
-          correct: Boolean(isCorrect),
-          isCorrect: Boolean(isCorrect),
+          correct: Boolean(option.correct || option.isCorrect),
+          isCorrect: Boolean(option.correct || option.isCorrect),
         };
       })
       .filter((option): option is QuizOption => Boolean(option?.id));
 
-    const resolvedIndex =
+    const markedIndex =
       typeof question?.correctAnswerIndex === 'number'
         ? question.correctAnswerIndex
         : normalizedOptions.findIndex((option) => Boolean(option.correct || option.isCorrect));
 
+    const resolvedIndex =
+      markedIndex >= 0 && markedIndex < normalizedOptions.length ? markedIndex : normalizedOptions.length > 0 ? 0 : -1;
+
+    const optionsWithFlags = normalizedOptions.map((option, optionIndex) => {
+      const isCorrect = optionIndex === resolvedIndex;
+      return {
+        ...option,
+        correct: isCorrect,
+        isCorrect,
+      };
+    });
+
+    const correctAnswerId =
+      resolvedIndex >= 0 && optionsWithFlags[resolvedIndex] ? optionsWithFlags[resolvedIndex].id : null;
+
     return {
       ...question,
       id: questionId,
+      type: question?.type || 'multiple-choice',
       text: question?.text || question?.question || question?.prompt || '',
       prompt: question?.prompt || question?.text || question?.question || '',
-      options: normalizedOptions,
-      correctAnswerIndex: resolvedIndex >= 0 ? resolvedIndex : 0,
+      options: optionsWithFlags,
+      correctAnswerIndex: resolvedIndex >= 0 ? resolvedIndex : undefined,
+      correctAnswer: correctAnswerId ?? undefined,
+      correctOptionIds: correctAnswerId ? [correctAnswerId] : [],
     };
   });
+};
+
+const toNumber = (value: unknown): number | undefined => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    if (!Number.isNaN(parsed)) {
+      return parsed;
+    }
+  }
+  return undefined;
+};
+
+const pickString = (...values: Array<unknown>): string | undefined => {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value;
+    }
+  }
+  return undefined;
+};
+
+const normalizeVideoAsset = (raw?: any): LessonVideoAsset | undefined => {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const asset: LessonVideoAsset = {
+    assetId:
+      raw.assetId ??
+      raw.asset_id ??
+      raw.assetKey ??
+      raw.asset_key ??
+      raw.id ??
+      raw.storageId ??
+      raw.storage_id ??
+      undefined,
+    storagePath:
+      pickString(
+        raw.storagePath,
+        raw.storage_path,
+        raw.storageKey,
+        raw.storage_key,
+        raw.path,
+        raw.asset_path,
+        raw.assetId,
+        raw.asset_id,
+        raw.url,
+        raw.publicUrl,
+        raw.public_url,
+      ) ?? 'external://unknown',
+    bucket: pickString(raw.bucket, raw.bucket_id, raw.bucketId) ?? 'external',
+    bytes: toNumber(raw.bytes ?? raw.size ?? raw.fileSize) ?? 0,
+    mimeType: pickString(raw.mimeType, raw.mime_type, raw.contentType, raw.content_type) ?? 'video/mp4',
+    checksum: raw.checksum ?? raw.etag ?? raw.hash ?? null,
+    uploadedAt: raw.uploadedAt ?? raw.uploaded_at ?? raw.created_at ?? raw.updated_at,
+    uploadedBy: raw.uploadedBy ?? raw.uploaded_by ?? raw.author ?? raw.owner ?? null,
+    source: raw.source ?? raw.videoSource ?? raw.provider ?? raw.origin ?? undefined,
+    status: raw.status ?? raw.uploadStatus ?? undefined,
+    resumableToken: raw.resumableToken ?? raw.resumable_token ?? null,
+    signedUrl: raw.signedUrl ?? raw.signed_url ?? raw.url ?? raw.publicUrl ?? raw.public_url ?? null,
+    urlExpiresAt: raw.urlExpiresAt ?? raw.url_expires_at ?? raw.expires_at ?? null,
+  };
+
+  if (!asset.assetId) {
+    asset.assetId = asset.storagePath;
+  }
+
+  if (!asset.signedUrl && typeof raw.signed_urls === 'object') {
+    asset.signedUrl = raw.signed_urls?.read ?? raw.signed_urls?.default ?? null;
+  }
+
+  return asset;
 };
 
 export const canonicalizeLessonContent = (content?: LessonContent): LessonContent => {
@@ -81,8 +157,61 @@ export const canonicalizeLessonContent = (content?: LessonContent): LessonConten
   const migrated = migrateLessonContent(content);
   const next: LessonContent = { ...migrated };
 
+  const fallbackQuestions =
+    Array.isArray((next as any)?.quiz?.questions)
+      ? (next as any).quiz.questions
+      : Array.isArray((next as any)?.quiz_questions)
+      ? (next as any).quiz_questions
+      : Array.isArray((next as any)?.quizQuestions)
+      ? (next as any).quizQuestions
+      : undefined;
+
+  if (!next.questions && fallbackQuestions) {
+    next.questions = fallbackQuestions;
+  }
+
   if (Array.isArray(next.questions)) {
     next.questions = canonicalizeQuizQuestions(next.questions) as any;
+  }
+
+  if ((next as any).video_url && !next.videoUrl) {
+    next.videoUrl = (next as any).video_url;
+  }
+
+  const rawAsset = next.videoAsset ?? (next as any).video_asset ?? (next.video as any)?.asset;
+  const normalizedAsset = normalizeVideoAsset(rawAsset);
+  if (normalizedAsset) {
+    next.videoAsset = normalizedAsset;
+  }
+
+  const resolvedVideoUrl = pickString(
+    next.videoUrl,
+    (next as any).video_url,
+    next.video?.url,
+    next.video?.embedUrl,
+    next.video?.source,
+    next.videoAsset?.signedUrl ?? undefined,
+    (next.videoAsset as any)?.url ?? (next.videoAsset as any)?.publicUrl ?? undefined,
+    next.videoAsset?.storagePath?.startsWith('http') ? next.videoAsset.storagePath : undefined,
+  );
+
+  if (resolvedVideoUrl) {
+    next.videoUrl = resolvedVideoUrl;
+    if (!next.video) {
+      next.video = {};
+    }
+    next.video.url = next.video.url || resolvedVideoUrl;
+  }
+
+  if (!next.videoSourceType) {
+    next.videoSourceType =
+      next.video?.sourceType ||
+      (next.videoAsset?.source === 'external' ? 'external' : next.videoAsset?.source) ||
+      (resolvedVideoUrl && resolvedVideoUrl.startsWith('http') ? 'external' : undefined);
+  }
+
+  if (!next.videoProvider && typeof next.video?.provider === 'string') {
+    next.videoProvider = next.video.provider;
   }
 
   if (!next.textContent && typeof next.content === 'string') {
@@ -91,10 +220,6 @@ export const canonicalizeLessonContent = (content?: LessonContent): LessonConten
 
   if (!next.content && typeof next.textContent === 'string') {
     next.content = next.textContent;
-  }
-
-  if (next.video && typeof next.video === 'object' && next.video.url && !next.videoUrl) {
-    next.videoUrl = next.video.url;
   }
 
   if (!next.videoSourceType && next.videoProvider) {
@@ -108,6 +233,11 @@ export const canonicalizeLessonContent = (content?: LessonContent): LessonConten
       next.videoAsset.bytes = parsedBytes;
     }
   }
+
+  delete (next as any).video_url;
+  delete (next as any).video_asset;
+  delete (next as any).quiz_questions;
+  delete (next as any).quizQuestions;
 
   return next;
 };

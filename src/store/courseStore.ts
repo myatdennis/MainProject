@@ -1614,9 +1614,9 @@ export const courseStore = {
         restrictToOrg || (!restrictToOrg && (adminLoadStatus === 'error' || adminLoadStatus === 'api_unreachable'));
 
       if ((!dbCourses || dbCourses.length === 0) && shouldLoadPublishedCatalog) {
-        const learnerContextReadyForFallback =
-          !restrictToOrg ||
-          (!!orgContext.orgId && (orgContext.status === 'ready' || orgContext.status === 'idle'));
+        const learnerContextReadyForFallback = restrictToOrg
+          ? orgContext.status === 'ready' && !!orgContext.orgId
+          : orgContext.status === 'ready';
         if (!learnerContextReadyForFallback) {
           console.info(
             '[courseStore.init] Deferring published catalog fallback until auth/org context is ready.',
