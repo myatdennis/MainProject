@@ -32,9 +32,9 @@ npm install chart.js react-chartjs-2 @supabase/supabase-js
 read -s "DB_PASS?Postgres password: " && echo
 read -e "SSLROOT?Path to SSL root CA (or leave empty): " && \
 if [ -n "$SSLROOT" ]; then \
-  export DATABASE_URL="postgresql://postgres:${DB_PASS}@db.miqzywzuqzeffqpiupjm.supabase.co:5432/postgres?sslmode=verify-full&sslrootcert=${SSLROOT}"; \
+  export DATABASE_URL="postgresql://postgres:${DB_PASS}@db.eprsgmfzqjptfywoecuy.supabase.co:5432/postgres?sslmode=verify-full&sslrootcert=${SSLROOT}"; \
 else \
-  export DATABASE_URL="postgresql://postgres:${DB_PASS}@db.miqzywzuqzeffqpiupjm.supabase.co:5432/postgres"; \
+  export DATABASE_URL="postgresql://postgres:${DB_PASS}@db.eprsgmfzqjptfywoecuy.supabase.co:5432/postgres"; \
 fi
 sh ./scripts/apply_migration.sh supabase/migrations/20251108_add_analytics_tables_and_views.sql
 ```
@@ -42,7 +42,7 @@ sh ./scripts/apply_migration.sh supabase/migrations/20251108_add_analytics_table
 3) Add frontend env (.env) with Supabase anon key and URL for realtime:
 
 ```
-VITE_SUPABASE_URL=https://db.miqzywzuqzeffqpiupjm.supabase.co
+VITE_SUPABASE_URL=https://eprsgmfzqjptfywoecuy.supabase.co
 VITE_SUPABASE_ANON_KEY=[YOUR_ANON_KEY]
 ```
 

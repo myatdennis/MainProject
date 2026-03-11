@@ -7,7 +7,7 @@ Use the deployed edge function to perform smoke tests against the persistent Sup
 Set the function base URL (replace the project ref if different):
 
 ```bash
-export API_BASE_URL="https://miqzywzuqzeffqpiupjm.functions.supabase.co"
+export API_BASE_URL="https://eprsgmfzqjptfywoecuy.functions.supabase.co"
 ```
 
 Authentication headers accepted by the routes:

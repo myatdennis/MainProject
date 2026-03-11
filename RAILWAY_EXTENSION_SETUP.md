@@ -17,7 +17,7 @@ This project already supports Railway (API + static frontend). These steps will 
 4) Configure environment variables
    - Click the service and open the `Variables` tab in the Railway extension.
    - Add the following env variables for the **server service** (do NOT add these to client-side env as `VITE_` prefixes unless intentionally exposed):
-     - SUPABASE_URL: https://miqzywzuqzeffqpiupjm.supabase.co
+     - SUPABASE_URL: https://eprsgmfzqjptfywoecuy.supabase.co
      - SUPABASE_SERVICE_ROLE_KEY: <paste-service-role-here>
      - CORS_ALLOWED_ORIGINS: https://your-frontend-hostname1,https://www.yourdomain.com
      - PORT: 8888

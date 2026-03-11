@@ -20,7 +20,7 @@
 
 ### 2. **Database & Environment Configuration** ✅ CONFIGURED
 - **Supabase Environment Variables:** Successfully configured in `.env` file
-  - `VITE_SUPABASE_URL`: https://miqzywzuqzeffqpiupjm.supabase.co
+  - `VITE_SUPABASE_URL`: https://eprsgmfzqjptfywoecuy.supabase.co
   - `VITE_SUPABASE_ANON_KEY`: Properly configured
 - **Demo Users Created:** ✅ Admin and LMS users created in database
    - Admin: `mya@the-huddle.co` / `admin123`

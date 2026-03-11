@@ -3,7 +3,7 @@
 //  - set DATABASE_URL in your environment (see `.env.example`)
 //  - import sql from './server/db.js' and use it for queries
 // Example DATABASE_URL:
-//  postgresql://postgres:[YOUR_PASSWORD]@db.miqzywzuqzeffqpiupjm.supabase.co:5432/postgres?sslmode=verify-full&sslrootcert=/path/to/root.crt
+//  postgresql://postgres:[YOUR_PASSWORD]@db.eprsgmfzqjptfywoecuy.supabase.co:5432/postgres?sslmode=verify-full&sslrootcert=/path/to/root.crt
 
 import { setDefaultResultOrder } from 'node:dns'
 import dns from 'node:dns/promises'
