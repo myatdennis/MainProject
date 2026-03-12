@@ -10982,19 +10982,63 @@ app.get('/api/client/certificates', async (req, res) => {
 });
 
 // Organization management
-const ADMIN_ORG_TABLES = [
+const REQUIRED_ADMIN_ORG_TABLES = [
   { table: 'organizations', columns: ['id', 'name', 'status', 'subscription', 'created_at'] },
+];
+
+const OPTIONAL_ADMIN_ORG_TABLES = [
   { table: 'organization_memberships', columns: ['org_id', 'user_id', 'role', 'status'] },
   { table: 'organization_profiles', columns: ['org_id', 'name'] },
   { table: 'organization_branding', columns: ['org_id'] },
 ];
 
-const ensureAdminOrgSchemaOrRespond = async (res, label) => {
-  const status = await ensureTablesReady(label, ADMIN_ORG_TABLES);
-  if (!status.ok) {
-    respondSchemaUnavailable(res, label, status);
+const ensureAdminOrgSchemaOrRespond = async (res, label, meta = {}) => {
+  const requestId = meta.requestId ?? null;
+  try {
+    const requiredStatus = await ensureTablesReady(label, REQUIRED_ADMIN_ORG_TABLES);
+    if (!requiredStatus.ok) {
+      respondSchemaUnavailable(res, label, requiredStatus);
+      return false;
+    }
+  } catch (error) {
+    const normalized = normalizeUnknownError(error);
+    const payload = {
+      label,
+      stage: 'schema_guard_required',
+      requestId,
+      ...normalized,
+    };
+    console.error('[organizations.schema_guard_failed]', payload);
+    logger.error('organizations_schema_guard_failed', payload);
+    res.status(500).json({
+      error: 'schema_guard_failed',
+      code: normalized.code ?? 'schema_guard_failed',
+      message: normalized.message ?? 'Unable to verify organization schema.',
+      details: normalized.details ?? null,
+      requestId,
+    });
     return false;
   }
+
+  try {
+    const optionalStatus = await ensureTablesReady(label, OPTIONAL_ADMIN_ORG_TABLES);
+    if (!optionalStatus.ok) {
+      logger.warn('organizations_optional_schema_missing', {
+        label,
+        table: optionalStatus.table,
+        requestId,
+      });
+    }
+  } catch (error) {
+    const normalized = normalizeUnknownError(error);
+    logger.warn('organizations_optional_schema_check_failed', {
+      label,
+      requestId,
+      code: normalized.code ?? null,
+      message: normalized.message ?? null,
+    });
+  }
+
   return true;
 };
 
@@ -11054,7 +11098,9 @@ const logUsersStageError = (stage, error, meta = {}) => {
 app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req, res) => {
   if (!ensureSupabase(res)) return;
   logOrganizationsEvent('schema_guard_start', { requestId: req.requestId ?? null });
-  const schemaOk = await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.list');
+  const schemaOk = await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.list', {
+    requestId: req.requestId ?? null,
+  });
   logOrganizationsEvent('schema_guard_done', { requestId: req.requestId ?? null, ok: Boolean(schemaOk) });
   if (!schemaOk) return;
   res.set('X-Organizations-Handler', 'express-v4');
@@ -11242,7 +11288,11 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
 
 app.post('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req, res) => {
   if (!ensureSupabase(res)) return;
-  if (!(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.create'))) return;
+  if (
+    !(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.create', { requestId: req.requestId ?? null }))
+  ) {
+    return;
+  }
   res.set('X-Organizations-Handler', 'express-v4');
   const payload = req.body || {};
 
@@ -11340,7 +11390,11 @@ app.post('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req
 
 app.get('/api/admin/organizations/:id', async (req, res) => {
   if (!ensureSupabase(res)) return;
-  if (!(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.detail'))) return;
+  if (
+    !(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.detail', { requestId: req.requestId ?? null }))
+  ) {
+    return;
+  }
   const { id } = req.params;
 
   const access = await requireOrgAccess(req, res, id, { write: false, requireOrgAdmin: true });
@@ -11365,7 +11419,11 @@ app.get('/api/admin/organizations/:id', async (req, res) => {
 
 app.put('/api/admin/organizations/:id', async (req, res) => {
   if (!ensureSupabase(res)) return;
-  if (!(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.update'))) return;
+  if (
+    !(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.update', { requestId: req.requestId ?? null }))
+  ) {
+    return;
+  }
   const { id } = req.params;
   const patch = req.body || {};
 
@@ -11422,7 +11480,11 @@ app.put('/api/admin/organizations/:id', async (req, res) => {
 
 app.delete('/api/admin/organizations/:id', async (req, res) => {
   if (!ensureSupabase(res)) return;
-  if (!(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.delete'))) return;
+  if (
+    !(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.delete', { requestId: req.requestId ?? null }))
+  ) {
+    return;
+  }
   const { id } = req.params;
 
   const access = await requireOrgAccess(req, res, id, { write: true, requireOrgAdmin: true });
@@ -11442,7 +11504,13 @@ app.delete('/api/admin/organizations/:id', async (req, res) => {
 // Organization memberships
 app.get('/api/admin/organizations/:orgId/members', async (req, res) => {
   if (!ensureSupabase(res)) return;
-  if (!(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.members.list'))) return;
+  if (
+    !(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.members.list', {
+      requestId: req.requestId ?? null,
+    }))
+  ) {
+    return;
+  }
   const { orgId } = req.params;
 
   const context = requireUserContext(req, res);
@@ -11468,7 +11536,13 @@ app.get('/api/admin/organizations/:orgId/members', async (req, res) => {
 
 app.post('/api/admin/organizations/:orgId/members', async (req, res) => {
   if (!ensureSupabase(res)) return;
-  if (!(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.members.create'))) return;
+  if (
+    !(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.members.create', {
+      requestId: req.requestId ?? null,
+    }))
+  ) {
+    return;
+  }
   const { orgId } = req.params;
   const { userId, role = 'member', status, inviteEmail } = req.body || {};
 
@@ -11519,7 +11593,13 @@ app.post('/api/admin/organizations/:orgId/members', async (req, res) => {
 
 app.patch('/api/admin/organizations/:orgId/members/:membershipId', async (req, res) => {
   if (!ensureSupabase(res)) return;
-  if (!(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.members.update'))) return;
+  if (
+    !(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.members.update', {
+      requestId: req.requestId ?? null,
+    }))
+  ) {
+    return;
+  }
   const { orgId, membershipId } = req.params;
   const { role, status } = req.body || {};
 
@@ -11607,7 +11687,13 @@ app.patch('/api/admin/organizations/:orgId/members/:membershipId', async (req, r
 
 app.delete('/api/admin/organizations/:orgId/members/:membershipId', async (req, res) => {
   if (!ensureSupabase(res)) return;
-  if (!(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.members.delete'))) return;
+  if (
+    !(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.members.delete', {
+      requestId: req.requestId ?? null,
+    }))
+  ) {
+    return;
+  }
   const { orgId, membershipId } = req.params;
 
   const context = requireUserContext(req, res);
@@ -11653,7 +11739,13 @@ app.delete('/api/admin/organizations/:orgId/members/:membershipId', async (req, 
 
 app.get('/api/admin/organizations/:orgId/users', async (req, res) => {
   if (!ensureSupabase(res)) return;
-  if (!(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.users.list'))) return;
+  if (
+    !(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.users.list', {
+      requestId: req.requestId ?? null,
+    }))
+  ) {
+    return;
+  }
   const { orgId } = req.params;
 
   const context = requireUserContext(req, res);
