@@ -51,6 +51,7 @@ const ClientDashboard = () => {
   }, [user]);
   const [assignments, setAssignments] = useState<CourseAssignment[]>([]);
   const [assignmentsLoading, setAssignmentsLoading] = useState(true);
+  const [courseStoreRevision, setCourseStoreRevision] = useState(0);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [analyticsError, setAnalyticsError] = useState<string | null>(null);
   const [bootAttempt, setBootAttempt] = useState(0);
@@ -76,6 +77,17 @@ const ClientDashboard = () => {
     [],
   );
   const [progressRefreshToken, setProgressRefreshToken] = useState(0);
+
+  useEffect(() => {
+    if (typeof courseStore.subscribe !== 'function') {
+      console.warn('[ClientDashboard] courseStore.subscribe not available; skipping catalog updates in this context.');
+      return;
+    }
+    const unsubscribe = courseStore.subscribe(() => {
+      setCourseStoreRevision((rev) => rev + 1);
+    });
+    return unsubscribe;
+  }, []);
 
   useEffect(() => {
     if (sessionStatus === 'loading') {
@@ -195,7 +207,7 @@ const ClientDashboard = () => {
         .map((record) => courseStore.getCourse(record.courseId))
         .filter(Boolean)
         .map((course) => normalizeCourse(course!)),
-    [assignments]
+    [assignments, courseStoreRevision]
   );
 
   useEffect(() => {

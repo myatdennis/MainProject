@@ -148,6 +148,47 @@ const asyncHandler = (handler) => (req, res, next) =>
     next(error);
   });
 
+const normalizeUnknownError = (error) => {
+  if (!error) {
+    return {
+      message: null,
+      code: null,
+      details: null,
+      hint: null,
+      stack: null,
+      rawType: 'null',
+    };
+  }
+  if (error instanceof Error) {
+    return {
+      message: error.message ?? null,
+      code: (error).code ?? null,
+      details: (error).details ?? null,
+      hint: (error).hint ?? null,
+      stack: error.stack ?? null,
+      rawType: error.constructor?.name ?? 'Error',
+    };
+  }
+  if (typeof error === 'object') {
+    return {
+      message: typeof error.message === 'string' ? error.message : null,
+      code: typeof error.code === 'string' ? error.code : null,
+      details: typeof error.details === 'string' ? error.details : null,
+      hint: typeof error.hint === 'string' ? error.hint : null,
+      stack: typeof error.stack === 'string' ? error.stack : null,
+      rawType: error.constructor?.name ?? 'Object',
+    };
+  }
+  return {
+    message: String(error),
+    code: null,
+    details: null,
+    hint: null,
+    stack: null,
+    rawType: typeof error,
+  };
+};
+
 const fatalEnvError = (message) => {
   console.error(`[env] ${message}`);
   process.exit(1);
@@ -1679,8 +1720,17 @@ app.get('/api/admin/users', async (req, res) => {
     const members = await fetchOrgMembersWithProfiles(orgId);
     res.json({ data: members });
   } catch (error) {
-    logRouteError('GET /api/admin/users', error);
-    res.status(500).json({ error: 'Unable to load organization users' });
+    const normalized = logUsersStageError('memberships_fetch', error, {
+      requestId: req.requestId ?? null,
+      orgId,
+    });
+    res.status(500).json({
+      error: 'Unable to load organization users',
+      code: normalized.code ?? 'internal_error',
+      message: normalized.message ?? 'Unexpected error while loading organization users',
+      details: normalized.details ?? null,
+      requestId: req.requestId ?? null,
+    });
   }
 });
 
@@ -1705,6 +1755,7 @@ app.patch('/api/admin/users/:userId', async (req, res) => {
   const access = await requireOrgAccess(req, res, orgId, { write: true, requireOrgAdmin: true });
   if (!access) return;
 
+  let currentStage = 'membership_lookup';
   try {
     const { data: membership, error: lookupError } = await supabase
       .from('organization_memberships')
@@ -1741,6 +1792,7 @@ app.patch('/api/admin/users/:userId', async (req, res) => {
     const statusRevokingOwner = membership.role === 'owner' && updatePayload.status === 'revoked';
 
     if (roleIsChangingFromOwner || statusRevokingOwner) {
+      currentStage = 'owner_guard';
       const { count, error: ownerCountError } = await supabase
         .from('organization_memberships')
         .select('id', { head: true, count: 'exact' })
@@ -1754,6 +1806,7 @@ app.patch('/api/admin/users/:userId', async (req, res) => {
       }
     }
 
+    currentStage = 'membership_update';
     const { data, error } = await supabase
       .from('organization_memberships')
       .update(updatePayload)
@@ -1766,8 +1819,18 @@ app.patch('/api/admin/users/:userId', async (req, res) => {
 
     res.json({ data });
   } catch (error) {
-    logRouteError('PATCH /api/admin/users/:userId', error);
-    res.status(500).json({ error: 'Unable to update organization user' });
+    const normalized = logUsersStageError(currentStage, error, {
+      requestId: req.requestId ?? null,
+      orgId,
+      userId,
+    });
+    res.status(500).json({
+      error: 'Unable to update organization user',
+      code: normalized.code ?? 'internal_error',
+      message: normalized.message ?? 'Unexpected error while updating organization user',
+      details: normalized.details ?? null,
+      requestId: req.requestId ?? null,
+    });
   }
 });
 
@@ -10848,6 +10911,39 @@ const ensureAdminOrgSchemaOrRespond = async (res, label) => {
   return true;
 };
 
+const logOrganizationsStageError = (stage, error, meta = {}) => {
+  const normalized = normalizeUnknownError(error);
+  const payload = {
+    stage,
+    ...meta,
+    ...normalized,
+  };
+  console.error('[organizations.stage_error]', payload);
+  logger.error('organizations_stage_error', payload);
+  return normalized;
+};
+
+const logOrganizationsEvent = (stage, meta = {}) => {
+  const payload = {
+    stage,
+    ...meta,
+  };
+  console.info('[organizations.event]', payload);
+  logger.info('organizations_event', payload);
+};
+
+const logUsersStageError = (stage, error, meta = {}) => {
+  const normalized = normalizeUnknownError(error);
+  const payload = {
+    stage,
+    ...meta,
+    ...normalized,
+  };
+  console.error('[admin.users.stage_error]', payload);
+  logger.error('admin_users_stage_error', payload);
+  return normalized;
+};
+
 app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req, res) => {
   if (!ensureSupabase(res)) return;
   if (!(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.list'))) return;
@@ -10895,6 +10991,17 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
   const sort = allowedSortFields.has(String(req.query.sort)) ? String(req.query.sort) : 'created_at';
   const ascending = String(req.query.direction).toLowerCase() === 'asc';
 
+  const requestId = req.requestId ?? null;
+  logOrganizationsEvent('request_received', {
+    requestId,
+    includeProgress,
+    page,
+    pageSize,
+    search: search || null,
+    requestedOrgId: requestedOrgId ?? null,
+    isPlatformAdmin,
+  });
+
   const buildOrgQuery = () => {
     let query = supabase
       .from('organizations')
@@ -10923,98 +11030,145 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
     return query;
   };
 
+  let organizations = [];
+  let totalCount = 0;
   try {
-    const { data, count } = await runSupabaseQueryWithRetry('admin.organizations.list', () => buildOrgQuery());
-
-    let progressMap = {};
-    let shouldFetchProgress = false;
-    if (includeProgress) {
-      try {
-        shouldFetchProgress = await ensureOrgProgressViewAvailable();
-      } catch (viewCheckError) {
-        console.warn('[admin.organizations.list] progress_view_check_failed', {
-          message: viewCheckError?.message ?? null,
-          code: viewCheckError?.code ?? null,
-        });
-        console.warn('[organizations.progress_enrichment_skipped]', {
-          reason: 'view_check_failed',
-          code: viewCheckError?.code ?? null,
-          message: viewCheckError?.message ?? null,
-        });
-        shouldFetchProgress = false;
-      }
-    }
-    if (shouldFetchProgress && Array.isArray(data) && data.length > 0) {
-      const ids = data.map((org) => org.id).filter(Boolean);
-      if (ids.length) {
-        try {
-          const cacheKey = `org-progress:${ids.sort().join(',')}`;
-          const rows = await withCache(
-            cacheKey,
-            async () => {
-              const result = await runSupabaseQueryWithRetry('admin.organizations.progress', () =>
-                supabase.from('org_onboarding_progress_vw').select('*').in('org_id', ids),
-              );
-              if (result.error) {
-                throw result.error;
-              }
-              return result.data || [];
-            },
-            { ttlSeconds: 60 },
-          );
-          progressMap = (rows || []).reduce((acc, row) => {
-            acc[row.org_id] = row;
-            return acc;
-          }, {});
-        } catch (progressError) {
-          console.warn('[admin.organizations.list] progress_lookup_failed', {
-            message: progressError?.message ?? null,
-            code: progressError?.code ?? null,
-            details: progressError?.details ?? null,
-          });
-          console.warn('[organizations.progress_enrichment_skipped]', {
-            reason: 'lookup_failed',
-            code: progressError?.code ?? null,
-            message: progressError?.message ?? null,
-          });
-          progressMap = {};
-        }
-      }
-    } else if (includeProgress && !shouldFetchProgress) {
-      console.info('[organizations.progress_enrichment_skipped]', {
-        reason: 'view_unavailable',
-        includeProgress,
-      });
-    }
-
-    console.info('[organizations.load]', {
-      requestId: req.requestId ?? null,
-      count: Array.isArray(data) ? data.length : 0,
-      page,
-      pageSize,
-      includeProgress,
-      orgFilter: requestedOrgId ?? null,
-    });
-
-    res.json({
-      data,
-      pagination: {
-        page,
-        pageSize,
-        total: count || 0,
-        hasMore: to + 1 < (count || 0),
-      },
-      progress: progressMap,
+    logOrganizationsEvent('base_query_start', { requestId });
+    const result = await runSupabaseQueryWithRetry('admin.organizations.list', () => buildOrgQuery());
+    organizations = Array.isArray(result?.data) ? result.data : [];
+    totalCount = typeof result?.count === 'number' ? result.count : result?.count ?? 0;
+    logOrganizationsEvent('base_query_success', {
+      requestId,
+      totalCount,
+      returnedCount: organizations.length,
     });
   } catch (error) {
-    logRouteError('GET /api/admin/organizations', error);
+    const normalized = logOrganizationsStageError('base_query', error, {
+      requestId,
+      includeProgress,
+      page,
+      pageSize,
+    });
     res.status(500).json({
       error: 'Unable to fetch organizations',
-      code: error?.code ?? 'internal_error',
-      message: error?.message ?? 'Unexpected error while loading organizations',
-      requestId: req.requestId ?? null,
+      code: normalized.code ?? 'internal_error',
+      message: normalized.message ?? 'Unexpected error while loading organizations',
+      details: normalized.details ?? null,
+      requestId,
+    });
+    return;
+  }
+
+  let progressMap = {};
+  let shouldFetchProgress = false;
+  if (includeProgress) {
+    try {
+      logOrganizationsEvent('progress_view_check_start', { requestId });
+      shouldFetchProgress = await ensureOrgProgressViewAvailable();
+      logOrganizationsEvent('progress_view_check_result', { requestId, available: shouldFetchProgress });
+    } catch (viewCheckError) {
+      logOrganizationsStageError('progress_view_check_failed', viewCheckError, {
+        requestId,
+      });
+      console.warn('[organizations.progress_enrichment_skipped]', {
+        reason: 'view_check_failed',
+        code: viewCheckError?.code ?? null,
+        message: viewCheckError?.message ?? null,
+      });
+      shouldFetchProgress = false;
+    }
+  }
+  if (shouldFetchProgress && Array.isArray(organizations) && organizations.length > 0) {
+    const ids = organizations.map((org) => org.id).filter(Boolean);
+    if (ids.length) {
+      try {
+        logOrganizationsEvent('progress_lookup_start', { requestId, orgCount: ids.length });
+        const cacheKey = `org-progress:${ids.sort().join(',')}`;
+        const rows = await withCache(
+          cacheKey,
+          async () => {
+            const result = await runSupabaseQueryWithRetry('admin.organizations.progress', () =>
+              supabase.from('org_onboarding_progress_vw').select('*').in('org_id', ids),
+            );
+            if (result.error) {
+              throw result.error;
+            }
+            return result.data || [];
+          },
+          { ttlSeconds: 60 },
+        );
+        progressMap = (rows || []).reduce((acc, row) => {
+          acc[row.org_id] = row;
+          return acc;
+        }, {});
+        logOrganizationsEvent('progress_lookup_success', {
+          requestId,
+          rowCount: Object.keys(progressMap).length,
+        });
+      } catch (progressError) {
+        logOrganizationsStageError('progress_lookup_failed', progressError, {
+          requestId,
+        });
+        console.warn('[organizations.progress_enrichment_skipped]', {
+          reason: 'lookup_failed',
+          code: progressError?.code ?? null,
+          message: progressError?.message ?? null,
+        });
+        progressMap = {};
+      }
+    }
+  } else if (includeProgress && !shouldFetchProgress) {
+    console.info('[organizations.progress_enrichment_skipped]', {
+      reason: 'view_unavailable',
+      includeProgress,
     });
   }
+
+  const safeOrganizations = [];
+  organizations.forEach((org, index) => {
+    try {
+      if (!org || typeof org !== 'object') {
+        throw new Error('organization_row_invalid');
+      }
+      const sanitized = {
+        ...org,
+        id: org.id ?? null,
+        name: org.name ?? null,
+        status: org.status ?? null,
+        subscription: org.subscription ?? null,
+        created_at: org.created_at ?? null,
+        updated_at: org.updated_at ?? null,
+        organization_id: org.organization_id ?? org.id ?? null,
+      };
+      safeOrganizations.push(sanitized);
+    } catch (rowError) {
+      logOrganizationsStageError('row_transform_failed', rowError, {
+        requestId,
+        index,
+        orgId: org?.id ?? null,
+      });
+    }
+  });
+
+  logOrganizationsEvent('response_ready', {
+    requestId,
+    count: safeOrganizations.length,
+    page,
+    pageSize,
+    includeProgress,
+    orgFilter: requestedOrgId ?? null,
+  });
+
+  res.json({
+    data: safeOrganizations,
+    pagination: {
+      page,
+      pageSize,
+      total: totalCount || 0,
+      hasMore: to + 1 < (totalCount || 0),
+    },
+    progress: progressMap,
+  });
 }));
 
 app.post('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req, res) => {
@@ -11026,6 +11180,12 @@ app.post('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req
     res.status(400).json({ error: 'name, contact_email, and subscription are required' });
     return;
   }
+
+  logOrganizationsEvent('org_create_request', {
+    requestId: req.requestId ?? null,
+    name: payload.name ?? null,
+    subscription: payload.subscription ?? null,
+  });
 
   try {
     const result = await runSupabaseQueryWithRetry('admin.organizations.create', () =>
@@ -11068,10 +11228,22 @@ app.post('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req
       }).select('*').single(),
     );
 
+    logOrganizationsEvent('org_create_success', {
+      requestId: req.requestId ?? null,
+      orgId: result?.data?.id ?? null,
+    });
     res.status(201).json({ data: result.data });
   } catch (error) {
-    logRouteError('POST /api/admin/organizations', error);
-    res.status(500).json({ error: 'Unable to create organization' });
+    const normalized = logOrganizationsStageError('create_failed', error, {
+      requestId: req.requestId ?? null,
+    });
+    res.status(500).json({
+      error: 'Unable to create organization',
+      code: normalized.code ?? 'internal_error',
+      message: normalized.message ?? 'Unexpected error while creating organization',
+      details: normalized.details ?? null,
+      requestId: req.requestId ?? null,
+    });
   }
 }));
 
