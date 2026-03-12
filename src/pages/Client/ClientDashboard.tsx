@@ -264,8 +264,43 @@ const ClientDashboard = () => {
     };
   }), [assignments, courses, progressRefreshToken]);
 
-  const completedCount = assignments.filter((record) => record.status === 'completed').length;
-  const inProgressCount = assignments.filter((record) => record.status === 'in-progress').length;
+  const fallbackCourseDetails = useMemo(() => {
+    if (courses.length > 0) return [];
+    const catalogEntries = courseStore.getAllCourses();
+    return catalogEntries.map((entry) => {
+      const normalized = normalizeCourse(entry);
+      const stored = loadStoredCourseProgress(normalized.slug);
+      const snapshot = buildLearnerProgressSnapshot(
+        normalized,
+        new Set(stored.completedLessonIds),
+        stored.lessonProgress || {},
+        stored.lessonPositions || {}
+      );
+      const progressPercent = Math.round((snapshot.overallProgress || 0) * 100);
+      const preferredLessonId = getPreferredLessonId(normalized, stored) ?? getFirstLessonId(normalized);
+      return {
+        course: normalized,
+        snapshot,
+        assignment: null,
+        stored,
+        progressPercent,
+        preferredLessonId,
+      };
+    });
+  }, [courses.length, courseStoreRevision, progressRefreshToken]);
+
+  const hasAssignedCourses = courseDetails.length > 0;
+  const showingFallbackCatalog = !hasAssignedCourses && fallbackCourseDetails.length > 0;
+  const displayedCourseDetails = hasAssignedCourses ? courseDetails : fallbackCourseDetails;
+  const assignedCourseCount = hasAssignedCourses ? assignments.length : fallbackCourseDetails.length;
+  const completedCount = hasAssignedCourses
+    ? assignments.filter((record) => record.status === 'completed').length
+    : fallbackCourseDetails.filter((entry) => entry.progressPercent >= 100).length;
+  const inProgressCount = hasAssignedCourses
+    ? assignments.filter((record) => record.status === 'in-progress').length
+    : fallbackCourseDetails.filter(
+        (entry) => entry.progressPercent > 0 && entry.progressPercent < 100
+      ).length;
   const bannerCandidates = [catalogError, analyticsError].filter(Boolean);
   const bannerError = bannerCandidates.length > 0 ? bannerCandidates.join(' ') : null;
 
@@ -382,7 +417,7 @@ const ClientDashboard = () => {
 
       <div className="mt-8 grid gap-4 md:grid-cols-4">
         <Card tone="muted" className="text-center py-6">
-          <div className="font-heading text-3xl font-bold text-charcoal">{assignments.length}</div>
+          <div className="font-heading text-3xl font-bold text-charcoal">{assignedCourseCount}</div>
           <p className="text-xs uppercase tracking-wide text-slate/70">Assigned courses</p>
         </Card>
         <Card tone="muted" className="text-center py-6">
@@ -408,13 +443,13 @@ const ClientDashboard = () => {
         <Card className="space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="font-heading text-lg font-semibold text-charcoal">Assigned courses</h2>
-            <Badge tone="info" className="bg-skyblue/10 text-skyblue">{assignments.length}</Badge>
+            <Badge tone="info" className="bg-skyblue/10 text-skyblue">{assignedCourseCount}</Badge>
           </div>
           {assignmentsLoading ? (
             <div className="flex items-center justify-center py-8 text-sm text-slate/60">
               Checking for assignments…
             </div>
-          ) : assignments.length === 0 ? (
+          ) : !hasAssignedCourses && !showingFallbackCatalog ? (
             <div className="rounded-2xl border border-dashed border-mist bg-cloud/60 p-6 text-center">
               <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-white text-skyblue">
                 <Inbox className="h-6 w-6" />
@@ -434,12 +469,19 @@ const ClientDashboard = () => {
             </div>
           ) : (
             <div className="space-y-3">
-              {courseDetails.map(({ course, assignment, progressPercent, preferredLessonId }) => (
+              {showingFallbackCatalog && (
+                <div className="rounded-lg border border-slate/20 bg-slate/30 px-3 py-2 text-xs text-slate/80">
+                  No direct assignments yet. Showing published catalog items so you can keep learning.
+                </div>
+              )}
+              {displayedCourseDetails.map(({ course, assignment, progressPercent, preferredLessonId }) => (
                 <Card key={course.id} tone="muted" className="space-y-2">
                   <div className="flex items-center justify-between">
                     <div>
                       <p className="font-heading text-sm font-semibold text-charcoal">{course.title}</p>
-                      <p className="text-xs text-slate/70">Due {assignment?.dueDate ? new Date(assignment.dueDate).toLocaleDateString() : '—'}</p>
+                      <p className="text-xs text-slate/70">
+                        Due {assignment?.dueDate ? new Date(assignment.dueDate).toLocaleDateString() : '—'}
+                      </p>
                     </div>
                     <Button
                       size="sm"

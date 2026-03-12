@@ -28,65 +28,105 @@ const canonicalTypes = {
 
 const schemaContract = {
   courses: {
-    id: 'uuid',
-    organization_id: 'uuid',
-    title: 'text',
-    slug: 'text',
-    description: 'text',
-    status: 'text',
-    meta_json: 'jsonb',
-    key_takeaways: 'jsonb',
-    version: 'int',
-    published_at: 'timestamptz',
-    created_at: 'timestamptz',
-    updated_at: 'timestamptz',
+    columns: {
+      id: 'uuid',
+      organization_id: 'uuid',
+      title: 'text',
+      slug: 'text',
+      description: 'text',
+      status: 'text',
+      meta_json: 'jsonb',
+      key_takeaways: 'jsonb',
+      version: 'int',
+      published_at: 'timestamptz',
+      created_at: 'timestamptz',
+      updated_at: 'timestamptz',
+    },
   },
   modules: {
-    id: 'uuid',
-    course_id: 'uuid',
-    organization_id: 'uuid',
-    title: 'text',
-    description: 'text',
-    order_index: 'int',
-    created_at: 'timestamptz',
-    updated_at: 'timestamptz',
+    columns: {
+      id: 'uuid',
+      course_id: 'uuid',
+      organization_id: 'uuid',
+      title: 'text',
+      description: 'text',
+      order_index: 'int',
+      created_at: 'timestamptz',
+      updated_at: 'timestamptz',
+    },
   },
   lessons: {
-    id: 'uuid',
-    module_id: 'uuid',
-    course_id: 'uuid',
-    organization_id: 'uuid',
-    title: 'text',
-    type: 'text',
-    description: 'text',
-    content_json: 'jsonb',
-    order_index: 'int',
-    duration_s: 'int',
-    created_at: 'timestamptz',
-    updated_at: 'timestamptz',
+    columns: {
+      id: 'uuid',
+      module_id: 'uuid',
+      course_id: 'uuid',
+      organization_id: 'uuid',
+      title: 'text',
+      type: 'text',
+      description: 'text',
+      content_json: 'jsonb',
+      order_index: 'int',
+      duration_s: 'int',
+      created_at: 'timestamptz',
+      updated_at: 'timestamptz',
+    },
   },
   organization_memberships: {
-    id: 'uuid',
-    user_id: 'uuid',
-    organization_id: 'uuid',
-    role: 'text',
-    status: 'text',
-    is_active: 'bool',
-    accepted_at: 'timestamptz',
-    created_at: 'timestamptz',
-    updated_at: 'timestamptz',
+    columns: {
+      id: 'uuid',
+      user_id: 'uuid',
+      organization_id: 'uuid',
+      role: 'text',
+      status: 'text',
+      is_active: 'bool',
+      accepted_at: 'timestamptz',
+      created_at: 'timestamptz',
+      updated_at: 'timestamptz',
+    },
   },
   user_course_progress: {
-    id: 'uuid',
-    user_id: 'uuid',
-    course_id: 'uuid',
-    organization_id: 'uuid',
-    progress: 'numeric',
-    time_spent_s: 'int',
-    completed: 'bool',
-    status: 'text',
-    created_at: 'timestamptz',
-    updated_at: 'timestamptz',
+    columns: {
+      id: 'uuid',
+      user_id: 'uuid',
+      course_id: 'uuid',
+      organization_id: 'uuid',
+      progress: 'numeric',
+      time_spent_s: 'int',
+      completed: 'bool',
+      status: 'text',
+      created_at: 'timestamptz',
+      updated_at: 'timestamptz',
+    },
+  },
+  assignments: {
+    columns: {
+      id: 'uuid',
+      organization_id: 'uuid',
+      course_id: 'uuid',
+      user_id: 'uuid',
+      due_at: 'timestamptz',
+      active: 'bool',
+      note: 'text',
+      assigned_by: 'uuid',
+      metadata: 'jsonb',
+      idempotency_key: 'text',
+      client_request_id: 'text',
+      created_at: 'timestamptz',
+      updated_at: 'timestamptz',
+    },
+  },
+  course_assignments: {
+    optional: true,
+    columns: {
+      id: 'uuid',
+      course_id: 'uuid',
+      organization_id: 'uuid',
+      user_id: 'uuid',
+      assigned_by: 'uuid',
+      status: 'text',
+      metadata: 'jsonb',
+      assigned_at: 'timestamptz',
+    },
   },
 };
 
@@ -124,9 +164,14 @@ async function ensureTableExists(table) {
 
 async function run() {
   await client.connect();
-  for (const [table, columns] of Object.entries(schemaContract)) {
+  for (const [table, config] of Object.entries(schemaContract)) {
+    const tableConfig = config.columns ? config : { columns: config };
+    const { columns, optional } = tableConfig;
     const exists = await ensureTableExists(table);
     if (!exists) {
+      if (optional) {
+        continue;
+      }
       issues.push({ table, column: '*', issue: 'table_missing' });
       continue;
     }

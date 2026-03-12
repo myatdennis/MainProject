@@ -3343,18 +3343,29 @@ const fetchSurveyAssignmentsMap = async (surveyIds = []) => {
     return map;
   }
 
-  const { data, error } = await supabase
-    .from('survey_assignments')
-    .select('*')
-    .in('survey_id', surveyIds.filter(Boolean));
-  if (error) throw error;
-  const map = new Map();
-  (data || []).forEach((row) => {
-    if (row?.survey_id) {
-      map.set(row.survey_id, row);
+  try {
+    const { data, error } = await supabase
+      .from('survey_assignments')
+      .select('*')
+      .in('survey_id', surveyIds.filter(Boolean));
+    if (error) throw error;
+    const map = new Map();
+    (data || []).forEach((row) => {
+      if (row?.survey_id) {
+        map.set(row.survey_id, row);
+      }
+    });
+    return map;
+  } catch (error) {
+    if (isMissingRelationError(error) || isMissingColumnError(error)) {
+      logger.warn('survey_assignments_table_unavailable', {
+        code: error?.code ?? null,
+        message: error?.message ?? null,
+      });
+      return new Map();
     }
-  });
-  return map;
+    throw error;
+  }
 };
 
 const loadSurveyWithAssignments = async (id) => {
@@ -3387,13 +3398,37 @@ const syncSurveyAssignments = async (surveyId, assignedTo = createEmptyAssignedT
     payload.department_ids.length > 0;
 
   if (!hasAssignments) {
-    const { error } = await supabase.from('survey_assignments').delete().eq('survey_id', surveyId);
-    if (error) throw error;
+    try {
+      const { error } = await supabase.from('survey_assignments').delete().eq('survey_id', surveyId);
+      if (error) throw error;
+    } catch (error) {
+      if (isMissingRelationError(error) || isMissingColumnError(error)) {
+        logger.warn('survey_assignments_delete_skipped', {
+          surveyId,
+          code: error?.code ?? null,
+          message: error?.message ?? null,
+        });
+        return;
+      }
+      throw error;
+    }
     return;
   }
 
-  const { error } = await supabase.from('survey_assignments').upsert(payload);
-  if (error) throw error;
+  try {
+    const { error } = await supabase.from('survey_assignments').upsert(payload);
+    if (error) throw error;
+  } catch (error) {
+    if (isMissingRelationError(error) || isMissingColumnError(error)) {
+      logger.warn('survey_assignments_sync_skipped', {
+        surveyId,
+        code: error?.code ?? null,
+        message: error?.message ?? null,
+      });
+      return;
+    }
+    throw error;
+  }
 };
 
 const parseLessonIdsParam = (raw) => {
@@ -7813,6 +7848,32 @@ app.get('/api/client/me', authenticate, async (req, res) => {
   });
 });
 
+const deriveAssignmentProgressValue = (row) => {
+  if (typeof row?.progress === 'number' && Number.isFinite(row.progress)) {
+    return Math.max(0, Math.min(100, Number(row.progress)));
+  }
+  const metadataProgress = row?.metadata && typeof row.metadata === 'object' ? row.metadata.progress : undefined;
+  if (typeof metadataProgress === 'number' && Number.isFinite(metadataProgress)) {
+    return Math.max(0, Math.min(100, Number(metadataProgress)));
+  }
+  const status = String(row?.status || '').toLowerCase();
+  if (status === 'completed') return 100;
+  if (status === 'in-progress' || status === 'in_progress') return 50;
+  return 0;
+};
+
+const normalizeAssignmentRow = (row) => {
+  if (!row || typeof row !== 'object') {
+    return null;
+  }
+  const normalized = { ...row };
+  normalized.organization_id = row.organization_id ?? row.org_id ?? row.organizationId ?? null;
+  normalized.course_id = row.course_id ?? row.courseId ?? null;
+  normalized.user_id = row.user_id ?? row.user_id_uuid ?? row.userId ?? null;
+  normalized.progress = deriveAssignmentProgressValue(row);
+  return normalized;
+};
+
 // Assignments listing for client: return active assignments for a user
 app.get('/api/client/assignments', authenticate, async (req, res) => {
   const context = requireUserContext(req, res);
@@ -7857,41 +7918,67 @@ app.get('/api/client/assignments', authenticate, async (req, res) => {
       ...extra,
     });
 
-  if (!supabase) {
-    if (E2E_TEST_MODE || DEV_FALLBACK) {
-      const rows = (e2eStore.assignments || []).filter((assignment) => {
-        if (!assignment || assignment.active === false) return false;
-        return String(assignment.user_id || '').toLowerCase() === normalizedUserId;
-      });
-      respond(200, rows);
+  try {
+    if (!supabase) {
+      if (E2E_TEST_MODE || DEV_FALLBACK) {
+        const rows = (e2eStore.assignments || []).filter((assignment) => {
+          if (!assignment || assignment.active === false) return false;
+          return String(assignment.user_id || '').toLowerCase() === normalizedUserId;
+        });
+        respond(200, rows);
+        return;
+      }
+      respond(200, []);
       return;
     }
-    respond(200, []);
-    return;
-  }
 
-  try {
-    let query = supabase
-      .from('course_assignments')
-      .select('*')
-      .eq('user_id', normalizedUserId)
-      .order('updated_at', { ascending: false, nullsFirst: false })
-      .order('created_at', { ascending: false, nullsFirst: false });
+    const assignmentTables = ['assignments', 'course_assignments'];
+    let rows = [];
+    let sourceTable = null;
+    for (const table of assignmentTables) {
+      let query = supabase
+        .from(table)
+        .select('*')
+        .eq('user_id', normalizedUserId)
+        .order('updated_at', { ascending: false, nullsFirst: false })
+        .order('created_at', { ascending: false, nullsFirst: false });
 
-    if (!includeCompletedAssignments) {
-      query = query.eq('active', true).in('status', ['assigned', 'in-progress']);
+      if (!includeCompletedAssignments) {
+        query = query.eq('active', true).in('status', ['assigned', 'in-progress']);
+      }
+
+      if (resolvedOrgId) {
+        const orgColumn = table === 'assignments' ? 'organization_id' : 'organization_id';
+        query = query.eq(orgColumn, resolvedOrgId);
+      }
+
+      const { data, error } = await query;
+      if (error) {
+        const missing = isMissingRelationError(error) || isMissingColumnError(error);
+        if (missing) {
+          logger.warn('client_assignments_table_missing', {
+            table,
+            code: error?.code ?? null,
+            message: error?.message ?? null,
+            requestId,
+          });
+          continue;
+        }
+        throw error;
+      }
+      rows = data || [];
+      sourceTable = table;
+      break;
     }
 
-    if (resolvedOrgId) {
-      query = query.eq('organization_id', resolvedOrgId);
+    if (!sourceTable) {
+      logger.warn('client_assignments_no_table', { requestId, tablesTried: assignmentTables });
+      respond(200, []);
+      return;
     }
 
-    const { data, error } = await query;
-    if (error) {
-      throw error;
-    }
-
-    respond(200, data || []);
+    const normalizedRows = rows.map((row) => normalizeAssignmentRow(row)).filter(Boolean);
+    respond(200, normalizedRows, { table: sourceTable });
   } catch (error) {
     logger.error('client_assignments_fetch_failed', {
       requestId,
@@ -10928,7 +11015,11 @@ const logOrganizationsEvent = (stage, meta = {}) => {
     stage,
     ...meta,
   };
-  console.info('[organizations.event]', payload);
+  if (stage && typeof stage === 'string' && stage.includes('v2')) {
+    console.info('[organizations.event]', payload);
+  } else {
+    console.info('[organizations.event.legacy]', payload);
+  }
   logger.info('organizations_event', payload);
 };
 
@@ -10992,7 +11083,7 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
   const ascending = String(req.query.direction).toLowerCase() === 'asc';
 
   const requestId = req.requestId ?? null;
-  logOrganizationsEvent('request_received', {
+  logOrganizationsEvent('request_received_v2', {
     requestId,
     includeProgress,
     page,
@@ -11181,7 +11272,7 @@ app.post('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req
     return;
   }
 
-  logOrganizationsEvent('org_create_request', {
+  logOrganizationsEvent('org_create_request_v2', {
     requestId: req.requestId ?? null,
     name: payload.name ?? null,
     subscription: payload.subscription ?? null,
