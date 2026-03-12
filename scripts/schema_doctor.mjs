@@ -27,6 +27,20 @@ const canonicalTypes = {
 };
 
 const schemaContract = {
+  organizations: {
+    columns: {
+      id: 'uuid',
+      name: 'text',
+      subscription: 'text',
+      status: 'text',
+      contact_email: 'text',
+      onboarding_status: 'text',
+      features: 'jsonb',
+      settings: 'jsonb',
+      created_at: 'timestamptz',
+      updated_at: 'timestamptz',
+    },
+  },
   courses: {
     columns: {
       id: 'uuid',
@@ -126,6 +140,43 @@ const schemaContract = {
       status: 'text',
       metadata: 'jsonb',
       assigned_at: 'timestamptz',
+    },
+  },
+  org_invites: {
+    columns: {
+      id: 'uuid',
+      org_id: 'uuid',
+      email: 'text',
+      invite_token: 'text',
+      role: 'text',
+      status: 'text',
+      metadata: 'jsonb',
+      expires_at: 'timestamptz',
+      last_sent_at: 'timestamptz',
+      reminder_count: 'int',
+      created_at: 'timestamptz',
+      updated_at: 'timestamptz',
+    },
+  },
+  org_activation_steps: {
+    columns: {
+      id: 'uuid',
+      org_id: 'uuid',
+      step: 'text',
+      status: 'text',
+      metadata: 'jsonb',
+      completed_at: 'timestamptz',
+      created_at: 'timestamptz',
+      updated_at: 'timestamptz',
+    },
+  },
+  org_activation_events: {
+    columns: {
+      id: 'uuid',
+      org_id: 'uuid',
+      event_type: 'text',
+      occurred_at: 'timestamptz',
+      metadata: 'jsonb',
     },
   },
 };

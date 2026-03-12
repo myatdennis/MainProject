@@ -33,6 +33,52 @@ type BootStepState = {
 
 const ORDERED_BOOT_STEPS: BootStepName[] = ['session', 'membership', 'courses', 'analytics'];
 
+type CourseStoreAdapter = {
+  subscribe: (listener: () => void) => () => void;
+  getAllCourses: () => ReturnType<typeof courseStore.getAllCourses>;
+  getCourse: (courseId: string) => ReturnType<typeof courseStore.getCourse>;
+};
+
+const noop = () => {};
+const noopUnsubscribe = () => {};
+
+const buildCourseStoreAdapter = (): CourseStoreAdapter => {
+  const missing: string[] = [];
+  const subscribeFn =
+    typeof courseStore.subscribe === 'function'
+      ? courseStore.subscribe
+      : (() => {
+          missing.push('subscribe');
+          return () => noopUnsubscribe;
+        })();
+  const getAllCoursesFn =
+    typeof courseStore.getAllCourses === 'function'
+      ? courseStore.getAllCourses
+      : (() => {
+          missing.push('getAllCourses');
+          return () => [];
+        })();
+  const getCourseFn =
+    typeof courseStore.getCourse === 'function'
+      ? courseStore.getCourse
+      : (() => {
+          missing.push('getCourse');
+          return () => null;
+        })();
+
+  if (missing.length) {
+    console.warn('[ClientDashboard] courseStore adapter missing methods; using safe fallbacks.', {
+      missing,
+    });
+  }
+
+  return {
+    subscribe: (listener: () => void) => (listener ? subscribeFn(listener) : subscribeFn(noop)),
+    getAllCourses: () => getAllCoursesFn(),
+    getCourse: (courseId: string) => getCourseFn(courseId),
+  };
+};
+
 const ClientDashboard = () => {
   // Prefetch critical user flows for fast navigation
   useRoutePrefetch([
@@ -77,17 +123,14 @@ const ClientDashboard = () => {
     [],
   );
   const [progressRefreshToken, setProgressRefreshToken] = useState(0);
+  const courseStoreAdapter = useMemo(buildCourseStoreAdapter, []);
 
   useEffect(() => {
-    if (typeof courseStore.subscribe !== 'function') {
-      console.warn('[ClientDashboard] courseStore.subscribe not available; skipping catalog updates in this context.');
-      return;
-    }
-    const unsubscribe = courseStore.subscribe(() => {
+    const unsubscribe = courseStoreAdapter.subscribe(() => {
       setCourseStoreRevision((rev) => rev + 1);
     });
     return unsubscribe;
-  }, []);
+  }, [courseStoreAdapter]);
 
   useEffect(() => {
     if (sessionStatus === 'loading') {
@@ -204,7 +247,7 @@ const ClientDashboard = () => {
   const courses = useMemo(
     () =>
       assignments
-        .map((record) => courseStore.getCourse(record.courseId))
+        .map((record) => courseStoreAdapter.getCourse(record.courseId))
         .filter(Boolean)
         .map((course) => normalizeCourse(course!)),
     [assignments, courseStoreRevision]
@@ -266,7 +309,7 @@ const ClientDashboard = () => {
 
   const fallbackCourseDetails = useMemo(() => {
     if (courses.length > 0) return [];
-    const catalogEntries = courseStore.getAllCourses();
+    const catalogEntries = courseStoreAdapter.getAllCourses();
     return catalogEntries.map((entry) => {
       const normalized = normalizeCourse(entry);
       const stored = loadStoredCourseProgress(normalized.slug);

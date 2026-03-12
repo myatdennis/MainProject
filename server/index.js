@@ -11099,6 +11099,16 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
   const ascending = String(req.query.direction).toLowerCase() === 'asc';
 
   const requestId = req.requestId ?? null;
+  logOrganizationsEvent('request_received_v3', {
+    requestId,
+    includeProgress,
+    page,
+    pageSize,
+    search: search || null,
+    requestedOrgId: requestedOrgId ?? null,
+    isPlatformAdmin,
+    source: 'express',
+  });
   logOrganizationsEvent('request_received_v2', {
     requestId,
     includeProgress,
@@ -11170,9 +11180,9 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
   let shouldFetchProgress = false;
   if (includeProgress) {
     try {
-      logOrganizationsEvent('progress_view_check_start', { requestId });
+      logOrganizationsEvent('progress_view_check', { requestId, status: 'start' });
       shouldFetchProgress = await ensureOrgProgressViewAvailable();
-      logOrganizationsEvent('progress_view_check_result', { requestId, available: shouldFetchProgress });
+      logOrganizationsEvent('progress_view_check', { requestId, status: 'done', available: shouldFetchProgress });
     } catch (viewCheckError) {
       logOrganizationsStageError('progress_view_check_failed', viewCheckError, {
         requestId,
@@ -11189,7 +11199,7 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
     const ids = organizations.map((org) => org.id).filter(Boolean);
     if (ids.length) {
       try {
-        logOrganizationsEvent('progress_lookup_start', { requestId, orgCount: ids.length });
+        logOrganizationsEvent('progress_lookup', { requestId, status: 'start', orgCount: ids.length });
         const cacheKey = `org-progress:${ids.sort().join(',')}`;
         const rows = await withCache(
           cacheKey,
@@ -11208,10 +11218,7 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
           acc[row.org_id] = row;
           return acc;
         }, {});
-        logOrganizationsEvent('progress_lookup_success', {
-          requestId,
-          rowCount: Object.keys(progressMap).length,
-        });
+        logOrganizationsEvent('progress_lookup', { requestId, status: 'done', rowCount: Object.keys(progressMap).length });
       } catch (progressError) {
         logOrganizationsStageError('progress_lookup_failed', progressError, {
           requestId,
@@ -11283,11 +11290,23 @@ app.post('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req
   if (!(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.create'))) return;
   const payload = req.body || {};
 
-  if (!payload.name || !payload.contact_email || !payload.subscription) {
-    res.status(400).json({ error: 'name, contact_email, and subscription are required' });
+  const missingFields = ['name', 'contact_email', 'subscription'].filter((field) => !payload[field]);
+  if (missingFields.length) {
+    res.status(400).json({
+      error: 'validation_failed',
+      code: 'org.validation.missing_fields',
+      message: 'name, contact_email, and subscription are required',
+      details: { missingFields },
+    });
     return;
   }
 
+  logOrganizationsEvent('org_create_request_v3', {
+    requestId: req.requestId ?? null,
+    name: payload.name ?? null,
+    subscription: payload.subscription ?? null,
+    source: 'express',
+  });
   logOrganizationsEvent('org_create_request_v2', {
     requestId: req.requestId ?? null,
     name: payload.name ?? null,
@@ -11339,12 +11358,21 @@ app.post('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req
       requestId: req.requestId ?? null,
       orgId: result?.data?.id ?? null,
     });
+    logOrganizationsEvent('create_success', {
+      requestId: req.requestId ?? null,
+      orgId: result?.data?.id ?? null,
+    });
     res.status(201).json({ data: result.data });
   } catch (error) {
     const normalized = logOrganizationsStageError('create_failed', error, {
       requestId: req.requestId ?? null,
     });
-    res.status(500).json({
+    logOrganizationsEvent('create_failed', {
+      requestId: req.requestId ?? null,
+      code: normalized.code ?? null,
+    });
+    const statusCode = normalized.code === '23505' ? 409 : 500;
+    res.status(statusCode).json({
       error: 'Unable to create organization',
       code: normalized.code ?? 'internal_error',
       message: normalized.message ?? 'Unexpected error while creating organization',
