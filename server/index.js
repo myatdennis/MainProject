@@ -10998,12 +10998,28 @@ const ensureAdminOrgSchemaOrRespond = async (res, label) => {
   return true;
 };
 
+const safeSerializeError = (error) => {
+  if (!error) return null;
+  if (typeof error === 'object') {
+    try {
+      return JSON.parse(JSON.stringify(error, Object.getOwnPropertyNames(error)));
+    } catch (_err) {
+      return {
+        message: typeof error.message === 'string' ? error.message : null,
+        code: typeof error.code === 'string' ? error.code : null,
+      };
+    }
+  }
+  return { message: String(error) };
+};
+
 const logOrganizationsStageError = (stage, error, meta = {}) => {
   const normalized = normalizeUnknownError(error);
   const payload = {
     stage,
     ...meta,
     ...normalized,
+    rawError: safeSerializeError(error),
   };
   console.error('[organizations.stage_error]', payload);
   logger.error('organizations_stage_error', payload);
