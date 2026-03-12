@@ -11053,7 +11053,11 @@ const logUsersStageError = (stage, error, meta = {}) => {
 
 app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req, res) => {
   if (!ensureSupabase(res)) return;
-  if (!(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.list'))) return;
+  logOrganizationsEvent('schema_guard_start', { requestId: req.requestId ?? null });
+  const schemaOk = await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.list');
+  logOrganizationsEvent('schema_guard_done', { requestId: req.requestId ?? null, ok: Boolean(schemaOk) });
+  if (!schemaOk) return;
+  res.set('X-Organizations-Handler', 'express-v4');
 
   const context = requireUserContext(req, res);
   if (!context) return;
@@ -11154,7 +11158,7 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
     const result = await runSupabaseQueryWithRetry('admin.organizations.list', () => buildOrgQuery());
     organizations = Array.isArray(result?.data) ? result.data : [];
     totalCount = typeof result?.count === 'number' ? result.count : result?.count ?? 0;
-    logOrganizationsEvent('base_query_success', {
+    logOrganizationsEvent('base_query_done', {
       requestId,
       totalCount,
       returnedCount: organizations.length,
@@ -11178,66 +11182,13 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
 
   let progressMap = {};
   let shouldFetchProgress = false;
-  if (includeProgress) {
-    try {
-      logOrganizationsEvent('progress_view_check', { requestId, status: 'start' });
-      shouldFetchProgress = await ensureOrgProgressViewAvailable();
-      logOrganizationsEvent('progress_view_check', { requestId, status: 'done', available: shouldFetchProgress });
-    } catch (viewCheckError) {
-      logOrganizationsStageError('progress_view_check_failed', viewCheckError, {
-        requestId,
-      });
-      console.warn('[organizations.progress_enrichment_skipped]', {
-        reason: 'view_check_failed',
-        code: viewCheckError?.code ?? null,
-        message: viewCheckError?.message ?? null,
-      });
-      shouldFetchProgress = false;
-    }
-  }
-  if (shouldFetchProgress && Array.isArray(organizations) && organizations.length > 0) {
-    const ids = organizations.map((org) => org.id).filter(Boolean);
-    if (ids.length) {
-      try {
-        logOrganizationsEvent('progress_lookup', { requestId, status: 'start', orgCount: ids.length });
-        const cacheKey = `org-progress:${ids.sort().join(',')}`;
-        const rows = await withCache(
-          cacheKey,
-          async () => {
-            const result = await runSupabaseQueryWithRetry('admin.organizations.progress', () =>
-              supabase.from('org_onboarding_progress_vw').select('*').in('org_id', ids),
-            );
-            if (result.error) {
-              throw result.error;
-            }
-            return result.data || [];
-          },
-          { ttlSeconds: 60 },
-        );
-        progressMap = (rows || []).reduce((acc, row) => {
-          acc[row.org_id] = row;
-          return acc;
-        }, {});
-        logOrganizationsEvent('progress_lookup', { requestId, status: 'done', rowCount: Object.keys(progressMap).length });
-      } catch (progressError) {
-        logOrganizationsStageError('progress_lookup_failed', progressError, {
-          requestId,
-        });
-        console.warn('[organizations.progress_enrichment_skipped]', {
-          reason: 'lookup_failed',
-          code: progressError?.code ?? null,
-          message: progressError?.message ?? null,
-        });
-        progressMap = {};
-      }
-    }
-  } else if (includeProgress && !shouldFetchProgress) {
-    console.info('[organizations.progress_enrichment_skipped]', {
-      reason: 'view_unavailable',
-      includeProgress,
-    });
-  }
+  // Temporarily skip progress/enrichment until prod issues resolved.
+  progressMap = {};
 
+  logOrganizationsEvent('row_transform_start', {
+    requestId,
+    sourceCount: organizations.length,
+  });
   const safeOrganizations = [];
   organizations.forEach((org, index) => {
     try {
@@ -11262,6 +11213,10 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
         orgId: org?.id ?? null,
       });
     }
+  });
+  logOrganizationsEvent('row_transform_done', {
+    requestId,
+    returnedCount: safeOrganizations.length,
   });
 
   logOrganizationsEvent('response_ready', {
@@ -11288,6 +11243,7 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
 app.post('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req, res) => {
   if (!ensureSupabase(res)) return;
   if (!(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.create'))) return;
+  res.set('X-Organizations-Handler', 'express-v4');
   const payload = req.body || {};
 
   const missingFields = ['name', 'contact_email', 'subscription'].filter((field) => !payload[field]);
