@@ -12,17 +12,19 @@ const AUTH_KEYS = ['thc-supabase-auth', 'thc-supabase-auth:thc-supabase-auth'];
 export const AUTH_STORAGE_MODE = (import.meta.env.VITE_AUTH_STORAGE_MODE || 'secure').toLowerCase();
 const supabaseAuthStorage: SupabaseStorageAdapter =
   AUTH_STORAGE_MODE === 'plain' ? createPlainSupabaseAuthStorage() : createSecureSupabaseAuthStorage();
+const SUPABASE_PERSIST_SESSION =
+  (import.meta.env.VITE_SUPABASE_PERSIST_SESSION || 'true').toLowerCase() === 'true';
 
 export const supabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
   import.meta.env.VITE_SUPABASE_ANON_KEY,
   {
     auth: {
-      persistSession: true,
+      persistSession: SUPABASE_PERSIST_SESSION,
       autoRefreshToken: true,
       detectSessionInUrl: true,
       storageKey: 'thc-supabase-auth',
-      storage: supabaseAuthStorage,
+      storage: SUPABASE_PERSIST_SESSION ? supabaseAuthStorage : undefined,
     },
   },
 );

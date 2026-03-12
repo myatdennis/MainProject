@@ -9,6 +9,8 @@ const STORAGE_KEY = 'huddle_course_assignments_v1';
 const ASSIGNMENTS_TABLE = 'course_assignments';
 let assignmentsTableUnavailable = false;
 let assignmentsTableWarningLogged = false;
+let assignmentsProgressColumnMissing = false;
+let assignmentsProgressWarningLogged = false;
 
 const isAssignmentsTableMissingError = (error: unknown): boolean => {
   if (!error) {
@@ -45,6 +47,32 @@ const handleAssignmentsTableMissing = (context: string, error: unknown): boolean
     );
   }
   return true;
+};
+
+const isAssignmentsProgressColumnMissingError = (error: unknown): boolean => {
+  if (!error) return false;
+  const message = typeof (error as { message?: string })?.message === 'string' ? (error as { message?: string })?.message : '';
+  if (!message) return false;
+  const normalized = message.toLowerCase();
+  return normalized.includes("'progress' column") && normalized.includes(`'${ASSIGNMENTS_TABLE}`);
+};
+
+const handleAssignmentsProgressColumnMissing = (context: string, error: unknown): boolean => {
+  if (!isAssignmentsProgressColumnMissingError(error)) {
+    return false;
+  }
+  const wasMissing = assignmentsProgressColumnMissing;
+  assignmentsProgressColumnMissing = true;
+  if (!assignmentsProgressWarningLogged) {
+    assignmentsProgressWarningLogged = true;
+    console.warn('[assignments.schema_mismatch]', {
+      context,
+      column: 'progress',
+      table: ASSIGNMENTS_TABLE,
+      message: (error as { message?: string })?.message ?? null,
+    });
+  }
+  return !wasMissing;
 };
 
 const supabaseReady = () => hasSupabaseConfig() || isSupabaseOperational();
@@ -166,6 +194,35 @@ const clearLocalAssignments = () => {
 
 let inflightLocalSync: Promise<void> | null = null;
 
+const buildSupabaseAssignmentRecord = (assignment: CourseAssignment, includeProgress: boolean) => ({
+  id: assignment.id,
+  course_id: assignment.courseId,
+  user_id: assignment.userId,
+  organization_id: assignment.organizationId ?? null,
+  status: assignment.status,
+  ...(includeProgress ? { progress: assignment.progress ?? 0 } : {}),
+  due_at: assignment.dueDate ?? null,
+  note: assignment.note ?? null,
+  assigned_by: assignment.assignedBy ?? null,
+  created_at: assignment.createdAt ?? new Date().toISOString(),
+  updated_at: assignment.updatedAt ?? new Date().toISOString(),
+  active: assignment.active ?? true,
+});
+
+const executeAssignmentsMutation = async <T>(
+  label: string,
+  operation: (includeProgressField: boolean) => Promise<T>,
+) => {
+  try {
+    return await operation(!assignmentsProgressColumnMissing);
+  } catch (error) {
+    if (handleAssignmentsProgressColumnMissing(label, error)) {
+      return operation(false);
+    }
+    throw error;
+  }
+};
+
 const syncLocalAssignmentsToSupabase = async () => {
   if (!supabaseReady()) {
     return;
@@ -189,32 +246,23 @@ const syncLocalAssignmentsToSupabase = async () => {
         return;
       }
 
-      const payload = pending.map((assignment) => ({
-        id: assignment.id,
-        course_id: assignment.courseId,
-        user_id: assignment.userId,
-        organization_id: assignment.organizationId ?? null,
-        status: assignment.status,
-        progress: assignment.progress ?? 0,
-        due_at: assignment.dueDate ?? null,
-        note: assignment.note ?? null,
-        assigned_by: assignment.assignedBy ?? null,
-        created_at: assignment.createdAt ?? new Date().toISOString(),
-        updated_at: assignment.updatedAt ?? new Date().toISOString(),
-        active: assignment.active ?? true,
-      }));
+      const attemptSync = async (includeProgressField: boolean) => {
+        const payload = pending.map((assignment) =>
+          buildSupabaseAssignmentRecord(assignment, includeProgressField),
+        );
+        const { error } = await supabase
+          .from(ASSIGNMENTS_TABLE)
+          .upsert(payload, { onConflict: 'course_id,user_id' });
+        if (error) throw error;
+      };
 
-      const { error } = await supabase.from(ASSIGNMENTS_TABLE).upsert(payload, { onConflict: 'course_id,user_id' });
-
-      if (error) {
-        if (handleAssignmentsTableMissing('sync', error)) {
-          return;
-        }
-        throw new Error(error.message);
-      }
+      await executeAssignmentsMutation('syncLocalAssignments', attemptSync);
 
       clearLocalAssignments();
     } catch (error) {
+      if (handleAssignmentsTableMissing('sync', error)) {
+        return;
+      }
       console.warn('[assignmentStorage] Failed to sync local assignments to Supabase:', error);
     } finally {
       inflightLocalSync = null;
@@ -318,34 +366,38 @@ export async function legacyAddAssignments(
     async () => {
       if (normalizedIds.length === 0) return [];
 
-      const payload = normalizedIds.map((userId) => ({
-        course_id: courseId,
-        user_id: userId,
-        organization_id: options.organizationId ?? null,
-        status: 'assigned',
-        progress: 0,
-        due_at: options.dueDate ?? null,
-        note: options.note ?? null,
-        assigned_by: options.assignedBy ?? null,
-        created_at: now,
-        updated_at: now,
-      }));
-
       const supabase = await getSupabase();
       if (!supabase) throw new Error('Supabase unavailable');
-      const { data, error } = await supabase
-        .from(ASSIGNMENTS_TABLE)
-        .upsert(payload, { onConflict: 'course_id,user_id' })
-        .select();
 
-      if (error) {
-        if (handleAssignmentsTableMissing('legacyAddAssignments', error)) {
-          throw error;
-        }
-        throw new Error(error.message);
+      const runUpsert = async (includeProgressField: boolean) => {
+        const payload = normalizedIds.map((userId) => ({
+          course_id: courseId,
+          user_id: userId,
+          organization_id: options.organizationId ?? null,
+          status: 'assigned',
+          ...(includeProgressField ? { progress: 0 } : {}),
+          due_at: options.dueDate ?? null,
+          note: options.note ?? null,
+          assigned_by: options.assignedBy ?? null,
+          created_at: now,
+          updated_at: now,
+        }));
+
+        const { data, error } = await supabase
+          .from(ASSIGNMENTS_TABLE)
+          .upsert(payload, { onConflict: 'course_id,user_id' })
+          .select();
+        if (error) throw error;
+        return data;
+      };
+
+      try {
+        const data = await executeAssignmentsMutation('legacyAddAssignments', runUpsert);
+        return (data ?? []).map(mapSupabaseAssignment);
+      } catch (error) {
+        handleAssignmentsTableMissing('legacyAddAssignments', error);
+        throw error;
       }
-
-      return (data ?? []).map(mapSupabaseAssignment);
     },
     () => {
       const existing = loadLocalAssignments();
@@ -493,18 +545,29 @@ export const updateAssignmentProgress = async (
     async () => {
       const supabase = await getSupabase();
       if (!supabase) throw new Error('Supabase unavailable');
-      const { data, error } = await supabase
-        .from(ASSIGNMENTS_TABLE)
-        .update({
-          progress: clampedProgress,
-          status,
-          updated_at: now,
-        })
-        .eq('course_id', courseId)
-        .eq('user_id', normalized)
-        .select();
 
-      if (error) {
+      const runUpdate = async (includeProgressField: boolean) => {
+        const { data, error } = await supabase
+          .from(ASSIGNMENTS_TABLE)
+          .update({
+            ...(includeProgressField ? { progress: clampedProgress } : {}),
+            status,
+            updated_at: now,
+          })
+          .eq('course_id', courseId)
+          .eq('user_id', normalized)
+          .select();
+        if (error) throw error;
+        return data;
+      };
+
+      try {
+        const data = await executeAssignmentsMutation('updateAssignmentProgress', runUpdate);
+
+        const record = Array.isArray(data) ? data[0] : data;
+        const assignment = record ? mapSupabaseAssignment(record as SupabaseAssignmentRow) : undefined;
+        return assignment;
+      } catch (error) {
         if (handleAssignmentsTableMissing('updateAssignmentProgress', error)) {
           const localAssignments = loadLocalAssignments();
           const index = localAssignments.findIndex(
@@ -524,12 +587,8 @@ export const updateAssignmentProgress = async (
           }
           return undefined;
         }
-        throw new Error(error.message);
+        throw error;
       }
-
-      const record = Array.isArray(data) ? data[0] : data;
-      const assignment = record ? mapSupabaseAssignment(record as SupabaseAssignmentRow) : undefined;
-      return assignment;
     },
     () => {
       const assignments = loadLocalAssignments();

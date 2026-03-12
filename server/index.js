@@ -10936,6 +10936,11 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
           message: viewCheckError?.message ?? null,
           code: viewCheckError?.code ?? null,
         });
+        console.warn('[organizations.progress_enrichment_skipped]', {
+          reason: 'view_check_failed',
+          code: viewCheckError?.code ?? null,
+          message: viewCheckError?.message ?? null,
+        });
         shouldFetchProgress = false;
       }
     }
@@ -10967,12 +10972,29 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
             code: progressError?.code ?? null,
             details: progressError?.details ?? null,
           });
+          console.warn('[organizations.progress_enrichment_skipped]', {
+            reason: 'lookup_failed',
+            code: progressError?.code ?? null,
+            message: progressError?.message ?? null,
+          });
           progressMap = {};
         }
       }
     } else if (includeProgress && !shouldFetchProgress) {
-      console.info('[admin.organizations.list] progress_view_unavailable; skipping includeProgress fetch.');
+      console.info('[organizations.progress_enrichment_skipped]', {
+        reason: 'view_unavailable',
+        includeProgress,
+      });
     }
+
+    console.info('[organizations.load]', {
+      requestId: req.requestId ?? null,
+      count: Array.isArray(data) ? data.length : 0,
+      page,
+      pageSize,
+      includeProgress,
+      orgFilter: requestedOrgId ?? null,
+    });
 
     res.json({
       data,
