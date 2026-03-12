@@ -679,6 +679,18 @@ const LMSModule = () => {
 
                         {activeLesson.type === 'video' && (
                           <div className="space-y-4">
+                            {console.info('[VIDEO SOURCE PLAYER]', {
+                              courseId: courseContext?.course.id ?? null,
+                              lessonId: activeLesson.id,
+                              bucket: activeLesson.content?.videoAsset?.bucket ?? null,
+                              storagePath: activeLesson.content?.videoAsset?.storagePath ?? null,
+                              signedUrl: activeLesson.content?.videoAsset?.signedUrl ?? null,
+                              publicUrl: activeLesson.content?.videoAsset?.publicUrl ?? null,
+                              videoUrl: activeLesson.content?.videoUrl ?? null,
+                              chosenSrc: securedVideoUrl ?? activeLesson.content?.videoUrl ?? null,
+                              videoSourceType,
+                              hasAsset: hasSecuredVideoAsset,
+                            })}
                             {secureVideoError && (
                               <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">
                                 <AlertTriangle className="h-5 w-5 flex-shrink-0" aria-hidden />

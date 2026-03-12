@@ -17,7 +17,7 @@ import { computeCourseDiff } from '../../utils/courseDiff';
 import { slugify } from '../../utils/courseNormalization';
 // import type { NormalizedCourse } from '../../utils/courseNormalization';
 import { mergePersistedCourse } from '../../utils/adminCourseMerge';
-import type { Course, Module, Lesson, LessonVideoAsset } from '../../types/courseTypes';
+import type { Course, Module, Lesson, LessonVideoAsset, LessonContent } from '../../types/courseTypes';
 import { type CourseValidationIntent, type CourseValidationIssue } from '../../validation/courseValidation';
 import { getCourseValidationSummary, type CourseValidationSummary } from '../../validation/courseValidationSummary';
 import { getUserSession } from '../../lib/secureStorage';
@@ -1089,6 +1089,17 @@ const AdminCourseBuilder = () => {
           suppressNextDirtyRef.current = true;
           setCourse(mergedCourse as Course);
           lastPersistedRef.current = mergedCourse as Course;
+          mergedCourse.modules?.forEach((module) => {
+            module.lessons?.forEach((lesson) => {
+              if (lesson.type === 'video') {
+                logVideoSourceDebug(
+                  'VIDEO SOURCE REFRESHED',
+                  { courseId: mergedCourse.id, moduleId: module.id, lessonId: lesson.id, phase: 'refresh_course' },
+                  lesson.content,
+                );
+              }
+            });
+          });
           console.info('[COURSE REFRESH]', {
             courseId,
             fetchedModuleCount: refreshed.modules?.length ?? null,
@@ -1877,6 +1888,28 @@ const scheduleAutosave = useCallback(
       lastPersistedRef.current = course;
     }
   }, [course]);
+
+const logVideoSourceDebug = (
+  label: string,
+  params: { courseId?: string | null; moduleId?: string | null; lessonId?: string | null; phase?: string },
+  content?: LessonContent | null,
+  extra: Record<string, unknown> = {},
+) => {
+  if (typeof console === 'undefined') {
+    return;
+  }
+  const safePayload = {
+    ...params,
+    bucket: content?.videoAsset?.bucket ?? null,
+    storagePath: content?.videoAsset?.storagePath ?? null,
+    signedUrl: content?.videoAsset?.signedUrl ?? null,
+    publicUrl: content?.videoAsset?.publicUrl ?? null,
+    videoUrl: content?.videoUrl ?? null,
+    videoSourceType: content?.videoSourceType ?? null,
+    ...extra,
+  };
+  console.info(`[${label}]`, safePayload);
+};
 
 const enforceStableModuleGraph = (input: Course): Course => ({
   ...input,
@@ -3177,15 +3210,23 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
         urlExpiresAt: payload.urlExpiresAt,
       };
 
+      const nextContent = {
+        ...existingContent,
+        videoUrl: payload.signedUrl,
+        fileName: file.name,
+        fileSize: fileSizeLabel,
+        videoAsset,
+        videoSourceType: 'internal',
+      };
+
+      logVideoSourceDebug(
+        'VIDEO SOURCE BUILDER',
+        { courseId: course.id, moduleId, lessonId, phase: 'upload_complete' },
+        nextContent,
+      );
+
       updateLesson(moduleId, lessonId, {
-        content: {
-          ...existingContent,
-          videoUrl: payload.signedUrl,
-          fileName: file.name,
-          fileSize: fileSizeLabel,
-          videoAsset,
-          videoSourceType: 'internal',
-        },
+        content: nextContent,
       });
 
       pendingUploadFiles.current[uploadKey] = null;

@@ -1,4 +1,4 @@
-import type { Course, Module, Lesson } from '../types/courseTypes';
+import type { Course, Module, Lesson, LessonContent } from '../types/courseTypes';
 import type { NormalizedCourse } from '../utils/courseNormalization';
 import {
   normalizeCourse,
@@ -216,7 +216,8 @@ const mapLessonRecord = (lesson: SupabaseLessonRecord): Lesson => {
     typeof durationValue === 'number'
       ? Math.round(durationValue / 60)
       : parseDurationToMinutes(typeof durationValue === 'string' ? durationValue : undefined);
-  const content = (lesson as any).content_json ?? lesson.content ?? {};
+  const rawContent = ((lesson as any).content_json ?? lesson.content ?? {}) as LessonContent;
+  const content = canonicalizeLessonContent(rawContent);
   const completionRule =
     (lesson as any).completion_rule_json ??
     ((content && typeof content === 'object' && 'completionRule' in content ? (content as any).completionRule : undefined) ??

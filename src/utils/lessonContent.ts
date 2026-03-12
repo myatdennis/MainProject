@@ -170,12 +170,20 @@ const normalizeVideoAsset = (raw?: any): LessonVideoAsset | undefined => {
     asset.signedUrl = raw.signed_urls?.read ?? raw.signed_urls?.default ?? null;
   }
 
-  if ((!asset.signedUrl || asset.signedUrl.startsWith('external://')) && asset.bucket && asset.storagePath) {
+  const bucketIsExternal = asset.bucket === 'external' || asset.bucket?.startsWith('external-');
+  if (
+    bucketIsExternal &&
+    (!asset.signedUrl || asset.signedUrl.startsWith('external://')) &&
+    asset.bucket &&
+    asset.storagePath
+  ) {
     const publicUrl = derivePublicSupabaseUrl(asset.bucket, asset.storagePath);
     if (publicUrl) {
       asset.publicUrl = publicUrl;
       asset.signedUrl = asset.signedUrl && !asset.signedUrl.startsWith('external://') ? asset.signedUrl : publicUrl;
     }
+  } else if (!bucketIsExternal) {
+    asset.publicUrl = asset.publicUrl ?? null;
   }
 
   return asset;
@@ -222,7 +230,9 @@ export const canonicalizeLessonContent = (content?: LessonContent): LessonConten
     next.video?.source,
     next.videoAsset?.signedUrl ?? undefined,
     (next.videoAsset as any)?.url ?? (next.videoAsset as any)?.publicUrl ?? undefined,
-    next.videoAsset?.storagePath?.startsWith('http') ? next.videoAsset.storagePath : undefined,
+    next.videoAsset?.bucket === 'external' && next.videoAsset?.storagePath?.startsWith('http')
+      ? next.videoAsset.storagePath
+      : undefined,
   );
 
   if (resolvedVideoUrl) {
@@ -233,11 +243,20 @@ export const canonicalizeLessonContent = (content?: LessonContent): LessonConten
     next.video.url = next.video.url || resolvedVideoUrl;
   }
 
+  const assetBucket = next.videoAsset?.bucket ?? null;
+  const assetSource =
+    typeof next.videoAsset?.source === 'string'
+      ? next.videoAsset.source
+      : assetBucket && assetBucket !== 'external'
+      ? 'internal'
+      : assetBucket === 'external'
+      ? 'external'
+      : undefined;
+
   if (!next.videoSourceType) {
-    next.videoSourceType =
-      next.video?.sourceType ||
-      (next.videoAsset?.source === 'external' ? 'external' : next.videoAsset?.source) ||
-      (resolvedVideoUrl && resolvedVideoUrl.startsWith('http') ? 'external' : undefined);
+    next.videoSourceType = next.video?.sourceType || assetSource || (next.videoAsset ? 'internal' : 'external');
+  } else if (next.videoAsset && assetBucket && assetBucket !== 'external' && next.videoSourceType === 'external') {
+    next.videoSourceType = 'internal';
   }
 
   if (!next.videoProvider && typeof next.video?.provider === 'string') {
