@@ -1911,10 +1911,18 @@ const logVideoSourceDebug = (
   console.info(`[${label}]`, safePayload);
 };
 
-const enforceStableModuleGraph = (input: Course): Course => ({
-  ...input,
-  modules: sanitizeModuleGraph(input.modules || []),
-});
+const isClientGeneratedId = (value?: string | null): boolean => {
+  if (!value) return true;
+  return value.startsWith('course-');
+};
+
+const enforceStableModuleGraph = (input: Course): Course => {
+  const forceNewIds = isClientGeneratedId(input?.id);
+  return {
+    ...input,
+    modules: sanitizeModuleGraph(input.modules || [], { forceNewIds }),
+  };
+};
 
 const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[] } => {
   let mutated = false;
@@ -2254,11 +2262,6 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
     course: Course;
     gate: RuntimeGateResult;
     remoteSynced: boolean;
-  };
-
-  const isClientGeneratedId = (value?: string | null): boolean => {
-    if (!value) return true;
-    return value.startsWith('course-');
   };
 
   const persistCourse = async (

@@ -137,9 +137,10 @@ const normalizeIdentifier = (
   value: string | null | undefined,
   generator: () => string,
   existingClientTemp?: string | null,
+  options: { forceNewId?: boolean } = {},
 ) => {
   const trimmed = typeof value === 'string' ? value.trim() : '';
-  if (trimmed && isUuid(trimmed)) {
+  if (!options.forceNewId && trimmed && isUuid(trimmed)) {
     return { id: trimmed, clientTempId: existingClientTemp ?? null, replaced: false, original: trimmed };
   }
   const generated = generator();
@@ -151,7 +152,7 @@ const normalizeIdentifier = (
   };
 };
 
-export const sanitizeModuleGraph = (modules: Module[] = []): Module[] => {
+export const sanitizeModuleGraph = (modules: Module[] = [], options: { forceNewIds?: boolean } = {}): Module[] => {
   const moduleIdMap = new Map<string, string>();
 
   return modules.map((module, moduleIndex) => {
@@ -159,6 +160,7 @@ export const sanitizeModuleGraph = (modules: Module[] = []): Module[] => {
       module.id,
       createModuleId,
       (module as any)?.client_temp_id ?? null,
+      { forceNewId: options.forceNewIds },
     );
     if (replaced && original) {
       moduleIdMap.set(original, moduleId);
@@ -171,7 +173,9 @@ export const sanitizeModuleGraph = (modules: Module[] = []): Module[] => {
         clientTempId: lessonTempId,
         original: lessonOriginalId,
         replaced: lessonReplaced,
-      } = normalizeIdentifier(lesson.id, createLessonId, (lesson as any)?.client_temp_id ?? null);
+      } = normalizeIdentifier(lesson.id, createLessonId, (lesson as any)?.client_temp_id ?? null, {
+        forceNewId: options.forceNewIds,
+      });
       if (lessonReplaced && lessonOriginalId) {
         moduleIdMap.set(lessonOriginalId, lessonId);
       }
@@ -2053,7 +2057,7 @@ export const courseStore = {
       stampCanonicalOrgId(newCourse as Record<string, any>, initialOrgId);
     }
     
-    newCourse.modules = sanitizeModuleGraph(newCourse.modules || []);
+    newCourse.modules = sanitizeModuleGraph(newCourse.modules || [], { forceNewIds: true });
     courses[newCourse.id] = newCourse;
     _saveCoursesToLocalStorage(courses);
     void saveDraftSnapshot(newCourse, { dirty: true, cause: 'create-course' });

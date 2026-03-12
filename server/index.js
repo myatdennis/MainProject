@@ -11099,7 +11099,7 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
   const ascending = String(req.query.direction).toLowerCase() === 'asc';
 
   const requestId = req.requestId ?? null;
-  logOrganizationsEvent('request_received_v3', {
+  logOrganizationsEvent('request_received_v4', {
     requestId,
     includeProgress,
     page,
@@ -11109,7 +11109,7 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
     isPlatformAdmin,
     source: 'express',
   });
-  logOrganizationsEvent('request_received_v2', {
+  logOrganizationsEvent('request_received_v3', {
     requestId,
     includeProgress,
     page,

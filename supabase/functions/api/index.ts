@@ -1741,8 +1741,7 @@ Deno.serve(async (req) => {
     }
 
     if (pathname === "/api/admin/organizations") {
-      if (method === "GET") return await listOrganizations(ctx);
-      if (method === "POST") return await createOrganization(req, ctx);
+      return errorJson(410, "GONE", "Organizations endpoint has moved to the Node API");
     }
 
     const orgMembersMatch = pathname.match(/^\/api\/admin\/organizations\/([^/]+)\/members$/);
