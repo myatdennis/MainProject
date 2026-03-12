@@ -25,6 +25,7 @@ import { ApiError } from '../../utils/apiClient';
 import { getVideoEmbedUrl } from '../../utils/videoUtils';
 import { uploadLessonVideo, uploadDocumentResource } from '../../dal/media';
 import { canonicalizeLessonContent, canonicalizeQuizQuestions } from '../../utils/lessonContent';
+import { COURSE_VIDEOS_BUCKET } from '../../config/mediaBuckets';
 import { 
   ArrowLeft, 
   Save, 
@@ -1944,7 +1945,7 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
       changed = true;
     }
     if (!asset.bucket) {
-      asset.bucket = fallbackSource.startsWith('external://') ? 'external' : 'course-videos';
+      asset.bucket = fallbackSource.startsWith('external://') ? 'external' : COURSE_VIDEOS_BUCKET;
       changed = true;
     }
     if (!(typeof asset.bytes === 'number' && Number.isFinite(asset.bytes) && asset.bytes > 0)) {
@@ -2629,6 +2630,36 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
     setSaveStatus('saving');
     setStatusBanner(null);
 
+    const waitForAutosaveSettlement = async () => {
+      const waitForInFlight = async () => {
+        if (!saveInFlightRef.current) return;
+        await new Promise<void>((resolve) => {
+          const check = () => {
+            if (!saveInFlightRef.current) {
+              resolve();
+              return;
+            }
+            setTimeout(check, 150);
+          };
+          check();
+        });
+      };
+
+      await waitForInFlight();
+      if (dirtyRef.current) {
+        try {
+          await flushAutosave();
+        } catch (flushError) {
+          console.warn('[COURSE PUBLISH] flushAutosave_failed', flushError);
+        }
+      }
+      await waitForInFlight();
+      if (saveInFlightRef.current || dirtyRef.current) {
+        console.info('[COURSE PUBLISH] refreshing course before publish due to pending changes.');
+        await refreshCourseFromServer(course.id, course);
+      }
+    };
+
     try {
       const gate = evaluateRuntimeGate('course.publish', runtimeStatus);
       if (gate.mode !== 'remote') {
@@ -2641,6 +2672,14 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
         showToast(gate.reason ?? 'Publishing paused until runtime health returns.', 'warning', 6000);
         setSaveStatus('idle');
         return;
+      }
+
+      if (saveInFlightRef.current || dirtyRef.current) {
+        console.info('[COURSE PUBLISH] waiting for autosave to settle before publish.', {
+          dirty: dirtyRef.current,
+          inFlight: saveInFlightRef.current,
+        });
+        await waitForAutosaveSettlement();
       }
 
       const preparedCourse = {
@@ -2667,7 +2706,20 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
         latestPersisted = lastPersistedRef.current || persistedCourse;
         publishIdentifiers = createActionIdentifiers('course.publish', { courseId: latestPersisted.id });
         const publishVersion =
-          typeof (latestPersisted as any)?.version === 'number' ? (latestPersisted as any).version : null;
+          typeof lastPersistedRef.current?.version === 'number'
+            ? lastPersistedRef.current.version
+            : typeof course.version === 'number'
+            ? course.version
+            : 1;
+
+        console.info('[COURSE PUBLISH]', {
+          courseId: course.id,
+          courseVersion: course.version ?? null,
+          lastPersistedVersion: lastPersistedRef.current?.version ?? null,
+          sendingVersion: publishVersion,
+          dirty: dirtyRef.current,
+          inFlight: saveInFlightRef.current,
+        });
 
         const publishResponse = await adminPublishCourse(latestPersisted.id, {
           version: publishVersion,

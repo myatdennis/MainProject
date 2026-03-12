@@ -1561,12 +1561,17 @@ export const courseStore = {
         return;
       }
       const adminSurfaceDetected = isAdminSurface();
+      if (adminSurfaceDetected && orgContext.status !== 'ready') {
+        console.info('[courseStore.init] admin_waiting_for_auth_context', { status: orgContext.status });
+        queueAuthReadyBootstrap(() => {
+          void courseStore.init();
+        });
+        return;
+      }
       if (adminSurfaceDetected && !orgContext.role) {
         if (!awaitingRoleResolution) {
           awaitingRoleResolution = true;
-          console.info(
-            '[courseStore.init] Awaiting admin role resolution before loading catalog; retrying after auth_ready.',
-          );
+          console.info('[courseStore.init] admin_waiting_for_role_context');
           queueAuthReadyBootstrap(() => {
             awaitingRoleResolution = false;
             void courseStore.init();
@@ -1575,7 +1580,8 @@ export const courseStore = {
         return;
       }
       awaitingRoleResolution = false;
-      const hasAdminRole = typeof orgContext.role === 'string' && orgContext.role.toLowerCase().includes('admin');
+      const roleResolved = typeof orgContext.role === 'string' && orgContext.role.length > 0;
+      const hasAdminRole = roleResolved && orgContext.role.toLowerCase().includes('admin');
       const treatAsAdmin = adminSurfaceDetected || hasAdminRole;
       restrictToOrg = !treatAsAdmin;
       const adminMode = treatAsAdmin;
@@ -1633,8 +1639,16 @@ export const courseStore = {
 
       const shouldLoadPublishedCatalog =
         restrictToOrg || (!restrictToOrg && (adminLoadStatus === 'error' || adminLoadStatus === 'api_unreachable'));
+      const publishedFallbackAllowed = !adminSurfaceDetected || (roleResolved && !hasAdminRole);
 
       if ((!dbCourses || dbCourses.length === 0) && shouldLoadPublishedCatalog) {
+        if (!publishedFallbackAllowed) {
+          console.info('[courseStore.init] published_fallback_blocked_admin_surface', {
+            adminSurfaceDetected,
+            role: orgContext.role ?? null,
+          });
+          return;
+        }
         const learnerContextReadyForFallback = restrictToOrg
           ? orgContext.status === 'ready' && !!orgContext.orgId
           : orgContext.status === 'ready';
@@ -1653,6 +1667,11 @@ export const courseStore = {
         }
 
         console.log('[courseStore.init] Loading published catalog as fallback...');
+        console.info('[courseStore.init] published_fallback_allowed', {
+          restrictToOrg,
+          orgId: orgContext.orgId ?? null,
+          role: orgContext.role ?? null,
+        });
         try {
           if (restrictToOrg) {
             if (orgContext.orgId) {
