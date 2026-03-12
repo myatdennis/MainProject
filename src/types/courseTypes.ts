@@ -80,6 +80,10 @@ export interface Course {
   assignmentStatus?: CourseAssignmentStatus;
   assignmentDueDate?: string | null;
   assignmentProgress?: number;
+  moduleCount?: number | null;
+  lessonCount?: number | null;
+  structureLoaded?: boolean;
+  structureSource?: 'full' | 'summary';
 }
 
 export interface Module {

@@ -259,6 +259,18 @@ const mapModuleRecord = (module: SupabaseModuleRecord): Module => {
 
 export const mapCourseRecord = (course: SupabaseCourseRecord): NormalizedCourse => {
   const modules = (course.modules || []).map(mapModuleRecord);
+  const derivedLessonCount = modules.reduce(
+    (total, module) => total + (module.lessons ? module.lessons.length : 0),
+    0,
+  );
+  const structureLoaded =
+    modules.length > 0 && modules.some((module) => Array.isArray(module.lessons) && module.lessons.length > 0);
+  const moduleCountFallback =
+    (course as any).module_count ?? (course as any).modules_count ?? (structureLoaded ? modules.length : null);
+  const lessonCountFallback =
+    (course as any).lesson_count ??
+    (course as any).lessons_count ??
+    (structureLoaded ? derivedLessonCount : null);
   const meta = course.meta_json || {};
   const resolvedTitle = course.title || course.name || 'Untitled Course';
   const resolvedOrganizationId =
@@ -313,6 +325,16 @@ export const mapCourseRecord = (course: SupabaseCourseRecord): NormalizedCourse 
   }
   if (typeof (course as any).version === 'number') {
     (normalizedCourse as Record<string, any>).version = (course as any).version;
+  }
+  (normalizedCourse as Record<string, any>).structureLoaded = structureLoaded;
+  (normalizedCourse as Record<string, any>).structureSource = structureLoaded ? 'full' : 'summary';
+  (normalizedCourse as Record<string, any>).moduleCount =
+    structureLoaded && modules.length > 0 ? modules.length : moduleCountFallback ?? modules.length ?? null;
+  const resolvedLessonCount =
+    structureLoaded && derivedLessonCount > 0 ? derivedLessonCount : lessonCountFallback ?? normalizedCourse.lessons ?? null;
+  (normalizedCourse as Record<string, any>).lessonCount = resolvedLessonCount;
+  if (resolvedLessonCount !== null && typeof resolvedLessonCount !== 'undefined') {
+    (normalizedCourse as Record<string, any>).lessons = resolvedLessonCount;
   }
   stampCanonicalOrgId(normalizedCourse as Record<string, any>, resolvedOrganizationId);
   markCoursePersisted(normalizedCourse.id);

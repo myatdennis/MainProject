@@ -1089,6 +1089,12 @@ const AdminCourseBuilder = () => {
           suppressNextDirtyRef.current = true;
           setCourse(mergedCourse as Course);
           lastPersistedRef.current = mergedCourse as Course;
+          console.info('[COURSE REFRESH]', {
+            courseId,
+            fetchedModuleCount: refreshed.modules?.length ?? null,
+            fetchedLessonCount: refreshed.modules ? countTotalLessons(refreshed.modules as Module[]) : null,
+            fetchedVersion: refreshed.version ?? null,
+          });
           logAutoSaveEvent('autosave_recovered_from_stale_version', { courseId });
           return mergedCourse as Course;
         }
@@ -2682,8 +2688,32 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
         await waitForAutosaveSettlement();
       }
 
+      const preparedCourseSource = await (async () => {
+        let fetched: Course | null = null;
+        try {
+          fetched = await refreshCourseFromServer(course.id, course);
+        } catch (refreshErr) {
+          console.warn('[COURSE PUBLISH] refresh before publish failed', {
+            courseId: course.id,
+            message: refreshErr instanceof Error ? refreshErr.message : String(refreshErr),
+          });
+        }
+        return fetched ?? lastPersistedRef.current ?? course;
+      })();
+
+      console.info('[COURSE PUBLISH SOURCE]', {
+        courseId: course.id,
+        fetchedLessonCount: preparedCourseSource?.modules
+          ? countTotalLessons(preparedCourseSource.modules)
+          : null,
+        fetchedModuleCount: preparedCourseSource?.modules?.length ?? null,
+        fetchedVersion: preparedCourseSource?.version ?? null,
+        localVersion: course.version ?? null,
+        persistedVersion: lastPersistedRef.current?.version ?? null,
+      });
+
       const preparedCourse = {
-        ...course,
+        ...preparedCourseSource,
         lastUpdated: new Date().toISOString(),
       };
 
@@ -2706,7 +2736,9 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
         latestPersisted = lastPersistedRef.current || persistedCourse;
         publishIdentifiers = createActionIdentifiers('course.publish', { courseId: latestPersisted.id });
         const publishVersion =
-          typeof lastPersistedRef.current?.version === 'number'
+          typeof preparedCourseSource?.version === 'number'
+            ? preparedCourseSource.version
+            : typeof lastPersistedRef.current?.version === 'number'
             ? lastPersistedRef.current.version
             : typeof course.version === 'number'
             ? course.version

@@ -87,5 +87,9 @@ export const mergePersistedCourse = (local: Course, persisted: NormalizedCourse)
     duration: calculateCourseDuration(mergedModules),
     lessons: countTotalLessons(mergedModules),
     lastUpdated: new Date().toISOString(),
+    structureLoaded: true,
+    structureSource: 'full',
+    moduleCount: mergedModules.length,
+    lessonCount: countTotalLessons(mergedModules),
   };
 };

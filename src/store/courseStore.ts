@@ -205,6 +205,25 @@ export const sanitizeModuleGraph = (modules: Module[] = []): Module[] => {
   });
 };
 
+const hasLoadedStructure = (candidate?: Course | null): boolean => {
+  if (!candidate?.modules || candidate.modules.length === 0) return false;
+  return candidate.modules.some((module) => Array.isArray(module.lessons) && module.lessons.length > 0);
+};
+
+const deriveModuleCount = (candidate?: Course | null): number | null => {
+  if (!candidate) return null;
+  if (typeof candidate.moduleCount === 'number') return candidate.moduleCount;
+  if (Array.isArray(candidate.modules)) return candidate.modules.length;
+  return null;
+};
+
+const deriveLessonCount = (candidate?: Course | null): number | null => {
+  if (!candidate) return null;
+  if (typeof candidate.lessonCount === 'number') return candidate.lessonCount;
+  if (!candidate.modules) return null;
+  return candidate.modules.reduce((total, module) => total + ((module.lessons || []).length), 0);
+};
+
 const createCoursePayloadForApi = (course: Course): Course => {
   const { clone } = cloneWithCanonicalOrgId(course, { removeAliases: true });
   const sanitizedModules = sanitizeModuleGraph((clone as Course).modules || []);
@@ -1562,7 +1581,7 @@ export const courseStore = {
       }
       const adminSurfaceDetected = isAdminSurface();
       if (adminSurfaceDetected && orgContext.status !== 'ready') {
-        console.info('[courseStore.init] admin_waiting_for_auth_context', { status: orgContext.status });
+        console.info('[courseStore.init] admin_surface_waiting_for_context', { status: orgContext.status });
         queueAuthReadyBootstrap(() => {
           void courseStore.init();
         });
@@ -1571,7 +1590,7 @@ export const courseStore = {
       if (adminSurfaceDetected && !orgContext.role) {
         if (!awaitingRoleResolution) {
           awaitingRoleResolution = true;
-          console.info('[courseStore.init] admin_waiting_for_role_context');
+          console.info('[courseStore.init] admin_surface_waiting_for_role_context');
           queueAuthReadyBootstrap(() => {
             awaitingRoleResolution = false;
             void courseStore.init();
@@ -1608,6 +1627,15 @@ export const courseStore = {
         try {
           dbCourses = await getAllCoursesFromDatabase();
           console.log('[courseStore.init] Admin API returned courses:', dbCourses);
+          console.info(
+            '[courseStore.init] admin_course_structure_snapshot',
+            dbCourses.map((entry) => ({
+              id: entry.id,
+              structureLoaded: hasLoadedStructure(entry),
+              moduleCount: deriveModuleCount(entry),
+              lessonCount: deriveLessonCount(entry),
+            })),
+          );
           adminLoadStatus = dbCourses.length === 0 ? 'empty' : 'success';
           if (adminLoadStatus === 'empty') {
             console.info('[courseStore.init] admin_courses_empty (0 results from /api/admin/courses).');
@@ -1639,13 +1667,18 @@ export const courseStore = {
 
       const shouldLoadPublishedCatalog =
         restrictToOrg || (!restrictToOrg && (adminLoadStatus === 'error' || adminLoadStatus === 'api_unreachable'));
-      const publishedFallbackAllowed = !adminSurfaceDetected || (roleResolved && !hasAdminRole);
+      const publishedFallbackAllowed = !adminSurfaceDetected;
 
       if ((!dbCourses || dbCourses.length === 0) && shouldLoadPublishedCatalog) {
         if (!publishedFallbackAllowed) {
-          console.info('[courseStore.init] published_fallback_blocked_admin_surface', {
+          console.info('[courseStore.init] admin_surface_detected_blocking_fallback', {
             adminSurfaceDetected,
             role: orgContext.role ?? null,
+            status: orgContext.status,
+          });
+          console.info('[courseStore.init] published_fallback_skipped_admin_surface', {
+            adminSurfaceDetected,
+            reason: 'admin_surface',
           });
           return;
         }
@@ -1707,7 +1740,24 @@ export const courseStore = {
           if (editingCourseId && courseWithVersion.id === editingCourseId && existing) {
             return;
           }
-          merged[courseWithVersion.id] = existing
+          const incomingStructureLoaded = hasLoadedStructure(courseWithVersion);
+          const existingStructureLoaded = hasLoadedStructure(existing ?? null);
+          const normalizedIncomingModules = sanitizeModuleGraph(courseWithVersion.modules || []);
+          const resolvedModules = incomingStructureLoaded
+            ? normalizedIncomingModules
+            : existing?.modules ?? normalizedIncomingModules;
+          const resolvedModuleCount = incomingStructureLoaded
+            ? courseWithVersion.moduleCount ?? normalizedIncomingModules.length
+            : existing?.moduleCount ?? courseWithVersion.moduleCount ?? null;
+          const resolvedLessonCount = incomingStructureLoaded
+            ? courseWithVersion.lessonCount ??
+              normalizedIncomingModules.reduce(
+                (total, module) => total + ((module.lessons || []).length),
+                0,
+              )
+            : existing?.lessonCount ?? courseWithVersion.lessonCount ?? null;
+
+          const mergedCourse = existing
             ? {
                 ...existing,
                 ...courseWithVersion,
@@ -1717,6 +1767,20 @@ export const courseStore = {
                     : existing.version,
               }
             : { ...courseWithVersion };
+
+          mergedCourse.modules = resolvedModules;
+          mergedCourse.structureLoaded = incomingStructureLoaded || existingStructureLoaded;
+          mergedCourse.structureSource = incomingStructureLoaded
+            ? 'full'
+            : existing?.structureSource ?? courseWithVersion.structureSource ?? (mergedCourse.structureLoaded ? 'full' : 'summary');
+          if (resolvedModuleCount !== null && typeof resolvedModuleCount !== 'undefined') {
+            mergedCourse.moduleCount = resolvedModuleCount;
+          }
+          if (resolvedLessonCount !== null && typeof resolvedLessonCount !== 'undefined') {
+            mergedCourse.lessonCount = resolvedLessonCount;
+            mergedCourse.lessons = resolvedLessonCount;
+          }
+          merged[courseWithVersion.id] = mergedCourse;
         });
         courses = merged;
         console.log(`[courseStore.init] Loaded ${dbCourses.length} courses from API (merged with ${Object.keys(merged).length - dbCourses.length} existing drafts)`);
@@ -1853,12 +1917,22 @@ export const courseStore = {
 
   saveCourse: (course: Course, options: { skipRemoteSync?: boolean } = {}): void => {
     const normalizedModules = sanitizeModuleGraph(course.modules || []);
+    const derivedLessonCount = normalizedModules.reduce(
+      (total, module) => total + ((module.lessons || []).length),
+      0,
+    );
     const resolvedVersion =
       typeof course.version === 'number' && Number.isFinite(course.version) ? course.version : 1;
+    const modulesLoaded = hasLoadedStructure({ ...course, modules: normalizedModules });
     const nextCourse: Course = {
       ...course,
       version: resolvedVersion,
       modules: normalizedModules,
+      moduleCount: normalizedModules.length,
+      lessonCount: derivedLessonCount,
+      lessons: derivedLessonCount,
+      structureLoaded: modulesLoaded,
+      structureSource: modulesLoaded ? 'full' : course.structureSource ?? 'summary',
       lastUpdated: new Date().toISOString(),
     };
     course.modules = normalizedModules;
