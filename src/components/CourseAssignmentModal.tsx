@@ -1,5 +1,15 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { X, BookOpen, Users, Send, Building2, Loader2, ShieldCheck, WifiOff } from 'lucide-react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  AlertTriangle,
+  BookOpen,
+  CheckCircle2,
+  Loader2,
+  Search,
+  Send,
+  Users,
+  WifiOff,
+  X,
+} from 'lucide-react';
 import LoadingButton from './LoadingButton';
 import { useToast } from '../context/ToastContext';
 import { courseStore } from '../store/courseStore';
@@ -7,15 +17,21 @@ import type { CourseAssignment } from '../types/assignment';
 import orgService from '../dal/orgs';
 import useRuntimeStatus from '../hooks/useRuntimeStatus';
 import { submitAssignmentRequest, subscribeToAssignmentQueue } from '../utils/assignmentQueue';
-import type { AssignmentQueueItem } from '../utils/assignmentQueue';
+import type { AssignmentQueueItem, AssignmentRequestMode } from '../utils/assignmentQueue';
 import { useSecureAuth } from '../context/SecureAuthContext';
+import adminUsers, { AdminUserRecord } from '../dal/adminUsers';
 
 interface CourseAssignmentModalProps {
   isOpen: boolean;
   onClose: () => void;
   selectedUsers: string[];
-  course?: { id: string; title: string; duration?: string };
+  course?: { id: string; title: string; duration?: string; organizationId?: string | null };
   onAssignComplete?: (assignmentData?: CourseAssignment[]) => void;
+}
+
+interface OrgOption {
+  id: string;
+  name: string;
 }
 
 const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
@@ -27,21 +43,26 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
 }) => {
   const { showToast } = useToast();
   const runtimeStatus = useRuntimeStatus();
-  const { user, activeOrgId } = useSecureAuth();
+  const { user } = useSecureAuth();
   const supabaseReady = runtimeStatus.supabaseConfigured && runtimeStatus.supabaseHealthy;
   const runtimeLastChecked = runtimeStatus.lastChecked
     ? new Date(runtimeStatus.lastChecked).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : 'pending';
+
   const [loading, setLoading] = useState(false);
   const [selectedCourseId, setSelectedCourseId] = useState(course?.id ?? '');
   const [dueDate, setDueDate] = useState('');
   const [note, setNote] = useState('');
-  const [emailList, setEmailList] = useState(selectedUsers.join('\n'));
-  const [assignmentMode, setAssignmentMode] = useState<'learners' | 'organization'>('learners');
-  const [organizationOptions, setOrganizationOptions] = useState<Array<{ id: string; name: string }>>([]);
+  const [organizationOptions, setOrganizationOptions] = useState<OrgOption[]>([]);
   const [orgListLoading, setOrgListLoading] = useState(false);
   const [orgListError, setOrgListError] = useState<string | null>(null);
-  const [selectedOrgId, setSelectedOrgId] = useState('');
+  const [orgSearch, setOrgSearch] = useState('');
+  const [selectedOrgIds, setSelectedOrgIds] = useState<string[]>([]);
+  const [orgMembers, setOrgMembers] = useState<Record<string, AdminUserRecord[]>>({});
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [usersError, setUsersError] = useState<string | null>(null);
+  const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
+  const [userSearch, setUserSearch] = useState('');
   const [queueItems, setQueueItems] = useState<AssignmentQueueItem[]>([]);
 
   useEffect(() => {
@@ -54,11 +75,20 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
   }, [course?.id]);
 
   useEffect(() => {
-    setEmailList((prev) => {
-      if (!isOpen) return prev;
-      return selectedUsers.join('\n');
-    });
-  }, [selectedUsers, isOpen]);
+    if (!isOpen) {
+      setSelectedOrgIds([]);
+      setSelectedUserIds([]);
+      setOrgSearch('');
+      setUserSearch('');
+      setUsersError(null);
+      setNote('');
+      setDueDate('');
+      return;
+    }
+    if (selectedUsers.length > 0) {
+      setSelectedUserIds(selectedUsers);
+    }
+  }, [isOpen, selectedUsers]);
 
   const availableCourses = useMemo(() => {
     if (course) {
@@ -70,6 +100,7 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
         id: entry.id,
         title: entry.title,
         duration: durationLabel,
+        organizationId: entry.organizationId,
       };
     });
   }, [course, isOpen]);
@@ -79,22 +110,13 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
       return courseStore.getCourse(course.id) ?? course;
     }
     if (selectedCourseId) {
-      return courseStore.getCourse(selectedCourseId);
+      return courseStore.getCourse(selectedCourseId) ?? availableCourses.find((c) => c.id === selectedCourseId);
     }
     return null;
-  }, [course, selectedCourseId]);
-
-  const resolvedCourseOrgId = resolvedCourse && 'organizationId' in resolvedCourse
-    ? resolvedCourse.organizationId ?? null
-    : null;
+  }, [course, selectedCourseId, availableCourses]);
 
   useEffect(() => {
-    if (!isOpen) {
-      setAssignmentMode('learners');
-      setSelectedOrgId('');
-      return;
-    }
-
+    if (!isOpen) return;
     let active = true;
     (async () => {
       try {
@@ -102,10 +124,21 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
         setOrgListError(null);
         const orgs = await orgService.listOrgs();
         if (!active) return;
-        const normalized = orgs
-          .filter((org: any) => org?.id)
-          .map((org: any) => ({ id: String(org.id), name: org.name || `Org ${org.id}` }));
+        const normalized = Array.isArray(orgs)
+          ? orgs
+              .filter((org: any) => org?.id)
+              .map((org: any) => ({ id: String(org.id), name: org.name || `Org ${org.id}` }))
+          : [];
         setOrganizationOptions(normalized);
+        if (
+          normalized.length > 0 &&
+          selectedOrgIds.length === 0 &&
+          resolvedCourse &&
+          'organizationId' in resolvedCourse &&
+          resolvedCourse.organizationId
+        ) {
+          setSelectedOrgIds([String(resolvedCourse.organizationId)]);
+        }
       } catch (error) {
         if (!active) return;
         console.error('[CourseAssignmentModal] Failed to load organizations:', error);
@@ -121,97 +154,197 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
     return () => {
       active = false;
     };
-  }, [isOpen]);
+  }, [isOpen, resolvedCourse, selectedOrgIds.length]);
 
-  const selectedOrganization = useMemo(() => {
-    return organizationOptions.find((org) => org.id === selectedOrgId) ?? null;
-  }, [organizationOptions, selectedOrgId]);
+  const fetchOrgMembers = useCallback(
+    async (orgId: string) => {
+      try {
+        const users = await adminUsers.listUsersByOrg(orgId);
+        setOrgMembers((prev) => ({ ...prev, [orgId]: users }));
+      } catch (error) {
+        console.error('[CourseAssignmentModal] Failed to load users for org', orgId, error);
+        setUsersError('Unable to load users for one or more organizations');
+      }
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const missing = selectedOrgIds.filter((orgId) => !orgMembers[orgId]);
+    if (missing.length === 0) {
+      setUsersLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setUsersLoading(true);
+    setUsersError(null);
+    Promise.all(missing.map((orgId) => fetchOrgMembers(orgId))).finally(() => {
+      if (!cancelled) {
+        setUsersLoading(false);
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedOrgIds, orgMembers, fetchOrgMembers, isOpen]);
+
+  const filteredOrganizations = useMemo(() => {
+    const term = orgSearch.trim().toLowerCase();
+    if (!term) return organizationOptions;
+    return organizationOptions.filter((org) => org.name.toLowerCase().includes(term));
+  }, [organizationOptions, orgSearch]);
+
+  const userIndex = useMemo(() => {
+    const map = new Map<string, AdminUserRecord>();
+    selectedOrgIds.forEach((orgId) => {
+      const members = orgMembers[orgId];
+      if (!members) return;
+      members.forEach((member) => {
+        const key = member.userId;
+        if (!key || map.has(key)) return;
+        map.set(key, member);
+      });
+    });
+    return map;
+  }, [selectedOrgIds, orgMembers]);
+
+  const availableUsers = useMemo(() => {
+    const list = Array.from(userIndex.values());
+    if (!userSearch.trim()) return list;
+    const term = userSearch.trim().toLowerCase();
+    return list.filter((user) => {
+      const fields = [user.name, user.email, user.title];
+      return fields.some((field) => field && field.toLowerCase().includes(term));
+    });
+  }, [userIndex, userSearch]);
+
+  const unresolvedSelectedUsers = useMemo(() => {
+    return selectedUserIds.filter((userId) => !userIndex.has(userId));
+  }, [selectedUserIds, userIndex]);
+
+  const resolvedSelectedUsers = useMemo(() => {
+    return selectedUserIds.filter((userId) => userIndex.has(userId));
+  }, [selectedUserIds, userIndex]);
 
   const hasQueuedRequests = queueItems.length > 0;
   const queuePreview = hasQueuedRequests ? queueItems.slice(0, 3) : [];
 
-  if (!isOpen) return null;
+  const toggleOrgSelection = (orgId: string) => {
+    setSelectedOrgIds((prev) =>
+      prev.includes(orgId) ? prev.filter((id) => id !== orgId) : [...prev, orgId]
+    );
+  };
+
+  const handleUserSelectionChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
+    const values = Array.from(event.target.selectedOptions).map((option) => option.value);
+    setSelectedUserIds(values);
+  };
 
   const handleAssign = async (event: React.FormEvent) => {
     event.preventDefault();
 
     const targetCourseId = course?.id ?? selectedCourseId;
     if (!targetCourseId) {
-      showToast('Pick a course before sending Huddle invites.', 'error');
+      showToast('Select a course before assigning.', 'error');
       return;
     }
 
-    let recipients: string[] = [];
-    if (assignmentMode === 'learners') {
-      recipients = emailList
-        .split(/\n|,|;/)
-        .map((value) => value.trim().toLowerCase())
-        .filter(Boolean);
-
-      if (recipients.length === 0) {
-        showToast('Add at least one email or user ID', 'error');
-        return;
+    const userGroups = new Map<string, string[]>();
+    resolvedSelectedUsers.forEach((userId) => {
+      const record = userIndex.get(userId);
+      if (!record || !record.orgId) return;
+      if (!userGroups.has(record.orgId)) {
+        userGroups.set(record.orgId, []);
       }
-    }
+      userGroups.get(record.orgId)!.push(userId);
+    });
 
-    const candidateOrgId = assignmentMode === 'organization'
-      ? selectedOrgId
-      : resolvedCourseOrgId || activeOrgId || selectedOrgId || '';
-    const resolvedOrgId = `${candidateOrgId}`.trim();
+    const filteredUserGroups = Array.from(userGroups.entries()).filter(
+      ([orgId]) => !selectedOrgIds.includes(orgId)
+    );
 
-    if (!resolvedOrgId) {
-      showToast('Select an organization or set your active workspace before assigning this course.', 'error');
+    const hasOrgTargets = selectedOrgIds.length > 0;
+    const hasUserTargets = filteredUserGroups.length > 0;
+
+    if (!hasOrgTargets && !hasUserTargets) {
+      showToast('Select at least one organization or learner.', 'error');
       return;
     }
 
     setLoading(true);
+    const assignmentPayloads: CourseAssignment[] = [];
+
     try {
-      const result = await submitAssignmentRequest({
-        courseId: targetCourseId,
-  organizationId: resolvedOrgId,
-        userIds: assignmentMode === 'organization' ? [] : recipients,
-        dueDate: dueDate || null,
-        note: note || null,
-        assignedBy: user?.id ?? user?.email ?? null,
-        mode: assignmentMode,
-        metadata: {
-          surface: 'course_assignment_modal',
-          selectedUserCount: selectedUsers.length,
-          manualEntryCount: recipients.length,
-          organizationMode: assignmentMode,
-          organizationLabel: selectedOrganization?.name ?? resolvedOrgId,
-        },
-      });
-
-      const audienceLabel = assignmentMode === 'organization'
-        ? selectedOrganization?.name ?? 'this organization'
-        : `${result.count} learner${result.count === 1 ? '' : 's'}`;
-
-      const toastMessage = result.status === 'queued'
-        ? `Assignments queued for ${audienceLabel}. We'll sync them automatically once we're back online.`
-        : `Assignments sent to ${audienceLabel}. Learners will see notifications shortly.`;
-
-      showToast(toastMessage, 'success');
-      onAssignComplete?.(result.assignments);
-
-      if (assignmentMode === 'learners') {
-        setEmailList('');
-        if (!course) {
-          setSelectedCourseId('');
+      const runAssignment = async (
+        orgId: string,
+        mode: AssignmentRequestMode,
+        userIds: string[]
+      ) => {
+        const result = await submitAssignmentRequest({
+          courseId: targetCourseId,
+          organizationId: orgId,
+          userIds,
+          dueDate: dueDate || null,
+          note: note || null,
+          assignedBy: user?.id ?? user?.email ?? null,
+          mode,
+          metadata: {
+            surface: 'course_assignment_modal',
+            orgCount: selectedOrgIds.length,
+            userCount: resolvedSelectedUsers.length,
+            queuedAt: new Date().toISOString(),
+          },
+        });
+        if (result.assignments?.length) {
+          assignmentPayloads.push(...result.assignments);
         }
-      } else {
-        setSelectedOrgId('');
+        console.info('[CourseAssignmentModal] assign_request_success', {
+          courseId: targetCourseId,
+          orgId,
+          mode,
+          userCount: userIds.length,
+          status: result.status,
+        });
+        return result.status;
+      };
+
+      const statuses: Array<'sent' | 'queued'> = [];
+      for (const orgId of selectedOrgIds) {
+        statuses.push(await runAssignment(orgId, 'organization', []));
       }
-      setNote('');
+      for (const [orgId, userIds] of filteredUserGroups) {
+        statuses.push(await runAssignment(orgId, 'learners', userIds));
+      }
+
+      const queuedCount = statuses.filter((status) => status === 'queued').length;
+      const successMessage = queuedCount > 0
+        ? `Assignments queued for ${selectedOrgIds.length} org(s) and ${resolvedSelectedUsers.length} learner(s). We'll sync them when the connection recovers.`
+        : `Assignments sent to ${selectedOrgIds.length} org(s) and ${resolvedSelectedUsers.length} learner(s).`;
+      showToast(successMessage, 'success');
+      console.info('[CourseAssignmentModal] assign_success', {
+        courseId: targetCourseId,
+        orgCount: selectedOrgIds.length,
+        userCount: resolvedSelectedUsers.length,
+      });
+      onAssignComplete?.(assignmentPayloads);
+      setSelectedUserIds([]);
+      setSelectedOrgIds([]);
       setDueDate('');
+      setNote('');
       onClose();
     } catch (error) {
-      console.error('[CourseAssignmentModal] Failed to assign course:', error);
+      console.error('[CourseAssignmentModal] assign_failed', {
+        courseId: course?.id ?? selectedCourseId,
+        orgCount: selectedOrgIds.length,
+        userCount: resolvedSelectedUsers.length,
+        error,
+      });
       const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
       showToast(
         offline
-          ? 'Huddle can’t reach the network right now. Keep the tab open and we will retry automatically.'
-          : 'We hit a snag assigning this course. Please try again in a moment.',
+          ? 'We queued your assignments offline. Keep the tab open so we can retry.'
+          : 'We hit a snag assigning this course. Please try again.',
         'error'
       );
     } finally {
@@ -219,10 +352,13 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
     }
   };
 
+  if (!isOpen) return null;
+
+  const filteredOrgSelections = filteredOrganizations.slice(0, 50); // safety for very large org lists
+
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-xl shadow-xl max-w-md w-full mx-4">
-        {/* Header */}
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-4">
+      <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between p-6 border-b border-gray-200">
           <div className="flex items-center space-x-3">
             <div className="bg-green-100 p-2 rounded-lg">
@@ -231,9 +367,7 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
             <div>
               <h2 className="text-xl font-bold text-gray-900">Assign Course</h2>
               <p className="text-sm text-gray-600">
-                {selectedUsers.length > 0
-                  ? `Prefilled with ${selectedUsers.length} selected user(s)`
-                  : 'Paste learner emails or IDs below'}
+                Choose one or more organizations and specific learners. We'll route assignments through the admin API.
               </p>
             </div>
           </div>
@@ -241,12 +375,12 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
             onClick={onClose}
             className="p-2 text-gray-400 hover:text-gray-600 rounded-lg"
             disabled={loading}
+            aria-label="Close course assignment modal"
           >
             <X className="h-5 w-5" />
           </button>
         </div>
 
-        {/* Form */}
         <form onSubmit={handleAssign} className="p-6 space-y-6">
           <div
             className={`rounded-xl border p-4 text-sm ${supabaseReady ? 'border-green-200 bg-green-50 text-green-900' : 'border-amber-200 bg-amber-50 text-amber-900'}`}
@@ -254,7 +388,7 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div className="flex items-start gap-3">
                 {supabaseReady ? (
-                  <ShieldCheck className="h-5 w-5 mt-0.5 text-green-600" />
+                  <CheckCircle2 className="h-5 w-5 mt-0.5 text-green-600" />
                 ) : (
                   <WifiOff className="h-5 w-5 mt-0.5 text-amber-600" />
                 )}
@@ -264,10 +398,10 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
                   </p>
                   <p className="mt-1 leading-relaxed">
                     {supabaseReady
-                      ? 'Learners and org workspaces will receive notifications and analytics updates as soon as you hit Assign.'
+                      ? 'Learners and org workspaces receive notifications as soon as you assign.'
                       : runtimeStatus.demoModeEnabled
-                        ? 'You can stage assignments, but they will remain local until Supabase is re-enabled. Use CSV export if sharing externally.'
-                        : 'Assignments persist locally and will auto-sync once the runtime health check returns to OK. You will also see them inside Sync Diagnostics.'}
+                        ? 'You can stage assignments, but they remain local until Supabase is re-enabled.'
+                        : 'Assignments persist locally and auto-sync once runtime health checks pass.'}
                   </p>
                 </div>
               </div>
@@ -279,6 +413,7 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
               </div>
             </div>
           </div>
+
           {hasQueuedRequests && (
             <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
               <div className="flex items-start justify-between gap-3">
@@ -313,7 +448,13 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
               </ul>
             </div>
           )}
-          {!course && (
+
+          {course ? (
+            <div className="rounded-lg border border-gray-100 bg-gray-50 px-4 py-3 text-sm text-gray-700">
+              Assigning <span className="font-semibold text-gray-900">{course.title}</span>
+              {course.duration && <span className="ml-1">({course.duration})</span>}
+            </div>
+          ) : (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">Select course *</label>
               <select
@@ -333,93 +474,118 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
             </div>
           )}
 
-          {course && (
-            <div className="rounded-lg border border-mist bg-softwhite/60 px-4 py-3 text-sm text-slate/80">
-              Assigning <span className="font-semibold text-charcoal">{course.title}</span>
-              {course.duration && <span className="ml-1">({course.duration})</span>}
-            </div>
-          )}
-
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Assignment method</label>
-            <div className="inline-flex rounded-lg border border-gray-200 bg-gray-50 p-1 text-sm font-medium">
-              <button
-                type="button"
-                onClick={() => setAssignmentMode('learners')}
-                className={`rounded-md px-3 py-1.5 transition ${assignmentMode === 'learners' ? 'bg-white text-charcoal shadow-sm' : 'text-gray-500'}`}
-                disabled={loading}
-              >
-                Learner emails
-              </button>
-              <button
-                type="button"
-                onClick={() => setAssignmentMode('organization')}
-                className={`rounded-md px-3 py-1.5 transition ${assignmentMode === 'organization' ? 'bg-white text-charcoal shadow-sm' : 'text-gray-500'}`}
-                disabled={loading}
-              >
-                Organization
-              </button>
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-sm font-medium text-gray-700">Organizations *</label>
+              <div className="relative">
+                <Search className="h-4 w-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={orgSearch}
+                  onChange={(e) => setOrgSearch(e.target.value)}
+                  placeholder="Search organizations"
+                  className="pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  disabled={orgListLoading}
+                />
+              </div>
             </div>
+            {orgListLoading ? (
+              <div className="flex items-center space-x-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Loading organizations…
+              </div>
+            ) : orgListError ? (
+              <div className="flex items-center gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                <AlertTriangle className="h-4 w-4" />
+                {orgListError}. Refresh and try again.
+              </div>
+            ) : (
+              <div className="max-h-48 overflow-y-auto rounded-lg border border-gray-200 p-3 space-y-2">
+                {filteredOrgSelections.length === 0 && (
+                  <p className="text-sm text-gray-500">No organizations match your search.</p>
+                )}
+                {filteredOrgSelections.map((org) => (
+                  <label
+                    key={org.id}
+                    className="flex items-center justify-between rounded-lg border border-transparent px-3 py-2 hover:border-gray-300"
+                  >
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="checkbox"
+                        checked={selectedOrgIds.includes(org.id)}
+                        onChange={() => toggleOrgSelection(org.id)}
+                        className="h-4 w-4 text-green-600"
+                      />
+                      <div>
+                        <p className="text-sm font-medium text-gray-900">{org.name}</p>
+                        <p className="text-xs text-gray-500">ID: {org.id}</p>
+                      </div>
+                    </div>
+                    {selectedOrgIds.includes(org.id) && (
+                      <CheckCircle2 className="h-4 w-4 text-green-600" />
+                    )}
+                  </label>
+                ))}
+              </div>
+            )}
+            <p className="mt-1 text-xs text-gray-500">Selecting an organization assigns the course to all active members.</p>
           </div>
 
-          {assignmentMode === 'organization' && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Choose organization *</label>
-              {orgListLoading ? (
-                <div className="flex items-center space-x-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600">
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                  Loading organizations…
-                </div>
-              ) : (
-                <select
-                  value={selectedOrgId}
-                  onChange={(event) => setSelectedOrgId(event.target.value)}
-                  className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                  disabled={loading || organizationOptions.length === 0}
-                  required
-                >
-                  <option value="">Select an organization…</option>
-                  {organizationOptions.map((org) => (
-                    <option key={org.id} value={org.id}>
-                      {org.name}
-                    </option>
-                  ))}
-                </select>
-              )}
-              {orgListError && (
-                <p className="mt-1 text-xs text-red-600">{orgListError}. Refresh and try again.</p>
-              )}
-              {assignmentMode === 'organization' && !orgListLoading && organizationOptions.length === 0 && !orgListError && (
-                <p className="mt-1 text-xs text-gray-500">Add an organization first from the Admin → Organizations page.</p>
-              )}
-              {selectedOrganization && (
-                <div className="mt-3 rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800">
-                  <div className="flex items-center space-x-2">
-                    <Building2 className="h-4 w-4" />
-                    <span>
-                      {selectedOrganization.name} will receive this course via their organization workspace.
-                    </span>
-                  </div>
-                </div>
-              )}
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <label className="block text-sm font-medium text-gray-700">Specific learners</label>
+              <div className="relative">
+                <Search className="h-4 w-4 text-gray-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  value={userSearch}
+                  onChange={(event) => setUserSearch(event.target.value)}
+                  placeholder="Filter learners by name or email"
+                  className="pl-9 pr-3 py-2 text-sm border border-gray-200 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                  disabled={usersLoading || selectedOrgIds.length === 0}
+                />
+              </div>
             </div>
-          )}
-
-          {assignmentMode === 'learners' && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Learner emails or IDs *</label>
-              <textarea
-                value={emailList}
-                onChange={(event) => setEmailList(event.target.value)}
-                placeholder="team@inclusive.org\nlearner@huddle.co"
-                className="w-full rounded-xl border border-gray-300 px-3 py-2 text-sm focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                rows={5}
-                required
-                disabled={loading}
-              />
-              <p className="mt-1 text-xs text-slate/70">Separate multiple entries with commas or line breaks.</p>
-            </div>
-          )}
+            {selectedOrgIds.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-gray-300 px-4 py-3 text-sm text-gray-500">
+                Choose at least one organization above to load its members.
+              </div>
+            ) : usersLoading ? (
+              <div className="flex items-center space-x-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-600">
+                <Loader2 className="h-4 w-4 animate-spin" /> Loading learners…
+              </div>
+            ) : availableUsers.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-gray-300 px-4 py-3 text-sm text-gray-500">
+                No learners found for the selected organization(s).
+              </div>
+            ) : (
+              <select
+                multiple
+                value={selectedUserIds}
+                onChange={handleUserSelectionChange}
+                className="w-full min-h-[140px] rounded-lg border border-gray-200 px-3 py-2 text-sm focus:ring-2 focus:ring-green-500 focus:border-transparent"
+              >
+                {availableUsers.map((userOption) => (
+                  <option key={userOption.userId} value={userOption.userId}>
+                    {userOption.name || userOption.email || userOption.userId}
+                    {userOption.email ? ` · ${userOption.email}` : ''}
+                    {userOption.title ? ` · ${userOption.title}` : ''}
+                  </option>
+                ))}
+              </select>
+            )}
+            {unresolvedSelectedUsers.length > 0 && (
+              <p className="mt-2 text-xs text-amber-600 flex items-center gap-1">
+                <AlertTriangle className="h-3 w-3" />
+                {unresolvedSelectedUsers.length} selected ID(s) aren't part of the loaded organizations yet.
+              </p>
+            )}
+            {selectedOrgIds.length > 0 && (
+              <p className="mt-1 text-xs text-gray-500">
+                Learner selections inside organizations you already selected are skipped automatically to avoid duplicates.
+              </p>
+            )}
+          </div>
 
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div>
@@ -448,17 +614,19 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
             <div className="flex items-start space-x-2">
               <Users className="h-5 w-5 text-blue-600 mt-0.5" />
               <div>
-                <h4 className="font-medium text-blue-900">Assignment Details</h4>
+                <h4 className="font-medium text-blue-900">Assignment details</h4>
                 <p className="text-sm text-blue-700 mt-1">
-                  {assignmentMode === 'organization'
-                    ? 'Org members receive notifications immediately, and their progress syncs with analytics.'
-                    : 'Learners receive notifications immediately. Progress syncs with analytics and the client portal dashboard.'}
+                  Entire organizations receive assignments instantly. Learner selections target specific people, perfect for pilot groups or follow-ups.
                 </p>
               </div>
             </div>
           </div>
 
-          {/* Actions */}
+          <div className="flex flex-wrap items-center justify-between text-sm text-gray-600">
+            <span>{selectedOrgIds.length} organization(s) selected</span>
+            <span>{resolvedSelectedUsers.length} learner(s) selected</span>
+          </div>
+
           <div className="flex items-center justify-end space-x-4 pt-6 border-t border-gray-200">
             <button
               type="button"

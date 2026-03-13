@@ -874,6 +874,7 @@ const AdminCourses = () => {
           id: courseForAssignment.id,
           title: courseForAssignment.title,
           duration: courseForAssignment.duration,
+          organizationId: courseForAssignment.organizationId ?? null,
         } : undefined}
         onAssignComplete={handleAssignmentComplete}
       />

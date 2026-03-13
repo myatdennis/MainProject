@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   User, 
   Building2, 
@@ -44,21 +44,34 @@ const ProfileView: React.FC<ProfileViewProps> = ({
   const [resourceFilter, setResourceFilter] = useState<string>('all');
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    loadProfile();
+  const normalizedProfileId = useMemo(() => {
+    if (profileType === 'organization' && profileId.startsWith('org-profile-')) {
+      return profileId.replace('org-profile-', '');
+    }
+    return profileId;
   }, [profileType, profileId]);
 
-  const loadProfile = async () => {
+  useEffect(() => {
+    loadProfile(normalizedProfileId);
+  }, [profileType, normalizedProfileId]);
+
+  const loadProfile = async (targetProfileId: string | null) => {
     try {
       setLoading(true);
+      if (!targetProfileId) {
+        setUserProfile(null);
+        setOrgProfile(null);
+        setResources([]);
+        return;
+      }
       if (profileType === 'user') {
-        const profile = await getUserProfile(profileId);
+        const profile = await getUserProfile(targetProfileId);
         setUserProfile(profile);
         if (profile) {
           setResources(profile.resources);
         }
       } else {
-        const profile = await getOrganizationProfile(profileId);
+        const profile = await getOrganizationProfile(targetProfileId);
         setOrgProfile(profile);
         if (profile) {
           setResources(profile.resources);
@@ -73,7 +86,8 @@ const ProfileView: React.FC<ProfileViewProps> = ({
 
   const handleResourceStatusChange = async (resourceId: string, status: BaseResource['status']) => {
     try {
-      await updateResourceStatus(profileType, profileId, resourceId, status);
+      if (!normalizedProfileId) return;
+      await updateResourceStatus(profileType, normalizedProfileId, resourceId, status);
       setResources(prev => 
         prev.map(r => r.id === resourceId ? { ...r, status } : r)
       );

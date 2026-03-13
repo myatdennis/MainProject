@@ -4851,17 +4851,19 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
                   </>
                 )}
               </button>
-              {course.status === 'draft' && (
               <button
                 onClick={() => setShowAssignmentModal(true)}
                 className="bg-orange-500 text-white px-6 py-3 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-2"
                 disabled={!course.id || (course.modules || []).length === 0}
-                title={!course.id || (course.modules || []).length === 0 ? "Save course and add content before assigning" : ""}
+                title={
+                  !course.id || (course.modules || []).length === 0
+                    ? 'Save this course and add at least one lesson before assigning'
+                    : 'Assign this course to organizations or hand-picked learners'
+                }
               >
                 <Users className="h-4 w-4" />
-                <span>Assign to Users</span>
+                <span>Assign Course</span>
               </button>
-            )}
             <button
               onClick={handlePublish}
               className="bg-green-600 text-white px-6 py-3 rounded-lg hover:bg-green-700 transition-colors duration-200 flex items-center space-x-2"
@@ -5675,7 +5677,12 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
         onClose={() => setShowAssignmentModal(false)}
         onAssignComplete={handleAssignmentComplete}
         selectedUsers={[]}
-        course={{ id: course.id, title: course.title, duration: course.duration }}
+        course={{
+          id: course.id,
+          title: course.title,
+          duration: course.duration,
+          organizationId: course.organizationId ?? null,
+        }}
       />
 
       {/* Live Preview Modal */}
