@@ -618,6 +618,12 @@ export const resendOrgInvite = async (organizationId: string, inviteId: string) 
   });
 };
 
+export const remindOrgInvite = async (organizationId: string, inviteId: string) => {
+  return apiRequest<{ data: any }>(`/api/admin/organizations/${organizationId}/invites/${inviteId}/remind`, {
+    method: 'POST',
+  });
+};
+
 export const revokeOrgInvite = async (organizationId: string, inviteId: string) => {
   return apiRequest(`/api/admin/organizations/${organizationId}/invites/${inviteId}`, {
     method: 'DELETE',
@@ -639,6 +645,7 @@ export default {
   createOrgInvite,
   bulkOrgInvites,
   resendOrgInvite,
+  remindOrgInvite,
   revokeOrgInvite,
   getOrgStats,
   listOrgMembers,

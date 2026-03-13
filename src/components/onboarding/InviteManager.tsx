@@ -14,6 +14,7 @@ import {
   createOrgInvite as createAdminOrgInvite,
   listOrgInvites as listAdminOrgInvites,
   resendOrgInvite as resendAdminOrgInvite,
+  remindOrgInvite as remindAdminOrgInvite,
   revokeOrgInvite as revokeAdminOrgInvite,
 } from '../../services/orgService';
 
@@ -132,6 +133,7 @@ type InviteApi = {
   bulk: (orgId: string, invites: Array<Record<string, any>>) => Promise<{ results: Array<Record<string, any>> }>;
   resend: (orgId: string, inviteId: string) => Promise<any>;
   revoke: (orgId: string, inviteId: string) => Promise<any>;
+  remind?: (orgId: string, inviteId: string) => Promise<any>;
 };
 
 const InviteManager = ({ orgId, defaultRole = 'member', onInvitesChanged, mode = 'admin' }: InviteManagerProps) => {
@@ -164,6 +166,7 @@ const InviteManager = ({ orgId, defaultRole = 'member', onInvitesChanged, mode =
       bulk: bulkAdminOrgInvites,
       resend: resendAdminOrgInvite,
       revoke: revokeAdminOrgInvite,
+      remind: remindAdminOrgInvite,
     };
   }, [apiMode]);
 
@@ -299,15 +302,24 @@ const InviteManager = ({ orgId, defaultRole = 'member', onInvitesChanged, mode =
     await loadInvites();
   };
 
-  const handleResend = async (inviteId: string) => {
+  const handleResend = async (inviteId: string, options?: { reminder?: boolean }) => {
     setActionInviteId(inviteId);
     try {
-      await inviteApi.resend(orgId, inviteId);
-      showToast('Invite resent.', 'success');
+      if (options?.reminder) {
+        if (!inviteApi.remind) {
+          showToast('Reminders are not available right now.', 'error');
+          return;
+        }
+        await inviteApi.remind(orgId, inviteId);
+        showToast('Reminder sent.', 'success');
+      } else {
+        await inviteApi.resend(orgId, inviteId);
+        showToast('Invite resent.', 'success');
+      }
       await loadInvites();
     } catch (error: any) {
       console.error('[InviteManager] Failed to resend invite', error);
-      showToast(error?.message || 'Unable to resend invite', 'error');
+      showToast(error?.message || 'Unable to send invite/reminder', 'error');
     } finally {
       setActionInviteId(null);
     }
@@ -542,6 +554,17 @@ const InviteManager = ({ orgId, defaultRole = 'member', onInvitesChanged, mode =
                         <RefreshCw className="h-4 w-4" />
                         Resend
                       </LoadingButton>
+                      {invite.status !== 'accepted' && invite.status !== 'revoked' && (
+                        <LoadingButton
+                          onClick={() => handleResend(invite.id, { reminder: true })}
+                          loading={actionInviteId === invite.id}
+                          variant="ghost"
+                          disabled={!inviteApi.remind}
+                        >
+                          <Mail className="h-4 w-4" />
+                          Reminder
+                        </LoadingButton>
+                      )}
                       <LoadingButton
                         onClick={() => handleRevoke(invite.id)}
                         loading={actionInviteId === invite.id}

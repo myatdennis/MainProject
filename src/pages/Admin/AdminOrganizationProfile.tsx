@@ -18,7 +18,9 @@ import documentService from '../../dal/documents';
 // client workspace DAL is dynamically imported where used so it can be bundled with the org-workspace chunk
 import notificationService from '../../dal/notifications';
 import orgService from '../../dal/orgs';
+import { getOnboardingProgress } from '../../dal/onboarding';
 import { useToast } from '../../context/ToastContext';
+import OrgCommunicationPanel from '../../components/Admin/OrgCommunicationPanel';
 import type { OrgProfileDetails } from '../../services/orgService';
 
 const tabs = [
@@ -61,6 +63,9 @@ const AdminOrganizationProfile: React.FC = () => {
   const [totalLearners, setTotalLearners] = useState<number | null>(null);
   const [avgCompletion, setAvgCompletion] = useState<number | null>(null);
   const [totalDownloads, setTotalDownloads] = useState<number>(0);
+  const [onboardingProgress, setOnboardingProgress] = useState<any | null>(null);
+  const [onboardingLoading, setOnboardingLoading] = useState<boolean>(false);
+  const [onboardingError, setOnboardingError] = useState<string | null>(null);
 
   // Upload form state
   const [file, setFile] = useState<File | null>(null);
@@ -92,15 +97,44 @@ const AdminOrganizationProfile: React.FC = () => {
     }
   }, [orgId]);
 
-  useEffect(() => {
-    void loadProfile();
-  }, [loadProfile]);
+useEffect(() => {
+  void loadProfile();
+}, [loadProfile]);
 
   useEffect(() => {
-    if (!orgId) return;
-    const hydrateDocuments = async () => {
-      try {
-        const list = await documentService.listDocuments({ organizationId: orgId });
+    if (!orgId) {
+      setOnboardingProgress(null);
+      return;
+    }
+    let cancelled = false;
+    setOnboardingLoading(true);
+    setOnboardingError(null);
+    getOnboardingProgress(orgId)
+      .then((response) => {
+        if (cancelled) return;
+        setOnboardingProgress(response?.data ?? null);
+      })
+      .catch((error) => {
+        console.warn('[AdminOrganizationProfile] onboarding progress failed', error);
+        if (cancelled) return;
+        setOnboardingProgress(null);
+        setOnboardingError('Unable to load onboarding progress.');
+      })
+      .finally(() => {
+        if (!cancelled) {
+          setOnboardingLoading(false);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [orgId]);
+
+useEffect(() => {
+  if (!orgId) return;
+  const hydrateDocuments = async () => {
+    try {
+      const list = await documentService.listDocuments({ organizationId: orgId });
         setDocuments(list);
         setTotalDownloads(list.reduce((acc, doc) => acc + (doc.downloadCount || 0), 0));
       } catch {
@@ -123,22 +157,17 @@ const AdminOrganizationProfile: React.FC = () => {
       }
     })();
 
-    orgService
-      .getOrg(orgId)
-      .then((o) => {
-        if (o) {
-          setTotalLearners(o.totalLearners || 0);
-          setAvgCompletion(o.completionRate || 0);
-        } else {
-          setTotalLearners(null);
-          setAvgCompletion(null);
-        }
-      })
-      .catch(() => {
-        setTotalLearners(null);
-        setAvgCompletion(null);
-      });
   }, [orgId]);
+
+  useEffect(() => {
+    if (!profile?.organization) {
+      setTotalLearners(null);
+      setAvgCompletion(null);
+      return;
+    }
+    setTotalLearners(profile.organization.totalLearners ?? profile.metrics?.totalUsers ?? null);
+    setAvgCompletion(profile.organization.completionRate ?? profile.metrics?.courseCompletionRate ?? null);
+  }, [profile]);
 
   const handleAssignDocument = async () => {
     // quick demo: create a placeholder doc and assign to org
@@ -260,7 +289,8 @@ const AdminOrganizationProfile: React.FC = () => {
       );
     }
 
-    const { organization, metrics, contacts = [], admins = [], invites = [], messages = [], assignments, lastContacted } = profile;
+    const { organization, metrics, contacts = [], admins = [], invites = [], messages = [], assignments, lastContacted } =
+      profile;
     const primaryContact = contacts.find((contact) => contact.isPrimary) ?? contacts[0] ?? null;
     const addressParts = [
       organization.address,
@@ -286,6 +316,18 @@ const AdminOrganizationProfile: React.FC = () => {
     const recentInvites = invites.slice(0, 4);
     const recentMessages = messages.slice(0, 4);
     const topAdmins = admins.slice(0, 5);
+    const onboardingSteps = onboardingProgress?.steps ?? [];
+    const onboardingSummary = onboardingProgress?.summary ?? null;
+    const completedSteps = onboardingSteps.filter((step: any) => step.status === 'completed').length;
+    const onboardingTotal = onboardingSteps.length || 1;
+    const onboardingStatus = onboardingSummary?.status ?? organization.onboardingStatus ?? 'pending';
+
+    const onboardingStatusTone =
+      onboardingStatus === 'completed'
+        ? 'bg-emerald-100 text-emerald-700'
+        : onboardingStatus === 'in_progress'
+          ? 'bg-skyblue/20 text-skyblue-dark'
+          : 'bg-amber-100 text-amber-800';
 
     return (
       <div className="space-y-6">
@@ -310,6 +352,64 @@ const AdminOrganizationProfile: React.FC = () => {
             <Button size="sm" variant="secondary" onClick={loadProfile}>
               Refresh data
             </Button>
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div>
+              <h3 className="text-lg font-semibold text-gray-900">Onboarding progress</h3>
+              <p className="text-sm text-gray-500">
+                {completedSteps}/{onboardingTotal} steps ·{' '}
+                {onboardingSummary?.current_step
+                  ? `Next: ${onboardingSummary.current_step.replace(/[_-]/g, ' ')}`
+                  : 'Awaiting kickoff'}
+              </p>
+            </div>
+            <div className="flex items-center gap-3">
+              {onboardingLoading ? (
+                <div className="flex items-center gap-2 text-sm text-gray-500">
+                  <span className="h-3 w-3 animate-spin rounded-full border-2 border-gray-300 border-t-transparent" />
+                  Syncing progress…
+                </div>
+              ) : onboardingError ? (
+                <span className="text-sm text-rose-600">{onboardingError}</span>
+              ) : null}
+              <span className={`rounded-full px-3 py-1 text-xs font-semibold uppercase tracking-wide ${onboardingStatusTone}`}>
+                {onboardingStatus.replace(/_/g, ' ')}
+              </span>
+            </div>
+          </div>
+          <div className="mt-4 space-y-2">
+            {(onboardingSteps.length ? onboardingSteps : [{ step: 'org_created', status: 'completed' }]).map((step: any) => {
+              const isDone = step.status === 'completed';
+              const isBlocked = step.status === 'blocked';
+              const badgeClass = isDone
+                ? 'bg-emerald-100 text-emerald-700'
+                : isBlocked
+                  ? 'bg-rose-100 text-rose-700'
+                  : 'bg-gray-100 text-gray-600';
+              return (
+                <div
+                  key={`${step.id ?? step.step}`}
+                  className="flex items-center justify-between rounded-lg border border-gray-100 px-4 py-2 text-sm"
+                >
+                  <div>
+                    <p className="font-medium text-gray-900 capitalize">{(step.label ?? step.step ?? '').replace(/[_-]/g, ' ') || 'Step'}</p>
+                    <p className="text-xs text-gray-500">
+                      {step.completed_at
+                        ? `Completed ${formatDate(step.completed_at)}`
+                        : step.status === 'in_progress'
+                          ? 'In progress'
+                          : 'Pending'}
+                    </p>
+                  </div>
+                  <span className={`rounded-full px-3 py-1 text-xs font-semibold ${badgeClass}`}>
+                    {step.status?.replace(/_/g, ' ') ?? 'pending'}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         </div>
 
@@ -573,15 +673,75 @@ const AdminOrganizationProfile: React.FC = () => {
     );
   };
 
-  const renderServices = () => (
-    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-      <h3 className="font-bold text-lg mb-2">Services</h3>
-      <p className="text-sm text-gray-600">List and configure services provided to this organization.</p>
-      <div className="mt-4">
-        <button className="px-4 py-2 bg-orange-500 text-white rounded-lg">Edit Services</button>
+  const renderServices = () => {
+    if (!profile) {
+      return (
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+          <p className="text-gray-600">Select an organization to view service settings.</p>
+        </div>
+      );
+    }
+    const features = profile.organization.features || {};
+    const settings = profile.organization.settings || {};
+    const modules = profile.organization.modules || {};
+    const featureEntries = Object.keys(features).length
+      ? Object.entries(features)
+      : [['analytics', true], ['customBranding', false]];
+    const settingEntries = Object.keys(settings).length
+      ? Object.entries(settings)
+      : [['timezone', profile.organization.timezone || 'UTC']];
+    const moduleEntries = Object.entries(modules).filter(([_, value]) => typeof value === 'number' && value > 0);
+
+    const badgeClass = (enabled: boolean) =>
+      enabled ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500';
+
+    return (
+      <div className="space-y-6">
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+          <h3 className="font-bold text-lg mb-4">Feature access</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {featureEntries.map(([key, value]) => (
+              <div key={key} className="rounded-lg border border-gray-100 p-4">
+                <p className="text-sm font-semibold capitalize text-gray-900">{key.replace(/([A-Z])/g, ' $1')}</p>
+                <p className="text-xs text-gray-500">Controls toolkit availability for this tenant.</p>
+                <span className={`mt-3 inline-flex rounded-full px-3 py-1 text-xs font-semibold ${badgeClass(Boolean(value))}`}>
+                  {Boolean(value) ? 'Enabled' : 'Disabled'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+          <h3 className="font-bold text-lg mb-4">Org settings</h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-gray-700">
+            {settingEntries.map(([key, value]) => (
+              <div key={key} className="rounded-lg border border-gray-100 p-4">
+                <p className="text-xs uppercase text-gray-500">{key.replace(/([A-Z])/g, ' $1')}</p>
+                <p className="font-medium text-gray-900">{typeof value === 'boolean' ? (value ? 'Enabled' : 'Disabled') : String(value ?? '—')}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+          <h3 className="font-bold text-lg mb-4">Active modules</h3>
+          {moduleEntries.length === 0 ? (
+            <p className="text-sm text-gray-600">No module usage recorded yet.</p>
+          ) : (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              {moduleEntries.map(([module, count]) => (
+                <div key={module} className="rounded-lg border border-gray-100 p-4 text-center">
+                  <p className="text-xs uppercase text-gray-500">{module}</p>
+                  <p className="text-2xl font-semibold text-gray-900 mt-1">{formatNumber(Number(count))}</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
 
   const renderResources = () => (
     <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
@@ -624,81 +784,204 @@ const AdminOrganizationProfile: React.FC = () => {
     </div>
   );
 
-  const renderActionTracker = () => (
-    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="font-bold text-lg">Action Tracker</h3>
-      </div>
-      <div className="mb-4 grid grid-cols-1 md:grid-cols-3 gap-2">
-        <input value={newActionTitle} onChange={e => setNewActionTitle(e.target.value)} placeholder="Action title" className="p-2 border rounded" />
-        <input value={newActionDue} onChange={e => setNewActionDue(e.target.value)} placeholder="Due date" type="date" className="p-2 border rounded" />
-        <input value={newActionAssignee} onChange={e => setNewActionAssignee(e.target.value)} placeholder="Assignee" className="p-2 border rounded" />
-        <div className="md:col-span-3 text-right">
-          <button onClick={handleAddAction} className="px-3 py-1 bg-blue-600 text-white rounded">Add Action</button>
+  const renderActionTracker = () => {
+    const steps = onboardingProgress?.steps ?? [];
+    return (
+      <div className="space-y-6">
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-bold text-lg">Activation checklist</h3>
+            {onboardingLoading && <span className="text-xs text-gray-500">Syncing…</span>}
+          </div>
+          {steps.length === 0 ? (
+            <p className="text-sm text-gray-500">
+              No onboarding steps recorded yet. Create an organization via the wizard to seed milestones.
+            </p>
+          ) : (
+            <ul className="space-y-3">
+              {steps.map((step: any) => {
+                const done = step.status === 'completed';
+                const blocked = step.status === 'blocked';
+                return (
+                  <li key={step.id ?? step.step} className="flex items-center justify-between rounded-lg border border-gray-100 px-4 py-3">
+                    <div>
+                      <p className="font-medium text-gray-900 capitalize">{(step.label ?? step.step ?? '').replace(/[_-]/g, ' ')}</p>
+                      <p className="text-xs text-gray-500">
+                        {done ? `Completed ${formatDate(step.completed_at)}` : step.status === 'in_progress' ? 'In progress' : 'Pending'}
+                      </p>
+                    </div>
+                    <span
+                      className={`rounded-full px-3 py-1 text-xs font-semibold ${
+                        done ? 'bg-emerald-100 text-emerald-700' : blocked ? 'bg-rose-100 text-rose-700' : 'bg-gray-100 text-gray-600'
+                      }`}
+                    >
+                      {step.status ?? 'pending'}
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </div>
-      </div>
 
-      {actionItems.length === 0 ? (
-        <div className="text-sm text-gray-500">No action items for this organization.</div>
-      ) : (
-        <ul className="space-y-2">
-          {actionItems.map(item => (
-            <li key={item.id} className="p-3 border rounded-lg flex items-center justify-between">
-              <div>
-                <div className="font-medium">{item.title}</div>
-                <div className="text-sm text-gray-600">Due: {item.dueDate || '—'}</div>
-                <div className="text-xs text-gray-500">Assignee: {item.assignee || 'Unassigned'}</div>
-              </div>
-              <div className="flex flex-col items-end space-y-2">
-                <div className={`px-2 py-1 rounded-full text-sm ${item.status === 'Completed' ? 'bg-green-100 text-green-800' : item.status === 'In Progress' ? 'bg-yellow-100 text-yellow-800' : 'bg-gray-100 text-gray-800'}`}>{item.status}</div>
-                <div className="flex space-x-2">
-                  <button onClick={() => toggleActionStatus(item)} className="px-2 py-1 bg-white border rounded text-sm">Toggle Status</button>
-                </div>
-              </div>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-bold text-lg">Custom action items</h3>
+          </div>
+          <div className="mb-4 grid grid-cols-1 md:grid-cols-3 gap-2">
+            <input value={newActionTitle} onChange={(e) => setNewActionTitle(e.target.value)} placeholder="Action title" className="p-2 border rounded" />
+            <input value={newActionDue} onChange={(e) => setNewActionDue(e.target.value)} placeholder="Due date" type="date" className="p-2 border rounded" />
+            <input value={newActionAssignee} onChange={(e) => setNewActionAssignee(e.target.value)} placeholder="Assignee" className="p-2 border rounded" />
+            <div className="md:col-span-3 text-right">
+              <button onClick={handleAddAction} className="px-3 py-1 bg-blue-600 text-white rounded">Add Action</button>
+            </div>
+          </div>
 
-  const renderMetrics = () => (
-    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-      <h3 className="font-bold text-lg mb-2">Metrics</h3>
-      <div className="grid grid-cols-3 gap-4">
-        <div className="p-4 bg-gray-50 rounded-lg text-center">
-          <div className="text-sm text-gray-600">Documents</div>
-          <div className="text-2xl font-bold">{documents.length}</div>
-        </div>
-        <div className="p-4 bg-gray-50 rounded-lg text-center">
-          <div className="text-sm text-gray-600">Learners</div>
-          <div className="text-2xl font-bold">{totalLearners === null ? '—' : totalLearners}</div>
-        </div>
-        <div className="p-4 bg-gray-50 rounded-lg text-center">
-          <div className="text-sm text-gray-600">Action Items</div>
-          <div className="text-2xl font-bold">{actionItems.length}</div>
-        </div>
-        <div className="p-4 bg-gray-50 rounded-lg text-center">
-          <div className="text-sm text-gray-600">Completed</div>
-          <div className="text-2xl font-bold">{
-            actionItems.length === 0 ? '—' : `${Math.round((actionItems.filter(a => a.status === 'Completed').length / actionItems.length) * 100)}%`
-          }</div>
-        </div>
-        <div className="p-4 bg-gray-50 rounded-lg text-center">
-          <div className="text-sm text-gray-600">Avg Completion</div>
-          <div className="text-2xl font-bold">{avgCompletion === null ? '—' : `${avgCompletion}%`}</div>
-        </div>
-        <div className="p-4 bg-gray-50 rounded-lg text-center">
-          <div className="text-sm text-gray-600">Strategic Plans</div>
-          <div className="text-2xl font-bold">{strategicPlansCount}</div>
-        </div>
-        <div className="p-4 bg-gray-50 rounded-lg text-center">
-          <div className="text-sm text-gray-600">Downloads</div>
-          <div className="text-2xl font-bold">{totalDownloads}</div>
+          {actionItems.length === 0 ? (
+            <div className="text-sm text-gray-500">No action items for this organization.</div>
+          ) : (
+            <ul className="space-y-2">
+              {actionItems.map((item) => (
+                <li key={item.id} className="p-3 border rounded-lg flex items-center justify-between">
+                  <div>
+                    <div className="font-medium">{item.title}</div>
+                    <div className="text-sm text-gray-600">Due: {item.dueDate || '—'}</div>
+                    <div className="text-xs text-gray-500">Assignee: {item.assignee || 'Unassigned'}</div>
+                  </div>
+                  <div className="flex flex-col items-end space-y-2">
+                    <div
+                      className={`px-2 py-1 rounded-full text-sm ${
+                        item.status === 'Completed'
+                          ? 'bg-green-100 text-green-800'
+                          : item.status === 'In Progress'
+                            ? 'bg-yellow-100 text-yellow-800'
+                            : 'bg-gray-100 text-gray-800'
+                      }`}
+                    >
+                      {item.status}
+                    </div>
+                    <div className="flex space-x-2">
+                      <button onClick={() => toggleActionStatus(item)} className="px-2 py-1 bg-white border rounded text-sm">
+                        Toggle Status
+                      </button>
+                    </div>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       </div>
-    </div>
-  );
+    );
+  };
+
+  const renderMetrics = () => {
+    const metrics = profile?.metrics;
+    const assignments = profile?.assignments;
+    const courseBucket = assignments?.courses;
+    const surveyBucket = assignments?.surveys;
+    const completionPercent = formatPercent(metrics?.courseCompletionRate ?? avgCompletion ?? null);
+    const surveyCompletionPercent = formatPercent(metrics?.surveyCompletionRate ?? null);
+    const actionCompletion =
+      actionItems.length === 0
+        ? '—'
+        : `${Math.round((actionItems.filter((a) => a.status === 'Completed').length / actionItems.length) * 100)}%`;
+
+    const summaryCards = [
+      { label: 'Total users', value: formatNumber(metrics?.totalUsers ?? totalLearners) },
+      { label: 'Active users', value: formatNumber(metrics?.activeUsers ?? profile?.organization?.activeLearners ?? null) },
+      { label: 'Course assignments', value: formatNumber(courseBucket?.assignmentCount ?? 0) },
+      { label: 'Survey assignments', value: formatNumber(surveyBucket?.assignmentCount ?? 0) },
+      { label: 'Course completion', value: completionPercent },
+      { label: 'Survey completion', value: surveyCompletionPercent },
+      { label: 'Documents shared', value: formatNumber(documents.length) },
+      { label: 'Downloads', value: formatNumber(totalDownloads) },
+    ];
+
+    return (
+      <div className="space-y-6">
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+          <h3 className="font-bold text-lg mb-4">Engagement snapshot</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-4">
+            {summaryCards.map((card) => (
+              <div key={card.label} className="rounded-lg border border-gray-100 bg-white p-4 text-center">
+                <p className="text-xs uppercase text-gray-500">{card.label}</p>
+                <p className="text-2xl font-semibold text-gray-900 mt-2">{card.value}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+          <h3 className="font-bold text-lg mb-4">Assignment pipeline</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="rounded-lg border border-gray-100 p-4">
+              <p className="text-sm font-semibold text-gray-900 mb-2">Courses</p>
+              <p className="text-sm text-gray-500 mb-4">
+                Due soon {formatNumber(courseBucket?.dueSoonCount ?? 0)} • Completed {formatNumber(courseBucket?.completedCount ?? 0)}
+              </p>
+              {courseBucket?.topAssignments?.length ? (
+                <ul className="space-y-2 text-sm text-gray-700">
+                  {courseBucket.topAssignments.slice(0, 4).map((item) => (
+                    <li key={item.id} className="rounded border border-gray-100 p-2">
+                      <span className="font-medium text-gray-900">{item.title ?? 'Untitled'}</span>
+                      <span className="block text-xs text-gray-500">
+                        {item.status ?? 'pending'} • Due {formatDate(item.dueAt)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-gray-500">No course assignments captured yet.</p>
+              )}
+            </div>
+            <div className="rounded-lg border border-gray-100 p-4">
+              <p className="text-sm font-semibold text-gray-900 mb-2">Surveys</p>
+              <p className="text-sm text-gray-500 mb-4">
+                Due soon {formatNumber(surveyBucket?.dueSoonCount ?? 0)} • Completed {formatNumber(surveyBucket?.completedCount ?? 0)}
+              </p>
+              {surveyBucket?.topAssignments?.length ? (
+                <ul className="space-y-2 text-sm text-gray-700">
+                  {surveyBucket.topAssignments.slice(0, 4).map((item) => (
+                    <li key={item.id} className="rounded border border-gray-100 p-2">
+                      <span className="font-medium text-gray-900">{item.title ?? 'Untitled'}</span>
+                      <span className="block text-xs text-gray-500">
+                        {item.status ?? 'pending'} • Due {formatDate(item.dueAt)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-gray-500">No survey assignments captured yet.</p>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+          <h3 className="font-bold text-lg mb-2">Internal plan tracking</h3>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-center">
+            <div className="rounded-lg border border-gray-100 p-4">
+              <p className="text-xs uppercase text-gray-500">Action items</p>
+              <p className="text-2xl font-semibold text-gray-900 mt-2">{formatNumber(actionItems.length)}</p>
+            </div>
+            <div className="rounded-lg border border-gray-100 p-4">
+              <p className="text-xs uppercase text-gray-500">Action completion</p>
+              <p className="text-2xl font-semibold text-gray-900 mt-2">{actionCompletion}</p>
+            </div>
+            <div className="rounded-lg border border-gray-100 p-4">
+              <p className="text-xs uppercase text-gray-500">Strategic plans</p>
+              <p className="text-2xl font-semibold text-gray-900 mt-2">{formatNumber(strategicPlansCount)}</p>
+            </div>
+            <div className="rounded-lg border border-gray-100 p-4">
+              <p className="text-xs uppercase text-gray-500">Avg completion</p>
+              <p className="text-2xl font-semibold text-gray-900 mt-2">{completionPercent}</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div className="p-6 max-w-6xl mx-auto">
@@ -728,6 +1011,14 @@ const AdminOrganizationProfile: React.FC = () => {
         {activeTab === 'resources' && renderResources()}
         {activeTab === 'action-tracker' && renderActionTracker()}
         {activeTab === 'metrics' && renderMetrics()}
+        {activeTab === 'overview' && profile?.organization && (
+          <OrgCommunicationPanel
+            orgId={profile.organization.id}
+            orgName={profile.organization.name}
+            messages={profile.messages ?? []}
+            onMessageSent={() => void loadProfile()}
+          />
+        )}
       </div>
     </div>
   );

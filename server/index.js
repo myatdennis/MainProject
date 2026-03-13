@@ -13998,6 +13998,70 @@ app.post('/api/admin/organizations/:orgId/invites/:inviteId/resend', async (req,
   }
 });
 
+app.post('/api/admin/organizations/:orgId/invites/:inviteId/remind', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const { orgId, inviteId } = req.params;
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  const access = await requireOrgAccess(req, res, orgId, { write: true, requireOrgAdmin: true });
+  if (!access) return;
+
+  const actor = buildActorFromRequest(req);
+  try {
+    const { data: invite, error } = await supabase
+      .from('org_invites')
+      .select('*')
+      .eq('id', inviteId)
+      .eq('org_id', orgId)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!invite) {
+      res.status(404).json({ error: 'Invite not found' });
+      return;
+    }
+
+    const derivedStatus = deriveInviteStatus(invite);
+    if (derivedStatus === 'accepted' || derivedStatus === 'revoked') {
+      res.status(400).json({ error: 'Invite can no longer be reminded' });
+      return;
+    }
+
+    const reminderCount = invite.reminder_count || 0;
+    if (reminderCount >= INVITE_REMINDER_MAX_SENDS) {
+      res.status(429).json({ error: 'reminder_limit_reached' });
+      return;
+    }
+
+    const lastTouch = invite.last_sent_at || invite.created_at;
+    const minGapMs = INVITE_REMINDER_LOOKBACK_HOURS * 60 * 60 * 1000;
+    if (lastTouch && minGapMs > 0) {
+      const elapsed = Date.now() - new Date(lastTouch).getTime();
+      if (elapsed < minGapMs) {
+        res.status(429).json({ error: 'reminder_too_soon', retryAfterMs: Math.max(minGapMs - elapsed, 0) });
+        return;
+      }
+    }
+
+    const orgSummary = await fetchOrganizationSummary(orgId);
+    const updated = await deliverInviteEmail(invite, { orgName: orgSummary?.name || '', inviterName: actor.name });
+    await recordActivationEvent(orgId, 'invite_reminder_sent', { inviteId }, actor);
+    logOrganizationsEvent('organization_invite_reminder_sent', {
+      requestId: req.requestId ?? null,
+      metadata: {
+        orgId,
+        inviteId,
+        reminderCount: (updated?.reminder_count ?? reminderCount) || reminderCount + 1,
+      },
+    });
+    res.json({ data: updated, reminder: true });
+  } catch (error) {
+    logRouteError('POST /api/admin/organizations/:orgId/invites/:inviteId/remind', error);
+    res.status(500).json({ error: 'Unable to send reminder' });
+  }
+});
+
 app.delete('/api/admin/organizations/:orgId/invites/:inviteId', async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { orgId, inviteId } = req.params;

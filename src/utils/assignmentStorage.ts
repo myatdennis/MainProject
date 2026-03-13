@@ -173,17 +173,35 @@ const loadLocalAssignments = (): CourseAssignment[] => {
         console.warn('[assignmentStorage] Dropping assignment with missing userId:', record);
         return;
       }
-      if (record.assignmentType && record.assignmentType !== 'course') {
-        return;
-      }
-      sanitized.push({
+      const assignmentType: AssignmentKind =
+        record.assignmentType === 'survey' ? 'survey' : 'course';
+      const resolvedCourseId = record.courseId ?? (record as any)?.course_id;
+      const resolvedSurveyId = record.surveyId ?? (record as any)?.survey_id;
+      const sanitizedRecord: CourseAssignment = {
         ...record,
         userId: normalizedUserId,
         progress: Number.isFinite(record.progress) ? record.progress : 0,
         status: toAssignmentStatus(record.status),
         dueDate: record.dueDate ?? null,
         note: record.note ?? null,
-      });
+      };
+      if (resolvedCourseId !== undefined) {
+        sanitizedRecord.courseId = resolvedCourseId ?? null;
+      }
+      if (resolvedSurveyId !== undefined) {
+        sanitizedRecord.surveyId = resolvedSurveyId ?? null;
+      }
+      if (assignmentType === 'survey') {
+        sanitizedRecord.assignmentType = 'survey';
+      } else if (record.assignmentType === 'course') {
+        sanitizedRecord.assignmentType = 'course';
+      }
+      if (record.metadata && typeof record.metadata === 'object') {
+        sanitizedRecord.metadata = record.metadata as Record<string, unknown>;
+      } else if (Object.prototype.hasOwnProperty.call(record, 'metadata')) {
+        sanitizedRecord.metadata = null;
+      }
+      sanitized.push(sanitizedRecord);
     });
 
     if (sanitized.length !== parsed.length) {
