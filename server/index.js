@@ -13450,7 +13450,7 @@ app.post('/api/admin/organizations/:orgId/messages', async (req, res) => {
 
   const subject = typeof req.body?.subject === 'string' ? req.body.subject.trim() : '';
   const body = typeof req.body?.body === 'string' ? req.body.body.trim() : '';
-  const channel = req.body?.channel || req.body?.delivery ?? 'email';
+  const channel = req.body?.channel ?? req.body?.delivery ?? 'email';
   const recipients =
     Array.isArray(req.body?.recipients) && req.body.recipients.length
       ? req.body.recipients
