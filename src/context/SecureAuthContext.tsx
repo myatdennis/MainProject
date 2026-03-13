@@ -848,6 +848,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         memberships: resolvedMemberships,
         requestedOrgId: requestedOrgHint,
         lastActiveOrgId: lastActiveOrgId ?? getActiveOrgPreference(),
+        fallbackOrgIds: orgIds,
       });
       setLastActiveOrgIdState(preferredOrg.activeOrgId ?? null);
       setActiveOrgPreference(preferredOrg.activeOrgId ?? null);
@@ -1764,7 +1765,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
   const setActiveOrganization = useCallback(
     async (orgId: string | null) => {
-      const normalized = orgId && memberships.some((membership) => membership.orgId === orgId) ? orgId : null;
+      const hasMembership = Boolean(orgId && memberships.some((membership) => membership.orgId === orgId));
+      const hasOrgAccess = Boolean(orgId && organizationIds.includes(orgId));
+      const normalized = orgId && (hasMembership || hasOrgAccess) ? orgId : null;
       setActiveOrgPreference(normalized);
       setLastActiveOrgIdState(normalized);
       setActiveOrgIdState(normalized);
@@ -1787,7 +1790,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         console.warn('[SecureAuth] Failed to persist active org on server', error);
       }
     },
-    [memberships],
+    [memberships, organizationIds],
   );
 
   const resolveSession = useCallback(

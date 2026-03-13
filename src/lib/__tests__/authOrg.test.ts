@@ -58,4 +58,38 @@ describe('resolvePreferredOrgId', () => {
     expect(result.activeOrgId).toBe('newest');
     expect(result.source).toBe('membership');
   });
+
+  it('falls back to accessible org list when no active memberships exist', () => {
+    const memberships: MembershipLike[] = [
+      buildMembership({ orgId: 'inactive-1', status: 'invited' }),
+      buildMembership({ orgId: null }),
+    ];
+
+    const result = resolvePreferredOrgId({
+      memberships,
+      requestedOrgId: null,
+      lastActiveOrgId: null,
+      fallbackOrgIds: ['org-abc', 'org-def'],
+    });
+
+    expect(result.activeOrgId).toBe('org-abc');
+    expect(result.source).toBe('membership');
+    expect(result.hasActiveMembership).toBe(false);
+  });
+
+  it('treats ready/member statuses as active memberships', () => {
+    const memberships: MembershipLike[] = [
+      buildMembership({ orgId: 'org-ready', status: 'ready' }),
+      buildMembership({ orgId: 'org-member', status: 'member' }),
+    ];
+
+    const result = resolvePreferredOrgId({
+      memberships,
+      requestedOrgId: null,
+      lastActiveOrgId: null,
+    });
+
+    expect(result.activeOrgId).toBe('org-ready');
+    expect(result.hasActiveMembership).toBe(true);
+  });
 });
