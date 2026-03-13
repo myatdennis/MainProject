@@ -60,6 +60,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import CourseAssignmentModal from '../../components/CourseAssignmentModal';
+import AdminCourseAssignmentsPanel from '../../components/AdminCourseAssignmentsPanel';
 import LivePreview from '../../components/LivePreview';
 import CoursePreviewDock from '../../components/preview/CoursePreviewDock';
 import AIContentAssistant from '../../components/AIContentAssistant';
@@ -83,6 +84,7 @@ import { buildIssueTargets, getIssueTargetsOrEmpty } from '../../utils/validatio
 import type { IssueTargets } from '../../utils/validationIssues';
 import { SlugConflictError } from '../../utils/slugConflict';
 import { invalidateCourseQueries } from '../../lib/courseQueryKeys';
+import { invalidateOrgListCache } from '../../dal/orgs';
 
 const buildUploadKey = (moduleId: string, lessonId: string) => `${moduleId}::${lessonId}`;
 const parseUploadKey = (key: string) => {
@@ -450,6 +452,7 @@ const AdminCourseBuilder = () => {
   const [mobileFocusMode, setMobileFocusMode] = useState(true);
   const [statusBanner, setStatusBanner] = useState<BuilderBanner | null>(null);
   const [draftSnapshotPrompt, setDraftSnapshotPrompt] = useState<DraftSnapshot | null>(null);
+  const [assignmentPanelRefreshToken, setAssignmentPanelRefreshToken] = useState(0);
   const [reloadNonce, setReloadNonce] = useState(0);
   const [validationIssues, setValidationIssues] = useState<CourseValidationIssue[]>([]);
   const [isValidationModalOpen, setValidationModalOpen] = useState(false);
@@ -3053,6 +3056,8 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
       ? `Assignments sent to ${count} learner${count === 1 ? '' : 's'}.`
       : 'Assignments queued successfully.';
     showToast(`${baseMessage} Learners will see Huddle notifications shortly.`, 'success');
+    invalidateOrgListCache();
+    setAssignmentPanelRefreshToken((token) => token + 1);
   };
 
   const addModule = () => {
@@ -4945,6 +4950,16 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
           </div>
         </div>
       </div>
+
+      {isEditing && (
+        <div className="mt-6">
+          <AdminCourseAssignmentsPanel
+            courseId={course.id}
+            defaultOrgId={course.organizationId ?? null}
+            refreshToken={assignmentPanelRefreshToken}
+          />
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200">

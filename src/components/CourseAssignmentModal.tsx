@@ -14,7 +14,7 @@ import LoadingButton from './LoadingButton';
 import { useToast } from '../context/ToastContext';
 import { courseStore } from '../store/courseStore';
 import type { CourseAssignment } from '../types/assignment';
-import orgService from '../dal/orgs';
+import orgService, { invalidateOrgListCache } from '../dal/orgs';
 import useRuntimeStatus from '../hooks/useRuntimeStatus';
 import { submitAssignmentRequest, subscribeToAssignmentQueue } from '../utils/assignmentQueue';
 import type { AssignmentQueueItem, AssignmentRequestMode } from '../utils/assignmentQueue';
@@ -64,6 +64,7 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
   const [userSearch, setUserSearch] = useState('');
   const [queueItems, setQueueItems] = useState<AssignmentQueueItem[]>([]);
+  const [orgFetchToken, setOrgFetchToken] = useState(0);
 
   useEffect(() => {
     const unsubscribe = subscribeToAssignmentQueue((items) => setQueueItems(items));
@@ -89,6 +90,14 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
       setSelectedUserIds(selectedUsers);
     }
   }, [isOpen, selectedUsers]);
+
+  useEffect(() => {
+    if (isOpen) {
+      setOrgFetchToken((token) => token + 1);
+    } else {
+      setOrganizationOptions([]);
+    }
+  }, [isOpen]);
 
   const availableCourses = useMemo(() => {
     if (course) {
@@ -121,8 +130,9 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
     (async () => {
       try {
         setOrgListLoading(true);
+        setOrganizationOptions([]);
         setOrgListError(null);
-        const orgs = await orgService.listOrgs();
+        const orgs = await orgService.listOrgs(undefined, { forceRefresh: true });
         if (!active) return;
         const normalized = Array.isArray(orgs)
           ? orgs
@@ -154,7 +164,7 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
     return () => {
       active = false;
     };
-  }, [isOpen, resolvedCourse, selectedOrgIds.length]);
+  }, [isOpen, resolvedCourse, orgFetchToken]);
 
   const fetchOrgMembers = useCallback(
     async (orgId: string) => {
@@ -322,6 +332,9 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
         ? `Assignments queued for ${selectedOrgIds.length} org(s) and ${resolvedSelectedUsers.length} learner(s). We'll sync them when the connection recovers.`
         : `Assignments sent to ${selectedOrgIds.length} org(s) and ${resolvedSelectedUsers.length} learner(s).`;
       showToast(successMessage, 'success');
+      invalidateOrgListCache();
+      setOrganizationOptions([]);
+      setOrgFetchToken((token) => token + 1);
       console.info('[CourseAssignmentModal] assign_success', {
         courseId: targetCourseId,
         orgCount: selectedOrgIds.length,

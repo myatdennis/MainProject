@@ -11,6 +11,7 @@ export {
   listOrgMembers,
   addOrgMember,
   removeOrgMember,
+  invalidateOrgListCache,
 } from '../services/orgService';
 
 export { default } from '../services/orgService';

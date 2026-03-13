@@ -1,3 +1,5 @@
+import type { CourseAssignment } from './assignment';
+
 // Enhanced Survey Platform Types - Qualtrics-style
 
 export type QuestionType = 
@@ -163,6 +165,7 @@ export interface Survey {
     departmentIds?: string[];
     cohortIds?: string[];
   };
+  assignmentRows?: CourseAssignment[];
   reflectionPrompts?: string[];
 }
 

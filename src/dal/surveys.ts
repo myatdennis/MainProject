@@ -1,5 +1,7 @@
 import type { Survey } from '../types/survey';
+import type { CourseAssignment } from '../types/assignment';
 import { request } from './http';
+import { mapAssignmentsFromApiRows } from '../utils/assignmentStorage';
 
 type SurveyApiRecord = any;
 
@@ -61,6 +63,7 @@ const mapSurveyRecord = (record: SurveyApiRecord): Survey => ({
       recommendedCourses: [],
     },
   reflectionPrompts: record.reflectionPrompts ?? record.reflection_prompts ?? [],
+  assignmentRows: mapAssignmentsFromApiRows(record.assignmentRows ?? record.assignment_rows ?? []),
 });
 
 const buildAssignedToPayload = (assignedTo?: Survey['assignedTo']) => ({
@@ -145,10 +148,6 @@ export async function updateSurvey(id: string, patch: SurveyPatch) {
   return mapSurveyRecord(json.data);
 }
 
-export async function updateSurveyAssignments(id: string, organizationIds: string[]) {
-  return updateSurvey(id, { organizationIds });
-}
-
 export async function deleteSurvey(id: string) {
   await request(`/api/admin/surveys/${id}`, { method: 'DELETE' });
 }
@@ -222,4 +221,92 @@ export async function getSurveyById(id: string) {
     console.warn('getSurveyById error:', err);
     return null;
   }
+}
+
+export type AssignSurveyPayload = {
+  organizationIds?: string[];
+  userIds?: string[];
+  dueAt?: string | null;
+  note?: string | null;
+  assignedBy?: string | null;
+  metadata?: Record<string, any>;
+};
+
+const normalizeIdList = (values?: string[]) =>
+  Array.isArray(values)
+    ? values
+        .map((value) => (typeof value === 'string' ? value.trim() : ''))
+        .filter((value) => value.length > 0)
+    : [];
+
+export async function assignSurvey(surveyId: string, payload: AssignSurveyPayload) {
+  const body: Record<string, unknown> = {};
+  const organizationIds = normalizeIdList(payload.organizationIds);
+  const userIds = normalizeIdList(payload.userIds);
+  if (organizationIds.length) {
+    body.organizationIds = organizationIds;
+  }
+  if (userIds.length) {
+    body.userIds = userIds;
+  }
+  if (payload.dueAt !== undefined) {
+    body.dueAt = payload.dueAt;
+  }
+  if (payload.note !== undefined) {
+    body.note = payload.note;
+  }
+  if (payload.assignedBy) {
+    body.assignedBy = payload.assignedBy;
+  }
+  if (payload.metadata) {
+    body.metadata = payload.metadata;
+  }
+  const json = await request<{ data: any[] }>(`/api/admin/surveys/${surveyId}/assign`, {
+    method: 'POST',
+    body,
+  });
+  return Array.isArray(json.data) ? json.data : [];
+}
+
+export async function fetchSurveyAssignments(
+  surveyId: string,
+  options: { organizationId?: string; active?: boolean } = {},
+): Promise<CourseAssignment[]> {
+  const params = new URLSearchParams();
+  if (options.organizationId) {
+    params.set('orgId', options.organizationId);
+  }
+  if (typeof options.active === 'boolean') {
+    params.set('active', options.active ? 'true' : 'false');
+  }
+  const path = params.toString()
+    ? `/api/admin/surveys/${surveyId}/assignments?${params.toString()}`
+    : `/api/admin/surveys/${surveyId}/assignments`;
+  const json = await request<{ data: any[] }>(path);
+  return mapAssignmentsFromApiRows(json.data ?? []);
+}
+
+export async function deleteSurveyAssignment(surveyId: string, assignmentId: string, opts?: { hard?: boolean }) {
+  const params = new URLSearchParams();
+  if (opts?.hard) params.set('hard', 'true');
+  const suffix = params.toString() ? `?${params.toString()}` : '';
+  await request(`/api/admin/surveys/${surveyId}/assignments/${assignmentId}${suffix}`, { method: 'DELETE' });
+}
+
+export type LearnerSurveyAssignment = {
+  assignment: CourseAssignment;
+  survey: Survey | null;
+};
+
+export async function fetchAssignedSurveysForLearner(): Promise<LearnerSurveyAssignment[]> {
+  const json = await request<{ data: Array<{ assignment: any; survey?: any }> }>('/api/client/surveys/assigned');
+  const entries = Array.isArray(json.data) ? json.data : [];
+  return entries
+    .map((entry) => {
+      const assignment = mapAssignmentsFromApiRows(entry.assignment ? [entry.assignment] : [])?.[0];
+      const survey = entry.survey ? mapSurveyRecord(entry.survey) : null;
+      if (!assignment) return null;
+      return { assignment, survey };
+    })
+    .filter((entry): entry is LearnerSurveyAssignment => Boolean(entry));
 }

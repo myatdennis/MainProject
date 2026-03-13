@@ -13,6 +13,7 @@ import useRuntimeStatus from '../../hooks/useRuntimeStatus';
 import { submitAssignmentRequest, subscribeToAssignmentQueue } from '../../utils/assignmentQueue';
 import type { AssignmentQueueItem } from '../../utils/assignmentQueue';
 import { useSecureAuth } from '../../context/SecureAuthContext';
+import { invalidateOrgListCache } from '../../dal/orgs';
 
 const AdminCourseAssign = () => {
   const { courseId } = useParams();
@@ -122,6 +123,7 @@ const AdminCourseAssign = () => {
         ? `Assignments queued for ${result.count} learner${result.count === 1 ? '' : 's'}. We'll sync them when the connection returns.`
         : `Assigned to ${result.count} learner${result.count === 1 ? '' : 's'}.`;
       showToast(toastMessage, 'success');
+      invalidateOrgListCache();
       setEmails('');
       setNote('');
       setDueDate('');

@@ -1,6 +1,6 @@
 import { getSupabase, hasSupabaseConfig } from '../lib/supabaseClient';
 import { syncService } from '../dal/sync';
-import type { CourseAssignment, CourseAssignmentStatus } from '../types/assignment';
+import type { AssignmentKind, CourseAssignment, CourseAssignmentStatus } from '../types/assignment';
 import { isSupabaseOperational, subscribeRuntimeStatus } from '../state/runtimeStatus';
 import { getUserSession, secureGet, secureSet, secureRemove } from '../lib/secureStorage';
 import apiRequest, { ApiError as RequestError } from './apiClient';
@@ -94,7 +94,9 @@ const getAuthedSupabaseClient = async () => {
 
 type SupabaseAssignmentRow = {
   id: string;
-  course_id: string;
+  course_id?: string | null;
+  survey_id?: string | null;
+  assignment_type?: AssignmentKind | null;
   user_id: string;
   organization_id?: string | null;
   status?: CourseAssignmentStatus | null;
@@ -105,6 +107,7 @@ type SupabaseAssignmentRow = {
   assigned_by?: string | null;
   created_at?: string | null;
   updated_at?: string | null;
+  metadata?: Record<string, unknown> | null;
 };
 
 const toAssignmentStatus = (status?: string | null): CourseAssignmentStatus => {
@@ -137,9 +140,12 @@ const mapSupabaseAssignment = (row: SupabaseAssignmentRow): CourseAssignment => 
   if (!normalizedUserId) {
     throw new Error('Supabase assignment row is missing user_id');
   }
+  const assignmentType: AssignmentKind =
+    row.assignment_type === 'survey' ? 'survey' : 'course';
   return {
     id: row.id,
-    courseId: row.course_id,
+    courseId: row.course_id ?? null,
+    surveyId: row.survey_id ?? null,
     userId: normalizedUserId,
     organizationId: row.organization_id ?? null,
     status: toAssignmentStatus(row.status),
@@ -150,6 +156,8 @@ const mapSupabaseAssignment = (row: SupabaseAssignmentRow): CourseAssignment => 
     createdAt: row.created_at || new Date().toISOString(),
     updatedAt: row.updated_at || new Date().toISOString(),
     active: true,
+    metadata: row.metadata && typeof row.metadata === 'object' ? row.metadata : null,
+    assignmentType,
   };
 };
 
@@ -162,6 +170,9 @@ const loadLocalAssignments = (): CourseAssignment[] => {
       const normalizedUserId = normalizeUserId(record?.userId);
       if (!normalizedUserId) {
         console.warn('[assignmentStorage] Dropping assignment with missing userId:', record);
+        return;
+      }
+      if (record.assignmentType && record.assignmentType !== 'course') {
         return;
       }
       sanitized.push({
@@ -197,6 +208,8 @@ let inflightLocalSync: Promise<void> | null = null;
 const buildSupabaseAssignmentRecord = (assignment: CourseAssignment, includeProgress: boolean) => ({
   id: assignment.id,
   course_id: assignment.courseId,
+  survey_id: assignment.surveyId ?? null,
+  assignment_type: assignment.assignmentType ?? 'course',
   user_id: assignment.userId,
   organization_id: assignment.organizationId ?? null,
   status: assignment.status,
@@ -344,6 +357,7 @@ const buildLocalAssignment = (
     updatedAt: overrides.updatedAt ?? now,
     assignedBy: overrides.assignedBy ?? null,
     active: overrides.active ?? true,
+    metadata: overrides.metadata ?? null,
   };
 };
 
@@ -459,6 +473,9 @@ export const mapAssignmentsFromApiRows = (rows: any[]): CourseAssignment[] => {
           created_at: row.created_at ?? new Date().toISOString(),
           updated_at: row.updated_at ?? new Date().toISOString(),
           organization_id: organizationId,
+          metadata: row.metadata ?? null,
+          assignment_type: row.assignment_type ?? null,
+          survey_id: row.survey_id ?? row.surveyId ?? null,
         } as SupabaseAssignmentRow);
       } catch (error) {
         console.warn('[assignmentStorage] Skipping malformed assignment row from API response:', error);
@@ -516,7 +533,12 @@ export const getAssignmentsForUser = async (userId?: string | null): Promise<Cou
 
   const { rows, failed } = await fetchAssignmentsViaApi();
   if (!failed) {
-    return rows;
+    const filtered = rows.filter((record) => (record.assignmentType ?? 'course') === 'course');
+    if (filtered.length) {
+      persistLocalAssignments(filtered);
+      filtered.forEach((assignment) => emitLocalEvent('assignment_synced', assignment));
+    }
+    return filtered.filter((record) => record.userId === normalized);
   }
 
   return loadLocalForUser();

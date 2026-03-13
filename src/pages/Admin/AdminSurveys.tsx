@@ -34,16 +34,15 @@ import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import { useToast } from '../../context/ToastContext';
 import EmptyState from '../../components/ui/EmptyState';
 import SurveyQueueStatus from '../../components/Survey/SurveyQueueStatus';
+import SurveyAssignmentModal from '../../components/Survey/SurveyAssignmentModal';
 import type { Survey } from '../../types/survey';
 import {
   listSurveys,
   saveSurvey as persistSurvey,
-  updateSurveyAssignments,
   getSurveyById,
   surveyQueueEvents,
   getQueueLength,
 } from '../../dal/surveys';
-import orgService from '../../dal/orgs';
 
 type AdminSurveyCard = {
   id: string;
@@ -77,62 +76,17 @@ const AdminSurveys = () => {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [queueLength, setQueueLength] = useState(0);
-  const [showAssignModal, setShowAssignModal] = useState(false);
-  const [assignTargetSurveyId, setAssignTargetSurveyId] = useState<string | null>(null);
-  const [selectedOrganizationIds, setSelectedOrganizationIds] = useState<string[]>([]);
-  const [assignError, setAssignError] = useState<string | null>(null);
-  const [isAssignSaving, setIsAssignSaving] = useState(false);
+  const [assignmentModal, setAssignmentModal] = useState<{
+    surveyId: string;
+    surveyTitle: string;
+    organizationIds: string[];
+  } | null>(null);
   const [duplicateTarget, setDuplicateTarget] = useState<string | null>(null);
-  const [organizations, setOrganizations] = useState<OrganizationOption[]>([]);
-  const [isOrgLoading, setIsOrgLoading] = useState(true);
-  const [orgsError, setOrgsError] = useState<string | null>(null);
-  const MIN_ASSIGN_SAVING_MS = 400;
-
-  const organizationMap = useMemo(() => {
-    const map = new Map<string, string>();
-    organizations.forEach((org) => map.set(org.id, org.name));
-    return map;
-  }, [organizations]);
-
-  const missingSelectedOrganizationIds = useMemo(() => {
-    return selectedOrganizationIds.filter((organizationId) => !organizationMap.has(organizationId));
-  }, [selectedOrganizationIds, organizationMap]);
-
-  useEffect(() => {
-    let isMounted = true;
-    const loadOrganizations = async () => {
-      try {
-        setIsOrgLoading(true);
-        setOrgsError(null);
-        const fetched = await orgService.listOrgs();
-        if (!isMounted) return;
-        const formatted = fetched.map((org: any) => ({
-          id: String(org.id ?? ''),
-          name: org.name || `Org ${org.id}`,
-        }));
-        setOrganizations(formatted);
-      } catch (error) {
-        if (!isMounted) return;
-        console.error('Failed to load organizations for survey assignments:', error);
-        setOrgsError('Unable to load organizations');
-        setOrganizations([]);
-      } finally {
-        if (isMounted) {
-          setIsOrgLoading(false);
-        }
-      }
-    };
-
-    loadOrganizations();
-    return () => {
-      isMounted = false;
-    };
-  }, []);
 
   const shapeSurveyRecord = useCallback(
     (record: Survey): AdminSurveyCard => {
   const organizationIds = record.assignedTo?.organizationIds ?? [];
-  const assignedOrgs = organizationIds.map((id: string) => organizationMap.get(id) ?? `Org ${id}`);
+  const assignedOrgs = organizationIds;
       const metrics = (record as any).metrics ?? (record as any).analytics ?? {};
       const totalResponses =
         typeof (record as any).totalResponses === 'number'
@@ -176,7 +130,7 @@ const AdminSurveys = () => {
         assignedOrgs,
       };
     },
-    [organizationMap]
+    []
   );
 
   const fetchSurveys = useCallback(
@@ -222,11 +176,21 @@ const AdminSurveys = () => {
   }, [surveys]);
 
   const openAssignModal = (surveyId: string) => {
-    const survey = surveys.find(s => s.id === surveyId);
-    setAssignTargetSurveyId(surveyId);
-  setSelectedOrganizationIds(survey?.organizationIds ?? []);
-    setAssignError(null);
-    setShowAssignModal(true);
+    const survey = surveys.find((entry) => entry.id === surveyId);
+    if (!survey) return;
+    setAssignmentModal({
+      surveyId,
+      surveyTitle: survey.title || 'Untitled Survey',
+      organizationIds: survey.organizationIds ?? [],
+    });
+  };
+
+  const closeAssignmentModal = () => {
+    setAssignmentModal(null);
+  };
+
+  const handleAssignmentComplete = async () => {
+    await fetchSurveys();
   };
 
   const navigate = useNavigate();
@@ -276,52 +240,6 @@ const AdminSurveys = () => {
       setErrorMessage(message);
     } finally {
       setDuplicateTarget(null);
-    }
-  };
-
-  const closeAssignModal = () => {
-    setShowAssignModal(false);
-    setAssignTargetSurveyId(null);
-  setSelectedOrganizationIds([]);
-    setAssignError(null);
-    setIsAssignSaving(false);
-  };
-
-  const toggleSelectOrganization = (organizationId: string) => {
-    setSelectedOrganizationIds(prev => prev.includes(organizationId) ? prev.filter(id => id !== organizationId) : [...prev, organizationId]);
-  };
-
-  const saveAssignment = async () => {
-    if (!assignTargetSurveyId) return;
-  setAssignError(null);
-  setIsAssignSaving(true);
-  const savingStartedAt = Date.now();
-
-    const assignedOrgNames = organizations
-      .filter((org) => selectedOrganizationIds.includes(org.id))
-      .map((org) => org.name);
-
-    setSurveys(prev => prev.map(s => s.id === assignTargetSurveyId ? {
-      ...s,
-      organizationIds: [...selectedOrganizationIds],
-      assignedOrgs: assignedOrgNames
-    } : s));
-
-    try {
-  const updated = await updateSurveyAssignments(assignTargetSurveyId, selectedOrganizationIds);
-      const elapsed = Date.now() - savingStartedAt;
-      if (elapsed < MIN_ASSIGN_SAVING_MS) {
-        await new Promise((resolve) => setTimeout(resolve, MIN_ASSIGN_SAVING_MS - elapsed));
-      }
-  setSurveys(prev => prev.map(s => s.id === assignTargetSurveyId ? shapeSurveyRecord(updated) : s));
-      closeAssignModal();
-    } catch (err) {
-      console.warn('Failed to save assignment', err);
-      const message = err instanceof Error ? err.message : 'Unable to save assignment';
-      setAssignError(message);
-      await fetchSurveys();
-    } finally {
-      setIsAssignSaving(false);
     }
   };
 

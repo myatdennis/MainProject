@@ -9,6 +9,11 @@ const missingRelationPatterns = [
   /table\s+"?([\w.]+)"?\s+does not exist/i,
 ];
 
+const missingFunctionPatterns = [
+  /function\s+"?([\w.]+)"?\s+does not exist/i,
+  /the function ["']?([\w.]+)["']?\s+does not exist/i,
+];
+
 export const normalizeColumnIdentifier = (identifier) => {
   if (typeof identifier !== 'string') return null;
   const cleaned = identifier.replace(/['"]/g, '');
@@ -54,3 +59,13 @@ export const isMissingRelationError = (error) =>
         )),
   );
 
+export const isMissingFunctionError = (error) =>
+  Boolean(
+    error &&
+      (error.code === '42883' ||
+        missingFunctionPatterns.some((pattern) =>
+          typeof error.message === 'string' && pattern.test(error.message)
+            ? true
+            : typeof error.details === 'string' && pattern.test(error.details),
+        )),
+  );

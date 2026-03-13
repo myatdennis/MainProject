@@ -599,6 +599,7 @@ import { handleError } from './utils/errorHandler.js';
 import {
   isMissingColumnError,
   isMissingRelationError,
+  isMissingFunctionError,
   normalizeColumnIdentifier,
   extractMissingColumnName,
 } from './utils/errors.js';
@@ -946,17 +947,29 @@ app.post('/api/admin/courses/:id/assign', async (req, res) => {
     : Array.isArray(body.userIds)
       ? body.userIds
       : [];
-  const normalizedUserIds = Array.from(
-    new Set(
-      rawUserIds
-        .map((value) => {
-          if (typeof value === 'string') return value.trim().toLowerCase();
-          if (value === null || typeof value === 'undefined') return '';
-          return String(value).trim().toLowerCase();
-        })
-        .filter(Boolean)
-    )
-  );
+  const normalizedUserIdSet = new Set();
+  const invalidTargetIdSet = new Set();
+  rawUserIds.forEach((value) => {
+    let normalized = '';
+    if (typeof value === 'string') {
+      normalized = value.trim().toLowerCase();
+    } else if (value === null || typeof value === 'undefined') {
+      normalized = '';
+    } else {
+      normalized = String(value).trim().toLowerCase();
+    }
+    if (!normalized) {
+      const invalidValue =
+        typeof value === 'string' ? value.trim() : value === null || typeof value === 'undefined' ? '' : String(value).trim();
+      if (invalidValue) {
+        invalidTargetIdSet.add(invalidValue);
+      }
+      return;
+    }
+    normalizedUserIdSet.add(normalized);
+  });
+  const normalizedUserIds = Array.from(normalizedUserIdSet);
+  const invalidTargetIds = Array.from(invalidTargetIdSet);
   const assignmentMode = body.mode === 'organization' ? 'organization' : normalizedUserIds.length > 0 ? 'learners' : 'organization';
 
   const context = requireUserContext(req, res);
@@ -964,12 +977,24 @@ app.post('/api/admin/courses/:id/assign', async (req, res) => {
 
   const access = await requireOrgAccess(req, res, organizationId, { write: true, requireOrgAdmin: true });
   if (!access && context.userRole !== 'admin') return;
+  const organizationIds = organizationId ? [organizationId] : [];
   const assignLogMeta = {
     requestId: req.requestId ?? null,
     userId: context.userId ?? null,
     courseId: id,
     orgId: organizationId,
   };
+  const assignmentLogBase = {
+    courseId: id,
+    organizationIds,
+    organizationCount: organizationIds.length,
+    userCount: normalizedUserIds.length,
+    invalidTargetIds,
+    requestId: req.requestId ?? null,
+  };
+  let assignmentInsertedCount = 0;
+  let assignmentUpdatedCount = 0;
+  let assignmentSkippedCount = 0;
   logCourseRequestEvent('admin.courses.assign.start', assignLogMeta);
   res.once('finish', () => {
     logCourseRequestEvent('admin.courses.assign.finish', {
@@ -1128,6 +1153,29 @@ app.post('/api/admin/courses/:id/assign', async (req, res) => {
       }
 
       const responseRows = [...updated, ...inserted];
+      assignmentInsertedCount = inserted.length;
+      assignmentUpdatedCount = updated.length;
+      assignmentSkippedCount = Math.max(targetUserIds.length - assignmentInsertedCount - assignmentUpdatedCount, 0);
+      if (assignmentInsertedCount > 0) {
+        logger.info('course_assignment_created', {
+          ...assignmentLogBase,
+          insertedRowCount: assignmentInsertedCount,
+        });
+      }
+      if (assignmentUpdatedCount > 0) {
+        logger.info('course_assignment_updated', {
+          ...assignmentLogBase,
+          insertedRowCount: assignmentInsertedCount,
+          updatedRowCount: assignmentUpdatedCount,
+          skippedRowCount: assignmentSkippedCount,
+        });
+      }
+      if (assignmentInsertedCount === 0 && assignmentUpdatedCount === 0 && assignmentSkippedCount > 0) {
+        logger.info('course_assignment_skipped_duplicate', {
+          ...assignmentLogBase,
+          skippedRowCount: assignmentSkippedCount,
+        });
+      }
       res.status(inserted.length > 0 ? 201 : 200).json({
         data: responseRows,
         meta: {
@@ -1282,6 +1330,31 @@ app.post('/api/admin/courses/:id/assign', async (req, res) => {
     }
 
     const responseRows = [...updatedRows, ...insertedRows];
+    assignmentInsertedCount = insertedRows.length;
+    assignmentUpdatedCount = updatedRows.length;
+    assignmentSkippedCount = Math.max(targetUserIds.length - assignmentInsertedCount - assignmentUpdatedCount, 0);
+    if (assignmentInsertedCount > 0) {
+      logger.info('course_assignment_created', {
+        ...assignmentLogBase,
+        insertedRowCount: assignmentInsertedCount,
+        updatedRowCount: assignmentUpdatedCount,
+        skippedRowCount: assignmentSkippedCount,
+      });
+    }
+    if (assignmentUpdatedCount > 0) {
+      logger.info('course_assignment_updated', {
+        ...assignmentLogBase,
+        insertedRowCount: assignmentInsertedCount,
+        updatedRowCount: assignmentUpdatedCount,
+        skippedRowCount: assignmentSkippedCount,
+      });
+    }
+    if (assignmentInsertedCount === 0 && assignmentUpdatedCount === 0 && assignmentSkippedCount > 0) {
+      logger.info('course_assignment_skipped_duplicate', {
+        ...assignmentLogBase,
+        skippedRowCount: assignmentSkippedCount,
+      });
+    }
     res.status(insertedRows.length > 0 ? 201 : 200).json({
       data: responseRows,
       meta: {
@@ -1292,6 +1365,13 @@ app.post('/api/admin/courses/:id/assign', async (req, res) => {
       },
     });
   } catch (error) {
+    logger.error('course_assignment_failed', {
+      ...assignmentLogBase,
+      insertedRowCount: assignmentInsertedCount,
+      updatedRowCount: assignmentUpdatedCount,
+      skippedRowCount: assignmentSkippedCount,
+      error: safeSerializeError(error),
+    });
     logAdminCoursesError(req, error, `Failed to assign course ${id}`);
     res.locals = res.locals || {};
     res.locals.errorCode = error?.code ?? 'assignment_failed';
@@ -1935,6 +2015,7 @@ console.log('[supabase] startup', {
 
 let supabase = supabaseUrl && supabaseServiceRoleKey ? createClient(supabaseUrl, supabaseServiceRoleKey) : null;
 let supabaseAuthClient = supabaseUrl && supabaseAnonKey ? createClient(supabaseUrl, supabaseAnonKey) : null;
+let surveyAssignmentAggregateRpcMissingLogged = false;
 if (E2E_TEST_MODE) {
   console.log('[server] Running in E2E_TEST_MODE - ignoring Supabase credentials and using in-memory fallback');
   supabase = null;
@@ -3079,16 +3160,24 @@ const applyAssignmentToSurvey = (survey, assignmentRecord) => {
   };
 
   if (assignmentRecord) {
-    normalized.organizationIds = coerceIdArray(assignmentRecord.organization_ids);
-    normalized.userIds = coerceIdArray(assignmentRecord.user_ids);
-    normalized.cohortIds = coerceIdArray(assignmentRecord.cohort_ids);
-    normalized.departmentIds = coerceIdArray(assignmentRecord.department_ids);
+    if (assignmentRecord.assignedTo) {
+      normalized.organizationIds = coerceIdArray(assignmentRecord.assignedTo.organizationIds);
+      normalized.userIds = coerceIdArray(assignmentRecord.assignedTo.userIds);
+      normalized.cohortIds = coerceIdArray(assignmentRecord.assignedTo.cohortIds);
+      normalized.departmentIds = coerceIdArray(assignmentRecord.assignedTo.departmentIds);
+    } else {
+      normalized.organizationIds = coerceIdArray(assignmentRecord.organization_ids);
+      normalized.userIds = coerceIdArray(assignmentRecord.user_ids);
+      normalized.cohortIds = coerceIdArray(assignmentRecord.cohort_ids);
+      normalized.departmentIds = coerceIdArray(assignmentRecord.department_ids);
+    }
   }
 
   return {
     ...survey,
     assignedTo: normalized,
     assigned_to: normalized,
+    assignmentRows: assignmentRecord?.rows ?? [],
   };
 };
 
@@ -3344,18 +3433,63 @@ const fetchSurveyAssignmentsMap = async (surveyIds = []) => {
   }
 
   try {
-    const { data, error } = await supabase
-      .from('survey_assignments')
-      .select('*')
-      .in('survey_id', surveyIds.filter(Boolean));
-    if (error) throw error;
     const map = new Map();
-    (data || []).forEach((row) => {
-      if (row?.survey_id) {
-        map.set(row.survey_id, row);
+    const normalizedIds = surveyIds.filter(Boolean);
+    if (!normalizedIds.length) {
+      return map;
+    }
+    try {
+      const { data, error } = await supabase
+        .from('assignments')
+        .select(
+          'id,survey_id,organization_id,user_id,status,due_at,note,assigned_by,metadata,active,created_at,updated_at',
+        )
+        .eq('assignment_type', 'survey')
+        .in('survey_id', normalizedIds);
+      if (error) throw error;
+      const grouped = new Map();
+      (data || []).forEach((row) => {
+        if (!row?.survey_id) return;
+        if (!grouped.has(row.survey_id)) {
+          grouped.set(row.survey_id, []);
+        }
+        grouped.get(row.survey_id).push(row);
+      });
+      grouped.forEach((rows, surveyId) => {
+        const aggregate = createEmptyAssignedTo();
+        const orgSet = new Set();
+        const userSet = new Set();
+        rows.forEach((row) => {
+          if (row.organization_id) orgSet.add(String(row.organization_id));
+          if (row.user_id) userSet.add(String(row.user_id));
+        });
+        aggregate.organizationIds = Array.from(orgSet);
+        aggregate.userIds = Array.from(userSet);
+        map.set(surveyId, { assignedTo: aggregate, rows });
+      });
+      const missingIds = normalizedIds.filter((id) => !map.has(id));
+      if (missingIds.length) {
+        const { data: legacyRows } = await supabase
+          .from('survey_assignments')
+          .select('*')
+          .in('survey_id', missingIds);
+        (legacyRows || []).forEach((row) => {
+          if (row?.survey_id) {
+            map.set(row.survey_id, { legacy: row });
+          }
+        });
       }
-    });
-    return map;
+      return map;
+    } catch (error) {
+      if (isMissingRelationError(error) || isMissingColumnError(error)) {
+        logger.warn('survey_assignments_table_unavailable', {
+          code: error?.code ?? null,
+          message: error?.message ?? null,
+        });
+        return new Map();
+      }
+      throw error;
+    }
   } catch (error) {
     if (isMissingRelationError(error) || isMissingColumnError(error)) {
       logger.warn('survey_assignments_table_unavailable', {
@@ -3379,8 +3513,191 @@ const loadSurveyWithAssignments = async (id) => {
   return applyAssignmentToSurvey({ ...data }, assignments.get(id));
 };
 
+const refreshSurveyAssignmentAggregates = async (surveyId) => {
+  if (!surveyId || !supabase) return false;
+  try {
+    const { error } = await supabase.rpc('refresh_survey_assignment_aggregates', {
+      target_survey_id: surveyId,
+    });
+    if (error) throw error;
+    return true;
+  } catch (error) {
+    if (isMissingFunctionError(error) || isMissingRelationError(error) || isMissingColumnError(error)) {
+      if (!surveyAssignmentAggregateRpcMissingLogged) {
+        surveyAssignmentAggregateRpcMissingLogged = true;
+        logger.warn('survey_assignment_aggregate_refresh_unavailable', {
+          code: error?.code ?? null,
+          message: error?.message ?? null,
+        });
+      }
+      return false;
+    }
+    throw error;
+  }
+};
+
+const ensureSurveyAssignmentsForUserFromOrgScope = async ({ userId, orgIds = [], surveyFilter = [] } = {}) => {
+  if (!supabase || !userId || !Array.isArray(orgIds) || orgIds.length === 0) return;
+  try {
+    let orgQuery = supabase
+      .from('assignments')
+      .select(SURVEY_ASSIGNMENT_SELECT)
+      .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
+      .in('organization_id', orgIds)
+      .is('user_id', null)
+      .eq('active', true);
+
+    if (Array.isArray(surveyFilter) && surveyFilter.length > 0) {
+      orgQuery = orgQuery.in('survey_id', surveyFilter);
+    }
+
+    const { data: orgAssignments, error: orgError } = await orgQuery;
+    if (orgError) throw orgError;
+    if (!orgAssignments || orgAssignments.length === 0) return;
+
+    const surveyIds = Array.from(new Set(orgAssignments.map((row) => row?.survey_id).filter(Boolean)));
+    if (surveyIds.length === 0) return;
+
+    const { data: existingRows, error: existingError } = await supabase
+      .from('assignments')
+      .select('survey_id')
+      .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
+      .eq('user_id', userId)
+      .in('survey_id', surveyIds);
+    if (existingError) throw existingError;
+
+    const existingSet = new Set((existingRows || []).map((row) => row?.survey_id).filter(Boolean));
+    const inserts = [];
+    surveyIds.forEach((surveyId) => {
+      if (existingSet.has(surveyId)) {
+        return;
+      }
+      const source = orgAssignments.find((row) => row?.survey_id === surveyId);
+      if (!source) return;
+      inserts.push({
+        survey_id: surveyId,
+        course_id: null,
+        organization_id: source.organization_id ?? null,
+        user_id: userId,
+        assignment_type: SURVEY_ASSIGNMENT_TYPE,
+        status: source.status ?? 'assigned',
+        due_at: source.due_at ?? null,
+        note: source.note ?? null,
+        assigned_by: source.assigned_by ?? null,
+        metadata: {
+          ...(source.metadata && typeof source.metadata === 'object' ? source.metadata : {}),
+          assigned_via: 'org_rollup',
+        },
+        active: true,
+      });
+    });
+
+    if (!inserts.length) return;
+
+    const { error: insertError } = await supabase.from('assignments').insert(inserts);
+    if (insertError) throw insertError;
+
+    const affectedSurveyIds = Array.from(new Set(inserts.map((row) => row.survey_id).filter(Boolean)));
+    await Promise.all(affectedSurveyIds.map((surveyId) => refreshSurveyAssignmentAggregates(surveyId)));
+  } catch (error) {
+    if (isMissingRelationError(error) || isMissingColumnError(error)) {
+      logger.warn('survey_assignment_user_materialize_skipped', {
+        code: error?.code ?? null,
+        message: error?.message ?? null,
+      });
+      return;
+    }
+    throw error;
+  }
+};
+
+const loadSurveyAssignmentForUser = async (surveyId, userId, { assignmentId = null, orgIds = [] } = {}) => {
+  if (!supabase || !surveyId || !userId) return null;
+  try {
+    if (assignmentId) {
+      const { data, error } = await supabase
+        .from('assignments')
+        .select(SURVEY_ASSIGNMENT_SELECT)
+        .eq('id', assignmentId)
+        .eq('survey_id', surveyId)
+        .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
+        .maybeSingle();
+      if (error) throw error;
+      if (data) return data;
+    }
+
+    const { data: existing, error: existingError } = await supabase
+      .from('assignments')
+      .select(SURVEY_ASSIGNMENT_SELECT)
+      .eq('survey_id', surveyId)
+      .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (existingError) throw existingError;
+    if (existing) return existing;
+
+    if (Array.isArray(orgIds) && orgIds.length > 0) {
+      await ensureSurveyAssignmentsForUserFromOrgScope({ userId, orgIds, surveyFilter: [surveyId] });
+      const { data: hydrated, error: hydratedError } = await supabase
+        .from('assignments')
+        .select(SURVEY_ASSIGNMENT_SELECT)
+        .eq('survey_id', surveyId)
+        .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
+        .eq('user_id', userId)
+        .maybeSingle();
+      if (hydratedError) throw hydratedError;
+      if (hydrated) return hydrated;
+    }
+
+    const { data: created, error: insertError } = await supabase
+      .from('assignments')
+      .insert({
+        survey_id: surveyId,
+        course_id: null,
+        user_id: userId,
+        assignment_type: SURVEY_ASSIGNMENT_TYPE,
+        status: 'assigned',
+        active: true,
+        metadata: { assigned_via: 'learner_self_enroll' },
+      })
+      .select(SURVEY_ASSIGNMENT_SELECT)
+      .single();
+    if (insertError) throw insertError;
+    await refreshSurveyAssignmentAggregates(surveyId);
+    return created ?? null;
+  } catch (error) {
+    if (isMissingRelationError(error) || isMissingColumnError(error)) {
+      logger.warn('survey_assignment_load_skipped', {
+        surveyId,
+        userId,
+        code: error?.code ?? null,
+        message: error?.message ?? null,
+      });
+      return null;
+    }
+    throw error;
+  }
+};
+
 const syncSurveyAssignments = async (surveyId, assignedTo = createEmptyAssignedTo()) => {
-  if (!surveyId || !supabase) return;
+  if (!surveyId) return;
+  if (!supabase) {
+    updateDemoSurveyAssignments(surveyId, assignedTo);
+    return;
+  }
+
+  let refreshed = false;
+  try {
+    refreshed = await refreshSurveyAssignmentAggregates(surveyId);
+  } catch (error) {
+    logger.warn('survey_assignment_refresh_failed', {
+      surveyId,
+      code: error?.code ?? null,
+      message: error?.message ?? null,
+    });
+  }
+  if (refreshed) return;
+
   const normalized = assignedTo ?? createEmptyAssignedTo();
   const payload = {
     survey_id: surveyId,
@@ -4014,13 +4331,47 @@ const ensureOrgProgressViewAvailable = async () => {
   }
 };
 
+const buildOrgProgressPayload = async (orgIds, { includeProgress, requestId }) => {
+  if (!includeProgress) {
+    return { progressAvailable: false };
+  }
+  if (!supabase || !Array.isArray(orgIds) || orgIds.length === 0) {
+    return { progressAvailable: Boolean(orgIds?.length === 0) };
+  }
+  const viewAvailable = await ensureOrgProgressViewAvailable();
+  if (!viewAvailable) {
+    return { progressAvailable: false, reason: 'view_unavailable' };
+  }
+  try {
+    const { data, error } = await supabase
+      .from(ORG_PROGRESS_VIEW)
+      .select('*')
+      .in('org_id', orgIds);
+    if (error) throw error;
+    const payload = { progressAvailable: true };
+    (data || []).forEach((row) => {
+      if (row?.org_id) {
+        payload[row.org_id] = row;
+      }
+    });
+    return payload;
+  } catch (error) {
+    logOrganizationsStageError('progress_fetch_failed', error, {
+      requestId,
+      orgCount: orgIds.length,
+    });
+    return { progressAvailable: false, reason: 'progress_fetch_failed' };
+  }
+};
+
 const ensureTablesReady = async (label, definitions = []) => {
   if (!supabase) return { ok: true };
   for (const definition of definitions) {
     const table = definition.table;
     if (!table) continue;
     const columns = Array.isArray(definition.columns) ? definition.columns : [];
-    const cacheKey = `${table}:${columns.slice().sort().join(',')}`;
+    const schema = definition.schema ?? 'public';
+    const cacheKey = `${schema}.${table}:${columns.slice().sort().join(',')}`;
     const lastCheck = tableVerificationCache.get(cacheKey);
     if (lastCheck && Date.now() - lastCheck < TABLE_VERIFICATION_TTL_MS) {
       continue;
@@ -4034,14 +4385,17 @@ const ensureTablesReady = async (label, definitions = []) => {
       tableVerificationCache.set(cacheKey, Date.now());
     } catch (error) {
       if (isSchemaMismatchError(error)) {
+        const missingColumn = normalizeColumnIdentifier(extractMissingColumnName(error)) || null;
         logger.error('supabase_table_verification_failed', {
           label,
           table,
+          schema,
           columns,
+          missingColumn,
           code: error?.code ?? null,
           message: error?.message ?? null,
         });
-        return { ok: false, table, error };
+        return { ok: false, table, schema, column: missingColumn, error };
       }
       throw error;
     }
@@ -4053,7 +4407,9 @@ const respondSchemaUnavailable = (res, label, status) => {
   res.status(503).json({
     error: 'schema_unavailable',
     message: `Required database table "${status.table}" is unavailable for ${label}.`,
-    table: status.table,
+    table: status.table ?? null,
+    column: status.column ?? null,
+    schema: status.schema ?? null,
     label,
   });
 };
@@ -4157,6 +4513,34 @@ const normalizeLegacyOrgInput = (payload, { surface = 'unknown', requestId = nul
 
   walk(payload, path);
   return payload;
+};
+
+const normalizeAssignmentUserIds = (rawList = []) => {
+  const normalizedUserIdSet = new Set();
+  const invalidTargetIdSet = new Set();
+  rawList.forEach((value) => {
+    let normalized = '';
+    if (typeof value === 'string') {
+      normalized = value.trim().toLowerCase();
+    } else if (value === null || typeof value === 'undefined') {
+      normalized = '';
+    } else {
+      normalized = String(value).trim().toLowerCase();
+    }
+    if (!normalized) {
+      const invalidValue =
+        typeof value === 'string' ? value.trim() : value === null || typeof value === 'undefined' ? '' : String(value).trim();
+      if (invalidValue) {
+        invalidTargetIdSet.add(invalidValue);
+      }
+      return;
+    }
+    normalizedUserIdSet.add(normalized);
+  });
+  return {
+    normalizedUserIds: Array.from(normalizedUserIdSet),
+    invalidTargetIds: Array.from(invalidTargetIdSet),
+  };
 };
 
 const getRequestContext = (req) => {
@@ -7870,6 +8254,8 @@ const normalizeAssignmentRow = (row) => {
   normalized.organization_id = row.organization_id ?? row.org_id ?? row.organizationId ?? null;
   normalized.course_id = row.course_id ?? row.courseId ?? null;
   normalized.user_id = row.user_id ?? row.user_id_uuid ?? row.userId ?? null;
+  normalized.survey_id = row.survey_id ?? row.surveyId ?? null;
+  normalized.assignment_type = row.assignment_type ?? row.assignmentType ?? null;
   normalized.progress = deriveAssignmentProgressValue(row);
   return normalized;
 };
@@ -8056,6 +8442,162 @@ app.get('/api/client/surveys', async (req, res) => {
   } catch (error) {
     console.error('Failed to fetch client surveys:', error);
     res.status(500).json({ error: 'Unable to fetch client surveys' });
+  }
+});
+
+app.get('/api/client/surveys/assigned', authenticate, async (req, res) => {
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  const parseBoolean = (value, defaultValue = true) => {
+    if (value === undefined || value === null) return defaultValue;
+    const normalized = String(value).trim().toLowerCase();
+    return ['1', 'true', 'yes', 'on'].includes(normalized);
+  };
+
+  const includeCompleted = parseBoolean(req.query.include_completed ?? req.query.includeCompleted, true);
+
+  if (!supabase) {
+    if (E2E_TEST_MODE || DEV_FALLBACK) {
+      const rows = (e2eStore.assignments || []).filter((assignment) => {
+        if (assignment.assignment_type !== SURVEY_ASSIGNMENT_TYPE) return false;
+        if (assignment.user_id && assignment.user_id !== context.userId) return false;
+        if (!includeCompleted && assignment.status === 'completed') return false;
+        return true;
+      });
+      res.json({ data: rows.map((assignment) => ({ assignment, survey: e2eStore.surveys.get(assignment.survey_id) ?? null })) });
+      return;
+    }
+    res.json({ data: [] });
+    return;
+  }
+
+  try {
+    await ensureSurveyAssignmentsForUserFromOrgScope({
+      userId: context.userId,
+      orgIds: Array.isArray(context.organizationIds) ? context.organizationIds : [],
+    });
+
+    let assignmentQuery = supabase
+      .from('assignments')
+      .select(SURVEY_ASSIGNMENT_SELECT)
+      .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
+      .eq('user_id', context.userId);
+
+    if (!includeCompleted) {
+      assignmentQuery = assignmentQuery.eq('active', true).in('status', ['assigned', 'in-progress']);
+    }
+
+    const { data: assignmentRows, error: assignmentError } = await assignmentQuery;
+    if (assignmentError) throw assignmentError;
+    const assignments = assignmentRows || [];
+
+    const surveyIds = Array.from(new Set(assignments.map((row) => row?.survey_id).filter(Boolean)));
+    let surveys = [];
+    let surveyMap = new Map();
+    if (surveyIds.length) {
+      const { data: surveyRows, error: surveyError } = await supabase
+        .from('surveys')
+        .select('*')
+        .in('id', surveyIds);
+      if (surveyError) throw surveyError;
+      const assignmentMap = await fetchSurveyAssignmentsMap(surveyIds);
+      surveys = (surveyRows || []).map((row) => applyAssignmentToSurvey({ ...row }, assignmentMap.get(row.id)));
+      surveyMap = new Map(surveys.map((survey) => [survey.id, survey]));
+    }
+
+    const shaped = assignments.map((assignment) => ({
+      assignment,
+      survey: assignment.survey_id ? surveyMap.get(assignment.survey_id) ?? null : null,
+    }));
+
+    res.json({ data: shaped });
+  } catch (error) {
+    logger.error('client_assigned_surveys_failed', {
+      requestId: req.requestId ?? null,
+      userId: context.userId,
+      code: error?.code ?? null,
+      message: error?.message ?? null,
+    });
+    res.status(500).json({ error: 'Unable to load assigned surveys' });
+  }
+});
+
+app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const context = requireUserContext(req, res);
+  if (!context) return;
+  const { id } = req.params;
+
+  const responses = req.body?.responses;
+  if (!responses || typeof responses !== 'object') {
+    res.status(400).json({ error: 'responses_required', message: 'Provide structured responses payload.' });
+    return;
+  }
+
+  try {
+    const assignment = await loadSurveyAssignmentForUser(id, context.userId, {
+      assignmentId: req.body?.assignmentId ?? req.body?.assignment_id ?? null,
+      orgIds: Array.isArray(context.organizationIds) ? context.organizationIds : [],
+    });
+
+    const nowIso = new Date().toISOString();
+    const responsePayload = {
+      survey_id: id,
+      user_id: context.userId,
+      organization_id: assignment?.organization_id ?? context.activeOrganizationId ?? null,
+      response: responses,
+      response_text: null,
+      question_id: null,
+      rating: null,
+      metadata: typeof req.body?.metadata === 'object' && req.body.metadata !== null ? req.body.metadata : {},
+      status: 'completed',
+      assignment_id: assignment?.id ?? null,
+      completed_at: nowIso,
+    };
+
+    const { data: inserted, error: insertError } = await supabase
+      .from('survey_responses')
+      .insert(responsePayload)
+      .select('*')
+      .single();
+    if (insertError) throw insertError;
+
+    if (assignment?.id) {
+      const mergedMetadata = {
+        ...(assignment.metadata && typeof assignment.metadata === 'object' ? assignment.metadata : {}),
+        last_completed_at: nowIso,
+      };
+      await supabase
+        .from('assignments')
+        .update({ status: 'completed', active: true, metadata: mergedMetadata })
+        .eq('id', assignment.id);
+      logSurveyAssignmentEvent('survey_assignment_completed', {
+        requestId: req.requestId ?? null,
+        surveyId: id,
+        organizationCount: assignment.organization_id ? 1 : 0,
+        userCount: 1,
+        insertedRowCount: 0,
+        skippedRowCount: 0,
+        invalidTargetIds: [],
+        metadata: { assignmentId: assignment.id },
+      });
+    }
+
+    res.status(201).json({ data: inserted });
+  } catch (error) {
+    console.error('[client.surveys.submit] failed', error);
+    logSurveyAssignmentEvent('survey_assignment_failed', {
+      requestId: req.requestId ?? null,
+      surveyId: id,
+      organizationCount: 0,
+      userCount: 1,
+      insertedRowCount: 0,
+      skippedRowCount: 0,
+      invalidTargetIds: [],
+      metadata: { error: error?.message ?? String(error) },
+    });
+    res.status(500).json({ error: 'Unable to submit survey response' });
   }
 });
 
@@ -10983,20 +11525,28 @@ app.get('/api/client/certificates', async (req, res) => {
 
 // Organization management
 const REQUIRED_ADMIN_ORG_TABLES = [
-  { table: 'organizations', columns: ['id', 'name', 'status', 'subscription', 'created_at'] },
+  { table: 'organizations', schema: 'public', columns: ['id', 'name', 'status', 'subscription', 'created_at'] },
 ];
 
 const OPTIONAL_ADMIN_ORG_TABLES = [
-  { table: 'organization_memberships', columns: ['org_id', 'user_id', 'role', 'status'] },
-  { table: 'organization_profiles', columns: ['org_id', 'name'] },
-  { table: 'organization_branding', columns: ['org_id'] },
+  { table: 'organization_memberships', schema: 'public', columns: ['org_id', 'user_id', 'role', 'status'] },
+  { table: 'organization_profiles', schema: 'public', columns: ['org_id', 'name'] },
+  { table: 'organization_branding', schema: 'public', columns: ['org_id'] },
 ];
+const loggedOptionalSchemaWarnings = new Set();
 
 const ensureAdminOrgSchemaOrRespond = async (res, label, meta = {}) => {
   const requestId = meta.requestId ?? null;
   try {
     const requiredStatus = await ensureTablesReady(label, REQUIRED_ADMIN_ORG_TABLES);
     if (!requiredStatus.ok) {
+      logger.warn('organizations_schema_guard_missing', {
+        label,
+        requestId,
+        table: requiredStatus.table ?? null,
+        column: requiredStatus.column ?? null,
+        schema: requiredStatus.schema ?? null,
+      });
       respondSchemaUnavailable(res, label, requiredStatus);
       return false;
     }
@@ -11023,15 +11573,23 @@ const ensureAdminOrgSchemaOrRespond = async (res, label, meta = {}) => {
   try {
     const optionalStatus = await ensureTablesReady(label, OPTIONAL_ADMIN_ORG_TABLES);
     if (!optionalStatus.ok) {
-      logger.warn('organizations_optional_schema_missing', {
-        label,
-        table: optionalStatus.table,
-        requestId,
-      });
+      const warningKey = `${optionalStatus.schema ?? 'public'}.${optionalStatus.table ?? 'unknown'}:${
+        optionalStatus.column ?? '*'
+      }`;
+      if (!loggedOptionalSchemaWarnings.has(warningKey)) {
+        loggedOptionalSchemaWarnings.add(warningKey);
+        logger.warn('organizations_optional_schema_missing', {
+          label,
+          table: optionalStatus.table ?? null,
+          column: optionalStatus.column ?? null,
+          schema: optionalStatus.schema ?? null,
+          requestId,
+        });
+      }
     }
   } catch (error) {
     const normalized = normalizeUnknownError(error);
-    logger.warn('organizations_optional_schema_check_failed', {
+    logger.info('organizations_optional_schema_check_failed', {
       label,
       requestId,
       code: normalized.code ?? null,
@@ -11070,17 +11628,33 @@ const logOrganizationsStageError = (stage, error, meta = {}) => {
   return normalized;
 };
 
-const logOrganizationsEvent = (stage, meta = {}) => {
+const logOrganizationsEvent = (event, { requestId = null, status = 'info', metadata = {} } = {}) => {
+  const shapedMetadata =
+    metadata && typeof metadata === 'object'
+      ? metadata
+      : metadata === null || typeof metadata === 'undefined'
+        ? {}
+        : { value: metadata };
   const payload = {
-    stage,
-    ...meta,
+    event,
+    requestId,
+    status,
+    metadata: shapedMetadata,
   };
-  if (stage && typeof stage === 'string' && stage.includes('v2')) {
-    console.info('[organizations.event]', payload);
-  } else {
-    console.info('[organizations.event.legacy]', payload);
-  }
   logger.info('organizations_event', payload);
+};
+
+const logSurveyAssignmentEvent = (event, payload = {}) => {
+  logger.info(event, {
+    requestId: payload.requestId ?? null,
+    surveyId: payload.surveyId ?? null,
+    organizationCount: payload.organizationCount ?? 0,
+    userCount: payload.userCount ?? 0,
+    insertedRowCount: payload.insertedRowCount ?? 0,
+    skippedRowCount: payload.skippedRowCount ?? 0,
+    invalidTargetIds: payload.invalidTargetIds ?? [],
+    metadata: payload.metadata ?? null,
+  });
 };
 
 const logUsersStageError = (stage, error, meta = {}) => {
@@ -11097,11 +11671,15 @@ const logUsersStageError = (stage, error, meta = {}) => {
 
 app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req, res) => {
   if (!ensureSupabase(res)) return;
-  logOrganizationsEvent('schema_guard_start', { requestId: req.requestId ?? null });
+  logOrganizationsEvent('schema_guard_start', { requestId: req.requestId ?? null, status: 'start' });
   const schemaOk = await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.list', {
     requestId: req.requestId ?? null,
   });
-  logOrganizationsEvent('schema_guard_done', { requestId: req.requestId ?? null, ok: Boolean(schemaOk) });
+  logOrganizationsEvent('schema_guard_done', {
+    requestId: req.requestId ?? null,
+    status: schemaOk ? 'ok' : 'failed',
+    metadata: { ok: Boolean(schemaOk) },
+  });
   if (!schemaOk) return;
   res.set('X-Organizations-Handler', 'express-v4');
 
@@ -11149,24 +11727,18 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
   const ascending = String(req.query.direction).toLowerCase() === 'asc';
 
   const requestId = req.requestId ?? null;
-  logOrganizationsEvent('request_received_v4', {
+  logOrganizationsEvent('request_received', {
     requestId,
-    includeProgress,
-    page,
-    pageSize,
-    search: search || null,
-    requestedOrgId: requestedOrgId ?? null,
-    isPlatformAdmin,
-    source: 'express',
-  });
-  logOrganizationsEvent('request_received_v3', {
-    requestId,
-    includeProgress,
-    page,
-    pageSize,
-    search: search || null,
-    requestedOrgId: requestedOrgId ?? null,
-    isPlatformAdmin,
+    status: 'ok',
+    metadata: {
+      includeProgress,
+      page,
+      pageSize,
+      search: search || null,
+      requestedOrgId: requestedOrgId ?? null,
+      isPlatformAdmin,
+      source: 'express',
+    },
   });
 
   const buildOrgQuery = () => {
@@ -11200,14 +11772,17 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
   let organizations = [];
   let totalCount = 0;
   try {
-    logOrganizationsEvent('base_query_start', { requestId });
+    logOrganizationsEvent('base_query_start', { requestId, status: 'start' });
     const result = await runSupabaseQueryWithRetry('admin.organizations.list', () => buildOrgQuery());
     organizations = Array.isArray(result?.data) ? result.data : [];
     totalCount = typeof result?.count === 'number' ? result.count : result?.count ?? 0;
     logOrganizationsEvent('base_query_done', {
       requestId,
-      totalCount,
-      returnedCount: organizations.length,
+      status: 'ok',
+      metadata: {
+        totalCount,
+        returnedCount: organizations.length,
+      },
     });
   } catch (error) {
     const normalized = logOrganizationsStageError('base_query', error, {
@@ -11226,14 +11801,10 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
     return;
   }
 
-  let progressMap = {};
-  let shouldFetchProgress = false;
-  // Temporarily skip progress/enrichment until prod issues resolved.
-  progressMap = {};
-
   logOrganizationsEvent('row_transform_start', {
     requestId,
-    sourceCount: organizations.length,
+    status: 'start',
+    metadata: { sourceCount: organizations.length },
   });
   const safeOrganizations = [];
   organizations.forEach((org, index) => {
@@ -11262,19 +11833,31 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
   });
   logOrganizationsEvent('row_transform_done', {
     requestId,
-    returnedCount: safeOrganizations.length,
+    status: 'ok',
+    metadata: { returnedCount: safeOrganizations.length },
+  });
+
+  const orgIdsForProgress = safeOrganizations
+    .map((org) => org?.id || org?.organization_id || null)
+    .filter((orgId): orgId is string => Boolean(orgId));
+  const progressPayload = await buildOrgProgressPayload(orgIdsForProgress, {
+    includeProgress: Boolean(includeProgress),
+    requestId,
   });
 
   logOrganizationsEvent('response_ready', {
     requestId,
-    count: safeOrganizations.length,
-    page,
-    pageSize,
-    includeProgress,
-    orgFilter: requestedOrgId ?? null,
+    status: 'ok',
+    metadata: {
+      count: safeOrganizations.length,
+      page,
+      pageSize,
+      includeProgress,
+      orgFilter: requestedOrgId ?? null,
+    },
   });
 
-  res.json({
+  const responsePayload = {
     data: safeOrganizations,
     pagination: {
       page,
@@ -11282,8 +11865,9 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
       total: totalCount || 0,
       hasMore: to + 1 < (totalCount || 0),
     },
-    progress: progressMap,
-  });
+    progress: progressPayload,
+  };
+  res.json(responsePayload);
 }));
 
 app.post('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req, res) => {
@@ -11309,14 +11893,20 @@ app.post('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req
 
   logOrganizationsEvent('org_create_request_v3', {
     requestId: req.requestId ?? null,
-    name: payload.name ?? null,
-    subscription: payload.subscription ?? null,
-    source: 'express',
+    status: 'start',
+    metadata: {
+      name: payload.name ?? null,
+      subscription: payload.subscription ?? null,
+      source: 'express',
+    },
   });
   logOrganizationsEvent('org_create_request_v2', {
     requestId: req.requestId ?? null,
-    name: payload.name ?? null,
-    subscription: payload.subscription ?? null,
+    status: 'start',
+    metadata: {
+      name: payload.name ?? null,
+      subscription: payload.subscription ?? null,
+    },
   });
 
   try {
@@ -11362,11 +11952,13 @@ app.post('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req
 
     logOrganizationsEvent('org_create_success', {
       requestId: req.requestId ?? null,
-      orgId: result?.data?.id ?? null,
+      status: 'ok',
+      metadata: { orgId: result?.data?.id ?? null },
     });
     logOrganizationsEvent('create_success', {
       requestId: req.requestId ?? null,
-      orgId: result?.data?.id ?? null,
+      status: 'ok',
+      metadata: { orgId: result?.data?.id ?? null },
     });
     res.status(201).json({ data: result.data });
   } catch (error) {
@@ -11375,7 +11967,8 @@ app.post('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req
     });
     logOrganizationsEvent('create_failed', {
       requestId: req.requestId ?? null,
-      code: normalized.code ?? null,
+      status: 'failed',
+      metadata: { code: normalized.code ?? null },
     });
     const statusCode = normalized.code === '23505' ? 409 : 500;
     res.status(statusCode).json({
@@ -13657,16 +14250,39 @@ app.post('/api/media/assets/:assetId/sign', authenticate, async (req, res) => {
 });
 
 // Surveys
-const ADMIN_SURVEY_TABLES = [
+const REQUIRED_ADMIN_SURVEY_TABLES = [
   { table: 'surveys', columns: ['id', 'title', 'status', 'updated_at'] },
-  { table: 'survey_assignments', columns: ['survey_id', 'organization_id'] },
+  {
+    table: 'assignments',
+    columns: ['survey_id', 'assignment_type', 'organization_id', 'user_id', 'status', 'due_at', 'note', 'assigned_by', 'active'],
+  },
 ];
 
+const OPTIONAL_ADMIN_SURVEY_TABLES = [{ table: 'survey_assignments', columns: ['survey_id', 'organization_id'] }];
+const SURVEY_ASSIGNMENT_TYPE = 'survey';
+const SURVEY_ASSIGNMENT_SELECT =
+  'id,survey_id,organization_id,user_id,status,due_at,note,assigned_by,metadata,active,created_at,updated_at';
+
 const ensureAdminSurveySchemaOrRespond = async (res, label) => {
-  const status = await ensureTablesReady(label, ADMIN_SURVEY_TABLES);
-  if (!status.ok) {
-    respondSchemaUnavailable(res, label, status);
+  const requiredStatus = await ensureTablesReady(label, REQUIRED_ADMIN_SURVEY_TABLES);
+  if (!requiredStatus.ok) {
+    respondSchemaUnavailable(res, label, requiredStatus);
     return false;
+  }
+  try {
+    const optionalStatus = await ensureTablesReady(label, OPTIONAL_ADMIN_SURVEY_TABLES);
+    if (!optionalStatus.ok) {
+      logger.info('surveys_optional_schema_missing', {
+        label,
+        table: optionalStatus.table ?? null,
+        column: optionalStatus.column ?? null,
+      });
+    }
+  } catch (error) {
+    logger.info('surveys_optional_schema_check_failed', {
+      label,
+      message: error?.message ?? null,
+    });
   }
   return true;
 };
@@ -13808,6 +14424,394 @@ app.delete('/api/admin/surveys/:id', async (req, res) => {
   } catch (error) {
     console.error('Failed to delete survey:', error);
     res.status(500).json({ error: 'Unable to delete survey' });
+  }
+});
+
+app.post('/api/admin/surveys/:id/assign', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.assign'))) return;
+  const { id } = req.params;
+  const body = normalizeLegacyOrgInput(req.body ?? {}, {
+    surface: 'admin.surveys.assign',
+    requestId: req.requestId ?? null,
+  });
+  const hasBodyKey = (key) => Object.prototype.hasOwnProperty.call(body, key);
+  const rawOrgInput = body.organization_ids ?? body.organizationIds ?? body.organizations ?? body.orgIds;
+  const organizationIds = coerceIdArray(rawOrgInput);
+  if (!organizationIds.length) {
+    const singleOrg = body.organization_id ?? body.organizationId ?? null;
+    if (singleOrg) organizationIds.push(String(singleOrg).trim());
+  }
+  if (!organizationIds.length) {
+    res.status(400).json({ error: 'organization_id_required', message: 'Provide at least one organization id.' });
+    return;
+  }
+
+  const rawUserIds = Array.isArray(body.user_ids)
+    ? body.user_ids
+    : Array.isArray(body.userIds)
+      ? body.userIds
+      : [];
+  const { normalizedUserIds, invalidTargetIds } = normalizeAssignmentUserIds(rawUserIds);
+
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  const dueProvided = hasBodyKey('due_at') || hasBodyKey('dueAt');
+  const noteProvided = hasBodyKey('note');
+
+  const dueAtValue = dueProvided ? (body.due_at ?? body.dueAt ?? null) : undefined;
+  const noteValue =
+    noteProvided && typeof body.note === 'string'
+      ? body.note
+      : noteProvided && body.note === null
+        ? null
+        : undefined;
+  const assignedByRaw = body.assigned_by ?? body.assignedBy;
+  const assignedBy = typeof assignedByRaw === 'string' && assignedByRaw.trim().length > 0
+    ? assignedByRaw.trim()
+    : context.userId;
+  const allowedStatuses = new Set(['assigned', 'in-progress', 'completed']);
+  const statusProvided = typeof body.status === 'string';
+  const requestedStatus = statusProvided ? String(body.status).toLowerCase() : '';
+  const statusValue = allowedStatuses.has(requestedStatus) ? requestedStatus : 'assigned';
+  const metadataInput = typeof body.metadata === 'object' && body.metadata !== null ? body.metadata : {};
+  let metadata = {};
+  try {
+    metadata = JSON.parse(JSON.stringify(metadataInput));
+  } catch (_err) {
+    metadata = {};
+  }
+  metadata = {
+    ...metadata,
+    assigned_via: metadata.assigned_via ?? 'admin_survey_api',
+    request_user: context.userId,
+    request_ip: req.ip,
+    surface: 'admin.surveys.assign',
+  };
+
+  const aggregateResponse = [];
+  let insertedTotal = 0;
+  let updatedTotal = 0;
+  let skippedTotal = 0;
+
+  const assignForOrg = async (organizationId) => {
+    if (!organizationId) return;
+    const access = await requireOrgAccess(req, res, organizationId, { write: true, requireOrgAdmin: true });
+    if (!access && context.userRole !== 'admin') {
+      throw new Error('org_access_denied');
+    }
+
+    if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+      const now = new Date().toISOString();
+      const rows = normalizedUserIds.length ? normalizedUserIds : [null];
+      const inserted = rows.map((userId) => ({
+        id: `survey-asn-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        survey_id: id,
+        organization_id: organizationId,
+        user_id: userId,
+        due_at: dueAtValue ?? null,
+        note: noteValue ?? null,
+        status: statusValue,
+        assigned_by: assignedBy ?? null,
+        metadata,
+        assignment_type: SURVEY_ASSIGNMENT_TYPE,
+        active: true,
+        created_at: now,
+        updated_at: now,
+      }));
+      e2eStore.assignments = e2eStore.assignments || [];
+      e2eStore.assignments.push(...inserted);
+      aggregateResponse.push(...inserted);
+      insertedTotal += inserted.length;
+      return;
+    }
+
+    const targetUserIds = normalizedUserIds.length > 0 ? normalizedUserIds : [null];
+    const existingMap = new Map();
+    if (normalizedUserIds.length > 0) {
+      const { data, error } = await supabase
+        .from('assignments')
+        .select(SURVEY_ASSIGNMENT_SELECT)
+        .eq('survey_id', id)
+        .eq('organization_id', organizationId)
+        .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
+        .eq('active', true)
+        .in('user_id', normalizedUserIds);
+      if (error) throw error;
+      (data || []).forEach((row) => {
+        if (!row) return;
+        existingMap.set(String(row.user_id).toLowerCase(), row);
+      });
+    } else {
+      const { data, error } = await supabase
+        .from('assignments')
+        .select(SURVEY_ASSIGNMENT_SELECT)
+        .eq('survey_id', id)
+        .eq('organization_id', organizationId)
+        .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
+        .eq('active', true)
+        .is('user_id', null);
+      if (error) throw error;
+      (data || []).forEach((row) => {
+        existingMap.set('__org__', row);
+      });
+    }
+
+    const mergeMetadata = (existingMeta) => {
+      if (!existingMeta || typeof existingMeta !== 'object') {
+        return metadata;
+      }
+      return { ...existingMeta, ...metadata };
+    };
+
+    const buildRecord = (userId) => ({
+      survey_id: id,
+      course_id: null,
+      organization_id: organizationId,
+      organizationId,
+      user_id: userId,
+      assignment_type: SURVEY_ASSIGNMENT_TYPE,
+      status: statusValue,
+      due_at: dueAtValue ?? null,
+      note: noteValue ?? null,
+      assigned_by: assignedBy ?? null,
+      metadata,
+      active: true,
+    });
+
+    const buildKey = (value) => (value === null ? '__org__' : String(value).toLowerCase());
+    const updates = [];
+    const inserts = [];
+    targetUserIds.forEach((userId) => {
+      const key = buildKey(userId);
+      const existing = existingMap.get(key);
+      if (existing) {
+        const patch = {
+          id: existing.id,
+          metadata: mergeMetadata(existing.metadata),
+          active: true,
+        };
+        if (dueProvided) patch.due_at = dueAtValue ?? null;
+        if (noteProvided) patch.note = noteValue ?? null;
+        if (statusProvided) patch.status = statusValue;
+        if (assignedBy) patch.assigned_by = assignedBy;
+        updates.push(patch);
+      } else {
+        inserts.push(buildRecord(userId));
+      }
+    });
+
+    const updatedRows = [];
+    for (const patch of updates) {
+      const patchId = patch.id;
+      const { id: _ignore, ...changes } = patch;
+      const { data, error } = await supabase
+        .from('assignments')
+        .update(changes)
+        .eq('id', patchId)
+        .select(SURVEY_ASSIGNMENT_SELECT)
+        .maybeSingle();
+      if (error) throw error;
+      if (data) updatedRows.push(data);
+    }
+
+    let insertedRows = [];
+    if (inserts.length > 0) {
+      const { data, error } = await supabase
+        .from('assignments')
+        .insert(inserts)
+        .select(SURVEY_ASSIGNMENT_SELECT);
+      if (error) throw error;
+      insertedRows = data || [];
+    }
+
+    aggregateResponse.push(...updatedRows, ...insertedRows);
+    insertedTotal += insertedRows.length;
+    updatedTotal += updatedRows.length;
+    skippedTotal += Math.max(targetUserIds.length - insertedRows.length - updatedRows.length, 0);
+  };
+
+  try {
+    for (const orgId of organizationIds) {
+      await assignForOrg(orgId);
+    }
+
+    if (insertedTotal > 0) {
+      logSurveyAssignmentEvent('survey_assignment_created', {
+        requestId: req.requestId ?? null,
+        surveyId: id,
+        organizationCount: organizationIds.length,
+        userCount: normalizedUserIds.length,
+        insertedRowCount: insertedTotal,
+        skippedRowCount: skippedTotal,
+        invalidTargetIds,
+      });
+    } else if (updatedTotal > 0) {
+      logSurveyAssignmentEvent('survey_assignment_updated', {
+        requestId: req.requestId ?? null,
+        surveyId: id,
+        organizationCount: organizationIds.length,
+        userCount: normalizedUserIds.length,
+        insertedRowCount: insertedTotal,
+        skippedRowCount: skippedTotal,
+        invalidTargetIds,
+      });
+    } else if (skippedTotal > 0) {
+      logSurveyAssignmentEvent('survey_assignment_skipped_duplicate', {
+        requestId: req.requestId ?? null,
+        surveyId: id,
+        organizationCount: organizationIds.length,
+        userCount: normalizedUserIds.length,
+        skippedRowCount: skippedTotal,
+        invalidTargetIds,
+      });
+    }
+
+    await refreshSurveyAssignmentAggregates(id);
+
+    res.status(insertedTotal > 0 ? 201 : 200).json({
+      data: aggregateResponse,
+      meta: {
+        inserted: insertedTotal,
+        updated: updatedTotal,
+        skipped: skippedTotal,
+        invalidTargetIds,
+      },
+    });
+  } catch (error) {
+    logSurveyAssignmentEvent('survey_assignment_failed', {
+      requestId: req.requestId ?? null,
+      surveyId: id,
+      organizationCount: organizationIds.length,
+      userCount: normalizedUserIds.length,
+      insertedRowCount: insertedTotal,
+      skippedRowCount: skippedTotal,
+      invalidTargetIds,
+      metadata: { error: error?.message ?? String(error) },
+    });
+    res.status(500).json({ error: 'Unable to assign survey' });
+  }
+});
+
+app.get('/api/admin/surveys/:id/assignments', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.assignments'))) return;
+  const { id } = req.params;
+  const organizationId = pickOrgId(req.query.orgId, req.query.organizationId);
+  const userIdFilter =
+    typeof req.query.userId === 'string'
+      ? req.query.userId.trim().toLowerCase()
+      : typeof req.query.user_id === 'string'
+        ? req.query.user_id.trim().toLowerCase()
+        : null;
+  const includeInactive = String(req.query.active ?? 'true').toLowerCase() === 'false';
+  const limit = clampNumber(parseInt(req.query.limit, 10) || 200, 1, 1000);
+  const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  if (organizationId) {
+    const access = await requireOrgAccess(req, res, organizationId, { write: false, requireOrgAdmin: false });
+    if (!access && !context.isPlatformAdmin) return;
+  } else if (!context.isPlatformAdmin) {
+    res.status(403).json({
+      error: 'org_required',
+      message: 'Organization filter is required unless you are a platform administrator.',
+    });
+    return;
+  }
+
+  try {
+    let query = supabase
+      .from('assignments')
+      .select(SURVEY_ASSIGNMENT_SELECT, { count: 'exact' })
+      .eq('survey_id', id)
+      .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
+      .order('updated_at', { ascending: false, nullsFirst: false })
+      .range(offset, offset + limit - 1);
+
+    if (organizationId) {
+      query = query.eq('organization_id', organizationId);
+    }
+    if (userIdFilter) {
+      query = query.eq('user_id', userIdFilter);
+    }
+    if (!includeInactive) {
+      query = query.eq('active', true);
+    }
+
+    const { data, error, count } = await query;
+    if (error) throw error;
+    res.json({ data: data || [], count: count ?? data?.length ?? 0 });
+  } catch (error) {
+    console.error('[admin.surveys.assignments] failed', error);
+    res.status(500).json({ error: 'Unable to load survey assignments' });
+  }
+});
+
+app.delete('/api/admin/surveys/:surveyId/assignments/:assignmentId', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.assignments.delete'))) return;
+  const { surveyId, assignmentId } = req.params;
+  if (!assignmentId) {
+    res.status(400).json({ error: 'assignment_id_required' });
+    return;
+  }
+
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  try {
+    const { data: existing, error: fetchError } = await supabase
+      .from('assignments')
+      .select(SURVEY_ASSIGNMENT_SELECT)
+      .eq('id', assignmentId)
+      .eq('survey_id', surveyId)
+      .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
+      .maybeSingle();
+    if (fetchError) throw fetchError;
+    if (!existing) {
+      res.status(404).json({ error: 'assignment_not_found' });
+      return;
+    }
+
+    if (existing.organization_id) {
+      const access = await requireOrgAccess(req, res, existing.organization_id, {
+        write: true,
+        requireOrgAdmin: true,
+      });
+      if (!access && !context.isPlatformAdmin) return;
+    } else if (!context.isPlatformAdmin) {
+      res.status(403).json({ error: 'org_required', message: 'Only platform admins can remove global assignments.' });
+      return;
+    }
+
+    const hardDelete = String(req.query.hard ?? 'false').toLowerCase() === 'true';
+    if (hardDelete) {
+      const { error } = await supabase.from('assignments').delete().eq('id', assignmentId);
+      if (error) throw error;
+    } else {
+      const { error } = await supabase.from('assignments').update({ active: false }).eq('id', assignmentId);
+      if (error) throw error;
+    }
+
+    logSurveyAssignmentEvent('survey_assignment_updated', {
+      requestId: req.requestId ?? null,
+      surveyId,
+      organizationCount: existing.organization_id ? 1 : 0,
+      userCount: existing.user_id ? 1 : 0,
+      insertedRowCount: 0,
+      skippedRowCount: 0,
+      metadata: { action: hardDelete ? 'deleted' : 'deactivated', assignmentId },
+    });
+
+    await refreshSurveyAssignmentAggregates(surveyId);
+    res.status(204).end();
+  } catch (error) {
+    console.error('[admin.surveys.assignments.delete] failed', error);
+    res.status(500).json({ error: 'Unable to remove survey assignment' });
   }
 });
 

@@ -1,8 +1,10 @@
 import type { Course } from '../types/courseTypes';
 import type { NormalizedCourse } from '../utils/courseNormalization';
+import type { CourseAssignment } from '../types/assignment';
 import apiRequest from '../utils/apiClient';
 import { CourseService, CourseValidationError } from '../services/courseService';
 import type { IdempotentAction } from '../utils/idempotency';
+import { mapAssignmentsFromApiRows } from '../utils/assignmentStorage';
 
 export { CourseValidationError };
 
@@ -86,4 +88,26 @@ export async function adminAssignCourse(
   });
 
   return response.data;
+}
+
+export async function fetchCourseAssignments(
+  courseId: string,
+  organizationId: string,
+  options: { activeOnly?: boolean } = {}
+): Promise<CourseAssignment[]> {
+  if (!courseId) {
+    throw new CourseValidationError('fetchCourseAssignments', ['courseId is required']);
+  }
+  if (!organizationId) {
+    throw new CourseValidationError('fetchCourseAssignments', ['organizationId is required']);
+  }
+  const params = new URLSearchParams({ orgId: organizationId });
+  if (options.activeOnly === false) {
+    params.set('active', 'false');
+  }
+  const response = await apiRequest<{ data: any[] }>(
+    `/api/admin/courses/${courseId}/assignments?${params.toString()}`
+  );
+  const rows = Array.isArray(response.data) ? response.data : [];
+  return mapAssignmentsFromApiRows(rows);
 }

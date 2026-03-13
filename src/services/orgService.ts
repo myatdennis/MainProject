@@ -88,6 +88,23 @@ export type OrgMember = {
 import apiRequest, { ApiError } from '../utils/apiClient';
 import { resolveApiUrl } from '../config/apiBase';
 
+const ORG_LIST_CACHE_TTL_MS = 60 * 1000;
+type OrgListCacheEntry = { timestamp: number; data: Org[] };
+const orgListCache = new Map<string, OrgListCacheEntry>();
+const buildOrgListCacheKey = (params?: OrgListParams) => JSON.stringify(params ?? {});
+
+export const invalidateOrgListCache = (predicate?: (key: string) => boolean) => {
+  if (!predicate) {
+    orgListCache.clear();
+    return;
+  }
+  for (const key of Array.from(orgListCache.keys())) {
+    if (predicate(key)) {
+      orgListCache.delete(key);
+    }
+  }
+};
+
 const fromRecord = <T = any>(record: any, key: string): T | undefined => {
   if (!record) return undefined;
   const camelKey = key.replace(/_([a-z])/g, (_, c) => (c ? c.toUpperCase() : ''));
@@ -205,8 +222,22 @@ export const listOrgPage = async (params?: OrgListParams): Promise<OrgListRespon
   };
 };
 
-export const listOrgs = async (params?: OrgListParams): Promise<Org[]> => {
+export const listOrgs = async (
+  params?: OrgListParams,
+  options?: { forceRefresh?: boolean }
+): Promise<Org[]> => {
+  const cacheKey = buildOrgListCacheKey(params);
+  if (!options?.forceRefresh) {
+    const entry = orgListCache.get(cacheKey);
+    if (entry && Date.now() - entry.timestamp < ORG_LIST_CACHE_TTL_MS) {
+      return entry.data;
+    }
+  } else {
+    invalidateOrgListCache((key) => key === cacheKey);
+  }
+
   const response = await listOrgPage(params);
+  orgListCache.set(cacheKey, { timestamp: Date.now(), data: response.data });
   return response.data;
 };
 
@@ -323,5 +354,6 @@ export default {
   getOrgStats,
   listOrgMembers,
   addOrgMember,
-  removeOrgMember
+  removeOrgMember,
+  invalidateOrgListCache,
 };
