@@ -25,7 +25,7 @@ import {
 } from 'lucide-react';
 
 // Lazy load heavy components
-const AssignmentModal = lazy(() => import('../../components/Survey/AssignmentModal'));
+const AssignmentModal = lazy(() => import('../../components/Survey/SurveyAssignmentModal'));
 const SurveySettingsModal = lazy(() => import('../../components/Survey/SurveySettingsModal'));
 import { surveyTemplates, questionTypes, defaultBranding, aiGeneratedQuestions, censusDemographicOptions } from '../../data/surveyTemplates';
 import SurveyQueueStatus from '../../components/Survey/SurveyQueueStatus';

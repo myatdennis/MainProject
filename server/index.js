@@ -11839,7 +11839,7 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
 
   const orgIdsForProgress = safeOrganizations
     .map((org) => org?.id || org?.organization_id || null)
-    .filter((orgId): orgId is string => Boolean(orgId));
+    .filter((orgId) => Boolean(orgId));
   const progressPayload = await buildOrgProgressPayload(orgIdsForProgress, {
     includeProgress: Boolean(includeProgress),
     requestId,

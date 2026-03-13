@@ -115,6 +115,7 @@ describe('assignmentStorage session enforcement', () => {
       {
         id: 'assign-1',
         courseId: 'course-1',
+        surveyId: null,
         userId: 'user-123',
         organizationId: null,
         status: 'assigned',
@@ -122,6 +123,8 @@ describe('assignmentStorage session enforcement', () => {
         dueDate: null,
         note: null,
         assignedBy: null,
+        assignmentType: 'course',
+        metadata: null,
         createdAt: now,
         updatedAt: now,
         active: true,
