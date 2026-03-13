@@ -4577,7 +4577,7 @@ const resolveOrgMembership = async (req, orgId, userId) => {
 
   const { data, error } = await supabase
     .from('organization_memberships')
-    .select('role, status, invited_by, invited_email')
+    .select(buildMembershipSelect('role', 'status', 'invited_by', 'invited_email'))
     .eq('org_id', orgId)
     .eq('user_id', userId)
     .maybeSingle();
@@ -5561,7 +5561,19 @@ async function fetchOrgMembersWithProfiles(orgId) {
   const { data: memberships, error } = await supabase
     .from('organization_memberships')
     .select(
-      'id, org_id, user_id, role, status, invited_by, invited_email, accepted_at, last_seen_at, created_at, updated_at',
+      buildMembershipSelect(
+        'id',
+        'org_id',
+        'user_id',
+        'role',
+        'status',
+        'invited_by',
+        'invited_email',
+        'accepted_at',
+        'last_seen_at',
+        'created_at',
+        'updated_at',
+      ),
     )
     .eq('org_id', orgId);
   if (error) throw error;
@@ -5590,18 +5602,180 @@ async function fetchOrgMembersWithProfiles(orgId) {
   }));
 }
 
+const DEFAULT_ASSIGNMENT_BUCKET = () => ({
+  assignmentCount: 0,
+  learnerAssignments: 0,
+  orgAssignments: 0,
+  dueSoonCount: 0,
+  completedCount: 0,
+  latestAssignedAt: null,
+  topAssignments: [],
+});
+
+const buildEmptyAssignmentSummary = () => ({
+  courses: DEFAULT_ASSIGNMENT_BUCKET(),
+  surveys: DEFAULT_ASSIGNMENT_BUCKET(),
+});
+
+const summarizeAssignmentRows = (rows = []) => {
+  const summary = buildEmptyAssignmentSummary();
+  const now = Date.now();
+  const dueSoonThreshold = now + 7 * 24 * 60 * 60 * 1000;
+
+  const courseTopIds = new Set();
+  const surveyTopIds = new Set();
+
+  rows.forEach((row) => {
+    if (!row) return;
+    const bucket =
+      row.assignment_type === 'survey' || row.survey_id
+        ? summary.surveys
+        : summary.courses;
+    bucket.assignmentCount += 1;
+    if (row.user_id) {
+      bucket.learnerAssignments += 1;
+    } else {
+      bucket.orgAssignments += 1;
+    }
+    if (row.status === 'completed') {
+      bucket.completedCount += 1;
+    }
+    if (row.due_at) {
+      const dueTime = new Date(row.due_at).getTime();
+      if (Number.isFinite(dueTime) && dueTime > now && dueTime <= dueSoonThreshold) {
+        bucket.dueSoonCount += 1;
+      }
+    }
+    const updatedAt = row.updated_at || row.created_at;
+    if (updatedAt) {
+      if (!bucket.latestAssignedAt || new Date(updatedAt) > new Date(bucket.latestAssignedAt)) {
+        bucket.latestAssignedAt = updatedAt;
+      }
+    }
+
+    const targetId = row.course_id || row.survey_id;
+    if (targetId) {
+      const targetSet = row.assignment_type === 'survey' || row.survey_id ? surveyTopIds : courseTopIds;
+      if (targetSet.size < 5) {
+        targetSet.add(targetId);
+      }
+    }
+  });
+
+  summary.courses.topAssignments = Array.from(courseTopIds.values());
+  summary.surveys.topAssignments = Array.from(surveyTopIds.values());
+  return summary;
+};
+
+const fetchOrgAssignmentSummary = async (orgId) => {
+  if (!supabase || !orgId) return buildEmptyAssignmentSummary();
+  try {
+    const { data, error } = await supabase
+      .from('assignments')
+      .select(
+        'id, assignment_type, course_id, survey_id, user_id, status, due_at, updated_at, created_at',
+      )
+      .eq('organization_id', orgId)
+      .order('updated_at', { ascending: false, nullsFirst: false })
+      .limit(500);
+
+    if (error) {
+      if (isMissingRelationError(error) || isMissingColumnError(error)) {
+        return buildEmptyAssignmentSummary();
+      }
+      throw error;
+    }
+
+    return summarizeAssignmentRows(data || []);
+  } catch (error) {
+    logOrganizationsStageError('assignment_summary_failed', error, { orgId });
+    return buildEmptyAssignmentSummary();
+  }
+};
+
+const fetchOrgMessages = async (orgId, { limit = 25 } = {}) => {
+  if (!supabase || !orgId) return [];
+  try {
+    const { data, error } = await supabase
+      .from('organization_messages')
+      .select('*')
+      .eq('org_id', orgId)
+      .order('created_at', { ascending: false })
+      .limit(Math.max(1, Math.min(100, limit)));
+
+    if (error) {
+      if (isMissingRelationError(error) || isMissingColumnError(error)) {
+        return [];
+      }
+      throw error;
+    }
+
+    return data || [];
+  } catch (error) {
+    logOrganizationsStageError('messages_fetch_failed', error, { orgId });
+    return [];
+  }
+};
+
+const buildOrgOverviewPayload = ({
+  bundle,
+  members,
+  onboarding,
+  assignmentSummary,
+  messages,
+}) => {
+  if (!bundle) return null;
+  const organization = bundle.organization;
+  const profile = bundle.profile ?? defaultOrgProfileRow(organization.id);
+  const branding = bundle.branding ?? defaultOrgBrandingRow(organization.id);
+  const contacts = bundle.contacts ?? [];
+  const adminMembers = (members || []).filter((member) =>
+    ['owner', 'admin'].includes(String(member.role || '').toLowerCase()),
+  );
+
+  const mapMember = (member) => ({
+    id: member.id,
+    userId: member.user_id ?? null,
+    role: member.role ?? null,
+    status: member.status ?? null,
+    invitedEmail: member.invited_email ?? null,
+    invitedBy: member.invited_by ?? null,
+    acceptedAt: member.accepted_at ?? null,
+    lastSeenAt: member.last_seen_at ?? null,
+    profile: member.profile
+      ? {
+          name: member.profile.name ?? null,
+          email: member.profile.email ?? null,
+          title: member.profile.title ?? null,
+          department: member.profile.department ?? null,
+        }
+      : null,
+  });
+
+  return {
+    organization,
+    profile,
+    branding,
+    contacts,
+    admins: adminMembers.map(mapMember),
+    members: (members || []).map(mapMember),
+    onboarding: onboarding ?? null,
+    assignments: assignmentSummary,
+    messages,
+  };
+};
+
 async function upsertOrganizationMembership(orgId, userId, role, actor) {
   if (!supabase) return null;
-  const payload = {
+  const payload = withMembershipInvitedEmail({
     org_id: orgId,
     user_id: userId,
     role,
     status: 'active',
     invited_by: actor?.userId ?? null,
-    invited_email: actor?.email ?? null,
     accepted_at: new Date().toISOString(),
     last_seen_at: new Date().toISOString(),
-  };
+  }, actor?.email ?? null);
 
   const { data, error } = await supabase
     .from('organization_memberships')
@@ -11533,7 +11707,23 @@ const OPTIONAL_ADMIN_ORG_TABLES = [
   { table: 'organization_profiles', schema: 'public', columns: ['org_id', 'name'] },
   { table: 'organization_branding', schema: 'public', columns: ['org_id'] },
 ];
+const ORGANIZATION_MEMBERSHIP_INVITED_EMAIL_DEF = {
+  table: 'organization_memberships',
+  schema: 'public',
+  columns: ['invited_email'],
+};
 const loggedOptionalSchemaWarnings = new Set();
+let orgMembershipInvitedEmailEnabled = true;
+
+const buildMembershipSelect = (...fields) =>
+  fields.filter((field) => field !== 'invited_email' || orgMembershipInvitedEmailEnabled).join(', ');
+
+const withMembershipInvitedEmail = (payload, value) => {
+  if (orgMembershipInvitedEmailEnabled) {
+    payload.invited_email = value ?? null;
+  }
+  return payload;
+};
 
 const ensureAdminOrgSchemaOrRespond = async (res, label, meta = {}) => {
   const requestId = meta.requestId ?? null;
@@ -11583,6 +11773,34 @@ const ensureAdminOrgSchemaOrRespond = async (res, label, meta = {}) => {
           table: optionalStatus.table ?? null,
           column: optionalStatus.column ?? null,
           schema: optionalStatus.schema ?? null,
+          requestId,
+        });
+      }
+    }
+  } catch (error) {
+    const normalized = normalizeUnknownError(error);
+    logger.info('organizations_optional_schema_check_failed', {
+      label,
+      requestId,
+      code: normalized.code ?? null,
+      message: normalized.message ?? null,
+    });
+  }
+
+  try {
+    const invitedEmailStatus = await ensureTablesReady(label, [ORGANIZATION_MEMBERSHIP_INVITED_EMAIL_DEF]);
+    orgMembershipInvitedEmailEnabled = invitedEmailStatus.ok;
+    if (!invitedEmailStatus.ok) {
+      const warningKey = `${invitedEmailStatus.schema ?? 'public'}.${invitedEmailStatus.table ?? 'unknown'}:${
+        invitedEmailStatus.column ?? 'invited_email'
+      }`;
+      if (!loggedOptionalSchemaWarnings.has(warningKey)) {
+        loggedOptionalSchemaWarnings.add(warningKey);
+        logger.warn('organizations_optional_schema_missing', {
+          label,
+          table: invitedEmailStatus.table ?? null,
+          column: invitedEmailStatus.column ?? null,
+          schema: invitedEmailStatus.schema ?? null,
           requestId,
         });
       }
@@ -12115,7 +12333,20 @@ app.get('/api/admin/organizations/:orgId/members', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('organization_memberships')
-      .select('id, user_id, role, status, invited_by, invited_email, accepted_at, last_seen_at, created_at, updated_at')
+      .select(
+        buildMembershipSelect(
+          'id',
+          'user_id',
+          'role',
+          'status',
+          'invited_by',
+          'invited_email',
+          'accepted_at',
+          'last_seen_at',
+          'created_at',
+          'updated_at',
+        ),
+      )
       .eq('org_id', orgId)
       .order('created_at', { ascending: false });
 
@@ -12159,21 +12390,34 @@ app.post('/api/admin/organizations/:orgId/members', async (req, res) => {
       }
       return 'pending';
     })();
-    const payload = {
+    const payload = withMembershipInvitedEmail({
       org_id: orgId,
       user_id: userId,
       role: normalizedRole,
       invited_by: context.userId ?? null,
       status: normalizedStatus,
-      invited_email: inviteEmail ?? null,
       accepted_at: normalizedStatus === 'active' ? new Date().toISOString() : null,
       last_seen_at: normalizedStatus === 'active' ? new Date().toISOString() : null,
-    };
+    }, inviteEmail ?? null);
 
     const { data, error } = await supabase
       .from('organization_memberships')
-    .upsert(payload, { onConflict: 'org_id,user_id' })
-    .select('id, org_id, user_id, role, status, invited_by, invited_email, accepted_at, last_seen_at, created_at, updated_at')
+      .upsert(payload, { onConflict: 'org_id,user_id' })
+      .select(
+        buildMembershipSelect(
+          'id',
+          'org_id',
+          'user_id',
+          'role',
+          'status',
+          'invited_by',
+          'invited_email',
+          'accepted_at',
+          'last_seen_at',
+          'created_at',
+          'updated_at',
+        ),
+      )
       .single();
 
     if (error) throw error;
@@ -12262,7 +12506,21 @@ app.patch('/api/admin/organizations/:orgId/members/:membershipId', async (req, r
       .update(updatePayload)
       .eq('id', membershipId)
       .eq('org_id', orgId)
-      .select('id, org_id, user_id, role, status, invited_by, invited_email, accepted_at, last_seen_at, created_at, updated_at')
+      .select(
+        buildMembershipSelect(
+          'id',
+          'org_id',
+          'user_id',
+          'role',
+          'status',
+          'invited_by',
+          'invited_email',
+          'accepted_at',
+          'last_seen_at',
+          'created_at',
+          'updated_at',
+        ),
+      )
       .maybeSingle();
 
     if (error) throw error;
@@ -12906,7 +13164,7 @@ app.post('/api/orgs/:orgId/memberships/accept', async (req, res) => {
       .update({ status: 'active', accepted_at: now, last_seen_at: now })
       .eq('org_id', orgId)
       .eq('user_id', context.userId)
-      .select('id, org_id, user_id, role, status, invited_email, accepted_at, last_seen_at')
+      .select(buildMembershipSelect('id', 'org_id', 'user_id', 'role', 'status', 'invited_email', 'accepted_at', 'last_seen_at'))
       .maybeSingle();
 
     if (error) throw error;
