@@ -5764,7 +5764,7 @@ const mapOrgProfileUser = (member) => {
     lastSeenAt: member.last_seen_at ?? null,
     lastLoginAt: userRow?.last_login_at ?? null,
     email: profile?.email ?? userRow?.email ?? null,
-    name: profile?.name ?? fallbackName || null,
+    name: profile?.name ?? fallbackName ?? null,
     title: profile?.title ?? userRow?.title ?? null,
     createdAt: member.created_at ?? null,
     updatedAt: member.updated_at ?? null,
