@@ -27,7 +27,6 @@ import {
   ChevronDown,
   UserCircle2,
   AlertTriangle,
-  Activity,
 } from 'lucide-react';
 import Card from '../ui/Card';
 import Button from '../ui/Button';
@@ -58,12 +57,11 @@ type AdminNavItem = {
 
 const navigation: AdminNavItem[] = [
   { name: 'Overview', href: '/admin/dashboard', icon: LayoutDashboard, exact: true },
-  { name: 'CRM', href: '/admin/crm', icon: Activity },
+  { name: 'Organizations & CRM', href: '/admin/organizations', icon: Building2 },
   { name: 'Courses', href: '/admin/courses', icon: BookOpen },
   { name: 'Course Builder', href: '/admin/course-builder/new', icon: Wand2 },
   { name: 'Surveys', href: '/admin/surveys', icon: ClipboardList },
   { name: 'Survey Creator', href: '/admin/surveys/builder', icon: PenSquare },
-  { name: 'Organizations', href: '/admin/organizations', icon: Building2 },
   { name: 'Users', href: '/admin/users', icon: UsersIcon },
   { name: 'Leadership AI', href: '/admin/leadership', icon: Brain },
   { name: 'Analytics', href: '/admin/analytics', icon: BarChart3 },

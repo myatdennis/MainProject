@@ -7,7 +7,24 @@ import InviteManager from '../../components/onboarding/InviteManager';
 import OrgCommunicationPanel from '../../components/Admin/OrgCommunicationPanel';
 import useOnboardingProgress from '../../hooks/useOnboardingProgress';
 import orgService, { type OrgProfileDetails } from '../../dal/orgs';
-import { format } from 'date-fns';
+
+const formatDisplayDate = (value?: string | null, options?: Intl.DateTimeFormatOptions) => {
+  if (!value) return '—';
+  try {
+    const parsed = new Date(value);
+    if (Number.isNaN(parsed.getTime())) return value;
+    return parsed.toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      ...options,
+    });
+  } catch {
+    return value;
+  }
+};
 
 const AdminOrgProfile: React.FC = () => {
   const { orgProfileId } = useParams<{ orgProfileId: string }>();
@@ -262,7 +279,7 @@ const AdminOrgProfile: React.FC = () => {
               <h3 className="text-lg font-semibold text-gray-900">Communication history</h3>
               <span className="text-sm text-gray-500">
                 {orgProfile.lastContacted
-                  ? `Last contacted ${format(new Date(orgProfile.lastContacted), 'MMM d, yyyy')}`
+                  ? `Last contacted ${formatDisplayDate(orgProfile.lastContacted, { hour: undefined, minute: undefined })}`
                   : 'No outreach yet'}
               </span>
             </div>
@@ -275,7 +292,7 @@ const AdminOrgProfile: React.FC = () => {
                     <p className="font-medium text-gray-900">{message.subject || 'Untitled message'}</p>
                     <p className="text-xs text-gray-500">
                       {message.channel?.toUpperCase() ?? 'EMAIL'} •{' '}
-                      {message.sentAt ? format(new Date(message.sentAt), 'MMM d, yyyy h:mm a') : 'Unknown date'}
+                      {message.sentAt ? formatDisplayDate(message.sentAt) : 'Unknown date'}
                     </p>
                     <p className="text-sm text-gray-600 truncate">{message.body || '—'}</p>
                   </li>

@@ -27,6 +27,7 @@ interface CourseAssignmentModalProps {
   selectedUsers: string[];
   course?: { id: string; title: string; duration?: string; organizationId?: string | null };
   onAssignComplete?: (assignmentData?: CourseAssignment[]) => void;
+  defaultOrgIds?: string[];
 }
 
 interface OrgOption {
@@ -40,6 +41,7 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
   selectedUsers,
   course,
   onAssignComplete,
+  defaultOrgIds = [],
 }) => {
   const { showToast } = useToast();
   const runtimeStatus = useRuntimeStatus();
@@ -89,7 +91,10 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
     if (selectedUsers.length > 0) {
       setSelectedUserIds(selectedUsers);
     }
-  }, [isOpen, selectedUsers]);
+    if (defaultOrgIds.length > 0) {
+      setSelectedOrgIds(defaultOrgIds);
+    }
+  }, [isOpen, selectedUsers, defaultOrgIds]);
 
   useEffect(() => {
     if (isOpen) {

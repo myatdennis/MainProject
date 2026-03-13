@@ -4,7 +4,6 @@ import { useToast } from '../../context/ToastContext';
 import LoadingButton from '../LoadingButton';
 import { sendOrganizationMessage } from '../../services/adminCommunicationService';
 import type { OrgProfileMessage } from '../../services/orgService';
-import { format } from 'date-fns';
 
 type OrgCommunicationPanelProps = {
   orgId: string;
@@ -21,7 +20,13 @@ const CHANNEL_OPTIONS = [
 const formatTimestamp = (value?: string | null) => {
   if (!value) return '—';
   try {
-    return format(new Date(value), 'MMM d, yyyy h:mm a');
+    return new Date(value).toLocaleString(undefined, {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+    });
   } catch {
     return value;
   }
