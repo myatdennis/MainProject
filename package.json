@@ -75,6 +75,7 @@
     "check:lock": "node scripts/check_lock_sync.mjs",
     "check:design": "ts-node scripts/design-consistency-checker.ts",
     "guard:api-nav": "node scripts/guard_api_navigation.cjs",
+    "smoke:org-onboarding": "node scripts/org_onboarding_smoke.mjs",
     "doctor": "bash ./scripts/doctor.sh"
   },
   "dependencies": {

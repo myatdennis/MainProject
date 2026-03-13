@@ -2,12 +2,12 @@ import React, { useState } from 'react';
 import { X, Building2, User } from 'lucide-react';
 import LoadingButton from './LoadingButton';
 import { useToast } from '../context/ToastContext';
-import orgService from '../dal/orgs';
+import orgService, { type Org } from '../dal/orgs';
 
 interface AddOrganizationModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onOrganizationAdded?: (organization: any) => void;
+  onOrganizationAdded?: (organization: Org) => void;
 }
 
 interface OrganizationFormData {
@@ -20,6 +20,8 @@ interface OrganizationFormData {
   address?: string;
   subscription: string;
   maxLearners?: number;
+  ownerEmail?: string;
+  ownerName?: string;
 }
 
 const AddOrganizationModal: React.FC<AddOrganizationModalProps> = ({ isOpen, onClose, onOrganizationAdded }) => {
@@ -34,7 +36,9 @@ const AddOrganizationModal: React.FC<AddOrganizationModalProps> = ({ isOpen, onC
     website: '',
     address: '',
     subscription: 'Standard',
-    maxLearners: 100
+    maxLearners: 100,
+    ownerEmail: '',
+    ownerName: ''
   });
 
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -80,6 +84,10 @@ const AddOrganizationModal: React.FC<AddOrganizationModalProps> = ({ isOpen, onC
       newErrors.maxLearners = 'Max learners must be at least 1';
     }
 
+    if (formData.ownerEmail && !/\S+@\S+\.\S+/.test(formData.ownerEmail)) {
+      newErrors.ownerEmail = 'Owner email is invalid';
+    }
+
     setErrors(newErrors);
     return Object.keys(newErrors).length === 0;
   };
@@ -106,6 +114,11 @@ const AddOrganizationModal: React.FC<AddOrganizationModalProps> = ({ isOpen, onC
         subscription: formData.subscription,
         maxLearners: formData.maxLearners ?? undefined,
         status: 'active',
+        ownerEmail: formData.ownerEmail?.trim() || formData.contactEmail,
+        owner: {
+          email: formData.ownerEmail?.trim() || formData.contactEmail,
+          name: formData.ownerName?.trim() || formData.contactPerson || undefined,
+        },
       });
 
       onOrganizationAdded?.(newOrganization);
@@ -121,12 +134,19 @@ const AddOrganizationModal: React.FC<AddOrganizationModalProps> = ({ isOpen, onC
         website: '',
         address: '',
         subscription: 'Standard',
-        maxLearners: 100
+        maxLearners: 100,
+        ownerEmail: '',
+        ownerName: ''
       });
       
       onClose();
-    } catch (error) {
-      showToast('Failed to add organization. Please try again.', 'error');
+    } catch (error: any) {
+      const message =
+        error?.message ||
+        error?.response?.message ||
+        error?.response?.data?.message ||
+        'Failed to add organization. Please try again.';
+      showToast(message, 'error');
     } finally {
       setLoading(false);
     }
@@ -191,12 +211,12 @@ const AddOrganizationModal: React.FC<AddOrganizationModalProps> = ({ isOpen, onC
                 {errors.name && (
                   <p className="mt-1 text-sm text-red-600">{errors.name}</p>
                 )}
-              </div>
+            </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Organization Type *
-                </label>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Organization Type *
+              </label>
                 <select
                   value={formData.type}
                   onChange={(e) => handleInputChange('type', e.target.value)}
@@ -330,9 +350,49 @@ const AddOrganizationModal: React.FC<AddOrganizationModalProps> = ({ isOpen, onC
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                   disabled={loading}
                 />
-              </div>
             </div>
           </div>
+        </div>
+
+        {/* Owner / Admin Contact */}
+        <div>
+          <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center space-x-2">
+            <User className="h-5 w-5 text-gray-600" />
+            <span>Primary Admin Contact</span>
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Owner / Admin Email
+              </label>
+              <input
+                type="email"
+                value={formData.ownerEmail}
+                onChange={(e) => handleInputChange('ownerEmail', e.target.value)}
+                placeholder="admin@example.com"
+                className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent ${
+                  errors.ownerEmail ? 'border-red-300' : 'border-gray-300'
+                }`}
+                disabled={loading}
+              />
+              <p className="mt-1 text-xs text-gray-500">If left blank, we’ll use the primary contact email.</p>
+              {errors.ownerEmail && <p className="mt-1 text-sm text-red-600">{errors.ownerEmail}</p>}
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                Owner / Admin Name
+              </label>
+              <input
+                type="text"
+                value={formData.ownerName}
+                onChange={(e) => handleInputChange('ownerName', e.target.value)}
+                placeholder="Owner name"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                disabled={loading}
+              />
+            </div>
+          </div>
+        </div>
 
           {/* Actions */}
           <div className="flex items-center justify-end space-x-4 pt-6 border-t border-gray-200">

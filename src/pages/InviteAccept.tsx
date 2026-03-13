@@ -1,11 +1,53 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
-import { AlertTriangle, CheckCircle2, Lock, Mail, RefreshCw, ShieldCheck } from 'lucide-react';
+import { AlertTriangle, BellRing, BookOpen, CheckCircle2, ClipboardList, Lock, Mail, RefreshCw, ShieldCheck } from 'lucide-react';
 import LoadingButton from '../components/LoadingButton';
 import { useToast } from '../context/ToastContext';
-import { getInvite, acceptInvite, type InvitePreview } from '../dal/invites';
+import { getInvite, acceptInvite, type InvitePreview, type AssignmentPreviewItem } from '../dal/invites';
 
 const ACCEPTABLE_STATUSES = new Set(['pending', 'sent']);
+
+type PasswordStrength = {
+  label: string;
+  tone: string;
+  percent: number;
+};
+
+const computePasswordStrength = (value: string, minLength: number): PasswordStrength => {
+  if (!value) {
+    return { label: 'Weak', tone: 'bg-gray-300', percent: 0 };
+  }
+  let score = 0;
+  if (value.length >= minLength) score += 1;
+  if (/[A-Z]/.test(value) && /[a-z]/.test(value)) score += 1;
+  if (/[0-9]/.test(value)) score += 1;
+  if (/[^A-Za-z0-9]/.test(value)) score += 1;
+
+  const percent = Math.min(100, Math.round((score / 4) * 100));
+  if (percent >= 75) return { label: 'Strong', tone: 'bg-emerald-500', percent };
+  if (percent >= 50) return { label: 'Fair', tone: 'bg-amber-500', percent };
+  if (percent >= 25) return { label: 'Needs work', tone: 'bg-orange-500', percent };
+  return { label: 'Weak', tone: 'bg-rose-500', percent };
+};
+
+const formatDueCopy = (value?: string | null) => {
+  if (!value) return 'Flexible schedule';
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) return 'Flexible schedule';
+  try {
+    return `Due ${new Date(timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`;
+  } catch {
+    return 'Flexible schedule';
+  }
+};
+
+const openMailComposer = (email: string, orgName?: string | null, inviteEmail?: string) => {
+  const subject = encodeURIComponent(`New invite request for ${orgName || 'workspace'}`);
+  const body = encodeURIComponent(
+    `Hi,\n\nCould you send a fresh invite for ${inviteEmail || 'my account'}?\n\nThank you!`,
+  );
+  window.location.href = `mailto:${email}?subject=${subject}&body=${body}`;
+};
 
 const InviteAccept = () => {
   const { token } = useParams<{ token: string }>();
@@ -21,6 +63,16 @@ const InviteAccept = () => {
   const [acceptedPayload, setAcceptedPayload] = useState<{ orgName: string | null; loginUrl: string; email: string } | null>(null);
 
   const passwordMinLength = useMemo(() => invite?.passwordPolicy?.minLength || 8, [invite]);
+  const passwordStrength = useMemo(
+    () => computePasswordStrength(password, passwordMinLength),
+    [password, passwordMinLength],
+  );
+  const contactEmail = invite?.contactEmail || invite?.inviterEmail || null;
+  const organizationName = invite?.orgName || null;
+  const inviteEmail = invite?.email || null;
+  const coursePreview = invite?.assignmentPreview?.courses ?? [];
+  const surveyPreview = invite?.assignmentPreview?.surveys ?? [];
+  const hasAssignmentPreview = coursePreview.length > 0 || surveyPreview.length > 0;
 
   const actionable = useMemo(() => {
     if (!invite) return false;
@@ -50,6 +102,20 @@ const InviteAccept = () => {
   useEffect(() => {
     fetchInvite();
   }, [fetchInvite]);
+
+  useEffect(() => {
+    if (invite?.invitedName) {
+      setFullName((prev) => prev || invite.invitedName || '');
+    }
+  }, [invite?.invitedName]);
+
+  const handleRequestNewInvite = useCallback(() => {
+    if (!contactEmail) {
+      showToast('No contact email on file.', 'error');
+      return;
+    }
+    openMailComposer(contactEmail, organizationName, inviteEmail ?? undefined);
+  }, [contactEmail, organizationName, inviteEmail, showToast]);
 
   const handleAccept = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -134,6 +200,16 @@ const InviteAccept = () => {
             <p className="font-semibold">This invite is no longer valid.</p>
             <p className="text-sm">Ask your workspace admin to send a new invitation.</p>
           </div>
+          {contactEmail && (
+            <button
+              type="button"
+              onClick={handleRequestNewInvite}
+              className="ml-auto inline-flex items-center gap-1 rounded-full bg-white/70 px-3 py-1 text-xs font-semibold text-amber-800 shadow-sm hover:bg-white"
+            >
+              <BellRing className="h-3.5 w-3.5" />
+              Request new invite
+            </button>
+          )}
         </div>
       );
     }
@@ -155,6 +231,52 @@ const InviteAccept = () => {
         </div>
 
         {statusBanner()}
+
+        {hasAssignmentPreview && (
+          <div className="card-lg border border-gray-100 bg-white shadow-sm space-y-4">
+            <div className="flex items-center gap-2 text-gray-800">
+              <BookOpen className="h-5 w-5 text-orange-500" />
+              <p className="font-semibold">What’s waiting for you</p>
+            </div>
+            <p className="text-sm text-gray-600">
+              Your organization already assigned a few experiences so you can jump in right away.
+            </p>
+            <div className="grid gap-4 md:grid-cols-2">
+              {coursePreview.length > 0 && (
+                <div>
+                  <p className="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-700">
+                    <BookOpen className="h-4 w-4 text-gray-500" />
+                    Courses
+                  </p>
+                  <ul className="space-y-2">
+                    {coursePreview.slice(0, 3).map((course: AssignmentPreviewItem) => (
+                      <li key={course.id} className="rounded-xl border border-gray-100 px-3 py-2">
+                        <p className="font-semibold text-gray-900">{course.title || 'Course assignment'}</p>
+                        <p className="text-xs text-gray-500">{formatDueCopy(course.dueAt)}</p>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {surveyPreview.length > 0 && (
+                <div>
+                  <p className="mb-2 flex items-center gap-2 text-sm font-semibold text-gray-700">
+                    <ClipboardList className="h-4 w-4 text-gray-500" />
+                    Surveys
+                  </p>
+                  <ul className="space-y-2">
+                    {surveyPreview.slice(0, 3).map((survey: AssignmentPreviewItem) => (
+                      <li key={survey.id} className="rounded-xl border border-gray-100 px-3 py-2">
+                        <p className="font-semibold text-gray-900">{survey.title || 'Survey assignment'}</p>
+                        <p className="text-xs text-gray-500">{formatDueCopy(survey.dueAt)}</p>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {acceptedPayload && (
           <div className="card-lg border border-emerald-100 bg-white shadow-lg">
@@ -226,6 +348,18 @@ const InviteAccept = () => {
                   className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                   required
                 />
+              </div>
+              <div className="mt-2 space-y-1">
+                <div className="flex items-center justify-between text-xs text-gray-500">
+                  <span>Password strength: {passwordStrength.label}</span>
+                  <span>{passwordStrength.percent}%</span>
+                </div>
+                <div className="h-2 w-full rounded-full bg-gray-100">
+                  <div
+                    className={`h-2 rounded-full transition-all duration-300 ${passwordStrength.tone}`}
+                    style={{ width: `${passwordStrength.percent}%` }}
+                  />
+                </div>
               </div>
             </div>
 

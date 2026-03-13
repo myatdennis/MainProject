@@ -5292,7 +5292,7 @@ const buildActorFromRequest = (req) => {
   };
 };
 
-async function deliverInviteEmail(invite, { orgName, inviterName }) {
+async function deliverInviteEmail(invite, { orgName, inviterName, requestId } = {}) {
   const inviteLink = buildInviteLink(invite.invite_token);
   const subject = `You have been invited to ${orgName || 'The Huddle'}`;
   const summary = [
@@ -5318,7 +5318,31 @@ async function deliverInviteEmail(invite, { orgName, inviterName }) {
   `;
 
   const text = `${summary}\n\nLink: ${inviteLink}\nExpires: ${new Date(invite.expires_at).toUTCString()}`;
-  const result = await sendEmail({ to: invite.email, subject, text, html });
+  let result;
+  try {
+    result = await sendEmail({
+      to: invite.email,
+      subject,
+      text,
+      html,
+      logContext: {
+        organizationId: invite.org_id ?? null,
+        metadata: { source: 'org_invite' },
+      },
+    });
+  } catch (error) {
+    logOrganizationsEvent('organization_invite_failed', {
+      requestId: requestId ?? null,
+      status: 'error',
+      metadata: {
+        orgId: invite.org_id ?? null,
+        inviteId: invite.id ?? null,
+        email: invite.email ?? null,
+        message: error?.message ?? null,
+      },
+    });
+    throw error;
+  }
   const sentAt = new Date().toISOString();
   const updatePayload = {
     last_sent_at: sentAt,
@@ -5339,8 +5363,102 @@ async function deliverInviteEmail(invite, { orgName, inviterName }) {
     console.warn('[onboarding] Failed to update invite after email send', { inviteId: invite.id, error });
   }
 
+  const logMetadata = {
+    orgId: invite.org_id ?? null,
+    inviteId: invite.id ?? null,
+    email: invite.email ?? null,
+    reminderCount: updatePayload.reminder_count ?? null,
+  };
+  if (result.delivered) {
+    logOrganizationsEvent('organization_invite_sent', {
+      requestId: requestId ?? null,
+      status: 'ok',
+      metadata: logMetadata,
+    });
+  } else {
+    logOrganizationsEvent('organization_invite_failed', {
+      requestId: requestId ?? null,
+      status: 'failed',
+      metadata: { ...logMetadata, reason: result.reason ?? null },
+    });
+  }
+
   return { ...invite, ...updatePayload };
 }
+
+const seedOrgOwner = async ({ orgId, orgName, ownerEmail, ownerName, actor, requestId }) => {
+  if (!ownerEmail || !supabase) {
+    return { status: 'skipped' };
+  }
+  const normalizedEmail = ownerEmail.trim().toLowerCase();
+  if (!normalizedEmail) {
+    return { status: 'skipped' };
+  }
+
+  let existingAuthUser = null;
+  try {
+    const { data, error } = await supabase.auth.admin.getUserByEmail(normalizedEmail);
+    if (error && error.message !== 'User not found') {
+      throw error;
+    }
+    existingAuthUser = data?.user ?? null;
+  } catch (error) {
+    logger.warn('organization_owner_lookup_failed', {
+      orgId,
+      targetEmail: normalizedEmail,
+      requestId,
+      message: error?.message ?? String(error),
+    });
+  }
+
+  if (existingAuthUser) {
+    try {
+      await upsertOrganizationMembership(orgId, existingAuthUser.id, 'owner', actor);
+      logOrganizationsEvent('organization_owner_seeded', {
+        requestId,
+        status: 'membership',
+        metadata: { orgId, targetEmail: normalizedEmail, method: 'membership' },
+      });
+      return { status: 'membership', userId: existingAuthUser.id };
+    } catch (error) {
+      logger.error('organization_owner_membership_failed', {
+        orgId,
+        targetEmail: normalizedEmail,
+        message: error?.message ?? String(error),
+      });
+    }
+  }
+
+  try {
+    const { invite, duplicate } = await createOrgInvite({
+      orgId,
+      email: normalizedEmail,
+      role: 'owner',
+      inviter: actor,
+      orgName,
+      metadata: ownerName ? { name: ownerName } : {},
+      requestId,
+    });
+    logOrganizationsEvent('organization_owner_seeded', {
+      requestId,
+      status: duplicate ? 'invite_duplicate' : 'invite',
+      metadata: { orgId, inviteId: invite.id, targetEmail: normalizedEmail },
+    });
+    return { status: duplicate ? 'invite_duplicate' : 'invite', inviteId: invite.id };
+  } catch (error) {
+    logger.error('organization_owner_seed_failed', {
+      orgId,
+      targetEmail: normalizedEmail,
+      message: error?.message ?? String(error),
+    });
+    logOrganizationsEvent('organization_owner_seeded', {
+      requestId,
+      status: 'failed',
+      metadata: { orgId, targetEmail: normalizedEmail, message: error?.message ?? null },
+    });
+    return { status: 'failed', error: error?.message ?? 'unknown' };
+  }
+};
 
 const normalizeInviteNote = (value) => {
   if (typeof value !== 'string') return null;
@@ -5358,6 +5476,7 @@ async function createOrgInvite({
   sendEmail: shouldSendEmail = true,
   duplicateStrategy = 'return',
   note = null,
+  requestId = null,
 }) {
   if (!supabase) {
     throw new Error('supabase_not_configured');
@@ -5377,7 +5496,7 @@ async function createOrgInvite({
 
   if (existing && duplicateStrategy === 'return') {
     if (shouldSendEmail) {
-      await deliverInviteEmail(existing, { orgName, inviterName: inviter?.name });
+      await deliverInviteEmail(existing, { orgName, inviterName: inviter?.name, requestId });
     }
     return { invite: existing, duplicate: true };
   }
@@ -5417,7 +5536,11 @@ async function createOrgInvite({
   let inviteRecord = data;
 
   if (shouldSendEmail) {
-    inviteRecord = await deliverInviteEmail(inviteRecord, { orgName, inviterName: inviter?.name });
+    inviteRecord = await deliverInviteEmail(inviteRecord, {
+      orgName,
+      inviterName: inviter?.name,
+      requestId,
+    });
   }
 
   await recordActivationEvent(orgId, 'invite_created', { email: normalizedEmail, role }, inviter);
@@ -5577,12 +5700,13 @@ async function loadInviteByToken(token) {
 
 const INVITE_LOGIN_URL = process.env.CLIENT_INVITE_LOGIN_URL || '/login';
 
-function buildPublicInvitePayload(invite, orgSummary) {
+function buildPublicInvitePayload(invite, orgSummary, assignmentPreview = null, contactEmail = null) {
   return {
     id: invite.id,
     orgId: invite.org_id,
     orgName: orgSummary?.name || null,
     orgSlug: orgSummary?.slug || null,
+    contactEmail: contactEmail ?? orgSummary?.contact_email ?? null,
     email: invite.email,
     role: invite.role,
     status: deriveInviteStatus(invite),
@@ -5597,6 +5721,7 @@ function buildPublicInvitePayload(invite, orgSummary) {
       minLength: INVITE_PASSWORD_MIN_CHARS,
     },
     loginUrl: INVITE_LOGIN_URL,
+    assignmentPreview: assignmentPreview || null,
   };
 }
 
@@ -5745,7 +5870,62 @@ const fetchOrgAssignmentSummary = async (orgId) => {
       throw error;
     }
 
-    return summarizeAssignmentRows(data || []);
+    const rows = Array.isArray(data) ? data : [];
+    const summary = summarizeAssignmentRows(rows);
+    const courseTopRows = [];
+    const surveyTopRows = [];
+    const courseSeen = new Set();
+    const surveySeen = new Set();
+    for (const row of rows) {
+      if (courseTopRows.length < 5 && row?.course_id && !courseSeen.has(row.course_id)) {
+        courseSeen.add(row.course_id);
+        courseTopRows.push(row);
+      }
+      if (surveyTopRows.length < 5 && row?.survey_id && !surveySeen.has(row.survey_id)) {
+        surveySeen.add(row.survey_id);
+        surveyTopRows.push(row);
+      }
+      if (courseTopRows.length >= 5 && surveyTopRows.length >= 5) {
+        break;
+      }
+    }
+
+    const [courseTitles, surveyTitles] = await Promise.all([
+      fetchAssignmentTitles(
+        'course',
+        courseTopRows.map((row) => row.course_id).filter(Boolean),
+      ),
+      fetchAssignmentTitles(
+        'survey',
+        surveyTopRows.map((row) => row.survey_id).filter(Boolean),
+      ),
+    ]);
+
+    const mapTopAssignment = (row, type) => {
+      const id = type === 'course' ? row?.course_id : row?.survey_id;
+      if (!id) return null;
+      const titleMap = type === 'course' ? courseTitles : surveyTitles;
+      return {
+        id,
+        title:
+          titleMap.get(id) ??
+          row?.title ??
+          row?.name ??
+          (type === 'course' ? 'Course assignment' : 'Survey assignment'),
+        status: row?.status ?? null,
+        dueAt: row?.due_at ?? null,
+        updatedAt: row?.updated_at ?? row?.created_at ?? null,
+      };
+    };
+
+    summary.courses.topAssignments = courseTopRows
+      .map((row) => mapTopAssignment(row, 'course'))
+      .filter(Boolean);
+    summary.surveys.topAssignments = surveyTopRows
+      .map((row) => mapTopAssignment(row, 'survey'))
+      .filter(Boolean);
+    summary.generatedAt = new Date().toISOString();
+    return summary;
   } catch (error) {
     logOrganizationsStageError('assignment_summary_failed', error, { orgId });
     return buildEmptyAssignmentSummary();
@@ -5831,6 +6011,7 @@ const mapOrgInviteRecord = (row) => ({
   acceptedAt: row.accepted_at ?? null,
   expiresAt: row.expires_at ?? null,
   lastSentAt: row.last_sent_at ?? null,
+  reminderCount: row.reminder_count ?? null,
   note: row.note ?? null,
 });
 
@@ -6425,6 +6606,78 @@ const fetchAssignmentTitles = async (assignmentType, ids = []) => {
   return map;
 };
 
+const buildInviteAssignmentPreview = async (orgId, { perTypeLimit = 3 } = {}) => {
+  const emptyPreview = { courses: [], surveys: [] };
+  if (!supabase || !orgId) {
+    return emptyPreview;
+  }
+
+  const limit = Math.max(1, perTypeLimit);
+  try {
+    const { data, error } = await supabase
+      .from('assignments')
+      .select('assignment_type, course_id, survey_id, status, due_at, updated_at, created_at')
+      .eq('organization_id', orgId)
+      .order('updated_at', { ascending: false, nullsFirst: false })
+      .limit(limit * 6);
+
+    if (error) {
+      if (isMissingRelationError(error) || isMissingColumnError(error)) {
+        return emptyPreview;
+      }
+      throw error;
+    }
+
+    const rows = Array.isArray(data) ? data : [];
+    const courseIds = [];
+    const surveyIds = [];
+    const courseMeta = new Map();
+    const surveyMeta = new Map();
+
+    rows.forEach((row) => {
+      if (row?.course_id && !courseMeta.has(row.course_id)) {
+        courseMeta.set(row.course_id, row);
+      }
+      if (row?.survey_id && !surveyMeta.has(row.survey_id)) {
+        surveyMeta.set(row.survey_id, row);
+      }
+      if (row?.course_id && courseIds.length < limit && !courseIds.includes(row.course_id)) {
+        courseIds.push(row.course_id);
+      }
+      if (row?.survey_id && surveyIds.length < limit && !surveyIds.includes(row.survey_id)) {
+        surveyIds.push(row.survey_id);
+      }
+    });
+
+    const [courseTitles, surveyTitles] = await Promise.all([
+      fetchAssignmentTitles('course', courseIds),
+      fetchAssignmentTitles('survey', surveyIds),
+    ]);
+
+    const mapAssignmentRows = (ids, metaMap, titles, fallbackLabel) =>
+      ids.map((id) => {
+        const row = metaMap.get(id) || {};
+        return {
+          id,
+          title: titles.get(id) || row.title || row.name || fallbackLabel,
+          dueAt: row.due_at ?? null,
+          status: row.status ?? null,
+        };
+      });
+
+    return {
+      courses: mapAssignmentRows(courseIds, courseMeta, courseTitles, 'Assigned course'),
+      surveys: mapAssignmentRows(surveyIds, surveyMeta, surveyTitles, 'Assigned survey'),
+    };
+  } catch (error) {
+    logger.warn('invite_assignment_preview_failed', {
+      orgId,
+      message: error?.message || String(error),
+    });
+    return emptyPreview;
+  }
+};
+
 const buildAssignmentNotificationTitle = (assignmentType, entityTitle) => {
   const fallback = assignmentType === 'course' ? 'Course' : 'Survey';
   return assignmentType === 'course'
@@ -6515,7 +6768,7 @@ const fetchOrgInvites = async (orgId, { requestId } = {}) => {
   try {
     const { data, error } = await supabase
       .from('organization_invites')
-      .select('id, organization_id, org_id, email, role, status, token, invited_by, invited_at, accepted_at, expires_at, last_sent_at, note, created_at')
+      .select('id, organization_id, org_id, email, role, status, token, invited_by, invited_at, accepted_at, expires_at, last_sent_at, reminder_count, note, created_at')
       .or(`organization_id.eq.${orgId},org_id.eq.${orgId}`)
       .order('invited_at', { ascending: false, nullsFirst: false })
       .limit(100);
@@ -6557,65 +6810,6 @@ const fetchUserMessages = async (userId, { limit = 25 } = {}) => {
     });
     return [];
   }
-};
-
-const countAssignmentsForOrg = async (assignmentType, orgId, { requestId } = {}) => {
-  if (!supabase || !orgId) return 0;
-  const attemptCount = async (table, configureQuery) => {
-    const query = configureQuery(supabase.from(table).select('id', { count: 'exact', head: true }));
-    const { count, error } = await query;
-    if (error) throw error;
-    return count ?? 0;
-  };
-
-  try {
-    return await attemptCount('assignments', (query) =>
-      query.eq('organization_id', orgId).eq('assignment_type', assignmentType),
-    );
-  } catch (error) {
-    logger.info('organizations_profile_assignment_count_failed', {
-      orgId,
-      assignmentType,
-      table: 'assignments',
-      requestId: requestId ?? null,
-      code: error?.code ?? null,
-      message: error?.message ?? null,
-    });
-  }
-
-  const legacyTable = assignmentType === 'survey' ? 'survey_assignments' : 'course_assignments';
-  try {
-    return await attemptCount(legacyTable, (query) => query.eq('organization_id', orgId));
-  } catch (error) {
-    if (isMissingColumnError(error)) {
-      try {
-        return await attemptCount(legacyTable, (query) => query.eq('org_id', orgId));
-      } catch (fallbackError) {
-        if (!isMissingRelationError(fallbackError) && !isMissingColumnError(fallbackError)) {
-          logger.info('organizations_profile_assignment_count_failed', {
-            orgId,
-            assignmentType,
-            table: legacyTable,
-            requestId: requestId ?? null,
-            code: fallbackError?.code ?? null,
-            message: fallbackError?.message ?? null,
-          });
-        }
-        return 0;
-      }
-    }
-    if (!isMissingRelationError(error)) {
-      logger.info('organizations_profile_assignment_count_failed', {
-        orgId,
-        assignmentType,
-        table: legacyTable,
-        requestId: requestId ?? null,
-        code: error?.code ?? null,
-        message: error?.message ?? null,
-      });
-    }
-  }
-  return 0;
 };
 
 const buildOrgProfileMetrics = ({ organization, members, courseAssignmentCount, surveyAssignmentCount }) => {
@@ -6669,9 +6863,8 @@ const buildOrganizationProfilePayload = async (orgId, options = {}) => {
   }
 
   const users = members.map((member) => mapOrgProfileUser(member)).filter(Boolean);
-  const [coursesAssigned, surveysAssigned, invites, recentMessages] = await Promise.all([
-    countAssignmentsForOrg('course', orgId, options),
-    countAssignmentsForOrg('survey', orgId, options),
+  const [assignmentSummary, invites, recentMessages] = await Promise.all([
+    fetchOrgAssignmentSummary(orgId),
     fetchOrgInvites(orgId, options),
     fetchOrgMessages(orgId, { limit: 25 }),
   ]);
@@ -6679,8 +6872,8 @@ const buildOrganizationProfilePayload = async (orgId, options = {}) => {
   const metrics = buildOrgProfileMetrics({
     organization: bundle.organization,
     members,
-    courseAssignmentCount: coursesAssigned,
-    surveyAssignmentCount: surveysAssigned,
+    courseAssignmentCount: assignmentSummary?.courses?.assignmentCount ?? 0,
+    surveyAssignmentCount: assignmentSummary?.surveys?.assignmentCount ?? 0,
   });
 
   const contacts = Array.isArray(bundle.contacts) ? bundle.contacts.map(mapContactResponse) : [];
@@ -6699,6 +6892,7 @@ const buildOrganizationProfilePayload = async (orgId, options = {}) => {
     metrics,
     invites: invitesList,
     messages,
+    assignments: assignmentSummary,
     lastContacted:
       messages[0]?.sentAt ??
       invitesList[0]?.invitedAt ??
@@ -6817,7 +7011,7 @@ async function fetchOrganizationSummary(orgId) {
   try {
     const { data } = await supabase
       .from('organizations')
-      .select('id, name, slug')
+      .select('id, name, slug, contact_email, contact_person')
       .eq('id', orgId)
       .maybeSingle();
     return data;
@@ -12711,22 +12905,18 @@ const ensureAdminOrgSchemaOrRespond = async (res, label, meta = {}) => {
   try {
     const requiredStatus = await ensureTablesReady(label, REQUIRED_ADMIN_ORG_TABLES);
     if (!requiredStatus.ok) {
-      logger.warn('organizations_schema_guard_missing', {
+      const failureMetadata = {
         label,
-        requestId,
         table: requiredStatus.table ?? null,
         column: requiredStatus.column ?? null,
         schema: requiredStatus.schema ?? null,
-      });
+        requestId,
+      };
+      logger.warn('organizations_schema_guard_missing', failureMetadata);
       logOrganizationsEvent('schema_guard_check', {
         requestId,
         status: 'failed',
-        metadata: {
-          label,
-          table: requiredStatus.table ?? null,
-          column: requiredStatus.column ?? null,
-          schema: requiredStatus.schema ?? null,
-        },
+        metadata: failureMetadata,
       });
       respondSchemaUnavailable(res, label, requiredStatus);
       return false;
@@ -12759,21 +12949,23 @@ const ensureAdminOrgSchemaOrRespond = async (res, label, meta = {}) => {
     return false;
   }
 
+  let optionalWarning = null;
   try {
     const optionalStatus = await ensureTablesReady(label, OPTIONAL_ADMIN_ORG_TABLES);
     if (!optionalStatus.ok) {
-      const warningKey = `${optionalStatus.schema ?? 'public'}.${optionalStatus.table ?? 'unknown'}:${
-        optionalStatus.column ?? '*'
+      optionalWarning = {
+        label,
+        table: optionalStatus.table ?? null,
+        column: optionalStatus.column ?? null,
+        schema: optionalStatus.schema ?? null,
+        requestId,
+      };
+      const warningKey = `${optionalWarning.schema ?? 'public'}.${optionalWarning.table ?? 'unknown'}:${
+        optionalWarning.column ?? '*'
       }`;
       if (!loggedOptionalSchemaWarnings.has(warningKey)) {
         loggedOptionalSchemaWarnings.add(warningKey);
-        logger.info('organizations_optional_schema_missing', {
-          label,
-          table: optionalStatus.table ?? null,
-          column: optionalStatus.column ?? null,
-          schema: optionalStatus.schema ?? null,
-          requestId,
-        });
+        logger.info('organizations_optional_schema_missing', optionalWarning);
       }
     }
   } catch (error) {
@@ -12788,8 +12980,8 @@ const ensureAdminOrgSchemaOrRespond = async (res, label, meta = {}) => {
 
   logOrganizationsEvent('schema_guard_check', {
     requestId,
-    status: 'ok',
-    metadata: { label },
+    status: optionalWarning ? 'warn' : 'ok',
+    metadata: optionalWarning ? optionalWarning : { label },
   });
   return true;
 };
@@ -13067,6 +13259,7 @@ app.post('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req
   }
   res.set('X-Organizations-Handler', 'express-v4');
   const payload = req.body || {};
+  const actor = buildActorFromRequest(req);
 
   const missingFields = ['name', 'contact_email', 'subscription'].filter((field) => !payload[field]);
   if (missingFields.length) {
@@ -13096,6 +13289,26 @@ app.post('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req
       subscription: payload.subscription ?? null,
     },
   });
+
+  const ownerInput = payload.owner || {};
+  const resolveOwnerString = (...values) => {
+    for (const value of values) {
+      if (typeof value === 'string' && value.trim()) {
+        return value.trim();
+      }
+    }
+    return '';
+  };
+  const ownerEmail = resolveOwnerString(
+    payload.ownerEmail,
+    payload.owner_email,
+    ownerInput.email,
+    ownerInput.emailAddress,
+    payload.contactEmail,
+    payload.contact_email,
+  ).toLowerCase();
+  const ownerName =
+    resolveOwnerString(ownerInput.name, payload.ownerName, payload.owner_name, payload.contactPerson) || null;
 
   try {
     const result = await runSupabaseQueryWithRetry('admin.organizations.create', () =>
@@ -13148,6 +13361,24 @@ app.post('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req
       status: 'ok',
       metadata: { orgId: result?.data?.id ?? null },
     });
+    if (result?.data?.id && ownerEmail) {
+      try {
+        await seedOrgOwner({
+          orgId: result.data.id,
+          orgName: result.data.name,
+          ownerEmail,
+          ownerName,
+          actor,
+          requestId: req.requestId ?? null,
+        });
+      } catch (seedError) {
+        logger.warn('organization_owner_seed_error', {
+          orgId: result.data.id,
+          targetEmail: ownerEmail,
+          message: seedError?.message ?? String(seedError),
+        });
+      }
+    }
     res.status(201).json({ data: result.data });
   } catch (error) {
     const normalized = logOrganizationsStageError('create_failed', error, {
@@ -13610,7 +13841,7 @@ app.post('/api/admin/organizations/:orgId/invites', async (req, res) => {
   try {
     const { data: orgRow } = await supabase
       .from('organizations')
-      .select('id,name,slug')
+      .select('id,name,slug,contact_email')
       .eq('id', orgId)
       .maybeSingle();
 
@@ -13626,6 +13857,7 @@ app.post('/api/admin/organizations/:orgId/invites', async (req, res) => {
       sendEmail,
       duplicateStrategy: 'return',
       note: inviteNote,
+      requestId: req.requestId ?? null,
     });
 
     logOrganizationsEvent('organization_invite_created', {
@@ -13639,7 +13871,7 @@ app.post('/api/admin/organizations/:orgId/invites', async (req, res) => {
     });
 
     res.status(201).json({
-      data: buildPublicInvitePayload(invite, orgRow || null),
+      data: buildPublicInvitePayload(invite, orgRow || null, null, orgRow?.contact_email ?? null),
       duplicate,
     });
   } catch (error) {
@@ -13708,6 +13940,7 @@ app.post('/api/admin/organizations/:orgId/invites/bulk', async (req, res) => {
         metadata: entry?.metadata || {},
         sendEmail: entry?.sendEmail !== false,
         note: entryNote,
+        requestId: req.requestId ?? null,
       });
       results.push({ email: invite.email, id: invite.id, duplicate });
     } catch (error) {
@@ -13858,6 +14091,15 @@ app.post('/api/admin/organizations/:orgId/messages', async (req, res) => {
       return;
     }
     logRouteError('POST /api/admin/organizations/:orgId/messages', error);
+    logOrganizationsEvent('organization_message_failed', {
+      requestId: req.requestId ?? null,
+      status: 'failed',
+      metadata: {
+        orgId,
+        channel: req.body?.channel ?? req.body?.delivery ?? 'email',
+        message: error?.message ?? null,
+      },
+    });
     res.status(500).json({ error: 'Unable to send organization message' });
   }
 });
@@ -13935,7 +14177,15 @@ app.get('/api/invite/:token', async (req, res) => {
       return;
     }
     const orgSummary = await fetchOrganizationSummary(invite.org_id);
-    res.json({ data: buildPublicInvitePayload(invite, orgSummary) });
+    const assignmentPreview = await buildInviteAssignmentPreview(invite.org_id, { perTypeLimit: 3 });
+    res.json({
+      data: buildPublicInvitePayload(
+        invite,
+        orgSummary,
+        assignmentPreview,
+        orgSummary?.contact_email ?? null,
+      ),
+    });
   } catch (error) {
     logger.warn('invite_lookup_failed', { token: token.slice(0, 6), message: error?.message || String(error) });
     res.status(500).json({ error: 'Unable to load invite' });
@@ -13950,21 +14200,22 @@ app.post('/api/invite/:token/accept', async (req, res) => {
     return;
   }
 
+  let inviteRecord = null;
   try {
-    const invite = await loadInviteByToken(token);
-    if (!invite) {
+    inviteRecord = await loadInviteByToken(token);
+    if (!inviteRecord) {
       res.status(404).json({ error: 'invite_not_found' });
       return;
     }
 
-    const derivedStatus = deriveInviteStatus(invite);
+    const derivedStatus = deriveInviteStatus(inviteRecord);
     if (!INVITE_ACCEPTABLE_STATUSES.has(derivedStatus)) {
       res.status(409).json({ error: 'invite_unavailable', status: derivedStatus });
       return;
     }
 
-    const orgSummary = await fetchOrganizationSummary(invite.org_id);
-    const fullName = (req.body?.fullName || invite.invited_name || '').trim();
+    const orgSummary = await fetchOrganizationSummary(inviteRecord.org_id);
+    const fullName = (req.body?.fullName || inviteRecord.invited_name || '').trim();
     const password = req.body?.password ? String(req.body.password) : '';
 
     let authUser = null;
@@ -13989,12 +14240,12 @@ app.post('/api/invite/:token/accept', async (req, res) => {
         return;
       }
       const { data, error } = await supabase.auth.admin.createUser({
-        email: invite.email,
+        email: inviteRecord.email,
         password,
         email_confirm: true,
         user_metadata: {
-          full_name: fullName || invite.invited_name || null,
-          onboarding_org_id: invite.org_id,
+          full_name: fullName || inviteRecord.invited_name || null,
+          onboarding_org_id: inviteRecord.org_id,
         },
       });
       if (error) {
@@ -14026,43 +14277,69 @@ app.post('/api/invite/:token/accept', async (req, res) => {
     const actor = {
       userId: authUser.id,
       email: authUser.email,
-      name: fullName || authUser.user_metadata?.full_name || invite.email,
+      name: fullName || authUser.user_metadata?.full_name || inviteRecord.email,
     };
 
-    await upsertOrganizationMembership(invite.org_id, authUser.id, normalizeOrgRole(invite.role), actor);
+    await upsertOrganizationMembership(inviteRecord.org_id, authUser.id, normalizeOrgRole(inviteRecord.role), actor);
 
     const nowIso = new Date().toISOString();
     await supabase
       .from('org_invites')
       .update({ status: 'accepted', accepted_at: nowIso, accepted_user_id: authUser.id })
-      .eq('id', invite.id);
+      .eq('id', inviteRecord.id);
 
-    await recordActivationEvent(invite.org_id, 'invite_accepted_public', { inviteId: invite.id }, actor);
-    await createAuditLogEntry('org_invite_accepted', { inviteId: invite.id }, { userId: authUser.id, orgId: invite.org_id });
+    await recordActivationEvent(inviteRecord.org_id, 'invite_accepted_public', { inviteId: inviteRecord.id }, actor);
+    await createAuditLogEntry('org_invite_accepted', { inviteId: inviteRecord.id }, { userId: authUser.id, orgId: inviteRecord.org_id });
 
     const { count: remainingInvites } = await supabase
       .from('org_invites')
       .select('id', { count: 'exact', head: true })
-      .eq('org_id', invite.org_id)
+      .eq('org_id', inviteRecord.org_id)
       .in('status', ['pending', 'sent']);
 
     if (!remainingInvites) {
-      await markActivationStep(invite.org_id, 'invite_team', { status: 'completed', actor });
+      await markActivationStep(inviteRecord.org_id, 'invite_team', { status: 'completed', actor });
     } else {
-      await markActivationStep(invite.org_id, 'invite_team', { status: 'in_progress', actor });
+      await markActivationStep(inviteRecord.org_id, 'invite_team', { status: 'in_progress', actor });
     }
 
     res.json({
       data: {
         status: 'accepted',
-        orgId: invite.org_id,
+        orgId: inviteRecord.org_id,
         orgName: orgSummary?.name || null,
-        email: invite.email,
+        email: inviteRecord.email,
         loginUrl: INVITE_LOGIN_URL,
+      },
+    });
+    logOrganizationsEvent('organization_invite_accepted', {
+      requestId: req.requestId ?? null,
+      status: 'ok',
+      metadata: {
+        inviteId: inviteRecord.id,
+        orgId: inviteRecord.org_id,
+        userId: authUser.id,
+      },
+    });
+    logOrganizationsEvent('organization_login_completed', {
+      requestId: req.requestId ?? null,
+      status: 'ok',
+      metadata: {
+        orgId: inviteRecord.org_id,
+        userId: authUser.id,
       },
     });
   } catch (error) {
     logger.error('invite_accept_failed', { message: error?.message || String(error) });
+    logOrganizationsEvent('organization_invite_failed', {
+      requestId: req.requestId ?? null,
+      status: 'failed',
+      metadata: {
+        orgId: inviteRecord?.org_id ?? null,
+        inviteId: inviteRecord?.id ?? null,
+        message: error?.message ?? null,
+      },
+    });
     res.status(500).json({ error: 'Unable to accept invite' });
   }
 });
@@ -14166,6 +14443,7 @@ app.post('/api/admin/onboarding/orgs', async (req, res) => {
         inviter: actor,
         orgName: org.name,
         metadata: { type: 'owner' },
+        requestId: req.requestId ?? null,
       });
       inviteResults.push({ email: invite.email, id: invite.id, role: invite.role });
     }
@@ -14182,6 +14460,7 @@ app.post('/api/admin/onboarding/orgs', async (req, res) => {
           inviter: actor,
           orgName: org.name,
           metadata: { type: 'backup_admin' },
+          requestId: req.requestId ?? null,
         });
         inviteResults.push({ email: invite.email, id: invite.id, role: invite.role });
       }
@@ -14200,6 +14479,7 @@ app.post('/api/admin/onboarding/orgs', async (req, res) => {
           orgName: org.name,
           metadata: invite.metadata || {},
           note: normalizeInviteNote(invite.note),
+          requestId: req.requestId ?? null,
         });
         inviteResults.push({ email: createdInvite.email, id: createdInvite.id, role: createdInvite.role });
       } catch (inviteError) {
@@ -14268,6 +14548,7 @@ app.post('/api/admin/onboarding/:orgId/invites', async (req, res) => {
       sendEmail: body.sendEmail !== false,
       duplicateStrategy: body.allowDuplicate ? 'create' : 'return',
       note,
+      requestId: req.requestId ?? null,
     });
 
     if (!duplicate) {
@@ -14314,6 +14595,7 @@ app.post('/api/admin/onboarding/:orgId/invites/bulk', async (req, res) => {
         metadata: entry?.metadata || {},
         sendEmail: entry?.sendEmail !== false,
         note: entryNote,
+        requestId: req.requestId ?? null,
       });
       results.push({ email: invite.email, id: invite.id, duplicate });
     } catch (error) {
@@ -14403,9 +14685,33 @@ app.patch('/api/admin/onboarding/:orgId/steps/:stepId', async (req, res) => {
     return;
   }
 
-  await markActivationStep(orgId, stepId, { status, actor: buildActorFromRequest(req) });
-  const progress = await fetchOnboardingProgress(orgId);
-  res.json({ data: progress });
+  try {
+    await markActivationStep(orgId, stepId, { status, actor: buildActorFromRequest(req) });
+    const progress = await fetchOnboardingProgress(orgId);
+    logOrganizationsEvent('organization_onboarding_status_updated', {
+      requestId: req.requestId ?? null,
+      status: 'ok',
+      metadata: {
+        orgId,
+        stepId,
+        status,
+      },
+    });
+    res.json({ data: progress });
+  } catch (error) {
+    logRouteError('PATCH /api/admin/onboarding/:orgId/steps/:stepId', error);
+    logOrganizationsEvent('organization_onboarding_status_updated', {
+      requestId: req.requestId ?? null,
+      status: 'failed',
+      metadata: {
+        orgId,
+        stepId,
+        status,
+        message: error?.message ?? null,
+      },
+    });
+    res.status(500).json({ error: 'Unable to update onboarding step' });
+  }
 });
 
 app.post('/api/orgs/:orgId/memberships/accept', async (req, res) => {

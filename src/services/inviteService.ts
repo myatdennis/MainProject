@@ -1,5 +1,12 @@
 import apiRequest from '../utils/apiClient';
 
+export type AssignmentPreviewItem = {
+  id: string;
+  title: string | null;
+  dueAt?: string | null;
+  status?: string | null;
+};
+
 export type InvitePreview = {
   id: string;
   orgId: string;
@@ -19,6 +26,11 @@ export type InvitePreview = {
     minLength?: number;
   };
   loginUrl?: string;
+  contactEmail?: string | null;
+  assignmentPreview?: {
+    courses?: AssignmentPreviewItem[];
+    surveys?: AssignmentPreviewItem[];
+  } | null;
 };
 
 export type AcceptInvitePayload = {

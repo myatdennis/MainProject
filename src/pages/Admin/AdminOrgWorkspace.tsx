@@ -26,7 +26,7 @@ import EditOrganizationModal from '../../components/EditOrganizationModal';
 import OrgCommunicationPanel from '../../components/Admin/OrgCommunicationPanel';
 import CourseAssignmentModal from '../../components/CourseAssignmentModal';
 import { useToast } from '../../context/ToastContext';
-import orgService, { OrgProfileDetails } from '../../dal/orgs';
+import orgService, { type Org, OrgProfileDetails } from '../../dal/orgs';
 import { getCrmActivity, getCrmSummary, sendBroadcastNotification, type CrmActivity, type CrmSummary } from '../../dal/crm';
 import { useDebounce } from '../../components/PerformanceComponents';
 
@@ -196,10 +196,13 @@ const AdminOrgWorkspace = () => {
     setShowAddOrgModal(true);
   };
 
-  const handleOrganizationAdded = () => {
+  const handleOrganizationAdded = (organization?: Org) => {
     setShowAddOrgModal(false);
     fetchOrganizations(1);
     void loadCrmData();
+    if (organization?.id) {
+      navigate(`/admin/organizations/${organization.id}`);
+    }
   };
 
   const handleEditOrganization = (orgId: string) => {

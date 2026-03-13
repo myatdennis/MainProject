@@ -73,6 +73,11 @@ export type Org = {
   // Additional Data
   notes?: string;
   tags?: string[];
+  ownerEmail?: string;
+  owner?: {
+    email?: string;
+    name?: string;
+  };
 };
 
 export type OrgMember = {
@@ -101,6 +106,30 @@ export type OrgProfileMetrics = {
   surveysAssigned: number;
   courseCompletionRate: number;
   surveyCompletionRate: number;
+};
+
+export type OrgAssignmentTopItem = {
+  id: string;
+  title: string | null;
+  status: string | null;
+  dueAt: string | null;
+  updatedAt: string | null;
+};
+
+export type OrgAssignmentBucket = {
+  assignmentCount: number;
+  learnerAssignments: number;
+  orgAssignments: number;
+  dueSoonCount: number;
+  completedCount: number;
+  latestAssignedAt: string | null;
+  topAssignments: OrgAssignmentTopItem[];
+};
+
+export type OrgAssignmentSummary = {
+  courses: OrgAssignmentBucket;
+  surveys: OrgAssignmentBucket;
+  generatedAt?: string | null;
 };
 
 export type OrgProfileUser = {
@@ -132,6 +161,7 @@ export type OrgProfileInvite = {
   acceptedAt: string | null;
   expiresAt: string | null;
   lastSentAt: string | null;
+  reminderCount?: number | null;
   note: string | null;
   token?: string | null;
 };
@@ -158,6 +188,7 @@ export type OrgProfileDetails = {
   admins: OrgProfileUser[];
   users: OrgProfileUser[];
   metrics: OrgProfileMetrics;
+  assignments?: OrgAssignmentSummary | null;
   invites: OrgProfileInvite[];
   messages: OrgProfileMessage[];
   lastContacted: string | null;
@@ -194,47 +225,49 @@ export const mapOrgRecord = (record: any): Org => {
   const settings = fromRecord(record, 'settings') as Org['settings'] | undefined;
 
   return {
-  id: record.id,
-  name: record.name,
-  slug: fromRecord(record, 'slug') ?? undefined,
-  type: record.type,
-  description: fromRecord(record, 'description') ?? undefined,
-  logo: fromRecord(record, 'logo') ?? undefined,
-  contactPerson: fromRecord(record, 'contact_person') ?? '',
-  contactEmail: fromRecord(record, 'contact_email') ?? '',
-  contactPhone: fromRecord(record, 'contact_phone') ?? undefined,
-  website: fromRecord(record, 'website') ?? undefined,
-  address: fromRecord(record, 'address') ?? undefined,
-  city: fromRecord(record, 'city') ?? undefined,
-  state: fromRecord(record, 'state') ?? undefined,
-  country: fromRecord(record, 'country') ?? undefined,
-  postalCode: fromRecord(record, 'postal_code') ?? undefined,
-  subscription: fromRecord(record, 'subscription') ?? 'standard',
-  billingEmail: fromRecord(record, 'billing_email') ?? undefined,
-  billingCycle: fromRecord(record, 'billing_cycle') ?? undefined,
-  customPricing: fromRecord(record, 'custom_pricing') ?? undefined,
-  maxLearners: fromRecord(record, 'max_learners') ?? undefined,
-  maxCourses: fromRecord(record, 'max_courses') ?? undefined,
-  maxStorage: fromRecord(record, 'max_storage') ?? undefined,
-  features: features ?? undefined,
-  settings: settings ?? undefined,
-  status: fromRecord(record, 'status') ?? 'active',
-  enrollmentDate: fromRecord(record, 'enrollment_date') ?? undefined,
-  contractStart: fromRecord(record, 'contract_start') ?? undefined,
-  contractEnd: fromRecord(record, 'contract_end') ?? undefined,
-  createdAt: fromRecord(record, 'created_at') ?? undefined,
-  updatedAt: fromRecord(record, 'updated_at') ?? undefined,
-  timezone: fromRecord(record, 'timezone') ?? undefined,
-  onboardingStatus: fromRecord(record, 'onboarding_status') ?? undefined,
-  totalLearners: fromRecord(record, 'total_learners') ?? 0,
-  activeLearners: fromRecord(record, 'active_learners') ?? 0,
-  completionRate: Number(fromRecord(record, 'completion_rate') ?? 0),
-  cohorts: fromRecord(record, 'cohorts') ?? [],
-  lastActivity: fromRecord(record, 'last_activity') ?? undefined,
-  modules: fromRecord(record, 'modules') ?? {},
-  notes: fromRecord(record, 'notes') ?? undefined,
-  tags: fromRecord(record, 'tags') ?? []
-};
+    id: record.id,
+    name: record.name,
+    slug: fromRecord(record, 'slug') ?? undefined,
+    type: record.type,
+    description: fromRecord(record, 'description') ?? undefined,
+    logo: fromRecord(record, 'logo') ?? undefined,
+    contactPerson: fromRecord(record, 'contact_person') ?? '',
+    contactEmail: fromRecord(record, 'contact_email') ?? '',
+    contactPhone: fromRecord(record, 'contact_phone') ?? undefined,
+    website: fromRecord(record, 'website') ?? undefined,
+    address: fromRecord(record, 'address') ?? undefined,
+    city: fromRecord(record, 'city') ?? undefined,
+    state: fromRecord(record, 'state') ?? undefined,
+    country: fromRecord(record, 'country') ?? undefined,
+    postalCode: fromRecord(record, 'postal_code') ?? undefined,
+    subscription: fromRecord(record, 'subscription') ?? 'standard',
+    billingEmail: fromRecord(record, 'billing_email') ?? undefined,
+    billingCycle: fromRecord(record, 'billing_cycle') ?? undefined,
+    customPricing: fromRecord(record, 'custom_pricing') ?? undefined,
+    maxLearners: fromRecord(record, 'max_learners') ?? undefined,
+    maxCourses: fromRecord(record, 'max_courses') ?? undefined,
+    maxStorage: fromRecord(record, 'max_storage') ?? undefined,
+    features: features ?? undefined,
+    settings: settings ?? undefined,
+    status: fromRecord(record, 'status') ?? 'active',
+    enrollmentDate: fromRecord(record, 'enrollment_date') ?? undefined,
+    contractStart: fromRecord(record, 'contract_start') ?? undefined,
+    contractEnd: fromRecord(record, 'contract_end') ?? undefined,
+    createdAt: fromRecord(record, 'created_at') ?? undefined,
+    updatedAt: fromRecord(record, 'updated_at') ?? undefined,
+    timezone: fromRecord(record, 'timezone') ?? undefined,
+    onboardingStatus: fromRecord(record, 'onboarding_status') ?? undefined,
+    totalLearners: fromRecord(record, 'total_learners') ?? 0,
+    activeLearners: fromRecord(record, 'active_learners') ?? 0,
+    completionRate: Number(fromRecord(record, 'completion_rate') ?? 0),
+    cohorts: fromRecord(record, 'cohorts') ?? [],
+    lastActivity: fromRecord(record, 'last_activity') ?? undefined,
+    modules: fromRecord(record, 'modules') ?? {},
+    notes: fromRecord(record, 'notes') ?? undefined,
+    tags: fromRecord(record, 'tags') ?? [],
+    ownerEmail: fromRecord(record, 'owner_email') ?? undefined,
+    owner: record.owner ?? undefined,
+  };
 };
 
 const mapOrgContactRecord = (record: any): OrgContact => ({
@@ -276,6 +309,7 @@ const mapOrgInviteRecord = (record: any): OrgProfileInvite => ({
   acceptedAt: record.acceptedAt ?? record.accepted_at ?? null,
   expiresAt: record.expiresAt ?? record.expires_at ?? null,
   lastSentAt: record.lastSentAt ?? record.last_sent_at ?? null,
+  reminderCount: record.reminderCount ?? record.reminder_count ?? null,
   note: record.note ?? null,
 });
 
@@ -302,6 +336,39 @@ const mapOrgMetricsRecord = (record: any): OrgProfileMetrics => ({
   surveyCompletionRate: Number(record?.surveyCompletionRate ?? record?.survey_completion_rate ?? 0),
 });
 
+const mapAssignmentTopItems = (items?: any[]): OrgAssignmentTopItem[] => {
+  if (!Array.isArray(items)) return [];
+  return items
+    .map((item) => {
+      const id = item?.id;
+      if (!id) return null;
+      return {
+        id: String(id),
+        title: item?.title ?? null,
+        status: item?.status ?? null,
+        dueAt: item?.dueAt ?? item?.due_at ?? null,
+        updatedAt: item?.updatedAt ?? item?.updated_at ?? null,
+      };
+    })
+    .filter((item): item is OrgAssignmentTopItem => Boolean(item));
+};
+
+const mapAssignmentBucketRecord = (record?: any): OrgAssignmentBucket => ({
+  assignmentCount: Number(record?.assignmentCount ?? record?.assignment_count ?? 0),
+  learnerAssignments: Number(record?.learnerAssignments ?? record?.learner_assignments ?? 0),
+  orgAssignments: Number(record?.orgAssignments ?? record?.org_assignments ?? 0),
+  dueSoonCount: Number(record?.dueSoonCount ?? record?.due_soon_count ?? 0),
+  completedCount: Number(record?.completedCount ?? record?.completed_count ?? 0),
+  latestAssignedAt: record?.latestAssignedAt ?? record?.latest_assigned_at ?? null,
+  topAssignments: mapAssignmentTopItems(record?.topAssignments),
+});
+
+const mapAssignmentSummaryRecord = (record?: any): OrgAssignmentSummary => ({
+  courses: mapAssignmentBucketRecord(record?.courses),
+  surveys: mapAssignmentBucketRecord(record?.surveys),
+  generatedAt: record?.generatedAt ?? record?.generated_at ?? null,
+});
+
 const mapOrgProfileResponse = (payload: any): OrgProfileDetails => {
   const organizationRecord = payload?.organization ?? payload;
   return {
@@ -312,6 +379,7 @@ const mapOrgProfileResponse = (payload: any): OrgProfileDetails => {
     admins: Array.isArray(payload?.admins) ? payload.admins.map(mapOrgProfileUserRecord) : [],
     users: Array.isArray(payload?.users) ? payload.users.map(mapOrgProfileUserRecord) : [],
     metrics: mapOrgMetricsRecord(payload?.metrics ?? {}),
+    assignments: payload?.assignments ? mapAssignmentSummaryRecord(payload.assignments) : undefined,
     invites: Array.isArray(payload?.invites) ? payload.invites.map(mapOrgInviteRecord) : [],
     messages: Array.isArray(payload?.messages) ? payload.messages.map(mapOrgMessageRecord) : [],
     lastContacted: payload?.lastContacted ?? null,
@@ -418,7 +486,15 @@ export const getOrg = async (id: string): Promise<Org | null> => {
   return profile?.organization ?? null;
 };
 
-export const createOrg = async (payload: Partial<Org>): Promise<Org> => {
+type CreateOrgPayload = Partial<Org> & {
+  ownerEmail?: string;
+  owner?: {
+    email?: string;
+    name?: string;
+  };
+};
+
+export const createOrg = async (payload: CreateOrgPayload): Promise<Org> => {
   const json = await apiRequest<{ data: any }>('/api/admin/organizations', {
     method: 'POST',
     body: payload

@@ -48,6 +48,61 @@ const statusStyles: Record<string, string> = {
   bounced: 'bg-rose-100 text-rose-700',
 };
 
+const MS_IN_MINUTE = 60 * 1000;
+const MS_IN_HOUR = 60 * MS_IN_MINUTE;
+const MS_IN_DAY = 24 * MS_IN_HOUR;
+const EXPIRING_SOON_DAYS = 3;
+
+const isSelectableInvite = (invite: InviteRecord) => invite.status === 'pending' || invite.status === 'sent';
+
+const formatRelativeTime = (value?: string | null) => {
+  if (!value) return '—';
+  const timestamp = Date.parse(value);
+  if (Number.isNaN(timestamp)) return '—';
+  const diff = timestamp - Date.now();
+  const abs = Math.abs(diff);
+
+  if (abs >= MS_IN_DAY) {
+    const days = Math.round(abs / MS_IN_DAY);
+    const label = `${days} day${days === 1 ? '' : 's'}`;
+    return diff >= 0 ? `in ${label}` : `${label} ago`;
+  }
+  if (abs >= MS_IN_HOUR) {
+    const hours = Math.max(1, Math.round(abs / MS_IN_HOUR));
+    const label = `${hours} hr${hours === 1 ? '' : 's'}`;
+    return diff >= 0 ? `in ${label}` : `${label} ago`;
+  }
+  const minutes = Math.max(1, Math.round(abs / MS_IN_MINUTE));
+  return diff >= 0 ? `in ${minutes} min` : `${minutes} min ago`;
+};
+
+const describeExpiry = (expiresAt?: string | null) => {
+  if (!expiresAt) return 'No expiry on file';
+  const timestamp = Date.parse(expiresAt);
+  if (Number.isNaN(timestamp)) return '—';
+  if (timestamp <= Date.now()) {
+    return `Expired ${formatRelativeTime(expiresAt)}`;
+  }
+  return `Expires ${formatRelativeTime(expiresAt)}`;
+};
+
+const expiryTone = (expiresAt?: string | null, status?: string) => {
+  if (status === 'accepted') return 'text-emerald-600';
+  if (!expiresAt) return 'text-gray-600';
+  const timestamp = Date.parse(expiresAt);
+  if (Number.isNaN(timestamp)) return 'text-gray-600';
+  if (timestamp <= Date.now()) return 'text-rose-600';
+  const days = (timestamp - Date.now()) / MS_IN_DAY;
+  if (days <= EXPIRING_SOON_DAYS) return 'text-amber-600';
+  return 'text-gray-700';
+};
+
+const describeReminder = (invite: InviteRecord) => {
+  const basis = invite.lastSentAt || invite.createdAt;
+  if (!basis) return 'Never sent';
+  return `Last sent ${formatRelativeTime(basis)}`;
+};
+
 export interface InviteManagerProps {
   orgId: string;
   defaultRole?: string;
@@ -84,11 +139,13 @@ const InviteManager = ({ orgId, defaultRole = 'member', onInvitesChanged, mode =
   const [invites, setInvites] = useState<InviteRecord[]>([]);
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [bulkResending, setBulkResending] = useState(false);
   const [bulkText, setBulkText] = useState('');
   const [singleEmail, setSingleEmail] = useState('');
   const [singleRole, setSingleRole] = useState(defaultRole);
   const [bulkRole, setBulkRole] = useState(defaultRole);
   const [actionInviteId, setActionInviteId] = useState<string | null>(null);
+  const [selectedInviteIds, setSelectedInviteIds] = useState<string[]>([]);
   const apiMode = mode ?? 'admin';
 
   const inviteApi = useMemo<InviteApi>(() => {
@@ -130,6 +187,12 @@ const InviteManager = ({ orgId, defaultRole = 'member', onInvitesChanged, mode =
     loadInvites();
   }, [loadInvites]);
 
+  useEffect(() => {
+    setSelectedInviteIds((prev) =>
+      prev.filter((id) => invites.some((invite) => invite.id === id && isSelectableInvite(invite))),
+    );
+  }, [invites]);
+
   const inviteCounts = useMemo(() => {
     return invites.reduce(
       (acc, invite) => {
@@ -139,6 +202,9 @@ const InviteManager = ({ orgId, defaultRole = 'member', onInvitesChanged, mode =
       {} as Record<string, number>,
     );
   }, [invites]);
+
+  const selectableInvites = useMemo(() => invites.filter(isSelectableInvite), [invites]);
+  const hasSelection = selectedInviteIds.length > 0;
 
   const handleCreateInvite = async () => {
     if (!singleEmail.trim()) {
@@ -185,6 +251,52 @@ const InviteManager = ({ orgId, defaultRole = 'member', onInvitesChanged, mode =
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const toggleInviteSelection = (inviteId: string, checked: boolean) => {
+    setSelectedInviteIds((prev) => {
+      if (checked) {
+        return prev.includes(inviteId) ? prev : [...prev, inviteId];
+      }
+      return prev.filter((id) => id !== inviteId);
+    });
+  };
+
+  const handleSelectAll = (checked: boolean) => {
+    if (checked) {
+      setSelectedInviteIds(selectableInvites.map((invite) => invite.id));
+      return;
+    }
+    setSelectedInviteIds([]);
+  };
+
+  const handleBulkResendSelected = async () => {
+    if (!selectedInviteIds.length) {
+      showToast('Select at least one pending invite.', 'error');
+      return;
+    }
+    setBulkResending(true);
+    let success = 0;
+    let failures = 0;
+    for (const inviteId of selectedInviteIds) {
+      try {
+        await inviteApi.resend(orgId, inviteId);
+        success += 1;
+      } catch (error) {
+        console.error('[InviteManager] Bulk resend failure', error);
+        failures += 1;
+      }
+    }
+    const summary = [
+      success ? `${success} resent` : null,
+      failures ? `${failures} failed` : null,
+    ]
+      .filter(Boolean)
+      .join(', ');
+    showToast(summary || 'Bulk resend complete.', failures ? 'warning' : 'success');
+    setSelectedInviteIds([]);
+    setBulkResending(false);
+    await loadInvites();
   };
 
   const handleResend = async (inviteId: string) => {
@@ -319,6 +431,39 @@ const InviteManager = ({ orgId, defaultRole = 'member', onInvitesChanged, mode =
         ))}
       </div>
 
+      {selectableInvites.length > 0 && (
+        <div className="mb-3 flex flex-col gap-2 rounded-xl border border-dashed border-gray-200 bg-white/60 p-3 text-sm text-gray-600 md:flex-row md:items-center md:justify-between">
+          <div>
+            {hasSelection ? (
+              <span className="font-semibold text-gray-900">{selectedInviteIds.length}</span>
+            ) : (
+              '0'
+            )}{' '}
+            pending invite{selectableInvites.length === 1 ? '' : 's'} selected
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <label className="inline-flex items-center gap-2 text-sm font-medium text-gray-700">
+              <input
+                type="checkbox"
+                className="rounded border-gray-300 text-orange-500 focus:ring-orange-500"
+                checked={hasSelection && selectedInviteIds.length === selectableInvites.length}
+                onChange={(event) => handleSelectAll(event.target.checked)}
+              />
+              Select all pending
+            </label>
+            <LoadingButton
+              variant="secondary"
+              onClick={handleBulkResendSelected}
+              disabled={!hasSelection}
+              loading={bulkResending}
+            >
+              <RefreshCw className="h-4 w-4" />
+              Resend selected
+            </LoadingButton>
+          </div>
+        </div>
+      )}
+
       {emptyState ? (
         <div className="py-8 text-center text-gray-500 border border-dashed border-gray-200 rounded-xl">
           <p className="font-medium">No invites yet</p>
@@ -329,16 +474,37 @@ const InviteManager = ({ orgId, defaultRole = 'member', onInvitesChanged, mode =
           <table className="min-w-full text-sm">
             <thead>
               <tr className="bg-gray-50 text-left">
+                <th className="px-4 py-2">
+                  <input
+                    type="checkbox"
+                    className="rounded border-gray-300 text-orange-500 focus:ring-orange-500"
+                    checked={hasSelection && selectedInviteIds.length === selectableInvites.length && selectableInvites.length > 0}
+                    onChange={(event) => handleSelectAll(event.target.checked)}
+                    aria-label="Select all invites"
+                    disabled={selectableInvites.length === 0}
+                  />
+                </th>
                 <th className="px-4 py-2 font-medium text-gray-700">Email</th>
                 <th className="px-4 py-2 font-medium text-gray-700">Role</th>
                 <th className="px-4 py-2 font-medium text-gray-700">Status</th>
-                <th className="px-4 py-2 font-medium text-gray-700">Last Sent</th>
+                <th className="px-4 py-2 font-medium text-gray-700">Delivery</th>
+                <th className="px-4 py-2 font-medium text-gray-700">Expiry</th>
                 <th className="px-4 py-2 font-medium text-gray-700 text-right">Actions</th>
               </tr>
             </thead>
             <tbody>
               {invites.map((invite) => (
                 <tr key={invite.id} className="border-b border-gray-100">
+                  <td className="px-4 py-3">
+                    <input
+                      type="checkbox"
+                      className="rounded border-gray-300 text-orange-500 focus:ring-orange-500"
+                      disabled={!isSelectableInvite(invite)}
+                      checked={selectedInviteIds.includes(invite.id)}
+                      onChange={(event) => toggleInviteSelection(invite.id, event.target.checked)}
+                      aria-label={`Select invite for ${invite.email}`}
+                    />
+                  </td>
                   <td className="px-4 py-3">
                     <div className="font-medium text-gray-900">{invite.email}</div>
                     <div className="text-xs text-gray-500">
@@ -352,7 +518,18 @@ const InviteManager = ({ orgId, defaultRole = 'member', onInvitesChanged, mode =
                     </span>
                   </td>
                   <td className="px-4 py-3 text-gray-600">
-                    {invite.lastSentAt ? new Date(invite.lastSentAt).toLocaleDateString() : '—'}
+                    <div className="text-sm">{describeReminder(invite)}</div>
+                    <div className="text-xs text-gray-500">
+                      Reminders: {invite.reminderCount ?? 0}
+                    </div>
+                  </td>
+                  <td className="px-4 py-3">
+                    <div className={`text-sm font-semibold ${expiryTone(invite.expiresAt, invite.status)}`}>
+                      {describeExpiry(invite.expiresAt)}
+                    </div>
+                    <div className="text-xs text-gray-500">
+                      {invite.expiresAt ? new Date(invite.expiresAt).toLocaleDateString() : '—'}
+                    </div>
                   </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center justify-end gap-2">
