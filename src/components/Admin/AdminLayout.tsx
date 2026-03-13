@@ -27,6 +27,7 @@ import {
   ChevronDown,
   UserCircle2,
   AlertTriangle,
+  Activity,
 } from 'lucide-react';
 import Card from '../ui/Card';
 import Button from '../ui/Button';
