@@ -42,6 +42,7 @@ import ApiStatusBanner from '../system/ApiStatusBanner';
 import { useToast } from '../../context/ToastContext';
 import { logAuthRedirect, logAuthDiagnostic } from '../../utils/logAuthRedirect';
 import { useAdminAccessState } from '../../lib/adminAccessState';
+import AdminNotificationBell from './AdminNotificationBell';
 
 interface AdminLayoutProps {
   children?: ReactNode;
@@ -56,6 +57,7 @@ type AdminNavItem = {
 
 const navigation: AdminNavItem[] = [
   { name: 'Overview', href: '/admin/dashboard', icon: LayoutDashboard, exact: true },
+  { name: 'CRM', href: '/admin/crm', icon: Activity },
   { name: 'Courses', href: '/admin/courses', icon: BookOpen },
   { name: 'Course Builder', href: '/admin/course-builder/new', icon: Wand2 },
   { name: 'Surveys', href: '/admin/surveys', icon: ClipboardList },
@@ -498,6 +500,7 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
             </div>
 
             <div className="flex items-center gap-3">
+              <AdminNotificationBell />
               <div className="hidden items-center gap-3 rounded-full border border-mist bg-white px-4 py-2 text-sm text-slate/70 shadow-sm lg:flex">
                 <div className="leading-tight">
                   <p className="text-[11px] uppercase tracking-[0.2em] text-slate/60">Organization</p>

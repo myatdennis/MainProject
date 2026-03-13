@@ -81,6 +81,7 @@ const AdminQueueMonitor = lazy(() => import('./pages/Admin/AdminQueueMonitor'));
 const AdminLeadershipInsights = lazy(() => import('./pages/Admin/AdminLeadershipInsights'));
 const AdminProfilePage = lazy(() => import('./pages/Admin/AdminProfilePage'));
 const AdminLayout = lazy(() => import('./components/Admin/AdminLayout'));
+const AdminCRM = lazy(() => import('./pages/Admin/AdminCRM'));
 const AdminCoursesImport = lazy(() => import('./pages/Admin/AdminCoursesImport'));
 const AdminCourseBulkPlaceholder = lazy(() => import('./pages/Admin/Course/AdminCourseBulkPlaceholder'));
 const AdminCourseNewPlaceholder = lazy(() => import('./pages/Admin/Course/AdminCourseNewPlaceholder'));
@@ -272,6 +273,7 @@ function AppContent() {
                   <Route path="organizations" element={<AdminOrganizations />} />
                   <Route path="organizations/new" element={<AdminOrganizationCreate />} />
                   <Route path="organizations/:organizationId" element={<AdminOrganizationProfile />} />
+                  <Route path="crm" element={<AdminCRM />} />
                   <Route path="leadership" element={<AdminLeadershipInsights />} />
                   <Route path="profile" element={<AdminProfilePage />} />
                   <Route path="users" element={<AdminUsers />} />

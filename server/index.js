@@ -110,7 +110,7 @@ const isUuidIdentifier = (value) =>
 
 const shouldLogAuthDebug =
   NODE_ENV !== 'production' || String(process.env.ENABLE_AUTH_DEBUG || '').toLowerCase() === 'true';
-const ENABLE_NOTIFICATIONS = parseFlag(process.env.ENABLE_NOTIFICATIONS);
+const ENABLE_NOTIFICATIONS = parseFlag(process.env.ENABLE_NOTIFICATIONS, true);
 const ORG_ADMIN_ROLES = new Set(['admin', 'owner', 'org_admin', 'organization_admin', 'super_admin', 'admin_user']);
 const hasOrgAdminRole = (role) => ORG_ADMIN_ROLES.has(String(role || '').toLowerCase());
 
@@ -1177,6 +1177,19 @@ app.post('/api/admin/courses/:id/assign', async (req, res) => {
           skippedRowCount: assignmentSkippedCount,
         });
       }
+      if (inserted.length > 0) {
+        try {
+          await notifyAssignmentRecipients({
+            assignmentType: 'course',
+            assignments: inserted,
+            actor: { userId: assignedBy ?? context.userId ?? null },
+          });
+        } catch (error) {
+          logger.warn('course_assignment_notification_skipped', {
+            message: error?.message || String(error),
+          });
+        }
+      }
       res.status(inserted.length > 0 ? 201 : 200).json({
         data: responseRows,
         meta: {
@@ -1355,6 +1368,19 @@ app.post('/api/admin/courses/:id/assign', async (req, res) => {
         ...assignmentLogBase,
         skippedRowCount: assignmentSkippedCount,
       });
+    }
+    if (insertedRows.length > 0) {
+      try {
+        await notifyAssignmentRecipients({
+          assignmentType: 'course',
+          assignments: insertedRows,
+          actor: { userId: assignedBy ?? context.userId ?? null },
+        });
+      } catch (error) {
+        logger.warn('course_assignment_notification_skipped', {
+          message: error?.message || String(error),
+        });
+      }
     }
     res.status(insertedRows.length > 0 ? 201 : 200).json({
       data: responseRows,
@@ -6135,6 +6161,353 @@ const sendUserMessage = async ({
   });
 
   return finalRecord;
+};
+
+const CRM_SUMMARY_TEMPLATE = Object.freeze({
+  organizations: { total: 0, active: 0, onboarding: 0, newThisMonth: 0 },
+  users: { total: 0, active: 0, invited: 0, recentActive: 0 },
+  assignments: { coursesLast30d: 0, surveysLast30d: 0, overdue: 0 },
+  communication: { messagesLast30d: 0, notificationsLast30d: 0, unreadNotifications: 0 },
+  invites: { pending: 0, accepted: 0, expired: 0 },
+});
+
+const CRM_ACTIVITY_TEMPLATE = Object.freeze({
+  organizations: [],
+  users: [],
+  messages: [],
+  notifications: [],
+});
+
+const cloneCrmSummary = () => ({
+  organizations: { ...CRM_SUMMARY_TEMPLATE.organizations },
+  users: { ...CRM_SUMMARY_TEMPLATE.users },
+  assignments: { ...CRM_SUMMARY_TEMPLATE.assignments },
+  communication: { ...CRM_SUMMARY_TEMPLATE.communication },
+  invites: { ...CRM_SUMMARY_TEMPLATE.invites },
+});
+
+const cloneCrmActivity = () => ({
+  organizations: [...CRM_ACTIVITY_TEMPLATE.organizations],
+  users: [...CRM_ACTIVITY_TEMPLATE.users],
+  messages: [...CRM_ACTIVITY_TEMPLATE.messages],
+  notifications: [...CRM_ACTIVITY_TEMPLATE.notifications],
+});
+
+const countRows = async (table, applyFilters) => {
+  if (!supabase) return 0;
+  let query = supabase.from(table).select('id', { count: 'exact', head: true });
+  if (typeof applyFilters === 'function') {
+    const modified = applyFilters(query);
+    if (modified) {
+      query = modified;
+    }
+  }
+  const { count, error } = await query;
+  if (error) throw error;
+  return count || 0;
+};
+
+const fetchRecentRecords = async ({
+  table,
+  columns = '*',
+  orderBy = 'created_at',
+  limit = 6,
+  label,
+}) => {
+  if (!supabase) return [];
+  try {
+    const { data, error } = await supabase
+      .from(table)
+      .select(columns)
+      .order(orderBy, { ascending: false, nullsLast: false })
+      .limit(limit);
+    if (error) throw error;
+    return data || [];
+  } catch (error) {
+    logger.warn('crm_activity_fetch_failed', {
+      table,
+      label,
+      message: error?.message || String(error),
+    });
+    return [];
+  }
+};
+
+const loadCrmSummary = async () => {
+  const summary = cloneCrmSummary();
+  if (!supabase) {
+    summary.disabled = true;
+    return summary;
+  }
+  const now = new Date();
+  const thirtyDaysAgoIso = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)).toISOString();
+
+  try {
+    const [
+      orgTotal,
+      orgActive,
+      orgOnboarding,
+      orgNew,
+      userTotal,
+      userActive,
+      userInvited,
+      userRecent,
+      courseAssignmentsLast30d,
+      surveyAssignmentsLast30d,
+      overdueAssignments,
+      messagesLast30d,
+      notificationsLast30d,
+      unreadNotifications,
+      pendingInvites,
+      acceptedInvites,
+      expiredInvites,
+    ] = await Promise.all([
+      countRows('organizations'),
+      countRows('organizations', (query) => query.eq('status', 'active')),
+      countRows('organizations', (query) =>
+        query.or('status.eq.trial,onboarding_status.neq.complete,onboarding_status.is.null'),
+      ),
+      countRows('organizations', (query) => query.gte('created_at', monthStart)),
+      countRows('users'),
+      countRows('users', (query) => query.eq('status', 'active')),
+      countRows('organization_memberships', (query) => query.is('accepted_at', null)),
+      countRows('users', (query) => query.gte('last_login_at', thirtyDaysAgoIso)),
+      countRows('assignments', (query) =>
+        query
+          .eq('assignment_type', 'course')
+          .gte('created_at', thirtyDaysAgoIso),
+      ),
+      countRows('assignments', (query) =>
+        query
+          .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
+          .gte('created_at', thirtyDaysAgoIso),
+      ),
+      countRows('assignments', (query) =>
+        query
+          .or('assignment_type.eq.course,assignment_type.eq.survey')
+          .lt('due_at', now.toISOString())
+          .in('status', ['assigned', 'in-progress'])
+          .eq('active', true),
+      ),
+      countRows('message_logs', (query) => query.gte('created_at', thirtyDaysAgoIso)),
+      countRows('notifications', (query) => query.gte('created_at', thirtyDaysAgoIso)),
+      countRows('notifications', (query) => query.eq('status', 'unread')),
+      countRows('organization_invites', (query) => query.eq('status', 'pending')),
+      countRows('organization_invites', (query) => query.eq('status', 'accepted')),
+      countRows('organization_invites', (query) => query.eq('status', 'expired')),
+    ]);
+
+    summary.organizations = {
+      total: orgTotal,
+      active: orgActive,
+      onboarding: orgOnboarding,
+      newThisMonth: orgNew,
+    };
+    summary.users = {
+      total: userTotal,
+      active: userActive,
+      invited: userInvited,
+      recentActive: userRecent,
+    };
+    summary.assignments = {
+      coursesLast30d: courseAssignmentsLast30d,
+      surveysLast30d: surveyAssignmentsLast30d,
+      overdue: overdueAssignments,
+    };
+    summary.communication = {
+      messagesLast30d,
+      notificationsLast30d,
+      unreadNotifications,
+    };
+    summary.invites = {
+      pending: pendingInvites,
+      accepted: acceptedInvites,
+      expired: expiredInvites,
+    };
+  } catch (error) {
+    logger.warn('crm_summary_failed', {
+      message: error?.message || String(error),
+    });
+  }
+
+  return summary;
+};
+
+const loadCrmActivity = async () => {
+  const activity = cloneCrmActivity();
+  if (!supabase) {
+    activity.disabled = true;
+    return activity;
+  }
+
+  const [orgs, users, messages, notifications] = await Promise.all([
+    fetchRecentRecords({
+      table: 'organizations',
+      columns: 'id,name,status,contact_email,created_at',
+      orderBy: 'created_at',
+      label: 'organizations',
+    }),
+    fetchRecentRecords({
+      table: 'users',
+      columns: 'id,email,first_name,last_name,role,status,last_login_at,created_at',
+      orderBy: 'created_at',
+      label: 'users',
+    }),
+    fetchRecentRecords({
+      table: 'message_logs',
+      columns: 'id,organization_id,recipient_type,recipient_id,subject,channel,status,sent_at,created_at',
+      orderBy: 'created_at',
+      label: 'messages',
+    }),
+    fetchRecentRecords({
+      table: 'notifications',
+      columns: 'id,title,organization_id,user_id,status,channel,created_at,priority',
+      orderBy: 'created_at',
+      label: 'notifications',
+    }),
+  ]);
+
+  activity.organizations = orgs.map((row) => ({
+    id: row.id,
+    name: row.name,
+    status: row.status,
+    createdAt: row.created_at,
+    contactEmail: row.contact_email ?? null,
+  }));
+  activity.users = users.map((row) => ({
+    id: row.id,
+    email: row.email,
+    name: [row.first_name, row.last_name].filter(Boolean).join(' ').trim() || row.email,
+    role: row.role,
+    status: row.status,
+    lastLoginAt: row.last_login_at ?? null,
+    createdAt: row.created_at,
+  }));
+  activity.messages = messages.map(mapOrgMessageRecord);
+  activity.notifications = notifications.map(mapNotificationRecord);
+  return activity;
+};
+
+const ASSIGNMENT_NOTIFICATION_LIMIT = Math.min(
+  Math.max(Number(process.env.ASSIGNMENT_NOTIFICATION_LIMIT) || 50, 1),
+  200,
+);
+const COURSE_TITLE_CACHE = new Map();
+const SURVEY_TITLE_CACHE = new Map();
+
+const fetchAssignmentTitles = async (assignmentType, ids = []) => {
+  if (!supabase || !ids.length) return new Map();
+  const cache = assignmentType === 'course' ? COURSE_TITLE_CACHE : SURVEY_TITLE_CACHE;
+  const pending = ids.filter((id) => id && !cache.has(id));
+  if (pending.length) {
+    const table = assignmentType === 'course' ? 'courses' : 'surveys';
+    try {
+      const { data, error } = await supabase.from(table).select('id,title,name,slug').in('id', pending);
+      if (error) throw error;
+      (data || []).forEach((row) => {
+        if (!row?.id) return;
+        const label = row.title || row.name || row.slug || row.id;
+        cache.set(row.id, label);
+      });
+    } catch (error) {
+      logger.warn('assignment_title_lookup_failed', {
+        assignmentType,
+        message: error?.message || String(error),
+      });
+    }
+  }
+  const map = new Map();
+  ids.forEach((id) => {
+    if (!id) return;
+    map.set(id, cache.get(id) || null);
+  });
+  return map;
+};
+
+const buildAssignmentNotificationTitle = (assignmentType, entityTitle) => {
+  const fallback = assignmentType === 'course' ? 'Course' : 'Survey';
+  return assignmentType === 'course'
+    ? `New course assigned: ${entityTitle || fallback}`
+    : `New survey assigned: ${entityTitle || fallback}`;
+};
+
+const assignmentNotificationMetadata = (row) => ({
+  assignmentId: row?.id ?? null,
+  courseId: row?.course_id ?? null,
+  surveyId: row?.survey_id ?? null,
+  organizationId: row?.organization_id ?? row?.org_id ?? null,
+  dueAt: row?.due_at ?? null,
+  status: row?.status ?? null,
+});
+
+const notifyAssignmentRecipients = async ({ assignmentType, assignments = [], actor = null }) => {
+  if (!ENABLE_NOTIFICATIONS || !notificationService) return;
+  const candidateRows = Array.isArray(assignments)
+    ? assignments.filter((row) => row && (row.user_id || row.organization_id || row.org_id))
+    : [];
+  if (!candidateRows.length) return;
+
+  const limited = candidateRows.slice(0, ASSIGNMENT_NOTIFICATION_LIMIT);
+  const ids = Array.from(
+    new Set(
+      limited
+        .map((row) => (assignmentType === 'course' ? row.course_id : row.survey_id))
+        .filter(Boolean),
+    ),
+  );
+  const titleMap = await fetchAssignmentTitles(assignmentType, ids);
+
+  let dispatched = 0;
+  for (const assignment of limited) {
+    const entityId = assignmentType === 'course' ? assignment.course_id : assignment.survey_id;
+    const notificationTitle = buildAssignmentNotificationTitle(assignmentType, entityId ? titleMap.get(entityId) : null);
+    const organizationId = assignment.organization_id ?? assignment.org_id ?? null;
+    const userId = assignment.user_id ?? null;
+    const recipientId = userId ?? organizationId;
+    if (!recipientId) continue;
+
+    const bodyParts = [];
+    if (assignment.due_at) {
+      try {
+        bodyParts.push(`Due ${new Date(assignment.due_at).toLocaleDateString()}`);
+      } catch {
+        bodyParts.push('Due soon');
+      }
+    }
+    if (actor?.userId) {
+      bodyParts.push(`Assigned by ${actor.userId}`);
+    }
+    const message = bodyParts.join(' • ') || undefined;
+
+    try {
+      await notificationService.createNotification({
+        title: notificationTitle,
+        body: message,
+        organizationId,
+        userId,
+        type: assignmentType === 'course' ? 'course_assignment' : 'survey_assignment',
+        metadata: assignmentNotificationMetadata(assignment),
+        priority: 'normal',
+        channel: 'in_app',
+      });
+      dispatched += 1;
+    } catch (error) {
+      logger.warn('assignment_notification_failed', {
+        assignmentType,
+        assignmentId: assignment?.id ?? null,
+        message: error?.message || String(error),
+      });
+    }
+  }
+
+  if (dispatched > 0) {
+    logger.info('assignment_notification_dispatched', {
+      assignmentType,
+      count: dispatched,
+      attempted: limited.length,
+    });
+  }
 };
 
 const fetchOrgInvites = async (orgId, { requestId } = {}) => {
@@ -15636,6 +16009,7 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
   let insertedTotal = 0;
   let updatedTotal = 0;
   let skippedTotal = 0;
+  const insertedAssignments = [];
 
   const assignForOrg = async (organizationId) => {
     if (!organizationId) return;
@@ -15666,6 +16040,7 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
       e2eStore.assignments.push(...inserted);
       aggregateResponse.push(...inserted);
       insertedTotal += inserted.length;
+      insertedAssignments.push(...inserted);
       return;
     }
 
@@ -15772,6 +16147,7 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
     insertedTotal += insertedRows.length;
     updatedTotal += updatedRows.length;
     skippedTotal += Math.max(targetUserIds.length - insertedRows.length - updatedRows.length, 0);
+    insertedAssignments.push(...insertedRows);
   };
 
   try {
@@ -15808,6 +16184,20 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
         skippedRowCount: skippedTotal,
         invalidTargetIds,
       });
+    }
+
+    if (insertedAssignments.length > 0) {
+      try {
+        await notifyAssignmentRecipients({
+          assignmentType: SURVEY_ASSIGNMENT_TYPE,
+          assignments: insertedAssignments,
+          actor: { userId: assignedBy ?? context.userId ?? null },
+        });
+      } catch (error) {
+        logger.warn('survey_assignment_notification_skipped', {
+          message: error?.message || String(error),
+        });
+      }
     }
 
     await refreshSurveyAssignmentAggregates(id);
@@ -16103,6 +16493,22 @@ app.get('/api/learner/notifications', async (req, res) => {
 });
 
 // Notifications
+app.get('/api/admin/crm/summary', requireAdminAccess, asyncHandler(async (req, res) => {
+  const summary = await loadCrmSummary();
+  res.json({
+    data: summary,
+    requestId: req.requestId ?? null,
+  });
+}));
+
+app.get('/api/admin/crm/activity', requireAdminAccess, asyncHandler(async (req, res) => {
+  const activity = await loadCrmActivity();
+  res.json({
+    data: activity,
+    requestId: req.requestId ?? null,
+  });
+}));
+
 app.get('/api/admin/notifications', async (req, res) => {
   if (!ENABLE_NOTIFICATIONS) {
     res.json(buildDisabledNotificationsResponse(1, 25, req.requestId ?? null));
@@ -16328,6 +16734,129 @@ app.post('/api/admin/notifications', async (req, res) => {
     });
   }
 });
+
+app.post('/api/admin/notifications/broadcast', requireAdminAccess, asyncHandler(async (req, res) => {
+  if (!ENABLE_NOTIFICATIONS || !notificationService) {
+    res.status(202).json({
+      ok: true,
+      data: null,
+      notificationsDisabled: true,
+      requestId: req.requestId ?? null,
+    });
+    return;
+  }
+  if (!ensureSupabase(res)) return;
+  const payload = req.body || {};
+  const title = typeof payload.title === 'string' ? payload.title.trim() : '';
+  const message = typeof payload.message === 'string' ? payload.message.trim() : '';
+  if (!title || !message) {
+    res.status(400).json({ error: 'notification_title_and_message_required', message: 'Title and message are required.' });
+    return;
+  }
+
+  const maxTargets = Math.min(Number(payload.maxTargets) || 200, 500);
+  const targetScope = (payload.audience || payload.scope || 'custom').toString().toLowerCase();
+  const initialOrgIds = coerceIdArray(payload.organizationIds ?? payload.organization_ids ?? []);
+  const initialUserIds = coerceIdArray(payload.userIds ?? payload.user_ids ?? []);
+  const includeAllOrgs = parseFlag(payload.allOrganizations ?? payload.includeAllOrganizations);
+  const includeAllUsers = parseFlag(payload.allUsers ?? payload.includeAllUsers);
+
+  const resolvedOrgIds = new Set(initialOrgIds);
+  const resolvedUserIds = new Set(initialUserIds);
+
+  const hydrateOrganizations = includeAllOrgs || targetScope === 'all_active_orgs';
+  if (hydrateOrganizations) {
+    try {
+      const { data, error } = await supabase
+        .from('organizations')
+        .select('id')
+        .eq('status', 'active')
+        .order('updated_at', { ascending: false, nullsLast: false })
+        .limit(maxTargets);
+      if (error) throw error;
+      (data || []).forEach((row) => row?.id && resolvedOrgIds.add(row.id));
+    } catch (error) {
+      logger.warn('notification_broadcast_org_fetch_failed', { message: error?.message || String(error) });
+    }
+  }
+
+  const hydrateUsers = includeAllUsers || targetScope === 'all_active_users';
+  if (hydrateUsers) {
+    try {
+      const { data, error } = await supabase
+        .from('users')
+        .select('id')
+        .eq('status', 'active')
+        .order('last_login_at', { ascending: false, nullsLast: false })
+        .limit(maxTargets);
+      if (error) throw error;
+      (data || []).forEach((row) => row?.id && resolvedUserIds.add(row.id));
+    } catch (error) {
+      logger.warn('notification_broadcast_user_fetch_failed', { message: error?.message || String(error) });
+    }
+  }
+
+  const targets = [];
+  Array.from(resolvedOrgIds).slice(0, maxTargets).forEach((orgId) => {
+    if (orgId) targets.push({ organizationId: orgId, recipientType: 'organization' });
+  });
+  Array.from(resolvedUserIds).slice(0, maxTargets).forEach((userId) => {
+    if (userId) targets.push({ userId, recipientType: 'user' });
+  });
+
+  if (!targets.length) {
+    res.status(400).json({ error: 'notification_targets_required', message: 'Provide at least one organization or user target.' });
+    return;
+  }
+
+  const channel = (payload.channel || 'in_app').toString().toLowerCase();
+  const priority = (payload.priority || 'normal').toString().toLowerCase();
+  const metadata = typeof payload.metadata === 'object' && payload.metadata !== null ? payload.metadata : {};
+  const results = [];
+  let failures = 0;
+
+  for (const target of targets) {
+    try {
+      const record = await notificationService.createNotification({
+        title,
+        body: message,
+        organizationId: target.organizationId ?? null,
+        userId: target.userId ?? null,
+        channel,
+        priority,
+        metadata: {
+          ...metadata,
+          audience: targetScope,
+        },
+      });
+      results.push(mapNotificationRecord(record));
+    } catch (error) {
+      failures += 1;
+      logger.warn('notification_broadcast_target_failed', {
+        target,
+        message: error?.message || String(error),
+      });
+    }
+  }
+
+  logger.info('notification_broadcast_sent', {
+    requestId: req.requestId ?? null,
+    totalTargets: targets.length,
+    delivered: results.length,
+    failures,
+  });
+
+  res.status(results.length > 0 ? 201 : 202).json({
+    ok: results.length > 0,
+    data: results,
+    meta: {
+      requested: targets.length,
+      delivered: results.length,
+      failed: failures,
+    },
+    requestId: req.requestId ?? null,
+  });
+}));
 
 app.post('/api/admin/notifications/:id/read', async (req, res) => {
   if (!ENABLE_NOTIFICATIONS) {

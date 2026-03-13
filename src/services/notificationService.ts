@@ -70,7 +70,13 @@ const mapNotification = (record: any): Notification => ({
   messageId: record.messageId ?? record.message_id ?? null,
 });
 
-export const listNotifications = async (opts?: { organizationId?: string; userId?: string }) => {
+type AdminNotificationResponse = {
+  ok?: boolean;
+  data?: any[];
+  notificationsDisabled?: boolean;
+};
+
+export const listAdminNotificationsWithMeta = async (opts?: { organizationId?: string; userId?: string }) => {
   const params = new URLSearchParams();
   if (opts?.organizationId) params.set('org_id', opts.organizationId);
   if (opts?.userId) params.set('user_id', opts.userId);
@@ -78,13 +84,25 @@ export const listNotifications = async (opts?: { organizationId?: string; userId
   const path = `/api/admin/notifications${params.toString() ? `?${params.toString()}` : ''}`;
 
   try {
-    const json = await apiFetch<{ data: any[] }>('admin.list', path);
-    const items = (json.data ?? []).map(mapNotification);
+    const json = await apiFetch<AdminNotificationResponse>('admin.list', path);
+    const items = (json?.data ?? []).map(mapNotification);
 
-    return items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return {
+      notifications: items.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()),
+      notificationsDisabled: Boolean(json?.notificationsDisabled),
+    };
   } catch (error) {
-    return handleSchemaMissing(error, 'admin.list', [] as Notification[]);
+    const fallback = handleSchemaMissing(error, 'admin.list', [] as Notification[]);
+    return {
+      notifications: fallback,
+      notificationsDisabled: true,
+    };
   }
+};
+
+export const listNotifications = async (opts?: { organizationId?: string; userId?: string }) => {
+  const { notifications } = await listAdminNotificationsWithMeta(opts);
+  return notifications;
 };
 
 export const addNotification = async (notification: Omit<Notification, 'id' | 'createdAt'>) => {
@@ -179,6 +197,7 @@ export const markLearnerNotificationsRead = async (ids: string[]) => {
 
 export default {
   listNotifications,
+  listAdminNotificationsWithMeta,
   addNotification,
   markNotificationRead,
   deleteNotification,

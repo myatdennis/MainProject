@@ -1,9 +1,10 @@
-import { useMemo, useEffect, useState } from 'react';
+import { useMemo, useEffect, useState, useCallback } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { AlertTriangle, ArrowLeft, CheckCircle2, RefreshCw } from 'lucide-react';
 import ProfileView from '../../components/ProfileView';
 import LoadingButton from '../../components/LoadingButton';
 import InviteManager from '../../components/onboarding/InviteManager';
+import OrgCommunicationPanel from '../../components/Admin/OrgCommunicationPanel';
 import useOnboardingProgress from '../../hooks/useOnboardingProgress';
 import orgService, { type OrgProfileDetails } from '../../dal/orgs';
 import { format } from 'date-fns';
@@ -49,8 +50,11 @@ const AdminOrgProfile: React.FC = () => {
   const adminUsers = orgProfile?.admins ?? [];
   const messages = orgProfile?.messages ?? [];
 
-  useEffect(() => {
-    if (!orgId) return;
+  const fetchOrgProfile = useCallback(() => {
+    if (!orgId) {
+      setOrgProfile(null);
+      return;
+    }
     setOrgProfileLoading(true);
     orgService
       .getOrgProfileDetails(orgId)
@@ -65,6 +69,10 @@ const AdminOrgProfile: React.FC = () => {
       })
       .finally(() => setOrgProfileLoading(false));
   }, [orgId]);
+
+  useEffect(() => {
+    void fetchOrgProfile();
+  }, [fetchOrgProfile]);
 
   if (!orgProfileId) {
     return (
@@ -329,6 +337,15 @@ const AdminOrgProfile: React.FC = () => {
 
       {orgId && (
         <InviteManager orgId={orgId} onInvitesChanged={() => refresh()} />
+      )}
+
+      {orgId && orgProfile && (
+        <OrgCommunicationPanel
+          orgId={orgId}
+          orgName={orgProfile.organization.name}
+          messages={messages}
+          onMessageSent={fetchOrgProfile}
+        />
       )}
 
       <ProfileView 
