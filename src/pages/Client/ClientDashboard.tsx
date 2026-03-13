@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useRoutePrefetch } from '../../hooks/useRoutePrefetch';
-import { ArrowUpRight, BookOpen, Clock, Users, Award, Inbox, Sparkles } from 'lucide-react';
+import { ArrowUpRight, BookOpen, Clock, Users, Award, Inbox, Sparkles, ClipboardList, CalendarClock } from 'lucide-react';
 import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
@@ -18,6 +18,7 @@ import {
 } from '../../utils/courseProgress';
 import { getPreferredLessonId, getFirstLessonId } from '../../utils/courseNavigation';
 import { syncService } from '../../dal/sync';
+import { fetchAssignedSurveysForLearner, type LearnerSurveyAssignment } from '../../dal/surveys';
 import type { CourseAssignment } from '../../types/assignment';
 import { isSupabaseOperational, subscribeRuntimeStatus } from '../../state/runtimeStatus';
 import apiRequest, { ApiError } from '../../utils/apiClient';
@@ -97,6 +98,9 @@ const ClientDashboard = () => {
   }, [user]);
   const [assignments, setAssignments] = useState<CourseAssignment[]>([]);
   const [assignmentsLoading, setAssignmentsLoading] = useState(true);
+  const [surveyAssignments, setSurveyAssignments] = useState<LearnerSurveyAssignment[]>([]);
+  const [surveyAssignmentsLoading, setSurveyAssignmentsLoading] = useState(true);
+  const [surveyAssignmentsError, setSurveyAssignmentsError] = useState<string | null>(null);
   const [courseStoreRevision, setCourseStoreRevision] = useState(0);
   const [catalogError, setCatalogError] = useState<string | null>(null);
   const [analyticsError, setAnalyticsError] = useState<string | null>(null);
@@ -228,7 +232,7 @@ const ClientDashboard = () => {
         window.clearInterval(pollHandle);
         pollHandle = null;
       }
-  runtimeUnsub?.();
+      runtimeUnsub?.();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       unsubscribeCreate?.();
       unsubscribeUpdate?.();
@@ -236,12 +240,109 @@ const ClientDashboard = () => {
     };
   }, [learnerId, bootAttempt, updateBootStep]);
 
+  useEffect(() => {
+    let cancelled = false;
+    let pollHandle: number | null = null;
+
+    const refreshSurveyAssignments = async (reason: 'boot' | 'poll' = 'poll') => {
+      if (reason === 'boot') {
+        setSurveyAssignmentsLoading(true);
+        setSurveyAssignmentsError(null);
+      }
+      try {
+        const rows = await fetchAssignedSurveysForLearner();
+        if (!cancelled) {
+          setSurveyAssignments(rows);
+          setSurveyAssignmentsError(null);
+        }
+      } catch (error) {
+        console.error('Failed to load survey assignments:', error);
+        if (!cancelled) {
+          setSurveyAssignments([]);
+          setSurveyAssignmentsError('Surveys unavailable. Please retry soon.');
+        }
+      } finally {
+        if (!cancelled) {
+          setSurveyAssignmentsLoading(false);
+        }
+      }
+    };
+
+    void refreshSurveyAssignments('boot');
+    pollHandle = window.setInterval(() => {
+      void refreshSurveyAssignments();
+    }, 15000);
+
+    return () => {
+      cancelled = true;
+      if (pollHandle) {
+        window.clearInterval(pollHandle);
+      }
+    };
+  }, []);
+
   const handleRetryBoot = () => {
     setCatalogError(null);
     setAnalyticsError(null);
     setBootAttempt((attempt) => attempt + 1);
     updateBootStep('courses', 'running');
     updateBootStep('analytics', 'running');
+  };
+
+  const formatDueDateLabel = (iso?: string | null) => {
+    if (!iso) return 'No due date';
+    const parsed = Date.parse(iso);
+    if (Number.isNaN(parsed)) return 'No due date';
+    return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', year: 'numeric' }).format(
+      new Date(parsed),
+    );
+  };
+
+  const describeDueDate = (iso?: string | null) => {
+    if (!iso) return { label: 'No due date', overdue: false };
+    const parsed = Date.parse(iso);
+    if (Number.isNaN(parsed)) return { label: 'No due date', overdue: false };
+    const overdue = parsed < Date.now();
+    return {
+      label: formatDueDateLabel(iso),
+      overdue,
+    };
+  };
+
+  const getSurveyStatusLabel = (status: CourseAssignment['status']) => {
+    if (status === 'completed') return 'Completed';
+    if (status === 'in-progress') return 'In progress';
+    return 'Assigned';
+  };
+
+  const getSurveyBadgeTone = (status: CourseAssignment['status'], overdue: boolean): 'positive' | 'info' | 'attention' | 'danger' => {
+    if (status === 'completed') return 'positive';
+    if (overdue) return 'danger';
+    if (status === 'in-progress') return 'info';
+    return 'attention';
+  };
+
+  const handleNavigateToSurveys = (assignmentId?: string, surveyId?: string | null) => {
+    const params = new URLSearchParams();
+    if (assignmentId) params.set('assignment', assignmentId);
+    if (surveyId) params.set('focus', surveyId);
+    const suffix = params.toString();
+    navigate(suffix ? `/client/surveys?${suffix}` : '/client/surveys');
+  };
+
+  const extractSurveyLink = (assignment: CourseAssignment) => {
+    if (!assignment.metadata || typeof assignment.metadata !== 'object') {
+      return null;
+    }
+    const metadata = assignment.metadata as Record<string, unknown>;
+    const candidate =
+      (typeof metadata.survey_url === 'string' && metadata.survey_url) ||
+      (typeof metadata.link === 'string' && metadata.link) ||
+      (typeof metadata.url === 'string' && metadata.url);
+    if (candidate && typeof candidate === 'string' && candidate.trim().startsWith('http')) {
+      return candidate.trim();
+    }
+    return null;
   };
 
   const courses = useMemo(
@@ -331,6 +432,60 @@ const ClientDashboard = () => {
       };
     });
   }, [courses.length, courseStoreRevision, progressRefreshToken]);
+
+  const surveyStats = useMemo(() => {
+    if (surveyAssignments.length === 0) {
+      return {
+        total: 0,
+        completed: 0,
+        inProgress: 0,
+        overdue: 0,
+        nextDue: null as LearnerSurveyAssignment | null,
+      };
+    }
+    const now = Date.now();
+    const completed = surveyAssignments.filter((entry) => entry.assignment.status === 'completed').length;
+    const inProgress = surveyAssignments.filter((entry) => entry.assignment.status === 'in-progress').length;
+    const overdue = surveyAssignments.filter((entry) => {
+      const due = entry.assignment.dueDate;
+      if (!due) return false;
+      const parsed = Date.parse(due);
+      if (Number.isNaN(parsed)) return false;
+      if (entry.assignment.status === 'completed') return false;
+      return parsed < now;
+    }).length;
+    const nextDue =
+      [...surveyAssignments]
+        .filter((entry) => entry.assignment.dueDate)
+        .sort((a, b) => {
+          const left = Date.parse(a.assignment.dueDate ?? '');
+          const right = Date.parse(b.assignment.dueDate ?? '');
+          const safeLeft = Number.isNaN(left) ? Number.POSITIVE_INFINITY : left;
+          const safeRight = Number.isNaN(right) ? Number.POSITIVE_INFINITY : right;
+          return safeLeft - safeRight;
+        })
+        .find((entry) => entry.assignment.status !== 'completed') ?? null;
+
+    return {
+      total: surveyAssignments.length,
+      completed,
+      inProgress,
+      overdue,
+      nextDue,
+    };
+  }, [surveyAssignments]);
+
+  const pendingSurveyAssignments = useMemo(
+    () => surveyAssignments.filter((entry) => entry.assignment.status !== 'completed'),
+    [surveyAssignments],
+  );
+
+  const featuredSurveyAssignments = useMemo(() => {
+    if (pendingSurveyAssignments.length > 0) {
+      return pendingSurveyAssignments.slice(0, 3);
+    }
+    return surveyAssignments.slice(0, 3);
+  }, [pendingSurveyAssignments, surveyAssignments]);
 
   const hasAssignedCourses = courseDetails.length > 0;
   const showingFallbackCatalog = !hasAssignedCourses && fallbackCourseDetails.length > 0;
@@ -482,6 +637,39 @@ const ClientDashboard = () => {
         </Card>
       </div>
 
+      <div className="mt-6 grid gap-4 md:grid-cols-3">
+        <Card tone="muted" className="text-center py-6">
+          <div className="font-heading text-3xl font-bold text-charcoal">{surveyStats.total}</div>
+          <p className="text-xs uppercase tracking-wide text-slate/70">Assigned surveys</p>
+        </Card>
+        <Card tone="muted" className="text-center py-6">
+          <div className="font-heading text-3xl font-bold text-charcoal">{surveyStats.completed}</div>
+          <p className="text-xs uppercase tracking-wide text-slate/70">Surveys completed</p>
+          <p className="text-xs text-slate/60 mt-1">{surveyStats.inProgress} in progress</p>
+        </Card>
+        <Card tone="muted" className="py-6">
+          <p className="text-xs uppercase tracking-wide text-slate/70 flex items-center gap-2">
+            <CalendarClock className="h-4 w-4 text-slate/70" />
+            Next survey due
+          </p>
+          {surveyStats.nextDue ? (
+            <div className="mt-2">
+              <div className="font-heading text-base font-semibold text-charcoal">
+                {surveyStats.nextDue.survey?.title ?? 'Upcoming survey'}
+              </div>
+              <p className="text-sm text-slate/70">{formatDueDateLabel(surveyStats.nextDue.assignment.dueDate)}</p>
+            </div>
+          ) : (
+            <p className="mt-2 text-sm text-slate/70">No upcoming deadlines</p>
+          )}
+          {surveyStats.overdue > 0 && (
+            <Badge tone="danger" className="mt-3 inline-flex">
+              {surveyStats.overdue} overdue
+            </Badge>
+          )}
+        </Card>
+      </div>
+
       <div className="mt-10 grid gap-6 lg:grid-cols-2">
         <Card className="space-y-4">
           <div className="flex items-center justify-between">
@@ -571,6 +759,107 @@ const ClientDashboard = () => {
           </Button>
         </Card>
       </div>
+
+      <Card className="mt-8 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h2 className="font-heading text-lg font-semibold text-charcoal flex items-center gap-2">
+              <ClipboardList className="h-5 w-5 text-slate/60" />
+              Assigned surveys
+            </h2>
+            <p className="text-sm text-slate/70">Track listening pulses and feedback requests from your organization.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            {surveyAssignmentsError && !surveyAssignmentsLoading && (
+              <Badge tone="attention" className="text-[11px]">
+                {surveyAssignmentsError}
+              </Badge>
+            )}
+            <Button variant="ghost" size="sm" onClick={() => handleNavigateToSurveys()}>
+              View all
+            </Button>
+          </div>
+        </div>
+        {surveyAssignmentsLoading ? (
+          <div className="flex items-center justify-center py-10 text-sm text-slate/60">
+            Checking for surveys…
+          </div>
+        ) : surveyAssignments.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-mist bg-cloud/60 p-6 text-center">
+            <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-white text-slate/70">
+              <ClipboardList className="h-6 w-6" />
+            </div>
+            <h3 className="mt-4 font-heading text-base font-semibold text-charcoal">No surveys yet</h3>
+            <p className="mt-2 text-sm text-slate/70">
+              You’ll see culture and engagement surveys here as soon as they’re assigned.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {featuredSurveyAssignments.map((entry) => {
+              const { assignment, survey } = entry;
+              const due = describeDueDate(assignment.dueDate);
+              const tone = getSurveyBadgeTone(assignment.status, due.overdue);
+              const statusLabel = getSurveyStatusLabel(assignment.status);
+              const surveyLink = extractSurveyLink(assignment);
+              return (
+                <div
+                  key={assignment.id}
+                  className="rounded-2xl border border-slate/20 bg-white/90 p-4 shadow-sm"
+                >
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p className="font-heading text-base font-semibold text-charcoal">
+                        {survey?.title ?? 'Untitled survey'}
+                      </p>
+                      <p className="text-xs text-slate/70">
+                        {due.overdue && assignment.status !== 'completed' ? 'Overdue • ' : ''}
+                        {due.label}
+                      </p>
+                    </div>
+                    <Badge tone={tone}>{statusLabel}</Badge>
+                  </div>
+                  {survey?.description && (
+                    <p className="mt-2 text-sm text-slate/70 line-clamp-2">{survey.description}</p>
+                  )}
+                  {assignment.note && (
+                    <p className="mt-2 text-sm text-slate/70 italic">{assignment.note}</p>
+                  )}
+                  <div className="mt-3 flex flex-wrap items-center gap-4 text-xs text-slate/70">
+                    <span className="inline-flex items-center gap-1">
+                      <CalendarClock className="h-3.5 w-3.5" />
+                      {due.label}
+                    </span>
+                    {assignment.assignedBy && (
+                      <span className="inline-flex items-center gap-1">
+                        <Users className="h-3.5 w-3.5" />
+                        Assigned by {assignment.assignedBy}
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-4 flex flex-wrap gap-3">
+                    <Button size="sm" onClick={() => handleNavigateToSurveys(assignment.id, survey?.id)}>
+                      Review details
+                    </Button>
+                    {surveyLink && (
+                      <Button size="sm" variant="ghost" asChild>
+                        <a href={surveyLink} target="_blank" rel="noreferrer">
+                          Open survey
+                        </a>
+                      </Button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+            {surveyAssignments.length > featuredSurveyAssignments.length && (
+              <Button variant="ghost" size="sm" onClick={() => handleNavigateToSurveys()}>
+                See {surveyAssignments.length - featuredSurveyAssignments.length} more
+              </Button>
+            )}
+          </div>
+        )}
+      </Card>
     </div>
     {showDebugOverlay && <BootDebugOverlay steps={bootSteps} onRetry={handleRetryBoot} />}
     </>

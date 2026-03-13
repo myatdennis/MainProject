@@ -125,12 +125,15 @@ export type OrgProfileInvite = {
   id: string;
   organizationId: string | null;
   email: string | null;
+  role: string | null;
   status: string;
   invitedBy: string | null;
   invitedAt: string | null;
   acceptedAt: string | null;
   expiresAt: string | null;
   lastSentAt: string | null;
+  note: string | null;
+  token?: string | null;
 };
 
 export type OrgProfileMessage = {
@@ -265,12 +268,15 @@ const mapOrgInviteRecord = (record: any): OrgProfileInvite => ({
   id: record.id ?? '',
   organizationId: record.organizationId ?? record.organization_id ?? record.org_id ?? null,
   email: record.email ?? null,
+  role: record.role ?? null,
   status: record.status ?? 'pending',
+  token: record.token ?? null,
   invitedBy: record.invitedBy ?? record.invited_by ?? null,
   invitedAt: record.invitedAt ?? record.invited_at ?? record.created_at ?? null,
   acceptedAt: record.acceptedAt ?? record.accepted_at ?? null,
   expiresAt: record.expiresAt ?? record.expires_at ?? null,
   lastSentAt: record.lastSentAt ?? record.last_sent_at ?? null,
+  note: record.note ?? null,
 });
 
 const mapOrgMessageRecord = (record: any): OrgProfileMessage => ({
@@ -503,6 +509,47 @@ export const removeOrgMember = async (organizationId: string, membershipId: stri
   });
 };
 
+export type OrgInviteInput = {
+  email: string;
+  role?: string;
+  metadata?: Record<string, any>;
+  sendEmail?: boolean;
+  note?: string | null;
+  allowDuplicate?: boolean;
+};
+
+export const listOrgInvites = async (organizationId: string) => {
+  return apiRequest<{ data: OrgProfileInvite[] }>(`/api/admin/organizations/${organizationId}/invites`);
+};
+
+export const createOrgInvite = async (organizationId: string, payload: OrgInviteInput) => {
+  return apiRequest<{ data: any; duplicate?: boolean }>(`/api/admin/organizations/${organizationId}/invites`, {
+    method: 'POST',
+    body: payload,
+  });
+};
+
+export const bulkOrgInvites = async (organizationId: string, invites: OrgInviteInput[]) => {
+  return apiRequest<{ results: Array<Record<string, any>> }>(`/api/admin/organizations/${organizationId}/invites/bulk`, {
+    method: 'POST',
+    body: { invites },
+  });
+};
+
+export const resendOrgInvite = async (organizationId: string, inviteId: string) => {
+  return apiRequest<{ data: any }>(`/api/admin/organizations/${organizationId}/invites/${inviteId}/resend`, {
+    method: 'POST',
+  });
+};
+
+export const revokeOrgInvite = async (organizationId: string, inviteId: string) => {
+  return apiRequest(`/api/admin/organizations/${organizationId}/invites/${inviteId}`, {
+    method: 'DELETE',
+    expectedStatus: [200, 204],
+    rawResponse: true,
+  });
+};
+
 export default {
   listOrgPage,
   listOrgs,
@@ -512,6 +559,11 @@ export default {
   createOrg,
   deleteOrg,
   bulkUpdateOrgs,
+  listOrgInvites,
+  createOrgInvite,
+  bulkOrgInvites,
+  resendOrgInvite,
+  revokeOrgInvite,
   getOrgStats,
   listOrgMembers,
   addOrgMember,

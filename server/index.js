@@ -66,8 +66,9 @@ import {
   supabaseServerConfigured,
   parseFlag,
 } from './config/runtimeFlags.js';
-import { sendEmail } from './services/emailService.js';
+import { sendEmail, configureEmailLogging } from './services/emailService.js';
 import { createMediaService } from './services/mediaService.js';
+import { createNotificationService } from './services/notificationService.js';
 import { isJwtSecretConfigured } from './utils/jwt.js';
 import { writeErrorDiagnostics, summarizeRequestBody } from './utils/errorDiagnostics.js';
 import getUserMemberships, { buildMembershipFilterString } from './utils/memberships.js';
@@ -2015,6 +2016,9 @@ console.log('[supabase] startup', {
 
 let supabase = supabaseUrl && supabaseServiceRoleKey ? createClient(supabaseUrl, supabaseServiceRoleKey) : null;
 let supabaseAuthClient = supabaseUrl && supabaseAnonKey ? createClient(supabaseUrl, supabaseAnonKey) : null;
+configureEmailLogging({
+  getSupabase: () => supabase,
+});
 let surveyAssignmentAggregateRpcMissingLogged = false;
 if (E2E_TEST_MODE) {
   console.log('[server] Running in E2E_TEST_MODE - ignoring Supabase credentials and using in-memory fallback');
@@ -2056,6 +2060,12 @@ const mediaService = createMediaService({
 });
 
 const notificationDispatcher = setupNotificationDispatcher({ supabase, emailSender: sendEmail });
+const notificationService = createNotificationService({
+  getSupabase: () => supabase,
+  dispatcher: notificationDispatcher,
+  logger,
+});
+app.locals.notificationService = notificationService;
 
 const INVITE_REMINDER_JOB = 'invites.reminder';
 const INVITE_REMINDER_LOOKBACK_HOURS = Number(
@@ -5306,6 +5316,12 @@ async function deliverInviteEmail(invite, { orgName, inviterName }) {
   return { ...invite, ...updatePayload };
 }
 
+const normalizeInviteNote = (value) => {
+  if (typeof value !== 'string') return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+};
+
 async function createOrgInvite({
   orgId,
   email,
@@ -5315,6 +5331,7 @@ async function createOrgInvite({
   metadata = {},
   sendEmail: shouldSendEmail = true,
   duplicateStrategy = 'return',
+  note = null,
 }) {
   if (!supabase) {
     throw new Error('supabase_not_configured');
@@ -5340,9 +5357,11 @@ async function createOrgInvite({
   }
 
   const normalizedMetadata = metadata && typeof metadata === 'object' ? metadata : {};
+  const normalizedNote = normalizeInviteNote(note);
   const token = randomUUID().replace(/-/g, '');
   const expiresAt = new Date(Date.now() + INVITE_TOKEN_TTL_HOURS * 60 * 60 * 1000).toISOString();
 
+  const nowIso = new Date().toISOString();
   const payload = {
     org_id: orgId,
     email: normalizedEmail,
@@ -5354,6 +5373,9 @@ async function createOrgInvite({
     invited_name: normalizedMetadata?.name ?? null,
     metadata: normalizedMetadata,
     expires_at: expiresAt,
+    invited_by: inviter?.userId ?? null,
+    invited_at: nowIso,
+    note: normalizedNote,
   };
 
   const { data, error } = await supabase
@@ -5775,6 +5797,7 @@ const mapOrgInviteRecord = (row) => ({
   id: row.id,
   organizationId: row.organization_id ?? row.org_id ?? null,
   email: row.email ?? null,
+  role: row.role ?? null,
   status: row.status ?? 'pending',
   token: row.token ?? null,
   invitedBy: row.invited_by ?? null,
@@ -5782,6 +5805,7 @@ const mapOrgInviteRecord = (row) => ({
   acceptedAt: row.accepted_at ?? null,
   expiresAt: row.expires_at ?? null,
   lastSentAt: row.last_sent_at ?? null,
+  note: row.note ?? null,
 });
 
 const mapOrgMessageRecord = (row) => ({
@@ -5798,12 +5822,327 @@ const mapOrgMessageRecord = (row) => ({
   metadata: row.metadata ?? null,
 });
 
+const MESSAGE_CHANNELS = new Set(['email', 'in_app']);
+
+const sanitizeRecipientEmails = (input) => {
+  const values = Array.isArray(input) ? input : [input];
+  const emails = new Set();
+  for (const value of values) {
+    if (!value) continue;
+    const normalized = String(value).trim().toLowerCase();
+    if (!normalized || !normalized.includes('@')) continue;
+    emails.add(normalized);
+  }
+  return Array.from(emails);
+};
+
+const resolveOrgMessageRecipients = async (orgId, provided = []) => {
+  const explicit = sanitizeRecipientEmails(provided);
+  if (explicit.length || !supabase) {
+    return explicit;
+  }
+
+  const recipients = [];
+  try {
+    const { data: org } = await supabase
+      .from('organizations')
+      .select('contact_email')
+      .eq('id', orgId)
+      .maybeSingle();
+    if (org?.contact_email) {
+      recipients.push(org.contact_email);
+    }
+  } catch (error) {
+    logger.warn('org_message_contact_lookup_failed', { orgId, message: error?.message || String(error) });
+  }
+
+  try {
+    const { data: contacts } = await supabase
+      .from('organization_contacts')
+      .select('email, is_primary')
+      .eq('org_id', orgId)
+      .order('is_primary', { ascending: false })
+      .order('updated_at', { ascending: false, nullsLast: false })
+      .limit(5);
+    (contacts || []).forEach((contact) => {
+      if (contact?.email) {
+        recipients.push(contact.email);
+      }
+    });
+  } catch (error) {
+    logger.warn('org_message_contacts_lookup_failed', { orgId, message: error?.message || String(error) });
+  }
+
+  return sanitizeRecipientEmails(recipients);
+};
+
+const resolveUserMessageRecipients = async (userId, provided = []) => {
+  const explicit = sanitizeRecipientEmails(provided);
+  if (explicit.length) return explicit;
+  if (!supabase || !userId) return [];
+
+  const candidates = [];
+  try {
+    const { data: profile } = await supabase
+      .from('user_profiles')
+      .select('email')
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (profile?.email) {
+      candidates.push(profile.email);
+    }
+  } catch (error) {
+    logger.warn('user_message_profile_lookup_failed', { userId, message: error?.message || String(error) });
+  }
+
+  if (!candidates.length) {
+    try {
+      const { data } = await supabase.auth.admin.getUserById(userId);
+      if (data?.user?.email) {
+        candidates.push(data.user.email);
+      }
+    } catch (error) {
+      logger.warn('user_message_auth_lookup_failed', { userId, message: error?.message || String(error) });
+    }
+  }
+
+  return sanitizeRecipientEmails(candidates);
+};
+
+const normalizeMessageChannel = (channel) => {
+  const normalized = String(channel || '').toLowerCase();
+  if (MESSAGE_CHANNELS.has(normalized)) {
+    return normalized;
+  }
+  return 'in_app';
+};
+
+const insertMessageLog = async ({
+  organizationId = null,
+  recipientType = 'organization',
+  recipientId = null,
+  subject = null,
+  body,
+  channel = 'in_app',
+  actor = null,
+  metadata = {},
+}) => {
+  if (!supabase) throw new Error('supabase_not_configured');
+  const normalizedChannel = normalizeMessageChannel(channel);
+  const payload = {
+    organization_id: organizationId,
+    org_id: organizationId,
+    recipient_type: recipientType,
+    recipient_id: recipientId,
+    subject,
+    body,
+    channel: normalizedChannel,
+    status: normalizedChannel === 'email' ? 'queued' : 'sent',
+    sent_by: actor?.userId ?? null,
+    metadata: metadata && typeof metadata === 'object' ? metadata : {},
+    sent_at: normalizedChannel === 'email' ? null : new Date().toISOString(),
+  };
+  const { data, error } = await supabase.from('message_logs').insert(payload).select('*').single();
+  if (error) throw error;
+  return data;
+};
+
+const finalizeMessageLog = async (id, updates = {}) => {
+  const { data, error } = await supabase.from('message_logs').update(updates).eq('id', id).select('*').single();
+  if (error) throw error;
+  return data;
+};
+
+const sendOrganizationMessage = async ({
+  orgId,
+  subject,
+  body,
+  channel = 'email',
+  recipients = [],
+  actor,
+  requestId = null,
+}) => {
+  if (!orgId) throw new Error('org_id_required');
+  if (!body || !body.trim()) throw new Error('message_body_required');
+  const normalizedChannel = normalizeMessageChannel(channel);
+  const resolvedRecipients = await resolveOrgMessageRecipients(orgId, recipients);
+
+  if (normalizedChannel === 'email' && resolvedRecipients.length === 0) {
+    throw new Error('message_recipients_required');
+  }
+
+  const orgSummary = await fetchOrganizationSummary(orgId);
+  const metadata = {
+    recipients: resolvedRecipients,
+    orgName: orgSummary?.name ?? null,
+  };
+  const record = await insertMessageLog({
+    organizationId: orgId,
+    recipientType: 'organization',
+    recipientId: orgId,
+    subject: subject || `Message for ${orgSummary?.name || 'organization'}`,
+    body,
+    channel: normalizedChannel,
+    actor,
+    metadata,
+  });
+
+  let finalRecord = record;
+  if (normalizedChannel === 'email' && resolvedRecipients.length) {
+    const failures = [];
+    let delivered = 0;
+    for (const email of resolvedRecipients) {
+      try {
+        const result = await sendEmail({
+          to: email,
+          subject: subject || `Message from The Huddle`,
+          text: body,
+          html: `<p style="font-family:Arial,sans-serif;color:#111827;line-height:1.5;">${body.replace(/\n/g, '<br/>')}</p>`,
+          logContext: {
+            organizationId: orgId,
+            recipientType: 'organization',
+            recipientId: orgId,
+            sentBy: actor?.userId ?? null,
+            metadata: { source: 'admin_message' },
+          },
+        });
+        if (result.delivered) {
+          delivered += 1;
+        } else {
+          failures.push({ email, reason: result.reason || 'unknown' });
+        }
+      } catch (error) {
+        failures.push({ email, reason: error?.message || 'send_failed' });
+      }
+    }
+    const status = delivered > 0 ? 'sent' : 'failed';
+    finalRecord = await finalizeMessageLog(record.id, {
+      status,
+      sent_at: new Date().toISOString(),
+      metadata: {
+        ...(record.metadata || {}),
+        recipients: resolvedRecipients,
+        failures,
+      },
+    });
+  } else {
+    finalRecord = await finalizeMessageLog(record.id, {
+      metadata: {
+        ...(record.metadata || {}),
+        recipients: resolvedRecipients,
+      },
+    });
+  }
+
+  logOrganizationsEvent('organization_message_sent', {
+    requestId,
+    status: finalRecord.status ?? 'sent',
+    metadata: {
+      orgId,
+      messageId: finalRecord.id,
+      channel: normalizedChannel,
+    },
+  });
+
+  return finalRecord;
+};
+
+const sendUserMessage = async ({
+  userId,
+  organizationId = null,
+  subject,
+  body,
+  channel = 'email',
+  recipients = [],
+  actor,
+  requestId = null,
+}) => {
+  if (!userId) throw new Error('user_id_required');
+  if (!body || !body.trim()) throw new Error('message_body_required');
+  const normalizedChannel = normalizeMessageChannel(channel);
+  const resolvedRecipients = await resolveUserMessageRecipients(userId, recipients);
+
+  if (normalizedChannel === 'email' && resolvedRecipients.length === 0) {
+    throw new Error('message_recipients_required');
+  }
+
+  const metadata = { recipients: resolvedRecipients };
+  const record = await insertMessageLog({
+    organizationId,
+    recipientType: 'user',
+    recipientId: userId,
+    subject: subject || 'Message from The Huddle',
+    body,
+    channel: normalizedChannel,
+    actor,
+    metadata,
+  });
+
+  let finalRecord = record;
+  if (normalizedChannel === 'email' && resolvedRecipients.length) {
+    const failures = [];
+    let delivered = 0;
+    for (const email of resolvedRecipients) {
+      try {
+        const result = await sendEmail({
+          to: email,
+          subject: subject || 'Message from The Huddle',
+          text: body,
+          html: `<p style="font-family:Arial,sans-serif;color:#111827;line-height:1.5;">${body.replace(/\n/g, '<br/>')}</p>`,
+          logContext: {
+            organizationId,
+            recipientType: 'user',
+            recipientId: userId,
+            sentBy: actor?.userId ?? null,
+            metadata: { source: 'admin_message' },
+          },
+        });
+        if (result.delivered) {
+          delivered += 1;
+        } else {
+          failures.push({ email, reason: result.reason || 'unknown' });
+        }
+      } catch (error) {
+        failures.push({ email, reason: error?.message || 'send_failed' });
+      }
+    }
+    const status = delivered > 0 ? 'sent' : 'failed';
+    finalRecord = await finalizeMessageLog(record.id, {
+      status,
+      sent_at: new Date().toISOString(),
+      metadata: {
+        ...(record.metadata || {}),
+        recipients: resolvedRecipients,
+        failures,
+      },
+    });
+  } else {
+    finalRecord = await finalizeMessageLog(record.id, {
+      metadata: {
+        ...(record.metadata || {}),
+        recipients: resolvedRecipients,
+      },
+    });
+  }
+
+  logger.info('user_message_sent', {
+    requestId,
+    userId,
+    organizationId,
+    messageId: finalRecord.id,
+    channel: normalizedChannel,
+    status: finalRecord.status ?? 'sent',
+  });
+
+  return finalRecord;
+};
+
 const fetchOrgInvites = async (orgId, { requestId } = {}) => {
   if (!supabase || !orgId) return [];
   try {
     const { data, error } = await supabase
       .from('organization_invites')
-      .select('id, organization_id, org_id, email, status, token, invited_by, invited_at, accepted_at, expires_at, last_sent_at, created_at')
+      .select('id, organization_id, org_id, email, role, status, token, invited_by, invited_at, accepted_at, expires_at, last_sent_at, note, created_at')
       .or(`organization_id.eq.${orgId},org_id.eq.${orgId}`)
       .order('invited_at', { ascending: false, nullsFirst: false })
       .limit(100);
@@ -5816,6 +6155,33 @@ const fetchOrgInvites = async (orgId, { requestId } = {}) => {
     return (data || []).map(mapOrgInviteRecord);
   } catch (error) {
     logOrganizationsStageError('profile_invites_fetch_failed', error, { orgId, requestId });
+    return [];
+  }
+};
+
+const fetchUserMessages = async (userId, { limit = 25 } = {}) => {
+  if (!supabase || !userId) return [];
+  try {
+    const queryLimit = Math.max(1, Math.min(limit, 100));
+    const { data, error } = await supabase
+      .from('message_logs')
+      .select('*')
+      .eq('recipient_type', 'user')
+      .eq('recipient_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(queryLimit);
+    if (error) {
+      if (isMissingRelationError(error) || isMissingColumnError(error)) {
+        return [];
+      }
+      throw error;
+    }
+    return (data || []).map(mapOrgMessageRecord);
+  } catch (error) {
+    logger.warn('user_messages_fetch_failed', {
+      userId,
+      message: error?.message || String(error),
+    });
     return [];
   }
 };
@@ -12854,7 +13220,7 @@ app.get('/api/admin/organizations/:orgId/users', async (req, res) => {
 app.post('/api/admin/organizations/:orgId/invites', async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { orgId } = req.params;
-  const { email, role = 'member', metadata = {}, sendEmail = true } = req.body || {};
+  const { email, role = 'member', metadata = {}, sendEmail = true, note: noteInput } = req.body || {};
 
   const normalizedEmail = typeof email === 'string' ? email.trim().toLowerCase() : '';
   if (!normalizedEmail) {
@@ -12876,6 +13242,7 @@ app.post('/api/admin/organizations/:orgId/invites', async (req, res) => {
       .maybeSingle();
 
     const actor = buildActorFromRequest(req);
+    const inviteNote = normalizeInviteNote(noteInput);
     const { invite, duplicate } = await createOrgInvite({
       orgId,
       email: normalizedEmail,
@@ -12885,6 +13252,17 @@ app.post('/api/admin/organizations/:orgId/invites', async (req, res) => {
       metadata,
       sendEmail,
       duplicateStrategy: 'return',
+      note: inviteNote,
+    });
+
+    logOrganizationsEvent('organization_invite_created', {
+      requestId: req.requestId ?? null,
+      status: duplicate ? 'duplicate' : 'created',
+      metadata: {
+        orgId,
+        inviteId: invite?.id ?? null,
+        email: invite?.email ?? normalizedEmail,
+      },
     });
 
     res.status(201).json({
@@ -12900,6 +13278,270 @@ app.post('/api/admin/organizations/:orgId/invites', async (req, res) => {
     res.status(500).json({ error: 'Unable to create organization invite' });
   }
 });
+
+app.get('/api/admin/organizations/:orgId/invites', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const { orgId } = req.params;
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  const access = await requireOrgAccess(req, res, orgId, { write: false, requireOrgAdmin: true });
+  if (!access) return;
+
+  try {
+    const invites = await fetchOrgInvites(orgId, { requestId: req.requestId ?? null });
+    res.json({ data: invites });
+  } catch (error) {
+    logRouteError('GET /api/admin/organizations/:orgId/invites', error);
+    res.status(500).json({ error: 'Unable to load organization invites' });
+  }
+});
+
+app.post('/api/admin/organizations/:orgId/invites/bulk', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const { orgId } = req.params;
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  const access = await requireOrgAccess(req, res, orgId, { write: true, requireOrgAdmin: true });
+  if (!access) return;
+
+  const entries = Array.isArray(req.body?.invites) ? req.body.invites : [];
+  if (!entries.length) {
+    res.status(400).json({ error: 'invites_required', message: 'Provide at least one invite.' });
+    return;
+  }
+
+  const actor = buildActorFromRequest(req);
+  const orgSummary = await fetchOrganizationSummary(orgId);
+  const orgName = orgSummary?.name || req.body?.orgName || 'Your organization';
+  const sliced = entries.slice(0, INVITE_BULK_LIMIT);
+  const results = [];
+
+  for (const entry of sliced) {
+    const email = (entry?.email || '').trim().toLowerCase();
+    if (!email) {
+      results.push({ error: 'missing_email' });
+      continue;
+    }
+    try {
+      const entryNote = normalizeInviteNote(entry?.note);
+      const { invite, duplicate } = await createOrgInvite({
+        orgId,
+        email,
+        role: normalizeOrgRole(entry?.role || 'member'),
+        inviter: actor,
+        orgName,
+        metadata: entry?.metadata || {},
+        sendEmail: entry?.sendEmail !== false,
+        note: entryNote,
+      });
+      results.push({ email: invite.email, id: invite.id, duplicate });
+    } catch (error) {
+      results.push({ email, error: error.message });
+    }
+  }
+
+  await markActivationStep(orgId, 'invite_team', { status: 'in_progress', actor });
+  logOrganizationsEvent('organization_invite_bulk', {
+    requestId: req.requestId ?? null,
+    metadata: { orgId, count: results.length },
+  });
+  res.status(201).json({ results });
+});
+
+app.post('/api/admin/organizations/:orgId/invites/:inviteId/resend', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const { orgId, inviteId } = req.params;
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  const access = await requireOrgAccess(req, res, orgId, { write: true, requireOrgAdmin: true });
+  if (!access) return;
+
+  const actor = buildActorFromRequest(req);
+  try {
+    const { data: invite, error } = await supabase
+      .from('org_invites')
+      .select('*')
+      .eq('id', inviteId)
+      .eq('org_id', orgId)
+      .maybeSingle();
+
+    if (error) throw error;
+    if (!invite) {
+      res.status(404).json({ error: 'Invite not found' });
+      return;
+    }
+    if (invite.status === 'accepted' || invite.status === 'revoked') {
+      res.status(400).json({ error: 'Invite can no longer be resent' });
+      return;
+    }
+
+    const orgSummary = await fetchOrganizationSummary(orgId);
+    const updated = await deliverInviteEmail(invite, { orgName: orgSummary?.name || '', inviterName: actor.name });
+    await recordActivationEvent(orgId, 'invite_resent', { inviteId }, actor);
+    logOrganizationsEvent('organization_invite_resent', {
+      requestId: req.requestId ?? null,
+      metadata: { orgId, inviteId },
+    });
+    res.json({ data: updated });
+  } catch (error) {
+    logRouteError('POST /api/admin/organizations/:orgId/invites/:inviteId/resend', error);
+    res.status(500).json({ error: 'Unable to resend invite' });
+  }
+});
+
+app.delete('/api/admin/organizations/:orgId/invites/:inviteId', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const { orgId, inviteId } = req.params;
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  const access = await requireOrgAccess(req, res, orgId, { write: true, requireOrgAdmin: true });
+  if (!access) return;
+
+  try {
+    const { error } = await supabase
+      .from('org_invites')
+      .update({ status: 'revoked' })
+      .eq('id', inviteId)
+      .eq('org_id', orgId);
+    if (error) throw error;
+    await recordActivationEvent(orgId, 'invite_revoked', { inviteId }, buildActorFromRequest(req));
+    logOrganizationsEvent('organization_invite_revoked', {
+      requestId: req.requestId ?? null,
+      metadata: { orgId, inviteId },
+    });
+    res.status(204).end();
+  } catch (error) {
+    logRouteError('DELETE /api/admin/organizations/:orgId/invites/:inviteId', error);
+    res.status(500).json({ error: 'Unable to revoke invite' });
+  }
+});
+
+app.get('/api/admin/organizations/:orgId/messages', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const { orgId } = req.params;
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  const access = await requireOrgAccess(req, res, orgId, { write: false, requireOrgAdmin: true });
+  if (!access) return;
+
+  try {
+    const limit = Number(req.query?.limit ?? 25) || 25;
+    const data = await fetchOrgMessages(orgId, { limit });
+    res.json({ data });
+  } catch (error) {
+    logRouteError('GET /api/admin/organizations/:orgId/messages', error);
+    res.status(500).json({ error: 'Unable to load organization messages' });
+  }
+});
+
+app.post('/api/admin/organizations/:orgId/messages', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const { orgId } = req.params;
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  const access = await requireOrgAccess(req, res, orgId, { write: true, requireOrgAdmin: true });
+  if (!access) return;
+
+  const subject = typeof req.body?.subject === 'string' ? req.body.subject.trim() : '';
+  const body = typeof req.body?.body === 'string' ? req.body.body.trim() : '';
+  const channel = req.body?.channel || req.body?.delivery ?? 'email';
+  const recipients =
+    Array.isArray(req.body?.recipients) && req.body.recipients.length
+      ? req.body.recipients
+      : typeof req.body?.recipients === 'string'
+        ? req.body.recipients.split(/[\n,;]/).map((value) => value.trim())
+        : [];
+
+  if (!body) {
+    res.status(400).json({ error: 'message_body_required', message: 'Message body is required.' });
+    return;
+  }
+
+  try {
+    const actor = buildActorFromRequest(req);
+    const record = await sendOrganizationMessage({
+      orgId,
+      subject,
+      body,
+      channel,
+      recipients,
+      actor,
+      requestId: req.requestId ?? null,
+    });
+    res.status(201).json({ data: mapOrgMessageRecord(record) });
+  } catch (error) {
+    if (error?.message === 'message_recipients_required') {
+      res.status(400).json({ error: 'message_recipients_required', message: 'No recipient emails available for this organization.' });
+      return;
+    }
+    if (error?.message === 'message_body_required') {
+      res.status(400).json({ error: 'message_body_required', message: 'Message body is required.' });
+      return;
+    }
+    logRouteError('POST /api/admin/organizations/:orgId/messages', error);
+    res.status(500).json({ error: 'Unable to send organization message' });
+  }
+});
+
+app.get('/api/admin/users/:userId/messages', requireAdminAccess, asyncHandler(async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const { userId } = req.params;
+  const limit = Number(req.query?.limit ?? 25) || 25;
+  const data = await fetchUserMessages(userId, { limit });
+  res.json({ data });
+}));
+
+app.post('/api/admin/users/:userId/messages', requireAdminAccess, asyncHandler(async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const { userId } = req.params;
+  const subject = typeof req.body?.subject === 'string' ? req.body.subject.trim() : '';
+  const body = typeof req.body?.body === 'string' ? req.body.body.trim() : '';
+  const channel = req.body?.channel || 'email';
+  const organizationId = req.body?.organizationId || null;
+  const recipients =
+    Array.isArray(req.body?.recipients) && req.body.recipients.length
+      ? req.body.recipients
+      : typeof req.body?.recipients === 'string'
+        ? req.body.recipients.split(/[\n,;]/).map((value) => value.trim())
+        : [];
+
+  if (!body) {
+    res.status(400).json({ error: 'message_body_required', message: 'Message body is required.' });
+    return;
+  }
+
+  try {
+    const actor = buildActorFromRequest(req);
+    const record = await sendUserMessage({
+      userId,
+      organizationId,
+      subject,
+      body,
+      channel,
+      recipients,
+      actor,
+      requestId: req.requestId ?? null,
+    });
+    res.status(201).json({ data: mapOrgMessageRecord(record) });
+  } catch (error) {
+    if (error?.message === 'message_recipients_required') {
+      res.status(400).json({ error: 'message_recipients_required', message: 'No email found for this user.' });
+      return;
+    }
+    if (error?.message === 'message_body_required') {
+      res.status(400).json({ error: 'message_body_required', message: 'Message body is required.' });
+      return;
+    }
+    logRouteError('POST /api/admin/users/:userId/messages', error);
+    res.status(500).json({ error: 'Unable to send user message' });
+  }
+}));
 
 // ---------------------------------------------------------------------------
 // Public invite acceptance endpoints
@@ -13184,6 +13826,7 @@ app.post('/api/admin/onboarding/orgs', async (req, res) => {
           inviter: actor,
           orgName: org.name,
           metadata: invite.metadata || {},
+          note: normalizeInviteNote(invite.note),
         });
         inviteResults.push({ email: createdInvite.email, id: createdInvite.id, role: createdInvite.role });
       } catch (inviteError) {
@@ -13237,6 +13880,7 @@ app.post('/api/admin/onboarding/:orgId/invites', async (req, res) => {
     return;
   }
 
+  const note = normalizeInviteNote(body.note);
   try {
     const orgSummary = await fetchOrganizationSummary(orgId);
     const orgName = orgSummary?.name || body.orgName || 'Your organization';
@@ -13250,6 +13894,7 @@ app.post('/api/admin/onboarding/:orgId/invites', async (req, res) => {
       metadata: body.metadata || {},
       sendEmail: body.sendEmail !== false,
       duplicateStrategy: body.allowDuplicate ? 'create' : 'return',
+      note,
     });
 
     if (!duplicate) {
@@ -13286,6 +13931,7 @@ app.post('/api/admin/onboarding/:orgId/invites/bulk', async (req, res) => {
       continue;
     }
     try {
+      const entryNote = normalizeInviteNote(entry?.note);
       const { invite, duplicate } = await createOrgInvite({
         orgId,
         email,
@@ -13294,6 +13940,7 @@ app.post('/api/admin/onboarding/:orgId/invites/bulk', async (req, res) => {
         orgName,
         metadata: entry?.metadata || {},
         sendEmail: entry?.sendEmail !== false,
+        note: entryNote,
       });
       results.push({ email: invite.email, id: invite.id, duplicate });
     } catch (error) {

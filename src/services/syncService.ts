@@ -26,15 +26,20 @@ const normalizeAssignmentStatus = (status?: string | null): CourseAssignment['st
 
 const mapAssignmentFromSupabase = (record: any): CourseAssignment => ({
   id: record?.id,
-  courseId: record?.course_id,
+  courseId: record?.course_id ?? null,
+  surveyId: record?.survey_id ?? null,
   userId: (record?.user_id || '').toLowerCase(),
+  organizationId: record?.organization_id ?? null,
   status: normalizeAssignmentStatus(record?.status),
   progress: Number.isFinite(record?.progress) ? Number(record.progress) : 0,
-  dueDate: record?.due_date ?? null,
+  dueDate: record?.due_at ?? record?.due_date ?? null,
   note: record?.note ?? null,
   assignedBy: record?.assigned_by ?? null,
+  metadata: record?.metadata && typeof record.metadata === 'object' ? record.metadata : null,
   createdAt: record?.created_at || new Date().toISOString(),
   updatedAt: record?.updated_at || new Date().toISOString(),
+  assignmentType: record?.assignment_type === 'survey' ? 'survey' : 'course',
+  active: typeof record?.active === 'boolean' ? record.active : true,
 });
 
 const resolveProgressUserId = (record: any): string | null => {
@@ -303,7 +308,7 @@ class SyncService {
           {
             event: '*',
             schema: 'public',
-            table: 'course_assignments',
+            table: 'assignments',
           },
           (payload: any) => {
             console.log('Real-time assignment change detected:', payload);

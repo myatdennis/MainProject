@@ -52,6 +52,7 @@ import { getOrganizationProfile, type OrganizationProfile } from '../../dal/prof
 import LoadingButton from '../../components/LoadingButton';
 import EditOrganizationModal from '../../components/EditOrganizationModal';
 import { useToast } from '../../context/ToastContext';
+import { sendOrganizationMessage } from '../../services/adminCommunicationService';
 
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell } from 'recharts';
 
@@ -110,6 +111,8 @@ const OrganizationDetails: React.FC = () => {
   const [members, setMembers] = useState<OrgProfileUser[]>([]);
   const [memberForm, setMemberForm] = useState({ userId: '', role: 'member' });
   const [memberSubmitting, setMemberSubmitting] = useState(false);
+  const [messageForm, setMessageForm] = useState({ subject: '', body: '', recipients: '', channel: 'email' as 'email' | 'in_app' });
+  const [sendingMessage, setSendingMessage] = useState(false);
 
   const loadOrganizationProfile = useCallback(async () => {
     if (!id) return;
@@ -198,12 +201,41 @@ const OrganizationDetails: React.FC = () => {
   const handleRemoveMember = async (membershipId: string) => {
     if (!id) return;
     try {
-  await removeOrgMember(id, membershipId);
+      await removeOrgMember(id, membershipId);
       await loadOrgAdminProfile();
       showToast('Member removed successfully', 'success');
     } catch (error) {
       console.error('Failed to remove organization member:', error);
       showToast('Failed to remove organization member', 'error');
+    }
+  };
+
+  const handleSendMessage = async () => {
+    if (!id) return;
+    if (!messageForm.body.trim()) {
+      showToast('Message body is required', 'error');
+      return;
+    }
+    setSendingMessage(true);
+    try {
+      const recipientList = messageForm.recipients
+        .split(/[\n,;]/)
+        .map((value) => value.trim())
+        .filter(Boolean);
+      await sendOrganizationMessage(id, {
+        subject: messageForm.subject.trim() || undefined,
+        body: messageForm.body.trim(),
+        channel: messageForm.channel,
+        recipients: recipientList.length ? recipientList : undefined,
+      });
+      showToast('Message sent successfully.', 'success');
+      setMessageForm({ subject: '', body: '', recipients: '', channel: messageForm.channel });
+      await loadOrgAdminProfile();
+    } catch (error) {
+      console.error('Failed to send organization message:', error);
+      showToast('Unable to send message. Please try again.', 'error');
+    } finally {
+      setSendingMessage(false);
     }
   };
 
@@ -910,6 +942,55 @@ const OrganizationDetails: React.FC = () => {
                       ? `Last contacted ${new Date(messageHistory[0].sentAt ?? Date.now()).toLocaleString()}`
                       : 'No messages logged'}
                   </span>
+                </div>
+                <div className="rounded-lg border border-dashed border-gray-200 bg-gray-50 p-4 space-y-3">
+                  <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                    <div className="md:col-span-2">
+                      <label className="block text-xs font-semibold text-gray-600 mb-1">Subject</label>
+                      <input
+                        type="text"
+                        value={messageForm.subject}
+                        onChange={(e) => setMessageForm((form) => ({ ...form, subject: e.target.value }))}
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="Quarterly update, welcome, reminder…"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-gray-600 mb-1">Channel</label>
+                      <select
+                        value={messageForm.channel}
+                        onChange={(e) =>
+                          setMessageForm((form) => ({ ...form, channel: e.target.value as 'email' | 'in_app' }))
+                        }
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="email">Email</option>
+                        <option value="in_app">In-app note</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">Message</label>
+                    <textarea
+                      value={messageForm.body}
+                      onChange={(e) => setMessageForm((form) => ({ ...form, body: e.target.value }))}
+                      rows={4}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="Write a personalized note to this organization…"
+                    />
+                  </div>
+                  <div className="flex flex-col md:flex-row md:items-center gap-3">
+                    <input
+                      type="text"
+                      value={messageForm.recipients}
+                      onChange={(e) => setMessageForm((form) => ({ ...form, recipients: e.target.value }))}
+                      placeholder="Override recipient emails (comma separated)"
+                      className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    <LoadingButton onClick={handleSendMessage} loading={sendingMessage}>
+                      Send Message
+                    </LoadingButton>
+                  </div>
                 </div>
                 {messageHistory.length === 0 ? (
                   <p className="text-sm text-gray-500">No outbound messages recorded for this organization.</p>

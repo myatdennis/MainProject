@@ -9,6 +9,13 @@ import {
   resendOnboardingInvite,
   revokeOnboardingInvite,
 } from '../../dal/onboarding';
+import {
+  bulkOrgInvites as bulkAdminOrgInvites,
+  createOrgInvite as createAdminOrgInvite,
+  listOrgInvites as listAdminOrgInvites,
+  resendOrgInvite as resendAdminOrgInvite,
+  revokeOrgInvite as revokeAdminOrgInvite,
+} from '../../services/orgService';
 
 interface InviteRecord {
   id: string;
@@ -16,6 +23,8 @@ interface InviteRecord {
   role: string;
   status: 'pending' | 'sent' | 'accepted' | 'revoked' | 'expired' | 'bounced';
   inviterEmail?: string | null;
+  note?: string | null;
+  token?: string | null;
   createdAt?: string;
   updatedAt?: string;
   lastSentAt?: string | null;
@@ -43,6 +52,7 @@ export interface InviteManagerProps {
   orgId: string;
   defaultRole?: string;
   onInvitesChanged?: (invites: InviteRecord[]) => void;
+  mode?: 'admin' | 'onboarding';
 }
 
 const normalizeBulkEntries = (text: string, fallbackRole: string) => {
@@ -61,7 +71,15 @@ const normalizeBulkEntries = (text: string, fallbackRole: string) => {
     .slice(0, 100);
 };
 
-const InviteManager = ({ orgId, defaultRole = 'member', onInvitesChanged }: InviteManagerProps) => {
+type InviteApi = {
+  list: (orgId: string) => Promise<{ data: any[] }>;
+  create: (orgId: string, payload: Record<string, any>) => Promise<any>;
+  bulk: (orgId: string, invites: Array<Record<string, any>>) => Promise<{ results: Array<Record<string, any>> }>;
+  resend: (orgId: string, inviteId: string) => Promise<any>;
+  revoke: (orgId: string, inviteId: string) => Promise<any>;
+};
+
+const InviteManager = ({ orgId, defaultRole = 'member', onInvitesChanged, mode = 'admin' }: InviteManagerProps) => {
   const { showToast } = useToast();
   const [invites, setInvites] = useState<InviteRecord[]>([]);
   const [loading, setLoading] = useState(false);
@@ -71,12 +89,32 @@ const InviteManager = ({ orgId, defaultRole = 'member', onInvitesChanged }: Invi
   const [singleRole, setSingleRole] = useState(defaultRole);
   const [bulkRole, setBulkRole] = useState(defaultRole);
   const [actionInviteId, setActionInviteId] = useState<string | null>(null);
+  const apiMode = mode ?? 'admin';
+
+  const inviteApi = useMemo<InviteApi>(() => {
+    if (apiMode === 'onboarding') {
+      return {
+        list: listOnboardingInvites,
+        create: createOnboardingInvite,
+        bulk: bulkOnboardingInvites,
+        resend: resendOnboardingInvite,
+        revoke: revokeOnboardingInvite,
+      };
+    }
+    return {
+      list: listAdminOrgInvites,
+      create: createAdminOrgInvite,
+      bulk: bulkAdminOrgInvites,
+      resend: resendAdminOrgInvite,
+      revoke: revokeAdminOrgInvite,
+    };
+  }, [apiMode]);
 
   const loadInvites = useCallback(async () => {
     if (!orgId) return;
     setLoading(true);
     try {
-      const response = await listOnboardingInvites(orgId);
+      const response = await inviteApi.list(orgId);
       const next = (response?.data || []) as InviteRecord[];
       setInvites(next);
       onInvitesChanged?.(next);
@@ -86,7 +124,7 @@ const InviteManager = ({ orgId, defaultRole = 'member', onInvitesChanged }: Invi
     } finally {
       setLoading(false);
     }
-  }, [orgId, onInvitesChanged, showToast]);
+  }, [inviteApi, orgId, onInvitesChanged, showToast]);
 
   useEffect(() => {
     loadInvites();
@@ -109,7 +147,7 @@ const InviteManager = ({ orgId, defaultRole = 'member', onInvitesChanged }: Invi
     }
     setSubmitting(true);
     try {
-      await createOnboardingInvite(orgId, { email: singleEmail.trim(), role: singleRole });
+      await inviteApi.create(orgId, { email: singleEmail.trim(), role: singleRole });
       showToast('Invite sent successfully.', 'success');
       setSingleEmail('');
       await loadInvites();
@@ -129,7 +167,7 @@ const InviteManager = ({ orgId, defaultRole = 'member', onInvitesChanged }: Invi
     }
     setSubmitting(true);
     try {
-      const response = await bulkOnboardingInvites(orgId, entries);
+      const response = await inviteApi.bulk(orgId, entries);
       const results = response.results || [];
       const duplicates = results.filter((entry) => entry.duplicate).length;
       const failures = results.filter((entry) => entry.error).length;
@@ -152,7 +190,7 @@ const InviteManager = ({ orgId, defaultRole = 'member', onInvitesChanged }: Invi
   const handleResend = async (inviteId: string) => {
     setActionInviteId(inviteId);
     try {
-      await resendOnboardingInvite(orgId, inviteId);
+      await inviteApi.resend(orgId, inviteId);
       showToast('Invite resent.', 'success');
       await loadInvites();
     } catch (error: any) {
@@ -169,7 +207,7 @@ const InviteManager = ({ orgId, defaultRole = 'member', onInvitesChanged }: Invi
     }
     setActionInviteId(inviteId);
     try {
-      await revokeOnboardingInvite(orgId, inviteId);
+      await inviteApi.revoke(orgId, inviteId);
       showToast('Invite revoked.', 'success');
       await loadInvites();
     } catch (error: any) {

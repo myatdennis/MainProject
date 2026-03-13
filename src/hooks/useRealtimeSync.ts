@@ -20,7 +20,7 @@ interface UseRealtimeSyncOptions {
 export const useRealtimeSync = (options: UseRealtimeSyncOptions = {}) => {
   const {
     userId,
-    channels = ['course_assignments', 'user_progress', 'enrollments'],
+    channels = ['assignments', 'course_assignments', 'user_progress', 'enrollments'],
     onEvent,
     onError,
     enabled = true
@@ -90,8 +90,10 @@ export const useRealtimeSync = (options: UseRealtimeSyncOptions = {}) => {
       });
       subscriptionsRef.current = [];
 
+      const uniqueChannels = Array.from(new Set(channels));
+
       // Subscribe to each channel
-      for (const channelName of channels) {
+      for (const channelName of uniqueChannels) {
         const channel = supabaseRef.current.channel(channelName)
           .on('postgres_changes', 
             { 

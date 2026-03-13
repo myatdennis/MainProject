@@ -6,7 +6,7 @@ import { getUserSession, secureGet, secureSet, secureRemove } from '../lib/secur
 import apiRequest, { ApiError as RequestError } from './apiClient';
 
 const STORAGE_KEY = 'huddle_course_assignments_v1';
-const ASSIGNMENTS_TABLE = 'course_assignments';
+const ASSIGNMENTS_TABLE = 'assignments';
 let assignmentsTableUnavailable = false;
 let assignmentsTableWarningLogged = false;
 let assignmentsProgressColumnMissing = false;
@@ -108,6 +108,7 @@ type SupabaseAssignmentRow = {
   created_at?: string | null;
   updated_at?: string | null;
   metadata?: Record<string, unknown> | null;
+  active?: boolean | null;
 };
 
 const toAssignmentStatus = (status?: string | null): CourseAssignmentStatus => {
@@ -152,13 +153,13 @@ const mapSupabaseAssignment = (row: SupabaseAssignmentRow): CourseAssignment => 
     progress: Number.isFinite(row.progress) ? Number(row.progress) : 0,
     dueDate: row.due_at || row.due_date || null,
     note: row.note || null,
-    assignedBy: row.assigned_by || null,
-    createdAt: row.created_at || new Date().toISOString(),
-    updatedAt: row.updated_at || new Date().toISOString(),
-    active: true,
-    metadata: row.metadata && typeof row.metadata === 'object' ? row.metadata : null,
-    assignmentType,
-  };
+  assignedBy: row.assigned_by || null,
+  createdAt: row.created_at || new Date().toISOString(),
+  updatedAt: row.updated_at || new Date().toISOString(),
+  active: typeof row.active === 'boolean' ? row.active : true,
+  metadata: row.metadata && typeof row.metadata === 'object' ? row.metadata : null,
+  assignmentType,
+};
 };
 
 const loadLocalAssignments = (): CourseAssignment[] => {
@@ -222,6 +223,9 @@ const buildSupabaseAssignmentRecord = (assignment: CourseAssignment, includeProg
   active: assignment.active ?? true,
 });
 
+const buildUpsertOptions = () =>
+  ASSIGNMENTS_TABLE === 'course_assignments' ? { onConflict: 'course_id,user_id' } : undefined;
+
 const executeAssignmentsMutation = async <T>(
   label: string,
   operation: (includeProgressField: boolean) => Promise<T>,
@@ -265,7 +269,7 @@ const syncLocalAssignmentsToSupabase = async () => {
         );
         const { error } = await supabase
           .from(ASSIGNMENTS_TABLE)
-          .upsert(payload, { onConflict: 'course_id,user_id' });
+          .upsert(payload, buildUpsertOptions());
         if (error) throw error;
       };
 
@@ -358,6 +362,7 @@ const buildLocalAssignment = (
     assignedBy: overrides.assignedBy ?? null,
     active: overrides.active ?? true,
     metadata: overrides.metadata ?? null,
+    assignmentType: overrides.assignmentType ?? 'course',
   };
 };
 
@@ -388,6 +393,8 @@ export async function legacyAddAssignments(
           course_id: courseId,
           user_id: userId,
           organization_id: options.organizationId ?? null,
+          assignment_type: 'course',
+          metadata: null,
           status: 'assigned',
           ...(includeProgressField ? { progress: 0 } : {}),
           due_at: options.dueDate ?? null,
@@ -399,7 +406,7 @@ export async function legacyAddAssignments(
 
         const { data, error } = await supabase
           .from(ASSIGNMENTS_TABLE)
-          .upsert(payload, { onConflict: 'course_id,user_id' })
+          .upsert(payload, buildUpsertOptions())
           .select();
         if (error) throw error;
         return data;
