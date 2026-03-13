@@ -1,10 +1,12 @@
-import { useMemo } from 'react';
+import { useMemo, useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { AlertTriangle, ArrowLeft, CheckCircle2, RefreshCw } from 'lucide-react';
 import ProfileView from '../../components/ProfileView';
 import LoadingButton from '../../components/LoadingButton';
 import InviteManager from '../../components/onboarding/InviteManager';
 import useOnboardingProgress from '../../hooks/useOnboardingProgress';
+import orgService, { type OrgProfileDetails } from '../../dal/orgs';
+import { format } from 'date-fns';
 
 const AdminOrgProfile: React.FC = () => {
   const { orgProfileId } = useParams<{ orgProfileId: string }>();
@@ -37,6 +39,32 @@ const AdminOrgProfile: React.FC = () => {
     const stale = list.filter((invite: any) => invite.status === 'expired' || invite.status === 'bounced').length;
     return { pending, accepted, stale };
   }, [invites]);
+
+  const [orgProfile, setOrgProfile] = useState<OrgProfileDetails | null>(null);
+  const [orgProfileLoading, setOrgProfileLoading] = useState(false);
+  const [orgProfileError, setOrgProfileError] = useState<string | null>(null);
+
+  const metrics = orgProfile?.metrics ?? null;
+  const contacts = orgProfile?.contacts ?? [];
+  const adminUsers = orgProfile?.admins ?? [];
+  const messages = orgProfile?.messages ?? [];
+
+  useEffect(() => {
+    if (!orgId) return;
+    setOrgProfileLoading(true);
+    orgService
+      .getOrgProfileDetails(orgId)
+      .then((data) => {
+        setOrgProfile(data);
+        setOrgProfileError(null);
+      })
+      .catch((error) => {
+        console.error('Failed to load organization overview', error);
+        setOrgProfile(null);
+        setOrgProfileError('Unable to load organization overview');
+      })
+      .finally(() => setOrgProfileLoading(false));
+  }, [orgId]);
 
   if (!orgProfileId) {
     return (
@@ -80,8 +108,18 @@ const AdminOrgProfile: React.FC = () => {
               Sync Progress
             </LoadingButton>
           )}
-        </div>
       </div>
+    </div>
+
+      {orgProfileError && (
+        <div className="bg-rose-50 border border-rose-100 text-rose-800 rounded-2xl p-4 flex items-center gap-3">
+          <AlertTriangle className="h-5 w-5" />
+          <div>
+            <p className="font-semibold">Unable to load organization overview.</p>
+            <p className="text-sm">{orgProfileError}</p>
+          </div>
+        </div>
+      )}
 
       {progressError && (
         <div className="bg-rose-50 border border-rose-100 text-rose-800 rounded-2xl p-4 flex items-center gap-3">
@@ -151,6 +189,95 @@ const AdminOrgProfile: React.FC = () => {
           </div>
         </div>
       )}
+
+      {orgProfile && (
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+          <div className="card-lg card-hover">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">Organization snapshot</h3>
+              {orgProfileLoading && <RefreshCw className="h-4 w-4 animate-spin text-gray-400" />}
+            </div>
+            <dl className="space-y-3 text-sm text-gray-700">
+              <div className="flex items-center justify-between">
+                <dt className="text-gray-500">Type</dt>
+                <dd className="font-medium text-gray-900">{orgProfile.organization.type || '—'}</dd>
+              </div>
+              <div className="flex items-center justify-between">
+                <dt className="text-gray-500">Subscription</dt>
+                <dd className="font-medium text-gray-900">{orgProfile.organization.subscription}</dd>
+              </div>
+              <div className="flex items-center justify-between">
+                <dt className="text-gray-500">Total users</dt>
+                <dd className="font-medium text-gray-900">{metrics?.totalUsers ?? '—'}</dd>
+              </div>
+              <div className="flex items-center justify-between">
+                <dt className="text-gray-500">Active users</dt>
+                <dd className="font-medium text-emerald-700">{metrics?.activeUsers ?? '—'}</dd>
+              </div>
+              <div className="flex items-center justify-between">
+                <dt className="text-gray-500">Courses assigned</dt>
+                <dd className="font-medium text-gray-900">{metrics?.coursesAssigned ?? 0}</dd>
+              </div>
+              <div className="flex items-center justify-between">
+                <dt className="text-gray-500">Surveys assigned</dt>
+                <dd className="font-medium text-gray-900">{metrics?.surveysAssigned ?? 0}</dd>
+              </div>
+            </dl>
+          </div>
+          <div className="card-lg card-hover">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">Strategic contacts</h3>
+              <span className="text-sm text-gray-500">{contacts.length} total</span>
+            </div>
+            {contacts.length === 0 ? (
+              <p className="text-sm text-gray-500">No contacts captured for this organization.</p>
+            ) : (
+              <ul className="space-y-3">
+                {contacts.slice(0, 4).map((contact) => (
+                  <li key={contact.id} className="flex items-center justify-between">
+                    <div>
+                      <p className="font-medium text-gray-900">{contact.name || 'Unnamed contact'}</p>
+                      <p className="text-sm text-gray-500">{contact.email || 'No email'}</p>
+                    </div>
+                    {contact.isPrimary && (
+                      <span className="px-2 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-800">
+                        Primary
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div className="card-lg card-hover">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">Communication history</h3>
+              <span className="text-sm text-gray-500">
+                {orgProfile.lastContacted
+                  ? `Last contacted ${format(new Date(orgProfile.lastContacted), 'MMM d, yyyy')}`
+                  : 'No outreach yet'}
+              </span>
+            </div>
+            {messages.length === 0 ? (
+              <p className="text-sm text-gray-500">No messages recorded for this organization.</p>
+            ) : (
+              <ul className="space-y-3">
+                {messages.slice(0, 4).map((message) => (
+                  <li key={message.id} className="border border-gray-100 rounded-lg p-3">
+                    <p className="font-medium text-gray-900">{message.subject || 'Untitled message'}</p>
+                    <p className="text-xs text-gray-500">
+                      {message.channel?.toUpperCase() ?? 'EMAIL'} •{' '}
+                      {message.sentAt ? format(new Date(message.sentAt), 'MMM d, yyyy h:mm a') : 'Unknown date'}
+                    </p>
+                    <p className="text-sm text-gray-600 truncate">{message.body || '—'}</p>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
+
 
       {orgId && (
         <div className="card-lg card-hover">

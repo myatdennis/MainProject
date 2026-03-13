@@ -21,7 +21,13 @@ const mapAdminUserRecord = (row: any): AdminUserRecord => {
     profile.name ??
     `${firstName} ${lastName}`.trim();
 
-  const normalizedEmail = (row?.invited_email ?? profile.email ?? '').toLowerCase() || undefined;
+  const normalizedEmailSource =
+    profile.email ??
+    profile.contact_email ??
+    row?.email ??
+    row?.user?.email ??
+    '';
+  const normalizedEmail = normalizedEmailSource ? normalizedEmailSource.toLowerCase() : undefined;
   let userId = String(row?.user_id ?? row?.userId ?? row?.user_id_uuid ?? row?.userUuid ?? '').trim();
   if (!userId && normalizedEmail) {
     userId = normalizedEmail;
@@ -46,7 +52,7 @@ export const listUsersByOrg = async (orgId: string): Promise<AdminUserRecord[]> 
   const params = new URLSearchParams({ orgId });
   const json = await apiRequest<{ data: any[] }>(`/api/admin/users?${params.toString()}`);
   return (json.data ?? [])
-    .filter((row) => row?.user_id || row?.userId || row?.invited_email)
+    .filter((row) => row?.user_id || row?.userId || row?.profile?.email || row?.user?.email)
     .map(mapAdminUserRecord)
     .filter((record) => Boolean(record.userId));
 };

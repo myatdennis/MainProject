@@ -85,6 +85,81 @@ export type OrgMember = {
   updatedAt: string;
 };
 
+export type OrgContact = {
+  id: string;
+  name: string | null;
+  email: string | null;
+  role: string | null;
+  phone: string | null;
+  isPrimary: boolean;
+};
+
+export type OrgProfileMetrics = {
+  totalUsers: number;
+  activeUsers: number;
+  coursesAssigned: number;
+  surveysAssigned: number;
+  courseCompletionRate: number;
+  surveyCompletionRate: number;
+};
+
+export type OrgProfileUser = {
+  id?: string | null;
+  membershipId: string | null;
+  orgId: string | null;
+  userId: string | null;
+  role: string | null;
+  status: string | null;
+  invitedBy: string | null;
+  acceptedAt: string | null;
+  lastSeenAt: string | null;
+  lastLoginAt: string | null;
+  email: string | null;
+  name: string | null;
+  title: string | null;
+  createdAt: string | null;
+  updatedAt: string | null;
+};
+
+export type OrgProfileInvite = {
+  id: string;
+  organizationId: string | null;
+  email: string | null;
+  status: string;
+  invitedBy: string | null;
+  invitedAt: string | null;
+  acceptedAt: string | null;
+  expiresAt: string | null;
+  lastSentAt: string | null;
+};
+
+export type OrgProfileMessage = {
+  id: string;
+  organizationId: string | null;
+  recipientType: string | null;
+  recipientId: string | null;
+  subject: string | null;
+  body: string | null;
+  channel: string | null;
+  sentBy: string | null;
+  sentAt: string | null;
+  status: string | null;
+  metadata?: Record<string, unknown> | null;
+};
+
+export type OrgProfileDetails = {
+  organization: Org;
+  profile?: Record<string, unknown> | null;
+  branding?: Record<string, unknown> | null;
+  contacts: OrgContact[];
+  admins: OrgProfileUser[];
+  users: OrgProfileUser[];
+  metrics: OrgProfileMetrics;
+  invites: OrgProfileInvite[];
+  messages: OrgProfileMessage[];
+  lastContacted: string | null;
+};
+
 import apiRequest, { ApiError } from '../utils/apiClient';
 import { resolveApiUrl } from '../config/apiBase';
 
@@ -157,6 +232,84 @@ export const mapOrgRecord = (record: any): Org => {
   notes: fromRecord(record, 'notes') ?? undefined,
   tags: fromRecord(record, 'tags') ?? []
 };
+};
+
+const mapOrgContactRecord = (record: any): OrgContact => ({
+  id: record.id ?? record.contactId ?? String(record?.orgId ?? ''),
+  name: record.name ?? record.contactName ?? null,
+  email: record.email ?? record.contactEmail ?? null,
+  role: record.role ?? record.type ?? null,
+  phone: record.phone ?? record.contactPhone ?? null,
+  isPrimary: Boolean(record.isPrimary ?? record.is_primary ?? false),
+});
+
+const mapOrgProfileUserRecord = (record: any): OrgProfileUser => ({
+  id: record.membershipId ?? record.id ?? null,
+  membershipId: record.membershipId ?? record.id ?? null,
+  orgId: record.orgId ?? record.org_id ?? null,
+  userId: record.userId ?? record.user_id ?? null,
+  role: record.role ?? null,
+  status: record.status ?? null,
+  invitedBy: record.invitedBy ?? record.invited_by ?? null,
+  acceptedAt: record.acceptedAt ?? record.accepted_at ?? null,
+  lastSeenAt: record.lastSeenAt ?? record.last_seen_at ?? null,
+  lastLoginAt: record.lastLoginAt ?? record.last_login_at ?? null,
+  email: record.email ?? null,
+  name: record.name ?? null,
+  title: record.title ?? null,
+  createdAt: record.createdAt ?? record.created_at ?? null,
+  updatedAt: record.updatedAt ?? record.updated_at ?? null,
+});
+
+const mapOrgInviteRecord = (record: any): OrgProfileInvite => ({
+  id: record.id ?? '',
+  organizationId: record.organizationId ?? record.organization_id ?? record.org_id ?? null,
+  email: record.email ?? null,
+  status: record.status ?? 'pending',
+  invitedBy: record.invitedBy ?? record.invited_by ?? null,
+  invitedAt: record.invitedAt ?? record.invited_at ?? record.created_at ?? null,
+  acceptedAt: record.acceptedAt ?? record.accepted_at ?? null,
+  expiresAt: record.expiresAt ?? record.expires_at ?? null,
+  lastSentAt: record.lastSentAt ?? record.last_sent_at ?? null,
+});
+
+const mapOrgMessageRecord = (record: any): OrgProfileMessage => ({
+  id: record.id ?? '',
+  organizationId: record.organizationId ?? record.organization_id ?? record.org_id ?? null,
+  recipientType: record.recipientType ?? record.recipient_type ?? null,
+  recipientId: record.recipientId ?? record.recipient_id ?? null,
+  subject: record.subject ?? null,
+  body: record.body ?? null,
+  channel: record.channel ?? null,
+  sentBy: record.sentBy ?? record.sent_by ?? null,
+  sentAt: record.sentAt ?? record.sent_at ?? record.created_at ?? null,
+  status: record.status ?? null,
+  metadata: (record.metadata as Record<string, unknown>) ?? null,
+});
+
+const mapOrgMetricsRecord = (record: any): OrgProfileMetrics => ({
+  totalUsers: Number(record?.totalUsers ?? record?.total_users ?? 0),
+  activeUsers: Number(record?.activeUsers ?? record?.active_users ?? 0),
+  coursesAssigned: Number(record?.coursesAssigned ?? record?.courses_assigned ?? 0),
+  surveysAssigned: Number(record?.surveysAssigned ?? record?.surveys_assigned ?? 0),
+  courseCompletionRate: Number(record?.courseCompletionRate ?? record?.course_completion_rate ?? 0),
+  surveyCompletionRate: Number(record?.surveyCompletionRate ?? record?.survey_completion_rate ?? 0),
+});
+
+const mapOrgProfileResponse = (payload: any): OrgProfileDetails => {
+  const organizationRecord = payload?.organization ?? payload;
+  return {
+    organization: mapOrgRecord(organizationRecord),
+    profile: payload?.profile ?? null,
+    branding: payload?.branding ?? null,
+    contacts: Array.isArray(payload?.contacts) ? payload.contacts.map(mapOrgContactRecord) : [],
+    admins: Array.isArray(payload?.admins) ? payload.admins.map(mapOrgProfileUserRecord) : [],
+    users: Array.isArray(payload?.users) ? payload.users.map(mapOrgProfileUserRecord) : [],
+    metrics: mapOrgMetricsRecord(payload?.metrics ?? {}),
+    invites: Array.isArray(payload?.invites) ? payload.invites.map(mapOrgInviteRecord) : [],
+    messages: Array.isArray(payload?.messages) ? payload.messages.map(mapOrgMessageRecord) : [],
+    lastContacted: payload?.lastContacted ?? null,
+  };
 };
 
 const mapMemberRecord = (record: any): OrgMember => ({
@@ -241,16 +394,22 @@ export const listOrgs = async (
   return response.data;
 };
 
-export const getOrg = async (id: string): Promise<Org | null> => {
+export const getOrgProfileDetails = async (id: string): Promise<OrgProfileDetails | null> => {
   try {
     const json = await apiRequest<{ data: any }>(`/api/admin/organizations/${id}`);
-    return mapOrgRecord(json.data);
+    if (!json?.data) return null;
+    return mapOrgProfileResponse(json.data);
   } catch (error) {
     if (error instanceof ApiError && error.status === 404) {
       return null;
     }
     throw error;
   }
+};
+
+export const getOrg = async (id: string): Promise<Org | null> => {
+  const profile = await getOrgProfileDetails(id);
+  return profile?.organization ?? null;
 };
 
 export const createOrg = async (payload: Partial<Org>): Promise<Org> => {
@@ -283,38 +442,39 @@ export const bulkUpdateOrgs = async (updates: Array<{ id: string; data: Partial<
 };
 
 export const getOrgStats = async (id: string): Promise<any> => {
-  const org = await getOrg(id);
-  if (!org) return null;
+  const profile = await getOrgProfileDetails(id);
+  if (!profile) return null;
+  const metrics = profile.metrics;
+  const totalUsers = metrics.totalUsers ?? profile.organization.totalLearners ?? 0;
+  const activeUsers = metrics.activeUsers ?? profile.organization.activeLearners ?? 0;
 
   return {
     overview: {
-      totalUsers: org.totalLearners,
-      activeUsers: org.activeLearners,
-      completionRate: org.completionRate,
-      avgSessionTime: Math.floor(Math.random() * 30) + 15
+      totalUsers,
+      activeUsers,
+      completionRate: metrics.courseCompletionRate ?? profile.organization.completionRate ?? 0,
+      avgSessionTime: Math.max(5, Math.round((activeUsers || 1) * 0.5)),
     },
     engagement: {
-      dailyActiveUsers: Math.floor(org.activeLearners * 0.6),
-      weeklyActiveUsers: Math.floor(org.activeLearners * 0.8),
-      monthlyActiveUsers: org.activeLearners
+      dailyActiveUsers: Math.round(activeUsers * 0.6),
+      weeklyActiveUsers: Math.round(activeUsers * 0.8),
+      monthlyActiveUsers: activeUsers,
     },
     performance: {
-      coursesCompleted: Object.values(org.modules).reduce((sum, val) => sum + Math.floor(val * 0.8), 0),
-      certificatesIssued: Math.floor(org.totalLearners * (org.completionRate / 100)),
-      avgScores: Object.fromEntries(
-        Object.keys(org.modules).map(key => [key, Math.floor(Math.random() * 30) + 70])
-      )
+      coursesCompleted: metrics.coursesAssigned ?? 0,
+      certificatesIssued: Math.round(totalUsers * ((metrics.courseCompletionRate ?? 0) / 100)),
+      avgScores: {},
     },
     trends: {
-      userGrowth: Array.from({ length: 12 }, (_, i) => ({
-        month: new Date(Date.now() - (11 - i) * 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 7),
-        users: Math.floor(Math.random() * 10) + org.totalLearners * 0.8
+      userGrowth: Array.from({ length: 6 }, (_, i) => ({
+        month: new Date(Date.now() - (5 - i) * 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 7),
+        users: Math.max(0, totalUsers - i * 2),
       })),
-      completionTrends: Array.from({ length: 30 }, (_, i) => ({
-        date: new Date(Date.now() - (29 - i) * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
-        completions: Math.floor(Math.random() * 5) + 2
-      }))
-    }
+      completionTrends: Array.from({ length: 6 }, (_, i) => ({
+        date: new Date(Date.now() - (5 - i) * 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+        completions: Math.max(0, Math.round((metrics.coursesAssigned ?? 0) / 6) - i),
+      })),
+    },
   };
 };
 
@@ -347,6 +507,7 @@ export default {
   listOrgPage,
   listOrgs,
   getOrg,
+  getOrgProfileDetails,
   updateOrg,
   createOrg,
   deleteOrg,

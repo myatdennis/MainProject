@@ -1,8 +1,18 @@
-export type { Org, OrgMember } from '../services/orgService';
+export type {
+  Org,
+  OrgMember,
+  OrgContact,
+  OrgProfileDetails,
+  OrgProfileMetrics,
+  OrgProfileUser,
+  OrgProfileInvite,
+  OrgProfileMessage,
+} from '../services/orgService';
 
 export {
   listOrgs,
   getOrg,
+  getOrgProfileDetails,
   createOrg,
   updateOrg,
   deleteOrg,

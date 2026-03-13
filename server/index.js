@@ -4577,7 +4577,7 @@ const resolveOrgMembership = async (req, orgId, userId) => {
 
   const { data, error } = await supabase
     .from('organization_memberships')
-    .select(buildMembershipSelect('role', 'status', 'invited_by', 'invited_email'))
+    .select(buildMembershipSelect('role', 'status', 'invited_by'))
     .eq('org_id', orgId)
     .eq('user_id', userId)
     .maybeSingle();
@@ -4589,7 +4589,6 @@ const resolveOrgMembership = async (req, orgId, userId) => {
     role: data.role,
     status: data.status,
     invitedBy: data.invited_by,
-    invitedEmail: data.invited_email,
   };
 };
 
@@ -5568,7 +5567,6 @@ async function fetchOrgMembersWithProfiles(orgId) {
         'role',
         'status',
         'invited_by',
-        'invited_email',
         'accepted_at',
         'last_seen_at',
         'created_at',
@@ -5581,6 +5579,7 @@ async function fetchOrgMembersWithProfiles(orgId) {
   const rows = Array.isArray(memberships) ? memberships : [];
   const userIds = rows.map((row) => row?.user_id).filter(Boolean);
   const profileMap = new Map();
+  const userMap = new Map();
 
   if (userIds.length > 0) {
     const { data: profiles, error: profileError } = await supabase
@@ -5593,12 +5592,24 @@ async function fetchOrgMembersWithProfiles(orgId) {
         profileMap.set(profile.user_id, profile);
       }
     });
+
+    const { data: userRows, error: userError } = await supabase
+      .from('users')
+      .select('id, email, first_name, last_name, role, status, title, last_login_at')
+      .in('id', userIds);
+    if (userError) throw userError;
+    (userRows || []).forEach((user) => {
+      if (user?.id) {
+        userMap.set(user.id, user);
+      }
+    });
   }
 
   return rows.map((membership) => ({
     ...membership,
     user_id_uuid: membership.user_id ?? membership.user_id_uuid ?? null,
     profile: profileMap.get(membership.user_id) || null,
+    user: userMap.get(membership.user_id) || null,
   }));
 }
 
@@ -5695,26 +5706,267 @@ const fetchOrgAssignmentSummary = async (orgId) => {
 
 const fetchOrgMessages = async (orgId, { limit = 25 } = {}) => {
   if (!supabase || !orgId) return [];
+  const tables = ['message_logs', 'organization_messages'];
+  const normalizedLimit = Math.max(1, Math.min(100, limit));
+
+  for (const table of tables) {
+    try {
+      const { data, error } = await supabase
+        .from(table)
+        .select('*')
+        .or(`organization_id.eq.${orgId},org_id.eq.${orgId}`)
+        .order('created_at', { ascending: false })
+        .limit(normalizedLimit);
+
+      if (error) {
+        if (isMissingRelationError(error) || isMissingColumnError(error)) {
+          continue;
+        }
+        throw error;
+      }
+
+      if (Array.isArray(data) && data.length > 0) {
+        return data;
+      }
+
+      if (table === tables[tables.length - 1]) {
+        return data || [];
+      }
+    } catch (error) {
+      if (isMissingRelationError(error) || isMissingColumnError(error)) {
+        continue;
+      }
+      logOrganizationsStageError('messages_fetch_failed', error, { orgId });
+      return [];
+    }
+  }
+  return [];
+};
+
+const mapOrgProfileUser = (member) => {
+  if (!member) return null;
+  const profile = member.profile ?? null;
+  const userRow = member.user ?? null;
+  const fallbackName = [userRow?.first_name, userRow?.last_name]
+    .filter((value) => typeof value === 'string' && value.trim())
+    .join(' ')
+    .trim();
+
+  return {
+    id: member.id ?? null,
+    membershipId: member.id ?? null,
+    orgId: member.org_id ?? null,
+    userId: member.user_id ?? null,
+    role: member.role ?? userRow?.role ?? null,
+    status: member.status ?? userRow?.status ?? null,
+    invitedBy: member.invited_by ?? null,
+    acceptedAt: member.accepted_at ?? null,
+    lastSeenAt: member.last_seen_at ?? null,
+    lastLoginAt: userRow?.last_login_at ?? null,
+    email: profile?.email ?? userRow?.email ?? null,
+    name: profile?.name ?? fallbackName || null,
+    title: profile?.title ?? userRow?.title ?? null,
+    createdAt: member.created_at ?? null,
+    updatedAt: member.updated_at ?? null,
+  };
+};
+
+const mapOrgInviteRecord = (row) => ({
+  id: row.id,
+  organizationId: row.organization_id ?? row.org_id ?? null,
+  email: row.email ?? null,
+  status: row.status ?? 'pending',
+  token: row.token ?? null,
+  invitedBy: row.invited_by ?? null,
+  invitedAt: row.invited_at ?? row.created_at ?? null,
+  acceptedAt: row.accepted_at ?? null,
+  expiresAt: row.expires_at ?? null,
+  lastSentAt: row.last_sent_at ?? null,
+});
+
+const mapOrgMessageRecord = (row) => ({
+  id: row.id,
+  organizationId: row.organization_id ?? row.org_id ?? null,
+  recipientType: row.recipient_type ?? row.recipientType ?? null,
+  recipientId: row.recipient_id ?? row.recipientId ?? null,
+  subject: row.subject ?? null,
+  body: row.body ?? null,
+  channel: row.channel ?? 'email',
+  sentBy: row.sent_by ?? null,
+  sentAt: row.sent_at ?? row.created_at ?? null,
+  status: row.status ?? null,
+  metadata: row.metadata ?? null,
+});
+
+const fetchOrgInvites = async (orgId, { requestId } = {}) => {
+  if (!supabase || !orgId) return [];
   try {
     const { data, error } = await supabase
-      .from('organization_messages')
-      .select('*')
-      .eq('org_id', orgId)
-      .order('created_at', { ascending: false })
-      .limit(Math.max(1, Math.min(100, limit)));
-
+      .from('organization_invites')
+      .select('id, organization_id, org_id, email, status, token, invited_by, invited_at, accepted_at, expires_at, last_sent_at, created_at')
+      .or(`organization_id.eq.${orgId},org_id.eq.${orgId}`)
+      .order('invited_at', { ascending: false, nullsFirst: false })
+      .limit(100);
     if (error) {
       if (isMissingRelationError(error) || isMissingColumnError(error)) {
         return [];
       }
       throw error;
     }
-
-    return data || [];
+    return (data || []).map(mapOrgInviteRecord);
   } catch (error) {
-    logOrganizationsStageError('messages_fetch_failed', error, { orgId });
+    logOrganizationsStageError('profile_invites_fetch_failed', error, { orgId, requestId });
     return [];
   }
+};
+
+const countAssignmentsForOrg = async (assignmentType, orgId, { requestId } = {}) => {
+  if (!supabase || !orgId) return 0;
+  const attemptCount = async (table, configureQuery) => {
+    const query = configureQuery(supabase.from(table).select('id', { count: 'exact', head: true }));
+    const { count, error } = await query;
+    if (error) throw error;
+    return count ?? 0;
+  };
+
+  try {
+    return await attemptCount('assignments', (query) =>
+      query.eq('organization_id', orgId).eq('assignment_type', assignmentType),
+    );
+  } catch (error) {
+    logger.info('organizations_profile_assignment_count_failed', {
+      orgId,
+      assignmentType,
+      table: 'assignments',
+      requestId: requestId ?? null,
+      code: error?.code ?? null,
+      message: error?.message ?? null,
+    });
+  }
+
+  const legacyTable = assignmentType === 'survey' ? 'survey_assignments' : 'course_assignments';
+  try {
+    return await attemptCount(legacyTable, (query) => query.eq('organization_id', orgId));
+  } catch (error) {
+    if (isMissingColumnError(error)) {
+      try {
+        return await attemptCount(legacyTable, (query) => query.eq('org_id', orgId));
+      } catch (fallbackError) {
+        if (!isMissingRelationError(fallbackError) && !isMissingColumnError(fallbackError)) {
+          logger.info('organizations_profile_assignment_count_failed', {
+            orgId,
+            assignmentType,
+            table: legacyTable,
+            requestId: requestId ?? null,
+            code: fallbackError?.code ?? null,
+            message: fallbackError?.message ?? null,
+          });
+        }
+        return 0;
+      }
+    }
+    if (!isMissingRelationError(error)) {
+      logger.info('organizations_profile_assignment_count_failed', {
+        orgId,
+        assignmentType,
+        table: legacyTable,
+        requestId: requestId ?? null,
+        code: error?.code ?? null,
+        message: error?.message ?? null,
+      });
+    }
+  }
+  return 0;
+};
+
+const buildOrgProfileMetrics = ({ organization, members, courseAssignmentCount, surveyAssignmentCount }) => {
+  const memberRows = Array.isArray(members) ? members : [];
+  const activeUsers = memberRows.filter(
+    (member) => String(member.status || '').toLowerCase() === 'active',
+  ).length;
+
+  return {
+    totalUsers: memberRows.length,
+    activeUsers,
+    coursesAssigned: courseAssignmentCount ?? 0,
+    surveysAssigned: surveyAssignmentCount ?? 0,
+    courseCompletionRate: Number(organization?.completion_rate ?? 0),
+    surveyCompletionRate: Number(organization?.survey_completion_rate ?? 0),
+  };
+};
+
+const mapOrganizationRecordForProfile = (organization, metrics = null) => {
+  if (!organization) return null;
+  const shapedMetrics = metrics || {};
+  return {
+    ...organization,
+    contact_person: organization.contact_person ?? organization.contact_name ?? null,
+    contact_email: organization.contact_email ?? null,
+    contact_phone: organization.contact_phone ?? null,
+    address: organization.address ?? null,
+    city: organization.city ?? null,
+    state: organization.state ?? null,
+    country: organization.country ?? null,
+    postal_code: organization.postal_code ?? null,
+    website: organization.website ?? null,
+    total_learners: organization.total_learners ?? shapedMetrics.totalUsers ?? 0,
+    active_learners: organization.active_learners ?? shapedMetrics.activeUsers ?? 0,
+    completion_rate: organization.completion_rate ?? shapedMetrics.courseCompletionRate ?? 0,
+    survey_completion_rate: organization.survey_completion_rate ?? shapedMetrics.surveyCompletionRate ?? 0,
+  };
+};
+
+const buildOrganizationProfilePayload = async (orgId, options = {}) => {
+  const requestId = options.requestId ?? null;
+  const bundle = await fetchOrgProfileBundle(orgId);
+  if (!bundle) return null;
+
+  let members = [];
+  try {
+    members = await fetchOrgMembersWithProfiles(orgId);
+  } catch (error) {
+    logOrganizationsStageError('profile_memberships_failed', error, { orgId, requestId });
+    members = [];
+  }
+
+  const users = members.map((member) => mapOrgProfileUser(member)).filter(Boolean);
+  const [coursesAssigned, surveysAssigned, invites, recentMessages] = await Promise.all([
+    countAssignmentsForOrg('course', orgId, options),
+    countAssignmentsForOrg('survey', orgId, options),
+    fetchOrgInvites(orgId, options),
+    fetchOrgMessages(orgId, { limit: 25 }),
+  ]);
+
+  const metrics = buildOrgProfileMetrics({
+    organization: bundle.organization,
+    members,
+    courseAssignmentCount: coursesAssigned,
+    surveyAssignmentCount: surveysAssigned,
+  });
+
+  const contacts = Array.isArray(bundle.contacts) ? bundle.contacts.map(mapContactResponse) : [];
+  const invitesList = Array.isArray(invites) ? invites : [];
+  const messages = (Array.isArray(recentMessages) ? recentMessages : []).map(mapOrgMessageRecord);
+  const admins = users.filter((user) => hasOrgAdminRole(user.role));
+  const organization = mapOrganizationRecordForProfile(bundle.organization, metrics);
+
+  return {
+    organization,
+    profile: bundle.profile,
+    branding: bundle.branding,
+    contacts,
+    admins,
+    users,
+    metrics,
+    invites: invitesList,
+    messages,
+    lastContacted:
+      messages[0]?.sentAt ??
+      invitesList[0]?.invitedAt ??
+      organization?.updated_at ??
+      organization?.created_at ??
+      null,
+  };
 };
 
 const buildOrgOverviewPayload = ({
@@ -5738,7 +5990,6 @@ const buildOrgOverviewPayload = ({
     userId: member.user_id ?? null,
     role: member.role ?? null,
     status: member.status ?? null,
-    invitedEmail: member.invited_email ?? null,
     invitedBy: member.invited_by ?? null,
     acceptedAt: member.accepted_at ?? null,
     lastSeenAt: member.last_seen_at ?? null,
@@ -11707,26 +11958,17 @@ const OPTIONAL_ADMIN_ORG_TABLES = [
   { table: 'organization_profiles', schema: 'public', columns: ['org_id', 'name'] },
   { table: 'organization_branding', schema: 'public', columns: ['org_id'] },
 ];
-const ORGANIZATION_MEMBERSHIP_INVITED_EMAIL_DEF = {
-  table: 'organization_memberships',
-  schema: 'public',
-  columns: ['invited_email'],
-};
 const loggedOptionalSchemaWarnings = new Set();
-let orgMembershipInvitedEmailEnabled = true;
-
-const buildMembershipSelect = (...fields) =>
-  fields.filter((field) => field !== 'invited_email' || orgMembershipInvitedEmailEnabled).join(', ');
-
-const withMembershipInvitedEmail = (payload, value) => {
-  if (orgMembershipInvitedEmailEnabled) {
-    payload.invited_email = value ?? null;
-  }
-  return payload;
-};
+const buildMembershipSelect = (...fields) => fields.join(', ');
+const withMembershipInvitedEmail = (payload) => payload;
 
 const ensureAdminOrgSchemaOrRespond = async (res, label, meta = {}) => {
   const requestId = meta.requestId ?? null;
+  logOrganizationsEvent('schema_guard_check', {
+    requestId,
+    status: 'start',
+    metadata: { label },
+  });
   try {
     const requiredStatus = await ensureTablesReady(label, REQUIRED_ADMIN_ORG_TABLES);
     if (!requiredStatus.ok) {
@@ -11736,6 +11978,16 @@ const ensureAdminOrgSchemaOrRespond = async (res, label, meta = {}) => {
         table: requiredStatus.table ?? null,
         column: requiredStatus.column ?? null,
         schema: requiredStatus.schema ?? null,
+      });
+      logOrganizationsEvent('schema_guard_check', {
+        requestId,
+        status: 'failed',
+        metadata: {
+          label,
+          table: requiredStatus.table ?? null,
+          column: requiredStatus.column ?? null,
+          schema: requiredStatus.schema ?? null,
+        },
       });
       respondSchemaUnavailable(res, label, requiredStatus);
       return false;
@@ -11750,6 +12002,14 @@ const ensureAdminOrgSchemaOrRespond = async (res, label, meta = {}) => {
     };
     console.error('[organizations.schema_guard_failed]', payload);
     logger.error('organizations_schema_guard_failed', payload);
+    logOrganizationsEvent('schema_guard_check', {
+      requestId,
+      status: 'error',
+      metadata: {
+        label,
+        code: normalized.code ?? null,
+      },
+    });
     res.status(500).json({
       error: 'schema_guard_failed',
       code: normalized.code ?? 'schema_guard_failed',
@@ -11768,7 +12028,7 @@ const ensureAdminOrgSchemaOrRespond = async (res, label, meta = {}) => {
       }`;
       if (!loggedOptionalSchemaWarnings.has(warningKey)) {
         loggedOptionalSchemaWarnings.add(warningKey);
-        logger.warn('organizations_optional_schema_missing', {
+        logger.info('organizations_optional_schema_missing', {
           label,
           table: optionalStatus.table ?? null,
           column: optionalStatus.column ?? null,
@@ -11787,34 +12047,11 @@ const ensureAdminOrgSchemaOrRespond = async (res, label, meta = {}) => {
     });
   }
 
-  try {
-    const invitedEmailStatus = await ensureTablesReady(label, [ORGANIZATION_MEMBERSHIP_INVITED_EMAIL_DEF]);
-    orgMembershipInvitedEmailEnabled = invitedEmailStatus.ok;
-    if (!invitedEmailStatus.ok) {
-      const warningKey = `${invitedEmailStatus.schema ?? 'public'}.${invitedEmailStatus.table ?? 'unknown'}:${
-        invitedEmailStatus.column ?? 'invited_email'
-      }`;
-      if (!loggedOptionalSchemaWarnings.has(warningKey)) {
-        loggedOptionalSchemaWarnings.add(warningKey);
-        logger.warn('organizations_optional_schema_missing', {
-          label,
-          table: invitedEmailStatus.table ?? null,
-          column: invitedEmailStatus.column ?? null,
-          schema: invitedEmailStatus.schema ?? null,
-          requestId,
-        });
-      }
-    }
-  } catch (error) {
-    const normalized = normalizeUnknownError(error);
-    logger.info('organizations_optional_schema_check_failed', {
-      label,
-      requestId,
-      code: normalized.code ?? null,
-      message: normalized.message ?? null,
-    });
-  }
-
+  logOrganizationsEvent('schema_guard_check', {
+    requestId,
+    status: 'ok',
+    metadata: { label },
+  });
   return true;
 };
 
@@ -11889,14 +12126,8 @@ const logUsersStageError = (stage, error, meta = {}) => {
 
 app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req, res) => {
   if (!ensureSupabase(res)) return;
-  logOrganizationsEvent('schema_guard_start', { requestId: req.requestId ?? null, status: 'start' });
   const schemaOk = await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.list', {
     requestId: req.requestId ?? null,
-  });
-  logOrganizationsEvent('schema_guard_done', {
-    requestId: req.requestId ?? null,
-    status: schemaOk ? 'ok' : 'failed',
-    metadata: { ok: Boolean(schemaOk) },
   });
   if (!schemaOk) return;
   res.set('X-Organizations-Handler', 'express-v4');
@@ -12200,10 +12431,9 @@ app.post('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req
 }));
 
 app.get('/api/admin/organizations/:id', async (req, res) => {
+  const requestId = req.requestId ?? null;
   if (!ensureSupabase(res)) return;
-  if (
-    !(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.detail', { requestId: req.requestId ?? null }))
-  ) {
+  if (!(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.detail', { requestId }))) {
     return;
   }
   const { id } = req.params;
@@ -12212,19 +12442,29 @@ app.get('/api/admin/organizations/:id', async (req, res) => {
   if (!access) return;
 
   try {
-    const result = await runSupabaseQueryWithRetry('admin.organizations.detail', () =>
-      supabase.from('organizations').select('*').eq('id', id).maybeSingle(),
-    );
-    const data = result.data;
-    if (!data) {
+    const payload = await buildOrganizationProfilePayload(id, { requestId });
+    if (!payload) {
       res.status(404).json({ error: 'Organization not found' });
       return;
     }
 
-    res.json({ data });
+    logOrganizationsEvent('organization_profile_loaded', {
+      requestId,
+      status: 'ok',
+      metadata: { orgId: id },
+    });
+    res.json({ data: payload });
   } catch (error) {
     logRouteError('GET /api/admin/organizations/:id', error);
-    res.status(500).json({ error: 'Unable to fetch organization' });
+    logOrganizationsEvent('organization_profile_failed', {
+      requestId,
+      status: 'failed',
+      metadata: { orgId: id, message: error?.message ?? null },
+    });
+    res.status(500).json({
+      error: 'Unable to fetch organization',
+      requestId,
+    });
   }
 });
 
@@ -12340,7 +12580,6 @@ app.get('/api/admin/organizations/:orgId/members', async (req, res) => {
           'role',
           'status',
           'invited_by',
-          'invited_email',
           'accepted_at',
           'last_seen_at',
           'created_at',
@@ -12411,7 +12650,6 @@ app.post('/api/admin/organizations/:orgId/members', async (req, res) => {
           'role',
           'status',
           'invited_by',
-          'invited_email',
           'accepted_at',
           'last_seen_at',
           'created_at',
@@ -12514,7 +12752,6 @@ app.patch('/api/admin/organizations/:orgId/members/:membershipId', async (req, r
           'role',
           'status',
           'invited_by',
-          'invited_email',
           'accepted_at',
           'last_seen_at',
           'created_at',
@@ -13164,7 +13401,7 @@ app.post('/api/orgs/:orgId/memberships/accept', async (req, res) => {
       .update({ status: 'active', accepted_at: now, last_seen_at: now })
       .eq('org_id', orgId)
       .eq('user_id', context.userId)
-      .select(buildMembershipSelect('id', 'org_id', 'user_id', 'role', 'status', 'invited_email', 'accepted_at', 'last_seen_at'))
+      .select(buildMembershipSelect('id', 'org_id', 'user_id', 'role', 'status', 'accepted_at', 'last_seen_at'))
       .maybeSingle();
 
     if (error) throw error;
