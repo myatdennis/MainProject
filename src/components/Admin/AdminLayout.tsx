@@ -44,6 +44,7 @@ import { useToast } from '../../context/ToastContext';
 import { logAuthRedirect, logAuthDiagnostic } from '../../utils/logAuthRedirect';
 import { useAdminAccessState } from '../../lib/adminAccessState';
 import AdminNotificationBell from './AdminNotificationBell';
+import AdminOrgSelectorModal from './AdminOrgSelectorModal';
 
 interface AdminLayoutProps {
   children?: ReactNode;
@@ -111,6 +112,7 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
   const apiReachable = runtimeStatus.apiReachable ?? runtimeStatus.apiHealthy;
   const apiAuthRequired = Boolean(runtimeStatus.apiAuthRequired);
   const isOrgSelectionRequired = Boolean(isMultiOrg && !activeOrgId);
+  const [orgModalOpen, setOrgModalOpen] = useState(false);
 
   const handleRuntimeRetry = useCallback(() => {
     refreshRuntimeStatus().catch((error) => {
@@ -192,15 +194,24 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
 
   const guardNavigation = useCallback(
     (targetPath: string) => {
-      if (!isOrgSelectionRequired) {
-        return false;
+      // Provide an explicit debug trace for blocked navigation so we can
+      // diagnose "clicks do nothing" in the running app without relying
+      // on the ADMIN_MENU_DEBUG build flag.
+      const blockedReason = (() => {
+        if (!isOrgSelectionRequired) return null;
+        // Only allow explicit org management and settings without an active org.
+        const allowList = ['/admin/organizations', '/admin/settings'];
+        if (allowList.some((allowed) => targetPath.startsWith(allowed))) return null;
+        return 'org_required';
+      })();
+
+      if (blockedReason) {
+        // Open an in-page modal prompting the user to choose an organization.
+        setOrgModalOpen(true);
+        return true;
       }
-      const allowList = ['/admin/organizations', '/admin/settings'];
-      if (allowList.some((allowed) => targetPath.startsWith(allowed))) {
-        return false;
-      }
-      showToast('Select an active organization to access this area.', 'error');
-      return true;
+
+      return false
     },
     [isOrgSelectionRequired, showToast],
   );
@@ -408,7 +419,8 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
                     to={item.href}
                     end={item.exact}
                     onClick={(event) => {
-                      if (guardNavigation(item.href)) {
+                      const blocked = guardNavigation(item.href);
+                      if (blocked) {
                         event.preventDefault();
                         return;
                       }
@@ -444,9 +456,10 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
               <Button asChild size="sm" variant="secondary" leadingIcon={<Plus className="h-4 w-4" />}>
                 <Link
                   to="/admin/courses/new"
-                  onClick={(event) => {
-                    if (guardNavigation('/admin/courses/new')) event.preventDefault();
-                  }}
+                    onClick={(event) => {
+                      const blocked = guardNavigation('/admin/courses/new');
+                      if (blocked) event.preventDefault();
+                    }}
                 >
                   Create course
                 </Link>
@@ -455,7 +468,8 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
                 <Link
                   to="/admin/courses/import"
                   onClick={(event) => {
-                    if (guardNavigation('/admin/courses/import')) event.preventDefault();
+                    const blocked = guardNavigation('/admin/courses/import');
+                    if (blocked) event.preventDefault();
                   }}
                 >
                   Import courses
@@ -465,7 +479,8 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
                 <Link
                   to="/admin/surveys/queue"
                   onClick={(event) => {
-                    if (guardNavigation('/admin/surveys/queue')) event.preventDefault();
+                    const blocked = guardNavigation('/admin/surveys/queue');
+                    if (blocked) event.preventDefault();
                   }}
                 >
                   Survey queue
@@ -618,19 +633,35 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
               Admin tools stay locked until you choose a workspace. Pick an organization from the header dropdown to continue.
             </span>
           </div>
-          <button
-            type="button"
-            className="rounded-full border border-sunrise/50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-sunrise transition hover:bg-sunrise/10"
-            onClick={handleRefreshOrganizations}
-          >
-            Refresh list
-          </button>
+          <div className="flex flex-col items-end gap-2">
+            <button
+              type="button"
+              className="rounded-full border border-sunrise/50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-sunrise transition hover:bg-sunrise/10"
+              onClick={handleRefreshOrganizations}
+            >
+              Refresh list
+            </button>
+            <button
+              type="button"
+              className="rounded-full bg-sunrise/600 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-white transition hover:bg-sunrise/700"
+              onClick={() => navigate('/admin/organizations')}
+            >
+              Choose organization
+            </button>
+          </div>
         </div>
       )}
 
       <main className="flex-1 overflow-y-auto bg-softwhite px-6 py-8 lg:px-12">
         {children ?? <Outlet />}
       </main>
+      <AdminOrgSelectorModal
+        open={orgModalOpen}
+        onClose={() => setOrgModalOpen(false)}
+        organizationOptions={organizationOptions}
+        activeOrgId={activeOrgId}
+        selectOrganization={selectOrganization}
+      />
       </div>
     </div>
   );

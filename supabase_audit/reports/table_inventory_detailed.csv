@@ -1,0 +1,366 @@
+schema,table,column_name,column_type,nullable,default,primary_key
+auth,audit_log_entries,instance_id,""uuid"",yes,"",no
+auth,audit_log_entries,id,""uuid"",no,"",no
+auth,audit_log_entries,payload,"json",yes,"",no
+auth,audit_log_entries,created_at,"timestamp with time zone",yes,"",no
+auth,audit_log_entries,ip_address,"character varying(64)",no,"''::character",no
+auth,flow_state,id,""uuid"",no,"",no
+auth,flow_state,user_id,""uuid"",yes,"",no
+auth,flow_state,auth_code,""text"",yes,"",no
+auth,flow_state,code_challenge_method,""auth"."code_challenge_method"",yes,"",no
+auth,flow_state,code_challenge,""text"",yes,"",no
+auth,flow_state,provider_type,""text"",no,"",no
+auth,flow_state,provider_access_token,""text"",yes,"",no
+auth,flow_state,provider_refresh_token,""text"",yes,"",no
+auth,flow_state,created_at,"timestamp with time zone",yes,"",no
+auth,flow_state,updated_at,"timestamp with time zone",yes,"",no
+auth,flow_state,authentication_method,""text"",no,"",no
+auth,flow_state,auth_code_issued_at,"timestamp with time zone",yes,"",no
+auth,flow_state,invite_token,""text"",yes,"",no
+auth,flow_state,referrer,""text"",yes,"",no
+auth,flow_state,oauth_client_state_id,""uuid"",yes,"",no
+auth,flow_state,linking_target_id,""uuid"",yes,"",no
+auth,flow_state,email_optional,"boolean",no,"false",no
+auth,identities,provider_id,""text"",no,"",no
+auth,identities,user_id,""uuid"",no,"",no
+auth,identities,identity_data,""jsonb"",no,"",no
+auth,identities,provider,""text"",no,"",no
+auth,identities,last_sign_in_at,"timestamp with time zone",yes,"",no
+auth,identities,created_at,"timestamp with time zone",yes,"",no
+auth,identities,updated_at,"timestamp with time zone",yes,"",no
+auth,identities,email,""text" GENERATED ALWAYS AS ("lower"(("identity_data" ->> 'email'::"text"))) STORED",yes,"",no
+auth,identities,id,""uuid"",no,""gen_random_uuid"()",no
+auth,instances,id,""uuid"",no,"",no
+auth,instances,uuid,""uuid"",yes,"",no
+auth,instances,raw_base_config,""text"",yes,"",no
+auth,instances,created_at,"timestamp with time zone",yes,"",no
+auth,instances,updated_at,"timestamp with time zone",yes,"",no
+auth,mfa_amr_claims,session_id,""uuid"",no,"",no
+auth,mfa_amr_claims,created_at,"timestamp with time zone",no,"",no
+auth,mfa_amr_claims,updated_at,"timestamp with time zone",no,"",no
+auth,mfa_amr_claims,authentication_method,""text"",no,"",no
+auth,mfa_amr_claims,id,""uuid"",no,"",no
+auth,mfa_challenges,id,""uuid"",no,"",no
+auth,mfa_challenges,factor_id,""uuid"",no,"",no
+auth,mfa_challenges,created_at,"timestamp with time zone",no,"",no
+auth,mfa_challenges,verified_at,"timestamp with time zone",yes,"",no
+auth,mfa_challenges,ip_address,""inet"",no,"",no
+auth,mfa_challenges,otp_code,""text"",yes,"",no
+auth,mfa_challenges,web_authn_session_data,""jsonb"",yes,"",no
+auth,mfa_factors,id,""uuid"",no,"",no
+auth,mfa_factors,user_id,""uuid"",no,"",no
+auth,mfa_factors,friendly_name,""text"",yes,"",no
+auth,mfa_factors,factor_type,""auth"."factor_type"",no,"",no
+auth,mfa_factors,status,""auth"."factor_status"",no,"",no
+auth,mfa_factors,created_at,"timestamp with time zone",no,"",no
+auth,mfa_factors,updated_at,"timestamp with time zone",no,"",no
+auth,mfa_factors,secret,""text"",yes,"",no
+auth,mfa_factors,phone,""text"",yes,"",no
+auth,mfa_factors,last_challenged_at,"timestamp with time zone",yes,"",no
+auth,mfa_factors,web_authn_credential,""jsonb"",yes,"",no
+auth,mfa_factors,web_authn_aaguid,""uuid"",yes,"",no
+auth,mfa_factors,last_webauthn_challenge_data,""jsonb"",yes,"",no
+auth,oauth_authorizations,id,""uuid"",no,"",no
+auth,oauth_authorizations,authorization_id,""text"",no,"",no
+auth,oauth_authorizations,client_id,""uuid"",no,"",no
+auth,oauth_authorizations,user_id,""uuid"",yes,"",no
+auth,oauth_authorizations,redirect_uri,""text"",no,"",no
+auth,oauth_authorizations,scope,""text"",no,"",no
+auth,oauth_authorizations,state,""text"",yes,"",no
+auth,oauth_authorizations,resource,""text"",yes,"",no
+auth,oauth_authorizations,code_challenge,""text"",yes,"",no
+auth,oauth_authorizations,code_challenge_method,""auth"."code_challenge_method"",yes,"",no
+auth,oauth_authorizations,response_type,""auth"."oauth_response_type"",no,"'code'::"auth"."oauth_response_type"",no
+auth,oauth_authorizations,status,""auth"."oauth_authorization_status"",no,"'pending'::"auth"."oauth_authorization_status"",no
+auth,oauth_authorizations,authorization_code,""text"",yes,"",no
+auth,oauth_authorizations,created_at,"timestamp with time zone",no,""now"()",no
+auth,oauth_authorizations,expires_at,"timestamp with time zone",no,"("now"()",no
+auth,oauth_authorizations,approved_at,"timestamp with time zone",yes,"",no
+auth,oauth_authorizations,nonce,""text"",yes,"",no
+auth,oauth_client_states,id,""uuid"",no,"",no
+auth,oauth_client_states,provider_type,""text"",no,"",no
+auth,oauth_client_states,code_verifier,""text"",yes,"",no
+auth,oauth_client_states,created_at,"timestamp with time zone",no,"",no
+auth,oauth_clients,id,""uuid"",no,"",no
+auth,oauth_clients,client_secret_hash,""text"",yes,"",no
+auth,oauth_clients,registration_type,""auth"."oauth_registration_type"",no,"",no
+auth,oauth_clients,redirect_uris,""text"",no,"",no
+auth,oauth_clients,grant_types,""text"",no,"",no
+auth,oauth_clients,client_name,""text"",yes,"",no
+auth,oauth_clients,client_uri,""text"",yes,"",no
+auth,oauth_clients,logo_uri,""text"",yes,"",no
+auth,oauth_clients,created_at,"timestamp with time zone",no,""now"()",no
+auth,oauth_clients,updated_at,"timestamp with time zone",no,""now"()",no
+auth,oauth_clients,deleted_at,"timestamp with time zone",yes,"",no
+auth,oauth_clients,client_type,""auth"."oauth_client_type"",no,"'confidential'::"auth"."oauth_client_type"",no
+auth,oauth_clients,token_endpoint_auth_method,""text"",no,"",no
+auth,oauth_consents,id,""uuid"",no,"",no
+auth,oauth_consents,user_id,""uuid"",no,"",no
+auth,oauth_consents,client_id,""uuid"",no,"",no
+auth,oauth_consents,scopes,""text"",no,"",no
+auth,oauth_consents,granted_at,"timestamp with time zone",no,""now"()",no
+auth,oauth_consents,revoked_at,"timestamp with time zone",yes,"",no
+auth,one_time_tokens,id,""uuid"",no,"",no
+auth,one_time_tokens,user_id,""uuid"",no,"",no
+auth,one_time_tokens,token_type,""auth"."one_time_token_type"",no,"",no
+auth,one_time_tokens,token_hash,""text"",no,"",no
+auth,one_time_tokens,relates_to,""text"",no,"",no
+auth,one_time_tokens,created_at,"timestamp without time zone",no,""now"()",no
+auth,one_time_tokens,updated_at,"timestamp without time zone",no,""now"()",no
+auth,refresh_tokens,instance_id,""uuid"",yes,"",no
+auth,refresh_tokens,id,"bigint",no,"",no
+auth,refresh_tokens,token,"character varying(255)",yes,"",no
+auth,refresh_tokens,user_id,"character varying(255)",yes,"",no
+auth,refresh_tokens,revoked,"boolean",yes,"",no
+auth,refresh_tokens,created_at,"timestamp with time zone",yes,"",no
+auth,refresh_tokens,updated_at,"timestamp with time zone",yes,"",no
+auth,refresh_tokens,parent,"character varying(255)",yes,"",no
+auth,refresh_tokens,session_id,""uuid"",yes,"",no
+auth,saml_providers,id,""uuid"",no,"",no
+auth,saml_providers,sso_provider_id,""uuid"",no,"",no
+auth,saml_providers,entity_id,""text"",no,"",no
+auth,saml_providers,metadata_xml,""text"",no,"",no
+auth,saml_providers,metadata_url,""text"",yes,"",no
+auth,saml_providers,attribute_mapping,""jsonb"",yes,"",no
+auth,saml_providers,created_at,"timestamp with time zone",yes,"",no
+auth,saml_providers,updated_at,"timestamp with time zone",yes,"",no
+auth,saml_providers,name_id_format,""text"",yes,"",no
+auth,saml_relay_states,id,""uuid"",no,"",no
+auth,saml_relay_states,sso_provider_id,""uuid"",no,"",no
+auth,saml_relay_states,request_id,""text"",no,"",no
+auth,saml_relay_states,for_email,""text"",yes,"",no
+auth,saml_relay_states,redirect_to,""text"",yes,"",no
+auth,saml_relay_states,created_at,"timestamp with time zone",yes,"",no
+auth,saml_relay_states,updated_at,"timestamp with time zone",yes,"",no
+auth,saml_relay_states,flow_state_id,""uuid"",yes,"",no
+auth,schema_migrations,version,"character varying(255)",no,"",no
+auth,sessions,id,""uuid"",no,"",no
+auth,sessions,user_id,""uuid"",no,"",no
+auth,sessions,created_at,"timestamp with time zone",yes,"",no
+auth,sessions,updated_at,"timestamp with time zone",yes,"",no
+auth,sessions,factor_id,""uuid"",yes,"",no
+auth,sessions,aal,""auth"."aal_level"",yes,"",no
+auth,sessions,not_after,"timestamp with time zone",yes,"",no
+auth,sessions,refreshed_at,"timestamp without time zone",yes,"",no
+auth,sessions,user_agent,""text"",yes,"",no
+auth,sessions,ip,""inet"",yes,"",no
+auth,sessions,tag,""text"",yes,"",no
+auth,sessions,oauth_client_id,""uuid"",yes,"",no
+auth,sessions,refresh_token_hmac_key,""text"",yes,"",no
+auth,sessions,refresh_token_counter,"bigint",yes,"",no
+auth,sessions,scopes,""text"",yes,"",no
+auth,sso_domains,id,""uuid"",no,"",no
+auth,sso_domains,sso_provider_id,""uuid"",no,"",no
+auth,sso_domains,domain,""text"",no,"",no
+auth,sso_domains,created_at,"timestamp with time zone",yes,"",no
+auth,sso_domains,updated_at,"timestamp with time zone",yes,"",no
+auth,sso_providers,id,""uuid"",no,"",no
+auth,sso_providers,resource_id,""text"",yes,"",no
+auth,sso_providers,created_at,"timestamp with time zone",yes,"",no
+auth,sso_providers,updated_at,"timestamp with time zone",yes,"",no
+auth,sso_providers,disabled,"boolean",yes,"",no
+auth,users,instance_id,""uuid"",yes,"",no
+auth,users,id,""uuid"",no,"",no
+auth,users,aud,"character varying(255)",yes,"",no
+auth,users,role,"character varying(255)",yes,"",no
+auth,users,email,"character varying(255)",yes,"",no
+auth,users,encrypted_password,"character varying(255)",yes,"",no
+auth,users,email_confirmed_at,"timestamp with time zone",yes,"",no
+auth,users,invited_at,"timestamp with time zone",yes,"",no
+auth,users,confirmation_token,"character varying(255)",yes,"",no
+auth,users,confirmation_sent_at,"timestamp with time zone",yes,"",no
+auth,users,recovery_token,"character varying(255)",yes,"",no
+auth,users,recovery_sent_at,"timestamp with time zone",yes,"",no
+auth,users,email_change_token_new,"character varying(255)",yes,"",no
+auth,users,email_change,"character varying(255)",yes,"",no
+auth,users,email_change_sent_at,"timestamp with time zone",yes,"",no
+auth,users,last_sign_in_at,"timestamp with time zone",yes,"",no
+auth,users,raw_app_meta_data,""jsonb"",yes,"",no
+auth,users,raw_user_meta_data,""jsonb"",yes,"",no
+auth,users,is_super_admin,"boolean",yes,"",no
+auth,users,created_at,"timestamp with time zone",yes,"",no
+auth,users,updated_at,"timestamp with time zone",yes,"",no
+auth,users,phone,""text"",yes,"NULL::character",no
+auth,users,phone_confirmed_at,"timestamp with time zone",yes,"",no
+auth,users,phone_change,""text"",yes,"''::character",no
+auth,users,phone_change_token,"character varying(255)",yes,"''::character",no
+auth,users,phone_change_sent_at,"timestamp with time zone",yes,"",no
+auth,users,email_change_token_current,"character varying(255)",yes,"''::character",no
+auth,users,email_change_confirm_status,"smallint",yes,"0",no
+auth,users,banned_until,"timestamp with time zone",yes,"",no
+auth,users,reauthentication_token,"character varying(255)",yes,"''::character",no
+auth,users,reauthentication_sent_at,"timestamp with time zone",yes,"",no
+auth,users,is_sso_user,"boolean",no,"false",no
+auth,users,deleted_at,"timestamp with time zone",yes,"",no
+auth,users,is_anonymous,"boolean",no,"false",no
+public,_policy_backup,id,""uuid"",no,""gen_random_uuid"()",no
+public,_policy_backup,object_name,""text"",no,"",no
+public,_policy_backup,policy_name,""text"",no,"",no
+public,_policy_backup,policy_sql,""text"",no,"",no
+public,_policy_backup,created_at,"timestamp with time zone",no,""now"()",no
+public,analytics_events,id,""text"",no,"",no
+public,analytics_events,user_id,""uuid"",yes,"",no
+public,analytics_events,org_id,""uuid"",yes,"",no
+public,analytics_events,course_id,""text"",yes,"",no
+public,analytics_events,lesson_id,""text"",yes,"",no
+public,analytics_events,module_id,""text"",yes,"",no
+public,analytics_events,event_type,""text"",no,"",no
+public,analytics_events,session_id,""text"",yes,"",no
+public,analytics_events,user_agent,""text"",yes,"",no
+public,analytics_events,payload,""jsonb"",yes,"",no
+public,analytics_events,created_at,"timestamp with time zone",no,""now"()",no
+public,analytics_events,client_event_id,""text"",yes,"",no
+public,audit_logs,id,""uuid"",no,""gen_random_uuid"()",no
+public,audit_logs,created_at,"timestamp with time zone",no,""now"()",no
+public,audit_logs,actor_id,""uuid"",yes,"",no
+public,audit_logs,actor_email,""text"",yes,"",no
+public,audit_logs,action,""text"",no,"",no
+public,audit_logs,entity_type,""text"",yes,"",no
+public,audit_logs,entity_id,""uuid"",yes,"",no
+public,audit_logs,organization_id,""uuid"",yes,"",no
+public,audit_logs,details,""jsonb"",no,"'{}'::"jsonb"",no
+public,course_engagement,id,""uuid"",no,""gen_random_uuid"()",no
+public,course_engagement,course_id,""uuid"",no,"",no
+public,course_engagement,organization_id,""uuid"",no,"",no
+public,course_engagement,metric_date,""date"",no,"",no
+public,course_engagement,active_learners,"integer",yes,"0",no
+public,course_engagement,created_at,"timestamp with time zone",no,""now"()",no
+public,course_engagement,updated_at,"timestamp with time zone",no,""now"()",no
+public,courses,id,""uuid"",no,""gen_random_uuid"()",no
+public,courses,organization_id,""uuid"",no,"",no
+public,courses,title,""text"",no,"",no
+public,courses,slug,""text"",no,"",no
+public,courses,description,""text"",yes,"",no
+public,courses,status,""text"",yes,"'draft'::"text"",no
+public,courses,published_at,"timestamp with time zone",yes,"",no
+public,courses,created_by,""uuid"",yes,"",no
+public,courses,created_at,"timestamp with time zone",no,""now"()",no
+public,courses,updated_at,"timestamp with time zone",no,""now"()",no
+public,courses,meta_json,""jsonb"",yes,"'{}'::"jsonb"",no
+public,courses,thumbnail,""text"",yes,"",no
+public,lessons,id,""uuid"",no,""gen_random_uuid"()",no
+public,lessons,module_id,""uuid"",no,"",no
+public,lessons,course_id,""uuid"",no,"",no
+public,lessons,organization_id,""uuid"",no,"",no
+public,lessons,title,""text"",no,"",no
+public,lessons,type,""text"",no,"'video'::"text"",no
+public,lessons,description,""text"",yes,"",no
+public,lessons,content,""jsonb"",yes,"'{}'::"jsonb"",no
+public,lessons,order_index,"integer",no,"0",no
+public,lessons,duration_seconds,"integer",yes,"",no
+public,lessons,metadata,""jsonb"",yes,"'{}'::"jsonb"",no
+public,lessons,created_at,"timestamp with time zone",no,""now"()",no
+public,lessons,updated_at,"timestamp with time zone",no,""now"()",no
+public,modules,id,""uuid"",no,""gen_random_uuid"()",no
+public,modules,course_id,""uuid"",no,"",no
+public,modules,organization_id,""uuid"",no,"",no
+public,modules,title,""text"",no,"",no
+public,modules,order_index,"integer",no,"0",no
+public,modules,created_at,"timestamp with time zone",no,""now"()",no
+public,modules,updated_at,"timestamp with time zone",no,""now"()",no
+public,org_invites,id,""uuid"",no,""gen_random_uuid"()",no
+public,org_invites,organization_id,""uuid"",no,"",no
+public,org_invites,email,""text"",no,"",no
+public,org_invites,role,""text"",no,"'member'::"text"",no
+public,org_invites,token,""text"",no,"",no
+public,org_invites,expires_at,"timestamp with time zone",no,"",no
+public,org_invites,created_by,""uuid"",yes,"",no
+public,org_invites,accepted_at,"timestamp with time zone",yes,"",no
+public,org_invites,created_at,"timestamp with time zone",no,""now"()",no
+public,org_invites,status,""text"",no,"'pending'::"text"",no
+public,org_invites,reminder_count,"integer",yes,"0",no
+public,organization_memberships,id,""uuid"",no,""gen_random_uuid"()",no
+public,organization_memberships,organization_id,""uuid"",no,"",no
+public,organization_memberships,user_id,""uuid"",no,"",no
+public,organization_memberships,role,""text"",no,"'member'::"text"",no
+public,organization_memberships,status,""text"",no,"'active'::"text"",no
+public,organization_memberships,invited_by,""uuid"",yes,"",no
+public,organization_memberships,created_at,"timestamp with time zone",no,""now"()",no
+public,organization_memberships,updated_at,"timestamp with time zone",no,""now"()",no
+public,organization_profiles,organization_id,""uuid"",no,"",no
+public,organization_profiles,logo_url,""text"",yes,"",no
+public,organization_profiles,primary_color,""text"",yes,"",no
+public,organization_profiles,metadata,""jsonb"",yes,"'{}'::"jsonb"",no
+public,organization_profiles,updated_at,"timestamp with time zone",no,""now"()",no
+public,organizations,id,""uuid"",no,""gen_random_uuid"()",no
+public,organizations,name,""text"",no,"",no
+public,organizations,slug,""text"",no,"",no
+public,organizations,status,""text"",yes,"'active'::"text"",no
+public,organizations,plan,""text"",yes,"'standard'::"text"",no
+public,organizations,created_at,"timestamp with time zone",no,""now"()",no
+public,organizations,updated_at,"timestamp with time zone",no,""now"()",no
+public,user_profiles,id,""uuid"",no,"",no
+public,user_profiles,email,""text"",no,"",no
+public,user_profiles,first_name,""text"",yes,"",no
+public,user_profiles,last_name,""text"",yes,"",no
+public,user_profiles,role,""text"",yes,"'learner'::"text"",no
+public,user_profiles,organization_id,""uuid"",yes,"",no
+public,user_profiles,is_active,"boolean",yes,"true",no
+public,user_profiles,metadata,""jsonb"",yes,"'{}'::"jsonb"",no
+public,user_profiles,created_at,"timestamp with time zone",no,""now"()",no
+public,user_profiles,updated_at,"timestamp with time zone",no,""now"()",no
+storage,buckets,id,""text"",no,"",no
+storage,buckets,name,""text"",no,"",no
+storage,buckets,owner,""uuid"",yes,"",no
+storage,buckets,created_at,"timestamp with time zone",yes,""now"()",no
+storage,buckets,updated_at,"timestamp with time zone",yes,""now"()",no
+storage,buckets,public,"boolean",yes,"false",no
+storage,buckets,avif_autodetection,"boolean",yes,"false",no
+storage,buckets,file_size_limit,"bigint",yes,"",no
+storage,buckets,allowed_mime_types,""text"[]",yes,"",no
+storage,buckets,owner_id,""text"",yes,"",no
+storage,buckets,type,""storage"."buckettype"",no,"'STANDARD'::"storage"."buckettype"",no
+storage,buckets_analytics,name,""text"",no,"",no
+storage,buckets_analytics,type,""storage"."buckettype"",no,"'ANALYTICS'::"storage"."buckettype"",no
+storage,buckets_analytics,format,""text"",no,"'ICEBERG'::"text"",no
+storage,buckets_analytics,created_at,"timestamp with time zone",no,""now"()",no
+storage,buckets_analytics,updated_at,"timestamp with time zone",no,""now"()",no
+storage,buckets_analytics,id,""uuid"",no,""gen_random_uuid"()",no
+storage,buckets_analytics,deleted_at,"timestamp with time zone",yes,"",no
+storage,buckets_vectors,id,""text"",no,"",no
+storage,buckets_vectors,type,""storage"."buckettype"",no,"'VECTOR'::"storage"."buckettype"",no
+storage,buckets_vectors,created_at,"timestamp with time zone",no,""now"()",no
+storage,buckets_vectors,updated_at,"timestamp with time zone",no,""now"()",no
+storage,migrations,id,"integer",no,"",no
+storage,migrations,name,"character varying(100)",no,"",no
+storage,migrations,hash,"character varying(40)",no,"",no
+storage,migrations,executed_at,"timestamp without time zone",yes,"CURRENT_TIMESTAMP",no
+storage,objects,id,""uuid"",no,""gen_random_uuid"()",no
+storage,objects,bucket_id,""text"",yes,"",no
+storage,objects,name,""text"",yes,"",no
+storage,objects,owner,""uuid"",yes,"",no
+storage,objects,created_at,"timestamp with time zone",yes,""now"()",no
+storage,objects,updated_at,"timestamp with time zone",yes,""now"()",no
+storage,objects,last_accessed_at,"timestamp with time zone",yes,""now"()",no
+storage,objects,metadata,""jsonb"",yes,"",no
+storage,objects,version,""text"",yes,"",no
+storage,objects,owner_id,""text"",yes,"",no
+storage,objects,user_metadata,""jsonb"",yes,"",no
+storage,s3_multipart_uploads,id,""text"",no,"",no
+storage,s3_multipart_uploads,in_progress_size,"bigint",no,"0",no
+storage,s3_multipart_uploads,upload_signature,""text"",no,"",no
+storage,s3_multipart_uploads,bucket_id,""text"",no,"",no
+storage,s3_multipart_uploads,key,""text"",no,"",no
+storage,s3_multipart_uploads,version,""text"",no,"",no
+storage,s3_multipart_uploads,owner_id,""text"",yes,"",no
+storage,s3_multipart_uploads,created_at,"timestamp with time zone",no,""now"()",no
+storage,s3_multipart_uploads,user_metadata,""jsonb"",yes,"",no
+storage,s3_multipart_uploads_parts,id,""uuid"",no,""gen_random_uuid"()",no
+storage,s3_multipart_uploads_parts,upload_id,""text"",no,"",no
+storage,s3_multipart_uploads_parts,size,"bigint",no,"0",no
+storage,s3_multipart_uploads_parts,part_number,"integer",no,"",no
+storage,s3_multipart_uploads_parts,bucket_id,""text"",no,"",no
+storage,s3_multipart_uploads_parts,key,""text"",no,"",no
+storage,s3_multipart_uploads_parts,etag,""text"",no,"",no
+storage,s3_multipart_uploads_parts,owner_id,""text"",yes,"",no
+storage,s3_multipart_uploads_parts,version,""text"",no,"",no
+storage,s3_multipart_uploads_parts,created_at,"timestamp with time zone",no,""now"()",no
+storage,vector_indexes,id,""text"",no,""gen_random_uuid"()",no
+storage,vector_indexes,name,""text"",no,"",no
+storage,vector_indexes,bucket_id,""text"",no,"",no
+storage,vector_indexes,data_type,""text"",no,"",no
+storage,vector_indexes,dimension,"integer",no,"",no
+storage,vector_indexes,distance_metric,""text"",no,"",no
+storage,vector_indexes,metadata_configuration,""jsonb"",yes,"",no
+storage,vector_indexes,created_at,"timestamp with time zone",no,""now"()",no
+storage,vector_indexes,updated_at,"timestamp with time zone",no,""now"()",no

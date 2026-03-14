@@ -1,4 +1,4 @@
-import { createClient, type SupabaseClient } from '@supabase/supabase-js';
+import { createClient, type SupabaseClient, type AuthChangeEvent, type Session } from '@supabase/supabase-js';
 import { secureGet, secureSet, secureRemove } from './secureStorage';
 
 type SupabaseStorageAdapter = {
@@ -15,7 +15,7 @@ const supabaseAuthStorage: SupabaseStorageAdapter =
 const SUPABASE_PERSIST_SESSION =
   (import.meta.env.VITE_SUPABASE_PERSIST_SESSION || 'true').toLowerCase() === 'true';
 
-export const supabase = createClient(
+const realSupabase = createClient(
   import.meta.env.VITE_SUPABASE_URL,
   import.meta.env.VITE_SUPABASE_ANON_KEY,
   {
@@ -29,6 +29,44 @@ export const supabase = createClient(
   },
 );
 
+// Export a proxy that delegates at runtime to an in-browser E2E override
+// (window.__E2E_SUPABASE_CLIENT) when present. This lets modules that
+// import `supabase` directly use the Playwright-injected fake client.
+export const supabase: any = new Proxy(realSupabase, {
+  get(target, prop: PropertyKey) {
+    try {
+      if (typeof window !== 'undefined') {
+        const override = (window as any).__E2E_SUPABASE_CLIENT as any | undefined;
+        if (override) {
+          const val = override[prop as any];
+          if (typeof val === 'function') return val.bind(override);
+          return val;
+        }
+      }
+    } catch {
+      // ignore and fall back to real client
+    }
+    const val = (target as any)[prop as any];
+    if (typeof val === 'function') return val.bind(target);
+    return val;
+  },
+  set(target, prop: PropertyKey, value: any) {
+    try {
+      if (typeof window !== 'undefined') {
+        const override = (window as any).__E2E_SUPABASE_CLIENT as any | undefined;
+        if (override && prop in override) {
+          override[prop as any] = value;
+          return true;
+        }
+      }
+    } catch {
+      // ignore
+    }
+    (target as any)[prop as any] = value;
+    return true;
+  },
+});
+
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
 let warnedMissingConfig = false;
@@ -39,6 +77,18 @@ export const SUPABASE_MISSING_CONFIG_MESSAGE =
 export const hasSupabaseConfig = () => Boolean(supabaseUrl && supabaseAnonKey);
 
 export function getSupabase(): SupabaseClient | null {
+  // Allow E2E tests to provide an in-browser override client. Tests can set
+  // window.__E2E_SUPABASE_CLIENT via Playwright addInitScript to stub auth.
+  if (typeof window !== 'undefined') {
+    const override = (window as any).__E2E_SUPABASE_CLIENT as SupabaseClient | undefined;
+    if (override) {
+      if (import.meta.env.DEV) {
+        console.info('[supabaseClient] using E2E supabase override');
+      }
+      return override;
+    }
+  }
+
   if (!hasSupabaseConfig()) {
     if (import.meta.env.DEV && !warnedMissingConfig) {
       console.warn('[supabaseClient] Missing VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY');
@@ -68,7 +118,7 @@ if (typeof window !== 'undefined') {
   }
 }
 
-supabase.auth.onAuthStateChange((event, session) => {
+supabase.auth.onAuthStateChange((event: AuthChangeEvent, session: Session | null) => {
   console.info('[supabaseClient] auth_state_change', {
     event,
     hasAccessToken: Boolean(session?.access_token),
