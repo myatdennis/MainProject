@@ -15,12 +15,21 @@ import {
   Users as UsersIcon,
 } from 'lucide-react';
 import documentService from '../../dal/documents';
-// client workspace DAL is dynamically imported where used so it can be bundled with the org-workspace chunk
+// client workspace DAL is dynamically imported where it can be bundled with the org-workspace chunk
 import notificationService from '../../dal/notifications';
 import orgService, { type OrgProfileDetails } from '../../dal/orgs';
 import { getOnboardingProgress } from '../../dal/onboarding';
 import { useToast } from '../../context/ToastContext';
 import OrgCommunicationPanel from '../../components/Admin/OrgCommunicationPanel';
+
+// Simple logger for admin hardening events
+const logAdminEvent = (event: string, meta: Record<string, any> = {}) => {
+  // In production, replace with analytics or server log
+  if (process.env.NODE_ENV === 'development') {
+    // eslint-disable-next-line no-console
+    console.info(`[ADMIN_LOG] ${event}`, meta);
+  }
+};
 
 const tabs = [
   { key: 'overview', label: 'Overview' },
@@ -285,7 +294,10 @@ useEffect(() => {
     if (profileLoading) {
       return (
         <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-          <LoadingSpinner text="Loading organization profile..." />
+          <div className="flex flex-col items-center justify-center py-8">
+            <LoadingSpinner />
+            <span className="mt-2 text-sm text-gray-500">Loading organization profile...</span>
+          </div>
         </div>
       );
     }
@@ -737,7 +749,10 @@ useEffect(() => {
     if (profileLoading) {
       return (
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-          <LoadingSpinner text="Loading services…" />
+          <div className="flex flex-col items-center justify-center py-8">
+            <LoadingSpinner />
+            <span className="mt-2 text-sm text-gray-500">Loading services…</span>
+          </div>
         </div>
       );
     }
@@ -840,7 +855,10 @@ useEffect(() => {
 
         {documentsLoading ? (
           <div className="rounded-lg border border-gray-100 bg-white p-8 text-center">
-            <LoadingSpinner text="Loading shared resources…" />
+            <div className="flex flex-col items-center justify-center py-8">
+              <LoadingSpinner />
+              <span className="mt-2 text-sm text-gray-500">Loading shared resources…</span>
+            </div>
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -1012,7 +1030,10 @@ useEffect(() => {
           </div>
 
           {actionLoading ? (
-            <LoadingSpinner text="Loading action items…" />
+            <div className="flex flex-col items-center justify-center py-8">
+              <LoadingSpinner />
+              <span className="mt-2 text-sm text-gray-500">Loading action items…</span>
+            </div>
           ) : actionItems.length === 0 ? (
             <div className="text-sm text-gray-500">No action items for this organization.</div>
           ) : (
@@ -1158,6 +1179,40 @@ useEffect(() => {
       </div>
     );
   };
+
+  // Log when org profile section loads
+  useEffect(() => {
+    if (profile && orgId) {
+      logAdminEvent('organization_profile_section_loaded', { orgId, userId: profile.organization?.owner || undefined, route: window.location.pathname });
+    }
+    if (profile === null && !profileLoading && orgId) {
+      logAdminEvent('organization_profile_section_empty', { orgId, route: window.location.pathname });
+    }
+  }, [profile, orgId, profileLoading]);
+
+  // Log resource loading
+  useEffect(() => {
+    if (documents && documents.length > 0 && orgId) {
+      logAdminEvent('learner_resources_loaded', { orgId, count: documents.length });
+    }
+    if (documentsError && orgId) {
+      logAdminEvent('learner_resources_failed', { orgId, error: documentsError });
+    }
+  }, [documents, documentsError, orgId]);
+
+  // Log onboarding progress
+  useEffect(() => {
+    if (onboardingProgress && orgId) {
+      logAdminEvent('onboarding_success_rendered', { orgId, route: window.location.pathname });
+    }
+    if (onboardingError && orgId) {
+      logAdminEvent('onboarding_org_match_failed', { orgId, error: onboardingError });
+    }
+  }, [onboardingProgress, onboardingError, orgId]);
+
+  // Example: log admin_dead_action_removed and admin_nav_item_disabled where you remove/disable dead actions/navs
+  // logAdminEvent('admin_dead_action_removed', { action: 'Edit Organization', orgId });
+  // logAdminEvent('admin_nav_item_disabled', { nav: 'Performance', orgId });
 
   return (
     <div className="p-6 max-w-6xl mx-auto">

@@ -2,6 +2,7 @@
     "recommendations": [
         "openai.chatgpt",
         "buildwithlayer.railway-integration-expert-x3o0c",
-        "supabase.vscode-supabase-extension"
+        "supabase.vscode-supabase-extension",
+        "github.copilot"
     ]
 }
