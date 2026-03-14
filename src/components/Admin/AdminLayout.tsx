@@ -28,6 +28,7 @@ import {
   UserCircle2,
   AlertTriangle,
 } from 'lucide-react';
+import { ADMIN_ROUTES } from '../../registry/ButtonRouteRegistry';
 import Card from '../ui/Card';
 import Button from '../ui/Button';
 import Input from '../ui/Input';
@@ -48,27 +49,32 @@ interface AdminLayoutProps {
   children?: ReactNode;
 }
 
-type AdminNavItem = {
-  name: string;
-  href: string;
-  icon: LucideIcon;
-  exact?: boolean;
+
+// Map route labels to Lucide icons
+const iconMap: Record<string, LucideIcon> = {
+  Dashboard: LayoutDashboard,
+  'Users': UsersIcon,
+  'Organizations': Building2,
+  'Organizations & CRM': Building2,
+  'Courses': BookOpen,
+  'Course Builder': Wand2,
+  'Surveys': ClipboardList,
+  'Survey Creator': PenSquare,
+  'Analytics': BarChart3,
+  'Documents': FileText,
+  'Performance': TrendingUp,
+  'Settings': Settings,
+  'Leadership AI': Brain,
 };
 
-const navigation: AdminNavItem[] = [
-  { name: 'Overview', href: '/admin/dashboard', icon: LayoutDashboard, exact: true },
-  { name: 'Organizations & CRM', href: '/admin/organizations', icon: Building2 },
-  { name: 'Courses', href: '/admin/courses', icon: BookOpen },
-  { name: 'Course Builder', href: '/admin/course-builder/new', icon: Wand2 },
-  { name: 'Surveys', href: '/admin/surveys', icon: ClipboardList },
-  { name: 'Survey Creator', href: '/admin/surveys/builder', icon: PenSquare },
-  { name: 'Users', href: '/admin/users', icon: UsersIcon },
-  { name: 'Leadership AI', href: '/admin/leadership', icon: Brain },
-  { name: 'Analytics', href: '/admin/analytics', icon: BarChart3 },
-  { name: 'Documents', href: '/admin/documents', icon: FileText },
-  { name: 'Performance', href: '/admin/performance', icon: TrendingUp },
-  { name: 'Settings', href: '/admin/settings', icon: Settings },
-];
+const navigation = ADMIN_ROUTES
+  .filter((route) => route.location === 'Admin Sidebar' && route.status === 'working')
+  .map((route) => ({
+    name: route.label,
+    href: route.targetRoute || '#',
+    icon: iconMap[route.label] || LayoutDashboard,
+    exact: route.targetRoute === '/admin/dashboard',
+  }));
 
 const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
   const { isAuthenticated, user: authUser, authInitializing, logout, sessionStatus, user } = useSecureAuth();
