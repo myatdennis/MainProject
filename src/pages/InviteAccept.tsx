@@ -4,6 +4,7 @@ import { AlertTriangle, BellRing, BookOpen, CheckCircle2, ClipboardList, Lock, M
 import LoadingButton from '../components/LoadingButton';
 import { useToast } from '../context/ToastContext';
 import { getInvite, acceptInvite, type InvitePreview, type AssignmentPreviewItem } from '../dal/invites';
+import { setActiveOrgPreference } from '../lib/secureStorage';
 
 const ACCEPTABLE_STATUSES = new Set(['pending', 'sent']);
 
@@ -47,6 +48,24 @@ const openMailComposer = (email: string, orgName?: string | null, inviteEmail?: 
     `Hi,\n\nCould you send a fresh invite for ${inviteEmail || 'my account'}?\n\nThank you!`,
   );
   window.location.href = `mailto:${email}?subject=${subject}&body=${body}`;
+};
+
+const storeOnboardingSuccess = (payload: {
+  orgId: string | null;
+  orgName: string | null;
+  email: string;
+  assignments: { courses: number; surveys: number };
+}) => {
+  if (typeof window === 'undefined') return;
+  try {
+    const snapshot = {
+      ...payload,
+      recordedAt: new Date().toISOString(),
+    };
+    window.sessionStorage.setItem('onboarding_welcome_payload', JSON.stringify(snapshot));
+  } catch {
+    // non-blocking
+  }
 };
 
 const InviteAccept = () => {
@@ -134,7 +153,7 @@ const InviteAccept = () => {
     setAccepting(true);
     setError(null);
     try {
-  const response = await acceptInvite(token, {
+      const response = await acceptInvite(token, {
         fullName,
         password,
       });
@@ -142,6 +161,22 @@ const InviteAccept = () => {
         orgName: response.data.orgName,
         loginUrl: response.data.loginUrl,
         email: response.data.email,
+      });
+      if (response.data.orgId) {
+        try {
+          setActiveOrgPreference(response.data.orgId);
+        } catch {
+          // ignore storage issues
+        }
+      }
+      storeOnboardingSuccess({
+        orgId: response.data.orgId ?? null,
+        orgName: response.data.orgName ?? null,
+        email: response.data.email,
+        assignments: {
+          courses: coursePreview.length,
+          surveys: surveyPreview.length,
+        },
       });
       showToast('Invitation accepted. You can sign in now.', 'success');
       setInvite((prev) => (prev ? { ...prev, status: 'accepted', acceptedAt: new Date().toISOString() } : prev));
@@ -279,7 +314,7 @@ const InviteAccept = () => {
         )}
 
         {acceptedPayload && (
-          <div className="card-lg border border-emerald-100 bg-white shadow-lg">
+          <div className="card-lg border border-emerald-100 bg-white shadow-lg space-y-4">
             <div className="flex items-center gap-3 text-emerald-700 mb-3">
               <ShieldCheck className="h-5 w-5" />
               <p className="font-semibold">You’re all set!</p>
@@ -289,6 +324,16 @@ const InviteAccept = () => {
               <span className="font-semibold"> {acceptedPayload.email} </span>
               anytime.
             </p>
+            {hasAssignmentPreview && (
+              <div className="rounded-xl border border-emerald-100 bg-emerald-50/40 p-4 text-sm text-emerald-900 space-y-2">
+                <p className="font-semibold">Here’s what’s ready for you:</p>
+                <ul className="list-disc pl-5 space-y-1">
+                  {coursePreview.length > 0 && <li>{coursePreview.length} course{coursePreview.length > 1 ? 's' : ''} assigned immediately.</li>}
+                  {surveyPreview.length > 0 && <li>{surveyPreview.length} survey{surveyPreview.length > 1 ? 's' : ''} awaiting your perspective.</li>}
+                  <li>Resources and announcements will appear on your dashboard after sign in.</li>
+                </ul>
+              </div>
+            )}
             <a
               href={acceptedPayload.loginUrl}
               className="inline-flex items-center justify-center px-4 py-2 rounded-lg bg-orange-500 text-white font-semibold hover:bg-orange-600 transition"

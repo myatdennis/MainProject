@@ -17,11 +17,10 @@ import {
 import documentService from '../../dal/documents';
 // client workspace DAL is dynamically imported where used so it can be bundled with the org-workspace chunk
 import notificationService from '../../dal/notifications';
-import orgService from '../../dal/orgs';
+import orgService, { type OrgProfileDetails } from '../../dal/orgs';
 import { getOnboardingProgress } from '../../dal/onboarding';
 import { useToast } from '../../context/ToastContext';
 import OrgCommunicationPanel from '../../components/Admin/OrgCommunicationPanel';
-import type { OrgProfileDetails } from '../../services/orgService';
 
 const tabs = [
   { key: 'overview', label: 'Overview' },
@@ -49,6 +48,13 @@ const formatNumber = (value?: number | null) => {
   return value.toLocaleString();
 };
 
+const normalizeBoolean = (value: unknown) => {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value > 0;
+  if (typeof value === 'string') return value.toLowerCase() === 'true';
+  return !!value;
+};
+
 const AdminOrganizationProfile: React.FC = () => {
   const params = useParams<{ organizationId?: string }>();
   const orgId = params.organizationId ?? null;
@@ -58,7 +64,11 @@ const AdminOrganizationProfile: React.FC = () => {
   const [profileLoading, setProfileLoading] = useState<boolean>(false);
   const [profileError, setProfileError] = useState<string | null>(null);
   const [documents, setDocuments] = useState<any[]>([]);
+  const [documentsLoading, setDocumentsLoading] = useState<boolean>(false);
+  const [documentsError, setDocumentsError] = useState<string | null>(null);
   const [actionItems, setActionItems] = useState<any[]>([]);
+  const [actionLoading, setActionLoading] = useState<boolean>(false);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [strategicPlansCount, setStrategicPlansCount] = useState<number>(0);
   const [totalLearners, setTotalLearners] = useState<number | null>(null);
   const [avgCompletion, setAvgCompletion] = useState<number | null>(null);
@@ -72,6 +82,7 @@ const AdminOrganizationProfile: React.FC = () => {
   const [docName, setDocName] = useState<string>('');
   const [docCategory, setDocCategory] = useState<string>('Onboarding');
   const [docTags, setDocTags] = useState<string>('');
+  const [docUrl, setDocUrl] = useState<string>('');
 
   // Action item form
   const [newActionTitle, setNewActionTitle] = useState<string>('');
@@ -129,35 +140,62 @@ useEffect(() => {
       cancelled = true;
     };
   }, [orgId]);
-
-useEffect(() => {
-  if (!orgId) return;
-  const hydrateDocuments = async () => {
+  const refreshDocuments = useCallback(async () => {
+    if (!orgId) {
+      setDocuments([]);
+      setTotalDownloads(0);
+      setDocumentsError(null);
+      setDocumentsLoading(false);
+      return;
+    }
+    setDocumentsLoading(true);
+    setDocumentsError(null);
     try {
       const list = await documentService.listDocuments({ organizationId: orgId });
-        setDocuments(list);
-        setTotalDownloads(list.reduce((acc, doc) => acc + (doc.downloadCount || 0), 0));
-      } catch {
-        setDocuments([]);
-        setTotalDownloads(0);
-      }
-    };
-    hydrateDocuments();
-
-    (async () => {
-      try {
-        const svc = await import('../../dal/clientWorkspace');
-        const actions = await svc.listActionItems(orgId);
-        setActionItems(actions);
-        const plans = await svc.listStrategicPlans(orgId);
-        setStrategicPlansCount(plans.length);
-      } catch (e) {
-        setActionItems([]);
-        setStrategicPlansCount(0);
-      }
-    })();
-
+      setDocuments(list);
+      setTotalDownloads(list.reduce((acc, doc) => acc + (doc.downloadCount || 0), 0));
+    } catch (error) {
+      console.error('[AdminOrganizationProfile] document load failed', error);
+      setDocuments([]);
+      setTotalDownloads(0);
+      setDocumentsError('Unable to load shared resources at the moment.');
+    } finally {
+      setDocumentsLoading(false);
+    }
   }, [orgId]);
+
+  const refreshActionItems = useCallback(async () => {
+    if (!orgId) {
+      setActionItems([]);
+      setStrategicPlansCount(0);
+      setActionError(null);
+      setActionLoading(false);
+      return;
+    }
+    setActionLoading(true);
+    setActionError(null);
+    try {
+      const svc = await import('../../dal/clientWorkspace');
+      const [actions, plans] = await Promise.all([
+        svc.listActionItems(orgId),
+        svc.listStrategicPlans(orgId),
+      ]);
+      setActionItems(actions);
+      setStrategicPlansCount(plans.length);
+    } catch (error) {
+      console.error('[AdminOrganizationProfile] action tracker load failed', error);
+      setActionItems([]);
+      setStrategicPlansCount(0);
+      setActionError('Unable to load internal action items.');
+    } finally {
+      setActionLoading(false);
+    }
+  }, [orgId]);
+
+  useEffect(() => {
+    void refreshDocuments();
+    void refreshActionItems();
+  }, [refreshDocuments, refreshActionItems]);
 
   useEffect(() => {
     if (!profile?.organization) {
@@ -169,61 +207,46 @@ useEffect(() => {
     setAvgCompletion(profile.organization.completionRate ?? profile.metrics?.courseCompletionRate ?? null);
   }, [profile]);
 
-  const handleAssignDocument = async () => {
-    // quick demo: create a placeholder doc and assign to org
-    const meta = await documentService.addDocument({
-      name: `welcome-packet-${Date.now()}`,
-      filename: 'welcome.pdf',
-      url: undefined,
-      category: 'Onboarding',
-      subcategory: undefined,
-      tags: ['welcome'],
-      fileType: 'application/pdf',
-      visibility: 'org',
-  organizationId: orgId!,
-      createdBy: 'Admin'
-    } as any);
-    if (meta && meta.id) {
-      await documentService.assignToOrg(meta.id, orgId!);
-      // notificationService API is addNotification and expects body
-      await notificationService.addNotification({
-        title: 'Document assigned',
-        body: `Assigned ${meta.name} to organization ${orgId}`,
-        organizationId: orgId!
-      } as any);
-      // refresh
-  const list = await documentService.listDocuments({ organizationId: orgId });
-      setDocuments(list);
-    }
-  };
-
   const handleFileChange = (f: File | null) => setFile(f);
 
   const handleUpload = async () => {
     if (!orgId) return;
-    if (!file && !docName) {
-      showToast('Provide a name or file', 'error');
+    if (!file && !docUrl) {
+      showToast('Upload a file or provide a resource link.', 'error');
       return;
     }
 
-    const doc = await documentService.addDocument({
-      name: docName || file?.name || 'Untitled Document',
-      filename: file?.name,
-      category: docCategory,
-      subcategory: undefined,
-      tags: docTags ? docTags.split(',').map(t => t.trim()).filter(Boolean) : [],
-      fileType: file?.type,
-      visibility: 'org',
-  organizationId: orgId!,
-      createdBy: 'Admin'
-    } as any, file || undefined);
+    try {
+      const doc = await documentService.addDocument({
+        name: docName || file?.name || 'Untitled Resource',
+        filename: file?.name,
+        url: docUrl || undefined,
+        category: docCategory,
+        subcategory: undefined,
+        tags: docTags ? docTags.split(',').map((t) => t.trim()).filter(Boolean) : [],
+        fileType: file?.type,
+        visibility: 'org',
+        organizationId: orgId!,
+        createdBy: 'Admin',
+      } as any, file || undefined);
 
-    if (doc && doc.id) {
-      await documentService.assignToOrg(doc.id, orgId!);
-  await notificationService.addNotification({ title: 'New Document Shared', body: `A document "${doc.name}" was shared with your organization.`, organizationId: orgId! } as any);
-      setDocName(''); setFile(null); setDocTags('');
-  const list = await documentService.listDocuments({ organizationId: orgId });
-      setDocuments(list);
+      if (doc?.id) {
+        await documentService.assignToOrg(doc.id, orgId!);
+        await notificationService.addNotification({
+          title: 'New Resource Shared',
+          body: `"${doc.name}" is now available to your learners.`,
+          organizationId: orgId!,
+        } as any);
+        setDocName('');
+        setDocTags('');
+        setDocUrl('');
+        setFile(null);
+        await refreshDocuments();
+        showToast('Resource shared successfully.', 'success');
+      }
+    } catch (error) {
+      console.error('[AdminOrganizationProfile] resource upload failed', error);
+      showToast('Unable to share resource right now.', 'error');
     }
   };
 
@@ -232,30 +255,30 @@ useEffect(() => {
       showToast('Provide a title for the action', 'error');
       return;
     }
-  const svc = await import('../../dal/clientWorkspace');
+    const svc = await import('../../dal/clientWorkspace');
     await svc.addActionItem(orgId, {
       title: newActionTitle,
       description: '',
       assignee: newActionAssignee || undefined,
       dueDate: newActionDue || undefined,
-      status: 'Not Started'
+      status: 'Not Started',
     } as any);
-    setNewActionTitle(''); setNewActionDue(''); setNewActionAssignee('');
-  const list = await (await import('../../dal/clientWorkspace')).listActionItems(orgId);
-    setActionItems(list);
+    setNewActionTitle('');
+    setNewActionDue('');
+    setNewActionAssignee('');
+    await refreshActionItems();
     showToast('Action item added', 'success');
   };
 
   const toggleActionStatus = async (item: any) => {
     if (!orgId) return;
-    const order = ['Not Started','In Progress','Completed'];
+    const order = ['Not Started', 'In Progress', 'Completed'];
     const idx = order.indexOf(item.status || 'Not Started');
     const next = order[(idx + 1) % order.length] as any;
     const updated = { ...item, status: next };
-  const svc2 = await import('../../dal/clientWorkspace');
+    const svc2 = await import('../../dal/clientWorkspace');
     await svc2.updateActionItem(orgId, updated);
-    const list = await svc2.listActionItems(orgId);
-    setActionItems(list);
+    await refreshActionItems();
   };
 
   const renderOverview = () => {
@@ -289,7 +312,7 @@ useEffect(() => {
       );
     }
 
-    const { organization, metrics, contacts = [], admins = [], invites = [], messages = [], assignments, lastContacted } =
+    const { organization, metrics, contacts = [], admins = [], invites = [], messages = [], assignments, lastContacted, users = [] } =
       profile;
     const primaryContact = contacts.find((contact) => contact.isPrimary) ?? contacts[0] ?? null;
     const addressParts = [
@@ -585,6 +608,43 @@ useEffect(() => {
           </div>
         </div>
 
+        <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-lg font-semibold text-gray-900 flex items-center gap-2">
+              <UsersIcon className="h-5 w-5 text-gray-400" /> Learners & members
+            </h3>
+            <span className="text-sm text-gray-500">{users.length} total</span>
+          </div>
+          {users.length === 0 ? (
+            <p className="text-sm text-gray-600">Invite members to see a roster preview here.</p>
+          ) : (
+            <ul className="divide-y divide-gray-100">
+              {users.slice(0, 6).map((user) => (
+                <li key={`${user.userId ?? user.email}`} className="py-3 flex items-center justify-between text-sm">
+                  <div>
+                    <p className="font-medium text-gray-900">{user.name ?? user.email ?? 'Unknown user'}</p>
+                    <p className="text-xs text-gray-500">{user.email || 'No email on file'}</p>
+                  </div>
+                  <div className="text-right text-xs text-gray-500">
+                    <p className="uppercase tracking-wide">{user.role ?? 'member'}</p>
+                    <p>{user.status ?? 'active'}</p>
+                    <p>Last seen {formatDate(user.lastSeenAt ?? user.updatedAt)}</p>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+          <div className="mt-3 flex items-center justify-between text-xs text-gray-500">
+            <span>Showing the six most recent members.</span>
+            <Link
+              to={orgId ? `/admin/users?focusOrg=${orgId}` : '/admin/users'}
+              className="font-semibold text-blue-600 hover:underline"
+            >
+              Open people list
+            </Link>
+          </div>
+        </div>
+
         <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
           <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
             <div className="flex items-center justify-between mb-3">
@@ -674,6 +734,13 @@ useEffect(() => {
   };
 
   const renderServices = () => {
+    if (profileLoading) {
+      return (
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+          <LoadingSpinner text="Loading services…" />
+        </div>
+      );
+    }
     if (!profile) {
       return (
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
@@ -684,12 +751,8 @@ useEffect(() => {
     const features = profile.organization.features || {};
     const settings = profile.organization.settings || {};
     const modules = profile.organization.modules || {};
-    const featureEntries = Object.keys(features).length
-      ? Object.entries(features)
-      : [['analytics', true], ['customBranding', false]];
-    const settingEntries = Object.keys(settings).length
-      ? Object.entries(settings)
-      : [['timezone', profile.organization.timezone || 'UTC']];
+    const featureEntries = Object.entries(features);
+    const settingEntries = Object.entries(settings);
     const moduleEntries = Object.entries(modules).filter(([_, value]) => typeof value === 'number' && value > 0);
 
     const badgeClass = (enabled: boolean) =>
@@ -698,36 +761,50 @@ useEffect(() => {
     return (
       <div className="space-y-6">
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-          <h3 className="font-bold text-lg mb-4">Feature access</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {featureEntries.map(([key, value]) => (
-              <div key={key} className="rounded-lg border border-gray-100 p-4">
-                <p className="text-sm font-semibold capitalize text-gray-900">{key.replace(/([A-Z])/g, ' $1')}</p>
-                <p className="text-xs text-gray-500">Controls toolkit availability for this tenant.</p>
-                <span className={`mt-3 inline-flex rounded-full px-3 py-1 text-xs font-semibold ${badgeClass(Boolean(value))}`}>
-                  {Boolean(value) ? 'Enabled' : 'Disabled'}
-                </span>
-              </div>
-            ))}
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-bold text-lg">Feature access</h3>
+            <p className="text-xs text-gray-500">Mirrors feature flags stored on the organization record.</p>
           </div>
+          {featureEntries.length === 0 ? (
+            <p className="text-sm text-gray-500">No optional modules have been enabled for this organization yet.</p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {featureEntries.map(([key, value]) => {
+                const enabled = normalizeBoolean(value);
+                return (
+                  <div key={key} className="rounded-lg border border-gray-100 p-4">
+                    <p className="text-sm font-semibold capitalize text-gray-900">{key.replace(/([A-Z])/g, ' $1')}</p>
+                    <p className="text-xs text-gray-500">Controls toolkit availability for this tenant.</p>
+                    <span className={`mt-3 inline-flex rounded-full px-3 py-1 text-xs font-semibold ${badgeClass(enabled)}`}>
+                      {enabled ? 'Enabled' : 'Disabled'}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
           <h3 className="font-bold text-lg mb-4">Org settings</h3>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-gray-700">
-            {settingEntries.map(([key, value]) => (
-              <div key={key} className="rounded-lg border border-gray-100 p-4">
-                <p className="text-xs uppercase text-gray-500">{key.replace(/([A-Z])/g, ' $1')}</p>
-                <p className="font-medium text-gray-900">{typeof value === 'boolean' ? (value ? 'Enabled' : 'Disabled') : String(value ?? '—')}</p>
-              </div>
-            ))}
-          </div>
+          {settingEntries.length === 0 ? (
+            <p className="text-sm text-gray-500">No custom settings stored for this organization.</p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm text-gray-700">
+              {settingEntries.map(([key, value]) => (
+                <div key={key} className="rounded-lg border border-gray-100 p-4">
+                  <p className="text-xs uppercase text-gray-500">{key.replace(/([A-Z])/g, ' $1')}</p>
+                  <p className="font-medium text-gray-900">{typeof value === 'boolean' ? (value ? 'Enabled' : 'Disabled') : String(value ?? '—')}</p>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
           <h3 className="font-bold text-lg mb-4">Active modules</h3>
           {moduleEntries.length === 0 ? (
-            <p className="text-sm text-gray-600">No module usage recorded yet.</p>
+            <p className="text-sm text-gray-500">Module usage metrics will appear after learners engage with courses and surveys linked to premium modules.</p>
           ) : (
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               {moduleEntries.map(([module, count]) => (
@@ -743,46 +820,142 @@ useEffect(() => {
     );
   };
 
-  const renderResources = () => (
-    <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
-      <div className="flex items-center justify-between mb-4">
-        <h3 className="font-bold text-lg">Resources</h3>
-        <div className="flex items-center space-x-2">
-          <button onClick={handleAssignDocument} className="px-3 py-1 bg-blue-600 text-white rounded-lg">Assign Demo Document</button>
-        </div>
-      </div>
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
-        <div className="md:col-span-2">
-          {documents.length === 0 ? (
-            <div className="text-sm text-gray-500">No documents assigned to this organization.</div>
-          ) : (
-            <ul className="space-y-2">
-              {documents.map(doc => (
-                <li key={doc.id} className="p-3 border rounded-lg flex items-center justify-between">
-                  <div>
-                    <div className="font-medium">{doc.name}</div>
-                    <div className="text-sm text-gray-600">{doc.filename || doc.category}</div>
-                  </div>
-                  <div className="text-sm text-gray-500">{doc.visibility}</div>
-                </li>
-              ))}
-            </ul>
-          )}
+  const renderResources = () => {
+    const orgDocuments = documents.filter((doc) => doc.visibility === 'org' && doc.organizationId === orgId);
+    const sharedDocuments = documents.filter((doc) => doc.visibility === 'global');
+
+    return (
+      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 space-y-6">
+        <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+          <div>
+            <h3 className="font-bold text-lg">Resources</h3>
+            <p className="text-sm text-gray-500">Share playbooks, onboarding packets, and reference documents with {profile?.organization?.name ?? 'this organization'}.</p>
+          </div>
+          <p className="text-xs text-gray-500">Total downloads tracked: {formatNumber(totalDownloads)}</p>
         </div>
 
-        <div className="p-4 border rounded-lg">
-          <div className="text-sm font-medium mb-2">Upload & Assign</div>
-          <input type="text" placeholder="Document name" value={docName} onChange={e => setDocName(e.target.value)} className="w-full mb-2 p-2 border rounded" />
-          <input type="text" placeholder="Category" value={docCategory} onChange={e => setDocCategory(e.target.value)} className="w-full mb-2 p-2 border rounded" />
-          <input type="text" placeholder="Tags (comma separated)" value={docTags} onChange={e => setDocTags(e.target.value)} className="w-full mb-2 p-2 border rounded" />
-          <input type="file" onChange={e => handleFileChange(e.target.files?.[0] || null)} className="w-full mb-2" />
-          <div className="text-right">
-            <button onClick={handleUpload} className="px-3 py-1 bg-gradient-to-r from-orange-400 to-red-500 text-white rounded">Upload & Share</button>
+        {documentsError ? (
+          <div className="rounded-lg border border-rose-200 bg-rose-50 p-4 text-sm text-rose-700">{documentsError}</div>
+        ) : null}
+
+        {documentsLoading ? (
+          <div className="rounded-lg border border-gray-100 bg-white p-8 text-center">
+            <LoadingSpinner text="Loading shared resources…" />
           </div>
-        </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+            <div className="rounded-lg border border-gray-100 p-4 lg:col-span-2 space-y-4">
+              <div>
+                <h4 className="text-sm font-semibold text-gray-900">Shared with this organization</h4>
+                {orgDocuments.length === 0 ? (
+                  <p className="text-sm text-gray-500 mt-2">No org-specific resources yet. Upload a file or link below.</p>
+                ) : (
+                  <ul className="mt-3 divide-y divide-gray-100">
+                    {orgDocuments.map((doc) => (
+                      <li key={doc.id} className="py-3 flex items-center justify-between gap-3">
+                        <div>
+                          <p className="font-medium text-gray-900">{doc.name}</p>
+                          <p className="text-xs text-gray-500">
+                            {doc.category} • {formatDate(doc.createdAt)} • {doc.downloadCount ?? 0} downloads
+                          </p>
+                        </div>
+                        {doc.url ? (
+                          <a
+                            className="text-sm font-medium text-blue-600 hover:underline"
+                            href={doc.url}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Open
+                          </a>
+                        ) : (
+                          <span className="text-xs text-gray-400">No download URL</span>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              <div>
+                <h4 className="text-sm font-semibold text-gray-900">Global library</h4>
+                {sharedDocuments.length === 0 ? (
+                  <p className="text-sm text-gray-500 mt-2">Global resources will appear here once uploaded.</p>
+                ) : (
+                  <ul className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
+                    {sharedDocuments.slice(0, 6).map((doc) => (
+                      <li key={doc.id} className="rounded-lg border border-gray-100 p-3 text-sm text-gray-700">
+                        <p className="font-medium text-gray-900">{doc.name}</p>
+                        <p className="text-xs text-gray-500">{doc.category}</p>
+                        {doc.url && (
+                          <a
+                            className="mt-2 inline-flex text-xs font-semibold text-blue-600 hover:underline"
+                            href={doc.url}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            View resource
+                          </a>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+
+            <div className="rounded-lg border border-gray-100 p-4">
+              <div className="text-sm font-medium mb-2">Upload or link a resource</div>
+              <input
+                type="text"
+                placeholder="Resource name"
+                value={docName}
+                onChange={(e) => setDocName(e.target.value)}
+                className="w-full mb-2 p-2 border rounded"
+              />
+              <input
+                type="text"
+                placeholder="Category"
+                value={docCategory}
+                onChange={(e) => setDocCategory(e.target.value)}
+                className="w-full mb-2 p-2 border rounded"
+              />
+              <input
+                type="text"
+                placeholder="Tags (comma separated)"
+                value={docTags}
+                onChange={(e) => setDocTags(e.target.value)}
+                className="w-full mb-2 p-2 border rounded"
+              />
+              <input
+                type="url"
+                placeholder="External resource URL"
+                value={docUrl}
+                onChange={(e) => setDocUrl(e.target.value)}
+                className="w-full mb-2 p-2 border rounded"
+              />
+              <input
+                type="file"
+                onChange={(e) => handleFileChange(e.target.files?.[0] || null)}
+                className="w-full mb-2"
+              />
+              <p className="text-xs text-gray-500 mb-3">Upload a file or provide a secure URL. Learners receive a notification automatically.</p>
+              <div className="text-right">
+                <button
+                  type="button"
+                  onClick={handleUpload}
+                  className="px-3 py-1 bg-gradient-to-r from-orange-400 to-red-500 text-white rounded"
+                  disabled={documentsLoading}
+                >
+                  Share resource
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
-    </div>
-  );
+    );
+  };
 
   const renderActionTracker = () => {
     const steps = onboardingProgress?.steps ?? [];
@@ -827,17 +1000,20 @@ useEffect(() => {
         <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-bold text-lg">Custom action items</h3>
+            {actionError ? <span className="text-xs text-rose-600">{actionError}</span> : null}
           </div>
           <div className="mb-4 grid grid-cols-1 md:grid-cols-3 gap-2">
             <input value={newActionTitle} onChange={(e) => setNewActionTitle(e.target.value)} placeholder="Action title" className="p-2 border rounded" />
             <input value={newActionDue} onChange={(e) => setNewActionDue(e.target.value)} placeholder="Due date" type="date" className="p-2 border rounded" />
             <input value={newActionAssignee} onChange={(e) => setNewActionAssignee(e.target.value)} placeholder="Assignee" className="p-2 border rounded" />
             <div className="md:col-span-3 text-right">
-              <button onClick={handleAddAction} className="px-3 py-1 bg-blue-600 text-white rounded">Add Action</button>
+              <button type="button" onClick={handleAddAction} className="px-3 py-1 bg-blue-600 text-white rounded">Add Action</button>
             </div>
           </div>
 
-          {actionItems.length === 0 ? (
+          {actionLoading ? (
+            <LoadingSpinner text="Loading action items…" />
+          ) : actionItems.length === 0 ? (
             <div className="text-sm text-gray-500">No action items for this organization.</div>
           ) : (
             <ul className="space-y-2">
@@ -861,7 +1037,7 @@ useEffect(() => {
                       {item.status}
                     </div>
                     <div className="flex space-x-2">
-                      <button onClick={() => toggleActionStatus(item)} className="px-2 py-1 bg-white border rounded text-sm">
+                      <button type="button" onClick={() => toggleActionStatus(item)} className="px-2 py-1 bg-white border rounded text-sm">
                         Toggle Status
                       </button>
                     </div>

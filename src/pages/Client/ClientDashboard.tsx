@@ -1,7 +1,18 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useRoutePrefetch } from '../../hooks/useRoutePrefetch';
-import { ArrowUpRight, BookOpen, Clock, Users, Award, Inbox, Sparkles, ClipboardList, CalendarClock } from 'lucide-react';
+import {
+  ArrowUpRight,
+  BookOpen,
+  Clock,
+  Users,
+  Award,
+  Inbox,
+  Sparkles,
+  ClipboardList,
+  CalendarClock,
+  FileText,
+} from 'lucide-react';
 import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
@@ -23,6 +34,8 @@ import type { CourseAssignment } from '../../types/assignment';
 import { isSupabaseOperational, subscribeRuntimeStatus } from '../../state/runtimeStatus';
 import apiRequest, { ApiError } from '../../utils/apiClient';
 import { useSecureAuth } from '../../context/SecureAuthContext';
+import documentService, { type DocumentMeta } from '../../dal/documents';
+import useDocumentDownload from '../../hooks/useDocumentDownload';
 
 type BootStepName = 'session' | 'membership' | 'courses' | 'analytics';
 type BootStepStatus = 'idle' | 'running' | 'success' | 'error' | 'timeout';
@@ -42,6 +55,17 @@ type CourseStoreAdapter = {
 
 const noop = () => {};
 const noopUnsubscribe = () => {};
+
+type OnboardingWelcomePayload = {
+  orgId?: string | null;
+  orgName?: string | null;
+  email?: string;
+  recordedAt?: string;
+  assignments?: {
+    courses?: number;
+    surveys?: number;
+  };
+};
 
 const buildCourseStoreAdapter = (): CourseStoreAdapter => {
   const missing: string[] = [];
@@ -80,6 +104,18 @@ const buildCourseStoreAdapter = (): CourseStoreAdapter => {
   };
 };
 
+const ResourceQuickAction = ({ document }: { document: DocumentMeta }) => {
+  const { download, isLoading, error } = useDocumentDownload(document);
+  return (
+    <div className="flex flex-col items-end gap-1 text-xs">
+      <Button variant="ghost" size="xs" onClick={() => download()} disabled={isLoading || !document.id}>
+        {isLoading ? 'Opening…' : 'Open'}
+      </Button>
+      {error && <p className="text-[11px] text-rose-600">{error}</p>}
+    </div>
+  );
+};
+
 const ClientDashboard = () => {
   // Prefetch critical user flows for fast navigation
   useRoutePrefetch([
@@ -111,6 +147,10 @@ const ClientDashboard = () => {
     courses: { status: 'idle', error: null },
     analytics: { status: 'idle', error: null },
   });
+  const [welcomeExperience, setWelcomeExperience] = useState<OnboardingWelcomePayload | null>(null);
+  const [resources, setResources] = useState<DocumentMeta[]>([]);
+  const [resourcesLoading, setResourcesLoading] = useState(false);
+  const [resourcesError, setResourcesError] = useState<string | null>(null);
   const showDebugOverlay = useMemo(() => new URLSearchParams(location.search).get('debug') === '1', [location.search]);
   const updateBootStep = useCallback(
     (step: BootStepName, status: BootStepStatus, error: string | null = null) => {
@@ -309,16 +349,29 @@ const ClientDashboard = () => {
     };
   };
 
-  const getSurveyStatusLabel = (status: CourseAssignment['status']) => {
-    if (status === 'completed') return 'Completed';
-    if (status === 'in-progress') return 'In progress';
-    return 'Assigned';
+  const isDueSoon = (iso?: string | null) => {
+    if (!iso) return false;
+    const parsed = Date.parse(iso);
+    if (Number.isNaN(parsed)) return false;
+    const diff = parsed - Date.now();
+    const THREE_DAYS_MS = 3 * 24 * 60 * 60 * 1000;
+    return diff > 0 && diff <= THREE_DAYS_MS;
   };
 
-  const getSurveyBadgeTone = (status: CourseAssignment['status'], overdue: boolean): 'positive' | 'info' | 'attention' | 'danger' => {
-    if (status === 'completed') return 'positive';
+  const getSurveyStatusLabel = (assignment: LearnerSurveyAssignment['assignment']) => {
+    if (assignment.status === 'completed') return 'Completed';
+    const dueInfo = describeDueDate(assignment.dueDate);
+    if (dueInfo.overdue) return 'Overdue';
+    if (assignment.status === 'in-progress' && isDueSoon(assignment.dueDate)) return 'Due soon';
+    if (assignment.status === 'in-progress') return 'In progress';
+    return isDueSoon(assignment.dueDate) ? 'Due soon' : 'Not started';
+  };
+
+  const getSurveyBadgeTone = (assignment: LearnerSurveyAssignment['assignment'], overdue: boolean): 'positive' | 'info' | 'attention' | 'danger' => {
+    if (assignment.status === 'completed') return 'positive';
     if (overdue) return 'danger';
-    if (status === 'in-progress') return 'info';
+    if (isDueSoon(assignment.dueDate)) return 'attention';
+    if (assignment.status === 'in-progress') return 'info';
     return 'attention';
   };
 
@@ -329,6 +382,10 @@ const ClientDashboard = () => {
     const suffix = params.toString();
     navigate(suffix ? `/client/surveys?${suffix}` : '/client/surveys');
   };
+
+  const handleNavigateToResources = useCallback(() => {
+    navigate('/client/documents');
+  }, [navigate]);
 
   const extractSurveyLink = (assignment: CourseAssignment) => {
     if (!assignment.metadata || typeof assignment.metadata !== 'object') {
@@ -501,6 +558,8 @@ const ClientDashboard = () => {
       ).length;
   const bannerCandidates = [catalogError, analyticsError].filter(Boolean);
   const bannerError = bannerCandidates.length > 0 ? bannerCandidates.join(' ') : null;
+  const featuredResources = useMemo(() => resources.slice(0, 3), [resources]);
+  const extraResources = Math.max(0, resources.length - featuredResources.length);
 
   const essentialReady =
     bootSteps.session.status === 'success' && bootSteps.membership.status === 'success';
@@ -553,6 +612,49 @@ const ClientDashboard = () => {
       controller.abort();
     };
   }, [essentialReady, bootAttempt, updateBootStep]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = window.sessionStorage.getItem('onboarding_welcome_payload');
+      if (raw) {
+        const parsed = JSON.parse(raw) as OnboardingWelcomePayload;
+        setWelcomeExperience(parsed);
+        window.sessionStorage.removeItem('onboarding_welcome_payload');
+      }
+    } catch {
+      window.sessionStorage.removeItem('onboarding_welcome_payload');
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!user?.organizationId) {
+      setResources([]);
+      setResourcesError(null);
+      return;
+    }
+    let cancelled = false;
+    setResourcesLoading(true);
+    setResourcesError(null);
+    documentService
+      .listDocuments({ organizationId: user.organizationId })
+      .then((list) => {
+        if (cancelled) return;
+        setResources(list);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        console.error('[ClientDashboard] resources load failed', error);
+        setResources([]);
+        setResourcesError('Unable to load resources right now.');
+      })
+      .finally(() => {
+        if (!cancelled) setResourcesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user?.organizationId]);
 
   if (essentialError) {
     return (
@@ -636,6 +738,56 @@ const ClientDashboard = () => {
           </Button>
         </Card>
       </div>
+
+      {welcomeExperience && (
+        <Card tone="positive" className="mt-6 space-y-3 border border-emerald-200 bg-emerald-50/70">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-xs uppercase tracking-wide text-emerald-700">Onboarding complete</p>
+              <h3 className="font-heading text-xl font-semibold text-emerald-900">
+                {welcomeExperience.orgName ? `Welcome to ${welcomeExperience.orgName}` : 'Welcome aboard'}
+              </h3>
+              <p className="text-sm text-emerald-800">
+                Sign in with <span className="font-semibold">{welcomeExperience.email ?? user?.email}</span> to access
+                your assignments and shared resources immediately.
+              </p>
+            </div>
+            <Button variant="ghost" size="sm" onClick={() => setWelcomeExperience(null)}>
+              Dismiss
+            </Button>
+          </div>
+          <ul className="list-disc pl-5 text-sm text-emerald-900 space-y-1">
+            {welcomeExperience.assignments?.courses ? (
+              <li>
+                {welcomeExperience.assignments.courses} course
+                {welcomeExperience.assignments.courses > 1 ? 's' : ''} ready to begin.
+              </li>
+            ) : (
+              <li>Courses will appear on your dashboard as soon as they’re assigned.</li>
+            )}
+            {welcomeExperience.assignments?.surveys ? (
+              <li>
+                {welcomeExperience.assignments.surveys} survey
+                {welcomeExperience.assignments.surveys > 1 ? 's' : ''} awaiting your input.
+              </li>
+            ) : (
+              <li>Survey invitations will appear here once scheduled.</li>
+            )}
+            <li>Shared resources and announcements are one click away.</li>
+          </ul>
+          <div className="flex flex-wrap gap-3">
+            <Button size="sm" onClick={() => navigate('/client/courses')}>
+              Start courses
+            </Button>
+            <Button size="sm" variant="secondary" onClick={() => handleNavigateToSurveys()}>
+              View surveys
+            </Button>
+            <Button size="sm" variant="ghost" onClick={handleNavigateToResources}>
+              View resources
+            </Button>
+          </div>
+        </Card>
+      )}
 
       <div className="mt-6 grid gap-4 md:grid-cols-3">
         <Card tone="muted" className="text-center py-6">
@@ -734,6 +886,59 @@ const ClientDashboard = () => {
           )}
         </Card>
 
+        <Card className="space-y-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate/10 text-slate">
+                <FileText className="h-5 w-5" />
+              </span>
+              <div>
+                <h3 className="font-heading text-base font-semibold text-charcoal">Shared resources</h3>
+                <p className="text-xs text-slate/70">Latest files and documents from your admin team.</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              {resourcesError && (
+                <Badge tone="attention" className="text-[11px]">
+                  {resourcesError}
+                </Badge>
+              )}
+              <Button variant="ghost" size="sm" onClick={handleNavigateToResources}>
+                View all
+              </Button>
+            </div>
+          </div>
+          {resourcesLoading ? (
+            <div className="flex items-center justify-center py-6 text-sm text-slate/60">Loading resources…</div>
+          ) : featuredResources.length === 0 ? (
+            <div className="rounded-2xl border border-dashed border-mist bg-cloud/60 p-4 text-sm text-slate/70">
+              No shared documents yet. Your facilitator will add resources soon.
+            </div>
+          ) : (
+            <ul className="space-y-3">
+              {featuredResources.map((doc) => (
+                <li
+                  key={doc.id}
+                  className="flex items-center justify-between gap-3 rounded-xl border border-slate/20 bg-white/90 p-3"
+                >
+                  <div>
+                    <p className="font-heading text-sm font-semibold text-charcoal">{doc.name}</p>
+                    <p className="text-xs text-slate/70">
+                      {doc.category} • {doc.visibility === 'org' ? 'Organization' : 'Global'}
+                    </p>
+                  </div>
+                  {doc.url ? <ResourceQuickAction document={doc} /> : <span className="text-xs text-slate/60">No file</span>}
+                </li>
+              ))}
+            </ul>
+          )}
+          {extraResources > 0 && (
+            <Button variant="ghost" size="xs" onClick={handleNavigateToResources}>
+              See {extraResources} more
+            </Button>
+          )}
+        </Card>
+
         <Card tone="muted" className="space-y-4">
           <div className="flex items-center gap-3">
             <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-sunrise/10 text-sunrise">
@@ -799,8 +1004,8 @@ const ClientDashboard = () => {
             {featuredSurveyAssignments.map((entry) => {
               const { assignment, survey } = entry;
               const due = describeDueDate(assignment.dueDate);
-              const tone = getSurveyBadgeTone(assignment.status, due.overdue);
-              const statusLabel = getSurveyStatusLabel(assignment.status);
+              const tone = getSurveyBadgeTone(assignment, due.overdue);
+              const statusLabel = getSurveyStatusLabel(assignment);
               const surveyLink = extractSurveyLink(assignment);
               return (
                 <div

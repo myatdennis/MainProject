@@ -24,6 +24,7 @@ import ClientCourseDetail from './pages/Client/ClientCourseDetail';
 import ClientLessonView from './pages/Client/ClientLessonView';
 import ClientCourseCompletion from './pages/Client/ClientCourseCompletion';
 import ClientSurveys from './pages/Client/ClientSurveys';
+import ClientDocuments from './pages/Client/DocumentsPage';
 import ClientProfile from './pages/Client/ClientProfile';
 import ClientLayout from './pages/Client/ClientLayout';
 import LMSLayout from './components/LMS/LMSLayout';
@@ -222,6 +223,7 @@ function AppContent() {
                   <Route path="courses/:courseId/lessons/:lessonId" element={<ClientLessonView />} />
                   <Route path="courses/:courseId/completion" element={<ClientCourseCompletion />} />
                   <Route path="surveys" element={<ClientSurveys />} />
+                  <Route path="documents" element={<ClientDocuments />} />
                   <Route path="profile" element={<ClientProfile />} />
                   <Route path="*" element={<Navigate to="dashboard" replace />} />
                 </Route>

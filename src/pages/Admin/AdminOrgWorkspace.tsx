@@ -12,6 +12,7 @@ import {
   Eye,
   Mail,
   Plus,
+  RefreshCw,
   Search,
   Upload,
   Users,
@@ -36,13 +37,54 @@ type SubscriptionFilterOption = 'all' | 'Standard' | 'Premium' | 'Enterprise';
 
 type BroadcastAudience = 'custom' | 'all_active_orgs' | 'all_active_users';
 
+const createEmptyCrmSummary = (): CrmSummary => ({
+  organizations: { total: 0, active: 0, onboarding: 0, newThisMonth: 0 },
+  users: { total: 0, active: 0, invited: 0, recentActive: 0 },
+  assignments: { coursesLast30d: 0, surveysLast30d: 0, overdue: 0 },
+  communication: { messagesLast30d: 0, notificationsLast30d: 0, unreadNotifications: 0 },
+  invites: { pending: 0, accepted: 0, expired: 0 },
+});
+
+const deriveCrmSummaryFromOrganizations = (orgs: Org[], paginationTotal?: number): CrmSummary => {
+  const derived = createEmptyCrmSummary();
+  if (!orgs || orgs.length === 0) {
+    derived.organizations.total = paginationTotal ?? 0;
+    return derived;
+  }
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const total = typeof paginationTotal === 'number' && paginationTotal > 0 ? paginationTotal : orgs.length;
+  derived.organizations.total = total;
+  derived.organizations.active = orgs.filter((org) => (org.status ?? '').toLowerCase() === 'active').length;
+  derived.organizations.onboarding = orgs.filter((org) => {
+    const onboardingStatus = (org.onboardingStatus ?? '').toLowerCase();
+    return onboardingStatus && onboardingStatus !== 'complete';
+  }).length;
+  derived.organizations.newThisMonth = orgs.filter((org) => {
+    if (!org.createdAt) return false;
+    const created = new Date(org.createdAt);
+    return created >= monthStart;
+  }).length;
+
+  const totalLearners = orgs.reduce((sum, org) => sum + (org.totalLearners ?? 0), 0);
+  const activeLearners = orgs.reduce((sum, org) => sum + (org.activeLearners ?? 0), 0);
+  derived.users = {
+    total: totalLearners,
+    active: activeLearners,
+    invited: Math.max(totalLearners - activeLearners, 0),
+    recentActive: activeLearners,
+  };
+
+  return derived;
+};
+
 const AdminOrgWorkspace = () => {
   const { showToast } = useToast();
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<StatusFilterOption>('all');
   const [subscriptionFilter, setSubscriptionFilter] = useState<SubscriptionFilterOption>('all');
-  const [organizations, setOrganizations] = useState<any[]>([]);
+  const [organizations, setOrganizations] = useState<Org[]>([]);
   const [progressMap, setProgressMap] = useState<Record<string, any>>({});
   const [fetching, setFetching] = useState(false);
   const [initialLoad, setInitialLoad] = useState(true);
@@ -77,6 +119,26 @@ const AdminOrgWorkspace = () => {
   const [sendingBroadcast, setSendingBroadcast] = useState(false);
 
   const [showCourseAssignModal, setShowCourseAssignModal] = useState(false);
+
+  const derivedSummary = useMemo(
+    () => deriveCrmSummaryFromOrganizations(organizations, paginationMeta.total),
+    [organizations, paginationMeta.total],
+  );
+
+  const summaryForDisplay = useMemo(() => {
+    if (crmSummary && !crmSummary.disabled && crmSummary.organizations.total > 0) {
+      return crmSummary;
+    }
+    return derivedSummary;
+  }, [crmSummary, derivedSummary]);
+
+  const usingDerivedSummary = useMemo(() => summaryForDisplay !== crmSummary, [summaryForDisplay, crmSummary]);
+
+  const orgListStats = useMemo(() => {
+    const total = paginationMeta.total || organizations.length;
+    const active = organizations.filter((org) => (org.status ?? '').toLowerCase() === 'active').length;
+    return { total, active };
+  }, [organizations, paginationMeta.total]);
 
   const loadCrmData = useCallback(async () => {
     setCrmLoading(true);
@@ -350,34 +412,35 @@ const AdminOrgWorkspace = () => {
   };
 
   const crmSummaryCards = useMemo(() => {
-    if (!crmSummary) return [];
+    if (!summaryForDisplay) return [];
+    const summary = summaryForDisplay;
     return [
       {
         label: 'Organizations',
         icon: Building2,
-        value: crmSummary.organizations.total,
-        subtext: `${crmSummary.organizations.active} active · ${crmSummary.organizations.onboarding} onboarding`,
+        value: summary.organizations.total,
+        subtext: `${summary.organizations.active} active · ${summary.organizations.onboarding} onboarding`,
       },
       {
         label: 'Learners',
         icon: Users,
-        value: crmSummary.users.total,
-        subtext: `${crmSummary.users.active} active · ${crmSummary.users.invited} invited`,
+        value: summary.users.total,
+        subtext: `${summary.users.active} active · ${summary.users.invited} invited`,
       },
       {
         label: 'Assignments (30d)',
         icon: Activity,
-        value: crmSummary.assignments.coursesLast30d + crmSummary.assignments.surveysLast30d,
-        subtext: `${crmSummary.assignments.coursesLast30d} courses · ${crmSummary.assignments.surveysLast30d} surveys`,
+        value: summary.assignments.coursesLast30d + summary.assignments.surveysLast30d,
+        subtext: `${summary.assignments.coursesLast30d} courses · ${summary.assignments.surveysLast30d} surveys`,
       },
       {
         label: 'Messages (30d)',
         icon: Mail,
-        value: crmSummary.communication.messagesLast30d + crmSummary.communication.notificationsLast30d,
-        subtext: `${crmSummary.communication.messagesLast30d} emails · ${crmSummary.communication.notificationsLast30d} alerts`,
+        value: summary.communication.messagesLast30d + summary.communication.notificationsLast30d,
+        subtext: `${summary.communication.messagesLast30d} emails · ${summary.communication.notificationsLast30d} alerts`,
       },
     ];
-  }, [crmSummary]);
+  }, [summaryForDisplay]);
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-8">
@@ -388,6 +451,9 @@ const AdminOrgWorkspace = () => {
           <p className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Organizations & CRM</p>
           <h1 className="text-3xl font-bold text-gray-900">Customer relationships</h1>
           <p className="text-sm text-gray-600">Monitor engagement, manage organizations, and send communications from one workspace.</p>
+          <p className="text-xs text-gray-500 mt-1">
+            Displaying {orgListStats.total} organizations · {orgListStats.active} active
+          </p>
         </div>
         <div className="flex flex-wrap gap-3">
           <LoadingButton onClick={loadCrmData} loading={crmLoading} variant="secondary">
@@ -418,6 +484,11 @@ const AdminOrgWorkspace = () => {
           </div>
         ))}
       </div>
+      {usingDerivedSummary && (
+        <p className="text-xs text-gray-500">
+          Live metrics derived from the organizations currently loaded in this session.
+        </p>
+      )}
 
       <div className="grid gap-6 lg:grid-cols-[2fr_1.1fr]">
         <div className="space-y-6">

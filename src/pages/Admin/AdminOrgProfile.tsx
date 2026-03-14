@@ -45,19 +45,19 @@ const AdminOrgProfile: React.FC = () => {
     steps,
     completionPercent,
     frictionAlerts,
-    invites,
+    invites: onboardingInvites,
     refresh,
   } = useOnboardingProgress(orgId ?? undefined, {
     pollIntervalMs: 60000,
   });
 
   const inviteStats = useMemo(() => {
-    const list = Array.isArray(invites) ? invites : [];
+    const list = Array.isArray(onboardingInvites) ? onboardingInvites : [];
     const pending = list.filter((invite: any) => invite.status === 'pending' || invite.status === 'sent').length;
     const accepted = list.filter((invite: any) => invite.status === 'accepted').length;
     const stale = list.filter((invite: any) => invite.status === 'expired' || invite.status === 'bounced').length;
     return { pending, accepted, stale };
-  }, [invites]);
+  }, [onboardingInvites]);
 
   const [orgProfile, setOrgProfile] = useState<OrgProfileDetails | null>(null);
   const [orgProfileLoading, setOrgProfileLoading] = useState(false);
@@ -75,7 +75,7 @@ const AdminOrgProfile: React.FC = () => {
   const contacts = orgProfile?.contacts ?? [];
   const adminUsers = orgProfile?.admins ?? [];
   const messages = orgProfile?.messages ?? [];
-  const invites = orgProfile?.invites ?? [];
+  const orgInvites = orgProfile?.invites ?? [];
   const users = orgProfile?.users ?? [];
   const assignments = orgProfile?.assignments;
   const primaryContact = contacts.find((contact) => contact.isPrimary) ?? contacts[0] ?? null;
@@ -143,7 +143,7 @@ const AdminOrgProfile: React.FC = () => {
   }, [orgId]);
 
   const inviteSummary = useMemo(() => {
-    return invites.reduce(
+    return orgInvites.reduce(
       (acc, invite) => {
         const status = invite.status?.toLowerCase() || 'pending';
         acc[status] = (acc[status] ?? 0) + 1;
@@ -151,7 +151,7 @@ const AdminOrgProfile: React.FC = () => {
       },
       {} as Record<string, number>,
     );
-  }, [invites]);
+  }, [orgInvites]);
 
   const recentUsers = useMemo(() => users.slice(0, 6), [users]);
 
@@ -309,7 +309,6 @@ const AdminOrgProfile: React.FC = () => {
           </div>
         )}
       </div>
-    </div>
 
       {orgProfileError && (
         <div className="bg-rose-50 border border-rose-100 text-rose-800 rounded-2xl p-4 flex items-center gap-3">
@@ -636,7 +635,7 @@ const AdminOrgProfile: React.FC = () => {
                 <h3 className="text-lg font-semibold text-gray-900">Open invites</h3>
                 <p className="text-sm text-gray-600">Monitor pending and accepted invites.</p>
               </div>
-              <span className="text-sm text-gray-500">{invites.length} total</span>
+              <span className="text-sm text-gray-500">{orgInvites.length} total</span>
             </div>
             <div className="grid grid-cols-3 gap-3">
               <div className="rounded-xl bg-amber-50 p-3">
@@ -654,7 +653,7 @@ const AdminOrgProfile: React.FC = () => {
                 </p>
               </div>
             </div>
-            {invites.length === 0 ? (
+            {orgInvites.length === 0 ? (
               <p className="text-sm text-gray-500">No invites have been issued.</p>
             ) : (
               <div className="overflow-x-auto">
@@ -668,7 +667,7 @@ const AdminOrgProfile: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100">
-                    {invites.slice(0, 6).map((invite) => (
+                    {orgInvites.slice(0, 6).map((invite) => (
                       <tr key={invite.id}>
                         <td className="px-3 py-2 font-medium text-gray-900">{invite.email}</td>
                         <td className="px-3 py-2 text-gray-600">{invite.role}</td>
