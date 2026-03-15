@@ -33,7 +33,17 @@ export const allowDemoExplicit = !isProduction && allowDemoFlag;
 export const demoModeExplicit = !isProduction && demoModeFlag;
 const devFallbackExplicit = !isProduction && devFallbackFlag;
 export const allowLegacyDemoUsers = parseFlag(process.env.ALLOW_LEGACY_DEMO_USERS);
-export const E2E_TEST_MODE = parseFlag(process.env.E2E_TEST_MODE);
+
+// E2E_TEST_MODE bypasses authentication — MUST NOT be enabled in production.
+const _e2eRaw = parseFlag(process.env.E2E_TEST_MODE);
+const _prodNode = (process.env.NODE_ENV || '').toLowerCase() === 'production';
+if (_e2eRaw && _prodNode) {
+  // Hard abort: leaking auth bypass to production is a critical security issue.
+  console.error('[FATAL] E2E_TEST_MODE=true is not allowed in NODE_ENV=production. Unset E2E_TEST_MODE before deploying.');
+  process.exit(1);
+}
+export const E2E_TEST_MODE = _e2eRaw;
+
 export const FORCE_ORG_ENFORCEMENT = parseFlag(
   process.env.FORCE_ORG_ENFORCEMENT ?? process.env.ENFORCE_ORG_ENFORCEMENT ?? process.env.FORCE_ORG_GUARDS
 );

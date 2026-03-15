@@ -87,7 +87,12 @@ const AdminUsers = () => {
     if (!email && !fullName) return null;
 
     const orgProgress = member?.progress ?? {};
-    const progressKeys = ['foundations', 'bias', 'empathy', 'conversations', 'planning'];
+    // Derive keys from whichever modules are present in the progress object,
+    // falling back to the well-known DEI defaults so the column never goes blank.
+    const DEFAULT_KEYS = ['foundations', 'bias', 'empathy', 'conversations', 'planning'];
+    const progressKeys = Object.keys(orgProgress).length > 0
+      ? Object.keys(orgProgress)
+      : DEFAULT_KEYS;
     const progressMap = progressKeys.reduce((acc: Record<string, number>, key) => {
       acc[key] = typeof orgProgress[key] === 'number' ? orgProgress[key] : 0;
       return acc;
@@ -150,13 +155,50 @@ const AdminUsers = () => {
     return () => { cancelled = true; };
   }, []);
 
-  const modules = [
-    { key: 'foundations', name: 'Foundations of Inclusive Leadership' },
-    { key: 'bias', name: 'Recognizing and Mitigating Bias' },
-    { key: 'empathy', name: 'Empathy in Action' },
-    { key: 'conversations', name: 'Courageous Conversations at Work' },
-    { key: 'planning', name: 'Personal & Team Action Planning' }
-  ];
+  // ── Org course modules (dynamic, falls back to defaults) ─────────────
+  const DEFAULT_MODULE_KEYS = ['foundations', 'bias', 'empathy', 'conversations', 'planning'];
+  const DEFAULT_MODULE_LABELS: Record<string, string> = {
+    foundations: 'Foundations of Inclusive Leadership',
+    bias: 'Recognizing and Mitigating Bias',
+    empathy: 'Empathy in Action',
+    conversations: 'Courageous Conversations at Work',
+    planning: 'Personal & Team Action Planning',
+  };
+  const [dynamicModules, setDynamicModules] = useState<Array<{ key: string; name: string }>>(
+    DEFAULT_MODULE_KEYS.map((k) => ({ key: k, name: DEFAULT_MODULE_LABELS[k] ?? k }))
+  );
+
+  useEffect(() => {
+    if (!activeOrgId) return;
+    let active = true;
+    (async () => {
+      try {
+        const res = await apiRequest<{ courses: Array<{ modules?: Array<{ slug?: string; title?: string; id?: string }> }> }>(
+          `/api/admin/courses?orgId=${activeOrgId}&status=published&limit=5`
+        );
+        if (!active) return;
+        const allModules: Array<{ key: string; name: string }> = [];
+        const seen = new Set<string>();
+        (res?.courses ?? []).forEach((course) => {
+          (course.modules ?? []).forEach((mod) => {
+            const key = mod.slug ?? mod.id ?? '';
+            if (key && !seen.has(key)) {
+              seen.add(key);
+              allModules.push({ key, name: mod.title ?? key });
+            }
+          });
+        });
+        if (allModules.length > 0) {
+          setDynamicModules(allModules);
+        }
+      } catch {
+        // Non-fatal: keep default module list
+      }
+    })();
+    return () => { active = false; };
+  }, [activeOrgId]);
+
+  const modules = dynamicModules;
 
   const filteredUsers = usersList.filter((user: User) => {
     const matchesSearch = user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||

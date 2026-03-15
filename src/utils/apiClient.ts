@@ -43,6 +43,7 @@ type ApiRequestOptions = {
   noTransform?: boolean;
   credentials?: RequestCredentials;
   skipAdminGateCheck?: boolean;
+  expectedStatus?: number[];
 };
 
 type InternalRequestOptions = ApiRequestOptions & {};
@@ -130,13 +131,6 @@ const ROUTE_THROTTLE_STATE = new Map<string, ThrottleEntry>();
 const BACKOFF_STEPS_MS = [500, 1500, 3000, 5000];
 
 const getThrottleKey = (url: string): string => extractPathname(url) || url;
-
-const clearThrottleEntry = (key: string) => {
-  const existing = ROUTE_THROTTLE_STATE.get(key);
-  if (existing && existing.retryAt <= Date.now()) {
-    ROUTE_THROTTLE_STATE.delete(key);
-  }
-};
 
 const parseRetryAfterHeader = (headerValue: string | null): number => {
   if (!headerValue) return 0;
@@ -527,21 +521,6 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
     timeoutMs,
     credentials: credentialMode,
   };
-
-  if (devMode) {
-    const originForUrl =
-      typeof window !== 'undefined' && window.location?.origin
-        ? window.location.origin
-        : 'http://localhost';
-
-    let parsed: URL | null = null;
-    try {
-      parsed = new URL(url, originForUrl);
-    } catch {
-      parsed = null;
-    }
-
-  }
 
   return preparedRequest;
 };

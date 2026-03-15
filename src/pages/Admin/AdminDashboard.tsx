@@ -12,6 +12,7 @@ import { logAuthRedirect } from '../../utils/logAuthRedirect';
 import useRuntimeStatus from '../../hooks/useRuntimeStatus';
 import { courseStore, AdminCatalogState } from '../../store/courseStore';
 import { useAnalyticsDashboard } from '../../hooks/useAnalyticsDashboard';
+import apiRequest from '../../utils/apiClient';
 import {
   Users,
   Building2,
@@ -31,58 +32,20 @@ import {
   WifiOff,
 } from 'lucide-react';
 
-// Stats are rendered from real API data inside AdminDashboard (see useAnalyticsDashboard usage below)
+type ActivityEntry = {
+  title: string;
+  subtitle: string;
+  icon: typeof CheckCircle2;
+  tone: string;
+};
 
-const recentActivity = [
-  {
-    title: 'Sarah Chen completed “Foundations of Inclusive Leadership”',
-    subtitle: 'Pacific Coast University · 2 hours ago',
-    icon: CheckCircle2,
-    tone: 'text-forest',
-  },
-  {
-    title: 'Marcus Rodriguez enrolled in “Courageous Conversations”',
-    subtitle: 'Mountain View High School · 4 hours ago',
-    icon: Users,
-    tone: 'text-skyblue',
-  },
-  {
-    title: 'Jennifer Walsh submitted course feedback',
-    subtitle: 'Community Impact Network · 6 hours ago',
-    icon: MessageSquare,
-    tone: 'text-sunrise',
-  },
-  {
-    title: '15 learners overdue on “Recognizing Bias”',
-    subtitle: 'Regional Fire Department · 1 day ago',
-    icon: AlertTriangle,
-    tone: 'text-deepred',
-  },
-];
-
-const alerts = [
-  {
-    title: '15 learners have overdue modules',
-    description: 'Send reminder notifications to improve completion rates.',
-    action: 'Send reminders',
-    icon: Clock,
-    tone: 'text-sunrise',
-  },
-  {
-    title: 'New organization pending approval',
-    description: 'TechForward Solutions has requested access to the portal.',
-    action: 'Review request',
-    icon: Building2,
-    tone: 'text-skyblue',
-  },
-  {
-    title: 'Monthly report ready',
-    description: 'February analytics report is available for download.',
-    action: 'Download report',
-    icon: BarChart3,
-    tone: 'text-forest',
-  },
-];
+type AlertEntry = {
+  title: string;
+  description: string;
+  action: string;
+  icon: typeof Clock;
+  tone: string;
+};
 
 const builderHighlights = [
   {
@@ -125,10 +88,87 @@ const AdminDashboard = () => {
     : 'pending';
   const [catalogState, setCatalogState] = useState<AdminCatalogState>(courseStore.getAdminCatalogState());
   const [retrying, setRetrying] = useState(false);
+  const [recentActivity, setRecentActivity] = useState<ActivityEntry[]>([]);
+  const [alerts, setAlerts] = useState<AlertEntry[]>([]);
+
+  // Fetch real admin activity feed from audit_logs
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const res = await apiRequest<{
+          data: Array<{ id: string; action: string; details: Record<string, unknown>; createdAt: string; userEmail?: string; orgName?: string }>;
+        }>('/api/admin/activity?limit=10');
+        if (active && Array.isArray(res?.data) && res.data.length > 0) {
+          const mapped: ActivityEntry[] = res.data.map((entry) => {
+            const isWarning = entry.action?.includes('overdue') || entry.action?.includes('fail') || entry.action?.includes('error');
+            const isMessage = entry.action?.includes('feedback') || entry.action?.includes('survey') || entry.action?.includes('comment');
+            const isUser = entry.action?.includes('enroll') || entry.action?.includes('invite') || entry.action?.includes('register');
+            const icon = isWarning ? AlertTriangle : isMessage ? MessageSquare : isUser ? Users : CheckCircle2;
+            const tone = isWarning ? 'text-deepred' : isMessage ? 'text-sunrise' : isUser ? 'text-skyblue' : 'text-forest';
+            const actorLabel = entry.userEmail ?? (entry.details?.email as string) ?? 'A user';
+            const courseLabel = (entry.details?.courseTitle as string) ?? (entry.details?.title as string) ?? '';
+            const actionLabel = entry.action?.replace(/_/g, ' ') ?? 'action';
+            const title = courseLabel
+              ? `${actorLabel} ${actionLabel} "${courseLabel}"`
+              : `${actorLabel} ${actionLabel}`;
+            const orgLabel = entry.orgName ?? (entry.details?.orgName as string) ?? '';
+            const timeLabel = entry.createdAt
+              ? new Date(entry.createdAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+              : '';
+            return { title, subtitle: orgLabel ? `${orgLabel} · ${timeLabel}` : timeLabel, icon, tone };
+          });
+          setRecentActivity(mapped);
+        }
+      } catch {
+        // Non-fatal — activity feed stays empty
+      }
+    })();
+    return () => { active = false; };
+  }, []);
+
 
   // Real analytics data
   const { data: analyticsData, loading: analyticsLoading } = useAnalyticsDashboard();
   const ov = analyticsData.overview;
+
+
+  // Derive alerts from real analytics data
+  useEffect(() => {
+    if (analyticsLoading) return;
+    const derived: AlertEntry[] = [];
+    const overdueLearners = (analyticsData as any)?.overview?.overdueLearners ?? 0;
+    if (overdueLearners > 0) {
+      derived.push({
+        title: `${overdueLearners} learner${overdueLearners !== 1 ? 's' : ''} have overdue modules`,
+        description: 'Send reminder notifications to improve completion rates.',
+        action: 'Send reminders',
+        icon: Clock,
+        tone: 'text-sunrise',
+      });
+    }
+    const pendingOrgs = (analyticsData as any)?.overview?.pendingOrgs ?? 0;
+    if (pendingOrgs > 0) {
+      derived.push({
+        title: `${pendingOrgs} organization${pendingOrgs !== 1 ? 's' : ''} pending approval`,
+        description: 'Review and approve pending organization access requests.',
+        action: 'Review requests',
+        icon: Building2,
+        tone: 'text-skyblue',
+      });
+    }
+    if (analyticsData.courseDetail.length > 0) {
+      derived.push({
+        title: 'Analytics report ready',
+        description: `${analyticsData.courseDetail.length} courses tracked. Export a CSV for detailed review.`,
+        action: 'Download report',
+        icon: BarChart3,
+        tone: 'text-forest',
+      });
+    }
+    setAlerts(derived);
+  }, [analyticsLoading, analyticsData]);
+
 
   const stats = useMemo(() => [
     {

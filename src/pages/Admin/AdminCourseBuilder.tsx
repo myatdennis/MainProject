@@ -14,7 +14,6 @@ import {
 } from '../../store/courseStore';
 import { syncCourseToDatabase, CourseValidationError, loadCourseFromDatabase, adminPublishCourse } from '../../dal/adminCourses';
 import { computeCourseDiff } from '../../utils/courseDiff';
-import { slugify } from '../../utils/courseNormalization';
 // import type { NormalizedCourse } from '../../utils/courseNormalization';
 import { mergePersistedCourse } from '../../utils/adminCourseMerge';
 import type { Course, Module, Lesson, LessonVideoAsset, LessonContent } from '../../types/courseTypes';
@@ -387,6 +386,9 @@ const AdminCourseBuilder = () => {
   const navigate = useNavigate();
   const isNewCourseRoute = !courseId || courseId === 'new';
   const isEditing = !isNewCourseRoute;
+
+  // Track the courseId we last initialized state for, so we can reset when it changes.
+  const mountedCourseIdRef = useRef<string | undefined>(courseId);
   
   const [course, setCourse] = useState<Course>(() => {
     if (isEditing && courseId) {
@@ -1216,6 +1218,40 @@ const AdminCourseBuilder = () => {
 
 const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 const [lastSaveTime, setLastSaveTime] = useState<Date | null>(null);
+
+  // When the courseId URL param changes (e.g., navigating from /new → /:id after first save,
+  // or clicking Edit on a different course), reset builder state so it loads the correct course.
+  useEffect(() => {
+    if (mountedCourseIdRef.current === courseId) {
+      return;
+    }
+    mountedCourseIdRef.current = courseId;
+    // Reset hydration tracking so hydrateCourse re-runs for the new courseId
+    lastLoadedCourseIdRef.current = null;
+    draftCheckIdRef.current = null;
+    // Reset course state to the store entry (or a fresh placeholder)
+    if (courseId && courseId !== 'new') {
+      const existing = courseStore.getCourse(courseId);
+      setCourse(existing || createEmptyCourse(courseId));
+      setInitializing(true);
+    } else {
+      setCourse(createEmptyCourse());
+      setInitializing(false);
+    }
+    // Reset all editor state
+    dirtyRef.current = false;
+    suppressNextDirtyRef.current = true;
+    setHasPendingChanges(false);
+    setSaveStatus('idle');
+    setStatusBanner(null);
+    setActiveTab('overview');
+    setEditingLesson(null);
+    setExpandedModules({});
+    clearValidationIssues();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [courseId]);
+
+
 type AutosaveTimerState = {
   timeout: NodeJS.Timeout;
   reject: (reason?: unknown) => void;
@@ -1427,7 +1463,7 @@ const scheduleAutosave = useCallback(
       clearTimeout(lessonAutosaveTimerRef.current);
     }
 
-    lessonAutosaveTimerRef.current = window.setTimeout(async () => {
+    lessonAutosaveTimerRef.current = setTimeout(async () => {
       if (!editingLesson) return;
       autoSaveLockRef.current = true;
       setLessonAutosaveState((prev) => ({
@@ -1438,7 +1474,7 @@ const scheduleAutosave = useCallback(
         message: null,
       }));
       try {
-        const gate = evaluateRuntimeGate('course.auto-save', runtimeStatus);
+        void evaluateRuntimeGate('course.auto-save', runtimeStatus);
         dirtyRef.current = true;
         console.info('[COURSE SAVE DIRTY]', {
           dirty: dirtyRef.current,
@@ -1551,7 +1587,7 @@ const scheduleAutosave = useCallback(
     (delayMs: number) => {
       if (autoSaveHaltedRef.current) return;
       clearAutoSaveBackoffTimer();
-      autoSaveBackoffTimerRef.current = window.setTimeout(() => {
+      autoSaveBackoffTimerRef.current = setTimeout(() => {
         autoSaveBackoffTimerRef.current = null;
         autoSaveBackoffUntilRef.current = 0;
         setAutoSaveRetryNonce((prev) => prev + 1);
@@ -1934,12 +1970,12 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
   const ensureTextContent = (lesson: Lesson): Lesson => {
     if (lesson.type !== 'text') return lesson;
     const nextLesson = { ...lesson };
-    const content = nextLesson.content ? { ...nextLesson.content } : {};
-    const body = typeof content.body === 'object' && content.body !== null ? { ...content.body } : {};
+    const content = (nextLesson.content ? { ...nextLesson.content } : {}) as LessonContent & Record<string, any>;
+    const body = typeof (content as any).body === 'object' && (content as any).body !== null ? { ...(content as any).body } : {} as Record<string, any>;
 
     if (typeof content.textContent !== 'string' || !content.textContent.trim()) {
       const fallback =
-        (typeof content.content === 'string' && content.content.trim()) ||
+        (typeof (content as any).content === 'string' && (content as any).content.trim()) ||
         (typeof body.textContent === 'string' && body.textContent.trim()) ||
         (typeof body.content === 'string' && body.content.trim()) ||
         (typeof nextLesson.description === 'string' && nextLesson.description.trim()) ||
@@ -1948,7 +1984,8 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
       body.textContent = fallback;
       body.content = body.content || fallback;
       issues.push(`text_content_filled:${nextLesson.id}`);
-      nextLesson.content = { ...content, body };
+      nextLesson.content = { ...content } as LessonContent;
+      (nextLesson.content as any).body = body;
       return nextLesson;
     }
 
@@ -1958,8 +1995,8 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
   const ensureVideoMetadata = (lesson: Lesson): Lesson => {
     if (lesson.type !== 'video') return lesson;
     const nextLesson = { ...lesson };
-    const content = nextLesson.content ? { ...nextLesson.content } : {};
-    const asset = content.videoAsset ? { ...content.videoAsset } : {};
+    const content = (nextLesson.content ? { ...nextLesson.content } : {}) as LessonContent & Record<string, any>;
+    const asset: Partial<LessonVideoAsset> & Record<string, any> = content.videoAsset ? { ...content.videoAsset } : {};
     let changed = false;
 
     const assetSignedUrl =
@@ -1975,7 +2012,7 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
       asset.assetId ||
       content.videoUrl ||
       (typeof content.video === 'object' && content.video
-        ? content.video.url || content.video.source || content.video.embedUrl
+        ? content.video.url || (content.video as any).source || content.video.embedUrl
         : null) ||
       `external://${nextLesson.id}`;
 
@@ -2009,11 +2046,12 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
       changed = true;
     }
     if (!asset.mimeType) {
-      asset.mimeType = content.mimeType || 'video/mp4';
+      asset.mimeType = (content as any).mimeType || 'video/mp4';
       changed = true;
     }
     if (!asset.source) {
-      asset.source = content.videoSourceType || (fallbackSource.startsWith('external://') ? 'external' : 'internal');
+      const vst = content.videoSourceType;
+      asset.source = (vst === 'internal' ? 'supabase' : vst === 'youtube' || vst === 'vimeo' || vst === 'external' ? 'api' : fallbackSource.startsWith('external://') ? 'api' : 'supabase') as LessonVideoAsset['source'];
       changed = true;
     }
     if (!asset.uploadedAt) {
@@ -2022,8 +2060,8 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
     }
 
     if (changed) {
-      content.videoAsset = asset;
-      nextLesson.content = content;
+      content.videoAsset = asset as LessonVideoAsset;
+      nextLesson.content = content as LessonContent;
       issues.push(`video_metadata_filled:${nextLesson.id}`);
       return nextLesson;
     }
@@ -2033,17 +2071,18 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
   const ensureQuizIntegrity = (lesson: Lesson): { lesson: Lesson; valid: boolean } => {
     if (lesson.type !== 'quiz') return { lesson, valid: true };
     const nextLesson = { ...lesson };
-    const content = nextLesson.content ? { ...nextLesson.content } : {};
-    let questions = Array.isArray(content.questions) ? content.questions.map((q) => ({ ...q })) : [];
+    const content = (nextLesson.content ? { ...nextLesson.content } : {}) as LessonContent & Record<string, any>;
+    let questions: Record<string, any>[] = Array.isArray(content.questions) ? content.questions.map((q) => ({ ...q })) : [];
     let valid = true;
 
     if (!questions.length) {
       questions = [
         {
+          id: generateId('q'),
           prompt: 'Sample question',
           options: [
-            { text: 'Option A', correct: true, isCorrect: true },
-            { text: 'Option B', correct: false, isCorrect: false },
+            { id: generateId('opt'), text: 'Option A', correct: true, isCorrect: true },
+            { id: generateId('opt'), text: 'Option B', correct: false, isCorrect: false },
           ],
           correctAnswerIndex: 0,
         },
@@ -2059,13 +2098,14 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
       }
       if (!Array.isArray(normalizedQuestion.options) || normalizedQuestion.options.length < 2) {
         normalizedQuestion.options = [
-          { text: 'Option A', correct: true },
-          { text: 'Option B', correct: false },
+          { id: generateId('opt'), text: 'Option A', correct: true },
+          { id: generateId('opt'), text: 'Option B', correct: false },
         ];
         issues.push(`quiz_options_filled:${nextLesson.id}:${index}`);
       } else {
-        normalizedQuestion.options = normalizedQuestion.options.map((option, optionIdx) => {
-          const normalizedOption = { ...option };
+        normalizedQuestion.options = (normalizedQuestion.options as (string | Record<string, any>)[]).map((option, optionIdx) => {
+          const normalizedOption: Record<string, any> = typeof option === 'string' ? { id: generateId('opt'), text: option } : { ...option };
+          if (!normalizedOption.id) normalizedOption.id = generateId('opt');
           if (typeof normalizedOption.text !== 'string' || !normalizedOption.text.trim()) {
             normalizedOption.text = `Option ${optionIdx + 1}`;
             issues.push(`quiz_option_text_filled:${nextLesson.id}:${index}:${optionIdx}`);
@@ -2074,29 +2114,30 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
         });
       }
 
+      const opts = (normalizedQuestion.options ?? []) as Record<string, any>[];
       const explicitIndex =
         typeof normalizedQuestion.correctAnswerIndex === 'number' &&
         normalizedQuestion.correctAnswerIndex >= 0 &&
-        normalizedQuestion.correctAnswerIndex < normalizedQuestion.options.length;
-      const hasMarkedOption = normalizedQuestion.options.some((option) => option?.correct || option?.isCorrect);
+        normalizedQuestion.correctAnswerIndex < opts.length;
+      const hasMarkedOption = opts.some((option) => option?.correct || option?.isCorrect);
 
       if (!explicitIndex && !hasMarkedOption) {
         normalizedQuestion.correctAnswerIndex = 0;
-        normalizedQuestion.options = normalizedQuestion.options.map((option, optionIdx) => ({
+        normalizedQuestion.options = opts.map((option, optionIdx) => ({
           ...option,
           correct: optionIdx === 0,
           isCorrect: optionIdx === 0,
         }));
         issues.push(`quiz_correct_answer_filled:${nextLesson.id}:${index}`);
       } else if (!explicitIndex && hasMarkedOption) {
-        const flaggedIndex = normalizedQuestion.options.findIndex((option) => option?.correct || option?.isCorrect);
+        const flaggedIndex = opts.findIndex((option) => option?.correct || option?.isCorrect);
         normalizedQuestion.correctAnswerIndex = flaggedIndex >= 0 ? flaggedIndex : 0;
       }
 
       if (
         normalizedQuestion.correctAnswerIndex == null ||
         normalizedQuestion.correctAnswerIndex < 0 ||
-        normalizedQuestion.correctAnswerIndex >= normalizedQuestion.options.length
+        normalizedQuestion.correctAnswerIndex >= opts.length
       ) {
         valid = false;
       }
@@ -2105,17 +2146,17 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
         normalizedQuestion.correctAnswerIndex != null && normalizedQuestion.correctAnswerIndex >= 0
           ? normalizedQuestion.correctAnswerIndex
           : 0;
-      normalizedQuestion.options = normalizedQuestion.options.map((option, optionIdx) => ({
+      normalizedQuestion.options = opts.map((option, optionIdx) => ({
         ...option,
         correct: optionIdx === finalCorrectIndex,
         isCorrect: optionIdx === finalCorrectIndex,
       }));
-      normalizedQuestion.correctAnswer = normalizedQuestion.options[finalCorrectIndex]?.id ?? null;
+      normalizedQuestion.correctAnswer = opts[finalCorrectIndex]?.id ?? null;
       return normalizedQuestion;
     });
 
-    content.questions = normalized;
-    nextLesson.content = content;
+    content.questions = normalized as any;
+    nextLesson.content = content as LessonContent;
     return { lesson: nextLesson, valid };
   };
   const normalizedModules = (input.modules || []).map((module) => {
@@ -2216,14 +2257,7 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
         order_index: normalizedLessons.length + 1,
         content: {
           textContent: 'Draft lesson content pending.',
-          body: {
-            title: 'Draft Lesson',
-            description: 'Auto-generated until content is added.',
-            content: 'Draft lesson content pending.',
-            textContent: 'Draft lesson content pending.',
-            schema_version: 1,
-          },
-        },
+        } as LessonContent,
       };
       normalizedLessons.push(fallbackLesson);
       issues.push(`module_publishable_filled:${module.id}`);
@@ -2293,7 +2327,7 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
     const canonicalCourseId = isUuid(sanitizedNextCourse.id)
       ? sanitizedNextCourse.id
       : isUuid(lastPersistedRef.current?.id ?? null)
-      ? lastPersistedRef.current?.id
+      ? (lastPersistedRef.current?.id ?? sanitizedNextCourse.id)
       : sanitizedNextCourse.id;
 
     const preparedCourse: Course = {
@@ -2870,7 +2904,7 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
       logPublishGuard('info', 'publish_complete');
       clearValidationIssues();
       setTimeout(() => setSaveStatus('idle'), 3000);
-      invalidateCourseQueries(queryClient, { orgId: activeOrgId ?? null, courseId: latestPersisted.id ?? null, slug: latestPersisted.slug ?? courseSlug ?? null });
+      invalidateCourseQueries(queryClient, { orgId: activeOrgId ?? null, courseId: latestPersisted.id ?? null, slug: latestPersisted.slug ?? course.slug ?? null });
       courseStore
         .init()
         .catch((refreshError) =>
@@ -2894,7 +2928,7 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
       } else if (error instanceof ApiError) {
         logPublishGuard('warn', 'publish_request_failed', { status: error.status, error });
         const responseBody = (error.body || {}) as { error?: string; code?: string; issues?: CourseValidationIssue[]; currentVersion?: number };
-        const errorCode = error.code || responseBody.code || responseBody.error || null;
+        const errorCode = (error as any).code || responseBody.code || responseBody.error || null;
         const apiErrorMessage =
           typeof (responseBody as any)?.message === 'string'
             ? ((responseBody as any).message as string)
@@ -3218,13 +3252,13 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
         urlExpiresAt: payload.urlExpiresAt,
       };
 
-      const nextContent = {
+      const nextContent: LessonContent = {
         ...existingContent,
         videoUrl: payload.signedUrl,
         fileName: file.name,
         fileSize: fileSizeLabel,
         videoAsset,
-        videoSourceType: 'internal',
+        videoSourceType: 'internal' as LessonContent['videoSourceType'],
       };
 
       logVideoSourceDebug(

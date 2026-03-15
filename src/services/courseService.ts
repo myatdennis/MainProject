@@ -435,8 +435,8 @@ const buildLessonContent = (lesson: Lesson, apiType: LessonDto['type']): LessonI
       canonical.videoUrl = assetUrl;
     }
   }
-  canonical.type = apiType;
-  canonical.schema_version = canonical.schema_version ?? CURRENT_CONTENT_SCHEMA_VERSION;
+  (canonical as any).type = apiType;
+  (canonical as any).schema_version = (canonical as any).schema_version ?? CURRENT_CONTENT_SCHEMA_VERSION;
   const sanitized = sanitizeSerializable(canonical) || {};
   const base =
     typeof sanitized === 'object' && sanitized !== null
@@ -522,7 +522,7 @@ export class CourseService {
     fallbackOrgId: string | null,
   ): T {
     const base = entity ? { ...entity } : {};
-    const stamped = stampCanonicalOrgId(base, fallbackOrgId);
+    const stamped = stampCanonicalOrgId(base, fallbackOrgId) as Record<string, any>;
     const resolvedOrgId = resolveOrgIdFromCarrier(stamped) ?? fallbackOrgId ?? null;
     if (resolvedOrgId) {
       stamped.organizationId = resolvedOrgId;
@@ -653,7 +653,7 @@ export class CourseService {
     }
     const canonicalCourse = CourseService.applyOrgIdContract(sanitizedCourse, canonicalOrgId);
     body.course = canonicalCourse;
-    modules = CourseService.withOrgContextForModules(modules, canonicalOrgId);
+    modules = CourseService.withOrgContextForModules(modules, canonicalOrgId) as typeof modules;
     body.modules = modules;
     CourseService.logLessonDiagnostics(modules as Record<string, any>[]);
     const courseIdIsServerAssigned = hasServerAssignedCourseId(course.id);
@@ -864,17 +864,31 @@ export class CourseService {
 
   static async loadCourseFromDatabase(
     identifier: string,
-    options: { includeDrafts?: boolean } = {},
+    options: { includeDrafts?: boolean; signal?: AbortSignal } = {},
   ): Promise<NormalizedCourse | null> {
     const { includeDrafts = false } = options;
     const normalizedIdentifier = identifier.trim();
 
-    const queryParam = includeDrafts ? '?includeDrafts=true' : '';
+    // Always try the admin endpoint first — it returns drafts, respects platform-admin scope,
+    // and works for courses not yet published to the client catalog.
+    try {
+      const adminJson = await apiRequest<{ data: SupabaseCourseRecord | null }>(
+        `/api/admin/courses/${normalizedIdentifier}`,
+        { noTransform: true, signal: options.signal },
+      );
+      if (adminJson.data) {
+        return mapCourseRecord(adminJson.data);
+      }
+    } catch (_adminErr) {
+      // 403/404 from the admin endpoint → fall through to client endpoint
+    }
 
+    // Fallback: client endpoint (handles slug-based lookup and published courses)
+    const queryParam = includeDrafts ? '?includeDrafts=true' : '';
     try {
       const json = await apiRequest<{ data: SupabaseCourseRecord | null }>(
         `/api/client/courses/${normalizedIdentifier}${queryParam}`,
-        { noTransform: true },
+        { noTransform: true, signal: options.signal },
       );
       if (!json.data) {
         const slugCandidate = slugify(normalizedIdentifier);

@@ -58,10 +58,8 @@ const ClientCourses = () => {
         }
         if (mounted) {
           const rawCourses = courseStore.getAllCourses();
-          console.log('[ClientCourses] RAW getAllCourses:', rawCourses);
           const all = rawCourses.map((course) => {
             const norm = normalizeCourse(course);
-            console.log('[ClientCourses] Normalized:', norm, 'Status:', norm.status);
             return norm;
           });
           setNormalizedCoursesAll(all);
@@ -77,7 +75,7 @@ const ClientCourses = () => {
   }, []);
 
   useEffect(() => {
-    console.log('[ClientCourses] normalizedCoursesAll (state):', normalizedCoursesAll);
+    // normalizedCoursesAll updated
   }, [normalizedCoursesAll]);
 
   useEffect(() => {
@@ -163,9 +161,6 @@ const ClientCourses = () => {
     };
   }), [normalizedCourses, assignments, progressRefreshToken]);
 
-  console.log('[ClientCourses] courseSnapshots:', courseSnapshots);
-  console.log('[ClientCourses] searchTerm:', searchTerm, 'filterStatus:', filterStatus);
-
   const filtered = courseSnapshots.filter(({ course, snapshot, assignment }) => {
     const searchMatch = course.title.toLowerCase().includes(searchTerm.toLowerCase());
     if (!searchMatch) return false;
@@ -177,7 +172,6 @@ const ClientCourses = () => {
     return true;
   });
 
-  console.log('[ClientCourses] filtered:', filtered);
   const noCoursesAvailable = !coursesLoading && normalizedCourses.length === 0;
 
   return (

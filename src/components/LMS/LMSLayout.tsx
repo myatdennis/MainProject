@@ -23,6 +23,7 @@ import LoadingSpinner from '../ui/LoadingSpinner';
 import useRuntimeStatus from '../../hooks/useRuntimeStatus';
 import { refreshRuntimeStatus } from '../../state/runtimeStatus';
 import ApiStatusBanner from '../system/ApiStatusBanner';
+import RealtimeNotifications from '../RealtimeNotifications';
 
 interface LMSLayoutProps {
   children?: ReactNode;
@@ -190,6 +191,7 @@ const LMSLayout = ({ children }: LMSLayoutProps) => {
               <p className="hidden font-heading text-lg font-semibold text-charcoal lg:block">Leadership Journey</p>
             </div>
             <div className="flex items-center gap-3 text-xs text-slate/70">
+              <RealtimeNotifications />
               <Badge tone="info" className="bg-sunrise/10 text-sunrise">
                 {new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
               </Badge>

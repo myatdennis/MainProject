@@ -51,20 +51,61 @@ const AdminAnalytics = () => {
   };
 
   const exportInsights = () => {
-    const exportData = {
-      exportedAt: new Date().toISOString(),
-      dateRange,
-      overview: data.overview,
-      courses: data.courseDetail,
-      topOrgs: data.topOrgs,
-    };
-    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(exportData, null, 2));
+    // Build CSV with overview + per-course detail
+    const rows: string[] = [];
+    rows.push('# HuddleCo Analytics Export');
+    rows.push(`# Date Range: ${dateRange}`);
+    rows.push(`# Exported: ${new Date().toISOString()}`);
+    rows.push('');
+
+    // Overview section
+    rows.push('## Overview');
+    rows.push('Metric,Value');
+    rows.push(`Active Learners,${data.overview?.totalActiveLearners ?? 0}`);
+    rows.push(`Partner Organizations,${data.overview?.totalOrgs ?? 0}`);
+    rows.push(`Published Courses,${data.overview?.totalCourses ?? 0}`);
+    rows.push(`Avg Completion Rate,${Math.round(data.overview?.platformAvgCompletion ?? 0)}%`);
+    rows.push(`Avg Progress,${Math.round(data.overview?.platformAvgProgress ?? 0)}%`);
+    rows.push('');
+
+    // Course detail section
+    rows.push('## Course Performance');
+    rows.push('Course Title,Total Learners,Completed,Completion %,Avg Time (min)');
+    data.courseDetail.forEach((c) => {
+      const safe = (v: string) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+      rows.push([
+        safe(c.courseTitle),
+        c.totalLearners ?? 0,
+        c.completedCount ?? 0,
+        `${Math.round(c.completionPercent ?? 0)}%`,
+        c.avgTimeMinutes ?? 0,
+      ].join(','));
+    });
+    rows.push('');
+
+    // Top orgs section
+    if (data.topOrgs.length > 0) {
+      rows.push('## Top Organizations');
+      rows.push('Organization,Total Learners,Completion Rate');
+      data.topOrgs.forEach((org) => {
+        rows.push([
+          `"${String(org.orgName ?? '').replace(/"/g, '""')}"`,
+          org.totalLearners ?? 0,
+          `${Math.round(org.completionRate ?? 0)}%`,
+        ].join(','));
+      });
+    }
+
+    const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.setAttribute('href', dataStr);
-    a.setAttribute('download', `insights-${selectedMetric}-${Date.now()}.json`);
+    a.href = url;
+    a.download = `huddleco-analytics-${dateRange}-${new Date().toISOString().split('T')[0]}.csv`;
     document.body.appendChild(a);
     a.click();
-    a.remove();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    showToast('Analytics exported as CSV.', 'success');
   };
 
   // ── Overview stats ────────────────────────────────────────────────────

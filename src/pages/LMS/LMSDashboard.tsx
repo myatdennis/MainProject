@@ -15,11 +15,88 @@ import {
 import { courseStore } from '../../store/courseStore';
 import { normalizeCourse } from '../../utils/courseNormalization';
 import { loadStoredCourseProgress } from '../../utils/courseProgress';
+import apiRequest from '../../utils/apiClient';
+
+type ProgressSummary = {
+  modulesCompleted: number;
+  modulesTotal: number;
+  overallPercent: number;
+  timeInvestedSeconds: number;
+  certificatesEarned: number;
+  streakDays: number;
+};
+
+type ActivityItem = {
+  action: string;
+  item: string;
+  time: string;
+  icon: typeof CheckCircle;
+  color: string;
+};
+
+const formatTimeInvested = (seconds: number): string => {
+  if (!seconds || seconds < 60) return '0 min';
+  const hours = seconds / 3600;
+  if (hours >= 1) return `${hours.toFixed(1)} hrs`;
+  return `${Math.round(seconds / 60)} min`;
+};
 
 const LMSDashboard = () => {
   const { user } = useSecureAuth();
   const [progressRefreshToken, setProgressRefreshToken] = useState(0);
   const [isLoadingCourses, setIsLoadingCourses] = useState(true);
+  const [progressSummary, setProgressSummary] = useState<ProgressSummary | null>(null);
+  const [recentActivity, setRecentActivity] = useState<ActivityItem[]>([]);
+  const [statsLoading, setStatsLoading] = useState(true);
+
+  // Load real progress summary from API
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const response = await apiRequest<{ data: ProgressSummary }>('/api/client/progress/summary');
+        if (active && response?.data) {
+          setProgressSummary(response.data);
+        }
+      } catch (err) {
+        // Non-fatal: stats will show defaults
+        console.warn('[LMSDashboard] Failed to load progress summary:', err);
+      } finally {
+        if (active) setStatsLoading(false);
+      }
+    })();
+    return () => { active = false; };
+  }, []);
+
+  // Load real recent activity from API
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      try {
+        const response = await apiRequest<{ data: Array<{ id: string; action: string; details: Record<string, unknown>; createdAt: string }> }>(
+          '/api/client/activity?limit=5'
+        );
+        if (active && Array.isArray(response?.data) && response.data.length > 0) {
+          const mapped: ActivityItem[] = response.data.map((item) => {
+            const isComplete = item.action?.includes('complet') || item.action?.includes('finish');
+            return {
+              action: item.action ?? 'Activity',
+              item: (item.details?.courseTitle as string) ?? (item.details?.title as string) ?? item.action ?? '',
+              time: item.createdAt
+                ? new Date(item.createdAt).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+                : '',
+              icon: isComplete ? CheckCircle : Play,
+              color: isComplete ? 'text-green-500' : 'text-orange-500',
+            };
+          });
+          setRecentActivity(mapped);
+        }
+      } catch {
+        // Non-fatal: activity feed stays empty
+      }
+    })();
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -83,35 +160,35 @@ const LMSDashboard = () => {
       });
   }, [progressRefreshToken]);
 
-  const stats = [
-    { label: 'Modules Completed', value: '1/5', icon: BookOpen, color: 'text-blue-500' },
-    { label: 'Total Progress', value: '45%', icon: TrendingUp, color: 'text-green-500' },
-    { label: 'Time Invested', value: '2.5 hrs', icon: Clock, color: 'text-orange-500' },
-    { label: 'Certificates Earned', value: '0', icon: Award, color: 'text-purple-500' }
-  ];
+  const completedValue = progressSummary
+    ? `${progressSummary.modulesCompleted}/${Math.max(progressSummary.modulesTotal, progressSummary.modulesCompleted)}`
+    : statsLoading ? '…' : '0/0';
 
-  const recentActivity = [
+  const stats = [
     {
-      action: 'Completed',
-      item: 'Foundations of Inclusive Leadership',
-      time: '2 days ago',
-      icon: CheckCircle,
-      color: 'text-green-500'
+      label: 'Modules Completed',
+      value: completedValue,
+      icon: BookOpen,
+      color: 'text-blue-500',
     },
     {
-      action: 'Downloaded',
-      item: 'Leadership Reflection Worksheet',
-      time: '3 days ago',
-      icon: Download,
-      color: 'text-blue-500'
+      label: 'Total Progress',
+      value: statsLoading ? '…' : `${progressSummary?.overallPercent ?? 0}%`,
+      icon: TrendingUp,
+      color: 'text-green-500',
     },
     {
-      action: 'Started',
-      item: 'Recognizing and Mitigating Bias',
-      time: '1 week ago',
-      icon: Play,
-      color: 'text-orange-500'
-    }
+      label: 'Time Invested',
+      value: statsLoading ? '…' : formatTimeInvested(progressSummary?.timeInvestedSeconds ?? 0),
+      icon: Clock,
+      color: 'text-orange-500',
+    },
+    {
+      label: 'Certificates Earned',
+      value: statsLoading ? '…' : String(progressSummary?.certificatesEarned ?? 0),
+      icon: Award,
+      color: 'text-purple-500',
+    },
   ];
 
   const getStatusColor = (status: string) => {
@@ -269,7 +346,9 @@ const LMSDashboard = () => {
           <div className="card-lg card-hover">
             <h3 className="text-lg font-bold text-gray-900 mb-4">Recent Activity</h3>
             <div className="space-y-4">
-              {recentActivity.map((activity, index) => {
+              {recentActivity.length === 0 ? (
+                <p className="text-sm text-slate/60 py-2">No recent activity yet. Start a course to see your progress here.</p>
+              ) : recentActivity.map((activity, index) => {
                 const Icon = activity.icon;
                 return (
                   <div key={index} className="flex items-start space-x-3">

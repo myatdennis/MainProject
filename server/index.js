@@ -954,7 +954,7 @@ const respondWithHealthPayload = async (_req, res) => {
   }
 };
 
-app.post('/api/admin/courses/:id/assign', async (req, res) => {
+app.post('/api/admin/courses/:id/assign', authenticate, async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { id } = req.params;
   try {
@@ -1324,7 +1324,7 @@ app.post('/api/admin/courses/:id/assign', async (req, res) => {
         data: responseRows,
         meta: {
           fallback: true,
-          organizationId,
+          organizationId: finalOrganizationId,
           inserted: inserted.length,
           updated: updated.length,
         },
@@ -12262,6 +12262,135 @@ app.get('/api/learner/progress', authenticate, async (req, res) => {
       hint: error?.hint ?? null,
       details: error?.message ?? null,
     });
+  }
+});
+
+// ─── GET /api/client/progress/summary ──────────────────────────────────────
+// Returns real per-learner stats: modulesCompleted/total, overall % progress,
+// total time invested (seconds), and certificates earned.
+// Falls back to local store data when Supabase is unavailable.
+app.get('/api/client/progress/summary', authenticate, async (req, res) => {
+  const context = requireUserContext(req, res);
+  if (!context) return;
+  const userId = context.userId;
+
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    let totalPercent = 0;
+    let courseCount = 0;
+    let completedCourses = 0;
+    let totalTimeSeconds = 0;
+    for (const [key, record] of e2eStore.courseProgress.entries()) {
+      if (!key.startsWith(`${userId}:`)) continue;
+      courseCount += 1;
+      totalPercent += typeof record.percent === 'number' ? record.percent : 0;
+      totalTimeSeconds += typeof record.time_spent_s === 'number' ? record.time_spent_s : 0;
+      if ((record.percent ?? 0) >= 100 || record.status === 'completed') completedCourses += 1;
+    }
+    const overallPercent = courseCount > 0 ? Math.round(totalPercent / courseCount) : 0;
+    return res.json({
+      data: {
+        modulesCompleted: completedCourses,
+        modulesTotal: courseCount,
+        overallPercent,
+        timeInvestedSeconds: totalTimeSeconds,
+        certificatesEarned: completedCourses,
+        streakDays: 0,
+      },
+    });
+  }
+
+  if (!supabase) {
+    return res.status(503).json({ error: 'database_unavailable' });
+  }
+
+  try {
+    const { data: rows, error } = await supabase
+      .from('user_course_progress')
+      .select('course_id, percent, status, time_spent_s, updated_at')
+      .eq('user_id_uuid', userId);
+
+    if (error) throw error;
+
+    const progressRows = rows || [];
+    const courseCount = progressRows.length;
+    const completedCourses = progressRows.filter(
+      (r) => (r.percent ?? 0) >= 100 || r.status === 'completed'
+    ).length;
+    const totalPercent = progressRows.reduce((sum, r) => sum + (r.percent ?? 0), 0);
+    const overallPercent = courseCount > 0 ? Math.round(totalPercent / courseCount) : 0;
+    const totalTimeSeconds = progressRows.reduce((sum, r) => sum + (r.time_spent_s ?? 0), 0);
+
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const recentDays = new Set(
+      progressRows
+        .filter((r) => r.updated_at && r.updated_at >= thirtyDaysAgo)
+        .map((r) => r.updated_at.slice(0, 10))
+    );
+    const streakDays = recentDays.size;
+
+    return res.json({
+      data: {
+        modulesCompleted: completedCourses,
+        modulesTotal: courseCount,
+        overallPercent,
+        timeInvestedSeconds: totalTimeSeconds,
+        certificatesEarned: completedCourses,
+        streakDays,
+      },
+    });
+  } catch (err) {
+    logger.warn('client_progress_summary_failed', { userId, message: err?.message ?? String(err) });
+    return res.status(500).json({ error: 'Unable to fetch progress summary' });
+  }
+});
+
+// ─── GET /api/admin/activity ────────────────────────────────────────────────
+// Returns real recent platform events from audit_logs, falling back to
+// synthesised events from analytics data in demo/E2E mode.
+app.get('/api/admin/activity', authenticate, requireAdmin, async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit, 10) || 10, 50);
+
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    const demoActivities = Array.from(e2eStore.auditLogs || [])
+      .sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime())
+      .slice(0, limit)
+      .map((entry) => ({
+        id: entry.id ?? `act-${Math.random()}`,
+        action: entry.action,
+        details: entry.details ?? {},
+        userId: entry.user_id ?? null,
+        organizationId: entry.organization_id ?? null,
+        createdAt: entry.created_at ?? new Date().toISOString(),
+      }));
+    return res.json({ data: demoActivities });
+  }
+
+  if (!supabase) {
+    return res.status(503).json({ error: 'database_unavailable' });
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('audit_logs')
+      .select('id, action, details, user_id, organization_id, created_at')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (error) throw error;
+
+    const activities = (data || []).map((row) => ({
+      id: row.id,
+      action: row.action,
+      details: row.details ?? {},
+      userId: row.user_id ?? null,
+      organizationId: row.organization_id ?? null,
+      createdAt: row.created_at,
+    }));
+
+    return res.json({ data: activities });
+  } catch (err) {
+    logger.warn('admin_activity_fetch_failed', { message: err?.message ?? String(err) });
+    return res.status(500).json({ error: 'Unable to fetch activity feed' });
   }
 });
 

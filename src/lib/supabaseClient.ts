@@ -15,14 +15,21 @@ const supabaseAuthStorage: SupabaseStorageAdapter =
 const SUPABASE_PERSIST_SESSION =
   (import.meta.env.VITE_SUPABASE_PERSIST_SESSION || 'true').toLowerCase() === 'true';
 
+const _supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
+const _supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+const _supabaseConfigured = Boolean(_supabaseUrl && _supabaseAnonKey);
+
+// Guard: if credentials are missing (E2E / demo mode), use a stub placeholder URL so
+// createClient doesn't throw at module-load time. All actual calls go through the Proxy
+// below which redirects to window.__E2E_SUPABASE_CLIENT when present.
 const realSupabase = createClient(
-  import.meta.env.VITE_SUPABASE_URL,
-  import.meta.env.VITE_SUPABASE_ANON_KEY,
+  _supabaseConfigured ? _supabaseUrl : 'https://placeholder.supabase.co',
+  _supabaseConfigured ? _supabaseAnonKey : 'placeholder-anon-key',
   {
     auth: {
       persistSession: SUPABASE_PERSIST_SESSION,
-      autoRefreshToken: true,
-      detectSessionInUrl: true,
+      autoRefreshToken: _supabaseConfigured,
+      detectSessionInUrl: _supabaseConfigured,
       storageKey: 'thc-supabase-auth',
       storage: SUPABASE_PERSIST_SESSION ? supabaseAuthStorage : undefined,
     },

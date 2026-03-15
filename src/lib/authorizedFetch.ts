@@ -1,4 +1,5 @@
 import { supabase } from './supabaseClient';
+import { getAccessToken as getStoredAccessToken } from './secureStorage';
 import { LEGACY_ORG_HEADER_NAME, ORG_HEADER_NAME, resolveOrgHeaderForRequest } from './orgContext';
 
 export class NotAuthenticatedError extends Error {
@@ -83,6 +84,22 @@ export const getAccessToken = async (): Promise<string | null> => {
 };
 
 const resolveSupabaseAccessToken = async (): Promise<string> => {
+  // In E2E/dev-bypass mode, use the token stored in secureStorage by the
+  // mock session instead of attempting a real Supabase session lookup —
+  // the Supabase client has a placeholder URL and will always fail.
+  const isE2EBypass =
+    typeof window !== 'undefined' &&
+    (Boolean((window as any).__E2E_BYPASS) ||
+      Boolean((window as any).__E2E_SUPABASE_CLIENT));
+  if (isE2EBypass) {
+    const storedToken = getStoredAccessToken();
+    if (storedToken) {
+      return storedToken;
+    }
+    // E2E bypass active but no stored token — return a placeholder that the
+    // E2E server will accept via its demo-auth bypass.
+    return 'e2e-access-token';
+  }
   try {
     let token = await getAccessToken();
     if (token) {

@@ -1,4 +1,5 @@
 import { supabase } from './supabaseClient';
+import { getAccessToken as getStoredAccessToken } from './secureStorage';
 import { LEGACY_ORG_HEADER_NAME, ORG_HEADER_NAME, resolveOrgHeaderForRequest } from './orgContext';
 
 const API_BASE = (import.meta.env.VITE_API_BASE_URL as string | undefined)?.trim() ?? '';
@@ -84,6 +85,15 @@ const createAbortController = (timeoutMs?: number, upstream?: AbortSignal | null
 };
 
 export async function getAccessToken(): Promise<string | null> {
+  // In E2E/dev-bypass mode, use the token stored in secureStorage instead
+  // of attempting a real Supabase session lookup (placeholder URL would fail).
+  const isE2EBypass =
+    typeof window !== 'undefined' &&
+    (Boolean((window as any).__E2E_BYPASS) ||
+      Boolean((window as any).__E2E_SUPABASE_CLIENT));
+  if (isE2EBypass) {
+    return getStoredAccessToken() ?? 'e2e-access-token';
+  }
   const { data, error } = await supabase.auth.getSession();
   if (error) {
     throw new Error(`[apiFetch] supabase.getSession failed: ${error.message}`);
