@@ -5,7 +5,7 @@ import type { Notification } from '../../services/notificationService';
 import { useSecureAuth } from '../../context/SecureAuthContext';
 import { useToast } from '../../context/ToastContext';
 import Button from '../ui/Button';
-import { Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 
 const BookIcon = () => (
   <span className="inline-flex h-4 w-4 items-center justify-center rounded bg-sky-100 text-sky-700 text-[10px] font-semibold">
@@ -144,6 +144,8 @@ const AdminNotificationBell = () => {
     setOpen((prev) => !prev);
   };
 
+  const navigate = useNavigate();
+
   return (
     <div className="relative" ref={dropdownRef}>
       <button
@@ -255,11 +257,23 @@ const AdminNotificationBell = () => {
             )}
           </div>
           <div className="border-t border-slate/100 px-4 py-3">
-            <Button asChild variant="ghost" size="sm" className="w-full justify-center gap-2">
-              <Link to="/admin/crm" onClick={() => setOpen(false)}>
-                View CRM & Alerts
-                <span aria-hidden="true">→</span>
-              </Link>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="w-full justify-center gap-2"
+              onClick={() => {
+                setOpen(false);
+                // Navigate programmatically to avoid any Link-as-child interaction bugs
+                try {
+                  navigate('/admin/crm');
+                } catch (err) {
+                  // Fallback: show toast if navigation fails
+                  showToast?.('Unable to open CRM view. Please navigate to CRM manually.', 'error');
+                }
+              }}
+            >
+              View CRM & Alerts
+              <span aria-hidden="true">→</span>
             </Button>
           </div>
         </div>

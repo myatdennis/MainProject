@@ -1889,6 +1889,15 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     } catch (error) {
       console.warn('[SecureAuth] Logout request failed (continuing with local cleanup)', error);
     } finally {
+      // Ensure the Supabase client clears any persisted session in browser storage.
+      try {
+        const supabaseClient = getSupabase();
+        // signOut may fail in some E2E override scenarios; ignore errors.
+        // eslint-disable-next-line @typescript-eslint/no-floating-promises
+        supabaseClient?.auth.signOut();
+      } catch (signOutErr) {
+        console.warn('[SecureAuth] supabase.signOut() failed during logout cleanup', signOutErr);
+      }
       if (user?.role === 'admin') {
         enqueueAudit({ action: 'admin_logout', details: { email: user.email, id: user.id } });
       }

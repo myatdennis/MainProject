@@ -5,14 +5,14 @@
  */
 
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { 
   Search, 
   Filter, 
   Plus, 
   Download, 
   Upload,
-  MoreVertical,
+  
   CheckCircle,
   Clock,
   AlertTriangle,
@@ -31,6 +31,7 @@ import type { CourseAssignment } from '../../types/assignment';
 import PageWrapper from '../../components/PageWrapper';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import EmptyState from '../../components/ui/EmptyState';
+import ActionsMenu from '../../components/ui/ActionsMenu';
 
 const AdminUsers = () => {
   const { showToast } = useToast();
@@ -160,6 +161,7 @@ const AdminUsers = () => {
   ];
 
   const [usersList, setUsersList] = useState<User[]>(users); // Make users editable
+  const navigate = useNavigate();
 
   const organizations = [
     'Pacific Coast University',
@@ -584,17 +586,14 @@ const AdminUsers = () => {
                       >
                         <Trash2 className="icon-16" />
                       </button>
-                      <button
-                        onClick={() => handleMoreOptions(user.id)}
-                        title="More Options"
-                        aria-label={`More options for ${user.name}`}
-                        className="icon-action muted"
-                        tabIndex={0}
-                        role="button"
-                        data-tooltip-id={`tooltip-more-${user.id}`}
-                      >
-                        <MoreVertical className="icon-16" />
-                      </button>
+                      <ActionsMenu
+                        items={[
+                          { key: 'view', label: 'View', onClick: () => navigate(`/admin/users/${user.id}`) },
+                          { key: 'edit', label: 'Edit', onClick: () => handleEditUser(user.id) },
+                          { key: 'delete', label: 'Delete', onClick: () => handleDeleteUser(user.id), destructive: true },
+                          { key: 'more', label: 'More options', onClick: () => handleMoreOptions(user.id) },
+                        ]}
+                      />
                       {/* Tooltips for icon-only actions */}
                       <span id={`tooltip-view-${user.id}`} className="sr-only">View profile</span>
                       <span id={`tooltip-edit-${user.id}`} className="sr-only">Edit user</span>

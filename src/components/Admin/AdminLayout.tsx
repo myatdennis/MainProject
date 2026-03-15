@@ -78,7 +78,7 @@ const navigation = ADMIN_ROUTES
   }));
 
 const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
-  const { isAuthenticated, user: authUser, authInitializing, logout, sessionStatus, user } = useSecureAuth();
+  const { isAuthenticated, user: authUser, authInitializing, logout, sessionStatus, user, membershipStatus } = useSecureAuth();
   const {
     adminPortalAllowed: adminPortalAllowedRaw,
     hasSession,
@@ -199,6 +199,14 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
       // on the ADMIN_MENU_DEBUG build flag.
       const blockedReason = (() => {
         if (!isOrgSelectionRequired) return null;
+        // If org membership resolution is still in progress, don't block navigation.
+        // Allow routes to render and let pages handle any org-specific UI once memberships arrive.
+        if (membershipStatus === 'loading' || membershipStatus === 'idle') {
+          if (import.meta.env?.DEV) {
+            console.info('[AdminLayout] guardNavigation: allowing navigation while membershipStatus=%s', membershipStatus);
+          }
+          return null;
+        }
         // Only allow explicit org management and settings without an active org.
         const allowList = ['/admin/organizations', '/admin/settings'];
         if (allowList.some((allowed) => targetPath.startsWith(allowed))) return null;

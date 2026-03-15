@@ -60,11 +60,6 @@ type AdminSurveyCard = {
   assignedOrgs: string[];
 };
 
-type OrganizationOption = {
-  id: string;
-  name: string;
-};
-
 const AdminSurveys = () => {
   const { showToast } = useToast();
   const [searchTerm, setSearchTerm] = useState('');
@@ -692,76 +687,16 @@ const AdminSurveys = () => {
           </div>
         </div>
       </div>
-      {/* Assign-to-Organization Modal */}
-      {showAssignModal && (
-        <div className="fixed inset-0 flex items-center justify-center z-50">
-          <div className="absolute inset-0 bg-black opacity-30" onClick={closeAssignModal}></div>
-          <div className="bg-white rounded-xl shadow-2xl z-50 w-full max-w-2xl p-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold">Assign Survey to Organizations</h3>
-              <button onClick={closeAssignModal} className="text-gray-500 hover:text-gray-800">Close</button>
-            </div>
-            <p className="text-sm text-gray-600 mb-4">Select which organizations should receive this survey. Assignments can be changed later.</p>
-
-            {orgsError && (
-              <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-                {orgsError}. Try refreshing the organizations list or verifying the admin API is online.
-              </div>
-            )}
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4 max-h-64 overflow-y-auto">
-              {isOrgLoading ? (
-                <div className="col-span-1 sm:col-span-2 flex items-center justify-center py-8 text-gray-500">
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Loading organizations…
-                </div>
-              ) : organizations.length > 0 ? (
-                organizations.map(org => (
-                  <label key={org.id} className={`flex items-center space-x-3 p-3 rounded-lg border ${selectedOrganizationIds.includes(org.id) ? 'border-orange-400 bg-orange-50' : 'border-gray-100 bg-white'}`}>
-                    <input type="checkbox" checked={selectedOrganizationIds.includes(org.id)} onChange={() => toggleSelectOrganization(org.id)} className="h-4 w-4 text-orange-500" />
-                    <div>
-                      <div className="font-medium text-gray-900">{org.name}</div>
-                    </div>
-                  </label>
-                ))
-              ) : (
-                <div className="col-span-1 sm:col-span-2 py-6 text-center text-sm text-gray-500">
-                  No organizations available. Create one first from the Organizations tab.
-                </div>
-              )}
-            </div>
-
-            {missingSelectedOrganizationIds.length > 0 && (
-              <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                These assignments reference organizations that haven’t synced yet:
-                <div className="mt-2 flex flex-wrap gap-1">
-                  {missingSelectedOrganizationIds.map((organizationId) => (
-                    <span key={organizationId} className="rounded-full bg-white px-2 py-1 text-[11px] font-medium text-amber-800">
-                      {organizationMap.get(organizationId) ?? `Org ${organizationId}`}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {assignError && (
-              <div className="mb-3 text-sm text-red-600">{assignError}</div>
-            )}
-
-            <div className="flex items-center justify-end space-x-3">
-              <button onClick={closeAssignModal} className="btn-outline">Cancel</button>
-              <button
-                onClick={saveAssignment}
-                className="btn-cta flex items-center space-x-2"
-                disabled={isAssignSaving}
-                aria-label="Save Assignment"
-              >
-                {isAssignSaving && <Loader2 className="h-4 w-4 animate-spin" />}
-                <span>{isAssignSaving ? 'Saving…' : 'Save Assignment'}</span>
-              </button>
-            </div>
-          </div>
-        </div>
+      {/* Assign-to-Organization Modal (uses shared SurveyAssignmentModal) */}
+      {assignmentModal && (
+        <SurveyAssignmentModal
+          isOpen={true}
+          surveyId={assignmentModal.surveyId}
+          surveyTitle={assignmentModal.surveyTitle}
+          initialOrganizationIds={assignmentModal.organizationIds}
+          onClose={closeAssignmentModal}
+          onAssigned={handleAssignmentComplete}
+        />
       )}
       </div>
     </>

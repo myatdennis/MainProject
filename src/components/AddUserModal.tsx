@@ -212,13 +212,13 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-gradient-to-br from-charcoal/60 via-indigo-900/40 to-sunrise/40 backdrop-blur-sm"
+            className="fixed inset-0 bg-gradient-to-br from-charcoal/60 via-indigo-900/40 to-sunrise/40 backdrop-blur-sm z-40"
             onClick={onClose}
             aria-label="Close modal background"
           />
           <motion.div
             id="add-user-modal"
-            className="bg-ivory rounded-3xl shadow-2xl border border-mutedgrey max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto focus:outline-none"
+            className="bg-ivory rounded-3xl shadow-2xl border border-mutedgrey max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto focus:outline-none z-50"
             tabIndex={-1}
             variants={modalVariants}
             initial="hidden"

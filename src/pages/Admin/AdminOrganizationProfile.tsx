@@ -18,6 +18,7 @@ import documentService from '../../dal/documents';
 // client workspace DAL is dynamically imported where it can be bundled with the org-workspace chunk
 import notificationService from '../../dal/notifications';
 import orgService, { type OrgProfileDetails } from '../../dal/orgs';
+import ConfirmationModal from '../../components/ConfirmationModal';
 import { getOnboardingProgress } from '../../dal/onboarding';
 import { useToast } from '../../context/ToastContext';
 import OrgCommunicationPanel from '../../components/Admin/OrgCommunicationPanel';
@@ -85,6 +86,8 @@ const AdminOrganizationProfile: React.FC = () => {
   const [onboardingProgress, setOnboardingProgress] = useState<any | null>(null);
   const [onboardingLoading, setOnboardingLoading] = useState<boolean>(false);
   const [onboardingError, setOnboardingError] = useState<string | null>(null);
+  const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
+  const [restoring, setRestoring] = useState(false);
 
   // Upload form state
   const [file, setFile] = useState<File | null>(null);
@@ -120,6 +123,22 @@ const AdminOrganizationProfile: React.FC = () => {
 useEffect(() => {
   void loadProfile();
 }, [loadProfile]);
+
+  const confirmRestoreOrg = async () => {
+    if (!orgId) return;
+    setRestoring(true);
+    try {
+      await orgService.updateOrg(orgId, { status: 'active' });
+      showToast('Organization restored.', 'success');
+      await loadProfile();
+    } catch (error) {
+      console.error('[AdminOrganizationProfile] restore failed', error);
+      showToast('Failed to restore organization.', 'error');
+    } finally {
+      setRestoring(false);
+      setShowRestoreConfirm(false);
+    }
+  };
 
   useEffect(() => {
     if (!orgId) {
@@ -387,6 +406,11 @@ useEffect(() => {
             <Button size="sm" variant="secondary" onClick={loadProfile}>
               Refresh data
             </Button>
+            {profile?.organization?.status === 'inactive' && (
+              <Button size="sm" variant="primary" onClick={() => setShowRestoreConfirm(true)}>
+                Restore organization
+              </Button>
+            )}
           </div>
         </div>
 
@@ -1251,6 +1275,14 @@ useEffect(() => {
           />
         )}
       </div>
+        <ConfirmationModal
+          isOpen={showRestoreConfirm}
+          onClose={() => setShowRestoreConfirm(false)}
+          onConfirm={confirmRestoreOrg}
+          title="Restore organization"
+          message="Restore this organization to an active state? This will re-enable learners and settings immediately."
+          loading={restoring}
+        />
     </div>
   );
 };

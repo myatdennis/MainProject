@@ -8,16 +8,14 @@ import {
   CheckCircle,
   Clock,
   Download,
-  Edit,
-  Eye,
   Mail,
   Plus,
-  RefreshCw,
   Search,
   Upload,
   Users,
 } from 'lucide-react';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
+import ActionsMenu from '../../components/ui/ActionsMenu';
 import LoadingButton from '../../components/LoadingButton';
 import Button from '../../components/ui/Button';
 import EmptyState from '../../components/ui/EmptyState';
@@ -28,7 +26,7 @@ import OrgCommunicationPanel from '../../components/Admin/OrgCommunicationPanel'
 import CourseAssignmentModal from '../../components/CourseAssignmentModal';
 import { useToast } from '../../context/ToastContext';
 import orgService, { type Org, OrgProfileDetails } from '../../dal/orgs';
-import { getCrmActivity, getCrmSummary, sendBroadcastNotification, type CrmActivity, type CrmSummary } from '../../dal/crm';
+import { getCrmSummary, sendBroadcastNotification, type CrmSummary } from '../../dal/crm';
 import { useDebounce } from '../../components/PerformanceComponents';
 
 const PAGE_SIZE = 24;
@@ -78,6 +76,8 @@ const deriveCrmSummaryFromOrganizations = (orgs: Org[], paginationTotal?: number
   return derived;
 };
 
+// ...existing code for AdminOrgWorkspace continues
+
 const AdminOrgWorkspace = () => {
   const { showToast } = useToast();
   const navigate = useNavigate();
@@ -93,9 +93,13 @@ const AdminOrgWorkspace = () => {
   const debouncedSearch = useDebounce(searchTerm, 250);
 
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showArchiveModal, setShowArchiveModal] = useState(false);
   const [showAddOrgModal, setShowAddOrgModal] = useState(false);
   const [showEditOrgModal, setShowEditOrgModal] = useState(false);
   const [orgToDelete, setOrgToDelete] = useState<string | null>(null);
+  const [orgToArchive, setOrgToArchive] = useState<string | null>(null);
+  const [showRestoreModal, setShowRestoreModal] = useState(false);
+  const [orgToRestore, setOrgToRestore] = useState<string | null>(null);
   const [orgToEdit, setOrgToEdit] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -105,7 +109,6 @@ const AdminOrgWorkspace = () => {
   const [profileError, setProfileError] = useState<string | null>(null);
 
   const [crmSummary, setCrmSummary] = useState<CrmSummary | null>(null);
-  const [crmActivity, setCrmActivity] = useState<CrmActivity | null>(null);
   const [crmLoading, setCrmLoading] = useState(false);
   const [crmError, setCrmError] = useState<string | null>(null);
   const [broadcastForm, setBroadcastForm] = useState({
@@ -144,9 +147,8 @@ const AdminOrgWorkspace = () => {
     setCrmLoading(true);
     setCrmError(null);
     try {
-      const [summaryData, activityData] = await Promise.all([getCrmSummary(), getCrmActivity()]);
-      setCrmSummary(summaryData);
-      setCrmActivity(activityData);
+  const [summaryData] = await Promise.all([getCrmSummary()]);
+  setCrmSummary(summaryData);
     } catch (error) {
       console.error('Failed to load CRM data', error);
       setCrmError(error instanceof Error ? error.message : 'Unable to load CRM data');
@@ -288,6 +290,16 @@ const AdminOrgWorkspace = () => {
     setShowDeleteModal(true);
   };
 
+  const handleArchiveOrganization = (orgId: string) => {
+    setOrgToArchive(orgId);
+    setShowArchiveModal(true);
+  };
+
+  const handleRestoreOrganization = (orgId: string) => {
+    setOrgToRestore(orgId);
+    setShowRestoreModal(true);
+  };
+
   const confirmDeleteOrganization = async () => {
     if (!orgToDelete) return;
     setLoading(true);
@@ -304,6 +316,48 @@ const AdminOrgWorkspace = () => {
     } catch (error) {
       console.error('Failed to delete organization', error);
       showToast?.('Failed to delete organization', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const confirmArchiveOrganization = async () => {
+    if (!orgToArchive) return;
+    setLoading(true);
+    try {
+      await orgService.updateOrg(orgToArchive, { status: 'inactive' });
+      setOrganizations((prev) => prev.map((org) => (org.id === orgToArchive ? { ...org, status: 'inactive' } : org)));
+      if (selectedOrgId === orgToArchive) {
+        void loadSelectedOrgProfile(selectedOrgId);
+      }
+      showToast?.('Organization archived (set to inactive).', 'success');
+      setShowArchiveModal(false);
+      setOrgToArchive(null);
+      void loadCrmData();
+    } catch (error) {
+      console.error('Failed to archive organization', error);
+      showToast?.('Failed to archive organization', 'error');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const confirmRestoreOrganization = async () => {
+    if (!orgToRestore) return;
+    setLoading(true);
+    try {
+      await orgService.updateOrg(orgToRestore, { status: 'active' });
+      setOrganizations((prev) => prev.map((org) => (org.id === orgToRestore ? { ...org, status: 'active' } : org)));
+      if (selectedOrgId === orgToRestore) {
+        void loadSelectedOrgProfile(selectedOrgId);
+      }
+      showToast?.('Organization restored (set to active).', 'success');
+      setShowRestoreModal(false);
+      setOrgToRestore(null);
+      void loadCrmData();
+    } catch (error) {
+      console.error('Failed to restore organization', error);
+      showToast?.('Failed to restore organization', 'error');
     } finally {
       setLoading(false);
     }
@@ -636,22 +690,17 @@ const AdminOrgWorkspace = () => {
 
                     <div className="mt-6 flex items-center justify-between border-t border-gray-100 pt-4">
                       <div className={`rounded-full px-3 py-1 text-xs font-medium ${getStatusBadge(org.status)}`}>{org.status}</div>
-                      <div className="flex items-center gap-2">
-                        <Button asChild size="sm" variant="ghost" onClick={(event) => event.stopPropagation()}>
-                          <Link to={`/admin/organizations/${org.id}`} className="flex items-center gap-1 text-sm">
-                            <Eye className="h-4 w-4" /> View
-                          </Link>
-                        </Button>
-                        <button
-                          type="button"
-                          className="rounded-lg p-2 text-gray-500 hover:text-gray-800"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            handleEditOrganization(org.id);
-                          }}
-                        >
-                          <Edit className="h-4 w-4" />
-                        </button>
+                      <div className="relative">
+                        <ActionsMenu
+                          items={[
+                            { key: 'view', label: 'View', onClick: () => navigate(`/admin/organizations/${org.id}`) },
+                            { key: 'edit', label: 'Edit', onClick: () => handleEditOrganization(org.id) },
+                            org.status === 'inactive'
+                              ? { key: 'restore', label: 'Restore', onClick: () => handleRestoreOrganization(org.id) }
+                              : { key: 'archive', label: 'Archive', onClick: () => handleArchiveOrganization(org.id) },
+                            { key: 'delete', label: 'Delete', onClick: () => handleDeleteOrganization(org.id), destructive: true },
+                          ]}
+                        />
                       </div>
                     </div>
                   </div>
@@ -667,7 +716,7 @@ const AdminOrgWorkspace = () => {
               </div>
               <div className="flex gap-3">
                 <Button
-                  variant="ghost"
+                  variant="secondary"
                   size="sm"
                   disabled={paginationMeta.page === 1}
                   onClick={() => fetchOrganizations(Math.max(1, paginationMeta.page - 1))}
@@ -675,7 +724,7 @@ const AdminOrgWorkspace = () => {
                   Previous
                 </Button>
                 <Button
-                  variant="ghost"
+                  variant="secondary"
                   size="sm"
                   disabled={!paginationMeta.hasMore}
                   onClick={() => fetchOrganizations(paginationMeta.page + 1)}
@@ -795,7 +844,7 @@ const AdminOrgWorkspace = () => {
                     <p className="text-sm text-gray-600">{selectedOrg.contactEmail}</p>
                   </div>
                   <Button
-                    variant="ghost"
+                    variant="secondary"
                     size="sm"
                     className="text-orange-600"
                     asChild
@@ -839,7 +888,7 @@ const AdminOrgWorkspace = () => {
                   >
                     Assign Survey
                   </LoadingButton>
-                  <LoadingButton variant="ghost" onClick={() => navigate(`/admin/organizations/${selectedOrg.id}`)}>
+                  <LoadingButton variant="secondary" onClick={() => navigate(`/admin/organizations/${selectedOrg.id}`)}>
                     Manage Org
                   </LoadingButton>
                 </div>
@@ -884,7 +933,7 @@ const AdminOrgWorkspace = () => {
                   <p className="text-sm font-semibold text-gray-500 uppercase tracking-wide">Invites</p>
                   <h3 className="text-lg font-bold text-gray-900">Pending invites</h3>
                 </div>
-                <LoadingButton variant="ghost" size="sm" onClick={() => navigate(`/admin/organizations/${selectedOrg.id}`)}>
+                <LoadingButton variant="secondary" size="sm" onClick={() => navigate(`/admin/organizations/${selectedOrg.id}`)}>
                   Manage invites
                 </LoadingButton>
               </div>
@@ -900,7 +949,7 @@ const AdminOrgWorkspace = () => {
                           <p className="text-xs text-gray-500">{invite.role ?? 'member'} • {invite.status}</p>
                         </div>
                         {invite.status !== 'accepted' && (
-                          <LoadingButton size="sm" variant="ghost" onClick={() => handleResendInvite(invite.id)}>
+                          <LoadingButton size="sm" variant="secondary" onClick={() => handleResendInvite(invite.id)}>
                             Resend
                           </LoadingButton>
                         )}
@@ -920,6 +969,22 @@ const AdminOrgWorkspace = () => {
         onConfirm={confirmDeleteOrganization}
         title="Delete organization"
         message="Are you sure you want to delete this organization? This action cannot be undone."
+        loading={loading}
+      />
+      <ConfirmationModal
+        isOpen={showArchiveModal}
+        onClose={() => setShowArchiveModal(false)}
+        onConfirm={confirmArchiveOrganization}
+        title="Archive organization"
+        message="Are you sure you want to archive this organization (set to inactive)? You can re-activate it later from the organization settings."
+        loading={loading}
+      />
+      <ConfirmationModal
+        isOpen={showRestoreModal}
+        onClose={() => setShowRestoreModal(false)}
+        onConfirm={confirmRestoreOrganization}
+        title="Restore organization"
+        message="Restore this organization to an active state? Members and settings will be re-enabled immediately."
         loading={loading}
       />
       <AddOrganizationModal

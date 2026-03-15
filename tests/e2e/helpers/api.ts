@@ -11,13 +11,19 @@ const API_BASE = getApiBaseUrl();
 
 const buildUrl = (path: string) => `${API_BASE}${path.startsWith('/') ? path : `/${path}`}`;
 
-async function apiPost(path: string, body: any) {
+async function apiPost(path: string, body: any, extraHeaders?: Record<string, string>) {
   const url = buildUrl(path);
+  // Debug: print outgoing request body so we can inspect what the test is sending
+  try {
+    // eslint-disable-next-line no-console
+    console.log('[E2E apiPost] POST', url, JSON.stringify(body));
+  } catch {}
   const res = await fetch(url, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'x-user-role': 'admin'
+      'x-user-role': 'admin',
+      ...(extraHeaders || {})
     },
     credentials: 'include',
     body: JSON.stringify(body || {})
@@ -31,7 +37,7 @@ async function apiPost(path: string, body: any) {
 
 export async function createAndPublishCourse(overrides: { title?: string; description?: string } = {}) {
   const title = overrides.title ?? `E2E Course ${Date.now()}`;
-  const description = overrides.description ?? 'Created by E2E test helper';
+  const description = overrides.description ?? 'Created by E2E test helper. This description is intentionally long to satisfy server validation for E2E tests.';
 
   const { data: created } = await apiPost('/api/admin/courses', {
     course: {
@@ -42,13 +48,33 @@ export async function createAndPublishCourse(overrides: { title?: string; descri
     modules: [
       {
         title: 'Module 1',
-        order_index: 0,
+         // Use 1-based order_index to satisfy server validation (must be greater than 0)
+         order_index: 1,
         lessons: [
           {
             type: 'video',
             title: 'Lesson 1',
-            order_index: 0,
-            content_json: { src: 'https://archive.org/download/ElephantsDream/ed_1024_512kb.mp4' }
+             // Use 1-based order_index for lessons as well
+             order_index: 1,
+            // Provide both `content` and `content_json` to match server canonicalization
+            content: {
+              videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
+              videoSourceType: 'external'
+            },
+            content_json: {
+              videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4',
+              videoSourceType: 'external'
+            ,
+              videoAsset: {
+                storagePath: 'e2e/elephants-dream.mp4',
+                bucket: 'public',
+                bytes: 1024,
+                mimeType: 'video/mp4',
+                checksum: 'e2e-checksum-abcdef',
+                uploadedAt: new Date().toISOString(),
+                source: 'e2e-helper'
+              }
+            }
           }
         ]
       }
@@ -65,8 +91,26 @@ export async function createAndPublishCourse(overrides: { title?: string; descri
 }
 
 export async function assignCourseToAll(courseId: string) {
-  // Tests run against an in-memory E2E store; provide a default org id for assignments
-  await apiPost(`/api/admin/courses/${courseId}/assign`, { organization_id: 'e2e-org' });
+  // Tests run against an in-memory E2E store; provide a default org id for assignments.
+  // Include several common shapes so the server's legacy normalization finds the org id.
+  await apiPost(`/api/admin/courses/${courseId}/assign`, {
+    // canonical top-level field
+    organization_id: 'e2e-org',
+    // camelCase alias
+    organizationId: 'e2e-org',
+    // legacy alias (kept for compatibility)
+    orgId: 'e2e-org',
+    // also include a nested organization object (some clients send this)
+    organization: {
+      id: 'e2e-org',
+      organization_id: 'e2e-org',
+      organizationId: 'e2e-org',
+    },
+  }, {
+    // Also send header fallback; server looks for x-org-id/x-organization-id
+    'x-org-id': 'e2e-org',
+    'x-organization-id': 'e2e-org',
+  });
 }
 
 export default { createAndPublishCourse, assignCourseToAll };

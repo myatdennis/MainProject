@@ -1,4 +1,4 @@
-import apiRequest, { ApiError, type ApiRequestOptions } from '../utils/apiClient';
+import apiRequest, { ApiError } from '../utils/apiClient';
 
 export type Notification = {
   id: string;
@@ -45,7 +45,7 @@ const handleSchemaMissing = <T>(error: unknown, label: string, fallback: T) => {
   throw error;
 };
 
-const apiFetch = async <T>(label: string, path: string, options: ApiRequestOptions = {}) => {
+const apiFetch = async <T>(label: string, path: string, options: any = {}) => {
   logNotificationFetch(label, path);
   return apiRequest<T>(path, options);
 };
@@ -85,6 +85,13 @@ export const listAdminNotificationsWithMeta = async (opts?: { organizationId?: s
 
   try {
     const json = await apiFetch<AdminNotificationResponse>('admin.list', path);
+    if (devLogEnabled) {
+      try {
+        console.debug('[notifications.raw:admin.list]', { path, raw: json });
+      } catch {
+        // ignore logging failures
+      }
+    }
     const items = (json?.data ?? []).map(mapNotification);
 
     return {
@@ -92,6 +99,13 @@ export const listAdminNotificationsWithMeta = async (opts?: { organizationId?: s
       notificationsDisabled: Boolean(json?.notificationsDisabled),
     };
   } catch (error) {
+    if (devLogEnabled) {
+      try {
+        console.warn('[notifications.error:admin.list] treating as disabled', { path, error });
+      } catch {
+        // ignore
+      }
+    }
     const fallback = handleSchemaMissing(error, 'admin.list', [] as Notification[]);
     return {
       notifications: fallback,
