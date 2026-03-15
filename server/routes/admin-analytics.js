@@ -192,15 +192,57 @@ router.get('/', async (req, res, next) => {
       limit 50
     `
 
+    // Map all DB rows from snake_case to camelCase to match the frontend hook interface.
     res.json({
-      overview,
-      courses:        courseAggs,
-      dropoffs,
-      engagementTrend,
-      heatmap,
-      topOrgs,
-      courseDetail,
-      surveySummary:  [],   // no survey_responses table yet; kept for API compat
+      overview: {
+        totalActiveLearners: overview.total_active_learners,
+        totalOrgs:           overview.total_orgs,
+        totalCourses:        overview.total_courses,
+        platformAvgProgress:    overview.platform_avg_progress,
+        platformAvgCompletion:  overview.platform_avg_completion,
+      },
+      courses: courseAggs.map((r) => ({
+        courseId:         r.course_id,
+        totalUsers:       r.total_users,
+        completedCount:   r.completed_count,
+        completionPercent: r.completion_percent,
+        avgProgress:      r.avg_progress,
+      })),
+      dropoffs: dropoffs.map((r) => ({
+        courseId:       r.course_id,
+        lessonId:       r.lesson_id,
+        startedCount:   r.started_count,
+        completedCount: r.completed_count,
+        dropoffPercent: r.dropoff_percent,
+      })),
+      engagementTrend: engagementTrend.map((r) => ({
+        date:        r.date,
+        events:      r.events,
+        uniqueUsers: r.unique_users,
+        completions: r.completions,
+      })),
+      heatmap: heatmap.map((r) => ({
+        dow:    r.dow,
+        bucket: r.bucket,
+        events: r.events,
+      })),
+      topOrgs: topOrgs.map((r) => ({
+        orgId:          r.org_id,
+        orgName:        r.org_name,
+        totalLearners:  r.total_learners,
+        completionRate: r.completion_rate,
+      })),
+      courseDetail: courseDetail.map((r) => ({
+        courseId:          r.course_id,
+        courseTitle:       r.course_title,
+        totalLearners:     r.total_learners,
+        completedCount:    r.completed_count,
+        completionPercent: r.completion_percent,
+        avgProgress:       r.avg_progress      ?? 0,
+        avgTimeMinutes:    r.avg_time_minutes   ?? 0,
+        quizAttempts:      r.quiz_attempts,
+      })),
+      surveySummary: [],   // no survey_responses table yet; kept for API compat
     })
   } catch (err) {
     console.error('[admin-analytics] error', err)

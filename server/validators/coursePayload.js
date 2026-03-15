@@ -87,7 +87,15 @@ const courseSchema = z.object({
     .nullable()
     .optional(),
   status: z.enum(['draft', 'published', 'archived']).optional(),
-  version: z.number().int().positive().optional(),
+  version: z
+    .union([z.number(), z.null(), z.undefined()])
+    .optional()
+    .nullable()
+    .transform((v) => {
+      if (v == null || typeof v !== 'number' || !Number.isFinite(v) || v <= 0) return undefined;
+      return Math.trunc(v);
+    })
+    .pipe(z.number().int().positive().optional()),
   org_id: z.string().optional().nullable(),
   organization_id: z.string().optional().nullable(),
   organizationId: z.string().optional().nullable(),

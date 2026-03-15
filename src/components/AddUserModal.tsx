@@ -6,6 +6,8 @@ import { useToast } from '../context/ToastContext';
 import { useFormValidation, validators } from './FormComponents';
 import SecurityUtils from '../utils/SecurityUtils';
 import { listOrgs } from '../services/orgService';
+import apiRequest from '../utils/apiClient';
+import { useSecureAuth } from '../context/SecureAuthContext';
 
 interface AddUserModalProps {
   isOpen: boolean;
@@ -18,6 +20,7 @@ interface AddUserModalProps {
 
 const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdded, editUser, organizations: orgsProp }) => {
   const { showToast } = useToast();
+  const { activeOrgId } = useSecureAuth();
   const [loading, setLoading] = useState(false);
   const isEditMode = !!editUser;
   const { values, errors, setValue, validateAll } = useFormValidation(
@@ -138,28 +141,52 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
     setLoading(true);
 
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 2000));
-
       if (isEditMode && editUser) {
-        // Update existing user
+        // Update existing user membership role/title via PATCH
+        await apiRequest(`/api/admin/users/${editUser.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({
+            organizationId: activeOrgId,
+            role: sanitizedData.role.toLowerCase(),
+          }),
+        });
         const updatedUser = {
           ...editUser,
           name: `${sanitizedData.firstName} ${sanitizedData.lastName}`,
           email: sanitizedData.email,
-          organization: sanitizedData.organization,
+          organization: sanitizedData.organization || editUser.organization,
           cohort: sanitizedData.cohort,
           role: sanitizedData.role,
-          department: sanitizedData.department,
-          phoneNumber: sanitizedData.phoneNumber,
         };
-
         onUserAdded?.(updatedUser);
         showToast('User updated successfully!', 'success');
       } else {
-        // Create new user
+        // Invite new user to the org via the invite endpoint
+        const orgId = sanitizedData.organization || activeOrgId;
+        if (!orgId) {
+          showToast('Please select an organization', 'error');
+          setLoading(false);
+          return;
+        }
+        await apiRequest(`/api/admin/organizations/${orgId}/invites`, {
+          method: 'POST',
+          body: JSON.stringify({
+            email: sanitizedData.email,
+            role: 'member',
+            metadata: {
+              firstName: sanitizedData.firstName,
+              lastName: sanitizedData.lastName,
+              jobTitle: sanitizedData.role,
+              department: sanitizedData.department,
+              cohort: sanitizedData.cohort,
+              phoneNumber: sanitizedData.phoneNumber,
+            },
+            sendEmail: true,
+          }),
+        });
+        // Return a placeholder so the parent can optimistically show the user
         const newUser = {
-          id: Date.now().toString(),
+          id: `pending-${Date.now()}`,
           name: `${sanitizedData.firstName} ${sanitizedData.lastName}`,
           email: sanitizedData.email,
           organization: sanitizedData.organization,
@@ -168,23 +195,16 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
           department: sanitizedData.department,
           phoneNumber: sanitizedData.phoneNumber,
           enrolled: new Date().toISOString(),
-          lastLogin: null,
-          status: 'active',
-          progress: {
-            foundations: 0,
-            bias: 0,
-            empathy: 0,
-            conversations: 0,
-            planning: 0
-          },
+          lastLogin: '',
+          status: 'pending' as const,
+          progress: { foundations: 0, bias: 0, empathy: 0, conversations: 0, planning: 0 },
           overallProgress: 0,
           completedModules: 0,
           totalModules: 5,
-          feedbackSubmitted: false
+          feedbackSubmitted: false,
         };
-
         onUserAdded?.(newUser);
-        showToast('User added successfully!', 'success');
+        showToast(`Invite sent to ${sanitizedData.email}`, 'success');
       }
       
       // Reset form

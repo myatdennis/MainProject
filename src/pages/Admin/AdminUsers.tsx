@@ -4,7 +4,7 @@
  * Features: search/filter, bulk actions, modals, progress tracking, and summary stats.
  */
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { 
   Search, 
@@ -19,7 +19,8 @@ import {
   Mail,
   Edit,
   Trash2,
-  Eye
+  Eye,
+  RefreshCw,
 } from 'lucide-react';
 import AddUserModal from '../../components/AddUserModal';
 import ConfirmationModal from '../../components/ConfirmationModal';
@@ -33,8 +34,14 @@ import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import EmptyState from '../../components/ui/EmptyState';
 import ActionsMenu from '../../components/ui/ActionsMenu';
 import { listOrgs } from '../../services/orgService';
+import { listUsersByOrg } from '../../dal/adminUsers';
+import { useSecureAuth } from '../../context/SecureAuthContext';
+import { LoadingSpinner } from '../../components/LoadingComponents';
+import apiRequest from '../../utils/apiClient';
 
 const AdminUsers = () => {
+  const { activeOrgId } = useSecureAuth();
+
   // Report page identity for admin layout mismatch detection
   useEffect(() => {
     try {
@@ -62,120 +69,70 @@ const AdminUsers = () => {
   const [userToEdit, setUserToEdit] = useState<User | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const users: User[] = [
-    {
-      id: '1',
-      name: 'Sarah Chen',
-      email: 'sarah.chen@pacificcoast.edu',
-      organization: 'Pacific Coast University',
-      cohort: 'Spring 2025 Leadership',
-      role: 'VP Student Affairs',
-      enrolled: '2025-01-15',
-      lastLogin: '2025-03-10',
-      progress: {
-        foundations: 100,
-        bias: 75,
-        empathy: 50,
-        conversations: 0,
-        planning: 0
-      },
-      overallProgress: 45,
-      status: 'active',
-      completedModules: 1,
-      totalModules: 5,
-      feedbackSubmitted: true
-    },
-    {
-      id: '2',
-      name: 'Marcus Rodriguez',
-      email: 'mrodriguez@mvhs.edu',
-      organization: 'Mountain View High School',
-      cohort: 'Spring 2025 Leadership',
-      role: 'Athletic Director',
-      enrolled: '2025-01-20',
-      lastLogin: '2025-03-09',
-      progress: {
-        foundations: 100,
-        bias: 100,
-        empathy: 80,
-        conversations: 25,
-        planning: 0
-      },
-      overallProgress: 61,
-      status: 'active',
-      completedModules: 2,
-      totalModules: 5,
-      feedbackSubmitted: true
-    },
-    {
-      id: '3',
-      name: 'Jennifer Walsh',
-      email: 'jwalsh@communityimpact.org',
-      organization: 'Community Impact Network',
-      cohort: 'Spring 2025 Leadership',
-      role: 'Executive Director',
-      enrolled: '2025-01-10',
-      lastLogin: '2025-02-28',
-      progress: {
-        foundations: 100,
-        bias: 50,
-        empathy: 0,
-        conversations: 0,
-        planning: 0
-      },
-      overallProgress: 30,
-      status: 'inactive',
-      completedModules: 1,
-      totalModules: 5,
-      feedbackSubmitted: false
-    },
-    {
-      id: '4',
-      name: 'David Thompson',
-      email: 'dthompson@regionalfire.gov',
-      organization: 'Regional Fire Department',
-      cohort: 'Winter 2025 Leadership',
-      role: 'Training Commander',
-      enrolled: '2024-12-01',
-      lastLogin: '2025-03-08',
-      progress: {
-        foundations: 100,
-        bias: 100,
-        empathy: 100,
-        conversations: 75,
-        planning: 50
-      },
-      overallProgress: 85,
-      status: 'active',
-      completedModules: 3,
-      totalModules: 5,
-      feedbackSubmitted: true
-    },
-    {
-      id: '5',
-      name: 'Lisa Park',
-      email: 'lpark@techforward.com',
-      organization: 'TechForward Solutions',
-      cohort: 'Spring 2025 Leadership',
-      role: 'Chief HR Officer',
-      enrolled: '2025-02-01',
-      lastLogin: '2025-03-11',
-      progress: {
-        foundations: 100,
-        bias: 100,
-        empathy: 100,
-        conversations: 100,
-        planning: 80
-      },
-      overallProgress: 96,
-      status: 'active',
-      completedModules: 4,
-      totalModules: 5,
-      feedbackSubmitted: true
-    }
-  ];
+  // ── Real user data from API ──────────────────────────────────────────
+  const [usersList, setUsersList] = useState<User[]>([]);
+  const [usersLoading, setUsersLoading] = useState(true);
+  const [usersError, setUsersError] = useState<string | null>(null);
 
-  const [usersList, setUsersList] = useState<User[]>(users); // Make users editable
+  const mapMemberToUser = useCallback((member: any): User | null => {
+    const profile = member?.profile ?? {};
+    const userRow = member?.user ?? {};
+    const userId = member?.user_id ?? member?.user_id_uuid ?? '';
+    if (!userId) return null;
+
+    const firstName = profile.first_name ?? userRow.first_name ?? '';
+    const lastName = profile.last_name ?? userRow.last_name ?? '';
+    const fullName = profile.full_name ?? profile.fullName ?? `${firstName} ${lastName}`.trim();
+    const email = profile.email ?? userRow.email ?? member?.email ?? '';
+    if (!email && !fullName) return null;
+
+    const orgProgress = member?.progress ?? {};
+    const progressKeys = ['foundations', 'bias', 'empathy', 'conversations', 'planning'];
+    const progressMap = progressKeys.reduce((acc: Record<string, number>, key) => {
+      acc[key] = typeof orgProgress[key] === 'number' ? orgProgress[key] : 0;
+      return acc;
+    }, {});
+    const overallProgress = progressKeys.reduce((sum, k) => sum + (progressMap[k] ?? 0), 0) / progressKeys.length;
+    const completedModules = progressKeys.filter((k) => (progressMap[k] ?? 0) >= 100).length;
+
+    return {
+      id: userId,
+      name: fullName || email,
+      email,
+      organization: member?.org_id ?? member?.organization_id ?? activeOrgId ?? '',
+      cohort: profile.cohort ?? '',
+      role: profile.title ?? profile.job_title ?? userRow.role ?? member?.role ?? '',
+      enrolled: member?.created_at ?? profile.created_at ?? '',
+      lastLogin: userRow.last_login_at ?? profile.updated_at ?? '',
+      progress: progressMap as User['progress'],
+      overallProgress: Math.round(overallProgress),
+      status: member?.status === 'active' ? 'active' : member?.status === 'pending' ? 'pending' : 'inactive',
+      completedModules,
+      totalModules: progressKeys.length,
+      feedbackSubmitted: false,
+    };
+  }, [activeOrgId]);
+
+  const fetchUsers = useCallback(async () => {
+    if (!activeOrgId) return;
+    setUsersLoading(true);
+    setUsersError(null);
+    try {
+      const records = await listUsersByOrg(activeOrgId);
+      const mapped = records.map(mapMemberToUser).filter((u): u is User => u !== null);
+      setUsersList(mapped);
+    } catch (err: any) {
+      console.error('[AdminUsers] Failed to load users', err);
+      setUsersError(err?.message ?? 'Failed to load users');
+    } finally {
+      setUsersLoading(false);
+    }
+  }, [activeOrgId, mapMemberToUser]);
+
+  useEffect(() => {
+    void fetchUsers();
+  }, [fetchUsers]);
+
   const navigate = useNavigate();
 
   // Fetch real organizations from the API for filtering and the Add User modal
@@ -242,16 +199,28 @@ const AdminUsers = () => {
     setShowAddUserModal(true);
   };
 
-  const handleUserAdded = (newUser: User) => {
-    setUsersList((prev: User[]) => [...prev, newUser]);
-    showToast('User added successfully!', 'success');
+  const handleUserAdded = (_newUser: User) => {
+    // Refresh from server to get real data instead of optimistic local append
+    void fetchUsers();
+    showToast('User invited successfully!', 'success');
   };
 
   const handleSendReminder = async () => {
     setLoading(true);
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      // Send reminder emails via the server for each selected user
+      await Promise.all(
+        selectedUsers.map((userId) =>
+          apiRequest(`/api/admin/users/${userId}/messages`, {
+            method: 'POST',
+            body: JSON.stringify({
+              subject: 'Course Reminder',
+              body: 'This is a reminder to continue your course progress.',
+              orgId: activeOrgId,
+            }),
+          }).catch(() => null), // don't let one failure block others
+        ),
+      );
       showToast(`Reminder sent to ${selectedUsers.length} user(s)`, 'success');
       setSelectedUsers([]);
     } catch (error) {
@@ -328,19 +297,21 @@ const AdminUsers = () => {
   };
 
   const confirmDeleteUser = async () => {
-    if (!userToDelete) return;
+    if (!userToDelete || !activeOrgId) return;
     
     setLoading(true);
     try {
-      // Simulate API call
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
+      // Revoke the membership (status = 'revoked') via the real API
+      await apiRequest(`/api/admin/users/${userToDelete}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ organizationId: activeOrgId, status: 'revoked' }),
+      });
       setUsersList((prev: User[]) => prev.filter((user: User) => user.id !== userToDelete));
-      showToast('User deleted successfully!', 'success');
+      showToast('User removed successfully!', 'success');
       setShowDeleteModal(false);
       setUserToDelete(null);
-    } catch (error) {
-      showToast('Failed to delete user', 'error');
+    } catch (error: any) {
+      showToast(error?.message ?? 'Failed to remove user', 'error');
     } finally {
       setLoading(false);
     }
@@ -390,10 +361,27 @@ const AdminUsers = () => {
     <PageWrapper>
       <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Users', to: '/admin/users' }]} />
       {/* Header */}
-      <div className="mb-8">
-        <h1 className="h1">User Management</h1>
-        <p className="muted-text">Monitor learner progress, assign courses, and manage user accounts</p>
+      <div className="mb-8 flex items-start justify-between">
+        <div>
+          <h1 className="h1">User Management</h1>
+          <p className="muted-text">Monitor learner progress, assign courses, and manage user accounts</p>
+        </div>
+        <button
+          onClick={() => void fetchUsers()}
+          className="flex items-center gap-2 text-gray-500 hover:text-gray-800 text-sm"
+          title="Refresh users"
+        >
+          <RefreshCw className="h-4 w-4" />
+          Refresh
+        </button>
       </div>
+
+      {usersError && (
+        <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 text-red-700 flex items-start gap-3">
+          <AlertTriangle className="h-5 w-5 mt-0.5 flex-shrink-0" />
+          <p className="text-sm">{usersError}</p>
+        </div>
+      )}
 
       {/* Search and Filter Bar */}
       <div className="card mb-8">
@@ -484,6 +472,11 @@ const AdminUsers = () => {
 
       {/* Users Table */}
       <div className="table-card">
+        {usersLoading ? (
+          <div className="flex justify-center py-16">
+            <LoadingSpinner size="lg" />
+          </div>
+        ) : (
         <div className="overflow-x-auto">
           <table className="w-full table-collapse">
             <thead className="table-head">
@@ -527,7 +520,9 @@ const AdminUsers = () => {
                   </td>
                   <td className="table-cell">
                     <div>
-                      <div className="progress-number">{user.organization}</div>
+                      <div className="progress-number">
+                        {organizations.find((o) => o.id === user.organization)?.name ?? user.organization}
+                      </div>
                       <div className="muted-small text-13">{user.cohort}</div>
                     </div>
                   </td>
@@ -571,7 +566,7 @@ const AdminUsers = () => {
                     </div>
                   </td>
                   <td className="table-cell text-center muted-text text-13">
-                    {new Date(user.lastLogin).toLocaleDateString()}
+                    {user.lastLogin ? new Date(user.lastLogin).toLocaleDateString() : '—'}
                   </td>
                   <td className="table-cell text-center">
                     <div className="flex items-center justify-center gap-2">
@@ -628,13 +623,16 @@ const AdminUsers = () => {
             </tbody>
           </table>
         </div>
+        )}
       </div>
 
-      {filteredUsers.length === 0 && (
+      {!usersLoading && filteredUsers.length === 0 && (
         <div className="mt-8">
           <EmptyState
-            title="No users found"
-            description="Try adjusting your search or filter criteria."
+            title={usersList.length === 0 ? 'No users yet' : 'No users found'}
+            description={usersList.length === 0
+              ? 'Invite your first user by clicking "Add User" above.'
+              : 'Try adjusting your search or filter criteria.'}
             action={(
               <button
                 type="button"

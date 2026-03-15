@@ -8448,6 +8448,11 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
     req.body.course.keyTakeaways = normalizedKeyTakeaways;
   }
 
+  // Strip version if it is not a valid positive integer (validator will default to undefined/omitted)
+  if (courseLocal.version !== undefined && (typeof courseLocal.version !== 'number' || !Number.isFinite(courseLocal.version) || courseLocal.version <= 0)) {
+    delete courseLocal.version;
+  }
+
   const payloadValidation = validateCoursePayload({ course: courseLocal, modules: modulesLocal });
   if (!payloadValidation.ok) {
     const details = (payloadValidation.issues || []).map((issue) => {
