@@ -217,6 +217,16 @@ export default async function supabaseJwtMiddleware(req, res, next) {
   } catch (error) {
     const code = error?.message || 'token_verification_failed';
     console.warn('[supabaseJwt] token validation failed', code);
+    // In E2E / dev-fallback mode, a token that fails JWT verification (e.g.
+    // a synthetic "e2e-access-token" placeholder) must NOT cause an immediate
+    // 401.  Instead we fall through to the authenticate middleware which has
+    // its own demo-bypass logic (buildAuthContext / allowDemoBypassForRequest).
+    // This keeps the two guards consistent: JWT pre-validation is optional in
+    // dev/E2E; the real auth gate is always buildAuthContext.
+    if (shouldSkipAuthInDev) {
+      console.warn('[supabaseJwt] dev/E2E mode — falling through after token validation failure');
+      return next();
+    }
     return res.status(401).json({
       error: 'Authentication required',
       message: 'Invalid or expired token',

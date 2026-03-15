@@ -182,8 +182,19 @@ const assertNotThrottled = (url: string) => {
 
 /**
  * Centralized auth failure handler: clears local state, signs out, and redirects.
+ *
+ * In E2E / dev-bypass mode the session is a synthetic mock — a 401 from the
+ * server means the DB / Supabase isn't reachable, NOT that the user is logged
+ * out.  Triggering clearAuth() + redirect would destroy the bypass session and
+ * break every E2E test that depends on the learner portal staying mounted.
+ * We detect the bypass by checking window.__E2E_BYPASS (injected by Playwright's
+ * addInitScript) so the guard survives React re-renders and any storage migrations.
  */
 const handleAuthFailure = async () => {
+  if (typeof window !== 'undefined' && Boolean((window as any).__E2E_BYPASS)) {
+    console.warn('[apiClient] E2E bypass active — suppressing auth failure redirect (401 received but session is a synthetic mock)');
+    return;
+  }
   clearSupabaseAuthSnapshot();
   clearAuth();
   try {

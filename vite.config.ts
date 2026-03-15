@@ -41,6 +41,25 @@ export default async () => {
       react(),
       // Optionally add compression plugin to reduce asset size for production builds
       ...(process.env.NODE_ENV === 'production' && compression ? [compression({ algorithm: 'brotliCompress' })] : []),
+      // Inline plugin: capture the actual port Vite chose (may differ from
+      // requestedPort when strictPort=false) and update activeViteOrigin so
+      // the proxy Origin header stays accurate.
+      {
+        name: 'capture-vite-port',
+        configureServer(viteServer) {
+          if (!isDev) return;
+          viteServer.httpServer?.once('listening', () => {
+            const address = viteServer.httpServer?.address();
+            const actualPort =
+              typeof address === 'object' && address && typeof address.port === 'number'
+                ? address.port
+                : requestedPort;
+            activeViteOrigin = `http://localhost:${actualPort}`;
+            console.info(`[vite] Dev server listening on ${activeViteOrigin}`);
+            process.env.VITE_ACTIVE_PORT = String(actualPort);
+          });
+        },
+      },
     ],
     resolve: {
       alias: {
@@ -86,7 +105,11 @@ export default async () => {
       },
       proxy: {
         '/api': {
-          target: 'http://localhost:3000',
+          // Allow the proxy target to be overridden at startup so E2E runs can
+          // point directly at the E2E API server (port 8888, E2E_TEST_MODE=true)
+          // instead of the regular dev server (port 3000).  The default stays
+          // localhost:3000 so normal dev-server usage is unchanged.
+          target: process.env.VITE_API_PROXY_TARGET || 'http://localhost:3000',
           changeOrigin: true,
           secure: false,
           ws: true,
@@ -106,12 +129,16 @@ export default async () => {
               });
             });
             proxy.on('proxyRes', (proxyRes, req) => {
-              const setCookieHeader = proxyRes.headers?.['set-cookie'];
+              // Cast to the union that node's http module actually produces for headers;
+              // http-proxy types the header map as Record<string, string | string[]>
+              // which narrows to `never` after the Array.isArray guard in some TS versions.
+              const rawHeader = proxyRes.headers?.['set-cookie'] as string | string[] | undefined;
+              const setCookieHeader = rawHeader;
               let cookieNames: string[] = [];
               if (Array.isArray(setCookieHeader)) {
                 cookieNames = setCookieHeader.map((entry) => String(entry).split('=')[0]);
               } else if (typeof setCookieHeader === 'string') {
-                cookieNames = [setCookieHeader.split('=')[0]];
+                cookieNames = [(setCookieHeader as string).split('=')[0]];
               }
               console.log('[vite-proxy][api] response', {
                 method: req.method,
@@ -127,25 +154,14 @@ export default async () => {
           },
         },
         '/ws': {
-          target: 'ws://localhost:3000',
+          target: process.env.VITE_API_PROXY_TARGET
+            ? process.env.VITE_API_PROXY_TARGET.replace(/^http/, 'ws')
+            : 'ws://localhost:3000',
           ws: true,
           changeOrigin: true,
           secure: false,
         },
       },
-    },
-    configureServer(viteServer) {
-      if (!isDev) return;
-      viteServer.httpServer?.once('listening', () => {
-        const address = viteServer.httpServer?.address();
-        const actualPort =
-          typeof address === 'object' && address && typeof address.port === 'number'
-            ? address.port
-            : requestedPort;
-        activeViteOrigin = `http://localhost:${actualPort}`;
-        console.info(`[vite] Dev server listening on ${activeViteOrigin}`);
-        process.env.VITE_ACTIVE_PORT = String(actualPort);
-      });
     },
     optimizeDeps: {
       exclude: ['lucide-react'],

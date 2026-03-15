@@ -61,6 +61,11 @@ setTimeout(() => {
         env: {
           ...process.env,
           PORT: '5174',
+          // Point Vite's /api and /ws proxies at the E2E API server (port 8888,
+          // E2E_TEST_MODE=true) so browser fetch() calls reach the correct server.
+          // Without this, Vite would proxy to port 3000 (the regular dev server)
+          // which does not have E2E_TEST_MODE set and therefore rejects e2e tokens.
+          VITE_API_PROXY_TARGET: 'http://localhost:8888',
           // Force API client to use relative /api (Vite proxy) instead of any pre-set external base
           VITE_API_BASE_URL: '',
           // Disable Supabase during E2E runs so the app uses demo mode and Vite proxy for /api
