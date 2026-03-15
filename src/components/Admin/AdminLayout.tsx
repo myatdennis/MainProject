@@ -224,6 +224,20 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
     [isOrgSelectionRequired, showToast],
   );
 
+  const logAdminNavEvent = useCallback((event: string, meta: Record<string, unknown> = {}) => {
+    try {
+      console.info('[admin] ' + event, {
+        source: meta.source || 'sidebar',
+        from: location.pathname,
+        target: meta.target || null,
+        timestamp: Date.now(),
+        ...meta,
+      });
+    } catch (err) {
+      // swallow
+    }
+  }, [location.pathname]);
+
   useEffect(() => {
     if (normalizedAuthInitializing) {
       return;
@@ -290,6 +304,94 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
   useEffect(() => {
     closeMenu('route_change', { to: location.pathname });
   }, [closeMenu, location.pathname]);
+
+  // Log when a route is rendered inside admin and allow easy detection of mismatches
+  useEffect(() => {
+    try {
+      console.info('[admin] admin_route_rendered', { pathname: location.pathname, timestamp: Date.now() });
+    } catch (err) {
+      // swallow
+    }
+  }, [location.pathname]);
+
+  // Mismatch detection: listen for pages reporting that they mounted and compare
+  // the reported page with the expected route-derived label. Emit diagnostics
+  // if they differ so we can detect cases where the URL changes but the page
+  // doesn't match the route.
+  const lastReportedRef = useRef<{ page: string | null; ready: boolean }>({ page: null, ready: false });
+  const mismatchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    const onPageEvent = (ev: Event) => {
+      try {
+        const detail = (ev as CustomEvent).detail as { page?: string } | undefined;
+        const page = detail?.page ?? null;
+  const isReady = (ev as CustomEvent).type === 'admin:page-ready' || Boolean((detail as any)?.ready);
+        // Update last reported page and readiness
+        lastReportedRef.current = { page, ready: isReady };
+        console.info('[admin] admin_page_event', { type: (ev as CustomEvent).type, page, ready: isReady, pathname: location.pathname, timestamp: Date.now() });
+
+        // If previously a mismatch was reported and now matches, emit resolved diagnostic
+        const expected = getExpectedAdminLabel(location.pathname);
+        if (expected && page && expected === page) {
+          console.info('[admin] admin_route_mismatch_resolved', { pathname: location.pathname, page, timestamp: Date.now() });
+        }
+      } catch (err) {
+        // swallow
+      }
+    };
+
+    window.addEventListener('admin:page-mounted', onPageEvent as EventListener);
+    window.addEventListener('admin:page-ready', onPageEvent as EventListener);
+    return () => {
+      window.removeEventListener('admin:page-mounted', onPageEvent as EventListener);
+      window.removeEventListener('admin:page-ready', onPageEvent as EventListener);
+    };
+  }, [location.pathname]);
+
+  // After every location change, schedule a check: if within 600ms no page has
+  // reported a mount that matches the expected label for this route, emit a
+  // diagnostic admin_route_mismatch_detected log.
+  const getExpectedAdminLabel = (pathname: string) => {
+    const match = ADMIN_ROUTES.find((r) => r.location === 'Admin Sidebar' && r.targetRoute && pathname.startsWith(r.targetRoute));
+    return match ? match.label : null;
+  };
+
+  useEffect(() => {
+    if (mismatchTimeoutRef.current) {
+      clearTimeout(mismatchTimeoutRef.current);
+      mismatchTimeoutRef.current = null;
+    }
+    const expected = getExpectedAdminLabel(location.pathname);
+    // increase timeout to allow heavy pages to initialize before flagging mismatches
+    mismatchTimeoutRef.current = setTimeout(() => {
+      const reported = lastReportedRef.current;
+      const reportedPage = reported.page;
+      if (expected && reportedPage && expected !== reportedPage) {
+        console.warn('[admin] admin_route_mismatch_detected', {
+          pathname: location.pathname,
+          expected,
+          reported: reportedPage,
+          ready: reported.ready,
+          timestamp: Date.now(),
+        });
+      } else if (expected && !reportedPage) {
+        console.warn('[admin] admin_route_mismatch_detected', {
+          pathname: location.pathname,
+          expected,
+          reported: null,
+          message: 'no page mounted reported within timeout',
+          timestamp: Date.now(),
+        });
+      }
+    }, 1200);
+    return () => {
+      if (mismatchTimeoutRef.current) {
+        clearTimeout(mismatchTimeoutRef.current);
+        mismatchTimeoutRef.current = null;
+      }
+    };
+  }, [location.pathname]);
 
   useEffect(() => {
     if (!ADMIN_MENU_DEBUG) {
@@ -427,6 +529,7 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
                     to={item.href}
                     end={item.exact}
                     onClick={(event) => {
+                      logAdminNavEvent('admin_navigation_clicked', { source: 'sidebar', target: item.href });
                       const blocked = guardNavigation(item.href);
                       if (blocked) {
                         event.preventDefault();
@@ -465,6 +568,7 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
                 <Link
                   to="/admin/courses/new"
                     onClick={(event) => {
+                      logAdminNavEvent('admin_quick_action_navigation_clicked', { source: 'quick_action', target: '/admin/courses/new' });
                       const blocked = guardNavigation('/admin/courses/new');
                       if (blocked) event.preventDefault();
                     }}
@@ -476,6 +580,7 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
                 <Link
                   to="/admin/courses/import"
                   onClick={(event) => {
+                    logAdminNavEvent('admin_quick_action_navigation_clicked', { source: 'quick_action', target: '/admin/courses/import' });
                     const blocked = guardNavigation('/admin/courses/import');
                     if (blocked) event.preventDefault();
                   }}
@@ -487,6 +592,7 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
                 <Link
                   to="/admin/surveys/queue"
                   onClick={(event) => {
+                    logAdminNavEvent('admin_quick_action_navigation_clicked', { source: 'quick_action', target: '/admin/surveys/queue' });
                     const blocked = guardNavigation('/admin/surveys/queue');
                     if (blocked) event.preventDefault();
                   }}
@@ -660,7 +766,7 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
         </div>
       )}
 
-      <main className="flex-1 overflow-y-auto bg-softwhite px-6 py-8 lg:px-12">
+      <main key={location.pathname} className="flex-1 overflow-y-auto bg-softwhite px-6 py-8 lg:px-12">
         {children ?? <Outlet />}
       </main>
       <AdminOrgSelectorModal

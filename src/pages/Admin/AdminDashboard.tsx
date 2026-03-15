@@ -153,6 +153,14 @@ const builderSnapshot = [
 ];
 
 const AdminDashboard = () => {
+  // Report page identity for admin layout mismatch detection
+  useEffect(() => {
+    try {
+      window.dispatchEvent(new CustomEvent('admin:page-mounted', { detail: { page: 'Dashboard' } }));
+    } catch (err) {
+      // swallow
+    }
+  }, []);
   const navigate = useNavigate();
   const runtimeStatus = useRuntimeStatus();
   const supabaseReady = runtimeStatus.supabaseConfigured && runtimeStatus.supabaseHealthy;
@@ -174,9 +182,19 @@ const AdminDashboard = () => {
     if (catalogState.phase !== 'idle') {
       return;
     }
-    void courseStore.init().catch((error) => {
-      console.error('[AdminDashboard] Failed to bootstrap admin catalog', error);
-    });
+    (async () => {
+      try {
+        await courseStore.init();
+        // signal to AdminLayout that this page finished its initial work
+        try {
+          window.dispatchEvent(new CustomEvent('admin:page-ready', { detail: { page: 'Dashboard', ready: true } }));
+        } catch (err) {
+          // swallow
+        }
+      } catch (error) {
+        console.error('[AdminDashboard] Failed to bootstrap admin catalog', error);
+      }
+    })();
   }, [catalogState.phase]);
 
   const handleRetry = useCallback(async () => {

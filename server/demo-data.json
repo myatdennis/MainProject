@@ -1301,10 +1301,10 @@
         "slug": "e2e-course-1773536574887",
         "title": "E2E Course 1773536574887",
         "description": "Created by E2E test helper. This description is intentionally long to satisfy server validation for E2E tests.",
-        "status": "draft",
-        "version": 1,
+        "status": "published",
+        "version": 2,
         "meta_json": {},
-        "published_at": null,
+        "published_at": "2026-03-15T01:02:54.910Z",
         "organization_id": "demo-org",
         "organizationId": "demo-org",
         "org_id": "demo-org",
@@ -1334,6 +1334,748 @@
                     "mimeType": "video/mp4",
                     "checksum": "e2e-checksum-abcdef",
                     "uploadedAt": "2026-03-15T01:02:54.887Z",
+                    "source": "e2e-helper"
+                  },
+                  "body": {}
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    [
+      "e2e-course-1773542971582",
+      {
+        "id": "e2e-course-1773542971582",
+        "slug": "e2e-course-1773542971567",
+        "title": "E2E Course 1773542971567",
+        "description": "Created by E2E test helper. This description is intentionally long to satisfy server validation for E2E tests.",
+        "status": "published",
+        "version": 2,
+        "meta_json": {},
+        "published_at": "2026-03-15T02:49:31.598Z",
+        "organization_id": "demo-org",
+        "organizationId": "demo-org",
+        "org_id": "demo-org",
+        "modules": [
+          {
+            "id": "e2e-mod-1773542971582-0",
+            "course_id": "e2e-course-1773542971582",
+            "title": "Module 1",
+            "description": null,
+            "order_index": 1,
+            "lessons": [
+              {
+                "id": "e2e-less-1773542971582-0-0",
+                "module_id": "e2e-mod-1773542971582-0",
+                "title": "Lesson 1",
+                "description": null,
+                "type": "video",
+                "order_index": 1,
+                "duration_s": null,
+                "content_json": {
+                  "videoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
+                  "videoSourceType": "external",
+                  "videoAsset": {
+                    "storagePath": "e2e/elephants-dream.mp4",
+                    "bucket": "public",
+                    "bytes": 1024,
+                    "mimeType": "video/mp4",
+                    "checksum": "e2e-checksum-abcdef",
+                    "uploadedAt": "2026-03-15T02:49:31.567Z",
+                    "source": "e2e-helper"
+                  },
+                  "body": {}
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    [
+      "e2e-course-1773542985655",
+      {
+        "id": "e2e-course-1773542985655",
+        "slug": "new-course-3",
+        "title": "New Course",
+        "description": "Enter your course description here. What will learners achieve after completing this course?",
+        "status": "draft",
+        "version": 1,
+        "meta_json": {
+          "thumbnail": "https://images.pexels.com/photos/3184465/pexels-photo-3184465.jpeg?auto=compress&cs=tinysrgb&w=800",
+          "difficulty": "Beginner",
+          "estimated_time": "30-45 minutes",
+          "prerequisites": [],
+          "learning_objectives": [
+            "Understand key concepts and terminology",
+            "Apply learned skills in practical scenarios",
+            "Demonstrate proficiency through assessments"
+          ],
+          "key_takeaways": [
+            "Key concept #1",
+            "Practical skill #2",
+            "Actionable insight #3"
+          ],
+          "tags": [
+            "Professional Development",
+            "Leadership",
+            "Skills Training"
+          ],
+          "type": "Mixed",
+          "created_by": "Mya Dennis"
+        },
+        "published_at": null,
+        "organization_id": "e2e-org-1",
+        "organizationId": "e2e-org-1",
+        "org_id": "e2e-org-1",
+        "modules": [
+          {
+            "id": "6d78c6b0-9aba-465a-a852-d2e453db7185",
+            "course_id": "e2e-course-1773542985655",
+            "title": "Introduction",
+            "description": "Course overview and learning objectives",
+            "order_index": 1,
+            "lessons": [
+              {
+                "id": "70ef3a82-9e0f-49ff-a2bf-cb98d75eba54",
+                "module_id": "6d78c6b0-9aba-465a-a852-d2e453db7185",
+                "title": "Welcome & Overview",
+                "description": "",
+                "type": "video",
+                "order_index": 1,
+                "duration_s": 300,
+                "content_json": {
+                  "notes": "Welcome learners and introduce the course objectives",
+                  "schema_version": 1,
+                  "videoSourceType": "external",
+                  "videoAsset": {
+                    "assetId": "external://70ef3a82-9e0f-49ff-a2bf-cb98d75eba54",
+                    "storagePath": "external://70ef3a82-9e0f-49ff-a2bf-cb98d75eba54",
+                    "bucket": "external",
+                    "bytes": 1,
+                    "mimeType": "video/mp4",
+                    "checksum": null,
+                    "uploadedAt": "2026-03-15T02:49:44.001Z",
+                    "uploadedBy": null,
+                    "source": "external",
+                    "status": null,
+                    "resumableToken": null,
+                    "signedUrl": "https://miqzywzuqzeffqpiupjm.supabase.co/storage/v1/object/public/external/external://70ef3a82-9e0f-49ff-a2bf-cb98d75eba54",
+                    "urlExpiresAt": null
+                  },
+                  "videoUrl": "https://miqzywzuqzeffqpiupjm.supabase.co/storage/v1/object/public/external/external://70ef3a82-9e0f-49ff-a2bf-cb98d75eba54",
+                  "video": {
+                    "type": "external",
+                    "url": "https://miqzywzuqzeffqpiupjm.supabase.co/storage/v1/object/public/external/external://70ef3a82-9e0f-49ff-a2bf-cb98d75eba54",
+                    "embedUrl": "https://miqzywzuqzeffqpiupjm.supabase.co/storage/v1/object/public/external/external://70ef3a82-9e0f-49ff-a2bf-cb98d75eba54",
+                    "provider": "external",
+                    "sourceType": "external",
+                    "thumbnailUrl": null,
+                    "durationSeconds": null,
+                    "title": null
+                  },
+                  "videoProvider": "external",
+                  "type": "video",
+                  "body": {}
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    [
+      "e2e-course-1773543401876",
+      {
+        "id": "e2e-course-1773543401876",
+        "slug": "e2e-course-1773543401866",
+        "title": "E2E Course 1773543401866",
+        "description": "Created by E2E test helper. This description is intentionally long to satisfy server validation for E2E tests.",
+        "status": "published",
+        "version": 2,
+        "meta_json": {},
+        "published_at": "2026-03-15T02:56:41.886Z",
+        "organization_id": "demo-org",
+        "organizationId": "demo-org",
+        "org_id": "demo-org",
+        "modules": [
+          {
+            "id": "e2e-mod-1773543401876-0",
+            "course_id": "e2e-course-1773543401876",
+            "title": "Module 1",
+            "description": null,
+            "order_index": 1,
+            "lessons": [
+              {
+                "id": "e2e-less-1773543401876-0-0",
+                "module_id": "e2e-mod-1773543401876-0",
+                "title": "Lesson 1",
+                "description": null,
+                "type": "video",
+                "order_index": 1,
+                "duration_s": null,
+                "content_json": {
+                  "videoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
+                  "videoSourceType": "external",
+                  "videoAsset": {
+                    "storagePath": "e2e/elephants-dream.mp4",
+                    "bucket": "public",
+                    "bytes": 1024,
+                    "mimeType": "video/mp4",
+                    "checksum": "e2e-checksum-abcdef",
+                    "uploadedAt": "2026-03-15T02:56:41.866Z",
+                    "source": "e2e-helper"
+                  },
+                  "body": {}
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    [
+      "e2e-course-1773543434562",
+      {
+        "id": "e2e-course-1773543434562",
+        "slug": "e2e-course-1773543434553",
+        "title": "E2E Course 1773543434553",
+        "description": "Created by E2E test helper. This description is intentionally long to satisfy server validation for E2E tests.",
+        "status": "published",
+        "version": 2,
+        "meta_json": {},
+        "published_at": "2026-03-15T02:57:14.568Z",
+        "organization_id": "demo-org",
+        "organizationId": "demo-org",
+        "org_id": "demo-org",
+        "modules": [
+          {
+            "id": "e2e-mod-1773543434562-0",
+            "course_id": "e2e-course-1773543434562",
+            "title": "Module 1",
+            "description": null,
+            "order_index": 1,
+            "lessons": [
+              {
+                "id": "e2e-less-1773543434562-0-0",
+                "module_id": "e2e-mod-1773543434562-0",
+                "title": "Lesson 1",
+                "description": null,
+                "type": "video",
+                "order_index": 1,
+                "duration_s": null,
+                "content_json": {
+                  "videoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
+                  "videoSourceType": "external",
+                  "videoAsset": {
+                    "storagePath": "e2e/elephants-dream.mp4",
+                    "bucket": "public",
+                    "bytes": 1024,
+                    "mimeType": "video/mp4",
+                    "checksum": "e2e-checksum-abcdef",
+                    "uploadedAt": "2026-03-15T02:57:14.553Z",
+                    "source": "e2e-helper"
+                  },
+                  "body": {}
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    [
+      "e2e-course-1773544369388",
+      {
+        "id": "e2e-course-1773544369388",
+        "slug": "e2e-course-1773544369381",
+        "title": "E2E Course 1773544369381",
+        "description": "Created by E2E test helper. This description is intentionally long to satisfy server validation for E2E tests.",
+        "status": "published",
+        "version": 2,
+        "meta_json": {},
+        "published_at": "2026-03-15T03:12:49.394Z",
+        "organization_id": "demo-org",
+        "organizationId": "demo-org",
+        "org_id": "demo-org",
+        "modules": [
+          {
+            "id": "e2e-mod-1773544369388-0",
+            "course_id": "e2e-course-1773544369388",
+            "title": "Module 1",
+            "description": null,
+            "order_index": 1,
+            "lessons": [
+              {
+                "id": "e2e-less-1773544369388-0-0",
+                "module_id": "e2e-mod-1773544369388-0",
+                "title": "Lesson 1",
+                "description": null,
+                "type": "video",
+                "order_index": 1,
+                "duration_s": null,
+                "content_json": {
+                  "videoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
+                  "videoSourceType": "external",
+                  "videoAsset": {
+                    "storagePath": "e2e/elephants-dream.mp4",
+                    "bucket": "public",
+                    "bytes": 1024,
+                    "mimeType": "video/mp4",
+                    "checksum": "e2e-checksum-abcdef",
+                    "uploadedAt": "2026-03-15T03:12:49.381Z",
+                    "source": "e2e-helper"
+                  },
+                  "body": {}
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    [
+      "e2e-course-1773544513022",
+      {
+        "id": "e2e-course-1773544513022",
+        "slug": "e2e-course-1773544513011",
+        "title": "E2E Course 1773544513011",
+        "description": "Created by E2E test helper. This description is intentionally long to satisfy server validation for E2E tests.",
+        "status": "published",
+        "version": 2,
+        "meta_json": {},
+        "published_at": "2026-03-15T03:15:13.029Z",
+        "organization_id": "demo-org",
+        "organizationId": "demo-org",
+        "org_id": "demo-org",
+        "modules": [
+          {
+            "id": "e2e-mod-1773544513022-0",
+            "course_id": "e2e-course-1773544513022",
+            "title": "Module 1",
+            "description": null,
+            "order_index": 1,
+            "lessons": [
+              {
+                "id": "e2e-less-1773544513022-0-0",
+                "module_id": "e2e-mod-1773544513022-0",
+                "title": "Lesson 1",
+                "description": null,
+                "type": "video",
+                "order_index": 1,
+                "duration_s": null,
+                "content_json": {
+                  "videoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
+                  "videoSourceType": "external",
+                  "videoAsset": {
+                    "storagePath": "e2e/elephants-dream.mp4",
+                    "bucket": "public",
+                    "bytes": 1024,
+                    "mimeType": "video/mp4",
+                    "checksum": "e2e-checksum-abcdef",
+                    "uploadedAt": "2026-03-15T03:15:13.011Z",
+                    "source": "e2e-helper"
+                  },
+                  "body": {}
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    [
+      "e2e-course-1773544519255",
+      {
+        "id": "e2e-course-1773544519255",
+        "slug": "e2e-course-1773544519244",
+        "title": "E2E Course 1773544519244",
+        "description": "Created by E2E test helper. This description is intentionally long to satisfy server validation for E2E tests.",
+        "status": "published",
+        "version": 2,
+        "meta_json": {},
+        "published_at": "2026-03-15T03:15:19.265Z",
+        "organization_id": "demo-org",
+        "organizationId": "demo-org",
+        "org_id": "demo-org",
+        "modules": [
+          {
+            "id": "e2e-mod-1773544519255-0",
+            "course_id": "e2e-course-1773544519255",
+            "title": "Module 1",
+            "description": null,
+            "order_index": 1,
+            "lessons": [
+              {
+                "id": "e2e-less-1773544519255-0-0",
+                "module_id": "e2e-mod-1773544519255-0",
+                "title": "Lesson 1",
+                "description": null,
+                "type": "video",
+                "order_index": 1,
+                "duration_s": null,
+                "content_json": {
+                  "videoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
+                  "videoSourceType": "external",
+                  "videoAsset": {
+                    "storagePath": "e2e/elephants-dream.mp4",
+                    "bucket": "public",
+                    "bytes": 1024,
+                    "mimeType": "video/mp4",
+                    "checksum": "e2e-checksum-abcdef",
+                    "uploadedAt": "2026-03-15T03:15:19.245Z",
+                    "source": "e2e-helper"
+                  },
+                  "body": {}
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    [
+      "e2e-course-1773544819043",
+      {
+        "id": "e2e-course-1773544819043",
+        "slug": "e2e-course-1773544819028",
+        "title": "E2E Course 1773544819028",
+        "description": "Created by E2E test helper. This description is intentionally long to satisfy server validation for E2E tests.",
+        "status": "published",
+        "version": 2,
+        "meta_json": {},
+        "published_at": "2026-03-15T03:20:19.052Z",
+        "organization_id": "demo-org",
+        "organizationId": "demo-org",
+        "org_id": "demo-org",
+        "modules": [
+          {
+            "id": "e2e-mod-1773544819043-0",
+            "course_id": "e2e-course-1773544819043",
+            "title": "Module 1",
+            "description": null,
+            "order_index": 1,
+            "lessons": [
+              {
+                "id": "e2e-less-1773544819043-0-0",
+                "module_id": "e2e-mod-1773544819043-0",
+                "title": "Lesson 1",
+                "description": null,
+                "type": "video",
+                "order_index": 1,
+                "duration_s": null,
+                "content_json": {
+                  "videoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
+                  "videoSourceType": "external",
+                  "videoAsset": {
+                    "storagePath": "e2e/elephants-dream.mp4",
+                    "bucket": "public",
+                    "bytes": 1024,
+                    "mimeType": "video/mp4",
+                    "checksum": "e2e-checksum-abcdef",
+                    "uploadedAt": "2026-03-15T03:20:19.028Z",
+                    "source": "e2e-helper"
+                  },
+                  "body": {}
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    [
+      "e2e-course-1773544825581",
+      {
+        "id": "e2e-course-1773544825581",
+        "slug": "e2e-course-1773544825570",
+        "title": "E2E Course 1773544825570",
+        "description": "Created by E2E test helper. This description is intentionally long to satisfy server validation for E2E tests.",
+        "status": "published",
+        "version": 2,
+        "meta_json": {},
+        "published_at": "2026-03-15T03:20:25.588Z",
+        "organization_id": "demo-org",
+        "organizationId": "demo-org",
+        "org_id": "demo-org",
+        "modules": [
+          {
+            "id": "e2e-mod-1773544825581-0",
+            "course_id": "e2e-course-1773544825581",
+            "title": "Module 1",
+            "description": null,
+            "order_index": 1,
+            "lessons": [
+              {
+                "id": "e2e-less-1773544825581-0-0",
+                "module_id": "e2e-mod-1773544825581-0",
+                "title": "Lesson 1",
+                "description": null,
+                "type": "video",
+                "order_index": 1,
+                "duration_s": null,
+                "content_json": {
+                  "videoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
+                  "videoSourceType": "external",
+                  "videoAsset": {
+                    "storagePath": "e2e/elephants-dream.mp4",
+                    "bucket": "public",
+                    "bytes": 1024,
+                    "mimeType": "video/mp4",
+                    "checksum": "e2e-checksum-abcdef",
+                    "uploadedAt": "2026-03-15T03:20:25.570Z",
+                    "source": "e2e-helper"
+                  },
+                  "body": {}
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    [
+      "e2e-course-1773545952755",
+      {
+        "id": "e2e-course-1773545952755",
+        "slug": "e2e-course-1773545952744",
+        "title": "E2E Course 1773545952744",
+        "description": "Created by E2E test helper. This description is intentionally long to satisfy server validation for E2E tests.",
+        "status": "published",
+        "version": 2,
+        "meta_json": {},
+        "published_at": "2026-03-15T03:39:12.765Z",
+        "organization_id": "demo-org",
+        "organizationId": "demo-org",
+        "org_id": "demo-org",
+        "modules": [
+          {
+            "id": "e2e-mod-1773545952755-0",
+            "course_id": "e2e-course-1773545952755",
+            "title": "Module 1",
+            "description": null,
+            "order_index": 1,
+            "lessons": [
+              {
+                "id": "e2e-less-1773545952755-0-0",
+                "module_id": "e2e-mod-1773545952755-0",
+                "title": "Lesson 1",
+                "description": null,
+                "type": "video",
+                "order_index": 1,
+                "duration_s": null,
+                "content_json": {
+                  "videoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
+                  "videoSourceType": "external",
+                  "videoAsset": {
+                    "storagePath": "e2e/elephants-dream.mp4",
+                    "bucket": "public",
+                    "bytes": 1024,
+                    "mimeType": "video/mp4",
+                    "checksum": "e2e-checksum-abcdef",
+                    "uploadedAt": "2026-03-15T03:39:12.744Z",
+                    "source": "e2e-helper"
+                  },
+                  "body": {}
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    [
+      "e2e-course-1773546776190",
+      {
+        "id": "e2e-course-1773546776190",
+        "slug": "e2e-course-1773546776182",
+        "title": "E2E Course 1773546776182",
+        "description": "Created by E2E test helper. This description is intentionally long to satisfy server validation for E2E tests.",
+        "status": "published",
+        "version": 2,
+        "meta_json": {},
+        "published_at": "2026-03-15T03:52:56.196Z",
+        "organization_id": "demo-org",
+        "organizationId": "demo-org",
+        "org_id": "demo-org",
+        "modules": [
+          {
+            "id": "e2e-mod-1773546776190-0",
+            "course_id": "e2e-course-1773546776190",
+            "title": "Module 1",
+            "description": null,
+            "order_index": 1,
+            "lessons": [
+              {
+                "id": "e2e-less-1773546776190-0-0",
+                "module_id": "e2e-mod-1773546776190-0",
+                "title": "Lesson 1",
+                "description": null,
+                "type": "video",
+                "order_index": 1,
+                "duration_s": null,
+                "content_json": {
+                  "videoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
+                  "videoSourceType": "external",
+                  "videoAsset": {
+                    "storagePath": "e2e/elephants-dream.mp4",
+                    "bucket": "public",
+                    "bytes": 1024,
+                    "mimeType": "video/mp4",
+                    "checksum": "e2e-checksum-abcdef",
+                    "uploadedAt": "2026-03-15T03:52:56.182Z",
+                    "source": "e2e-helper"
+                  },
+                  "body": {}
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    [
+      "e2e-course-1773546783411",
+      {
+        "id": "e2e-course-1773546783411",
+        "slug": "e2e-course-1773546783400",
+        "title": "E2E Course 1773546783400",
+        "description": "Created by E2E test helper. This description is intentionally long to satisfy server validation for E2E tests.",
+        "status": "draft",
+        "version": 1,
+        "meta_json": {},
+        "published_at": null,
+        "organization_id": "demo-org",
+        "organizationId": "demo-org",
+        "org_id": "demo-org",
+        "modules": [
+          {
+            "id": "e2e-mod-1773546783411-0",
+            "course_id": "e2e-course-1773546783411",
+            "title": "Module 1",
+            "description": null,
+            "order_index": 1,
+            "lessons": [
+              {
+                "id": "e2e-less-1773546783411-0-0",
+                "module_id": "e2e-mod-1773546783411-0",
+                "title": "Lesson 1",
+                "description": null,
+                "type": "video",
+                "order_index": 1,
+                "duration_s": null,
+                "content_json": {
+                  "videoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
+                  "videoSourceType": "external",
+                  "videoAsset": {
+                    "storagePath": "e2e/elephants-dream.mp4",
+                    "bucket": "public",
+                    "bytes": 1024,
+                    "mimeType": "video/mp4",
+                    "checksum": "e2e-checksum-abcdef",
+                    "uploadedAt": "2026-03-15T03:53:03.400Z",
+                    "source": "e2e-helper"
+                  },
+                  "body": {}
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    [
+      "e2e-course-1773578875124",
+      {
+        "id": "e2e-course-1773578875124",
+        "slug": "e2e-course-1773578875107",
+        "title": "E2E Course 1773578875107",
+        "description": "Created by E2E test helper. This description is intentionally long to satisfy server validation for E2E tests.",
+        "status": "published",
+        "version": 2,
+        "meta_json": {},
+        "published_at": "2026-03-15T12:47:55.136Z",
+        "organization_id": "demo-org",
+        "organizationId": "demo-org",
+        "org_id": "demo-org",
+        "modules": [
+          {
+            "id": "e2e-mod-1773578875124-0",
+            "course_id": "e2e-course-1773578875124",
+            "title": "Module 1",
+            "description": null,
+            "order_index": 1,
+            "lessons": [
+              {
+                "id": "e2e-less-1773578875124-0-0",
+                "module_id": "e2e-mod-1773578875124-0",
+                "title": "Lesson 1",
+                "description": null,
+                "type": "video",
+                "order_index": 1,
+                "duration_s": null,
+                "content_json": {
+                  "videoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
+                  "videoSourceType": "external",
+                  "videoAsset": {
+                    "storagePath": "e2e/elephants-dream.mp4",
+                    "bucket": "public",
+                    "bytes": 1024,
+                    "mimeType": "video/mp4",
+                    "checksum": "e2e-checksum-abcdef",
+                    "uploadedAt": "2026-03-15T12:47:55.107Z",
+                    "source": "e2e-helper"
+                  },
+                  "body": {}
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    [
+      "e2e-course-1773578875198",
+      {
+        "id": "e2e-course-1773578875198",
+        "slug": "e2e-course-1773578875190",
+        "title": "E2E Course 1773578875190",
+        "description": "Created by E2E test helper. This description is intentionally long to satisfy server validation for E2E tests.",
+        "status": "draft",
+        "version": 1,
+        "meta_json": {},
+        "published_at": null,
+        "organization_id": "demo-org",
+        "organizationId": "demo-org",
+        "org_id": "demo-org",
+        "modules": [
+          {
+            "id": "e2e-mod-1773578875198-0",
+            "course_id": "e2e-course-1773578875198",
+            "title": "Module 1",
+            "description": null,
+            "order_index": 1,
+            "lessons": [
+              {
+                "id": "e2e-less-1773578875198-0-0",
+                "module_id": "e2e-mod-1773578875198-0",
+                "title": "Lesson 1",
+                "description": null,
+                "type": "video",
+                "order_index": 1,
+                "duration_s": null,
+                "content_json": {
+                  "videoUrl": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
+                  "videoSourceType": "external",
+                  "videoAsset": {
+                    "storagePath": "e2e/elephants-dream.mp4",
+                    "bucket": "public",
+                    "bytes": 1024,
+                    "mimeType": "video/mp4",
+                    "checksum": "e2e-checksum-abcdef",
+                    "uploadedAt": "2026-03-15T12:47:55.190Z",
                     "source": "e2e-helper"
                   },
                   "body": {}

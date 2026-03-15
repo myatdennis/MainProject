@@ -21,15 +21,15 @@ const ConnectionDiagnostic: React.FC = () => {
     return (
       <button
         onClick={() => setIsVisible(true)}
-        className="fixed bottom-4 right-4 z-50 bg-gray-800 text-white px-3 py-2 rounded-full shadow-lg hover:bg-gray-700 transition-colors flex items-center gap-2"
-        title="Connection Status"
+        className="fixed bottom-4 right-4 z-50 bg-gray-800 text-white p-2 rounded-full shadow-lg hover:bg-gray-700 transition-colors flex items-center justify-center"
+        title={`Connection Status: ${statusLabel}`}
+        aria-label="Connection Status"
       >
         {snapshot.isOnline ? (
           <Wifi className="h-4 w-4 text-green-400" />
         ) : (
           <WifiOff className="h-4 w-4 text-red-400" />
         )}
-        <span className="text-xs font-semibold">{statusLabel}</span>
       </button>
     );
   }

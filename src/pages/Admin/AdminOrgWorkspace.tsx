@@ -79,6 +79,14 @@ const deriveCrmSummaryFromOrganizations = (orgs: Org[], paginationTotal?: number
 // ...existing code for AdminOrgWorkspace continues
 
 const AdminOrgWorkspace = () => {
+  // Report page identity for admin layout mismatch detection
+  useEffect(() => {
+    try {
+      window.dispatchEvent(new CustomEvent('admin:page-mounted', { detail: { page: 'Organizations' } }));
+    } catch (err) {
+      // swallow
+    }
+  }, []);
   const { showToast } = useToast();
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
@@ -186,7 +194,13 @@ const AdminOrgWorkspace = () => {
         showToast?.('Unable to load organizations', 'error');
       } finally {
         setFetching(false);
+        // mark initial load complete and notify admin shell that page is ready
         setInitialLoad(false);
+        try {
+          window.dispatchEvent(new CustomEvent('admin:page-ready', { detail: { page: 'Organizations', ready: true } }));
+        } catch (err) {
+          // swallow
+        }
       }
     },
     [debouncedSearch, statusFilter, subscriptionFilter, selectedOrgId, showToast],

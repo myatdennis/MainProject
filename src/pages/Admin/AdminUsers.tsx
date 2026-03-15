@@ -4,7 +4,7 @@
  * Features: search/filter, bulk actions, modals, progress tracking, and summary stats.
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { 
   Search, 
@@ -34,6 +34,20 @@ import EmptyState from '../../components/ui/EmptyState';
 import ActionsMenu from '../../components/ui/ActionsMenu';
 
 const AdminUsers = () => {
+  // Report page identity for admin layout mismatch detection
+  useEffect(() => {
+    try {
+      window.dispatchEvent(new CustomEvent('admin:page-mounted', { detail: { page: 'Users' } }));
+    } catch (err) {
+      // swallow
+    }
+    try {
+      // lightweight page: signal ready immediately after mount
+      window.dispatchEvent(new CustomEvent('admin:page-ready', { detail: { page: 'Users', ready: true } }));
+    } catch (err) {
+      // swallow
+    }
+  }, []);
   const { showToast } = useToast();
   const [searchTerm, setSearchTerm] = useState('');
   const [filterOrg, setFilterOrg] = useState('all');

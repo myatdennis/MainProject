@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { 
   AlertTriangle,
   Clock,
@@ -15,6 +15,20 @@ import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import { useToast } from '../../context/ToastContext';
 
 const AdminAnalytics = () => {
+  // Report page identity for admin layout mismatch detection
+  useEffect(() => {
+    try {
+      window.dispatchEvent(new CustomEvent('admin:page-mounted', { detail: { page: 'Analytics' } }));
+    } catch (err) {
+      // swallow
+    }
+    try {
+      // Analytics is relatively lightweight for now; signal ready on mount
+      window.dispatchEvent(new CustomEvent('admin:page-ready', { detail: { page: 'Analytics', ready: true } }));
+    } catch (err) {
+      // swallow
+    }
+  }, []);
   const { showToast } = useToast();
   const [dateRange, setDateRange] = useState('last-30-days');
   const [selectedMetric, setSelectedMetric] = useState('engagement');

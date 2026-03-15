@@ -19,16 +19,12 @@ import {
   Copy,
   Trash2,
   Eye,
-  Users,
-  Clock,
   Play,
   FileText,
   Video,
-  BarChart3,
   Settings,
   Upload,
   Download,
-  UserPlus,
   Archive,
   AlertTriangle,
   ShieldCheck
@@ -53,6 +49,14 @@ import { logAuthRedirect } from '../../utils/logAuthRedirect';
 
 
 const AdminCourses = () => {
+  // Report page identity for admin layout mismatch detection
+  useEffect(() => {
+    try {
+      window.dispatchEvent(new CustomEvent('admin:page-mounted', { detail: { page: 'Courses' } }));
+    } catch (err) {
+      // swallow
+    }
+  }, []);
   const { showToast } = useToast();
   const syncService = useSyncService();
   
@@ -100,6 +104,11 @@ const AdminCourses = () => {
         if (!cancelled) {
           setCatalogState(courseStore.getAdminCatalogState());
           setVersion((v) => v + 1);
+          try {
+            window.dispatchEvent(new CustomEvent('admin:page-ready', { detail: { page: 'Courses', ready: true } }));
+          } catch (err) {
+            // swallow
+          }
         }
       }
     };
@@ -164,9 +173,6 @@ const AdminCourses = () => {
     }
   };
 
-  const handleEditCourse = (course: Course) => {
-    navigate(`/admin/course-builder/${course.id}`);
-  };
 
   const handleCreateCourse = () => {
     setSearchParams(prev => {
@@ -182,10 +188,7 @@ const AdminCourses = () => {
     navigate('/admin/course-builder/new');
   }, [navigate]);
 
-  const handleAssignCourse = (course: Course) => {
-    setCourseForAssignment(course);
-    setShowAssignmentModal(true);
-  };
+  // ...existing code...
 
   const handleAssignmentComplete = (assignments?: CourseAssignment[]) => {
     setShowAssignmentModal(false);

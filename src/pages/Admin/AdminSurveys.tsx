@@ -61,6 +61,14 @@ type AdminSurveyCard = {
 };
 
 const AdminSurveys = () => {
+  // Report page identity for admin layout mismatch detection
+  useEffect(() => {
+    try {
+      window.dispatchEvent(new CustomEvent('admin:page-mounted', { detail: { page: 'Surveys' } }));
+    } catch (err) {
+      // swallow
+    }
+  }, []);
   const { showToast } = useToast();
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
@@ -137,6 +145,12 @@ const AdminSurveys = () => {
       try {
         const data = await listSurveys();
         setSurveys(data.map(shapeSurveyRecord));
+        try {
+          // signal the admin shell that the Surveys page finished initial load
+          window.dispatchEvent(new CustomEvent('admin:page-ready', { detail: { page: 'Surveys', ready: true } }));
+        } catch (err) {
+          // swallow
+        }
       } catch (err) {
         console.warn('Failed to load surveys', err);
         const message = err instanceof Error ? err.message : 'Unable to load surveys';

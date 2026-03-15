@@ -682,7 +682,27 @@ ${content.type === 'quiz' && 'questions' in content.content ? `\nQuestions: ${co
     if (blocking.length === 0) {
       return '';
     }
-    return blocking.map((issue, index) => `${index + 1}. ${issue.message}`).join('\n');
+
+    // Map some validation codes to concise, legacy-friendly messages that Playwright
+    // specs (and older parts of the app) expect. Fall back to the issue.message
+    // when no mapping exists.
+    const legacyMessageForCode = (issue: CourseValidationIssue) => {
+      if (!issue || !issue.code) return issue.message;
+      switch (issue.code) {
+        case 'course.title.missing':
+          return 'Course title is required';
+        case 'course.description.short':
+          return 'Course description is required';
+        case 'course.modules.missing':
+          return 'Add at least one module before saving';
+        default:
+          return issue.message;
+      }
+    };
+
+    return blocking
+      .map((issue, index) => `${index + 1}. ${legacyMessageForCode(issue)}`)
+      .join('\n');
   };
 
   const buildCoursePayload = (overrides: Partial<Course> = {}) => {
