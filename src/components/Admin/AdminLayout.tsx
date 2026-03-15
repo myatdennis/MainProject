@@ -665,9 +665,6 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
                   <RefreshCcw className="h-4 w-4" />
                 </button>
               </div>
-              <Button variant="ghost" size="sm" leadingIcon={<Bell className="h-4 w-4" />}>
-                Alerts
-              </Button>
               <Button
                 variant="secondary"
                 size="sm"

@@ -7,33 +7,55 @@ const router = express.Router()
 // GET /api/admin/analytics/export?course_id=&org_id=
 router.get('/', async (req, res, next) => {
   try {
-    const { course_id } = req.query
+    const { course_id, organization_id } = req.query
 
-    // Reuse the same aggregates as the main analytics route
+    // Build real-table aggregates (no generated views required)
     let rows
     if (course_id) {
       rows = await sql`
-        select vc.course_id, vc.total_users, vc.completed_count, vc.completion_percent, vp.avg_progress
-        from public.view_course_completion_rate vc
-        left join public.view_course_avg_progress vp on vp.course_id = vc.course_id
-        where vc.course_id = ${course_id}
+        select
+          c.title                                             as course_title,
+          ucp.course_id::text                                 as course_id,
+          count(distinct ucp.user_id)::int                    as total_users,
+          count(*) filter (where ucp.completed)::int          as completed_count,
+          round(100.0 * count(*) filter (where ucp.completed) / nullif(count(*),0), 1)::float as completion_percent,
+          round(avg(ucp.progress)::numeric, 1)::float         as avg_progress,
+          round(avg(ucp.time_spent_s)::numeric / 60.0, 0)::int as avg_time_minutes
+        from public.user_course_progress ucp
+        join public.courses c on c.id = ucp.course_id
+        where ucp.course_id = ${course_id}::uuid
+        group by c.title, ucp.course_id
       `
     } else {
+      const orgFilter = organization_id
+        ? sql`and ucp.organization_id = ${organization_id}::uuid`
+        : sql``
       rows = await sql`
-        select vc.course_id, vc.total_users, vc.completed_count, vc.completion_percent, vp.avg_progress
-        from public.view_course_completion_rate vc
-        left join public.view_course_avg_progress vp on vp.course_id = vc.course_id
-        order by vc.completion_percent desc
+        select
+          c.title                                             as course_title,
+          ucp.course_id::text                                 as course_id,
+          count(distinct ucp.user_id)::int                    as total_users,
+          count(*) filter (where ucp.completed)::int          as completed_count,
+          round(100.0 * count(*) filter (where ucp.completed) / nullif(count(*),0), 1)::float as completion_percent,
+          round(avg(ucp.progress)::numeric, 1)::float         as avg_progress,
+          round(avg(ucp.time_spent_s)::numeric / 60.0, 0)::int as avg_time_minutes
+        from public.user_course_progress ucp
+        join public.courses c on c.id = ucp.course_id
+        where 1=1 ${orgFilter}
+        group by c.title, ucp.course_id
+        order by completion_percent desc
         limit 500
       `
     }
 
     const records = (rows || []).map((r) => ({
+      course_title: r.course_title ?? '',
       course_id: r.course_id,
       total_users: r.total_users ?? 0,
       completed_count: r.completed_count ?? 0,
       completion_percent: r.completion_percent ?? 0,
-      avg_progress: r.avg_progress ?? 0
+      avg_progress: r.avg_progress ?? 0,
+      avg_time_minutes: r.avg_time_minutes ?? 0,
     }))
 
     // Simple CSV serializer (no external dependency) — safe for small exports

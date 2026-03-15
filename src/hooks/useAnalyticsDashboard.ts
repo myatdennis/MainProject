@@ -44,6 +44,34 @@ interface AdminAnalyticsResponse {
     responses: number;
     avgRating: number | null;
   }>;
+  // New fields returned by the rewritten analytics route
+  engagementTrend?: Array<{
+    date: string;
+    events: number;
+    uniqueUsers: number;
+    completions: number;
+  }>;
+  heatmap?: Array<{
+    dow: number;     // 0=Sun … 6=Sat
+    bucket: number;  // 0–11, 2-hour buckets
+    events: number;
+  }>;
+  topOrgs?: Array<{
+    orgId: string;
+    orgName: string;
+    totalLearners: number;
+    completionRate: number;
+  }>;
+  courseDetail?: Array<{
+    courseId: string;
+    courseTitle: string;
+    totalLearners: number;
+    completedCount: number;
+    completionPercent: number;
+    avgProgress: number;
+    avgTimeMinutes: number;
+    quizAttempts: number;
+  }>;
 }
 
 export interface DropoffInsight {
@@ -97,6 +125,11 @@ export interface AnalyticsDashboardData {
   skillGaps: SkillGapInsight[];
   predictions: PredictionInsight[];
   strugglingLearners: LearnerProgress[];
+  // New fields from server
+  topOrgs: NonNullable<AdminAnalyticsResponse['topOrgs']>;
+  courseDetail: NonNullable<AdminAnalyticsResponse['courseDetail']>;
+  rawEngagementTrend: NonNullable<AdminAnalyticsResponse['engagementTrend']>;
+  rawHeatmap: NonNullable<AdminAnalyticsResponse['heatmap']>;
 }
 
 const DEFAULT_DATA: AnalyticsDashboardData = {
@@ -112,6 +145,10 @@ const DEFAULT_DATA: AnalyticsDashboardData = {
   skillGaps: [],
   predictions: [],
   strugglingLearners: [],
+  topOrgs: [],
+  courseDetail: [],
+  rawEngagementTrend: [],
+  rawHeatmap: [],
 };
 
 interface UseAnalyticsDashboardOptions {
@@ -395,6 +432,10 @@ export const useAnalyticsDashboard = (options: UseAnalyticsDashboardOptions = {}
       skillGaps,
       predictions,
       strugglingLearners: struggling,
+      topOrgs: apiData.topOrgs ?? [],
+      courseDetail: apiData.courseDetail ?? [],
+      rawEngagementTrend: apiData.engagementTrend ?? [],
+      rawHeatmap: apiData.heatmap ?? [],
     };
   }, [apiData, courseId, start, end, liveToken]);
 

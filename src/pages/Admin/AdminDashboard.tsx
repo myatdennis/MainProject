@@ -11,6 +11,7 @@ import { LoadingSpinner } from '../../components/LoadingComponents';
 import { logAuthRedirect } from '../../utils/logAuthRedirect';
 import useRuntimeStatus from '../../hooks/useRuntimeStatus';
 import { courseStore, AdminCatalogState } from '../../store/courseStore';
+import { useAnalyticsDashboard } from '../../hooks/useAnalyticsDashboard';
 import {
   Users,
   Building2,
@@ -30,36 +31,7 @@ import {
   WifiOff,
 } from 'lucide-react';
 
-const stats = [
-  {
-    label: 'Active learners',
-    value: '247',
-    change: '+12% vs last month',
-    icon: Users,
-    accent: 'text-skyblue',
-  },
-  {
-    label: 'Partner organizations',
-    value: '18',
-    change: '+2 newly onboarded',
-    icon: Building2,
-    accent: 'text-forest',
-  },
-  {
-    label: 'Courses completed',
-    value: '1,234',
-    change: '+8% completion growth',
-    icon: Award,
-    accent: 'text-sunrise',
-  },
-  {
-    label: 'Avg. completion rate',
-    value: '87%',
-    change: '-3% vs last month',
-    icon: TrendingUp,
-    accent: 'text-gold',
-  },
-];
+// Stats are rendered from real API data inside AdminDashboard (see useAnalyticsDashboard usage below)
 
 const recentActivity = [
   {
@@ -112,22 +84,6 @@ const alerts = [
   },
 ];
 
-const topPerformingOrgs = [
-  { name: 'Pacific Coast University', completion: 94, learners: 45 },
-  { name: 'Community Impact Network', completion: 91, learners: 28 },
-  { name: 'Regional Medical Center', completion: 89, learners: 67 },
-  { name: 'Mountain View High School', completion: 87, learners: 23 },
-  { name: 'TechForward Solutions', completion: 85, learners: 34 },
-];
-
-const modulePerformance = [
-  { name: 'Foundations of Inclusive Leadership', completion: 92, avgTime: '45 min' },
-  { name: 'Empathy in Action', completion: 89, avgTime: '38 min' },
-  { name: 'Courageous Conversations', completion: 84, avgTime: '52 min' },
-  { name: 'Recognizing and Mitigating Bias', completion: 81, avgTime: '58 min' },
-  { name: 'Personal & Team Action Planning', completion: 78, avgTime: '35 min' },
-];
-
 const builderHighlights = [
   {
     icon: Wand2,
@@ -169,6 +125,41 @@ const AdminDashboard = () => {
     : 'pending';
   const [catalogState, setCatalogState] = useState<AdminCatalogState>(courseStore.getAdminCatalogState());
   const [retrying, setRetrying] = useState(false);
+
+  // Real analytics data
+  const { data: analyticsData, loading: analyticsLoading } = useAnalyticsDashboard();
+  const ov = analyticsData.overview;
+
+  const stats = useMemo(() => [
+    {
+      label: 'Active learners',
+      value: analyticsLoading ? '…' : (ov?.totalActiveLearners ?? 0).toLocaleString(),
+      change: 'Total learners with course progress',
+      icon: Users,
+      accent: 'text-skyblue',
+    },
+    {
+      label: 'Partner organizations',
+      value: analyticsLoading ? '…' : (ov?.totalOrgs ?? 0).toLocaleString(),
+      change: 'Active organizations on the platform',
+      icon: Building2,
+      accent: 'text-forest',
+    },
+    {
+      label: 'Published courses',
+      value: analyticsLoading ? '…' : (ov?.totalCourses ?? 0).toLocaleString(),
+      change: 'Courses available to learners',
+      icon: Award,
+      accent: 'text-sunrise',
+    },
+    {
+      label: 'Avg. completion rate',
+      value: analyticsLoading ? '…' : `${Math.round(ov?.platformAvgCompletion ?? 0)}%`,
+      change: `Avg. progress ${Math.round(ov?.platformAvgProgress ?? 0)}%`,
+      icon: TrendingUp,
+      accent: 'text-gold',
+    },
+  ], [ov, analyticsLoading]);
 
   useEffect(() => {
     setCatalogState(courseStore.getAdminCatalogState());
@@ -239,17 +230,21 @@ const AdminDashboard = () => {
   );
 
   const catalogStatus = catalogState.adminLoadStatus;
-  const isCatalogLoading = catalogState.phase === 'loading';
+  // Only block the dashboard with a spinner on the very first cold load.
+  // If status is already 'success' (courses in store) don't re-gate on phase.
+  const isCatalogLoading = catalogState.phase === 'loading' && catalogStatus !== 'success';
   const isCatalogEmpty = catalogStatus === 'empty';
   const isCatalogUnauthorized = catalogStatus === 'unauthorized';
   const isCatalogError = catalogStatus === 'error' || catalogStatus === 'api_unreachable';
   const lastSyncAttempt = catalogState.lastAttemptAt ? new Date(catalogState.lastAttemptAt).toLocaleString() : null;
 
   const reportCsv = useMemo(() => {
-    const header = ['Module Name,Completion Rate,Average Time'];
-    const rows = modulePerformance.map((module) => `${module.name},${module.completion}%,${module.avgTime}`);
+    const header = ['Course Name,Completion Rate,Avg Learners,Avg Time (min)'];
+    const rows = analyticsData.courseDetail.map((c) =>
+      `${c.courseTitle},${Math.round(c.completionPercent ?? 0)}%,${c.totalLearners},${c.avgTimeMinutes ?? 0}`
+    );
     return [...header, ...rows].join('\n');
-  }, []);
+  }, [analyticsData.courseDetail]);
 
   const handleExportReport = () => {
     const blob = new Blob([reportCsv], { type: 'text/csv' });
@@ -544,38 +539,53 @@ const AdminDashboard = () => {
               </Badge>
             </div>
             <div className="space-y-3">
-              {topPerformingOrgs.map((org) => (
-                <div key={org.name} className="rounded-2xl border border-mist/50 bg-white px-4 py-3 shadow-card-sm">
-                  <div className="flex items-center justify-between text-sm font-semibold text-charcoal">
-                    <span>{org.name}</span>
-                    <span>{org.completion}%</span>
+              {analyticsLoading ? (
+                <div className="flex justify-center py-4"><LoadingSpinner size="sm" /></div>
+              ) : analyticsData.topOrgs.length === 0 ? (
+                <p className="text-sm text-slate/60 py-2">No org data available yet.</p>
+              ) : (
+                analyticsData.topOrgs.slice(0, 5).map((org) => (
+                  <div key={org.orgId} className="rounded-2xl border border-mist/50 bg-white px-4 py-3 shadow-card-sm">
+                    <div className="flex items-center justify-between text-sm font-semibold text-charcoal">
+                      <span>{org.orgName}</span>
+                      <span>{Math.round(org.completionRate ?? 0)}%</span>
+                    </div>
+                    <ProgressBar value={Math.round(org.completionRate ?? 0)} className="mt-2" tone="info" srLabel={`${org.orgName} completion`} />
+                    <p className="text-xs text-slate/70">{org.totalLearners.toLocaleString()} learners enrolled</p>
                   </div>
-                  <ProgressBar value={org.completion} className="mt-2" tone="info" srLabel={`${org.name} completion`} />
-                  <p className="text-xs text-slate/70">{org.learners} learners enrolled</p>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </Card>
 
           <Card className="space-y-4">
             <div className="flex items-center justify-between">
-              <h2 className="font-heading text-lg font-semibold text-charcoal">Module performance</h2>
+              <h2 className="font-heading text-lg font-semibold text-charcoal">Course performance</h2>
               <Button variant="ghost" size="sm" trailingIcon={<ArrowUpRight className="h-4 w-4" />}
                 onClick={() => navigate('/admin/courses')}>
                 Manage curriculum
               </Button>
             </div>
             <div className="space-y-3">
-              {modulePerformance.map((module) => (
-                <div key={module.name} className="rounded-2xl border border-mist/50 bg-white px-4 py-3 shadow-card-sm">
-                  <div className="flex items-center justify-between text-sm font-semibold text-charcoal">
-                    <span>{module.name}</span>
-                    <span>{module.completion}%</span>
+              {analyticsLoading ? (
+                <div className="flex justify-center py-4"><LoadingSpinner size="sm" /></div>
+              ) : analyticsData.courseDetail.length === 0 ? (
+                <p className="text-sm text-slate/60 py-2">No published course data available yet.</p>
+              ) : (
+                analyticsData.courseDetail.slice(0, 5).map((course) => (
+                  <div key={course.courseId} className="rounded-2xl border border-mist/50 bg-white px-4 py-3 shadow-card-sm">
+                    <div className="flex items-center justify-between text-sm font-semibold text-charcoal">
+                      <span className="truncate max-w-[200px]">{course.courseTitle}</span>
+                      <span>{Math.round(course.completionPercent ?? 0)}%</span>
+                    </div>
+                    <ProgressBar value={Math.round(course.completionPercent ?? 0)} className="mt-2" srLabel={`${course.courseTitle} completion`} />
+                    <p className="text-xs text-slate/70">
+                      {course.totalLearners.toLocaleString()} learners
+                      {course.avgTimeMinutes ? ` · Avg. ${course.avgTimeMinutes} min` : ''}
+                    </p>
                   </div>
-                  <ProgressBar value={module.completion} className="mt-2" srLabel={`${module.name} completion`} />
-                  <p className="text-xs text-slate/70">Average time: {module.avgTime}</p>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </Card>
         </div>

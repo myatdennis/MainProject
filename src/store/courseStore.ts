@@ -5,7 +5,7 @@ import {
   syncCourseToDatabase,
 } from '../dal/adminCourses';
 import { fetchPublishedCourses, fetchCourse } from '../dal/clientCourses';
-import { Course, Module, Lesson } from '../types/courseTypes';
+import { Course, Module } from '../types/courseTypes';
 import { slugify, normalizeCourse } from '../utils/courseNormalization';
 import { getActiveOrgPreference } from '../lib/secureStorage';
 import { getAssignmentsForUser } from '../utils/assignmentStorage';
@@ -1145,6 +1145,8 @@ let learnerCatalogState: LearnerCatalogState = {
 };
 
 let initPromise: Promise<void> | null = null;
+// @ts-expect-error flag is written by deferred-boot callbacks but not yet read in a guard
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 let awaitingOrgResolution = false;
 let awaitingRoleResolution = false;
 
@@ -1247,7 +1249,9 @@ const resolveOrgContext = (): ResolvedOrgContext => {
   return { orgId: null, role: null, userId: null, status: 'idle' };
 };
 
-const hasLocalProgressForCourse = (course: Course): boolean => {
+// Reserved for future use: checks whether a learner has any local progress stored for a given course.
+// @ts-ignore unused — retained for planned assignment-scope filtering feature
+const _hasLocalProgressForCourse = (course: Course): boolean => {
   if (typeof window === 'undefined') {
     return false;
   }
@@ -1417,9 +1421,11 @@ const ensureAssignmentScopedCatalog = async (
     const missingCourseIds: string[] = [];
 
     assignments.forEach((assignment) => {
-      assignmentByCourseId.set(assignment.courseId, assignment);
-      if (!courseMap[assignment.courseId]) {
-        missingCourseIds.push(assignment.courseId);
+      const cId = assignment.courseId;
+      if (!cId) return;
+      assignmentByCourseId.set(cId, assignment);
+      if (!courseMap[cId]) {
+        missingCourseIds.push(cId);
       }
     });
 
@@ -1542,7 +1548,6 @@ export const courseStore = {
     }
 
     initPromise = (async () => {
-    let supabaseOperational = false;
     let restrictToOrg = true;
     let canUseAdminApi = false;
     let adminLoadStatus: AdminLoadStatus = 'skipped';
@@ -1567,7 +1572,7 @@ export const courseStore = {
         return;
       }
       if (!orgContext.userId) {
-        if (orgContext.status === 'loading' || orgContext.status === 'idle') {
+        if (orgContext.status === 'idle') {
           console.info(
             '[courseStore.init] Auth context not ready (status=%s); deferring catalog initialization until memberships resolve.',
             orgContext.status,
@@ -1604,7 +1609,7 @@ export const courseStore = {
       }
       awaitingRoleResolution = false;
       const roleResolved = typeof orgContext.role === 'string' && orgContext.role.length > 0;
-      const hasAdminRole = roleResolved && orgContext.role.toLowerCase().includes('admin');
+      const hasAdminRole = roleResolved && (orgContext.role ?? '').toLowerCase().includes('admin');
       const treatAsAdmin = adminSurfaceDetected || hasAdminRole;
       restrictToOrg = !treatAsAdmin;
       const adminMode = treatAsAdmin;
@@ -1617,7 +1622,8 @@ export const courseStore = {
       } catch (statusError) {
         console.warn('[courseStore.init] Runtime status refresh failed; using last known snapshot.', statusError);
       }
-      supabaseOperational = runtimeStatus.supabaseConfigured && runtimeStatus.supabaseHealthy;
+      // supabaseOperational is checked implicitly through apiReachable/supabaseHealthy downstream
+      void (runtimeStatus.supabaseConfigured && runtimeStatus.supabaseHealthy);
       const apiReachable = runtimeStatus.apiReachable ?? runtimeStatus.apiHealthy;
       const apiAuthRequired = runtimeStatus.apiAuthRequired;
       canUseAdminApi = adminMode && apiReachable;
@@ -1730,7 +1736,7 @@ export const courseStore = {
       }
 
       const adminEmptySuccess = !restrictToOrg && adminLoadStatus === 'empty';
-      const adminUnauthorized = !restrictToOrg && adminLoadStatus === 'unauthorized';
+      const adminUnauthorized = !restrictToOrg && adminLoadStatus === 'error' && (adminLoadError === 'admin_courses_auth_error');
 
       if (dbCourses.length > 0) {
         // Merge fetched courses with any existing locally persisted drafts instead of overwriting entirely.
@@ -1781,8 +1787,12 @@ export const courseStore = {
             mergedCourse.moduleCount = resolvedModuleCount;
           }
           if (resolvedLessonCount !== null && typeof resolvedLessonCount !== 'undefined') {
-            mergedCourse.lessonCount = resolvedLessonCount;
-            mergedCourse.lessons = resolvedLessonCount;
+            // Only overwrite with 0 if structure was actually loaded (avoids wiping a known-good count
+            // with the placeholder 0 the list endpoint returns when modules haven't been fetched yet).
+            if (resolvedLessonCount > 0 || incomingStructureLoaded) {
+              mergedCourse.lessonCount = resolvedLessonCount;
+              mergedCourse.lessons = resolvedLessonCount;
+            }
           }
           merged[courseWithVersion.id] = mergedCourse;
         });

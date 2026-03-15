@@ -1996,8 +1996,8 @@ app.patch('/api/admin/users/:userId', async (req, res) => {
   try {
     const { data: membership, error: lookupError } = await supabase
       .from('organization_memberships')
-      .select('id, org_id, user_id, role, status')
-      .eq('org_id', orgId)
+      .select('id, organization_id, user_id, role, status')
+      .eq('organization_id', orgId)
       .eq('user_id', userId)
       .maybeSingle();
 
@@ -2018,10 +2018,6 @@ app.patch('/api/admin/users/:userId', async (req, res) => {
         return;
       }
       updatePayload.status = normalizedStatus;
-      if (normalizedStatus === 'active') {
-        updatePayload.accepted_at = new Date().toISOString();
-        updatePayload.last_seen_at = new Date().toISOString();
-      }
     }
 
     const roleIsChangingFromOwner =
@@ -2033,7 +2029,7 @@ app.patch('/api/admin/users/:userId', async (req, res) => {
       const { count, error: ownerCountError } = await supabase
         .from('organization_memberships')
         .select('id', { head: true, count: 'exact' })
-        .eq('org_id', orgId)
+        .eq('organization_id', orgId)
         .eq('role', 'owner')
         .eq('status', 'active');
       if (ownerCountError) throw ownerCountError;
@@ -2047,7 +2043,7 @@ app.patch('/api/admin/users/:userId', async (req, res) => {
     const { data, error } = await supabase
       .from('organization_memberships')
       .update(updatePayload)
-      .eq('org_id', orgId)
+      .eq('organization_id', orgId)
       .eq('user_id', userId)
       .select('*')
       .maybeSingle();
@@ -2461,14 +2457,14 @@ const fetchPrimaryOrgIdForUser = async (userId) => {
   try {
     const { data, error } = await supabase
       .from('organization_memberships')
-      .select('org_id')
+      .select('organization_id')
       .eq('user_id', userId)
       .eq('status', 'active')
       .order('created_at', { ascending: true })
       .limit(1)
       .maybeSingle();
     if (error) throw error;
-    return data?.org_id ?? null;
+    return data?.organization_id ?? null;
   } catch (err) {
     console.error('[admin-courses] primary_org_lookup_failed', { userId, error: err });
     return null;
@@ -4744,7 +4740,7 @@ const resolveOrgMembership = async (req, orgId, userId) => {
   const { data, error } = await supabase
     .from('organization_memberships')
     .select(buildMembershipSelect('role', 'status', 'invited_by'))
-    .eq('org_id', orgId)
+    .eq('organization_id', orgId)
     .eq('user_id', userId)
     .maybeSingle();
 
@@ -5857,18 +5853,16 @@ async function fetchOrgMembersWithProfiles(orgId) {
     .select(
       buildMembershipSelect(
         'id',
-        'org_id',
+        'organization_id',
         'user_id',
         'role',
         'status',
         'invited_by',
-        'accepted_at',
-        'last_seen_at',
         'created_at',
         'updated_at',
       ),
     )
-    .eq('org_id', orgId);
+    .eq('organization_id', orgId);
   if (error) throw error;
 
   const rows = Array.isArray(memberships) ? memberships : [];
@@ -6574,7 +6568,7 @@ const loadCrmSummary = async () => {
       countRows('organizations', (query) => query.gte('created_at', monthStart)),
       countRows('users'),
       countRows('users', (query) => query.eq('status', 'active')),
-      countRows('organization_memberships', (query) => query.is('accepted_at', null)),
+      countRows('organization_memberships', (query) => query.eq('status', 'pending')),
       countRows('users', (query) => query.gte('last_login_at', thirtyDaysAgoIso)),
       countRows('assignments', (query) =>
         query
@@ -7073,19 +7067,17 @@ const buildOrgOverviewPayload = ({
 
 async function upsertOrganizationMembership(orgId, userId, role, actor) {
   if (!supabase) return null;
-  const payload = withMembershipInvitedEmail({
-    org_id: orgId,
+  const payload = {
+    organization_id: orgId,
     user_id: userId,
     role,
     status: 'active',
     invited_by: actor?.userId ?? null,
-    accepted_at: new Date().toISOString(),
-    last_seen_at: new Date().toISOString(),
-  }, actor?.email ?? null);
+  };
 
   const { data, error } = await supabase
     .from('organization_memberships')
-    .upsert(payload, { onConflict: 'org_id,user_id' })
+    .upsert(payload, { onConflict: 'organization_id,user_id' })
     .select('*')
     .single();
 
@@ -7703,8 +7695,6 @@ app.get('/api/debug/memberships', async (req, res) => {
       'user_id',
       'role',
       'status',
-      'is_active',
-      'accepted_at',
       'created_at',
       'updated_at',
     ];
@@ -7712,9 +7702,7 @@ app.get('/api/debug/memberships', async (req, res) => {
     let query = supabase
       .from('organization_memberships')
       .select(selectColumns.join(','))
-      .eq('status', 'active')
-      .eq('is_active', true)
-      .not('accepted_at', 'is', null);
+      .eq('status', 'active');
     if (filter) {
       query = query.or(filter);
     } else {
@@ -8033,7 +8021,7 @@ app.get('/api/admin/courses', async (req, res) => {
     try {
       const { data: adminMemberships, error: adminMembershipsError } = await supabase
         .from('organization_memberships')
-        .select('organization_id, org_id, role, status')
+        .select('organization_id, role, status')
         .eq('user_id', context.userId)
         .eq('status', 'active');
 
@@ -8041,7 +8029,7 @@ app.get('/api/admin/courses', async (req, res) => {
 
       adminOrgIds = (adminMemberships || [])
         .filter((membership) => hasOrgAdminRole(membership.role))
-        .map((membership) => pickOrgId(membership.organization_id, membership.org_id))
+        .map((membership) => membership.organization_id)
         .filter(Boolean);
 
       allowedOrgIdSet = new Set(adminOrgIds);
@@ -13009,7 +12997,7 @@ const REQUIRED_ADMIN_ORG_TABLES = [
 ];
 
 const OPTIONAL_ADMIN_ORG_TABLES = [
-  { table: 'organization_memberships', schema: 'public', columns: ['org_id', 'user_id', 'role', 'status'] },
+  { table: 'organization_memberships', schema: 'public', columns: ['organization_id', 'user_id', 'role', 'status'] },
   { table: 'organization_profiles', schema: 'public', columns: ['org_id', 'name'] },
   { table: 'organization_branding', schema: 'public', columns: ['org_id'] },
 ];
@@ -13672,13 +13660,11 @@ app.get('/api/admin/organizations/:orgId/members', async (req, res) => {
           'role',
           'status',
           'invited_by',
-          'accepted_at',
-          'last_seen_at',
           'created_at',
           'updated_at',
         ),
       )
-      .eq('org_id', orgId)
+      .eq('organization_id', orgId)
       .order('created_at', { ascending: false });
 
     if (error) throw error;
@@ -13722,28 +13708,24 @@ app.post('/api/admin/organizations/:orgId/members', async (req, res) => {
       return 'pending';
     })();
     const payload = withMembershipInvitedEmail({
-      org_id: orgId,
+      organization_id: orgId,
       user_id: userId,
       role: normalizedRole,
       invited_by: context.userId ?? null,
       status: normalizedStatus,
-      accepted_at: normalizedStatus === 'active' ? new Date().toISOString() : null,
-      last_seen_at: normalizedStatus === 'active' ? new Date().toISOString() : null,
     }, inviteEmail ?? null);
 
     const { data, error } = await supabase
       .from('organization_memberships')
-      .upsert(payload, { onConflict: 'org_id,user_id' })
+      .upsert(payload, { onConflict: 'organization_id,user_id' })
       .select(
         buildMembershipSelect(
           'id',
-          'org_id',
+          'organization_id',
           'user_id',
           'role',
           'status',
           'invited_by',
-          'accepted_at',
-          'last_seen_at',
           'created_at',
           'updated_at',
         ),
@@ -13784,9 +13766,9 @@ app.patch('/api/admin/organizations/:orgId/members/:membershipId', async (req, r
   try {
     const { data: existing, error: existingError } = await supabase
       .from('organization_memberships')
-      .select('id, org_id, role, status, user_id')
+      .select('id, organization_id, role, status, user_id')
       .eq('id', membershipId)
-      .eq('org_id', orgId)
+      .eq('organization_id', orgId)
       .maybeSingle();
 
     if (existingError) throw existingError;
@@ -13806,10 +13788,6 @@ app.patch('/api/admin/organizations/:orgId/members/:membershipId', async (req, r
         return;
       }
       updatePayload.status = normalizedStatus;
-      if (normalizedStatus === 'active') {
-        updatePayload.accepted_at = new Date().toISOString();
-        updatePayload.last_seen_at = new Date().toISOString();
-      }
     }
 
     const roleIsChangingFromOwner =
@@ -13820,7 +13798,7 @@ app.patch('/api/admin/organizations/:orgId/members/:membershipId', async (req, r
       const { count, error: countError } = await supabase
         .from('organization_memberships')
         .select('id', { count: 'exact', head: true })
-        .eq('org_id', orgId)
+        .eq('organization_id', orgId)
         .eq('role', 'owner')
         .eq('status', 'active');
 
@@ -13835,17 +13813,15 @@ app.patch('/api/admin/organizations/:orgId/members/:membershipId', async (req, r
       .from('organization_memberships')
       .update(updatePayload)
       .eq('id', membershipId)
-      .eq('org_id', orgId)
+      .eq('organization_id', orgId)
       .select(
         buildMembershipSelect(
           'id',
-          'org_id',
+          'organization_id',
           'user_id',
           'role',
           'status',
           'invited_by',
-          'accepted_at',
-          'last_seen_at',
           'created_at',
           'updated_at',
         ),
@@ -13882,7 +13858,7 @@ app.delete('/api/admin/organizations/:orgId/members/:membershipId', async (req, 
   try {
     const existing = await supabase
       .from('organization_memberships')
-      .select('id, org_id, user_id, role')
+      .select('id, organization_id, user_id, role')
       .eq('id', membershipId)
       .maybeSingle();
 
@@ -13894,7 +13870,7 @@ app.delete('/api/admin/organizations/:orgId/members/:membershipId', async (req, 
       return;
     }
 
-    if (membership.org_id !== orgId) {
+    if (membership.organization_id !== orgId) {
       res.status(400).json({ error: 'Membership does not belong to organization' });
       return;
     }
@@ -15938,12 +15914,8 @@ app.get('/api/admin/documents', async (req, res) => {
       res.status(403).json({ error: 'org_access_denied', message: 'Organization scope not permitted' });
       return;
     }
-  } else if (!isPlatformAdmin) {
-    if (!adminOrgIds.length) {
-      res.json({ data: [] });
-      return;
-    }
   }
+  // Non-platform-admins with no org memberships can still see global documents — don't return early.
 
   const buildDocumentsQuery = () => {
     let query = supabase.from('documents').select('*').order('created_at', { ascending: false });
@@ -15954,7 +15926,12 @@ app.get('/api/admin/documents', async (req, res) => {
     if (requestedOrgId) {
       query = query.eq('organization_id', requestedOrgId);
     } else if (!isPlatformAdmin) {
-      query = query.in('organization_id', adminOrgIds);
+      // Return global documents plus any org-scoped docs the user has access to.
+      if (adminOrgIds.length > 0) {
+        query = query.or(`visibility.eq.global,organization_id.in.(${adminOrgIds.join(',')})`);
+      } else {
+        query = query.eq('visibility', 'global');
+      }
     }
     if (user_id) {
       query = query.eq('user_id', user_id);
@@ -16150,13 +16127,13 @@ app.post('/api/admin/documents/:id/download', async (req, res) => {
     res.status(404).json({ error: 'Document not found' });
     return;
   }
+  // docOrgId === null means it is a global document — all authenticated users may download it.
+  // docOrgId is a string UUID when the document is org-scoped.
   if (docOrgId) {
     const access = await requireOrgAccess(req, res, docOrgId, { write: false });
     if (!access) return;
-  } else if (!context.isPlatformAdmin) {
-    res.status(403).json({ error: 'organization_scope_required', message: 'Document is platform scoped' });
-    return;
   }
+  // Global documents (docOrgId === null) are accessible to any authenticated user — no further guard needed.
 
   try {
     const { data, error } = await supabase.rpc('increment_document_download', { doc_id: id });

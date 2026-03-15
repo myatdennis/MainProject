@@ -174,15 +174,6 @@ const AdminCourses = () => {
   };
 
 
-  const handleCreateCourse = () => {
-    setSearchParams(prev => {
-      const params = new URLSearchParams(prev);
-      params.set('create', '1');
-      return params;
-    });
-    setShowCreateModal(true);
-  };
-
   const handleNavigateToCreateCourse = useCallback(() => {
     console.info('[AdminCourses] navigate_create_course');
     navigate('/admin/course-builder/new');
@@ -624,16 +615,9 @@ const AdminCourses = () => {
                       </Button>
                     </div>
                   )}
-                  <Button size="md" onClick={handleCreateCourse} leadingIcon={<Plus className="h-4 w-4" />} data-test="admin-new-course">
+                  <Button size="md" onClick={handleNavigateToCreateCourse} leadingIcon={<Plus className="h-4 w-4" />} data-test="admin-new-course">
                     New Course
                   </Button>
-                  <LoadingButton
-                    onClick={() => navigate('/admin/courses/new')}
-                    variant="secondary"
-                    icon={BookOpen}
-                  >
-                    Create Course
-                  </LoadingButton>
                   <LoadingButton
                     onClick={handleImportCourses}
                     variant="secondary"

@@ -6,156 +6,111 @@ import {
   Target, 
   Users,
   Zap,
-  Eye,
   RefreshCw,
   CheckCircle,
   Brain,
-  Lightbulb
+  Lightbulb,
+  BookOpen,
+  AlertTriangle,
 } from 'lucide-react';
-
-interface PerformanceMetrics {
-  pageLoadTime: number;
-  componentRenderTime: number;
-  apiResponseTime: number;
-  memoryUsage: number;
-  userEngagement: number;
-  errorRate: number;
-  cacheHitRate: number;
-  autoSaveSuccessRate: number;
-}
-
-interface UserBehaviorMetrics {
-  sessionDuration: number;
-  pagesVisited: number;
-  courseProgress: number;
-  interactionRate: number;
-  reflectionLength: number;
-  videoWatchTime: number;
-}
+import { useAnalyticsDashboard } from '../../hooks/useAnalyticsDashboard';
+import { LoadingSpinner } from '../../components/LoadingComponents';
 
 const AdminPerformanceDashboard: React.FC = () => {
-  // ...existing useState declarations...
+  const { data, loading, error, refresh, lastUpdated } = useAnalyticsDashboard();
+  const ov = data.overview;
+
+  const [apiTiming, setApiTiming] = useState<number | null>(null);
+
+  // Measure the round-trip time for a lightweight API call as a proxy for API response time
+  useEffect(() => {
+    const t0 = Date.now();
+    fetch('/api/runtime/status', { credentials: 'include' })
+      .then(() => setApiTiming(Date.now() - t0))
+      .catch(() => {});
+  }, []);
 
   function exportDashboardData() {
     try {
-      const data = {
-        metrics,
-        behaviorMetrics,
-        optimizationImpacts,
-        liveData
+      const exportPayload = {
+        exportedAt: new Date().toISOString(),
+        overview: ov,
+        courseDetail: data.courseDetail,
+        topOrgs: data.topOrgs,
+        dropoffs: data.dropoffs,
       };
-      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const blob = new Blob([JSON.stringify(exportPayload, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = 'dashboard_export.json';
+      a.download = 'performance_export.json';
       a.click();
       toast.success('Dashboard data exported!');
     } catch (err) {
       toast.error('Export failed');
     }
   }
-  // ...existing useState declarations...
 
+  const completionRate = Math.round(ov?.platformAvgCompletion ?? 0);
+  const avgProgress   = Math.round(ov?.platformAvgProgress ?? 0);
+  const activeLearners = ov?.totalActiveLearners ?? 0;
+  const totalCourses   = ov?.totalCourses ?? 0;
+  const totalOrgs      = ov?.totalOrgs ?? 0;
 
-  const [metrics, setMetrics] = useState<PerformanceMetrics>({
-    pageLoadTime: 0.8,
-    componentRenderTime: 12,
-    apiResponseTime: 150,
-    memoryUsage: 45,
-    userEngagement: 87,
-    errorRate: 0.2,
-    cacheHitRate: 94,
-    autoSaveSuccessRate: 99.1
-  });
+  // Derive engagement level from avg completion
+  const engagementLabel = completionRate >= 75 ? 'High' : completionRate >= 45 ? 'Medium' : 'Low';
+  const engagementColor = completionRate >= 75 ? 'text-green-600' : completionRate >= 45 ? 'text-yellow-600' : 'text-red-600';
 
-  const [behaviorMetrics] = useState<UserBehaviorMetrics>({
-    sessionDuration: 2400, // 40 minutes
-    pagesVisited: 12,
-    courseProgress: 68,
-    interactionRate: 0.85,
-    reflectionLength: 145,
-    videoWatchTime: 0.92
-  });
-
-  const [optimizationImpacts] = useState([
-    { feature: 'Smart Recommendations', improvement: '+15%', metric: 'Course Completion Rate' },
-    { feature: 'Auto-save Functionality', improvement: '+99%', metric: 'Data Retention' },
-    { feature: 'Video Optimization', improvement: '+25%', metric: 'Watch Time' },
-    { feature: 'Engagement Tracking', improvement: '+30%', metric: 'User Insights' },
-    { feature: 'Performance Hooks', improvement: '+50%', metric: 'Load Speed' },
-    { feature: 'Real-time Sync', improvement: '+80%', metric: 'Data Accuracy' }
-  ]);
-
-  const [liveData, setLiveData] = useState({
-    activeUsers: 47,
-    coursesInProgress: 23,
-    autoSavesPerMinute: 12,
-    cacheRequests: 156,
-    smartRecommendations: 8
-  });
-
-  // Simulate real-time updates
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setLiveData(prev => ({
-        activeUsers: prev.activeUsers + Math.floor(Math.random() * 3) - 1,
-        coursesInProgress: prev.coursesInProgress + Math.floor(Math.random() * 2) - 1,
-        autoSavesPerMinute: Math.floor(Math.random() * 20) + 5,
-        cacheRequests: prev.cacheRequests + Math.floor(Math.random() * 10) + 1,
-        smartRecommendations: prev.smartRecommendations + Math.floor(Math.random() * 2)
-      }));
-
-      // Simulate slight metric variations
-      setMetrics(prev => ({
-        ...prev,
-        userEngagement: Math.max(80, Math.min(95, prev.userEngagement + (Math.random() - 0.5) * 2)),
-        cacheHitRate: Math.max(90, Math.min(98, prev.cacheHitRate + (Math.random() - 0.5) * 1)),
-        autoSaveSuccessRate: Math.max(98, Math.min(100, prev.autoSaveSuccessRate + (Math.random() - 0.5) * 0.5))
-      }));
-    }, 5000);
-
-    return () => clearInterval(interval);
-  }, []);
-
-  const getMetricColor = (value: number, good: number, excellent: number) => {
-    if (value >= excellent) return 'text-green-600';
-    if (value >= good) return 'text-yellow-600';
-    return 'text-red-600';
-  };
-
-  const getMetricBgColor = (value: number, good: number, excellent: number) => {
-    if (value >= excellent) return 'bg-green-50 border-green-200';
-    if (value >= good) return 'bg-yellow-50 border-yellow-200';
-    return 'bg-red-50 border-red-200';
-  };
+  // Dropout rate = 100 - completionRate (platform-wide)
+  const dropoutRate = Math.max(0, 100 - completionRate);
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
       {/* Header */}
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">Performance Optimization Dashboard</h1>
-        <p className="text-gray-600">Real-time monitoring of platform performance improvements</p>
+      <div className="mb-8 flex items-start justify-between">
+        <div>
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">Performance Dashboard</h1>
+          <p className="text-gray-600">
+            Live platform metrics from real learner and course data.
+            {lastUpdated && (
+              <span className="ml-2 text-xs text-gray-400">
+                Updated {new Date(lastUpdated).toLocaleTimeString()}
+              </span>
+            )}
+          </p>
+        </div>
+        <div className="flex gap-3">
+          <button
+            className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
+            onClick={() => { refresh(); toast.success('Refreshed.'); }}
+          >
+            <RefreshCw className="h-4 w-4" />
+            Refresh
+          </button>
+          <button
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            onClick={exportDashboardData}
+          >
+            Export Data
+          </button>
+        </div>
       </div>
 
-      {/* Export Button */}
-      <div className="mb-6 flex justify-end">
-        <button
-          className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-          onClick={exportDashboardData}
-        >
-          Export Data
-        </button>
-      </div>
+      {error && (
+        <div className="mb-6 rounded-lg border border-red-200 bg-red-50 p-4 text-red-700 flex items-start gap-3">
+          <AlertTriangle className="h-5 w-5 mt-0.5 flex-shrink-0" />
+          <p className="text-sm">{error.message}</p>
+        </div>
+      )}
 
-      {/* Live Metrics Overview */}
+      {/* Live KPI Overview */}
       <div className="grid grid-cols-1 md:grid-cols-5 gap-6 mb-8">
         {[
-          { label: 'Active Users', value: liveData.activeUsers, icon: Users, color: 'text-blue-600' },
-          { label: 'Courses Active', value: liveData.coursesInProgress, icon: BarChart3, color: 'text-green-600' },
-          { label: 'Auto-saves/min', value: liveData.autoSavesPerMinute, icon: RefreshCw, color: 'text-orange-600' },
-          { label: 'Cache Hits', value: liveData.cacheRequests, icon: Zap, color: 'text-purple-600' },
-          { label: 'AI Recommendations', value: liveData.smartRecommendations, icon: Brain, color: 'text-indigo-600' }
+          { label: 'Active Learners',   value: loading ? '…' : activeLearners.toLocaleString(), icon: Users,     color: 'text-blue-600' },
+          { label: 'Published Courses', value: loading ? '…' : totalCourses.toLocaleString(),   icon: BookOpen,  color: 'text-green-600' },
+          { label: 'Organizations',     value: loading ? '…' : totalOrgs.toLocaleString(),      icon: BarChart3, color: 'text-orange-600' },
+          { label: 'Avg Completion',    value: loading ? '…' : `${completionRate}%`,             icon: Zap,       color: 'text-purple-600' },
+          { label: 'Avg Progress',      value: loading ? '…' : `${avgProgress}%`,               icon: Brain,     color: 'text-indigo-600' },
         ].map((stat, index) => (
           <div key={index} className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
             <div className="flex items-center justify-between">
@@ -169,137 +124,157 @@ const AdminPerformanceDashboard: React.FC = () => {
         ))}
       </div>
 
-      {/* Performance Metrics */}
+      {/* Platform health metrics */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
           <h2 className="text-xl font-bold text-gray-900 mb-6 flex items-center">
             <TrendingUp className="h-6 w-6 mr-2 text-green-500" />
-            System Performance
+            Learning Platform Health
           </h2>
-          <div className="space-y-4">
-            {[
-              { label: 'Page Load Time', value: `${metrics.pageLoadTime}s`, good: 1.5, excellent: 1.0, current: metrics.pageLoadTime },
-              { label: 'Component Render', value: `${metrics.componentRenderTime}ms`, good: 50, excellent: 20, current: metrics.componentRenderTime },
-              { label: 'API Response', value: `${metrics.apiResponseTime}ms`, good: 500, excellent: 200, current: metrics.apiResponseTime },
-              { label: 'Memory Usage', value: `${metrics.memoryUsage}%`, good: 70, excellent: 50, current: metrics.memoryUsage },
-            ].map((metric, index) => (
-              <div key={index} className={`p-4 rounded-lg border ${getMetricBgColor(metric.current <= 100 ? 100 - metric.current : metric.current, metric.good, metric.excellent)}`}>
-                <div className="flex justify-between items-center">
-                  <span className="font-medium text-gray-900">{metric.label}</span>
-                  <span className={`font-bold ${getMetricColor(metric.current <= 100 ? 100 - metric.current : metric.current, metric.good, metric.excellent)}`}>
-                    {metric.value}
-                  </span>
+          {loading ? (
+            <div className="flex justify-center py-8"><LoadingSpinner size="md" /></div>
+          ) : (
+            <div className="space-y-4">
+              {[
+                { label: 'Completion Rate',  value: `${completionRate}%`,  barPct: completionRate,  good: true  },
+                { label: 'Avg Progress',     value: `${avgProgress}%`,     barPct: avgProgress,     good: avgProgress >= 50 },
+                { label: 'Dropout Rate',     value: `${dropoutRate}%`,     barPct: dropoutRate,     good: dropoutRate <= 25 },
+                { label: 'API Response',     value: apiTiming ? `${apiTiming}ms` : '—', barPct: apiTiming ? Math.min(100, 100 - (apiTiming / 10)) : 0, good: (apiTiming ?? 9999) < 500 },
+              ].map((metric, index) => (
+                <div key={index} className={`p-4 rounded-lg border ${metric.good ? 'bg-green-50 border-green-200' : 'bg-yellow-50 border-yellow-200'}`}>
+                  <div className="flex justify-between items-center">
+                    <span className="font-medium text-gray-900">{metric.label}</span>
+                    <span className={`font-bold ${metric.good ? 'text-green-600' : 'text-yellow-600'}`}>{metric.value}</span>
+                  </div>
                 </div>
-              </div>
-            ))}
-          </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
           <h2 className="text-xl font-bold text-gray-900 mb-6 flex items-center">
             <Target className="h-6 w-6 mr-2 text-blue-500" />
-            User Experience
+            Engagement Overview
           </h2>
-          <div className="space-y-4">
-            {[
-              { label: 'User Engagement', value: `${Math.round(metrics.userEngagement)}%`, target: 85 },
-              { label: 'Cache Hit Rate', value: `${Math.round(metrics.cacheHitRate)}%`, target: 90 },
-              { label: 'Auto-save Success', value: `${metrics.autoSaveSuccessRate}%`, target: 98 },
-              { label: 'Error Rate', value: `${metrics.errorRate}%`, target: 1 },
-            ].map((metric, index) => (
-              <div key={index} className="p-4 rounded-lg bg-gray-50 border border-gray-200">
-                <div className="flex justify-between items-center mb-2">
-                  <span className="font-medium text-gray-900">{metric.label}</span>
-                  <span className="font-bold text-blue-600">{metric.value}</span>
+          {loading ? (
+            <div className="flex justify-center py-8"><LoadingSpinner size="md" /></div>
+          ) : (
+            <div className="space-y-4">
+              {[
+                { label: 'Platform Engagement Level', value: engagementLabel, color: engagementColor },
+                { label: 'Learner Activation',        value: activeLearners > 0 ? 'Active' : 'No data', color: activeLearners > 0 ? 'text-green-600' : 'text-gray-400' },
+                { label: 'Course Catalog',            value: totalCourses > 0 ? `${totalCourses} live` : 'No published courses', color: totalCourses > 0 ? 'text-blue-600' : 'text-gray-400' },
+                { label: 'Organizations Active',      value: totalOrgs > 0 ? `${totalOrgs} orgs` : 'None yet', color: totalOrgs > 0 ? 'text-purple-600' : 'text-gray-400' },
+              ].map((metric, index) => (
+                <div key={index} className="p-4 rounded-lg bg-gray-50 border border-gray-200">
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="font-medium text-gray-900">{metric.label}</span>
+                    <span className={`font-bold ${metric.color}`}>{metric.value}</span>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-2">
+                    <div
+                      className="bg-gradient-to-r from-blue-400 to-blue-500 h-2 rounded-full"
+                      style={{ width: `${completionRate}%` }}
+                    />
+                  </div>
                 </div>
-                <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div 
-                    className="bg-gradient-to-r from-blue-400 to-blue-500 h-2 rounded-full"
-                    style={{ width: `${Math.min(100, parseFloat(metric.value))}%` }}
-                  ></div>
-                </div>
-              </div>
-            ))}
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Course-level performance table */}
+      {data.courseDetail.length > 0 && (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
+          <h2 className="text-xl font-bold text-gray-900 mb-6 flex items-center">
+            <Lightbulb className="h-6 w-6 mr-2 text-yellow-500" />
+            Course Performance Breakdown
+          </h2>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="text-left py-3 px-4 font-semibold text-gray-900">Course</th>
+                  <th className="text-center py-3 px-4 font-semibold text-gray-900">Learners</th>
+                  <th className="text-center py-3 px-4 font-semibold text-gray-900">Completed</th>
+                  <th className="text-center py-3 px-4 font-semibold text-gray-900">Rate</th>
+                  <th className="text-center py-3 px-4 font-semibold text-gray-900">Avg Time</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.courseDetail.map((c, i) => (
+                  <tr key={i} className="border-b border-gray-100 hover:bg-gray-50">
+                    <td className="py-3 px-4 font-medium text-gray-900 max-w-[240px] truncate">{c.courseTitle}</td>
+                    <td className="py-3 px-4 text-center">{c.totalLearners.toLocaleString()}</td>
+                    <td className="py-3 px-4 text-center">{c.completedCount.toLocaleString()}</td>
+                    <td className="py-3 px-4 text-center">
+                      <span className={Math.round(c.completionPercent ?? 0) >= 70 ? 'text-green-600 font-bold' : 'text-yellow-600 font-bold'}>
+                        {Math.round(c.completionPercent ?? 0)}%
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 text-center text-gray-600">
+                      {c.avgTimeMinutes ? `${c.avgTimeMinutes} min` : '—'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </div>
-      </div>
+      )}
 
-      {/* Optimization Impact */}
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
-        <h2 className="text-xl font-bold text-gray-900 mb-6 flex items-center">
-          <Lightbulb className="h-6 w-6 mr-2 text-yellow-500" />
-          Optimization Impact Analysis
-        </h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          {optimizationImpacts.map((impact, index) => (
-            <div key={index} className="bg-gradient-to-br from-green-50 to-emerald-50 p-4 rounded-lg border border-green-200">
-              <h3 className="font-semibold text-green-900 mb-2">{impact.feature}</h3>
-              <div className="flex items-center justify-between">
-                <span className="text-sm text-green-700">{impact.metric}</span>
-                <span className="font-bold text-green-600 text-lg">{impact.improvement}</span>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      {/* User Behavior Insights */}
+      {/* System status */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-        <h2 className="text-xl font-bold text-gray-900 mb-6 flex items-center">
-          <Eye className="h-6 w-6 mr-2 text-purple-500" />
-          User Behavior Analytics
-        </h2>
+        <h2 className="text-xl font-bold text-gray-900 mb-6">System Status</h2>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <div className="space-y-4">
-            <h3 className="font-semibold text-gray-900">Engagement Metrics</h3>
-            <div className="space-y-3">
-              <div className="flex justify-between">
-                <span className="text-gray-600">Avg Session Duration</span>
-                <span className="font-medium">{Math.round(behaviorMetrics.sessionDuration / 60)} min</span>
+          <div className="space-y-3">
+            <h3 className="font-semibold text-gray-900">Data Layer</h3>
+            <div className="space-y-2">
+              <div className="flex items-center text-green-600">
+                <CheckCircle className="h-4 w-4 mr-2" />
+                <span className="text-sm">Analytics events tracked</span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-gray-600">Interaction Rate</span>
-                <span className="font-medium">{Math.round(behaviorMetrics.interactionRate * 100)}%</span>
+              <div className="flex items-center text-green-600">
+                <CheckCircle className="h-4 w-4 mr-2" />
+                <span className="text-sm">Progress data synced</span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-gray-600">Video Completion</span>
-                <span className="font-medium">{Math.round(behaviorMetrics.videoWatchTime * 100)}%</span>
+              <div className="flex items-center text-green-600">
+                <CheckCircle className="h-4 w-4 mr-2" />
+                <span className="text-sm">Real-time DB queries</span>
               </div>
             </div>
           </div>
-
-          <div className="space-y-4">
-            <h3 className="font-semibold text-gray-900">Learning Progress</h3>
-            <div className="space-y-3">
-              <div className="flex justify-between">
-                <span className="text-gray-600">Course Progress</span>
-                <span className="font-medium">{behaviorMetrics.courseProgress}%</span>
+          <div className="space-y-3">
+            <h3 className="font-semibold text-gray-900">Learning Outcomes</h3>
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-600">Avg Completion</span>
+                <span className={`font-medium ${completionRate >= 70 ? 'text-green-600' : 'text-yellow-600'}`}>{completionRate}%</span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-gray-600">Pages per Session</span>
-                <span className="font-medium">{behaviorMetrics.pagesVisited}</span>
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-600">Active Orgs</span>
+                <span className="font-medium text-blue-600">{totalOrgs}</span>
               </div>
-              <div className="flex justify-between">
-                <span className="text-gray-600">Avg Reflection Length</span>
-                <span className="font-medium">{behaviorMetrics.reflectionLength} chars</span>
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-600">Dropout Rate</span>
+                <span className={`font-medium ${dropoutRate <= 25 ? 'text-green-600' : 'text-red-600'}`}>{dropoutRate}%</span>
               </div>
             </div>
           </div>
-
-          <div className="space-y-4">
-            <h3 className="font-semibold text-gray-900">Performance Impact</h3>
-            <div className="space-y-3">
-              <div className="flex items-center text-green-600">
-                <CheckCircle className="h-4 w-4 mr-2" />
-                <span className="text-sm">50% faster loading</span>
+          <div className="space-y-3">
+            <h3 className="font-semibold text-gray-900">API</h3>
+            <div className="space-y-2">
+              <div className="flex justify-between text-sm">
+                <span className="text-gray-600">Response time</span>
+                <span className={`font-medium ${(apiTiming ?? 9999) < 500 ? 'text-green-600' : 'text-yellow-600'}`}>
+                  {apiTiming ? `${apiTiming}ms` : '—'}
+                </span>
               </div>
               <div className="flex items-center text-green-600">
                 <CheckCircle className="h-4 w-4 mr-2" />
-                <span className="text-sm">99% auto-save success</span>
-              </div>
-              <div className="flex items-center text-green-600">
-                <CheckCircle className="h-4 w-4 mr-2" />
-                <span className="text-sm">Real-time progress sync</span>
+                <span className="text-sm">Server online</span>
               </div>
             </div>
           </div>

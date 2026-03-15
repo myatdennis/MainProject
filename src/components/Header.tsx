@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { Menu, X, Search, Zap, ChevronDown, LogOut, LayoutDashboard } from 'lucide-react';
-import Button from './ui/Button';
+import { Menu, X, Search, ChevronDown, LogOut, LayoutDashboard } from 'lucide-react';
 import Input from './ui/Input';
 import cn from '../utils/cn';
 import { logAuthRedirect, logAuthDiagnostic } from '../utils/logAuthRedirect';
@@ -25,10 +24,8 @@ const Header = () => {
   const { user, isAuthenticated, authInitializing, logout, sessionStatus } = useSecureAuth();
   const {
     adminPortalAllowed,
-    hasSession: adminHasSession,
     sessionStatus: adminSessionStatus,
     authInitializing: adminAuthInitializing,
-    snapshot: adminAccessSnapshot,
   } = useAdminAccessState();
   const userMenuRef = useRef<HTMLDivElement | null>(null);
   const userMenuButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -60,7 +57,6 @@ const Header = () => {
   const canAccessAdmin = Boolean(isAuthenticated?.admin);
   const canAccessLms = Boolean(isAuthenticated?.lms);
   const primaryWorkspacePath = canAccessAdmin ? '/admin/dashboard' : '/lms/dashboard';
-  const adminAccessResolved = Boolean(adminAccessSnapshot?.payload);
 
   const handleToggleUserMenu = useCallback(() => {
     if (!isLoggedIn || authInitializing) {
@@ -108,34 +104,20 @@ const Header = () => {
   }, [canAccessAdmin, isLoggedIn, logout, navigate]);
 
   const handleAdminCtaClick = useCallback(() => {
-    const gateHasSession = adminHasSession ?? Boolean(user);
-    const gateState = {
-      sessionStatus: gateSessionStatus,
-      hasSession: gateHasSession,
-      adminPortalAllowed,
-      isAdminRole,
-    };
-    if (import.meta.env?.DEV) {
-      console.debug('[Header] admin_cta_gate_state', gateState);
-    }
-    if (gateAuthInitializing || gateSessionStatus !== 'authenticated') {
+    // If not logged in or session not authenticated, go straight to admin login
+    if (!user || gateSessionStatus !== 'authenticated') {
+      navigate('/admin/login');
       return;
     }
-    if (gateHasSession && adminPortalAllowed) {
+    if (gateAuthInitializing) {
+      return;
+    }
+    if (adminPortalAllowed) {
       navigate('/admin/courses');
       return;
     }
-    if (gateHasSession && !adminPortalAllowed && !adminAccessResolved) {
-      console.debug('[Header] admin_cta awaiting access snapshot', gateState);
-      return;
-    }
-    logAuthRedirect('Header.admin_cta', {
-      target: '/admin/login',
-      gateState,
-      reason: gateHasSession ? 'admin_not_allowed' : 'no_session',
-    });
     navigate('/admin/login');
-  }, [adminAccessResolved, adminHasSession, adminPortalAllowed, gateAuthInitializing, gateSessionStatus, isAdminRole, navigate, user]);
+  }, [adminPortalAllowed, gateAuthInitializing, gateSessionStatus, navigate, user]);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 8);
@@ -213,14 +195,6 @@ const Header = () => {
               className="w-40 border-none p-0 text-sm text-charcoal focus-visible:ring-0 focus-visible:ring-offset-0"
             />
           </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="hidden md:inline-flex"
-            leadingIcon={<Zap className="h-4 w-4" />}
-          >
-            Demo Mode
-          </Button>
           {!isLoggedIn && (
             <>
               <Link

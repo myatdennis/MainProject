@@ -17,12 +17,46 @@ router.post('/', async (req, res, next) => {
     const payload = await withCache(
       cacheKey,
       async () => {
-        const overviewRows = await sql`select * from public.view_admin_overview limit 1`
+        // Overview from real tables (no generated views)
+        const overviewRows = await sql`
+          select
+            count(distinct ucp.user_id)::int                           as total_active_learners,
+            count(distinct o.id)::int                                  as total_orgs,
+            count(distinct c.id) filter (where c.status='published')::int as total_courses,
+            round(avg(ucp.progress)::numeric, 1)::float                as platform_avg_progress,
+            round(100.0 * count(*) filter (where ucp.completed) / nullif(count(*),0), 1)::float as platform_avg_completion
+          from public.user_course_progress ucp
+          full outer join public.organizations o on true
+          full outer join public.courses c on true
+          where o.status = 'active'
+        `
+
         const courseAgg = course_id
-          ? await sql`select vc.course_id, vc.total_users, vc.completed_count, vc.completion_percent, vp.avg_progress from public.view_course_completion_rate vc left join public.view_course_avg_progress vp on vp.course_id = vc.course_id where vc.course_id = ${course_id}`
+          ? await sql`
+              select
+                ucp.course_id::text,
+                count(distinct ucp.user_id)::int as total_users,
+                count(*) filter (where ucp.completed)::int as completed_count,
+                round(100.0 * count(*) filter (where ucp.completed) / nullif(count(*),0), 1)::float as completion_percent,
+                round(avg(ucp.progress)::numeric, 1)::float as avg_progress
+              from public.user_course_progress ucp
+              where ucp.course_id = ${course_id}::uuid
+              group by ucp.course_id
+            `
           : []
 
-        const dropoffs = await sql`select lesson_id, course_id, started_count, completed_count, dropoff_percent from public.view_lesson_dropoff order by dropoff_percent desc limit 10`
+        const dropoffs = await sql`
+          select
+            ulp.course_id::text as course_id,
+            ulp.lesson_id::text as lesson_id,
+            count(*)::int as started_count,
+            count(*) filter (where ulp.status = 'completed')::int as completed_count,
+            round(100.0 * count(*) filter (where ulp.status <> 'completed') / nullif(count(*),0), 1)::float as dropoff_percent
+          from public.user_lesson_progress ulp
+          group by ulp.course_id, ulp.lesson_id
+          order by dropoff_percent desc
+          limit 10
+        `
 
         return {
           overview: overviewRows[0] || {},
