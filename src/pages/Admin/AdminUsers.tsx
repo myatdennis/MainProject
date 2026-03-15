@@ -32,6 +32,7 @@ import PageWrapper from '../../components/PageWrapper';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import EmptyState from '../../components/ui/EmptyState';
 import ActionsMenu from '../../components/ui/ActionsMenu';
+import { listOrgs } from '../../services/orgService';
 
 const AdminUsers = () => {
   // Report page identity for admin layout mismatch detection
@@ -177,13 +178,20 @@ const AdminUsers = () => {
   const [usersList, setUsersList] = useState<User[]>(users); // Make users editable
   const navigate = useNavigate();
 
-  const organizations = [
-    'Pacific Coast University',
-    'Mountain View High School', 
-    'Community Impact Network',
-    'Regional Fire Department',
-    'TechForward Solutions'
-  ];
+  // Fetch real organizations from the API for filtering and the Add User modal
+  const [organizations, setOrganizations] = useState<Array<{ id: string; name: string }>>([]);
+  useEffect(() => {
+    let cancelled = false;
+    listOrgs()
+      .then((orgs) => {
+        if (cancelled) return;
+        setOrganizations(orgs.map((o) => ({ id: o.id, name: o.name ?? o.id })));
+      })
+      .catch((err) => {
+        console.warn('[AdminUsers] Failed to load organizations for filter', err);
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   const modules = [
     { key: 'foundations', name: 'Foundations of Inclusive Leadership' },
@@ -412,7 +420,7 @@ const AdminUsers = () => {
               >
                 <option value="all">All Organizations</option>
                 {organizations.map(org => (
-                  <option key={org} value={org}>{org}</option>
+                  <option key={org.id} value={org.id}>{org.name}</option>
                 ))}
               </select>
               <select
@@ -672,6 +680,7 @@ const AdminUsers = () => {
         isOpen={showAddUserModal}
         onClose={() => setShowAddUserModal(false)}
         onUserAdded={handleUserAdded}
+        organizations={organizations}
       />
 
       <CourseAssignmentModal
@@ -705,6 +714,7 @@ const AdminUsers = () => {
           }}
           onUserAdded={handleUserUpdated}
           editUser={userToEdit}
+          organizations={organizations}
         />
       )}
     </PageWrapper>

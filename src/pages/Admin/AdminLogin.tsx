@@ -14,14 +14,14 @@ import {
   hasAdminPortalAccess,
   type AdminAccessPayload,
   getAdminAccessSnapshot,
-  setAdminAccessSnapshot,
+  clearAdminAccessSnapshot,
   normalizeAdminAccessPayload,
 } from '../../lib/adminAccess';
-import { logAuthDiagnostic, logAuthRedirect } from '../../utils/logAuthRedirect';
+import { logAuthDiagnostic } from '../../utils/logAuthRedirect';
 
 type AdminCapabilityResponse = AdminAccessPayload & {
-  error?: string;
-  message?: string;
+  error?: string | null;
+  message?: string | null;
 };
 
 interface CapabilityCheckResult {
@@ -35,8 +35,8 @@ const AdminLogin: React.FC = () => {
   const { login, isAuthenticated, forgotPassword, authInitializing, verifyMfa, sessionStatus, user } = useSecureAuth();
   const runtimeStatus = useRuntimeStatus();
   const supabaseReady = runtimeStatus.supabaseConfigured && runtimeStatus.supabaseHealthy;
-  const [email, setEmail] = useState('mya@the-huddle.co');
-  const [password, setPassword] = useState('admin123');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -207,6 +207,12 @@ const AdminLogin: React.FC = () => {
     updateDevSessionSnapshot('initial_render');
   }, [updateDevSessionSnapshot]);
 
+  // When the login page mounts, clear any stale admin access snapshot so a
+  // previous session doesn't auto-redirect back into the admin portal.
+  useEffect(() => {
+    clearAdminAccessSnapshot();
+  }, []);
+
   const markSessionExpired = useCallback(
     (context: string) => {
       logAuthDiagnostic('AdminLogin.session_expired', { context, path: location.pathname });
@@ -227,7 +233,7 @@ const AdminLogin: React.FC = () => {
       recordDevApiEvent('/admin/me', 200);
       const payload = normalizeAdminAccessPayload(response);
       if (computeAdminAllowed(payload)) {
-        return { allowed: true, user: payload?.user ?? null, payload };
+        return { allowed: true, user: payload?.user ?? undefined, payload };
       }
       const reason =
         payload?.access?.reason || payload?.reason || payload?.error || payload?.message || 'not_authorized';
@@ -240,7 +246,7 @@ const AdminLogin: React.FC = () => {
         capabilityError instanceof NotAuthenticatedError
       ) {
         if (capabilityError instanceof ApiResponseError) {
-          let parsedPayload: AdminCapabilityResponse | null = null;
+          let parsedPayload: AdminAccessPayload | null = null;
           if (capabilityError.body) {
             try {
               parsedPayload = normalizeAdminAccessPayload(
@@ -357,7 +363,7 @@ const AdminLogin: React.FC = () => {
     if (normalizedReason === 'admin_privileges_required') {
       void captureDeniedUserSnapshot();
     }
-    setAuthError(capabilityErrorMessage(normalizedReason));
+    setAuthError(capabilityErrorMessage(normalizedReason ?? undefined));
     return false;
   }, [captureDeniedUserSnapshot, capabilityErrorMessage, navigateToAdminLanding, verifyAdminCapability]);
 

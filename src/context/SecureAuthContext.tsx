@@ -23,6 +23,7 @@ import buildSessionAuditHeaders from '../utils/sessionAuditHeaders';
 import { getSupabase, captureAuthDiagnostics, AUTH_STORAGE_MODE, debugAuthStorage } from '../lib/supabaseClient';
 import { AuthExpiredError, NotAuthenticatedError } from '../lib/apiClient';
 import { setGlobalActiveOrgIdForApi } from '../lib/orgContext';
+import { clearAdminAccessSnapshot } from '../lib/adminAccess';
 
 // MFA helpers
 
@@ -1903,6 +1904,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       }
 
       clearAuth('manual_logout');
+      clearAdminAccessSnapshot();
       setUser(null);
       setMemberships([]);
       setOrganizationIds([]);
@@ -1910,6 +1912,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       setSessionMetaVersion((value) => value + 1);
       clearActiveOrgPreference();
       setAuthStatus('unauthenticated');
+      setSessionStatus('unauthenticated');
 
       if (type) {
         setIsAuthenticated((prev) => ({

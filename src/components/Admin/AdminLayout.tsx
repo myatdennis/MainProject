@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FC, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, Suspense, type ChangeEvent, type FC, type ReactNode } from 'react';
 import { Link, NavLink, useLocation, useNavigate, Outlet } from 'react-router-dom';
 import { ErrorBoundary } from '../ErrorHandling';
 import AdminErrorBoundary from '../ErrorBoundary/AdminErrorBoundary';
@@ -767,7 +767,13 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
       )}
 
       <main key={location.pathname} className="flex-1 overflow-y-auto bg-softwhite px-6 py-8 lg:px-12">
-        {children ?? <Outlet />}
+        <Suspense fallback={
+          <div className="flex items-center justify-center min-h-[40vh]">
+            <LoadingSpinner size="lg" />
+          </div>
+        }>
+          {children ?? <Outlet />}
+        </Suspense>
       </main>
       <AdminOrgSelectorModal
         open={orgModalOpen}

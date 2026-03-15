@@ -5,15 +5,18 @@ import LoadingButton from './LoadingButton';
 import { useToast } from '../context/ToastContext';
 import { useFormValidation, validators } from './FormComponents';
 import SecurityUtils from '../utils/SecurityUtils';
+import { listOrgs } from '../services/orgService';
 
 interface AddUserModalProps {
   isOpen: boolean;
   onClose: () => void;
   onUserAdded?: (user: any) => void;
   editUser?: any;
+  /** Pass pre-fetched orgs from the parent page; the modal will also fetch its own if not provided. */
+  organizations?: Array<{ id: string; name: string }>;
 }
 
-const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdded, editUser }) => {
+const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdded, editUser, organizations: orgsProp }) => {
   const { showToast } = useToast();
   const [loading, setLoading] = useState(false);
   const isEditMode = !!editUser;
@@ -38,13 +41,35 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
     }
   );
 
-  const organizations = [
-    'Pacific Coast University',
-    'Mountain View High School', 
-    'Community Impact Network',
-    'Regional Fire Department',
-    'Healthcare Partners'
-  ];
+  // Fetch real organizations from the API when no pre-fetched list is supplied
+  const [fetchedOrgs, setFetchedOrgs] = useState<Array<{ id: string; name: string }>>([]);
+  const [orgsLoading, setOrgsLoading] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    // If parent already passed orgs, no need to fetch
+    if (orgsProp && orgsProp.length > 0) return;
+    let cancelled = false;
+    setOrgsLoading(true);
+    listOrgs()
+      .then((orgs) => {
+        if (cancelled) return;
+        setFetchedOrgs(
+          orgs.map((o) => ({ id: o.id, name: o.name ?? o.id }))
+        );
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.warn('[AddUserModal] Failed to load organizations', err);
+      })
+      .finally(() => {
+        if (!cancelled) setOrgsLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [isOpen, orgsProp]);
+
+  // Resolved org list: prefer prop, fall back to fetched
+  const organizations = (orgsProp && orgsProp.length > 0) ? orgsProp : fetchedOrgs;
 
   const cohorts = [
     'Spring 2025 Leadership',
@@ -212,13 +237,13 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-gradient-to-br from-charcoal/60 via-indigo-900/40 to-sunrise/40 backdrop-blur-sm z-40"
+            className="fixed inset-0 bg-black/40 z-40"
             onClick={onClose}
             aria-label="Close modal background"
           />
           <motion.div
             id="add-user-modal"
-            className="bg-ivory rounded-3xl shadow-2xl border border-mutedgrey max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto focus:outline-none z-50"
+            className="relative bg-white rounded-2xl shadow-2xl border border-cloud max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto focus:outline-none z-50"
             tabIndex={-1}
             variants={modalVariants}
             initial="hidden"
@@ -244,16 +269,16 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
             aria-label={isEditMode ? 'Edit User Modal' : 'Add User Modal'}
           >
             {/* Header */}
-            <div className="flex items-center justify-between p-8 border-b border-mutedgrey bg-gradient-to-r from-sunrise/10 to-indigo-100 rounded-t-3xl">
+            <div className="flex items-center justify-between p-6 border-b border-cloud">
               <div className="flex items-center space-x-3">
-                <div className="bg-sunrise/20 p-3 rounded-xl">
-                  <UserPlus className="h-7 w-7 text-sunrise" />
+                <div className="bg-sunrise/10 p-2.5 rounded-xl">
+                  <UserPlus className="h-6 w-6 text-sunrise" />
                 </div>
                 <div>
-                  <h2 id="add-user-modal-title" className="text-2xl font-heading text-charcoal">
+                  <h2 id="add-user-modal-title" className="text-xl font-heading font-semibold text-charcoal">
                     {isEditMode ? 'Edit User' : 'Add New User'}
                   </h2>
-                  <p className="text-sm text-gray-600 font-body">
+                  <p className="text-sm text-slate/70 font-body">
                     {isEditMode ? 'Update user information and settings' : 'Create a new user account and assign to courses'}
                   </p>
                 </div>
@@ -268,7 +293,7 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
               </button>
             </div>
             {/* Form */}
-            <form onSubmit={handleSubmit} className="p-8 space-y-8 font-body">
+            <form onSubmit={handleSubmit} className="p-6 space-y-6 font-body">
               {/* Personal Information */}
               <div>
                 <h3 className="text-lg font-semibold text-gray-900 mb-4 flex items-center space-x-2">
@@ -360,11 +385,13 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
                       className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent ${
                         errors.organization ? 'border-red-300' : 'border-gray-300'
                       }`}
-                      disabled={loading}
+                      disabled={loading || orgsLoading}
                     >
-                      <option value="">Select Organization</option>
+                      <option value="">
+                        {orgsLoading ? 'Loading organizations…' : 'Select Organization'}
+                      </option>
                       {organizations.map(org => (
-                        <option key={org} value={org}>{org}</option>
+                        <option key={org.id} value={org.id}>{org.name}</option>
                       ))}
                     </select>
                     {errors.organization && (
