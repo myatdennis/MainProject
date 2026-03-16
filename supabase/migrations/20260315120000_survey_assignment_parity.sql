@@ -8,16 +8,24 @@ alter table if exists public.survey_responses
   add column if not exists metadata jsonb default '{}'::jsonb,
   add column if not exists completed_at timestamptz;
 
-create index if not exists survey_responses_assignment_idx
-  on public.survey_responses(assignment_id)
-  where assignment_id is not null;
-
-create index if not exists survey_responses_survey_idx
-  on public.survey_responses(survey_id);
+do $$
+begin
+  if exists (
+    select 1 from information_schema.tables
+    where table_schema = 'public' and table_name = 'survey_responses'
+  ) then
+    if not exists (select 1 from pg_indexes where schemaname='public' and tablename='survey_responses' and indexname='survey_responses_assignment_idx') then
+      create index survey_responses_assignment_idx on public.survey_responses(assignment_id) where assignment_id is not null;
+    end if;
+    if not exists (select 1 from pg_indexes where schemaname='public' and tablename='survey_responses' and indexname='survey_responses_survey_idx') then
+      create index survey_responses_survey_idx on public.survey_responses(survey_id);
+    end if;
+  end if;
+end $$;
 
 -- 2) Tighten indexes for survey assignments stored inside the unified assignments table
 create index if not exists assignments_survey_user_active_idx
-  on public.assignments(survey_id, lower(user_id))
+  on public.assignments(survey_id, user_id)
   where assignment_type = 'survey'
     and user_id is not null
     and coalesce(active, true);

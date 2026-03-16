@@ -7342,7 +7342,7 @@ const hydrateOrgProfileBundles = async (organizations) => {
   const orgIds = organizations.map((org) => org.id);
 
   const [profilesRes, brandingRes, contactsRes] = await Promise.all([
-    supabase.from('organization_profiles').select('*').in('org_id', orgIds),
+    supabase.from('organization_profiles').select('*').in('organization_id', orgIds),
     supabase.from('organization_branding').select('*').in('org_id', orgIds),
     supabase
       .from('organization_contacts')
@@ -7357,7 +7357,7 @@ const hydrateOrgProfileBundles = async (organizations) => {
   if (contactsRes.error) throw contactsRes.error;
 
   const profilesByOrg = (profilesRes.data ?? []).reduce((acc, row) => {
-    acc[row.org_id] = row;
+    acc[row.organization_id] = row;
     return acc;
   }, {});
 
@@ -7384,7 +7384,7 @@ const fetchOrgProfileBundle = async (orgId) => {
   if (!organization) return null;
 
   const [profileRes, brandingRes, contactsRes] = await Promise.all([
-    supabase.from('organization_profiles').select('*').eq('org_id', orgId).maybeSingle(),
+    supabase.from('organization_profiles').select('*').eq('organization_id', orgId).maybeSingle(),
     supabase.from('organization_branding').select('*').eq('org_id', orgId).maybeSingle(),
     supabase
       .from('organization_contacts')
@@ -13132,7 +13132,7 @@ const REQUIRED_ADMIN_ORG_TABLES = [
 
 const OPTIONAL_ADMIN_ORG_TABLES = [
   { table: 'organization_memberships', schema: 'public', columns: ['organization_id', 'user_id', 'role', 'status'] },
-  { table: 'organization_profiles', schema: 'public', columns: ['org_id', 'name'] },
+  { table: 'organization_profiles', schema: 'public', columns: ['organization_id'] },
   { table: 'organization_branding', schema: 'public', columns: ['org_id'] },
 ];
 const loggedOptionalSchemaWarnings = new Set();
@@ -15168,7 +15168,7 @@ app.delete('/api/admin/org-profiles/:orgId', async (req, res) => {
 
   try {
     await Promise.all([
-      supabase.from('organization_profiles').delete().eq('org_id', orgId),
+      supabase.from('organization_profiles').delete().eq('organization_id', orgId),
       supabase.from('organization_branding').delete().eq('org_id', orgId),
       supabase.from('organization_contacts').delete().eq('org_id', orgId),
     ]);
@@ -15302,7 +15302,7 @@ app.get('/api/users/me', async (req, res) => {
 
   try {
     const [{ data: profileRow, error: profileError }, { data: userRow, error: userError }] = await Promise.all([
-      supabase.from('user_profiles').select('*').eq('user_id', context.userId).maybeSingle(),
+      supabase.from('user_profiles').select('*').eq('id', context.userId).maybeSingle(),
       supabase
         .from('users')
         .select('id, email, first_name, last_name, role, organization_id, organizationId')

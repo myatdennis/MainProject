@@ -188,6 +188,7 @@ begin
 end;
 $$;
 
+drop trigger if exists notifications_sync_columns on public.notifications;
 create trigger notifications_sync_columns
   before insert or update on public.notifications
   for each row execute function public.notifications_sync_columns();

@@ -13,7 +13,7 @@ alter table if exists public.assignments
   add column if not exists updated_at timestamp with time zone default now();
 
 create index if not exists assignments_course_id_idx on public.assignments(course_id);
-create index if not exists assignments_user_id_idx on public.assignments(lower(user_id));
+create index if not exists assignments_user_id_idx on public.assignments(user_id);
 create index if not exists assignments_org_id_idx on public.assignments(organization_id);
 
 comment on column public.assignments.metadata is

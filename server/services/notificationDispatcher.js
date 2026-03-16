@@ -8,14 +8,14 @@ const fetchUserEmails = async (supabase, userIds = []) => {
   const unique = [...new Set(userIds.filter(Boolean))];
   const { data, error } = await supabase
     .from('user_profiles')
-    .select('user_id, email')
-    .in('user_id', unique)
+    .select('id, email')
+    .in('id', unique)
     .limit(500);
   if (error) {
     logger.warn('notifications_fetch_profiles_failed', { message: error.message });
     return [];
   }
-  return (data || []).map((row) => ({ id: row.user_id, email: row.email })).filter((row) => !!row.email);
+  return (data || []).map((row) => ({ id: row.id, email: row.email })).filter((row) => !!row.email);
 };
 
 const fetchOrgRecipientEmails = async (supabase, orgId) => {

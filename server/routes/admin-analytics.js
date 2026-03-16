@@ -98,7 +98,7 @@ router.get('/', async (req, res, next) => {
     // Derive from user_lesson_progress: started = any record, completed = status='completed'
     const dropoffFilters = []
     if (course_id) dropoffFilters.push(sql`ulp.course_id = ${course_id}`)
-    const dropoffWhere = dropoffFilters.length ? sql`where ${sql.join(dropoffFilters, sql` and `)}` : sql``
+    const dropoffWhere = dropoffFilters.length ? sql`where ${dropoffFilters.reduce((a, b) => sql`${a} and ${b}`)}` : sql``
 
     const dropoffs = await sql`
       select
@@ -123,7 +123,7 @@ router.get('/', async (req, res, next) => {
     if (organization_id) eventFilters.push(sql`ae.org_id = ${organization_id}::uuid`)
     if (sinceDate)  eventFilters.push(sql`ae.created_at >= ${sinceDate.toISOString()}`)
     if (untilDate)  eventFilters.push(sql`ae.created_at <= ${untilDate.toISOString()}`)
-    const eventWhere = eventFilters.length ? sql`where ${sql.join(eventFilters, sql` and `)}` : sql``
+    const eventWhere = eventFilters.length ? sql`where ${eventFilters.reduce((a, b) => sql`${a} and ${b}`)}` : sql``
 
     const engagementTrend = await sql`
       select

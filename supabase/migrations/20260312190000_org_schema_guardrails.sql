@@ -174,23 +174,41 @@ create trigger org_invites_set_updated_at
 
 alter table public.org_invites enable row level security;
 
-create policy if not exists "org_invites_service_full_access"
-  on public.org_invites
-  for all
-  to service_role
-  using (true)
-  with check (true);
+do $$ begin
+  if not exists (select 1 from pg_policies where schemaname='public' and tablename='org_invites' and policyname='org_invites_service_full_access') then
+    create policy "org_invites_service_full_access" on public.org_invites for all to service_role using (true) with check (true);
+  end if;
+end $$;
 
-create policy if not exists "org_invites_member_read"
-  on public.org_invites
-  for select
-  to authenticated
-  using (public._is_org_member(org_id));
+do $$ begin
+  if not exists (select 1 from pg_policies where schemaname='public' and tablename='org_invites' and policyname='org_invites_member_read') then
+    create policy "org_invites_member_read" on public.org_invites
+      for select to authenticated
+      using (exists (
+        select 1 from public.organization_memberships m
+        where m.organization_id = org_invites.org_id
+          and m.user_id = auth.uid()
+      ));
+  end if;
+end $$;
 
-create policy if not exists "org_invites_admin_manage"
-  on public.org_invites
-  using (public._is_org_admin(org_id))
-  with check (public._is_org_admin(org_id));
+do $$ begin
+  if not exists (select 1 from pg_policies where schemaname='public' and tablename='org_invites' and policyname='org_invites_admin_manage') then
+    create policy "org_invites_admin_manage" on public.org_invites
+      using (exists (
+        select 1 from public.organization_memberships m
+        where m.organization_id = org_invites.org_id
+          and m.user_id = auth.uid()
+          and m.role in ('owner','admin')
+      ))
+      with check (exists (
+        select 1 from public.organization_memberships m
+        where m.organization_id = org_invites.org_id
+          and m.user_id = auth.uid()
+          and m.role in ('owner','admin')
+      ));
+  end if;
+end $$;
 
 -------------------------------------------------------------------------------
 -- Activation steps & events (used for onboarding progress)
@@ -231,19 +249,17 @@ create index if not exists org_activation_events_type_idx on public.org_activati
 alter table public.org_activation_steps enable row level security;
 alter table public.org_activation_events enable row level security;
 
-create policy if not exists "org_activation_steps_service_full_access"
-  on public.org_activation_steps
-  for all
-  to service_role
-  using (true)
-  with check (true);
+do $$ begin
+  if not exists (select 1 from pg_policies where schemaname='public' and tablename='org_activation_steps' and policyname='org_activation_steps_service_full_access') then
+    create policy "org_activation_steps_service_full_access" on public.org_activation_steps for all to service_role using (true) with check (true);
+  end if;
+end $$;
 
-create policy if not exists "org_activation_events_service_full_access"
-  on public.org_activation_events
-  for all
-  to service_role
-  using (true)
-  with check (true);
+do $$ begin
+  if not exists (select 1 from pg_policies where schemaname='public' and tablename='org_activation_events' and policyname='org_activation_events_service_full_access') then
+    create policy "org_activation_events_service_full_access" on public.org_activation_events for all to service_role using (true) with check (true);
+  end if;
+end $$;
 
 -------------------------------------------------------------------------------
 -- Progress view aggregates
