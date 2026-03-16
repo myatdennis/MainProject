@@ -70,6 +70,7 @@ const AdminSurveys = lazy(() => import('./pages/Admin/AdminSurveys'));
 const AdminAnalytics = lazy(() => import('./pages/Admin/AdminAnalytics'));
 const AdminSurveyBuilder = lazy(() => import('./pages/Admin/AdminSurveyBuilder'));
 const AdminSurveyAnalytics = lazy(() => import('./pages/Admin/AdminSurveyAnalytics'));
+const AdminSurveysImport = lazy(() => import('./pages/Admin/AdminSurveysImport'));
 const AdminOrganizations = lazy(() => import('./pages/Admin/AdminOrganizations'));
 const AdminOrganizationProfile = lazy(() => import('./pages/Admin/AdminOrganizationProfile'));
 const AdminOrganizationCreate = lazy(() => import('./pages/Admin/AdminOrganizationNew'));
@@ -86,6 +87,11 @@ const AdminCRM = lazy(() => import('./pages/Admin/AdminCRM'));
 const AdminCoursesImport = lazy(() => import('./pages/Admin/AdminCoursesImport'));
 const AdminCourseBulkPlaceholder = lazy(() => import('./pages/Admin/Course/AdminCourseBulkPlaceholder'));
 const AdminCourseNewPlaceholder = lazy(() => import('./pages/Admin/Course/AdminCourseNewPlaceholder'));
+const AdminOrgProfile = lazy(() => import('./pages/Admin/AdminOrgProfile'));
+const AdminReports = lazy(() => import('./pages/Admin/AdminReports'));
+const AdminIntegrations = lazy(() => import('./pages/Admin/AdminIntegrations'));
+const AdminIntegrationConfig = lazy(() => import('./pages/Admin/AdminIntegrationConfig'));
+const AdminCertificates = lazy(() => import('./pages/Admin/AdminCertificates'));
 
 const AdminProtectedLayout = () => (
   <RequireAuth mode="admin">
@@ -271,10 +277,12 @@ function AppContent() {
                   <Route path="surveys" element={<AdminSurveys />} />
                   <Route path="surveys/builder" element={<AdminSurveyBuilder />} />
                   <Route path="surveys/analytics" element={<AdminSurveyAnalytics />} />
+                  <Route path="surveys/import" element={<AdminSurveysImport />} />
                   <Route path="surveys/queue" element={<AdminQueueMonitor />} />
                   <Route path="organizations" element={<AdminOrganizations />} />
                   <Route path="organizations/new" element={<AdminOrganizationCreate />} />
                   <Route path="organizations/:organizationId" element={<AdminOrganizationProfile />} />
+                  <Route path="org-profiles/:orgProfileId" element={<AdminOrgProfile />} />
                   <Route path="crm" element={<AdminCRM />} />
                   <Route path="leadership" element={<AdminLeadershipInsights />} />
                   <Route path="profile" element={<AdminProfilePage />} />
@@ -283,6 +291,10 @@ function AppContent() {
                   <Route path="documents" element={<AdminDocuments />} />
                   <Route path="performance" element={<AdminPerformanceDashboard />} />
                   <Route path="settings" element={<AdminSettings />} />
+                  <Route path="reports" element={<AdminReports />} />
+                  <Route path="integrations" element={<AdminIntegrations />} />
+                  <Route path="integrations/:integrationId" element={<AdminIntegrationConfig />} />
+                  <Route path="certificates" element={<AdminCertificates />} />
                 </Route>
                 {/* ...admin routes... */}
                 <Route path="*" element={<NotFound />} />

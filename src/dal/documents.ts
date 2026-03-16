@@ -3,6 +3,20 @@ import apiRequest from '../utils/apiClient';
 
 export type Visibility = 'global' | 'org' | 'user';
 
+/** Resolves the correct documents endpoint based on caller surface.
+ *  Admin surfaces use the full `/api/admin/documents` endpoint.
+ *  Client/learner surfaces use `/api/client/documents` which enforces
+ *  org-scoped visibility without exposing admin-only documents.
+ */
+const resolveDocumentsEndpoint = (forceAdmin = false): string => {
+  if (forceAdmin) return '/api/admin/documents';
+  // Detect admin surface by URL prefix
+  if (typeof window !== 'undefined' && window.location.pathname.startsWith('/admin')) {
+    return '/api/admin/documents';
+  }
+  return '/api/client/documents';
+};
+
 export type DocumentMeta = {
   id: string;
   name: string;
@@ -27,9 +41,11 @@ export type DocumentMeta = {
 
 const mapDocumentRecord = (record: any): DocumentMeta => ({
   id: record.id,
-  name: record.name,
-  filename: record.filename ?? undefined,
-  url: record.url ?? undefined,
+  // DB uses 'name' as primary; 'title' is an older alias kept for backwards compat
+  name: record.name ?? record.title ?? '',
+  // DB uses 'file_url' as canonical; 'url' is a legacy/camelCase alias
+  filename: record.filename ?? record.name ?? undefined,
+  url: record.file_url ?? record.url ?? undefined,
   category: record.category,
   subcategory: record.subcategory ?? undefined,
   tags: record.tags ?? [],
@@ -42,16 +58,23 @@ const mapDocumentRecord = (record: any): DocumentMeta => ({
   userId: record.user_id ?? record.userId ?? undefined,
   createdAt: record.created_at ?? record.createdAt ?? new Date().toISOString(),
   createdBy: record.created_by ?? record.createdBy ?? undefined,
+  // download_count column does not exist in prod; default to 0
   downloadCount: record.download_count ?? record.downloadCount ?? 0,
-  metadata: record.metadata ?? null,
+  metadata: record.metadata ?? record.meta_json ?? null,
   mediaAssetId: record.media_asset_id ?? record.metadata?.mediaAssetId ?? undefined,
 });
 
 const buildDocumentPayload = (input: Record<string, any>): Record<string, any> => {
   const payload = { ...input };
+  // Normalize organizationId → organization_id
   if (Object.prototype.hasOwnProperty.call(payload, 'organizationId')) {
     payload.organization_id = payload.organizationId;
     delete payload.organizationId;
+  }
+  // Normalize url → file_url (DB canonical column)
+  if (Object.prototype.hasOwnProperty.call(payload, 'url') && !Object.prototype.hasOwnProperty.call(payload, 'file_url')) {
+    payload.file_url = payload.url;
+    delete payload.url;
   }
   return payload;
 };
@@ -97,12 +120,19 @@ export const listDocuments = async (opts?: {
   tag?: string;
   category?: string;
   search?: string;
+  /** Pass true only from admin surfaces to use the admin endpoint */
+  forceAdmin?: boolean;
 }) => {
-  const json = await request<{ data: any[] }>('/api/admin/documents');
+  const endpoint = resolveDocumentsEndpoint(opts?.forceAdmin);
+  const params = new URLSearchParams();
+  if (opts?.organizationId) params.set('orgId', opts.organizationId);
+  const url = params.toString() ? `${endpoint}?${params.toString()}` : endpoint;
+  const json = await request<{ data: any[] }>(url);
   let docs = (json.data || []).map(mapDocumentRecord);
 
   // Seed a couple of defaults if empty to improve first-run UX
-  if (docs.length === 0) {
+  // Only seed on admin surfaces (seeding requires write access via admin endpoint)
+  if (docs.length === 0 && opts?.forceAdmin) {
     const seedDocs: Array<Omit<DocumentMeta, 'id' | 'createdAt'>> = [
       {
         name: 'Inclusive Leadership Handbook',
@@ -126,7 +156,7 @@ export const listDocuments = async (opts?: {
       await addDocument(seed as any, undefined);
     }
 
-    const refreshed = await request<{ data: any[] }>('/api/admin/documents');
+    const refreshed = await request<{ data: any[] }>(resolveDocumentsEndpoint(true));
     docs = (refreshed.data || []).map(mapDocumentRecord);
   }
 

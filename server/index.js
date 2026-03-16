@@ -5874,11 +5874,11 @@ async function fetchOrgMembersWithProfiles(orgId) {
     const { data: profiles, error: profileError } = await supabase
       .from('user_profiles')
       .select('*')
-      .in('user_id', userIds);
+      .in('id', userIds);
     if (profileError) throw profileError;
     (profiles || []).forEach((profile) => {
-      if (profile?.user_id) {
-        profileMap.set(profile.user_id, profile);
+      if (profile?.id) {
+        profileMap.set(profile.id, profile);
       }
     });
 
@@ -16036,6 +16036,41 @@ const ensureDocumentsSchemaOrRespond = async (res, label) => {
   }
   return true;
 };
+
+// ── Client-facing documents endpoint ────────────────────────────────────────
+// Returns only global or org-scoped documents visible to the authenticated learner.
+// Does NOT expose documents belonging to other orgs or private admin-only docs.
+app.get('/api/client/documents', authenticate, asyncHandler(async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  if (!(await ensureDocumentsSchemaOrRespond(res, 'client.documents.list'))) return;
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  const requestedOrgId = pickOrgId(req.query?.orgId, req.query?.org_id, req.query?.organization_id)
+    || context.organizationId
+    || null;
+
+  try {
+    let query = supabase
+      .from('documents')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (requestedOrgId) {
+      // Show global docs + docs scoped to this org
+      query = query.or(`visibility.eq.global,and(visibility.eq.org,organization_id.eq.${requestedOrgId})`);
+    } else {
+      query = query.eq('visibility', 'global');
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+    res.json({ data: data ?? [] });
+  } catch (error) {
+    console.error('[client.documents.list] Failed to fetch documents:', error);
+    res.status(500).json({ error: 'Unable to fetch documents' });
+  }
+}));
 
 app.get('/api/admin/documents', async (req, res) => {
   if (!ensureSupabase(res)) return;

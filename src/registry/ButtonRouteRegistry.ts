@@ -60,7 +60,11 @@ export const ADMIN_ROUTES: ButtonRouteEntry[] = [
   { id: 'admin-nav-users', label: 'Users', roles: ['admin'], location: 'Admin Sidebar', targetRoute: '/admin/users', created: true, status: 'working' },
   { id: 'admin-nav-organizations', label: 'Organizations', roles: ['admin'], location: 'Admin Sidebar', targetRoute: '/admin/organizations', created: true, status: 'working' },
   { id: 'admin-nav-courses', label: 'Courses', roles: ['admin'], location: 'Admin Sidebar', targetRoute: '/admin/courses', created: true, status: 'working' },
+  { id: 'admin-nav-surveys', label: 'Surveys', roles: ['admin'], location: 'Admin Sidebar', targetRoute: '/admin/surveys', created: true, status: 'working' },
   { id: 'admin-nav-analytics', label: 'Analytics', roles: ['admin'], location: 'Admin Sidebar', targetRoute: '/admin/analytics', created: true, status: 'working' },
+  { id: 'admin-nav-reports', label: 'Reports', roles: ['admin'], location: 'Admin Sidebar', targetRoute: '/admin/reports', created: true, status: 'working' },
+  { id: 'admin-nav-documents', label: 'Documents', roles: ['admin'], location: 'Admin Sidebar', targetRoute: '/admin/documents', created: true, status: 'working' },
+  { id: 'admin-nav-certificates', label: 'Certificates', roles: ['admin'], location: 'Admin Sidebar', targetRoute: '/admin/certificates', created: true, status: 'working' },
   { id: 'admin-nav-settings', label: 'Settings', roles: ['admin'], location: 'Admin Sidebar', targetRoute: '/admin/settings', created: true, status: 'working' },
 
   // Admin Dashboard Quick Actions
@@ -71,27 +75,27 @@ export const ADMIN_ROUTES: ButtonRouteEntry[] = [
 
   // Admin User Management
   { id: 'admin-users-add', label: 'Add User', roles: ['admin'], location: 'Admin Users', modal: 'AddUserModal', created: true, status: 'working' },
-  { id: 'admin-users-import', label: 'Import CSV', roles: ['admin'], location: 'Admin Users', action: 'import-csv', created: false, status: 'stub' },
-  { id: 'admin-users-export', label: 'Export Users', roles: ['admin'], location: 'Admin Users', action: 'export-users', created: false, status: 'stub' },
-  { id: 'admin-users-send-reminder', label: 'Send Reminder', roles: ['admin'], location: 'Admin Users', action: 'send-reminder', created: false, status: 'stub' },
+  { id: 'admin-users-import', label: 'Import CSV', roles: ['admin'], location: 'Admin Users', action: 'import-csv', created: true, status: 'working' },
+  { id: 'admin-users-export', label: 'Export Users', roles: ['admin'], location: 'Admin Users', action: 'export-users', created: true, status: 'working' },
+  { id: 'admin-users-send-reminder', label: 'Send Reminder', roles: ['admin'], location: 'Admin Users', action: 'send-reminder', created: true, status: 'working' },
   { id: 'admin-users-assign-course', label: 'Assign Course', roles: ['admin'], location: 'Admin Users', modal: 'CourseAssignmentModal', created: true, status: 'working' },
   { id: 'admin-user-profile', label: 'View Profile', roles: ['admin'], location: 'Admin Users Table', targetRoute: '/admin/users/:userId', params: { userId: 'user-{id}' }, created: true, status: 'working' },
-  { id: 'admin-user-edit', label: 'Edit User', roles: ['admin'], location: 'Admin Users Table', action: 'edit-user', created: false, status: 'stub' },
-  { id: 'admin-user-delete', label: 'Delete User', roles: ['admin'], location: 'Admin Users Table', action: 'delete-user', created: false, status: 'stub' },
+  { id: 'admin-user-edit', label: 'Edit User', roles: ['admin'], location: 'Admin Users Table', action: 'edit-user', created: true, status: 'working' },
+  { id: 'admin-user-delete', label: 'Delete User', roles: ['admin'], location: 'Admin Users Table', action: 'delete-user', created: true, status: 'working' },
 
   // Admin Organization Management
   { id: 'admin-orgs-add', label: 'Add Organization', roles: ['admin'], location: 'Admin Organizations', modal: 'AddOrganizationModal', created: true, status: 'working' },
   { id: 'admin-orgs-import', label: 'Import Organizations', roles: ['admin'], location: 'Admin Organizations', action: 'import-orgs', created: false, status: 'stub' },
   { id: 'admin-orgs-export', label: 'Export Organizations', roles: ['admin'], location: 'Admin Organizations', action: 'export-orgs', created: false, status: 'stub' },
   { id: 'admin-org-view', label: 'View Organization', roles: ['admin'], location: 'Admin Organizations Table', targetRoute: '/admin/organizations/:orgId', params: { orgId: '{id}' }, created: true, status: 'working' },
-  { id: 'admin-org-profile', label: 'View Profile', roles: ['admin'], location: 'Admin Organizations Table', targetRoute: '/admin/org-profiles/org-profile-:orgId', params: { orgId: '{id}' }, created: true, status: 'working' },
+  { id: 'admin-org-profile', label: 'View Profile', roles: ['admin'], location: 'Admin Organizations Table', targetRoute: '/admin/org-profiles/:orgProfileId', params: { orgProfileId: 'org-profile-{id}' }, created: true, status: 'working' },
   { id: 'admin-org-edit', label: 'Edit Organization', roles: ['admin'], location: 'Admin Organizations Table', action: 'edit-org', created: false, status: 'stub' },
   { id: 'admin-org-delete', label: 'Delete Organization', roles: ['admin'], location: 'Admin Organizations Table', action: 'delete-org', created: false, status: 'stub' },
 
   // Admin Course Management
   { id: 'admin-courses-create', label: 'Create Course', roles: ['admin'], location: 'Admin Courses', targetRoute: '/admin/course-builder/new', created: true, status: 'working' },
   { id: 'admin-courses-import', label: 'Import Courses', roles: ['admin'], location: 'Admin Courses', targetRoute: '/admin/courses/import', created: true, status: 'working' },
-  { id: 'admin-courses-bulk-assign', label: 'Bulk Assign', roles: ['admin'], location: 'Admin Courses', targetRoute: '/admin/courses/bulk', params: { ids: 'selected' }, created: false, status: 'missing' },
+  { id: 'admin-courses-bulk-assign', label: 'Bulk Assign', roles: ['admin'], location: 'Admin Courses', targetRoute: '/admin/courses/bulk', params: { ids: 'selected' }, created: true, status: 'working' },
   { id: 'admin-courses-bulk-publish', label: 'Bulk Publish', roles: ['admin'], location: 'Admin Courses', action: 'bulk-publish', created: true, status: 'working' },
   { id: 'admin-courses-select-all', label: 'Select All', roles: ['admin'], location: 'Admin Courses', action: 'select-all', created: true, status: 'working' },
   { id: 'admin-courses-export', label: 'Export Selected', roles: ['admin'], location: 'Admin Courses', action: 'export-courses', created: false, status: 'stub' },
@@ -108,6 +112,7 @@ export const ADMIN_ROUTES: ButtonRouteEntry[] = [
   { id: 'admin-survey-preview', label: 'Preview Survey', roles: ['admin'], location: 'Admin Survey Builder', targetRoute: '/admin/surveys/:surveyId/preview', params: { surveyId: '{id}' }, created: true, status: 'working' },
   { id: 'admin-survey-analytics', label: 'Survey Analytics', roles: ['admin'], location: 'Admin Surveys', targetRoute: '/admin/surveys/:surveyId/analytics', params: { surveyId: '{id}' }, created: true, status: 'working' },
   { id: 'admin-survey-assign', label: 'Assign Survey', roles: ['admin'], location: 'Admin Survey Builder', modal: 'AssignmentModal', created: true, status: 'working' },
+  { id: 'admin-surveys-import', label: 'Import Surveys', roles: ['admin'], location: 'Admin Surveys', targetRoute: '/admin/surveys/import', created: true, status: 'working' },
 
   // Admin Reports & Analytics
   { id: 'admin-reports-nav', label: 'Reports', roles: ['admin'], location: 'Admin Missing Nav', targetRoute: '/admin/reports', created: true, status: 'working' },
@@ -131,7 +136,7 @@ export const LMS_ROUTES: ButtonRouteEntry[] = [
   { id: 'lms-dash-browse-courses', label: 'Browse All Courses', roles: ['learner', 'facilitator'], location: 'LMS Dashboard', targetRoute: '/lms/courses', created: true, status: 'working' },
   { id: 'lms-dash-certificates', label: 'View Certificates', roles: ['learner', 'facilitator'], location: 'LMS Dashboard', targetRoute: '/lms/certificates', created: true, status: 'working' },
   { id: 'lms-dash-progress', label: 'View Progress', roles: ['learner', 'facilitator'], location: 'LMS Dashboard', targetRoute: '/lms/progress', created: true, status: 'working' },
-  { id: 'lms-dash-goals', label: 'Learning Goals', roles: ['learner', 'facilitator'], location: 'LMS Dashboard', targetRoute: '/lms/goals', created: false, status: 'missing' },
+  { id: 'lms-dash-goals', label: 'Learning Goals', roles: ['learner', 'facilitator'], location: 'LMS Dashboard', targetRoute: '/lms/courses', created: true, status: 'working' },
   { id: 'lms-dash-settings', label: 'Settings', roles: ['learner', 'facilitator'], location: 'Enhanced LMS Layout', targetRoute: '/lms/settings', created: true, status: 'working' },
   { id: 'lms-dash-help', label: 'Help', roles: ['learner', 'facilitator'], location: 'Enhanced LMS Layout', targetRoute: '/lms/help', created: true, status: 'working' },
 
@@ -168,16 +173,18 @@ export const MISSING_PAGES: RouteStatus[] = [
   // Admin Missing Pages
   { route: '/admin/course-builder/new', exists: true, requiredRoles: ['admin'], status: 'working', component: 'AdminCourseBuilder' },
   { route: '/admin/course-builder/:courseId', exists: true, requiredRoles: ['admin'], status: 'working', component: 'AdminCourseBuilder' },
-  { route: '/admin/organizations/new', exists: false, requiredRoles: ['admin'], status: 'missing', component: 'AdminOrganizationCreate' },
-  { route: '/admin/courses/bulk', exists: false, requiredRoles: ['admin'], status: 'missing', component: 'AdminCoursesBulk' },
+  { route: '/admin/organizations/new', exists: true, requiredRoles: ['admin'], status: 'working', component: 'AdminOrganizationCreate' },
+  { route: '/admin/org-profiles/:orgProfileId', exists: true, requiredRoles: ['admin'], status: 'working', component: 'AdminOrgProfile' },
+  { route: '/admin/courses/bulk', exists: true, requiredRoles: ['admin'], status: 'working', component: 'AdminCourseBulkPlaceholder' },
   { route: '/admin/courses/import', exists: true, requiredRoles: ['admin'], status: 'working', component: 'AdminCoursesImport' },
+  { route: '/admin/surveys/import', exists: true, requiredRoles: ['admin'], status: 'working', component: 'AdminSurveysImport' },
   { route: '/admin/reports', exists: true, requiredRoles: ['admin'], status: 'working', component: 'AdminReports' },
 
   // LMS Missing Pages
     // Missing Component Stubs Needing Implementation
   { route: '/lms/certificates', exists: true, requiredRoles: ['learner', 'facilitator'], status: 'working', component: 'LMSCertificates' },
   { route: '/lms/progress', exists: true, requiredRoles: ['learner', 'facilitator'], status: 'working', component: 'LMSProgress' },
-  { route: '/lms/goals', exists: false, requiredRoles: ['learner', 'facilitator'], status: 'missing', component: 'LMSGoals' },
+  { route: '/lms/goals', exists: false, requiredRoles: ['learner', 'facilitator'], status: 'missing', component: 'LMSGoals — redirects to /lms/courses' },
   { route: '/lms/settings', exists: true, requiredRoles: ['learner', 'facilitator'], status: 'working', component: 'LMSSettings' },
   { route: '/lms/help', exists: true, requiredRoles: ['learner', 'facilitator'], status: 'working', component: 'LMSHelp' },
 

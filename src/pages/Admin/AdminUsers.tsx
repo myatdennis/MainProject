@@ -381,21 +381,8 @@ const AdminUsers = () => {
   const handleMoreOptions = (userId: string) => {
     const user = usersList.find(u => u.id === userId);
     if (user) {
-      // For now, show a menu with common actions
-      const actions = [
-        'Reset Password',
-        'Send Welcome Email',
-        'View Activity Log',
-        'Duplicate User',
-        'Export User Data'
-      ];
-      
-      const action = prompt(`Select action for ${user.name}:\n${actions.map((a, i) => `${i+1}. ${a}`).join('\n')}\n\nEnter number (1-${actions.length}):`);
-      
-      if (action && parseInt(action) >= 1 && parseInt(action) <= actions.length) {
-        const selectedAction = actions[parseInt(action) - 1];
-        showToast(`${selectedAction} for ${user.name} - Feature coming soon!`, 'info');
-      }
+      // Show informational toast; these features are on the roadmap
+      showToast(`Additional actions for ${user.name} are coming soon. Use the Edit button to update this user's details.`, 'info');
     }
   };
 

@@ -18,7 +18,7 @@ const AdminDocuments: React.FC = () => {
   const { showToast } = useToast();
 
   const load = async () => {
-    const list = await documentService.listDocuments();
+    const list = await documentService.listDocuments({ forceAdmin: true });
     setDocs(list || []);
   };
 

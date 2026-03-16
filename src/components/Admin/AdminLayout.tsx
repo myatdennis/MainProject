@@ -27,6 +27,8 @@ import {
   ChevronDown,
   UserCircle2,
   AlertTriangle,
+  Award,
+  BarChart2,
 } from 'lucide-react';
 import { ADMIN_ROUTES } from '../../registry/ButtonRouteRegistry';
 import Card from '../ui/Card';
@@ -62,7 +64,9 @@ const iconMap: Record<string, LucideIcon> = {
   'Surveys': ClipboardList,
   'Survey Creator': PenSquare,
   'Analytics': BarChart3,
+  'Reports': BarChart2,
   'Documents': FileText,
+  'Certificates': Award,
   'Performance': TrendingUp,
   'Settings': Settings,
   'Leadership AI': Brain,
