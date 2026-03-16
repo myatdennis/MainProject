@@ -12306,21 +12306,19 @@ app.get('/api/client/progress/summary', authenticate, async (req, res) => {
   try {
     const { data: rows, error } = await supabase
       .from('user_course_progress')
-      .select('course_id, percent, status, time_spent_s, updated_at')
-      .eq('user_id_uuid', userId);
+      .select('course_id, progress, status, time_spent_s, updated_at')
+      .eq('user_id', userId);
 
     if (error) throw error;
 
     const progressRows = rows || [];
     const courseCount = progressRows.length;
     const completedCourses = progressRows.filter(
-      (r) => (r.percent ?? 0) >= 100 || r.status === 'completed'
-    ).length;
-    const totalPercent = progressRows.reduce((sum, r) => sum + (r.percent ?? 0), 0);
+          (r) => (r.progress ?? 0) >= 100 || r.status === 'completed'
+        ).length;
+    const totalPercent = progressRows.reduce((sum, r) => sum + (r.progress ?? 0), 0);
     const overallPercent = courseCount > 0 ? Math.round(totalPercent / courseCount) : 0;
-    const totalTimeSeconds = progressRows.reduce((sum, r) => sum + (r.time_spent_s ?? 0), 0);
-
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const totalTimeSeconds = progressRows.reduce((sum, r) => sum + (r.time_spent_s ?? 0), 0);    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
     const recentDays = new Set(
       progressRows
         .filter((r) => r.updated_at && r.updated_at >= thirtyDaysAgo)
@@ -12341,6 +12339,59 @@ app.get('/api/client/progress/summary', authenticate, async (req, res) => {
   } catch (err) {
     logger.warn('client_progress_summary_failed', { userId, message: err?.message ?? String(err) });
     return res.status(500).json({ error: 'Unable to fetch progress summary' });
+  }
+});
+
+// ─── GET /api/client/activity ───────────────────────────────────────────────
+// Returns recent activity events for the authenticated learner from audit_logs.
+app.get('/api/client/activity', authenticate, async (req, res) => {
+  const context = requireUserContext(req, res);
+  if (!context) return;
+  const userId = context.userId;
+  const limit = Math.min(parseInt(req.query.limit, 10) || 10, 50);
+
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    const demoActivities = Array.from(e2eStore.auditLogs || [])
+      .filter((entry) => entry.user_id === userId || entry.actor_id === userId)
+      .sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime())
+      .slice(0, limit)
+      .map((entry) => ({
+        id: entry.id ?? `act-${Math.random()}`,
+        action: entry.action,
+        details: entry.details ?? {},
+        userId: entry.user_id ?? null,
+        createdAt: entry.created_at ?? new Date().toISOString(),
+      }));
+    return res.json({ data: demoActivities });
+  }
+
+  if (!supabase) {
+    return res.status(503).json({ error: 'database_unavailable' });
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('audit_logs')
+      .select('id, action, details, user_id, organization_id, created_at')
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (error) throw error;
+
+    const activities = (data || []).map((row) => ({
+      id: row.id,
+      action: row.action,
+      details: row.details ?? {},
+      userId: row.user_id ?? null,
+      organizationId: row.organization_id ?? null,
+      createdAt: row.created_at,
+    }));
+
+    return res.json({ data: activities });
+  } catch (err) {
+    logger.warn('client_activity_fetch_failed', { userId, message: err?.message ?? String(err) });
+    return res.status(500).json({ error: 'Unable to fetch activity feed' });
   }
 });
 
@@ -13099,6 +13150,11 @@ app.post('/api/client/certificates/:courseId', async (req, res) => {
 app.get('/api/client/certificates', async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { user_id, course_id } = req.query;
+
+  // Validate user_id is a proper UUID — reject emails/non-uuid values
+  if (user_id && !isUuid(String(user_id))) {
+    return res.status(400).json({ error: 'user_id must be a valid UUID' });
+  }
 
   try {
     let query = supabase
@@ -17913,8 +17969,10 @@ app.post('/api/analytics/events', optionalAuthenticate, async (req, res) => {
   }
 
   try {
+    // Sanitize user_id: only store valid UUIDs, never emails
+    const sanitizedUserId = user_id && isUuid(user_id) ? user_id : null;
     const insertPayload = {
-      user_id: user_id ?? null,
+      user_id: sanitizedUserId,
       org_id: resolvedOrgId,
       course_id: course_id ?? null,
       lesson_id: lesson_id ?? null,

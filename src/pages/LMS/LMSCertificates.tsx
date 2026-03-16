@@ -49,8 +49,8 @@ const LMSCertificates: React.FC = () => {
   const [sortBy, setSortBy] = useState<'date' | 'course' | 'grade'>('date');
   const { user } = useUserProfile();
   const learnerId = useMemo(() => {
-    if (user?.email) return user.email.toLowerCase();
     if (user?.id) return String(user.id).toLowerCase();
+    if (user?.email) return user.email.toLowerCase();
     return 'local-user';
   }, [user]);
   
