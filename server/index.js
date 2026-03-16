@@ -16024,6 +16024,19 @@ app.post(
     }
   },
 );
+
+const REQUIRED_DOCUMENTS_TABLES = [
+  { table: 'documents', columns: ['id', 'name', 'category', 'created_at'] },
+];
+const ensureDocumentsSchemaOrRespond = async (res, label) => {
+  const requiredStatus = await ensureTablesReady(label, REQUIRED_DOCUMENTS_TABLES);
+  if (!requiredStatus.ok) {
+    respondSchemaUnavailable(res, label, requiredStatus);
+    return false;
+  }
+  return true;
+};
+
 app.get('/api/admin/documents', async (req, res) => {
   if (!ensureSupabase(res)) return;
   if (!(await ensureDocumentsSchemaOrRespond(res, 'admin.documents.list'))) return;
