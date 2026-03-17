@@ -490,7 +490,17 @@ const AdminCourses = () => {
   };
 
   const catalogStatus = catalogState.adminLoadStatus;
-  const isCatalogLoading = catalogState.phase === 'loading';
+  // Show spinner while loading OR while idle with no confirmed result yet
+  // (idle = init hasn't run yet; the brief window between mount and first effect fire
+  // would otherwise show "No courses found" before the store initializes).
+  const isCatalogLoading =
+    catalogState.phase === 'loading' ||
+    (catalogState.phase === 'idle' &&
+      catalogStatus !== 'success' &&
+      catalogStatus !== 'empty' &&
+      catalogStatus !== 'unauthorized' &&
+      catalogStatus !== 'error' &&
+      catalogStatus !== 'api_unreachable');
   const isCatalogEmpty = catalogStatus === 'empty';
   const isCatalogUnauthorized = catalogStatus === 'unauthorized';
   const isCatalogError = catalogStatus === 'error' || catalogStatus === 'api_unreachable';

@@ -14,12 +14,23 @@ const AdminDocuments: React.FC = () => {
   const [orgId, setOrgId] = useState('');
   const [userId, setUserId] = useState('');
   const [file, setFile] = useState<File | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
   const { showToast } = useToast();
 
   const load = async () => {
-    const list = await documentService.listDocuments({ forceAdmin: true });
-    setDocs(list || []);
+    setIsLoading(true);
+    setLoadError(null);
+    try {
+      const list = await documentService.listDocuments({ forceAdmin: true });
+      setDocs(list || []);
+    } catch (err: any) {
+      console.error('Failed to load documents:', err);
+      setLoadError(err?.message || 'Unable to load documents. Please try again.');
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   useEffect(() => { load(); }, []);
@@ -134,22 +145,43 @@ const AdminDocuments: React.FC = () => {
 
       <div className="card-md">
         <h2 className="text-lg font-semibold text-neutral-text mb-4">All Documents</h2>
-        <div className="flex flex-col gap-4">
-          {docs.map(d => (
-            <div key={d.id} className="flex items-center justify-between border p-4 rounded-lg" style={{border: '1px solid var(--card-border)', background: 'var(--card-bg)'}}>
-              <div>
-                <div className="font-medium text-primary">{d.name}</div>
-                <div className="text-sm muted-text">{d.category} • {d.subcategory} • {d.tags?.join(', ')}</div>
-                <div className="text-xs muted-text">{d.visibility}{d.organizationId ? ` • org:${d.organizationId}` : ''}{d.userId ? ` • user:${d.userId}` : ''}</div>
+        {isLoading ? (
+          <div className="flex items-center justify-center py-12 text-gray-400">
+            <svg className="animate-spin h-6 w-6 mr-3" viewBox="0 0 24 24" fill="none">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+            </svg>
+            <span className="text-sm">Loading documents…</span>
+          </div>
+        ) : loadError ? (
+          <div className="flex flex-col items-center py-12 gap-3">
+            <p className="text-sm text-red-600">{loadError}</p>
+            <button onClick={load} className="btn-primary text-sm">Retry</button>
+          </div>
+        ) : docs.length === 0 ? (
+          <div className="flex flex-col items-center py-12 text-gray-400 gap-2">
+            <FilePlus className="w-10 h-10 text-gray-300" />
+            <p className="text-sm font-medium">No documents yet</p>
+            <p className="text-xs">Upload a document above to get started.</p>
+          </div>
+        ) : (
+          <div className="flex flex-col gap-4">
+            {docs.map(d => (
+              <div key={d.id} className="flex items-center justify-between border p-4 rounded-lg" style={{border: '1px solid var(--card-border)', background: 'var(--card-bg)'}}>
+                <div>
+                  <div className="font-medium text-primary">{d.name}</div>
+                  <div className="text-sm muted-text">{d.category} • {d.subcategory} • {d.tags?.join(', ')}</div>
+                  <div className="text-xs muted-text">{d.visibility}{d.organizationId ? ` • org:${d.organizationId}` : ''}{d.userId ? ` • user:${d.userId}` : ''}</div>
+                </div>
+                <div className="flex items-center gap-4">
+                  {d.url && <a onClick={() => documentService.recordDownload(d.id)} href={d.url} target="_blank" rel="noreferrer" className="text-sm text-primary font-medium underline">Open</a>}
+                  <div className="text-sm muted-text">{d.downloadCount || 0} downloads</div>
+                  <button onClick={() => handleDelete(d.id)} className="icon-action"><Trash className="w-4 h-4" /></button>
+                </div>
               </div>
-              <div className="flex items-center gap-4">
-                {d.url && <a onClick={() => documentService.recordDownload(d.id)} href={d.url} target="_blank" rel="noreferrer" className="text-sm text-primary font-medium underline">Open</a>}
-                <div className="text-sm muted-text">{d.downloadCount || 0} downloads</div>
-                <button onClick={() => handleDelete(d.id)} className="icon-action"><Trash className="w-4 h-4" /></button>
-              </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

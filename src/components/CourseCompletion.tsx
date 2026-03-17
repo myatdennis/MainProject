@@ -115,7 +115,7 @@ const CourseCompletion: React.FC<CourseCompletionProps> = ({
     if (!user) {
       return fallback;
     }
-    const id = (user.email || user.id || fallback.id).toLowerCase();
+    const id = (user.id || user.email || fallback.id).toLowerCase();
     const email = user.email || fallback.email;
     const derivedName = [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
     const name = derivedName || user.email || fallback.name;

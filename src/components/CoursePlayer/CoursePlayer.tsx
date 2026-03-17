@@ -88,8 +88,8 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
 
   const { user } = useUserProfile();
   const learnerId = useMemo(() => {
-    if (user?.email) return user.email.toLowerCase();
     if (user?.id) return String(user.id).toLowerCase();
+    if (user?.email) return user.email.toLowerCase();
     return 'local-user';
   }, [user]);
 

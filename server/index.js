@@ -4260,7 +4260,9 @@ const schemaSupportFlags = {
   lessonProgress: 'unknown',
   lessonProgressOrgColumn: 'unknown',
   courseProgress: 'unknown',
-  courseProgressPercentColumn: 'unknown',
+  // user_course_progress has no 'percent' column — the canonical column is 'progress'.
+  // Initializing as 'missing' prevents a guaranteed-to-fail write attempt on every server restart.
+  courseProgressPercentColumn: 'missing',
   courseProgressTimeColumn: 'unknown',
 };
 
@@ -5883,8 +5885,8 @@ async function fetchOrgMembersWithProfiles(orgId) {
     });
 
     const { data: userRows, error: userError } = await supabase
-      .from('users')
-      .select('id, email, first_name, last_name, role, status, title, last_login_at')
+      .from('user_profiles')
+      .select('id, email, first_name, last_name, organization_id')
       .in('id', userIds);
     if (userError) throw userError;
     (userRows || []).forEach((user) => {
@@ -9748,6 +9750,13 @@ app.get('/api/client/assignments', authenticate, async (req, res) => {
     return;
   }
 
+  // In dev/demo mode the injected user ID may be a non-UUID placeholder.
+  // Return empty assignments rather than a DB 22P02 error.
+  if (!isUuid(normalizedUserId) && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    res.status(200).json({ data: [], count: 0, orgId: null });
+    return;
+  }
+
   const parseBoolean = (value, defaultValue = true) => {
     if (value === undefined || value === null) return defaultValue;
     const normalized = String(value).trim().toLowerCase();
@@ -10360,6 +10369,12 @@ app.get('/api/client/courses', asyncHandler(async (req, res) => {
         : null;
   const context = requireUserContext(req, res);
   if (!context) return;
+
+  // In dev/demo mode the injected user/org IDs may be non-UUID placeholders.
+  // Return empty catalog rather than a DB 22P02 error.
+  if ((E2E_TEST_MODE || DEV_FALLBACK) && !isUuid(context.userId || '')) {
+    return res.json({ ok: true, courses: [], total: 0, requestId });
+  }
 
   const orgScope = await resolveOrgScopeForRequest(req, context, { queryOrgId: queryOrgParam });
   const { resolvedOrgId, scopedOrgIds, membershipSet, primaryOrgId } = orgScope;
@@ -12273,6 +12288,21 @@ app.get('/api/client/progress/summary', authenticate, async (req, res) => {
   const context = requireUserContext(req, res);
   if (!context) return;
   const userId = context.userId;
+
+  // In dev/demo mode the injected user ID may be a non-UUID placeholder.
+  // Return an empty but valid summary rather than a DB 22P02 error.
+  if (!isUuid(userId) && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    return res.json({
+      data: {
+        modulesCompleted: 0,
+        modulesTotal: 0,
+        overallPercent: 0,
+        timeInvestedSeconds: 0,
+        certificatesEarned: 0,
+        streakDays: 0,
+      },
+    });
+  }
 
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
     let totalPercent = 0;
@@ -15357,17 +15387,13 @@ app.get('/api/users/me', async (req, res) => {
   if (!context) return;
 
   try {
-    const [{ data: profileRow, error: profileError }, { data: userRow, error: userError }] = await Promise.all([
+    const [{ data: profileRow, error: profileError }] = await Promise.all([
       supabase.from('user_profiles').select('*').eq('id', context.userId).maybeSingle(),
-      supabase
-        .from('users')
-        .select('id, email, first_name, last_name, role, organization_id, organizationId')
-        .eq('id', context.userId)
-        .maybeSingle(),
     ]);
+    // NOTE: public.users does not exist — all user data lives in user_profiles.
+    const userRow = null;
 
     if (profileError) throw profileError;
-    if (userError) throw userError;
 
     let organizationRow = null;
     const orgId = profileRow?.organization_id || userRow?.organization_id || userRow?.organizationId;
@@ -15405,13 +15431,8 @@ app.put('/api/users/me', async (req, res) => {
 
     if (profileError) throw profileError;
 
-    const { data: userRow, error: userError } = await supabase
-      .from('users')
-      .select('id, email, first_name, last_name, role, organization_id, organizationId')
-      .eq('id', context.userId)
-      .maybeSingle();
-
-    if (userError) throw userError;
+    // NOTE: public.users does not exist — user data lives in user_profiles.
+    const userRow = null;
 
     const allowOrgChange = context.userRole === 'admin';
     const profilePayload = normalizeUserProfileUpdatePayload(context.userId, body, { allowOrgChange });
@@ -17491,10 +17512,9 @@ app.post('/api/admin/notifications/broadcast', requireAdminAccess, asyncHandler(
   if (hydrateUsers) {
     try {
       const { data, error } = await supabase
-        .from('users')
+        .from('user_profiles')
         .select('id')
-        .eq('status', 'active')
-        .order('last_login_at', { ascending: false, nullsLast: false })
+        .order('updated_at', { ascending: false, nullsLast: false })
         .limit(maxTargets);
       if (error) throw error;
       (data || []).forEach((row) => row?.id && resolvedUserIds.add(row.id));
@@ -18120,6 +18140,19 @@ app.post('/api/analytics/journeys', authenticate, resolveOrganizationContext, as
   const rawOrgId = typeof req.body?.organization_id === 'string' ? req.body.organization_id.trim() : null;
   const userId = allowOverride && rawUserId ? rawUserId : sessionUserId;
   const organizationId = allowOverride && rawOrgId ? rawOrgId : sessionOrgId;
+
+  // Guard: userId must be a valid UUID before attempting any DB write.
+  // Client-side bugs can send email addresses instead of UUIDs (e.g. user.email used as learnerId).
+  if (!isUuid(userId)) {
+    res.status(400).json({ error: 'invalid_user_id', message: 'user_id must be a valid UUID.' });
+    return;
+  }
+
+  // Guard: organizationId must also be a valid UUID.
+  if (!isUuid(organizationId)) {
+    res.status(400).json({ error: 'invalid_organization_id', message: 'organization_id must be a valid UUID.' });
+    return;
+  }
 
   const { course_id, journey } = req.body || {};
 

@@ -1,14 +1,30 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Wifi, WifiOff, CheckCircle, AlertTriangle, Info } from 'lucide-react';
 import useConnectivityCheck from '../hooks/useConnectivityCheck';
 
 const ConnectionDiagnostic: React.FC = () => {
   const { snapshot, forceCheck, status } = useConnectivityCheck();
   const [isVisible, setIsVisible] = useState(false);
+  // Track whether the first real health check has completed.
+  // The initial snapshot has serverReachable=false / apiHealthy=false even
+  // when the server is healthy, so we must not open the widget until we know
+  // the actual result of the first probe.
+  const initialLastCheckedRef = useRef(snapshot.lastChecked);
+  const hasCheckedRef = useRef(false);
 
   useEffect(() => {
+    if (!hasCheckedRef.current) {
+      // snapshot.lastChecked is updated inside runCheck() after the fetch
+      // completes — if it has moved past the value captured at mount, at
+      // least one real check has finished.
+      if (snapshot.lastChecked !== initialLastCheckedRef.current) {
+        hasCheckedRef.current = true;
+      } else {
+        return;
+      }
+    }
     if (status !== 'healthy') setIsVisible(true);
-  }, [status]);
+  }, [status, snapshot.lastChecked]);
 
   const statusLabel = {
     healthy: 'All systems operational',

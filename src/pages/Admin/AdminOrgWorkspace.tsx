@@ -397,7 +397,7 @@ const AdminOrgWorkspace = () => {
       const csvContent = `Name,Type,Contact Person,Contact Email,Total Learners,Active Learners,Completion Rate,Status\n${organizations
         .map(
           (org: any) =>
-            `"${org.name}","${org.type}","${org.contactPerson}","${org.contactEmail}","${org.totalLearners}","${org.activeLearners}","${org.completionRate}%","${org.status}"`,
+            `"${org.name}","${org.type}","${org.contactPerson}","${org.contactEmail}","${org.totalLearners}","${org.activeLearners}","${isFinite(org.completionRate) ? org.completionRate : 0}%","${org.status}"`,
         )
         .join('\n')}`;
       const blob = new Blob([csvContent], { type: 'text/csv' });
@@ -643,7 +643,7 @@ const AdminOrgWorkspace = () => {
               {organizations.map((org) => {
                 const onboarding = progressMap[org.id];
                 const onboardingPct = onboarding
-                  ? Math.round((onboarding.completed_steps / Math.max(onboarding.total_steps || 1, 1)) * 100)
+                  ? Math.round(((onboarding.completed_steps ?? 0) / Math.max(onboarding.total_steps ?? 1, 1)) * 100)
                   : null;
                 const isSelected = selectedOrgId === org.id;
                 return (
@@ -680,7 +680,7 @@ const AdminOrgWorkspace = () => {
                       </div>
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-gray-600">Completion</span>
-                        <span className="text-sm font-bold text-green-600">{org.completionRate}%</span>
+                        <span className="text-sm font-bold text-green-600">{isFinite(org.completionRate) ? org.completionRate : 0}%</span>
                       </div>
                       <div className="flex items-center justify-between">
                         <span className="text-sm text-gray-600">Subscription</span>
@@ -885,7 +885,7 @@ const AdminOrgWorkspace = () => {
                   </div>
                   <div>
                     <p className="text-gray-500">Completion</p>
-                    <p className="font-semibold text-gray-900">{selectedOrg.completionRate}%</p>
+                    <p className="font-semibold text-gray-900">{isFinite(selectedOrg.completionRate) ? selectedOrg.completionRate : 0}%</p>
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-3">
