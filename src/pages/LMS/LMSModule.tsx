@@ -298,13 +298,48 @@ const LMSModule = () => {
     [setSearchParams]
   );
 
+  // Track whether the store has finished its initial load so we don't show
+  // "Module not found" while the catalog is still being fetched.
+  // The store is considered ready when admin phase reaches 'ready' (meaning
+  // init() completed) OR when it started idle and was never kicked off.
+  const [storeReady, setStoreReady] = useState(() => {
+    const adminState = courseStore.getAdminCatalogState();
+    return adminState.phase === 'ready' || adminState.phase === 'idle';
+  });
+
+  useEffect(() => {
+    // Subscribe to store changes so we can retry module resolution once the
+    // catalog finishes initialising.
+    const unsubscribe = courseStore.subscribe(() => {
+      const adminState = courseStore.getAdminCatalogState();
+      // Once phase transitions away from 'loading', the catalog attempt is done.
+      const ready = adminState.phase !== 'loading';
+      setStoreReady(ready);
+    });
+    // Kick off init if it hasn't started yet.
+    if (courseStore.getAdminCatalogState().phase === 'idle') {
+      void courseStore.init();
+    }
+    return unsubscribe;
+  }, []);
+
   useEffect(() => {
     const loadModule = async () => {
       setIsLoading(true);
       setError(null);
       try {
+        // If the store hasn't finished loading yet, wait — don't declare "not found".
+        const adminState = courseStore.getAdminCatalogState();
+        if (adminState.phase === 'loading') {
+          // Leave isLoading=true; the store subscriber will flip storeReady and
+          // re-trigger this effect.
+          setIsLoading(true);
+          return;
+        }
+
         const context = deriveModuleContext(moduleIdentifier ?? undefined, requestedLessonId);
         if (!context) {
+          console.warn('[LMSModule] Module not resolved', { moduleIdentifier, requestedLessonId });
           setError('Module not found. It may have been unpublished or removed.');
           setCourseContext(null);
           setIsLoading(false);
@@ -343,7 +378,7 @@ const LMSModule = () => {
             : lessons[0]?.id) ?? null;
         focusLesson(resolvedLesson, { replace: true });
       } catch (err) {
-        console.error('Failed to load module data:', err);
+        console.error('[LMSModule] Failed to load module data:', err);
         setError('We couldn’t load the module right now. Please refresh or try again later.');
         setCourseContext(null);
       } finally {
@@ -351,7 +386,7 @@ const LMSModule = () => {
       }
     };
     void loadModule();
-  }, [moduleIdentifier, requestedLessonId, learnerId, focusLesson]);
+  }, [moduleIdentifier, requestedLessonId, learnerId, focusLesson, storeReady]);
 
   useEffect(() => {
     if (!requestedLessonId || !courseContext?.lessons?.length) return;

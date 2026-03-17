@@ -612,7 +612,7 @@ const AdminCourseBuilder = () => {
         onAction: () => {
           const target = `/admin/login?reauth=1&from=${encodeURIComponent(window.location.pathname)}`;
           logAuthRedirect('AdminCourseBuilder.auth_required', { target });
-          window.location.href = target;
+          navigate(target);
         },
       });
       showToast(

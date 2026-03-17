@@ -536,6 +536,10 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
   return preparedRequest;
 };
 
+// Retry only on network-layer failures (TypeError = connection refused / offline).
+// We do NOT retry on HTTP errors (4xx/5xx), auth errors, or explicit aborts.
+const NETWORK_RETRY_DELAYS_MS = [200, 600] as const; // 2 attempts after the initial try
+
 const executeFetch = async (input: PreparedRequest): Promise<Response> => {
   const {
     url,
@@ -551,38 +555,71 @@ const executeFetch = async (input: PreparedRequest): Promise<Response> => {
     requiresSession,
   } = input;
 
-  let res: Response;
-  try {
-    res = await authorizedFetch(
-      url,
-      {
-        method,
-        credentials,
-        headers,
-        body,
-        signal: controller.signal,
-      },
-      {
-        requireAuth: attachAuth && requiresSession,
-        timeoutMs: input.timeoutMs,
-        requestLabel: extractPathname(url),
-      },
-    );
-  } catch (error: any) {
-    if (timeoutId) clearTimeout(timeoutId);
-    linkedSignals.forEach((signal) => signal.removeEventListener('abort', abortForwarder));
-    if (error?.name === 'AbortError') {
+  let lastNetworkError: unknown;
+
+  for (let attempt = 0; attempt <= NETWORK_RETRY_DELAYS_MS.length; attempt++) {
+    // Bail immediately if the request was already aborted (e.g. component unmounted).
+    if (controller.signal.aborted) {
+      if (timeoutId) clearTimeout(timeoutId);
+      linkedSignals.forEach((signal) => signal.removeEventListener('abort', abortForwarder));
       throw new ApiError('Request timed out', 0, url, { message: 'The request exceeded the allowed time.' });
     }
-    if (error instanceof NotAuthenticatedError) {
-      await handleAuthFailure();
-      throw buildNotAuthenticatedError(url);
+
+    try {
+      const res = await authorizedFetch(
+        url,
+        {
+          method,
+          credentials,
+          headers,
+          body,
+          signal: controller.signal,
+        },
+        {
+          requireAuth: attachAuth && requiresSession,
+          timeoutMs: input.timeoutMs,
+          requestLabel: extractPathname(url),
+        },
+      );
+      if (timeoutId) clearTimeout(timeoutId);
+      linkedSignals.forEach((signal) => signal.removeEventListener('abort', abortForwarder));
+      return res;
+    } catch (error: any) {
+      // Abort / timeout — never retry.
+      if (error?.name === 'AbortError') {
+        if (timeoutId) clearTimeout(timeoutId);
+        linkedSignals.forEach((signal) => signal.removeEventListener('abort', abortForwarder));
+        throw new ApiError('Request timed out', 0, url, { message: 'The request exceeded the allowed time.' });
+      }
+      // Auth error — never retry.
+      if (error instanceof NotAuthenticatedError) {
+        if (timeoutId) clearTimeout(timeoutId);
+        linkedSignals.forEach((signal) => signal.removeEventListener('abort', abortForwarder));
+        await handleAuthFailure();
+        throw buildNotAuthenticatedError(url);
+      }
+      // Only network-level TypeErrors are retryable (e.g. "Failed to fetch").
+      const isNetworkError = error instanceof TypeError;
+      if (!isNetworkError || attempt >= NETWORK_RETRY_DELAYS_MS.length) {
+        if (timeoutId) clearTimeout(timeoutId);
+        linkedSignals.forEach((signal) => signal.removeEventListener('abort', abortForwarder));
+        throw error;
+      }
+      // Network failure — wait briefly then retry.
+      lastNetworkError = error;
+      const delayMs = NETWORK_RETRY_DELAYS_MS[attempt];
+      console.warn(`[apiClient] Network error on attempt ${attempt + 1}, retrying in ${delayMs}ms`, {
+        url: extractPathname(url),
+        message: error.message,
+      });
+      await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
     }
-    throw error;
   }
+
+  // Should not be reachable, but satisfy TypeScript.
   if (timeoutId) clearTimeout(timeoutId);
   linkedSignals.forEach((signal) => signal.removeEventListener('abort', abortForwarder));
-  return res;
+  throw lastNetworkError;
 };
 
 const internalAuthorizedFetch = async (

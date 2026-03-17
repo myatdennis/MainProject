@@ -3104,6 +3104,23 @@
         "org_id": "demo-org",
         "modules": []
       }
+    ],
+    [
+      "e2e-course-1773777735162",
+      {
+        "id": "e2e-course-1773777735162",
+        "slug": "integration-test-course-15",
+        "title": "Integration Test Course",
+        "description": null,
+        "status": "draft",
+        "version": 1,
+        "meta_json": {},
+        "published_at": null,
+        "organization_id": "demo-org",
+        "organizationId": "demo-org",
+        "org_id": "demo-org",
+        "modules": []
+      }
     ]
   ],
   "surveys": [

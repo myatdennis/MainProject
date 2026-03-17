@@ -12828,7 +12828,13 @@ app.post('/api/client/progress/lesson', async (req, res) => {
             res.json({ data: toApiLessonRecord(existing.data, time_spent_s, resume_at_s), idempotent: true });
             return;
           }
-        } catch (fetchErr) {}
+        } catch (fetchErr) {
+          logger.warn('lesson_progress_idempotency_fetch_failed', {
+            lesson_id,
+            user_id,
+            error: fetchErr instanceof Error ? fetchErr.message : String(fetchErr),
+          });
+        }
       }
     }
     const { data, error } = await supabase
@@ -12943,7 +12949,9 @@ app.post('/api/client/progress/batch', async (req, res) => {
             broadcastToTopic(`progress:user:${String(userId).toLowerCase()}`, payload);
             broadcastToTopic(`progress:lesson:${lessonId}`, payload);
             broadcastToTopic('progress:all', payload);
-          } catch {}
+          } catch (broadcastErr) {
+            logger.warn('ws_broadcast_lesson_progress_failed', { lessonId, error: broadcastErr instanceof Error ? broadcastErr.message : String(broadcastErr) });
+          }
         } else if (courseId) {
           const key = `${userId}:${courseId}`;
           const record = {
@@ -12960,7 +12968,9 @@ app.post('/api/client/progress/batch', async (req, res) => {
             broadcastToTopic(`progress:user:${String(userId).toLowerCase()}`, payload);
             broadcastToTopic(`progress:course:${courseId}`, payload);
             broadcastToTopic('progress:all', payload);
-          } catch {}
+          } catch (broadcastErr) {
+            logger.warn('ws_broadcast_course_progress_failed', { courseId, error: broadcastErr instanceof Error ? broadcastErr.message : String(broadcastErr) });
+          }
         }
         accepted.push(id);
       } catch (err) {

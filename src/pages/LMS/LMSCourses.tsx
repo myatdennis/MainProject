@@ -47,7 +47,7 @@ const LMSCourses = () => {
   const [isSyncing, setIsSyncing] = useState(false);
   const [catalogRetrying, setCatalogRetrying] = useState(false);
   const [learnerCatalogState, setLearnerCatalogState] = useState(courseStore.getLearnerCatalogState());
-  const syncDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const syncDebounceRef = useRef<number | null>(null);
   const syncRanRef = useRef(false);
 
   const learnerId = useMemo(() => {
@@ -59,6 +59,8 @@ const LMSCourses = () => {
   useEffect(() => {
     const unsubscribe = courseStore.subscribe(() => {
       setLearnerCatalogState(courseStore.getLearnerCatalogState());
+      // Also refresh the published-courses list whenever the store catalog changes.
+      setProgressRefreshToken((t) => t + 1);
     });
     return unsubscribe;
   }, []);

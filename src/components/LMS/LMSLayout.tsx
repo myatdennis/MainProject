@@ -200,7 +200,7 @@ const LMSLayout = ({ children }: LMSLayoutProps) => {
           </div>
         </header>
 
-        <main className="flex-1 overflow-y-auto bg-softwhite px-6 py-8 lg:px-12">{children ?? <Outlet />}</main>
+        <main key={location.pathname} className="flex-1 overflow-y-auto bg-softwhite px-6 py-8 lg:px-12">{children ?? <Outlet />}</main>
       </div>
     </div>
   );

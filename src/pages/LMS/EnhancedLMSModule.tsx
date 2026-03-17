@@ -303,7 +303,7 @@ const EnhancedLMSModule = () => {
               certificateUrl={course?.certification?.available ? '/lms/certificates' : undefined}
               onDownloadCertificate={() => {
                 // Navigate to certificates page or trigger download
-                window.location.href = '/lms/certificates';
+                navigate('/lms/certificates');
               }}
               onShare={() => {
                 if (navigator.share) {
@@ -319,7 +319,7 @@ const EnhancedLMSModule = () => {
               }}
               onNextCourse={() => {
                 // Navigate to courses page for now
-                window.location.href = '/lms/courses';
+                navigate('/lms/courses');
               }}
             />
           </div>
