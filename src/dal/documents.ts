@@ -130,8 +130,10 @@ export const listDocuments = async (opts?: {
   const json = await request<{ data: any[] }>(url);
   let docs = (json.data || []).map(mapDocumentRecord);
 
-  // Seed a couple of defaults if empty to improve first-run UX
-  // Only seed on admin surfaces (seeding requires write access via admin endpoint)
+  // Seed a couple of defaults if empty to improve first-run UX.
+  // Only seed on admin surfaces (seeding requires write access via admin endpoint).
+  // After seeding we append the synthetic records locally to avoid a second round-trip
+  // (which would cause an extra auth/org-context log churn on every cold load).
   if (docs.length === 0 && opts?.forceAdmin) {
     const seedDocs: Array<Omit<DocumentMeta, 'id' | 'createdAt'>> = [
       {
@@ -152,12 +154,17 @@ export const listDocuments = async (opts?: {
       },
     ];
 
+    const seeded: DocumentMeta[] = [];
     for (const seed of seedDocs) {
-      await addDocument(seed as any, undefined);
+      try {
+        const created = await addDocument(seed as any, undefined);
+        seeded.push(created);
+      } catch {
+        // Non-fatal: best-effort seed; don't block the page
+      }
     }
-
-    const refreshed = await request<{ data: any[] }>(resolveDocumentsEndpoint(true));
-    docs = (refreshed.data || []).map(mapDocumentRecord);
+    // Use the just-created records directly — no second fetch needed
+    docs = seeded;
   }
 
   if (opts?.organizationId) {
@@ -202,11 +209,11 @@ export const addDocument = async (
   file?: File | null,
 ) => {
   const docId = `doc-${Date.now()}`;
-  let url = meta.url;
-  let storagePath = meta.storagePath;
-  let urlExpiresAt = meta.urlExpiresAt;
-  let fileType = meta.fileType;
-  let fileSize = meta.fileSize;
+  let url = meta.url ?? null;
+  let storagePath = meta.storagePath ?? null;
+  let urlExpiresAt = meta.urlExpiresAt ?? null;
+  let fileType = meta.fileType ?? null;
+  let fileSize = meta.fileSize ?? null;
 
   if (file) {
     const uploadResult = await uploadDocumentFile(file, {
@@ -222,28 +229,32 @@ export const addDocument = async (
     fileSize = typeof uploadResult.fileSize === 'number' ? uploadResult.fileSize : file.size;
   }
 
-  if (!url && !storagePath) {
-    throw new Error('Document uploads require an external URL or a successful storage upload.');
-  }
-
-  const payload = buildDocumentPayload({
+  // Build the payload using the snake_case organization_id key that the backend
+  // pickOrgId() helper reads.  Do NOT use buildDocumentPayload() here because it
+  // converts organizationId → organization_id but then the object also carries
+  // organization_id from the explicit key below, which is fine — pickOrgId reads
+  // whichever arrives first and is non-null.
+  const payload: Record<string, any> = {
     id: docId,
     name: meta.name,
-    filename: meta.filename,
+    filename: meta.filename ?? null,
     url,
     storagePath,
     urlExpiresAt,
     fileSize,
     category: meta.category,
-    subcategory: meta.subcategory,
-    tags: meta.tags ?? [],
+    subcategory: meta.subcategory ?? null,
+    tags: Array.isArray(meta.tags) ? meta.tags : [],
     fileType,
-    visibility: meta.visibility,
-    organizationId: meta.organizationId,
-    userId: meta.userId,
-    createdBy: meta.createdBy,
-    metadata: meta,
-  } as any);
+    visibility: meta.visibility ?? 'global',
+    // Send all three org-id aliases so normalizeLegacyOrgInput / pickOrgId
+    // can resolve whichever is non-null.
+    organization_id: meta.organizationId ?? null,
+    organizationId: meta.organizationId ?? null,
+    userId: meta.userId ?? null,
+    createdBy: meta.createdBy ?? null,
+    metadata: meta.metadata ?? {},
+  };
 
   const json = await request<{ data: any }>('/api/admin/documents', {
     method: 'POST',

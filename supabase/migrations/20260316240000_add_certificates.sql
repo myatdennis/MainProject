@@ -19,11 +19,13 @@ alter table public.certificates
 alter table public.certificates enable row level security;
 
 -- Learners can read their own certificates
+drop policy if exists "cert_own_select" on public.certificates;
 create policy "cert_own_select"
   on public.certificates for select
   using ((select auth.uid()) = user_id);
 
 -- Service role has full access (used by server-side API)
+drop policy if exists "cert_service_all" on public.certificates;
 create policy "cert_service_all"
   on public.certificates
   using ((select auth.role()) = 'service_role');

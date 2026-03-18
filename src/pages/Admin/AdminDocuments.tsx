@@ -1,8 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { FilePlus, UploadCloud, Trash } from 'lucide-react';
 import documentService, { DocumentMeta, Visibility } from '../../dal/documents';
+import { extractDalErrorDetail } from '../../dal/http';
 import notificationService from '../../dal/notifications';
 import { useToast } from '../../context/ToastContext';
+
+type FieldErrors = Record<string, string>;
 
 const AdminDocuments: React.FC = () => {
   const [docs, setDocs] = useState<DocumentMeta[]>([]);
@@ -16,6 +19,9 @@ const AdminDocuments: React.FC = () => {
   const [file, setFile] = useState<File | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<FieldErrors>({});
   const inputRef = useRef<HTMLInputElement | null>(null);
   const { showToast } = useToast();
 
@@ -26,7 +32,7 @@ const AdminDocuments: React.FC = () => {
       const list = await documentService.listDocuments({ forceAdmin: true });
       setDocs(list || []);
     } catch (err: any) {
-      console.error('Failed to load documents:', err);
+      console.error('[AdminDocuments] load_failed', { message: err?.message });
       setLoadError(err?.message || 'Unable to load documents. Please try again.');
     } finally {
       setIsLoading(false);
@@ -35,26 +41,40 @@ const AdminDocuments: React.FC = () => {
 
   useEffect(() => { load(); }, []);
 
+  const validateForm = (): FieldErrors => {
+    const errors: FieldErrors = {};
+    if (!name.trim()) errors.name = 'Name is required.';
+    if (!category.trim()) errors.category = 'Category is required.';
+    if (visibility === 'org' && !orgId.trim()) errors.orgId = 'Organization ID is required for org-scoped documents.';
+    if (visibility === 'user' && !userId.trim()) errors.userId = 'User ID is required for user-scoped documents.';
+    return errors;
+  };
+
   const onFile = (f: File | null) => setFile(f);
 
   const handleUpload = async () => {
-    if (!file && !name) {
-      showToast('Provide a name or file', 'error');
+    setFormError(null);
+    setFieldErrors({});
+
+    const errors = validateForm();
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
       return;
     }
 
+    setIsSubmitting(true);
     try {
       const doc = await documentService.addDocument({
-        name: name || file?.name || 'Untitled Document',
+        name: name.trim() || file?.name || 'Untitled Document',
         filename: file?.name,
-        category,
-        subcategory: subcategory || undefined,
+        category: category.trim(),
+        subcategory: subcategory.trim() || undefined,
         tags: tags ? tags.split(',').map(t => t.trim()).filter(Boolean) : [],
         fileType: file?.type,
         visibility,
-        organizationId: visibility === 'org' ? orgId : undefined,
-        userId: visibility === 'user' ? userId : undefined,
-        createdBy: 'Admin'
+        organizationId: visibility === 'org' ? orgId.trim() : undefined,
+        userId: visibility === 'user' ? userId.trim() : undefined,
+        createdBy: 'Admin',
       }, file || undefined);
 
       if (visibility === 'org' && orgId) {
@@ -65,19 +85,33 @@ const AdminDocuments: React.FC = () => {
       }
 
       setName(''); setFile(null); setTags(''); setOrgId(''); setUserId('');
+      setFormError(null);
+      setFieldErrors({});
       load();
-      showToast('Document uploaded', 'success');
+      showToast('Document uploaded successfully', 'success');
     } catch (error: any) {
-      console.error('Failed to upload document:', error);
-      showToast(error?.message || 'Unable to upload document', 'error');
+      const { message, fields } = extractDalErrorDetail(error);
+      console.error('[AdminDocuments] upload_failed', { message, fields, status: error?.status });
+      if (fields && Object.keys(fields).length > 0) {
+        setFieldErrors(fields);
+      }
+      setFormError(message);
+      showToast(message, 'error');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
   const handleDelete = async (id: string) => {
     if (!confirm('Delete document?')) return;
-    await documentService.deleteDocument(id);
-    load();
-    showToast('Document deleted', 'success');
+    try {
+      await documentService.deleteDocument(id);
+      load();
+      showToast('Document deleted', 'success');
+    } catch (err: any) {
+      console.error('[AdminDocuments] delete_failed', { id, message: err?.message });
+      showToast(err?.message || 'Unable to delete document', 'error');
+    }
   };
 
   return (
@@ -93,12 +127,26 @@ const AdminDocuments: React.FC = () => {
       <div className="card-md mb-6">
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
-            <label className="text-sm font-medium muted-text block mb-2">Name</label>
-            <input className="input" value={name} onChange={e => setName(e.target.value)} />
+            <label className="text-sm font-medium muted-text block mb-2">
+              Name <span className="text-red-500">*</span>
+            </label>
+            <input
+              className={`input${fieldErrors.name ? ' border-red-500' : ''}`}
+              value={name}
+              onChange={e => { setName(e.target.value); setFieldErrors(p => ({ ...p, name: '' })); }}
+            />
+            {fieldErrors.name && <p className="text-xs text-red-600 mt-1">{fieldErrors.name}</p>}
           </div>
           <div>
-            <label className="text-sm font-medium muted-text block mb-2">Category</label>
-            <input className="input" value={category} onChange={e => setCategory(e.target.value)} />
+            <label className="text-sm font-medium muted-text block mb-2">
+              Category <span className="text-red-500">*</span>
+            </label>
+            <input
+              className={`input${fieldErrors.category ? ' border-red-500' : ''}`}
+              value={category}
+              onChange={e => { setCategory(e.target.value); setFieldErrors(p => ({ ...p, category: '' })); }}
+            />
+            {fieldErrors.category && <p className="text-xs text-red-600 mt-1">{fieldErrors.category}</p>}
           </div>
           <div>
             <label className="text-sm font-medium muted-text block mb-2">Subcategory</label>
@@ -113,33 +161,89 @@ const AdminDocuments: React.FC = () => {
           </div>
           <div>
             <label className="text-sm font-medium muted-text block mb-2">Visibility</label>
-            <select className="input" value={visibility} onChange={e => setVisibility(e.target.value as Visibility)}>
+            <select
+              className="input"
+              value={visibility}
+              onChange={e => { setVisibility(e.target.value as Visibility); setFieldErrors({}); }}
+            >
               <option value="global">Global</option>
               <option value="org">Organization</option>
               <option value="user">User</option>
             </select>
           </div>
           <div>
-            <label className="text-sm font-medium muted-text block mb-2">Org ID / User ID</label>
-            <input className="input" placeholder="orgId or userId" value={visibility === 'org' ? orgId : userId} onChange={e => visibility === 'org' ? setOrgId(e.target.value) : setUserId(e.target.value)} />
+            {visibility === 'org' && (
+              <>
+                <label className="text-sm font-medium muted-text block mb-2">
+                  Organization ID <span className="text-red-500">*</span>
+                </label>
+                <input
+                  className={`input${fieldErrors.orgId ? ' border-red-500' : ''}`}
+                  placeholder="UUID of the organization"
+                  value={orgId}
+                  onChange={e => { setOrgId(e.target.value); setFieldErrors(p => ({ ...p, orgId: '' })); }}
+                />
+                {fieldErrors.orgId && <p className="text-xs text-red-600 mt-1">{fieldErrors.orgId}</p>}
+              </>
+            )}
+            {visibility === 'user' && (
+              <>
+                <label className="text-sm font-medium muted-text block mb-2">
+                  User ID <span className="text-red-500">*</span>
+                </label>
+                <input
+                  className={`input${fieldErrors.userId ? ' border-red-500' : ''}`}
+                  placeholder="UUID of the user"
+                  value={userId}
+                  onChange={e => { setUserId(e.target.value); setFieldErrors(p => ({ ...p, userId: '' })); }}
+                />
+                {fieldErrors.userId && <p className="text-xs text-red-600 mt-1">{fieldErrors.userId}</p>}
+              </>
+            )}
+            {visibility === 'global' && (
+              <div className="text-xs muted-text mt-6">Visible to all authenticated users</div>
+            )}
           </div>
         </div>
 
         <div className="mt-4">
-          <label className="text-sm font-medium muted-text block mb-2">File</label>
+          <label className="text-sm font-medium muted-text block mb-2">File <span className="text-xs muted-text">(optional — document record can exist without a file)</span></label>
           <div className="border-dashed p-6 rounded-lg" style={{border: '2px dashed var(--input-border)'}}>
             <input ref={inputRef} type="file" onChange={e => onFile(e.target.files?.[0] || null)} style={{display: 'none'}} />
             <div className="flex items-center justify-center gap-3">
               <UploadCloud className="w-5 h-5 muted-text" />
-              <button onClick={() => inputRef.current?.click()} className="text-sm text-primary">Choose file</button>
-              <span className="text-sm muted-text">or drag and drop (not implemented)</span>
+              <button type="button" onClick={() => inputRef.current?.click()} className="text-sm text-primary">Choose file</button>
             </div>
-            {file && <div className="mt-3 text-sm text-neutral-text">Selected: {file.name} <button onClick={() => setFile(null)} className="ml-3 text-danger">Remove</button></div>}
+            {file && (
+              <div className="mt-3 text-sm text-neutral-text">
+                Selected: {file.name}
+                <button type="button" onClick={() => setFile(null)} className="ml-3 text-danger">Remove</button>
+              </div>
+            )}
           </div>
         </div>
 
+        {formError && (
+          <div className="mt-4 p-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700" role="alert">
+            {formError}
+          </div>
+        )}
+
         <div className="mt-4 text-right">
-          <button onClick={handleUpload} className="btn-primary primary-gradient">Upload</button>
+          <button
+            type="button"
+            onClick={handleUpload}
+            disabled={isSubmitting}
+            className="btn-primary primary-gradient disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2 ml-auto"
+          >
+            {isSubmitting && (
+              <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8H4z" />
+              </svg>
+            )}
+            {isSubmitting ? 'Uploading…' : 'Upload'}
+          </button>
         </div>
       </div>
 
@@ -156,7 +260,7 @@ const AdminDocuments: React.FC = () => {
         ) : loadError ? (
           <div className="flex flex-col items-center py-12 gap-3">
             <p className="text-sm text-red-600">{loadError}</p>
-            <button onClick={load} className="btn-primary text-sm">Retry</button>
+            <button type="button" onClick={load} className="btn-primary text-sm">Retry</button>
           </div>
         ) : docs.length === 0 ? (
           <div className="flex flex-col items-center py-12 text-gray-400 gap-2">
@@ -170,13 +274,13 @@ const AdminDocuments: React.FC = () => {
               <div key={d.id} className="flex items-center justify-between border p-4 rounded-lg" style={{border: '1px solid var(--card-border)', background: 'var(--card-bg)'}}>
                 <div>
                   <div className="font-medium text-primary">{d.name}</div>
-                  <div className="text-sm muted-text">{d.category} • {d.subcategory} • {d.tags?.join(', ')}</div>
+                  <div className="text-sm muted-text">{d.category}{d.subcategory ? ` • ${d.subcategory}` : ''}{d.tags?.length ? ` • ${d.tags.join(', ')}` : ''}</div>
                   <div className="text-xs muted-text">{d.visibility}{d.organizationId ? ` • org:${d.organizationId}` : ''}{d.userId ? ` • user:${d.userId}` : ''}</div>
                 </div>
                 <div className="flex items-center gap-4">
                   {d.url && <a onClick={() => documentService.recordDownload(d.id)} href={d.url} target="_blank" rel="noreferrer" className="text-sm text-primary font-medium underline">Open</a>}
                   <div className="text-sm muted-text">{d.downloadCount || 0} downloads</div>
-                  <button onClick={() => handleDelete(d.id)} className="icon-action"><Trash className="w-4 h-4" /></button>
+                  <button type="button" onClick={() => handleDelete(d.id)} className="icon-action"><Trash className="w-4 h-4" /></button>
                 </div>
               </div>
             ))}

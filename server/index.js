@@ -16234,9 +16234,24 @@ app.post('/api/admin/documents', async (req, res) => {
   if (!context) return;
 
   const payload = req.body || {};
+  const requestId = req.requestId ?? null;
 
   if (!payload.name || !payload.category) {
-    res.status(400).json({ error: 'name and category are required' });
+    const missingFields = [];
+    if (!payload.name) missingFields.push('name');
+    if (!payload.category) missingFields.push('category');
+    logger.warn('[admin.documents.create] validation_failed', {
+      requestId,
+      orgId: payload.organization_id ?? payload.organizationId ?? null,
+      userId: context.userId,
+      reason: 'missing_required_fields',
+      missingFields,
+    });
+    res.status(400).json({
+      error: 'validation_failed',
+      message: `Missing required fields: ${missingFields.join(', ')}.`,
+      fields: Object.fromEntries(missingFields.map((f) => [f, `${f} is required`])),
+    });
     return;
   }
 
@@ -16247,6 +16262,11 @@ app.post('/api/admin/documents', async (req, res) => {
       const access = await requireOrgAccess(req, res, organizationId, { write: true });
       if (!access) return;
     } else if (!context.isPlatformAdmin) {
+      logger.warn('[admin.documents.create] org_scope_required', {
+        requestId,
+        userId: context.userId,
+        reason: 'no_organization_id_and_not_platform_admin',
+      });
       res.status(403).json({ error: 'organization_scope_required', message: 'Document must be assigned to an organization.' });
       return;
     }
@@ -16289,9 +16309,24 @@ app.post('/api/admin/documents', async (req, res) => {
       .single();
 
     if (error) throw error;
+
+    logger.info('[admin.documents.create] success', {
+      requestId,
+      orgId: organizationId,
+      userId: context.userId,
+      documentId: data.id,
+      name: data.name,
+      visibility: data.visibility,
+    });
+
     res.status(201).json({ data });
   } catch (error) {
-    console.error('Failed to create document:', error);
+    logger.error('[admin.documents.create] failed', {
+      requestId,
+      orgId: organizationId ?? null,
+      userId: context.userId,
+      error: error instanceof Error ? error.message : String(error),
+    });
     res.status(500).json({ error: 'Unable to create document' });
   }
 });

@@ -9,8 +9,13 @@ import { getDatabaseConnectionInfo } from '../db.js';
 import { extractTokenFromHeader } from '../utils/jwt.js';
 import { getActiveOrgFromRequest } from '../utils/authCookies.js';
 import { getUserMemberships, getMembershipDiagnostics } from '../utils/memberships.js';
-import { E2E_TEST_MODE, DEV_FALLBACK, demoAutoAuthEnabled } from '../config/runtimeFlags.js';
+import { E2E_TEST_MODE, DEV_FALLBACK, demoAutoAuthEnabled, NODE_ENV } from '../config/runtimeFlags.js';
 import { getPermissionsForRole, mergePermissions } from '../../shared/permissions/index.js';
+
+// Verbose per-request auth diagnostics are only emitted in non-production environments
+// to avoid flooding Railway logs with `membership_snapshot` / `resolved_org_context`
+// on every authenticated request.
+const AUTH_VERBOSE_LOGGING = NODE_ENV !== 'production' || process.env.AUTH_VERBOSE_LOGGING === 'true';
 
 const normalizeEmail = (value = '') => value.trim().toLowerCase();
 const PRIMARY_ADMIN_EMAIL = normalizeEmail(process.env.PRIMARY_ADMIN_EMAIL || 'mya@the-huddle.co');
@@ -529,19 +534,21 @@ export async function buildAuthContext(req, { optional = false } = {}) {
     diagnostics: membershipDiagnostics ?? null,
   };
   const supabaseHost = supabaseEnv?.urlHost ?? null;
-  const membershipSummaryLine = [
-    '[auth] membership_snapshot',
-    `userId=${supabaseUser.id}`,
-    `email=${supabaseUser.email ?? 'unknown'}`,
-    `membershipStatus=${membershipStatus}`,
-    `membershipCount=${effectiveMembershipCount ?? 'unknown'}`,
-    `orgIds=[${membershipOrgIds.join(',')}]`,
-    `requestedOrgId=${requestedOrgId ?? 'none'}`,
-    `activeOrgId=${activeOrgId ?? 'none'}`,
-    `supabaseHost=${supabaseHost ?? 'not-set'}`,
-    `dbHost=${databaseHostForLogs ?? 'not-set'}`,
-  ].join(' ');
-  console.info(membershipSummaryLine);
+  if (AUTH_VERBOSE_LOGGING) {
+    const membershipSummaryLine = [
+      '[auth] membership_snapshot',
+      `userId=${supabaseUser.id}`,
+      `email=${supabaseUser.email ?? 'unknown'}`,
+      `membershipStatus=${membershipStatus}`,
+      `membershipCount=${effectiveMembershipCount ?? 'unknown'}`,
+      `orgIds=[${membershipOrgIds.join(',')}]`,
+      `requestedOrgId=${requestedOrgId ?? 'none'}`,
+      `activeOrgId=${activeOrgId ?? 'none'}`,
+      `supabaseHost=${supabaseHost ?? 'not-set'}`,
+      `dbHost=${databaseHostForLogs ?? 'not-set'}`,
+    ].join(' ');
+    console.info(membershipSummaryLine);
+  }
 
   return {
     user: userPayload,
@@ -642,12 +649,14 @@ export function resolveOrganizationContext(req, res, next) {
 
   const resolvedOrgId = requestedOrgId || activeOrgId || (orgIds.length ? orgIds[0] : null);
 
-  console.info('[auth] resolved_org_context', {
-    userId: req.user?.id ?? req.user?.userId ?? null,
-    requestedOrgId: requestedOrgId ?? null,
-    activeOrgId: activeOrgId ?? null,
-    resolvedOrgId,
-  });
+  if (AUTH_VERBOSE_LOGGING) {
+    console.info('[auth] resolved_org_context', {
+      userId: req.user?.id ?? req.user?.userId ?? null,
+      requestedOrgId: requestedOrgId ?? null,
+      activeOrgId: activeOrgId ?? null,
+      resolvedOrgId,
+    });
+  }
 
   if (!resolvedOrgId) {
     return res.status(400).json({
