@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   ArrowLeft,
   RefreshCw,
@@ -10,6 +10,7 @@ import {
   CheckCircle,
   Brain,
   Activity,
+  Loader2,
 } from 'lucide-react';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import Skeleton from '../../components/ui/Skeleton';
@@ -22,6 +23,7 @@ import {
   SurveyAnalyticsDashboardView,
   buildSurveySummary,
 } from '../../components/Survey/SurveyAnalyticsDashboard';
+import { getSurveyById } from '../../dal/surveys';
 
 const RANGE_OPTIONS: { label: string; value: AnalyticsDateRange }[] = [
   { label: '7 days', value: 'last-7-days' },
@@ -38,8 +40,35 @@ const riskColor: Record<PredictionInsight['risk'], string> = {
 
 const AdminSurveyAnalytics = () => {
   const { surveyId } = useParams<{ surveyId: string }>();
+  const navigate = useNavigate();
   const [dateRange, setDateRange] = useState<AnalyticsDateRange>('last-30-days');
   const { data, loading, error, refresh, lastUpdated } = useAnalyticsDashboard({ dateRange });
+
+  const [surveyTitle, setSurveyTitle] = useState<string | null>(null);
+  const [surveyNotFound, setSurveyNotFound] = useState(false);
+  const [surveyTitleLoading, setSurveyTitleLoading] = useState(false);
+
+  useEffect(() => {
+    if (!surveyId) return;
+    setSurveyTitleLoading(true);
+    setSurveyNotFound(false);
+    getSurveyById(surveyId)
+      .then((survey) => {
+        if (!survey) {
+          setSurveyNotFound(true);
+        } else {
+          setSurveyTitle(survey.title || null);
+        }
+      })
+      .catch(() => setSurveyNotFound(true))
+      .finally(() => setSurveyTitleLoading(false));
+  }, [surveyId]);
+
+  const displayTitle = surveyTitle
+    ? surveyTitle
+    : surveyId
+    ? `Survey ${surveyId.slice(0, 8)}…`
+    : 'Survey Analytics';
 
   const summary = useMemo(() => buildSurveySummary(data), [data]);
   const riskPredictions = useMemo(() => data.predictions.slice(0, 6), [data.predictions]);
@@ -49,11 +78,67 @@ const AdminSurveyAnalytics = () => {
   );
   const prioritySkills = useMemo(() => data.skillGaps.slice(0, 4), [data.skillGaps]);
 
+  // Guard: invalid or missing surveyId
+  if (!surveyId) {
+    return (
+      <div className="container mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
+        <div className="flex flex-col items-center justify-center py-24 text-center">
+          <AlertTriangle className="h-12 w-12 text-orange-400 mb-4" />
+          <h2 className="text-2xl font-bold text-gray-900 mb-2">No Survey Selected</h2>
+          <p className="text-gray-600 mb-6">A valid survey ID is required to view analytics.</p>
+          <button
+            onClick={() => navigate('/admin/surveys')}
+            className="inline-flex items-center gap-2 px-5 py-2.5 bg-orange-500 text-white rounded-lg hover:bg-orange-600 font-medium"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Back to Surveys
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // Guard: survey not found
+  if (surveyNotFound) {
+    return (
+      <div className="container mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
+        <div className="flex flex-col items-center justify-center py-24 text-center">
+          <AlertTriangle className="h-12 w-12 text-red-400 mb-4" />
+          <h2 className="text-2xl font-bold text-gray-900 mb-2">Survey Not Found</h2>
+          <p className="text-gray-600 mb-6">
+            The survey with ID <code className="font-mono bg-gray-100 px-2 py-0.5 rounded">{surveyId.slice(0, 12)}…</code> could not be found.
+          </p>
+          <button
+            onClick={() => navigate('/admin/surveys')}
+            className="inline-flex items-center gap-2 px-5 py-2.5 bg-orange-500 text-white rounded-lg hover:bg-orange-600 font-medium"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Back to Surveys
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="container mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6 space-y-8">
       <div>
         <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Surveys', to: '/admin/surveys' }, { label: 'Analytics' }]} />
       </div>
+
+      {/* Analytics load error */}
+      {error && (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-5 py-4 flex items-start gap-3">
+          <AlertTriangle className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
+          <div>
+            <p className="text-sm font-semibold text-red-800">Analytics data failed to load</p>
+            <p className="text-sm text-red-600 mt-0.5">{String(error)}</p>
+          </div>
+          <button onClick={refresh} className="ml-auto text-sm text-red-600 hover:underline font-medium">
+            Retry
+          </button>
+        </div>
+      )}
 
       <div className="flex flex-col lg:flex-row lg:items-start lg:justify-between gap-6">
         <div>
@@ -64,7 +149,9 @@ const AdminSurveyAnalytics = () => {
             <ArrowLeft className="h-4 w-4 mr-2" />
             Back to Surveys
           </Link>
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">{surveyId ? `Survey ${surveyId}` : 'Survey Analytics'}</h1>
+          <h1 className="text-3xl font-bold text-gray-900 mb-2 flex items-center gap-3">
+            {surveyTitleLoading ? <Loader2 className="h-6 w-6 animate-spin text-gray-400" /> : displayTitle}
+          </h1>
           <p className="text-gray-600 max-w-2xl">
             Monitor real-time response volume, sentiment, and participation trends across every organization. All
             charts below reflect live data from the admin analytics API and auto-refresh when learners submit updates.

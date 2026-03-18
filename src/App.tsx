@@ -70,7 +70,9 @@ const AdminSurveys = lazy(() => import('./pages/Admin/AdminSurveys'));
 const AdminAnalytics = lazy(() => import('./pages/Admin/AdminAnalytics'));
 const AdminSurveyBuilder = lazy(() => import('./pages/Admin/AdminSurveyBuilder'));
 const AdminSurveyAnalytics = lazy(() => import('./pages/Admin/AdminSurveyAnalytics'));
+const AdminSurveyPreview = lazy(() => import('./pages/Admin/AdminSurveyPreview'));
 const AdminSurveysImport = lazy(() => import('./pages/Admin/AdminSurveysImport'));
+const AdminSurveysBulk = lazy(() => import('./pages/Admin/AdminSurveysBulk'));
 const AdminOrganizations = lazy(() => import('./pages/Admin/AdminOrganizations'));
 const AdminOrganizationProfile = lazy(() => import('./pages/Admin/AdminOrganizationProfile'));
 const AdminOrganizationCreate = lazy(() => import('./pages/Admin/AdminOrganizationNew'));
@@ -276,8 +278,12 @@ function AppContent() {
                   <Route path="course-builder/:courseId" element={<AdminCourseBuilder />} />
                   <Route path="surveys" element={<AdminSurveys />} />
                   <Route path="surveys/builder" element={<AdminSurveyBuilder />} />
+                  <Route path="surveys/builder/:surveyId" element={<AdminSurveyBuilder />} />
                   <Route path="surveys/analytics" element={<AdminSurveyAnalytics />} />
+                  <Route path="surveys/:surveyId/analytics" element={<AdminSurveyAnalytics />} />
+                  <Route path="surveys/:surveyId/preview" element={<AdminSurveyPreview />} />
                   <Route path="surveys/import" element={<AdminSurveysImport />} />
+                  <Route path="surveys/bulk" element={<AdminSurveysBulk />} />
                   <Route path="surveys/queue" element={<AdminQueueMonitor />} />
                   <Route path="organizations" element={<AdminOrganizations />} />
                   <Route path="organizations/new" element={<AdminOrganizationCreate />} />

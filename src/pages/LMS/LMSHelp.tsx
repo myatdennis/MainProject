@@ -201,7 +201,7 @@ const LMSHelp: React.FC = () => {
         // Implement chat widget opening
         break;
       case 'send-email':
-        window.location.href = 'mailto:support@inclusiveexcellence.com?subject=Learning Platform Support';
+        window.open('mailto:support@inclusiveexcellence.com?subject=Learning Platform Support');
         break;
       case 'schedule-call':
         showToast('Phone support is currently unavailable', 'info');

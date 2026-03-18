@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo, lazy } from 'react';
-import { useParams, useSearchParams, Link } from 'react-router-dom';
+import { useParams, useSearchParams, useNavigate, Link } from 'react-router-dom';
 import {
   ArrowLeft,
   Save,
@@ -133,8 +133,11 @@ const buildContextualQuestionTemplates = (orgContext: OrgProfileContext): AIQues
 const AdminSurveyBuilder = () => {
   const { surveyId } = useParams();
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const templateId = searchParams.get('template');
   const isAIMode = searchParams.get('ai') === '1';
+  /** When mode=preview the builder is rendered read-only with all editing disabled */
+  const isPreviewMode = searchParams.get('mode') === 'preview';
   
   const [survey, setSurvey] = useState<Survey | null>(null);
   const [activeSection, setActiveSection] = useState<string>('');
@@ -158,16 +161,6 @@ const AdminSurveyBuilder = () => {
   const aiQuestionTemplates = useMemo<AIQuestionTemplate[]>(
     () => (orgContext ? buildContextualQuestionTemplates(orgContext) : (aiGeneratedQuestions as AIQuestionTemplate[])),
     [orgContext],
-  );
-  const assignmentModalOrganizations = useMemo(
-    () =>
-      orgProfiles.map((org) => ({
-        id: org.id,
-        name: org.name,
-        type: org.type ?? 'Organization',
-        learners: org.metrics?.totalLearners ?? org.metrics?.activeLearners ?? 0,
-      })),
-    [orgProfiles],
   );
   const aiSuggestionsDisabled = !activeSection || !selectedOrg || orgContextLoading || !orgContext;
   const aiSuggestionHelperText = useMemo(() => {
@@ -641,6 +634,9 @@ const AdminSurveyBuilder = () => {
 
   // Autosave with debounce when survey changes
   useEffect(() => {
+    // Never autosave in preview mode
+    if (isPreviewMode) return;
+
     if (initialLoadRef.current) {
       // Skip autosave on initial load
       initialLoadRef.current = false;
@@ -690,6 +686,107 @@ const AdminSurveyBuilder = () => {
         return <CheckCircle className="h-5 w-5" />;
     }
   };
+
+  // ── Read-only question card used when isPreviewMode ──────────────────────────
+  const renderQuestionViewer = (question: SurveyQuestion, globalIndex: number) => (
+    <div className="bg-white border border-gray-200 rounded-lg p-5 mb-4 opacity-90">
+      <div className="flex items-start gap-3 mb-3">
+        <div className="bg-gray-100 p-2 rounded-lg flex-shrink-0">{getQuestionIcon(question.type)}</div>
+        <div className="flex-1">
+          <p className="font-medium text-gray-900">
+            {globalIndex + 1}. {question.title || 'Untitled question'}
+            {question.required && <span className="ml-1 text-red-500">*</span>}
+          </p>
+          {question.description && (
+            <p className="mt-0.5 text-sm text-gray-500">{question.description}</p>
+          )}
+        </div>
+        <span className="text-xs text-gray-400 capitalize border border-gray-200 rounded px-2 py-0.5">
+          {question.type.replace(/-/g, ' ')}
+        </span>
+      </div>
+
+      <div className="pl-11">
+        {(question.type === 'multiple-choice' || question.type === 'demographics') && (
+          <div className="space-y-2">
+            {(question.options ?? []).map((opt, i) => (
+              <label key={i} className="flex items-center gap-3 cursor-not-allowed opacity-70">
+                <input type={question.allowMultiple ? 'checkbox' : 'radio'} disabled className="h-4 w-4" />
+                <span className="text-sm text-gray-700">{opt}</span>
+              </label>
+            ))}
+            {question.allowOther && (
+              <label className="flex items-center gap-3 cursor-not-allowed opacity-70">
+                <input type={question.allowMultiple ? 'checkbox' : 'radio'} disabled className="h-4 w-4" />
+                <span className="text-sm text-gray-700 italic">Other (please specify)</span>
+              </label>
+            )}
+            {(question.options ?? []).length === 0 && (
+              <p className="text-sm italic text-gray-400">No options configured.</p>
+            )}
+          </div>
+        )}
+
+        {question.type === 'likert-scale' && question.scale && (
+          <div className="flex gap-3 flex-wrap">
+            {Array.from(
+              { length: (question.scale.max ?? 5) - (question.scale.min ?? 1) + 1 },
+              (_, i) => (question.scale?.min ?? 1) + i,
+            ).map((val) => (
+              <label key={val} className="flex flex-col items-center gap-1 cursor-not-allowed opacity-70">
+                <input type="radio" disabled className="h-4 w-4" />
+                <span className="text-xs text-gray-600">{val}</span>
+              </label>
+            ))}
+          </div>
+        )}
+
+        {question.type === 'ranking' && (
+          <div className="space-y-2">
+            {(question.rankingItems ?? []).map((item, i) => (
+              <div key={i} className="flex items-center gap-2 rounded border border-gray-200 bg-gray-50 px-3 py-1.5 opacity-70">
+                <span className="flex h-5 w-5 items-center justify-center rounded-full bg-gray-200 text-xs font-semibold text-gray-600">{i + 1}</span>
+                <span className="text-sm text-gray-700">{item}</span>
+              </div>
+            ))}
+            {(question.rankingItems ?? []).length === 0 && <p className="text-sm italic text-gray-400">No items configured.</p>}
+          </div>
+        )}
+
+        {question.type === 'open-ended' && (
+          <textarea disabled placeholder="Learner response here…" rows={2}
+            className="w-full rounded border border-gray-200 bg-gray-50 px-3 py-2 text-sm text-gray-400 cursor-not-allowed resize-none" />
+        )}
+
+        {question.type === 'matrix' && question.matrixRows && question.matrixColumns && (
+          <div className="overflow-x-auto opacity-70">
+            <table className="w-full text-sm border-collapse">
+              <thead>
+                <tr>
+                  <th className="text-left py-1 pr-4 font-medium text-gray-600 w-1/3"></th>
+                  {question.matrixColumns.map((col, i) => (
+                    <th key={i} className="py-1 px-3 font-medium text-gray-600 text-center">{col}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {question.matrixRows.map((row, ri) => (
+                  <tr key={ri} className="border-t border-gray-100">
+                    <td className="py-1 pr-4 text-gray-700">{row}</td>
+                    {question.matrixColumns!.map((_, ci) => (
+                      <td key={ci} className="py-1 px-3 text-center">
+                        <input type="radio" disabled className="h-4 w-4" />
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
 
   const renderQuestionEditor = (question: SurveyQuestion, sectionId: string) => {
     return (
@@ -1194,6 +1291,23 @@ const AdminSurveyBuilder = () => {
 
   return (
     <div className="p-6 max-w-7xl mx-auto">
+      {/* Preview Mode Banner */}
+      {isPreviewMode && (
+        <div className="mb-6 flex items-center justify-between rounded-xl border border-orange-200 bg-orange-50 px-4 py-3">
+          <div className="flex items-center gap-2 text-orange-700">
+            <Eye className="h-4 w-4 flex-shrink-0" />
+            <span className="text-sm font-semibold">Preview Mode</span>
+            <span className="text-sm text-orange-600">— All editing is disabled. Changes will not be saved.</span>
+          </div>
+          <button
+            onClick={() => navigate(`/admin/surveys/builder/${survey.id}`)}
+            className="text-sm font-medium text-orange-600 hover:text-orange-700 underline"
+          >
+            Switch to Edit Mode →
+          </button>
+        </div>
+      )}
+
       {/* Header */}
       <div className="mb-8">
         <Link 
@@ -1210,8 +1324,9 @@ const AdminSurveyBuilder = () => {
               <input
                 type="text"
                 value={survey.title}
-                onChange={(e) => setSurvey(prev => prev ? { ...prev, title: e.target.value, updatedAt: new Date().toISOString() } : null)}
-                className="text-3xl font-bold text-gray-900 bg-transparent border-none outline-none focus:ring-2 focus:ring-orange-500 rounded px-2 py-1"
+                onChange={(e) => !isPreviewMode && setSurvey(prev => prev ? { ...prev, title: e.target.value, updatedAt: new Date().toISOString() } : null)}
+                readOnly={isPreviewMode}
+                className={`text-3xl font-bold text-gray-900 bg-transparent border-none outline-none rounded px-2 py-1 ${isPreviewMode ? 'cursor-default select-none' : 'focus:ring-2 focus:ring-orange-500'}`}
                 placeholder="Survey Title"
               />
               {isAIMode && (
@@ -1223,195 +1338,203 @@ const AdminSurveyBuilder = () => {
             </div>
             <textarea
               value={survey.description}
-              onChange={(e) => setSurvey(prev => prev ? { ...prev, description: e.target.value, updatedAt: new Date().toISOString() } : null)}
-              className="text-gray-600 bg-transparent border-none outline-none focus:ring-2 focus:ring-orange-500 rounded px-2 py-1 resize-none"
+              onChange={(e) => !isPreviewMode && setSurvey(prev => prev ? { ...prev, description: e.target.value, updatedAt: new Date().toISOString() } : null)}
+              readOnly={isPreviewMode}
+              className={`text-gray-600 bg-transparent border-none outline-none rounded px-2 py-1 resize-none ${isPreviewMode ? 'cursor-default select-none' : 'focus:ring-2 focus:ring-orange-500'}`}
               placeholder="Survey description"
               rows={2}
             />
           </div>
           
           <div className="flex items-center space-x-3">
-            <button
-              onClick={() => setShowBranding(!showBranding)}
-              className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2"
-            >
-              <Palette className="h-4 w-4" />
-              <span>Branding</span>
-            </button>
-            <button
-              onClick={() => setShowAssignModal(true)}
-              className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2"
-            >
-              <Building2 className="h-4 w-4" />
-              <span>Assign Survey</span>
-            </button>
-            <button
-              onClick={() => setShowSettings(!showSettings)}
-              className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2"
-            >
-              <Settings className="h-4 w-4" />
-              <span>Settings</span>
-            </button>
-            <button
-              onClick={() => window.open(`/admin/surveys/${survey.id}/preview`, '_blank')}
-              className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2"
-            >
-              <Eye className="h-4 w-4" />
-              <span>Preview</span>
-            </button>
-            <button
-              onClick={() => {
-                try {
-                  const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(survey, null, 2));
-                  const dlAnchor = document.createElement('a');
-                  dlAnchor.setAttribute('href', dataStr);
-                  dlAnchor.setAttribute('download', `${survey.title.replace(/\s+/g, '_').toLowerCase() || 'survey'}.json`);
-                  document.body.appendChild(dlAnchor);
-                  dlAnchor.click();
-                  dlAnchor.remove();
-                } catch (err) {
-                  console.warn('Export failed', err);
-                }
-              }}
-              className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2"
-            >
-              <BarChart3 className="h-4 w-4" />
-              <span>Export</span>
-            </button>
-            <button
-              onClick={saveSurvey}
-              disabled={isSaving}
-              className="bg-orange-500 text-white px-6 py-2 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-2 disabled:opacity-50"
-            >
-              <Save className="h-4 w-4" />
-              <span>{isSaving ? 'Saving...' : 'Save'}</span>
-            </button>
-            <div className="ml-2 flex flex-col gap-1 text-xs text-gray-500">
-              <span>{lastSavedAt ? `Last saved ${lastSavedAt}` : 'Not saved yet'}</span>
-              <SurveyQueueStatus variant="inline" showFlushButton={false} />
-            </div>
+            {!isPreviewMode && (
+              <>
+                <button
+                  onClick={() => setShowBranding(!showBranding)}
+                  className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2"
+                >
+                  <Palette className="h-4 w-4" />
+                  <span>Branding</span>
+                </button>
+                <button
+                  onClick={() => setShowAssignModal(true)}
+                  className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2"
+                >
+                  <Building2 className="h-4 w-4" />
+                  <span>Assign Survey</span>
+                </button>
+                <button
+                  onClick={() => setShowSettings(!showSettings)}
+                  className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2"
+                >
+                  <Settings className="h-4 w-4" />
+                  <span>Settings</span>
+                </button>
+                <button
+                  onClick={() => window.open(`/admin/surveys/${survey.id}/preview`, '_blank')}
+                  className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2"
+                >
+                  <Eye className="h-4 w-4" />
+                  <span>Preview</span>
+                </button>
+                <button
+                  onClick={() => {
+                    try {
+                      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(survey, null, 2));
+                      const dlAnchor = document.createElement('a');
+                      dlAnchor.setAttribute('href', dataStr);
+                      dlAnchor.setAttribute('download', `${survey.title.replace(/\s+/g, '_').toLowerCase() || 'survey'}.json`);
+                      document.body.appendChild(dlAnchor);
+                      dlAnchor.click();
+                      dlAnchor.remove();
+                    } catch (err) {
+                      console.warn('Export failed', err);
+                    }
+                  }}
+                  className="border border-gray-300 px-4 py-2 rounded-lg hover:bg-gray-50 transition-colors duration-200 flex items-center space-x-2"
+                >
+                  <BarChart3 className="h-4 w-4" />
+                  <span>Export</span>
+                </button>
+                <button
+                  onClick={saveSurvey}
+                  disabled={isSaving}
+                  className="bg-orange-500 text-white px-6 py-2 rounded-lg hover:bg-orange-600 transition-colors duration-200 flex items-center space-x-2 disabled:opacity-50"
+                >
+                  <Save className="h-4 w-4" />
+                  <span>{isSaving ? 'Saving...' : 'Save'}</span>
+                </button>
+                <div className="ml-2 flex flex-col gap-1 text-xs text-gray-500">
+                  <span>{lastSavedAt ? `Last saved ${lastSavedAt}` : 'Not saved yet'}</span>
+                  <SurveyQueueStatus variant="inline" showFlushButton={false} />
+                </div>
+              </>
+            )}
           </div>
         </div>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
-        <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-          <div>
-            <h2 className="text-xl font-semibold text-gray-900">Organization Context for AI</h2>
-            <p className="text-gray-600 text-sm mt-1">
-              We personalize AI question suggestions using the selected organization's mission, tone, languages, and DEI focus.
-            </p>
-          </div>
-          <div className="flex items-center gap-3">
-            {orgContext?.context?.updatedAt && (
-              <div className="text-xs text-gray-500">
-                Last updated {new Date(orgContext.context.updatedAt).toLocaleString()}
-              </div>
-            )}
-            <button
-              onClick={refreshOrgContext}
-              disabled={!selectedOrgId || orgContextLoading}
-              className="inline-flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
-            >
-              {orgContextLoading ? <Loader2 className="h-4 w-4 animate-spin text-orange-500" /> : <RefreshCcw className="h-4 w-4 text-gray-600" />}
-              <span>{orgContextLoading ? 'Refreshing...' : 'Refresh Context'}</span>
-            </button>
-          </div>
-        </div>
-
-        <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Target Organization</label>
-            {orgProfilesLoading ? (
-              <div className="h-11 flex items-center text-sm text-gray-500">
-                <Loader2 className="h-4 w-4 animate-spin mr-2 text-orange-500" /> Loading organizations...
-              </div>
-            ) : (
-              <select
-                value={selectedOrgId}
-                onChange={(e) => handleOrgChange(e.target.value)}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
-                disabled={orgProfiles.length === 0}
-              >
-                <option value="">Select an organization</option>
-                {orgProfiles.map((org) => (
-                  <option key={org.id} value={org.id}>
-                    {org.name}
-                  </option>
-                ))}
-              </select>
-            )}
-            {orgProfilesError && <p className="text-sm text-red-600 mt-2">{orgProfilesError}</p>}
-            {!orgProfilesLoading && orgProfiles.length === 0 && (
-              <p className="text-sm text-gray-500 mt-2">
-                No organizations yet. <Link to="/admin/organizations" className="text-orange-600 hover:text-orange-700 underline">Add one</Link> to unlock AI context.
+      {!isPreviewMode && (
+        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-8">
+          <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+            <div>
+              <h2 className="text-xl font-semibold text-gray-900">Organization Context for AI</h2>
+              <p className="text-gray-600 text-sm mt-1">
+                We personalize AI question suggestions using the selected organization's mission, tone, languages, and DEI focus.
               </p>
-            )}
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Context Status</label>
-            <div className="flex items-center gap-2 text-sm text-gray-700">
-              {orgContextLoading ? <Loader2 className="h-4 w-4 animate-spin text-orange-500" /> : <CheckCircle className={`h-4 w-4 ${orgContext ? 'text-green-500' : 'text-gray-400'}`} />}
-              <span>
-                {orgContextLoading && 'Refreshing context...'}
-                {!orgContextLoading && orgContext && `Ready (${orgContext.context.source === 'cached' ? 'Stored summary' : 'Live data'})`}
-                {!orgContextLoading && !orgContext && 'Context not available yet'}
-              </span>
             </div>
-            {orgContextError && <p className="text-sm text-red-600 mt-2">{orgContextError}</p>}
-          </div>
-        </div>
-
-        {orgContext?.context?.summary && (
-          <p className="mt-4 text-sm text-gray-600 whitespace-pre-line border-l-2 border-orange-200 pl-4">
-            {orgContext.context.summary}
-          </p>
-        )}
-
-        {orgContext && (
-          <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="p-4 border border-gray-200 rounded-lg bg-gray-50">
-              <p className="text-xs uppercase text-gray-500 mb-2">Mission & Vision</p>
-              <p className="text-sm text-gray-900">{orgContext.context.mission || 'No mission captured yet.'}</p>
-              {orgContext.context.vision && <p className="text-xs text-gray-600 mt-2">{orgContext.context.vision}</p>}
+            <div className="flex items-center gap-3">
+              {orgContext?.context?.updatedAt && (
+                <div className="text-xs text-gray-500">
+                  Last updated {new Date(orgContext.context.updatedAt).toLocaleString()}
+                </div>
+              )}
+              <button
+                onClick={refreshOrgContext}
+                disabled={!selectedOrgId || orgContextLoading}
+                className="inline-flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
+              >
+                {orgContextLoading ? <Loader2 className="h-4 w-4 animate-spin text-orange-500" /> : <RefreshCcw className="h-4 w-4 text-gray-600" />}
+                <span>{orgContextLoading ? 'Refreshing...' : 'Refresh Context'}</span>
+              </button>
             </div>
-            <div className="p-4 border border-gray-200 rounded-lg bg-gray-50">
-              <p className="text-xs uppercase text-gray-500 mb-2">DEI Priorities</p>
-              {orgContext.context.deiPriorities?.length ? (
-                <div className="flex flex-wrap gap-2">
-                  {orgContext.context.deiPriorities.slice(0, 4).map((priority) => (
-                    <span key={priority} className="px-2 py-1 bg-purple-100 text-purple-700 rounded-full text-xs font-medium">
-                      {priority}
+          </div>
+
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Target Organization</label>
+              {orgProfilesLoading ? (
+                <div className="h-11 flex items-center text-sm text-gray-500">
+                  <Loader2 className="h-4 w-4 animate-spin mr-2 text-orange-500" /> Loading organizations...
+                </div>
+              ) : (
+                <select
+                  value={selectedOrgId}
+                  onChange={(e) => handleOrgChange(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                  disabled={orgProfiles.length === 0}
+                >
+                  <option value="">Select an organization</option>
+                  {orgProfiles.map((org) => (
+                    <option key={org.id} value={org.id}>
+                      {org.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+              {orgProfilesError && <p className="text-sm text-red-600 mt-2">{orgProfilesError}</p>}
+              {!orgProfilesLoading && orgProfiles.length === 0 && (
+                <p className="text-sm text-gray-500 mt-2">
+                  No organizations yet. <Link to="/admin/organizations" className="text-orange-600 hover:text-orange-700 underline">Add one</Link> to unlock AI context.
+                </p>
+              )}
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Context Status</label>
+              <div className="flex items-center gap-2 text-sm text-gray-700">
+                {orgContextLoading ? <Loader2 className="h-4 w-4 animate-spin text-orange-500" /> : <CheckCircle className={`h-4 w-4 ${orgContext ? 'text-green-500' : 'text-gray-400'}`} />}
+                <span>
+                  {orgContextLoading && 'Refreshing context...'}
+                  {!orgContextLoading && orgContext && `Ready (${orgContext.context.source === 'cached' ? 'Stored summary' : 'Live data'})`}
+                  {!orgContextLoading && !orgContext && 'Context not available yet'}
+                </span>
+              </div>
+              {orgContextError && <p className="text-sm text-red-600 mt-2">{orgContextError}</p>}
+            </div>
+          </div>
+
+          {orgContext?.context?.summary && (
+            <p className="mt-4 text-sm text-gray-600 whitespace-pre-line border-l-2 border-orange-200 pl-4">
+              {orgContext.context.summary}
+            </p>
+          )}
+
+          {orgContext && (
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="p-4 border border-gray-200 rounded-lg bg-gray-50">
+                <p className="text-xs uppercase text-gray-500 mb-2">Mission & Vision</p>
+                <p className="text-sm text-gray-900">{orgContext.context.mission || 'No mission captured yet.'}</p>
+                {orgContext.context.vision && <p className="text-xs text-gray-600 mt-2">{orgContext.context.vision}</p>}
+              </div>
+              <div className="p-4 border border-gray-200 rounded-lg bg-gray-50">
+                <p className="text-xs uppercase text-gray-500 mb-2">DEI Priorities</p>
+                {orgContext.context.deiPriorities?.length ? (
+                  <div className="flex flex-wrap gap-2">
+                    {orgContext.context.deiPriorities.slice(0, 4).map((priority) => (
+                      <span key={priority} className="px-2 py-1 bg-purple-100 text-purple-700 rounded-full text-xs font-medium">
+                        {priority}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-gray-500">No priorities documented.</p>
+                )}
+                {orgContext.context.coreValues?.length ? (
+                  <p className="text-xs text-gray-600 mt-3">
+                    Values: {orgContext.context.coreValues.slice(0, 3).join(', ')}
+                  </p>
+                ) : null}
+              </div>
+              <div className="p-4 border border-gray-200 rounded-lg bg-gray-50">
+                <p className="text-xs uppercase text-gray-500 mb-2">Tone & Languages</p>
+                <p className="text-sm text-gray-900">{orgContext.context.toneGuidelines || 'Set tone guidance to help AI copy.'}</p>
+                <div className="flex flex-wrap gap-2 mt-3">
+                  {(orgContext.context.preferredLanguages?.length ? orgContext.context.preferredLanguages : ['English']).slice(0, 4).map((lang) => (
+                    <span key={lang} className="px-2 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-medium">
+                      {lang}
                     </span>
                   ))}
                 </div>
-              ) : (
-                <p className="text-sm text-gray-500">No priorities documented.</p>
-              )}
-              {orgContext.context.coreValues?.length ? (
-                <p className="text-xs text-gray-600 mt-3">
-                  Values: {orgContext.context.coreValues.slice(0, 3).join(', ')}
-                </p>
-              ) : null}
-            </div>
-            <div className="p-4 border border-gray-200 rounded-lg bg-gray-50">
-              <p className="text-xs uppercase text-gray-500 mb-2">Tone & Languages</p>
-              <p className="text-sm text-gray-900">{orgContext.context.toneGuidelines || 'Set tone guidance to help AI copy.'}</p>
-              <div className="flex flex-wrap gap-2 mt-3">
-                {(orgContext.context.preferredLanguages?.length ? orgContext.context.preferredLanguages : ['English']).slice(0, 4).map((lang) => (
-                  <span key={lang} className="px-2 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-medium">
-                    {lang}
-                  </span>
-                ))}
               </div>
             </div>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
         {/* Question Types Palette */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
+        {!isPreviewMode && (
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
           <h3 className="text-lg font-bold text-gray-900 mb-4">Question Types</h3>
           <div className="space-y-3">
             {questionTypes.map((type) => (
@@ -1510,9 +1633,10 @@ const AdminSurveyBuilder = () => {
             )}
           </div>
         </div>
+        )}
 
         {/* Main Builder Area */}
-        <div className="lg:col-span-3 space-y-6">
+        <div className={isPreviewMode ? 'lg:col-span-4 space-y-6' : 'lg:col-span-3 space-y-6'}>
           {/* Sections */}
           <div className="space-y-4">
             {survey.sections.map((section) => (
@@ -1522,26 +1646,28 @@ const AdminSurveyBuilder = () => {
                     <input
                       type="text"
                       value={section.title}
-                      onChange={(e) => setSurvey(prev => prev ? {
+                      onChange={(e) => !isPreviewMode && setSurvey(prev => prev ? {
                         ...prev,
                         sections: prev.sections.map(s => 
                           s.id === section.id ? { ...s, title: e.target.value } : s
                         ),
                         updatedAt: new Date().toISOString()
                       } : null)}
-                      className="text-xl font-bold text-gray-900 bg-transparent border-none outline-none focus:ring-2 focus:ring-orange-500 rounded px-2 py-1"
+                      readOnly={isPreviewMode}
+                      className={`text-xl font-bold text-gray-900 bg-transparent border-none outline-none rounded px-2 py-1 ${isPreviewMode ? 'cursor-default' : 'focus:ring-2 focus:ring-orange-500'}`}
                       placeholder="Section title"
                     />
                     <textarea
                       value={section.description || ''}
-                      onChange={(e) => setSurvey(prev => prev ? {
+                      onChange={(e) => !isPreviewMode && setSurvey(prev => prev ? {
                         ...prev,
                         sections: prev.sections.map(s => 
                           s.id === section.id ? { ...s, description: e.target.value } : s
                         ),
                         updatedAt: new Date().toISOString()
                       } : null)}
-                      className="text-gray-600 bg-transparent border-none outline-none focus:ring-2 focus:ring-orange-500 rounded px-2 py-1 resize-none w-full"
+                      readOnly={isPreviewMode}
+                      className={`text-gray-600 bg-transparent border-none outline-none rounded px-2 py-1 resize-none w-full ${isPreviewMode ? 'cursor-default' : 'focus:ring-2 focus:ring-orange-500'}`}
                       placeholder="Section description"
                       rows={1}
                     />
@@ -1553,20 +1679,30 @@ const AdminSurveyBuilder = () => {
                     >
                       {activeSection === section.id ? <ChevronUp className="h-5 w-5" /> : <ChevronDown className="h-5 w-5" />}
                     </button>
-                    <button className="p-2 text-red-600 hover:text-red-800">
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                    {!isPreviewMode && (
+                      <button className="p-2 text-red-600 hover:text-red-800">
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
                   </div>
                 </div>
 
                 {activeSection === section.id && (
                   <div className="space-y-4">
-                    {section.questions.map((question) => renderQuestionEditor(question, section.id))}
+                    {section.questions.map((question, qIdx) =>
+                      isPreviewMode
+                        ? renderQuestionViewer(question, qIdx)
+                        : renderQuestionEditor(question, section.id)
+                    )}
                     
                     {section.questions.length === 0 && (
                       <div className="text-center py-8 border-2 border-dashed border-gray-300 rounded-lg">
                         <MessageSquare className="h-8 w-8 text-gray-400 mx-auto mb-2" />
-                        <p className="text-gray-500">No questions yet. Select a question type from the left to get started.</p>
+                        <p className="text-gray-500">
+                          {isPreviewMode
+                            ? 'This section has no questions.'
+                            : 'No questions yet. Select a question type from the left to get started.'}
+                        </p>
                       </div>
                     )}
                   </div>
@@ -1574,13 +1710,15 @@ const AdminSurveyBuilder = () => {
               </div>
             ))}
 
-            <button
-              onClick={addSection}
-              className="w-full border-2 border-dashed border-gray-300 rounded-xl p-6 text-center hover:border-orange-500 hover:bg-orange-50 transition-colors duration-200"
-            >
-              <Plus className="h-6 w-6 text-gray-400 mx-auto mb-2" />
-              <span className="text-gray-600 font-medium">Add Section</span>
-            </button>
+            {!isPreviewMode && (
+              <button
+                onClick={addSection}
+                className="w-full border-2 border-dashed border-gray-300 rounded-xl p-6 text-center hover:border-orange-500 hover:bg-orange-50 transition-colors duration-200"
+              >
+                <Plus className="h-6 w-6 text-gray-400 mx-auto mb-2" />
+                <span className="text-gray-600 font-medium">Add Section</span>
+              </button>
+            )}
           </div>
 
           {/* Reflection Prompts */}
@@ -1596,33 +1734,39 @@ const AdminSurveyBuilder = () => {
                     type="text"
                     value={prompt}
                     onChange={(e) => {
+                      if (isPreviewMode) return;
                       const newPrompts = [...(survey.reflectionPrompts || [])];
                       newPrompts[index] = e.target.value;
                       setSurvey(prev => prev ? { ...prev, reflectionPrompts: newPrompts, updatedAt: new Date().toISOString() } : null);
                     }}
-                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent text-sm"
+                    readOnly={isPreviewMode}
+                    className={`flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm ${isPreviewMode ? 'cursor-default bg-gray-50' : 'focus:ring-2 focus:ring-orange-500 focus:border-transparent'}`}
                     placeholder="Reflection prompt"
                   />
-                  <button
-                    onClick={() => {
-                      const newPrompts = (survey.reflectionPrompts || []).filter((_, i) => i !== index);
-                      setSurvey(prev => prev ? { ...prev, reflectionPrompts: newPrompts, updatedAt: new Date().toISOString() } : null);
-                    }}
-                    className="p-2 text-red-600 hover:text-red-800"
-                  >
-                    <Trash2 className="h-4 w-4" />
-                  </button>
+                  {!isPreviewMode && (
+                    <button
+                      onClick={() => {
+                        const newPrompts = (survey.reflectionPrompts || []).filter((_, i) => i !== index);
+                        setSurvey(prev => prev ? { ...prev, reflectionPrompts: newPrompts, updatedAt: new Date().toISOString() } : null);
+                      }}
+                      className="p-2 text-red-600 hover:text-red-800"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  )}
                 </div>
               ))}
-              <button
-                onClick={() => {
-                  const newPrompts = [...(survey.reflectionPrompts || []), 'New reflection prompt'];
-                  setSurvey(prev => prev ? { ...prev, reflectionPrompts: newPrompts, updatedAt: new Date().toISOString() } : null);
-                }}
-                className="text-orange-500 hover:text-orange-600 text-sm font-medium"
-              >
-                + Add Reflection Prompt
-              </button>
+              {!isPreviewMode && (
+                <button
+                  onClick={() => {
+                    const newPrompts = [...(survey.reflectionPrompts || []), 'New reflection prompt'];
+                    setSurvey(prev => prev ? { ...prev, reflectionPrompts: newPrompts, updatedAt: new Date().toISOString() } : null);
+                  }}
+                  className="text-orange-500 hover:text-orange-600 text-sm font-medium"
+                >
+                  + Add Reflection Prompt
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -1691,15 +1835,10 @@ const AdminSurveyBuilder = () => {
           <AssignmentModal
             isOpen={showAssignModal}
             onClose={() => setShowAssignModal(false)}
-            organizations={assignmentModalOrganizations}
-            selectedOrganizations={survey?.assignedTo?.organizationIds || []}
-            onSave={async (organizationIds: any) => {
-              if (!survey) return;
-              setSurvey(prev => prev ? {
-                ...prev,
-                assignedTo: { ...prev.assignedTo, organizationIds },
-                updatedAt: new Date().toISOString()
-              } : null);
+            surveyId={survey.id}
+            surveyTitle={survey.title || 'Untitled Survey'}
+            initialOrganizationIds={survey?.assignedTo?.organizationIds ?? []}
+            onAssigned={async () => {
               await saveSurvey();
             }}
           />

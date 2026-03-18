@@ -39,8 +39,12 @@ export async function request<T = any>(url: string, options: RequestOptions = {}
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), config.timeouts.requestMs);
     try {
-      // apiRequest already throws on non-ok; it also handles auth headers and transforms
-      const json = await apiRequest<T>(url, { ...options, signal: controller.signal });
+      // apiRequest already throws on non-ok; it also handles auth headers and transforms.
+      // RequestOptions extends the broad RequestInit type whose `method` and `headers`
+      // fields are wider than apiRequest's narrower ApiRequestOptions union types.
+      // We cast at this boundary — runtime behaviour is identical.
+      type AnyFn = (...args: any[]) => Promise<T>;
+      const json = await (apiRequest as unknown as AnyFn)(url, { ...options, signal: controller.signal });
       return json as T;
     } catch (err: any) {
       const status = typeof err?.status === 'number' ? err.status : undefined;
