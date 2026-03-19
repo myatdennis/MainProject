@@ -547,7 +547,11 @@ export async function buildAuthContext(req, { optional = false } = {}) {
       `supabaseHost=${supabaseHost ?? 'not-set'}`,
       `dbHost=${databaseHostForLogs ?? 'not-set'}`,
     ].join(' ');
-    console.info(membershipSummaryLine);
+    // Demote to debug in production — this fires on every authenticated request and
+    // creates Railway log noise with no actionable signal when things are working.
+    if (process.env.NODE_ENV !== 'production') {
+      console.debug(membershipSummaryLine);
+    }
   }
 
   return {

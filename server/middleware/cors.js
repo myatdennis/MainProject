@@ -72,12 +72,15 @@ const isAllowedOrigin = (origin) => resolveCorsOriginDecision(origin);
 
 const logOriginDecision = (origin, decision) => {
   if (!origin) return;
-  const logger = (decision.allowed ? console.debug : console.warn).bind(console);
-  logger('[cors] origin_check', {
-    origin,
-    allowed: decision.allowed,
-    reason: decision.reason,
-  });
+  // In production, skip logging allowed origins entirely — they are the overwhelmingly common
+  // case and produce nothing actionable. Only log denials (potential mis-config or attacks).
+  if (decision.allowed) {
+    if (process.env.NODE_ENV !== 'production') {
+      console.debug('[cors] origin_check', { origin, allowed: true, reason: decision.reason });
+    }
+    return;
+  }
+  console.warn('[cors] origin_denied', { origin, reason: decision.reason });
 };
 
 const isHealthRequest = (req) => {

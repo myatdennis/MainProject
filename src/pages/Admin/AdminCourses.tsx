@@ -84,7 +84,9 @@ const AdminCourses = () => {
   useEffect(() => {
     setCatalogState(courseStore.getAdminCatalogState());
     const unsubscribe = courseStore.subscribe(() => {
+      // Bump version on every store change so the courses memo re-derives.
       setCatalogState(courseStore.getAdminCatalogState());
+      setVersion((v) => v + 1);
     });
     return unsubscribe;
   }, []);

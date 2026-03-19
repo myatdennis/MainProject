@@ -1864,9 +1864,11 @@ app.use((req, res, next) => {
     const path = req.originalUrl || req.path || '/';
     const isHealthCheck = path === '/api/health' || path === '/health' || path.startsWith('/api/health/');
     const statusCode = res.statusCode;
-    // Health checks: only log at info level when unhealthy (non-2xx) to reduce Railway log noise.
-    // Successful health probes are logged at debug to keep them visible for debugging but quiet in production.
-    const logFn = isHealthCheck && statusCode >= 200 && statusCode < 300
+    // In production, 2xx/3xx responses generate enormous volume with no actionable signal.
+    // Log them at debug (invisible in Railway unless LOG_LEVEL=debug) and promote only
+    // 4xx/5xx to info so failures are always visible.  Health-check 2xx stay at debug too.
+    const isSuccess = statusCode >= 200 && statusCode < 400;
+    const logFn = isSuccess || isHealthCheck
       ? logger.debug.bind(logger)
       : logger.info.bind(logger);
     logFn('http_request_completed', {
@@ -3378,6 +3380,49 @@ const hasAssignmentPayload = (payload = {}) =>
   Object.prototype.hasOwnProperty.call(payload, 'departmentIds') ||
   Object.prototype.hasOwnProperty.call(payload, 'department_ids');
 
+// Runtime column support flags for the surveys table.
+// When a Supabase upsert/update returns a missing-column error for a column that
+// was added after the initial schema was deployed, we flip the flag off so
+// subsequent writes omit that column until a migration adds it.
+const surveyColumnSupport = {
+  blocks: true,
+  defaultLanguage: true,
+  supportedLanguages: true,
+  completionSettings: true,
+  reflectionPrompts: true,
+};
+
+const maybeHandleSurveyColumnError = (error) => {
+  const missingColumn = normalizeColumnIdentifier(extractMissingColumnName(error));
+  if (!missingColumn) return false;
+  if (missingColumn === 'blocks' && surveyColumnSupport.blocks) {
+    surveyColumnSupport.blocks = false;
+    logger.warn('surveys_blocks_column_missing', { code: error?.code ?? null });
+    return true;
+  }
+  if (missingColumn === 'default_language' && surveyColumnSupport.defaultLanguage) {
+    surveyColumnSupport.defaultLanguage = false;
+    logger.warn('surveys_default_language_column_missing', { code: error?.code ?? null });
+    return true;
+  }
+  if (missingColumn === 'supported_languages' && surveyColumnSupport.supportedLanguages) {
+    surveyColumnSupport.supportedLanguages = false;
+    logger.warn('surveys_supported_languages_column_missing', { code: error?.code ?? null });
+    return true;
+  }
+  if (missingColumn === 'completion_settings' && surveyColumnSupport.completionSettings) {
+    surveyColumnSupport.completionSettings = false;
+    logger.warn('surveys_completion_settings_column_missing', { code: error?.code ?? null });
+    return true;
+  }
+  if (missingColumn === 'reflection_prompts' && surveyColumnSupport.reflectionPrompts) {
+    surveyColumnSupport.reflectionPrompts = false;
+    logger.warn('surveys_reflection_prompts_column_missing', { code: error?.code ?? null });
+    return true;
+  }
+  return false;
+};
+
 const buildSurveyPersistencePayload = (payload = {}) => {
   const shaped = {
     id: payload.id ?? undefined,
@@ -3386,15 +3431,30 @@ const buildSurveyPersistencePayload = (payload = {}) => {
     type: payload.type ?? null,
     status: payload.status ?? 'draft',
     sections: payload.sections ?? [],
-    blocks: payload.blocks ?? [],
     branding: payload.branding ?? {},
     settings: payload.settings ?? {},
-    default_language: payload.defaultLanguage ?? payload.default_language ?? 'en',
-    supported_languages: payload.supportedLanguages ?? payload.supported_languages ?? ['en'],
-    completion_settings: payload.completionSettings ?? payload.completion_settings ?? buildDefaultSurveyCompletionSettings(),
-    reflection_prompts: payload.reflectionPrompts ?? payload.reflection_prompts ?? [],
     updated_at: new Date().toISOString(),
   };
+
+  // Only include columns that are confirmed present in the schema.
+  // If the migration hasn't run yet, the flag will be false and we omit the
+  // column so the upsert doesn't fail. Once the migration runs, a server
+  // restart resets the flag to true and the column is included again.
+  if (surveyColumnSupport.blocks) {
+    shaped.blocks = payload.blocks ?? [];
+  }
+  if (surveyColumnSupport.defaultLanguage) {
+    shaped.default_language = payload.defaultLanguage ?? payload.default_language ?? 'en';
+  }
+  if (surveyColumnSupport.supportedLanguages) {
+    shaped.supported_languages = payload.supportedLanguages ?? payload.supported_languages ?? ['en'];
+  }
+  if (surveyColumnSupport.completionSettings) {
+    shaped.completion_settings = payload.completionSettings ?? payload.completion_settings ?? buildDefaultSurveyCompletionSettings();
+  }
+  if (surveyColumnSupport.reflectionPrompts) {
+    shaped.reflection_prompts = payload.reflectionPrompts ?? payload.reflection_prompts ?? [];
+  }
 
   return shaped;
 };
@@ -16763,17 +16823,39 @@ app.post('/api/admin/surveys', async (req, res) => {
     }
 
     const { assignedTo } = normalizeAssignedTargets(payload);
-    const insertPayload = buildSurveyPersistencePayload(payload);
 
-    const { data } = await runSupabaseQueryWithRetry('admin.surveys.upsert', () =>
-      supabase.from('surveys').upsert(insertPayload).select('*').single(),
-    );
+    const performUpsert = async () => {
+      const insertPayload = buildSurveyPersistencePayload(payload);
+      try {
+        const { data } = await runSupabaseQueryWithRetry('admin.surveys.upsert', () =>
+          supabase.from('surveys').upsert(insertPayload).select('*').single(),
+        );
+        return data;
+      } catch (err) {
+        if (isMissingColumnError(err) && maybeHandleSurveyColumnError(err)) {
+          // Retry once with the offending column stripped
+          const retryPayload = buildSurveyPersistencePayload(payload);
+          const { data } = await runSupabaseQueryWithRetry('admin.surveys.upsert.retry', () =>
+            supabase.from('surveys').upsert(retryPayload).select('*').single(),
+          );
+          return data;
+        }
+        throw err;
+      }
+    };
 
+    const data = await performUpsert();
     await syncSurveyAssignments(data.id, assignedTo);
     const survey = await loadSurveyWithAssignments(data.id);
     res.status(201).json({ data: survey });
   } catch (error) {
-    console.error('Failed to save survey:', error);
+    logger.error('survey_save_failed', {
+      message: error?.message ?? String(error),
+      code: error?.code ?? null,
+      hint: error?.hint ?? null,
+      details: error?.details ?? null,
+      surveyTitle: (req.body || {}).title ?? null,
+    });
     res.status(500).json({ error: 'Unable to save survey' });
   }
 });
@@ -16796,20 +16878,40 @@ app.put('/api/admin/surveys/:id', async (req, res) => {
       ? normalizeAssignedTargets(patch)
       : { assignedTo: undefined };
 
-    const updatePayload = buildSurveyPersistencePayload({ ...patch, id });
-    delete updatePayload.id;
+    const performUpdate = async () => {
+      const updatePayload = buildSurveyPersistencePayload({ ...patch, id });
+      delete updatePayload.id;
+      try {
+        const { data } = await runSupabaseQueryWithRetry('admin.surveys.update', () =>
+          supabase.from('surveys').update(updatePayload).eq('id', id).select('*').single(),
+        );
+        return data;
+      } catch (err) {
+        if (isMissingColumnError(err) && maybeHandleSurveyColumnError(err)) {
+          const retryPayload = buildSurveyPersistencePayload({ ...patch, id });
+          delete retryPayload.id;
+          const { data } = await runSupabaseQueryWithRetry('admin.surveys.update.retry', () =>
+            supabase.from('surveys').update(retryPayload).eq('id', id).select('*').single(),
+          );
+          return data;
+        }
+        throw err;
+      }
+    };
 
-    const { data } = await runSupabaseQueryWithRetry('admin.surveys.update', () =>
-      supabase.from('surveys').update(updatePayload).eq('id', id).select('*').single(),
-    );
-
+    await performUpdate();
     if (assignmentUpdateRequested) {
       await syncSurveyAssignments(id, assignedTo);
     }
     const survey = await loadSurveyWithAssignments(id);
     res.json({ data: survey });
   } catch (error) {
-    console.error('Failed to update survey:', error);
+    logger.error('survey_update_failed', {
+      surveyId: id,
+      message: error?.message ?? String(error),
+      code: error?.code ?? null,
+      hint: error?.hint ?? null,
+    });
     res.status(500).json({ error: 'Unable to update survey' });
   }
 });

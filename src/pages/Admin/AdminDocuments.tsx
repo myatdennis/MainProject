@@ -65,6 +65,14 @@ const AdminDocuments: React.FC = () => {
     return errors;
   };
 
+  // Derived: is the form currently in a submittable state?
+  const isFormValid = (() => {
+    if (!name.trim() || !category.trim()) return false;
+    if (visibility === 'org' && (!orgId.trim() || !isValidUuid(orgId))) return false;
+    if (visibility === 'user' && (!userId.trim() || !isValidUuid(userId))) return false;
+    return true;
+  })();
+
   const onFile = (f: File | null) => setFile(f);
 
   const handleUpload = async () => {
@@ -254,8 +262,9 @@ const AdminDocuments: React.FC = () => {
           <button
             type="button"
             onClick={handleUpload}
-            disabled={isSubmitting}
+            disabled={isSubmitting || !isFormValid}
             className="btn-primary primary-gradient disabled:opacity-60 disabled:cursor-not-allowed flex items-center gap-2 ml-auto"
+            title={!isFormValid ? 'Fill in required fields (Name, Category) before uploading' : undefined}
           >
             {isSubmitting && (
               <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24" fill="none">
