@@ -161,12 +161,6 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
   const handleMenuButtonClick = useCallback(
     (event: React.MouseEvent<HTMLButtonElement>) => {
       const pointerType = 'pointerType' in event.nativeEvent ? (event.nativeEvent as PointerEvent).pointerType : 'mouse';
-      console.log('[AdminMenu] button click', {
-        pointerType,
-        defaultPrevented: event.defaultPrevented,
-        target: event.currentTarget,
-        timestamp: Date.now(),
-      });
       logMenuEvent('button_click', { pointerType, defaultPrevented: event.defaultPrevented });
       toggleMenu();
     },
@@ -463,7 +457,11 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
 
   const activeUser = user ?? authUser;
 
-  if (normalizedAuthInitializing || normalizedSessionStatus !== 'authenticated') {
+  // Only show the full-screen spinner during the very first cold boot
+  // (normalizedAuthInitializing is true AND we have no session yet).
+  // After that, navigating between admin pages must never trigger a full
+  // remount of the shell or a full-screen loading overlay.
+  if (normalizedAuthInitializing && !hasSession) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-softwhite">
         <LoadingSpinner size="lg" />
@@ -472,6 +470,15 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
   }
 
   if (!hasSession || !adminPortalAllowed) {
+    // If still initializing but we have some session info, render a lighter
+    // inline banner instead of a full-screen block so the shell stays visible.
+    if (normalizedAuthInitializing) {
+      return (
+        <div className="flex min-h-screen items-center justify-center bg-softwhite">
+          <LoadingSpinner size="lg" />
+        </div>
+      );
+    }
     return (
       <div className="flex min-h-screen items-center justify-center bg-softwhite text-sm text-slate/80">
         Checking admin access…
@@ -768,13 +775,15 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
       )}
 
       <main key={location.pathname} className="flex-1 overflow-y-auto bg-softwhite px-6 py-8 lg:px-12">
-        <Suspense fallback={
-          <div className="flex items-center justify-center min-h-[40vh]">
-            <LoadingSpinner size="lg" />
-          </div>
-        }>
-          {children ?? <Outlet />}
-        </Suspense>
+        <AdminErrorBoundary>
+          <Suspense fallback={
+            <div className="flex items-center justify-center min-h-[40vh]">
+              <LoadingSpinner size="lg" />
+            </div>
+          }>
+            {children ?? <Outlet />}
+          </Suspense>
+        </AdminErrorBoundary>
       </main>
       <AdminOrgSelectorModal
         open={orgModalOpen}
@@ -789,7 +798,7 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
 
   return (
     <ErrorBoundary>
-      <AdminErrorBoundary>{content}</AdminErrorBoundary>
+      {content}
     </ErrorBoundary>
   );
 };

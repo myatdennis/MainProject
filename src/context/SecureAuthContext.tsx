@@ -2548,8 +2548,17 @@ const renderAuthState = ({
     pathname.startsWith('/auth/callback') ||
     pathname.startsWith('/invite/');
   const isMarketingLanding = pathname === '/';
+  const isProtectedAppRoute = /^\/(admin|lms|client)(?:\/|$)/i.test(pathname);
 
   if (authStatus === 'booting') {
+    // On a protected app route (admin/lms/client), render children optimistically
+    // while the session is being re-verified. This prevents a full-screen
+    // "INITIALIZING SESSION" overlay from appearing during normal navigation or
+    // after a recoverable auth hiccup. The child routes themselves will guard
+    // via RequireAuth/AdminLayout once the real auth state arrives.
+    if (isProtectedAppRoute && !isPublicAuthPath) {
+      return <>{children}</>;
+    }
     return <BootstrapLoading />;
   }
 

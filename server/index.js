@@ -1861,10 +1861,18 @@ app.use((req, res, next) => {
   res.on('finish', () => {
     const ms = Date.now() - start;
     const requestId = req.requestId || '-';
-    logger.info('http_request_completed', {
+    const path = req.originalUrl || req.path || '/';
+    const isHealthCheck = path === '/api/health' || path === '/health' || path.startsWith('/api/health/');
+    const statusCode = res.statusCode;
+    // Health checks: only log at info level when unhealthy (non-2xx) to reduce Railway log noise.
+    // Successful health probes are logged at debug to keep them visible for debugging but quiet in production.
+    const logFn = isHealthCheck && statusCode >= 200 && statusCode < 300
+      ? logger.debug.bind(logger)
+      : logger.info.bind(logger);
+    logFn('http_request_completed', {
       method: req.method,
-      path: req.originalUrl || req.path,
-      statusCode: res.statusCode,
+      path,
+      statusCode,
       durationMs: ms,
       requestId,
       userId: req.user?.userId ?? null,

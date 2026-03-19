@@ -1,4 +1,4 @@
-import { ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import SEO from '../../components/SEO/SEO';
 import Card from '../../components/ui/Card';
@@ -209,6 +209,15 @@ const AdminDashboard = () => {
     return unsubscribe;
   }, []);
 
+  // Track whether the catalog has ever successfully loaded in this session.
+  // If it has, never block the full dashboard behind a gate again.
+  const catalogEverSucceeded = useRef(false);
+  useEffect(() => {
+    if (catalogState.adminLoadStatus === 'success') {
+      catalogEverSucceeded.current = true;
+    }
+  }, [catalogState.adminLoadStatus]);
+
   useEffect(() => {
     if (catalogState.phase !== 'idle') {
       return;
@@ -233,8 +242,9 @@ const AdminDashboard = () => {
       return;
     }
     setRetrying(true);
+    // Use forceInit to bypass the ready-guard and perform a fresh catalog fetch.
     try {
-      await courseStore.init();
+      await courseStore.forceInit();
     } catch (error) {
       console.error('[AdminDashboard] Admin catalog retry failed', error);
     } finally {
@@ -270,12 +280,18 @@ const AdminDashboard = () => {
   );
 
   const catalogStatus = catalogState.adminLoadStatus;
-  // Only block the dashboard with a spinner on the very first cold load.
-  // If status is already 'success' (courses in store) don't re-gate on phase.
-  const isCatalogLoading = catalogState.phase === 'loading' && catalogStatus !== 'success';
-  const isCatalogEmpty = catalogStatus === 'empty';
-  const isCatalogUnauthorized = catalogStatus === 'unauthorized';
-  const isCatalogError = catalogStatus === 'error' || catalogStatus === 'api_unreachable';
+  // Only block the dashboard with a full gate when:
+  // 1. It's the very first load AND we're still loading (never had a success).
+  // 2. The catalog hit a fatal auth/access error on the first load.
+  // After the catalog ever succeeds, errors and retries must NEVER block the dashboard.
+  const isFirstLoad = !catalogEverSucceeded.current;
+  const isCatalogLoading = isFirstLoad && catalogState.phase === 'loading' && catalogStatus !== 'success';
+  const isCatalogEmpty = isFirstLoad && catalogStatus === 'empty';
+  const isCatalogUnauthorized = isFirstLoad && catalogStatus === 'unauthorized';
+  // Only gate on error during the very first load. Subsequent errors show an inline banner instead.
+  const isCatalogError = isFirstLoad && (catalogStatus === 'error' || catalogStatus === 'api_unreachable');
+  // Show a non-blocking inline warning when there's a catalog error but we've had prior success.
+  const showCatalogWarningBanner = !isFirstLoad && (catalogStatus === 'error' || catalogStatus === 'api_unreachable' || catalogStatus === 'unauthorized');
   const lastSyncAttempt = catalogState.lastAttemptAt ? new Date(catalogState.lastAttemptAt).toLocaleString() : null;
 
   const reportCsv = useMemo(() => {
@@ -381,6 +397,29 @@ const AdminDashboard = () => {
       <SEO title="Admin Dashboard" description="Monitor learner progress and organizational impact." />
       {gateShell(
         <section className="space-y-10">
+        {/* Non-blocking catalog warning — only shown after a prior success */}
+        {showCatalogWarningBanner && (
+          <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0 text-amber-600" aria-hidden="true" />
+            <div className="flex flex-1 flex-col gap-1">
+              <span className="font-semibold">Course catalog temporarily unavailable</span>
+              <span className="text-amber-800/80">
+                {catalogStatus === 'unauthorized'
+                  ? 'Admin course access requires re-authentication. Dashboard data is still available.'
+                  : 'We could not refresh the course catalog. Showing the last known data while we retry.'}
+                {lastSyncAttempt && ` Last attempt: ${lastSyncAttempt}.`}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={handleRetry}
+              disabled={retrying || catalogState.phase === 'loading'}
+              className="flex-shrink-0 rounded-lg border border-amber-300 bg-white px-3 py-1.5 text-xs font-semibold text-amber-900 transition hover:bg-amber-100 disabled:opacity-50"
+            >
+              {retrying ? 'Retrying…' : 'Retry'}
+            </button>
+          </div>
+        )}
         <Card tone="gradient" withBorder={false} className="overflow-hidden">
           <div className="relative z-10 flex flex-col gap-4 text-charcoal md:flex-row md:items-center md:justify-between">
             <div>

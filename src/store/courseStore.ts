@@ -214,6 +214,8 @@ const hasLoadedStructure = (candidate?: Course | null): boolean => {
   return candidate.modules.some((module) => Array.isArray(module.lessons) && module.lessons.length > 0);
 };
 
+// @ts-expect-error retained for future diagnostics (unused in production logging)
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const deriveModuleCount = (candidate?: Course | null): number | null => {
   if (!candidate) return null;
   if (typeof candidate.moduleCount === 'number') return candidate.moduleCount;
@@ -221,6 +223,8 @@ const deriveModuleCount = (candidate?: Course | null): number | null => {
   return null;
 };
 
+// @ts-expect-error retained for future diagnostics (unused in production logging)
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const deriveLessonCount = (candidate?: Course | null): number | null => {
   if (!candidate) return null;
   if (typeof candidate.lessonCount === 'number') return candidate.lessonCount;
@@ -1546,6 +1550,15 @@ export const courseStore = {
     if (initPromise) {
       return initPromise;
     }
+    // If the catalog already succeeded and is in the 'ready' phase, don't re-run
+    // a full init. This prevents navigating back to the dashboard from triggering
+    // an unnecessary re-fetch that can transiently reset the catalog to loading.
+    if (
+      adminCatalogState.phase === 'ready' &&
+      adminCatalogState.adminLoadStatus === 'success'
+    ) {
+      return Promise.resolve();
+    }
 
     initPromise = (async () => {
     let restrictToOrg = true;
@@ -1560,7 +1573,9 @@ export const courseStore = {
       lastAttemptAt: attemptStartedAt,
     });
     try {
-      console.log('[courseStore.init] Starting initialization...');
+      if (import.meta.env?.DEV) {
+        console.info('[courseStore.init] Starting initialization...');
+      }
       const orgContext = resolveOrgContext();
       if (orgContext.status === 'loading') {
         console.info(
@@ -1627,25 +1642,20 @@ export const courseStore = {
       const apiReachable = runtimeStatus.apiReachable ?? runtimeStatus.apiHealthy;
       const apiAuthRequired = runtimeStatus.apiAuthRequired;
       canUseAdminApi = adminMode && apiReachable;
-      console.log('[courseStore.init] Runtime status snapshot:', runtimeStatus);
+      if (import.meta.env?.DEV) {
+        console.info('[courseStore.init] runtime_status_snapshot', { apiReachable, apiAuthRequired, adminMode });
+      }
       // Prefer admin list (richer shape) but gracefully fall back to published-only
       let dbCourses: Course[] = [];
       if (canUseAdminApi) {
-        if (apiAuthRequired) {
+        if (apiAuthRequired && import.meta.env?.DEV) {
           console.info('[courseStore.init] Health probe indicated auth required, but API is reachable. Proceeding with admin course load attempt.');
         }
         try {
           dbCourses = await getAllCoursesFromDatabase();
-          console.log('[courseStore.init] Admin API returned courses:', dbCourses);
-          console.info(
-            '[courseStore.init] admin_course_structure_snapshot',
-            dbCourses.map((entry) => ({
-              id: entry.id,
-              structureLoaded: hasLoadedStructure(entry),
-              moduleCount: deriveModuleCount(entry),
-              lessonCount: deriveLessonCount(entry),
-            })),
-          );
+          if (import.meta.env?.DEV) {
+            console.info('[courseStore.init] admin_courses_loaded', { count: dbCourses.length });
+          }
           adminLoadStatus = dbCourses.length === 0 ? 'empty' : 'success';
           if (adminLoadStatus === 'empty') {
             console.info('[courseStore.init] admin_courses_empty (0 results from /api/admin/courses).');
@@ -1709,12 +1719,9 @@ export const courseStore = {
           return;
         }
 
-        console.log('[courseStore.init] Loading published catalog as fallback...');
-        console.info('[courseStore.init] published_fallback_allowed', {
-          restrictToOrg,
-          orgId: orgContext.orgId ?? null,
-          role: orgContext.role ?? null,
-        });
+        if (import.meta.env?.DEV) {
+          console.info('[courseStore.init] Loading published catalog as fallback...');
+        }
         try {
           if (restrictToOrg) {
             if (orgContext.orgId) {
@@ -1728,7 +1735,9 @@ export const courseStore = {
           } else {
             dbCourses = await fetchPublishedCourses();
           }
-          console.log('[courseStore.init] Published catalog returned courses:', dbCourses);
+          if (import.meta.env?.DEV) {
+            console.info('[courseStore.init] published_catalog_loaded', { count: dbCourses.length });
+          }
         } catch (fallbackErr) {
           console.warn('[courseStore.init] Published catalog fallback failed:', fallbackErr);
           dbCourses = [];
@@ -1797,7 +1806,7 @@ export const courseStore = {
           merged[courseWithVersion.id] = mergedCourse;
         });
         courses = merged;
-        console.log(`[courseStore.init] Loaded ${dbCourses.length} courses from API (merged with ${Object.keys(merged).length - dbCourses.length} existing drafts)`);
+        console.info(`[courseStore.init] catalog_merged`, { loaded: dbCourses.length, totalInStore: Object.keys(merged).length });
       } else if (adminEmptySuccess) {
         courses = {};
         console.info('[courseStore.init] Admin catalog is empty; awaiting first course creation.');
@@ -1806,7 +1815,9 @@ export const courseStore = {
         console.warn('[courseStore.init] Admin course load unauthorized; leaving local catalog empty.');
       } else {
         if (DEFAULT_CATALOG_ALLOWED) {
-          console.log('[courseStore.init] No courses returned; loading local default catalog for demo use.');
+          if (import.meta.env?.DEV) {
+            console.info('[courseStore.init] No courses returned; loading local default catalog for demo use.');
+          }
           courses = getDefaultCourses();
           emitCatalogDiagnostic('default_catalog_loaded', {
             reason: 'admin_catalog_unavailable',
@@ -1893,6 +1904,20 @@ export const courseStore = {
     });
 
     return initPromise;
+  },
+
+  // Force a fresh catalog fetch, bypassing the ready-guard.
+  // Use this for explicit user-triggered retries when the catalog is in error.
+  forceInit: (): Promise<void> => {
+    // Clear any in-flight promise so a fresh run can start.
+    initPromise = null;
+    // Reset phase to idle so the init logic runs from scratch.
+    setAdminCatalogState((prev) => ({
+      ...prev,
+      phase: 'idle',
+      adminLoadStatus: prev.adminLoadStatus === 'success' ? 'success' : prev.adminLoadStatus,
+    }));
+    return courseStore.init();
   },
 
   getCourse: (id: string): Course | null => {

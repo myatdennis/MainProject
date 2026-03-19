@@ -135,10 +135,6 @@ class AdminErrorBoundary extends Component<Props, State> {
     this.retryTimeouts.add(timeout);
   };
 
-  private handleReload = () => {
-    window.location.reload();
-  };
-
   private handleGoHome = () => {
     window.location.href = '/admin/dashboard';
   };
@@ -150,20 +146,20 @@ class AdminErrorBoundary extends Component<Props, State> {
         return this.props.fallbackComponent;
       }
 
-      // Default error UI
+      // Default error UI — contained within the page content area, not full-screen
       return (
-        <div className="min-h-screen bg-gray-50 flex items-center justify-center p-4">
-          <div className="max-w-2xl w-full bg-white rounded-xl shadow-xl p-8">
+        <div className="flex min-h-[40vh] items-center justify-center p-4">
+          <div className="max-w-2xl w-full bg-white rounded-xl border border-red-100 shadow-md p-8">
             {/* Error Icon & Title */}
             <div className="text-center mb-6">
-              <div className="mx-auto w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mb-4">
-                <AlertTriangle className="h-8 w-8 text-red-600" />
+              <div className="mx-auto w-14 h-14 bg-red-50 rounded-full flex items-center justify-center mb-4">
+                <AlertTriangle className="h-7 w-7 text-red-500" />
               </div>
-              <h1 className="text-2xl font-bold text-gray-900 mb-2">
-                Something went wrong
+              <h1 className="text-xl font-bold text-gray-900 mb-2">
+                Something went wrong on this page
               </h1>
-              <p className="text-gray-600">
-                We encountered an unexpected error in the admin portal. Our team has been notified.
+              <p className="text-gray-600 text-sm">
+                An unexpected error occurred. The rest of the admin portal is still working.
               </p>
             </div>
 
@@ -198,32 +194,24 @@ class AdminErrorBoundary extends Component<Props, State> {
             <div className="flex flex-col sm:flex-row gap-3 justify-center">
               <button
                 onClick={this.handleRetry}
-                className="flex items-center justify-center px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium"
+                className="flex items-center justify-center px-5 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors font-medium text-sm"
               >
-                <RefreshCw className="h-5 w-5 mr-2" />
+                <RefreshCw className="h-4 w-4 mr-2" />
                 Try Again
               </button>
               
               <button
                 onClick={this.handleGoHome}
-                className="flex items-center justify-center px-6 py-3 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors font-medium"
+                className="flex items-center justify-center px-5 py-2.5 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition-colors font-medium text-sm"
               >
-                <Home className="h-5 w-5 mr-2" />
+                <Home className="h-4 w-4 mr-2" />
                 Go to Dashboard
-              </button>
-              
-              <button
-                onClick={this.handleReload}
-                className="flex items-center justify-center px-6 py-3 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition-colors font-medium"
-              >
-                <RefreshCw className="h-5 w-5 mr-2" />
-                Reload Page
               </button>
             </div>
 
             {/* Contact Support */}
-            <div className="mt-6 pt-6 border-t border-gray-200 text-center">
-              <p className="text-sm text-gray-600">
+            <div className="mt-5 pt-5 border-t border-gray-100 text-center">
+              <p className="text-xs text-gray-500">
                 Still having issues?{' '}
                 <a 
                   href="mailto:support@huddleco.com?subject=Admin Portal Error&body=Error ID: ${this.state.errorId}"
