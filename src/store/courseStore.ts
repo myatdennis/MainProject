@@ -1184,10 +1184,27 @@ const notifySubscribers = () => {
 
 const AUTH_READY_EVENT = 'huddle:auth_ready';
 let awaitingAuthReadyBootstrap = false;
+let authReadyBootstrapAttempts = 0;
+const AUTH_READY_BOOTSTRAP_MAX_ATTEMPTS = 3;
+
 const queueAuthReadyBootstrap = (reinitializer: () => void) => {
   if (typeof window === 'undefined') return;
   if (awaitingAuthReadyBootstrap) return;
+  if (authReadyBootstrapAttempts >= AUTH_READY_BOOTSTRAP_MAX_ATTEMPTS) {
+    console.warn(
+      '[courseStore] queueAuthReadyBootstrap: max attempts (%d) reached — setting error state and giving up.',
+      AUTH_READY_BOOTSTRAP_MAX_ATTEMPTS,
+    );
+    setAdminCatalogState({
+      phase: 'ready',
+      adminLoadStatus: 'error',
+      lastAttemptAt: Date.now(),
+      lastError: 'Auth context did not become ready after maximum bootstrap retries.',
+    });
+    return;
+  }
   awaitingAuthReadyBootstrap = true;
+  authReadyBootstrapAttempts += 1;
   const handler = () => {
     awaitingAuthReadyBootstrap = false;
     window.removeEventListener(AUTH_READY_EVENT, handler);
@@ -1589,6 +1606,7 @@ export const courseStore = {
         console.info(
           '[courseStore.init] Org context still resolving (membershipStatus=loading); awaiting auth_ready event before catalog fetch.',
         );
+        setAdminCatalogState({ phase: 'idle', adminLoadStatus: 'skipped', lastAttemptAt: Date.now(), lastError: null });
         queueAuthReadyBootstrap(() => {
           void courseStore.init();
         });
@@ -1600,6 +1618,7 @@ export const courseStore = {
             '[courseStore.init] Auth context not ready (status=%s); deferring catalog initialization until memberships resolve.',
             orgContext.status,
           );
+          setAdminCatalogState({ phase: 'idle', adminLoadStatus: 'skipped', lastAttemptAt: Date.now(), lastError: null });
           queueAuthReadyBootstrap(() => {
             void courseStore.init();
           });
@@ -1614,6 +1633,7 @@ export const courseStore = {
       const adminSurfaceDetected = isAdminSurface();
       if (adminSurfaceDetected && orgContext.status !== 'ready') {
         console.info('[courseStore.init] admin_surface_waiting_for_context', { status: orgContext.status });
+        setAdminCatalogState({ phase: 'idle', adminLoadStatus: 'skipped', lastAttemptAt: Date.now(), lastError: null });
         queueAuthReadyBootstrap(() => {
           void courseStore.init();
         });
@@ -1623,6 +1643,7 @@ export const courseStore = {
         if (!awaitingRoleResolution) {
           awaitingRoleResolution = true;
           console.info('[courseStore.init] admin_surface_waiting_for_role_context');
+          setAdminCatalogState({ phase: 'idle', adminLoadStatus: 'skipped', lastAttemptAt: Date.now(), lastError: null });
           queueAuthReadyBootstrap(() => {
             awaitingRoleResolution = false;
             void courseStore.init();
@@ -1963,6 +1984,10 @@ export const courseStore = {
 
     // Clear any in-flight promise so a fresh run can start.
     initPromise = null;
+    // Reset the bootstrap attempt counter so an explicit forceInit (e.g. user-triggered retry)
+    // is never blocked by the automatic-retry cap.
+    authReadyBootstrapAttempts = 0;
+    awaitingAuthReadyBootstrap = false;
     // Reset phase to idle so the init logic runs from scratch.
     setAdminCatalogState((prev) => ({
       ...prev,

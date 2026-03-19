@@ -136,7 +136,12 @@ class AdminErrorBoundary extends Component<Props, State> {
   };
 
   private handleGoHome = () => {
-    window.location.href = '/admin/dashboard';
+    // Soft-navigate to avoid a full page reload that would re-trigger the auth bootstrap
+    // pipeline and incur the cold-start delay. Reset error state first, then push the new
+    // route via the History API and fire a popstate event so React Router picks it up.
+    this.handleRetry();
+    window.history.pushState({}, '', '/admin/dashboard');
+    window.dispatchEvent(new PopStateEvent('popstate'));
   };
 
   render() {

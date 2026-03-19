@@ -1,9 +1,31 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { CheckCircle, AlertTriangle } from 'lucide-react';
-import useConnectivityCheck from '../hooks/useConnectivityCheck';
+import { useRuntimeStatus } from '../hooks/useRuntimeStatus';
+import { refreshRuntimeStatus } from '../state/runtimeStatus';
 
 const ConnectionDiagnostic: React.FC = () => {
-  const { snapshot, forceCheck, status } = useConnectivityCheck();
+  const rts = useRuntimeStatus();
+
+  // Derive a normalised snapshot shape identical to what the rest of the component expects.
+  const snapshot = {
+    isOnline: typeof navigator !== 'undefined' ? navigator.onLine : true,
+    serverReachable: rts.apiReachable,
+    apiHealthy: rts.apiHealthy,
+    lastChecked: rts.lastChecked ? new Date(rts.lastChecked) : new Date(),
+  };
+
+  const forceCheck = () => {
+    refreshRuntimeStatus().catch(() => undefined);
+  };
+
+  // Derive a status label consistent with ConnectivityBanner logic.
+  const status: 'healthy' | 'server-unreachable' | 'api-error' | 'offline' = (() => {
+    if (!snapshot.isOnline) return 'offline';
+    if (!snapshot.serverReachable) return 'server-unreachable';
+    if (!snapshot.apiHealthy) return 'api-error';
+    return 'healthy';
+  })();
+
   const [isExpanded, setIsExpanded] = useState(false);
   // Track whether the first real health check has completed.
   const initialLastCheckedRef = useRef(snapshot.lastChecked);
@@ -132,4 +154,3 @@ const ConnectionDiagnostic: React.FC = () => {
 };
 
 export default ConnectionDiagnostic;
-

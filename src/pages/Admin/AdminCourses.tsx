@@ -91,35 +91,18 @@ const AdminCourses = () => {
     return unsubscribe;
   }, []);
 
+  // Emit admin:page-ready once the catalog reaches a terminal phase so other
+  // listeners know this page has settled. Initialization is driven exclusively
+  // by App.tsx bootstrapCourseStore — no duplicate courseStore.init() call here.
   useEffect(() => {
-    if (catalogState.phase !== 'idle') {
-      return;
-    }
-
-    let cancelled = false;
-    const bootstrap = async () => {
+    const phase = catalogState.phase;
+    if (phase === 'ready' || phase === 'idle') {
       try {
-        await courseStore.init();
-      } catch (err) {
-        console.warn('[AdminCourses] Failed to initialize course store:', err);
-      } finally {
-        if (!cancelled) {
-          setCatalogState(courseStore.getAdminCatalogState());
-          setVersion((v) => v + 1);
-          try {
-            window.dispatchEvent(new CustomEvent('admin:page-ready', { detail: { page: 'Courses', ready: true } }));
-          } catch (err) {
-            // swallow
-          }
-        }
+        window.dispatchEvent(new CustomEvent('admin:page-ready', { detail: { page: 'Courses', ready: true } }));
+      } catch {
+        // swallow
       }
-    };
-
-    void bootstrap();
-
-    return () => {
-      cancelled = true;
-    };
+    }
   }, [catalogState.phase]);
 
   const persistCourse = async (

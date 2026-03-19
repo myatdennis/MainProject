@@ -21,7 +21,10 @@ type RuntimeListener = (status: RuntimeStatus) => void;
 
 const DEFAULT_STATUS: RuntimeStatus = {
   supabaseConfigured: hasSupabaseConfig(),
-  supabaseHealthy: hasSupabaseConfig(),
+  // Initialise to false — a real /health response is required before we trust Supabase is up.
+  // Previously this was hasSupabaseConfig(), which caused a false-positive banner suppression
+  // for the first 4-30 s on cold starts before the first health poll resolved.
+  supabaseHealthy: false,
   apiHealthy: true,
   apiReachable: true,
   apiAuthRequired: false,
@@ -213,8 +216,12 @@ export const ensureRuntimeStatusPolling = () => {
   }, 30000);
 };
 
+let visibilityHandlersInstalled = false;
+
 export const onResumeForeground = () => {
   if (typeof document === 'undefined') return;
+  if (visibilityHandlersInstalled) return;
+  visibilityHandlersInstalled = true;
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
       refreshRuntimeStatus().catch((error) => {

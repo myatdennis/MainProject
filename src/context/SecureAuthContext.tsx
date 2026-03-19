@@ -42,7 +42,10 @@ if (axios?.defaults) {
 
 const MIN_REFRESH_INTERVAL_MS = 60 * 1000;
 const SESSION_RELOAD_THROTTLE_MS = 45 * 1000;
-const BOOTSTRAP_FAIL_OPEN_MS = 2500;
+// 8 s gives sufficient headroom for the full auth pipeline on Railway cold starts and
+// slow networks (Supabase session + server session + membership + org resolution).
+// 2500 ms was too aggressive and caused silent force-logouts on first load.
+const BOOTSTRAP_FAIL_OPEN_MS = 8000;
 const MEMBERSHIP_RETRY_DELAYS_MS = [2000, 5000, 10000, 30000, 60000] as const;
 
 const isNavigatorOffline = () => typeof navigator !== 'undefined' && navigator.onLine === false;
@@ -709,7 +712,13 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         return;
       }
       try {
-        await fetchFn({ surface: 'lms', silent: true, allowRefresh: false, skipMembershipSelfHeal: true });
+        // Use the current path to determine which surface to retry on so admin
+        // users don't accidentally hit the LMS session endpoint on the admin surface.
+        const retrySurface: 'admin' | 'lms' =
+          typeof window !== 'undefined' && isAdminSurface(window.location.pathname)
+            ? 'admin'
+            : 'lms';
+        await fetchFn({ surface: retrySurface, silent: true, allowRefresh: false, skipMembershipSelfHeal: true });
       } catch (retryError) {
         console.warn('[SecureAuth] membership retry backoff failed', retryError);
       } finally {

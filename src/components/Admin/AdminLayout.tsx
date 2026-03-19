@@ -526,9 +526,26 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
         <div className="flex h-full flex-col justify-between px-6 py-6">
           <div className="space-y-6">
             <Card tone="muted" className="space-y-3">
-              <Badge tone="info" className="bg-skyblue/10 text-skyblue">
-                System Online
-              </Badge>
+              {(() => {
+                const sl = runtimeStatus.statusLabel;
+                const label =
+                  sl === 'ok' ? 'System Online' :
+                  sl === 'degraded' ? 'Degraded' :
+                  sl === 'demo-fallback' ? 'Demo Mode' :
+                  'Checking…';
+                const tone = (sl === 'ok' ? 'info' : 'attention') as 'info' | 'attention';
+                const cls =
+                  sl === 'ok'
+                    ? 'bg-skyblue/10 text-skyblue'
+                    : sl === 'degraded'
+                    ? 'bg-amber-100 text-amber-800'
+                    : 'bg-gray-100 text-gray-600';
+                return (
+                  <Badge tone={tone} className={cls}>
+                    {label}
+                  </Badge>
+                );
+              })()}
               <div>
                 <p className="font-heading text-lg font-semibold text-charcoal">
                   Welcome, {activeUser ? `${activeUser.firstName || ''} ${activeUser.lastName || ''}`.trim() || 'Admin' : 'Admin'}

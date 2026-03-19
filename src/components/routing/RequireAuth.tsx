@@ -58,7 +58,6 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
     user,
     organizationIds,
     logout,
-    lastActiveOrgId,
   } = useSecureAuth();
   const location = useLocation();
   const sessionRequestRef = useRef(false);
@@ -191,6 +190,8 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
     [activeOrgId, memberships, setActiveOrganization, logGuardEvent],
   );
 
+  // activeMembership is retained for future guard logic (e.g. feature-flag gating by membership tier).
+  // @ts-ignore unused — retained for planned role-scoped feature-flag guard
   const activeMembership = useMemo(() => {
     if (!activeOrgId) {
       return null;
@@ -575,7 +576,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
       if (adminGateTimeoutRef.current) {
         clearTimeout(adminGateTimeoutRef.current);
         adminGateTimeoutRef.current = null;
-        if ((typeof import.meta !== 'undefined' && (import.meta as any)?.env?.DEV) || process.env?.NODE_ENV !== 'production') {
+        if (import.meta.env.DEV) {
           console.log('[RequireAuth][admin] gate_timeout cleared', {
             adminGateStatus,
             sessionStatus,
@@ -590,7 +591,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
     if (adminGateTimeoutRef.current) {
       clearTimeout(adminGateTimeoutRef.current);
     }
-    if ((typeof import.meta !== 'undefined' && (import.meta as any)?.env?.DEV) || process.env?.NODE_ENV !== 'production') {
+    if (import.meta.env.DEV) {
       console.log('[RequireAuth][admin] gate_timeout started', {
         timeoutMs: ADMIN_GATE_TIMEOUT_MS,
         adminGateStatus,
@@ -603,7 +604,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
       adminGateTimeoutRef.current = null;
       const latest = adminGateStateRef.current;
       if (!latest.waiting) {
-        if ((typeof import.meta !== 'undefined' && (import.meta as any)?.env?.DEV) || process.env?.NODE_ENV !== 'production') {
+        if (import.meta.env.DEV) {
           console.log('[RequireAuth][admin] gate_timeout ignored (state ready)', latest);
         }
         return;
@@ -612,7 +613,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
       setAdminGateStatus('error');
       setAdminGateError('timeout');
       logGuardEvent('admin_gate_timeout', { timeoutMs: ADMIN_GATE_TIMEOUT_MS });
-      if ((typeof import.meta !== 'undefined' && (import.meta as any)?.env?.DEV) || process.env?.NODE_ENV !== 'production') {
+      if (import.meta.env.DEV) {
         console.log('[RequireAuth][admin] gate_timeout fired', latest);
       }
     }, ADMIN_GATE_TIMEOUT_MS);
@@ -621,7 +622,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
       if (adminGateTimeoutRef.current) {
         clearTimeout(adminGateTimeoutRef.current);
         adminGateTimeoutRef.current = null;
-        if ((typeof import.meta !== 'undefined' && (import.meta as any)?.env?.DEV) || process.env?.NODE_ENV !== 'production') {
+        if (import.meta.env.DEV) {
           console.log('[RequireAuth][admin] gate_timeout cleanup');
         }
       }
@@ -761,7 +762,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   }
 
   if (mode === 'admin') {
-    if (typeof window !== 'undefined') {
+    if (ROUTE_GUARD_DEBUG && typeof window !== 'undefined') {
       console.log('[RequireAuth][admin] gate_state', {
         sessionStatus,
         orgResolutionStatus,
