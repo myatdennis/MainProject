@@ -385,8 +385,7 @@ const AdminOrgWorkspace = () => {
       const target = event.target as HTMLInputElement;
       const file = target?.files?.[0];
       if (!file) return;
-      showToast?.(`Importing ${file.name}…`, 'info');
-      setTimeout(() => showToast?.('Organization import completed.', 'success'), 2000);
+      showToast?.(`CSV import is not yet available. Please add organizations manually.`, 'warning');
     };
     input.click();
   };

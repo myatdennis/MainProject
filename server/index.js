@@ -887,7 +887,9 @@ const probeDatabaseHealth = async () => {
   // consider self-signed certificate errors tolerated so local health checks
   // and test harnesses don't fail. We still surface the original error
   // message in the payload for visibility.
-  console.warn('[health] probeDatabaseHealth caught DB error', { code, message, allowSelfSigned: databaseConnectionInfo?.allowSelfSigned });
+  if (import.meta?.env?.DEV || process.env.NODE_ENV !== 'production') {
+    console.warn('[health] probeDatabaseHealth caught DB error', { code, message, allowSelfSigned: databaseConnectionInfo?.allowSelfSigned });
+  }
     if (sslSelfSigned && databaseConnectionInfo?.allowSelfSigned) {
       return {
         ok: true,
@@ -1648,7 +1650,7 @@ app.use(attachRequestId);
 const createCorsRouteLogger = (label) => (req, res, next) => {
   const origin = req.headers?.origin ?? null;
   res.on('finish', () => {
-    logger.info('cors_route_trace', {
+    logger.debug('cors_route_trace', {
       route: label,
       origin,
       requestId: req.requestId ?? null,
@@ -1768,7 +1770,7 @@ const diagnosticsAllowedOrigins = new Set(
 const defaultCookieSameSite = (process.env.COOKIE_SAMESITE || '').trim() || (process.env.NODE_ENV === 'production' ? 'none' : 'lax');
 const defaultCookieSecure = process.env.NODE_ENV === 'production';
 
-logger.info('diagnostics_cookies_and_cors', {
+logger.debug('diagnostics_cookies_and_cors', {
   allowedOrigins: Array.from(diagnosticsAllowedOrigins),
   resolvedCorsOrigins,
   corsAllowCredentials: true,
@@ -2191,10 +2193,17 @@ const auditUserCourseProgressUuid = async () => {
       logger.error('user_course_progress_uuid_missing', {
         rowsWithoutUuid: count,
       });
-    } else {
-      logger.info('user_course_progress_uuid_verified', { rowsWithoutUuid: count || 0 });
     }
+    // Suppress the noisy success log — absence of errors means schema is healthy.
   } catch (error) {
+    // If the column doesn't exist at all, treat as non-fatal schema drift — the
+    // progress write path already has a per-request fallback for this case.
+    if (isUserCourseProgressUuidColumnMissing(error)) {
+      logger.warn('user_course_progress_uuid_column_missing', {
+        message: 'user_id_uuid column does not exist on user_course_progress — progress writes will use legacy conflict target',
+      });
+      return;
+    }
     logger.warn('user_course_progress_uuid_audit_failed', {
       message: error?.message ?? String(error),
     });
@@ -5419,6 +5428,61 @@ const buildActorFromRequest = (req) => {
     name,
   };
 };
+
+/**
+ * Idempotent certificate creation.
+ * Creates a certificate row only if one does not already exist for (user_id, course_id).
+ * Returns the existing or newly-created certificate, or null on non-fatal error.
+ */
+async function createCertificateIfNotExists(userId, courseId, organizationId) {
+  if (!supabase || !userId || !courseId) return null;
+  try {
+    // Check for existing certificate first (idempotency)
+    const { data: existing, error: checkError } = await supabase
+      .from('certificates')
+      .select('id, user_id, course_id, issued_at')
+      .eq('user_id', userId)
+      .eq('course_id', courseId)
+      .maybeSingle();
+
+    if (checkError && checkError.code !== 'PGRST116') {
+      logger.warn('certificate_check_failed', { userId, courseId, code: checkError.code, message: checkError.message });
+      return null;
+    }
+    if (existing) {
+      logger.debug('certificate_already_exists', { userId, courseId, certificateId: existing.id });
+      return existing;
+    }
+
+    // Create new certificate
+    const { data: created, error: insertError } = await supabase
+      .from('certificates')
+      .insert({
+        user_id: userId,
+        course_id: courseId,
+        organization_id: organizationId ?? null,
+        metadata: { source: 'auto_completion' },
+      })
+      .select('*')
+      .single();
+
+    if (insertError) {
+      // Unique constraint violation — race condition, cert was just created by another request
+      if (insertError.code === '23505') {
+        logger.debug('certificate_race_condition_ok', { userId, courseId });
+        return null;
+      }
+      logger.warn('certificate_create_failed', { userId, courseId, code: insertError.code, message: insertError.message });
+      return null;
+    }
+
+    logger.info('certificate_auto_created', { userId, courseId, certificateId: created.id, organizationId: organizationId ?? null });
+    return created;
+  } catch (err) {
+    logger.warn('certificate_create_exception', { userId, courseId, message: err?.message ?? String(err) });
+    return null;
+  }
+}
 
 async function deliverInviteEmail(invite, { orgName, inviterName, requestId } = {}) {
   const inviteLink = buildInviteLink(invite.token);
@@ -8714,19 +8778,21 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
     });
   });
   // Lightweight request tracing to aid debugging in CI/local runs
-  try {
-    console.log(
-      `[srv] Upsert course request: requestId=${req.requestId} idempotency=${req.body?.idempotency_key ?? req.body?.client_event_id ?? null} hasSupabase=${Boolean(supabase)} E2E_TEST_MODE=${E2E_TEST_MODE}`
-    );
-    console.log('[srv] Upsert payload summary:', {
-      title: course?.title ?? null,
-      id: course?.id ?? null,
-      slug: course?.slug ?? null,
-      moduleCount: Array.isArray(modules) ? modules.length : 0
-    });
-  } catch (logErr) {
-    // Swallow logging errors to avoid interfering with normal request flow
-    console.warn('Failed to log upsert request summary', logErr);
+  if (process.env.NODE_ENV !== 'production') {
+    try {
+      console.log(
+        `[srv] Upsert course request: requestId=${req.requestId} idempotency=${req.body?.idempotency_key ?? req.body?.client_event_id ?? null} hasSupabase=${Boolean(supabase)} E2E_TEST_MODE=${E2E_TEST_MODE}`
+      );
+      console.log('[srv] Upsert payload summary:', {
+        title: course?.title ?? null,
+        id: course?.id ?? null,
+        slug: course?.slug ?? null,
+        moduleCount: Array.isArray(modules) ? modules.length : 0
+      });
+    } catch (logErr) {
+      // Swallow logging errors to avoid interfering with normal request flow
+      console.warn('Failed to log upsert request summary', logErr);
+    }
   }
 
   const initialNormalization = normalizeModuleLessonPayloads(modules, {
@@ -9036,14 +9102,16 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
         moduleCount,
         lessonCount,
       });
-      console.info('[course.save_attempt]', {
-        requestId: req.requestId ?? null,
-        userId: context.userId ?? null,
-        orgId: organizationId,
-        courseId: course?.id ?? null,
-        moduleCount,
-        lessonCount,
-      });
+      if (process.env.NODE_ENV !== 'production') {
+        console.info('[course.save_attempt]', {
+          requestId: req.requestId ?? null,
+          userId: context.userId ?? null,
+          orgId: organizationId,
+          courseId: course?.id ?? null,
+          moduleCount,
+          lessonCount,
+        });
+      }
       const rpcRes = await supabase.rpc('upsert_course_graph', { ...rpcBaseInput, p_course: rpcPayload });
       if (rpcRes.error) {
         const durationMs = Date.now() - startedAt;
@@ -9063,15 +9131,17 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
       }
       const durationMs = Date.now() - startedAt;
       const savedCourse = rpcRes.data;
-      console.info('[course.save_success]', {
-        requestId: req.requestId ?? null,
-        userId: context.userId ?? null,
-        orgId: organizationId,
-        courseId: savedCourse?.id ?? null,
-        moduleCount,
-        lessonCount,
-        durationMs,
-      });
+      if (process.env.NODE_ENV !== 'production') {
+        console.info('[course.save_success]', {
+          requestId: req.requestId ?? null,
+          userId: context.userId ?? null,
+          orgId: organizationId,
+          courseId: savedCourse?.id ?? null,
+          moduleCount,
+          lessonCount,
+          durationMs,
+        });
+      }
       logCourseRequestEvent('admin.courses.upsert.rpc_success', {
         ...baseLogMeta,
         orgId: organizationId,
@@ -10402,7 +10472,7 @@ app.get('/api/client/courses', asyncHandler(async (req, res) => {
   }
 
   const assignmentOrgId = effectiveOrgId ?? primaryOrgId;
-  logger.info('[client/courses] request_context', {
+  logger.debug('[client/courses] request_context', {
     requestId,
     assignedOnly,
     requestedOrgId: queryOrgParam,
@@ -11717,7 +11787,7 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
   baseLogMeta.orgId = resolvedOrgId;
 
   const logSnapshotSuccess = (mode) => {
-    logger.info('learner_progress_snapshot_success', {
+    logger.debug('learner_progress_snapshot_success', {
       ...baseLogMeta,
       mode,
       completedAt: courseProgress?.completed_at || courseProgress?.completedAt || null,
@@ -11725,7 +11795,7 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
     });
   };
 
-  logger.info('learner_progress_snapshot_received', baseLogMeta);
+  logger.debug('learner_progress_snapshot_received', baseLogMeta);
 
   const respondWithError = (status, code, message, error, queryName = 'learner_progress_snapshot') => {
     if (error) {
@@ -11749,7 +11819,8 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
     });
   };
 
-  if (DEV_FALLBACK || E2E_TEST_MODE) {
+  if (E2E_TEST_MODE) {
+    // Only log in E2E test mode, not on every DEV_FALLBACK request — too chatty.
     console.log('Progress sync request:', {
       userId,
       courseId,
@@ -12086,6 +12157,23 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
       }
     } catch (err) {
       console.warn('Failed to broadcast persisted progress snapshot', err);
+    }
+
+    // Auto-create certificate when course reaches 100% completion (idempotent).
+    const isCourseCompleted =
+      (courseProgress?.percent ?? 0) >= 100 ||
+      Boolean(courseProgress?.completed) ||
+      courseProgress?.status === 'completed';
+    const wasAlreadyCompleted =
+      courseRow?.completed === true ||
+      (courseRow?.progress ?? courseRow?.percent ?? 0) >= 100;
+
+    if (isCourseCompleted && !wasAlreadyCompleted && supabase) {
+      // Fire-and-forget: do not block the 202 response
+      const certOrgId = resolvedOrgId ?? courseRow?.organization_id ?? null;
+      createCertificateIfNotExists(userId, courseId, certOrgId).catch((err) => {
+        logger.warn('certificate_auto_create_unhandled', { userId, courseId, message: err?.message });
+      });
     }
 
     logSnapshotSuccess('supabase');
@@ -16255,20 +16343,46 @@ app.post('/api/admin/documents', async (req, res) => {
     return;
   }
 
-  const organizationId = pickOrgId(payload.organization_id, payload.organizationId, payload.orgId);
+  let organizationId = pickOrgId(payload.organization_id, payload.organizationId, payload.orgId);
 
   try {
+    if (!organizationId && !context.isPlatformAdmin) {
+      // Auto-resolve from the authenticated user's active/primary org so that
+      // org-admin users can upload documents without passing orgId explicitly.
+      // Priority: active org header > context.activeOrganizationId > first membership.
+      const headerOrgId = getHeaderOrgId(req, { requireMembership: true }) || null;
+      const membershipOrgIds = Array.isArray(context.memberships)
+        ? context.memberships
+            .map((m) => normalizeOrgIdValue(pickOrgId(m.organization_id, m.organizationId, m.org_id, m.orgId)))
+            .filter(Boolean)
+        : [];
+      const fallbackOrgId =
+        headerOrgId ||
+        normalizeOrgIdValue(context.activeOrganizationId ?? context.requestedOrgId) ||
+        membershipOrgIds[0] ||
+        (Array.isArray(context.organizationIds) ? normalizeOrgIdValue(context.organizationIds[0]) : null) ||
+        null;
+      if (fallbackOrgId) {
+        organizationId = fallbackOrgId;
+        logger.info('[admin.documents.create] org_id_auto_resolved', {
+          requestId,
+          userId: context.userId,
+          resolvedOrgId: organizationId,
+        });
+      } else {
+        logger.warn('[admin.documents.create] org_scope_required', {
+          requestId,
+          userId: context.userId,
+          reason: 'no_organization_id_and_not_platform_admin',
+        });
+        res.status(403).json({ error: 'organization_scope_required', message: 'Document must be assigned to an organization. Pass an organizationId in the request.' });
+        return;
+      }
+    }
+
     if (organizationId) {
       const access = await requireOrgAccess(req, res, organizationId, { write: true });
       if (!access) return;
-    } else if (!context.isPlatformAdmin) {
-      logger.warn('[admin.documents.create] org_scope_required', {
-        requestId,
-        userId: context.userId,
-        reason: 'no_organization_id_and_not_platform_admin',
-      });
-      res.status(403).json({ error: 'organization_scope_required', message: 'Document must be assigned to an organization.' });
-      return;
     }
 
     let storagePath = payload.storagePath ?? null;

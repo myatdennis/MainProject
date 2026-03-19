@@ -637,14 +637,12 @@ const AdminUsers = () => {
                           { key: 'view', label: 'View', onClick: () => navigate(`/admin/users/${user.id}`) },
                           { key: 'edit', label: 'Edit', onClick: () => handleEditUser(user.id) },
                           { key: 'delete', label: 'Delete', onClick: () => handleDeleteUser(user.id), destructive: true },
-                          { key: 'more', label: 'More options', onClick: () => handleMoreOptions(user.id) },
                         ]}
                       />
                       {/* Tooltips for icon-only actions */}
                       <span id={`tooltip-view-${user.id}`} className="sr-only">View profile</span>
                       <span id={`tooltip-edit-${user.id}`} className="sr-only">Edit user</span>
                       <span id={`tooltip-delete-${user.id}`} className="sr-only">Delete user</span>
-                      <span id={`tooltip-more-${user.id}`} className="sr-only">More options</span>
                     </div>
                   </td>
                 </tr>

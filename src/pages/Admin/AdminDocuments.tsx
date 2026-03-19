@@ -7,6 +7,9 @@ import { useToast } from '../../context/ToastContext';
 
 type FieldErrors = Record<string, string>;
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isValidUuid = (v: string) => UUID_RE.test(v.trim());
+
 const AdminDocuments: React.FC = () => {
   const [docs, setDocs] = useState<DocumentMeta[]>([]);
   const [name, setName] = useState('');
@@ -45,8 +48,20 @@ const AdminDocuments: React.FC = () => {
     const errors: FieldErrors = {};
     if (!name.trim()) errors.name = 'Name is required.';
     if (!category.trim()) errors.category = 'Category is required.';
-    if (visibility === 'org' && !orgId.trim()) errors.orgId = 'Organization ID is required for org-scoped documents.';
-    if (visibility === 'user' && !userId.trim()) errors.userId = 'User ID is required for user-scoped documents.';
+    if (visibility === 'org') {
+      if (!orgId.trim()) {
+        errors.orgId = 'Organization ID is required for org-scoped documents.';
+      } else if (!isValidUuid(orgId)) {
+        errors.orgId = 'Organization ID must be a valid UUID (e.g. xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx).';
+      }
+    }
+    if (visibility === 'user') {
+      if (!userId.trim()) {
+        errors.userId = 'User ID is required for user-scoped documents.';
+      } else if (!isValidUuid(userId)) {
+        errors.userId = 'User ID must be a valid UUID.';
+      }
+    }
     return errors;
   };
 
@@ -178,12 +193,15 @@ const AdminDocuments: React.FC = () => {
                   Organization ID <span className="text-red-500">*</span>
                 </label>
                 <input
-                  className={`input${fieldErrors.orgId ? ' border-red-500' : ''}`}
-                  placeholder="UUID of the organization"
+                  className={`input${fieldErrors.orgId ? ' border-red-500' : (!fieldErrors.orgId && orgId && isValidUuid(orgId)) ? ' border-green-500' : ''}`}
+                  placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
                   value={orgId}
                   onChange={e => { setOrgId(e.target.value); setFieldErrors(p => ({ ...p, orgId: '' })); }}
                 />
                 {fieldErrors.orgId && <p className="text-xs text-red-600 mt-1">{fieldErrors.orgId}</p>}
+                {!fieldErrors.orgId && orgId && isValidUuid(orgId) && (
+                  <p className="text-xs text-green-700 mt-1">✓ Scoped to organization <code className="font-mono">{orgId}</code></p>
+                )}
               </>
             )}
             {visibility === 'user' && (
@@ -192,12 +210,15 @@ const AdminDocuments: React.FC = () => {
                   User ID <span className="text-red-500">*</span>
                 </label>
                 <input
-                  className={`input${fieldErrors.userId ? ' border-red-500' : ''}`}
-                  placeholder="UUID of the user"
+                  className={`input${fieldErrors.userId ? ' border-red-500' : (!fieldErrors.userId && userId && isValidUuid(userId)) ? ' border-green-500' : ''}`}
+                  placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
                   value={userId}
                   onChange={e => { setUserId(e.target.value); setFieldErrors(p => ({ ...p, userId: '' })); }}
                 />
                 {fieldErrors.userId && <p className="text-xs text-red-600 mt-1">{fieldErrors.userId}</p>}
+                {!fieldErrors.userId && userId && isValidUuid(userId) && (
+                  <p className="text-xs text-green-700 mt-1">✓ Scoped to user <code className="font-mono">{userId}</code></p>
+                )}
               </>
             )}
             {visibility === 'global' && (

@@ -544,6 +544,11 @@ export class CourseService {
   }
 
   private static buildModulesPayloadForUpsert(course: NormalizedCourse) {
+    // Only propagate course_id when it is a confirmed server-assigned UUID.
+    // For new (unsaved) courses the id is either absent or a temp value — in
+    // that case we omit it and let the server-side RPC derive the linkage from
+    // the nested graph structure so no stale/temp id contaminates the payload.
+    const courseId = hasServerAssignedCourseId(course.id) ? (course.id as string) : null;
     const modules = (course.modules || []).map((mod, moduleIndex) => {
       const lessons = (mod.lessons || []).map((lesson, lessonIndex) => {
         const canonicalLesson = normalizeLessonForPersistence(lesson);
@@ -570,6 +575,10 @@ export class CourseService {
           duration_s: durationSeconds,
           content_json: content,
           content,
+          // Only attach course_id when the course is already persisted (UUID confirmed).
+          ...(courseId ? { course_id: courseId } : {}),
+          // Always propagate module_id so the server can link the lesson without guessing.
+          ...(mod.id ? { module_id: mod.id } : {}),
         };
       });
 
@@ -579,6 +588,8 @@ export class CourseService {
         description: mod.description ?? null,
         order_index: mod.order ?? moduleIndex,
         lessons,
+        // Only attach course_id when the course is already persisted (UUID confirmed).
+        ...(courseId ? { course_id: courseId } : {}),
       };
     });
     return modules;
@@ -622,7 +633,7 @@ export class CourseService {
         });
     });
 
-    if (diagnostics.length > 0) {
+    if (diagnostics.length > 0 && import.meta.env?.DEV) {
       console.info('[CourseService] lesson_payload_debug', diagnostics);
     }
   }
@@ -821,6 +832,7 @@ export class CourseService {
     options: { idempotencyKey?: string; action?: IdempotentAction; signal?: AbortSignal } = {},
   ): Promise<NormalizedCourse | null> {
     const normalizedCourse = normalizeCourse(course);
+    const isNewCourse = !hasServerAssignedCourseId(normalizedCourse.id);
     const action = options.action ?? 'course.save';
     const identifiers = createActionIdentifiers(action, {
       courseId: normalizedCourse.id,
@@ -829,29 +841,107 @@ export class CourseService {
     });
     const idempotencyKey = options.idempotencyKey ?? identifiers.idempotencyKey;
     const { signal } = options;
-    // Single upsert with full graph (course + modules + lessons)
-    await withSupabaseAuthRetry(() =>
+
+    // Single upsert with full graph (course + modules + lessons).
+    // The server response contains the authoritative saved course with server-assigned UUIDs.
+    const serverCourse = await withSupabaseAuthRetry(() =>
       CourseService.upsertCourse(normalizedCourse, { idempotencyKey, signal }),
     );
 
-    // Reload fresh graph to get server-assigned IDs and order
-    const refreshed =
-      (await withSupabaseAuthRetry(() =>
-        CourseService.fetchCourseStructure(normalizedCourse.id, { signal }),
-      )) ||
-      (normalizedCourse.slug
-        ? await withSupabaseAuthRetry(() =>
-            CourseService.fetchCourseStructure(normalizedCourse.slug, { signal }),
-          )
-        : null);
+    // Use the server response directly (now includes module_id and course_id on each lesson).
+    let authoritative: NormalizedCourse | null = serverCourse
+      ? mapCourseRecord(serverCourse as unknown as SupabaseCourseRecord)
+      : null;
 
-    const authoritative = refreshed ?? normalizedCourse;
-    markCoursePersisted(authoritative.id);
+    // For a new course's first save, or when the server response is missing, always
+    // fetch the canonical admin record to ensure full graph linkage.
+    const needsCanonicalFetch = !authoritative || isNewCourse || !CourseService.isGraphComplete(authoritative);
+
+    if (needsCanonicalFetch) {
+      const identifier = authoritative?.id ?? authoritative?.slug ?? normalizedCourse.id ?? normalizedCourse.slug ?? null;
+      if (identifier && hasServerAssignedCourseId(identifier)) {
+        try {
+          const adminJson = await apiRequest<{ data: SupabaseCourseRecord | null }>(
+            `/api/admin/courses/${identifier}`,
+            { noTransform: true, signal },
+          );
+          if (adminJson.data) {
+            const canonical = mapCourseRecord(adminJson.data);
+            if (canonical) {
+              authoritative = canonical;
+            }
+          }
+        } catch (_) {
+          // fall through to client endpoint
+        }
+      } else if (!authoritative) {
+        // Non-UUID identifier fallback (slug-only)
+        const slugIdentifier = normalizedCourse.slug ?? null;
+        if (slugIdentifier) {
+          try {
+            const adminJson = await apiRequest<{ data: SupabaseCourseRecord | null }>(
+              `/api/admin/courses/${slugIdentifier}`,
+              { noTransform: true, signal },
+            );
+            if (adminJson.data) {
+              authoritative = mapCourseRecord(adminJson.data);
+            }
+          } catch (_) {
+            // fall through
+          }
+        }
+      }
+    }
+
+    if (!authoritative) {
+      // Final fallback: client endpoint by id then slug (handles published courses).
+      const refreshed =
+        (await withSupabaseAuthRetry(() =>
+          CourseService.fetchCourseStructure(normalizedCourse.id, { signal }),
+        )) ||
+        (normalizedCourse.slug
+          ? await withSupabaseAuthRetry(() =>
+              CourseService.fetchCourseStructure(normalizedCourse.slug, { signal }),
+            )
+          : null);
+      authoritative = refreshed;
+    }
+
+    // Post-save integrity guard: verify all modules and lessons have proper IDs and linkage.
+    if (authoritative && !CourseService.isGraphComplete(authoritative)) {
+      if (import.meta.env?.DEV) {
+        const issues = CourseService.graphIntegrityIssues(authoritative);
+        console.warn('[CourseService] post_save_graph_incomplete', {
+          courseId: authoritative.id,
+          issues,
+        });
+      }
+      // If still incomplete, trigger one more canonical fetch by the now-known server UUID.
+      if (hasServerAssignedCourseId(authoritative.id)) {
+        try {
+          const repairJson = await apiRequest<{ data: SupabaseCourseRecord | null }>(
+            `/api/admin/courses/${authoritative.id}`,
+            { noTransform: true, signal },
+          );
+          if (repairJson.data) {
+            const repaired = mapCourseRecord(repairJson.data);
+            if (repaired && CourseService.isGraphComplete(repaired)) {
+              authoritative = repaired;
+            }
+          }
+        } catch (_) {
+          // Non-fatal: use best available result
+        }
+      }
+    }
+
+    const result = authoritative ?? normalizedCourse;
+    markCoursePersisted(result.id);
     try {
       invalidateCourseQueries(queryClient, {
-        orgId: authoritative.organizationId ?? normalizedCourse.organizationId ?? null,
-        courseId: authoritative.id ?? null,
-        slug: authoritative.slug ?? normalizedCourse.slug ?? null,
+        orgId: result.organizationId ?? normalizedCourse.organizationId ?? null,
+        courseId: result.id ?? null,
+        slug: result.slug ?? normalizedCourse.slug ?? null,
       });
     } catch (invalidationError) {
       if (import.meta.env?.DEV) {
@@ -859,7 +949,40 @@ export class CourseService {
       }
     }
 
-    return authoritative;
+    return result;
+  }
+
+  /**
+   * Returns true if every module has an id and every lesson has an id,
+   * module_id (chapterId), and course_id. Used for post-save integrity validation.
+   */
+  private static isGraphComplete(course: NormalizedCourse): boolean {
+    if (!hasServerAssignedCourseId(course.id)) return false;
+    for (const mod of course.modules ?? []) {
+      if (!hasServerAssignedCourseId(mod.id)) return false;
+      for (const lesson of mod.lessons ?? []) {
+        if (!hasServerAssignedCourseId(lesson.id)) return false;
+        // chapterId maps to module_id — must be present for full linkage
+        if (!lesson.chapterId) return false;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Returns a list of human-readable integrity issues for structured logging.
+   */
+  private static graphIntegrityIssues(course: NormalizedCourse): string[] {
+    const issues: string[] = [];
+    if (!hasServerAssignedCourseId(course.id)) issues.push(`course.id not a UUID: ${course.id}`);
+    (course.modules ?? []).forEach((mod, mi) => {
+      if (!hasServerAssignedCourseId(mod.id)) issues.push(`modules[${mi}].id missing`);
+      (mod.lessons ?? []).forEach((lesson, li) => {
+        if (!hasServerAssignedCourseId(lesson.id)) issues.push(`modules[${mi}].lessons[${li}].id missing`);
+        if (!lesson.chapterId) issues.push(`modules[${mi}].lessons[${li}].chapterId (module_id) missing`);
+      });
+    });
+    return issues;
   }
 
   static async loadCourseFromDatabase(
@@ -936,12 +1059,8 @@ export class CourseService {
 
   static async getAllCoursesFromDatabase(): Promise<NormalizedCourse[]> {
     try {
-      console.log('[CourseService.getAllCoursesFromDatabase] Fetching from /api/admin/courses...');
       const json = await apiRequest<{ data: SupabaseCourseRecord[] }>('/api/admin/courses', { noTransform: true });
-      console.log('[CourseService.getAllCoursesFromDatabase] Raw response:', json);
-      const mapped = (json.data || []).map(mapCourseRecord);
-      console.log('[CourseService.getAllCoursesFromDatabase] Mapped courses:', mapped);
-      return mapped;
+      return (json.data || []).map(mapCourseRecord);
     } catch (error) {
       console.error('[CourseService.getAllCoursesFromDatabase] Error loading courses from API:', error);
       throw error;
