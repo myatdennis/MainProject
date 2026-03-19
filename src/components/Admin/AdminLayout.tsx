@@ -47,6 +47,7 @@ import { logAuthRedirect, logAuthDiagnostic } from '../../utils/logAuthRedirect'
 import { useAdminAccessState } from '../../lib/adminAccessState';
 import AdminNotificationBell from './AdminNotificationBell';
 import AdminOrgSelectorModal from './AdminOrgSelectorModal';
+import { courseStore } from '../../store/courseStore';
 
 interface AdminLayoutProps {
   children?: ReactNode;
@@ -177,6 +178,11 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
     const nextOrgId = event.target.value || null;
     try {
       await selectOrganization(nextOrgId);
+      // Flush the stale catalog cache for the old org so the learner/admin view
+      // doesn't serve a 30-minute-old snapshot from a different workspace.
+      courseStore.forceInit({ newOrgId: nextOrgId }).catch((err: unknown) => {
+        console.warn('[AdminLayout] forceInit after org switch failed', err);
+      });
     } catch (error) {
       console.warn('[AdminLayout] Failed to select organization', error);
     }
@@ -223,6 +229,7 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
   );
 
   const logAdminNavEvent = useCallback((event: string, meta: Record<string, unknown> = {}) => {
+    if (!import.meta.env.DEV) return;
     try {
       console.info('[admin] ' + event, {
         source: meta.source || 'sidebar',
@@ -305,6 +312,7 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
 
   // Log when a route is rendered inside admin and allow easy detection of mismatches
   useEffect(() => {
+    if (!import.meta.env.DEV) return;
     try {
       console.info('[admin] admin_route_rendered', { pathname: location.pathname, timestamp: Date.now() });
     } catch (err) {
@@ -327,11 +335,14 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
   const isReady = (ev as CustomEvent).type === 'admin:page-ready' || Boolean((detail as any)?.ready);
         // Update last reported page and readiness
         lastReportedRef.current = { page, ready: isReady };
-        console.info('[admin] admin_page_event', { type: (ev as CustomEvent).type, page, ready: isReady, pathname: location.pathname, timestamp: Date.now() });
+        if (import.meta.env.DEV) {
+          console.info('[admin] admin_page_event', { type: (ev as CustomEvent).type, page, ready: isReady, pathname: location.pathname, timestamp: Date.now() });
+        }
 
-        // If previously a mismatch was reported and now matches, emit resolved diagnostic
+        // Only log mismatch_resolved once — on the definitive ready event (admin:page-ready).
+        // Logging on admin:page-mounted (ready:false) would fire twice for the same navigation.
         const expected = getExpectedAdminLabel(location.pathname);
-        if (expected && page && expected === page) {
+        if (import.meta.env.DEV && isReady && expected && page && expected === page) {
           console.info('[admin] admin_route_mismatch_resolved', { pathname: location.pathname, page, timestamp: Date.now() });
         }
       } catch (err) {

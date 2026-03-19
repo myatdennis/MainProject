@@ -1024,6 +1024,7 @@ const AdminCourseBuilder = () => {
 
   // Auto-save course changes with enhanced feedback
   useEffect(() => {
+    if (initializing) return;
     if (course.id && course.id !== 'new' && course.title?.trim()) {
       if (!course.modules || course.modules.length === 0) {
         return;
@@ -1054,7 +1055,7 @@ const AdminCourseBuilder = () => {
 
       return () => clearTimeout(timeoutId);
     }
-  }, [course, logDev]);
+  }, [course, initializing, logDev]);
 
   const resolveOrganizationId = useCallback(
     (nextCourse?: Course | null) => {
@@ -1219,6 +1220,43 @@ const AdminCourseBuilder = () => {
 const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 const [lastSaveTime, setLastSaveTime] = useState<Date | null>(null);
 
+// ── Multi-tab safety: detect when another tab saves the same course ──────────
+const [staleFromOtherTab, setStaleFromOtherTab] = useState(false);
+const broadcastChannelRef = useRef<BroadcastChannel | null>(null);
+
+useEffect(() => {
+  if (typeof window === 'undefined' || !('BroadcastChannel' in window)) return;
+  const channel = new BroadcastChannel('huddle-course-editor');
+  broadcastChannelRef.current = channel;
+  channel.onmessage = (event: MessageEvent) => {
+    const msg = event.data as { type?: string; courseId?: string };
+    if (
+      msg?.type === 'course_saved' &&
+      msg?.courseId === courseId &&
+      courseId &&
+      courseId !== 'new'
+    ) {
+      setStaleFromOtherTab(true);
+    }
+  };
+  return () => {
+    channel.close();
+    broadcastChannelRef.current = null;
+  };
+}, [courseId]);
+
+const broadcastCourseSaved = useCallback((savedCourseId: string) => {
+  try {
+    broadcastChannelRef.current?.postMessage({
+      type: 'course_saved',
+      courseId: savedCourseId,
+      savedAt: Date.now(),
+    });
+  } catch {
+    // BroadcastChannel.postMessage is non-critical; swallow errors silently.
+  }
+}, []);
+
   // When the courseId URL param changes (e.g., navigating from /new → /:id after first save,
   // or clicking Edit on a different course), reset builder state so it loads the correct course.
   useEffect(() => {
@@ -1267,6 +1305,7 @@ const autoSaveHaltedRef = useRef(false);
 const autoSaveWarningIssuedRef = useRef(false);
 const autoSavePauseLoggedRef = useRef(false);
 const saveInFlightRef = useRef(false);
+const publishInFlightRef = useRef(false);
   const cancelScheduledAutosave = useCallback(
     (reason?: Error) => {
       if (!autosaveTimerRef.current) return;
@@ -1381,6 +1420,7 @@ const scheduleAutosave = useCallback(
           setLastSaveTime(new Date());
           setTimeout(() => setSaveStatus('idle'), 2000);
           logAutoSaveEvent('autosave_success', { courseId: snapshot.id, requestToken, mode: 'remote' });
+          broadcastCourseSaved(snapshot.id);
         } else {
           setSaveStatus('idle');
           logAutoSaveEvent('autosave_success', { courseId: snapshot.id, requestToken, mode: 'local' });
@@ -2480,6 +2520,11 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
   // Debounced remote auto-sync (single upsert). Runs only when there are real changes vs lastPersistedRef.
   useEffect(() => {
     if (!course.id || !course.title?.trim()) return;
+    // Guard: never autosave while the course is being hydrated from the server.
+    // Without this, a hard-refresh on /admin/courses/:id resolves to createEmptyCourse()
+    // before the async hydrateCourse effect runs, and the 1500ms debounce fires first,
+    // writing an empty shell to the database and overwriting real content.
+    if (initializing) return;
     if (autoSaveLockRef.current) {
       logAutoSaveEvent('autosave_skip_inflight', { courseId: course.id, reason: 'lock' });
       return;
@@ -2571,6 +2616,7 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
     };
   }, [
     course,
+    initializing,
     lessonAutosaveState.pending,
     lessonAutosaveState.status,
     runtimeStatus,
@@ -2588,10 +2634,10 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
   ]);
 
   const handleSave = async () => {
+    if (saveInFlightRef.current) return;
     setSaveStatus('saving');
     
     try {
-      await new Promise(resolve => setTimeout(resolve, 300)); // Simulate save delay
       const gate = evaluateRuntimeGate('course.save', runtimeStatus);
       const result = await persistCourse(course, { gate, action: 'course.save' });
 
@@ -2602,6 +2648,7 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
         showToast('Draft synced to your Huddle workspace.', 'success');
         clearValidationIssues();
         setTimeout(() => setSaveStatus('idle'), 3000);
+        broadcastCourseSaved(course.id);
       } else {
         setSaveStatus('idle');
         showToast(
@@ -2643,6 +2690,8 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
   };
 
   const handlePublish = async () => {
+    if (publishInFlightRef.current) return;
+    publishInFlightRef.current = true;
     const publishOrgId = activeOrgId ?? course.organizationId ?? null;
     const publishContext = {
       courseId: course.id,
@@ -2712,9 +2761,11 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
     const waitForAutosaveSettlement = async () => {
       const waitForInFlight = async () => {
         if (!saveInFlightRef.current) return;
+        const MAX_WAIT_MS = 8000;
+        const start = Date.now();
         await new Promise<void>((resolve) => {
           const check = () => {
-            if (!saveInFlightRef.current) {
+            if (!saveInFlightRef.current || Date.now() - start >= MAX_WAIT_MS) {
               resolve();
               return;
             }
@@ -2989,6 +3040,8 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
       }
       setSaveStatus('error');
       setTimeout(() => setSaveStatus('idle'), 5000);
+    } finally {
+      publishInFlightRef.current = false;
     }
   };
 
@@ -4711,6 +4764,36 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
           <ArrowLeft className="h-4 w-4 mr-2" />
           Back to Course Management
         </Link>
+        {staleFromOtherTab && (
+          <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-start gap-3">
+                <AlertTriangle className="h-5 w-5 mt-0.5 text-amber-600 shrink-0" />
+                <p className="font-semibold">
+                  This course was saved in another tab. Reload to get the latest version and avoid overwriting changes.
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => {
+                    setStaleFromOtherTab(false);
+                    void refreshCourseFromServer(courseId);
+                  }}
+                  className="rounded-lg border border-amber-300 px-3 py-1.5 text-xs font-semibold text-amber-900 hover:bg-amber-100 transition-colors"
+                >
+                  Reload Latest
+                </button>
+                <button
+                  onClick={() => setStaleFromOtherTab(false)}
+                  className="rounded-lg px-3 py-1.5 text-xs font-semibold text-amber-700 hover:bg-amber-100 transition-colors"
+                  title="Dismiss — your local changes will be saved on next autosave"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         {statusBanner && (
           <div className={`mb-4 rounded-2xl p-4 text-sm ${bannerToneClasses[statusBanner.tone].container}`}>
             <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">

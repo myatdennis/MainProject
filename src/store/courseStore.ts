@@ -1153,6 +1153,9 @@ let initPromise: Promise<void> | null = null;
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 let awaitingOrgResolution = false;
 let awaitingRoleResolution = false;
+// Track the org context that was used for the last successful init so we can
+// detect org switches and flush the stale localStorage catalog cache.
+let lastInitOrgId: string | null = null;
 
 const storeSubscribers = new Set<() => void>();
 
@@ -1463,7 +1466,9 @@ const ensureAssignmentScopedCatalog = async (
         lastError: null,
         detail: 'filtered_empty',
       });
-      return currentCourses;
+      // Assignments exist but none of the assigned course IDs are in the local course map.
+      // Return an empty catalog rather than leaking the full admin catalog to the learner.
+      return {};
     }
 
     const filtered: { [key: string]: Course } = {};
@@ -1565,6 +1570,7 @@ export const courseStore = {
     let canUseAdminApi = false;
     let adminLoadStatus: AdminLoadStatus = 'skipped';
     let adminLoadError: string | null = null;
+    let resolvedOrgIdForInit: string | null = null;
     const attemptStartedAt = Date.now();
     setAdminCatalogState({
       phase: 'loading',
@@ -1577,6 +1583,8 @@ export const courseStore = {
         console.info('[courseStore.init] Starting initialization...');
       }
       const orgContext = resolveOrgContext();
+      // Record the org being resolved so forceInit can detect org switches.
+      resolvedOrgIdForInit = orgContext.orgId ?? null;
       if (orgContext.status === 'loading') {
         console.info(
           '[courseStore.init] Org context still resolving (membershipStatus=loading); awaiting auth_ready event before catalog fetch.',
@@ -1896,6 +1904,10 @@ export const courseStore = {
         lastUpdatedAt: Date.now(),
         lastError: adminLoadError,
       });
+      // Persist the resolved org so forceInit can detect org switches on the next call.
+      if (resolvedOrgIdForInit !== null) {
+        lastInitOrgId = resolvedOrgIdForInit;
+      }
     }
     })();
 
@@ -1908,7 +1920,47 @@ export const courseStore = {
 
   // Force a fresh catalog fetch, bypassing the ready-guard.
   // Use this for explicit user-triggered retries when the catalog is in error.
-  forceInit: (): Promise<void> => {
+  forceInit: (options?: { newOrgId?: string | null; flushCache?: boolean }): Promise<void> => {
+    // If caller signals an org switch, flush the stale catalog cache for the old org
+    // so the fresh init doesn't serve a 30-minute-old snapshot from a different workspace.
+    const incomingOrgId = options?.newOrgId ?? null;
+    const shouldFlushAllCaches = options?.flushCache === true;
+
+    try {
+      if (typeof window !== 'undefined') {
+        if (shouldFlushAllCaches) {
+          // Flush every cached catalog entry unconditionally (full cache bust).
+          writeCatalogCache({});
+          if (import.meta.env?.DEV) {
+            console.info('[courseStore.forceInit] Full catalog cache flushed (flushCache=true)');
+          }
+        } else if (incomingOrgId !== undefined && incomingOrgId !== lastInitOrgId) {
+          const allCaches = readCatalogCache();
+          // Remove entries that belong to the previous org to avoid cross-org catalog bleed.
+          const keysToRemove = Object.keys(allCaches).filter((key) => {
+            // Cache keys are formatted as `${userId}:${orgId}` — drop any entry whose
+            // orgId segment matches the *old* org, not the new one.
+            const parts = key.split(':');
+            const entryOrgId = parts.length >= 2 ? parts.slice(1).join(':') : null;
+            return entryOrgId && entryOrgId !== incomingOrgId && entryOrgId !== 'none';
+          });
+          if (keysToRemove.length > 0) {
+            keysToRemove.forEach((k) => { delete allCaches[k]; });
+            writeCatalogCache(allCaches);
+            if (import.meta.env?.DEV) {
+              console.info('[courseStore.forceInit] Flushed stale catalog cache on org switch', {
+                from: lastInitOrgId,
+                to: incomingOrgId,
+                flushed: keysToRemove.length,
+              });
+            }
+          }
+        }
+      }
+    } catch (cacheErr) {
+      console.warn('[courseStore.forceInit] Failed to flush catalog cache', cacheErr);
+    }
+
     // Clear any in-flight promise so a fresh run can start.
     initPromise = null;
     // Reset phase to idle so the init logic runs from scratch.
@@ -2008,6 +2060,7 @@ export const courseStore = {
           }
           _saveCoursesToLocalStorage(courses);
           void markDraftSynced(targetId, courses[targetId]);
+          notifySubscribers();
         })
         .catch(error => {
           if (error instanceof CourseValidationError) {
@@ -2117,6 +2170,7 @@ export const courseStore = {
         }
         _saveCoursesToLocalStorage(courses);
         void markDraftSynced(normalizedId, courses[normalizedId]);
+        notifySubscribers();
       })
       .catch((error) => {
         if (error instanceof SlugConflictError) {

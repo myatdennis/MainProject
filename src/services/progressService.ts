@@ -49,6 +49,7 @@ let eventRetryTimer: number | null = null;
 let isDrainingEvents = false;
 let serverErrorBackoffUntil: number | null = null;
 const SERVER_ERROR_BACKOFF_MS = 60000;
+const RATE_LIMIT_BACKOFF_MS = 30000;
 
 interface ProgressSnapshot {
   userId: string;
@@ -136,6 +137,10 @@ const postSnapshot = async (snapshot: ProgressSnapshot, { showFailureToast }: { 
     if (error instanceof ApiError && error.status >= 500) {
       serverErrorBackoffUntil = Date.now() + SERVER_ERROR_BACKOFF_MS;
       scheduleRetry(SERVER_ERROR_BACKOFF_MS);
+    }
+    if (error instanceof ApiError && error.status === 429) {
+      serverErrorBackoffUntil = Date.now() + RATE_LIMIT_BACKOFF_MS;
+      scheduleRetry(RATE_LIMIT_BACKOFF_MS);
     }
     if (showFailureToast) {
       const message = NetworkErrorHandler.isOnline()

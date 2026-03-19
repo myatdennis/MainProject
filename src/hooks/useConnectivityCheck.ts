@@ -51,7 +51,10 @@ export const useConnectivityCheck = ({ healthPath = '/api/health', intervalMs = 
   const timeoutRef = useRef<number | null>(null);
   const failureCountRef = useRef(0);
   const enabledRef = useRef(enabled);
-  const normalizedSuccessInterval = Math.max(intervalMs ?? MIN_SUCCESS_INTERVAL_MS, MIN_SUCCESS_INTERVAL_MS);
+  const normalizedSuccessInterval = useMemo(
+    () => Math.max(intervalMs ?? MIN_SUCCESS_INTERVAL_MS, MIN_SUCCESS_INTERVAL_MS),
+    [intervalMs],
+  );
 
   useEffect(() => {
     enabledRef.current = enabled;

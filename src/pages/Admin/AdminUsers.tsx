@@ -378,14 +378,6 @@ const AdminUsers = () => {
     setUserToEdit(null);
   };
 
-  const handleMoreOptions = (userId: string) => {
-    const user = usersList.find(u => u.id === userId);
-    if (user) {
-      // Show informational toast; these features are on the roadmap
-      showToast(`Additional actions for ${user.name} are coming soon. Use the Edit button to update this user's details.`, 'info');
-    }
-  };
-
   return (
     <PageWrapper>
       <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Users', to: '/admin/users' }]} />

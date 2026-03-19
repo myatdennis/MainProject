@@ -108,7 +108,7 @@ const ResourceQuickAction = ({ document }: { document: DocumentMeta }) => {
   const { download, isLoading, error } = useDocumentDownload(document);
   return (
     <div className="flex flex-col items-end gap-1 text-xs">
-      <Button variant="ghost" size="xs" onClick={() => download()} disabled={isLoading || !document.id}>
+      <Button variant="ghost" size="sm" onClick={() => download()} disabled={isLoading || !document.id}>
         {isLoading ? 'Opening…' : 'Open'}
       </Button>
       {error && <p className="text-[11px] text-rose-600">{error}</p>}
@@ -138,8 +138,10 @@ const ClientDashboard = () => {
   const [surveyAssignmentsLoading, setSurveyAssignmentsLoading] = useState(true);
   const [surveyAssignmentsError, setSurveyAssignmentsError] = useState<string | null>(null);
   const [courseStoreRevision, setCourseStoreRevision] = useState(0);
-  const [catalogError, setCatalogError] = useState<string | null>(null);
-  const [analyticsError, setAnalyticsError] = useState<string | null>(null);
+  // catalogError and analyticsError are set by async handlers for future use / error surfacing;
+  // the read-values are currently unused (errors are surfaced via bootSteps).
+  const [, setCatalogError] = useState<string | null>(null);
+  const [, setAnalyticsError] = useState<string | null>(null);
   const [bootAttempt, setBootAttempt] = useState(0);
   const [bootSteps, setBootSteps] = useState<Record<BootStepName, BootStepState>>({
     session: { status: 'running', error: null },
@@ -168,10 +170,17 @@ const ClientDashboard = () => {
   );
   const [progressRefreshToken, setProgressRefreshToken] = useState(0);
   const courseStoreAdapter = useMemo(buildCourseStoreAdapter, []);
+  // Track learner catalog load status so we can show a targeted empty-state when the
+  // server confirms there are genuinely no courses available (status === 'empty'), rather
+  // than staying silent or showing a stale "loading" indicator indefinitely.
+  const [learnerCatalogState, setLearnerCatalogState] = useState(() =>
+    courseStore.getLearnerCatalogState(),
+  );
 
   useEffect(() => {
     const unsubscribe = courseStoreAdapter.subscribe(() => {
       setCourseStoreRevision((rev) => rev + 1);
+      setLearnerCatalogState(courseStore.getLearnerCatalogState());
     });
     return unsubscribe;
   }, [courseStoreAdapter]);
@@ -405,7 +414,8 @@ const ClientDashboard = () => {
   const courses = useMemo(
     () =>
       assignments
-        .map((record) => courseStoreAdapter.getCourse(record.courseId))
+        .filter((record) => record.courseId != null)
+        .map((record) => courseStoreAdapter.getCourse(record.courseId as string))
         .filter(Boolean)
         .map((course) => normalizeCourse(course!)),
     [assignments, courseStoreRevision]
@@ -556,8 +566,6 @@ const ClientDashboard = () => {
     : fallbackCourseDetails.filter(
         (entry) => entry.progressPercent > 0 && entry.progressPercent < 100
       ).length;
-  const bannerCandidates = [catalogError, analyticsError].filter(Boolean);
-  const bannerError = bannerCandidates.length > 0 ? bannerCandidates.join(' ') : null;
   const featuredResources = useMemo(() => resources.slice(0, 3), [resources]);
   const extraResources = Math.max(0, resources.length - featuredResources.length);
 
@@ -740,7 +748,7 @@ const ClientDashboard = () => {
       </div>
 
       {welcomeExperience && (
-        <Card tone="positive" className="mt-6 space-y-3 border border-emerald-200 bg-emerald-50/70">
+        <Card className="mt-6 space-y-3 border border-emerald-200 bg-emerald-50/70">
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <p className="text-xs uppercase tracking-wide text-emerald-700">Onboarding complete</p>
@@ -831,6 +839,24 @@ const ClientDashboard = () => {
           {assignmentsLoading ? (
             <div className="flex items-center justify-center py-8 text-sm text-slate/60">
               Checking for assignments…
+            </div>
+          ) : !hasAssignedCourses && !showingFallbackCatalog && learnerCatalogState.status === 'empty' ? (
+            // Catalog confirmed empty by server — no courses are published/available for this org.
+            // Show a clear "contact your admin" message so learners don't wait indefinitely.
+            <div className="rounded-2xl border border-dashed border-mist bg-cloud/60 p-6 text-center">
+              <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-white text-skyblue">
+                <BookOpen className="h-6 w-6" />
+              </div>
+              <h3 className="mt-4 font-heading text-base font-semibold text-charcoal">No courses available yet</h3>
+              <p className="mt-2 text-sm text-slate/70">
+                Your organization hasn't published any courses yet. Reach out to your administrator to get programs
+                scheduled for your account.
+              </p>
+              <div className="mt-4 flex flex-wrap justify-center gap-3">
+                <Button variant="ghost" size="sm" onClick={() => navigate('/lms/dashboard')}>
+                  Visit full LMS
+                </Button>
+              </div>
             </div>
           ) : !hasAssignedCourses && !showingFallbackCatalog ? (
             <div className="rounded-2xl border border-dashed border-mist bg-cloud/60 p-6 text-center">
@@ -933,7 +959,7 @@ const ClientDashboard = () => {
             </ul>
           )}
           {extraResources > 0 && (
-            <Button variant="ghost" size="xs" onClick={handleNavigateToResources}>
+            <Button variant="ghost" size="sm" onClick={handleNavigateToResources}>
               See {extraResources} more
             </Button>
           )}

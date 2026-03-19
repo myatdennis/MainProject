@@ -270,7 +270,7 @@ export const buildLearnerProgressSnapshot = (
     };
   });
 
-  const totalLessons = course.lessons || 0;
+  const totalLessons = course.lessons || chapterProgress.reduce((sum, ch) => sum + ch.lessonProgress.length, 0);
   const overallCompletion = totalLessons > 0 ? completedLessons.size / totalLessons : 0;
 
   return {

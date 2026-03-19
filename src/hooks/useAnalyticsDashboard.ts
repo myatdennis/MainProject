@@ -190,8 +190,11 @@ const buildHourlyUsageFallback = (events: ReturnType<typeof getEvents>): HourlyU
   }));
 
   events.forEach((event) => {
-    const hour = new Date(event.timestamp).getHours();
+    const ts = new Date(event.timestamp);
+    if (isNaN(ts.getTime())) return;
+    const hour = ts.getHours();
     const entry = template[hour];
+    if (!entry) return;
     entry.usage += 1;
     if (event.type === 'course_completed') {
       entry.completion += 1;
@@ -219,6 +222,7 @@ const buildTrendPoints = (
 
   events.forEach((event) => {
     const timestamp = new Date(event.timestamp);
+    if (isNaN(timestamp.getTime())) return;
     if (timestamp < start || timestamp > end) return;
     const label = formatDateLabel(timestamp);
     const bucket = bucketMap.get(label);
@@ -262,8 +266,10 @@ const buildHeatmap = (
 
   events.forEach((event) => {
     const timestamp = new Date(event.timestamp);
+    if (isNaN(timestamp.getTime())) return;
     if (timestamp < start || timestamp > end) return;
     const dayLabel = DAY_LABELS[timestamp.getDay()];
+    if (!dayLabel) return;
     const bucketIndex = Math.min(HEATMAP_BUCKETS - 1, Math.floor(timestamp.getHours() / 2));
     template[dayLabel][bucketIndex] += 1;
   });
@@ -345,7 +351,17 @@ export const useAnalyticsDashboard = (options: UseAnalyticsDashboardOptions = {}
     const targetCourseId = courseId ?? courses[0]?.courseId ?? null;
   const events = getEvents(targetCourseId ? { courseId: targetCourseId } : undefined);
     const engagementTrend = buildTrendPoints(events, start, end);
-    const heatmap = buildHeatmap(events, start, end);
+    // Prefer server-computed heatmap; fall back to local DAL only if absent
+    const serverHeatmap = apiData.heatmap;
+    const heatmap: HeatmapDay[] = serverHeatmap?.length
+      ? DAY_LABELS.map((day, dow) => ({
+          day,
+          hours: Array.from({ length: HEATMAP_BUCKETS }, (_, bucket) => {
+            const row = serverHeatmap.find((r) => r.dow === dow && r.bucket === bucket);
+            return row?.events ?? 0;
+          }),
+        }))
+      : buildHeatmap(events, start, end);
 
   const courseAnalytics = targetCourseId ? getCourseAnalytics(targetCourseId) : null;
     const hourlyUsage = courseAnalytics?.peakUsageHours?.length

@@ -1339,7 +1339,7 @@ app.post('/api/admin/courses/:id/assign', authenticate, async (req, res) => {
         .from('assignments')
         .select('*')
         .eq('course_id', id)
-        .eq('organization_id', organizationId)
+        .eq('organization_id', finalOrganizationId)
         .eq('idempotency_key', idempotencyKey);
       if (error) throw error;
       if (existingByKey && existingByKey.length > 0) {
@@ -1351,7 +1351,7 @@ app.post('/api/admin/courses/:id/assign', authenticate, async (req, res) => {
         .from('assignments')
         .select('*')
         .eq('course_id', id)
-        .eq('organization_id', organizationId)
+        .eq('organization_id', finalOrganizationId)
         .eq('client_request_id', clientRequestId);
       if (error) throw error;
       if (existingByClient && existingByClient.length > 0) {
@@ -1369,7 +1369,7 @@ app.post('/api/admin/courses/:id/assign', authenticate, async (req, res) => {
           .from('assignments')
           .select('*')
           .eq('course_id', id)
-          .eq('organization_id', organizationId)
+          .eq('organization_id', finalOrganizationId)
           .eq('active', true)
           .in(column, normalizedUserIds);
         if (error) throw error;
@@ -1394,7 +1394,7 @@ app.post('/api/admin/courses/:id/assign', authenticate, async (req, res) => {
         .from('assignments')
         .select('*')
         .eq('course_id', id)
-        .eq('organization_id', organizationId)
+        .eq('organization_id', finalOrganizationId)
         .eq('active', true)
         .is('user_id', null);
       if (error) throw error;
@@ -1517,7 +1517,7 @@ app.post('/api/admin/courses/:id/assign', authenticate, async (req, res) => {
     res.status(insertedRows.length > 0 ? 201 : 200).json({
       data: responseRows,
       meta: {
-        organizationId,
+        organizationId: finalOrganizationId,
         inserted: insertedRows.length,
         updated: updatedRows.length,
         targets: targetUserIds.length,

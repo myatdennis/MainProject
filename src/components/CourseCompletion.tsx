@@ -219,46 +219,62 @@ const CourseCompletion: React.FC<CourseCompletionProps> = ({
     setIsGeneratingCertificate(true);
     setAutoGenerationError(null);
 
-    try {
-      const generated = await generateFromCompletion({
-        userId: learnerId,
-        userName: learnerName,
-        userEmail: learnerEmail,
-        courseId: course.id,
-        courseTitle: course.title,
-        certificationName: certificateDisplayName,
-        completionDate: completionData.completedAt.toISOString(),
-        completionTimeMinutes: completionData.timeSpent,
-        finalScore: completionData.score,
-        requirementsMet: requirementChecklist.map((item) => item.label),
-      });
+    const MAX_ATTEMPTS = 3;
+    const BASE_DELAY_MS = 2000;
 
-      setCertificateUrl(generated.certificateUrl);
-      setCertificateId(generated.id);
-      setActiveTab('certificate');
-      toast.success(source === 'auto' ? 'Your certificate is ready!' : 'Certificate generated successfully!');
-
-      if (!hasLoggedCertificateAnalyticsRef.current) {
-        trackCourseCompletion(learnerId, course.id, {
-          totalTimeSpent: completionData.timeSpent,
+    let lastError: unknown = null;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        const generated = await generateFromCompletion({
+          userId: learnerId,
+          userName: learnerName,
+          userEmail: learnerEmail,
+          courseId: course.id,
+          courseTitle: course.title,
+          certificationName: certificateDisplayName,
+          completionDate: completionData.completedAt.toISOString(),
+          completionTimeMinutes: completionData.timeSpent,
           finalScore: completionData.score,
-          modulesCompleted: totalModules,
-          lessonsCompleted: completedLessons,
-          quizzesPassed: 0,
-          certificateGenerated: true,
+          requirementsMet: requirementChecklist.map((item) => item.label),
         });
-        hasLoggedCertificateAnalyticsRef.current = true;
+
+        setCertificateUrl(generated.certificateUrl);
+        setCertificateId(generated.id);
+        setActiveTab('certificate');
+        toast.success(source === 'auto' ? 'Your certificate is ready!' : 'Certificate generated successfully!');
+
+        if (!hasLoggedCertificateAnalyticsRef.current) {
+          trackCourseCompletion(learnerId, course.id, {
+            totalTimeSpent: completionData.timeSpent,
+            finalScore: completionData.score,
+            modulesCompleted: totalModules,
+            lessonsCompleted: completedLessons,
+            quizzesPassed: 0,
+            certificateGenerated: true,
+          });
+          hasLoggedCertificateAnalyticsRef.current = true;
+        }
+        // Success — exit the retry loop
+        setIsGeneratingCertificate(false);
+        return;
+      } catch (error) {
+        lastError = error;
+        console.error(`Failed to generate certificate (attempt ${attempt}/${MAX_ATTEMPTS}):`, error);
+        if (attempt < MAX_ATTEMPTS) {
+          // Exponential backoff: 2s, 4s before next attempt
+          await new Promise<void>((resolve) => setTimeout(resolve, BASE_DELAY_MS * attempt));
+        }
       }
-    } catch (error) {
-      console.error('Failed to generate certificate:', error);
-      if (source === 'auto') {
-        setAutoGenerationError('We could not auto-issue your certificate. Please try again below.');
-      } else {
-        toast.error('Unable to generate certificate. Please try again.');
-      }
-    } finally {
-      setIsGeneratingCertificate(false);
     }
+
+    // All attempts exhausted
+    if (source === 'auto') {
+      setAutoGenerationError('We could not auto-issue your certificate. Please try again below.');
+    } else {
+      toast.error('Unable to generate certificate after multiple attempts. Please try again later.');
+    }
+    console.error('Certificate generation failed after all retries:', lastError);
+    setIsGeneratingCertificate(false);
   }, [certificateDisplayName, completionData.completedAt, completionData.score, completionData.timeSpent, completedLessons, course?.id, course.title, learnerEmail, learnerId, learnerName, requirementChecklist, totalModules]);
 
   const handleCertificateDownloadInternal = useCallback(() => {
@@ -502,10 +518,21 @@ const CourseCompletion: React.FC<CourseCompletionProps> = ({
               <h2 className="text-2xl font-bold text-gray-900 mb-4">Your Certificate</h2>
               {autoGenerationError && (
                 <div className="mb-4 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-4 text-left">
-                  <AlertTriangle className="h-5 w-5 text-amber-600" />
-                  <div>
-                    <p className="text-sm font-semibold text-amber-800">Automatic issuance failed</p>
+                  <AlertTriangle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+                  <div className="flex-1">
+                    <p className="text-sm font-semibold text-amber-800">Certificate generation failed</p>
                     <p className="text-sm text-amber-700">{autoGenerationError}</p>
+                    <button
+                      onClick={handleGenerateCertificate}
+                      disabled={isGeneratingCertificate}
+                      className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-amber-600 px-4 py-2 text-xs font-semibold text-white hover:bg-amber-700 disabled:opacity-60 transition-colors"
+                    >
+                      {isGeneratingCertificate ? (
+                        <><Loader2 className="h-3 w-3 animate-spin" /> Retrying…</>
+                      ) : (
+                        'Retry Certificate'
+                      )}
+                    </button>
                   </div>
                 </div>
               )}
