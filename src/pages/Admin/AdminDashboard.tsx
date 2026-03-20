@@ -14,6 +14,7 @@ import useRuntimeStatus from '../../hooks/useRuntimeStatus';
 import { courseStore, AdminCatalogState } from '../../store/courseStore';
 import { useAnalyticsDashboard } from '../../hooks/useAnalyticsDashboard';
 import apiRequest from '../../utils/apiClient';
+import { useRouteChangeReset } from '../../hooks/useRouteChangeReset';
 import {
   Users,
   Building2,
@@ -95,6 +96,9 @@ const AdminDashboard = () => {
     }
   }, []);
   const navigate = useNavigate();
+  // routeKey increments on every pathname change — use as a dep in
+  // useMemo/useEffect to get controlled resets without component remounts.
+  const { routeKey } = useRouteChangeReset();
   const runtimeStatus = useRuntimeStatus();
   const supabaseReady = runtimeStatus.supabaseConfigured && runtimeStatus.supabaseHealthy;
   const runtimeLastChecked = runtimeStatus.lastChecked
@@ -213,7 +217,10 @@ const AdminDashboard = () => {
       icon: TrendingUp,
       accent: 'text-gold',
     },
-  ], [ov, analyticsLoading]);
+  // routeKey: re-derive stat labels when we navigate back to the dashboard
+  // so stale values from a prior visit don't persist.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [ov, analyticsLoading, routeKey]);
 
   useEffect(() => {
     setCatalogState(courseStore.getAdminCatalogState());

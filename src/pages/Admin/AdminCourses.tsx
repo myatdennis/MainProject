@@ -46,6 +46,7 @@ import { LoadingSpinner } from '../../components/LoadingComponents';
 import { LazyImage } from '../../components/PerformanceComponents';
 import CourseAssignmentModal from '../../components/CourseAssignmentModal';
 import { logAuthRedirect } from '../../utils/logAuthRedirect';
+import { useRouteChangeReset } from '../../hooks/useRouteChangeReset';
 
 
 const AdminCourses = () => {
@@ -59,7 +60,10 @@ const AdminCourses = () => {
   }, []);
   const { showToast } = useToast();
   const syncService = useSyncService();
-  
+
+  // Reset transient UI state whenever we navigate to/from this page.
+  const { routeKey } = useRouteChangeReset();
+
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [selectedCourses, setSelectedCourses] = useState<string[]>([]);
@@ -78,8 +82,22 @@ const AdminCourses = () => {
 
   const navigate = useNavigate();
 
-  // Get courses from store (re-read when version changes)
-  const courses = useMemo(() => courseStore.getAllCourses(), [version]);
+  // Reset transient modal/selection state on navigation.
+  useEffect(() => {
+    setSearchTerm('');
+    setFilterStatus('all');
+    setSelectedCourses([]);
+    setShowDeleteModal(false);
+    setCourseToDelete(null);
+    setShowCreateModal(false);
+    setShowAssignmentModal(false);
+    setCourseForAssignment(null);
+    setShowArchiveModal(false);
+    setCourseToArchive(null);
+  }, [routeKey]);
+
+  // Get courses from store (re-read when version or routeKey changes)
+  const courses = useMemo(() => courseStore.getAllCourses(), [version, routeKey]);
 
   useEffect(() => {
     setCatalogState(courseStore.getAdminCatalogState());

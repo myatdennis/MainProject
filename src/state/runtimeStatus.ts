@@ -79,6 +79,13 @@ const parseHealthResponse = async (response: Response, overrides: HealthOverride
   const realtime = diagnostics?.realtime ?? {};
   const storage = diagnostics?.storage ?? {};
   const offlineQueue = diagnostics?.offlineQueue ?? {};
+  // Derive apiHealthy first so supabaseHealthy can use it as a fallback.
+  const derivedApiHealthy =
+    typeof diagnostics?.healthy === 'boolean'
+      ? Boolean(diagnostics.healthy)
+      : Boolean(diagnostics?.ok ?? response.ok);
+  const apiReachable = overrides.apiReachable ?? derivedApiHealthy;
+  const apiHealthy = overrides.apiReachable ?? derivedApiHealthy;
   const supabaseConfigured =
     typeof supabaseStatus === 'object'
       ? !supabaseStatus?.disabled && (supabaseStatus?.status !== 'disabled' || hasSupabaseConfig())
@@ -86,13 +93,11 @@ const parseHealthResponse = async (response: Response, overrides: HealthOverride
   const supabaseHealthy =
     typeof supabaseStatus?.status === 'string'
       ? supabaseStatus.status === 'ok'
-      : currentStatus.supabaseHealthy;
-  const derivedApiHealthy =
-    typeof diagnostics?.healthy === 'boolean'
-      ? Boolean(diagnostics.healthy)
-      : Boolean(diagnostics?.ok ?? response.ok);
-  const apiReachable = overrides.apiReachable ?? derivedApiHealthy;
-  const apiHealthy = overrides.apiReachable ?? derivedApiHealthy;
+      // If the health response doesn't include supabase.status but the overall
+      // response is healthy (apiHealthy=true), treat Supabase as healthy.
+      // This prevents a false "Supabase offline" banner when the server returns
+      // a minimal health payload without a supabase sub-key.
+      : apiHealthy || currentStatus.supabaseHealthy;
   const demoModeEnabled =
     typeof diagnostics?.demoMode?.enabled === 'boolean'
       ? diagnostics.demoMode.enabled
@@ -185,15 +190,23 @@ const performRefresh = async (): Promise<RuntimeStatus> => {
     throw new Error(`Health request returned unexpected status (${response.status})`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    // Only mark Supabase as unhealthy if we have a prior successful baseline
+    // (lastChecked !== null).  On the very first cold-start poll, a network
+    // timeout should not flip supabaseHealthy to false — the banner would show
+    // a false "offline" error before a single real response has arrived.
+    const hadPriorSuccess = currentStatus.lastChecked !== null;
     currentStatus = {
       ...currentStatus,
       apiHealthy: false,
       apiReachable: false,
       apiAuthRequired: false,
       wsEnabled: false,
-      supabaseHealthy: currentStatus.supabaseHealthy && hasSupabaseConfig(),
-      statusLabel: 'degraded',
-      lastChecked: Date.now(),
+      // Only degrade Supabase health when we have prior evidence of its state.
+      supabaseHealthy: hadPriorSuccess
+        ? (currentStatus.supabaseHealthy && hasSupabaseConfig())
+        : currentStatus.supabaseHealthy,
+      statusLabel: hadPriorSuccess ? 'degraded' : currentStatus.statusLabel,
+      lastChecked: hadPriorSuccess ? Date.now() : currentStatus.lastChecked,
       lastError: message,
     };
     return currentStatus;

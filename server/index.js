@@ -1200,8 +1200,6 @@ app.post('/api/admin/courses/:id/assign', authenticate, async (req, res) => {
   const buildRecord = (userId) => {
     const record = {
       organization_id: finalOrganizationId,
-      organizationId: finalOrganizationId,
-      org_id: finalOrganizationId,
       course_id: id,
       user_id: userId,
       user_id_uuid: userId ?? null,

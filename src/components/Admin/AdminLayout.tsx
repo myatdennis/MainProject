@@ -802,7 +802,7 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
         </div>
       )}
 
-      <main key={location.pathname} className="flex-1 overflow-y-auto bg-softwhite px-6 py-8 lg:px-12">
+      <main className="flex-1 overflow-y-auto bg-softwhite px-6 py-8 lg:px-12">
         <AdminErrorBoundary>
           <Suspense fallback={
             <div className="flex items-center justify-center min-h-[40vh]">

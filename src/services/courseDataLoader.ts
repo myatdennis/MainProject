@@ -21,6 +21,16 @@ export interface LoadCourseResult {
 const courseCache = new Map<string, LoadCourseResult>();
 let courseStoreInitPromise: Promise<void> | null = null;
 
+// Clear the in-memory course-detail cache whenever the store signals a full
+// catalog refresh (org switch, forceInit, etc.).  This prevents stale remote
+// course detail results from being served after the catalog is refreshed.
+if (typeof window !== 'undefined') {
+  window.addEventListener('huddle:catalog-flush', () => {
+    courseCache.clear();
+    courseStoreInitPromise = null;
+  });
+}
+
 const isSupabaseConfigured = () =>
   Boolean(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY);
 

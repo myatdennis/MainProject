@@ -1340,8 +1340,12 @@ const _hasLocalProgressForCourse = (course: Course): boolean => {
   }
 };
 
-const CATALOG_CACHE_STORAGE_KEY = 'huddle_assignment_catalog_v2';
-const CATALOG_CACHE_MAX_AGE_MS = 1000 * 60 * 30; // 30 minutes
+const CATALOG_CACHE_STORAGE_KEY = 'huddle_assignment_catalog_v3';
+// Evict any stale v2 cache written by E2E / dev runs so it never surfaces in production.
+if (typeof window !== 'undefined') {
+  try { window.localStorage.removeItem('huddle_assignment_catalog_v2'); } catch { /* noop */ }
+}
+const CATALOG_CACHE_MAX_AGE_MS = 1000 * 60 * 10; // 10 minutes (was 30)
 
 type CatalogCacheEntry = {
   timestamp: number;
@@ -1512,16 +1516,18 @@ const ensureAssignmentScopedCatalog = async (
 
     const filteredEntries = Object.entries(courseMap).filter(([id]) => assignmentByCourseId.has(id));
     if (filteredEntries.length === 0) {
-      const cached = loadCachedCatalog(cacheKey);
-      if (cached) {
-        console.info('[courseStore] Using cached catalog for empty assignment filter.');
-        setLearnerCatalogState({
-          status: 'empty',
-          lastUpdatedAt: Date.now(),
-          lastError: null,
-          detail: 'cached',
-        });
-        return cached;
+      // Server returned assignments but none of their course IDs are in the local
+      // course map.  Do NOT promote the stale localStorage cache as the result —
+      // that was the root cause of inconsistent catalogs.  Instead, return empty
+      // so the UI shows "no content" and the user can trigger a manual refresh.
+      if (import.meta.env.DEV) {
+        const cached = loadCachedCatalog(cacheKey);
+        if (cached) {
+          console.info(
+            '[courseStore] cache available but NOT used as primary source (server data takes priority)',
+            { cacheEntries: Object.keys(cached).length },
+          );
+        }
       }
       setLearnerCatalogState({
         status: 'empty',
@@ -1563,14 +1569,17 @@ const ensureAssignmentScopedCatalog = async (
       userId,
       error: error instanceof Error ? error.message : String(error),
     });
+    // Cache is only a fallback when the server request itself failed (network error,
+    // timeout, etc.).  Mark UI as degraded so the user knows they may be seeing
+    // stale data.
     const cached = loadCachedCatalog(cacheKey);
     if (cached) {
-      console.info('[courseStore] Using cached catalog after assignment scope failure.');
+      console.info('[courseStore] Using cached catalog after assignment scope failure (degraded mode).');
       setLearnerCatalogState({
         status: 'error',
         lastUpdatedAt: Date.now(),
         lastError: error instanceof Error ? error.message : String(error),
-        detail: 'cached',
+        detail: 'degraded_cached',
       });
       return cached;
     }
@@ -1629,16 +1638,30 @@ export const courseStore = {
   },
   init: (): Promise<void> => {
     if (initPromise) {
+      // Re-use the in-flight promise — never start a second concurrent init.
       return initPromise;
     }
-    // If the catalog already succeeded and is in the 'ready' phase, don't re-run
-    // a full init. This prevents navigating back to the dashboard from triggering
-    // an unnecessary re-fetch that can transiently reset the catalog to loading.
+
+    // Ready-guard: skip a full re-fetch if the catalog already succeeded,
+    // UNLESS the active org has changed since the last successful load.
     if (
       adminCatalogState.phase === 'ready' &&
       adminCatalogState.adminLoadStatus === 'success'
     ) {
-      return Promise.resolve();
+      // Check whether the org context has shifted since the last successful init.
+      const currentOrgContext = resolveOrgContext();
+      const currentOrgId = currentOrgContext.orgId ?? null;
+      if (currentOrgId === lastInitOrgId) {
+        // Same org — catalog is current, skip.
+        return Promise.resolve();
+      }
+      // Org changed — fall through and do a full re-fetch.
+      if (import.meta.env?.DEV) {
+        console.info('[courseStore.init] org_change_detected — re-fetching catalog', {
+          from: lastInitOrgId,
+          to: currentOrgId,
+        });
+      }
     }
 
     initPromise = (async () => {
@@ -1851,17 +1874,37 @@ export const courseStore = {
           const existingStructureLoaded = hasLoadedStructure(existing ?? null);
           const normalizedIncomingModules = sanitizeModuleGraph(courseWithVersion.modules || []);
 
+          // Deep-validation immutability guard:
+          // Before accepting the incoming module graph, verify it actually contains
+          // lesson content.  If the existing course has lessons and the incoming
+          // version does not (e.g. a list-endpoint summary that omits modules),
+          // keep the existing graph and emit a DEV warning.
+          const incomingHasLessons = normalizedIncomingModules.some(
+            (m) => Array.isArray(m.lessons) && m.lessons.length > 0,
+          );
+          const existingHasLessons =
+            Array.isArray(existing?.modules) &&
+            existing!.modules.some((m) => Array.isArray(m.lessons) && m.lessons.length > 0);
+
           // Structure-preservation guard: if the stored course already has a
           // fully-loaded module graph and the incoming data is a summary (no
           // structure), keep the existing modules to avoid wiping lesson content
           // that was fetched in a prior detail request.
           const shouldPreserveExistingModules =
-            existingStructureLoaded && !incomingStructureLoaded;
+            (existingStructureLoaded && !incomingStructureLoaded) ||
+            (existingHasLessons && !incomingHasLessons);
 
           if (shouldPreserveExistingModules && import.meta.env?.DEV) {
             console.info(
-              '[courseStore] structure_preserve',
-              { courseId: courseWithVersion.id, reason: 'incoming_is_summary_existing_is_full' },
+              '[courseStore] course_graph_downgrade_blocked',
+              {
+                courseId: courseWithVersion.id,
+                reason: !incomingHasLessons
+                  ? 'incoming_has_no_lessons'
+                  : 'incoming_is_summary_existing_is_full',
+                existingModules: existing?.modules?.length ?? 0,
+                incomingModules: normalizedIncomingModules.length,
+              },
             );
           }
 
@@ -2083,6 +2126,13 @@ export const courseStore = {
     // is never blocked by the automatic-retry cap.
     authReadyBootstrapAttempts = 0;
     awaitingAuthReadyBootstrap = false;
+    // Signal courseDataLoader (and any other in-memory caches) to flush their
+    // cached results so the next course-detail load fetches fresh data.
+    try {
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('huddle:catalog-flush'));
+      }
+    } catch { /* non-fatal */ }
     // Reset phase to idle so the init logic runs from scratch.
     setAdminCatalogState((prev) => ({
       ...prev,

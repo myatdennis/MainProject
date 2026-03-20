@@ -51,7 +51,7 @@ export const SupabaseStatusBanner = () => {
     return unsubscribe;
   }, []);
 
-  if (status.status === 'ready') {
+  if (status.status === 'ready' || status.status === 'idle') {
     return null;
   }
 
