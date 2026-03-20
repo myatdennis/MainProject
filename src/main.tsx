@@ -40,11 +40,13 @@ devConsole.log('🔧 Supabase configured:', !!(import.meta.env.VITE_SUPABASE_URL
 devConsole.log('⚙️ React version detected:', React?.version || 'unknown');
 devConsole.info('[api] Base URL resolved:', getApiBaseUrl() || '(not set)');
 const declaredBuildTag = serviceWorkerManager.getDeclaredVersionTag();
-console.info('[build] declared version tag:', declaredBuildTag);
+if (import.meta.env.DEV) {
+  console.info('[build] declared version tag:', declaredBuildTag);
+}
 serviceWorkerManager
   .getResolvedVersionTag()
   .then((resolved) => {
-    if (resolved && resolved !== declaredBuildTag) {
+    if (import.meta.env.DEV && resolved && resolved !== declaredBuildTag) {
       console.info('[build] resolved service worker tag:', resolved);
     }
   })
@@ -159,7 +161,19 @@ class SecureAuthErrorBoundary extends React.Component<{ children: React.ReactNod
   }
 
   handleReload = () => {
-    window.location.reload();
+    // Prefer a soft reset — clear the error state so React re-renders the
+    // tree without destroying the page context or re-triggering the full 8s
+    // bootstrap.  Fall back to a hard reload only if the error persists after
+    // two soft attempts (tracked via retryCount so we don't loop forever).
+    this.setState((prev) => {
+      const retryCount = (prev as typeof prev & { retryCount?: number }).retryCount ?? 0;
+      if (retryCount >= 2) {
+        // Hard reload as last resort
+        window.location.reload();
+        return prev;
+      }
+      return { hasError: false, error: null, retryCount: retryCount + 1 } as any;
+    });
   };
 
   getLoginDestination = () => resolveLoginPath();
@@ -343,12 +357,14 @@ if (serviceWorkerEnabled) {
       showServiceWorkerErrorToast();
     });
 } else {
-  console.log('🛠️ Service worker disabled for this build', {
-    deployContext,
-    hostLooksLikePreview,
-    swAllowed: supportsServiceWorker && import.meta.env.PROD,
-    reason: swFlag === 'true' ? 'preview_guard' : 'flag_disabled',
-  });
+  if (import.meta.env.DEV) {
+    console.log('🛠️ Service worker disabled for this build', {
+      deployContext,
+      hostLooksLikePreview,
+      swAllowed: supportsServiceWorker && import.meta.env.PROD,
+      reason: swFlag === 'true' ? 'preview_guard' : 'flag_disabled',
+    });
+  }
   serviceWorkerManager.forceCleanup().catch((error) => {
     console.warn('[SW] Failed to perform cleanup:', error);
   });

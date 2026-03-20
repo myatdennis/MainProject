@@ -126,11 +126,13 @@ if (typeof window !== 'undefined') {
 }
 
 supabase.auth.onAuthStateChange((event: AuthChangeEvent, session: Session | null) => {
-  console.info('[supabaseClient] auth_state_change', {
-    event,
-    hasAccessToken: Boolean(session?.access_token),
-    userId: session?.user?.id ?? null,
-  });
+  if (import.meta.env.DEV) {
+    console.info('[supabaseClient] auth_state_change', {
+      event,
+      hasAccessToken: Boolean(session?.access_token),
+      userId: session?.user?.id ?? null,
+    });
+  }
   if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
     debugAuthStorage(`auth_event:${event}`);
   }
@@ -264,6 +266,10 @@ export function debugAuthStorage(label: string) {
   if (typeof window === 'undefined') {
     return;
   }
+  // Storage snapshots are diagnostic-only — suppress in production.
+  if (!import.meta.env.DEV) {
+    return;
+  }
   const browserLocalStorage = window.localStorage ?? null;
   const browserSessionStorage = window.sessionStorage ?? null;
   const matchThcKey = (key: string) => key.includes('thc-supabase-auth');
@@ -297,6 +303,7 @@ export function debugAuthStorage(label: string) {
 }
 
 async function logSupabaseSessionStatus(label: string) {
+  if (!import.meta.env.DEV) return;
   try {
     const { data, error } = await supabase.auth.getSession();
     console.info('[supabaseClient] session snapshot', {

@@ -42,7 +42,7 @@ export const getConfig = (): AppConfig => {
 
 export const config = getConfig();
 
-if (typeof window !== 'undefined' && typeof console !== 'undefined') {
+if (typeof window !== 'undefined' && typeof console !== 'undefined' && import.meta.env.DEV) {
   const displayBase = config.apiBaseUrl || '/api (proxied via Vite)';
   console.info('[App Config] API base URL:', displayBase);
 }

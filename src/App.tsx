@@ -1,5 +1,5 @@
 import { useEffect, Suspense, lazy, useRef, useContext } from 'react';
-import { BrowserRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom';
 import { courseStore } from './store/courseStore';
 import { LoadingSpinner } from './components/LoadingComponents';
 import { ErrorBoundary } from './components/ErrorHandling';
@@ -128,6 +128,22 @@ const LegacyCourseRedirect = () => {
   return <Navigate to={{ pathname: targetPath, search: location.search, hash: location.hash }} replace />;
 };
 
+/**
+ * Redirects the legacy singular-form lesson URL to the canonical plural form.
+ * e.g. /lms/course/:courseId/lesson/:lessonId → /lms/courses/:courseId/lesson/:lessonId
+ * This ensures stale deep-links (from emails, notifications, analytics) still work.
+ */
+const LmsLessonCanonicalRedirect = () => {
+  const { courseId, lessonId } = useParams<{ courseId: string; lessonId: string }>();
+  const location = useLocation();
+  return (
+    <Navigate
+      to={{ pathname: `/lms/courses/${courseId}/lesson/${lessonId}`, search: location.search, hash: location.hash }}
+      replace
+    />
+  );
+};
+
 
 function App() {
   return (
@@ -209,104 +225,209 @@ function AppContent() {
       <SupabaseStatusBanner />
       <ConnectivityBanner />
       <main className="flex-grow">
-        <Suspense fallback={<LoadingSpinner size="lg" className="py-20" text="Loading..." />}>
-          <ErrorBoundary>
-            <Routes>
-                <Route path="/" element={<HomePage />} />
-                <Route path="/about" element={<AboutPage />} />
-                <Route path="/services" element={<ServicesPage />} />
-                <Route path="/resources" element={<ResourcePage />} />
-                <Route path="/testimonials" element={<TestimonialsPage />} />
-                <Route path="/contact" element={<ContactPage />} />
-                <Route path="/client-portal" element={<ClientPortalPage />} />
-                <Route path="/invite/:token" element={<InviteAccept />} />
-                <Route path="/auth/callback" element={<AuthCallback />} />
-                <Route path="/unauthorized" element={<Unauthorized />} />
-                <Route path="/client-portal/org/:orgId/*" element={<OrgWorkspaceProtectedLayout />} />
-                <Route path="/client/*" element={<ClientProtectedLayout />}>
-                  <Route index element={<Navigate to="dashboard" replace />} />
-                  <Route path="dashboard" element={<ClientDashboard />} />
-                  <Route path="courses" element={<ClientCourses />} />
-                  <Route path="courses/:courseId" element={<ClientCourseDetail />} />
-                  <Route path="courses/:courseId/lessons/:lessonId" element={<ClientLessonView />} />
-                  <Route path="courses/:courseId/completion" element={<ClientCourseCompletion />} />
-                  <Route path="surveys" element={<ClientSurveys />} />
-                  <Route path="documents" element={<ClientDocuments />} />
-                  <Route path="profile" element={<ClientProfile />} />
-                  <Route path="*" element={<Navigate to="dashboard" replace />} />
-                </Route>
-                {/* Public auth routes */}
-                <Route path="/login" element={<LMSLogin />} />
-                <Route path="/lms/login" element={<Navigate to="/login" replace />} />
-                <Route path="/admin/login" element={<AdminLogin />} />
-                <Route path="/courses/*" element={<LegacyCourseRedirect />} />
-                <Route path="/lms" element={<Navigate to="/lms/dashboard" replace />} />
-                <Route path="/lms/*" element={<LmsProtectedLayout />}>
-                  <Route index element={<Navigate to="dashboard" replace />} />
-                  <Route path="dashboard" element={<LMSDashboard />} />
-                  <Route path="courses" element={<LMSCourses />} />
-                  <Route path="courses/:courseId" element={<LMSModule />} />
-                  <Route path="course/:courseId" element={<LMSModule />} />
-                  <Route path="module/:moduleId" element={<LMSModule />} />
-                  <Route path="course/:courseId/lesson/:lessonId" element={<LMSLessonView />} />
-                  <Route path="courses/:courseId/lesson/:lessonId" element={<LMSLessonView />} />
-                  <Route path="courses/:courseId/completion" element={<LMSCourseCompletion />} />
-                  <Route path="course/:courseId/completion" element={<LMSCourseCompletion />} />
-                  <Route path="progress" element={<LMSProgress />} />
-                  <Route path="certificates" element={<LMSCertificates />} />
-                  <Route path="downloads" element={<LMSDownloads />} />
-                  <Route path="feedback" element={<LMSFeedback />} />
-                  <Route path="contact" element={<LMSContact />} />
-                  <Route path="settings" element={<LMSSettings />} />
-                  <Route path="help" element={<LMSHelp />} />
-                  <Route path="meeting" element={<LMSMeeting />} />
-                </Route>
-                <Route path="/admin/*" element={<AdminProtectedLayout />}>
-                  <Route index element={<Navigate to="courses" replace />} />
-                  <Route path="dashboard" element={<AdminDashboard />} />
-                  <Route path="health" element={<AdminHealth />} />
-                  <Route path="analytics" element={<AdminAnalytics />} />
-                  <Route path="courses" element={<AdminCourses />} />
-                  <Route path="courses/new" element={<AdminCourseNewPlaceholder />} />
-                  <Route path="courses/import" element={<AdminCoursesImport />} />
-                  <Route path="courses/bulk" element={<AdminCourseBulkPlaceholder />} />
-                  <Route path="courses/:courseId/details" element={<AdminCourseDetail />} />
-                  <Route path="courses/:courseId/edit" element={<AdminCourseEdit />} />
-                  <Route path="courses/:courseId/assign" element={<AdminCourseAssign />} />
-                  <Route path="courses/:courseId/settings" element={<AdminCourseSettings />} />
-                  <Route path="course-builder/new" element={<AdminCourseBuilder />} />
-                  <Route path="course-builder/:courseId" element={<AdminCourseBuilder />} />
-                  <Route path="surveys" element={<AdminSurveys />} />
-                  <Route path="surveys/builder" element={<AdminSurveyBuilder />} />
-                  <Route path="surveys/builder/:surveyId" element={<AdminSurveyBuilder />} />
-                  <Route path="surveys/analytics" element={<AdminSurveyAnalytics />} />
-                  <Route path="surveys/:surveyId/analytics" element={<AdminSurveyAnalytics />} />
-                  <Route path="surveys/:surveyId/preview" element={<AdminSurveyPreview />} />
-                  <Route path="surveys/import" element={<AdminSurveysImport />} />
-                  <Route path="surveys/bulk" element={<AdminSurveysBulk />} />
-                  <Route path="surveys/queue" element={<AdminQueueMonitor />} />
-                  <Route path="organizations" element={<AdminOrganizations />} />
-                  <Route path="organizations/new" element={<AdminOrganizationCreate />} />
-                  <Route path="organizations/:organizationId" element={<AdminOrganizationProfile />} />
-                  <Route path="org-profiles/:orgProfileId" element={<AdminOrgProfile />} />
-                  <Route path="crm" element={<AdminCRM />} />
-                  <Route path="leadership" element={<AdminLeadershipInsights />} />
-                  <Route path="profile" element={<AdminProfilePage />} />
-                  <Route path="users" element={<AdminUsers />} />
-                  <Route path="users/:userId" element={<AdminUserProfile />} />
-                  <Route path="documents" element={<AdminDocuments />} />
-                  <Route path="performance" element={<AdminPerformanceDashboard />} />
-                  <Route path="settings" element={<AdminSettings />} />
-                  <Route path="reports" element={<AdminReports />} />
-                  <Route path="integrations" element={<AdminIntegrations />} />
-                  <Route path="integrations/:integrationId" element={<AdminIntegrationConfig />} />
-                  <Route path="certificates" element={<AdminCertificates />} />
-                </Route>
-                {/* ...admin routes... */}
-                <Route path="*" element={<NotFound />} />
-            </Routes>
-          </ErrorBoundary>
-        </Suspense>
+        {/*
+          Per-section Suspense + ErrorBoundary isolation:
+          A chunk-load failure in the admin portal will not blank the LMS or
+          marketing pages, and vice-versa.  Statically-imported routes (Home,
+          Login, LMS pages) don't need a Suspense at all.
+        */}
+        <Routes>
+          {/* ── Marketing / public ─────────────────────────────────────── */}
+          <Route path="/" element={<HomePage />} />
+          <Route
+            path="/about"
+            element={
+              <Suspense fallback={<LoadingSpinner size="lg" className="py-20" text="Loading..." />}>
+                <ErrorBoundary>
+                  <AboutPage />
+                </ErrorBoundary>
+              </Suspense>
+            }
+          />
+          <Route
+            path="/services"
+            element={
+              <Suspense fallback={<LoadingSpinner size="lg" className="py-20" text="Loading..." />}>
+                <ErrorBoundary>
+                  <ServicesPage />
+                </ErrorBoundary>
+              </Suspense>
+            }
+          />
+          <Route
+            path="/resources"
+            element={
+              <Suspense fallback={<LoadingSpinner size="lg" className="py-20" text="Loading..." />}>
+                <ErrorBoundary>
+                  <ResourcePage />
+                </ErrorBoundary>
+              </Suspense>
+            }
+          />
+          <Route
+            path="/testimonials"
+            element={
+              <Suspense fallback={<LoadingSpinner size="lg" className="py-20" text="Loading..." />}>
+                <ErrorBoundary>
+                  <TestimonialsPage />
+                </ErrorBoundary>
+              </Suspense>
+            }
+          />
+          <Route
+            path="/contact"
+            element={
+              <Suspense fallback={<LoadingSpinner size="lg" className="py-20" text="Loading..." />}>
+                <ErrorBoundary>
+                  <ContactPage />
+                </ErrorBoundary>
+              </Suspense>
+            }
+          />
+          <Route
+            path="/client-portal"
+            element={
+              <Suspense fallback={<LoadingSpinner size="lg" className="py-20" text="Loading..." />}>
+                <ErrorBoundary>
+                  <ClientPortalPage />
+                </ErrorBoundary>
+              </Suspense>
+            }
+          />
+          <Route path="/invite/:token" element={<InviteAccept />} />
+          <Route path="/auth/callback" element={<AuthCallback />} />
+          <Route
+            path="/unauthorized"
+            element={
+              <Suspense fallback={<LoadingSpinner size="lg" className="py-20" text="Loading..." />}>
+                <ErrorBoundary>
+                  <Unauthorized />
+                </ErrorBoundary>
+              </Suspense>
+            }
+          />
+          <Route path="/client-portal/org/:orgId/*" element={<OrgWorkspaceProtectedLayout />} />
+
+          {/* ── Client portal ──────────────────────────────────────────── */}
+          <Route path="/client/*" element={<ClientProtectedLayout />}>
+            <Route index element={<Navigate to="dashboard" replace />} />
+            <Route path="dashboard" element={<ClientDashboard />} />
+            <Route path="courses" element={<ClientCourses />} />
+            <Route path="courses/:courseId" element={<ClientCourseDetail />} />
+            <Route path="courses/:courseId/lessons/:lessonId" element={<ClientLessonView />} />
+            <Route path="courses/:courseId/completion" element={<ClientCourseCompletion />} />
+            <Route path="surveys" element={<ClientSurveys />} />
+            <Route path="documents" element={<ClientDocuments />} />
+            <Route path="profile" element={<ClientProfile />} />
+            <Route path="*" element={<Navigate to="dashboard" replace />} />
+          </Route>
+
+          {/* ── Public auth ────────────────────────────────────────────── */}
+          <Route path="/login" element={<LMSLogin />} />
+          <Route path="/lms/login" element={<Navigate to="/login" replace />} />
+          <Route path="/admin/login" element={<AdminLogin />} />
+          <Route path="/courses/*" element={<LegacyCourseRedirect />} />
+
+          {/* ── LMS portal ─────────────────────────────────────────────── */}
+          {/*
+            Isolated Suspense + ErrorBoundary: a chunk-load failure inside
+            the LMS sub-tree will not affect the admin portal or marketing pages.
+          */}
+          <Route path="/lms" element={<Navigate to="/lms/dashboard" replace />} />
+          <Route
+            path="/lms/*"
+            element={
+              <Suspense fallback={<LoadingSpinner size="lg" className="py-20" text="Loading LMS..." />}>
+                <ErrorBoundary>
+                  <LmsProtectedLayout />
+                </ErrorBoundary>
+              </Suspense>
+            }
+          >
+            <Route index element={<Navigate to="dashboard" replace />} />
+            <Route path="dashboard" element={<LMSDashboard />} />
+            <Route path="courses" element={<LMSCourses />} />
+            <Route path="courses/:courseId" element={<LMSModule />} />
+            <Route path="course/:courseId" element={<LMSModule />} />
+            <Route path="module/:moduleId" element={<LMSModule />} />
+            {/* Canonical lesson URL — always use the plural "courses" form */}
+            <Route path="courses/:courseId/lesson/:lessonId" element={<LMSLessonView />} />
+            {/*
+              Legacy singular "course" form — redirect to canonical URL.
+              Keeps stale deep-links (email notifications, analytics, external
+              bookmarks) working without silently serving two active routes.
+            */}
+            <Route path="course/:courseId/lesson/:lessonId" element={<LmsLessonCanonicalRedirect />} />
+            <Route path="courses/:courseId/completion" element={<LMSCourseCompletion />} />
+            <Route path="course/:courseId/completion" element={<LMSCourseCompletion />} />
+            <Route path="progress" element={<LMSProgress />} />
+            <Route path="certificates" element={<LMSCertificates />} />
+            <Route path="downloads" element={<LMSDownloads />} />
+            <Route path="feedback" element={<LMSFeedback />} />
+            <Route path="contact" element={<LMSContact />} />
+            <Route path="settings" element={<LMSSettings />} />
+            <Route path="help" element={<LMSHelp />} />
+            <Route path="meeting" element={<LMSMeeting />} />
+          </Route>
+
+          {/* ── Admin portal ────────────────────────────────────────────── */}
+          {/*
+            Isolated Suspense + ErrorBoundary: a chunk-load failure inside
+            the admin sub-tree will not affect the LMS or marketing pages.
+          */}
+          <Route
+            path="/admin/*"
+            element={
+              <Suspense fallback={<LoadingSpinner size="lg" className="py-20" text="Loading Admin..." />}>
+                <ErrorBoundary>
+                  <AdminProtectedLayout />
+                </ErrorBoundary>
+              </Suspense>
+            }
+          >
+            <Route index element={<Navigate to="courses" replace />} />
+            <Route path="dashboard" element={<AdminDashboard />} />
+            <Route path="health" element={<AdminHealth />} />
+            <Route path="analytics" element={<AdminAnalytics />} />
+            <Route path="courses" element={<AdminCourses />} />
+            <Route path="courses/new" element={<AdminCourseNewPlaceholder />} />
+            <Route path="courses/import" element={<AdminCoursesImport />} />
+            <Route path="courses/bulk" element={<AdminCourseBulkPlaceholder />} />
+            <Route path="courses/:courseId/details" element={<AdminCourseDetail />} />
+            <Route path="courses/:courseId/edit" element={<AdminCourseEdit />} />
+            <Route path="courses/:courseId/assign" element={<AdminCourseAssign />} />
+            <Route path="courses/:courseId/settings" element={<AdminCourseSettings />} />
+            <Route path="course-builder/new" element={<AdminCourseBuilder />} />
+            <Route path="course-builder/:courseId" element={<AdminCourseBuilder />} />
+            <Route path="surveys" element={<AdminSurveys />} />
+            <Route path="surveys/builder" element={<AdminSurveyBuilder />} />
+            <Route path="surveys/builder/:surveyId" element={<AdminSurveyBuilder />} />
+            <Route path="surveys/analytics" element={<AdminSurveyAnalytics />} />
+            <Route path="surveys/:surveyId/analytics" element={<AdminSurveyAnalytics />} />
+            <Route path="surveys/:surveyId/preview" element={<AdminSurveyPreview />} />
+            <Route path="surveys/import" element={<AdminSurveysImport />} />
+            <Route path="surveys/bulk" element={<AdminSurveysBulk />} />
+            <Route path="surveys/queue" element={<AdminQueueMonitor />} />
+            <Route path="organizations" element={<AdminOrganizations />} />
+            <Route path="organizations/new" element={<AdminOrganizationCreate />} />
+            <Route path="organizations/:organizationId" element={<AdminOrganizationProfile />} />
+            <Route path="org-profiles/:orgProfileId" element={<AdminOrgProfile />} />
+            <Route path="crm" element={<AdminCRM />} />
+            <Route path="leadership" element={<AdminLeadershipInsights />} />
+            <Route path="profile" element={<AdminProfilePage />} />
+            <Route path="users" element={<AdminUsers />} />
+            <Route path="users/:userId" element={<AdminUserProfile />} />
+            <Route path="documents" element={<AdminDocuments />} />
+            <Route path="performance" element={<AdminPerformanceDashboard />} />
+            <Route path="settings" element={<AdminSettings />} />
+            <Route path="reports" element={<AdminReports />} />
+            <Route path="integrations" element={<AdminIntegrations />} />
+            <Route path="integrations/:integrationId" element={<AdminIntegrationConfig />} />
+            <Route path="certificates" element={<AdminCertificates />} />
+          </Route>
+
+          <Route path="*" element={<NotFound />} />
+        </Routes>
       </main>
       {!hideMarketingChrome && <Footer />}
       {!hideMarketingChrome && <AIBot />}

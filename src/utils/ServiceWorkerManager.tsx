@@ -323,7 +323,7 @@ class ServiceWorkerManager {
         await Promise.all(
           registrations.map(async (registration) => {
             const didUnregister = await registration.unregister();
-            if (didUnregister) {
+            if (didUnregister && import.meta.env.DEV) {
               console.log('[SW] Unregistered dev service worker:', registration.scope);
             }
           })
@@ -337,7 +337,9 @@ class ServiceWorkerManager {
       try {
         const cacheNames = await caches.keys();
         await Promise.all(cacheNames.map((cacheName) => caches.delete(cacheName)));
-        console.log('[SW] Cleared caches during dev cleanup');
+        if (import.meta.env.DEV) {
+          console.log('[SW] Cleared caches during dev cleanup');
+        }
       } catch (error) {
         console.warn('[SW] Failed to clear caches during dev cleanup:', error);
       }

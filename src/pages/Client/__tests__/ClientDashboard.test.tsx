@@ -34,15 +34,21 @@ vi.mock('../../../context/SecureAuthContext', () => ({
   }),
 }));
 
-const getAssignmentsForUserMock = vi.fn(async () => []);
+const getAssignmentsForUserMock = vi.fn(async (_userId?: string | null) => []);
 
 vi.mock('../../../utils/assignmentStorage', () => ({
-  getAssignmentsForUser: (userId: string) => getAssignmentsForUserMock(userId),
+  getAssignmentsForUser: (userId?: string | null) => getAssignmentsForUserMock(userId),
 }));
 
 vi.mock('../../../store/courseStore', () => ({
   courseStore: {
     getCourse: vi.fn(),
+    getLearnerCatalogState: vi.fn(() => ({
+      status: 'ok',
+      lastUpdatedAt: null,
+      lastError: null,
+      detail: null,
+    })),
   },
 }));
 

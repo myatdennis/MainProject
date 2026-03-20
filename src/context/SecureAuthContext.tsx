@@ -1458,6 +1458,13 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         return false;
       }
 
+      // For user-initiated retries (e.g., clicking "Retry" in the UI), clear the
+      // single-use lock so the refresh is allowed to run again.
+      if (reason === 'user_retry') {
+        hasAttemptedRefreshRef.current = false;
+        refreshAttemptedRef.current = false;
+      }
+
       if (hasAttemptedRefreshRef.current || refreshAttemptedRef.current) {
         return false;
       }
@@ -1597,19 +1604,26 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       // override (window.__E2E_SUPABASE_CLIENT) we short-circuit the full
       // SecureAuth bootstrap and inject a safe mock session so tests can
       // exercise the real UI without depending on external auth flows.
+      //
+      // SECURITY: The localStorage-based bypass key (`huddle_lms_auth`) is
+      // intentionally restricted to non-production builds.  In production a
+      // stale key from a previous dev/test session would otherwise grant any
+      // browser full admin access without a real credential exchange.
       try {
         // Client-side E2E detection: prefer an explicit in-browser override
         // (injected by Playwright) or Vite-provided env flags. Avoid using
         // Node's process.env at runtime in the browser since it's not
         // available in production bundles.
-  const hasWindowOverride = typeof window !== 'undefined' && Boolean((window as any).__E2E_SUPABASE_CLIENT);
-  const hasE2EBypassFlag = typeof window !== 'undefined' && Boolean((window as any).__E2E_BYPASS === true);
+        const isNotProduction = import.meta.env.DEV || import.meta.env.MODE !== 'production';
+        const hasWindowOverride = typeof window !== 'undefined' && Boolean((window as any).__E2E_SUPABASE_CLIENT);
+        const hasE2EBypassFlag = typeof window !== 'undefined' && Boolean((window as any).__E2E_BYPASS === true);
         const clientE2EFlag = typeof import.meta !== 'undefined' && Boolean((import.meta as any).env?.E2E_TEST_MODE === 'true' || (import.meta as any).env?.DEV_FALLBACK === 'true');
         // Also check localStorage key set by Playwright addInitScript (works even if window flags race)
-        const hasLocalStorageBypass = typeof window !== 'undefined' && (() => {
+        // Restricted to non-production to prevent stale dev keys from leaking into live environments.
+        const hasLocalStorageBypass = isNotProduction && typeof window !== 'undefined' && (() => {
           try { return window.localStorage.getItem('huddle_lms_auth') === 'true'; } catch { return false; }
         })();
-  if (hasWindowOverride || clientE2EFlag || hasE2EBypassFlag || hasLocalStorageBypass) {
+        if (hasWindowOverride || clientE2EFlag || hasE2EBypassFlag || hasLocalStorageBypass) {
           const mockPayload: SessionResponsePayload = {
             user: { id: '00000000-0000-0000-0000-000000000001', email: 'mya@the-huddle.co' } as any,
             memberships: [
@@ -1640,11 +1654,12 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         // if anything goes wrong in the bypass, try a minimal fallback before
         // falling back to normal bootstrap — this handles the case where
         // applySessionPayload throws (e.g., Supabase placeholder errors)
+        const _bypassIsNotProduction = import.meta.env.DEV || import.meta.env.MODE !== 'production';
         const _bypassRetry =
           typeof window !== 'undefined' &&
           (Boolean((window as any).__E2E_BYPASS) ||
             Boolean((window as any).__E2E_SUPABASE_CLIENT) ||
-            (() => { try { return window.localStorage.getItem('huddle_lms_auth') === 'true'; } catch { return false; } })());
+            (_bypassIsNotProduction && (() => { try { return window.localStorage.getItem('huddle_lms_auth') === 'true'; } catch { return false; } })()));
         if (_bypassRetry) {
           console.warn('[SecureAuth] E2E bypass threw, retrying with minimal mock', e);
           try {
@@ -1662,11 +1677,13 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       }
 
       // Detect E2E bypass outside the try block too, so a throw can't override it
+      // Restrict the localStorage key to non-production environments (same rule as above).
+      const _isNotProduction = import.meta.env.DEV || import.meta.env.MODE !== 'production';
       const _e2eFallbackBypass =
         typeof window !== 'undefined' &&
         (Boolean((window as any).__E2E_BYPASS) ||
           Boolean((window as any).__E2E_SUPABASE_CLIENT) ||
-          (() => { try { return window.localStorage.getItem('huddle_lms_auth') === 'true'; } catch { return false; } })());
+          (_isNotProduction && (() => { try { return window.localStorage.getItem('huddle_lms_auth') === 'true'; } catch { return false; } })()));
 
       if (!_e2eFallbackBypass && isLoginPath()) {
         continueAsGuest('bootstrap_login_route');
@@ -1774,11 +1791,13 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       }
       // Skip the login-path short-circuit when running in E2E / dev-bypass mode
       // so runBootstrap can inject the mock session even when the URL is /login.
+      // Restrict the localStorage key to non-production environments.
+      const _startIsNotProduction = import.meta.env.DEV || import.meta.env.MODE !== 'production';
       const _isE2EBypass =
         typeof window !== 'undefined' &&
         (Boolean((window as any).__E2E_BYPASS) ||
           Boolean((window as any).__E2E_SUPABASE_CLIENT) ||
-          (() => { try { return window.localStorage.getItem('huddle_lms_auth') === 'true'; } catch { return false; } })());
+          (_startIsNotProduction && (() => { try { return window.localStorage.getItem('huddle_lms_auth') === 'true'; } catch { return false; } })()));
       if (!_isE2EBypass && isLoginPath()) {
         bootstrappedRef.current = true;
         clearBootstrapFailOpenTimer();
@@ -1802,6 +1821,11 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
   const retryBootstrap = useCallback(() => {
     bootstrappedRef.current = false;
+    // Reset the single-use refresh lock so a fresh bootstrap attempt can
+    // trigger token refresh again if needed (e.g., user clicks "Retry" after
+    // a 401 on a long-lived session).
+    hasAttemptedRefreshRef.current = false;
+    refreshAttemptedRef.current = false;
     setBootstrapError(null);
     startBootstrap({ force: true });
   }, [startBootstrap]);
@@ -1980,6 +2004,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   }, [buildSessionAuditHeaders, user]);
 
   useEffect(() => {
+    // Fast paths — immediately resolve to 'ready' or 'resolving'.
     if (authInitializing) {
       setOrgResolutionStatus('resolving');
       return;
@@ -1996,7 +2021,28 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       setOrgResolutionStatus('ready');
       return;
     }
+
+    // Edge case: user has memberships but activeOrgId hasn't resolved yet
+    // (e.g., no stored preference, multi-org ambiguity, slow network).
+    // Rather than staying 'resolving' forever and blocking courseStore init,
+    // we install a 10-second fail-open timer.  If activeOrgId hasn't been set
+    // by then we force 'ready' so the rest of the app can proceed.
     setOrgResolutionStatus('resolving');
+    const failOpenTimer = window.setTimeout(() => {
+      setOrgResolutionStatus((current) => {
+        if (current === 'resolving') {
+          if (import.meta.env.DEV) {
+            console.warn('[SecureAuth] orgResolutionStatus fail-open: timed out waiting for activeOrgId; forcing ready');
+          }
+          return 'ready';
+        }
+        return current;
+      });
+    }, 10_000);
+
+    return () => {
+      window.clearTimeout(failOpenTimer);
+    };
   }, [authInitializing, user, memberships, activeOrgId]);
 
   useEffect(() => {
@@ -2195,10 +2241,12 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           }
           const { data: sessionCheck, error: sessionError } = await supabaseClient.auth.getSession();
           const supabaseSession = sessionCheck?.session ?? data?.session ?? null;
-          console.info(`[${context === 'admin' ? 'AdminLogin' : 'ClientLogin'}] supabase_session`, {
-            sessionHasAccessToken: Boolean(supabaseSession?.access_token),
-            sessionError: sessionError?.message ?? null,
-          });
+          if (import.meta.env.DEV) {
+            console.info(`[${context === 'admin' ? 'AdminLogin' : 'ClientLogin'}] supabase_session`, {
+              sessionHasAccessToken: Boolean(supabaseSession?.access_token),
+              sessionError: sessionError?.message ?? null,
+            });
+          }
           if (!supabaseSession?.access_token) {
             return {
               success: false,

@@ -1500,7 +1500,9 @@ const ensureAssignmentScopedCatalog = async (
       };
     });
 
-    console.log('[courseStore] Assignment filter reduced catalog to', filteredEntries.length, 'course(s).');
+    if (import.meta.env.DEV) {
+      console.log('[courseStore] Assignment filter reduced catalog to', filteredEntries.length, 'course(s).');
+    }
     saveCachedCatalog(cacheKey, filtered);
     setLearnerCatalogState({
       status: 'ok',
@@ -1540,6 +1542,17 @@ const DEFAULT_CATALOG_ALLOWED =
   typeof import.meta.env?.VITE_ALLOW_DEFAULT_COURSES !== 'undefined'
     ? import.meta.env?.VITE_ALLOW_DEFAULT_COURSES === 'true'
     : import.meta.env?.MODE !== 'production';
+
+// Production safety-net: if someone accidentally sets VITE_ALLOW_DEFAULT_COURSES=true
+// in a production build, emit a loud console error so it's visible in logs / Sentry.
+// Demo courses are meant only for dev/staging environments; exposing them in production
+// leaks placeholder content to real paying users.
+if (import.meta.env.PROD && import.meta.env.VITE_ALLOW_DEFAULT_COURSES === 'true') {
+  console.error(
+    '[courseStore] DANGER: VITE_ALLOW_DEFAULT_COURSES=true is set in a production build. ' +
+    'Demo/default courses WILL be shown to real users. Remove this flag from your production environment immediately.',
+  );
+}
 
 type CatalogDiagnosticEvent =
   | 'default_catalog_loaded'
@@ -1835,7 +1848,9 @@ export const courseStore = {
           merged[courseWithVersion.id] = mergedCourse;
         });
         courses = merged;
-        console.info(`[courseStore.init] catalog_merged`, { loaded: dbCourses.length, totalInStore: Object.keys(merged).length });
+        if (import.meta.env?.DEV) {
+          console.info(`[courseStore.init] catalog_merged`, { loaded: dbCourses.length, totalInStore: Object.keys(merged).length });
+        }
       } else if (adminEmptySuccess) {
         courses = {};
         console.info('[courseStore.init] Admin catalog is empty; awaiting first course creation.');
@@ -2066,12 +2081,27 @@ export const courseStore = {
       import.meta.env.VITE_SUPABASE_URL &&
       import.meta.env.VITE_SUPABASE_ANON_KEY
     ) {
+      // Capture the local timestamp at the moment this sync was initiated.
+      // The .then() callback will only apply the server response if no newer
+      // local save has occurred in the meantime, preventing the async
+      // round-trip from overwriting edits made while the request was in flight.
+      const syncInitiatedAt: string = nextCourse.lastUpdated ?? new Date().toISOString();
       const apiPayload = createCoursePayloadForApi(nextCourse);
       syncCourseToDatabase(apiPayload)
         .then((persisted) => {
           if (!persisted) return;
-    const normalized = normalizeCourse(persisted as Course);
+          const normalized = normalizeCourse(persisted as Course);
           const targetId = normalized.id || nextCourse.id;
+          // Bail out if a newer local save has already written to this slot —
+          // the server response would contain stale data relative to what the
+          // user most recently edited.
+          const currentLastUpdated = courses[targetId]?.lastUpdated ?? courses[nextCourse.id]?.lastUpdated;
+          if (currentLastUpdated && currentLastUpdated > syncInitiatedAt) {
+            if (import.meta.env.DEV) {
+              console.debug('[courseStore] Skipping stale server response for course', targetId, '(local edit is newer)');
+            }
+            return;
+          }
           const normalizedModules = normalized.modules && normalized.modules.length
             ? sanitizeModuleGraph(normalized.modules as Module[])
             : courses[nextCourse.id]?.modules ?? nextCourse.modules;

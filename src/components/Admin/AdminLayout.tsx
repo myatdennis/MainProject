@@ -268,7 +268,7 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
   ]);
 
   useEffect(() => {
-    if (!(import.meta.env?.DEV || process.env?.NODE_ENV !== 'production')) {
+    if (!import.meta.env.DEV) {
       return;
     }
     console.debug('[AdminLayout] gate_state', {
