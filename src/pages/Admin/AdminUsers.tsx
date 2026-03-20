@@ -255,11 +255,11 @@ const AdminUsers = () => {
         selectedUsers.map((userId) =>
           apiRequest(`/api/admin/users/${userId}/messages`, {
             method: 'POST',
-            body: JSON.stringify({
+            body: {
               subject: 'Course Reminder',
               body: 'This is a reminder to continue your course progress.',
               orgId: activeOrgId,
-            }),
+            },
           }).catch(() => null), // don't let one failure block others
         ),
       );
@@ -346,7 +346,7 @@ const AdminUsers = () => {
       // Revoke the membership (status = 'revoked') via the real API
       await apiRequest(`/api/admin/users/${userToDelete}`, {
         method: 'PATCH',
-        body: JSON.stringify({ organizationId: activeOrgId, status: 'revoked' }),
+        body: { organizationId: activeOrgId, status: 'revoked' },
       });
       setUsersList((prev: User[]) => prev.filter((user: User) => user.id !== userToDelete));
       showToast('User removed successfully!', 'success');

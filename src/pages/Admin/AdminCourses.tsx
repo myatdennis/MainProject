@@ -109,9 +109,19 @@ const AdminCourses = () => {
     return unsubscribe;
   }, []);
 
+  // Kick off catalog initialization if the store hasn't started yet.
+  // App.tsx drives the primary bootstrap, but if the store is still idle when
+  // this page mounts (e.g. fast navigation before the bootstrap effect fires,
+  // or a stale ready-guard that skipped re-fetch) we need to trigger it here
+  // so courses are always populated.
+  useEffect(() => {
+    if (catalogState.phase === 'idle') {
+      void courseStore.init();
+    }
+  }, [catalogState.phase]);
+
   // Emit admin:page-ready once the catalog reaches a terminal phase so other
-  // listeners know this page has settled. Initialization is driven exclusively
-  // by App.tsx bootstrapCourseStore — no duplicate courseStore.init() call here.
+  // listeners know this page has settled.
   useEffect(() => {
     const phase = catalogState.phase;
     if (phase === 'ready' || phase === 'idle') {

@@ -79,7 +79,7 @@ const AdminSurveysImport: React.FC = () => {
       try {
         await apiRequest('/api/admin/surveys', {
           method: 'POST',
-          body: JSON.stringify({ title: row.title, description: row.description ?? '', questions: row.questions ?? [] }),
+          body: { title: row.title, description: row.description ?? '', questions: row.questions ?? [] },
         });
         ok++;
       } catch {

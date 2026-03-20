@@ -145,10 +145,10 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
         // Update existing user membership role/title via PATCH
         await apiRequest(`/api/admin/users/${editUser.id}`, {
           method: 'PATCH',
-          body: JSON.stringify({
+          body: {
             organizationId: activeOrgId,
             role: sanitizedData.role.toLowerCase(),
-          }),
+          },
         });
         const updatedUser = {
           ...editUser,
@@ -170,7 +170,7 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
         }
         await apiRequest(`/api/admin/organizations/${orgId}/invites`, {
           method: 'POST',
-          body: JSON.stringify({
+          body: {
             email: sanitizedData.email,
             role: 'member',
             metadata: {
@@ -182,7 +182,7 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
               phoneNumber: sanitizedData.phoneNumber,
             },
             sendEmail: true,
-          }),
+          },
         });
         // Return a placeholder so the parent can optimistically show the user
         const newUser = {

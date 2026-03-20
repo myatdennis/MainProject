@@ -258,7 +258,7 @@ export const addDocument = async (
 
   const json = await request<{ data: any }>('/api/admin/documents', {
     method: 'POST',
-    body: JSON.stringify(payload),
+    body: payload as any,
   });
 
   return mapDocumentRecord(json.data);
@@ -274,7 +274,7 @@ export const recordDownload = async (id: string) => {
 export const updateDocument = async (id: string, patch: Partial<DocumentMeta>) => {
   const json = await request<{ data: any }>(`/api/admin/documents/${id}`, {
     method: 'PUT',
-    body: JSON.stringify(buildDocumentPayload(patch as Record<string, any>)),
+    body: buildDocumentPayload(patch as Record<string, any>) as any,
   });
   return mapDocumentRecord(json.data);
 };

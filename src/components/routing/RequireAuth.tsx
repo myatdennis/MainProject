@@ -9,6 +9,7 @@ import {
   hasAdminPortalAccess,
   setAdminAccessSnapshot,
   getAdminAccessSnapshot,
+  isAdminAccessSnapshotFresh,
   normalizeAdminAccessPayload,
   type AdminAccessPayload,
 } from '../../lib/adminAccess';
@@ -76,10 +77,33 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   const waitingForSurface = hasSession && effectiveSurfaceState === 'checking';
   const waitingForOrgContext =
     mode === 'admin' && hasSession && memberships.length > 0 && !activeOrgId && orgResolutionStatus !== 'ready';
-  const waitingForMembership = hasSession && (membershipStatus === 'idle' || membershipStatus === 'loading');
-  const [adminCapability, setAdminCapability] = useState<AdminCapabilityState>({ status: 'idle', payload: null });
+
+  // Resolve admin access snapshot once so we can use it for both the gate-status
+  // seed and the membership-wait bypass below.
+  const existingSnapshot = mode === 'admin' ? getAdminAccessSnapshot() : null;
+  const snapshotGranted =
+    existingSnapshot !== null &&
+    isAdminAccessSnapshotFresh() &&
+    hasAdminPortalAccess(existingSnapshot.payload);
+  // If we already confirmed admin access (via a fresh snapshot or isAuthenticated.admin),
+  // don't block rendering while memberships are still resolving.  This eliminates
+  // the full-screen spinner that appears on every page load when the admin is already
+  // logged in.
+  const adminAlreadyConfirmed = snapshotGranted || Boolean(isAuthenticated?.admin);
+  const waitingForMembership =
+    hasSession &&
+    (membershipStatus === 'idle' || membershipStatus === 'loading') &&
+    !adminAlreadyConfirmed;
+
+  // Seed the gate as 'allowed' immediately if we have a fresh snapshot so we never
+  // flash a full-screen spinner on internal admin navigation.
+  const [adminCapability, setAdminCapability] = useState<AdminCapabilityState>(
+    snapshotGranted && existingSnapshot?.payload
+      ? { status: 'granted', payload: existingSnapshot.payload }
+      : { status: 'idle', payload: null },
+  );
   const [adminGateStatus, setAdminGateStatus] = useState<'checking' | 'allowed' | 'unauthorized' | 'error'>(
-    mode === 'admin' ? 'checking' : 'allowed',
+    mode !== 'admin' ? 'allowed' : snapshotGranted ? 'allowed' : 'checking',
   );
   const adminAccessPayload = adminCapability.payload ?? getAdminAccessSnapshot()?.payload ?? null;
   const adminPortalAllowed = hasAdminPortalAccess(adminAccessPayload) || Boolean(isAuthenticated?.admin);
