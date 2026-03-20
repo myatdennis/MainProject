@@ -665,6 +665,14 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   const lastRefreshSuccessRef = useRef(0);
   const bootstrapControllerRef = useRef<AbortController | null>(null);
   const bootstrapFailOpenTimerRef = useRef<number | null>(null);
+  // Monotonically-incrementing run ID: every startBootstrap invocation stamps a
+  // new ID.  After every await inside runBootstrap the run validates that its ID
+  // is still current; if not it returns early without applying any state.
+  const bootstrapRunIdRef = useRef(0);
+  // Timestamp of the last retryBootstrap() call. Used to enforce a 2-second
+  // minimum interval between retries so rapid-fire external calls (e.g. button
+  // spam) cannot hammer the Supabase auth endpoint.
+  const lastRetryTimestampRef = useRef(0);
   const lastSessionReloadRef = useRef(0);
   const hasLoggedAppLoadRef = useRef(false);
   const hasAuthenticatedSessionRef = useRef(false);
@@ -1599,7 +1607,12 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   }, [refreshTokenCallback]);
 
   const runBootstrap = useCallback(
-    async (signal?: AbortSignal) => {
+    async (signal?: AbortSignal, runId?: number) => {
+      // Guard: if a newer bootstrap run has started since this one was dispatched,
+      // discard all state updates to prevent stale responses from overwriting
+      // the outcome of the newer run.
+      const isStale = () =>
+        typeof runId === 'number' && bootstrapRunIdRef.current !== runId;
       // Test/dev bypass: when running E2E or with an explicit in-browser
       // override (window.__E2E_SUPABASE_CLIENT) we short-circuit the full
       // SecureAuth bootstrap and inject a safe mock session so tests can
@@ -1704,6 +1717,11 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       } catch (sessionError) {
         console.warn('[SecureAuth] Failed to inspect Supabase session during bootstrap', sessionError);
       }
+      // Stale-run guard: if a newer bootstrap run has been started since this
+      // one awaited readSupabaseSessionTokens, discard all remaining state updates.
+      if (isStale()) {
+        return;
+      }
       const hasStoredToken = Boolean(storedAccessToken);
       if (!hasStoredToken) {
         await forceLogout('bootstrap_no_supabase_token');
@@ -1715,6 +1733,10 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           signal,
           requireAuth: true,
         });
+        // Stale-run guard: check again after the heavyweight session fetch.
+        if (isStale()) {
+          return;
+        }
         const payload = normalizeSessionResponsePayload(payloadRaw);
 
         if (payload?.user) {
@@ -1730,6 +1752,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           logSessionResult('aborted');
           return;
         }
+        if (isStale()) {
+          return;
+        }
         if (error instanceof NotAuthenticatedError) {
           continueAsGuest('bootstrap_no_supabase_token');
           return;
@@ -1743,6 +1768,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             const refreshFn = refreshTokenCallbackRef.current;
             if (refreshFn) {
               const recovered = await refreshFn({ reason: 'user_retry' });
+              if (isStale()) {
+                return;
+              }
               if (recovered) {
                 setAuthStatus('authenticated');
                 setBootstrapError(null);
@@ -1771,9 +1799,11 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           logSessionResult('error');
         }
       } finally {
-        clearBootstrapFailOpenTimer();
-        setSessionStatus(hasAuthenticatedSessionRef.current ? 'authenticated' : 'unauthenticated');
-        setAuthInitializing(false);
+        if (!isStale()) {
+          clearBootstrapFailOpenTimer();
+          setSessionStatus(hasAuthenticatedSessionRef.current ? 'authenticated' : 'unauthenticated');
+          setAuthInitializing(false);
+        }
       }
     },
     [applySessionPayload, captureServerClock, clearBootstrapFailOpenTimer, continueAsGuest, forceLogout, scheduleBootstrapFailOpen],
@@ -1809,9 +1839,11 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       clearBootstrapFailOpenTimer();
       const controller = new AbortController();
       bootstrapControllerRef.current = controller;
+      // Stamp a new run ID so in-flight older runs can detect they are stale.
+      const runId = ++bootstrapRunIdRef.current;
       const runner = runBootstrapRef.current;
       if (runner) {
-        runner(controller.signal).catch((error) => {
+        runner(controller.signal, runId).catch((error) => {
           console.warn('[SecureAuth] Bootstrap run failed', error);
         });
       }
@@ -1820,6 +1852,13 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   );
 
   const retryBootstrap = useCallback(() => {
+    // Enforce a 2-second minimum cooldown between retries to prevent rapid-fire
+    // external calls (e.g. button spam) from hammering the Supabase auth endpoint.
+    const now = Date.now();
+    if (now - lastRetryTimestampRef.current < 2_000) {
+      return;
+    }
+    lastRetryTimestampRef.current = now;
     bootstrappedRef.current = false;
     // Reset the single-use refresh lock so a fresh bootstrap attempt can
     // trigger token refresh again if needed (e.g., user clicks "Retry" after

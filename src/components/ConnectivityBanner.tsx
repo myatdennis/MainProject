@@ -5,6 +5,10 @@ import { refreshRuntimeStatus } from '../state/runtimeStatus';
 const ConnectivityBanner = () => {
   const rts = useRuntimeStatus();
 
+  // Do not render until the first health check has completed — avoids false
+  // "server unreachable" flashes during the initial pending state.
+  if (rts.lastChecked === null || rts.statusLabel === 'pending') return null;
+
   // Derive the same status shape that the old useConnectivityCheck provided,
   // sourced from the shared runtimeStatus singleton (no extra /api/health poll).
   const isOnline = typeof navigator !== 'undefined' ? navigator.onLine : true;

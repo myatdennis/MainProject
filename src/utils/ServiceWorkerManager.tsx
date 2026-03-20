@@ -353,7 +353,9 @@ class ServiceWorkerManager {
       await Promise.all(
         cacheNames.map(cacheName => caches.delete(cacheName))
       );
-      console.log('[SW] All caches cleared');
+      if (import.meta.env.DEV) {
+        console.log('[SW] All caches cleared');
+      }
       
       toast.success('Cache cleared successfully', {
         duration: 3000,

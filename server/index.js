@@ -1951,7 +1951,7 @@ app.get('/api/debug/whoami', authenticate, (req, res) => {
   });
 });
 
-app.get('/api/admin/users', async (req, res) => {
+app.get('/api/admin/users', authenticate, requireAdmin, async (req, res) => {
   if (!ensureSupabase(res)) return;
   const orgId = pickOrgId(req.query.orgId, req.query.organizationId);
   if (!orgId) {
@@ -1983,7 +1983,7 @@ app.get('/api/admin/users', async (req, res) => {
   }
 });
 
-app.patch('/api/admin/users/:userId', async (req, res) => {
+app.patch('/api/admin/users/:userId', authenticate, requireAdmin, async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { userId } = req.params;
   const orgId = pickOrgId(req.body?.orgId, req.body?.organizationId);
@@ -2082,6 +2082,14 @@ app.patch('/api/admin/users/:userId', async (req, res) => {
 // MFA routes
 app.use('/api/mfa', mfaRoutes);
 
+// ─── ADMIN MIDDLEWARE BARRIER ──────────────────────────────────────────────────
+// ALL /api/admin/* route handlers and routers MUST be registered AFTER this line.
+// Routes registered before this line bypass authenticate + requireAdmin entirely
+// because Express resolves middleware in registration order.
+// This pattern has already caused two auth bypass bugs (fixed 2026-03). Do not
+// add new /api/admin/* routes above this block under any circumstances.
+// ──────────────────────────────────────────────────────────────────────────────
+
 // Enforce authentication + admin role on every /api/admin/* route before specific routers/handlers
 app.use('/api/admin', authenticate, requireAdmin, resolveOrganizationContext);
 
@@ -2089,7 +2097,7 @@ app.use('/api/admin', authenticate, requireAdmin, resolveOrganizationContext);
 app.use('/api/admin/analytics', adminAnalyticsRoutes);
 app.use('/api/admin/analytics/export', adminAnalyticsExport);
 app.use('/api/admin/analytics/summary', adminAnalyticsSummary);
-app.use('/api/admin/users', adminUsersRouter);
+app.use('/api/admin/users', authenticate, requireAdmin, adminUsersRouter);
 app.use('/api/admin/courses', authenticate, requireSupabaseUser, requireAdmin, adminCoursesRouter);
 
 app.get(
@@ -8131,13 +8139,15 @@ app.get('/api/admin/courses', async (req, res) => {
   );
 
   const isPlatformAdmin = Boolean(context.isPlatformAdmin);
-  console.log('[admin.courses] access_context', {
-    requestId: req.requestId,
-    userId: context.userId || null,
-    userRole: context.userRole || null,
-    isPlatformAdmin,
-    requestedOrgId: requestedOrgId || null,
-  });
+  if (shouldLogAuthDebug) {
+    console.log('[admin.courses] access_context', {
+      requestId: req.requestId,
+      userId: context.userId || null,
+      userRole: context.userRole || null,
+      isPlatformAdmin,
+      requestedOrgId: requestedOrgId || null,
+    });
+  }
   let adminOrgIds = Array.isArray(context.memberships)
     ? context.memberships
         .filter((membership) => hasOrgAdminRole(membership.role) && membership.orgId)
@@ -8147,11 +8157,13 @@ app.get('/api/admin/courses', async (req, res) => {
   let allowedOrgIdSet = new Set(adminOrgIds);
 
   if (!isPlatformAdmin && adminOrgIds.length === 0 && supabase) {
-    console.log('[admin.courses] membership_lookup_fallback', {
-      requestId: req.requestId,
-      userId: context.userId || null,
-      reason: 'no_cached_admin_memberships',
-    });
+    if (shouldLogAuthDebug) {
+      console.log('[admin.courses] membership_lookup_fallback', {
+        requestId: req.requestId,
+        userId: context.userId || null,
+        reason: 'no_cached_admin_memberships',
+      });
+    }
     try {
       const { data: adminMemberships, error: adminMembershipsError } = await supabase
         .from('organization_memberships')
@@ -8167,11 +8179,13 @@ app.get('/api/admin/courses', async (req, res) => {
         .filter(Boolean);
 
       allowedOrgIdSet = new Set(adminOrgIds);
-      console.log('[admin.courses] membership_lookup_result', {
-        requestId: req.requestId,
-        userId: context.userId || null,
-        resolvedOrgIds: adminOrgIds,
-      });
+      if (shouldLogAuthDebug) {
+        console.log('[admin.courses] membership_lookup_result', {
+          requestId: req.requestId,
+          userId: context.userId || null,
+          resolvedOrgIds: adminOrgIds,
+        });
+      }
     } catch (membershipLookupError) {
       logAdminCoursesError(req, membershipLookupError, 'Failed to load admin memberships');
       res.status(500).json({ error: 'Unable to verify admin organization memberships' });
@@ -13896,7 +13910,7 @@ app.post('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req
   }
 }));
 
-app.get('/api/admin/organizations/:id', async (req, res) => {
+app.get('/api/admin/organizations/:id', requireAdminAccess, async (req, res) => {
   const requestId = req.requestId ?? null;
   if (!ensureSupabase(res)) return;
   if (!(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.detail', { requestId }))) {
@@ -13934,7 +13948,7 @@ app.get('/api/admin/organizations/:id', async (req, res) => {
   }
 });
 
-app.put('/api/admin/organizations/:id', async (req, res) => {
+app.put('/api/admin/organizations/:id', requireAdminAccess, async (req, res) => {
   if (!ensureSupabase(res)) return;
   if (
     !(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.update', { requestId: req.requestId ?? null }))
@@ -13995,7 +14009,7 @@ app.put('/api/admin/organizations/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/admin/organizations/:id', async (req, res) => {
+app.delete('/api/admin/organizations/:id', requireAdminAccess, async (req, res) => {
   if (!ensureSupabase(res)) return;
   if (
     !(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.delete', { requestId: req.requestId ?? null }))

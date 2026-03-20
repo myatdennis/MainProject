@@ -12,6 +12,12 @@ interface StatusState {
 const missingConfigMessage = SUPABASE_MISSING_CONFIG_MESSAGE;
 
 const deriveStatusState = (runtime: RuntimeStatus): StatusState => {
+  // Suppress the banner entirely until the first real health check resolves —
+  // avoids false "Supabase offline" flashes during the initial pending state.
+  if (runtime.lastChecked === null || runtime.statusLabel === 'pending') {
+    return { status: 'idle' };
+  }
+
   if (!runtime.supabaseConfigured || !hasSupabaseConfig()) {
     return {
       status: 'disabled',

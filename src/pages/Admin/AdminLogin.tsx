@@ -301,6 +301,10 @@ const AdminLogin: React.FC = () => {
       label: 'Status unknown',
       description: 'Checking backend health. You can continue with demo credentials.',
     },
+    pending: {
+      label: 'Checking status',
+      description: 'Verifying backend connectivity. This will only take a moment.',
+    },
   };
 
   const getStatusBadgeClass = (status: RuntimeStatus['statusLabel']) => {

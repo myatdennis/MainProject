@@ -11,7 +11,7 @@ export type RuntimeStatus = {
   demoModeEnabled: boolean;
   offlineQueueBacklog: number | null;
   storageStatus: 'ok' | 'warn' | 'disabled' | 'unknown';
-  statusLabel: 'ok' | 'degraded' | 'demo-fallback' | 'unknown';
+  statusLabel: 'ok' | 'degraded' | 'demo-fallback' | 'unknown' | 'pending';
   lastChecked: number | null;
   requestId?: string | null;
   lastError?: string | null;
@@ -25,14 +25,14 @@ const DEFAULT_STATUS: RuntimeStatus = {
   // Previously this was hasSupabaseConfig(), which caused a false-positive banner suppression
   // for the first 4-30 s on cold starts before the first health poll resolved.
   supabaseHealthy: false,
-  apiHealthy: true,
-  apiReachable: true,
+  apiHealthy: false,
+  apiReachable: false,
   apiAuthRequired: false,
   wsEnabled: false,
   demoModeEnabled: false,
   offlineQueueBacklog: null,
   storageStatus: 'unknown',
-  statusLabel: 'unknown',
+  statusLabel: 'pending',
   lastChecked: null,
   requestId: null,
   lastError: undefined,
@@ -108,6 +108,14 @@ const parseHealthResponse = async (response: Response, overrides: HealthOverride
     typeof offlineQueue?.backlog === 'number' ? offlineQueue.backlog : currentStatus.offlineQueueBacklog;
   const statusLabel =
     (diagnostics?.status as RuntimeStatus['statusLabel']) ?? (apiHealthy ? 'ok' : 'degraded');
+  // Once a real /health response is received, neither 'pending' nor 'unknown'
+  // should persist — map both to a concrete state based on apiHealthy.
+  // 'unknown' from a malformed response body is treated conservatively as
+  // 'degraded' to avoid false-positive "healthy" UI.
+  const resolvedStatusLabel: RuntimeStatus['statusLabel'] =
+    statusLabel === 'pending' || statusLabel === 'unknown'
+      ? (apiHealthy ? 'ok' : 'degraded')
+      : statusLabel;
 
   currentStatus = {
     supabaseConfigured: supabaseConfigured || hasSupabaseConfig(),
@@ -119,7 +127,7 @@ const parseHealthResponse = async (response: Response, overrides: HealthOverride
   wsEnabled,
     offlineQueueBacklog,
     storageStatus,
-    statusLabel,
+    statusLabel: resolvedStatusLabel,
     lastChecked: Date.now(),
     requestId: diagnostics?.requestId ?? null,
     lastError: overrides.lastError,

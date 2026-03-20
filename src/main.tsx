@@ -89,7 +89,9 @@ if (typeof window !== 'undefined') {
     migrateFromLocalStorage();
     cleanupLegacySensitiveKeys();
     installLocalStorageGuards();
-    checkStorageSecurity();
+    if (import.meta.env.DEV) {
+      checkStorageSecurity();
+    }
   } catch (error) {
     console.warn('[secureStorage] bootstrap migration failed:', error);
   }
@@ -332,18 +334,26 @@ const serviceWorkerEnabled =
   !hostLooksLikePreview;
 
 if (serviceWorkerEnabled) {
-  console.log('📦 Production mode: Registering service worker...');
+  if (import.meta.env.DEV) {
+    console.log('📦 Production mode: Registering service worker...');
+  }
   serviceWorkerManager
     .register({
       onSuccess: () => {
-        console.log('✅ Admin portal is ready for offline use');
+        if (import.meta.env.DEV) {
+          console.log('✅ Admin portal is ready for offline use');
+        }
       },
       onUpdate: (registration) => {
-        console.log('🔄 New version available');
+        if (import.meta.env.DEV) {
+          console.log('🔄 New version available');
+        }
         showServiceWorkerUpdateToast(registration);
       },
       onOfflineReady: () => {
-        console.log('💾 Admin portal cached for offline use');
+        if (import.meta.env.DEV) {
+          console.log('💾 Admin portal cached for offline use');
+        }
       },
       onError: () => {
         showServiceWorkerErrorToast();

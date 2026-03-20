@@ -8,6 +8,7 @@ import ProgressBar from '../../components/ui/ProgressBar';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import EmptyState from '../../components/ui/EmptyState';
 import { LoadingSpinner } from '../../components/LoadingComponents';
+import { ErrorBoundary } from '../../components/ErrorHandling';
 import { logAuthRedirect } from '../../utils/logAuthRedirect';
 import useRuntimeStatus from '../../hooks/useRuntimeStatus';
 import { courseStore, AdminCatalogState } from '../../store/courseStore';
@@ -70,6 +71,19 @@ const builderSnapshot = [
   { label: 'Ready templates', value: '4', helper: 'Scenario · Micro-lesson · Workshop · Quiz' },
   { label: 'Avg. publish time', value: '12 min', helper: 'From brief to announcement' },
 ];
+
+/** Fallback rendered by per-widget ErrorBoundary — isolates one broken widget from the rest of the dashboard. */
+const WidgetErrorFallback = ({ retry }: { error: Error; retry: () => void }) => (
+  <div className="rounded-2xl border border-mist/60 bg-cloud px-6 py-5 text-sm text-ink/60 flex items-center justify-between gap-4">
+    <span>This widget is temporarily unavailable.</span>
+    <button
+      onClick={retry}
+      className="rounded-lg border border-mist px-3 py-1 text-xs font-semibold text-slate hover:bg-cloud/80 transition"
+    >
+      Retry
+    </button>
+  </div>
+);
 
 const AdminDashboard = () => {
   // Report page identity for admin layout mismatch detection
@@ -542,6 +556,7 @@ const AdminDashboard = () => {
         </Card>
 
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <ErrorBoundary fallback={WidgetErrorFallback}>
           {stats.map((stat) => {
             const Icon = stat.icon;
             return (
@@ -555,9 +570,11 @@ const AdminDashboard = () => {
               </Card>
             );
           })}
+          </ErrorBoundary>
         </div>
 
         <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
+          <ErrorBoundary fallback={WidgetErrorFallback}>
           <Card className="space-y-6">
             <div className="flex items-center justify-between">
               <h2 className="font-heading text-lg font-semibold text-charcoal">Recent activity</h2>
@@ -582,7 +599,9 @@ const AdminDashboard = () => {
               })}
             </div>
           </Card>
+          </ErrorBoundary>
 
+          <ErrorBoundary fallback={WidgetErrorFallback}>
           <Card tone="muted" className="space-y-4">
             <h2 className="font-heading text-lg font-semibold text-charcoal">Alerts</h2>
             <div className="space-y-3">
@@ -607,9 +626,11 @@ const AdminDashboard = () => {
               })}
             </div>
           </Card>
+          </ErrorBoundary>
         </div>
 
         <div className="grid gap-6 lg:grid-cols-2">
+          <ErrorBoundary fallback={WidgetErrorFallback}>
           <Card className="space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="font-heading text-lg font-semibold text-charcoal">Top performing organizations</h2>
@@ -636,7 +657,9 @@ const AdminDashboard = () => {
               )}
             </div>
           </Card>
+          </ErrorBoundary>
 
+          <ErrorBoundary fallback={WidgetErrorFallback}>
           <Card className="space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="font-heading text-lg font-semibold text-charcoal">Course performance</h2>
@@ -667,6 +690,7 @@ const AdminDashboard = () => {
               )}
             </div>
           </Card>
+          </ErrorBoundary>
         </div>
         </section>,
       )}

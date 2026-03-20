@@ -488,14 +488,23 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
       adminGateKeyRef.current = null;
       return () => {};
     }
-    const key = `${user?.id ?? 'anon'}:${activeOrgId ?? 'none'}`;
+    // Key on userId:membershipStatus instead of userId:activeOrgId.
+    // activeOrgId transitions null → real-value asynchronously and would fire
+    // the gate check twice on every admin page load. membershipStatus is stable
+    // once resolved ('ready'/'degraded') and only changes on meaningful auth events.
+    const key = `${user?.id ?? 'anon'}:${membershipStatus}`;
     if (adminGateKeyRef.current === key) {
+      return () => {};
+    }
+    // Only fire the gate check once membership is actually resolved — not while
+    // it is still 'idle' or 'loading', which would trigger a redundant second check.
+    if (membershipStatus !== 'ready' && membershipStatus !== 'degraded') {
       return () => {};
     }
     adminGateKeyRef.current = key;
     beginAdminCapabilityCheck('initial');
     return () => {};
-  }, [mode, sessionStatus, hasSession, user?.id, activeOrgId, beginAdminCapabilityCheck, adminGateStatus]);
+  }, [mode, sessionStatus, hasSession, user?.id, membershipStatus, beginAdminCapabilityCheck, adminGateStatus]);
 
   useEffect(() => {
     if (mode !== 'admin') {

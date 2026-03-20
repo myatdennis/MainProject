@@ -1157,6 +1157,39 @@ let awaitingRoleResolution = false;
 // detect org switches and flush the stale localStorage catalog cache.
 let lastInitOrgId: string | null = null;
 
+/**
+ * Maximum ms to wait for the org resolver bridge to return a snapshot before
+ * treating the situation as a hard error. Prevents course loads from stalling
+ * indefinitely when the auth provider unmounts or fails to re-register.
+ */
+export const BRIDGE_RESOLUTION_TIMEOUT_MS = 8_000;
+/** Timestamp (Date.now()) when the bridge first entered 'loading' state. */
+let bridgeLoadingStartedAt: number | null = null;
+
+/**
+ * BroadcastChannel used to coordinate org-switch cache invalidation across
+ * browser tabs. When one tab switches org (via forceInit with a newOrgId),
+ * it broadcasts the new org so other tabs can reset their initPromise and
+ * re-initialize with the correct org context on their next catalog access.
+ * Intentionally not assigned — the channel is kept alive by the IIFE closure.
+ */
+void ((): void => {
+  if (typeof BroadcastChannel === 'undefined') return;
+  try {
+    const ch = new BroadcastChannel('huddle:catalog-sync');
+    ch.addEventListener('message', (evt) => {
+      if (evt.data?.type === 'org_switch') {
+        // Another tab switched org — invalidate this tab's in-flight promise so
+        // the next init() call re-fetches under the new org context.
+        initPromise = null;
+        lastInitOrgId = evt.data.newOrgId ?? null;
+      }
+    });
+  } catch {
+    // BroadcastChannel not supported in this environment — silently skip.
+  }
+})();
+
 const storeSubscribers = new Set<() => void>();
 
 const shallowEqualState = (current: AdminCatalogState, next: AdminCatalogState): boolean => {
@@ -1249,6 +1282,8 @@ const resolveOrgContext = (): ResolvedOrgContext => {
   const storedPreference = resolveOrgIdFromCarrier(getActiveOrgPreference());
   const resolverSnapshot = resolveOrgContextFromBridge();
   if (resolverSnapshot) {
+    // Bridge responded — reset the loading-start timer.
+    bridgeLoadingStartedAt = null;
     if (resolverSnapshot.status && resolverSnapshot.status !== 'ready') {
       return {
         orgId: null,
@@ -1265,12 +1300,23 @@ const resolveOrgContext = (): ResolvedOrgContext => {
     };
   }
   if (!isOrgResolverRegistered()) {
+    bridgeLoadingStartedAt = null;
     return { orgId: null, role: null, userId: null, status: 'loading' };
   }
-  if (storedPreference) {
-    return { orgId: storedPreference, role: null, userId: null, status: 'ready' };
+  // Bridge is registered but returned no snapshot yet.
+  // Start the timeout clock on first entry, and escalate to 'error' if the
+  // bridge has been unresponsive for longer than BRIDGE_RESOLUTION_TIMEOUT_MS.
+  if (bridgeLoadingStartedAt === null) {
+    bridgeLoadingStartedAt = Date.now();
   }
-  return { orgId: null, role: null, userId: null, status: 'idle' };
+  if (Date.now() - bridgeLoadingStartedAt > BRIDGE_RESOLUTION_TIMEOUT_MS) {
+    bridgeLoadingStartedAt = null; // reset so a subsequent registration can try again
+    if (import.meta.env?.DEV) {
+      console.warn('[courseStore] bridge_timeout: org resolver registered but returned no snapshot after 8s');
+    }
+    return { orgId: null, role: null, userId: null, status: 'error' };
+  }
+  return { orgId: null, role: null, userId: null, status: 'loading' };
 };
 
 // Reserved for future use: checks whether a learner has any local progress stored for a given course.
@@ -1804,7 +1850,24 @@ export const courseStore = {
           const incomingStructureLoaded = hasLoadedStructure(courseWithVersion);
           const existingStructureLoaded = hasLoadedStructure(existing ?? null);
           const normalizedIncomingModules = sanitizeModuleGraph(courseWithVersion.modules || []);
-          const resolvedModules = incomingStructureLoaded
+
+          // Structure-preservation guard: if the stored course already has a
+          // fully-loaded module graph and the incoming data is a summary (no
+          // structure), keep the existing modules to avoid wiping lesson content
+          // that was fetched in a prior detail request.
+          const shouldPreserveExistingModules =
+            existingStructureLoaded && !incomingStructureLoaded;
+
+          if (shouldPreserveExistingModules && import.meta.env?.DEV) {
+            console.info(
+              '[courseStore] structure_preserve',
+              { courseId: courseWithVersion.id, reason: 'incoming_is_summary_existing_is_full' },
+            );
+          }
+
+          const resolvedModules = shouldPreserveExistingModules
+            ? (existing?.modules ?? normalizedIncomingModules)
+            : incomingStructureLoaded
             ? normalizedIncomingModules
             : existing?.modules ?? normalizedIncomingModules;
           const resolvedModuleCount = incomingStructureLoaded
@@ -1830,8 +1893,12 @@ export const courseStore = {
             : { ...courseWithVersion };
 
           mergedCourse.modules = resolvedModules;
-          mergedCourse.structureLoaded = incomingStructureLoaded || existingStructureLoaded;
-          mergedCourse.structureSource = incomingStructureLoaded
+          // When we preserved the existing full structure, keep structureLoaded true
+          // and source 'full' so downstream consumers don't re-fetch needlessly.
+          mergedCourse.structureLoaded = shouldPreserveExistingModules
+            ? true
+            : incomingStructureLoaded || existingStructureLoaded;
+          mergedCourse.structureSource = (shouldPreserveExistingModules || incomingStructureLoaded)
             ? 'full'
             : existing?.structureSource ?? courseWithVersion.structureSource ?? (mergedCourse.structureLoaded ? 'full' : 'summary');
           if (resolvedModuleCount !== null && typeof resolvedModuleCount !== 'undefined') {
@@ -1999,6 +2066,19 @@ export const courseStore = {
 
     // Clear any in-flight promise so a fresh run can start.
     initPromise = null;
+    // Notify other tabs about the org switch so they can reset their initPromise
+    // and avoid serving a stale catalog from the previous org.
+    if (incomingOrgId !== null && incomingOrgId !== lastInitOrgId) {
+      try {
+        if (typeof BroadcastChannel !== 'undefined') {
+          const ch = new BroadcastChannel('huddle:catalog-sync');
+          ch.postMessage({ type: 'org_switch', newOrgId: incomingOrgId });
+          ch.close();
+        }
+      } catch {
+        // Non-fatal — cross-tab coordination is best-effort.
+      }
+    }
     // Reset the bootstrap attempt counter so an explicit forceInit (e.g. user-triggered retry)
     // is never blocked by the automatic-retry cap.
     authReadyBootstrapAttempts = 0;

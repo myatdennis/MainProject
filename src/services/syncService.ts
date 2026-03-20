@@ -52,7 +52,9 @@ const resolveProgressUserId = (record: any): string | null => {
   const trimmed = raw.trim();
   if (!trimmed) return null;
   if (trimmed.includes('@')) {
-    console.warn('[SyncService] Ignoring progress event with email-like user_id', { userId: trimmed });
+    if (import.meta.env.DEV) {
+      console.warn('[SyncService] Ignoring progress event with email-like user_id', { userId: trimmed });
+    }
     return null;
   }
   return trimmed;
@@ -112,7 +114,9 @@ class SyncService {
       this.installWebsocketHandlers();
       wsClient.connect();
       if (!wsClient.isEnabled()) {
-        console.info('[SyncService] WebSocket client disabled; relying on Supabase realtime/polling.');
+        if (import.meta.env.DEV) {
+          console.info('[SyncService] WebSocket client disabled; relying on Supabase realtime/polling.');
+        }
       }
     } catch (err) {
       console.warn('WS client initialization failed', err);
@@ -136,7 +140,9 @@ class SyncService {
         case 'user_progress': {
           const resolvedUserId = resolveProgressUserId(d);
           if (!resolvedUserId) {
-            console.warn('[SyncService] Dropping websocket progress event with invalid user_id');
+            if (import.meta.env.DEV) {
+              console.warn('[SyncService] Dropping websocket progress event with invalid user_id');
+            }
             return;
           }
           this.emit('user_progress', { progress: d, userId: resolvedUserId, timestamp: Date.now(), source: 'client' });
@@ -172,7 +178,9 @@ class SyncService {
   private async initializeRealtimeSync() {
     // Only set up real-time sync if Supabase is configured
     if (!import.meta.env.VITE_SUPABASE_URL || !import.meta.env.VITE_SUPABASE_ANON_KEY) {
-      console.log('Supabase not configured - using polling sync only');
+      if (import.meta.env.DEV) {
+        console.log('[SyncService] Supabase not configured - using polling sync only');
+      }
       this.cleanupRealtimeChannels();
       return;
     }
@@ -180,7 +188,9 @@ class SyncService {
     try {
       const supabase = await getSupabase();
       if (!supabase) {
-        console.log('Supabase client not available for realtime sync');
+        if (import.meta.env.DEV) {
+          console.log('[SyncService] Supabase client not available for realtime sync');
+        }
         this.cleanupRealtimeChannels();
         return;
       }
@@ -205,11 +215,15 @@ class SyncService {
           }
 
           if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') {
-            console.warn(`[SyncService] realtime channel ${channelName} ${status}; falling back to polling.`);
+            if (import.meta.env.DEV) {
+              console.warn(`[SyncService] realtime channel ${channelName} ${status}; falling back to polling.`);
+            }
             try {
               subscribedChannel.unsubscribe();
             } catch (unsubscribeError) {
-              console.warn(`[SyncService] Failed to unsubscribe channel ${channelName}:`, unsubscribeError);
+              if (import.meta.env.DEV) {
+                console.warn(`[SyncService] Failed to unsubscribe channel ${channelName}:`, unsubscribeError);
+              }
             }
             this.realtimeChannels = this.realtimeChannels.filter((entry) => entry.channel !== subscribedChannel);
             return;
@@ -233,7 +247,9 @@ class SyncService {
             table: 'courses',
           },
           (payload: any) => {
-            console.log('Real-time course change detected:', payload);
+            if (import.meta.env.DEV) {
+              console.log('[SyncService] Real-time course change detected:', payload);
+            }
 
             const eventType =
               payload.eventType === 'INSERT'
@@ -262,7 +278,9 @@ class SyncService {
             table: 'modules',
           },
           (payload: any) => {
-            console.log('Real-time module change detected:', payload);
+            if (import.meta.env.DEV) {
+              console.log('[SyncService] Real-time module change detected:', payload);
+            }
 
             this.emit('course_updated', {
               module: payload.new || payload.old,
@@ -284,7 +302,9 @@ class SyncService {
             table: 'lessons',
           },
           (payload: any) => {
-            console.log('Real-time lesson change detected:', payload);
+            if (import.meta.env.DEV) {
+              console.log('[SyncService] Real-time lesson change detected:', payload);
+            }
 
             // Get course ID from module
             this.getLessonCourseId((payload.new || payload.old)?.module_id).then((courseId) => {
@@ -311,7 +331,9 @@ class SyncService {
             table: 'assignments',
           },
           (payload: any) => {
-            console.log('Real-time assignment change detected:', payload);
+            if (import.meta.env.DEV) {
+              console.log('[SyncService] Real-time assignment change detected:', payload);
+            }
             const record = payload.new || payload.old;
             if (!record) return;
 
@@ -338,12 +360,16 @@ class SyncService {
             table: 'user_lesson_progress',
           },
           (payload: any) => {
-            console.log('Real-time progress change detected:', payload);
+            if (import.meta.env.DEV) {
+              console.log('[SyncService] Real-time progress change detected:', payload);
+            }
 
             const record = payload.new || payload.old;
             const resolvedUserId = resolveProgressUserId(record);
             if (!resolvedUserId) {
-              console.warn('[SyncService] Dropping realtime progress change with invalid user_id');
+              if (import.meta.env.DEV) {
+                console.warn('[SyncService] Dropping realtime progress change with invalid user_id');
+              }
               return;
             }
 
@@ -357,9 +383,11 @@ class SyncService {
         )
       );
 
-      console.log('Real-time sync initialized successfully');
+      if (import.meta.env.DEV) {
+        console.log('[SyncService] Real-time sync initialized successfully');
+      }
     } catch (error) {
-      console.error('Failed to initialize real-time sync:', error);
+      console.error('[SyncService] Failed to initialize real-time sync:', error);
       this.cleanupRealtimeChannels();
     }
   }
@@ -407,7 +435,9 @@ class SyncService {
   // Manual refresh methods for immediate sync
   async refreshCourse(courseId: string): Promise<void> {
     try {
-      console.log('Manual course refresh triggered:', courseId);
+      if (import.meta.env.DEV) {
+        console.log('[SyncService] Manual course refresh triggered:', courseId);
+      }
       
       // If Supabase is configured, fetch from database
       if (import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY) {
@@ -446,7 +476,9 @@ class SyncService {
         });
       }
       
-      console.log('Course refresh completed:', courseId);
+      if (import.meta.env.DEV) {
+        console.log('[SyncService] Course refresh completed:', courseId);
+      }
     } catch (error) {
       console.error('Error refreshing course:', courseId, error);
       throw error;
@@ -455,7 +487,9 @@ class SyncService {
 
   async refreshAll(): Promise<void> {
     try {
-      console.log('Global refresh triggered');
+      if (import.meta.env.DEV) {
+        console.log('[SyncService] Global refresh triggered');
+      }
       
       // Trigger course store re-initialization
       await courseStore.init();
@@ -467,7 +501,9 @@ class SyncService {
         manual: true
       });
       
-      console.log('Global refresh completed');
+      if (import.meta.env.DEV) {
+        console.log('[SyncService] Global refresh completed');
+      }
     } catch (error) {
       console.error('Error during global refresh:', error);
       throw error;

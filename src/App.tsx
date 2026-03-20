@@ -431,9 +431,9 @@ function AppContent() {
       </main>
       {!hideMarketingChrome && <Footer />}
       {!hideMarketingChrome && <AIBot />}
-      <ConnectionDiagnostic />
-      <TroubleshootingGuide />
-      <DevDebugPanel />
+      {import.meta.env.DEV && <ConnectionDiagnostic />}
+      {import.meta.env.DEV && <TroubleshootingGuide />}
+      {import.meta.env.DEV && <DevDebugPanel />}
     </div>
   );
 }

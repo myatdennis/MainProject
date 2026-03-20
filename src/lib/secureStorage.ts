@@ -778,7 +778,8 @@ export function migrateFromLocalStorage(): void {
  */
 export function auditLocalStorage(): string[] {
   const warnings: string[] = [];
-  const sensitivePatterns = ['token', 'auth', 'password', 'session', 'secret', 'user'];
+  // 'user' intentionally excluded — too broad; matches non-sensitive keys like 'lms-user-settings'
+  const sensitivePatterns = ['token', 'auth', 'password', 'session', 'secret'];
   if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') {
     return warnings;
   }
