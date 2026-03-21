@@ -38,12 +38,25 @@ import { listUsersByOrg } from '../../dal/adminUsers';
 import { useSecureAuth } from '../../context/SecureAuthContext';
 import { LoadingSpinner } from '../../components/LoadingComponents';
 import apiRequest from '../../utils/apiClient';
+import { useRouteChangeReset } from '../../hooks/useRouteChangeReset';
 
 const AdminUsers = () => {
   const { activeOrgId } = useSecureAuth();
+  const { routeKey } = useRouteChangeReset();
+
+  // Reset transient UI state (filters, selections) whenever the user navigates
+  // away from and back to this page so stale selections never persist across sessions.
+  useEffect(() => {
+    setSearchTerm('');
+    setFilterOrg('all');
+    setFilterStatus('all');
+    setSelectedUsers([]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeKey]);
 
   // Report page identity for admin layout mismatch detection
   useEffect(() => {
+    if (import.meta.env.DEV) console.debug('[PAGE COMMIT] AdminUsers');
     try {
       window.dispatchEvent(new CustomEvent('admin:page-mounted', { detail: { page: 'Users' } }));
     } catch (err) {
@@ -380,6 +393,7 @@ const AdminUsers = () => {
 
   return (
     <PageWrapper>
+      {import.meta.env.DEV && (() => { console.debug('[PAGE RENDER] AdminUsers'); return null; })()}
       <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Users', to: '/admin/users' }]} />
       {/* Header */}
       <div className="mb-8 flex items-start justify-between">

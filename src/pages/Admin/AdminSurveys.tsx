@@ -43,6 +43,7 @@ import {
   surveyQueueEvents,
   getQueueLength,
 } from '../../dal/surveys';
+import { useRouteChangeReset } from '../../hooks/useRouteChangeReset';
 
 type AdminSurveyCard = {
   id: string;
@@ -61,8 +62,11 @@ type AdminSurveyCard = {
 };
 
 const AdminSurveys = () => {
+  const { routeKey } = useRouteChangeReset();
+
   // Report page identity for admin layout mismatch detection
   useEffect(() => {
+    if (import.meta.env.DEV) console.debug('[PAGE COMMIT] AdminSurveys');
     try {
       window.dispatchEvent(new CustomEvent('admin:page-mounted', { detail: { page: 'Surveys' } }));
     } catch (err) {
@@ -85,6 +89,15 @@ const AdminSurveys = () => {
     organizationIds: string[];
   } | null>(null);
   const [duplicateTarget, setDuplicateTarget] = useState<string | null>(null);
+
+  // Reset transient filter/selection state whenever the user navigates back to this page.
+  useEffect(() => {
+    setSearchTerm('');
+    setFilterStatus('all');
+    setFilterType('all');
+    setSelectedSurveys([]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeKey]);
 
   const shapeSurveyRecord = useCallback(
     (record: Survey): AdminSurveyCard => {
@@ -323,6 +336,7 @@ const AdminSurveys = () => {
 
   return (
     <>
+      {import.meta.env.DEV && (() => { console.debug('[PAGE RENDER] AdminSurveys'); return null; })()}
       <div className="container mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
       <div className="mb-6">
         <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Surveys', to: '/admin/surveys' }]} />

@@ -1,5 +1,6 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { useRouteChangeReset } from '../../hooks/useRouteChangeReset';
 import {
   Activity,
   AlertTriangle,
@@ -79,6 +80,8 @@ const deriveCrmSummaryFromOrganizations = (orgs: Org[], paginationTotal?: number
 // ...existing code for AdminOrgWorkspace continues
 
 const AdminOrgWorkspace = () => {
+  const { routeKey } = useRouteChangeReset();
+
   // Report page identity for admin layout mismatch detection
   useEffect(() => {
     try {
@@ -100,6 +103,21 @@ const AdminOrgWorkspace = () => {
   const [paginationMeta, setPaginationMeta] = useState({ page: 1, pageSize: PAGE_SIZE, total: 0, hasMore: false });
   const debouncedSearch = useDebounce(searchTerm, 250);
 
+  const [selectedOrgId, setSelectedOrgId] = useState<string | null>(null);
+  const [selectedOrgProfile, setSelectedOrgProfile] = useState<OrgProfileDetails | null>(null);
+  const [profileLoading, setProfileLoading] = useState(false);
+  const [profileError, setProfileError] = useState<string | null>(null);
+
+  // Reset transient filter/selection state whenever the user navigates back to this page.
+  useEffect(() => {
+    setSearchTerm('');
+    setStatusFilter('all');
+    setSubscriptionFilter('all');
+    setSelectedOrgId(null);
+    setSelectedOrgProfile(null);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [routeKey]);
+
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showArchiveModal, setShowArchiveModal] = useState(false);
   const [showAddOrgModal, setShowAddOrgModal] = useState(false);
@@ -110,11 +128,6 @@ const AdminOrgWorkspace = () => {
   const [orgToRestore, setOrgToRestore] = useState<string | null>(null);
   const [orgToEdit, setOrgToEdit] = useState<any | null>(null);
   const [loading, setLoading] = useState(false);
-
-  const [selectedOrgId, setSelectedOrgId] = useState<string | null>(null);
-  const [selectedOrgProfile, setSelectedOrgProfile] = useState<OrgProfileDetails | null>(null);
-  const [profileLoading, setProfileLoading] = useState(false);
-  const [profileError, setProfileError] = useState<string | null>(null);
 
   const [crmSummary, setCrmSummary] = useState<CrmSummary | null>(null);
   const [crmLoading, setCrmLoading] = useState(false);

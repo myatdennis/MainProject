@@ -31,7 +31,12 @@ const ApiStatusBanner: FC<ApiStatusBannerProps> = ({
   onRetry,
   className = '',
 }) => {
-  const offline = apiReachable === false;
+  // Suppress the banner entirely until the first health check has completed.
+  // apiReachable defaults to false before any /health response arrives, so
+  // without this guard the banner fires a false "API unreachable" on every
+  // cold-start load for the first few seconds.
+  const hasCompletedFirstCheck = lastCheckedAt != null;
+  const offline = hasCompletedFirstCheck && apiReachable === false;
   const requiresAuth = !offline && Boolean(apiAuthRequired) && !isAuthenticated;
   const timestampLabel = useMemo(() => formatTimestamp(lastCheckedAt), [lastCheckedAt]);
 

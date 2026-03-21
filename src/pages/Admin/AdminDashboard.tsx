@@ -89,6 +89,7 @@ const WidgetErrorFallback = ({ retry }: { error: Error; retry: () => void }) => 
 const AdminDashboard = () => {
   // Report page identity for admin layout mismatch detection
   useEffect(() => {
+    if (import.meta.env.DEV) console.debug('[PAGE COMMIT] AdminDashboard');
     try {
       window.dispatchEvent(new CustomEvent('admin:page-mounted', { detail: { page: 'Dashboard' } }));
     } catch (err) {
@@ -415,6 +416,7 @@ const AdminDashboard = () => {
 
   return (
     <>
+      {import.meta.env.DEV && (() => { console.debug('[PAGE RENDER] AdminDashboard'); return null; })()}
       <SEO title="Admin Dashboard" description="Monitor learner progress and organizational impact." />
       {gateShell(
         <section className="space-y-10">

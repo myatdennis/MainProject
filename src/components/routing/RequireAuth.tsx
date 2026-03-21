@@ -61,6 +61,10 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
     logout,
   } = useSecureAuth();
   const location = useLocation();
+  // Once authentication succeeds once, this ref stays true for the lifetime of
+  // the component.  After this point the spinner is NEVER shown for route
+  // transitions — only the initial cold-start boot needs the loading screen.
+  const hasResolvedAuthRef = useRef(false);
   const sessionRequestRef = useRef(false);
   const retryRef = useRef(false);
   const adminCheckAbortRef = useRef<AbortController | null>(null);
@@ -74,9 +78,6 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   const surfaceState = surfaceAuthStatus?.[mode] ?? 'idle';
   const effectiveSurfaceState =
     surfaceState === 'idle' && sessionAuthenticated && orgResolutionStatus === 'ready' ? 'ready' : surfaceState;
-  const waitingForSurface = hasSession && effectiveSurfaceState === 'checking';
-  const waitingForOrgContext =
-    mode === 'admin' && hasSession && memberships.length > 0 && !activeOrgId && orgResolutionStatus !== 'ready';
 
   // Resolve admin access snapshot once so we can use it for both the gate-status
   // seed and the membership-wait bypass below.
@@ -86,14 +87,9 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
     isAdminAccessSnapshotFresh() &&
     hasAdminPortalAccess(existingSnapshot.payload);
   // If we already confirmed admin access (via a fresh snapshot or isAuthenticated.admin),
-  // don't block rendering while memberships are still resolving.  This eliminates
-  // the full-screen spinner that appears on every page load when the admin is already
-  // logged in.
-  const adminAlreadyConfirmed = snapshotGranted || Boolean(isAuthenticated?.admin);
-  const waitingForMembership =
-    hasSession &&
-    (membershipStatus === 'idle' || membershipStatus === 'loading') &&
-    !adminAlreadyConfirmed;
+  // don't block rendering while memberships are still resolving.
+  // The render gate now relies exclusively on hasResolvedAuthRef; this check is
+  // retained only for future gate-key logic that may need it.
 
   // Seed the gate as 'allowed' immediately if we have a fresh snapshot so we never
   // flash a full-screen spinner on internal admin navigation.
@@ -673,14 +669,21 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
 
   const statusesReady =
     sessionAuthenticated && orgResolutionStatus === 'ready' && effectiveSurfaceState === 'ready';
-  const waitingForAdminGate = mode === 'admin' && hasSession && adminGateStatus === 'checking';
 
-  const shouldShowSpinner =
-    !statusesReady ||
-    (hasSession && (waitingForSurface || waitingForOrgContext || waitingForMembership)) ||
-    waitingForAdminGate;
+  // Once auth succeeds at least once, we NEVER block rendering for route changes.
+  // Subsequent navigations must always render immediately — no spinner flash.
+  if (sessionAuthenticated) {
+    hasResolvedAuthRef.current = true;
+  }
 
-  if (shouldShowSpinner) {
+  // Bootstrap-only gate: block rendering exclusively during the first cold-start
+  // load (before we have any confirmed auth state).  Once hasResolvedAuthRef is
+  // true we skip every spinner condition — the admin gate and membership checks
+  // run in the background and update state without blocking the page render.
+  const shouldShowBootstrapSpinner =
+    !hasResolvedAuthRef.current && sessionStatus !== 'authenticated';
+
+  if (shouldShowBootstrapSpinner) {
     return (
       <div className="flex min-h-[60vh] items-center justify-center bg-softwhite">
         <LoadingSpinner size="lg" />
@@ -738,12 +741,14 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   }
 
   if (!hasSession) {
+    // Do not show a spinner here — the bootstrap spinner at the top of this
+    // function already handles all pre-auth loading states (sessionStatus
+    // !== 'authenticated').  Showing a second spinner here would cause a
+    // flash if user populates slightly after sessionStatus flips.
     if (authInitializing || sessionLoading) {
-      return (
-        <div className="flex min-h-[60vh] items-center justify-center bg-softwhite">
-          <LoadingSpinner size="lg" />
-        </div>
-      );
+      // Render nothing — bootstrap spinner already showing upstream,
+      // or the component will re-render once sessionStatus settles.
+      return null;
     }
     if (!sessionUnauthenticated) {
       return null;
@@ -843,6 +848,9 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   }
 
   logGuardEvent('allow', { path: location.pathname, adminCapabilityStatus: adminCapability.status });
+  if (import.meta.env.DEV) {
+    console.debug('[REQUIRE AUTH RENDER]', location.pathname, { mode, hasSession, sessionStatus });
+  }
   const membershipBanner =
     membershipStatus === 'degraded' ? (
       <div className="mb-4 flex flex-col gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 sm:flex-row sm:items-center sm:justify-between">

@@ -93,7 +93,7 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
   const normalizedSessionStatus = adminSessionStatus ?? sessionStatus;
   const normalizedAuthInitializing = adminAuthInitializing ?? authInitializing;
   const adminPortalAllowed = adminPortalAllowedRaw || Boolean(isAuthenticated?.admin);
-  const { showToast } = useToast();
+  const { showToast: _showToast } = useToast();
   const runtimeStatus = useRuntimeStatus();
   const {
     organizations: organizationOptions,
@@ -203,11 +203,19 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
       // on the ADMIN_MENU_DEBUG build flag.
       const blockedReason = (() => {
         if (!isOrgSelectionRequired) return null;
-        // If org membership resolution is still in progress, don't block navigation.
-        // Allow routes to render and let pages handle any org-specific UI once memberships arrive.
-        if (membershipStatus === 'loading' || membershipStatus === 'idle') {
+        // Never block when an org switch is already in flight — activeOrgId
+        // will populate shortly and blocking the nav here would appear broken.
+        if (isSwitching) return null;
+        // Allow navigation freely while memberships are still resolving.
+        // This covers the transient window between memberships arriving and
+        // the auto-select effect in RequireAuth setting activeOrgId.
+        if (
+          membershipStatus === 'loading' ||
+          membershipStatus === 'idle' ||
+          membershipStatus === 'ready'
+        ) {
           if (import.meta.env?.DEV) {
-            console.info('[AdminLayout] guardNavigation: allowing navigation while membershipStatus=%s', membershipStatus);
+            console.debug('[NAV] guardNavigation: allowing nav — activeOrgId resolving (membershipStatus=%s)', membershipStatus);
           }
           return null;
         }
@@ -218,6 +226,11 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
       })();
 
       if (blockedReason) {
+        if (import.meta.env?.DEV) {
+          console.warn('[NAV] guardNavigation: BLOCKED nav to', targetPath, 'reason:', blockedReason, {
+            isOrgSelectionRequired, isMultiOrg, activeOrgId, membershipStatus, isSwitching,
+          });
+        }
         // Open an in-page modal prompting the user to choose an organization.
         setOrgModalOpen(true);
         return true;
@@ -225,7 +238,7 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
 
       return false
     },
-    [isOrgSelectionRequired, showToast],
+    [isOrgSelectionRequired, isSwitching, isMultiOrg, activeOrgId, membershipStatus],
   );
 
   const logAdminNavEvent = useCallback((event: string, meta: Record<string, unknown> = {}) => {
@@ -318,6 +331,13 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
     } catch (err) {
       // swallow
     }
+  }, [location.pathname]);
+
+  // NAV COMMIT: confirms React has committed the new route to the DOM.
+  // Absence of this log after a click means the URL changed but React Router
+  // did not re-render the Outlet — the key prop below forces that.
+  useEffect(() => {
+    console.debug('[NAV COMMIT]', location.pathname);
   }, [location.pathname]);
 
   // Mismatch detection: listen for pages reporting that they mounted and compare
@@ -468,10 +488,10 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
 
   const activeUser = user ?? authUser;
 
-  // Only show the full-screen spinner during the very first cold boot
-  // (normalizedAuthInitializing is true AND we have no session yet).
-  // After that, navigating between admin pages must never trigger a full
-  // remount of the shell or a full-screen loading overlay.
+  // Cold-boot gate: only show the full-screen spinner during the very first
+  // load when we have no session at all.  Once a session exists, this layout
+  // NEVER shows a blocking overlay — RequireAuth is responsible for access
+  // denial; AdminLayout only redirects on a hard unauthenticated state.
   if (normalizedAuthInitializing && !hasSession) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-softwhite">
@@ -480,21 +500,20 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
     );
   }
 
-  if (!hasSession || !adminPortalAllowed) {
-    // If still initializing but we have some session info, render a lighter
-    // inline banner instead of a full-screen block so the shell stays visible.
-    if (normalizedAuthInitializing) {
-      return (
-        <div className="flex min-h-screen items-center justify-center bg-softwhite">
-          <LoadingSpinner size="lg" />
-        </div>
-      );
-    }
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-softwhite text-sm text-slate/80">
-        Checking admin access…
-      </div>
-    );
+  // If there is definitively no session (fully unauthenticated, not just
+  // still initializing), let the useEffect redirect handle it. Return null
+  // to avoid a blank flash before the navigate() fires.
+  if (!hasSession && normalizedSessionStatus === 'unauthenticated') {
+    return null;
+  }
+
+  // At this point we have a session (or auth is still resolving with a session).
+  // Do NOT block the layout render on adminPortalAllowed — that check is
+  // performed asynchronously by RequireAuth which will show its own denial UI
+  // if access is ultimately refused.  Blocking here caused a "Checking admin
+  // access…" overlay on every internal navigation while the snapshot resolved.
+  if (import.meta.env.DEV) {
+    console.debug('[ADMIN LAYOUT RENDER]', location.pathname);
   }
 
   const content = (
@@ -568,6 +587,9 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
                     to={item.href}
                     end={item.exact}
                     onClick={(event) => {
+                      if (import.meta.env.DEV) {
+                        console.debug('[NAV CLICK]', item.href, { from: location.pathname });
+                      }
                       logAdminNavEvent('admin_navigation_clicked', { source: 'sidebar', target: item.href });
                       const blocked = guardNavigation(item.href);
                       if (blocked) {
@@ -809,7 +831,13 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
               <LoadingSpinner size="lg" />
             </div>
           }>
-            {children ?? <Outlet />}
+            {/* key={location.pathname} forces React to commit a fresh element tree
+                on every route change, eliminating the "URL changed but page didn't
+                update" symptom caused by stale Outlet content surviving navigation. */}
+            <div key={location.pathname}>
+              {import.meta.env.DEV && (() => { console.debug('[OUTLET RENDER]', location.pathname); return null; })()}
+              {children ?? <Outlet />}
+            </div>
           </Suspense>
         </AdminErrorBoundary>
       </main>

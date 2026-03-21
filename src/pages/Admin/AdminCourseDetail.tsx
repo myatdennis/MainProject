@@ -1,13 +1,13 @@
-import { useState } from 'react';
+import { useState, useEffect, useSyncExternalStore } from 'react';
 import { useParams, Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { courseStore } from '../../store/courseStore';
 import { syncCourseToDatabase, CourseValidationError } from '../../dal/adminCourses';
 import type { Course } from '../../types/courseTypes';
 import { useToast } from '../../context/ToastContext';
 import { SlugConflictError } from '../../utils/slugConflict';
+import { LoadingSpinner } from '../../components/LoadingComponents';
 
 import { LazyImage } from '../../components/PerformanceComponents';
-// Removed unused UI imports to satisfy lints
 import {
   ArrowLeft,
   Edit,
@@ -30,7 +30,6 @@ import {
   Target,
   AlertTriangle,
   Info,
-  
 } from 'lucide-react';
 
 const AdminCourseDetail = () => {
@@ -41,6 +40,19 @@ const AdminCourseDetail = () => {
   const [viewMode, setViewMode] = useState<'admin' | 'learner'>(
     searchParams.get('viewMode') === 'learner' ? 'learner' : 'admin'
   );
+
+  // Subscribe to catalog state so the component re-renders when init completes.
+  const catalogState = useSyncExternalStore(courseStore.subscribe, courseStore.getAdminCatalogState);
+
+  // When navigating directly to a course detail page the store may not have
+  // been initialized yet (phase === 'idle').  Trigger init so getCourse()
+  // returns the real record once the fetch resolves.
+  useEffect(() => {
+    if (import.meta.env.DEV) console.debug('[PAGE COMMIT] AdminCourseDetail', courseId);
+    if (catalogState.phase === 'idle') {
+      void courseStore.init();
+    }
+  }, [catalogState.phase]);
 
   // Get course from store
   const course = courseId ? courseStore.getCourse(courseId) : null;
@@ -101,6 +113,16 @@ const AdminCourseDetail = () => {
   };
 
   if (!course) {
+    // If the store is still initializing, show a spinner rather than the
+    // permanent "Course Not Found" error — the course will appear once the
+    // catalog fetch completes.
+    if (catalogState.phase === 'idle' || catalogState.phase === 'loading') {
+      return (
+        <div className="flex min-h-[50vh] items-center justify-center">
+          <LoadingSpinner size="lg" />
+        </div>
+      );
+    }
     return (
       <div className="p-6 max-w-4xl mx-auto text-center">
         <h1 className="text-2xl font-bold text-gray-900 mb-4">Course Not Found</h1>
@@ -171,7 +193,7 @@ const AdminCourseDetail = () => {
 
   return (
     <div className="container mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
-      {/* Header */}
+      {import.meta.env.DEV && (() => { console.debug('[PAGE RENDER] AdminCourseDetail', courseId); return null; })()}
       <div className="mb-8">
         <Link 
           to="/admin/courses" 

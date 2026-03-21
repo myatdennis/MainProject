@@ -52,6 +52,7 @@ import { useRouteChangeReset } from '../../hooks/useRouteChangeReset';
 const AdminCourses = () => {
   // Report page identity for admin layout mismatch detection
   useEffect(() => {
+    if (import.meta.env.DEV) console.debug('[PAGE COMMIT] AdminCourses');
     try {
       window.dispatchEvent(new CustomEvent('admin:page-mounted', { detail: { page: 'Courses' } }));
     } catch (err) {
@@ -216,7 +217,9 @@ const AdminCourses = () => {
     }
     setRetrying(true);
     try {
-      await courseStore.init();
+      // Use forceInit to bypass the ready-guard so explicit retries always
+      // trigger a fresh catalog fetch even when phase is already 'ready'.
+      await courseStore.forceInit();
       setVersion((v) => v + 1);
     } catch (error) {
       console.error('[AdminCourses] Admin catalog retry failed', error);
@@ -589,6 +592,7 @@ const AdminCourses = () => {
 
   return (
     <>
+      {import.meta.env.DEV && (() => { console.debug('[PAGE RENDER] AdminCourses'); return null; })()}
       <div className="container mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
         <div className="mb-6">
           <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Courses', to: '/admin/courses' }]} />
