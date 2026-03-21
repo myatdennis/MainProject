@@ -57,17 +57,6 @@ const AdminUsers = () => {
   // Report page identity for admin layout mismatch detection
   useEffect(() => {
     if (import.meta.env.DEV) console.debug('[PAGE COMMIT] AdminUsers');
-    try {
-      window.dispatchEvent(new CustomEvent('admin:page-mounted', { detail: { page: 'Users' } }));
-    } catch (err) {
-      // swallow
-    }
-    try {
-      // lightweight page: signal ready immediately after mount
-      window.dispatchEvent(new CustomEvent('admin:page-ready', { detail: { page: 'Users', ready: true } }));
-    } catch (err) {
-      // swallow
-    }
   }, []);
   const { showToast } = useToast();
   const [searchTerm, setSearchTerm] = useState('');

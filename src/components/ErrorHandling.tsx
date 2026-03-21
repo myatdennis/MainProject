@@ -82,13 +82,44 @@ interface ErrorBoundaryState {
   error?: Error;
 }
 
+interface ErrorBoundaryProps {
+  children?: React.ReactNode;
+  fallback?: React.ComponentType<{ error: Error; retry: () => void }>;
+  /**
+   * When this value changes the boundary resets itself — identical to the
+   * technique React's own docs recommend for route-based resets.
+   * Usage: <ErrorBoundary resetKey={location.pathname}>
+   */
+  resetKey?: string | number;
+}
+
 export class ErrorBoundary extends React.Component<
-  React.PropsWithChildren<{ fallback?: React.ComponentType<{ error: Error; retry: () => void }> }>,
+  ErrorBoundaryProps,
   ErrorBoundaryState
 > {
-  constructor(props: React.PropsWithChildren<{ fallback?: React.ComponentType<{ error: Error; retry: () => void }> }>) {
+  constructor(props: ErrorBoundaryProps) {
     super(props);
     this.state = { hasError: false };
+  }
+
+  /**
+   * Fires on every render (including prop updates).  When resetKey changes,
+   * we clear the error state so the boundary unmasks its children on the new
+   * route instead of persisting a stale error screen.
+   */
+  static getDerivedStateFromProps(
+    props: ErrorBoundaryProps,
+    state: ErrorBoundaryState & { _prevResetKey?: string | number }
+  ): Partial<ErrorBoundaryState & { _prevResetKey?: string | number }> | null {
+    if (state.hasError && props.resetKey !== state._prevResetKey) {
+      // resetKey changed → clear the error so children can re-render
+      return { hasError: false, error: undefined, _prevResetKey: props.resetKey };
+    }
+    if (props.resetKey !== state._prevResetKey) {
+      // Track the current key even when there is no error
+      return { _prevResetKey: props.resetKey };
+    }
+    return null;
   }
 
   static getDerivedStateFromError(error: Error): ErrorBoundaryState {

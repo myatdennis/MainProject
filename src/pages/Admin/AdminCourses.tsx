@@ -4,9 +4,9 @@
  * Features: catalog sync, search/filter, bulk actions, modals, progress tracking, and summary stats.
  */
 
-import { ReactNode, useCallback, useEffect, useMemo, useState } from 'react';
+import { ReactNode, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { courseStore, AdminCatalogState } from '../../store/courseStore';
+import { courseStore } from '../../store/courseStore';
 import { Course } from '../../types/courseTypes';
 import type { CourseAssignment } from '../../types/assignment';
 import { syncCourseToDatabase, CourseValidationError } from '../../dal/adminCourses';
@@ -50,14 +50,8 @@ import { useRouteChangeReset } from '../../hooks/useRouteChangeReset';
 
 
 const AdminCourses = () => {
-  // Report page identity for admin layout mismatch detection
   useEffect(() => {
     if (import.meta.env.DEV) console.debug('[PAGE COMMIT] AdminCourses');
-    try {
-      window.dispatchEvent(new CustomEvent('admin:page-mounted', { detail: { page: 'Courses' } }));
-    } catch (err) {
-      // swallow
-    }
   }, []);
   const { showToast } = useToast();
   const syncService = useSyncService();
@@ -78,8 +72,12 @@ const AdminCourses = () => {
   const [showAssignmentModal, setShowAssignmentModal] = useState(false);
   const [courseToArchive, setCourseToArchive] = useState<Course | null>(null);
   const [showArchiveModal, setShowArchiveModal] = useState(false);
-  const [catalogState, setCatalogState] = useState<AdminCatalogState>(courseStore.getAdminCatalogState());
   const [retrying, setRetrying] = useState(false);
+
+  // useSyncExternalStore gives tear-free reads from the module-scope courseStore singleton.
+  // It supersedes the old useState+subscribe pattern which could miss a notification fired
+  // between the initial render and the subscribe() call.
+  const catalogState = useSyncExternalStore(courseStore.subscribe, courseStore.getAdminCatalogState);
 
   const navigate = useNavigate();
 
@@ -100,11 +98,10 @@ const AdminCourses = () => {
   // Get courses from store (re-read when version or routeKey changes)
   const courses = useMemo(() => courseStore.getAllCourses(), [version, routeKey]);
 
+  // Subscribe to store changes so the courses useMemo re-derives on every catalog update.
+  // catalogState is now read via useSyncExternalStore above; we only need setVersion here.
   useEffect(() => {
-    setCatalogState(courseStore.getAdminCatalogState());
     const unsubscribe = courseStore.subscribe(() => {
-      // Bump version on every store change so the courses memo re-derives.
-      setCatalogState(courseStore.getAdminCatalogState());
       setVersion((v) => v + 1);
     });
     return unsubscribe;
@@ -118,19 +115,6 @@ const AdminCourses = () => {
   useEffect(() => {
     if (catalogState.phase === 'idle') {
       void courseStore.init();
-    }
-  }, [catalogState.phase]);
-
-  // Emit admin:page-ready once the catalog reaches a terminal phase so other
-  // listeners know this page has settled.
-  useEffect(() => {
-    const phase = catalogState.phase;
-    if (phase === 'ready' || phase === 'idle') {
-      try {
-        window.dispatchEvent(new CustomEvent('admin:page-ready', { detail: { page: 'Courses', ready: true } }));
-      } catch {
-        // swallow
-      }
     }
   }, [catalogState.phase]);
 

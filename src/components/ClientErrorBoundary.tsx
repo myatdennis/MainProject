@@ -6,6 +6,12 @@ interface Props {
   children: ReactNode;
   fallback?: ReactNode;
   onError?: (error: Error, errorInfo: ErrorInfo) => void;
+  /**
+   * When this value changes the boundary resets itself so a stale error screen
+   * from one route does not bleed into the next route.
+   * Usage: <ClientErrorBoundary resetKey={location.pathname}>
+   */
+  resetKey?: string | number;
 }
 
 interface State {
@@ -14,6 +20,8 @@ interface State {
   errorInfo: ErrorInfo | null;
   errorId: string | null;
   retryCount: number;
+  /** Mirrors the last seen resetKey so getDerivedStateFromProps can diff it */
+  _prevResetKey?: string | number;
 }
 
 class ClientErrorBoundary extends Component<Props, State> {
@@ -36,6 +44,26 @@ class ClientErrorBoundary extends Component<Props, State> {
       error,
       errorId: `client_error_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
     };
+  }
+
+  /**
+   * Clears the error state whenever resetKey changes so that navigating to a
+   * new client route never shows a stale error screen from the previous route.
+   */
+  static getDerivedStateFromProps(props: Props, state: State): Partial<State> | null {
+    if (state.hasError && props.resetKey !== state._prevResetKey) {
+      return {
+        hasError: false,
+        error: null,
+        errorInfo: null,
+        retryCount: 0,
+        _prevResetKey: props.resetKey
+      };
+    }
+    if (props.resetKey !== state._prevResetKey) {
+      return { _prevResetKey: props.resetKey };
+    }
+    return null;
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
@@ -90,13 +118,14 @@ class ClientErrorBoundary extends Component<Props, State> {
   };
 
   private handleRetry = () => {
-    const maxRetries = 3;
-    
-    if (this.state.retryCount >= maxRetries) {
-      toast.error('Maximum retry attempts reached. Please refresh the page.', {
-        duration: 8000
-      });
-      return;
+    const RETRY_SOFT_CAP = 3;
+
+    if (this.state.retryCount >= RETRY_SOFT_CAP) {
+      // Soft cap reached — warn but don't permanently block
+      toast.error(
+        'Still running into trouble. Try refreshing the page or use the Dashboard button to start fresh.',
+        { duration: 8000 }
+      );
     }
 
     this.setState(prevState => ({
@@ -112,13 +141,16 @@ class ClientErrorBoundary extends Component<Props, State> {
         error: null,
         errorInfo: null
       });
-      
+
       toast.success('Retrying your session', { duration: 2000 });
     }, 1000);
   };
 
   private handleGoHome = () => {
-    window.location.href = '/lms/dashboard';
+    // Navigate via history API so React Router handles the transition
+    // (no full-page reload, session state is preserved).
+    window.history.pushState(null, '', '/client/dashboard');
+    window.dispatchEvent(new PopStateEvent('popstate', { state: window.history.state }));
   };
 
   private handleRefreshPage = () => {
@@ -208,11 +240,10 @@ class ClientErrorBoundary extends Component<Props, State> {
               {/* Primary Action - Retry */}
               <button
                 onClick={this.handleRetry}
-                disabled={this.state.retryCount >= 3}
-                className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                className="w-full bg-blue-600 text-white py-3 px-4 rounded-lg font-medium hover:bg-blue-700 transition-colors flex items-center justify-center gap-2"
               >
                 <RefreshCw className="w-4 h-4" />
-                {this.state.retryCount >= 3 ? 'Max Retries Reached' : 'Try Again'}
+                {this.state.retryCount >= 3 ? 'Try Again (having trouble?)' : 'Try Again'}
               </button>
 
               {/* Secondary Actions */}

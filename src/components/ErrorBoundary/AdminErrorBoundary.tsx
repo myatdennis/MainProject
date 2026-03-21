@@ -136,12 +136,20 @@ class AdminErrorBoundary extends Component<Props, State> {
   };
 
   private handleGoHome = () => {
-    // Soft-navigate to avoid a full page reload that would re-trigger the auth bootstrap
-    // pipeline and incur the cold-start delay. Reset error state first, then push the new
-    // route via the History API and fire a popstate event so React Router picks it up.
+    // Reset error state first, then navigate to the dashboard via the
+    // History API with a popstate event so React Router picks up the change.
+    // NOTE: With AdminErrorBoundary now keyed on location.pathname in
+    // AdminLayout, this button effectively navigates to a new route and the
+    // key change will automatically reset the boundary — no manual setState
+    // required.  We still call handleRetry() defensively for boundaries that
+    // are used without a key (e.g. outside AdminLayout).
     this.handleRetry();
+    // Use history.pushState + popstate so we stay inside the SPA without
+    // triggering a full-page reload (which would re-run the cold-start auth
+    // bootstrap pipeline).  React Router v6 listens to popstate and will
+    // re-render with the new pathname.
     window.history.pushState({}, '', '/admin/dashboard');
-    window.dispatchEvent(new PopStateEvent('popstate'));
+    window.dispatchEvent(new PopStateEvent('popstate', { state: window.history.state }));
   };
 
   render() {

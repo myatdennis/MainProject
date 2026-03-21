@@ -1764,7 +1764,42 @@ export const courseStore = {
         }
         try {
           dbCourses = await getAllCoursesFromDatabase();
+          // Hard-reject any course that came back without a module graph.
+          // A course missing modules entirely is structurally invalid and must
+          // not overwrite a locally-cached full-graph copy.
+          const beforeFilter = dbCourses.length;
+          dbCourses = dbCourses.filter((c) => {
+            const hasModules = Array.isArray(c.modules) && c.modules.length > 0;
+            if (!hasModules) {
+              if (import.meta.env?.DEV) {
+                console.warn('[courseStore.init] course_graph_rejected_no_modules', { courseId: c.id, title: c.title });
+              }
+              return false;
+            }
+            // Reject courses with an invalid version stamp (version must be > 0 if present)
+            if (typeof c.version === 'number' && c.version <= 0) {
+              if (import.meta.env?.DEV) {
+                console.warn('[courseStore.init] course_graph_rejected_invalid_version', { courseId: c.id, version: c.version });
+              }
+              return false;
+            }
+            // Reject courses where no module has any lessons — partial graph
+            const hasLessons = (c.modules ?? []).some(
+              (m) => Array.isArray(m.lessons) && m.lessons.length > 0,
+            );
+            if (!hasLessons) {
+              if (import.meta.env?.DEV) {
+                console.warn('[courseStore.init] course_graph_rejected_no_lessons', { courseId: c.id, title: c.title });
+              }
+              return false;
+            }
+            return true;
+          });
           if (import.meta.env?.DEV) {
+            const rejected = beforeFilter - dbCourses.length;
+            if (rejected > 0) {
+              console.warn('[courseStore.init] courses_rejected_missing_structure', { rejected, remaining: dbCourses.length });
+            }
             console.info('[courseStore.init] admin_courses_loaded', { count: dbCourses.length });
           }
           adminLoadStatus = dbCourses.length === 0 ? 'empty' : 'success';

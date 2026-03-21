@@ -35,8 +35,7 @@ const buildHeatmapRows = (
 
 const AdminAnalytics = () => {
   useEffect(() => {
-    try { window.dispatchEvent(new CustomEvent('admin:page-mounted', { detail: { page: 'Analytics' } })); } catch { /* swallow */ }
-    try { window.dispatchEvent(new CustomEvent('admin:page-ready', { detail: { page: 'Analytics', ready: true } })); } catch { /* swallow */ }
+    if (import.meta.env.DEV) console.debug('[PAGE COMMIT] AdminAnalytics');
   }, []);
 
   const { showToast } = useToast();

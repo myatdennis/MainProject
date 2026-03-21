@@ -767,4 +767,32 @@ async function fetchAdminAccessPayload(): Promise<AdminAccessPayload | null> {
   return adminAccessInFlight;
 }
 
+/**
+ * Safe wrapper around apiRequest that NEVER throws.
+ *
+ * Two call signatures:
+ *   safeApiRequest<T>(path, options, fallback: T) → Promise<T>  (never null)
+ *   safeApiRequest<T>(path, options?)             → Promise<T | null>
+ *
+ * Use this for non-critical data fetches (analytics, dashboard stats, activity
+ * feeds, etc.) where a failure should degrade gracefully rather than crash the
+ * component.
+ */
+export async function safeApiRequest<T>(path: string, options: ApiRequestOptions | undefined, fallback: T): Promise<T>;
+export async function safeApiRequest<T>(path: string, options?: ApiRequestOptions): Promise<T | null>;
+export async function safeApiRequest<T>(
+  path: string,
+  options?: ApiRequestOptions,
+  fallback?: T,
+): Promise<T | null> {
+  try {
+    return await apiRequest<T>(path, options);
+  } catch (error) {
+    if (devMode) {
+      console.warn('[safeApiRequest] fetch_error — returning fallback', { path, error });
+    }
+    return fallback !== undefined ? fallback : null;
+  }
+}
+
 export default apiRequest;

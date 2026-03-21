@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useRouteChangeReset } from '../../hooks/useRouteChangeReset';
 import {
@@ -84,11 +84,7 @@ const AdminOrgWorkspace = () => {
 
   // Report page identity for admin layout mismatch detection
   useEffect(() => {
-    try {
-      window.dispatchEvent(new CustomEvent('admin:page-mounted', { detail: { page: 'Organizations' } }));
-    } catch (err) {
-      // swallow
-    }
+    if (import.meta.env.DEV) console.debug('[PAGE COMMIT] AdminOrgWorkspace');
   }, []);
   const { showToast } = useToast();
   const navigate = useNavigate();
@@ -102,8 +98,18 @@ const AdminOrgWorkspace = () => {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [paginationMeta, setPaginationMeta] = useState({ page: 1, pageSize: PAGE_SIZE, total: 0, hasMore: false });
   const debouncedSearch = useDebounce(searchTerm, 250);
+  // Ref so fetchOrganizations can read selectedOrgId without capturing it as a dep.
+  // Capturing it caused every org-selection to recreate fetchOrganizations → re-trigger
+  // the fetch effect → immediately overwrite the selection with response.data[0].
+  const selectedOrgIdRef = useRef<string | null>(null);
 
-  const [selectedOrgId, setSelectedOrgId] = useState<string | null>(null);
+  const [selectedOrgId, _setSelectedOrgId] = useState<string | null>(null);
+  // Sync the ref whenever the state changes so fetchOrganizations can read it
+  // without capturing it as a useCallback dep (which caused refetch storms).
+  const setSelectedOrgId = useCallback((id: string | null) => {
+    selectedOrgIdRef.current = id;
+    _setSelectedOrgId(id);
+  }, []);
   const [selectedOrgProfile, setSelectedOrgProfile] = useState<OrgProfileDetails | null>(null);
   const [profileLoading, setProfileLoading] = useState(false);
   const [profileError, setProfileError] = useState<string | null>(null);
@@ -186,6 +192,8 @@ const AdminOrgWorkspace = () => {
     async (targetPage = 1) => {
       setFetching(true);
       setLoadError(null);
+      let cancelled = false;
+      const cleanup = () => { cancelled = true; };
       try {
         const response = await orgService.listOrgPage({
           page: targetPage,
@@ -195,28 +203,32 @@ const AdminOrgWorkspace = () => {
           status: statusFilter === 'all' ? undefined : [statusFilter],
           subscription: subscriptionFilter === 'all' ? undefined : [subscriptionFilter],
         });
+        if (cancelled) return;
         setOrganizations(response.data);
         setProgressMap(response.progress ?? {});
         setPaginationMeta(response.pagination);
-        if (!selectedOrgId && response.data.length > 0) {
+        // Only auto-select the first org if the user hasn't already made a selection
+        // (read via ref, NOT from state, to avoid re-creating this callback on every
+        // org click and causing a refetch → auto-select → refetch loop).
+        if (!selectedOrgIdRef.current && response.data.length > 0) {
           setSelectedOrgId(response.data[0].id);
         }
       } catch (error) {
+        if (cancelled) return;
         console.error('Failed to load organizations', error);
         setLoadError('Unable to load organizations');
         showToast?.('Unable to load organizations', 'error');
       } finally {
-        setFetching(false);
-        // mark initial load complete and notify admin shell that page is ready
-        setInitialLoad(false);
-        try {
-          window.dispatchEvent(new CustomEvent('admin:page-ready', { detail: { page: 'Organizations', ready: true } }));
-        } catch (err) {
-          // swallow
+        if (!cancelled) {
+          setFetching(false);
+          setInitialLoad(false);
         }
       }
+      return cleanup;
     },
-    [debouncedSearch, statusFilter, subscriptionFilter, selectedOrgId, showToast],
+    // selectedOrgId intentionally omitted — read via ref to prevent refetch storms
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [debouncedSearch, statusFilter, subscriptionFilter, showToast],
   );
 
   useEffect(() => {
@@ -524,6 +536,7 @@ const AdminOrgWorkspace = () => {
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-8">
+      {import.meta.env.DEV && (() => { console.debug('[PAGE RENDER] AdminOrgWorkspace'); return null; })()}
       <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Organizations & CRM', to: '/admin/organizations' }]} />
 
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">

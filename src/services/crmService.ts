@@ -1,4 +1,4 @@
-import apiRequest from '../utils/apiClient';
+import apiRequest, { safeApiRequest } from '../utils/apiClient';
 
 export type CrmSummary = {
   organizations: {
@@ -69,13 +69,13 @@ export type BroadcastPayload = {
 };
 
 export const getCrmSummary = async () => {
-  const response = await apiRequest<{ data: CrmSummary }>('/api/admin/crm/summary');
-  return response.data;
+  const response = await safeApiRequest<{ data: CrmSummary }>('/api/admin/crm/summary');
+  return response?.data ?? null;
 };
 
 export const getCrmActivity = async () => {
-  const response = await apiRequest<{ data: CrmActivity }>('/api/admin/crm/activity');
-  return response.data;
+  const response = await safeApiRequest<{ data: CrmActivity }>('/api/admin/crm/activity');
+  return response?.data ?? null;
 };
 
 export const sendBroadcastNotification = async (payload: BroadcastPayload) => {

@@ -95,11 +95,22 @@ const AdminIntegrations = lazy(() => import('./pages/Admin/AdminIntegrations'));
 const AdminIntegrationConfig = lazy(() => import('./pages/Admin/AdminIntegrationConfig'));
 const AdminCertificates = lazy(() => import('./pages/Admin/AdminCertificates'));
 
-const AdminProtectedLayout = () => (
-  <RequireAuth mode="admin">
-    <AdminLayout />
-  </RequireAuth>
-);
+const AdminProtectedLayout = () => {
+  const loc = useLocation();
+  if (import.meta.env.DEV) {
+    // Runs synchronously during render — confirms React Router matched the
+    // admin sub-tree and is about to commit the new route to the DOM.
+    // If [NAV CLICK] appears but [ROUTE MATCHED] does not, the problem is
+    // in the router match layer (unlikely) or a parent guard blocking render.
+    // eslint-disable-next-line no-console
+    console.debug('[ROUTE MATCHED] admin', loc.pathname);
+  }
+  return (
+    <RequireAuth mode="admin">
+      <AdminLayout />
+    </RequireAuth>
+  );
+};
 
 const LmsProtectedLayout = () => (
   <RequireAuth mode="lms" loginPathOverride="/login">
@@ -332,13 +343,15 @@ function AppContent() {
           {/*
             Isolated Suspense + ErrorBoundary: a chunk-load failure inside
             the LMS sub-tree will not affect the admin portal or marketing pages.
+            resetKey={location.pathname} ensures the boundary clears its error
+            state on every navigation instead of freezing the whole LMS subtree.
           */}
           <Route path="/lms" element={<Navigate to="/lms/dashboard" replace />} />
           <Route
             path="/lms/*"
             element={
               <Suspense fallback={<LoadingSpinner size="lg" className="py-20" text="Loading LMS..." />}>
-                <ErrorBoundary>
+                <ErrorBoundary resetKey={location.pathname}>
                   <LmsProtectedLayout />
                 </ErrorBoundary>
               </Suspense>
@@ -374,12 +387,14 @@ function AppContent() {
           {/*
             Isolated Suspense + ErrorBoundary: a chunk-load failure inside
             the admin sub-tree will not affect the LMS or marketing pages.
+            resetKey={location.pathname} ensures the boundary clears its error
+            state on every navigation instead of freezing the whole admin subtree.
           */}
           <Route
             path="/admin/*"
             element={
               <Suspense fallback={<LoadingSpinner size="lg" className="py-20" text="Loading Admin..." />}>
-                <ErrorBoundary>
+                <ErrorBoundary resetKey={location.pathname}>
                   <AdminProtectedLayout />
                 </ErrorBoundary>
               </Suspense>

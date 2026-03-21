@@ -1,12 +1,14 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { LazyImage } from '../PerformanceComponents';
-import { Link, Outlet, useParams } from 'react-router-dom';
+import { Link, Outlet, useLocation, useParams } from 'react-router-dom';
 import notificationService from '../../dal/notifications';
 import { useSecureAuth } from '../../context/SecureAuthContext';
 import { useActiveOrganization } from '../../hooks/useActiveOrganization';
+import { ErrorBoundary } from '../ErrorHandling';
 
 const OrgWorkspaceLayout: React.FC = () => {
   const { orgId } = useParams();
+  const location = useLocation();
   const { isAuthenticated } = useSecureAuth();
   const { memberships, selectOrganization } = useActiveOrganization({ surface: 'admin' });
   const [orgName, setOrgName] = useState<string>(`Organization ${orgId}`);
@@ -48,7 +50,7 @@ const OrgWorkspaceLayout: React.FC = () => {
       if (hasMembership || isAuthenticated.admin) {
         setAllowed(true);
         try {
-          const notes = await notificationService.listNotifications({ orgId });
+          const notes = await notificationService.listNotifications({ organizationId: orgId });
           if (!cancelled) {
             setNotifications(notes.slice(0, 5));
           }
@@ -70,7 +72,7 @@ const OrgWorkspaceLayout: React.FC = () => {
         }
 
         if (canAccess) {
-          const notes = await notificationService.listNotifications({ orgId });
+          const notes = await notificationService.listNotifications({ organizationId: orgId });
           if (!cancelled) {
             setNotifications(notes.slice(0, 5));
           }
@@ -149,7 +151,9 @@ const OrgWorkspaceLayout: React.FC = () => {
               </ul>
             </div>
           )}
-          <Outlet />
+          <ErrorBoundary resetKey={location.pathname}>
+            <Outlet key={location.pathname} />
+          </ErrorBoundary>
           {/* Dark mode toggle for Org Workspace */}
           <div className="mt-8 flex justify-end">
             <button

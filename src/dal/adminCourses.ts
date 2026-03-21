@@ -105,9 +105,14 @@ export async function fetchCourseAssignments(
   if (options.activeOnly === false) {
     params.set('active', 'false');
   }
-  const response = await apiRequest<{ data: any[] }>(
-    `/api/admin/courses/${courseId}/assignments?${params.toString()}`
-  );
-  const rows = Array.isArray(response.data) ? response.data : [];
-  return mapAssignmentsFromApiRows(rows);
+  try {
+    const response = await apiRequest<{ data: any[] }>(
+      `/api/admin/courses/${courseId}/assignments?${params.toString()}`
+    );
+    const rows = Array.isArray(response.data) ? response.data : [];
+    return mapAssignmentsFromApiRows(rows);
+  } catch (error) {
+    console.error('[fetchCourseAssignments] fetch_error — returning empty list', { courseId, organizationId, error });
+    return [];
+  }
 }

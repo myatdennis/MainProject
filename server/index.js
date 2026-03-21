@@ -590,6 +590,12 @@ function savePersistedData(data) {
 const app = express();
 app.locals.schemaHealth = schemaHealth;
 app.set('etag', false);
+// CORS must run first — before any route handler — so that 401/403 responses
+// from authenticate() always include the correct Access-Control-Allow-Origin header.
+// Previously corsMiddleware was registered at line ~1643 (after early routes),
+// which meant browsers received CORS-less 401 responses and reported them as
+// network errors instead of auth errors.
+app.use(corsMiddleware);
 
 import healthRouter from './routes/health.js';
 import corsMiddleware, { resolvedCorsOrigins, corsAllowedHeaders } from './middleware/cors.js';
@@ -1536,7 +1542,7 @@ app.post('/api/admin/courses/:id/assign', authenticate, async (req, res) => {
   }
 });
 
-app.get('/api/admin/courses/:id/assignments', async (req, res) => {
+app.get('/api/admin/courses/:id/assignments', authenticate, async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { id } = req.params;
   const organizationId = pickOrgId(req.query.orgId, req.query.organizationId);
@@ -1572,7 +1578,7 @@ app.get('/api/admin/courses/:id/assignments', async (req, res) => {
   }
 });
 
-app.delete('/api/admin/assignments/:assignmentId', async (req, res) => {
+app.delete('/api/admin/assignments/:assignmentId', authenticate, async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { assignmentId } = req.params;
 
@@ -1639,8 +1645,9 @@ if (isProduction) {
 const PORT = Number(process.env.PORT) || 3000;
 logger.info('server_port', { port: PORT });
 
-// Core middleware ordering: CORS -> cookies -> JSON -> request metadata.
-app.use(corsMiddleware);
+// Core middleware ordering: cookies -> JSON -> request metadata.
+// NOTE: corsMiddleware is registered at app creation (above) so it runs before
+// every route handler, including the early pre-2092 /api/admin routes.
 app.use(cookieParser());
 app.use(express.json({ limit: '10mb' }));
 app.use(attachRequestId);

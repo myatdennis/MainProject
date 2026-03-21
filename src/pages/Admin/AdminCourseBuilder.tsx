@@ -387,6 +387,11 @@ const AdminCourseBuilder = () => {
   const isNewCourseRoute = !courseId || courseId === 'new';
   const isEditing = !isNewCourseRoute;
 
+  useEffect(() => {
+    if (import.meta.env.DEV) console.debug('[PAGE COMMIT] AdminCourseBuilder', courseId);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   // Track the courseId we last initialized state for, so we can reset when it changes.
   const mountedCourseIdRef = useRef<string | undefined>(courseId);
   
@@ -4751,6 +4756,7 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
 
   return (
     <>
+      {import.meta.env.DEV && (() => { console.debug('[PAGE RENDER] AdminCourseBuilder', courseId); return null; })()}
       <div className="p-6" data-testid="admin-course-builder">
         <div className="max-w-7xl mx-auto">
           <div className="xl:grid xl:grid-cols-[minmax(0,1fr)_420px] gap-6 items-start">

@@ -340,86 +340,19 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
     console.debug('[NAV COMMIT]', location.pathname);
   }, [location.pathname]);
 
-  // Mismatch detection: listen for pages reporting that they mounted and compare
-  // the reported page with the expected route-derived label. Emit diagnostics
-  // if they differ so we can detect cases where the URL changes but the page
-  // doesn't match the route.
-  const lastReportedRef = useRef<{ page: string | null; ready: boolean }>({ page: null, ready: false });
-  const mismatchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  useEffect(() => {
-    const onPageEvent = (ev: Event) => {
-      try {
-        const detail = (ev as CustomEvent).detail as { page?: string } | undefined;
-        const page = detail?.page ?? null;
-  const isReady = (ev as CustomEvent).type === 'admin:page-ready' || Boolean((detail as any)?.ready);
-        // Update last reported page and readiness
-        lastReportedRef.current = { page, ready: isReady };
-        if (import.meta.env.DEV) {
-          console.info('[admin] admin_page_event', { type: (ev as CustomEvent).type, page, ready: isReady, pathname: location.pathname, timestamp: Date.now() });
-        }
-
-        // Only log mismatch_resolved once — on the definitive ready event (admin:page-ready).
-        // Logging on admin:page-mounted (ready:false) would fire twice for the same navigation.
-        const expected = getExpectedAdminLabel(location.pathname);
-        if (import.meta.env.DEV && isReady && expected && page && expected === page) {
-          console.info('[admin] admin_route_mismatch_resolved', { pathname: location.pathname, page, timestamp: Date.now() });
-        }
-      } catch (err) {
-        // swallow
-      }
-    };
-
-    window.addEventListener('admin:page-mounted', onPageEvent as EventListener);
-    window.addEventListener('admin:page-ready', onPageEvent as EventListener);
-    return () => {
-      window.removeEventListener('admin:page-mounted', onPageEvent as EventListener);
-      window.removeEventListener('admin:page-ready', onPageEvent as EventListener);
-    };
-  }, [location.pathname]);
-
-  // After every location change, schedule a check: if within 600ms no page has
-  // reported a mount that matches the expected label for this route, emit a
-  // diagnostic admin_route_mismatch_detected log.
+  // Page identity is derived exclusively from location.pathname — no event-based
+  // reporting from page components.  This eliminates false-positive mismatch logs
+  // caused by stale page names arriving from the previous route.
   const getExpectedAdminLabel = (pathname: string) => {
     const match = ADMIN_ROUTES.find((r) => r.location === 'Admin Sidebar' && r.targetRoute && pathname.startsWith(r.targetRoute));
     return match ? match.label : null;
   };
 
+  // Log the current route label whenever the pathname changes (DEV only).
   useEffect(() => {
-    if (mismatchTimeoutRef.current) {
-      clearTimeout(mismatchTimeoutRef.current);
-      mismatchTimeoutRef.current = null;
-    }
-    const expected = getExpectedAdminLabel(location.pathname);
-    // increase timeout to allow heavy pages to initialize before flagging mismatches
-    mismatchTimeoutRef.current = setTimeout(() => {
-      const reported = lastReportedRef.current;
-      const reportedPage = reported.page;
-      if (expected && reportedPage && expected !== reportedPage) {
-        console.warn('[admin] admin_route_mismatch_detected', {
-          pathname: location.pathname,
-          expected,
-          reported: reportedPage,
-          ready: reported.ready,
-          timestamp: Date.now(),
-        });
-      } else if (expected && !reportedPage) {
-        console.warn('[admin] admin_route_mismatch_detected', {
-          pathname: location.pathname,
-          expected,
-          reported: null,
-          message: 'no page mounted reported within timeout',
-          timestamp: Date.now(),
-        });
-      }
-    }, 1200);
-    return () => {
-      if (mismatchTimeoutRef.current) {
-        clearTimeout(mismatchTimeoutRef.current);
-        mismatchTimeoutRef.current = null;
-      }
-    };
+    if (!import.meta.env.DEV) return;
+    const label = getExpectedAdminLabel(location.pathname);
+    console.info('[admin] current_route', { pathname: location.pathname, label: label ?? '(no match)', timestamp: Date.now() });
   }, [location.pathname]);
 
   useEffect(() => {
@@ -500,14 +433,11 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
     );
   }
 
-  // If there is definitively no session (fully unauthenticated, not just
-  // still initializing), let the useEffect redirect handle it. Return null
-  // to avoid a blank flash before the navigate() fires.
-  if (!hasSession && normalizedSessionStatus === 'unauthenticated') {
-    return null;
-  }
-
   // At this point we have a session (or auth is still resolving with a session).
+  // Do NOT block here on unauthenticated state — the useEffect above fires the
+  // navigate() redirect.  Returning null here caused blank flashes on navigation
+  // while the session status was transitioning.  Let the layout stay mounted and
+  // let RequireAuth / the redirect effect handle the auth denial path.
   // Do NOT block the layout render on adminPortalAllowed — that check is
   // performed asynchronously by RequireAuth which will show its own denial UI
   // if access is ultimately refused.  Blocking here caused a "Checking admin
@@ -825,18 +755,29 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
       )}
 
       <main className="flex-1 overflow-y-auto bg-softwhite px-6 py-8 lg:px-12">
-        <AdminErrorBoundary>
+        {/*
+          key={location.pathname} on AdminErrorBoundary is CRITICAL for navigation correctness.
+          Class-based error boundaries do not reset their `hasError` state on re-render; the
+          state persists even when children change.  Without a key, a page that throws an error
+          leaves the boundary in the error state — subsequent navigation clicks change the URL
+          and remount the Outlet child, but the boundary shell stays showing the error UI and
+          the new page is never painted.  Keying the boundary on pathname forces React to
+          unmount the old (errored) boundary instance and mount a fresh one for every route,
+          guaranteeing that no prior error can bleed into the next navigation target.
+        */}
+        <AdminErrorBoundary key={location.pathname}>
           <Suspense fallback={
             <div className="flex items-center justify-center min-h-[40vh]">
               <LoadingSpinner size="lg" />
             </div>
           }>
-            {/* key={location.pathname} forces React to commit a fresh element tree
-                on every route change, eliminating the "URL changed but page didn't
-                update" symptom caused by stale Outlet content surviving navigation. */}
-            <div key={location.pathname}>
+            {/* key on Outlet itself — not just a wrapper div — so React treats
+                each route as a distinct fiber identity. A key on a wrapper <div>
+                does NOT force React Router to unmount/remount the matched child
+                component; keying Outlet directly does. */}
+            <div>
               {import.meta.env.DEV && (() => { console.debug('[OUTLET RENDER]', location.pathname); return null; })()}
-              {children ?? <Outlet />}
+              {children ?? <Outlet key={location.pathname} />}
             </div>
           </Suspense>
         </AdminErrorBoundary>

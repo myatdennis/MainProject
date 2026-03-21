@@ -745,7 +745,11 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
     // function already handles all pre-auth loading states (sessionStatus
     // !== 'authenticated').  Showing a second spinner here would cause a
     // flash if user populates slightly after sessionStatus flips.
-    if (authInitializing || sessionLoading) {
+    //
+    // If auth has already resolved once (hasResolvedAuthRef.current is true),
+    // we must NOT block rendering here — the Outlet must stay mounted so the
+    // page commits instantly on navigation.
+    if (!hasResolvedAuthRef.current && (authInitializing || sessionLoading)) {
       // Render nothing — bootstrap spinner already showing upstream,
       // or the component will re-render once sessionStatus settles.
       return null;
@@ -849,7 +853,13 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
 
   logGuardEvent('allow', { path: location.pathname, adminCapabilityStatus: adminCapability.status });
   if (import.meta.env.DEV) {
-    console.debug('[REQUIRE AUTH RENDER]', location.pathname, { mode, hasSession, sessionStatus });
+    console.debug('[REQUIRE AUTH RENDER]', location.pathname, {
+      mode,
+      hasSession,
+      sessionStatus,
+      adminGateStatus,
+      hasResolvedAuth: hasResolvedAuthRef.current,
+    });
   }
   const membershipBanner =
     membershipStatus === 'degraded' ? (

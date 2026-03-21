@@ -1,4 +1,4 @@
-import { ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ReactNode, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useNavigate } from 'react-router-dom';
 import SEO from '../../components/SEO/SEO';
 import Card from '../../components/ui/Card';
@@ -11,7 +11,7 @@ import { LoadingSpinner } from '../../components/LoadingComponents';
 import { ErrorBoundary } from '../../components/ErrorHandling';
 import { logAuthRedirect } from '../../utils/logAuthRedirect';
 import useRuntimeStatus from '../../hooks/useRuntimeStatus';
-import { courseStore, AdminCatalogState } from '../../store/courseStore';
+import { courseStore } from '../../store/courseStore';
 import { useAnalyticsDashboard } from '../../hooks/useAnalyticsDashboard';
 import apiRequest from '../../utils/apiClient';
 import { useRouteChangeReset } from '../../hooks/useRouteChangeReset';
@@ -87,14 +87,8 @@ const WidgetErrorFallback = ({ retry }: { error: Error; retry: () => void }) => 
 );
 
 const AdminDashboard = () => {
-  // Report page identity for admin layout mismatch detection
   useEffect(() => {
     if (import.meta.env.DEV) console.debug('[PAGE COMMIT] AdminDashboard');
-    try {
-      window.dispatchEvent(new CustomEvent('admin:page-mounted', { detail: { page: 'Dashboard' } }));
-    } catch (err) {
-      // swallow
-    }
   }, []);
   const navigate = useNavigate();
   // routeKey increments on every pathname change — use as a dep in
@@ -105,10 +99,14 @@ const AdminDashboard = () => {
   const runtimeLastChecked = runtimeStatus.lastChecked
     ? new Date(runtimeStatus.lastChecked).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : 'pending';
-  const [catalogState, setCatalogState] = useState<AdminCatalogState>(courseStore.getAdminCatalogState());
   const [retrying, setRetrying] = useState(false);
   const [recentActivity, setRecentActivity] = useState<ActivityEntry[]>([]);
   const [alerts, setAlerts] = useState<AlertEntry[]>([]);
+
+  // useSyncExternalStore gives tear-free reads from the module-scope courseStore
+  // singleton. It supersedes the old useState+subscribe pattern which could miss
+  // a notification fired between the initial render and the subscribe() call.
+  const catalogState = useSyncExternalStore(courseStore.subscribe, courseStore.getAdminCatalogState);
 
   // Fetch real admin activity feed from audit_logs
   useEffect(() => {
@@ -223,14 +221,6 @@ const AdminDashboard = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [ov, analyticsLoading, routeKey]);
 
-  useEffect(() => {
-    setCatalogState(courseStore.getAdminCatalogState());
-    const unsubscribe = courseStore.subscribe(() => {
-      setCatalogState(courseStore.getAdminCatalogState());
-    });
-    return unsubscribe;
-  }, []);
-
   // Track whether the catalog has ever successfully loaded in this session.
   // If it has, never block the full dashboard behind a gate again.
   const catalogEverSucceeded = useRef(false);
@@ -247,12 +237,6 @@ const AdminDashboard = () => {
     (async () => {
       try {
         await courseStore.init();
-        // signal to AdminLayout that this page finished its initial work
-        try {
-          window.dispatchEvent(new CustomEvent('admin:page-ready', { detail: { page: 'Dashboard', ready: true } }));
-        } catch (err) {
-          // swallow
-        }
       } catch (error) {
         console.error('[AdminDashboard] Failed to bootstrap admin catalog', error);
       }

@@ -12,6 +12,8 @@ export type RuntimeStatus = {
   offlineQueueBacklog: number | null;
   storageStatus: 'ok' | 'warn' | 'disabled' | 'unknown';
   statusLabel: 'ok' | 'degraded' | 'demo-fallback' | 'unknown' | 'pending';
+  /** Discriminates why the API is unavailable — null when healthy. */
+  errorType: 'network_error' | 'auth_error' | 'api_error' | null;
   lastChecked: number | null;
   requestId?: string | null;
   lastError?: string | null;
@@ -33,6 +35,7 @@ const DEFAULT_STATUS: RuntimeStatus = {
   offlineQueueBacklog: null,
   storageStatus: 'unknown',
   statusLabel: 'pending',
+  errorType: null,
   lastChecked: null,
   requestId: null,
   lastError: undefined,
@@ -133,6 +136,13 @@ const parseHealthResponse = async (response: Response, overrides: HealthOverride
     offlineQueueBacklog,
     storageStatus,
     statusLabel: resolvedStatusLabel,
+    // auth errors keep the API reachable — do NOT set errorType to anything that
+    // implies a network or server fault when it is purely an auth issue.
+    errorType: overrides.apiAuthRequired
+      ? 'auth_error'
+      : apiHealthy
+      ? null
+      : (resolvedStatusLabel === 'degraded' ? 'api_error' : null),
     lastChecked: Date.now(),
     requestId: diagnostics?.requestId ?? null,
     lastError: overrides.lastError,
@@ -206,6 +216,9 @@ const performRefresh = async (): Promise<RuntimeStatus> => {
         ? (currentStatus.supabaseHealthy && hasSupabaseConfig())
         : currentStatus.supabaseHealthy,
       statusLabel: hadPriorSuccess ? 'degraded' : currentStatus.statusLabel,
+      // Classify: fetch/timeout failures are network errors; 5xx from /health
+      // are api_errors (thrown above as new Error before reaching the catch).
+      errorType: 'network_error',
       lastChecked: hadPriorSuccess ? Date.now() : currentStatus.lastChecked,
       lastError: message,
     };
@@ -263,6 +276,7 @@ const installConnectivityHandlers = () => {
       apiAuthRequired: false,
       wsEnabled: false,
       statusLabel: 'degraded',
+      errorType: 'network_error',
       lastChecked: Date.now(),
       lastError: 'offline',
     };
