@@ -1727,12 +1727,14 @@ export const courseStore = {
           dbCourses = dbCourses.filter((c) => {
             const hasModules = Array.isArray(c.modules) && c.modules.length > 0;
             if (!hasModules) {
-              console.warn('[COURSE GRAPH REJECTED] no_modules', { courseId: c.id, title: c.title });
+              // source=server: this is real server data that is structurally incomplete,
+              // NOT a blocked-fetch or cache-fallback artifact.
+              console.warn('[COURSE GRAPH REJECTED] no_modules', { courseId: c.id, title: c.title, source: 'server' });
               return false;
             }
             // Reject courses with an invalid version stamp (version must be > 0 if present)
             if (typeof c.version === 'number' && c.version <= 0) {
-              console.warn('[COURSE GRAPH REJECTED] invalid_version', { courseId: c.id, version: c.version });
+              console.warn('[COURSE GRAPH REJECTED] invalid_version', { courseId: c.id, version: c.version, source: 'server' });
               return false;
             }
             // Reject courses where no module has any lessons — partial graph
@@ -1740,7 +1742,7 @@ export const courseStore = {
               (m) => Array.isArray(m.lessons) && m.lessons.length > 0,
             );
             if (!hasLessons) {
-              console.warn('[COURSE GRAPH REJECTED] no_lessons_in_any_module', { courseId: c.id, title: c.title });
+              console.warn('[COURSE GRAPH REJECTED] no_lessons_in_any_module', { courseId: c.id, title: c.title, source: 'server' });
               return false;
             }
             if (import.meta.env.DEV) {
@@ -1755,28 +1757,29 @@ export const courseStore = {
           if (import.meta.env?.DEV) {
             const rejected = beforeFilter - dbCourses.length;
             if (rejected > 0) {
-              console.warn('[courseStore.init] courses_rejected_missing_structure', { rejected, remaining: dbCourses.length });
+              console.warn('[courseStore.init] courses_rejected_missing_structure', { rejected, remaining: dbCourses.length, source: 'server' });
             }
             console.info('[courseStore.init] admin_courses_loaded', { count: dbCourses.length });
           }
           // Production safety: strip any E2E / test courses from the server
           // response before they can enter the store.  In production the server
           // should not return these, but this is a belt-and-suspenders guard.
-          if (import.meta.env.PROD) {
-            const beforeTestFilter = dbCourses.length;
-            dbCourses = dbCourses.filter((c) => {
-              if (isTestOrE2ECourse(c)) {
-                console.warn('[courseStore.init] server_course_rejected_test_data', { courseId: c.id, title: c.title });
-                return false;
-              }
-              return true;
-            });
-            if (import.meta.env?.DEV && beforeTestFilter !== dbCourses.length) {
-              console.warn('[courseStore.init] test_courses_stripped_from_server_response', {
-                before: beforeTestFilter,
-                after: dbCourses.length,
-              });
+          // Applied in ALL environments (not just PROD) since demo-data.json
+          // can accumulate Integration Test entries during E2E runs.
+          const beforeTestFilter = dbCourses.length;
+          dbCourses = dbCourses.filter((c) => {
+            if (isTestOrE2ECourse(c)) {
+              console.warn('[courseStore.init] server_course_rejected_test_data', { courseId: c.id, title: c.title, source: 'server' });
+              return false;
             }
+            return true;
+          });
+          if (beforeTestFilter !== dbCourses.length) {
+            console.warn('[courseStore.init] test_courses_stripped_from_server_response', {
+              before: beforeTestFilter,
+              after: dbCourses.length,
+              source: 'server',
+            });
           }
           adminLoadStatus = dbCourses.length === 0 ? 'empty' : 'success';
           if (adminLoadStatus === 'empty') {
@@ -1784,6 +1787,7 @@ export const courseStore = {
           }
         } catch (adminError) {
           const status = adminError instanceof ApiError ? adminError.status : undefined;
+          const isBlockedByGuard = adminError instanceof Error && adminError.message?.includes('non-admin route');
           adminLoadStatus = 'error';
           adminLoadError =
             status === 401 || status === 403
@@ -1791,10 +1795,21 @@ export const courseStore = {
               : adminError instanceof Error
               ? adminError.message
               : 'admin_courses_error';
-          console.warn('[courseStore.init] admin_courses_error', {
-            status,
-            message: adminLoadError,
-          });
+          if (isBlockedByGuard) {
+            // This should never happen after the skipAdminGateCheck fix in courseService.ts,
+            // but if it does, log it clearly so it's distinguishable from a real 403.
+            console.error('[courseStore.init] admin_fetch_blocked_by_surface_guard — this is a bug; admin surface was confirmed but the API guard still rejected the call', {
+              status,
+              message: adminLoadError,
+              pathname: typeof window !== 'undefined' ? window.location?.pathname : 'ssr',
+            });
+          } else {
+            console.warn('[courseStore.init] admin_courses_error', {
+              status,
+              message: adminLoadError,
+              source: 'admin_fetch',
+            });
+          }
           dbCourses = [];
         }
       } else if (adminMode && !apiReachable) {

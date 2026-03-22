@@ -4161,6 +4161,41 @@ const buildLessonRow = (lessonId, record) => {
   };
 };
 
+// ─── Startup: purge E2E / Integration Test courses from e2eStore ─────────────
+// demo-data.json accumulates Integration Test Course entries during E2E runs.
+// These must never appear in the admin course list for real users.  Purge them
+// here, before any request handler can serve them, and persist the clean state.
+const E2E_COURSE_PATTERNS = [
+  /\be2e\b/i,
+  /\bintegration[_\s-]?test\b/i,
+  /\bplaywright\b/i,
+  /\bcypress\b/i,
+  /^e2e-course-/i,
+  /^test[-_\s]/i,
+  /[-_\s]test$/i,
+  /__test__/i,
+  /_e2e_/i,
+];
+const isE2ECourseEntry = (course) => {
+  if (!course) return false;
+  if (course.isTestData === true || course.is_test_data === true) return true;
+  if (course.meta_json && typeof course.meta_json === 'object' && course.meta_json.isTestData === true) return true;
+  const candidates = [course.id, course.title, course.slug, ...(Array.isArray(course.tags) ? course.tags : [])];
+  return E2E_COURSE_PATTERNS.some((re) => candidates.some((c) => typeof c === 'string' && re.test(c)));
+};
+let e2ePurgeCount = 0;
+for (const [id, course] of e2eStore.courses.entries()) {
+  if (isE2ECourseEntry(course)) {
+    e2eStore.courses.delete(id);
+    e2ePurgeCount += 1;
+  }
+}
+if (e2ePurgeCount > 0) {
+  console.log(`🧹 Purged ${e2ePurgeCount} E2E/Integration Test course(s) from persistent storage`);
+  // Persist the cleaned state so they don't reload on the next server restart.
+  savePersistedData(e2eStore);
+}
+
 // Log loaded courses
 if (e2eStore.courses.size > 0) {
   console.log(`✅ Loaded ${e2eStore.courses.size} course(s) from persistent storage`);
@@ -8221,7 +8256,11 @@ app.get('/api/admin/courses', async (req, res) => {
 
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
     try {
-      const shaped = Array.from(e2eStore.courses.values()).map((c) => ({
+      const shaped = Array.from(e2eStore.courses.values())
+        // Belt-and-suspenders: filter E2E/Integration Test courses at serve time
+        // so any that were created after the startup purge don't appear in admin lists.
+        .filter((c) => !isE2ECourseEntry(c))
+        .map((c) => ({
         id: c.id,
         slug: c.slug ?? c.id,
         title: c.title,

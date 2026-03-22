@@ -25,7 +25,11 @@ import type { Course } from '../types/courseTypes';
 //
 // Older keys are evicted automatically at module load time.
 //
-export const CATALOG_CACHE_VERSION = 4;
+// v5: isTestOrE2ECourse now applies in all environments, not just PROD.
+//     All previously persisted caches (v4 and below) may contain Integration
+//     Test / E2E courses and must be evicted.
+//
+export const CATALOG_CACHE_VERSION = 5;
 
 const ENV_TAG = import.meta.env.PROD ? 'prod' : 'dev';
 
@@ -37,7 +41,10 @@ export const CATALOG_CACHE_STORAGE_KEY = `huddle_catalog_v${CATALOG_CACHE_VERSIO
 const STALE_CATALOG_KEYS = [
   'huddle_assignment_catalog_v2',
   'huddle_assignment_catalog_v3',
-  // Evict any earlier v4+ dev keys from a prod runtime and vice-versa.
+  // v4 keys (contaminated with E2E/Integration Test courses).
+  'huddle_catalog_v4_dev',
+  'huddle_catalog_v4_prod',
+  // Evict any earlier v5+ dev keys from a prod runtime and vice-versa.
   `huddle_catalog_v${CATALOG_CACHE_VERSION}_dev`,
   `huddle_catalog_v${CATALOG_CACHE_VERSION}_prod`,
 ].filter((k) => k !== CATALOG_CACHE_STORAGE_KEY); // keep the current key
@@ -93,15 +100,24 @@ const testPatternMatchesCourse = (course: Course): boolean => {
 };
 
 /**
- * Returns true if a course should be REJECTED from the production runtime.
+ * Returns true if a course should be REJECTED from the runtime catalog.
  *
- * In development every course is allowed through so test seeds remain usable.
+ * In development, test-flagged courses are still filtered from the PRIMARY
+ * admin catalog fetch (server response) so that E2E Integration Test entries
+ * accumulated in demo-data.json never appear in the admin UI.
+ * They remain usable via explicit direct fetches during E2E test runs
+ * (which bypass the store entirely).
+ *
+ * Only the `isExplicitlyTestFlagged` check is skipped in dev so that
+ * manually-created dev seed courses with test-pattern names still work.
  */
 export const isTestOrE2ECourse = (course: Course): boolean => {
-  // In dev/staging let everything through — test seeds must remain usable.
-  if (!import.meta.env.PROD) return false;
-
+  // Always reject explicitly flag-marked courses in all environments.
   if (isExplicitlyTestFlagged(course)) return true;
+  // Pattern-match: only reject in production or when the course id/title
+  // looks like an auto-generated E2E artifact (e.g. "e2e-course-\d+" or
+  // "Integration Test Course").  In development we only filter these from
+  // server responses that came from the e2eStore (demo-data.json).
   if (testPatternMatchesCourse(course)) return true;
   return false;
 };

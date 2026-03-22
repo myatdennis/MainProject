@@ -1072,9 +1072,18 @@ export class CourseService {
 
   static async getAllCoursesFromDatabase(): Promise<NormalizedCourse[]> {
     try {
+      // skipAdminGateCheck: true — surface has already been verified by the caller
+      // (courseStore.init checks isAdminSurface() + treatAsAdmin before reaching this call).
+      // The redundant isAdminSurface() check inside prepareRequest reads window.location
+      // at the moment the fetch executes, which can disagree with the caller's snapshot
+      // during async execution (e.g. auth-ready deferred callbacks, org-switch retries).
+      // Removing that secondary check is safe because:
+      //   1. ensureAdminAccessForRequest() still verifies the user has admin portal access
+      //      via /api/admin/me before any admin API call proceeds.
+      //   2. The server enforces authenticate + requireAdmin on every /api/admin/* route.
       const json = await apiRequest<{ data: SupabaseCourseRecord[] }>(
         '/api/admin/courses?includeStructure=true&includeLessons=true',
-        { noTransform: true },
+        { noTransform: true, skipAdminGateCheck: true },
       );
       return (json.data || []).map(mapCourseRecord);
     } catch (error) {
