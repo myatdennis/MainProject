@@ -2696,12 +2696,23 @@ const ensureCourseStructureLoaded = async (courseRecord, { includeLessons = fals
     }
     return { ...courseRecord, modules: [] };
   }
-  if (Array.isArray(courseRecord.modules)) {
+  // When modules is a non-empty array the inline join already returned the full
+  // graph — normalise and return immediately.
+  if (Array.isArray(courseRecord.modules) && courseRecord.modules.length > 0) {
     const normalized = normalizeModuleGraph(courseRecord.modules, { includeLessons });
     return { ...courseRecord, modules: normalized };
   }
+  // modules is null, undefined, or [] — the inline select either wasn't
+  // requested or returned empty.  Always attempt a direct fetch so that
+  // courses with real modules in the DB are not rejected by the client store.
   try {
     const hydratedModules = await fetchModulesForCourse(courseRecord.id, { includeLessons });
+    if (NODE_ENV !== 'production' && hydratedModules.length > 0) {
+      console.log('[admin.courses] ensureCourseStructureLoaded rescued modules via direct fetch', {
+        courseId: courseRecord.id,
+        moduleCount: hydratedModules.length,
+      });
+    }
     return { ...courseRecord, modules: hydratedModules };
   } catch (error) {
     console.warn('[admin.courses] Failed to hydrate modules for course', {
@@ -8256,6 +8267,15 @@ app.get('/api/admin/courses', async (req, res) => {
 
   if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
     try {
+      const reqIncludeStructure = parseBooleanParam(req.query.includeStructure, false);
+      const reqIncludeLessons = parseBooleanParam(req.query.includeLessons, reqIncludeStructure);
+      if (NODE_ENV !== 'production') {
+        console.log('[admin.courses][DEV_FALLBACK] query_flags', {
+          includeStructure: reqIncludeStructure,
+          includeLessons: reqIncludeLessons,
+          storeSize: e2eStore.courses.size,
+        });
+      }
       const shaped = Array.from(e2eStore.courses.values())
         // Belt-and-suspenders: filter E2E/Integration Test courses at serve time
         // so any that were created after the startup purge don't appear in admin lists.
@@ -8290,14 +8310,26 @@ app.get('/api/admin/courses', async (req, res) => {
         }
         return true;
       });
+      // Honor includeStructure flag: run ensureCourseStructureLoaded on each
+      // course (no-op when modules already populated, normalizes otherwise).
+      const responseData = reqIncludeStructure
+        ? await Promise.all(filtered.map((c) => ensureCourseStructureLoaded(c, { includeLessons: reqIncludeLessons })))
+        : filtered;
+      if (NODE_ENV !== 'production') {
+        console.log('[admin.courses][DEV_FALLBACK] response_shape', {
+          total: responseData.length,
+          withModules: responseData.filter((c) => Array.isArray(c.modules) && c.modules.length > 0).length,
+          withLessons: responseData.filter((c) => (c.modules || []).some((m) => Array.isArray(m.lessons) && m.lessons.length > 0)).length,
+        });
+      }
       const responseBody = {
-        data: filtered,
-        pagination: { page: 1, pageSize: filtered.length, total: filtered.length, hasMore: false },
+        data: responseData,
+        pagination: { page: 1, pageSize: responseData.length, total: responseData.length, hasMore: false },
       };
       if (NODE_ENV !== 'production') {
         responseBody.debug = {
           filterOrgId: requestedOrgId || null,
-          totalCountForOrg: filtered.length,
+          totalCountForOrg: responseData.length,
           totalCountAllOrgs: shaped.length,
         };
       }
@@ -8315,6 +8347,13 @@ app.get('/api/admin/courses', async (req, res) => {
   const { page, pageSize, from, to } = parsePaginationParams(req, { defaultSize: 20, maxSize: 100 });
   const includeStructure = parseBooleanParam(req.query.includeStructure, false);
   const includeLessons = parseBooleanParam(req.query.includeLessons, includeStructure);
+  if (NODE_ENV !== 'production') {
+    console.log('[admin.courses][supabase] query_flags', {
+      includeStructure,
+      includeLessons,
+      url: req.url,
+    });
+  }
   const search = (req.query.search || '').toString().trim();
   const statusFilter = (req.query.status || '')
     .toString()
@@ -8380,6 +8419,16 @@ app.get('/api/admin/courses', async (req, res) => {
           ),
         )
       : normalizedData;
+
+    if (NODE_ENV !== 'production') {
+      console.log('[admin.courses][supabase] response_shape', {
+        rawCount: normalizedData.length,
+        responseCount: responseData.length,
+        includeStructure,
+        withModules: responseData.filter((c) => Array.isArray(c.modules) && c.modules.length > 0).length,
+        withLessons: responseData.filter((c) => (c.modules || []).some((m) => Array.isArray(m.lessons) && m.lessons.length > 0)).length,
+      });
+    }
 
     let debugMeta = null;
     if (NODE_ENV !== 'production') {

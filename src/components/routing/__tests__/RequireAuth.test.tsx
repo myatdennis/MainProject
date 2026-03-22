@@ -61,15 +61,19 @@ describe('RequireAuth guard', () => {
     mockUseSecureAuth.mockReset();
   });
 
-  it('renders loading spinner while membership status is loading', () => {
+  it('renders protected content while membership status is loading (session already authenticated)', () => {
+    // Once sessionStatus === 'authenticated', hasResolvedAuthRef is set to true.
+    // From that point on RequireAuth never blocks the render for membership loading —
+    // the layout must stay mounted so navigation commits instantly without a spinner flash.
     renderGuard({
       membershipStatus: 'loading',
       hasActiveMembership: false,
       user: { id: 'user-1', role: 'learner', email: 'learner@example.com' },
     });
 
-    expect(screen.getByLabelText('Loading')).toBeInTheDocument();
-    expect(screen.queryByTestId('protected-content')).not.toBeInTheDocument();
+    // Children are rendered immediately; no full-screen spinner blocks the UI.
+    expect(screen.getByTestId('protected-content')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Loading')).not.toBeInTheDocument();
   });
 
   it('does not redirect when active membership exists after resolution', () => {
