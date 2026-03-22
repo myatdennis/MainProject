@@ -54,12 +54,12 @@ const AdminWebpageEditor: React.FC = () => {
       });
   };
 
-  if (loading) return <div className="max-w-3xl mx-auto mt-8 p-6 bg-white rounded-lg shadow"><p className="text-gray-500">Loading…</p></div>;
-
   return (
     <div className="max-w-3xl mx-auto mt-8 p-6 bg-white rounded-lg shadow">
       <h1 className="text-2xl font-bold mb-4">Edit Website Text</h1>
-      {error && <div className="text-red-500 mb-4">{error}</div>}
+      {loading && <p className="text-gray-500">Loading…</p>}
+      {!loading && error && <div className="text-red-500 mb-4">{error}</div>}
+      {!loading && (
       <form>
         {textItems.map(item => (
           <div key={item.key} className="mb-6">
@@ -83,6 +83,7 @@ const AdminWebpageEditor: React.FC = () => {
         {success && <div className="text-green-500 mt-2">Saved!</div>}
         {error && <div className="text-red-500 mt-2">{error}</div>}
       </form>
+      )}
     </div>
   );
 };
