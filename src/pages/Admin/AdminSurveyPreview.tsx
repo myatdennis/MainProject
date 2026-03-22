@@ -273,12 +273,26 @@ const AdminSurveyPreview = () => {
 
   const totalQuestions = survey?.sections.reduce((sum, s) => sum + s.questions.length, 0) ?? 0;
 
-  // ── Loading ──
+  // ── Loading — render inline skeleton, NOT a full-page gate ──
+  // Returning a full-screen spinner from a page component blocks [PAGE COMMIT]
+  // and makes the navigation appear broken (URL updates, page doesn't change).
+  // The skeleton renders inside the page chrome so the route commits immediately.
   if (isLoading) {
     return (
-      <div className="flex min-h-[40vh] flex-col items-center justify-center gap-3 text-gray-500">
-        <Loader2 className="h-8 w-8 animate-spin text-orange-500" />
-        <p className="text-sm font-medium">Loading survey preview…</p>
+      <div className="mx-auto max-w-3xl px-4 py-8 sm:px-6 lg:px-8">
+        <div className="mb-6">
+          <Breadcrumbs
+            items={[
+              { label: 'Admin', to: '/admin' },
+              { label: 'Surveys', to: '/admin/surveys' },
+              { label: 'Preview', to: '#' },
+            ]}
+          />
+        </div>
+        <div className="flex min-h-[40vh] flex-col items-center justify-center gap-3 rounded-2xl border border-mist/40 bg-white">
+          <Loader2 className="h-8 w-8 animate-spin text-orange-500" />
+          <p className="text-sm font-medium text-gray-500">Loading survey preview…</p>
+        </div>
       </div>
     );
   }

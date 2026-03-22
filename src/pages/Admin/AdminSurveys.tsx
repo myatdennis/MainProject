@@ -44,6 +44,7 @@ import {
   getQueueLength,
 } from '../../dal/surveys';
 import { useRouteChangeReset } from '../../hooks/useRouteChangeReset';
+import useNavTrace from '../../hooks/useNavTrace';
 
 type AdminSurveyCard = {
   id: string;
@@ -63,11 +64,7 @@ type AdminSurveyCard = {
 
 const AdminSurveys = () => {
   const { routeKey } = useRouteChangeReset();
-
-  // Report page identity for admin layout mismatch detection
-  useEffect(() => {
-    if (import.meta.env.DEV) console.debug('[PAGE COMMIT] AdminSurveys');
-  }, []);
+  useNavTrace('AdminSurveys');
   const { showToast } = useToast();
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
@@ -325,7 +322,6 @@ const AdminSurveys = () => {
 
   return (
     <>
-      {import.meta.env.DEV && (() => { console.debug('[PAGE RENDER] AdminSurveys'); return null; })()}
       <div className="container mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
       <div className="mb-6">
         <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Surveys', to: '/admin/surveys' }]} />

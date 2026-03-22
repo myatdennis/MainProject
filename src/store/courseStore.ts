@@ -22,6 +22,19 @@ import { SlugConflictError } from '../utils/slugConflict';
 import isUuid from '../utils/isUuid';
 import { isAdminSurface } from '../utils/surface';
 import { resolveOrgContextFromBridge, isOrgResolverRegistered } from './courseStoreOrgBridge';
+import {
+  evictStaleCatalogKeys,
+  buildCatalogCacheKey,
+  loadCachedCatalog,
+  saveCachedCatalog,
+  clearCatalogCacheEntry,
+  clearAllCatalogCache,
+  clearCatalogCacheForOrg,
+  isTestOrE2ECourse,
+} from '../utils/catalogPersistence';
+
+// Run stale key eviction immediately at module load — before any cache reads.
+evictStaleCatalogKeys();
 
 // Course data types
 export interface ScenarioChoice {
@@ -1206,6 +1219,11 @@ const shallowEqualState = (current: AdminCatalogState, next: AdminCatalogState):
 };
 
 const notifySubscribers = () => {
+  if (import.meta.env.DEV) {
+    const courseList = Object.values(courses);
+    console.debug('[STORE UPDATE] courseStore notifying', storeSubscribers.size, 'subscribers');
+    console.debug('[COURSE COUNT]', courseList.length, 'courses in store');
+  }
   storeSubscribers.forEach((listener) => {
     try {
       listener();
@@ -1340,83 +1358,11 @@ const _hasLocalProgressForCourse = (course: Course): boolean => {
   }
 };
 
-const CATALOG_CACHE_STORAGE_KEY = 'huddle_assignment_catalog_v3';
-// Evict any stale v2 cache written by E2E / dev runs so it never surfaces in production.
-if (typeof window !== 'undefined') {
-  try { window.localStorage.removeItem('huddle_assignment_catalog_v2'); } catch { /* noop */ }
-}
-const CATALOG_CACHE_MAX_AGE_MS = 1000 * 60 * 10; // 10 minutes (was 30)
 
-type CatalogCacheEntry = {
-  timestamp: number;
-  courses: { [key: string]: Course };
-};
-
-const buildCatalogCacheKey = (userId: string | null, orgId: string | null) => {
-  if (!userId) return null;
-  return `${userId}:${orgId ?? 'none'}`;
-};
-
-const readCatalogCache = (): Record<string, CatalogCacheEntry> => {
-  if (typeof window === 'undefined') return {};
-  try {
-    const raw = window.localStorage.getItem(CATALOG_CACHE_STORAGE_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw);
-    return typeof parsed === 'object' && parsed !== null ? parsed : {};
-  } catch (error) {
-    console.warn('[courseStore] Failed to read catalog cache:', error);
-    return {};
-  }
-};
-
-const writeCatalogCache = (payload: Record<string, CatalogCacheEntry>) => {
-  if (typeof window === 'undefined') return;
-  try {
-    window.localStorage.setItem(CATALOG_CACHE_STORAGE_KEY, JSON.stringify(payload));
-  } catch (error) {
-    console.warn('[courseStore] Failed to persist catalog cache:', error);
-  }
-};
-
-const loadCachedCatalog = (cacheKey: string | null): { [key: string]: Course } | null => {
-  if (!cacheKey) return null;
-  const cache = readCatalogCache();
-  const entry: CatalogCacheEntry | undefined = cache[cacheKey];
-  if (!entry) return null;
-  if (Date.now() - entry.timestamp > CATALOG_CACHE_MAX_AGE_MS) {
-    return null;
-  }
-  return entry.courses || null;
-};
-
-const saveCachedCatalog = (cacheKey: string | null, catalog: { [key: string]: Course }) => {
-  if (!cacheKey || typeof window === 'undefined') return;
-  try {
-    const serializedCatalog = JSON.parse(JSON.stringify(catalog));
-    const cache = readCatalogCache();
-    cache[cacheKey] = {
-      timestamp: Date.now(),
-      courses: serializedCatalog,
-    };
-    writeCatalogCache(cache);
-  } catch (error) {
-    console.warn('[courseStore] Failed to serialize catalog cache:', error);
-  }
-};
-
-const clearCatalogCacheEntry = (cacheKey: string | null) => {
-  if (!cacheKey || typeof window === 'undefined') return;
-  try {
-    const cache = readCatalogCache();
-    if (cache[cacheKey]) {
-      delete cache[cacheKey];
-      writeCatalogCache(cache);
-    }
-  } catch (error) {
-    console.warn('[courseStore] Failed to clear catalog cache entry:', error);
-  }
-};
+// ─── Catalog cache helpers ────────────────────────────────────────────────────
+// All cache logic (key versioning, test-data filtering, read/write, eviction)
+// is now delegated to catalogPersistence.ts, imported at the top of this file.
+// The inline implementations below have been removed.
 
 const ensureAssignmentScopedCatalog = async (
   currentCourses: { [key: string]: Course },
@@ -1574,7 +1520,17 @@ const ensureAssignmentScopedCatalog = async (
     // stale data.
     const cached = loadCachedCatalog(cacheKey);
     if (cached) {
-      console.info('[courseStore] Using cached catalog after assignment scope failure (degraded mode).');
+      // CACHE USED: this log ONLY fires in degraded mode (server threw).
+      // If you see this log and the server is healthy, the catch above fired
+      // unexpectedly — check the error above for root cause.
+      if (import.meta.env.DEV) {
+        console.warn('[CACHE USED] degraded mode — serving cached catalog', {
+          cacheKey,
+          courseCount: Object.keys(cached).length,
+        });
+      } else {
+        console.info('[courseStore] Using cached catalog after assignment scope failure (degraded mode).');
+      }
       setLearnerCatalogState({
         status: 'error',
         lastUpdatedAt: Date.now(),
@@ -1771,16 +1727,12 @@ export const courseStore = {
           dbCourses = dbCourses.filter((c) => {
             const hasModules = Array.isArray(c.modules) && c.modules.length > 0;
             if (!hasModules) {
-              if (import.meta.env?.DEV) {
-                console.warn('[courseStore.init] course_graph_rejected_no_modules', { courseId: c.id, title: c.title });
-              }
+              console.warn('[COURSE GRAPH REJECTED] no_modules', { courseId: c.id, title: c.title });
               return false;
             }
             // Reject courses with an invalid version stamp (version must be > 0 if present)
             if (typeof c.version === 'number' && c.version <= 0) {
-              if (import.meta.env?.DEV) {
-                console.warn('[courseStore.init] course_graph_rejected_invalid_version', { courseId: c.id, version: c.version });
-              }
+              console.warn('[COURSE GRAPH REJECTED] invalid_version', { courseId: c.id, version: c.version });
               return false;
             }
             // Reject courses where no module has any lessons — partial graph
@@ -1788,10 +1740,15 @@ export const courseStore = {
               (m) => Array.isArray(m.lessons) && m.lessons.length > 0,
             );
             if (!hasLessons) {
-              if (import.meta.env?.DEV) {
-                console.warn('[courseStore.init] course_graph_rejected_no_lessons', { courseId: c.id, title: c.title });
-              }
+              console.warn('[COURSE GRAPH REJECTED] no_lessons_in_any_module', { courseId: c.id, title: c.title });
               return false;
+            }
+            if (import.meta.env.DEV) {
+              const mods = c.modules ?? [];
+              console.debug('[COURSE GRAPH VALID]', c.id, c.title, {
+                modules: mods.length,
+                lessons: mods.reduce((acc, m) => acc + (m.lessons?.length ?? 0), 0),
+              });
             }
             return true;
           });
@@ -1801,6 +1758,25 @@ export const courseStore = {
               console.warn('[courseStore.init] courses_rejected_missing_structure', { rejected, remaining: dbCourses.length });
             }
             console.info('[courseStore.init] admin_courses_loaded', { count: dbCourses.length });
+          }
+          // Production safety: strip any E2E / test courses from the server
+          // response before they can enter the store.  In production the server
+          // should not return these, but this is a belt-and-suspenders guard.
+          if (import.meta.env.PROD) {
+            const beforeTestFilter = dbCourses.length;
+            dbCourses = dbCourses.filter((c) => {
+              if (isTestOrE2ECourse(c)) {
+                console.warn('[courseStore.init] server_course_rejected_test_data', { courseId: c.id, title: c.title });
+                return false;
+              }
+              return true;
+            });
+            if (import.meta.env?.DEV && beforeTestFilter !== dbCourses.length) {
+              console.warn('[courseStore.init] test_courses_stripped_from_server_response', {
+                before: beforeTestFilter,
+                after: dbCourses.length,
+              });
+            }
           }
           adminLoadStatus = dbCourses.length === 0 ? 'empty' : 'success';
           if (adminLoadStatus === 'empty') {
@@ -2108,35 +2084,10 @@ export const courseStore = {
     const shouldFlushAllCaches = options?.flushCache === true;
 
     try {
-      if (typeof window !== 'undefined') {
-        if (shouldFlushAllCaches) {
-          // Flush every cached catalog entry unconditionally (full cache bust).
-          writeCatalogCache({});
-          if (import.meta.env?.DEV) {
-            console.info('[courseStore.forceInit] Full catalog cache flushed (flushCache=true)');
-          }
-        } else if (incomingOrgId !== undefined && incomingOrgId !== lastInitOrgId) {
-          const allCaches = readCatalogCache();
-          // Remove entries that belong to the previous org to avoid cross-org catalog bleed.
-          const keysToRemove = Object.keys(allCaches).filter((key) => {
-            // Cache keys are formatted as `${userId}:${orgId}` — drop any entry whose
-            // orgId segment matches the *old* org, not the new one.
-            const parts = key.split(':');
-            const entryOrgId = parts.length >= 2 ? parts.slice(1).join(':') : null;
-            return entryOrgId && entryOrgId !== incomingOrgId && entryOrgId !== 'none';
-          });
-          if (keysToRemove.length > 0) {
-            keysToRemove.forEach((k) => { delete allCaches[k]; });
-            writeCatalogCache(allCaches);
-            if (import.meta.env?.DEV) {
-              console.info('[courseStore.forceInit] Flushed stale catalog cache on org switch', {
-                from: lastInitOrgId,
-                to: incomingOrgId,
-                flushed: keysToRemove.length,
-              });
-            }
-          }
-        }
+      if (shouldFlushAllCaches) {
+        clearAllCatalogCache();
+      } else if (incomingOrgId !== undefined && incomingOrgId !== lastInitOrgId) {
+        clearCatalogCacheForOrg(lastInitOrgId, incomingOrgId);
       }
     } catch (cacheErr) {
       console.warn('[courseStore.forceInit] Failed to flush catalog cache', cacheErr);

@@ -104,9 +104,22 @@ export class CourseValidationError extends Error {
   }
 }
 
-const PERSISTED_COURSE_IDS_KEY = 'courseService.persistedCourseIds';
+// Versioned + environment-scoped key.  The old unscoped key is evicted at startup
+// so E2E/test run persisted IDs cannot pollute a production session.
+const PERSISTED_COURSE_IDS_STALE_KEY = 'courseService.persistedCourseIds';
+const ENV_TAG = import.meta.env.PROD ? 'prod' : 'dev';
+const PERSISTED_COURSE_IDS_KEY = `courseService.persistedCourseIds.v2.${ENV_TAG}`;
 const persistedCourseIds = new Set<string>();
 const supportsLocalStorage = () => typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
+
+// Evict the old key at module load so stale IDs from a previous (possibly
+// E2E-contaminated) session are never read.
+if (supportsLocalStorage()) {
+  try {
+    window.localStorage.removeItem(PERSISTED_COURSE_IDS_STALE_KEY);
+  } catch { /* non-fatal */ }
+}
+
 const hydratePersistedCourseIds = () => {
   if (!supportsLocalStorage()) return;
   try {

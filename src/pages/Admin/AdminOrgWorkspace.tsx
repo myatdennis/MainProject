@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useRouteChangeReset } from '../../hooks/useRouteChangeReset';
+import useNavTrace from '../../hooks/useNavTrace';
 import {
   Activity,
   AlertTriangle,
@@ -81,11 +82,7 @@ const deriveCrmSummaryFromOrganizations = (orgs: Org[], paginationTotal?: number
 
 const AdminOrgWorkspace = () => {
   const { routeKey } = useRouteChangeReset();
-
-  // Report page identity for admin layout mismatch detection
-  useEffect(() => {
-    if (import.meta.env.DEV) console.debug('[PAGE COMMIT] AdminOrgWorkspace');
-  }, []);
+  useNavTrace('AdminOrgWorkspace');
   const { showToast } = useToast();
   const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
@@ -536,7 +533,6 @@ const AdminOrgWorkspace = () => {
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-8">
-      {import.meta.env.DEV && (() => { console.debug('[PAGE RENDER] AdminOrgWorkspace'); return null; })()}
       <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Organizations & CRM', to: '/admin/organizations' }]} />
 
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">

@@ -39,8 +39,10 @@ import { useSecureAuth } from '../../context/SecureAuthContext';
 import { LoadingSpinner } from '../../components/LoadingComponents';
 import apiRequest from '../../utils/apiClient';
 import { useRouteChangeReset } from '../../hooks/useRouteChangeReset';
+import { useNavTrace } from '../../hooks/useNavTrace';
 
 const AdminUsers = () => {
+  useNavTrace('AdminUsers');
   const { activeOrgId } = useSecureAuth();
   const { routeKey } = useRouteChangeReset();
 
@@ -54,10 +56,6 @@ const AdminUsers = () => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routeKey]);
 
-  // Report page identity for admin layout mismatch detection
-  useEffect(() => {
-    if (import.meta.env.DEV) console.debug('[PAGE COMMIT] AdminUsers');
-  }, []);
   const { showToast } = useToast();
   const [searchTerm, setSearchTerm] = useState('');
   const [filterOrg, setFilterOrg] = useState('all');
@@ -382,7 +380,6 @@ const AdminUsers = () => {
 
   return (
     <PageWrapper>
-      {import.meta.env.DEV && (() => { console.debug('[PAGE RENDER] AdminUsers'); return null; })()}
       <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Users', to: '/admin/users' }]} />
       {/* Header */}
       <div className="mb-8 flex items-start justify-between">

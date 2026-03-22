@@ -1,4 +1,10 @@
-import { ReactNode, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { ReactNode, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+
+// Module-level flag: persists across component unmount/remount cycles.
+// AdminLayout keys <Outlet> on pathname, so the page component unmounts on
+// every navigation.  A useRef(false) would reset to false on each remount and
+// re-trigger the full-screen catalog loading gate on every revisit to this page.
+let _dashboardCatalogEverSucceeded = false;
 import { useNavigate } from 'react-router-dom';
 import SEO from '../../components/SEO/SEO';
 import Card from '../../components/ui/Card';
@@ -15,6 +21,7 @@ import { courseStore } from '../../store/courseStore';
 import { useAnalyticsDashboard } from '../../hooks/useAnalyticsDashboard';
 import apiRequest from '../../utils/apiClient';
 import { useRouteChangeReset } from '../../hooks/useRouteChangeReset';
+import { useNavTrace } from '../../hooks/useNavTrace';
 import {
   Users,
   Building2,
@@ -87,9 +94,7 @@ const WidgetErrorFallback = ({ retry }: { error: Error; retry: () => void }) => 
 );
 
 const AdminDashboard = () => {
-  useEffect(() => {
-    if (import.meta.env.DEV) console.debug('[PAGE COMMIT] AdminDashboard');
-  }, []);
+  useNavTrace('AdminDashboard');
   const navigate = useNavigate();
   // routeKey increments on every pathname change — use as a dep in
   // useMemo/useEffect to get controlled resets without component remounts.
@@ -222,11 +227,14 @@ const AdminDashboard = () => {
   ], [ov, analyticsLoading, routeKey]);
 
   // Track whether the catalog has ever successfully loaded in this session.
-  // If it has, never block the full dashboard behind a gate again.
-  const catalogEverSucceeded = useRef(false);
+  // CRITICAL: this flag must be module-level, NOT a useRef — a useRef resets to
+  // false every time this page component unmounts and remounts (which happens on
+  // every route change because AdminLayout keys Outlet on pathname).  A module-
+  // level variable persists across remounts, ensuring the "first load" gate only
+  // fires ONCE per browser session, not on every navigation to this page.
   useEffect(() => {
     if (catalogState.adminLoadStatus === 'success') {
-      catalogEverSucceeded.current = true;
+      _dashboardCatalogEverSucceeded = true;
     }
   }, [catalogState.adminLoadStatus]);
 
@@ -290,7 +298,7 @@ const AdminDashboard = () => {
   // 1. It's the very first load AND we're still loading (never had a success).
   // 2. The catalog hit a fatal auth/access error on the first load.
   // After the catalog ever succeeds, errors and retries must NEVER block the dashboard.
-  const isFirstLoad = !catalogEverSucceeded.current;
+  const isFirstLoad = !_dashboardCatalogEverSucceeded;
   const isCatalogLoading = isFirstLoad && catalogState.phase === 'loading' && catalogStatus !== 'success';
   const isCatalogEmpty = isFirstLoad && catalogStatus === 'empty';
   const isCatalogUnauthorized = isFirstLoad && catalogStatus === 'unauthorized';
@@ -400,7 +408,6 @@ const AdminDashboard = () => {
 
   return (
     <>
-      {import.meta.env.DEV && (() => { console.debug('[PAGE RENDER] AdminDashboard'); return null; })()}
       <SEO title="Admin Dashboard" description="Monitor learner progress and organizational impact." />
       {gateShell(
         <section className="space-y-10">

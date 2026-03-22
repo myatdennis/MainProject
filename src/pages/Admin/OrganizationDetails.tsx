@@ -41,7 +41,6 @@ import {
   addOrgMember,
   removeOrgMember,
   type Org,
-  type OrgMember,
   type OrgProfileDetails,
   type OrgProfileUser,
   type OrgProfileMessage,
@@ -240,9 +239,23 @@ const OrganizationDetails: React.FC = () => {
   };
 
   if (loading) {
+    // Inline skeleton — renders within the page shell so [PAGE COMMIT] fires
+    // immediately on navigation.  Full-screen spinners returned here would block
+    // the route commit and make the nav click appear to do nothing.
     return (
-      <div className="flex items-center justify-center h-64">
-        <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
+      <div className="p-6">
+        <div className="mb-6 flex items-center gap-2 text-sm">
+          <Link to="/admin/organizations" className="inline-flex items-center text-blue-600 hover:text-blue-700">
+            <ArrowLeft className="w-4 h-4 mr-1" />
+            Organizations
+          </Link>
+        </div>
+        <div className="flex items-center justify-center h-64 rounded-xl border border-gray-200 bg-white">
+          <div className="flex flex-col items-center gap-3">
+            <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+            <p className="text-sm text-gray-500">Loading organization&hellip;</p>
+          </div>
+        </div>
       </div>
     );
   }

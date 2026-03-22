@@ -7,6 +7,12 @@
 import { ReactNode, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { courseStore } from '../../store/courseStore';
+
+// Module-level flag: survives unmount/remount across navigations.
+// AdminLayout keys <Outlet> on pathname so the page re-mounts on every nav;
+// a useRef(false) would reset and re-trigger the full-screen loading gate on
+// every revisit.  This module variable persists for the browser session.
+let _coursesCatalogEverSucceeded = false;
 import { Course } from '../../types/courseTypes';
 import type { CourseAssignment } from '../../types/assignment';
 import { syncCourseToDatabase, CourseValidationError } from '../../dal/adminCourses';
@@ -47,12 +53,11 @@ import { LazyImage } from '../../components/PerformanceComponents';
 import CourseAssignmentModal from '../../components/CourseAssignmentModal';
 import { logAuthRedirect } from '../../utils/logAuthRedirect';
 import { useRouteChangeReset } from '../../hooks/useRouteChangeReset';
+import { useNavTrace } from '../../hooks/useNavTrace';
 
 
 const AdminCourses = () => {
-  useEffect(() => {
-    if (import.meta.env.DEV) console.debug('[PAGE COMMIT] AdminCourses');
-  }, []);
+  useNavTrace('AdminCourses');
   const { showToast } = useToast();
   const syncService = useSyncService();
 
@@ -490,17 +495,29 @@ const AdminCourses = () => {
   };
 
   const catalogStatus = catalogState.adminLoadStatus;
-  // Show spinner while loading OR while idle with no confirmed result yet
-  // (idle = init hasn't run yet; the brief window between mount and first effect fire
-  // would otherwise show "No courses found" before the store initializes).
+
+  // Track whether the catalog has ever succeeded in this session (module-level
+  // to survive unmount/remount across route changes).
+  useEffect(() => {
+    if (catalogStatus === 'success') {
+      _coursesCatalogEverSucceeded = true;
+    }
+  }, [catalogStatus]);
+
+  // Only show the full-screen loading gate on the very first visit before the
+  // catalog has ever resolved.  Subsequent navigations to this page must render
+  // the course list immediately — even while a background re-fetch is in flight.
+  const isFirstLoad = !_coursesCatalogEverSucceeded;
   const isCatalogLoading =
-    catalogState.phase === 'loading' ||
-    (catalogState.phase === 'idle' &&
-      catalogStatus !== 'success' &&
-      catalogStatus !== 'empty' &&
-      catalogStatus !== 'unauthorized' &&
-      catalogStatus !== 'error' &&
-      catalogStatus !== 'api_unreachable');
+    isFirstLoad && (
+      catalogState.phase === 'loading' ||
+      (catalogState.phase === 'idle' &&
+        catalogStatus !== 'success' &&
+        catalogStatus !== 'empty' &&
+        catalogStatus !== 'unauthorized' &&
+        catalogStatus !== 'error' &&
+        catalogStatus !== 'api_unreachable')
+    );
   const isCatalogEmpty = catalogStatus === 'empty';
   const isCatalogUnauthorized = catalogStatus === 'unauthorized';
   const isCatalogError = catalogStatus === 'error' || catalogStatus === 'api_unreachable';
@@ -576,7 +593,6 @@ const AdminCourses = () => {
 
   return (
     <>
-      {import.meta.env.DEV && (() => { console.debug('[PAGE RENDER] AdminCourses'); return null; })()}
       <div className="container mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
         <div className="mb-6">
           <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Courses', to: '/admin/courses' }]} />

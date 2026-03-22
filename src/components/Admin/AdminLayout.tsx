@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, Suspense, type ChangeEvent, type FC, type ReactNode } from 'react';
+import { useCallback, useEffect, useRef, useState, useTransition, Suspense, type ChangeEvent, type FC, type ReactNode } from 'react';
 import { Link, NavLink, useLocation, useNavigate, Outlet } from 'react-router-dom';
 import { ErrorBoundary } from '../ErrorHandling';
 import AdminErrorBoundary from '../ErrorBoundary/AdminErrorBoundary';
@@ -83,6 +83,12 @@ const navigation = ADMIN_ROUTES
   }));
 
 const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
+  // useTransition allows React to defer the route update as a non-urgent
+  // transition.  When a nav click triggers a lazy chunk load, React keeps the
+  // CURRENT page visible (instead of showing the Suspense fallback) until the
+  // new chunk resolves.  isPending can be used to show a subtle loading indicator
+  // in the sidebar without blanking the content area.
+  const [navPending, startNavTransition] = useTransition();
   const { isAuthenticated, user: authUser, authInitializing, logout, sessionStatus, user, membershipStatus } = useSecureAuth();
   const {
     adminPortalAllowed: adminPortalAllowedRaw,
@@ -260,10 +266,15 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
     if (normalizedAuthInitializing) {
       return;
     }
-    if (!hasSession || !adminPortalAllowed) {
+    // Only redirect when there is definitively no session. Do NOT redirect based
+    // on adminPortalAllowed alone — that flag is false while /admin/me is still
+    // resolving, which would cause a premature login redirect on every internal
+    // navigation click while the async gate check is in flight. RequireAuth is
+    // responsible for the access-denied path once the check completes.
+    if (!hasSession) {
       logAuthDiagnostic('AdminLayout.auth_guard', {
         path: location.pathname,
-        reason: !hasSession ? 'missing_session' : 'admin_access_pending',
+        reason: 'missing_session',
         sessionStatus: normalizedSessionStatus,
       });
       const onLoginRoute = location.pathname === '/admin/login';
@@ -275,7 +286,6 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
     normalizedAuthInitializing,
     normalizedSessionStatus,
     hasSession,
-    adminPortalAllowed,
     location.pathname,
     navigate,
   ]);
@@ -338,6 +348,14 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
   // did not re-render the Outlet — the key prop below forces that.
   useEffect(() => {
     console.debug('[NAV COMMIT]', location.pathname);
+  }, [location.pathname]);
+
+  // LAYOUT COMMIT: confirms the AdminLayout shell itself (sidebar, header, Outlet
+  // wrapper) committed to the DOM for this pathname.  If [NAV COMMIT] fires but
+  // [LAYOUT COMMIT] does NOT, a parent component is blocking the layout render.
+  useEffect(() => {
+    if (!import.meta.env.DEV) return;
+    console.debug('[LAYOUT COMMIT]', location.pathname);
   }, [location.pathname]);
 
   // Page identity is derived exclusively from location.pathname — no event-based
@@ -526,7 +544,13 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
                         event.preventDefault();
                         return;
                       }
-                      setSidebarOpen(false);
+                      // Wrap the close-sidebar state update in startNavTransition so
+                      // React treats the resulting route change as a deferred transition.
+                      // This keeps the current page visible while the new lazy chunk
+                      // loads, preventing the Suspense fallback from blanking the screen.
+                      startNavTransition(() => {
+                        setSidebarOpen(false);
+                      });
                     }}
                     className={({ isActive }) =>
                       `flex items-center gap-3 rounded-xl px-4 py-3 text-sm font-semibold transition ${
@@ -660,7 +684,7 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
                 variant="secondary"
                 size="sm"
                 leadingIcon={<ClipboardList className="h-4 w-4" />}
-                onClick={() => navigate('/admin/surveys/builder')}
+                onClick={() => startNavTransition(() => { void navigate('/admin/surveys/builder'); })}
               >
                 New survey
               </Button>
@@ -698,7 +722,7 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
                       className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm font-semibold text-charcoal transition hover:bg-cloud/70"
                       onClick={() => {
                         closeMenu('nav_profile');
-                        navigate('/admin/profile');
+                        startNavTransition(() => { void navigate('/admin/profile'); });
                       }}
                     >
                       <UserCircle2 className="h-4 w-4 text-slate" aria-hidden="true" />
@@ -746,7 +770,7 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
             <button
               type="button"
               className="rounded-full bg-sunrise/600 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-white transition hover:bg-sunrise/700"
-              onClick={() => navigate('/admin/organizations')}
+              onClick={() => startNavTransition(() => { void navigate('/admin/organizations'); })}
             >
               Choose organization
             </button>
@@ -755,6 +779,14 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
       )}
 
       <main className="flex-1 overflow-y-auto bg-softwhite px-6 py-8 lg:px-12">
+        {/* Nav-transition progress bar: visible only while startNavTransition is pending
+            (i.e. a lazy chunk is loading after a sidebar click). Zero height when idle
+            so it never shifts layout. */}
+        {navPending && (
+          <div className="pointer-events-none fixed left-0 right-0 top-0 z-[9999] h-0.5 overflow-hidden">
+            <div className="h-full animate-[progress_1s_ease-in-out_infinite] bg-gradient-to-r from-sunrise via-skyblue to-forest" />
+          </div>
+        )}
         {/*
           key={location.pathname} on AdminErrorBoundary is CRITICAL for navigation correctness.
           Class-based error boundaries do not reset their `hasError` state on re-render; the
@@ -771,13 +803,22 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
               <LoadingSpinner size="lg" />
             </div>
           }>
-            {/* key on Outlet itself — not just a wrapper div — so React treats
-                each route as a distinct fiber identity. A key on a wrapper <div>
-                does NOT force React Router to unmount/remount the matched child
-                component; keying Outlet directly does. */}
+            {/*
+              NOTE: The key has been intentionally removed from <Outlet>.
+              Previously Outlet was keyed on location.pathname to force a fiber
+              identity reset on every navigation.  That unmount/remount pattern
+              defeats React's startTransition deferred rendering — React cannot
+              keep the previous page visible during a lazy chunk load if the
+              previous fiber has already been destroyed.
+
+              Error boundary resets are handled by AdminErrorBoundary key above.
+              Page-level state resets are handled by useRouteChangeReset() inside
+              each page component.  Module-level flags (_dashboardCatalogEverSucceeded
+              etc.) survive unmount either way.
+            */}
             <div>
               {import.meta.env.DEV && (() => { console.debug('[OUTLET RENDER]', location.pathname); return null; })()}
-              {children ?? <Outlet key={location.pathname} />}
+              {children ?? <Outlet />}
             </div>
           </Suspense>
         </AdminErrorBoundary>

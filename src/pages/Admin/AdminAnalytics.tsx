@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useMemo } from 'react';
+import { useNavTrace } from '../../hooks/useNavTrace';
 import { 
   AlertTriangle,
   Clock,
@@ -34,9 +35,7 @@ const buildHeatmapRows = (
 };
 
 const AdminAnalytics = () => {
-  useEffect(() => {
-    if (import.meta.env.DEV) console.debug('[PAGE COMMIT] AdminAnalytics');
-  }, []);
+  useNavTrace('AdminAnalytics');
 
   const { showToast } = useToast();
   const [dateRange, setDateRange] = useState<AnalyticsDateRange>('last-30-days');

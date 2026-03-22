@@ -6,6 +6,7 @@ import type { Course } from '../../types/courseTypes';
 import { useToast } from '../../context/ToastContext';
 import { SlugConflictError } from '../../utils/slugConflict';
 import { LoadingSpinner } from '../../components/LoadingComponents';
+import { useNavTrace } from '../../hooks/useNavTrace';
 
 import { LazyImage } from '../../components/PerformanceComponents';
 import {
@@ -33,6 +34,7 @@ import {
 } from 'lucide-react';
 
 const AdminCourseDetail = () => {
+  useNavTrace('AdminCourseDetail');
   const { courseId } = useParams();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -48,7 +50,6 @@ const AdminCourseDetail = () => {
   // been initialized yet (phase === 'idle').  Trigger init so getCourse()
   // returns the real record once the fetch resolves.
   useEffect(() => {
-    if (import.meta.env.DEV) console.debug('[PAGE COMMIT] AdminCourseDetail', courseId);
     if (catalogState.phase === 'idle') {
       void courseStore.init();
     }
@@ -113,13 +114,26 @@ const AdminCourseDetail = () => {
   };
 
   if (!course) {
-    // If the store is still initializing, show a spinner rather than the
-    // permanent "Course Not Found" error — the course will appear once the
-    // catalog fetch completes.
+    // Catalog is still initializing — render the page shell with an inline
+    // skeleton so navigation commits immediately and content populates once
+    // the store resolves.  NEVER return a full-screen spinner from a page
+    // component: that blocks [PAGE COMMIT] and makes the nav appear broken.
     if (catalogState.phase === 'idle' || catalogState.phase === 'loading') {
       return (
-        <div className="flex min-h-[50vh] items-center justify-center">
-          <LoadingSpinner size="lg" />
+        <div className="container mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
+          <Link
+            to="/admin/courses"
+            className="inline-flex items-center mb-6 font-medium text-[var(--hud-orange)] hover:opacity-80"
+          >
+            <ArrowLeft className="h-4 w-4 mr-2" />
+            Back to Course Management
+          </Link>
+          <div className="flex min-h-[40vh] items-center justify-center rounded-2xl border border-mist/40 bg-white">
+            <div className="flex flex-col items-center gap-3">
+              <LoadingSpinner size="lg" />
+              <p className="text-sm text-slate/70">Loading course&hellip;</p>
+            </div>
+          </div>
         </div>
       );
     }
@@ -193,7 +207,6 @@ const AdminCourseDetail = () => {
 
   return (
     <div className="container mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
-      {import.meta.env.DEV && (() => { console.debug('[PAGE RENDER] AdminCourseDetail', courseId); return null; })()}
       <div className="mb-8">
         <Link 
           to="/admin/courses" 
