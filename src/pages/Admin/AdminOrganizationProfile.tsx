@@ -22,6 +22,7 @@ import ConfirmationModal from '../../components/ConfirmationModal';
 import { getOnboardingProgress } from '../../dal/onboarding';
 import { useToast } from '../../context/ToastContext';
 import OrgCommunicationPanel from '../../components/Admin/OrgCommunicationPanel';
+import InviteManager from '../../components/onboarding/InviteManager';
 
 // Simple logger for admin hardening events
 const logAdminEvent = (event: string, meta: Record<string, any> = {}) => {
@@ -34,6 +35,7 @@ const logAdminEvent = (event: string, meta: Record<string, any> = {}) => {
 
 const tabs = [
   { key: 'overview', label: 'Overview' },
+  { key: 'people', label: 'People' },
   { key: 'services', label: 'Services' },
   { key: 'resources', label: 'Resources' },
   { key: 'action-tracker', label: 'Action Tracker' },
@@ -769,6 +771,28 @@ useEffect(() => {
     );
   };
 
+  const renderPeople = () => {
+    if (!orgId) {
+      return (
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+          <p className="text-gray-600">Organization ID not found.</p>
+        </div>
+      );
+    }
+    return (
+      <div className="space-y-6">
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200">
+          <h3 className="font-bold text-lg mb-1">Invite &amp; manage members</h3>
+          <p className="text-sm text-gray-500 mb-4">
+            Send email invites, bulk-upload members, and track invite status for{' '}
+            {profile?.organization?.name ?? 'this organization'}.
+          </p>
+          <InviteManager orgId={orgId} mode="admin" />
+        </div>
+      </div>
+    );
+  };
+
   const renderServices = () => {
     if (profileLoading) {
       return (
@@ -1262,6 +1286,7 @@ useEffect(() => {
 
       <div className="space-y-6">
         {activeTab === 'overview' && renderOverview()}
+        {activeTab === 'people' && renderPeople()}
         {activeTab === 'services' && renderServices()}
         {activeTab === 'resources' && renderResources()}
         {activeTab === 'action-tracker' && renderActionTracker()}

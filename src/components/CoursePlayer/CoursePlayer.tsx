@@ -72,7 +72,7 @@ const formatDurationLabel = (seconds: number): string => {
 };
 
 interface CoursePlayerProps {
-  namespace?: 'admin' | 'client';
+  namespace?: 'admin' | 'client' | 'lms';
 }
 
 const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
@@ -80,11 +80,11 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
   const navigate = useNavigate();
   const syncService = useSyncService();
   const { showToast } = useToast();
-  const isClientNamespace = namespace === 'client';
-  const coursePathBase = isClientNamespace ? '/client/courses' : '/lms/course';
-  const lessonPathSegment = isClientNamespace ? 'lessons' : 'lesson';
-  const coursesIndexPath = isClientNamespace ? '/client/courses' : '/lms/courses';
-  const eventSource = isClientNamespace ? 'client' : 'admin';
+  const isClientNamespace = namespace === 'client' || namespace === 'lms';
+  const coursePathBase = namespace === 'client' ? '/client/courses' : '/lms/course';
+  const lessonPathSegment = namespace === 'client' ? 'lessons' : 'lesson';
+  const coursesIndexPath = namespace === 'client' ? '/client/courses' : '/lms/courses';
+  const eventSource = namespace === 'client' ? 'client' : namespace === 'lms' ? 'lms' : 'admin';
 
   const { user } = useUserProfile();
   const learnerId = useMemo(() => {
@@ -2093,7 +2093,7 @@ const LessonContent: React.FC<{
   if (!lesson.content || (typeof lesson.content === 'object' && Object.keys(lesson.content).length === 0)) {
     return renderFallback('Lesson content unavailable. Please check back later.');
   }
-  if (lessonType === 'text' || lessonType === 'document') {
+  if (lessonType === 'text') {
     const html = lesson.content.textContent || lesson.content.content || lesson.description || '';
     if (!html.trim()) {
       return renderFallback('Lesson notes will appear here once your facilitator adds them.');

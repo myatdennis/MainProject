@@ -111,7 +111,7 @@ const LMSLessonView = () => {
         </Card>
 
         <div className="mt-8 overflow-hidden rounded-3xl border border-mist bg-white shadow-card-lg">
-          <CoursePlayer namespace="admin" />
+          <CoursePlayer namespace="lms" />
         </div>
       </div>
     </div>

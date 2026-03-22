@@ -14,7 +14,7 @@ interface SyncEvent {
   timestamp: number;
   userId?: string;
   courseId?: string;
-  source?: 'admin' | 'client';
+  source?: 'admin' | 'client' | 'lms';
 }
 
 const normalizeAssignmentStatus = (status?: string | null): CourseAssignment['status'] => {

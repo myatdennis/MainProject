@@ -1,7 +1,7 @@
-import { useState, useEffect, useSyncExternalStore } from 'react';
+import { useState, useEffect, useRef, useSyncExternalStore } from 'react';
 import { useParams, Link, useSearchParams, useNavigate } from 'react-router-dom';
 import { courseStore } from '../../store/courseStore';
-import { syncCourseToDatabase, CourseValidationError } from '../../dal/adminCourses';
+import { syncCourseToDatabase, CourseValidationError, loadCourseFromDatabase } from '../../dal/adminCourses';
 import type { Course } from '../../types/courseTypes';
 import { useToast } from '../../context/ToastContext';
 import { SlugConflictError } from '../../utils/slugConflict';
@@ -55,7 +55,37 @@ const AdminCourseDetail = () => {
     }
   }, [catalogState.phase]);
 
-  // Get course from store
+  // Direct-fetch fallback: if the store finished loading but doesn't have this
+  // course (e.g. it was graph-rejected or navigated to directly), fetch it from
+  // the API and hydrate the store so the page can render.
+  const directFetchAttemptedRef = useRef(false);
+  // Track whether the direct-fetch is still in-flight so the loading skeleton
+  // stays visible until the async resolves (prevents a flash of "Course Not Found"
+  // between the ref flip and the Promise resolution).
+  const [directFetchInFlight, setDirectFetchInFlight] = useState(false);
+  const storeIsSettled = catalogState.phase === 'idle' || catalogState.phase === 'loading'
+    ? false
+    : true; // 'success', 'error', 'empty', 'unauthorized', 'api_unreachable'
+  const courseFromStore = courseId ? courseStore.getCourse(courseId) : null;
+  useEffect(() => {
+    if (!courseId) return;
+    if (courseFromStore) return;
+    if (!storeIsSettled) return;
+    if (directFetchAttemptedRef.current) return;
+    directFetchAttemptedRef.current = true;
+    setDirectFetchInFlight(true);
+    void loadCourseFromDatabase(courseId, { includeDrafts: true }).then((remote) => {
+      if (remote) {
+        courseStore.saveCourse(remote as Course, { skipRemoteSync: true });
+      }
+    }).catch(() => {
+      // non-fatal — "Course Not Found" UI handles this
+    }).finally(() => {
+      setDirectFetchInFlight(false);
+    });
+  }, [courseId, courseFromStore, storeIsSettled]);
+
+  // Get course from store (re-reads after direct-fetch hydration above)
   const course = courseId ? courseStore.getCourse(courseId) : null;
 
   const persistCourse = async (inputCourse: Course, statusOverride?: 'draft' | 'published') => {
@@ -114,11 +144,17 @@ const AdminCourseDetail = () => {
   };
 
   if (!course) {
-    // Catalog is still initializing — render the page shell with an inline
-    // skeleton so navigation commits immediately and content populates once
-    // the store resolves.  NEVER return a full-screen spinner from a page
-    // component: that blocks [PAGE COMMIT] and makes the nav appear broken.
-    if (catalogState.phase === 'idle' || catalogState.phase === 'loading') {
+    // Catalog is still initializing, or we just fired the direct-fetch fallback —
+    // render the page shell with an inline skeleton so navigation commits
+    // immediately and content populates once the store resolves.
+    // NEVER return a full-screen spinner: that blocks [PAGE COMMIT].
+    const isStillLoading =
+      catalogState.phase === 'idle' ||
+      catalogState.phase === 'loading' ||
+      !storeIsSettled ||
+      directFetchInFlight ||
+      (storeIsSettled && !directFetchAttemptedRef.current);
+    if (isStillLoading) {
       return (
         <div className="container mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
           <Link

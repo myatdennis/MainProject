@@ -152,7 +152,7 @@ const OrgWorkspaceLayout: React.FC = () => {
             </div>
           )}
           <ErrorBoundary resetKey={location.pathname}>
-            <Outlet key={location.pathname} />
+            <Outlet />
           </ErrorBoundary>
           {/* Dark mode toggle for Org Workspace */}
           <div className="mt-8 flex justify-end">

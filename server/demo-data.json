@@ -153,23 +153,6 @@
           }
         ]
       }
-    ],
-    [
-      "e2e-course-1774188795583",
-      {
-        "id": "e2e-course-1774188795583",
-        "slug": "integration-test-course",
-        "title": "Integration Test Course",
-        "description": null,
-        "status": "draft",
-        "version": 1,
-        "meta_json": {},
-        "published_at": null,
-        "organization_id": "demo-org",
-        "organizationId": "demo-org",
-        "org_id": "demo-org",
-        "modules": []
-      }
     ]
   ],
   "surveys": [

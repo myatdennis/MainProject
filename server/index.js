@@ -573,15 +573,39 @@ function loadPersistedData() {
 
 function savePersistedData(data) {
   try {
-    // Convert Maps to arrays for JSON serialization
-    // Modules and lessons are nested inside courses, not separate Maps
+    // Convert Maps to arrays for JSON serialization, stripping E2E/test courses at
+    // write time so they can never accumulate in demo-data.json across test runs.
+    // isE2ECourseEntry is defined later in the file; use a safe inline guard here.
+    const isE2EId = (id) =>
+      typeof id === 'string' && (
+        /^e2e-course-/i.test(id) ||
+        /\be2e\b/i.test(id) ||
+        /\bintegration[_\s-]?test\b/i.test(id) ||
+        /\bplaywright\b/i.test(id) ||
+        /\bcypress\b/i.test(id) ||
+        /^test[-_\s]/i.test(id) ||
+        /__test__/i.test(id) ||
+        /_e2e_/i.test(id)
+      );
+    const isE2ECourse = (course) => {
+      if (!course) return false;
+      if (course.isTestData === true || course.is_test_data === true) return true;
+      if (course.meta_json?.isTestData === true) return true;
+      return [course.id, course.title, course.slug].some(isE2EId);
+    };
+    const filteredCourseEntries = Array.from(data.courses.entries())
+      .filter(([, course]) => !isE2ECourse(course));
     const serializable = {
-      courses: Array.from(data.courses.entries()),
+      courses: filteredCourseEntries,
       surveys: Array.from((data.surveys || new Map()).entries()),
       surveyAssignments: Array.from((data.surveyAssignments || new Map()).entries()),
     };
     fs.writeFileSync(STORAGE_FILE, JSON.stringify(serializable, null, 2), 'utf8');
-    logger.info('demo_data_persisted', { courseCount: data.courses.size, storageFile: STORAGE_FILE });
+    const strippedCount = data.courses.size - filteredCourseEntries.length;
+    if (strippedCount > 0) {
+      logger.info('demo_data_e2e_courses_stripped_on_save', { strippedCount });
+    }
+    logger.info('demo_data_persisted', { courseCount: filteredCourseEntries.length, storageFile: STORAGE_FILE });
   } catch (error) {
     logger.error('demo_data_save_failed', { error: error instanceof Error ? error.message : error });
   }
@@ -2655,7 +2679,7 @@ const getCourseOrgId = async (courseId) => {
 };
 
 const MODULE_SELECT_WITH_LESSONS =
-  'id,course_id,title,description,order_index,lessons:lessons!lessons_module_id_fkey(id,module_id,title,description,type,order_index,duration_s,content_json)';
+  'id,course_id,title,description,order_index,lessons:lessons!lessons_module_id_fkey(id,module_id,title,description,type,order_index,duration_s,content_json,completion_rule_json)';
 const MODULE_SELECT_NO_LESSONS = 'id,course_id,title,description,order_index';
 
 const normalizeModuleGraph = (modules, { includeLessons = false } = {}) => {
@@ -14831,8 +14855,8 @@ app.get('/api/invite/:token', async (req, res) => {
       res.status(404).json({ error: 'invite_not_found' });
       return;
     }
-    const orgSummary = await fetchOrganizationSummary(invite.org_id);
-    const assignmentPreview = await buildInviteAssignmentPreview(invite.org_id, { perTypeLimit: 3 });
+    const orgSummary = await fetchOrganizationSummary(invite.organization_id);
+    const assignmentPreview = await buildInviteAssignmentPreview(invite.organization_id, { perTypeLimit: 3 });
     res.json({
       data: buildPublicInvitePayload(
         invite,
@@ -14869,13 +14893,13 @@ app.post('/api/invite/:token/accept', async (req, res) => {
       return;
     }
 
-    const orgSummary = await fetchOrganizationSummary(inviteRecord.org_id);
+    const orgSummary = await fetchOrganizationSummary(inviteRecord.organization_id);
     const fullName = (req.body?.fullName || inviteRecord.invited_name || '').trim();
     const password = req.body?.password ? String(req.body.password) : '';
 
     let authUser = null;
     try {
-      const { data, error } = await supabase.auth.admin.getUserByEmail(invite.email);
+      const { data, error } = await supabase.auth.admin.getUserByEmail(inviteRecord.email);
       if (error && error.message !== 'User not found') {
         throw error;
       }
@@ -14900,7 +14924,7 @@ app.post('/api/invite/:token/accept', async (req, res) => {
         email_confirm: true,
         user_metadata: {
           full_name: fullName || inviteRecord.invited_name || null,
-          onboarding_org_id: inviteRecord.org_id,
+          onboarding_org_id: inviteRecord.organization_id,
         },
       });
       if (error) {

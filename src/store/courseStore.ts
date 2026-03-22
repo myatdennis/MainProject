@@ -2,6 +2,7 @@ import {
   CourseValidationError,
   deleteCourseFromDatabase,
   getAllCoursesFromDatabase,
+  loadCourseFromDatabase,
   syncCourseToDatabase,
 } from '../dal/adminCourses';
 import { fetchPublishedCourses, fetchCourse } from '../dal/clientCourses';
@@ -1724,17 +1725,20 @@ export const courseStore = {
           // A course missing modules entirely is structurally invalid and must
           // not overwrite a locally-cached full-graph copy.
           const beforeFilter = dbCourses.length;
+          const graphRejectedIds: string[] = [];
           dbCourses = dbCourses.filter((c) => {
             const hasModules = Array.isArray(c.modules) && c.modules.length > 0;
             if (!hasModules) {
               // source=server: this is real server data that is structurally incomplete,
               // NOT a blocked-fetch or cache-fallback artifact.
               console.warn('[COURSE GRAPH REJECTED] no_modules', { courseId: c.id, title: c.title, source: 'server' });
+              if (c.id) graphRejectedIds.push(c.id);
               return false;
             }
             // Reject courses with an invalid version stamp (version must be > 0 if present)
             if (typeof c.version === 'number' && c.version <= 0) {
               console.warn('[COURSE GRAPH REJECTED] invalid_version', { courseId: c.id, version: c.version, source: 'server' });
+              if (c.id) graphRejectedIds.push(c.id);
               return false;
             }
             // Reject courses where no module has any lessons — partial graph
@@ -1743,6 +1747,7 @@ export const courseStore = {
             );
             if (!hasLessons) {
               console.warn('[COURSE GRAPH REJECTED] no_lessons_in_any_module', { courseId: c.id, title: c.title, source: 'server' });
+              if (c.id) graphRejectedIds.push(c.id);
               return false;
             }
             if (import.meta.env.DEV) {
@@ -1754,6 +1759,34 @@ export const courseStore = {
             }
             return true;
           });
+          // Self-heal: any course that was rejected from the bulk list due to a
+          // missing module graph gets an individual rescue fetch via the single-
+          // course endpoint.  That endpoint always calls ensureCourseStructureLoaded
+          // which fires a direct DB query for modules, bypassing the inline-join
+          // limitation of the bulk list query.
+          if (graphRejectedIds.length > 0) {
+            // Fire-and-forget: don't block the store from settling.
+            Promise.allSettled(
+              graphRejectedIds.map((id) =>
+                loadCourseFromDatabase(id, { includeDrafts: true })
+                  .then((rescued: import('../utils/courseNormalization').NormalizedCourse | null) => {
+                    if (!rescued) return;
+                    const hasModules = Array.isArray((rescued as any).modules) && (rescued as any).modules.length > 0;
+                    const hasLessons = hasModules && ((rescued as any).modules as any[]).some(
+                      (m: any) => Array.isArray(m.lessons) && m.lessons.length > 0,
+                    );
+                    if (hasModules && hasLessons) {
+                      courses[rescued.id] = rescued as unknown as Course;
+                      console.info('[courseStore.init] graph_rejected_course_rescued', { courseId: rescued.id });
+                      notifySubscribers();
+                    }
+                  })
+                  .catch((err: unknown) => {
+                    console.warn('[courseStore.init] rescue_fetch_failed', { courseId: id, error: (err as Error)?.message });
+                  }),
+              ),
+            );
+          }
           if (import.meta.env?.DEV) {
             const rejected = beforeFilter - dbCourses.length;
             if (rejected > 0) {

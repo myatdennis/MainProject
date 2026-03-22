@@ -1632,10 +1632,13 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         const hasE2EBypassFlag = typeof window !== 'undefined' && Boolean((window as any).__E2E_BYPASS === true);
         const clientE2EFlag = typeof import.meta !== 'undefined' && Boolean((import.meta as any).env?.E2E_TEST_MODE === 'true' || (import.meta as any).env?.DEV_FALLBACK === 'true');
         // Also check localStorage key set by Playwright addInitScript (works even if window flags race)
-        // Restricted to non-production to prevent stale dev keys from leaking into live environments.
-        const hasLocalStorageBypass = isNotProduction && typeof window !== 'undefined' && (() => {
-          try { return window.localStorage.getItem('huddle_lms_auth') === 'true'; } catch { return false; }
-        })();
+        // Restricted to non-production AND requires an explicit window E2E flag to also be present,
+        // so a stale localStorage key left over from a prior test run cannot auto-authenticate a
+        // real browser session on its own.
+        const hasLocalStorageBypass = isNotProduction &&
+          typeof window !== 'undefined' &&
+          (Boolean((window as any).__E2E_BYPASS) || Boolean((window as any).__E2E_SUPABASE_CLIENT)) &&
+          (() => { try { return window.localStorage.getItem('huddle_lms_auth') === 'true'; } catch { return false; } })();
         if (hasWindowOverride || clientE2EFlag || hasE2EBypassFlag || hasLocalStorageBypass) {
           const mockPayload: SessionResponsePayload = {
             user: { id: '00000000-0000-0000-0000-000000000001', email: 'mya@the-huddle.co' } as any,
@@ -1672,7 +1675,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           typeof window !== 'undefined' &&
           (Boolean((window as any).__E2E_BYPASS) ||
             Boolean((window as any).__E2E_SUPABASE_CLIENT) ||
-            (_bypassIsNotProduction && (() => { try { return window.localStorage.getItem('huddle_lms_auth') === 'true'; } catch { return false; } })()));
+            (_bypassIsNotProduction &&
+              (Boolean((window as any).__E2E_BYPASS) || Boolean((window as any).__E2E_SUPABASE_CLIENT)) &&
+              (() => { try { return window.localStorage.getItem('huddle_lms_auth') === 'true'; } catch { return false; } })()));
         if (_bypassRetry) {
           console.warn('[SecureAuth] E2E bypass threw, retrying with minimal mock', e);
           try {
@@ -1696,7 +1701,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         typeof window !== 'undefined' &&
         (Boolean((window as any).__E2E_BYPASS) ||
           Boolean((window as any).__E2E_SUPABASE_CLIENT) ||
-          (_isNotProduction && (() => { try { return window.localStorage.getItem('huddle_lms_auth') === 'true'; } catch { return false; } })()));
+          (_isNotProduction &&
+            (Boolean((window as any).__E2E_BYPASS) || Boolean((window as any).__E2E_SUPABASE_CLIENT)) &&
+            (() => { try { return window.localStorage.getItem('huddle_lms_auth') === 'true'; } catch { return false; } })()));
 
       if (!_e2eFallbackBypass && isLoginPath()) {
         continueAsGuest('bootstrap_login_route');
@@ -1827,7 +1834,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         typeof window !== 'undefined' &&
         (Boolean((window as any).__E2E_BYPASS) ||
           Boolean((window as any).__E2E_SUPABASE_CLIENT) ||
-          (_startIsNotProduction && (() => { try { return window.localStorage.getItem('huddle_lms_auth') === 'true'; } catch { return false; } })()));
+          (_startIsNotProduction &&
+            (Boolean((window as any).__E2E_BYPASS) || Boolean((window as any).__E2E_SUPABASE_CLIENT)) &&
+            (() => { try { return window.localStorage.getItem('huddle_lms_auth') === 'true'; } catch { return false; } })()));
       if (!_isE2EBypass && isLoginPath()) {
         bootstrappedRef.current = true;
         clearBootstrapFailOpenTimer();
