@@ -2162,7 +2162,11 @@ app.use('/api/admin/analytics', adminAnalyticsRoutes);
 app.use('/api/admin/analytics/export', adminAnalyticsExport);
 app.use('/api/admin/analytics/summary', adminAnalyticsSummary);
 app.use('/api/admin/users', authenticate, requireAdmin, adminUsersRouter);
-app.use('/api/admin/courses', authenticate, requireSupabaseUser, requireAdmin, adminCoursesRouter);
+// NOTE: adminCoursesRouter is a deprecated empty stub (see server/routes/admin-courses.js).
+// The real /api/admin/courses handlers live in index.js at the app.get/post/put/delete
+// call sites below. The app.use() mount was intercepting all /api/admin/courses* traffic
+// and routing it into an empty router, causing every courses request to 404 before the
+// real handlers were reached. Removed — auth is covered by app.use('/api/admin', ...) above.
 
 app.get(
   '/api/admin/courses/import/template',
@@ -8234,6 +8238,7 @@ app.post('/api/broadcast', async (req, res) => {
 app.locals.broadcastToTopic = broadcastToTopic;
 
 app.get('/api/admin/courses', async (req, res) => {
+  console.debug('[ADMIN COURSES HANDLER HIT]', { url: req.url, method: req.method });
   const context = requireUserContext(req, res);
   if (!context) return;
 

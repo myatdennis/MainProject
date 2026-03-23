@@ -33,6 +33,9 @@ export default async () => {
 
   return defineConfig({
     define: {
+      // Build version stamp — visible in browser console as __APP_BUILD_TIME__
+      // Confirms which bundle is running after a deploy. Check: console.log(__APP_BUILD_TIME__)
+      __APP_BUILD_TIME__: JSON.stringify(new Date().toISOString()),
       ...(process.env.NODE_ENV === 'development'
         ? { 'import.meta.env.VITE_WS_URL': JSON.stringify('ws://localhost:3000/ws') }
         : {}),
