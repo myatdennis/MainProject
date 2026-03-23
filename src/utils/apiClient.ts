@@ -418,18 +418,30 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
   const url = buildApiUrl(path);
   const pathname = extractPathname(path);
 
-  const adminGuardActive = !options.skipAdminGateCheck && !options.allowAnonymous;
-  if (adminGuardActive && ADMIN_API_PATTERN.test(pathname) && typeof window !== 'undefined' && !isAdminSurface()) {
-    const errorPayload = {
-      error: 'admin_required',
-      message: `Blocked request to admin API from non-admin route: ${pathname}`,
-    };
-    if (devMode) {
-      throw new Error(errorPayload.message);
+  // NOTE: The client-side pathname guard that previously blocked /api/admin/* requests
+  // when isAdminSurface() returned false has been removed.
+  //
+  // Rationale:
+  //   1. ensureAdminAccessForRequest() (called before prepareRequest) already verifies
+  //      admin portal access by calling /api/admin/me — a real server round-trip.
+  //   2. The server enforces authenticate + requireAdmin on every /api/admin/* route,
+  //      making client-side pathname enforcement redundant and adding zero security.
+  //   3. isAdminSurface() reads window.location.pathname synchronously inside an async
+  //      call chain. During deferred callbacks (auth-ready events, org-switch retries,
+  //      courseStore.init() re-runs), the pathname snapshot can disagree with the
+  //      caller's context even when the user is legitimately on an admin page — causing
+  //      spurious [apiRequest] blocked_admin_request errors.
+  //
+  // DEV hint (non-blocking): warn if calling an admin API from a clearly non-admin path,
+  // but never block the request — server authorization is the source of truth.
+  if (devMode && !options.skipAdminGateCheck && !options.allowAnonymous && ADMIN_API_PATTERN.test(pathname)) {
+    if (typeof window !== 'undefined' && !isAdminSurface()) {
+      console.warn('[apiRequest] dev_hint: admin API called from non-admin pathname', {
+        pathname,
+        surface: window.location?.pathname,
+        tip: 'Pass skipAdminGateCheck:true if this is intentional (e.g. courseStore.init).',
+      });
     }
-    const surface = typeof window !== 'undefined' ? window.location?.pathname : 'ssr';
-    console.warn('[apiRequest] blocked_admin_request', { pathname, surface });
-    throw new ApiError(errorPayload.message, 403, pathname, errorPayload);
   }
 
   const requiresSession =

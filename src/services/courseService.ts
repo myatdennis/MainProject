@@ -697,6 +697,7 @@ export class CourseService {
         method,
         body,
         signal: options.signal,
+        skipAdminGateCheck: true,
       });
       const serverCourse = response?.course ?? response?.data ?? null;
       const serverVersion =
@@ -741,6 +742,7 @@ export class CourseService {
     const response = await apiRequest<{ data: ModuleDto }>('/api/admin/modules', {
       method: 'POST',
       body: parsed,
+      skipAdminGateCheck: true,
     });
     return response.data;
   }
@@ -750,6 +752,7 @@ export class CourseService {
     const response = await apiRequest<{ data: ModuleDto }>(`/api/admin/modules/${moduleId}`, {
       method: 'PATCH',
       body: parsed,
+      skipAdminGateCheck: true,
     });
     return response.data;
   }
@@ -758,6 +761,7 @@ export class CourseService {
     await apiRequest(`/api/admin/modules/${moduleId}`, {
       method: 'DELETE',
       expectedStatus: [204],
+      skipAdminGateCheck: true,
     });
   }
 
@@ -766,6 +770,7 @@ export class CourseService {
     const response = await apiRequest<{ data: LessonDto }>('/api/admin/lessons', {
       method: 'POST',
       body: parsed,
+      skipAdminGateCheck: true,
     });
     return response.data;
   }
@@ -775,6 +780,7 @@ export class CourseService {
     const response = await apiRequest<{ data: LessonDto }>(`/api/admin/lessons/${lessonId}`, {
       method: 'PATCH',
       body: parsed,
+      skipAdminGateCheck: true,
     });
     return response.data;
   }
@@ -783,6 +789,7 @@ export class CourseService {
     await apiRequest(`/api/admin/lessons/${lessonId}`, {
       method: 'DELETE',
       expectedStatus: [204],
+      skipAdminGateCheck: true,
     });
   }
 
@@ -808,6 +815,7 @@ export class CourseService {
     const response = await apiRequest<{ data: ModuleDto[] }>('/api/admin/modules/reorder', {
       method: 'POST',
       body: parsed,
+      skipAdminGateCheck: true,
     });
 
     return response.data;
@@ -835,6 +843,7 @@ export class CourseService {
     const response = await apiRequest<{ data: LessonDto[] }>('/api/admin/lessons/reorder', {
       method: 'POST',
       body: parsed,
+      skipAdminGateCheck: true,
     });
 
     return response.data;
@@ -876,7 +885,7 @@ export class CourseService {
         try {
           const adminJson = await apiRequest<{ data: SupabaseCourseRecord | null }>(
             `/api/admin/courses/${identifier}`,
-            { noTransform: true, signal },
+            { noTransform: true, signal, skipAdminGateCheck: true },
           );
           if (adminJson.data) {
             const canonical = mapCourseRecord(adminJson.data);
@@ -894,7 +903,7 @@ export class CourseService {
           try {
             const adminJson = await apiRequest<{ data: SupabaseCourseRecord | null }>(
               `/api/admin/courses/${slugIdentifier}`,
-              { noTransform: true, signal },
+              { noTransform: true, signal, skipAdminGateCheck: true },
             );
             if (adminJson.data) {
               authoritative = mapCourseRecord(adminJson.data);
@@ -934,7 +943,7 @@ export class CourseService {
         try {
           const repairJson = await apiRequest<{ data: SupabaseCourseRecord | null }>(
             `/api/admin/courses/${authoritative.id}`,
-            { noTransform: true, signal },
+            { noTransform: true, signal, skipAdminGateCheck: true },
           );
           if (repairJson.data) {
             const repaired = mapCourseRecord(repairJson.data);
@@ -1010,7 +1019,7 @@ export class CourseService {
     try {
       const adminJson = await apiRequest<{ data: SupabaseCourseRecord | null }>(
         `/api/admin/courses/${normalizedIdentifier}`,
-        { noTransform: true, signal: options.signal },
+        { noTransform: true, signal: options.signal, skipAdminGateCheck: true },
       );
       if (adminJson.data) {
         return mapCourseRecord(adminJson.data);
@@ -1099,6 +1108,7 @@ export class CourseService {
   static async deleteCourseFromDatabase(courseId: string): Promise<void> {
     await apiRequest(`/api/admin/courses/${courseId}`, {
       method: 'DELETE',
+      skipAdminGateCheck: true,
     });
   }
 }

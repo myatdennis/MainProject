@@ -33,7 +33,8 @@ export async function loadCourseFromDatabase(
 export async function adminCreateCourse(payload: any): Promise<any> {
   const json = await apiRequest<{ data: any }>(`/api/admin/courses`, {
     method: 'POST',
-    body: payload
+    body: payload,
+    skipAdminGateCheck: true,
   });
   return json.data;
 }
@@ -58,6 +59,7 @@ export async function adminPublishCourse(courseId: string, options: PublishCours
   const response = await apiRequest<{ data: any }>(`/api/admin/courses/${courseId}/publish`, {
     method: 'POST',
     body: Object.keys(body).length > 0 ? body : undefined,
+    skipAdminGateCheck: true,
   });
 
   return response.data;
@@ -85,6 +87,7 @@ export async function adminAssignCourse(
   const response = await apiRequest<{ data: any }>(`/api/admin/courses/${courseId}/assign`, {
     method: 'POST',
     body: payload,
+    skipAdminGateCheck: true,
   });
 
   return response.data;
@@ -107,7 +110,8 @@ export async function fetchCourseAssignments(
   }
   try {
     const response = await apiRequest<{ data: any[] }>(
-      `/api/admin/courses/${courseId}/assignments?${params.toString()}`
+      `/api/admin/courses/${courseId}/assignments?${params.toString()}`,
+      { skipAdminGateCheck: true },
     );
     const rows = Array.isArray(response.data) ? response.data : [];
     return mapAssignmentsFromApiRows(rows);

@@ -4,7 +4,7 @@ import Button from '../../components/ui/Button';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import { useToast } from '../../context/ToastContext';
 import apiRequest from '../../utils/apiClient';
-import { BookOpen, CheckCircle2, FileJson, FileSpreadsheet, UploadCloud, XCircle } from 'lucide-react';
+import { BookOpen, CheckCircle2, FileJson, FileSpreadsheet, UploadCloud } from 'lucide-react';
 
 type ImportItem = {
   course: any;
@@ -111,7 +111,7 @@ const AdminCoursesImport: React.FC = () => {
 
   const loadExisting = useCallback(async () => {
     try {
-      const res = await apiRequest<{ data: Array<{ slug?: string }> }>('/api/admin/courses', { noTransform: true });
+      const res = await apiRequest<{ data: Array<{ slug?: string }> }>('/api/admin/courses', { noTransform: true, skipAdminGateCheck: true });
       const slugs = new Set<string>();
       (res.data || []).forEach((c: any) => {
         const s = (c.slug || c.id || '').toString().toLowerCase();
