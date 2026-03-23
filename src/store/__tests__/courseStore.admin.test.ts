@@ -303,3 +303,103 @@ describe('courseStore learner catalog fallbacks', () => {
     expect(courseStore.getAllCourses().length).toBe(0);
   });
 });
+
+
+describe('courseStore graph validation — belt-and-suspenders', () => {
+  // The server now pre-filters incomplete courses from the list endpoint.
+  // These tests confirm the client-side guard still catches any that slip through
+  // (e.g. a future API regression or a test mock that bypasses the server filter).
+  beforeEach(() => {
+    window.history.pushState({}, '', '/admin/courses');
+  });
+
+  const createEmptyDraft = (overrides: Partial<Course> = {}): Course => ({
+    id: 'draft-1',
+    slug: 'draft-1',
+    title: 'New Course',
+    description: '',
+    thumbnail: '',
+    difficulty: 'Beginner',
+    duration: '0 min',
+    status: 'draft',
+    tags: [],
+    learningObjectives: [],
+    prerequisites: [],
+    modules: [],    // No modules — belt-and-suspenders guard rejects this
+    lessons: 0,
+    progress: 0,
+    ...overrides,
+  });
+
+  it('excludes courses with no modules from getAllCourses()', async () => {
+    const validCourse = createCourse({ id: 'valid-1' });
+    const emptyDraft = createEmptyDraft({ id: 'empty-draft-1' });
+    adminCoursesMock.getAllCoursesFromDatabase.mockResolvedValue([validCourse, emptyDraft]);
+
+    const courseStore = await importCourseStore();
+    await courseStore.init();
+
+    const allCourses = courseStore.getAllCourses();
+    expect(allCourses.length).toBe(1);
+    expect(allCourses[0].id).toBe('valid-1');
+  });
+
+  it('excludes courses with modules but no lessons from getAllCourses()', async () => {
+    const moduleWithoutLessons = {
+      id: 'mod-1',
+      title: 'Module 1',
+      description: '',
+      duration: '',
+      order: 0,
+      lessons: [],  // No lessons — rejected by belt-and-suspenders guard
+    };
+    const partialCourse = createCourse({ id: 'partial-1', modules: [moduleWithoutLessons] });
+    const validCourse = createCourse({ id: 'valid-1' });
+    adminCoursesMock.getAllCoursesFromDatabase.mockResolvedValue([validCourse, partialCourse]);
+
+    const courseStore = await importCourseStore();
+    await courseStore.init();
+
+    expect(courseStore.getAllCourses().map((c) => c.id)).toEqual(['valid-1']);
+  });
+
+  it('reports success when only valid courses remain after guard', async () => {
+    const validCourse = createCourse({ id: 'v1' });
+    const emptyDraft1 = createEmptyDraft({ id: 'd1', title: 'New Course' });
+    const emptyDraft2 = createEmptyDraft({ id: 'd2', title: 'Another Draft' });
+    adminCoursesMock.getAllCoursesFromDatabase.mockResolvedValue([validCourse, emptyDraft1, emptyDraft2]);
+
+    const courseStore = await importCourseStore();
+    await courseStore.init();
+
+    const state = courseStore.getAdminCatalogState();
+    expect(state.adminLoadStatus).toBe('success');
+    expect(courseStore.getAllCourses().length).toBe(1);
+  });
+
+  it('reports empty when ALL courses from server are invalid', async () => {
+    const draft1 = createEmptyDraft({ id: 'd1' });
+    const draft2 = createEmptyDraft({ id: 'd2' });
+    adminCoursesMock.getAllCoursesFromDatabase.mockResolvedValue([draft1, draft2]);
+
+    const courseStore = await importCourseStore();
+    await courseStore.init();
+
+    const state = courseStore.getAdminCatalogState();
+    expect(state.adminLoadStatus).toBe('empty');
+    expect(courseStore.getAllCourses().length).toBe(0);
+  });
+
+  it('emits a [COURSE GRAPH REJECTED] warning when an incomplete course slips through', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const emptyDraft = createEmptyDraft({ id: 'slip-through' });
+    adminCoursesMock.getAllCoursesFromDatabase.mockResolvedValue([emptyDraft]);
+
+    const courseStore = await importCourseStore();
+    await courseStore.init();
+
+    const warnCalls = warnSpy.mock.calls.map((args) => args[0] as string);
+    expect(warnCalls.some((msg) => msg.includes('[COURSE GRAPH REJECTED]'))).toBe(true);
+    warnSpy.mockRestore();
+  });
+});

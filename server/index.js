@@ -8476,7 +8476,7 @@ app.get('/api/admin/courses', async (req, res) => {
     if (error) throw error;
 
     const normalizedData = Array.isArray(data) ? data : [];
-    const responseData = includeStructure
+    const hydratedData = includeStructure
       ? await Promise.all(
           normalizedData.map((courseRecord) =>
             ensureCourseStructureLoaded(courseRecord, { includeLessons }),
@@ -8484,13 +8484,43 @@ app.get('/api/admin/courses', async (req, res) => {
         )
       : normalizedData;
 
+    // CATALOG CONTRACT: only return courses that are structurally complete.
+    // A course is complete when it has ≥1 module AND at least one module
+    // has ≥1 lesson.  Empty drafts are real DB rows but do not belong in the
+    // graph-backed admin catalog — they cause [COURSE GRAPH REJECTED] noise on
+    // every client init.  Incomplete rows are logged here (server-side) and
+    // must be managed through a separate drafts endpoint or the course builder.
+    const catalogData = hydratedData.filter((c) => {
+      const mods = Array.isArray(c.modules) ? c.modules : [];
+      if (mods.length === 0) {
+        if (NODE_ENV !== 'production') {
+          console.log('[admin.courses] incomplete_draft_excluded', {
+            courseId: c.id, title: c.title, status: c.status, reason: 'no_modules',
+          });
+        }
+        return false;
+      }
+      const hasLessons = mods.some((m) => Array.isArray(m.lessons) && m.lessons.length > 0);
+      if (!hasLessons) {
+        if (NODE_ENV !== 'production') {
+          console.log('[admin.courses] incomplete_draft_excluded', {
+            courseId: c.id, title: c.title, status: c.status, reason: 'no_lessons_in_any_module',
+          });
+        }
+        return false;
+      }
+      return true;
+    });
+
     if (NODE_ENV !== 'production') {
       console.log('[admin.courses][supabase] response_shape', {
         rawCount: normalizedData.length,
-        responseCount: responseData.length,
+        hydratedCount: hydratedData.length,
+        catalogCount: catalogData.length,
+        excludedIncomplete: hydratedData.length - catalogData.length,
         includeStructure,
-        withModules: responseData.filter((c) => Array.isArray(c.modules) && c.modules.length > 0).length,
-        withLessons: responseData.filter((c) => (c.modules || []).some((m) => Array.isArray(m.lessons) && m.lessons.length > 0)).length,
+        withModules: catalogData.filter((c) => Array.isArray(c.modules) && c.modules.length > 0).length,
+        withLessons: catalogData.filter((c) => (c.modules || []).some((m) => Array.isArray(m.lessons) && m.lessons.length > 0)).length,
       });
     }
 
@@ -8514,7 +8544,7 @@ app.get('/api/admin/courses', async (req, res) => {
     }
 
     const responseBody = {
-      data: responseData,
+      data: catalogData,
       pagination: {
         page,
         pageSize,
