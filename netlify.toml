@@ -14,6 +14,11 @@
   VITE_API_BASE_URL = "https://api.the-huddle.co/api"
   VITE_WS_URL = "wss://api.the-huddle.co/ws"
   VITE_DEPLOY_CONTEXT = "$CONTEXT"
+  # VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are NOT set here.
+  # They MUST be set in the Netlify dashboard → Site → Environment Variables.
+  # Project: eprsgmfzqjptfywoecuy
+  # Without these, the frontend will use placeholder Supabase credentials and
+  # all authenticated API calls will fail (no real session token issued).
 
 [context.deploy-preview.environment]
   API_MODE = "proxy"

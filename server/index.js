@@ -49,7 +49,7 @@ import {
   resolveOrganizationContext,
 } from './middleware/auth.js';
 import requireAdminAccess from './middleware/requireAdminAccess.js';
-import supabaseJwtMiddleware from './middleware/supabaseJwt.js';
+import supabaseJwtMiddleware, { SUPABASE_JWT_SECRET_CONFIGURED } from './middleware/supabaseJwt.js';
 import { setDoubleSubmitCSRF, getCSRFToken } from './middleware/csrf.js';
 import adminUsersRouter from './routes/admin-users.js';
 import mfaRoutes from './routes/mfa.js';
@@ -205,6 +205,7 @@ const placeholderPatterns = [
   /your-very-secret/i,
   /public-anon-key-here/i,
   /service-role-secret/i,
+  /^PASTE_/,
 ];
 
 const hasPlaceholderValue = (value) => {
@@ -231,6 +232,7 @@ const warnOnPlaceholderSecrets = () => {
     'SUPABASE_SERVICE_ROLE_KEY',
     'SUPABASE_SERVICE_KEY',
     'SUPABASE_ANON_KEY',
+    'SUPABASE_JWT_SECRET',
     'SUPABASE_URL',
     'VITE_SUPABASE_URL',
     'VITE_SUPABASE_ANON_KEY',
@@ -310,8 +312,19 @@ const ensureEnvironmentIsValid = () => {
     }
   }
 
-  const prodRequired = ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'DATABASE_URL'];
-  const missingProd = prodRequired.filter((key) => !(process.env[key] || '').trim());
+  const prodRequired = ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_JWT_SECRET'];
+  const missingProd = prodRequired.filter((key) => {
+    const val = (process.env[key] || '').trim();
+    return !val || val.startsWith('PASTE_');
+  });
+  // Accept DATABASE_POOLER_URL as an alternative to DATABASE_URL
+  const hasDbUrl =
+    (process.env.DATABASE_URL || '').trim() ||
+    (process.env.DATABASE_POOLER_URL || '').trim() ||
+    (process.env.SUPABASE_DB_POOLER_URL || '').trim();
+  if (!hasDbUrl) {
+    missingProd.push('DATABASE_URL (or DATABASE_POOLER_URL)');
+  }
   if (isProduction && missingProd.length) {
     fatalEnvError(`Missing required production environment variables: ${missingProd.join(', ')}`);
   }
@@ -507,11 +520,28 @@ log('info', 'http_cookie_policy', cookiePolicySnapshot);
 const inferredCookieDomain = process.env.COOKIE_DOMAIN || cookiePolicySnapshot.domain || '(request hostname derived)';
 const cookieSameSite = cookiePolicySnapshot.sameSite;
 const cookieSecure = cookiePolicySnapshot.secure;
+
+// Confirm Supabase JWT secret status at startup using the same value the
+// JWT middleware captured at module-load time (SUPABASE_JWT_SECRET_CONFIGURED).
+// Never log the secret value itself.
+if (!SUPABASE_JWT_SECRET_CONFIGURED) {
+  logger.error('startup_supabase_jwt_secret_missing', {
+    message: 'SUPABASE_JWT_SECRET is not set or is still a placeholder. All authenticated API requests will fail with 401. ' +
+      'Set it in Railway → Project → Variables from Supabase Dashboard → Settings → API → JWT Settings. Then REDEPLOY.',
+    envKeyName: 'SUPABASE_JWT_SECRET',
+    isPlaceholder: (process.env.SUPABASE_JWT_SECRET || '').startsWith('PASTE_'),
+    isEmpty: !(process.env.SUPABASE_JWT_SECRET || '').trim(),
+  });
+}
+
 logger.info('startup_env_diagnostics', {
   nodeEnv: process.env.NODE_ENV || 'development',
   port: Number(process.env.PORT) || 8888,
   supabaseConfigured: supabaseEnv.configured,
-  jwtSecretConfigured: isJwtSecretConfigured,
+  supabaseUrlHost,
+  supabaseProjectRef,
+  appJwtSecretConfigured: isJwtSecretConfigured,
+  supabaseJwtSecretConfigured: SUPABASE_JWT_SECRET_CONFIGURED,
   cookie: {
     domain: inferredCookieDomain,
     sameSite: cookieSameSite,
@@ -864,6 +894,10 @@ const buildHealthPayload = async (overrides = {}) => {
     featureFlags: {
       forceOrgEnforcement: Boolean(FORCE_ORG_ENFORCEMENT),
       devFallback: Boolean(DEV_FALLBACK),
+      // This reflects the VALUE AT STARTUP — not the current env — because supabaseJwt.js
+      // captures SUPABASE_JWT_SECRET into a module-level const at import time.
+      // If this is false after you set the env var in Railway, you need to REDEPLOY.
+      supabaseJwtSecretConfigured: SUPABASE_JWT_SECRET_CONFIGURED,
     },
     orgEnforcement: {
       enforced: Boolean(FORCE_ORG_ENFORCEMENT),
@@ -974,6 +1008,7 @@ const respondWithHealthPayload = async (_req, res) => {
       realtime: payload.realtime,
       metrics: payload.metrics,
       database: payload.database ?? dbHealth,
+      featureFlags: payload.featureFlags,
     });
   } catch (error) {
     logger.warn('health_check_failed', { message: error?.message || String(error), code: error?.code || null });
@@ -1957,7 +1992,7 @@ app.get('/api/text-content', (_req, res, next) => {
   });
 });
 
-app.put('/api/text-content', (req, res, next) => {
+app.put('/api/text-content', requireAdminAccess, (req, res, next) => {
   const items = Array.isArray(req.body) ? req.body : [];
   const contentJson = {};
   for (const item of items) {
@@ -13060,15 +13095,25 @@ app.post('/api/client/progress/lesson', async (req, res) => {
   }
 
   if (!ensureSupabase(res)) return;
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
   const { user_id, lesson_id, percent, status, time_spent_s, resume_at_s } = req.body || {};
   const clientEventId = req.body?.client_event_id ?? null;
 
-  if (!user_id || !lesson_id) {
+  // Enforce that progress can only be recorded for the authenticated user
+  if (user_id && user_id !== context.userId) {
+    res.status(403).json({ error: 'forbidden', message: 'Cannot record progress for a different user.' });
+    return;
+  }
+  const resolvedUserId = context.userId;
+
+  if (!resolvedUserId || !lesson_id) {
     res.status(400).json({ error: 'user_id and lesson_id are required' });
     return;
   }
 
-  const rlKey = `lesson:${String(user_id).toLowerCase()}`;
+  const rlKey = `lesson:${String(resolvedUserId).toLowerCase()}`;
   if (!checkProgressLimit(rlKey)) {
     res.status(429).json({ error: 'Too many progress updates, please slow down' });
     return;
@@ -13077,7 +13122,7 @@ app.post('/api/client/progress/lesson', async (req, res) => {
   const opStart = Date.now();
   try {
     const toApiLessonRecord = (row, fallbackTimeSpent, fallbackResume) => ({
-      user_id: row?.user_id ?? user_id,
+      user_id: row?.user_id ?? resolvedUserId,
       course_id: row?.course_id ?? null,
       lesson_id: row?.lesson_id ?? lesson_id,
       percent: clampPercent(Number(row?.progress ?? row?.percent ?? percent ?? 0)),
@@ -13102,13 +13147,13 @@ app.post('/api/client/progress/lesson', async (req, res) => {
 
     if (clientEventId) {
       try {
-        await supabase.from('progress_events').insert({ id: clientEventId, user_id, course_id: null, lesson_id, payload: req.body });
+        await supabase.from('progress_events').insert({ id: clientEventId, user_id: resolvedUserId, course_id: null, lesson_id, payload: req.body });
       } catch (evErr) {
         try {
           const existing = await supabase
             .from('user_lesson_progress')
             .select('*')
-            .eq('user_id', user_id)
+            .eq('user_id', resolvedUserId)
             .eq('lesson_id', lesson_id)
             .maybeSingle();
           if (existing && !existing.error && existing.data) {
@@ -13118,7 +13163,7 @@ app.post('/api/client/progress/lesson', async (req, res) => {
         } catch (fetchErr) {
           logger.warn('lesson_progress_idempotency_fetch_failed', {
             lesson_id,
-            user_id,
+            user_id: resolvedUserId,
             error: fetchErr instanceof Error ? fetchErr.message : String(fetchErr),
           });
         }
@@ -13127,7 +13172,7 @@ app.post('/api/client/progress/lesson', async (req, res) => {
     const { data, error } = await supabase
       .from('user_lesson_progress')
       .upsert({
-        user_id,
+        user_id: resolvedUserId,
         lesson_id,
         progress: normalizedPercent,
         completed: normalizedCompleted,
@@ -13139,7 +13184,7 @@ app.post('/api/client/progress/lesson', async (req, res) => {
     if (error) throw error;
     try {
       const apiRecord = toApiLessonRecord(data, time_spent_s, resume_at_s);
-      const userId = apiRecord?.user_id || user_id;
+      const userId = apiRecord?.user_id || resolvedUserId;
       const lessonId = apiRecord?.lesson_id || lesson_id;
       const payload = { type: 'lesson_progress', data: apiRecord, timestamp: Date.now() };
       if (userId) broadcastToTopic(`progress:user:${String(userId).toLowerCase()}`, payload);
@@ -13154,7 +13199,7 @@ app.post('/api/client/progress/lesson', async (req, res) => {
     }
   recordLessonProgress('supabase', Date.now() - opStart, {
       status: 'success',
-      userId: user_id,
+      userId: resolvedUserId,
       lessonId: lesson_id,
       percent: normalizedPercent,
     });
@@ -13163,7 +13208,7 @@ app.post('/api/client/progress/lesson', async (req, res) => {
   } catch (error) {
     recordLessonProgress('supabase', Date.now() - opStart, {
       status: 'error',
-      userId: user_id,
+      userId: resolvedUserId,
       lessonId: lesson_id,
       message: error instanceof Error ? error.message : String(error),
     });
@@ -13270,6 +13315,9 @@ app.post('/api/client/progress/batch', async (req, res) => {
 
   if (!ensureSupabase(res)) return;
 
+  const batchContext = requireUserContext(req, res);
+  if (!batchContext) return;
+
   const approxBytes = Buffer.byteLength(JSON.stringify(events));
   if (approxBytes > PROGRESS_BATCH_MAX_BYTES) {
     res.status(413).json({ error: 'batch_payload_too_large', limitBytes: PROGRESS_BATCH_MAX_BYTES });
@@ -13285,7 +13333,7 @@ app.post('/api/client/progress/batch', async (req, res) => {
     const normalizedClientEventId = evt.client_event_id || evt.clientEventId || randomUUID();
     return {
       client_event_id: normalizedClientEventId,
-      user_id: typeof normalizedUserIdRaw === 'string' ? normalizedUserIdRaw.trim() : null,
+      user_id: batchContext.userId, // always use authenticated user's ID, never trust payload user_id
       course_id: typeof normalizedCourseId === 'string' ? normalizedCourseId.trim() : null,
       lesson_id: typeof normalizedLessonId === 'string' ? normalizedLessonId.trim() : null,
       org_id: normalizedOrgId,
@@ -13445,20 +13493,25 @@ app.post('/api/analytics/events/batch', async (req, res) => {
 
 app.post('/api/client/certificates/:courseId', async (req, res) => {
   if (!ensureSupabase(res)) return;
+  const certContext = requireUserContext(req, res);
+  if (!certContext) return;
+
   const { courseId } = req.params;
   const { id, user_id, pdf_url, metadata = {} } = req.body || {};
 
-  if (!user_id) {
-    res.status(400).json({ error: 'user_id is required' });
+  // Disallow spoofing certificates for other users
+  if (user_id && user_id !== certContext.userId) {
+    res.status(403).json({ error: 'forbidden', message: 'Cannot create certificate for a different user.' });
     return;
   }
+  const resolvedCertUserId = certContext.userId;
 
   try {
     const { data, error } = await supabase
       .from('certificates')
       .insert({
         id: id ?? undefined,
-        user_id,
+        user_id: resolvedCertUserId,
         course_id: courseId,
         pdf_url: pdf_url ?? null,
         metadata
@@ -13476,12 +13529,12 @@ app.post('/api/client/certificates/:courseId', async (req, res) => {
 
 app.get('/api/client/certificates', async (req, res) => {
   if (!ensureSupabase(res)) return;
-  const { user_id, course_id } = req.query;
+  const getCertContext = requireUserContext(req, res);
+  if (!getCertContext) return;
 
-  // Validate user_id is a proper UUID — reject emails/non-uuid values
-  if (user_id && !isUuid(String(user_id))) {
-    return res.status(400).json({ error: 'user_id must be a valid UUID' });
-  }
+  const { course_id } = req.query;
+  // Always scope to the authenticated user — never trust a user_id query param
+  const user_id = getCertContext.userId;
 
   try {
     let query = supabase

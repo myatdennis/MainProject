@@ -16,6 +16,12 @@ const normalizeOrigins = (value = '') =>
     .map((entry) => entry.trim())
     .filter(Boolean)
     .filter((origin) => {
+      // Silently discard wildcard glob patterns — they are not valid browser origins
+      // and will never match the Origin header.  Netlify preview URLs are handled
+      // separately by NETLIFY_PREVIEW_REGEX.
+      if (origin.includes('*')) {
+        return false;
+      }
       if (isHttpOrigin(origin)) {
         return true;
       }
@@ -23,9 +29,14 @@ const normalizeOrigins = (value = '') =>
       return false;
     });
 
+// Matches any Netlify deploy preview or branch deploy URL for this project.
+// The pattern intentionally accepts any subdomain so PR previews and branch
+// deploys don't require manual CORS allowlist updates.
 const NETLIFY_PREVIEW_REGEX = /^https:\/\/[a-z0-9-]+--the-huddleco\.netlify\.app$/i;
+// Broader fallback: any *.netlify.app origin is also allowed for previews.
+const NETLIFY_ANY_PREVIEW_REGEX = /^https:\/\/[a-z0-9-]+\.netlify\.app$/i;
 
-const STATIC_ALLOWED_ORIGINS = ['https://the-huddle.co', 'https://www.the-huddle.co', 'http://localhost:5173'];
+const STATIC_ALLOWED_ORIGINS = ['https://the-huddle.co', 'https://www.the-huddle.co', 'http://localhost:5173', 'http://localhost:5174'];
 const devDefaults = STATIC_ALLOWED_ORIGINS;
 const requiredProdOrigins = ['https://the-huddle.co', 'https://www.the-huddle.co'];
 const prodDefaults = STATIC_ALLOWED_ORIGINS;
@@ -59,7 +70,9 @@ const resolveCorsOriginDecision = (origin) => {
   if (resolvedCorsOrigins.includes(origin)) {
     return { allowed: true, reason: 'allowlist', resolvedOrigin: origin };
   }
-  if ((process.env.NODE_ENV || '').toLowerCase() === 'production' && NETLIFY_PREVIEW_REGEX.test(origin)) {
+  // Allow all Netlify preview and branch-deploy URLs in all environments so PR
+  // previews never hit CORS errors when calling the Railway API.
+  if (NETLIFY_PREVIEW_REGEX.test(origin) || NETLIFY_ANY_PREVIEW_REGEX.test(origin)) {
     return { allowed: true, reason: 'netlify_preview', resolvedOrigin: origin };
   }
   if ((process.env.NODE_ENV || '').toLowerCase() !== 'production' && isLocalDevOrigin(origin)) {

@@ -23,8 +23,20 @@ const buildSupabaseUrl = (path) => {
 
 const SUPABASE_JWKS_URL = new URL('/auth/v1/.well-known/jwks.json', rawSupabaseBaseUrl);
 const SUPABASE_EXPECTED_ISSUER = new URL('/auth/v1', rawSupabaseBaseUrl).toString().replace(/\/+$/, '');
-console.log('[JWT] JWKS URL:', SUPABASE_JWKS_URL.toString());
 const SUPABASE_JWT_SECRET = (process.env.SUPABASE_JWT_SECRET || '').trim();
+const SUPABASE_JWT_SECRET_CONFIGURED = Boolean(SUPABASE_JWT_SECRET) && !SUPABASE_JWT_SECRET.startsWith('PASTE_');
+
+// Emit a single startup log so Railway logs always show the JWT config state.
+// Never log the secret value itself.
+console.log('[supabaseJwt] startup_config', {
+  supabaseUrlHost: (() => { try { return new URL(rawSupabaseBaseUrl).host; } catch { return '(invalid)'; } })(),
+  expectedIssuer: SUPABASE_EXPECTED_ISSUER,
+  jwksUrl: SUPABASE_JWKS_URL.toString(),
+  hs256SecretConfigured: SUPABASE_JWT_SECRET_CONFIGURED,
+  devFallbackEnabled: DEV_FALLBACK_ENABLED,
+  e2eMode: E2E_MODE,
+  activeVerificationMode: SUPABASE_JWT_SECRET_CONFIGURED ? 'hs256' : 'jwks_only',
+});
 let cachedHs256Secret;
 const textEncoder = typeof TextEncoder !== 'undefined' ? new TextEncoder() : null;
 
@@ -37,7 +49,15 @@ const jwksCache = new LRUCache({
 });
 const JWKS_CACHE_KEY = 'remote_jwks';
 const getHs256SecretKey = () => {
-  if (!SUPABASE_JWT_SECRET) {
+  if (!SUPABASE_JWT_SECRET_CONFIGURED) {
+    // Emit a loud server-side error so Railway/local logs surface the root cause.
+    // This fires per-request (not just startup) so it's visible in Railway log tailing.
+    console.error(
+      '[supabaseJwt] FATAL CONFIG: SUPABASE_JWT_SECRET is not set or is still a placeholder. ' +
+      'All HS256 token validation will fail with 401. ' +
+      'Get the JWT secret from: Supabase Dashboard → Settings → API → JWT Settings → "JWT Secret" ' +
+      'Then set SUPABASE_JWT_SECRET in Railway environment variables and REDEPLOY.'
+    );
     throw new Error('supabase_jwt_secret_missing');
   }
   if (!cachedHs256Secret) {
@@ -216,7 +236,17 @@ export default async function supabaseJwtMiddleware(req, res, next) {
     return next();
   } catch (error) {
     const code = error?.message || 'token_verification_failed';
-    console.warn('[supabaseJwt] token validation failed', code);
+    // Distinguish between config errors and invalid tokens to aid Railway log triage
+    const isConfigError = code === 'supabase_jwt_secret_missing';
+    if (isConfigError) {
+      // Already logged inside getHs256SecretKey — no need to repeat here
+    } else {
+      console.warn('[supabaseJwt] token validation failed', {
+        code,
+        algorithm: (() => { try { return decodeProtectedHeader(token)?.alg; } catch { return 'unknown'; } })(),
+        secretConfigured: SUPABASE_JWT_SECRET_CONFIGURED,
+      });
+    }
     // In E2E / dev-fallback mode, a token that fails JWT verification (e.g.
     // a synthetic "e2e-access-token" placeholder) must NOT cause an immediate
     // 401.  Instead we fall through to the authenticate middleware which has
@@ -229,9 +259,11 @@ export default async function supabaseJwtMiddleware(req, res, next) {
     }
     return res.status(401).json({
       error: 'Authentication required',
-      message: 'Invalid or expired token',
+      message: isConfigError
+        ? 'Server authentication is not configured. Contact the administrator.'
+        : 'Invalid or expired token',
     });
   }
 }
 
-export { verifySupabaseToken };
+export { verifySupabaseToken, SUPABASE_JWT_SECRET_CONFIGURED };

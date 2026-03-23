@@ -167,8 +167,8 @@ export default async () => {
       exclude: ['lucide-react'],
     },
     build: {
-      sourcemap: true,
-      minify: false, // TEMP: keep bundles readable while debugging
+      sourcemap: process.env.NODE_ENV !== 'production',
+      minify: process.env.NODE_ENV === 'production' ? 'esbuild' : false,
       target: 'es2015',
       chunkSizeWarningLimit: 1000,
       rollupOptions: {

@@ -24,8 +24,10 @@ const ConnectivityBanner = () => {
 
   const statusCopy: Record<string, string> = {
     offline: 'You appear to be offline. Changes will be saved locally until your connection returns.',
-    'server-unreachable': 'We cannot reach the API server. Please check that npm run dev is running.',
-    'api-error': 'The API health check failed. Review server logs or retry shortly.',
+    'server-unreachable': import.meta.env.DEV
+      ? 'We cannot reach the API server. Please check that npm run dev is running.'
+      : 'We cannot reach the server right now. Your data is cached locally. Please try again shortly.',
+    'api-error': 'The server is experiencing issues. Please retry shortly.',
   };
 
   const handleRetry = () => {
