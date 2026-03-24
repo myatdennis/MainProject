@@ -925,6 +925,14 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       lastAppliedActiveOrgIdRef.current = session.activeOrgId ?? null;
       lastActiveOrgSourceRef.current = activeOrgSource;
       clearMembershipRetryBackoff();
+      console.debug('[AUTH SESSION RESTORED]', {
+        userId: session.id,
+        role: session.role,
+        activeOrgId: session.activeOrgId,
+        reason,
+        pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+        ts: Date.now(),
+      });
 
       if (persistTokens) {
         if (payload.accessToken !== undefined) {
@@ -1716,6 +1724,10 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       setSessionStatus('loading');
       setBootstrapError(null);
       setAuthInitializing(true);
+      console.debug('[AUTH BOOTSTRAP START]', {
+        pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+        ts: Date.now(),
+      });
 
       let storedAccessToken: string | null = null;
       try {
@@ -1810,6 +1822,11 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           clearBootstrapFailOpenTimer();
           setSessionStatus(hasAuthenticatedSessionRef.current ? 'authenticated' : 'unauthenticated');
           setAuthInitializing(false);
+          console.debug('[AUTH BOOTSTRAP COMPLETE]', {
+            authenticated: hasAuthenticatedSessionRef.current,
+            pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+            ts: Date.now(),
+          });
         }
       }
     },
@@ -2629,6 +2646,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     <AuthContext.Provider value={value}>
       {renderAuthState({
         authStatus,
+        authInitializing,
         bootstrapError,
         onRetry: retryBootstrap,
         onGoToLogin,
@@ -2641,6 +2659,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
 const renderAuthState = ({
   authStatus,
+  authInitializing,
   bootstrapError,
   onRetry,
   onGoToLogin,
@@ -2648,6 +2667,7 @@ const renderAuthState = ({
   shouldRedirectToLogin,
 }: {
   authStatus: 'booting' | 'authenticated' | 'unauthenticated' | 'error';
+  authInitializing: boolean;
   bootstrapError: string | null;
   onRetry: () => void;
   onGoToLogin: () => void;
@@ -2696,10 +2716,35 @@ const renderAuthState = ({
     if (!isAuthenticatedUser && (isPublicAuthPath || isMarketingLanding)) {
       return <>{children}</>;
     }
+    // Bootstrap is still in progress — the server session call hasn't completed
+    // yet (e.g. Supabase token read returned empty before /auth/session resolved).
+    // Suppress the redirect and render optimistically so we don't bounce the user
+    // to /login and then immediately restore their authenticated session.
+    if (authInitializing) {
+      console.debug('[AUTH REDIRECT DECISION]', {
+        decision: 'suppressed_bootstrap_in_progress',
+        authStatus,
+        authInitializing,
+        shouldRedirectToLogin,
+        pathname,
+        ts: Date.now(),
+      });
+      if (isProtectedAppRoute && !isPublicAuthPath) return <>{children}</>;
+      return <BootstrapLoading />;
+    }
     const onLoginRoute = isLoginPath();
     if (!onLoginRoute && shouldRedirectToLogin) {
       if (typeof window !== 'undefined') {
         const target = resolveLoginPath();
+        console.debug('[AUTH REDIRECT DECISION]', {
+          decision: 'redirecting',
+          authStatus,
+          authInitializing,
+          shouldRedirectToLogin,
+          pathname,
+          target,
+          ts: Date.now(),
+        });
         logAuthRedirect('SecureAuthContext.renderAuthState.unauthenticated', {
           target,
           pathname,
