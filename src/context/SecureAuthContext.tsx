@@ -2211,6 +2211,21 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     publishAuthDebugSnapshot('state_change');
   }, [publishAuthDebugSnapshot]);
 
+  // ── Global auth state machine trace ──────────────────────────────────────
+  // Fires on every transition of the canonical auth state.  This is the single
+  // source of truth log — every gate decision elsewhere references these values.
+  useEffect(() => {
+    console.debug('[AUTH_STATE_MACHINE]', {
+      pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+      authInitializing,
+      authStatus,
+      sessionStatus,
+      membershipStatus,
+      activeOrgId: activeOrgId ?? null,
+      ts: Date.now(),
+    });
+  }, [authInitializing, authStatus, sessionStatus, membershipStatus, activeOrgId]);
+
   useEffect(() => {
     if (membershipStatus === 'ready' && lastMembershipStatusRef.current !== 'ready') {
       if (typeof window !== 'undefined') {

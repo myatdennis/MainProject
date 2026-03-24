@@ -89,7 +89,7 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
   // new chunk resolves.  isPending can be used to show a subtle loading indicator
   // in the sidebar without blanking the content area.
   const [navPending, startNavTransition] = useTransition();
-  const { isAuthenticated, user: authUser, authInitializing, logout, sessionStatus, user, membershipStatus } = useSecureAuth();
+  const { isAuthenticated, user: authUser, authInitializing, authStatus, logout, sessionStatus, user, membershipStatus } = useSecureAuth();
   const {
     adminPortalAllowed: adminPortalAllowedRaw,
     hasSession,
@@ -266,24 +266,32 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
     if (normalizedAuthInitializing) {
       return;
     }
-    // Only redirect when there is definitively no session. Do NOT redirect based
-    // on adminPortalAllowed alone — that flag is false while /admin/me is still
-    // resolving, which would cause a premature login redirect on every internal
-    // navigation click while the async gate check is in flight. RequireAuth is
-    // responsible for the access-denied path once the check completes.
-    if (!hasSession) {
+    // Only redirect when auth is definitively settled as unauthenticated.
+    // Using authStatus (not sessionStatus) prevents the transient race where
+    // sessionStatus='unauthenticated' fires before /auth/session resolves.
+    // RequireAuth is the primary auth gate; this is a safety net for the layout
+    // shell only.
+    if (!hasSession && authStatus === 'unauthenticated') {
       logAuthDiagnostic('AdminLayout.auth_guard', {
         path: location.pathname,
         reason: 'missing_session',
+        authStatus,
         sessionStatus: normalizedSessionStatus,
       });
+      console.debug('[AUTH_GATE_DECISION]', {
+        source: 'AdminLayout.auth_guard',
+        decision: 'redirect_login',
+        pathname: location.pathname,
+        reason: 'missing_session_post_bootstrap',
+      });
       const onLoginRoute = location.pathname === '/admin/login';
-      if (normalizedSessionStatus === 'unauthenticated' && !onLoginRoute) {
+      if (!onLoginRoute) {
         navigate('/admin/login');
       }
     }
   }, [
     normalizedAuthInitializing,
+    authStatus,
     normalizedSessionStatus,
     hasSession,
     location.pathname,

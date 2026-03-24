@@ -42,7 +42,7 @@ const navigation = [
 ];
 
 const LMSLayout = ({ children }: LMSLayoutProps) => {
-  const { logout, isAuthenticated, user } = useSecureAuth();
+  const { logout, isAuthenticated, user, authInitializing, authStatus } = useSecureAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const location = useLocation();
   const navigate = useNavigate();
@@ -61,13 +61,27 @@ const LMSLayout = ({ children }: LMSLayoutProps) => {
     if (!supabaseConfigured) {
       return;
     }
-
-    if (!isAuthenticated.lms) {
+    // Do NOT redirect while bootstrap is in progress.  isAuthenticated.lms is
+    // false transiently during the bootstrap window before the session payload
+    // is applied.  Only redirect once authInitializing is false AND authStatus
+    // is definitively 'unauthenticated'.
+    if (authInitializing || authStatus === 'booting') {
+      return;
+    }
+    if (!isAuthenticated.lms && authStatus === 'unauthenticated') {
+      console.debug('[AUTH_GATE_DECISION]', {
+        source: 'LMSLayout.auth_guard',
+        decision: 'redirect_login',
+        pathname: window.location.pathname,
+        reason: 'lms_unauthenticated_post_bootstrap',
+      });
       navigate('/login');
     }
-  }, [isAuthenticated.lms, navigate, supabaseConfigured]);
+  }, [isAuthenticated.lms, authInitializing, authStatus, navigate, supabaseConfigured]);
 
-  if (isAuthenticated.lms === undefined) {
+  // Show spinner only during the initial cold-start bootstrap, not on every
+  // re-render.  Once authInitializing is false the layout commits immediately.
+  if (authInitializing || authStatus === 'booting') {
     return (
       <div className="flex min-h-screen items-center justify-center bg-softwhite">
         <LoadingSpinner size="lg" />

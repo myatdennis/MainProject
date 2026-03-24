@@ -44,6 +44,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   const ROUTE_GUARD_DEBUG = Boolean(env?.DEV || env?.VITE_ENABLE_ROUTE_GUARD_DEBUG === 'true');
   const {
     authInitializing,
+    authStatus,
     sessionStatus,
     surfaceAuthStatus,
     orgResolutionStatus,
@@ -74,7 +75,6 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   const hasSession = Boolean(user);
   const sessionLoading = sessionStatus === 'loading';
   const sessionAuthenticated = sessionStatus === 'authenticated';
-  const sessionUnauthenticated = sessionStatus === 'unauthenticated';
   const surfaceState = surfaceAuthStatus?.[mode] ?? 'idle';
   const effectiveSurfaceState =
     surfaceState === 'idle' && sessionAuthenticated && orgResolutionStatus === 'ready' ? 'ready' : surfaceState;
@@ -670,18 +670,41 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   const statusesReady =
     sessionAuthenticated && orgResolutionStatus === 'ready' && effectiveSurfaceState === 'ready';
 
-  // Once auth succeeds at least once, we NEVER block rendering for route changes.
+  // Once authentication succeeds at least once, we NEVER block rendering for route changes.
   // Subsequent navigations must always render immediately — no spinner flash.
   if (sessionAuthenticated) {
     hasResolvedAuthRef.current = true;
   }
+
+  // ── GATE 1: Bootstrap in progress ────────────────────────────────────────
+  // authInitializing is the CANONICAL signal that bootstrap has not yet
+  // completed.  While it is true, authStatus/sessionStatus may transiently
+  // show 'unauthenticated' before the server session resolves.  We must
+  // NEVER redirect during this window.
+  //
+  // We use authStatus === 'booting' OR authInitializing === true as the
+  // composite in-progress signal:
+  //   - 'booting'        → runBootstrap has not yet called applySessionPayload
+  //   - authInitializing → runBootstrap is executing (covers edge where
+  //                        authStatus flips to 'unauthenticated' transiently
+  //                        before the server session call resolves)
+  const bootstrapInProgress = authInitializing || authStatus === 'booting';
+
+  console.debug('[REQUIRE_AUTH_EVAL]', {
+    pathname: location.pathname,
+    authInitializing,
+    authStatus,
+    sessionStatus,
+    membershipStatus,
+    activeOrgId,
+  });
 
   // Bootstrap-only gate: block rendering exclusively during the first cold-start
   // load (before we have any confirmed auth state).  Once hasResolvedAuthRef is
   // true we skip every spinner condition — the admin gate and membership checks
   // run in the background and update state without blocking the page render.
   const shouldShowBootstrapSpinner =
-    !hasResolvedAuthRef.current && sessionStatus !== 'authenticated';
+    !hasResolvedAuthRef.current && bootstrapInProgress;
 
   if (shouldShowBootstrapSpinner) {
     return (
@@ -697,6 +720,12 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
     statusesReady &&
     (adminGateStatus === 'unauthorized' || adminGateStatus === 'error')
   ) {
+    console.debug('[REQUIRE_AUTH_UNAUTHORIZED]', {
+      pathname: location.pathname,
+      authStatus,
+      membershipStatus,
+      reason: adminGateError ?? adminGateStatus,
+    });
     const heading = adminGateStatus === 'unauthorized' ? 'Admin access required' : 'Unable to verify admin access';
     const description =
       adminGateStatus === 'unauthorized'
@@ -742,19 +771,19 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
 
   if (!hasSession) {
     // Do not show a spinner here — the bootstrap spinner at the top of this
-    // function already handles all pre-auth loading states (sessionStatus
-    // !== 'authenticated').  Showing a second spinner here would cause a
-    // flash if user populates slightly after sessionStatus flips.
+    // function already handles all pre-auth loading states.
     //
-    // If auth has already resolved once (hasResolvedAuthRef.current is true),
-    // we must NOT block rendering here — the Outlet must stay mounted so the
-    // page commits instantly on navigation.
-    if (!hasResolvedAuthRef.current && (authInitializing || sessionLoading)) {
-      // Render nothing — bootstrap spinner already showing upstream,
-      // or the component will re-render once sessionStatus settles.
+    // CRITICAL: do NOT redirect while bootstrap is still in progress.
+    // authStatus can transiently be 'unauthenticated' before /auth/session
+    // resolves, which would produce a false redirect.  Only redirect after
+    // authInitializing === false AND authStatus is definitively settled.
+    if (bootstrapInProgress) {
+      // Bootstrap still running — render nothing and wait for the real state.
       return null;
     }
-    if (!sessionUnauthenticated) {
+    // Bootstrap is complete.  If auth is not definitively unauthenticated,
+    // something is still resolving (e.g. authStatus='error') — don't redirect.
+    if (authStatus !== 'unauthenticated') {
       return null;
     }
     const targetPath = currentLoginPath;
@@ -768,9 +797,18 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
       logAuthRedirect('RequireAuth.redirect_missing_session', {
         path: location.pathname,
         target: targetPath,
+        authStatus,
+        authInitializing,
         sessionStatus,
         orgResolutionStatus,
         surfaceStatus: effectiveSurfaceState,
+      });
+      console.debug('[REQUIRE_AUTH_REDIRECT]', {
+        pathname: location.pathname,
+        authInitializing,
+        authStatus,
+        membershipStatus,
+        target: targetPath,
       });
       return <Navigate to={targetPath} state={{ from: location, reason: 'missing_session' }} replace />;
     }
@@ -818,8 +856,25 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
     if (!isAuthenticated.lms) {
       const lmsTarget = loginPathByMode.lms;
       if (!isOnModeLoginPath) {
+        // Guard: same bootstrap-in-progress check — do not redirect while
+        // auth is still initializing.  isAuthenticated.lms is false transiently
+        // during bootstrap before the session payload is applied.
+        if (bootstrapInProgress) {
+          return null;
+        }
+        // Only redirect once auth is definitively settled as unauthenticated.
+        if (authStatus !== 'unauthenticated') {
+          return null;
+        }
         logRedirectOnce(lmsTarget, 'missing_lms_session');
         logGuardEvent('redirect_login', { reason: 'missing_lms_session' });
+        console.debug('[REQUIRE_AUTH_REDIRECT]', {
+          pathname: location.pathname,
+          authInitializing,
+          authStatus,
+          membershipStatus,
+          target: lmsTarget,
+        });
         return <Navigate to={lmsTarget} state={{ from: location, reason: 'missing_lms_session' }} replace />;
       }
       logGuardEvent('render_login_route', { reason: 'missing_lms_session', target: lmsTarget });
@@ -852,11 +907,17 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   }
 
   logGuardEvent('allow', { path: location.pathname, adminCapabilityStatus: adminCapability.status });
+  console.debug('[REQUIRE_AUTH_ALLOW]', {
+    pathname: location.pathname,
+    authStatus,
+    membershipStatus,
+  });
   if (import.meta.env.DEV) {
     console.debug('[REQUIRE AUTH RENDER]', location.pathname, {
       mode,
       hasSession,
       sessionStatus,
+      authStatus,
       adminGateStatus,
       hasResolvedAuth: hasResolvedAuthRef.current,
     });
