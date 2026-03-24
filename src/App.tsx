@@ -1,4 +1,4 @@
-import { useEffect, Suspense, lazy, useRef, useContext } from 'react';
+import { useEffect, Suspense, lazy, useRef, useContext, type ReactNode } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, useLocation, useParams } from 'react-router-dom';
 import { courseStore } from './store/courseStore';
 import { LoadingSpinner } from './components/LoadingComponents';
@@ -164,9 +164,59 @@ function App() {
   );
 }
 
+/**
+ * AuthBootstrapGate — dedicated component that owns the root auth gate.
+ *
+ * Separated from AppContent so that EVERY hook is declared unconditionally
+ * before any conditional return, avoiding React error #310.
+ *
+ * Rules enforced here:
+ *  1. useSecureAuth() and useLocation() are called unconditionally (always first).
+ *  2. All derived constants are computed unconditionally.
+ *  3. The conditional early return (loading shell) is the LAST statement.
+ *  4. No other hooks exist in this component — there is nothing after the return.
+ */
+const AuthBootstrapGate = ({ children }: { children: ReactNode }) => {
+  const { authInitializing, authStatus } = useSecureAuth();
+  const location = useLocation();
+
+  const isProtectedSurface = /^\/(admin|lms|client)(?:\/|$)/i.test(location.pathname);
+  const isPublicAuthPath =
+    location.pathname === '/admin/login' ||
+    location.pathname === '/login' ||
+    location.pathname === '/lms/login' ||
+    location.pathname.startsWith('/auth/') ||
+    location.pathname.startsWith('/invite/');
+  const blocking = (authInitializing || authStatus === 'booting') && isProtectedSurface && !isPublicAuthPath;
+
+  console.debug('[AUTH ROOT GATE]', {
+    pathname: location.pathname,
+    authInitializing,
+    authStatus,
+    blocking,
+  });
+
+  // All hooks are above this line — this conditional return is safe.
+  if (blocking) {
+    return (
+      <div className="flex min-h-[calc(var(--app-vh,1vh)*100)] flex-col bg-[var(--hud-bg)]" style={{ paddingBottom: 'var(--safe-area-bottom, 0px)' }}>
+        <main className="flex flex-grow items-center justify-center bg-softwhite">
+          <div className="flex flex-col items-center gap-4 rounded-2xl border border-mist bg-white px-10 py-8 shadow-lg">
+            <span className="text-sm font-semibold uppercase tracking-wide text-slate">Initializing session</span>
+            <div className="h-10 w-10 animate-spin rounded-full border-4 border-cloud border-t-sunrise" aria-label="Loading" />
+            <p className="text-center text-sm text-slate/70">Please hold while we verify your access…</p>
+          </div>
+        </main>
+        {import.meta.env.DEV && <ConnectionDiagnostic />}
+      </div>
+    );
+  }
+  return <>{children}</>;
+};
+
 function AppContent() {
   useViewportHeight();
-  const { sessionStatus, user, activeOrgId, orgResolutionStatus, authInitializing, authStatus } = useSecureAuth();
+  const { sessionStatus, user, activeOrgId, orgResolutionStatus } = useSecureAuth();
   const toastContext = useContext(ToastContext);
   const showCatalogToast = toastContext?.showToast;
   const courseInitKeyRef = useRef<string | null>(null);
@@ -205,65 +255,9 @@ function AppContent() {
     };
   }, [sessionStatus, orgResolutionStatus, user?.id, activeOrgId]);
 
-  const location = useLocation();
-  const hideMarketingChrome = /^\/(admin|lms|client)(?:\/|$)/i.test(location.pathname);
-
-  // ── Root auth bootstrap gate ─────────────────────────────────────────────
-  // Determines whether the current path is a protected app surface that must
-  // wait for auth bootstrap to complete before any route component renders.
-  //
-  // Public paths that must ALWAYS render immediately (no gate):
-  //   /admin/login   — the login page itself
-  //   /login         — LMS login
-  //   /auth/callback — OAuth return URL
-  //   /invite/*      — invite-accept flow
-  //   /              — marketing home
-  //   /about /services /resources … — all marketing pages
-  //
-  // Protected surfaces that MUST NOT render until authStatus is settled:
-  //   /admin/* (except /admin/login)
-  //   /lms/*
-  //   /client/*
-  //   /client-portal/org/*
-  const isProtectedSurface = /^\/(admin|lms|client)(?:\/|$)/i.test(location.pathname);
-  const isPublicAuthPath =
-    location.pathname === '/admin/login' ||
-    location.pathname === '/login' ||
-    location.pathname === '/lms/login' ||
-    location.pathname.startsWith('/auth/') ||
-    location.pathname.startsWith('/invite/');
-  const bootstrapInProgress = authInitializing || authStatus === 'booting';
-
-  console.debug('[AUTH ROOT GATE]', {
-    pathname: location.pathname,
-    authInitializing,
-    authStatus,
-    isProtectedSurface,
-    isPublicAuthPath,
-    bootstrapInProgress,
-  });
-
-  // If bootstrap is still in progress for a protected surface, render a minimal
-  // full-screen loading shell.  This prevents ANY child component — RequireAuth,
-  // AdminLayout, LMSLayout, page components — from evaluating auth state against
-  // the transient 'booting'/'unauthenticated' snapshot and firing a premature
-  // redirect to /admin/login.
-  if (bootstrapInProgress && isProtectedSurface && !isPublicAuthPath) {
-    return (
-      <div className="flex min-h-[calc(var(--app-vh,1vh)*100)] flex-col bg-[var(--hud-bg)]" style={{ paddingBottom: 'var(--safe-area-bottom, 0px)' }}>
-        <main className="flex flex-grow items-center justify-center bg-softwhite">
-          <div className="flex flex-col items-center gap-4 rounded-2xl border border-mist bg-white px-10 py-8 shadow-lg">
-            <span className="text-sm font-semibold uppercase tracking-wide text-slate">Initializing session</span>
-            <div className="h-10 w-10 animate-spin rounded-full border-4 border-cloud border-t-sunrise" aria-label="Loading" />
-            <p className="text-center text-sm text-slate/70">Please hold while we verify your access…</p>
-          </div>
-        </main>
-        {import.meta.env.DEV && <ConnectionDiagnostic />}
-      </div>
-    );
-  }
-  // ── End root auth bootstrap gate ─────────────────────────────────────────
-
+  // ── Catalog warning toast handler ─────────────────────────────────────────
+  // Declared here (before useLocation / any conditional) so hook call count
+  // is always stable regardless of auth state.
   useEffect(() => {
     if (typeof window === 'undefined' || typeof showCatalogToast !== 'function') {
       return;
@@ -287,7 +281,11 @@ function AppContent() {
     };
   }, [showCatalogToast]);
 
+  const location = useLocation();
+  const hideMarketingChrome = /^\/(admin|lms|client)(?:\/|$)/i.test(location.pathname);
+
   return (
+    <AuthBootstrapGate>
     <div className="flex min-h-[calc(var(--app-vh,1vh)*100)] flex-col bg-[var(--hud-bg)]" style={{ paddingBottom: 'var(--safe-area-bottom, 0px)' }}>
       {!hideMarketingChrome && (
         <>
@@ -512,6 +510,7 @@ function AppContent() {
       {import.meta.env.DEV && <TroubleshootingGuide />}
       {import.meta.env.DEV && <DevDebugPanel />}
     </div>
+    </AuthBootstrapGate>
   );
 }
 
