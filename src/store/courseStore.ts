@@ -1714,12 +1714,27 @@ export const courseStore = {
       }
       // Prefer admin list (richer shape) but gracefully fall back to published-only
       let dbCourses: Course[] = [];
+
+      // SINGLE SOURCE GUARANTEE: flush the in-memory course map before every
+      // admin catalog fetch so stale entries from a prior init can never survive
+      // into the merge and corrupt the final state.
+      // This only runs for admin surfaces — learner contexts merge incrementally.
+      if (!restrictToOrg) {
+        courses = {};
+      }
+
       if (canUseAdminApi) {
         if (apiAuthRequired && import.meta.env?.DEV) {
           console.info('[courseStore.init] Health probe indicated auth required, but API is reachable. Proceeding with admin course load attempt.');
         }
         try {
+          console.debug('[COURSE FETCH]', {
+            source: 'getAllCoursesFromDatabase',
+            url: '/api/admin/courses',
+            params: { includeStructure: true, includeLessons: true },
+          });
           dbCourses = await getAllCoursesFromDatabase();
+          console.debug('[COURSE STORE INPUT]', dbCourses);
           // The server list endpoint now pre-filters to complete courses only.
           // This client-side check is a belt-and-suspenders guard: if a course
           // somehow arrives without modules it is rejected here with a clear log.
@@ -1920,9 +1935,17 @@ export const courseStore = {
           // fully-loaded module graph and the incoming data is a summary (no
           // structure), keep the existing modules to avoid wiping lesson content
           // that was fetched in a prior detail request.
+          //
+          // CRITICAL: this guard must NEVER fire when the incoming course is the
+          // authoritative full-structure admin catalog response.  If the incoming
+          // data has lessons (incomingHasLessons) the incoming version always wins —
+          // regardless of what the existing entry looks like.  This prevents a stale
+          // zero-module cache entry from blocking a valid full-structure update.
           const shouldPreserveExistingModules =
-            (existingStructureLoaded && !incomingStructureLoaded) ||
-            (existingHasLessons && !incomingHasLessons);
+            incomingHasLessons
+              ? false  // incoming is authoritative — never preserve stale existing data
+              : (existingStructureLoaded && !incomingStructureLoaded) ||
+                (existingHasLessons && !incomingHasLessons);
 
           if (shouldPreserveExistingModules && import.meta.env?.DEV) {
             console.info(

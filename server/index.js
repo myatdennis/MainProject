@@ -915,6 +915,8 @@ const buildHealthPayload = async (overrides = {}) => {
 
 const resolveAppVersion = () =>
   process.env.APP_VERSION ||
+  process.env.RAILWAY_GIT_COMMIT_SHA ||
+  process.env.RAILWAY_DEPLOYMENT_ID ||
   process.env.VERCEL_GIT_COMMIT_SHA ||
   process.env.GIT_SHA ||
   process.env.HEROKU_RELEASE_VERSION ||
@@ -8379,21 +8381,28 @@ app.get('/api/admin/courses', async (req, res) => {
       const responseData = reqIncludeStructure
         ? await Promise.all(filtered.map((c) => ensureCourseStructureLoaded(c, { includeLessons: reqIncludeLessons })))
         : filtered;
+      // Apply the same catalog contract as the Supabase path: only complete courses.
+      const catalogData = responseData.filter((c) => {
+        const mods = Array.isArray(c.modules) ? c.modules : [];
+        if (mods.length === 0) return false;
+        return mods.some((m) => Array.isArray(m.lessons) && m.lessons.length > 0);
+      });
       if (NODE_ENV !== 'production') {
         console.log('[admin.courses][DEV_FALLBACK] response_shape', {
-          total: responseData.length,
-          withModules: responseData.filter((c) => Array.isArray(c.modules) && c.modules.length > 0).length,
-          withLessons: responseData.filter((c) => (c.modules || []).some((m) => Array.isArray(m.lessons) && m.lessons.length > 0)).length,
+          total: catalogData.length,
+          excluded: responseData.length - catalogData.length,
+          withModules: catalogData.filter((c) => Array.isArray(c.modules) && c.modules.length > 0).length,
+          withLessons: catalogData.filter((c) => (c.modules || []).some((m) => Array.isArray(m.lessons) && m.lessons.length > 0)).length,
         });
       }
       const responseBody = {
-        data: responseData,
-        pagination: { page: 1, pageSize: responseData.length, total: responseData.length, hasMore: false },
+        data: catalogData,
+        pagination: { page: 1, pageSize: catalogData.length, total: catalogData.length, hasMore: false },
       };
       if (NODE_ENV !== 'production') {
         responseBody.debug = {
           filterOrgId: requestedOrgId || null,
-          totalCountForOrg: responseData.length,
+          totalCountForOrg: catalogData.length,
           totalCountAllOrgs: shaped.length,
         };
       }
