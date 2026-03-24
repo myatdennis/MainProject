@@ -245,7 +245,13 @@ describe('courseStore admin catalog phase transitions', () => {
     expect(finalState.phase).toBe('ready');
   });
 
-  it('reports api_unreachable when the admin API cannot be contacted', async () => {
+  it('reports error and preserves catalog when the admin API throws a network error', async () => {
+    // Simulate a network failure on the actual API call (not just the health probe).
+    // With the health-probe decoupling fix, admin surfaces always attempt the API
+    // call regardless of apiReachable.  api_unreachable is now only set when the
+    // API call itself throws; a degraded health probe no longer aborts the fetch.
+    const networkErr = new Error('Failed to fetch');
+    adminCoursesMock.getAllCoursesFromDatabase.mockRejectedValue(networkErr);
     setRuntimeStatusSnapshot({ apiReachable: false, apiHealthy: false, lastError: 'offline' });
     const courseStore = await importCourseStore();
     const { seen, unsubscribe } = captureTransitions(courseStore);
@@ -256,7 +262,8 @@ describe('courseStore admin catalog phase transitions', () => {
     const finalState = courseStore.getAdminCatalogState();
     expect(seen[0]?.phase).toBe('loading');
     expect(seen[seen.length - 1]?.phase).toBe('ready');
-    expect(finalState.adminLoadStatus).toBe('api_unreachable');
+    // No prior catalog snapshot → network error → adminLoadStatus stays 'error'
+    expect(finalState.adminLoadStatus).toBe('error');
     expect(finalState.phase).toBe('ready');
   });
 

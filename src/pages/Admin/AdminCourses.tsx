@@ -119,6 +119,12 @@ const AdminCourses = () => {
   // so courses are always populated.
   useEffect(() => {
     if (catalogState.phase === 'idle') {
+      console.debug('[COURSE INIT CALLER]', {
+        source: 'AdminCourses.tsx',
+        phase: catalogState.phase,
+        pathname: typeof window !== 'undefined' ? window.location?.pathname : 'ssr',
+        ts: Date.now(),
+      });
       void courseStore.init();
     }
   }, [catalogState.phase]);

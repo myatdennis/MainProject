@@ -1708,26 +1708,42 @@ export const courseStore = {
       void (runtimeStatus.supabaseConfigured && runtimeStatus.supabaseHealthy);
       const apiReachable = runtimeStatus.apiReachable ?? runtimeStatus.apiHealthy;
       const apiAuthRequired = runtimeStatus.apiAuthRequired;
-      canUseAdminApi = adminMode && apiReachable;
+      // HEALTH PROBE DECOUPLED FROM ADMIN API GATE:
+      // The /api/health probe is purely informational for UI status indicators.
+      // A transient health failure (net::ERR_NETWORK_CHANGED, timeout, network
+      // switch) must NOT abort the admin catalog fetch — the actual
+      // /api/admin/courses call will fail with a real error if the API is truly
+      // unreachable.  Gating on health probe results caused the store to wipe
+      // valid courses and set adminLoadStatus='api_unreachable' whenever the
+      // health check raced with a network change, even when the API itself was
+      // perfectly healthy.
+      //
+      // For admin surfaces: always attempt the API call.
+      // For learner surfaces: respect the health probe (network gating).
+      canUseAdminApi = adminMode && (adminSurfaceDetected ? true : apiReachable);
       if (import.meta.env?.DEV) {
-        console.info('[courseStore.init] runtime_status_snapshot', { apiReachable, apiAuthRequired, adminMode });
+        console.info('[courseStore.init] runtime_status_snapshot', { apiReachable, apiAuthRequired, adminMode, canUseAdminApi });
       }
       // Prefer admin list (richer shape) but gracefully fall back to published-only
       let dbCourses: Course[] = [];
-
-      // SINGLE SOURCE GUARANTEE: flush the in-memory course map before every
-      // admin catalog fetch so stale entries from a prior init can never survive
-      // into the merge and corrupt the final state.
-      // This only runs for admin surfaces — learner contexts merge incrementally.
-      if (!restrictToOrg) {
-        courses = {};
-      }
 
       if (canUseAdminApi) {
         if (apiAuthRequired && import.meta.env?.DEV) {
           console.info('[courseStore.init] Health probe indicated auth required, but API is reachable. Proceeding with admin course load attempt.');
         }
+        // Snapshot the current catalog before flushing.  If the API call itself
+        // fails (real network error, 5xx, timeout) we restore the snapshot so
+        // the UI continues showing the last-known-good catalog instead of an
+        // empty page.  The snapshot is ONLY restored on failure — a successful
+        // response always wins.
+        const catalogSnapshot = { ...courses };
         try {
+          // SINGLE SOURCE GUARANTEE: flush the in-memory course map immediately
+          // before the API call so stale entries from a prior init can never
+          // survive into the merge.  The flush is deferred to here (not earlier)
+          // so that if the API call itself fails the existing valid catalog
+          // remains intact for the UI to display.
+          courses = {};
           console.debug('[COURSE FETCH]', {
             source: 'getAllCoursesFromDatabase',
             url: '/api/admin/courses',
@@ -1807,6 +1823,13 @@ export const courseStore = {
         } catch (adminError) {
           const status = adminError instanceof ApiError ? adminError.status : undefined;
           const isBlockedByGuard = adminError instanceof Error && adminError.message?.includes('non-admin route');
+          const isNetworkError = adminError instanceof Error && (
+            adminError.message?.includes('ERR_NETWORK') ||
+            adminError.message?.includes('network') ||
+            adminError.message?.includes('Failed to fetch') ||
+            adminError.message?.includes('NetworkError') ||
+            status === undefined // fetch threw, not an HTTP error
+          );
           adminLoadStatus = 'error';
           adminLoadError =
             status === 401 || status === 403
@@ -1827,9 +1850,24 @@ export const courseStore = {
               status,
               message: adminLoadError,
               source: 'admin_fetch',
+              isNetworkError,
             });
           }
           dbCourses = [];
+          // CATALOG PRESERVATION: if the API call failed due to a transient
+          // network error (not an auth error, not a 4xx/5xx), restore the
+          // previous catalog snapshot so the UI keeps showing valid courses
+          // rather than an empty page.  Auth errors must wipe the catalog
+          // (user may have lost access).  Real API errors (5xx) should also
+          // wipe — stale data is worse than an error state for permissions.
+          if (isNetworkError && Object.keys(catalogSnapshot).length > 0) {
+            courses = catalogSnapshot;
+            adminLoadStatus = 'success'; // treat as success — we kept the catalog
+            console.warn('[courseStore.init] admin_fetch_network_error_catalog_preserved', {
+              restoredCount: Object.keys(catalogSnapshot).length,
+              error: adminLoadError,
+            });
+          }
         }
       } else if (adminMode && !apiReachable) {
         adminLoadStatus = 'api_unreachable';
@@ -2011,6 +2049,14 @@ export const courseStore = {
           merged[courseWithVersion.id] = mergedCourse;
         });
         courses = merged;
+        console.debug('[COURSE STORE WRITE]', {
+          source: 'init/merge',
+          count: Object.keys(merged).length,
+          ids: Object.keys(merged),
+          allHaveModules: Object.values(merged).every(
+            (c) => Array.isArray(c.modules) && c.modules.length > 0,
+          ),
+        });
         if (import.meta.env?.DEV) {
           console.info(`[courseStore.init] catalog_merged`, { loaded: dbCourses.length, totalInStore: Object.keys(merged).length });
         }

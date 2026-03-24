@@ -185,6 +185,12 @@ function AppContent() {
     let cancelled = false;
     const bootstrapCourseStore = async () => {
       try {
+        console.debug('[COURSE INIT CALLER]', {
+          source: 'App.tsx',
+          targetKey,
+          pathname: typeof window !== 'undefined' ? window.location?.pathname : 'ssr',
+          ts: Date.now(),
+        });
         await courseStore.init();
         if (!cancelled) {
           courseInitKeyRef.current = targetKey;

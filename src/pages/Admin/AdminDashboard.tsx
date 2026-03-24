@@ -244,6 +244,12 @@ const AdminDashboard = () => {
     }
     (async () => {
       try {
+        console.debug('[COURSE INIT CALLER]', {
+          source: 'AdminDashboard.tsx',
+          phase: catalogState.phase,
+          pathname: typeof window !== 'undefined' ? window.location?.pathname : 'ssr',
+          ts: Date.now(),
+        });
         await courseStore.init();
       } catch (error) {
         console.error('[AdminDashboard] Failed to bootstrap admin catalog', error);
