@@ -318,6 +318,19 @@ const AdminDashboard = () => {
   const showCatalogWarningBanner = !isFirstLoad && (catalogStatus === 'error' || catalogStatus === 'api_unreachable' || catalogStatus === 'unauthorized');
   const lastSyncAttempt = catalogState.lastAttemptAt ? new Date(catalogState.lastAttemptAt).toLocaleString() : null;
 
+  if (import.meta.env.DEV) {
+    console.debug('[PAGE GATE AdminDashboard]', {
+      isCatalogLoading,
+      isCatalogEmpty,
+      isCatalogUnauthorized,
+      isCatalogError,
+      isFirstLoad,
+      phase: catalogState.phase,
+      status: catalogStatus,
+      ts: Date.now(),
+    });
+  }
+
   const reportCsv = useMemo(() => {
     const header = ['Course Name,Completion Rate,Avg Learners,Avg Time (min)'];
     const rows = analyticsData.courseDetail.map((c) =>

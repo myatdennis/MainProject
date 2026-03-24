@@ -1682,6 +1682,7 @@ export const courseStore = {
         );
         setAdminCatalogState({ phase: 'idle', adminLoadStatus: 'skipped', lastAttemptAt: monotonicNow(), lastError: null });
         queueAuthReadyBootstrap(() => {
+          console.debug('[INIT CALLER]', { caller: 'courseStore/queueAuthReadyBootstrap(membershipLoading)', pathname: typeof window !== 'undefined' ? window.location?.pathname : 'ssr', ts: Date.now() });
           void courseStore.init();
         });
         return;
@@ -1694,6 +1695,7 @@ export const courseStore = {
           );
           setAdminCatalogState({ phase: 'idle', adminLoadStatus: 'skipped', lastAttemptAt: monotonicNow(), lastError: null });
           queueAuthReadyBootstrap(() => {
+            console.debug('[INIT CALLER]', { caller: 'courseStore/queueAuthReadyBootstrap(authIdle)', pathname: typeof window !== 'undefined' ? window.location?.pathname : 'ssr', ts: Date.now() });
             void courseStore.init();
           });
           return;
@@ -1709,6 +1711,7 @@ export const courseStore = {
         console.info('[courseStore.init] admin_surface_waiting_for_context', { status: orgContext.status });
         setAdminCatalogState({ phase: 'idle', adminLoadStatus: 'skipped', lastAttemptAt: monotonicNow(), lastError: null });
         queueAuthReadyBootstrap(() => {
+          console.debug('[INIT CALLER]', { caller: 'courseStore/queueAuthReadyBootstrap(adminSurfaceWaiting)', pathname: typeof window !== 'undefined' ? window.location?.pathname : 'ssr', ts: Date.now() });
           void courseStore.init();
         });
         return;
@@ -1720,6 +1723,7 @@ export const courseStore = {
           setAdminCatalogState({ phase: 'idle', adminLoadStatus: 'skipped', lastAttemptAt: monotonicNow(), lastError: null });
           queueAuthReadyBootstrap(() => {
             awaitingRoleResolution = false;
+            console.debug('[INIT CALLER]', { caller: 'courseStore/queueAuthReadyBootstrap(roleWaiting)', pathname: typeof window !== 'undefined' ? window.location?.pathname : 'ssr', ts: Date.now() });
             void courseStore.init();
           });
         }
@@ -1790,6 +1794,7 @@ export const courseStore = {
           // survive into the merge.  The flush is deferred to here (not earlier)
           // so that if the API call itself fails the existing valid catalog
           // remains intact for the UI to display.
+          console.debug('[COURSE RESET]', { caller: 'courseStore.init/pre-fetch-flush', beforeCount: Object.keys(courses).length });
           courses = {};
           console.debug('[COURSE FETCH]', {
             source: 'getAllCoursesFromDatabase',
@@ -1959,6 +1964,7 @@ export const courseStore = {
         // fetch left courses={} permanently, wiping a valid previously-loaded catalog.
         const degradedCatalogSnapshot = { ...courses };
         try {
+          console.debug('[COURSE RESET]', { caller: 'courseStore.init/degraded-pre-fetch-flush', beforeCount: Object.keys(courses).length });
           courses = {};
           dbCourses = await getAllCoursesFromDatabase();
           adminLoadStatus = dbCourses.length === 0 ? 'empty' : 'success';
@@ -2154,6 +2160,12 @@ export const courseStore = {
           }
           merged[courseWithVersion.id] = mergedCourse;
         });
+        console.debug('[COURSE OVERWRITE]', {
+          caller: 'courseStore.init/merge',
+          beforeCount: Object.keys(courses).length,
+          afterCount: Object.keys(merged).length,
+          ids: Object.keys(merged),
+        });
         courses = merged;
         // Belt-and-suspenders: notify directly after writing courses so
         // subscribers always receive the update even if the finally-block
@@ -2171,9 +2183,11 @@ export const courseStore = {
           console.info(`[courseStore.init] catalog_merged`, { loaded: dbCourses.length, totalInStore: Object.keys(merged).length });
         }
       } else if (adminEmptySuccess) {
+        console.debug('[COURSE RESET]', { caller: 'courseStore.init/adminEmptySuccess', beforeCount: Object.keys(courses).length });
         courses = {};
         console.info('[courseStore.init] Admin catalog is empty; awaiting first course creation.');
       } else if (adminUnauthorized) {
+        console.debug('[COURSE RESET]', { caller: 'courseStore.init/adminUnauthorized', beforeCount: Object.keys(courses).length });
         courses = {};
         console.warn('[courseStore.init] Admin course load unauthorized; leaving local catalog empty.');
       } else {
@@ -2195,6 +2209,7 @@ export const courseStore = {
             });
           }
         } else {
+          console.debug('[COURSE RESET]', { caller: 'courseStore.init/default_catalog_disabled', beforeCount: Object.keys(courses).length });
           courses = {};
           emitCatalogDiagnostic('default_catalog_loaded', {
             reason: 'admin_catalog_unavailable',
@@ -2237,6 +2252,7 @@ export const courseStore = {
           });
         }
       } else {
+        console.debug('[COURSE RESET]', { caller: 'courseStore.init/catch/default_catalog_disabled', beforeCount: Object.keys(courses).length });
         courses = {};
         emitCatalogDiagnostic('default_catalog_loaded', {
           reason: 'init_failure',

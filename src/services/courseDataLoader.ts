@@ -47,6 +47,7 @@ const ensureCourseStoreReady = async () => {
   }
 
   if (!courseStoreInitPromise && typeof courseStore.init === 'function') {
+    console.debug('[INIT CALLER]', { caller: 'courseDataLoader.ensureCourseStoreReady', pathname: typeof window !== 'undefined' ? window.location?.pathname : 'ssr', ts: Date.now() });
     courseStoreInitPromise = courseStore.init();
   }
 

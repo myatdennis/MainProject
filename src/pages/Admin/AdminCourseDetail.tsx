@@ -172,6 +172,18 @@ const AdminCourseDetail = () => {
       catalogState.phase === 'loading' ||
       (!storeIsSettled && !directFetchAttemptedRef.current) ||
       directFetchInFlight;
+    if (import.meta.env.DEV) {
+      console.debug('[PAGE GATE AdminCourseDetail]', {
+        courseId,
+        isStillLoading,
+        phase: catalogState.phase,
+        storeIsSettled,
+        directFetchAttempted: directFetchAttemptedRef.current,
+        directFetchInFlight,
+        courseFound: false,
+        ts: Date.now(),
+      });
+    }
     if (isStillLoading) {
       return (
         <div className="container mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">
@@ -204,6 +216,18 @@ const AdminCourseDetail = () => {
         </Link>
       </div>
     );
+  }
+
+  if (import.meta.env.DEV) {
+    console.debug('[PAGE GATE AdminCourseDetail]', {
+      courseId,
+      isStillLoading: false,
+      phase: catalogState.phase,
+      courseFound: true,
+      courseTitle: course.title,
+      moduleCount: course.modules?.length ?? 0,
+      ts: Date.now(),
+    });
   }
 
   const getStatusColor = (status: string) => {

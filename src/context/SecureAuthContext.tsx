@@ -2202,11 +2202,20 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           membershipCount: memberships.length,
           userId: user?.id ?? null,
         };
+        console.debug('[AUTH READY]', {
+          sessionStatus,
+          membershipStatus,
+          activeOrgId: activeOrgId ?? null,
+          userId: user?.id ?? null,
+          membershipCount: memberships.length,
+          pathname: window.location?.pathname ?? 'ssr',
+          ts: Date.now(),
+        });
         window.dispatchEvent(new CustomEvent('huddle:auth_ready', { detail }));
       }
     }
     lastMembershipStatusRef.current = membershipStatus;
-  }, [membershipStatus, activeOrgId, memberships.length, user?.id]);
+  }, [membershipStatus, activeOrgId, memberships.length, user?.id, sessionStatus]);
 
   useEffect(() => {
     registerCourseStoreOrgResolver(() => {

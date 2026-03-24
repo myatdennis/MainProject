@@ -540,6 +540,20 @@ const AdminCourses = () => {
   const isCatalogError = catalogStatus === 'error' || catalogStatus === 'api_unreachable';
   const lastSyncAttempt = catalogState.lastAttemptAt ? new Date(catalogState.lastAttemptAt).toLocaleString() : null;
 
+  if (import.meta.env.DEV) {
+    console.debug('[PAGE GATE AdminCourses]', {
+      isCatalogLoading,
+      isCatalogEmpty,
+      isCatalogUnauthorized,
+      isCatalogError,
+      isFirstLoad,
+      phase: catalogState.phase,
+      status: catalogStatus,
+      courseCount: courses.length,
+      ts: Date.now(),
+    });
+  }
+
   let gateContent: ReactNode | null = null;
   if (isCatalogLoading) {
     gateContent = (

@@ -467,6 +467,7 @@ class SyncService {
         });
       } else {
         // Fallback to client-side refresh
+        console.debug('[INIT CALLER]', { caller: 'syncService.refreshCourse', courseId, pathname: typeof window !== 'undefined' ? window.location?.pathname : 'ssr', ts: Date.now() });
         await courseStore.init();
         this.emit('course_updated', {
           courseId,
@@ -492,6 +493,7 @@ class SyncService {
       }
       
       // Trigger course store re-initialization
+      console.debug('[INIT CALLER]', { caller: 'syncService.refreshAll', pathname: typeof window !== 'undefined' ? window.location?.pathname : 'ssr', ts: Date.now() });
       await courseStore.init();
       
       // Emit global refresh event
