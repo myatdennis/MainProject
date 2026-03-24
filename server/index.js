@@ -2387,14 +2387,23 @@ const checkSupabaseHealth = async () => {
   }
 };
 
-// Load persisted data if available
+// Load persisted data if available.
+// When Supabase is configured, NEVER seed e2eStore.courses from demo-data.json —
+// that file is stale, lacks modules/lessons, and corrupts the admin catalog.
+// Supabase is the ONLY source of truth for courses in production.
 const persistedData = loadPersistedData();
-
-
-
+const _loadCoursesFromDisk = !supabaseServerConfigured && (E2E_TEST_MODE || DEV_FALLBACK);
+if (supabaseServerConfigured && (persistedData.courses || []).length > 0) {
+  logger.warn('persistent_storage_courses_ignored', {
+    message: 'demo-data.json contains courses but Supabase is configured — disk courses will NOT be loaded. Supabase is the sole source of truth.',
+    diskCourseCount: (persistedData.courses || []).length,
+  });
+}
 
 const e2eStore = {
-  courses: new Map(persistedData.courses || []), // id -> { id, slug, title, description, status, version, published_at, meta_json, modules: [{ id, title, description, order_index, lessons: [...] }] }
+  // Only populate from disk when Supabase is NOT configured (pure demo / E2E mode).
+  // When Supabase is available this Map starts empty; all course reads go to the DB.
+  courses: _loadCoursesFromDisk ? new Map(persistedData.courses || []) : new Map(),
   assignments: [],
   courseProgress: new Map(), // key `${user_id}:${course_id}` -> { user_id, course_id, percent, status, time_spent_s, updated_at }
   lessonProgress: new Map(), // key `${user_id}:${lesson_id}` -> { user_id, lesson_id, percent, status, time_spent_s, resume_at_s, updated_at }
@@ -4260,6 +4269,9 @@ const isE2ECourseEntry = (course) => {
   return E2E_COURSE_PATTERNS.some((re) => candidates.some((c) => typeof c === 'string' && re.test(c)));
 };
 let e2ePurgeCount = 0;
+// ─── Startup: purge E2E / Integration Test courses from e2eStore ─────────────
+// Only meaningful in demo/E2E mode where e2eStore.courses was populated from disk.
+// When Supabase is configured, e2eStore.courses is empty so this is a no-op.
 for (const [id, course] of e2eStore.courses.entries()) {
   if (isE2ECourseEntry(course)) {
     e2eStore.courses.delete(id);
@@ -4272,134 +4284,150 @@ if (e2ePurgeCount > 0) {
   savePersistedData(e2eStore);
 }
 
-// Log loaded courses
-if (e2eStore.courses.size > 0) {
-  console.log(`✅ Loaded ${e2eStore.courses.size} course(s) from persistent storage`);
-  for (const [id, course] of e2eStore.courses.entries()) {
-    console.log(`   - ${course.title} (${id})`);
+if (supabaseServerConfigured) {
+  // ✅ PRODUCTION / SUPABASE MODE
+  // Supabase is the sole source of truth. Do NOT seed or load any courses from
+  // demo-data.json. The e2eStore.courses Map is intentionally empty here.
+  // "Loaded X course(s) from persistent storage" will never appear in this mode.
+  logger.info('course_source_supabase_only', {
+    message: 'Supabase configured — courses served exclusively from DB. File-based store disabled.',
+  });
+} else if (E2E_TEST_MODE || DEV_FALLBACK) {
+  // ─── Demo / E2E mode only ─────────────────────────────────────────────────
+  // Log loaded courses
+  if (e2eStore.courses.size > 0) {
+    console.log(`✅ Loaded ${e2eStore.courses.size} course(s) from persistent storage`);
+    for (const [, course] of e2eStore.courses.entries()) {
+      console.log(`   - ${course.title} (${course.id})`);
+    }
+  } else {
+    // Seed a demo course if no courses exist in demo mode
+    console.log('📚 No courses found in demo mode. Seeding demo course...');
+    const demoCourse = {
+      id: 'foundations',
+      slug: 'foundations-of-inclusive-leadership',
+      title: 'Foundations of Inclusive Leadership',
+      description: 'Learn the fundamentals of inclusive leadership through interactive lessons, including TED Talks, quizzes, and practical frameworks.',
+      status: 'published',
+      version: 1,
+      published_at: new Date().toISOString(),
+      thumbnail: '/api/placeholder/400/300',
+      difficulty: 'Beginner',
+      duration: '2 hours',
+      organization_id: DEFAULT_SANDBOX_ORG_ID,
+      organizationId: DEFAULT_SANDBOX_ORG_ID,
+      org_id: DEFAULT_SANDBOX_ORG_ID,
+      instructorName: 'Dr. Sarah Chen',
+      estimatedDuration: 7200,
+      keyTakeaways: [
+        'Understand the core principles of inclusive leadership',
+        'Learn how vulnerability strengthens leadership',
+        'Build psychological safety in teams',
+        'Apply practical leadership frameworks'
+      ],
+      meta_json: {
+        tags: ['leadership', 'inclusion', 'management', 'professional development'],
+        category: 'Leadership',
+        level: 'beginner'
+      },
+      modules: [
+        {
+          id: 'mod-1',
+          course_id: 'foundations',
+          title: 'Introduction to Leadership',
+          description: 'Core concepts and foundations',
+          order_index: 0,
+          lessons: [
+            {
+              id: 'lesson-video',
+              module_id: 'mod-1',
+              title: 'The Power of Vulnerability',
+              description: 'Watch this inspiring TED Talk by Brené Brown',
+              type: 'video',
+              order_index: 0,
+              duration_s: 1200,
+              content_json: {
+                videoUrl: 'https://www.ted.com/talks/brene_brown_the_power_of_vulnerability',
+                videoType: 'ted',
+                completionRule: { requiredPercent: 85 },
+              }
+            },
+            {
+              id: 'lesson-quiz',
+              module_id: 'mod-1',
+              title: 'Leadership Knowledge Check',
+              description: 'Test your understanding',
+              type: 'quiz',
+              order_index: 1,
+              duration_s: 300,
+              content_json: {
+                questions: [
+                  {
+                    id: 'q1',
+                    question: 'What is the primary role of an inclusive leader?',
+                    options: [
+                      { id: 'a', text: 'To make all decisions alone' },
+                      { id: 'b', text: 'To create an environment where all voices are heard' },
+                      { id: 'c', text: 'To maintain strict hierarchy' },
+                      { id: 'd', text: 'To avoid difficult conversations' }
+                    ],
+                    correctAnswer: 'b'
+                  },
+                  {
+                    id: 'q2',
+                    question: 'Which quality is essential for effective leadership?',
+                    options: [
+                      { id: 'a', text: 'Vulnerability' },
+                      { id: 'b', text: 'Perfectionism' },
+                      { id: 'c', text: 'Control' },
+                      { id: 'd', text: 'Distance' }
+                    ],
+                    correctAnswer: 'a'
+                  }
+                ],
+                completionRule: { requiredScore: 70 },
+              }
+            },
+            {
+              id: 'lesson-text',
+              module_id: 'mod-1',
+              title: 'Leadership Principles',
+              description: 'Core principles of effective leadership',
+              type: 'text',
+              order_index: 2,
+              duration_s: 600,
+              content_json: {
+                body: '# Leadership Principles\n\n## 1. Lead with Empathy\n\nEmpathy is the foundation of inclusive leadership...\n\n## 2. Foster Psychological Safety\n\nCreate an environment where team members feel safe...\n\n## 3. Embrace Vulnerability\n\nAs Brené Brown teaches, vulnerability is not weakness...'
+              }
+            },
+            {
+              id: 'lesson-resource',
+              module_id: 'mod-1',
+              title: 'Leadership Framework Guide',
+              description: 'Download the comprehensive leadership framework',
+              type: 'resource',
+              order_index: 3,
+              duration_s: 0,
+              content_json: {
+                fileUrl: '/resources/leadership-framework.pdf',
+                fileType: 'pdf',
+                fileSize: '2.4 MB',
+                fileName: 'Leadership Framework Guide.pdf'
+              }
+            }
+          ]
+        }
+      ]
+    };
+    e2eStore.courses.set('foundations', demoCourse);
+    savePersistedData(e2eStore);
+    console.log('✅ Demo course seeded successfully');
   }
 } else {
-  // Seed a demo course if no courses exist
-  console.log('📚 No courses found. Seeding demo course...');
-  const demoCourse = {
-    id: 'foundations',
-    slug: 'foundations-of-inclusive-leadership',
-    title: 'Foundations of Inclusive Leadership',
-    description: 'Learn the fundamentals of inclusive leadership through interactive lessons, including TED Talks, quizzes, and practical frameworks.',
-    status: 'published',
-    version: 1,
-    published_at: new Date().toISOString(),
-    thumbnail: '/api/placeholder/400/300',
-    difficulty: 'Beginner',
-    duration: '2 hours',
-  organization_id: DEFAULT_SANDBOX_ORG_ID,
-  organizationId: DEFAULT_SANDBOX_ORG_ID,
-  org_id: DEFAULT_SANDBOX_ORG_ID,
-    instructorName: 'Dr. Sarah Chen',
-    estimatedDuration: 7200,
-    keyTakeaways: [
-      'Understand the core principles of inclusive leadership',
-      'Learn how vulnerability strengthens leadership',
-      'Build psychological safety in teams',
-      'Apply practical leadership frameworks'
-    ],
-    meta_json: {
-      tags: ['leadership', 'inclusion', 'management', 'professional development'],
-      category: 'Leadership',
-      level: 'beginner'
-    },
-    modules: [
-      {
-        id: 'mod-1',
-        course_id: 'foundations',
-        title: 'Introduction to Leadership',
-        description: 'Core concepts and foundations',
-        order_index: 0,
-        lessons: [
-          {
-            id: 'lesson-video',
-            module_id: 'mod-1',
-            title: 'The Power of Vulnerability',
-            description: 'Watch this inspiring TED Talk by Brené Brown',
-            type: 'video',
-            order_index: 0,
-            duration_s: 1200,
-            content_json: {
-              videoUrl: 'https://www.ted.com/talks/brene_brown_the_power_of_vulnerability',
-              videoType: 'ted',
-              completionRule: { requiredPercent: 85 },
-            }
-          },
-          {
-            id: 'lesson-quiz',
-            module_id: 'mod-1',
-            title: 'Leadership Knowledge Check',
-            description: 'Test your understanding',
-            type: 'quiz',
-            order_index: 1,
-            duration_s: 300,
-            content_json: {
-              questions: [
-                {
-                  id: 'q1',
-                  question: 'What is the primary role of an inclusive leader?',
-                  options: [
-                    { id: 'a', text: 'To make all decisions alone' },
-                    { id: 'b', text: 'To create an environment where all voices are heard' },
-                    { id: 'c', text: 'To maintain strict hierarchy' },
-                    { id: 'd', text: 'To avoid difficult conversations' }
-                  ],
-                  correctAnswer: 'b'
-                },
-                {
-                  id: 'q2',
-                  question: 'Which quality is essential for effective leadership?',
-                  options: [
-                    { id: 'a', text: 'Vulnerability' },
-                    { id: 'b', text: 'Perfectionism' },
-                    { id: 'c', text: 'Control' },
-                    { id: 'd', text: 'Distance' }
-                  ],
-                  correctAnswer: 'a'
-                }
-              ],
-              completionRule: { requiredScore: 70 },
-            }
-          },
-          {
-            id: 'lesson-text',
-            module_id: 'mod-1',
-            title: 'Leadership Principles',
-            description: 'Core principles of effective leadership',
-            type: 'text',
-            order_index: 2,
-            duration_s: 600,
-            content_json: {
-              body: '# Leadership Principles\n\n## 1. Lead with Empathy\n\nEmpathy is the foundation of inclusive leadership...\n\n## 2. Foster Psychological Safety\n\nCreate an environment where team members feel safe...\n\n## 3. Embrace Vulnerability\n\nAs Brené Brown teaches, vulnerability is not weakness...'
-            }
-          },
-          {
-            id: 'lesson-resource',
-            module_id: 'mod-1',
-            title: 'Leadership Framework Guide',
-            description: 'Download the comprehensive leadership framework',
-            type: 'resource',
-            order_index: 3,
-            duration_s: 0,
-            content_json: {
-              fileUrl: '/resources/leadership-framework.pdf',
-              fileType: 'pdf',
-              fileSize: '2.4 MB',
-              fileName: 'Leadership Framework Guide.pdf'
-            }
-          }
-        ]
-      }
-    ]
-  };
-  e2eStore.courses.set('foundations', demoCourse);
-  savePersistedData(e2eStore);
-  console.log('✅ Demo course seeded successfully');
+  // No Supabase, no demo flags — log a warning but do not seed fake data.
+  logger.warn('course_source_unavailable', {
+    message: 'Neither Supabase credentials nor DEV_FALLBACK/E2E_TEST_MODE are configured. Course endpoints will return empty results.',
+  });
 }
 
 // E2E helpers
@@ -8532,6 +8560,21 @@ app.get('/api/admin/courses', async (req, res) => {
         withLessons: catalogData.filter((c) => (c.modules || []).some((m) => Array.isArray(m.lessons) && m.lessons.length > 0)).length,
       });
     }
+
+    // [SERVER COURSES] — always log summary so corrupted data is immediately visible in server logs.
+    console.log('[SERVER COURSES]', {
+      source: 'supabase',
+      count: catalogData.length,
+      courses: catalogData.map((c) => ({
+        id: c.id,
+        title: c.title,
+        status: c.status,
+        moduleCount: Array.isArray(c.modules) ? c.modules.length : 0,
+        lessonCount: Array.isArray(c.modules)
+          ? c.modules.reduce((sum, m) => sum + (Array.isArray(m.lessons) ? m.lessons.length : 0), 0)
+          : 0,
+      })),
+    });
 
     let debugMeta = null;
     if (NODE_ENV !== 'production') {

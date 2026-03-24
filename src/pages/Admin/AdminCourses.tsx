@@ -166,6 +166,17 @@ const AdminCourses = () => {
     return matchesSearch && matchesFilter;
   });
 
+  if (import.meta.env.DEV) {
+    console.debug('[RENDER COURSES]', {
+      total: courses.length,
+      filtered: filteredCourses.length,
+      phase: catalogState.phase,
+      status: catalogState.adminLoadStatus,
+      version,
+      routeKey,
+    });
+  }
+
   const handleSelectCourse = (courseId: string) => {
     setSelectedCourses(prev => 
       prev.includes(courseId) 

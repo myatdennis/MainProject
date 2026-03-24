@@ -1205,6 +1205,16 @@ void ((): void => {
 
 const storeSubscribers = new Set<() => void>();
 
+/** Returns a strictly-increasing timestamp so that consecutive setAdminCatalogState
+ *  calls in the same millisecond never produce an identical lastUpdatedAt and are
+ *  therefore never suppressed by shallowEqualState. */
+let _lastMonotonicTs = 0;
+const monotonicNow = (): number => {
+  const now = Date.now();
+  _lastMonotonicTs = now > _lastMonotonicTs ? now : _lastMonotonicTs + 1;
+  return _lastMonotonicTs;
+};
+
 const shallowEqualState = (current: AdminCatalogState, next: AdminCatalogState): boolean => {
   if (current === next) {
     return true;
@@ -1249,7 +1259,7 @@ const queueAuthReadyBootstrap = (reinitializer: () => void) => {
     setAdminCatalogState({
       phase: 'ready',
       adminLoadStatus: 'error',
-      lastAttemptAt: Date.now(),
+      lastAttemptAt: monotonicNow(),
       lastError: 'Auth context did not become ready after maximum bootstrap retries.',
     });
     return;
@@ -1626,7 +1636,7 @@ export const courseStore = {
     let adminLoadStatus: AdminLoadStatus = 'skipped';
     let adminLoadError: string | null = null;
     let resolvedOrgIdForInit: string | null = null;
-    const attemptStartedAt = Date.now();
+    const attemptStartedAt = monotonicNow();
     setAdminCatalogState({
       phase: 'loading',
       adminLoadStatus: 'skipped',
@@ -1644,7 +1654,7 @@ export const courseStore = {
         console.info(
           '[courseStore.init] Org context still resolving (membershipStatus=loading); awaiting auth_ready event before catalog fetch.',
         );
-        setAdminCatalogState({ phase: 'idle', adminLoadStatus: 'skipped', lastAttemptAt: Date.now(), lastError: null });
+        setAdminCatalogState({ phase: 'idle', adminLoadStatus: 'skipped', lastAttemptAt: monotonicNow(), lastError: null });
         queueAuthReadyBootstrap(() => {
           void courseStore.init();
         });
@@ -1656,7 +1666,7 @@ export const courseStore = {
             '[courseStore.init] Auth context not ready (status=%s); deferring catalog initialization until memberships resolve.',
             orgContext.status,
           );
-          setAdminCatalogState({ phase: 'idle', adminLoadStatus: 'skipped', lastAttemptAt: Date.now(), lastError: null });
+          setAdminCatalogState({ phase: 'idle', adminLoadStatus: 'skipped', lastAttemptAt: monotonicNow(), lastError: null });
           queueAuthReadyBootstrap(() => {
             void courseStore.init();
           });
@@ -1671,7 +1681,7 @@ export const courseStore = {
       const adminSurfaceDetected = isAdminSurface();
       if (adminSurfaceDetected && orgContext.status !== 'ready') {
         console.info('[courseStore.init] admin_surface_waiting_for_context', { status: orgContext.status });
-        setAdminCatalogState({ phase: 'idle', adminLoadStatus: 'skipped', lastAttemptAt: Date.now(), lastError: null });
+        setAdminCatalogState({ phase: 'idle', adminLoadStatus: 'skipped', lastAttemptAt: monotonicNow(), lastError: null });
         queueAuthReadyBootstrap(() => {
           void courseStore.init();
         });
@@ -1681,7 +1691,7 @@ export const courseStore = {
         if (!awaitingRoleResolution) {
           awaitingRoleResolution = true;
           console.info('[courseStore.init] admin_surface_waiting_for_role_context');
-          setAdminCatalogState({ phase: 'idle', adminLoadStatus: 'skipped', lastAttemptAt: Date.now(), lastError: null });
+          setAdminCatalogState({ phase: 'idle', adminLoadStatus: 'skipped', lastAttemptAt: monotonicNow(), lastError: null });
           queueAuthReadyBootstrap(() => {
             awaitingRoleResolution = false;
             void courseStore.init();
@@ -2049,6 +2059,10 @@ export const courseStore = {
           merged[courseWithVersion.id] = mergedCourse;
         });
         courses = merged;
+        // Belt-and-suspenders: notify directly after writing courses so
+        // subscribers always receive the update even if the finally-block
+        // setAdminCatalogState is suppressed by shallowEqualState.
+        notifySubscribers();
         console.debug('[COURSE STORE WRITE]', {
           source: 'init/merge',
           count: Object.keys(merged).length,
@@ -2146,7 +2160,7 @@ export const courseStore = {
       setAdminCatalogState({
         phase: 'ready',
         adminLoadStatus,
-        lastUpdatedAt: Date.now(),
+        lastUpdatedAt: monotonicNow(),
         lastError: adminLoadError,
       });
       // Persist the resolved org so forceInit can detect org switches on the next call.
