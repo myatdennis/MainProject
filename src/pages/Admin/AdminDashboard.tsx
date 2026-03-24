@@ -1,4 +1,4 @@
-import { ReactNode, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { ReactNode, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 
 // Module-level flag: persists across component unmount/remount cycles.
 // AdminLayout keys <Outlet> on pathname, so the page component unmounts on
@@ -233,15 +233,19 @@ const AdminDashboard = () => {
   // level variable persists across remounts, ensuring the "first load" gate only
   // fires ONCE per browser session, not on every navigation to this page.
   useEffect(() => {
-    if (catalogState.adminLoadStatus === 'success') {
+    if (catalogState.adminLoadStatus === 'success' || catalogState.adminLoadStatus === 'empty' || catalogState.phase === 'ready') {
       _dashboardCatalogEverSucceeded = true;
     }
-  }, [catalogState.adminLoadStatus]);
+  }, [catalogState.adminLoadStatus, catalogState.phase]);
 
+  // Guard: only request init once per mount. Subsequent idle transitions
+  // are handled by App.tsx and AdminLayout forceInit.
+  const hasRequestedInitRef = useRef(false);
   useEffect(() => {
-    if (catalogState.phase !== 'idle') {
+    if (catalogState.phase !== 'idle' || hasRequestedInitRef.current) {
       return;
     }
+    hasRequestedInitRef.current = true;
     (async () => {
       try {
         console.debug('[COURSE INIT CALLER]', {

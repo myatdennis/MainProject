@@ -49,11 +49,22 @@ const AdminCourseDetail = () => {
   // When navigating directly to a course detail page the store may not have
   // been initialized yet (phase === 'idle').  Trigger init so getCourse()
   // returns the real record once the fetch resolves.
+  // Guard: only request init once per mount so we don't fire a second init on
+  // every subsequent idle transition (e.g. after forceInit resets phase to idle).
+  const hasRequestedInitRef = useRef(false);
   useEffect(() => {
-    if (catalogState.phase === 'idle') {
+    if (catalogState.phase === 'idle' && !hasRequestedInitRef.current) {
+      hasRequestedInitRef.current = true;
+      console.debug('[COURSE INIT CALLER]', {
+        source: 'AdminCourseDetail.tsx',
+        phase: catalogState.phase,
+        courseId,
+        pathname: typeof window !== 'undefined' ? window.location?.pathname : 'ssr',
+        ts: Date.now(),
+      });
       void courseStore.init();
     }
-  }, [catalogState.phase]);
+  }, [catalogState.phase, courseId]);
 
   // Direct-fetch fallback: if the store finished loading but doesn't have this
   // course (e.g. it was graph-rejected or navigated to directly), fetch it from
@@ -148,12 +159,19 @@ const AdminCourseDetail = () => {
     // render the page shell with an inline skeleton so navigation commits
     // immediately and content populates once the store resolves.
     // NEVER return a full-screen spinner: that blocks [PAGE COMMIT].
+    //
+    // isStillLoading rules:
+    //  - phase 'loading'  → init is in-flight, show skeleton
+    //  - phase 'idle'     → no init running; if store is unsettled show skeleton,
+    //                        but do NOT gate solely on idle (forceInit resets to idle
+    //                        briefly before setting 'loading', causing a false spinner)
+    //  - directFetchInFlight → direct API rescue is in-flight, show skeleton
+    //  - storeIsSettled + directFetchAttemptedRef already set → all paths exhausted,
+    //                        show "Course Not Found"
     const isStillLoading =
-      catalogState.phase === 'idle' ||
       catalogState.phase === 'loading' ||
-      !storeIsSettled ||
-      directFetchInFlight ||
-      (storeIsSettled && !directFetchAttemptedRef.current);
+      (!storeIsSettled && !directFetchAttemptedRef.current) ||
+      directFetchInFlight;
     if (isStillLoading) {
       return (
         <div className="container mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-6">

@@ -4,7 +4,7 @@
  * Features: catalog sync, search/filter, bulk actions, modals, progress tracking, and summary stats.
  */
 
-import { ReactNode, useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { ReactNode, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { courseStore } from '../../store/courseStore';
 
@@ -117,8 +117,14 @@ const AdminCourses = () => {
   // this page mounts (e.g. fast navigation before the bootstrap effect fires,
   // or a stale ready-guard that skipped re-fetch) we need to trigger it here
   // so courses are always populated.
+  // Guard: only request init once per mount. Subsequent idle transitions
+  // (e.g. deferred bootstrap retries, org switches) are handled by App.tsx
+  // and AdminLayout forceInit — we must not start a new init on every
+  // idle→loading→idle cycle.
+  const hasRequestedInitRef = useRef(false);
   useEffect(() => {
-    if (catalogState.phase === 'idle') {
+    if (catalogState.phase === 'idle' && !hasRequestedInitRef.current) {
+      hasRequestedInitRef.current = true;
       console.debug('[COURSE INIT CALLER]', {
         source: 'AdminCourses.tsx',
         phase: catalogState.phase,
@@ -516,25 +522,19 @@ const AdminCourses = () => {
   // Track whether the catalog has ever succeeded in this session (module-level
   // to survive unmount/remount across route changes).
   useEffect(() => {
-    if (catalogStatus === 'success') {
+    // Unstick on any terminal ready state — not just 'success' — so re-auth
+    // after a 401 doesn't leave the flag permanently false.
+    if (catalogStatus === 'success' || catalogStatus === 'empty' || catalogState.phase === 'ready') {
       _coursesCatalogEverSucceeded = true;
     }
-  }, [catalogStatus]);
+  }, [catalogStatus, catalogState.phase]);
 
   // Only show the full-screen loading gate on the very first visit before the
   // catalog has ever resolved.  Subsequent navigations to this page must render
   // the course list immediately — even while a background re-fetch is in flight.
+  // phase === 'idle' means no fetch is running — never gate on it.
   const isFirstLoad = !_coursesCatalogEverSucceeded;
-  const isCatalogLoading =
-    isFirstLoad && (
-      catalogState.phase === 'loading' ||
-      (catalogState.phase === 'idle' &&
-        catalogStatus !== 'success' &&
-        catalogStatus !== 'empty' &&
-        catalogStatus !== 'unauthorized' &&
-        catalogStatus !== 'error' &&
-        catalogStatus !== 'api_unreachable')
-    );
+  const isCatalogLoading = isFirstLoad && catalogState.phase === 'loading';
   const isCatalogEmpty = catalogStatus === 'empty';
   const isCatalogUnauthorized = catalogStatus === 'unauthorized';
   const isCatalogError = catalogStatus === 'error' || catalogStatus === 'api_unreachable';

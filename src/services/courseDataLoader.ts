@@ -39,6 +39,13 @@ const ensureCourseStoreReady = async () => {
     return;
   }
 
+  if (import.meta.env.DEV) {
+    console.debug('[COURSE DATA LOADER] ensureCourseStoreReady: store empty, triggering init', {
+      ts: Date.now(),
+      hasInitPromise: Boolean(courseStoreInitPromise),
+    });
+  }
+
   if (!courseStoreInitPromise && typeof courseStore.init === 'function') {
     courseStoreInitPromise = courseStore.init();
   }

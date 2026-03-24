@@ -1233,6 +1233,14 @@ const notifySubscribers = () => {
     const courseList = Object.values(courses);
     console.debug('[STORE UPDATE] courseStore notifying', storeSubscribers.size, 'subscribers');
     console.debug('[COURSE COUNT]', courseList.length, 'courses in store');
+    console.debug('[SUBSCRIBER NOTIFY]', {
+      ts: Date.now(),
+      subscribers: storeSubscribers.size,
+      courseCount: courseList.length,
+      ids: courseList.slice(0, 5).map((c) => c.id),
+      phase: adminCatalogState.phase,
+      status: adminCatalogState.adminLoadStatus,
+    });
   }
   storeSubscribers.forEach((listener) => {
     try {
@@ -1282,6 +1290,15 @@ const setAdminCatalogState = (update: Partial<AdminCatalogState> | ((state: Admi
   const nextState = typeof update === 'function' ? update(adminCatalogState) : { ...adminCatalogState, ...update };
   if (shallowEqualState(adminCatalogState, nextState)) {
     return;
+  }
+  if (import.meta.env.DEV) {
+    console.debug('[CATALOG STATE SET]', {
+      ts: Date.now(),
+      from: { phase: adminCatalogState.phase, status: adminCatalogState.adminLoadStatus },
+      to: { phase: nextState.phase, status: nextState.adminLoadStatus },
+      lastError: nextState.lastError ?? null,
+      courseCount: Object.keys(courses).length,
+    });
   }
   adminCatalogState = nextState;
   notifySubscribers();
@@ -1637,6 +1654,15 @@ export const courseStore = {
     let adminLoadError: string | null = null;
     let resolvedOrgIdForInit: string | null = null;
     const attemptStartedAt = monotonicNow();
+    if (import.meta.env.DEV) {
+      console.debug('[INIT START]', {
+        ts: attemptStartedAt,
+        pathname: typeof window !== 'undefined' ? window.location?.pathname : 'ssr',
+        existingCourseCount: Object.keys(courses).length,
+        phase: adminCatalogState.phase,
+        status: adminCatalogState.adminLoadStatus,
+      });
+    }
     setAdminCatalogState({
       phase: 'loading',
       adminLoadStatus: 'skipped',
@@ -1734,6 +1760,17 @@ export const courseStore = {
       if (import.meta.env?.DEV) {
         console.info('[courseStore.init] runtime_status_snapshot', { apiReachable, apiAuthRequired, adminMode, canUseAdminApi });
       }
+      if (import.meta.env.DEV) {
+        console.debug('[HEALTH RESULT]', {
+          ts: Date.now(),
+          apiReachable,
+          apiAuthRequired,
+          adminMode,
+          adminSurfaceDetected,
+          canUseAdminApi,
+          lastError: runtimeStatus.lastError ?? null,
+        });
+      }
       // Prefer admin list (richer shape) but gracefully fall back to published-only
       let dbCourses: Course[] = [];
 
@@ -1759,7 +1796,24 @@ export const courseStore = {
             url: '/api/admin/courses',
             params: { includeStructure: true, includeLessons: true },
           });
+          if (import.meta.env.DEV) {
+            console.debug('[FETCH START]', {
+              ts: Date.now(),
+              pathname: typeof window !== 'undefined' ? window.location?.pathname : 'ssr',
+              endpoint: '/api/admin/courses?includeStructure=true&includeLessons=true',
+            });
+          }
           dbCourses = await getAllCoursesFromDatabase();
+          if (import.meta.env.DEV) {
+            console.debug('[RAW API RESPONSE]', {
+              ts: Date.now(),
+              count: dbCourses.length,
+              ids: dbCourses.slice(0, 5).map((c) => c.id),
+              titles: dbCourses.slice(0, 5).map((c) => c.title),
+              withModules: dbCourses.filter((c) => Array.isArray(c.modules) && c.modules.length > 0).length,
+              withLessons: dbCourses.filter((c) => (c.modules ?? []).some((m) => Array.isArray(m.lessons) && m.lessons.length > 0)).length,
+            });
+          }
           console.debug('[COURSE STORE INPUT]', dbCourses);
           // The server list endpoint now pre-filters to complete courses only.
           // This client-side check is a belt-and-suspenders guard: if a course
@@ -1830,6 +1884,17 @@ export const courseStore = {
           if (adminLoadStatus === 'empty') {
             console.info('[courseStore.init] admin_courses_empty (0 results from /api/admin/courses).');
           }
+          if (import.meta.env.DEV) {
+            console.debug('[MAPPED COURSES]', {
+              ts: Date.now(),
+              count: dbCourses.length,
+              ids: dbCourses.slice(0, 5).map((c) => c.id),
+              titles: dbCourses.slice(0, 5).map((c) => c.title),
+              withModules: dbCourses.filter((c) => Array.isArray(c.modules) && c.modules.length > 0).length,
+              withLessons: dbCourses.filter((c) => (c.modules ?? []).some((m) => Array.isArray(m.lessons) && m.lessons.length > 0)).length,
+              adminLoadStatus,
+            });
+          }
         } catch (adminError) {
           const status = adminError instanceof ApiError ? adminError.status : undefined;
           const isBlockedByGuard = adminError instanceof Error && adminError.message?.includes('non-admin route');
@@ -1880,11 +1945,42 @@ export const courseStore = {
           }
         }
       } else if (adminMode && !apiReachable) {
-        adminLoadStatus = 'api_unreachable';
-        adminLoadError = runtimeStatus.lastError || 'api_unreachable';
-        console.warn('[courseStore.init] admin_courses_api_unreachable', {
+        // Health probe says unreachable, but this is a non-admin-surface admin user.
+        // Still attempt the fetch — the actual HTTP call will fail with a real error
+        // if the API is truly down, rather than silently setting api_unreachable based
+        // on a potentially stale/transient health check result.
+        console.warn('[courseStore.init] admin_mode_health_degraded — attempting API call anyway', {
           reason: runtimeStatus.lastError || 'unknown',
+          adminSurfaceDetected,
+          note: 'api_unreachable is only set if the actual fetch fails',
         });
+        // Snapshot BEFORE flush so we can restore on failure — same pattern as
+        // the canUseAdminApi branch above.  Without this, a failed degraded-mode
+        // fetch left courses={} permanently, wiping a valid previously-loaded catalog.
+        const degradedCatalogSnapshot = { ...courses };
+        try {
+          courses = {};
+          dbCourses = await getAllCoursesFromDatabase();
+          adminLoadStatus = dbCourses.length === 0 ? 'empty' : 'success';
+        } catch (healthDegradedFetchErr) {
+          adminLoadStatus = 'api_unreachable';
+          adminLoadError = healthDegradedFetchErr instanceof Error
+            ? healthDegradedFetchErr.message
+            : runtimeStatus.lastError || 'api_unreachable';
+          console.warn('[courseStore.init] admin_courses_api_unreachable (fetch confirmed)', {
+            reason: adminLoadError,
+          });
+          // Restore snapshot so the UI keeps showing the last-known-good catalog
+          // instead of an empty page after a transient network failure.
+          if (Object.keys(degradedCatalogSnapshot).length > 0) {
+            courses = degradedCatalogSnapshot;
+            adminLoadStatus = 'success';
+            console.warn('[courseStore.init] admin_degraded_catalog_preserved', {
+              restoredCount: Object.keys(degradedCatalogSnapshot).length,
+              error: adminLoadError,
+            });
+          }
+        }
       } else if (!adminMode) {
         console.warn('[courseStore.init] Skipping admin course load for non-admin role.');
       }
