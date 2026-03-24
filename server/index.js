@@ -19037,37 +19037,82 @@ if (NODE_ENV !== 'production') {
 
 const distPath = path.resolve(__dirname, '../dist');
 
-// Serve static files from the dist directory
-// For E2E runs and local dev we want to avoid stale cached assets. Ensure assets are not cached by browsers.
-app.use('/assets', (req, res, next) => {
-  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-  res.setHeader('Pragma', 'no-cache');
-  res.setHeader('Expires', '0');
-  next();
-});
-app.use(express.static(distPath));
+// ─── Domain Separation ────────────────────────────────────────────────────────
+// In production, api.the-huddle.co is a pure API server.  The SPA is deployed
+// to Netlify at https://the-huddle.co.  We must never serve index.html or any
+// frontend asset from the API domain in production.
+//
+// Detection: Railway sets NODE_ENV=production.  We also check the opt-in env
+// var SERVE_SPA=true so that a self-hosted single-process deployment (one box
+// running both API and SPA) keeps working without code changes.
+//
+// Local dev (NODE_ENV !== 'production') continues to serve the Vite dist output
+// exactly as before so `npm run preview` / E2E runs are unaffected.
+// ─────────────────────────────────────────────────────────────────────────────
+const SERVE_SPA = !isProduction || String(process.env.SERVE_SPA || '').toLowerCase() === 'true';
+const FRONTEND_URL = process.env.FRONTEND_URL || 'https://the-huddle.co';
 
-// Ensure a simple root handler exists for platforms that hit the root URL for health checks
-app.get('/', (_req, res) => {
-  const indexFile = path.join(distPath, 'index.html');
-  if (fs.existsSync(indexFile)) return res.sendFile(indexFile);
-  return res.status(200).send('OK');
-});
-
-// For SPA client-side routing — serve index.html for unknown routes
-// Use a non-wildcard param pattern to avoid path-to-regexp parsing issues on some Node/express versions.
-// Serve index.html for SPA routes that aren't API or WS. Use a middleware to avoid
-// registering a path pattern that trips path-to-regexp in some environments.
-app.use((req, res, next) => {
-  // Only handle GET requests that are not API or WS paths
-  if (req.method !== 'GET') return next();
-  if (req.path.startsWith('/api') || req.path.startsWith('/ws') || req.path.startsWith('/_next')) return next();
-
-  const indexFile = path.join(distPath, 'index.html');
-  res.sendFile(indexFile, (err) => {
-    if (err) return next(err);
+if (SERVE_SPA) {
+  // Non-production (local dev / E2E / single-process self-hosted):
+  // Serve static assets and fall back to index.html for client-side routing.
+  // For E2E runs and local dev we want to avoid stale cached assets.
+  app.use('/assets', (req, res, next) => {
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+    next();
   });
-});
+  app.use(express.static(distPath));
+
+  // Root: serve SPA shell
+  app.get('/', (_req, res) => {
+    const indexFile = path.join(distPath, 'index.html');
+    if (fs.existsSync(indexFile)) return res.sendFile(indexFile);
+    return res.status(200).send('OK');
+  });
+
+  // SPA fallback — serve index.html for unknown client-side routes
+  app.use((req, res, next) => {
+    if (req.method !== 'GET') return next();
+    if (req.path.startsWith('/api') || req.path.startsWith('/ws') || req.path.startsWith('/_next')) return next();
+    const indexFile = path.join(distPath, 'index.html');
+    res.sendFile(indexFile, (err) => {
+      if (err) return next(err);
+    });
+  });
+} else {
+  // Production API-only mode (api.the-huddle.co on Railway):
+  // The SPA lives on Netlify.  Hitting the API root in a browser is almost
+  // always a misconfiguration — return a helpful JSON response and, for
+  // browsers that sent an Accept: text/html header, also emit a 302 so the
+  // browser lands on the real app automatically.
+
+  app.get('/', (req, res) => {
+    const wantHtml = (req.headers.accept || '').includes('text/html');
+    if (wantHtml) {
+      // Browser navigation: redirect to the Netlify frontend.
+      return res.redirect(302, FRONTEND_URL);
+    }
+    // curl / Postman / health-check ping: return JSON.
+    return res.status(200).json({
+      ok: true,
+      service: 'api',
+      message: `Use ${FRONTEND_URL} for the web app`,
+    });
+  });
+
+  // Any other non-API GET that slips through (e.g. /favicon.ico, /robots.txt)
+  // also gets the JSON response so we never accidentally serve HTML from dist.
+  app.use((req, res, next) => {
+    if (req.method !== 'GET') return next();
+    if (req.path.startsWith('/api') || req.path.startsWith('/ws') || req.path.startsWith('/_next')) return next();
+    return res.status(200).json({
+      ok: true,
+      service: 'api',
+      message: `Use ${FRONTEND_URL} for the web app`,
+    });
+  });
+}
 
 const redactEnv = (input) => {
   if (!input || typeof input !== 'object') {
