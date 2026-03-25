@@ -242,7 +242,7 @@ const buildSupabaseAssignmentRecord = (assignment: CourseAssignment, includeProg
 });
 
 const buildUpsertOptions = () =>
-  ASSIGNMENTS_TABLE === 'course_assignments' ? { onConflict: 'course_id,user_id' } : undefined;
+  (ASSIGNMENTS_TABLE as string) === 'course_assignments' ? { onConflict: 'course_id,user_id' } : undefined;
 
 const executeAssignmentsMutation = async <T>(
   label: string,
@@ -334,7 +334,7 @@ const emitLocalEvent = (
   syncService.logSyncEvent({
     type,
     data: assignment,
-    courseId: assignment.courseId,
+    courseId: assignment.courseId ?? undefined,
     userId: assignment.userId,
     timestamp: Date.now(),
     source: 'client',
@@ -552,8 +552,31 @@ export const getAssignmentsForUser = async (userId?: string | null): Promise<Cou
   }
 
   if (sessionUserId !== normalized) {
-    console.warn('[assignmentStorage] Requested user does not match authenticated session; using local fallback.');
-    return loadLocalForUser();
+    // The secureStorage session can momentarily lag behind the live React auth
+    // state (e.g. right after login when setUserSession hasn't flushed yet).
+    // Before assuming a genuine mismatch, check if the Supabase live session
+    // confirms the requested user — if so, treat it as a match.
+    try {
+      const supabase = await getSupabase();
+      if (supabase) {
+        const { data } = await supabase.auth.getSession();
+        const liveId = data?.session?.user?.id
+          ? data.session.user.id.toLowerCase()
+          : null;
+        if (liveId && liveId === normalized) {
+          // Live session confirms this is the correct user — proceed normally.
+        } else {
+          console.warn('[assignmentStorage] Requested user does not match authenticated session; using local fallback.');
+          return loadLocalForUser();
+        }
+      } else {
+        console.warn('[assignmentStorage] Requested user does not match authenticated session; using local fallback.');
+        return loadLocalForUser();
+      }
+    } catch {
+      console.warn('[assignmentStorage] Requested user does not match authenticated session; using local fallback.');
+      return loadLocalForUser();
+    }
   }
 
   const { rows, failed } = await fetchAssignmentsViaApi();
@@ -561,7 +584,7 @@ export const getAssignmentsForUser = async (userId?: string | null): Promise<Cou
     const filtered = rows.filter((record) => (record.assignmentType ?? 'course') === 'course');
     if (filtered.length) {
       persistLocalAssignments(filtered);
-      filtered.forEach((assignment) => emitLocalEvent('assignment_synced', assignment));
+      filtered.forEach((assignment) => emitLocalEvent('assignment_updated', assignment));
     }
     return filtered.filter((record) => record.userId === normalized);
   }

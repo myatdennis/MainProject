@@ -48,12 +48,17 @@ const EnhancedLMSLayout: React.FC<EnhancedLMSLayoutProps> = ({ children }) => {
     autoSaveInterval: 30000
   });
 
-  // Check authentication
+  // Check authentication — guard against bootstrap race.
+  // authInitializing=true means SecureAuthContext hasn't finished its first
+  // runBootstrap pass yet.  Redirecting here would race with RequireAuth
+  // (the canonical gate) and fire before the session is confirmed, causing
+  // a spurious logout of an authenticated user.
   useEffect(() => {
+    if (authInitializing) return;
     if (!isAuthenticated.lms) {
       navigate('/login');
     }
-  }, [isAuthenticated.lms, navigate]);
+  }, [authInitializing, isAuthenticated.lms, navigate]);
 
   const navigation = [
     { name: 'Dashboard', href: '/lms/dashboard', icon: LayoutDashboard },

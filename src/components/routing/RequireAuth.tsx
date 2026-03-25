@@ -781,6 +781,12 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
       // Bootstrap still running — render nothing and wait for the real state.
       return null;
     }
+    // ADDITIONAL GUARD: if sessionStatus is 'loading', loadSession() is in
+    // flight (triggered by the effect above).  Do not redirect yet — the result
+    // may arrive as 'authenticated' and we would have caused a spurious logout.
+    if (sessionStatus === 'loading') {
+      return null;
+    }
     // Bootstrap is complete.  If auth is not definitively unauthenticated,
     // something is still resolving (e.g. authStatus='error') — don't redirect.
     if (authStatus !== 'unauthenticated') {

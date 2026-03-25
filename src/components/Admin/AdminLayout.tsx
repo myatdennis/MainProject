@@ -271,6 +271,13 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
     // sessionStatus='unauthenticated' fires before /auth/session resolves.
     // RequireAuth is the primary auth gate; this is a safety net for the layout
     // shell only.
+    //
+    // ADDITIONAL GUARD: if authStatus is 'authenticated', never redirect even if
+    // hasSession (derived from user object) is momentarily null during a React
+    // re-render cycle.  SecureAuthContext is the canonical source of truth.
+    if (authStatus === 'authenticated') {
+      return;
+    }
     if (!hasSession && authStatus === 'unauthenticated') {
       logAuthDiagnostic('AdminLayout.auth_guard', {
         path: location.pathname,

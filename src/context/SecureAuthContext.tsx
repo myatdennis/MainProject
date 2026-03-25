@@ -649,8 +649,46 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   }, []);
 
   const [authInitializing, setAuthInitializing] = useState(true);
-  const [authStatus, setAuthStatus] = useState<'booting' | 'authenticated' | 'unauthenticated' | 'error'>('booting');
-  const [sessionStatus, setSessionStatus] = useState<'loading' | 'authenticated' | 'unauthenticated'>('loading');
+  const authStatusRef = useRef<'booting' | 'authenticated' | 'unauthenticated' | 'error'>('booting');
+  const [authStatus, setAuthStatusState] = useState<'booting' | 'authenticated' | 'unauthenticated' | 'error'>('booting');
+  const setAuthStatus = useCallback(
+    (next: 'booting' | 'authenticated' | 'unauthenticated' | 'error', source?: string) => {
+      const prev = authStatusRef.current;
+      authStatusRef.current = next;
+      setAuthStatusState(next);
+      if (import.meta.env?.DEV) {
+        console.debug('[AUTH_STATE_SET]', {
+          source: source ?? 'unknown',
+          previousAuthStatus: prev,
+          nextAuthStatus: next,
+          authInitializing: true, // will be current render value
+          userId: null, // populated by caller when available
+          pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+          ts: Date.now(),
+        });
+      }
+    },
+    [],
+  );
+  const sessionStatusRef = useRef<'loading' | 'authenticated' | 'unauthenticated'>('loading');
+  const [sessionStatus, setSessionStatusState] = useState<'loading' | 'authenticated' | 'unauthenticated'>('loading');
+  const setSessionStatus = useCallback(
+    (next: 'loading' | 'authenticated' | 'unauthenticated', source?: string) => {
+      const prev = sessionStatusRef.current;
+      sessionStatusRef.current = next;
+      setSessionStatusState(next);
+      if (import.meta.env?.DEV) {
+        console.debug('[AUTH_STATE_SET]', {
+          source: source ?? 'unknown',
+          previousSessionStatus: prev,
+          nextSessionStatus: next,
+          pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+          ts: Date.now(),
+        });
+      }
+    },
+    [],
+  );
   const [surfaceAuthStatus, setSurfaceAuthStatus] = useState<Record<SessionSurface, SurfaceAuthStatus>>({
     admin: 'idle',
     lms: 'idle',
@@ -975,10 +1013,37 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       message,
       shouldRedirect = true,
     }: { silent?: boolean; reason?: string; message?: string; shouldRedirect?: boolean } = {}) => {
-      setShouldRedirectToLogin(shouldRedirect);
       const hadSession = hasAuthenticatedSessionRef.current;
+
+      // CRITICAL GUARD: a silent/background session check (e.g. membership retry)
+      // must NEVER overwrite a confirmed authenticated session.  Only allow the
+      // 401 handler to destroy auth state when the call was not silent OR when no
+      // authenticated session has ever been established.
+      if (silent && hadSession) {
+        if (import.meta.env?.DEV) {
+          console.warn('[AUTH_RESET] handleSessionUnauthorized SUPPRESSED (silent + hadSession)', {
+            reason,
+            pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+            hadUser: hadSession,
+            hadToken: Boolean(getAccessToken()),
+          });
+        }
+        return;
+      }
+
+      if (import.meta.env?.DEV) {
+        console.warn('[AUTH_RESET]', {
+          source: 'handleSessionUnauthorized',
+          reason,
+          pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+          hadUser: hadSession,
+          hadToken: Boolean(getAccessToken()),
+        });
+      }
+
+      setShouldRedirectToLogin(shouldRedirect);
       applySessionPayload(null, { persistTokens: true, reason });
-      setAuthStatus('unauthenticated');
+      setAuthStatus('unauthenticated', `handleSessionUnauthorized:${reason}`);
       lastSessionFetchResultRef.current = 'unauthenticated';
       if (!silent) {
         setBootstrapError(null);
@@ -987,7 +1052,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         toast.error(message ?? 'Your session expired. Please sign in again.', { id: 'session-expired' });
       }
     },
-    [applySessionPayload],
+    [applySessionPayload, setAuthStatus],
   );
 
   const headersToRecord = (headers?: Headers): Record<string, string> | undefined => {
@@ -1133,20 +1198,57 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   const continueAsGuest = useCallback(
     (reason: string, options?: { redirect?: boolean }) => {
       const redirect = options?.redirect ?? true;
-      setShouldRedirectToLogin(redirect);
-      if (import.meta.env.DEV) {
-        console.info('[Auth] auth_restore: logged_out, continuing as guest.', { reason });
+
+      // CRITICAL GUARD: never wipe an already-confirmed authenticated session from
+      // a background/silent path (e.g. a membership retry that gets a transient 401).
+      // Only allow continueAsGuest to destroy auth state if:
+      //   1. We have never successfully authenticated (cold boot failures), OR
+      //   2. The caller explicitly acknowledges it is doing a real logout.
+      // "bootstrap_" prefixes are generally allowed (they run before any auth is set).
+      // EXCEPTION: "bootstrap_empty" means /auth/session returned no user — but if
+      // hasAuthenticatedSessionRef is already true (user previously confirmed) this is
+      // a transient API race, NOT a real logout. Suppress it to prevent the spurious
+      // authStatus='unauthenticated' flash that causes RequireAuth to redirect.
+      // "bootstrap_no_supabase_token" and "bootstrap_unauthenticated" remain allowed
+      // because they mean Supabase itself has no token — a real session cannot exist.
+      const isBootstrapReason = reason.startsWith('bootstrap_');
+      const isBootstrapEmptyRace =
+        reason === 'bootstrap_empty' && hasAuthenticatedSessionRef.current;
+      const isLogoutReason = reason === 'manual_logout' || reason === 'refresh_rejected';
+      if (isBootstrapEmptyRace || (!isBootstrapReason && !isLogoutReason && hasAuthenticatedSessionRef.current)) {
+        if (import.meta.env?.DEV) {
+          console.warn('[AUTH_RESET] continueAsGuest SUPPRESSED — live authenticated session preserved', {
+            reason,
+            isBootstrapEmptyRace,
+            pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+            hadUser: true,
+            hadToken: Boolean(getAccessToken()),
+          });
+        }
+        return;
       }
+
+      if (import.meta.env?.DEV) {
+        console.warn('[AUTH_RESET]', {
+          source: 'continueAsGuest',
+          reason,
+          pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+          hadUser: hasAuthenticatedSessionRef.current,
+          hadToken: Boolean(getAccessToken()),
+        });
+      }
+
+      setShouldRedirectToLogin(redirect);
       clearBootstrapFailOpenTimer();
       applySessionPayload(null, { persistTokens: true, reason });
-      setAuthStatus('unauthenticated');
-      setSessionStatus('unauthenticated');
+      setAuthStatus('unauthenticated', `continueAsGuest:${reason}`);
+      setSessionStatus('unauthenticated', `continueAsGuest:${reason}`);
       setAuthInitializing(false);
       setBootstrapError(null);
       lastSessionFetchResultRef.current = 'unauthenticated';
       logSessionResult('unauthenticated');
     },
-    [applySessionPayload, clearBootstrapFailOpenTimer, setAuthInitializing, setAuthStatus, setBootstrapError],
+    [applySessionPayload, clearBootstrapFailOpenTimer, setAuthInitializing, setAuthStatus, setBootstrapError, setSessionStatus],
   );
   const forceLogout = useCallback(
     async (reason: string) => {
@@ -1156,6 +1258,10 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       } catch (signOutError) {
         console.warn('[SecureAuth] forceLogout signOut failed', signOutError);
       }
+      // forceLogout must always proceed regardless of current auth state.
+      // We temporarily clear hasAuthenticatedSessionRef so continueAsGuest's
+      // guard does not suppress the state reset.
+      hasAuthenticatedSessionRef.current = false;
       continueAsGuest(reason);
     },
     [continueAsGuest],
@@ -1283,7 +1389,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             persistTokens: false,
             reason: surface ? `${surface}_session_bootstrap` : 'session_bootstrap',
           });
-          setAuthStatus('authenticated');
+          setAuthStatus('authenticated', `fetchServerSession:${surface ?? 'unknown'}`);
           if (!silent) {
             setBootstrapError(null);
           }
@@ -1563,7 +1669,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
           if (payload?.user) {
             applySessionPayload(payload, { persistTokens: true, reason: 'refresh_success' });
-            setAuthStatus('authenticated');
+            setAuthStatus('authenticated', 'refreshTokenCallback:refresh_success');
             refreshStatus = 'success';
           } else {
             await fetchServerSession({ silent: true });
@@ -1576,8 +1682,18 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           if (error instanceof ApiError) {
             if (error.status === 401 || error.status === 403) {
               console.warn('[SecureAuth] Refresh token rejected, clearing session');
+              if (import.meta.env?.DEV) {
+                console.warn('[AUTH_RESET]', {
+                  source: 'refreshTokenCallback:refresh_rejected',
+                  reason: 'refresh_rejected',
+                  pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+                  hadUser: hasAuthenticatedSessionRef.current,
+                  hadToken: Boolean(getAccessToken()),
+                });
+              }
+              hasAuthenticatedSessionRef.current = false;
               applySessionPayload(null, { persistTokens: true, reason: 'refresh_rejected' });
-              setAuthStatus('unauthenticated');
+              setAuthStatus('unauthenticated', 'refreshTokenCallback:refresh_rejected');
               if (typeof window !== 'undefined') {
                 toast.error('Your session expired. Please sign in again.', { id: 'session-expired' });
                 const loginPath = resolveLoginPath();
@@ -1760,7 +1876,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
         if (payload?.user) {
           applySessionPayload(payload, { persistTokens: false, reason: 'bootstrap_success' });
-          setAuthStatus('authenticated');
+          setAuthStatus('authenticated', 'runBootstrap:success');
           setBootstrapError(null);
           logSessionResult('authenticated');
         } else {
@@ -1791,7 +1907,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
                 return;
               }
               if (recovered) {
-                setAuthStatus('authenticated');
+                setAuthStatus('authenticated', 'runBootstrap:refresh_recovery');
                 setBootstrapError(null);
                 logSessionResult('authenticated');
                 return;
@@ -1820,7 +1936,10 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       } finally {
         if (!isStale()) {
           clearBootstrapFailOpenTimer();
-          setSessionStatus(hasAuthenticatedSessionRef.current ? 'authenticated' : 'unauthenticated');
+          setSessionStatus(
+            hasAuthenticatedSessionRef.current ? 'authenticated' : 'unauthenticated',
+            'runBootstrap:finally',
+          );
           setAuthInitializing(false);
           console.debug('[AUTH BOOTSTRAP COMPLETE]', {
             authenticated: hasAuthenticatedSessionRef.current,
@@ -2051,8 +2170,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       setActiveOrgIdState(null);
       setSessionMetaVersion((value) => value + 1);
       clearActiveOrgPreference();
-      setAuthStatus('unauthenticated');
-      setSessionStatus('unauthenticated');
+      hasAuthenticatedSessionRef.current = false;
+      setAuthStatus('unauthenticated', 'logout:manual_logout');
+      setSessionStatus('unauthenticated', 'logout:manual_logout');
 
       if (type) {
         setIsAuthenticated((prev) => ({
@@ -2382,7 +2502,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         void flushAuditQueue();
 
         logAuthSessionState('admin-login_success', getUserSession());
-        setAuthStatus('authenticated');
+        setAuthStatus('authenticated', 'login:admin_success');
         return { success: true };
       }
 
@@ -2426,9 +2546,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         persistTokens: true,
         reason: `${type}_login_success`,
       });
-      setAuthStatus('authenticated');
-
-      
+      setAuthStatus('authenticated', `login:${type}_success`);
 
       logAuthSessionState(`${type}-login_success`, getUserSession());
 
