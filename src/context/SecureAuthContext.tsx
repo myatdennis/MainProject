@@ -2709,6 +2709,8 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     });
     return () => {
       registerCourseStoreOrgResolver(null);
+      // Clear the direct snapshot so a subsequent mount starts clean.
+      setOrgContextSnapshot(null);
     };
   }, [activeOrgId, membershipStatus, sessionStatus, user?.activeOrgId, user?.organizationId, user?.role, user?.id]);
 
@@ -3099,23 +3101,32 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   const _sessionReady = sessionStatus === 'authenticated';
   const _membershipReady = membershipStatus === 'ready' || membershipStatus === 'degraded';
   const _membershipErrored = membershipStatus === 'error';
-  setOrgContextSnapshot(
-    !_sessionReady
-      ? { status: 'loading', orgId: null, role: null, userId: null }
-      : !_membershipReady
-        ? {
-            status: _membershipErrored ? 'error' : 'loading',
-            orgId: null,
-            role: null,
-            userId: user?.id ?? null,
-          }
-        : {
-            status: 'ready',
-            orgId: activeOrgId ?? user?.activeOrgId ?? user?.organizationId ?? null,
-            role: user?.role ?? null,
-            userId: user?.id ?? null,
-          },
-  );
+  const _snapshot = !_sessionReady
+    ? { status: 'loading' as const, orgId: null, role: null, userId: null }
+    : !_membershipReady
+      ? {
+          status: (_membershipErrored ? 'error' : 'loading') as 'error' | 'loading',
+          orgId: null,
+          role: null,
+          userId: user?.id ?? null,
+        }
+      : {
+          status: 'ready' as const,
+          orgId: activeOrgId ?? user?.activeOrgId ?? user?.organizationId ?? null,
+          role: user?.role ?? null,
+          userId: user?.id ?? null,
+        };
+  setOrgContextSnapshot(_snapshot);
+  if (import.meta.env?.DEV) {
+    // Visible in dev console — confirm the snapshot is updating correctly.
+    console.debug('[SecureAuth] org_bridge_snapshot', {
+      status: _snapshot.status,
+      orgId: _snapshot.orgId,
+      membershipStatus,
+      sessionStatus,
+      ts: Date.now(),
+    });
+  }
 
   return (
     <AuthContext.Provider value={value}>
