@@ -1313,11 +1313,48 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       setAuthStatus('unauthenticated', `continueAsGuest:${reason}`);
       setSessionStatus('unauthenticated', `continueAsGuest:${reason}`);
       setAuthInitializing(false);
+      // continueAsGuest is the terminal exit of every bootstrap short-circuit
+      // path (e.g. 'bootstrap_login_route', 'bootstrap_unauthenticated',
+      // 'bootstrap_http_error', 'bootstrap_no_supabase_token', etc.).
+      // Without this, bootstrapComplete stays false when startBootstrap takes
+      // the login-route fast-exit, leaving authFullySettled permanently false
+      // in RequireAuth — the user can never be allowed through after login.
+      setBootstrapComplete(true);
+      bootstrapInProgressRef.current = false;
+      // Determine whether this continueAsGuest call settles auth for protected
+      // routes.  On public auth entry paths (/, /login, /admin/login,
+      // /auth/callback) the user is about to log in — defer authSettled so
+      // RequireAuth cannot redirect prematurely.  On every other path the
+      // unauthenticated state is definitive and it is safe to settle.
+      const _cagPathname = typeof window !== 'undefined' ? window.location?.pathname : '';
+      const _cagIsPublicAuthEntry =
+        _cagPathname === '/' ||
+        _cagPathname.startsWith('/login') ||
+        _cagPathname.startsWith('/admin/login') ||
+        _cagPathname.startsWith('/auth/callback');
+      if (!_cagIsPublicAuthEntry) {
+        setAuthSettled(true);
+        console.info('[AUTH_SETTLED]', {
+          pathname: _cagPathname,
+          authStatus: 'unauthenticated',
+          sessionStatus: 'unauthenticated',
+          bootstrapComplete: true,
+          authSettled: true,
+          reason: `continueAsGuest:${reason}`,
+        });
+      } else {
+        console.info('[AUTH_SETTLED_DEFERRED]', {
+          pathname: _cagPathname,
+          reason: `continueAsGuest:${reason}:public_auth_entry`,
+          authSettled: false,
+          bootstrapComplete: true,
+        });
+      }
       setBootstrapError(null);
       lastSessionFetchResultRef.current = 'unauthenticated';
       logSessionResult('unauthenticated');
     },
-    [applySessionPayload, clearBootstrapFailOpenTimer, setAuthInitializing, setAuthStatus, setBootstrapError, setSessionStatus],
+    [applySessionPayload, clearBootstrapFailOpenTimer, setAuthInitializing, setAuthSettled, setAuthStatus, setBootstrapComplete, setBootstrapError, setSessionStatus],
   );
   const forceLogout = useCallback(
     async (reason: string) => {
