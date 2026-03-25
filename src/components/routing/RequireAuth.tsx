@@ -690,19 +690,75 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   //                        before the server session call resolves)
   const bootstrapInProgress = authInitializing || authStatus === 'booting';
 
+  // ── TRUE SETTLED CHECK ───────────────────────────────────────────────────
+  // Auth is NOT settled when any of the following are true:
+  //   - authInitializing (bootstrap still executing)
+  //   - authStatus === 'booting' (applySessionPayload not yet called)
+  //   - sessionStatus === 'loading' (loadSession() in-flight)
+  //   - membershipStatus === 'loading' | 'idle' (membership resolution pending)
+  //
+  // [SecureAuth] membership_applied fires BEFORE membershipStatus leaves
+  // 'loading', meaning RequireAuth was previously able to evaluate redirect
+  // logic in the window between session restore and membership settle.
+  // This gate closes that race completely.
+  const membershipSettled =
+    membershipStatus !== 'loading' && membershipStatus !== 'idle';
+  const authFullySettled =
+    !authInitializing &&
+    authStatus !== 'booting' &&
+    sessionStatus !== 'loading' &&
+    membershipSettled;
+
   console.debug('[REQUIRE_AUTH_EVAL]', {
     pathname: location.pathname,
     authInitializing,
     authStatus,
     sessionStatus,
     membershipStatus,
+    membershipSettled,
+    authFullySettled,
     activeOrgId,
   });
+
+  // ── GATE 2: Auth not yet fully settled — NO REDIRECT ALLOWED ─────────────
+  // This is the hard gate that prevents RequireAuth from redirecting while
+  // bootstrap is still completing.  It fires for EVERY unsettled state,
+  // including the membership_applied → membershipStatus='ready' window.
+  //
+  // EXCEPTION: if hasResolvedAuthRef.current is true (i.e. the user was
+  // already confirmed authenticated at least once this page lifetime), we do
+  // NOT block on membership loading.  That prevents the spinner flash on
+  // internal navigation and matches the existing hasResolvedAuthRef contract.
+  // Redirect logic in those downstream blocks still requires authStatus to be
+  // 'unauthenticated' explicitly, so there is no spurious redirect risk here.
+  const shouldWaitForSettle = !authFullySettled && !hasResolvedAuthRef.current;
+  if (shouldWaitForSettle) {
+    console.debug('[REQUIRE_AUTH_WAIT]', {
+      authInitializing,
+      authStatus,
+      sessionStatus,
+      membershipStatus,
+      membershipSettled,
+      pathname: location.pathname,
+    });
+    // Only show the full-screen spinner on cold first load; for all other
+    // unsettled-but-re-visiting states return null (transparent wait).
+    if (!hasResolvedAuthRef.current && bootstrapInProgress) {
+      return (
+        <div className="flex min-h-[60vh] items-center justify-center bg-softwhite">
+          <LoadingSpinner size="lg" />
+        </div>
+      );
+    }
+    return null;
+  }
 
   // Bootstrap-only gate: block rendering exclusively during the first cold-start
   // load (before we have any confirmed auth state).  Once hasResolvedAuthRef is
   // true we skip every spinner condition — the admin gate and membership checks
   // run in the background and update state without blocking the page render.
+  // NOTE: This path is now only reachable if authFullySettled === true, so
+  // shouldShowBootstrapSpinner will always be false.  Retained for safety.
   const shouldShowBootstrapSpinner =
     !hasResolvedAuthRef.current && bootstrapInProgress;
 
@@ -770,26 +826,15 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   }
 
   if (!hasSession) {
-    // Do not show a spinner here — the bootstrap spinner at the top of this
-    // function already handles all pre-auth loading states.
-    //
-    // CRITICAL: do NOT redirect while bootstrap is still in progress.
-    // authStatus can transiently be 'unauthenticated' before /auth/session
-    // resolves, which would produce a false redirect.  Only redirect after
-    // authInitializing === false AND authStatus is definitively settled.
-    if (bootstrapInProgress) {
-      // Bootstrap still running — render nothing and wait for the real state.
-      return null;
-    }
-    // ADDITIONAL GUARD: if sessionStatus is 'loading', loadSession() is in
-    // flight (triggered by the effect above).  Do not redirect yet — the result
-    // may arrive as 'authenticated' and we would have caused a spurious logout.
-    if (sessionStatus === 'loading') {
-      return null;
-    }
-    // Bootstrap is complete.  If auth is not definitively unauthenticated,
-    // something is still resolving (e.g. authStatus='error') — don't redirect.
+    // At this point authFullySettled === true, so:
+    //   - authInitializing is false
+    //   - authStatus is 'authenticated' or 'unauthenticated' (not 'booting')
+    //   - sessionStatus is NOT 'loading'
+    //   - membershipStatus is settled (not 'loading' or 'idle')
+    // The only remaining reason to be here with no session is that auth is
+    // definitively unauthenticated.  Redirect only when that is confirmed.
     if (authStatus !== 'unauthenticated') {
+      // Covers authStatus === 'error' or any future transient state.
       return null;
     }
     const targetPath = currentLoginPath;
@@ -808,6 +853,14 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
         sessionStatus,
         orgResolutionStatus,
         surfaceStatus: effectiveSurfaceState,
+      });
+      console.debug('[REQUIRE_AUTH_FINAL_DECISION]', {
+        authStatus,
+        sessionStatus,
+        membershipStatus,
+        decision: 'redirect',
+        target: targetPath,
+        pathname: location.pathname,
       });
       console.debug('[REQUIRE_AUTH_REDIRECT]', {
         pathname: location.pathname,
@@ -862,18 +915,22 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
     if (!isAuthenticated.lms) {
       const lmsTarget = loginPathByMode.lms;
       if (!isOnModeLoginPath) {
-        // Guard: same bootstrap-in-progress check — do not redirect while
-        // auth is still initializing.  isAuthenticated.lms is false transiently
-        // during bootstrap before the session payload is applied.
-        if (bootstrapInProgress) {
-          return null;
-        }
-        // Only redirect once auth is definitively settled as unauthenticated.
+        // authFullySettled === true here (enforced by the gate above), so
+        // bootstrapInProgress is false and sessionStatus is not 'loading'.
+        // Only redirect if auth is definitively unauthenticated.
         if (authStatus !== 'unauthenticated') {
           return null;
         }
         logRedirectOnce(lmsTarget, 'missing_lms_session');
         logGuardEvent('redirect_login', { reason: 'missing_lms_session' });
+        console.debug('[REQUIRE_AUTH_FINAL_DECISION]', {
+          authStatus,
+          sessionStatus,
+          membershipStatus,
+          decision: 'redirect',
+          target: lmsTarget,
+          pathname: location.pathname,
+        });
         console.debug('[REQUIRE_AUTH_REDIRECT]', {
           pathname: location.pathname,
           authInitializing,
@@ -913,6 +970,13 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   }
 
   logGuardEvent('allow', { path: location.pathname, adminCapabilityStatus: adminCapability.status });
+  console.debug('[REQUIRE_AUTH_FINAL_DECISION]', {
+    authStatus,
+    sessionStatus,
+    membershipStatus,
+    decision: 'allow',
+    pathname: location.pathname,
+  });
   console.debug('[REQUIRE_AUTH_ALLOW]', {
     pathname: location.pathname,
     authStatus,

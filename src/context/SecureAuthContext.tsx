@@ -656,17 +656,13 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       const prev = authStatusRef.current;
       authStatusRef.current = next;
       setAuthStatusState(next);
-      if (import.meta.env?.DEV) {
-        console.debug('[AUTH_STATE_SET]', {
-          source: source ?? 'unknown',
-          previousAuthStatus: prev,
-          nextAuthStatus: next,
-          authInitializing: true, // will be current render value
-          userId: null, // populated by caller when available
-          pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
-          ts: Date.now(),
-        });
-      }
+      console.debug('[AUTH_STATE_SET]', {
+        source: source ?? 'unknown',
+        previousAuthStatus: prev,
+        nextAuthStatus: next,
+        pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+        ts: Date.now(),
+      });
     },
     [],
   );
@@ -677,15 +673,13 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       const prev = sessionStatusRef.current;
       sessionStatusRef.current = next;
       setSessionStatusState(next);
-      if (import.meta.env?.DEV) {
-        console.debug('[AUTH_STATE_SET]', {
-          source: source ?? 'unknown',
-          previousSessionStatus: prev,
-          nextSessionStatus: next,
-          pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
-          ts: Date.now(),
-        });
-      }
+      console.debug('[AUTH_STATE_SET]', {
+        source: source ?? 'unknown',
+        previousSessionStatus: prev,
+        nextSessionStatus: next,
+        pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+        ts: Date.now(),
+      });
     },
     [],
   );
@@ -1031,15 +1025,13 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         return;
       }
 
-      if (import.meta.env?.DEV) {
-        console.warn('[AUTH_RESET]', {
-          source: 'handleSessionUnauthorized',
-          reason,
-          pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
-          hadUser: hadSession,
-          hadToken: Boolean(getAccessToken()),
-        });
-      }
+      console.warn('[AUTH_RESET]', {
+        source: 'handleSessionUnauthorized',
+        reason,
+        pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+        hadUser: hadSession,
+        hadToken: Boolean(getAccessToken()),
+      });
 
       setShouldRedirectToLogin(shouldRedirect);
       applySessionPayload(null, { persistTokens: true, reason });
@@ -1216,27 +1208,23 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         reason === 'bootstrap_empty' && hasAuthenticatedSessionRef.current;
       const isLogoutReason = reason === 'manual_logout' || reason === 'refresh_rejected';
       if (isBootstrapEmptyRace || (!isBootstrapReason && !isLogoutReason && hasAuthenticatedSessionRef.current)) {
-        if (import.meta.env?.DEV) {
-          console.warn('[AUTH_RESET] continueAsGuest SUPPRESSED — live authenticated session preserved', {
-            reason,
-            isBootstrapEmptyRace,
-            pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
-            hadUser: true,
-            hadToken: Boolean(getAccessToken()),
-          });
-        }
+        console.warn('[AUTH_RESET] continueAsGuest SUPPRESSED — live authenticated session preserved', {
+          reason,
+          isBootstrapEmptyRace,
+          pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+          hadUser: true,
+          hadToken: Boolean(getAccessToken()),
+        });
         return;
       }
 
-      if (import.meta.env?.DEV) {
-        console.warn('[AUTH_RESET]', {
-          source: 'continueAsGuest',
-          reason,
-          pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
-          hadUser: hasAuthenticatedSessionRef.current,
-          hadToken: Boolean(getAccessToken()),
-        });
-      }
+      console.warn('[AUTH_RESET]', {
+        source: 'continueAsGuest',
+        reason,
+        pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+        hadUser: hasAuthenticatedSessionRef.current,
+        hadToken: Boolean(getAccessToken()),
+      });
 
       setShouldRedirectToLogin(redirect);
       clearBootstrapFailOpenTimer();
@@ -1340,6 +1328,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             method: 'GET',
             signal,
             requireAuth: true,
+            suppressAuthFailureRedirect: true,
           });
           return normalizeSessionResponsePayload(payloadRaw);
         };
@@ -1665,6 +1654,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             allowAnonymous: true,
             headers: refreshHeaders,
             body: refreshBody,
+            suppressAuthFailureRedirect: true,
           });
 
           if (payload?.user) {
@@ -1867,6 +1857,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           method: 'GET',
           signal,
           requireAuth: true,
+          suppressAuthFailureRedirect: true,
         });
         // Stale-run guard: check again after the heavyweight session fetch.
         if (isStale()) {
@@ -1879,6 +1870,12 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           setAuthStatus('authenticated', 'runBootstrap:success');
           setBootstrapError(null);
           logSessionResult('authenticated');
+          console.debug('[AUTH_SESSION_RESTORED]', {
+            userId: payload.user.id,
+            activeOrgId: payload.user.activeOrgId ?? payload.user.organizationId ?? null,
+            pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+            ts: Date.now(),
+          });
         } else {
           continueAsGuest('bootstrap_empty');
         }
@@ -2869,20 +2866,26 @@ const renderAuthState = ({
     if (!onLoginRoute && shouldRedirectToLogin) {
       if (typeof window !== 'undefined') {
         const target = resolveLoginPath();
-        console.debug('[AUTH REDIRECT DECISION]', {
-          decision: 'redirecting',
-          authStatus,
-          authInitializing,
-          shouldRedirectToLogin,
-          pathname,
-          target,
-          ts: Date.now(),
-        });
-        logAuthRedirect('SecureAuthContext.renderAuthState.unauthenticated', {
-          target,
-          pathname,
-        });
-        window.location.assign(target);
+        // Guard: window.location.assign fires on every React render while
+        // authStatus stays 'unauthenticated'. Use a module-level flag so only
+        // the first call in a given page lifetime actually triggers navigation.
+        if (!(window as any).__HUDDLE_AUTH_REDIRECT_FIRED__) {
+          (window as any).__HUDDLE_AUTH_REDIRECT_FIRED__ = true;
+          console.debug('[AUTH REDIRECT DECISION]', {
+            decision: 'redirecting',
+            authStatus,
+            authInitializing,
+            shouldRedirectToLogin,
+            pathname,
+            target,
+            ts: Date.now(),
+          });
+          logAuthRedirect('SecureAuthContext.renderAuthState.unauthenticated', {
+            target,
+            pathname,
+          });
+          window.location.assign(target);
+        }
       }
       return <BootstrapRedirecting message="Redirecting to login…" />;
     }

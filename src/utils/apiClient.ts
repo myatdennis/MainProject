@@ -44,9 +44,18 @@ type ApiRequestOptions = {
   credentials?: RequestCredentials;
   skipAdminGateCheck?: boolean;
   expectedStatus?: number[];
+  /**
+   * When true, a 401 response will throw ApiError normally but will NOT
+   * trigger the handleAuthFailure() hard-redirect / clearAuth() side-effect.
+   * Use this for endpoints (e.g. /auth/session) where the caller owns the
+   * recovery flow and a page-level redirect would destroy in-flight auth state.
+   */
+  suppressAuthFailureRedirect?: boolean;
 };
 
-type InternalRequestOptions = ApiRequestOptions & {};
+type InternalRequestOptions = ApiRequestOptions & {
+  suppressAuthFailureRedirect?: boolean;
+};
 const devMode = Boolean(
   (import.meta as any)?.env?.DEV ?? (typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production'),
 );
@@ -657,7 +666,16 @@ const internalAuthorizedFetch = async (
 
   const contentType = res.headers.get('content-type');
   if (res.status === 401) {
-    await handleAuthFailure();
+    // suppressAuthFailureRedirect callers (e.g. SecureAuthContext bootstrap) own
+    // their own recovery flow.  Skip the hard clearAuth()+window.location.replace()
+    // so they can attempt a token refresh or call continueAsGuest gracefully.
+    if (!options.suppressAuthFailureRedirect) {
+      await handleAuthFailure();
+    } else {
+      console.debug('[apiClient] 401 received — auth failure redirect suppressed by caller', {
+        path: extractPathname(prepared.url),
+      });
+    }
     const body = isJsonResponse(contentType) ? await safeParseJson(res) : await safeReadText(res);
     logUnauthorized(prepared.url, res.status, body, {
       credentials: prepared.credentials,

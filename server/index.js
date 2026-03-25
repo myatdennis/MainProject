@@ -19049,8 +19049,24 @@ const distPath = path.resolve(__dirname, '../dist');
 // Local dev (NODE_ENV !== 'production') continues to serve the Vite dist output
 // exactly as before so `npm run preview` / E2E runs are unaffected.
 // ─────────────────────────────────────────────────────────────────────────────
-const SERVE_SPA = !isProduction || String(process.env.SERVE_SPA || '').toLowerCase() === 'true';
+// SERVE_SPA is false by default in production.
+// It must be explicitly opted-in with SERVE_SPA=true for single-process deployments.
+// In non-production (local dev / E2E) it is always true so `npm run preview` works.
+const _rawNodeEnv = (process.env.NODE_ENV || '').trim();
+const _rawServeSpa = (process.env.SERVE_SPA || '').trim().toLowerCase();
+const SERVE_SPA = _rawNodeEnv !== 'production' || _rawServeSpa === 'true';
 const FRONTEND_URL = process.env.FRONTEND_URL || 'https://the-huddle.co';
+
+// Log the runtime values EXACTLY as Node sees them — do NOT use the imported
+// isProduction binding here, use raw process.env so Railway log tells the truth.
+console.log('[DOMAIN_MODE_RUNTIME]', {
+  NODE_ENV: _rawNodeEnv,
+  SERVE_SPA: _rawServeSpa || '(not set)',
+  FRONTEND_URL,
+  isProduction: _rawNodeEnv === 'production',
+  serveSpa: SERVE_SPA,
+  apiOnly: _rawNodeEnv === 'production' && !SERVE_SPA,
+});
 
 if (SERVE_SPA) {
   // Non-production (local dev / E2E / single-process self-hosted):
@@ -19157,7 +19173,11 @@ app.use(apiErrorHandler);
 const server = http.createServer(app);
 
 server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Serving production build from ${distPath} at http://0.0.0.0:${PORT}`);
+  if (SERVE_SPA) {
+    console.log(`[DOMAIN_MODE] Serving SPA + API from ${distPath} at http://0.0.0.0:${PORT}`);
+  } else {
+    console.log(`[DOMAIN_MODE] API-only mode (no SPA) at http://0.0.0.0:${PORT} — frontend: ${FRONTEND_URL}`);
+  }
 });
 
 // Initialize WebSocket server (ws) to handle realtime broadcasts at /ws

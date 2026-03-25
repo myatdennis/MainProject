@@ -10,7 +10,7 @@
 --   INSERT  — denied via API; server uses service role which bypasses RLS
 --   UPDATE  — denied for everyone
 --   DELETE  — denied for everyone
--- =============================================================================
+-- =============================================================================                              
 
 -- Allow admins to read audit entries
 do $$ begin
