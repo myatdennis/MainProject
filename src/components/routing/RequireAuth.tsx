@@ -44,6 +44,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   const ROUTE_GUARD_DEBUG = Boolean(env?.DEV || env?.VITE_ENABLE_ROUTE_GUARD_DEBUG === 'true');
   const {
     authInitializing,
+    bootstrapComplete,
     authStatus,
     sessionStatus,
     surfaceAuthStatus,
@@ -691,19 +692,18 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   const bootstrapInProgress = authInitializing || authStatus === 'booting';
 
   // ── TRUE SETTLED CHECK ───────────────────────────────────────────────────
-  // Auth is NOT settled when any of the following are true:
-  //   - authInitializing (bootstrap still executing)
-  //   - authStatus === 'booting' (applySessionPayload not yet called)
-  //   - sessionStatus === 'loading' (loadSession() in-flight)
-  //   - membershipStatus === 'loading' | 'idle' (membership resolution pending)
+  // `bootstrapComplete` is the AUTHORITATIVE signal: SecureAuthContext sets it
+  // to true at EVERY terminal exit of runBootstrap — after session, membership,
+  // authStatus, and sessionStatus are all finalised.  RequireAuth MUST NOT
+  // evaluate redirect logic before bootstrapComplete === true.
   //
-  // [SecureAuth] membership_applied fires BEFORE membershipStatus leaves
-  // 'loading', meaning RequireAuth was previously able to evaluate redirect
-  // logic in the window between session restore and membership settle.
-  // This gate closes that race completely.
+  // The individual status checks below are belt-and-suspenders fallbacks for
+  // any in-flight state that arrives after bootstrapComplete (e.g. a
+  // membership retry that races with an internal route change).
   const membershipSettled =
     membershipStatus !== 'loading' && membershipStatus !== 'idle';
   const authFullySettled =
+    bootstrapComplete &&        // ← authoritative: bootstrap ran to completion
     !authInitializing &&
     authStatus !== 'booting' &&
     sessionStatus !== 'loading' &&
@@ -711,6 +711,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
 
   console.debug('[REQUIRE_AUTH_EVAL]', {
     pathname: location.pathname,
+    bootstrapComplete,
     authInitializing,
     authStatus,
     sessionStatus,
@@ -734,6 +735,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   const shouldWaitForSettle = !authFullySettled && !hasResolvedAuthRef.current;
   if (shouldWaitForSettle) {
     console.debug('[REQUIRE_AUTH_WAIT]', {
+      bootstrapComplete,
       authInitializing,
       authStatus,
       sessionStatus,

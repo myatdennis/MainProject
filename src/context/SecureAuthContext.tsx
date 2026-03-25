@@ -491,6 +491,12 @@ interface RegisterResult extends LoginResult {
 interface AuthContextType {
   isAuthenticated: AuthState;
   authInitializing: boolean;
+  /**
+   * True once the full bootstrap sequence has run to completion (or terminated
+   * definitively as unauthenticated/error).  RequireAuth MUST NOT evaluate
+   * redirect logic before this is true.
+   */
+  bootstrapComplete: boolean;
   authStatus: 'booting' | 'authenticated' | 'unauthenticated' | 'error';
   sessionStatus: 'loading' | 'authenticated' | 'unauthenticated';
   membershipStatus: 'idle' | 'loading' | 'ready' | 'error' | 'degraded';
@@ -524,6 +530,7 @@ interface AuthContextType {
 const defaultAuthContext: AuthContextType = {
   isAuthenticated: { lms: false, admin: false },
   authInitializing: true,
+  bootstrapComplete: false,
   authStatus: 'booting',
   sessionStatus: 'loading',
   membershipStatus: 'idle',
@@ -649,6 +656,14 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   }, []);
 
   const [authInitializing, setAuthInitializing] = useState(true);
+  // True once the full bootstrap sequence has completed (or terminated
+  // definitively).  Set to true at EVERY exit path of runBootstrap so
+  // RequireAuth never evaluates redirect logic before the outcome is known.
+  const [bootstrapComplete, setBootstrapComplete] = useState(false);
+  // Ref (not state) so it can be read synchronously inside continueAsGuest /
+  // forceLogout without stale-closure issues.  true from the moment runBootstrap
+  // sets authInitializing=true until the matching setBootstrapComplete(true) fires.
+  const bootstrapInProgressRef = useRef(true);
   const authStatusRef = useRef<'booting' | 'authenticated' | 'unauthenticated' | 'error'>('booting');
   const [authStatus, setAuthStatusState] = useState<'booting' | 'authenticated' | 'unauthenticated' | 'error'>('booting');
   const setAuthStatus = useCallback(
@@ -1009,6 +1024,18 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     }: { silent?: boolean; reason?: string; message?: string; shouldRedirect?: boolean } = {}) => {
       const hadSession = hasAuthenticatedSessionRef.current;
 
+      // BOOTSTRAP LOCK: never destroy auth state while bootstrap is still running
+      // and there is no previously confirmed session.  A silent/background
+      // 401 during the bootstrap window must not wipe a session that bootstrap
+      // is about to confirm.
+      if (bootstrapInProgressRef.current && !hadSession) {
+        console.warn('[AUTH_RESET_BLOCKED] handleSessionUnauthorized — bootstrap in progress, no prior session', {
+          reason,
+          pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+        });
+        return;
+      }
+
       // CRITICAL GUARD: a silent/background session check (e.g. membership retry)
       // must NEVER overwrite a confirmed authenticated session.  Only allow the
       // 401 handler to destroy auth state when the call was not silent OR when no
@@ -1191,6 +1218,24 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     (reason: string, options?: { redirect?: boolean }) => {
       const redirect = options?.redirect ?? true;
 
+      // BOOTSTRAP LOCK: block NON-bootstrap resets during bootstrap when no prior
+      // session has been confirmed.  Bootstrap-prefixed reasons (e.g. 'bootstrap_empty',
+      // 'bootstrap_unauthenticated', 'bootstrap_no_supabase_token') are the bootstrap
+      // sequence's own resolution paths and MUST be allowed through so the sequence
+      // can complete and set bootstrapComplete = true.  External callers (e.g. a
+      // background session poll, handleSessionUnauthorized) are blocked.
+      if (
+        bootstrapInProgressRef.current &&
+        !hasAuthenticatedSessionRef.current &&
+        !reason.startsWith('bootstrap_')
+      ) {
+        console.warn('[CONTINUE_AS_GUEST_BLOCKED] non-bootstrap reset during bootstrap phase', {
+          reason,
+          pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+        });
+        return;
+      }
+
       // CRITICAL GUARD: never wipe an already-confirmed authenticated session from
       // a background/silent path (e.g. a membership retry that gets a transient 401).
       // Only allow continueAsGuest to destroy auth state if:
@@ -1201,8 +1246,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       // hasAuthenticatedSessionRef is already true (user previously confirmed) this is
       // a transient API race, NOT a real logout. Suppress it to prevent the spurious
       // authStatus='unauthenticated' flash that causes RequireAuth to redirect.
-      // "bootstrap_no_supabase_token" and "bootstrap_unauthenticated" remain allowed
-      // because they mean Supabase itself has no token — a real session cannot exist.
+      // NOTE: "bootstrap_no_supabase_token" is only reached here when
+      // hasPreviouslyHadSession === true (initial-boot callers are redirected to
+      // applySessionPayload(null) before reaching continueAsGuest — see runBootstrap).
       const isBootstrapReason = reason.startsWith('bootstrap_');
       const isBootstrapEmptyRace =
         reason === 'bootstrap_empty' && hasAuthenticatedSessionRef.current;
@@ -1240,6 +1286,17 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   );
   const forceLogout = useCallback(
     async (reason: string) => {
+      // BOOTSTRAP LOCK: do not force-logout if bootstrap is still in progress
+      // and no session has ever been confirmed.  This prevents a stale
+      // readSupabaseSessionTokens() miss from nuking state that bootstrap
+      // is about to restore.
+      if (bootstrapInProgressRef.current && !hasAuthenticatedSessionRef.current) {
+        console.warn('[FORCE_LOGOUT_BLOCKED] bootstrap in progress — no prior session, skipping force logout', {
+          reason,
+          pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+        });
+        return;
+      }
       try {
         const supabaseClient = getSupabase();
         await supabaseClient?.auth.signOut();
@@ -1778,6 +1835,8 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           setAuthStatus('authenticated');
           setSessionStatus('authenticated');
           setAuthInitializing(false);
+          bootstrapInProgressRef.current = false;
+          setBootstrapComplete(true);
           return;
         }
       } catch (e) {
@@ -1799,6 +1858,8 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             setAuthStatus('authenticated');
             setSessionStatus('authenticated');
             setAuthInitializing(false);
+            bootstrapInProgressRef.current = false;
+            setBootstrapComplete(true);
             return;
           } catch (e2) {
             console.warn('[SecureAuth] E2E minimal bypass also failed', e2);
@@ -1820,7 +1881,14 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             (() => { try { return window.localStorage.getItem('huddle_lms_auth') === 'true'; } catch { return false; } })()));
 
       if (!_e2eFallbackBypass && isLoginPath()) {
-        continueAsGuest('bootstrap_login_route');
+        // On the login page, skip bootstrap entirely — just mark unauthenticated
+        // cleanly.  Do NOT call continueAsGuest here: the bootstrap lock is active
+        // and no session exists yet, so the call would be blocked anyway.
+        setAuthStatus('unauthenticated', 'runBootstrap:login_route');
+        setSessionStatus('unauthenticated', 'runBootstrap:login_route');
+        setAuthInitializing(false);
+        bootstrapInProgressRef.current = false;
+        setBootstrapComplete(true);
         return;
       }
       scheduleBootstrapFailOpen();
@@ -1830,6 +1898,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       setSessionStatus('loading');
       setBootstrapError(null);
       setAuthInitializing(true);
+      bootstrapInProgressRef.current = true;
       console.debug('[AUTH BOOTSTRAP START]', {
         pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
         ts: Date.now(),
@@ -1848,8 +1917,55 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         return;
       }
       const hasStoredToken = Boolean(storedAccessToken);
+      // ── INITIAL BOOT — NO SUPABASE TOKEN ─────────────────────────────────
+      // isInitialBoot is true when no session has ever been confirmed in this
+      // page lifetime (hasAuthenticatedSessionRef.current === false).
+      //
+      // When there is no stored token AND this is an initial boot, the user
+      // simply has no session.  We must NOT call forceLogout (which calls
+      // supabase.auth.signOut() — wasteful and can corrupt state when there is
+      // nothing to sign out of) and we must NOT call continueAsGuest with a
+      // "reset" reason that triggers AUTH_RESET logging/effects.
+      //
+      // We only call forceLogout / continueAsGuest if the user HAD a previously
+      // confirmed session (hasPreviouslyHadSession === true), meaning we need
+      // to actively tear down that state.
+      const hasPreviouslyHadSession = hasAuthenticatedSessionRef.current;
       if (!hasStoredToken) {
+        const isInitialBoot = !hasPreviouslyHadSession;
+        if (isInitialBoot) {
+          // Cold load, no token — simply mark unauthenticated.  No reset needed.
+          console.info('[AUTH_BOOTSTRAP_WAIT] no Supabase token on initial boot — marking unauthenticated without reset', {
+            pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+            ts: Date.now(),
+          });
+          // applySessionPayload(null) clears any stale UI state without calling
+          // signOut() or firing the AUTH_RESET path in continueAsGuest.
+          applySessionPayload(null, { persistTokens: false, reason: 'bootstrap_no_token_cold' });
+          setAuthStatus('unauthenticated', 'runBootstrap:no_token_cold');
+          setSessionStatus('unauthenticated', 'runBootstrap:no_token_cold');
+          setAuthInitializing(false);
+          clearBootstrapFailOpenTimer();
+          bootstrapInProgressRef.current = false;
+          setBootstrapComplete(true);
+          console.debug('[AUTH BOOTSTRAP COMPLETE]', {
+            authenticated: false,
+            reason: 'no_token_cold',
+            pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+            ts: Date.now(),
+          });
+          console.info('[AUTH_SYSTEM_READY]', {
+            sessionStatus: 'unauthenticated',
+            membershipStatus: membershipStatusRef.current,
+            bootstrapComplete: true,
+          });
+          return;
+        }
+        // User had a previously confirmed session but token is now gone —
+        // a real sign-out / expiry event.  Safe to force logout.
         await forceLogout('bootstrap_no_supabase_token');
+        bootstrapInProgressRef.current = false;
+        setBootstrapComplete(true);
         return;
       }
       try {
@@ -1888,6 +2004,37 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           return;
         }
         if (error instanceof NotAuthenticatedError) {
+          // The /auth/session endpoint rejected the token as not authenticated.
+          // If this is an initial boot (no previously confirmed session), this is
+          // a normal "first visit, no session" path — do NOT reset, just mark
+          // unauthenticated cleanly.  Only call continueAsGuest (which fires
+          // AUTH_RESET) if the user had a previously confirmed session that we
+          // must tear down.
+          if (!hasPreviouslyHadSession) {
+            console.info('[AUTH_BOOTSTRAP_WAIT] NotAuthenticatedError on initial boot — marking unauthenticated without reset', {
+              pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+              ts: Date.now(),
+            });
+            applySessionPayload(null, { persistTokens: false, reason: 'bootstrap_not_authenticated_cold' });
+            setAuthStatus('unauthenticated', 'runBootstrap:not_authenticated_cold');
+            setSessionStatus('unauthenticated', 'runBootstrap:not_authenticated_cold');
+            setAuthInitializing(false);
+            clearBootstrapFailOpenTimer();
+            bootstrapInProgressRef.current = false;
+            setBootstrapComplete(true);
+            console.debug('[AUTH BOOTSTRAP COMPLETE]', {
+              authenticated: false,
+              reason: 'not_authenticated_cold',
+              pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+              ts: Date.now(),
+            });
+            console.info('[AUTH_SYSTEM_READY]', {
+              sessionStatus: 'unauthenticated',
+              membershipStatus: membershipStatusRef.current,
+              bootstrapComplete: true,
+            });
+            return;
+          }
           continueAsGuest('bootstrap_no_supabase_token');
           return;
         }
@@ -1938,10 +2085,17 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             'runBootstrap:finally',
           );
           setAuthInitializing(false);
+          bootstrapInProgressRef.current = false;
+          setBootstrapComplete(true);
           console.debug('[AUTH BOOTSTRAP COMPLETE]', {
             authenticated: hasAuthenticatedSessionRef.current,
             pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
             ts: Date.now(),
+          });
+          console.info('[AUTH_SYSTEM_READY]', {
+            sessionStatus: hasAuthenticatedSessionRef.current ? 'authenticated' : 'unauthenticated',
+            membershipStatus: membershipStatusRef.current,
+            bootstrapComplete: true,
           });
         }
       }
@@ -2746,6 +2900,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   const value: AuthContextType = {
     isAuthenticated,
     authInitializing,
+    bootstrapComplete,
     authStatus,
     sessionStatus,
     membershipStatus,
