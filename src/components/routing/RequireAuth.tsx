@@ -45,6 +45,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   const {
     authInitializing,
     bootstrapComplete,
+    authSettled,
     authStatus,
     sessionStatus,
     surfaceAuthStatus,
@@ -692,18 +693,23 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   const bootstrapInProgress = authInitializing || authStatus === 'booting';
 
   // ── TRUE SETTLED CHECK ───────────────────────────────────────────────────
-  // `bootstrapComplete` is the AUTHORITATIVE signal: SecureAuthContext sets it
-  // to true at EVERY terminal exit of runBootstrap — after session, membership,
-  // authStatus, and sessionStatus are all finalised.  RequireAuth MUST NOT
-  // evaluate redirect logic before bootstrapComplete === true.
+  // `authSettled` is the AUTHORITATIVE signal: SecureAuthContext sets it true
+  // only when the app is genuinely ready for protected-route decisions — either
+  // an authenticated session has been confirmed, or the route is definitively
+  // unauthenticated with no login/session-restore in flight.
   //
-  // The individual status checks below are belt-and-suspenders fallbacks for
-  // any in-flight state that arrives after bootstrapComplete (e.g. a
+  // `bootstrapComplete` means the initial probe ran to completion but the user
+  // may still be mid-login on a public path (/, /login, /admin/login).  It is
+  // intentionally NOT used as the settlement gate here.
+  //
+  // Belt-and-suspenders: also wait for all individual status signals to settle,
+  // covering any in-flight states that arrive after authSettled (e.g. a
   // membership retry that races with an internal route change).
   const membershipSettled =
     membershipStatus !== 'loading' && membershipStatus !== 'idle';
   const authFullySettled =
-    bootstrapComplete &&        // ← authoritative: bootstrap ran to completion
+    authSettled &&              // ← AUTHORITATIVE: safe for protected-route decisions
+    bootstrapComplete &&        // ← belt-and-suspenders: probe completed
     !authInitializing &&
     authStatus !== 'booting' &&
     sessionStatus !== 'loading' &&
@@ -712,6 +718,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   console.debug('[REQUIRE_AUTH_EVAL]', {
     pathname: location.pathname,
     bootstrapComplete,
+    authSettled,
     authInitializing,
     authStatus,
     sessionStatus,
@@ -735,13 +742,14 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   const shouldWaitForSettle = !authFullySettled && !hasResolvedAuthRef.current;
   if (shouldWaitForSettle) {
     console.debug('[REQUIRE_AUTH_WAIT]', {
+      pathname: location.pathname,
       bootstrapComplete,
+      authSettled,
       authInitializing,
       authStatus,
       sessionStatus,
       membershipStatus,
       membershipSettled,
-      pathname: location.pathname,
     });
     // Only show the full-screen spinner on cold first load; for all other
     // unsettled-but-re-visiting states return null (transparent wait).

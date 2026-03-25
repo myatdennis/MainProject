@@ -492,11 +492,23 @@ interface AuthContextType {
   isAuthenticated: AuthState;
   authInitializing: boolean;
   /**
-   * True once the full bootstrap sequence has run to completion (or terminated
-   * definitively as unauthenticated/error).  RequireAuth MUST NOT evaluate
-   * redirect logic before this is true.
+   * True once the initial auth probe (runBootstrap) has run to completion or
+   * terminated definitively.  This is a bookkeeping signal — it does NOT mean
+   * protected routes are safe to evaluate.  The user may still be mid-login.
    */
   bootstrapComplete: boolean;
+  /**
+   * True when it is safe for protected routes to make allow-vs-redirect
+   * decisions.  Distinct from bootstrapComplete:
+   *
+   *   bootstrapComplete = probe finished (may still be mid-login on a public path)
+   *   authSettled       = safe to gate: either an authenticated session is stable
+   *                       OR the route is definitively unauthenticated with no
+   *                       login/session-restore in flight
+   *
+   * RequireAuth MUST wait until authSettled === true before redirecting.
+   */
+  authSettled: boolean;
   authStatus: 'booting' | 'authenticated' | 'unauthenticated' | 'error';
   sessionStatus: 'loading' | 'authenticated' | 'unauthenticated';
   membershipStatus: 'idle' | 'loading' | 'ready' | 'error' | 'degraded';
@@ -531,6 +543,7 @@ const defaultAuthContext: AuthContextType = {
   isAuthenticated: { lms: false, admin: false },
   authInitializing: true,
   bootstrapComplete: false,
+  authSettled: false,
   authStatus: 'booting',
   sessionStatus: 'loading',
   membershipStatus: 'idle',
@@ -658,8 +671,14 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   const [authInitializing, setAuthInitializing] = useState(true);
   // True once the full bootstrap sequence has completed (or terminated
   // definitively).  Set to true at EVERY exit path of runBootstrap so
-  // RequireAuth never evaluates redirect logic before the outcome is known.
+  // RequireAuth knows the probe is done — but this does NOT mean protected
+  // routes are safe to act on; use authSettled for that.
   const [bootstrapComplete, setBootstrapComplete] = useState(false);
+  // True when it is safe for protected routes to make allow-vs-redirect
+  // decisions.  Remains false on public/auth entry routes (/, /login,
+  // /admin/login, /auth/callback) after a cold no-token boot so that a
+  // subsequent login flow can complete before any redirect fires.
+  const [authSettled, setAuthSettled] = useState(false);
   // Ref (not state) so it can be read synchronously inside continueAsGuest /
   // forceLogout without stale-closure issues.  true from the moment runBootstrap
   // sets authInitializing=true until the matching setBootstrapComplete(true) fires.
@@ -981,6 +1000,21 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         ts: Date.now(),
       });
 
+      // An authenticated session is now confirmed — protected routes may act.
+      // Log [AUTH_SETTLED] here so the settled signal fires at the same moment
+      // the session is applied, regardless of which code path (login, bootstrap
+      // success, token refresh) triggered it.
+      setAuthSettled(true);
+      console.info('[AUTH_SETTLED]', {
+        pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+        authStatus: 'authenticated',
+        sessionStatus: 'authenticated',
+        membershipStatus: membershipStatusRef.current,
+        bootstrapComplete: bootstrapInProgressRef.current ? false : true,
+        authSettled: true,
+        reason: reason ?? 'session_applied',
+      });
+
       if (persistTokens) {
         if (payload.accessToken !== undefined) {
           setAccessToken(payload.accessToken, tokenReason);
@@ -1012,6 +1046,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       setOrganizationIds,
       setActiveOrgIdState,
       setIsAuthenticated,
+      setAuthSettled,
     ],
   );
 
@@ -1837,6 +1872,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           setAuthInitializing(false);
           bootstrapInProgressRef.current = false;
           setBootstrapComplete(true);
+          // applySessionPayload above already calls setAuthSettled(true) for
+          // authenticated payloads.  Belt-and-suspenders explicit set here too.
+          setAuthSettled(true);
           return;
         }
       } catch (e) {
@@ -1860,6 +1898,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             setAuthInitializing(false);
             bootstrapInProgressRef.current = false;
             setBootstrapComplete(true);
+            setAuthSettled(true);
             return;
           } catch (e2) {
             console.warn('[SecureAuth] E2E minimal bypass also failed', e2);
@@ -1934,9 +1973,22 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       if (!hasStoredToken) {
         const isInitialBoot = !hasPreviouslyHadSession;
         if (isInitialBoot) {
+          const _noTokenPathname = typeof window !== 'undefined' ? window.location?.pathname : '';
+          // Public/auth entry paths: /, /login, /admin/login, /auth/callback.
+          // On these paths the user may be about to log in — do NOT set
+          // authSettled yet so RequireAuth cannot redirect prematurely.
+          // On any other (protected) path, the unauthenticated state is
+          // definitive and it is safe to let RequireAuth act.
+          const _isPublicAuthEntry =
+            _noTokenPathname === '/' ||
+            _noTokenPathname.startsWith('/login') ||
+            _noTokenPathname.startsWith('/admin/login') ||
+            _noTokenPathname.startsWith('/auth/callback');
+
           // Cold load, no token — simply mark unauthenticated.  No reset needed.
           console.info('[AUTH_BOOTSTRAP_WAIT] no Supabase token on initial boot — marking unauthenticated without reset', {
-            pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+            pathname: _noTokenPathname,
+            isPublicAuthEntry: _isPublicAuthEntry,
             ts: Date.now(),
           });
           // applySessionPayload(null) clears any stale UI state without calling
@@ -1948,16 +2000,38 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           clearBootstrapFailOpenTimer();
           bootstrapInProgressRef.current = false;
           setBootstrapComplete(true);
+          if (!_isPublicAuthEntry) {
+            // Protected route — definitively unauthenticated, safe to settle.
+            setAuthSettled(true);
+            console.info('[AUTH_SETTLED]', {
+              pathname: _noTokenPathname,
+              authStatus: 'unauthenticated',
+              sessionStatus: 'unauthenticated',
+              membershipStatus: membershipStatusRef.current,
+              bootstrapComplete: true,
+              authSettled: true,
+              reason: 'no_token_cold_protected_route',
+            });
+          } else {
+            // Public/auth entry path — login may follow; keep authSettled=false.
+            console.info('[AUTH_SETTLED_DEFERRED]', {
+              pathname: _noTokenPathname,
+              reason: 'public_auth_entry_no_token_cold',
+              authSettled: false,
+              bootstrapComplete: true,
+            });
+          }
           console.debug('[AUTH BOOTSTRAP COMPLETE]', {
             authenticated: false,
             reason: 'no_token_cold',
-            pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+            pathname: _noTokenPathname,
             ts: Date.now(),
           });
           console.info('[AUTH_SYSTEM_READY]', {
             sessionStatus: 'unauthenticated',
             membershipStatus: membershipStatusRef.current,
             bootstrapComplete: true,
+            authSettled: !_isPublicAuthEntry,
           });
           return;
         }
@@ -2011,8 +2085,15 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           // AUTH_RESET) if the user had a previously confirmed session that we
           // must tear down.
           if (!hasPreviouslyHadSession) {
+            const _naPathname = typeof window !== 'undefined' ? window.location?.pathname : '';
+            const _naIsPublicAuthEntry =
+              _naPathname === '/' ||
+              _naPathname.startsWith('/login') ||
+              _naPathname.startsWith('/admin/login') ||
+              _naPathname.startsWith('/auth/callback');
             console.info('[AUTH_BOOTSTRAP_WAIT] NotAuthenticatedError on initial boot — marking unauthenticated without reset', {
-              pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+              pathname: _naPathname,
+              isPublicAuthEntry: _naIsPublicAuthEntry,
               ts: Date.now(),
             });
             applySessionPayload(null, { persistTokens: false, reason: 'bootstrap_not_authenticated_cold' });
@@ -2022,16 +2103,36 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             clearBootstrapFailOpenTimer();
             bootstrapInProgressRef.current = false;
             setBootstrapComplete(true);
+            if (!_naIsPublicAuthEntry) {
+              setAuthSettled(true);
+              console.info('[AUTH_SETTLED]', {
+                pathname: _naPathname,
+                authStatus: 'unauthenticated',
+                sessionStatus: 'unauthenticated',
+                membershipStatus: membershipStatusRef.current,
+                bootstrapComplete: true,
+                authSettled: true,
+                reason: 'not_authenticated_cold_protected_route',
+              });
+            } else {
+              console.info('[AUTH_SETTLED_DEFERRED]', {
+                pathname: _naPathname,
+                reason: 'public_auth_entry_not_authenticated_cold',
+                authSettled: false,
+                bootstrapComplete: true,
+              });
+            }
             console.debug('[AUTH BOOTSTRAP COMPLETE]', {
               authenticated: false,
               reason: 'not_authenticated_cold',
-              pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+              pathname: _naPathname,
               ts: Date.now(),
             });
             console.info('[AUTH_SYSTEM_READY]', {
               sessionStatus: 'unauthenticated',
               membershipStatus: membershipStatusRef.current,
               bootstrapComplete: true,
+              authSettled: !_naIsPublicAuthEntry,
             });
             return;
           }
@@ -2087,20 +2188,35 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           setAuthInitializing(false);
           bootstrapInProgressRef.current = false;
           setBootstrapComplete(true);
+          // The finally block runs after a full /auth/session round-trip, so the
+          // auth outcome is definitively known regardless of pathname.  Always settle.
+          setAuthSettled(true);
+          const _finallyPathname = typeof window !== 'undefined' ? window.location?.pathname : '';
+          const _finallyAuthenticated = hasAuthenticatedSessionRef.current;
+          console.info('[AUTH_SETTLED]', {
+            pathname: _finallyPathname,
+            authStatus: _finallyAuthenticated ? 'authenticated' : 'unauthenticated',
+            sessionStatus: _finallyAuthenticated ? 'authenticated' : 'unauthenticated',
+            membershipStatus: membershipStatusRef.current,
+            bootstrapComplete: true,
+            authSettled: true,
+            reason: 'bootstrap_finally',
+          });
           console.debug('[AUTH BOOTSTRAP COMPLETE]', {
-            authenticated: hasAuthenticatedSessionRef.current,
-            pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+            authenticated: _finallyAuthenticated,
+            pathname: _finallyPathname,
             ts: Date.now(),
           });
           console.info('[AUTH_SYSTEM_READY]', {
-            sessionStatus: hasAuthenticatedSessionRef.current ? 'authenticated' : 'unauthenticated',
+            sessionStatus: _finallyAuthenticated ? 'authenticated' : 'unauthenticated',
             membershipStatus: membershipStatusRef.current,
             bootstrapComplete: true,
+            authSettled: true,
           });
         }
       }
     },
-    [applySessionPayload, captureServerClock, clearBootstrapFailOpenTimer, continueAsGuest, forceLogout, scheduleBootstrapFailOpen],
+    [applySessionPayload, captureServerClock, clearBootstrapFailOpenTimer, continueAsGuest, forceLogout, scheduleBootstrapFailOpen, setAuthSettled],
   );
 
   const runBootstrapRef = useRef(runBootstrap);
@@ -2901,6 +3017,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     isAuthenticated,
     authInitializing,
     bootstrapComplete,
+    authSettled,
     authStatus,
     sessionStatus,
     membershipStatus,
