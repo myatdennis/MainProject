@@ -1255,7 +1255,35 @@ const AUTH_READY_EVENT = 'huddle:auth_ready';
 let awaitingAuthReadyBootstrap = false;
 let authReadyBootstrapAttempts = 0;
 const AUTH_READY_BOOTSTRAP_MAX_ATTEMPTS = 3;
+// Tracks pending polling timers so forceInit can cancel them.
+let authReadyPollTimer: ReturnType<typeof setTimeout> | null = null;
 
+const cancelAuthReadyPoll = () => {
+  if (authReadyPollTimer !== null) {
+    clearTimeout(authReadyPollTimer);
+    authReadyPollTimer = null;
+  }
+};
+
+// Poll intervals (ms) — start fast, back off, give up after ~10 s total.
+const AUTH_READY_POLL_INTERVALS = [50, 100, 200, 400, 800, 1600, 3200, 3200];
+
+/**
+ * Dual-mode deferred init:
+ *
+ * 1. Event fast-path: listen for `huddle:auth_ready`.  The listener wraps the
+ *    call in `queueMicrotask` so React can flush the registerCourseStoreOrgResolver
+ *    useEffect (which re-registers the resolver closure with the new membershipStatus)
+ *    before courseStore.init() re-runs.
+ *
+ * 2. Polling fallback: if `huddle:auth_ready` was dispatched before this function
+ *    registered the listener (a race that happens when the route navigation causes
+ *    courseStore.init → defer in the same React effect batch that dispatched the
+ *    event), the poll timer fires and re-checks the resolver directly.
+ *
+ * This makes the deferred-init path independent of whether the one-shot event
+ * was observed — eliminating the permanent hang when the event is missed.
+ */
 const queueAuthReadyBootstrap = (reinitializer: () => void) => {
   if (typeof window === 'undefined') return;
   if (awaitingAuthReadyBootstrap) return;
@@ -1274,16 +1302,70 @@ const queueAuthReadyBootstrap = (reinitializer: () => void) => {
   }
   awaitingAuthReadyBootstrap = true;
   authReadyBootstrapAttempts += 1;
-  const handler = () => {
+
+  let settled = false;
+
+  const settle = () => {
+    if (settled) return;
+    settled = true;
     awaitingAuthReadyBootstrap = false;
-    window.removeEventListener(AUTH_READY_EVENT, handler);
-    try {
-      reinitializer();
-    } catch (error) {
-      console.error('[courseStore] auth_ready bootstrap failed', error);
-    }
+    cancelAuthReadyPoll();
+    window.removeEventListener(AUTH_READY_EVENT, eventHandler);
+    // Yield one microtask so React can flush the registerCourseStoreOrgResolver
+    // useEffect (which re-registers the closure with the fresh membershipStatus='ready'
+    // value) before courseStore.init() runs again.
+    queueMicrotask(() => {
+      try {
+        reinitializer();
+      } catch (error) {
+        console.error('[courseStore] auth_ready bootstrap failed', error);
+      }
+    });
   };
-  window.addEventListener(AUTH_READY_EVENT, handler, { once: true });
+
+  // — Fast path: event listener —
+  const eventHandler = () => settle();
+  window.addEventListener(AUTH_READY_EVENT, eventHandler, { once: true });
+
+  // — Polling fallback: in case the event already fired before we registered —
+  let pollIndex = 0;
+  const poll = () => {
+    if (settled) return;
+    const ctx = resolveOrgContext();
+    if (ctx.status === 'ready') {
+      console.debug('[courseStore] auth_ready_poll: org context ready — resuming init', {
+        orgId: ctx.orgId,
+        pollIndex,
+        ts: Date.now(),
+      });
+      settle();
+      return;
+    }
+    if (pollIndex >= AUTH_READY_POLL_INTERVALS.length) {
+      // Polling exhausted without the org becoming ready — give up gracefully.
+      if (!settled) {
+        settled = true;
+        awaitingAuthReadyBootstrap = false;
+        window.removeEventListener(AUTH_READY_EVENT, eventHandler);
+        console.warn('[courseStore] auth_ready_poll: timed out waiting for org context', {
+          status: ctx.status,
+          attempts: authReadyBootstrapAttempts,
+        });
+        setAdminCatalogState({
+          phase: 'ready',
+          adminLoadStatus: 'error',
+          lastAttemptAt: monotonicNow(),
+          lastError: 'Auth context did not become ready after polling timeout.',
+        });
+      }
+      return;
+    }
+    const delay = AUTH_READY_POLL_INTERVALS[pollIndex++];
+    authReadyPollTimer = setTimeout(poll, delay);
+  };
+  // Start polling after the first interval to avoid a synchronous double-check
+  // inside the same React flush.
+  authReadyPollTimer = setTimeout(poll, AUTH_READY_POLL_INTERVALS[0]);
 };
 
 const setAdminCatalogState = (update: Partial<AdminCatalogState> | ((state: AdminCatalogState) => AdminCatalogState)) => {
@@ -2326,6 +2408,7 @@ export const courseStore = {
     // is never blocked by the automatic-retry cap.
     authReadyBootstrapAttempts = 0;
     awaitingAuthReadyBootstrap = false;
+    cancelAuthReadyPoll();
     // Signal courseDataLoader (and any other in-memory caches) to flush their
     // cached results so the next course-detail load fetches fresh data.
     try {

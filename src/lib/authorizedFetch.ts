@@ -35,6 +35,16 @@ const normalizeUrl = (target: string): string => {
   if (absolutePattern.test(target)) {
     return target;
   }
+  // When API_BASE is an absolute URL (production: https://api.the-huddle.co/api)
+  // we must ALWAYS build the URL relative to API_BASE, never relative to
+  // window.location.origin.  Using window.location.origin would send the request
+  // to the Netlify frontend (https://the-huddle.co) instead of the Railway API.
+  if (API_BASE && absolutePattern.test(API_BASE)) {
+    const base = API_BASE.replace(/\/+$/, '');
+    const path = target.startsWith('/') ? target : `/${target}`;
+    return `${base}${path}`;
+  }
+  // Dev/test: relative path — resolve against window.location.origin (Vite proxy).
   if (typeof window !== 'undefined' && target.startsWith('/')) {
     try {
       return new URL(target, window.location.origin).toString();
