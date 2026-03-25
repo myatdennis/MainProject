@@ -1311,16 +1311,15 @@ const queueAuthReadyBootstrap = (reinitializer: () => void) => {
     awaitingAuthReadyBootstrap = false;
     cancelAuthReadyPoll();
     window.removeEventListener(AUTH_READY_EVENT, eventHandler);
-    // Yield one microtask so React can flush the registerCourseStoreOrgResolver
-    // useEffect (which re-registers the closure with the fresh membershipStatus='ready'
-    // value) before courseStore.init() runs again.
-    queueMicrotask(() => {
-      try {
-        reinitializer();
-      } catch (error) {
-        console.error('[courseStore] auth_ready bootstrap failed', error);
-      }
-    });
+    // The bridge snapshot is now written synchronously during every render of
+    // SecureAuthProvider (via setOrgContextSnapshot), so the org context is
+    // always current by the time any event or poll fires.  No microtask yield
+    // is needed.
+    try {
+      reinitializer();
+    } catch (error) {
+      console.error('[courseStore] auth_ready bootstrap failed', error);
+    }
   };
 
   // — Fast path: event listener —

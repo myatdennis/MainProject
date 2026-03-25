@@ -34,7 +34,7 @@ import { logAuthRedirect } from '../utils/logAuthRedirect';
 import { resolveLoginPath, isLoginPath, isAdminSurface } from '../utils/surface';
 import { resolvePreferredOrgId } from '../lib/authOrg';
 import { createMembershipSelfHealTracker } from '../lib/membershipSelfHeal';
-import { registerCourseStoreOrgResolver } from '../store/courseStoreOrgBridge';
+import { registerCourseStoreOrgResolver, setOrgContextSnapshot } from '../store/courseStoreOrgBridge';
 
 if (axios?.defaults) {
   axios.defaults.withCredentials = true;
@@ -2673,6 +2673,12 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     lastMembershipStatusRef.current = membershipStatus;
   }, [membershipStatus, activeOrgId, memberships.length, user?.id, sessionStatus]);
 
+  // ── Bridge resolver registration ─────────────────────────────────────────
+  // The direct-snapshot path (setOrgContextSnapshot, called synchronously
+  // during render above) is now the primary bridge for courseStore.  The
+  // closure registered here is kept only as a test-compatibility shim for
+  // mocks that expect registerCourseStoreOrgResolver to be called, and as a
+  // fallback in the unlikely event the direct snapshot is somehow null.
   useEffect(() => {
     registerCourseStoreOrgResolver(() => {
       const sessionReady = sessionStatus === 'authenticated';
@@ -3080,6 +3086,36 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     loadSession,
     retryBootstrap,
   };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Synchronous bridge snapshot — written every render so courseStore always
+  // reads the current auth state regardless of useEffect ordering.
+  //
+  // This eliminates the race where huddle:auth_ready fired (Effect A) before
+  // the registerCourseStoreOrgResolver useEffect (Effect B) re-ran with the
+  // fresh membershipStatus='ready' closure — courseStore was reading the stale
+  // 'loading' value from the previously-captured closure.
+  // ─────────────────────────────────────────────────────────────────────────
+  const _sessionReady = sessionStatus === 'authenticated';
+  const _membershipReady = membershipStatus === 'ready' || membershipStatus === 'degraded';
+  const _membershipErrored = membershipStatus === 'error';
+  setOrgContextSnapshot(
+    !_sessionReady
+      ? { status: 'loading', orgId: null, role: null, userId: null }
+      : !_membershipReady
+        ? {
+            status: _membershipErrored ? 'error' : 'loading',
+            orgId: null,
+            role: null,
+            userId: user?.id ?? null,
+          }
+        : {
+            status: 'ready',
+            orgId: activeOrgId ?? user?.activeOrgId ?? user?.organizationId ?? null,
+            role: user?.role ?? null,
+            userId: user?.id ?? null,
+          },
+  );
 
   return (
     <AuthContext.Provider value={value}>
