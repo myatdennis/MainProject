@@ -238,14 +238,10 @@ const AdminDashboard = () => {
     }
   }, [catalogState.adminLoadStatus, catalogState.phase]);
 
-  // Guard: only request init once per IDLE→loading transition. Reset when
-  // phase returns to 'ready' so a forceInit→idle cycle can re-arm.
+  // Guard: only request init once per mount. Subsequent idle transitions
+  // are handled by App.tsx and AdminLayout forceInit.
   const hasRequestedInitRef = useRef(false);
   useEffect(() => {
-    if (catalogState.phase === 'ready') {
-      hasRequestedInitRef.current = false;
-      return;
-    }
     if (catalogState.phase !== 'idle' || hasRequestedInitRef.current) {
       return;
     }

@@ -24,6 +24,7 @@ import { getSupabase, captureAuthDiagnostics, AUTH_STORAGE_MODE, debugAuthStorag
 import { AuthExpiredError, NotAuthenticatedError } from '../lib/apiClient';
 import { setGlobalActiveOrgIdForApi } from '../lib/orgContext';
 import { clearAdminAccessSnapshot } from '../lib/adminAccess';
+import { setAuthBootstrapping } from '../lib/authBootstrapState';
 
 // MFA helpers
 
@@ -34,7 +35,7 @@ import { logAuthRedirect } from '../utils/logAuthRedirect';
 import { resolveLoginPath, isLoginPath, isAdminSurface } from '../utils/surface';
 import { resolvePreferredOrgId } from '../lib/authOrg';
 import { createMembershipSelfHealTracker } from '../lib/membershipSelfHeal';
-import { registerCourseStoreOrgResolver, setOrgContextSnapshot } from '../store/courseStoreOrgBridge';
+import { registerCourseStoreOrgResolver } from '../store/courseStoreOrgBridge';
 
 if (axios?.defaults) {
   axios.defaults.withCredentials = true;
@@ -491,24 +492,6 @@ interface RegisterResult extends LoginResult {
 interface AuthContextType {
   isAuthenticated: AuthState;
   authInitializing: boolean;
-  /**
-   * True once the initial auth probe (runBootstrap) has run to completion or
-   * terminated definitively.  This is a bookkeeping signal — it does NOT mean
-   * protected routes are safe to evaluate.  The user may still be mid-login.
-   */
-  bootstrapComplete: boolean;
-  /**
-   * True when it is safe for protected routes to make allow-vs-redirect
-   * decisions.  Distinct from bootstrapComplete:
-   *
-   *   bootstrapComplete = probe finished (may still be mid-login on a public path)
-   *   authSettled       = safe to gate: either an authenticated session is stable
-   *                       OR the route is definitively unauthenticated with no
-   *                       login/session-restore in flight
-   *
-   * RequireAuth MUST wait until authSettled === true before redirecting.
-   */
-  authSettled: boolean;
   authStatus: 'booting' | 'authenticated' | 'unauthenticated' | 'error';
   sessionStatus: 'loading' | 'authenticated' | 'unauthenticated';
   membershipStatus: 'idle' | 'loading' | 'ready' | 'error' | 'degraded';
@@ -542,8 +525,6 @@ interface AuthContextType {
 const defaultAuthContext: AuthContextType = {
   isAuthenticated: { lms: false, admin: false },
   authInitializing: true,
-  bootstrapComplete: false,
-  authSettled: false,
   authStatus: 'booting',
   sessionStatus: 'loading',
   membershipStatus: 'idle',
@@ -669,20 +650,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   }, []);
 
   const [authInitializing, setAuthInitializing] = useState(true);
-  // True once the full bootstrap sequence has completed (or terminated
-  // definitively).  Set to true at EVERY exit path of runBootstrap so
-  // RequireAuth knows the probe is done — but this does NOT mean protected
-  // routes are safe to act on; use authSettled for that.
-  const [bootstrapComplete, setBootstrapComplete] = useState(false);
-  // True when it is safe for protected routes to make allow-vs-redirect
-  // decisions.  Remains false on public/auth entry routes (/, /login,
-  // /admin/login, /auth/callback) after a cold no-token boot so that a
-  // subsequent login flow can complete before any redirect fires.
-  const [authSettled, setAuthSettled] = useState(false);
-  // Ref (not state) so it can be read synchronously inside continueAsGuest /
-  // forceLogout without stale-closure issues.  true from the moment runBootstrap
-  // sets authInitializing=true until the matching setBootstrapComplete(true) fires.
-  const bootstrapInProgressRef = useRef(true);
   const authStatusRef = useRef<'booting' | 'authenticated' | 'unauthenticated' | 'error'>('booting');
   const [authStatus, setAuthStatusState] = useState<'booting' | 'authenticated' | 'unauthenticated' | 'error'>('booting');
   const setAuthStatus = useCallback(
@@ -690,13 +657,17 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       const prev = authStatusRef.current;
       authStatusRef.current = next;
       setAuthStatusState(next);
-      console.debug('[AUTH_STATE_SET]', {
-        source: source ?? 'unknown',
-        previousAuthStatus: prev,
-        nextAuthStatus: next,
-        pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
-        ts: Date.now(),
-      });
+      if (import.meta.env?.DEV) {
+        console.debug('[AUTH_STATE_SET]', {
+          source: source ?? 'unknown',
+          previousAuthStatus: prev,
+          nextAuthStatus: next,
+          authInitializing: true, // will be current render value
+          userId: null, // populated by caller when available
+          pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+          ts: Date.now(),
+        });
+      }
     },
     [],
   );
@@ -707,13 +678,15 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       const prev = sessionStatusRef.current;
       sessionStatusRef.current = next;
       setSessionStatusState(next);
-      console.debug('[AUTH_STATE_SET]', {
-        source: source ?? 'unknown',
-        previousSessionStatus: prev,
-        nextSessionStatus: next,
-        pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
-        ts: Date.now(),
-      });
+      if (import.meta.env?.DEV) {
+        console.debug('[AUTH_STATE_SET]', {
+          source: source ?? 'unknown',
+          previousSessionStatus: prev,
+          nextSessionStatus: next,
+          pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+          ts: Date.now(),
+        });
+      }
     },
     [],
   );
@@ -1000,21 +973,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         ts: Date.now(),
       });
 
-      // An authenticated session is now confirmed — protected routes may act.
-      // Log [AUTH_SETTLED] here so the settled signal fires at the same moment
-      // the session is applied, regardless of which code path (login, bootstrap
-      // success, token refresh) triggered it.
-      setAuthSettled(true);
-      console.info('[AUTH_SETTLED]', {
-        pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
-        authStatus: 'authenticated',
-        sessionStatus: 'authenticated',
-        membershipStatus: membershipStatusRef.current,
-        bootstrapComplete: bootstrapInProgressRef.current ? false : true,
-        authSettled: true,
-        reason: reason ?? 'session_applied',
-      });
-
       if (persistTokens) {
         if (payload.accessToken !== undefined) {
           setAccessToken(payload.accessToken, tokenReason);
@@ -1046,7 +1004,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       setOrganizationIds,
       setActiveOrgIdState,
       setIsAuthenticated,
-      setAuthSettled,
     ],
   );
 
@@ -1058,18 +1015,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       shouldRedirect = true,
     }: { silent?: boolean; reason?: string; message?: string; shouldRedirect?: boolean } = {}) => {
       const hadSession = hasAuthenticatedSessionRef.current;
-
-      // BOOTSTRAP LOCK: never destroy auth state while bootstrap is still running
-      // and there is no previously confirmed session.  A silent/background
-      // 401 during the bootstrap window must not wipe a session that bootstrap
-      // is about to confirm.
-      if (bootstrapInProgressRef.current && !hadSession) {
-        console.warn('[AUTH_RESET_BLOCKED] handleSessionUnauthorized — bootstrap in progress, no prior session', {
-          reason,
-          pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
-        });
-        return;
-      }
 
       // CRITICAL GUARD: a silent/background session check (e.g. membership retry)
       // must NEVER overwrite a confirmed authenticated session.  Only allow the
@@ -1087,13 +1032,15 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         return;
       }
 
-      console.warn('[AUTH_RESET]', {
-        source: 'handleSessionUnauthorized',
-        reason,
-        pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
-        hadUser: hadSession,
-        hadToken: Boolean(getAccessToken()),
-      });
+      if (import.meta.env?.DEV) {
+        console.warn('[AUTH_RESET]', {
+          source: 'handleSessionUnauthorized',
+          reason,
+          pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+          hadUser: hadSession,
+          hadToken: Boolean(getAccessToken()),
+        });
+      }
 
       setShouldRedirectToLogin(shouldRedirect);
       applySessionPayload(null, { persistTokens: true, reason });
@@ -1253,59 +1200,36 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     (reason: string, options?: { redirect?: boolean }) => {
       const redirect = options?.redirect ?? true;
 
-      // BOOTSTRAP LOCK: block NON-bootstrap resets during bootstrap when no prior
-      // session has been confirmed.  Bootstrap-prefixed reasons (e.g. 'bootstrap_empty',
-      // 'bootstrap_unauthenticated', 'bootstrap_no_supabase_token') are the bootstrap
-      // sequence's own resolution paths and MUST be allowed through so the sequence
-      // can complete and set bootstrapComplete = true.  External callers (e.g. a
-      // background session poll, handleSessionUnauthorized) are blocked.
-      if (
-        bootstrapInProgressRef.current &&
-        !hasAuthenticatedSessionRef.current &&
-        !reason.startsWith('bootstrap_')
-      ) {
-        console.warn('[CONTINUE_AS_GUEST_BLOCKED] non-bootstrap reset during bootstrap phase', {
-          reason,
-          pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
-        });
-        return;
-      }
-
       // CRITICAL GUARD: never wipe an already-confirmed authenticated session from
       // a background/silent path (e.g. a membership retry that gets a transient 401).
       // Only allow continueAsGuest to destroy auth state if:
       //   1. We have never successfully authenticated (cold boot failures), OR
       //   2. The caller explicitly acknowledges it is doing a real logout.
-      // "bootstrap_" prefixes are generally allowed (they run before any auth is set).
-      // EXCEPTION: "bootstrap_empty" means /auth/session returned no user — but if
-      // hasAuthenticatedSessionRef is already true (user previously confirmed) this is
-      // a transient API race, NOT a real logout. Suppress it to prevent the spurious
-      // authStatus='unauthenticated' flash that causes RequireAuth to redirect.
-      // NOTE: "bootstrap_no_supabase_token" is only reached here when
-      // hasPreviouslyHadSession === true (initial-boot callers are redirected to
-      // applySessionPayload(null) before reaching continueAsGuest — see runBootstrap).
+      // "bootstrap_" prefixes are always allowed (they run before any auth is set).
+      // Everything else is allowed only if no authenticated session exists yet.
       const isBootstrapReason = reason.startsWith('bootstrap_');
-      const isBootstrapEmptyRace =
-        reason === 'bootstrap_empty' && hasAuthenticatedSessionRef.current;
       const isLogoutReason = reason === 'manual_logout' || reason === 'refresh_rejected';
-      if (isBootstrapEmptyRace || (!isBootstrapReason && !isLogoutReason && hasAuthenticatedSessionRef.current)) {
-        console.warn('[AUTH_RESET] continueAsGuest SUPPRESSED — live authenticated session preserved', {
-          reason,
-          isBootstrapEmptyRace,
-          pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
-          hadUser: true,
-          hadToken: Boolean(getAccessToken()),
-        });
+      if (!isBootstrapReason && !isLogoutReason && hasAuthenticatedSessionRef.current) {
+        if (import.meta.env?.DEV) {
+          console.warn('[AUTH_RESET] continueAsGuest SUPPRESSED — live authenticated session preserved', {
+            reason,
+            pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+            hadUser: true,
+            hadToken: Boolean(getAccessToken()),
+          });
+        }
         return;
       }
 
-      console.warn('[AUTH_RESET]', {
-        source: 'continueAsGuest',
-        reason,
-        pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
-        hadUser: hasAuthenticatedSessionRef.current,
-        hadToken: Boolean(getAccessToken()),
-      });
+      if (import.meta.env?.DEV) {
+        console.warn('[AUTH_RESET]', {
+          source: 'continueAsGuest',
+          reason,
+          pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+          hadUser: hasAuthenticatedSessionRef.current,
+          hadToken: Boolean(getAccessToken()),
+        });
+      }
 
       setShouldRedirectToLogin(redirect);
       clearBootstrapFailOpenTimer();
@@ -1313,62 +1237,14 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       setAuthStatus('unauthenticated', `continueAsGuest:${reason}`);
       setSessionStatus('unauthenticated', `continueAsGuest:${reason}`);
       setAuthInitializing(false);
-      // continueAsGuest is the terminal exit of every bootstrap short-circuit
-      // path (e.g. 'bootstrap_login_route', 'bootstrap_unauthenticated',
-      // 'bootstrap_http_error', 'bootstrap_no_supabase_token', etc.).
-      // Without this, bootstrapComplete stays false when startBootstrap takes
-      // the login-route fast-exit, leaving authFullySettled permanently false
-      // in RequireAuth — the user can never be allowed through after login.
-      setBootstrapComplete(true);
-      bootstrapInProgressRef.current = false;
-      // Determine whether this continueAsGuest call settles auth for protected
-      // routes.  On public auth entry paths (/, /login, /admin/login,
-      // /auth/callback) the user is about to log in — defer authSettled so
-      // RequireAuth cannot redirect prematurely.  On every other path the
-      // unauthenticated state is definitive and it is safe to settle.
-      const _cagPathname = typeof window !== 'undefined' ? window.location?.pathname : '';
-      const _cagIsPublicAuthEntry =
-        _cagPathname === '/' ||
-        _cagPathname.startsWith('/login') ||
-        _cagPathname.startsWith('/admin/login') ||
-        _cagPathname.startsWith('/auth/callback');
-      if (!_cagIsPublicAuthEntry) {
-        setAuthSettled(true);
-        console.info('[AUTH_SETTLED]', {
-          pathname: _cagPathname,
-          authStatus: 'unauthenticated',
-          sessionStatus: 'unauthenticated',
-          bootstrapComplete: true,
-          authSettled: true,
-          reason: `continueAsGuest:${reason}`,
-        });
-      } else {
-        console.info('[AUTH_SETTLED_DEFERRED]', {
-          pathname: _cagPathname,
-          reason: `continueAsGuest:${reason}:public_auth_entry`,
-          authSettled: false,
-          bootstrapComplete: true,
-        });
-      }
       setBootstrapError(null);
       lastSessionFetchResultRef.current = 'unauthenticated';
       logSessionResult('unauthenticated');
     },
-    [applySessionPayload, clearBootstrapFailOpenTimer, setAuthInitializing, setAuthSettled, setAuthStatus, setBootstrapComplete, setBootstrapError, setSessionStatus],
+    [applySessionPayload, clearBootstrapFailOpenTimer, setAuthInitializing, setAuthStatus, setBootstrapError, setSessionStatus],
   );
   const forceLogout = useCallback(
     async (reason: string) => {
-      // BOOTSTRAP LOCK: do not force-logout if bootstrap is still in progress
-      // and no session has ever been confirmed.  This prevents a stale
-      // readSupabaseSessionTokens() miss from nuking state that bootstrap
-      // is about to restore.
-      if (bootstrapInProgressRef.current && !hasAuthenticatedSessionRef.current) {
-        console.warn('[FORCE_LOGOUT_BLOCKED] bootstrap in progress — no prior session, skipping force logout', {
-          reason,
-          pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
-        });
-        return;
-      }
       try {
         const supabaseClient = getSupabase();
         await supabaseClient?.auth.signOut();
@@ -1457,7 +1333,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             method: 'GET',
             signal,
             requireAuth: true,
-            suppressAuthFailureRedirect: true,
           });
           return normalizeSessionResponsePayload(payloadRaw);
         };
@@ -1783,7 +1658,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             allowAnonymous: true,
             headers: refreshHeaders,
             body: refreshBody,
-            suppressAuthFailureRedirect: true,
           });
 
           if (payload?.user) {
@@ -1907,11 +1781,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           setAuthStatus('authenticated');
           setSessionStatus('authenticated');
           setAuthInitializing(false);
-          bootstrapInProgressRef.current = false;
-          setBootstrapComplete(true);
-          // applySessionPayload above already calls setAuthSettled(true) for
-          // authenticated payloads.  Belt-and-suspenders explicit set here too.
-          setAuthSettled(true);
           return;
         }
       } catch (e) {
@@ -1933,9 +1802,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             setAuthStatus('authenticated');
             setSessionStatus('authenticated');
             setAuthInitializing(false);
-            bootstrapInProgressRef.current = false;
-            setBootstrapComplete(true);
-            setAuthSettled(true);
             return;
           } catch (e2) {
             console.warn('[SecureAuth] E2E minimal bypass also failed', e2);
@@ -1957,14 +1823,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             (() => { try { return window.localStorage.getItem('huddle_lms_auth') === 'true'; } catch { return false; } })()));
 
       if (!_e2eFallbackBypass && isLoginPath()) {
-        // On the login page, skip bootstrap entirely — just mark unauthenticated
-        // cleanly.  Do NOT call continueAsGuest here: the bootstrap lock is active
-        // and no session exists yet, so the call would be blocked anyway.
-        setAuthStatus('unauthenticated', 'runBootstrap:login_route');
-        setSessionStatus('unauthenticated', 'runBootstrap:login_route');
-        setAuthInitializing(false);
-        bootstrapInProgressRef.current = false;
-        setBootstrapComplete(true);
+        continueAsGuest('bootstrap_login_route');
         return;
       }
       scheduleBootstrapFailOpen();
@@ -1974,7 +1833,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       setSessionStatus('loading');
       setBootstrapError(null);
       setAuthInitializing(true);
-      bootstrapInProgressRef.current = true;
+      setAuthBootstrapping(true);
       console.debug('[AUTH BOOTSTRAP START]', {
         pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
         ts: Date.now(),
@@ -1993,90 +1852,8 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         return;
       }
       const hasStoredToken = Boolean(storedAccessToken);
-      // ── INITIAL BOOT — NO SUPABASE TOKEN ─────────────────────────────────
-      // isInitialBoot is true when no session has ever been confirmed in this
-      // page lifetime (hasAuthenticatedSessionRef.current === false).
-      //
-      // When there is no stored token AND this is an initial boot, the user
-      // simply has no session.  We must NOT call forceLogout (which calls
-      // supabase.auth.signOut() — wasteful and can corrupt state when there is
-      // nothing to sign out of) and we must NOT call continueAsGuest with a
-      // "reset" reason that triggers AUTH_RESET logging/effects.
-      //
-      // We only call forceLogout / continueAsGuest if the user HAD a previously
-      // confirmed session (hasPreviouslyHadSession === true), meaning we need
-      // to actively tear down that state.
-      const hasPreviouslyHadSession = hasAuthenticatedSessionRef.current;
       if (!hasStoredToken) {
-        const isInitialBoot = !hasPreviouslyHadSession;
-        if (isInitialBoot) {
-          const _noTokenPathname = typeof window !== 'undefined' ? window.location?.pathname : '';
-          // Public/auth entry paths: /, /login, /admin/login, /auth/callback.
-          // On these paths the user may be about to log in — do NOT set
-          // authSettled yet so RequireAuth cannot redirect prematurely.
-          // On any other (protected) path, the unauthenticated state is
-          // definitive and it is safe to let RequireAuth act.
-          const _isPublicAuthEntry =
-            _noTokenPathname === '/' ||
-            _noTokenPathname.startsWith('/login') ||
-            _noTokenPathname.startsWith('/admin/login') ||
-            _noTokenPathname.startsWith('/auth/callback');
-
-          // Cold load, no token — simply mark unauthenticated.  No reset needed.
-          console.info('[AUTH_BOOTSTRAP_WAIT] no Supabase token on initial boot — marking unauthenticated without reset', {
-            pathname: _noTokenPathname,
-            isPublicAuthEntry: _isPublicAuthEntry,
-            ts: Date.now(),
-          });
-          // applySessionPayload(null) clears any stale UI state without calling
-          // signOut() or firing the AUTH_RESET path in continueAsGuest.
-          applySessionPayload(null, { persistTokens: false, reason: 'bootstrap_no_token_cold' });
-          setAuthStatus('unauthenticated', 'runBootstrap:no_token_cold');
-          setSessionStatus('unauthenticated', 'runBootstrap:no_token_cold');
-          setAuthInitializing(false);
-          clearBootstrapFailOpenTimer();
-          bootstrapInProgressRef.current = false;
-          setBootstrapComplete(true);
-          if (!_isPublicAuthEntry) {
-            // Protected route — definitively unauthenticated, safe to settle.
-            setAuthSettled(true);
-            console.info('[AUTH_SETTLED]', {
-              pathname: _noTokenPathname,
-              authStatus: 'unauthenticated',
-              sessionStatus: 'unauthenticated',
-              membershipStatus: membershipStatusRef.current,
-              bootstrapComplete: true,
-              authSettled: true,
-              reason: 'no_token_cold_protected_route',
-            });
-          } else {
-            // Public/auth entry path — login may follow; keep authSettled=false.
-            console.info('[AUTH_SETTLED_DEFERRED]', {
-              pathname: _noTokenPathname,
-              reason: 'public_auth_entry_no_token_cold',
-              authSettled: false,
-              bootstrapComplete: true,
-            });
-          }
-          console.debug('[AUTH BOOTSTRAP COMPLETE]', {
-            authenticated: false,
-            reason: 'no_token_cold',
-            pathname: _noTokenPathname,
-            ts: Date.now(),
-          });
-          console.info('[AUTH_SYSTEM_READY]', {
-            sessionStatus: 'unauthenticated',
-            membershipStatus: membershipStatusRef.current,
-            bootstrapComplete: true,
-            authSettled: !_isPublicAuthEntry,
-          });
-          return;
-        }
-        // User had a previously confirmed session but token is now gone —
-        // a real sign-out / expiry event.  Safe to force logout.
         await forceLogout('bootstrap_no_supabase_token');
-        bootstrapInProgressRef.current = false;
-        setBootstrapComplete(true);
         return;
       }
       try {
@@ -2084,7 +1861,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           method: 'GET',
           signal,
           requireAuth: true,
-          suppressAuthFailureRedirect: true,
         });
         // Stale-run guard: check again after the heavyweight session fetch.
         if (isStale()) {
@@ -2097,12 +1873,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           setAuthStatus('authenticated', 'runBootstrap:success');
           setBootstrapError(null);
           logSessionResult('authenticated');
-          console.debug('[AUTH_SESSION_RESTORED]', {
-            userId: payload.user.id,
-            activeOrgId: payload.user.activeOrgId ?? payload.user.organizationId ?? null,
-            pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
-            ts: Date.now(),
-          });
         } else {
           continueAsGuest('bootstrap_empty');
         }
@@ -2115,64 +1885,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           return;
         }
         if (error instanceof NotAuthenticatedError) {
-          // The /auth/session endpoint rejected the token as not authenticated.
-          // If this is an initial boot (no previously confirmed session), this is
-          // a normal "first visit, no session" path — do NOT reset, just mark
-          // unauthenticated cleanly.  Only call continueAsGuest (which fires
-          // AUTH_RESET) if the user had a previously confirmed session that we
-          // must tear down.
-          if (!hasPreviouslyHadSession) {
-            const _naPathname = typeof window !== 'undefined' ? window.location?.pathname : '';
-            const _naIsPublicAuthEntry =
-              _naPathname === '/' ||
-              _naPathname.startsWith('/login') ||
-              _naPathname.startsWith('/admin/login') ||
-              _naPathname.startsWith('/auth/callback');
-            console.info('[AUTH_BOOTSTRAP_WAIT] NotAuthenticatedError on initial boot — marking unauthenticated without reset', {
-              pathname: _naPathname,
-              isPublicAuthEntry: _naIsPublicAuthEntry,
-              ts: Date.now(),
-            });
-            applySessionPayload(null, { persistTokens: false, reason: 'bootstrap_not_authenticated_cold' });
-            setAuthStatus('unauthenticated', 'runBootstrap:not_authenticated_cold');
-            setSessionStatus('unauthenticated', 'runBootstrap:not_authenticated_cold');
-            setAuthInitializing(false);
-            clearBootstrapFailOpenTimer();
-            bootstrapInProgressRef.current = false;
-            setBootstrapComplete(true);
-            if (!_naIsPublicAuthEntry) {
-              setAuthSettled(true);
-              console.info('[AUTH_SETTLED]', {
-                pathname: _naPathname,
-                authStatus: 'unauthenticated',
-                sessionStatus: 'unauthenticated',
-                membershipStatus: membershipStatusRef.current,
-                bootstrapComplete: true,
-                authSettled: true,
-                reason: 'not_authenticated_cold_protected_route',
-              });
-            } else {
-              console.info('[AUTH_SETTLED_DEFERRED]', {
-                pathname: _naPathname,
-                reason: 'public_auth_entry_not_authenticated_cold',
-                authSettled: false,
-                bootstrapComplete: true,
-              });
-            }
-            console.debug('[AUTH BOOTSTRAP COMPLETE]', {
-              authenticated: false,
-              reason: 'not_authenticated_cold',
-              pathname: _naPathname,
-              ts: Date.now(),
-            });
-            console.info('[AUTH_SYSTEM_READY]', {
-              sessionStatus: 'unauthenticated',
-              membershipStatus: membershipStatusRef.current,
-              bootstrapComplete: true,
-              authSettled: !_naIsPublicAuthEntry,
-            });
-            return;
-          }
           continueAsGuest('bootstrap_no_supabase_token');
           return;
         }
@@ -2223,83 +1935,16 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             'runBootstrap:finally',
           );
           setAuthInitializing(false);
-          bootstrapInProgressRef.current = false;
-          setBootstrapComplete(true);
-
-          // ── PROTECTED-ROUTE MEMBERSHIP HYDRATION ─────────────────────────
-          // If bootstrap completed with an authenticated session on a protected
-          // route (/admin/*, /lms/*, /client/*) but membershipStatus is still
-          // 'idle' or 'loading', the /auth/session response did not include
-          // fully-hydrated memberships.  We must fetch them before settling —
-          // authSettled=true with membershipStatus=idle is an invalid state that
-          // blocks courseStore.init() permanently.
-          const _finallyPathname = typeof window !== 'undefined' ? window.location?.pathname : '';
-          const _finallyAuthenticated = hasAuthenticatedSessionRef.current;
-          const _isProtectedRoute =
-            _finallyPathname.startsWith('/admin/') ||
-            _finallyPathname.startsWith('/lms/') ||
-            _finallyPathname.startsWith('/client/');
-          const _membershipNeedsHydration =
-            _finallyAuthenticated &&
-            _isProtectedRoute &&
-            (membershipStatusRef.current === 'idle' || membershipStatusRef.current === 'loading');
-
-          if (_membershipNeedsHydration) {
-            console.info('[MEMBERSHIP_HYDRATION_START]', {
-              pathname: _finallyPathname,
-              membershipStatus: membershipStatusRef.current,
-              reason: 'bootstrap_finally_protected_route_idle',
-            });
-            try {
-              await fetchServerSession({ surface: isStale() ? undefined : (_finallyPathname.startsWith('/admin/') ? 'admin' : 'lms'), signal, skipMembershipSelfHeal: false });
-            } catch (_hydrationError) {
-              console.warn('[MEMBERSHIP_HYDRATION_ERROR]', {
-                pathname: _finallyPathname,
-                error: _hydrationError,
-              });
-            }
-            console.info('[MEMBERSHIP_HYDRATION_DONE]', {
-              pathname: _finallyPathname,
-              membershipStatus: membershipStatusRef.current,
-            });
-          } else {
-            console.info('[MEMBERSHIP_HYDRATION_SKIPPED]', {
-              pathname: _finallyPathname,
-              reason: _finallyAuthenticated
-                ? _isProtectedRoute
-                  ? `membership_already_${membershipStatusRef.current}`
-                  : 'not_protected_route'
-                : 'not_authenticated',
-            });
-          }
-
-          // Now settle — memberships are either hydrated or this is not a
-          // protected-route bootstrap that requires them.
-          setAuthSettled(true);
-          console.info('[AUTH_SETTLED]', {
-            pathname: _finallyPathname,
-            authStatus: _finallyAuthenticated ? 'authenticated' : 'unauthenticated',
-            sessionStatus: _finallyAuthenticated ? 'authenticated' : 'unauthenticated',
-            membershipStatus: membershipStatusRef.current,
-            bootstrapComplete: true,
-            authSettled: true,
-            reason: 'bootstrap_finally',
-          });
+          setAuthBootstrapping(false);
           console.debug('[AUTH BOOTSTRAP COMPLETE]', {
-            authenticated: _finallyAuthenticated,
-            pathname: _finallyPathname,
+            authenticated: hasAuthenticatedSessionRef.current,
+            pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
             ts: Date.now(),
-          });
-          console.info('[AUTH_SYSTEM_READY]', {
-            sessionStatus: _finallyAuthenticated ? 'authenticated' : 'unauthenticated',
-            membershipStatus: membershipStatusRef.current,
-            bootstrapComplete: true,
-            authSettled: true,
           });
         }
       }
     },
-    [applySessionPayload, captureServerClock, clearBootstrapFailOpenTimer, continueAsGuest, fetchServerSession, forceLogout, scheduleBootstrapFailOpen, setAuthSettled],
+    [applySessionPayload, captureServerClock, clearBootstrapFailOpenTimer, continueAsGuest, forceLogout, scheduleBootstrapFailOpen],
   );
 
   const runBootstrapRef = useRef(runBootstrap);
@@ -2719,12 +2364,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     lastMembershipStatusRef.current = membershipStatus;
   }, [membershipStatus, activeOrgId, memberships.length, user?.id, sessionStatus]);
 
-  // ── Bridge resolver registration ─────────────────────────────────────────
-  // The direct-snapshot path (setOrgContextSnapshot, called synchronously
-  // during render above) is now the primary bridge for courseStore.  The
-  // closure registered here is kept only as a test-compatibility shim for
-  // mocks that expect registerCourseStoreOrgResolver to be called, and as a
-  // fallback in the unlikely event the direct snapshot is somehow null.
   useEffect(() => {
     registerCourseStoreOrgResolver(() => {
       const sessionReady = sessionStatus === 'authenticated';
@@ -2755,8 +2394,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     });
     return () => {
       registerCourseStoreOrgResolver(null);
-      // Clear the direct snapshot so a subsequent mount starts clean.
-      setOrgContextSnapshot(null);
     };
   }, [activeOrgId, membershipStatus, sessionStatus, user?.activeOrgId, user?.organizationId, user?.role, user?.id]);
 
@@ -2861,7 +2498,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
         logAuthSessionState('admin-login_success', getUserSession());
         setAuthStatus('authenticated', 'login:admin_success');
-        setSessionStatus('authenticated', 'login:admin_success');
         return { success: true };
       }
 
@@ -2906,7 +2542,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         reason: `${type}_login_success`,
       });
       setAuthStatus('authenticated', `login:${type}_success`);
-      setSessionStatus('authenticated', `login:${type}_success`);
 
       logAuthSessionState(`${type}-login_success`, getUserSession());
 
@@ -2961,7 +2596,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         errorType: 'unknown_error',
       };
     }
-  }, [applySessionPayload, fetchServerSession, requestJsonWithClock, setAuthStatus, setSessionStatus]);
+  }, [applySessionPayload, fetchServerSession, requestJsonWithClock]);
 
   const register = useCallback(async (input: RegisterInput): Promise<RegisterResult> => {
     try {
@@ -3109,8 +2744,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   const value: AuthContextType = {
     isAuthenticated,
     authInitializing,
-    bootstrapComplete,
-    authSettled,
     authStatus,
     sessionStatus,
     membershipStatus,
@@ -3136,49 +2769,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     loadSession,
     retryBootstrap,
   };
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // Synchronous bridge snapshot — written every render so courseStore always
-  // reads the current auth state regardless of useEffect ordering.
-  //
-  // This eliminates the race where huddle:auth_ready fired (Effect A) before
-  // the registerCourseStoreOrgResolver useEffect (Effect B) re-ran with the
-  // fresh membershipStatus='ready' closure — courseStore was reading the stale
-  // 'loading' value from the previously-captured closure.
-  // ─────────────────────────────────────────────────────────────────────────
-  // _sessionReady: treat authStatus='authenticated' as sufficient signal even
-  // if sessionStatus hasn't been updated yet (e.g. login on /admin/login sets
-  // authStatus first; sessionStatus is now also set immediately after, but we
-  // keep the OR guard as a belt-and-suspenders fallback for any future path).
-  const _sessionReady = sessionStatus === 'authenticated' || authStatus === 'authenticated';
-  const _membershipReady = membershipStatus === 'ready' || membershipStatus === 'degraded';
-  const _membershipErrored = membershipStatus === 'error';
-  const _snapshot = !_sessionReady
-    ? { status: 'loading' as const, orgId: null, role: null, userId: null }
-    : !_membershipReady
-      ? {
-          status: (_membershipErrored ? 'error' : 'loading') as 'error' | 'loading',
-          orgId: null,
-          role: null,
-          userId: user?.id ?? null,
-        }
-      : {
-          status: 'ready' as const,
-          orgId: activeOrgId ?? user?.activeOrgId ?? user?.organizationId ?? null,
-          role: user?.role ?? null,
-          userId: user?.id ?? null,
-        };
-  setOrgContextSnapshot(_snapshot);
-  if (import.meta.env?.DEV) {
-    // Visible in dev console — confirm the snapshot is updating correctly.
-    console.debug('[SecureAuth] org_bridge_snapshot', {
-      status: _snapshot.status,
-      orgId: _snapshot.orgId,
-      membershipStatus,
-      sessionStatus,
-      ts: Date.now(),
-    });
-  }
 
   return (
     <AuthContext.Provider value={value}>
@@ -3274,26 +2864,20 @@ const renderAuthState = ({
     if (!onLoginRoute && shouldRedirectToLogin) {
       if (typeof window !== 'undefined') {
         const target = resolveLoginPath();
-        // Guard: window.location.assign fires on every React render while
-        // authStatus stays 'unauthenticated'. Use a module-level flag so only
-        // the first call in a given page lifetime actually triggers navigation.
-        if (!(window as any).__HUDDLE_AUTH_REDIRECT_FIRED__) {
-          (window as any).__HUDDLE_AUTH_REDIRECT_FIRED__ = true;
-          console.debug('[AUTH REDIRECT DECISION]', {
-            decision: 'redirecting',
-            authStatus,
-            authInitializing,
-            shouldRedirectToLogin,
-            pathname,
-            target,
-            ts: Date.now(),
-          });
-          logAuthRedirect('SecureAuthContext.renderAuthState.unauthenticated', {
-            target,
-            pathname,
-          });
-          window.location.assign(target);
-        }
+        console.debug('[AUTH REDIRECT DECISION]', {
+          decision: 'redirecting',
+          authStatus,
+          authInitializing,
+          shouldRedirectToLogin,
+          pathname,
+          target,
+          ts: Date.now(),
+        });
+        logAuthRedirect('SecureAuthContext.renderAuthState.unauthenticated', {
+          target,
+          pathname,
+        });
+        window.location.assign(target);
       }
       return <BootstrapRedirecting message="Redirecting to login…" />;
     }

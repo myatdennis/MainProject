@@ -1255,35 +1255,7 @@ const AUTH_READY_EVENT = 'huddle:auth_ready';
 let awaitingAuthReadyBootstrap = false;
 let authReadyBootstrapAttempts = 0;
 const AUTH_READY_BOOTSTRAP_MAX_ATTEMPTS = 3;
-// Tracks pending polling timers so forceInit can cancel them.
-let authReadyPollTimer: ReturnType<typeof setTimeout> | null = null;
 
-const cancelAuthReadyPoll = () => {
-  if (authReadyPollTimer !== null) {
-    clearTimeout(authReadyPollTimer);
-    authReadyPollTimer = null;
-  }
-};
-
-// Poll intervals (ms) — start fast, back off, give up after ~10 s total.
-const AUTH_READY_POLL_INTERVALS = [50, 100, 200, 400, 800, 1600, 3200, 3200];
-
-/**
- * Dual-mode deferred init:
- *
- * 1. Event fast-path: listen for `huddle:auth_ready`.  The listener wraps the
- *    call in `queueMicrotask` so React can flush the registerCourseStoreOrgResolver
- *    useEffect (which re-registers the resolver closure with the new membershipStatus)
- *    before courseStore.init() re-runs.
- *
- * 2. Polling fallback: if `huddle:auth_ready` was dispatched before this function
- *    registered the listener (a race that happens when the route navigation causes
- *    courseStore.init → defer in the same React effect batch that dispatched the
- *    event), the poll timer fires and re-checks the resolver directly.
- *
- * This makes the deferred-init path independent of whether the one-shot event
- * was observed — eliminating the permanent hang when the event is missed.
- */
 const queueAuthReadyBootstrap = (reinitializer: () => void) => {
   if (typeof window === 'undefined') return;
   if (awaitingAuthReadyBootstrap) return;
@@ -1302,69 +1274,16 @@ const queueAuthReadyBootstrap = (reinitializer: () => void) => {
   }
   awaitingAuthReadyBootstrap = true;
   authReadyBootstrapAttempts += 1;
-
-  let settled = false;
-
-  const settle = () => {
-    if (settled) return;
-    settled = true;
+  const handler = () => {
     awaitingAuthReadyBootstrap = false;
-    cancelAuthReadyPoll();
-    window.removeEventListener(AUTH_READY_EVENT, eventHandler);
-    // The bridge snapshot is now written synchronously during every render of
-    // SecureAuthProvider (via setOrgContextSnapshot), so the org context is
-    // always current by the time any event or poll fires.  No microtask yield
-    // is needed.
+    window.removeEventListener(AUTH_READY_EVENT, handler);
     try {
       reinitializer();
     } catch (error) {
       console.error('[courseStore] auth_ready bootstrap failed', error);
     }
   };
-
-  // — Fast path: event listener —
-  const eventHandler = () => settle();
-  window.addEventListener(AUTH_READY_EVENT, eventHandler, { once: true });
-
-  // — Polling fallback: in case the event already fired before we registered —
-  let pollIndex = 0;
-  const poll = () => {
-    if (settled) return;
-    const ctx = resolveOrgContext();
-    if (ctx.status === 'ready') {
-      console.debug('[courseStore] auth_ready_poll: org context ready — resuming init', {
-        orgId: ctx.orgId,
-        pollIndex,
-        ts: Date.now(),
-      });
-      settle();
-      return;
-    }
-    if (pollIndex >= AUTH_READY_POLL_INTERVALS.length) {
-      // Polling exhausted without the org becoming ready — give up gracefully.
-      if (!settled) {
-        settled = true;
-        awaitingAuthReadyBootstrap = false;
-        window.removeEventListener(AUTH_READY_EVENT, eventHandler);
-        console.warn('[courseStore] auth_ready_poll: timed out waiting for org context', {
-          status: ctx.status,
-          attempts: authReadyBootstrapAttempts,
-        });
-        setAdminCatalogState({
-          phase: 'ready',
-          adminLoadStatus: 'error',
-          lastAttemptAt: monotonicNow(),
-          lastError: 'Auth context did not become ready after polling timeout.',
-        });
-      }
-      return;
-    }
-    const delay = AUTH_READY_POLL_INTERVALS[pollIndex++];
-    authReadyPollTimer = setTimeout(poll, delay);
-  };
-  // Start polling after the first interval to avoid a synchronous double-check
-  // inside the same React flush.
-  authReadyPollTimer = setTimeout(poll, AUTH_READY_POLL_INTERVALS[0]);
+  window.addEventListener(AUTH_READY_EVENT, handler, { once: true });
 };
 
 const setAdminCatalogState = (update: Partial<AdminCatalogState> | ((state: AdminCatalogState) => AdminCatalogState)) => {
@@ -1858,25 +1777,23 @@ export const courseStore = {
       }
       // Prefer admin list (richer shape) but gracefully fall back to published-only
       let dbCourses: Course[] = [];
+      // Capture the current catalog BEFORE any fetch so the merge logic below
+      // can reference prior course state (for edit-lock guards and module
+      // structure preservation) even though the merge output starts from {}.
+      // Also used by the snapshot-restore on fetch failure.
+      const catalogSnapshot = { ...courses };
 
       if (canUseAdminApi) {
         if (apiAuthRequired && import.meta.env?.DEV) {
           console.info('[courseStore.init] Health probe indicated auth required, but API is reachable. Proceeding with admin course load attempt.');
         }
-        // Snapshot the current catalog before flushing.  If the API call itself
-        // fails (real network error, 5xx, timeout) we restore the snapshot so
-        // the UI continues showing the last-known-good catalog instead of an
-        // empty page.  The snapshot is ONLY restored on failure — a successful
-        // response always wins.
-        const catalogSnapshot = { ...courses };
+        // NOTE: we no longer flush `courses = {}` here before the API call.
+        // The pre-fetch flush created a subscriber-visible empty window between
+        // the flush and the resolved fetch, causing blank-page flashes on every
+        // re-init (navigation, org switch, etc.).  Instead the merge below builds
+        // its output from a fresh `{}` using catalogSnapshot as the "prior state"
+        // reference, achieving the same single-source guarantee without the flash.
         try {
-          // SINGLE SOURCE GUARANTEE: flush the in-memory course map immediately
-          // before the API call so stale entries from a prior init can never
-          // survive into the merge.  The flush is deferred to here (not earlier)
-          // so that if the API call itself fails the existing valid catalog
-          // remains intact for the UI to display.
-          console.debug('[COURSE RESET]', { caller: 'courseStore.init/pre-fetch-flush', beforeCount: Object.keys(courses).length });
-          courses = {};
           console.debug('[COURSE FETCH]', {
             source: 'getAllCoursesFromDatabase',
             url: '/api/admin/courses',
@@ -2046,7 +1963,6 @@ export const courseStore = {
         const degradedCatalogSnapshot = { ...courses };
         try {
           console.debug('[COURSE RESET]', { caller: 'courseStore.init/degraded-pre-fetch-flush', beforeCount: Object.keys(courses).length });
-          courses = {};
           dbCourses = await getAllCoursesFromDatabase();
           adminLoadStatus = dbCourses.length === 0 ? 'empty' : 'success';
         } catch (healthDegradedFetchErr) {
@@ -2135,14 +2051,21 @@ export const courseStore = {
       const adminUnauthorized = !restrictToOrg && adminLoadStatus === 'error' && (adminLoadError === 'admin_courses_auth_error');
 
       if (dbCourses.length > 0) {
-        // Merge fetched courses with any existing locally persisted drafts instead of overwriting entirely.
-        const merged: { [key: string]: Course } = { ...courses };
+        // SINGLE SOURCE GUARANTEE: build the merged output from a fresh empty
+        // object so no stale entries from a prior init (deleted courses etc.) can
+        // survive.  Use catalogSnapshot as the "prior state" reference so the
+        // edit-lock guard and structure-preservation logic still have access to
+        // the last-known-good course data without requiring a pre-fetch flush.
+        const merged: { [key: string]: Course } = {};
         dbCourses.forEach((apiCourse: Course) => {
           const courseWithVersion =
             typeof apiCourse.version === 'number' && Number.isFinite(apiCourse.version)
               ? apiCourse
               : { ...apiCourse, version: 1 };
-          const existing = merged[courseWithVersion.id];
+          // Use catalogSnapshot (pre-fetch state) as the "prior entry" reference so
+          // the edit-lock guard and structure-preservation logic work correctly even
+          // though merged starts from {}.
+          const existing = catalogSnapshot[courseWithVersion.id];
           if (editingCourseId && courseWithVersion.id === editingCourseId && existing) {
             return;
           }
@@ -2407,7 +2330,6 @@ export const courseStore = {
     // is never blocked by the automatic-retry cap.
     authReadyBootstrapAttempts = 0;
     awaitingAuthReadyBootstrap = false;
-    cancelAuthReadyPoll();
     // Signal courseDataLoader (and any other in-memory caches) to flush their
     // cached results so the next course-detail load fetches fresh data.
     try {

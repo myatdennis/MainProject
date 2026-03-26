@@ -117,33 +117,22 @@ const AdminCourses = () => {
   // this page mounts (e.g. fast navigation before the bootstrap effect fires,
   // or a stale ready-guard that skipped re-fetch) we need to trigger it here
   // so courses are always populated.
-  // Guard: only request init once per IDLE→loading transition.  The ref is
-  // reset when phase transitions back to 'idle' so a deferred-init cycle
-  // (idle→loading→idle because org context wasn't ready yet) can trigger
-  // a second attempt once the org context resolves.
+  // Guard: only request init once per mount. Subsequent idle transitions
+  // (e.g. deferred bootstrap retries, org switches) are handled by App.tsx
+  // and AdminLayout forceInit — we must not start a new init on every
+  // idle→loading→idle cycle.
   const hasRequestedInitRef = useRef(false);
   useEffect(() => {
-    if (catalogState.phase !== 'idle') {
-      // Phase left 'idle' (loading or ready) — allow the next idle transition
-      // to re-trigger if needed.
-      if (hasRequestedInitRef.current && catalogState.phase === 'loading') {
-        // init is running; keep the guard set so we don't double-fire.
-      }
-      if (catalogState.phase === 'ready') {
-        // Catalog is ready; reset so a future forceInit→idle cycle can re-arm.
-        hasRequestedInitRef.current = false;
-      }
-      return;
+    if (catalogState.phase === 'idle' && !hasRequestedInitRef.current) {
+      hasRequestedInitRef.current = true;
+      console.debug('[COURSE INIT CALLER]', {
+        source: 'AdminCourses.tsx',
+        phase: catalogState.phase,
+        pathname: typeof window !== 'undefined' ? window.location?.pathname : 'ssr',
+        ts: Date.now(),
+      });
+      void courseStore.init();
     }
-    if (hasRequestedInitRef.current) return;
-    hasRequestedInitRef.current = true;
-    console.debug('[COURSE INIT CALLER]', {
-      source: 'AdminCourses.tsx',
-      phase: catalogState.phase,
-      pathname: typeof window !== 'undefined' ? window.location?.pathname : 'ssr',
-      ts: Date.now(),
-    });
-    void courseStore.init();
   }, [catalogState.phase]);
 
   const persistCourse = async (

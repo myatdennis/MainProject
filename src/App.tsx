@@ -242,14 +242,7 @@ function AppContent() {
           ts: Date.now(),
         });
         await courseStore.init();
-        // Only lock the key when init actually completed (phase='ready').
-        // If init deferred because the org context was still loading it returns
-        // immediately with phase='idle', and the queueAuthReadyBootstrap polling
-        // fallback will re-call courseStore.init().  We must NOT consume the key
-        // in that case — the App.tsx effect must remain free to re-trigger when
-        // orgResolutionStatus transitions to 'ready'.
-        const resultState = courseStore.getAdminCatalogState();
-        if (!cancelled && resultState.phase === 'ready') {
+        if (!cancelled) {
           courseInitKeyRef.current = targetKey;
         }
       } catch (error) {

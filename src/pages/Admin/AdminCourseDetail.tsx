@@ -53,10 +53,6 @@ const AdminCourseDetail = () => {
   // every subsequent idle transition (e.g. after forceInit resets phase to idle).
   const hasRequestedInitRef = useRef(false);
   useEffect(() => {
-    if (catalogState.phase === 'ready') {
-      hasRequestedInitRef.current = false;
-      return;
-    }
     if (catalogState.phase === 'idle' && !hasRequestedInitRef.current) {
       hasRequestedInitRef.current = true;
       console.debug('[COURSE INIT CALLER]', {

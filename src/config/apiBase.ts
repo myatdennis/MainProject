@@ -38,7 +38,7 @@ const getMetaEnv = (): MetaEnv => {
 };
 
 const DEFAULT_DEV_API_BASE = '/api';
-const PROD_API_BASE = 'https://api.the-huddle.co/api';
+const DEFAULT_PROD_API_BASE = '/api';
 const DEFAULT_NODE_ORIGIN = 'http://localhost:8888';
 
 const detectDevMode = () => {
@@ -73,28 +73,6 @@ const logMissingEnv = (() => {
 })();
 
 const getRawApiBase = (): string => {
-  // In production, always use the canonical API origin.  The env var can still
-  // override this (e.g. staging), but there is NO silent fallback to /api in
-  // production — that would route requests to the Netlify frontend origin instead
-  // of the Railway API service.
-  const isProd = !devMode;
-  if (isProd) {
-    const override = getRuntimeApiBaseOverride();
-    if (typeof override === 'string' && override) {
-      return override;
-    }
-    const value = getMetaEnv().VITE_API_BASE_URL;
-    const trimmed = typeof value === 'string' ? value.trim() : '';
-    if (trimmed) {
-      return trimmed;
-    }
-    // No env var in production — use the hardcoded canonical URL and log an error
-    // so the missing var is visible in deploy logs.
-    console.error('[apiBase] Missing VITE_API_BASE_URL in production — using hardcoded fallback https://api.the-huddle.co/api');
-    return PROD_API_BASE;
-  }
-
-  // Dev / test path — allow runtime override, env var, or /api proxy fallback.
   const override = getRuntimeApiBaseOverride();
   if (typeof override === 'string') {
     return override;
@@ -104,9 +82,14 @@ const getRawApiBase = (): string => {
   if (trimmed) {
     return trimmed;
   }
-  logMissingEnv('VITE_API_BASE_URL', 'Falling back to /api proxy because no development value is configured.');
-  console.warn(`[apiBase] Missing VITE_API_BASE_URL in development. Defaulting to ${DEFAULT_DEV_API_BASE}.`);
-  return DEFAULT_DEV_API_BASE;
+  const fallback = devMode ? DEFAULT_DEV_API_BASE : DEFAULT_PROD_API_BASE;
+  const context = devMode ? 'development' : 'production';
+  const detail = devMode
+    ? 'Falling back to /api proxy because no development value is configured.'
+    : 'Falling back to same-origin /api to avoid accidental production cross-domain requests.';
+  logMissingEnv('VITE_API_BASE_URL', detail);
+  console.warn(`[apiBase] Missing VITE_API_BASE_URL in ${context}. Defaulting to ${fallback}.`);
+  return fallback;
 };
 
 const getRawWsUrl = (): string => {
@@ -245,9 +228,6 @@ export function getApiBaseUrl(): string {
     return envFallback;
   }
 
-  // This line is only reachable in development/test environments.
-  // In production getRawApiBase() always returns PROD_API_BASE so envFallback
-  // is always non-empty and we never reach here.
   return DEFAULT_DEV_API_BASE;
 }
 

@@ -1,7 +1,6 @@
 import { supabase } from './supabaseClient';
 import { getAccessToken as getStoredAccessToken } from './secureStorage';
 import { LEGACY_ORG_HEADER_NAME, ORG_HEADER_NAME, resolveOrgHeaderForRequest } from './orgContext';
-import { getApiBaseUrl } from '../config/apiBase';
 
 export class NotAuthenticatedError extends Error {
   constructor(message = 'Supabase session is unavailable') {
@@ -24,10 +23,10 @@ const PUBLIC_ENDPOINTS = new Set([
 ]);
 const PUBLIC_ENDPOINT_PREFIXES = ['/api/diagnostics'];
 
-// Resolved once at module load from the canonical apiBase config so that
-// production always uses https://api.the-huddle.co/api and never falls back
-// to the same-origin /api path.
-const API_BASE = getApiBaseUrl();
+const API_BASE =
+  (typeof import.meta !== 'undefined' && (import.meta as any)?.env?.VITE_API_BASE_URL) ||
+  (typeof process !== 'undefined' ? process.env?.VITE_API_BASE_URL : '') ||
+  '';
 
 const normalizeUrl = (target: string): string => {
   if (!target) return target;
@@ -35,16 +34,6 @@ const normalizeUrl = (target: string): string => {
   if (absolutePattern.test(target)) {
     return target;
   }
-  // When API_BASE is an absolute URL (production: https://api.the-huddle.co/api)
-  // we must ALWAYS build the URL relative to API_BASE, never relative to
-  // window.location.origin.  Using window.location.origin would send the request
-  // to the Netlify frontend (https://the-huddle.co) instead of the Railway API.
-  if (API_BASE && absolutePattern.test(API_BASE)) {
-    const base = API_BASE.replace(/\/+$/, '');
-    const path = target.startsWith('/') ? target : `/${target}`;
-    return `${base}${path}`;
-  }
-  // Dev/test: relative path — resolve against window.location.origin (Vite proxy).
   if (typeof window !== 'undefined' && target.startsWith('/')) {
     try {
       return new URL(target, window.location.origin).toString();

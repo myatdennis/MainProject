@@ -466,9 +466,14 @@ class SyncService {
           manual: true
         });
       } else {
-        // Fallback to client-side refresh
-        console.debug('[INIT CALLER]', { caller: 'syncService.refreshCourse', courseId, pathname: typeof window !== 'undefined' ? window.location?.pathname : 'ssr', ts: Date.now() });
-        await courseStore.init();
+        // Fallback to client-side refresh — skip if catalog is already loading.
+        const phase = courseStore.getAdminCatalogState().phase;
+        if (phase === 'loading') {
+          console.debug('[INIT CALLER SKIPPED]', { caller: 'syncService.refreshCourse', courseId, reason: 'already_loading' });
+        } else {
+          console.debug('[INIT CALLER]', { caller: 'syncService.refreshCourse', courseId, pathname: typeof window !== 'undefined' ? window.location?.pathname : 'ssr', ts: Date.now() });
+          await courseStore.init();
+        }
         this.emit('course_updated', {
           courseId,
           timestamp: Date.now(),
@@ -492,6 +497,17 @@ class SyncService {
         console.log('[SyncService] Global refresh triggered');
       }
       
+      // Skip if a catalog fetch is already in progress — courseStore.init()
+      // deduplicates concurrent calls via initPromise, but sequential calls
+      // immediately after completion each start a fresh fetch.  Gating here
+      // prevents syncService from piling on when the store is already loading.
+      const phase = courseStore.getAdminCatalogState().phase;
+      if (phase === 'loading') {
+        console.debug('[INIT CALLER SKIPPED]', { caller: 'syncService.refreshAll', reason: 'already_loading', phase });
+        this.emit('refresh_all', { timestamp: Date.now(), source: 'admin', manual: true });
+        return;
+      }
+
       // Trigger course store re-initialization
       console.debug('[INIT CALLER]', { caller: 'syncService.refreshAll', pathname: typeof window !== 'undefined' ? window.location?.pathname : 'ssr', ts: Date.now() });
       await courseStore.init();

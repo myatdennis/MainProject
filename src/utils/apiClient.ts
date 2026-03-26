@@ -15,6 +15,7 @@ import {
 import { logAuthRedirect } from './logAuthRedirect';
 import { isAdminSurface, resolveLoginPath } from './surface';
 import { getCSRFToken } from './csrfToken';
+import { isAuthBootstrapping } from '../lib/authBootstrapState';
 
 export class ApiError extends Error {
   status: number;
@@ -44,18 +45,9 @@ type ApiRequestOptions = {
   credentials?: RequestCredentials;
   skipAdminGateCheck?: boolean;
   expectedStatus?: number[];
-  /**
-   * When true, a 401 response will throw ApiError normally but will NOT
-   * trigger the handleAuthFailure() hard-redirect / clearAuth() side-effect.
-   * Use this for endpoints (e.g. /auth/session) where the caller owns the
-   * recovery flow and a page-level redirect would destroy in-flight auth state.
-   */
-  suppressAuthFailureRedirect?: boolean;
 };
 
-type InternalRequestOptions = ApiRequestOptions & {
-  suppressAuthFailureRedirect?: boolean;
-};
+type InternalRequestOptions = ApiRequestOptions & {};
 const devMode = Boolean(
   (import.meta as any)?.env?.DEV ?? (typeof process !== 'undefined' && process.env?.NODE_ENV !== 'production'),
 );
@@ -202,6 +194,18 @@ const assertNotThrottled = (url: string) => {
 const handleAuthFailure = async () => {
   if (typeof window !== 'undefined' && Boolean((window as any).__E2E_BYPASS)) {
     console.warn('[apiClient] E2E bypass active — suppressing auth failure redirect (401 received but session is a synthetic mock)');
+    return;
+  }
+  // Suppress the hard redirect while auth bootstrap is still running.
+  // A 401 during bootstrap (e.g. from courseStore.init() firing before the
+  // session cookie is confirmed) must NOT destroy the session — the bootstrap
+  // will resolve the correct auth state and SecureAuthContext will handle any
+  // real unauthenticated condition via its own redirect path.
+  if (isAuthBootstrapping()) {
+    console.warn('[apiClient] Auth bootstrap in progress — suppressing auth failure redirect for 401', {
+      pathname: typeof window !== 'undefined' ? window.location?.pathname : 'ssr',
+      ts: Date.now(),
+    });
     return;
   }
   clearSupabaseAuthSnapshot();
@@ -666,16 +670,7 @@ const internalAuthorizedFetch = async (
 
   const contentType = res.headers.get('content-type');
   if (res.status === 401) {
-    // suppressAuthFailureRedirect callers (e.g. SecureAuthContext bootstrap) own
-    // their own recovery flow.  Skip the hard clearAuth()+window.location.replace()
-    // so they can attempt a token refresh or call continueAsGuest gracefully.
-    if (!options.suppressAuthFailureRedirect) {
-      await handleAuthFailure();
-    } else {
-      console.debug('[apiClient] 401 received — auth failure redirect suppressed by caller', {
-        path: extractPathname(prepared.url),
-      });
-    }
+    await handleAuthFailure();
     const body = isJsonResponse(contentType) ? await safeParseJson(res) : await safeReadText(res);
     logUnauthorized(prepared.url, res.status, body, {
       credentials: prepared.credentials,

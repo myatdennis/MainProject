@@ -7,7 +7,6 @@
       "rootDirectory": "./",
       "start": "node index.js",
       "env": [
-        "NODE_ENV",
         "SUPABASE_URL",
         "SUPABASE_SERVICE_ROLE_KEY",
         "SUPABASE_ANON_KEY",
