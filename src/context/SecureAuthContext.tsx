@@ -53,6 +53,14 @@ const SESSION_RELOAD_THROTTLE_MS = 45 * 1000;
 const BOOTSTRAP_FAIL_OPEN_MS = 8000;
 const MEMBERSHIP_RETRY_DELAYS_MS = [2000, 5000, 10000, 30000, 60000] as const;
 
+// ── BUILD FINGERPRINT ─────────────────────────────────────────────────────────
+// Token: 0b9c7f8e — if this does NOT appear in the browser console the browser
+// is serving a cached/stale bundle and not the current deployment.
+if (typeof window !== 'undefined') {
+  console.debug('[SecureAuthContext] LOADED build=0b9c7f8e ts=' + Date.now());
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 const isNavigatorOffline = () => typeof navigator !== 'undefined' && navigator.onLine === false;
 const isDevEnvironment = Boolean(import.meta.env?.DEV);
 const logAuthDebug = (label: string, payload: Record<string, unknown>) => {
@@ -2163,6 +2171,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
       clearAuth('manual_logout');
       clearAdminAccessSnapshot();
+      clearBridgeSnapshot(); // Clear org bridge on explicit logout so courseStore doesn't serve stale state.
       setUser(null);
       setMemberships([]);
       setOrganizationIds([]);
@@ -2357,6 +2366,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   //
   // Effect order is still intentional: this effect runs BEFORE the auth_ready
   // dispatch effect below so the snapshot is current when the event fires.
+  // ── BUILD FINGERPRINT: 0b9c7f8e ──────────────────────────────────────────────
   useEffect(() => {
     const sessionReady = sessionStatus === 'authenticated';
     const membershipReady = membershipStatus === 'ready' || membershipStatus === 'degraded';
@@ -2400,8 +2410,13 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     registerCourseStoreOrgResolver(() => snapshot);
 
     return () => {
+      // Only unregister the closure resolver — do NOT call clearBridgeSnapshot()
+      // here.  React runs cleanup before re-running effects on dep changes, so
+      // clearBridgeSnapshot() would create a brief null window between the
+      // cleanup and the next write.  If courseStore polls or reads during that
+      // window it sees null → status:'loading' → queues another bootstrap.
+      // The snapshot is cleared explicitly in the logout handler instead.
       registerCourseStoreOrgResolver(null);
-      clearBridgeSnapshot();
     };
   }, [activeOrgId, membershipStatus, sessionStatus, user?.activeOrgId, user?.organizationId, user?.role, user?.id]);
 

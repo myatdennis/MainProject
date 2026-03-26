@@ -13,6 +13,10 @@
  * The closure-based resolver (registerCourseStoreOrgResolver) is kept as a
  * secondary fallback for backward compatibility but is no longer the primary
  * read path.
+ *
+ * Singleton guard: state is kept on `window.__courseStoreOrgBridge` so that
+ * if Vite ever bundles this module into more than one chunk (causing two
+ * separate module instances), all instances still share the same object.
  */
 
 export type OrgContextSnapshot = {
@@ -22,40 +26,86 @@ export type OrgContextSnapshot = {
   userId: string | null;
 };
 
-// ── Mutable snapshot (primary) ───────────────────────────────────────────────
-// Written by SecureAuthContext on every render that changes auth/org state.
-// Read by courseStore synchronously — no effect-commit delay.
-let latestSnapshot: OrgContextSnapshot | null = null;
-let snapshotWrittenAt: number = 0;
-
-export const writeBridgeSnapshot = (snapshot: OrgContextSnapshot): void => {
-  latestSnapshot = snapshot;
-  snapshotWrittenAt = Date.now();
-  if (typeof window !== 'undefined' && (window as any).__DEV_BRIDGE_LOG) {
-    console.debug('[courseStoreOrgBridge] snapshot_written', {
-      status: snapshot.status,
-      orgId: snapshot.orgId,
-      role: snapshot.role,
-      userId: snapshot.userId,
-      ts: snapshotWrittenAt,
-    });
-  }
+// ── Window-object singleton (survives Vite chunk duplication) ────────────────
+type BridgeStore = {
+  latestSnapshot: OrgContextSnapshot | null;
+  snapshotWrittenAt: number;
+  resolver: (() => OrgContextSnapshot | null) | null;
+  resolverRegistered: boolean;
 };
 
-export const readBridgeSnapshot = (): OrgContextSnapshot | null => latestSnapshot;
+declare global {
+  interface Window {
+    __courseStoreOrgBridge?: BridgeStore;
+  }
+}
 
-export const getBridgeSnapshotAge = (): number =>
-  snapshotWrittenAt > 0 ? Date.now() - snapshotWrittenAt : Infinity;
+// ── BUILD FINGERPRINT ────────────────────────────────────────────────────────
+// Token: 0b9c7f8e — bump this comment to force a new hash on every deploy.
+// If this string does NOT appear in the browser console after a deploy, the
+// browser is serving a cached/old bundle.
+const _BRIDGE_BUILD = '0b9c7f8e';
+if (typeof window !== 'undefined') {
+  console.debug('[courseStoreOrgBridge] LOADED build=' + _BRIDGE_BUILD + ' ts=' + Date.now());
+}
+
+const _getStore = (): BridgeStore => {
+  if (typeof window === 'undefined') {
+    // SSR / non-browser: use a module-local fallback (never shared, but that's
+    // acceptable in SSR where there is no cross-chunk singleton problem).
+    return _ssrStore;
+  }
+  if (!window.__courseStoreOrgBridge) {
+    window.__courseStoreOrgBridge = {
+      latestSnapshot: null,
+      snapshotWrittenAt: 0,
+      resolver: null,
+      resolverRegistered: false,
+    };
+    console.debug('[courseStoreOrgBridge] singleton CREATED build=' + _BRIDGE_BUILD);
+  } else {
+    console.debug('[courseStoreOrgBridge] singleton REUSED (pre-existing) build=' + _BRIDGE_BUILD);
+  }
+  return window.__courseStoreOrgBridge;
+};
+
+// SSR-only fallback (module-local, used when window is undefined)
+const _ssrStore: BridgeStore = {
+  latestSnapshot: null,
+  snapshotWrittenAt: 0,
+  resolver: null,
+  resolverRegistered: false,
+};
+
+export const writeBridgeSnapshot = (snapshot: OrgContextSnapshot): void => {
+  const store = _getStore();
+  store.latestSnapshot = snapshot;
+  store.snapshotWrittenAt = Date.now();
+  // Always log writes so we can prove the correct build is running and
+  // compare write values against read values in the same console session.
+  console.debug('[courseStoreOrgBridge] WRITE build=0b9c7f8e', {
+    status: snapshot.status,
+    orgId: snapshot.orgId,
+    role: snapshot.role,
+    userId: snapshot.userId,
+    ts: store.snapshotWrittenAt,
+  });
+};
+
+export const readBridgeSnapshot = (): OrgContextSnapshot | null => _getStore().latestSnapshot;
+
+export const getBridgeSnapshotAge = (): number => {
+  const { snapshotWrittenAt } = _getStore();
+  return snapshotWrittenAt > 0 ? Date.now() - snapshotWrittenAt : Infinity;
+};
 
 // ── Closure-based resolver (legacy / secondary) ──────────────────────────────
-let resolver: (() => OrgContextSnapshot | null) | null = null;
-let resolverRegistered = false;
-
 export const registerCourseStoreOrgResolver = (
   next: (() => OrgContextSnapshot | null) | null,
 ): void => {
-  resolver = next;
-  resolverRegistered = typeof next === 'function';
+  const store = _getStore();
+  store.resolver = next;
+  store.resolverRegistered = typeof next === 'function';
 };
 
 /**
@@ -67,19 +117,32 @@ export const registerCourseStoreOrgResolver = (
  *  3. null
  */
 export const resolveOrgContextFromBridge = (): OrgContextSnapshot | null => {
-  if (latestSnapshot !== null) {
-    return latestSnapshot;
-  }
-  return resolver ? resolver() : null;
+  const store = _getStore();
+  const result = store.latestSnapshot !== null
+    ? store.latestSnapshot
+    : (store.resolver ? store.resolver() : null);
+  // Always log reads so we can prove write→read parity in the same console session.
+  console.debug('[courseStoreOrgBridge] READ build=0b9c7f8e', {
+    status: result?.status ?? 'null',
+    orgId: result?.orgId ?? null,
+    role: result?.role ?? null,
+    userId: result?.userId ?? null,
+    source: store.latestSnapshot !== null ? 'snapshot' : (store.resolver ? 'resolver' : 'none'),
+    ts: Date.now(),
+  });
+  return result;
 };
 
-export const isOrgResolverRegistered = (): boolean =>
-  latestSnapshot !== null || resolverRegistered;
+export const isOrgResolverRegistered = (): boolean => {
+  const store = _getStore();
+  return store.latestSnapshot !== null || store.resolverRegistered;
+};
 
-/** Clears all bridge state. Call on logout / context unmount. */
+/** Clears all bridge state. Call on explicit logout only — never in effect cleanup. */
 export const clearBridgeSnapshot = (): void => {
-  latestSnapshot = null;
-  snapshotWrittenAt = 0;
-  resolver = null;
-  resolverRegistered = false;
+  const store = _getStore();
+  store.latestSnapshot = null;
+  store.snapshotWrittenAt = 0;
+  store.resolver = null;
+  store.resolverRegistered = false;
 };

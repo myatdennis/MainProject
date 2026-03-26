@@ -36,6 +36,14 @@ import {
 // Run stale key eviction immediately at module load — before any cache reads.
 evictStaleCatalogKeys();
 
+// ── BUILD FINGERPRINT ─────────────────────────────────────────────────────────
+// Token: 0b9c7f8e — if this does NOT appear in the browser console the browser
+// is serving a cached/stale bundle and not the current deployment.
+if (typeof window !== 'undefined') {
+  console.debug('[courseStore] LOADED build=0b9c7f8e ts=' + Date.now());
+}
+// ─────────────────────────────────────────────────────────────────────────────
+
 // Course data types
 export interface ScenarioChoice {
   id: string;
@@ -1278,10 +1286,16 @@ const queueAuthReadyBootstrap = (reinitializer: () => void) => {
   // Guard: fire reinitializer only once even if both the event and the
   // fallback timer trigger in quick succession.
   let fired = false;
-  const fireOnce = () => {
+  const fireOnce = (resetAttempts = false) => {
     if (fired) return;
     fired = true;
     awaitingAuthReadyBootstrap = false;
+    // Reset the attempt counter when auth actually succeeded (event fired or
+    // bridge became ready) so that subsequent navigations in the same session
+    // are never permanently blocked by earlier loading-state failures.
+    if (resetAttempts) {
+      authReadyBootstrapAttempts = 0;
+    }
     window.removeEventListener(AUTH_READY_EVENT, handler);
     clearInterval(fallbackTimer);
     try {
@@ -1291,7 +1305,7 @@ const queueAuthReadyBootstrap = (reinitializer: () => void) => {
     }
   };
 
-  const handler = () => fireOnce();
+  const handler = () => fireOnce(/* resetAttempts */ true);
   window.addEventListener(AUTH_READY_EVENT, handler, { once: true });
 
   // Missed-event fallback: if huddle:auth_ready already fired before this
@@ -1308,11 +1322,11 @@ const queueAuthReadyBootstrap = (reinitializer: () => void) => {
     if (snapshot?.status === 'ready') {
       clearInterval(fallbackTimer);
       console.debug('[courseStore] queueAuthReadyBootstrap: org_ready_via_fallback_poll', { elapsed });
-      fireOnce();
+      fireOnce(/* resetAttempts */ true);
     } else if (elapsed >= FALLBACK_POLL_MAX_MS) {
       clearInterval(fallbackTimer);
       console.warn('[courseStore] queueAuthReadyBootstrap: fallback_poll_timeout — org context never became ready');
-      fireOnce(); // attempt anyway; init will re-defer if still not ready
+      fireOnce(/* resetAttempts */ false); // attempt anyway; init will re-defer if still not ready
     }
   }, FALLBACK_POLL_INTERVAL_MS);
 };
