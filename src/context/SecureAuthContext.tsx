@@ -2815,6 +2815,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
         logAuthSessionState('admin-login_success', getUserSession());
         setAuthStatus('authenticated', 'login:admin_success');
+        setSessionStatus('authenticated', 'login:admin_success');
         return { success: true };
       }
 
@@ -2859,6 +2860,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         reason: `${type}_login_success`,
       });
       setAuthStatus('authenticated', `login:${type}_success`);
+      setSessionStatus('authenticated', `login:${type}_success`);
 
       logAuthSessionState(`${type}-login_success`, getUserSession());
 
@@ -2913,7 +2915,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         errorType: 'unknown_error',
       };
     }
-  }, [applySessionPayload, fetchServerSession, requestJsonWithClock]);
+  }, [applySessionPayload, fetchServerSession, requestJsonWithClock, setAuthStatus, setSessionStatus]);
 
   const register = useCallback(async (input: RegisterInput): Promise<RegisterResult> => {
     try {
@@ -3098,7 +3100,11 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   // fresh membershipStatus='ready' closure — courseStore was reading the stale
   // 'loading' value from the previously-captured closure.
   // ─────────────────────────────────────────────────────────────────────────
-  const _sessionReady = sessionStatus === 'authenticated';
+  // _sessionReady: treat authStatus='authenticated' as sufficient signal even
+  // if sessionStatus hasn't been updated yet (e.g. login on /admin/login sets
+  // authStatus first; sessionStatus is now also set immediately after, but we
+  // keep the OR guard as a belt-and-suspenders fallback for any future path).
+  const _sessionReady = sessionStatus === 'authenticated' || authStatus === 'authenticated';
   const _membershipReady = membershipStatus === 'ready' || membershipStatus === 'degraded';
   const _membershipErrored = membershipStatus === 'error';
   const _snapshot = !_sessionReady
