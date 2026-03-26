@@ -1,0 +1,51 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e3]:
+  - generic [ref=e5]:
+    - img [ref=e6]
+    - generic [ref=e8]:
+      - paragraph [ref=e9]: Supabase is not configured
+      - paragraph [ref=e10]: Supabase configuration missing. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.
+      - paragraph [ref=e11]: All data writes are disabled while Supabase is offline. Please configure your environment variables or try again later.
+  - main [ref=e12]:
+    - generic [ref=e14]:
+      - heading "Unable to verify admin access" [level=2] [ref=e15]
+      - paragraph [ref=e16]:
+        - text: We hit a snag while confirming your admin access. You can retry the check or jump back to the login screen.
+        - generic [ref=e17]: "Details: timeout"
+        - generic [ref=e18]:
+          - text: Ask an admin to add you to the
+          - code [ref=e19]: admin_users
+          - text: allowlist table.
+      - generic [ref=e20]:
+        - button "Try again" [ref=e21] [cursor=pointer]:
+          - generic [ref=e22]: Try again
+        - button "Copy User ID" [ref=e23] [cursor=pointer]:
+          - generic [ref=e24]: Copy User ID
+        - link "Go to admin login" [ref=e25] [cursor=pointer]:
+          - /url: /admin/login
+  - generic [ref=e26]:
+    - generic [ref=e27]:
+      - heading "Connection Status All systems operational" [level=3] [ref=e28]:
+        - img [ref=e29]
+        - generic [ref=e32]: Connection Status
+        - generic [ref=e33]: All systems operational
+      - button "Close connection status panel" [ref=e34] [cursor=pointer]: ×
+    - generic [ref=e35]:
+      - generic [ref=e36]:
+        - generic [ref=e37]: Internet
+        - img [ref=e38]
+      - generic [ref=e41]:
+        - generic [ref=e42]: Server
+        - img [ref=e43]
+      - generic [ref=e46]:
+        - generic [ref=e47]: API health
+        - img [ref=e48]
+      - generic [ref=e51]:
+        - paragraph [ref=e52]: "Checked: 1:52:34 PM"
+        - button "Refresh Status" [ref=e53] [cursor=pointer]
+  - button "Troubleshooting Guide" [ref=e54] [cursor=pointer]:
+    - img [ref=e55]
+  - button "Show Dev Panel" [ref=e60] [cursor=pointer]
+```

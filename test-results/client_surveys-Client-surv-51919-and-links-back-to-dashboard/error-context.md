@@ -1,0 +1,167 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e3]:
+  - navigation "Primary navigation" [ref=e4]:
+    - generic [ref=e5]:
+      - link "Go to home" [ref=e6] [cursor=pointer]:
+        - /url: /
+        - img "Huddle Co." [ref=e7]
+      - navigation "Main navigation" [ref=e8]:
+        - link "Home" [ref=e9] [cursor=pointer]:
+          - /url: /
+        - link "Courses" [ref=e10] [cursor=pointer]:
+          - /url: /courses
+        - link "Resources" [ref=e11] [cursor=pointer]:
+          - /url: /resources
+        - link "About" [ref=e12] [cursor=pointer]:
+          - /url: /about
+        - link "Contact" [ref=e13] [cursor=pointer]:
+          - /url: /contact
+      - generic [ref=e14]:
+        - generic [ref=e15]:
+          - img [ref=e16]
+          - textbox "Search courses" [ref=e19]
+        - link "Client Login" [ref=e20] [cursor=pointer]:
+          - /url: /login
+        - button "Admin Portal" [ref=e21] [cursor=pointer]
+  - generic [ref=e23]:
+    - generic [ref=e24]:
+      - img [ref=e25]
+      - paragraph [ref=e28]:
+        - strong [ref=e29]: "Demo Mode:"
+        - text: You're viewing a demonstration of The Huddle Co platform. All data is simulated and progress is stored locally.
+        - link "Contact us to get started with your organization" [ref=e30] [cursor=pointer]:
+          - /url: mailto:contact@thehuddleco.com
+    - button "Close demo banner" [ref=e31] [cursor=pointer]:
+      - img [ref=e32]
+  - generic [ref=e36]:
+    - img [ref=e37]
+    - generic [ref=e39]:
+      - paragraph [ref=e40]: Supabase is not configured
+      - paragraph [ref=e41]: Supabase configuration missing. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.
+      - paragraph [ref=e42]: All data writes are disabled while Supabase is offline. Please configure your environment variables or try again later.
+  - main [ref=e43]:
+    - generic [ref=e45]:
+      - generic [ref=e46]:
+        - link "The Huddle Co." [ref=e47] [cursor=pointer]:
+          - /url: /
+          - img [ref=e49]
+          - generic [ref=e54]: The Huddle Co.
+        - heading "Welcome back to your learning path" [level=2] [ref=e55]
+        - paragraph [ref=e56]: Use your organization email for assignments, reflections, and certificates curated for your cohort.
+        - paragraph [ref=e57]:
+          - text: Need to manage a program instead? Visit the
+          - link "Admin Portal" [ref=e58] [cursor=pointer]:
+            - /url: /admin/login
+          - text: .
+      - generic [ref=e59]:
+        - generic [ref=e60]:
+          - img [ref=e61]
+          - generic [ref=e64]:
+            - paragraph [ref=e65]: Private learner workspace
+            - paragraph [ref=e66]: Only active cohorts and verified facilitators can sign in. Your progress, reflections, and certifications stay synced with your org lead.
+        - generic [ref=e67]:
+          - generic [ref=e68]: Personalized modules unlocked weekly
+          - generic [ref=e69]: Secure Supabase storage & auto-save
+          - generic [ref=e70]: Access from any device
+      - generic [ref=e71]:
+        - generic [ref=e72]:
+          - generic [ref=e73]:
+            - img [ref=e74]
+            - generic [ref=e76]: Demo mode active
+          - generic [ref=e77]:
+            - text: "Email:"
+            - code [ref=e78]: user@pacificcoast.edu
+            - text: "• Password:"
+            - code [ref=e79]: user123
+            - paragraph [ref=e80]: Production signup and password reset are disabled until the platform is connected to Supabase.
+        - generic [ref=e81]:
+          - button "Sign In" [ref=e82] [cursor=pointer]
+          - button "Create Account" [disabled] [ref=e83]
+        - generic [ref=e84]:
+          - generic [ref=e85]:
+            - generic [ref=e86]: Email Address
+            - generic [ref=e87]:
+              - generic:
+                - img
+              - textbox "Email Address" [ref=e88]:
+                - /placeholder: Enter your email
+                - text: user@pacificcoast.edu
+          - generic [ref=e89]:
+            - generic [ref=e90]: Password
+            - generic [ref=e91]:
+              - generic:
+                - img
+              - textbox "Password" [active] [ref=e92]:
+                - /placeholder: Enter your password
+                - text: user123
+              - button [ref=e93] [cursor=pointer]:
+                - img [ref=e94]
+          - generic [ref=e97]:
+            - generic [ref=e98]:
+              - checkbox "Remember me" [ref=e99]
+              - generic [ref=e100]: Remember me
+            - button "Forgot password?" [ref=e101] [cursor=pointer]
+          - button "Sign In" [ref=e102] [cursor=pointer]
+        - paragraph [ref=e104]:
+          - text: Need help accessing your account?
+          - link "Contact support" [ref=e105] [cursor=pointer]:
+            - /url: /contact
+      - link "← Back to main website" [ref=e107] [cursor=pointer]:
+        - /url: /
+  - contentinfo [ref=e108]:
+    - generic [ref=e109]:
+      - link "Return to home" [ref=e110] [cursor=pointer]:
+        - /url: /
+        - img "Huddle Co." [ref=e111]:
+          - button "Switch to dark mode" [ref=e115]: Dark
+      - navigation [ref=e116]:
+        - link "Privacy" [ref=e117] [cursor=pointer]:
+          - /url: /privacy
+        - link "Terms" [ref=e118] [cursor=pointer]:
+          - /url: /terms
+        - link "Access Statement" [ref=e119] [cursor=pointer]:
+          - /url: /accessibility
+      - generic [ref=e120]:
+        - link "LinkedIn" [ref=e121] [cursor=pointer]:
+          - /url: https://linkedin.com
+          - img [ref=e122]
+        - link "Twitter" [ref=e126] [cursor=pointer]:
+          - /url: https://twitter.com
+          - img [ref=e127]
+    - generic [ref=e130]:
+      - img "Huddle Co." [ref=e131]:
+        - button "Switch to dark mode" [ref=e135] [cursor=pointer]: Dark
+      - link "Brand Guidelines" [ref=e136] [cursor=pointer]:
+        - /url: /brand-guidelines
+    - paragraph [ref=e138]: © 2026 The Huddle Co. All rights reserved.
+  - generic [ref=e139]:
+    - button "Tips & Shortcuts" [ref=e140] [cursor=pointer]:
+      - img [ref=e141]
+    - button "Open AI Assistant" [ref=e143] [cursor=pointer]:
+      - img [ref=e144]
+  - generic [ref=e146]:
+    - generic [ref=e147]:
+      - heading "Connection Status All systems operational" [level=3] [ref=e148]:
+        - img [ref=e149]
+        - generic [ref=e152]: Connection Status
+        - generic [ref=e153]: All systems operational
+      - button "Close connection status panel" [ref=e154] [cursor=pointer]: ×
+    - generic [ref=e155]:
+      - generic [ref=e156]:
+        - generic [ref=e157]: Internet
+        - img [ref=e158]
+      - generic [ref=e161]:
+        - generic [ref=e162]: Server
+        - img [ref=e163]
+      - generic [ref=e166]:
+        - generic [ref=e167]: API health
+        - img [ref=e168]
+      - generic [ref=e171]:
+        - paragraph [ref=e172]: "Checked: 1:52:36 PM"
+        - button "Refresh Status" [ref=e173] [cursor=pointer]
+  - button "Troubleshooting Guide" [ref=e174] [cursor=pointer]:
+    - img [ref=e175]
+  - button "Show Dev Panel" [ref=e180] [cursor=pointer]
+```

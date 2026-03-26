@@ -1,0 +1,119 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e3]:
+  - generic [ref=e5]:
+    - img [ref=e6]
+    - generic [ref=e8]:
+      - paragraph [ref=e9]: Supabase is not configured
+      - paragraph [ref=e10]: Supabase configuration missing. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY.
+      - paragraph [ref=e11]: All data writes are disabled while Supabase is offline. Please configure your environment variables or try again later.
+  - main [ref=e12]:
+    - generic [ref=e14]:
+      - generic [ref=e15]:
+        - generic [ref=e16]:
+          - img [ref=e18]
+          - generic [ref=e20]:
+            - text: Admin Portal
+            - paragraph [ref=e21]: The Huddle Co.
+        - heading "Secure Access" [level=2] [ref=e22]
+        - paragraph [ref=e23]: Program operations, enrollment leads, and facilitators sign in here to manage org-wide learning.
+        - paragraph [ref=e24]:
+          - text: Learners should continue to the
+          - link "learning portal" [ref=e25] [cursor=pointer]:
+            - /url: /login
+          - text: .
+      - generic [ref=e26]:
+        - generic [ref=e27]:
+          - generic [ref=e28]:
+            - generic [ref=e29]:
+              - paragraph [ref=e30]: Platform health
+              - paragraph [ref=e31]: Supabase connection verified. Live production data.
+              - paragraph [ref=e32]: Last verified 1:53:03 PM
+            - generic [ref=e33]: Operational
+          - paragraph [ref=e34]:
+            - img [ref=e35]
+            - text: We're reconnecting to Supabase. Stay on this page or use the demo credentials below while we finish syncing.
+          - generic [ref=e37]:
+            - generic [ref=e38]:
+              - img [ref=e39]
+              - generic [ref=e42]:
+                - paragraph [ref=e43]: Multi-factor enforced
+                - paragraph [ref=e44]: Every admin session requires a one-time verification code.
+            - generic [ref=e45]:
+              - img [ref=e46]
+              - generic [ref=e48]:
+                - paragraph [ref=e49]: Monitored changes
+                - paragraph [ref=e50]: Course, invite, and org updates are logged for audit readiness.
+            - generic [ref=e51]:
+              - img [ref=e52]
+              - generic [ref=e59]:
+                - paragraph [ref=e60]: Concierge support
+                - paragraph [ref=e61]: Need a new admin seat? We respond to access requests within 1 business day.
+        - generic [ref=e62]:
+          - generic [ref=e63]:
+            - generic [ref=e64]: Admin Email Address
+            - generic [ref=e65]:
+              - generic:
+                - img
+              - textbox "Admin Email Address" [ref=e66]:
+                - /placeholder: mya@the-huddle.co
+          - generic [ref=e67]:
+            - generic [ref=e68]: Password
+            - generic [ref=e69]:
+              - generic:
+                - img
+              - textbox "Password" [ref=e70]:
+                - /placeholder: Enter admin password
+              - button [ref=e71] [cursor=pointer]:
+                - img [ref=e72]
+          - generic [ref=e76]:
+            - img [ref=e77]
+            - generic [ref=e79]:
+              - heading "Demo Credentials" [level=4] [ref=e80]
+              - paragraph [ref=e81]:
+                - text: "Email: mya@the-huddle.co"
+                - text: "Password: admin123"
+          - button "Sign in securely" [ref=e82] [cursor=pointer]
+        - generic [ref=e83]:
+          - heading "Login Debug (DEV only)" [level=3] [ref=e84]
+          - generic [ref=e85]:
+            - generic [ref=e86]: "Session checked: 2026-03-26T18:53:03.886Z"
+            - generic [ref=e87]: "Has access_token: no"
+            - generic [ref=e88]: "Token length: 0"
+            - generic [ref=e89]: "header.alg: n/a"
+            - generic [ref=e90]: "header.kid: n/a"
+            - generic [ref=e91]: "Last label: initial_render"
+            - generic [ref=e92]: "Last API: —"
+        - generic [ref=e93]:
+          - paragraph [ref=e94]:
+            - text: Need help accessing the admin portal?
+            - link "Contact support" [ref=e95] [cursor=pointer]:
+              - /url: /contact
+          - button "Forgot password?" [ref=e96] [cursor=pointer]
+      - link "← Back to main website" [ref=e98] [cursor=pointer]:
+        - /url: /
+  - generic [ref=e99]:
+    - generic [ref=e100]:
+      - heading "Connection Status All systems operational" [level=3] [ref=e101]:
+        - img [ref=e102]
+        - generic [ref=e105]: Connection Status
+        - generic [ref=e106]: All systems operational
+      - button "Close connection status panel" [ref=e107] [cursor=pointer]: ×
+    - generic [ref=e108]:
+      - generic [ref=e109]:
+        - generic [ref=e110]: Internet
+        - img [ref=e111]
+      - generic [ref=e114]:
+        - generic [ref=e115]: Server
+        - img [ref=e116]
+      - generic [ref=e119]:
+        - generic [ref=e120]: API health
+        - img [ref=e121]
+      - generic [ref=e124]:
+        - paragraph [ref=e125]: "Checked: 1:53:03 PM"
+        - button "Refresh Status" [ref=e126] [cursor=pointer]
+  - button "Troubleshooting Guide" [ref=e127] [cursor=pointer]:
+    - img [ref=e128]
+  - button "Show Dev Panel" [ref=e133] [cursor=pointer]
+```

@@ -92,6 +92,9 @@ const orgBridgeMock = vi.hoisted(() => {
 vi.mock('../courseStoreOrgBridge', () => ({
   resolveOrgContextFromBridge: orgBridgeMock.resolveOrgContextFromBridge,
   registerCourseStoreOrgResolver: orgBridgeMock.registerCourseStoreOrgResolver,
+  writeBridgeSnapshot: vi.fn(),
+  clearBridgeSnapshot: vi.fn(),
+  isOrgResolverRegistered: vi.fn(() => true),
 }));
 
 const setOrgContextSnapshot = (next: OrgContextSnapshot | null) => {

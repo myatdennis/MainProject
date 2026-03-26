@@ -35,7 +35,11 @@ import { logAuthRedirect } from '../utils/logAuthRedirect';
 import { resolveLoginPath, isLoginPath, isAdminSurface } from '../utils/surface';
 import { resolvePreferredOrgId } from '../lib/authOrg';
 import { createMembershipSelfHealTracker } from '../lib/membershipSelfHeal';
-import { registerCourseStoreOrgResolver } from '../store/courseStoreOrgBridge';
+import {
+  registerCourseStoreOrgResolver,
+  writeBridgeSnapshot,
+  clearBridgeSnapshot,
+} from '../store/courseStoreOrgBridge';
 
 if (axios?.defaults) {
   axios.defaults.withCredentials = true;
@@ -2341,42 +2345,63 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     });
   }, [authInitializing, authStatus, sessionStatus, membershipStatus, activeOrgId]);
 
-  // ── Effect order is intentional: resolver MUST be registered/updated BEFORE
-  // the auth_ready event is dispatched so that courseStore can immediately call
-  // resolveOrgContextFromBridge() and get a 'ready' snapshot.
-  // React runs effects in declaration order within the same render commit, so
-  // placing this effect first guarantees the bridge closure is fresh before
-  // the second effect fires the custom event.
+  // ── Bridge snapshot write (PRIMARY FIX) ─────────────────────────────────────
+  // Write the current auth/org state directly into the mutable bridge snapshot
+  // on every render where these values change.  This replaces the closure-based
+  // resolver as the PRIMARY data path because closures captured in a prior effect
+  // flush are stale by the time courseStore.init() executes them.
+  //
+  // writeBridgeSnapshot() is a plain module-level write — no React scheduling,
+  // no effect-commit delay.  courseStore.resolveOrgContextFromBridge() reads
+  // latestSnapshot directly and always gets the value from the most recent render.
+  //
+  // Effect order is still intentional: this effect runs BEFORE the auth_ready
+  // dispatch effect below so the snapshot is current when the event fires.
   useEffect(() => {
-    registerCourseStoreOrgResolver(() => {
-      const sessionReady = sessionStatus === 'authenticated';
-      const membershipReady = membershipStatus === 'ready' || membershipStatus === 'degraded';
-      const membershipErrored = membershipStatus === 'error';
-      if (!sessionReady) {
-        return {
-          status: 'loading',
-          orgId: null,
-          role: null,
-          userId: null,
-        };
-      }
-      if (!membershipReady) {
-        return {
-          status: membershipErrored ? 'error' : 'loading',
-          orgId: null,
-          role: null,
-          userId: user?.id ?? null,
-        };
-      }
-      return {
+    const sessionReady = sessionStatus === 'authenticated';
+    const membershipReady = membershipStatus === 'ready' || membershipStatus === 'degraded';
+    const membershipErrored = membershipStatus === 'error';
+
+    let snapshot: Parameters<typeof writeBridgeSnapshot>[0];
+    if (!sessionReady) {
+      snapshot = { status: 'loading', orgId: null, role: null, userId: null };
+    } else if (!membershipReady) {
+      snapshot = {
+        status: membershipErrored ? 'error' : 'loading',
+        orgId: null,
+        role: null,
+        userId: user?.id ?? null,
+      };
+    } else {
+      snapshot = {
         status: 'ready',
         orgId: activeOrgId ?? user?.activeOrgId ?? user?.organizationId ?? null,
         role: user?.role ?? null,
         userId: user?.id ?? null,
       };
+    }
+
+    console.debug('[SecureAuth] bridge_snapshot_written', {
+      status: snapshot.status,
+      orgId: snapshot.orgId,
+      role: snapshot.role,
+      userId: snapshot.userId,
+      sessionStatus,
+      membershipStatus,
+      ts: Date.now(),
     });
+
+    // Write the mutable snapshot (primary read path for courseStore)
+    writeBridgeSnapshot(snapshot);
+
+    // Also register the closure resolver as a secondary fallback.
+    // The closure captures the SAME values as the snapshot above, so both
+    // return identical data when called in the same render cycle.
+    registerCourseStoreOrgResolver(() => snapshot);
+
     return () => {
       registerCourseStoreOrgResolver(null);
+      clearBridgeSnapshot();
     };
   }, [activeOrgId, membershipStatus, sessionStatus, user?.activeOrgId, user?.organizationId, user?.role, user?.id]);
 

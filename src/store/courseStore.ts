@@ -1357,6 +1357,16 @@ type ResolvedOrgContext = {
 const resolveOrgContext = (): ResolvedOrgContext => {
   const storedPreference = resolveOrgIdFromCarrier(getActiveOrgPreference());
   const resolverSnapshot = resolveOrgContextFromBridge();
+
+  // ── Diagnostic: log what the bridge returned ────────────────────────────
+  console.debug('[courseStore] bridge_snapshot_read', {
+    snapshotStatus: resolverSnapshot?.status ?? 'null',
+    snapshotOrgId: resolverSnapshot?.orgId ?? null,
+    snapshotRole: resolverSnapshot?.role ?? null,
+    snapshotUserId: resolverSnapshot?.userId ?? null,
+    ts: Date.now(),
+  });
+
   if (resolverSnapshot) {
     // Bridge responded — reset the loading-start timer.
     bridgeLoadingStartedAt = null;
