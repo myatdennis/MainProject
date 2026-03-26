@@ -33,6 +33,8 @@ import {
   isTestOrE2ECourse,
 } from '../utils/catalogPersistence';
 
+const TRACE_TOKEN = 'SEV1_REAL_FIX_01';
+
 // Run stale key eviction immediately at module load — before any cache reads.
 evictStaleCatalogKeys();
 
@@ -41,6 +43,12 @@ evictStaleCatalogKeys();
 // is serving a cached/stale bundle and not the current deployment.
 if (typeof window !== 'undefined') {
   console.debug('[courseStore] LOADED build=0b9c7f8e ts=' + Date.now());
+  console.debug('[TRACE BUILD]', {
+    token: TRACE_TOKEN,
+    module: 'courseStore',
+    buildFingerprint: '0b9c7f8e',
+    ts: Date.now(),
+  });
 }
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -1260,75 +1268,78 @@ const notifySubscribers = () => {
 };
 
 const AUTH_READY_EVENT = 'huddle:auth_ready';
-let awaitingAuthReadyBootstrap = false;
-let authReadyBootstrapAttempts = 0;
-const AUTH_READY_BOOTSTRAP_MAX_ATTEMPTS = 3;
+const ORG_CONTEXT_POLL_INTERVAL_MS = 150;
 
-const queueAuthReadyBootstrap = (reinitializer: () => void) => {
-  if (typeof window === 'undefined') return;
-  if (awaitingAuthReadyBootstrap) return;
-  if (authReadyBootstrapAttempts >= AUTH_READY_BOOTSTRAP_MAX_ATTEMPTS) {
-    console.warn(
-      '[courseStore] queueAuthReadyBootstrap: max attempts (%d) reached — setting error state and giving up.',
-      AUTH_READY_BOOTSTRAP_MAX_ATTEMPTS,
-    );
-    setAdminCatalogState({
-      phase: 'ready',
-      adminLoadStatus: 'error',
-      lastAttemptAt: monotonicNow(),
-      lastError: 'Auth context did not become ready after maximum bootstrap retries.',
-    });
-    return;
+type OrgContextValidator = (context: ResolvedOrgContext) => boolean;
+
+const waitForOrgContext = async ({
+  reason,
+  validator,
+  timeoutMs = BRIDGE_RESOLUTION_TIMEOUT_MS,
+  pollIntervalMs = ORG_CONTEXT_POLL_INTERVAL_MS,
+}: {
+  reason: string;
+  validator: OrgContextValidator;
+  timeoutMs?: number;
+  pollIntervalMs?: number;
+}): Promise<ResolvedOrgContext | null> => {
+  if (typeof window === 'undefined') {
+    return null;
   }
-  awaitingAuthReadyBootstrap = true;
-  authReadyBootstrapAttempts += 1;
 
-  // Guard: fire reinitializer only once even if both the event and the
-  // fallback timer trigger in quick succession.
-  let fired = false;
-  const fireOnce = (resetAttempts = false) => {
-    if (fired) return;
-    fired = true;
-    awaitingAuthReadyBootstrap = false;
-    // Reset the attempt counter when auth actually succeeded (event fired or
-    // bridge became ready) so that subsequent navigations in the same session
-    // are never permanently blocked by earlier loading-state failures.
-    if (resetAttempts) {
-      authReadyBootstrapAttempts = 0;
-    }
-    window.removeEventListener(AUTH_READY_EVENT, handler);
-    clearInterval(fallbackTimer);
-    try {
-      reinitializer();
-    } catch (error) {
-      console.error('[courseStore] auth_ready bootstrap failed', error);
-    }
-  };
+  return new Promise((resolve) => {
+    const start = Date.now();
+    let iteration = 0;
 
-  const handler = () => fireOnce(/* resetAttempts */ true);
-  window.addEventListener(AUTH_READY_EVENT, handler, { once: true });
+    const cleanup = () => {
+      window.removeEventListener(AUTH_READY_EVENT, authReadyHandler);
+      window.clearInterval(pollTimer);
+      window.clearTimeout(timeoutTimer);
+    };
 
-  // Missed-event fallback: if huddle:auth_ready already fired before this
-  // listener was registered (e.g. membership resolved during the login
-  // redirect before the courses page mounted), the event is gone and the
-  // listener will never trigger.  Poll the org bridge every 150 ms for up
-  // to 5 s so courses load without needing a manual refresh.
-  const FALLBACK_POLL_INTERVAL_MS = 150;
-  const FALLBACK_POLL_MAX_MS = 5_000;
-  const fallbackStart = Date.now();
-  const fallbackTimer = setInterval(() => {
-    const snapshot = resolveOrgContextFromBridge();
-    const elapsed = Date.now() - fallbackStart;
-    if (snapshot?.status === 'ready') {
-      clearInterval(fallbackTimer);
-      console.debug('[courseStore] queueAuthReadyBootstrap: org_ready_via_fallback_poll', { elapsed });
-      fireOnce(/* resetAttempts */ true);
-    } else if (elapsed >= FALLBACK_POLL_MAX_MS) {
-      clearInterval(fallbackTimer);
-      console.warn('[courseStore] queueAuthReadyBootstrap: fallback_poll_timeout — org context never became ready');
-      fireOnce(/* resetAttempts */ false); // attempt anyway; init will re-defer if still not ready
-    }
-  }, FALLBACK_POLL_INTERVAL_MS);
+    const evaluate = (event: 'initial' | 'poll' | 'auth_ready_event') => {
+      iteration += 1;
+      const contextSnapshot = resolveOrgContext();
+      console.debug('[TRACE BOOTSTRAP RETRY]', {
+        token: TRACE_TOKEN,
+        event,
+        reason,
+        iteration,
+        elapsed: Date.now() - start,
+        orgContext: contextSnapshot,
+        ts: Date.now(),
+      });
+      if (contextSnapshot.status === 'error') {
+        cleanup();
+        resolve(contextSnapshot);
+        return;
+      }
+      if (validator(contextSnapshot)) {
+        cleanup();
+        resolve(contextSnapshot);
+      }
+    };
+
+    const authReadyHandler = () => evaluate('auth_ready_event');
+    window.addEventListener(AUTH_READY_EVENT, authReadyHandler);
+
+    const pollTimer = window.setInterval(() => evaluate('poll'), pollIntervalMs);
+
+    const timeoutTimer = window.setTimeout(() => {
+      cleanup();
+      console.debug('[TRACE BOOTSTRAP RETRY]', {
+        token: TRACE_TOKEN,
+        event: 'timeout',
+        reason,
+        iteration,
+        elapsed: Date.now() - start,
+        ts: Date.now(),
+      });
+      resolve(null);
+    }, timeoutMs);
+
+    evaluate('initial');
+  });
 };
 
 const setAdminCatalogState = (update: Partial<AdminCatalogState> | ((state: AdminCatalogState) => AdminCatalogState)) => {
@@ -1372,51 +1383,60 @@ const resolveOrgContext = (): ResolvedOrgContext => {
   const storedPreference = resolveOrgIdFromCarrier(getActiveOrgPreference());
   const resolverSnapshot = resolveOrgContextFromBridge();
 
-  // ── Diagnostic: log what the bridge returned ────────────────────────────
-  console.debug('[courseStore] bridge_snapshot_read', {
-    snapshotStatus: resolverSnapshot?.status ?? 'null',
-    snapshotOrgId: resolverSnapshot?.orgId ?? null,
-    snapshotRole: resolverSnapshot?.role ?? null,
-    snapshotUserId: resolverSnapshot?.userId ?? null,
-    ts: Date.now(),
-  });
+  let resolved: ResolvedOrgContext;
 
   if (resolverSnapshot) {
     // Bridge responded — reset the loading-start timer.
     bridgeLoadingStartedAt = null;
     if (resolverSnapshot.status && resolverSnapshot.status !== 'ready') {
-      return {
+      resolved = {
         orgId: null,
         role: null,
         userId: null,
         status: resolverSnapshot.status,
       };
+    } else {
+      resolved = {
+        orgId: resolverSnapshot.orgId ?? storedPreference ?? null,
+        role: resolverSnapshot.role ?? null,
+        userId: resolverSnapshot.userId ?? null,
+        status: 'ready',
+      };
     }
-    return {
-      orgId: resolverSnapshot.orgId ?? storedPreference ?? null,
-      role: resolverSnapshot.role ?? null,
-      userId: resolverSnapshot.userId ?? null,
-      status: 'ready',
-    };
-  }
-  if (!isOrgResolverRegistered()) {
+  } else if (!isOrgResolverRegistered()) {
     bridgeLoadingStartedAt = null;
-    return { orgId: null, role: null, userId: null, status: 'loading' };
-  }
-  // Bridge is registered but returned no snapshot yet.
-  // Start the timeout clock on first entry, and escalate to 'error' if the
-  // bridge has been unresponsive for longer than BRIDGE_RESOLUTION_TIMEOUT_MS.
-  if (bridgeLoadingStartedAt === null) {
-    bridgeLoadingStartedAt = Date.now();
-  }
-  if (Date.now() - bridgeLoadingStartedAt > BRIDGE_RESOLUTION_TIMEOUT_MS) {
-    bridgeLoadingStartedAt = null; // reset so a subsequent registration can try again
-    if (import.meta.env?.DEV) {
-      console.warn('[courseStore] bridge_timeout: org resolver registered but returned no snapshot after 8s');
+    resolved = { orgId: null, role: null, userId: null, status: 'loading' };
+  } else {
+    // Bridge is registered but returned no snapshot yet. Start the timeout
+    // clock on first entry, and escalate to 'error' if the bridge has been
+    // unresponsive for longer than BRIDGE_RESOLUTION_TIMEOUT_MS.
+    if (bridgeLoadingStartedAt === null) {
+      bridgeLoadingStartedAt = Date.now();
     }
-    return { orgId: null, role: null, userId: null, status: 'error' };
+    if (Date.now() - bridgeLoadingStartedAt > BRIDGE_RESOLUTION_TIMEOUT_MS) {
+      bridgeLoadingStartedAt = null; // reset so a subsequent registration can try again
+      if (import.meta.env?.DEV) {
+        console.warn('[courseStore] bridge_timeout: org resolver registered but returned no snapshot after 8s');
+      }
+      resolved = { orgId: null, role: null, userId: null, status: 'error' };
+    } else {
+      resolved = { orgId: null, role: null, userId: null, status: 'loading' };
+    }
   }
-  return { orgId: null, role: null, userId: null, status: 'loading' };
+
+  console.debug('[TRACE RESOLVE ORG]', {
+    token: TRACE_TOKEN,
+    snapshotStatus: resolverSnapshot?.status ?? 'null',
+    snapshotOrgId: resolverSnapshot?.orgId ?? null,
+    snapshotRole: resolverSnapshot?.role ?? null,
+    snapshotUserId: resolverSnapshot?.userId ?? null,
+    storedPreference: storedPreference ?? null,
+    resolved,
+    bridgeLoadingStartedAt,
+    ts: Date.now(),
+  });
+
+  return resolved;
 };
 
 // Reserved for future use: checks whether a learner has any local progress stored for a given course.
@@ -1675,6 +1695,15 @@ export const courseStore = {
     editingCourseId = id ?? null;
   },
   init: (): Promise<void> => {
+    if (typeof window !== 'undefined') {
+      console.debug('[TRACE ROUTE]', {
+        token: TRACE_TOKEN,
+        pathname: window.location?.pathname ?? 'unknown',
+        phase: adminCatalogState.phase,
+        adminLoadStatus: adminCatalogState.adminLoadStatus,
+        ts: Date.now(),
+      });
+    }
     if (initPromise) {
       // Re-use the in-flight promise — never start a second concurrent init.
       return initPromise;
@@ -1728,61 +1757,142 @@ export const courseStore = {
       if (import.meta.env?.DEV) {
         console.info('[courseStore.init] Starting initialization...');
       }
-      const orgContext = resolveOrgContext();
+      let orgContext = resolveOrgContext();
+      console.debug('[TRACE INIT DECISION]', {
+        token: TRACE_TOKEN,
+        stage: 'org_context_initial',
+        orgContext,
+        ts: Date.now(),
+      });
       // Record the org being resolved so forceInit can detect org switches.
       resolvedOrgIdForInit = orgContext.orgId ?? null;
-      if (orgContext.status === 'loading') {
-        console.info(
-          '[courseStore.init] Org context still resolving (membershipStatus=loading); awaiting auth_ready event before catalog fetch.',
-        );
-        setAdminCatalogState({ phase: 'idle', adminLoadStatus: 'skipped', lastAttemptAt: monotonicNow(), lastError: null });
-        queueAuthReadyBootstrap(() => {
-          console.debug('[INIT CALLER]', { caller: 'courseStore/queueAuthReadyBootstrap(membershipLoading)', pathname: typeof window !== 'undefined' ? window.location?.pathname : 'ssr', ts: Date.now() });
-          void courseStore.init();
+
+      const waitForCondition = async (reason: string, predicate: OrgContextValidator): Promise<boolean> => {
+        if (predicate(orgContext)) {
+          return true;
+        }
+        const awaited = await waitForOrgContext({ reason, validator: predicate });
+        if (!awaited || awaited.status === 'error') {
+          if (awaited?.status === 'error') {
+            orgContext = awaited;
+            resolvedOrgIdForInit = orgContext.orgId ?? null;
+          }
+          console.debug('[TRACE INIT DECISION]', {
+            token: TRACE_TOKEN,
+            stage: 'org_wait_timeout',
+            reason,
+            orgContext,
+            ts: Date.now(),
+          });
+          return false;
+        }
+        orgContext = awaited;
+        resolvedOrgIdForInit = orgContext.orgId ?? null;
+        console.debug('[TRACE INIT DECISION]', {
+          token: TRACE_TOKEN,
+          stage: 'org_wait_resolved',
+          reason,
+          orgContext,
+          ts: Date.now(),
+        });
+        return true;
+      };
+
+      if (orgContext.status === 'error') {
+        console.error('[courseStore.init] Org context reported an error state; aborting catalog load.');
+        console.debug('[TRACE INIT DECISION]', {
+          token: TRACE_TOKEN,
+          stage: 'org_context_error',
+          orgContext,
+          ts: Date.now(),
+        });
+        setAdminCatalogState({
+          phase: 'ready',
+          adminLoadStatus: 'error',
+          lastError: 'Org context failed to load. Please refresh.',
+          lastAttemptAt: monotonicNow(),
         });
         return;
       }
-      if (!orgContext.userId) {
-        if (orgContext.status === 'idle') {
-          console.info(
-            '[courseStore.init] Auth context not ready (status=%s); deferring catalog initialization until memberships resolve.',
-            orgContext.status,
-          );
-          setAdminCatalogState({ phase: 'idle', adminLoadStatus: 'skipped', lastAttemptAt: monotonicNow(), lastError: null });
-          queueAuthReadyBootstrap(() => {
-            console.debug('[INIT CALLER]', { caller: 'courseStore/queueAuthReadyBootstrap(authIdle)', pathname: typeof window !== 'undefined' ? window.location?.pathname : 'ssr', ts: Date.now() });
-            void courseStore.init();
+
+      if (orgContext.status !== 'ready') {
+        const ready = await waitForCondition('status_not_ready', (ctx) => ctx.status === 'ready');
+        if (!ready) {
+          console.info('[courseStore.init] Org context never became ready — showing error state.');
+          console.debug('[TRACE INIT DECISION]', {
+            token: TRACE_TOKEN,
+            stage: 'org_context_not_ready_timeout',
+            orgContext,
+            ts: Date.now(),
+          });
+          setAdminCatalogState({
+            phase: 'ready',
+            adminLoadStatus: 'error',
+            lastError: 'Org context did not become ready. Please refresh or re-authenticate.',
+            lastAttemptAt: monotonicNow(),
           });
           return;
         }
-        console.info('[courseStore.init] No authenticated session detected; loading local defaults without hitting API.');
-        awaitingRoleResolution = false;
-        awaitingOrgResolution = false;
-        courses = getDefaultCourses();
-        return;
       }
+
+      if (!orgContext.userId) {
+        const hasUser = await waitForCondition('user_missing', (ctx) => Boolean(ctx.userId) && ctx.status === 'ready');
+        if (!hasUser || !orgContext.userId) {
+          console.info('[courseStore.init] No authenticated session detected; loading local defaults without hitting API.');
+          console.debug('[TRACE INIT DECISION]', {
+            token: TRACE_TOKEN,
+            stage: 'no_authenticated_session',
+            orgContext,
+            ts: Date.now(),
+          });
+          awaitingRoleResolution = false;
+          awaitingOrgResolution = false;
+          courses = getDefaultCourses();
+          return;
+        }
+      }
+
       const adminSurfaceDetected = isAdminSurface();
       if (adminSurfaceDetected && orgContext.status !== 'ready') {
-        console.info('[courseStore.init] admin_surface_waiting_for_context', { status: orgContext.status });
-        setAdminCatalogState({ phase: 'idle', adminLoadStatus: 'skipped', lastAttemptAt: monotonicNow(), lastError: null });
-        queueAuthReadyBootstrap(() => {
-          console.debug('[INIT CALLER]', { caller: 'courseStore/queueAuthReadyBootstrap(adminSurfaceWaiting)', pathname: typeof window !== 'undefined' ? window.location?.pathname : 'ssr', ts: Date.now() });
-          void courseStore.init();
-        });
-        return;
-      }
-      if (adminSurfaceDetected && !orgContext.role) {
-        if (!awaitingRoleResolution) {
-          awaitingRoleResolution = true;
-          console.info('[courseStore.init] admin_surface_waiting_for_role_context');
-          setAdminCatalogState({ phase: 'idle', adminLoadStatus: 'skipped', lastAttemptAt: monotonicNow(), lastError: null });
-          queueAuthReadyBootstrap(() => {
-            awaitingRoleResolution = false;
-            console.debug('[INIT CALLER]', { caller: 'courseStore/queueAuthReadyBootstrap(roleWaiting)', pathname: typeof window !== 'undefined' ? window.location?.pathname : 'ssr', ts: Date.now() });
-            void courseStore.init();
+        const ready = await waitForCondition('admin_surface_status_not_ready', (ctx) => ctx.status === 'ready');
+        if (!ready) {
+          setAdminCatalogState({
+            phase: 'idle',
+            adminLoadStatus: 'skipped',
+            lastAttemptAt: monotonicNow(),
+            lastError: 'Waiting for admin context...',
           });
+          console.debug('[TRACE INIT DECISION]', {
+            token: TRACE_TOKEN,
+            stage: 'admin_surface_stalled_context',
+            orgContext,
+            ts: Date.now(),
+          });
+          return;
         }
-        return;
+      }
+
+      if (adminSurfaceDetected && !orgContext.role) {
+        const roleReady = await waitForCondition('admin_surface_missing_role', (ctx) => Boolean(ctx.role));
+        if (!roleReady || !orgContext.role) {
+          if (!awaitingRoleResolution) {
+            awaitingRoleResolution = true;
+            console.info('[courseStore.init] admin_surface_waiting_for_role_context');
+          }
+          setAdminCatalogState({
+            phase: 'idle',
+            adminLoadStatus: 'skipped',
+            lastAttemptAt: monotonicNow(),
+            lastError: 'Waiting for admin role context...',
+          });
+          console.debug('[TRACE INIT DECISION]', {
+            token: TRACE_TOKEN,
+            stage: 'admin_surface_missing_role',
+            orgContext,
+            ts: Date.now(),
+          });
+          return;
+        }
       }
       awaitingRoleResolution = false;
       const roleResolved = typeof orgContext.role === 'string' && orgContext.role.length > 0;
@@ -2089,14 +2199,32 @@ export const courseStore = {
           console.info(
             '[courseStore.init] Deferring published catalog fallback until auth/org context is ready.',
           );
-          queueAuthReadyBootstrap(() => {
-            awaitingOrgResolution = false;
-            void courseStore.init();
-          });
           if (restrictToOrg && !orgContext.orgId) {
             awaitingOrgResolution = true;
           }
-          return;
+          const fallbackReady = await waitForCondition(
+            'published_fallback_wait',
+            restrictToOrg
+              ? (ctx) => ctx.status === 'ready' && Boolean(ctx.orgId)
+              : (ctx) => ctx.status === 'ready',
+          );
+          awaitingOrgResolution = false;
+          if (!fallbackReady) {
+            setAdminCatalogState({
+              phase: 'ready',
+              adminLoadStatus: 'error',
+              lastAttemptAt: monotonicNow(),
+              lastError: 'Org context never became ready for published fallback.',
+            });
+            console.debug('[TRACE INIT DECISION]', {
+              token: TRACE_TOKEN,
+              stage: 'published_fallback_wait_timeout',
+              orgContext,
+              restrictToOrg,
+              ts: Date.now(),
+            });
+            return;
+          }
         }
 
         if (import.meta.env?.DEV) {
@@ -2403,10 +2531,6 @@ export const courseStore = {
         // Non-fatal — cross-tab coordination is best-effort.
       }
     }
-    // Reset the bootstrap attempt counter so an explicit forceInit (e.g. user-triggered retry)
-    // is never blocked by the automatic-retry cap.
-    authReadyBootstrapAttempts = 0;
-    awaitingAuthReadyBootstrap = false;
     // Signal courseDataLoader (and any other in-memory caches) to flush their
     // cached results so the next course-detail load fetches fresh data.
     try {

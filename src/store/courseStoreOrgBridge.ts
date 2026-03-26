@@ -26,6 +26,16 @@ export type OrgContextSnapshot = {
   userId: string | null;
 };
 
+const TRACE_TOKEN = 'SEV1_REAL_FIX_01';
+
+if (typeof window !== 'undefined') {
+  console.debug('[TRACE BUILD]', {
+    token: TRACE_TOKEN,
+    source: 'courseStoreOrgBridge',
+    ts: Date.now(),
+  });
+}
+
 // ── Window-object singleton (survives Vite chunk duplication) ────────────────
 type BridgeStore = {
   latestSnapshot: OrgContextSnapshot | null;
@@ -44,10 +54,7 @@ declare global {
 // Token: 0b9c7f8e — bump this comment to force a new hash on every deploy.
 // If this string does NOT appear in the browser console after a deploy, the
 // browser is serving a cached/old bundle.
-const _BRIDGE_BUILD = '0b9c7f8e';
-if (typeof window !== 'undefined') {
-  console.debug('[courseStoreOrgBridge] LOADED build=' + _BRIDGE_BUILD + ' ts=' + Date.now());
-}
+// Legacy build fingerprint retained via TRACE logs below.
 
 const _getStore = (): BridgeStore => {
   if (typeof window === 'undefined') {
@@ -62,9 +69,17 @@ const _getStore = (): BridgeStore => {
       resolver: null,
       resolverRegistered: false,
     };
-    console.debug('[courseStoreOrgBridge] singleton CREATED build=' + _BRIDGE_BUILD);
+    console.debug('[TRACE BRIDGE WRITE]', {
+      token: TRACE_TOKEN,
+      event: 'singleton_created',
+      ts: Date.now(),
+    });
   } else {
-    console.debug('[courseStoreOrgBridge] singleton REUSED (pre-existing) build=' + _BRIDGE_BUILD);
+    console.debug('[TRACE BRIDGE WRITE]', {
+      token: TRACE_TOKEN,
+      event: 'singleton_reused',
+      ts: Date.now(),
+    });
   }
   return window.__courseStoreOrgBridge;
 };
@@ -81,13 +96,9 @@ export const writeBridgeSnapshot = (snapshot: OrgContextSnapshot): void => {
   const store = _getStore();
   store.latestSnapshot = snapshot;
   store.snapshotWrittenAt = Date.now();
-  // Always log writes so we can prove the correct build is running and
-  // compare write values against read values in the same console session.
-  console.debug('[courseStoreOrgBridge] WRITE build=0b9c7f8e', {
-    status: snapshot.status,
-    orgId: snapshot.orgId,
-    role: snapshot.role,
-    userId: snapshot.userId,
+  console.debug('[TRACE BRIDGE WRITE]', {
+    token: TRACE_TOKEN,
+    snapshot,
     ts: store.snapshotWrittenAt,
   });
 };
@@ -118,16 +129,24 @@ export const registerCourseStoreOrgResolver = (
  */
 export const resolveOrgContextFromBridge = (): OrgContextSnapshot | null => {
   const store = _getStore();
-  const result = store.latestSnapshot !== null
-    ? store.latestSnapshot
-    : (store.resolver ? store.resolver() : null);
-  // Always log reads so we can prove write→read parity in the same console session.
-  console.debug('[courseStoreOrgBridge] READ build=0b9c7f8e', {
+  const result =
+    store.latestSnapshot !== null
+      ? store.latestSnapshot
+      : store.resolver
+        ? store.resolver()
+        : null;
+  console.debug('[TRACE BRIDGE READ]', {
+    token: TRACE_TOKEN,
     status: result?.status ?? 'null',
     orgId: result?.orgId ?? null,
     role: result?.role ?? null,
     userId: result?.userId ?? null,
-    source: store.latestSnapshot !== null ? 'snapshot' : (store.resolver ? 'resolver' : 'none'),
+    source:
+      store.latestSnapshot !== null
+        ? 'snapshot'
+        : store.resolver
+          ? 'resolver'
+          : 'none',
     ts: Date.now(),
   });
   return result;
@@ -145,4 +164,9 @@ export const clearBridgeSnapshot = (): void => {
   store.snapshotWrittenAt = 0;
   store.resolver = null;
   store.resolverRegistered = false;
+  console.debug('[TRACE BRIDGE WRITE]', {
+    token: TRACE_TOKEN,
+    event: 'clear',
+    ts: Date.now(),
+  });
 };

@@ -93,8 +93,10 @@ describe('courseStore auth_ready bridge', () => {
     resetMockImpls();
   });
 
-  it('defers initialization until huddle:auth_ready fires', async () => {
-    await courseStore.init();
+  it('waits inline until huddle:auth_ready fires or the bridge reports ready', async () => {
+    const initPromise = courseStore.init();
+    // Allow the async init flow to hit the waiting branch.
+    await new Promise((resolve) => setTimeout(resolve, 0));
     expect(fetchPublishedCoursesMock).not.toHaveBeenCalled();
 
     resolverSnapshot = {
@@ -113,6 +115,8 @@ describe('courseStore auth_ready bridge', () => {
         },
       }),
     );
+
+    await initPromise;
 
     await vi.waitFor(() => {
       expect(fetchPublishedCoursesMock).toHaveBeenCalled();

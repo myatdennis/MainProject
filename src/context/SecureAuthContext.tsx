@@ -52,14 +52,15 @@ const SESSION_RELOAD_THROTTLE_MS = 45 * 1000;
 // 2500 ms was too aggressive and caused silent force-logouts on first load.
 const BOOTSTRAP_FAIL_OPEN_MS = 8000;
 const MEMBERSHIP_RETRY_DELAYS_MS = [2000, 5000, 10000, 30000, 60000] as const;
+const TRACE_TOKEN = 'SEV1_REAL_FIX_01';
 
-// ── BUILD FINGERPRINT ─────────────────────────────────────────────────────────
-// Token: 0b9c7f8e — if this does NOT appear in the browser console the browser
-// is serving a cached/stale bundle and not the current deployment.
 if (typeof window !== 'undefined') {
-  console.debug('[SecureAuthContext] LOADED build=0b9c7f8e ts=' + Date.now());
+  console.debug('[TRACE BUILD]', {
+    token: TRACE_TOKEN,
+    source: 'SecureAuthContext',
+    ts: Date.now(),
+  });
 }
-// ─────────────────────────────────────────────────────────────────────────────
 
 const isNavigatorOffline = () => typeof navigator !== 'undefined' && navigator.onLine === false;
 const isDevEnvironment = Boolean(import.meta.env?.DEV);
@@ -2172,6 +2173,12 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       clearAuth('manual_logout');
       clearAdminAccessSnapshot();
       clearBridgeSnapshot(); // Clear org bridge on explicit logout so courseStore doesn't serve stale state.
+      console.debug('[TRACE AUTH SNAPSHOT]', {
+        token: TRACE_TOKEN,
+        action: 'clearBridgeSnapshot',
+        reason: 'logout',
+        ts: Date.now(),
+      });
       setUser(null);
       setMemberships([]);
       setOrganizationIds([]);
@@ -2390,6 +2397,17 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         userId: user?.id ?? null,
       };
     }
+
+    console.debug('[TRACE AUTH SNAPSHOT]', {
+      token: TRACE_TOKEN,
+      sessionStatus,
+      membershipStatus,
+      activeOrgId: activeOrgId ?? null,
+      userId: user?.id ?? null,
+      snapshot,
+      writeBridgeSnapshotCalled: true,
+      ts: Date.now(),
+    });
 
     console.debug('[SecureAuth] bridge_snapshot_written', {
       status: snapshot.status,
