@@ -127,10 +127,12 @@ export const loginAsAdmin = async (
     }
     const bodyText = await page.textContent('body').catch(() => '');
     const htmlSnippet = await page.content().catch(() => '');
-    throw new Error(
-      `Timed out waiting for #email on ${page.url()} (SecureAuth state). Body snippet: ${bodyText?.slice(0, 280)} | HTML snippet: ${htmlSnippet?.slice(0, 280)}`,
-      { cause: error instanceof Error ? error : undefined },
-    );
+    const baseMessage = `Timed out waiting for #email on ${page.url()} (SecureAuth state). Body snippet: ${bodyText?.slice(0, 280)} | HTML snippet: ${htmlSnippet?.slice(0, 280)}`;
+    const wrappedError = new Error(baseMessage);
+    if (error instanceof Error) {
+      (wrappedError as Error & { cause?: Error }).cause = error;
+    }
+    throw wrappedError;
   }
   await emailInput.fill(email);
   await page.fill('#password', password);

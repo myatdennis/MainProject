@@ -48,6 +48,7 @@ let resolverSnapshot = {
 
 vi.mock('../courseStoreOrgBridge', () => ({
   resolveOrgContextFromBridge: vi.fn(() => resolverSnapshot),
+  readBridgeSnapshot: vi.fn(() => resolverSnapshot),
   registerCourseStoreOrgResolver: vi.fn(),
   writeBridgeSnapshot: vi.fn(),
   clearBridgeSnapshot: vi.fn(),

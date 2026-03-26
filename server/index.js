@@ -49,7 +49,10 @@ import {
   resolveOrganizationContext,
 } from './middleware/auth.js';
 import requireAdminAccess from './middleware/requireAdminAccess.js';
-import supabaseJwtMiddleware, { SUPABASE_JWT_SECRET_CONFIGURED } from './middleware/supabaseJwt.js';
+import supabaseJwtMiddleware, {
+  SUPABASE_JWT_SECRET_CONFIGURED,
+  getSupabaseJwtSecretDiagnostics,
+} from './middleware/supabaseJwt.js';
 import { setDoubleSubmitCSRF, getCSRFToken } from './middleware/csrf.js';
 import adminUsersRouter from './routes/admin-users.js';
 import mfaRoutes from './routes/mfa.js';
@@ -548,6 +551,10 @@ logger.info('startup_env_diagnostics', {
     secure: cookieSecure,
   },
   corsOrigins,
+});
+
+logger.info('startup_supabase_jwt_secret_state', {
+  ...getSupabaseJwtSecretDiagnostics(),
 });
 
 const DOCUMENTS_BUCKET = process.env.SUPABASE_DOCUMENTS_BUCKET || 'course-resources';

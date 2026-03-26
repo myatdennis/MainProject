@@ -35,11 +35,7 @@ import { logAuthRedirect } from '../utils/logAuthRedirect';
 import { resolveLoginPath, isLoginPath, isAdminSurface } from '../utils/surface';
 import { resolvePreferredOrgId } from '../lib/authOrg';
 import { createMembershipSelfHealTracker } from '../lib/membershipSelfHeal';
-import {
-  registerCourseStoreOrgResolver,
-  writeBridgeSnapshot,
-  clearBridgeSnapshot,
-} from '../store/courseStoreOrgBridge';
+import { registerCourseStoreOrgResolver } from '../store/courseStoreOrgBridge';
 
 if (axios?.defaults) {
   axios.defaults.withCredentials = true;
@@ -52,15 +48,6 @@ const SESSION_RELOAD_THROTTLE_MS = 45 * 1000;
 // 2500 ms was too aggressive and caused silent force-logouts on first load.
 const BOOTSTRAP_FAIL_OPEN_MS = 8000;
 const MEMBERSHIP_RETRY_DELAYS_MS = [2000, 5000, 10000, 30000, 60000] as const;
-const TRACE_TOKEN = 'SEV1_REAL_FIX_01';
-
-if (typeof window !== 'undefined') {
-  console.debug('[TRACE BUILD]', {
-    token: TRACE_TOKEN,
-    source: 'SecureAuthContext',
-    ts: Date.now(),
-  });
-}
 
 const isNavigatorOffline = () => typeof navigator !== 'undefined' && navigator.onLine === false;
 const isDevEnvironment = Boolean(import.meta.env?.DEV);
@@ -2172,13 +2159,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
       clearAuth('manual_logout');
       clearAdminAccessSnapshot();
-      clearBridgeSnapshot(); // Clear org bridge on explicit logout so courseStore doesn't serve stale state.
-      console.debug('[TRACE AUTH SNAPSHOT]', {
-        token: TRACE_TOKEN,
-        action: 'clearBridgeSnapshot',
-        reason: 'logout',
-        ts: Date.now(),
-      });
       setUser(null);
       setMemberships([]);
       setOrganizationIds([]);
@@ -2361,83 +2341,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     });
   }, [authInitializing, authStatus, sessionStatus, membershipStatus, activeOrgId]);
 
-  // ── Bridge snapshot write (PRIMARY FIX) ─────────────────────────────────────
-  // Write the current auth/org state directly into the mutable bridge snapshot
-  // on every render where these values change.  This replaces the closure-based
-  // resolver as the PRIMARY data path because closures captured in a prior effect
-  // flush are stale by the time courseStore.init() executes them.
-  //
-  // writeBridgeSnapshot() is a plain module-level write — no React scheduling,
-  // no effect-commit delay.  courseStore.resolveOrgContextFromBridge() reads
-  // latestSnapshot directly and always gets the value from the most recent render.
-  //
-  // Effect order is still intentional: this effect runs BEFORE the auth_ready
-  // dispatch effect below so the snapshot is current when the event fires.
-  // ── BUILD FINGERPRINT: 0b9c7f8e ──────────────────────────────────────────────
-  useEffect(() => {
-    const sessionReady = sessionStatus === 'authenticated';
-    const membershipReady = membershipStatus === 'ready' || membershipStatus === 'degraded';
-    const membershipErrored = membershipStatus === 'error';
-
-    let snapshot: Parameters<typeof writeBridgeSnapshot>[0];
-    if (!sessionReady) {
-      snapshot = { status: 'loading', orgId: null, role: null, userId: null };
-    } else if (!membershipReady) {
-      snapshot = {
-        status: membershipErrored ? 'error' : 'loading',
-        orgId: null,
-        role: null,
-        userId: user?.id ?? null,
-      };
-    } else {
-      snapshot = {
-        status: 'ready',
-        orgId: activeOrgId ?? user?.activeOrgId ?? user?.organizationId ?? null,
-        role: user?.role ?? null,
-        userId: user?.id ?? null,
-      };
-    }
-
-    console.debug('[TRACE AUTH SNAPSHOT]', {
-      token: TRACE_TOKEN,
-      sessionStatus,
-      membershipStatus,
-      activeOrgId: activeOrgId ?? null,
-      userId: user?.id ?? null,
-      snapshot,
-      writeBridgeSnapshotCalled: true,
-      ts: Date.now(),
-    });
-
-    console.debug('[SecureAuth] bridge_snapshot_written', {
-      status: snapshot.status,
-      orgId: snapshot.orgId,
-      role: snapshot.role,
-      userId: snapshot.userId,
-      sessionStatus,
-      membershipStatus,
-      ts: Date.now(),
-    });
-
-    // Write the mutable snapshot (primary read path for courseStore)
-    writeBridgeSnapshot(snapshot);
-
-    // Also register the closure resolver as a secondary fallback.
-    // The closure captures the SAME values as the snapshot above, so both
-    // return identical data when called in the same render cycle.
-    registerCourseStoreOrgResolver(() => snapshot);
-
-    return () => {
-      // Only unregister the closure resolver — do NOT call clearBridgeSnapshot()
-      // here.  React runs cleanup before re-running effects on dep changes, so
-      // clearBridgeSnapshot() would create a brief null window between the
-      // cleanup and the next write.  If courseStore polls or reads during that
-      // window it sees null → status:'loading' → queues another bootstrap.
-      // The snapshot is cleared explicitly in the logout handler instead.
-      registerCourseStoreOrgResolver(null);
-    };
-  }, [activeOrgId, membershipStatus, sessionStatus, user?.activeOrgId, user?.organizationId, user?.role, user?.id]);
-
   useEffect(() => {
     if (membershipStatus === 'ready' && lastMembershipStatusRef.current !== 'ready') {
       if (typeof window !== 'undefined') {
@@ -2460,6 +2363,39 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     }
     lastMembershipStatusRef.current = membershipStatus;
   }, [membershipStatus, activeOrgId, memberships.length, user?.id, sessionStatus]);
+
+  useEffect(() => {
+    registerCourseStoreOrgResolver(() => {
+      const sessionReady = sessionStatus === 'authenticated';
+      const membershipReady = membershipStatus === 'ready' || membershipStatus === 'degraded';
+      const membershipErrored = membershipStatus === 'error';
+      if (!sessionReady) {
+        return {
+          status: 'loading',
+          orgId: null,
+          role: null,
+          userId: null,
+        };
+      }
+      if (!membershipReady) {
+        return {
+          status: membershipErrored ? 'error' : 'loading',
+          orgId: null,
+          role: null,
+          userId: user?.id ?? null,
+        };
+      }
+      return {
+        status: 'ready',
+        orgId: activeOrgId ?? user?.activeOrgId ?? user?.organizationId ?? null,
+        role: user?.role ?? null,
+        userId: user?.id ?? null,
+      };
+    });
+    return () => {
+      registerCourseStoreOrgResolver(null);
+    };
+  }, [activeOrgId, membershipStatus, sessionStatus, user?.activeOrgId, user?.organizationId, user?.role, user?.id]);
 
 // ============================================================================
 // Login

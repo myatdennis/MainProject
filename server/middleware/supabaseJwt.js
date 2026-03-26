@@ -23,19 +23,37 @@ const buildSupabaseUrl = (path) => {
 
 const SUPABASE_JWKS_URL = new URL('/auth/v1/.well-known/jwks.json', rawSupabaseBaseUrl);
 const SUPABASE_EXPECTED_ISSUER = new URL('/auth/v1', rawSupabaseBaseUrl).toString().replace(/\/+$/, '');
+const SUPABASE_URL_HOST = (() => {
+  try {
+    return new URL(rawSupabaseBaseUrl).host;
+  } catch {
+    return null;
+  }
+})();
 const SUPABASE_JWT_SECRET = (process.env.SUPABASE_JWT_SECRET || '').trim();
-const SUPABASE_JWT_SECRET_CONFIGURED = Boolean(SUPABASE_JWT_SECRET) && !SUPABASE_JWT_SECRET.startsWith('PASTE_');
+const SUPABASE_JWT_SECRET_IS_PLACEHOLDER = SUPABASE_JWT_SECRET.startsWith('PASTE_');
+const SUPABASE_JWT_SECRET_CONFIGURED = Boolean(SUPABASE_JWT_SECRET) && !SUPABASE_JWT_SECRET_IS_PLACEHOLDER;
+const getSupabaseJwtSecretDiagnostics = () => {
+  const nodeEnv = process.env.NODE_ENV || 'development';
+  return {
+    hasSupabaseJwtSecret: Boolean(SUPABASE_JWT_SECRET),
+    isPlaceholder: SUPABASE_JWT_SECRET_IS_PLACEHOLDER,
+    secretLength: SUPABASE_JWT_SECRET.length,
+    nodeEnv,
+    supabaseUrlHost: SUPABASE_URL_HOST || '(invalid)',
+    activeVerificationMode: SUPABASE_JWT_SECRET_CONFIGURED ? 'hs256' : 'jwks_only',
+  };
+};
 
 // Emit a single startup log so Railway logs always show the JWT config state.
 // Never log the secret value itself.
 console.log('[supabaseJwt] startup_config', {
-  supabaseUrlHost: (() => { try { return new URL(rawSupabaseBaseUrl).host; } catch { return '(invalid)'; } })(),
+  ...getSupabaseJwtSecretDiagnostics(),
   expectedIssuer: SUPABASE_EXPECTED_ISSUER,
   jwksUrl: SUPABASE_JWKS_URL.toString(),
   hs256SecretConfigured: SUPABASE_JWT_SECRET_CONFIGURED,
   devFallbackEnabled: DEV_FALLBACK_ENABLED,
   e2eMode: E2E_MODE,
-  activeVerificationMode: SUPABASE_JWT_SECRET_CONFIGURED ? 'hs256' : 'jwks_only',
 });
 let cachedHs256Secret;
 const textEncoder = typeof TextEncoder !== 'undefined' ? new TextEncoder() : null;
@@ -266,4 +284,4 @@ export default async function supabaseJwtMiddleware(req, res, next) {
   }
 }
 
-export { verifySupabaseToken, SUPABASE_JWT_SECRET_CONFIGURED };
+export { verifySupabaseToken, SUPABASE_JWT_SECRET_CONFIGURED, getSupabaseJwtSecretDiagnostics };
