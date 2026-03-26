@@ -552,12 +552,15 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
                         event.preventDefault();
                         return;
                       }
-                      // Wrap the close-sidebar state update in startNavTransition so
-                      // React treats the resulting route change as a deferred transition.
-                      // This keeps the current page visible while the new lazy chunk
-                      // loads, preventing the Suspense fallback from blanking the screen.
+                      // Prevent NavLink's default navigation and drive it through
+                      // startNavTransition so React keeps the current page visible
+                      // while the target lazy chunk loads (deferred transition).
+                      // Without this, React would show the Suspense fallback
+                      // (spinner) immediately on every first visit to a page.
+                      event.preventDefault();
                       startNavTransition(() => {
                         setSidebarOpen(false);
+                        navigate(item.href);
                       });
                     }}
                     className={({ isActive }) =>
@@ -796,30 +799,32 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
           </div>
         )}
         {/*
-          key={location.pathname} on AdminErrorBoundary is CRITICAL for navigation correctness.
-          Class-based error boundaries do not reset their `hasError` state on re-render; the
-          state persists even when children change.  Without a key, a page that throws an error
-          leaves the boundary in the error state — subsequent navigation clicks change the URL
-          and remount the Outlet child, but the boundary shell stays showing the error UI and
-          the new page is never painted.  Keying the boundary on pathname forces React to
-          unmount the old (errored) boundary instance and mount a fresh one for every route,
-          guaranteeing that no prior error can bleed into the next navigation target.
+          resetKey={location.pathname} on AdminErrorBoundary clears its error
+          state via getDerivedStateFromProps whenever the route changes — without
+          unmounting the boundary fiber.  This is critical for startTransition
+          deferred rendering: if we used key={location.pathname} instead, React
+          would unmount the old fiber immediately on navigation, destroying the
+          current Suspense tree and preventing startTransition from keeping the
+          previous page visible while a lazy chunk loads.
+
+          Class-based error boundaries do not reset their `hasError` state on
+          re-render; getDerivedStateFromProps is the standard pattern for
+          prop-driven resets without remounting.
         */}
-        <AdminErrorBoundary key={location.pathname}>
+        <AdminErrorBoundary resetKey={location.pathname}>
           <Suspense fallback={
             <div className="flex items-center justify-center min-h-[40vh]">
               <LoadingSpinner size="lg" />
             </div>
           }>
             {/*
-              NOTE: The key has been intentionally removed from <Outlet>.
-              Previously Outlet was keyed on location.pathname to force a fiber
-              identity reset on every navigation.  That unmount/remount pattern
-              defeats React's startTransition deferred rendering — React cannot
-              keep the previous page visible during a lazy chunk load if the
-              previous fiber has already been destroyed.
+              NOTE: No key on <Outlet> or on AdminErrorBoundary.
+              AdminErrorBoundary uses resetKey={location.pathname} which resets
+              error state via getDerivedStateFromProps without unmounting the
+              fiber tree — this preserves React's startTransition deferred
+              rendering so the current page stays visible while a new lazy
+              chunk loads.
 
-              Error boundary resets are handled by AdminErrorBoundary key above.
               Page-level state resets are handled by useRouteChangeReset() inside
               each page component.  Module-level flags (_dashboardCatalogEverSucceeded
               etc.) survive unmount either way.

@@ -7,6 +7,15 @@ interface Props {
   fallbackComponent?: ReactNode;
   onError?: (error: Error, errorInfo: ErrorInfo) => void;
   showDetails?: boolean;
+  /**
+   * When this prop changes the boundary resets itself without unmounting.
+   * Prefer resetKey over a `key` prop on AdminErrorBoundary: a key change
+   * forces an unmount/remount which destroys the current Suspense tree and
+   * prevents React's startTransition from keeping the old page visible while
+   * a lazy chunk loads.  resetKey uses getDerivedStateFromProps instead —
+   * React resets the error state in the same render, keeping the fiber alive.
+   */
+  resetKey?: string;
 }
 
 interface State {
@@ -14,6 +23,7 @@ interface State {
   error: Error | null;
   errorInfo: ErrorInfo | null;
   errorId: string;
+  resetKey?: string;
 }
 
 type StoredErrorReport = {
@@ -63,8 +73,25 @@ class AdminErrorBoundary extends Component<Props, State> {
       hasError: false,
       error: null,
       errorInfo: null,
-      errorId: ''
+      errorId: '',
+      resetKey: props.resetKey,
     };
+  }
+
+  static getDerivedStateFromProps(props: Props, state: State): Partial<State> | null {
+    // When resetKey changes (e.g. on route navigation), clear the error state
+    // in the same render pass so React never has to unmount the boundary fiber.
+    // This preserves startTransition deferred rendering across navigations.
+    if (props.resetKey !== undefined && props.resetKey !== state.resetKey) {
+      return {
+        hasError: false,
+        error: null,
+        errorInfo: null,
+        errorId: '',
+        resetKey: props.resetKey,
+      };
+    }
+    return null;
   }
 
   static getDerivedStateFromError(error: Error): Partial<State> {

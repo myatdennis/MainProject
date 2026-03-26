@@ -2341,29 +2341,12 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     });
   }, [authInitializing, authStatus, sessionStatus, membershipStatus, activeOrgId]);
 
-  useEffect(() => {
-    if (membershipStatus === 'ready' && lastMembershipStatusRef.current !== 'ready') {
-      if (typeof window !== 'undefined') {
-        const detail = {
-          activeOrgId: activeOrgId ?? null,
-          membershipCount: memberships.length,
-          userId: user?.id ?? null,
-        };
-        console.debug('[AUTH READY]', {
-          sessionStatus,
-          membershipStatus,
-          activeOrgId: activeOrgId ?? null,
-          userId: user?.id ?? null,
-          membershipCount: memberships.length,
-          pathname: window.location?.pathname ?? 'ssr',
-          ts: Date.now(),
-        });
-        window.dispatchEvent(new CustomEvent('huddle:auth_ready', { detail }));
-      }
-    }
-    lastMembershipStatusRef.current = membershipStatus;
-  }, [membershipStatus, activeOrgId, memberships.length, user?.id, sessionStatus]);
-
+  // ── Effect order is intentional: resolver MUST be registered/updated BEFORE
+  // the auth_ready event is dispatched so that courseStore can immediately call
+  // resolveOrgContextFromBridge() and get a 'ready' snapshot.
+  // React runs effects in declaration order within the same render commit, so
+  // placing this effect first guarantees the bridge closure is fresh before
+  // the second effect fires the custom event.
   useEffect(() => {
     registerCourseStoreOrgResolver(() => {
       const sessionReady = sessionStatus === 'authenticated';
@@ -2396,6 +2379,29 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       registerCourseStoreOrgResolver(null);
     };
   }, [activeOrgId, membershipStatus, sessionStatus, user?.activeOrgId, user?.organizationId, user?.role, user?.id]);
+
+  useEffect(() => {
+    if (membershipStatus === 'ready' && lastMembershipStatusRef.current !== 'ready') {
+      if (typeof window !== 'undefined') {
+        const detail = {
+          activeOrgId: activeOrgId ?? null,
+          membershipCount: memberships.length,
+          userId: user?.id ?? null,
+        };
+        console.debug('[AUTH READY]', {
+          sessionStatus,
+          membershipStatus,
+          activeOrgId: activeOrgId ?? null,
+          userId: user?.id ?? null,
+          membershipCount: memberships.length,
+          pathname: window.location?.pathname ?? 'ssr',
+          ts: Date.now(),
+        });
+        window.dispatchEvent(new CustomEvent('huddle:auth_ready', { detail }));
+      }
+    }
+    lastMembershipStatusRef.current = membershipStatus;
+  }, [membershipStatus, activeOrgId, memberships.length, user?.id, sessionStatus]);
 
 // ============================================================================
 // Login

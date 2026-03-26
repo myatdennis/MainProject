@@ -61,6 +61,8 @@ setTimeout(() => {
         env: {
           ...process.env,
           PORT: '5174',
+          // vite.config.ts reads VITE_PORT (not PORT) to set the dev server port
+          VITE_PORT: '5174',
           // Point Vite's /api and /ws proxies at the E2E API server (port 8888,
           // E2E_TEST_MODE=true) so browser fetch() calls reach the correct server.
           // Without this, Vite would proxy to port 3000 (the regular dev server)

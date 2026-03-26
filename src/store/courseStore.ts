@@ -1274,16 +1274,47 @@ const queueAuthReadyBootstrap = (reinitializer: () => void) => {
   }
   awaitingAuthReadyBootstrap = true;
   authReadyBootstrapAttempts += 1;
-  const handler = () => {
+
+  // Guard: fire reinitializer only once even if both the event and the
+  // fallback timer trigger in quick succession.
+  let fired = false;
+  const fireOnce = () => {
+    if (fired) return;
+    fired = true;
     awaitingAuthReadyBootstrap = false;
     window.removeEventListener(AUTH_READY_EVENT, handler);
+    clearInterval(fallbackTimer);
     try {
       reinitializer();
     } catch (error) {
       console.error('[courseStore] auth_ready bootstrap failed', error);
     }
   };
+
+  const handler = () => fireOnce();
   window.addEventListener(AUTH_READY_EVENT, handler, { once: true });
+
+  // Missed-event fallback: if huddle:auth_ready already fired before this
+  // listener was registered (e.g. membership resolved during the login
+  // redirect before the courses page mounted), the event is gone and the
+  // listener will never trigger.  Poll the org bridge every 150 ms for up
+  // to 5 s so courses load without needing a manual refresh.
+  const FALLBACK_POLL_INTERVAL_MS = 150;
+  const FALLBACK_POLL_MAX_MS = 5_000;
+  const fallbackStart = Date.now();
+  const fallbackTimer = setInterval(() => {
+    const snapshot = resolveOrgContextFromBridge();
+    const elapsed = Date.now() - fallbackStart;
+    if (snapshot?.status === 'ready') {
+      clearInterval(fallbackTimer);
+      console.debug('[courseStore] queueAuthReadyBootstrap: org_ready_via_fallback_poll', { elapsed });
+      fireOnce();
+    } else if (elapsed >= FALLBACK_POLL_MAX_MS) {
+      clearInterval(fallbackTimer);
+      console.warn('[courseStore] queueAuthReadyBootstrap: fallback_poll_timeout — org context never became ready');
+      fireOnce(); // attempt anyway; init will re-defer if still not ready
+    }
+  }, FALLBACK_POLL_INTERVAL_MS);
 };
 
 const setAdminCatalogState = (update: Partial<AdminCatalogState> | ((state: AdminCatalogState) => AdminCatalogState)) => {
@@ -1738,16 +1769,38 @@ export const courseStore = {
       if (!restrictToOrg || (restrictToOrg && orgContext.orgId)) {
         awaitingOrgResolution = false;
       }
-      let runtimeStatus = getRuntimeStatus();
+      // Safe runtime-status defaults — guard against undefined returns from
+      // getRuntimeStatus() (possible in test environments after mock.clearAll)
+      // or from a refreshRuntimeStatus() that resolves to undefined/null.
+      const SAFE_RUNTIME_DEFAULTS = {
+        supabaseConfigured: false,
+        supabaseHealthy: false,
+        apiHealthy: false,
+        apiReachable: false,
+        apiAuthRequired: false,
+      } as const;
+      let runtimeStatus: ReturnType<typeof getRuntimeStatus> =
+        getRuntimeStatus() ?? SAFE_RUNTIME_DEFAULTS;
       try {
-        runtimeStatus = await refreshRuntimeStatus();
+        const refreshed = await refreshRuntimeStatus();
+        // Guard: refreshRuntimeStatus should never return undefined/null in
+        // production, but defensive check keeps test environments stable when
+        // mocks are partially cleared via vi.clearAllMocks().
+        if (refreshed != null) {
+          runtimeStatus = refreshed;
+        }
       } catch (statusError) {
         console.warn('[courseStore.init] Runtime status refresh failed; using last known snapshot.', statusError);
       }
-      // supabaseOperational is checked implicitly through apiReachable/supabaseHealthy downstream
-      void (runtimeStatus.supabaseConfigured && runtimeStatus.supabaseHealthy);
-      const apiReachable = runtimeStatus.apiReachable ?? runtimeStatus.apiHealthy;
-      const apiAuthRequired = runtimeStatus.apiAuthRequired;
+      // Belt-and-suspenders: if getRuntimeStatus and refresh both returned
+      // undefined (e.g. test environment with all mocks cleared), fall back to
+      // safe defaults so downstream property accesses never throw.
+      if (runtimeStatus == null) {
+        console.warn('[courseStore.init] runtimeStatus is undefined — using safe defaults. Check mock setup in tests.');
+        runtimeStatus = { ...SAFE_RUNTIME_DEFAULTS } as ReturnType<typeof getRuntimeStatus>;
+      }
+      const apiReachable = runtimeStatus.apiReachable ?? (runtimeStatus as any).apiHealthy ?? false;
+      const apiAuthRequired = runtimeStatus.apiAuthRequired ?? false;
       // HEALTH PROBE DECOUPLED FROM ADMIN API GATE:
       // The /api/health probe is purely informational for UI status indicators.
       // A transient health failure (net::ERR_NETWORK_CHANGED, timeout, network
