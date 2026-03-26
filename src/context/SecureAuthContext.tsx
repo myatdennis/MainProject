@@ -2225,11 +2225,57 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           setAuthInitializing(false);
           bootstrapInProgressRef.current = false;
           setBootstrapComplete(true);
-          // The finally block runs after a full /auth/session round-trip, so the
-          // auth outcome is definitively known regardless of pathname.  Always settle.
-          setAuthSettled(true);
+
+          // ── PROTECTED-ROUTE MEMBERSHIP HYDRATION ─────────────────────────
+          // If bootstrap completed with an authenticated session on a protected
+          // route (/admin/*, /lms/*, /client/*) but membershipStatus is still
+          // 'idle' or 'loading', the /auth/session response did not include
+          // fully-hydrated memberships.  We must fetch them before settling —
+          // authSettled=true with membershipStatus=idle is an invalid state that
+          // blocks courseStore.init() permanently.
           const _finallyPathname = typeof window !== 'undefined' ? window.location?.pathname : '';
           const _finallyAuthenticated = hasAuthenticatedSessionRef.current;
+          const _isProtectedRoute =
+            _finallyPathname.startsWith('/admin/') ||
+            _finallyPathname.startsWith('/lms/') ||
+            _finallyPathname.startsWith('/client/');
+          const _membershipNeedsHydration =
+            _finallyAuthenticated &&
+            _isProtectedRoute &&
+            (membershipStatusRef.current === 'idle' || membershipStatusRef.current === 'loading');
+
+          if (_membershipNeedsHydration) {
+            console.info('[MEMBERSHIP_HYDRATION_START]', {
+              pathname: _finallyPathname,
+              membershipStatus: membershipStatusRef.current,
+              reason: 'bootstrap_finally_protected_route_idle',
+            });
+            try {
+              await fetchServerSession({ surface: isStale() ? undefined : (_finallyPathname.startsWith('/admin/') ? 'admin' : 'lms'), signal, skipMembershipSelfHeal: false });
+            } catch (_hydrationError) {
+              console.warn('[MEMBERSHIP_HYDRATION_ERROR]', {
+                pathname: _finallyPathname,
+                error: _hydrationError,
+              });
+            }
+            console.info('[MEMBERSHIP_HYDRATION_DONE]', {
+              pathname: _finallyPathname,
+              membershipStatus: membershipStatusRef.current,
+            });
+          } else {
+            console.info('[MEMBERSHIP_HYDRATION_SKIPPED]', {
+              pathname: _finallyPathname,
+              reason: _finallyAuthenticated
+                ? _isProtectedRoute
+                  ? `membership_already_${membershipStatusRef.current}`
+                  : 'not_protected_route'
+                : 'not_authenticated',
+            });
+          }
+
+          // Now settle — memberships are either hydrated or this is not a
+          // protected-route bootstrap that requires them.
+          setAuthSettled(true);
           console.info('[AUTH_SETTLED]', {
             pathname: _finallyPathname,
             authStatus: _finallyAuthenticated ? 'authenticated' : 'unauthenticated',
@@ -2253,7 +2299,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         }
       }
     },
-    [applySessionPayload, captureServerClock, clearBootstrapFailOpenTimer, continueAsGuest, forceLogout, scheduleBootstrapFailOpen, setAuthSettled],
+    [applySessionPayload, captureServerClock, clearBootstrapFailOpenTimer, continueAsGuest, fetchServerSession, forceLogout, scheduleBootstrapFailOpen, setAuthSettled],
   );
 
   const runBootstrapRef = useRef(runBootstrap);
