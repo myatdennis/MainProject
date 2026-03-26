@@ -3,7 +3,7 @@
  *
  * Covers Bug #1 root causes:
  *   1. SecureAuthContext effect ordering (resolver registered before auth_ready)
- *   2. queueAuthReadyBootstrap polling fallback (auth_ready missed → polling picks it up)
+ *   2. Org snapshot wait loop (bridge snapshot ready signal replaces auth_ready/polling race)
  *
  * The critical assertion is that after a successful login the admin/courses page
  * renders course content in a SINGLE navigation — no manual reload required.

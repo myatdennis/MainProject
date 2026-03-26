@@ -4,7 +4,7 @@
  * Features: catalog sync, search/filter, bulk actions, modals, progress tracking, and summary stats.
  */
 
-import { ReactNode, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { ReactNode, useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { courseStore } from '../../store/courseStore';
 
@@ -67,7 +67,6 @@ const AdminCourses = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState('all');
   const [selectedCourses, setSelectedCourses] = useState<string[]>([]);
-  const [version, setVersion] = useState(0); // bump to force re-render when store changes
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [courseToDelete, setCourseToDelete] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -100,17 +99,8 @@ const AdminCourses = () => {
     setCourseToArchive(null);
   }, [routeKey]);
 
-  // Get courses from store (re-read when version or routeKey changes)
-  const courses = useMemo(() => courseStore.getAllCourses(), [version, routeKey]);
-
-  // Subscribe to store changes so the courses useMemo re-derives on every catalog update.
-  // catalogState is now read via useSyncExternalStore above; we only need setVersion here.
-  useEffect(() => {
-    const unsubscribe = courseStore.subscribe(() => {
-      setVersion((v) => v + 1);
-    });
-    return unsubscribe;
-  }, []);
+  // Get courses from the store via tear-free external subscription
+  const courses = useSyncExternalStore(courseStore.subscribe, courseStore.getAllCourses);
 
   // Kick off catalog initialization if the store hasn't started yet.
   // App.tsx drives the primary bootstrap, but if the store is still idle when
@@ -173,12 +163,13 @@ const AdminCourses = () => {
   });
 
   if (import.meta.env.DEV) {
-    console.debug('[RENDER COURSES]', {
-      total: courses.length,
-      filtered: filteredCourses.length,
-      phase: catalogState.phase,
+    console.info('[ADMIN COURSES RENDER]', {
+      count: courses.length,
+      loading: catalogState.phase === 'loading',
+      error: catalogState.adminLoadStatus === 'error' ? catalogState.lastError ?? null : null,
       status: catalogState.adminLoadStatus,
-      version,
+      phase: catalogState.phase,
+      filtered: filteredCourses.length,
       routeKey,
     });
   }
@@ -210,7 +201,6 @@ const AdminCourses = () => {
   const handleAssignmentComplete = (assignments?: CourseAssignment[]) => {
     setShowAssignmentModal(false);
     setCourseForAssignment(null);
-    refresh();
     const count = assignments?.length ?? 0;
     const message = count > 0
       ? `Assignments sent to ${count} learner${count === 1 ? '' : 's'}.`
@@ -232,7 +222,6 @@ const AdminCourses = () => {
       // Use forceInit to bypass the ready-guard so explicit retries always
       // trigger a fresh catalog fetch even when phase is already 'ready'.
       await courseStore.forceInit();
-      setVersion((v) => v + 1);
     } catch (error) {
       console.error('[AdminCourses] Admin catalog retry failed', error);
     } finally {
@@ -262,7 +251,6 @@ const AdminCourses = () => {
         timestamp: Date.now(),
       });
       showToast('Course archived successfully.', 'success');
-      refresh();
     } catch (error) {
       console.error('[AdminCourses] Failed to archive course:', error);
       showToast('Failed to archive course', 'error');
@@ -290,7 +278,6 @@ const AdminCourses = () => {
 
     showToast('Course created successfully.', 'success');
     closeCreateModal();
-    refresh();
     navigate(`/admin/courses/${created.id}/details`);
   };
 
@@ -377,7 +364,6 @@ const AdminCourses = () => {
         data: persistedClone,
         timestamp: Date.now()
       });
-      setVersion(v => v + 1);
       navigate(`/admin/course-builder/${persistedClone.id}`);
       showToast('Course duplicated successfully.', 'success');
     } catch (err: any) {
@@ -392,8 +378,6 @@ const AdminCourses = () => {
       }
     }
   };
-
-  const refresh = () => setVersion(v => v + 1);
 
   const publishSelected = async () => {
     if (selectedCourses.length === 0) {
@@ -441,7 +425,6 @@ const AdminCourses = () => {
       }
 
       setSelectedCourses([]);
-      refresh();
     } catch (error) {
       showToast('Failed to publish courses', 'error');
     } finally {
@@ -489,7 +472,6 @@ const AdminCourses = () => {
         timestamp: Date.now()
       });
       setSelectedCourses((prev: string[]) => prev.filter((x: string) => x !== courseToDelete));
-      refresh();
       showToast('Course deleted successfully!', 'success');
       setShowDeleteModal(false);
       setCourseToDelete(null);

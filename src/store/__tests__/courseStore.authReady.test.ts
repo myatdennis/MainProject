@@ -40,7 +40,9 @@ vi.mock('../../state/runtimeStatus', () => ({
 }));
 
 let resolverSnapshot = {
-  status: 'loading' as 'loading' | 'ready',
+  status: 'loading' as 'loading' | 'ready' | 'error',
+  membershipStatus: 'loading' as 'idle' | 'loading' | 'ready' | 'degraded' | 'error',
+  activeOrgId: null as string | null,
   orgId: null as string | null,
   role: 'member',
   userId: 'user-123',
@@ -74,10 +76,12 @@ const resetMockImpls = () => {
   });
 };
 
-describe('courseStore auth_ready bridge', () => {
+describe('courseStore bridge snapshot synchronization', () => {
   beforeEach(() => {
     resolverSnapshot = {
       status: 'loading',
+      membershipStatus: 'loading',
+      activeOrgId: null,
       orgId: null,
       role: 'member',
       userId: 'user-123',
@@ -94,28 +98,19 @@ describe('courseStore auth_ready bridge', () => {
     resetMockImpls();
   });
 
-  it('waits inline until huddle:auth_ready fires or the bridge reports ready', async () => {
-    const initPromise = courseStore.init();
-    // Allow the async init flow to hit the waiting branch.
-    await new Promise((resolve) => setTimeout(resolve, 0));
+  it('waits inline until the bridge snapshot reports ready', async () => {
+    const initPromise = courseStore.init({ reason: 'test_wait' });
+    await new Promise((resolve) => setTimeout(resolve, 20));
     expect(fetchPublishedCoursesMock).not.toHaveBeenCalled();
 
     resolverSnapshot = {
       status: 'ready',
+      membershipStatus: 'ready',
+      activeOrgId: 'org-999',
       orgId: 'org-999',
       role: 'member',
       userId: 'user-123',
     };
-
-    window.dispatchEvent(
-      new CustomEvent('huddle:auth_ready', {
-        detail: {
-          activeOrgId: 'org-999',
-          membershipCount: 1,
-          userId: 'user-123',
-        },
-      }),
-    );
 
     await initPromise;
 
@@ -124,76 +119,19 @@ describe('courseStore auth_ready bridge', () => {
     });
   });
 
-  it('polling fallback triggers init when auth_ready was missed', async () => {
-    // Reset resolver to loading and flush the store back to idle.
-    // We set resolverSnapshot BEFORE forceInit so the internal init() call
-    // inside forceInit sees status='loading' and queues the polling fallback.
-    resolverSnapshot = { status: 'loading', orgId: null, role: 'member', userId: 'user-456' };
-    fetchPublishedCoursesMock.mockClear();
-
-    // forceInit resets initPromise/phase/attempts then calls init() internally.
-    // With resolver='loading', that internal init() call queues the polling fallback.
-    courseStore.forceInit({ flushCache: true }).catch(() => {/* ignore */});
-    // Yield to let the internal init() microtasks complete so the setInterval is set up.
-    await new Promise((r) => setTimeout(r, 0));
-
-    expect(fetchPublishedCoursesMock).not.toHaveBeenCalled();
-
-    // Now simulate Effect 2 catching up: resolver transitions to 'ready'.
-    // auth_ready event was already missed — the polling fallback must fire init.
-    // Use role='member' (non-admin) so the store uses fetchPublishedCourses,
-    // which is what we're asserting on (admin path uses getAllCoursesFromDatabase).
+  it('surfaces an error when the bridge reports an unrecoverable status', async () => {
     resolverSnapshot = {
-      status: 'ready',
-      orgId: 'org-polling',
+      status: 'error',
+      membershipStatus: 'error',
+      activeOrgId: null,
+      orgId: null,
       role: 'member',
-      userId: 'user-456',
+      userId: 'user-error',
     };
 
-    // The polling interval is 150ms; wait up to 2s for it to fire with real timers.
-    await vi.waitFor(() => {
-      expect(fetchPublishedCoursesMock).toHaveBeenCalled();
-    }, { timeout: 2000, interval: 50 });
-  });
+    await courseStore.init({ reason: 'test_error' }).catch(() => {/* swallow */});
 
-  it('fireOnce guard prevents double initialization when both event and poll fire', async () => {
-    // Reset resolver to loading.
-    resolverSnapshot = { status: 'loading', orgId: null, role: 'member', userId: 'user-789' };
-    fetchPublishedCoursesMock.mockClear();
-
-    // Queue the bootstrap listener/poll via forceInit+init.
-    courseStore.forceInit({ flushCache: true }).catch(() => {/* ignore */});
-    await new Promise((r) => setTimeout(r, 0));
     expect(fetchPublishedCoursesMock).not.toHaveBeenCalled();
-
-    // Transition resolver to ready, then fire the event.
-    resolverSnapshot = {
-      status: 'ready',
-      orgId: 'org-double',
-      role: 'member',
-      userId: 'user-789',
-    };
-
-    // Dispatch the auth_ready event — this should trigger fireOnce once.
-    window.dispatchEvent(
-      new CustomEvent('huddle:auth_ready', {
-        detail: { activeOrgId: 'org-double', membershipCount: 1, userId: 'user-789' },
-      }),
-    );
-
-    // Wait for the event handler to complete.
-    await vi.waitFor(() => {
-      expect(fetchPublishedCoursesMock).toHaveBeenCalled();
-    }, { timeout: 2000 });
-
-    const callsAfterEvent = fetchPublishedCoursesMock.mock.calls.length;
-
-    // Wait one full poll cycle (200ms > 150ms interval) to confirm the
-    // polling fallback does NOT fire a second init (fireOnce guard).
-    await new Promise((r) => setTimeout(r, 200));
-
-    // Call count must not have increased (fireOnce cleared the interval).
-    expect(fetchPublishedCoursesMock.mock.calls.length).toBe(callsAfterEvent);
   });
 });
 
@@ -210,6 +148,8 @@ describe('courseStore init() defensive runtime-status guard', () => {
     // fall back to safe defaults instead of throwing.
     resolverSnapshot = {
       status: 'ready',
+      membershipStatus: 'ready',
+      activeOrgId: 'org-safe',
       orgId: 'org-safe',
       role: 'member',
       userId: 'user-safe',
@@ -228,7 +168,14 @@ describe('courseStore init() defensive runtime-status guard', () => {
     // Should not throw even with undefined from getRuntimeStatus.
     courseStore.forceInit({ flushCache: true }).catch(() => {/* ignore */});
     await new Promise((r) => setTimeout(r, 0));
-    resolverSnapshot = { status: 'ready', orgId: 'org-safe', role: 'member', userId: 'user-safe' };
+    resolverSnapshot = {
+      status: 'ready',
+      membershipStatus: 'ready',
+      activeOrgId: 'org-safe',
+      orgId: 'org-safe',
+      role: 'member',
+      userId: 'user-safe',
+    };
 
     await vi.waitFor(() => {
       expect(fetchPublishedCoursesMock).toHaveBeenCalled();
@@ -238,6 +185,8 @@ describe('courseStore init() defensive runtime-status guard', () => {
   it('does not crash when both getRuntimeStatus and refreshRuntimeStatus return undefined', async () => {
     resolverSnapshot = {
       status: 'ready',
+      membershipStatus: 'ready',
+      activeOrgId: 'org-safe2',
       orgId: 'org-safe2',
       role: 'member',
       userId: 'user-safe2',

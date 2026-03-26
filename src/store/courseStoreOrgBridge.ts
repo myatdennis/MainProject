@@ -21,10 +21,15 @@
 
 export type OrgContextSnapshot = {
   status: 'idle' | 'loading' | 'ready' | 'error';
+  membershipStatus: 'idle' | 'loading' | 'ready' | 'degraded' | 'error';
+  activeOrgId: string | null;
   orgId: string | null;
   role: string | null;
   userId: string | null;
+  updatedAt?: number;
 };
+
+export const BRIDGE_SNAPSHOT_EVENT = 'huddle:org_snapshot_updated';
 
 const TRACE_TOKEN = 'SEV1_REAL_FIX_01';
 
@@ -92,18 +97,69 @@ const _ssrStore: BridgeStore = {
   resolverRegistered: false,
 };
 
-export const writeBridgeSnapshot = (snapshot: OrgContextSnapshot): void => {
-  const store = _getStore();
-  store.latestSnapshot = snapshot;
-  store.snapshotWrittenAt = Date.now();
-  console.debug('[TRACE BRIDGE WRITE]', {
-    token: TRACE_TOKEN,
-    snapshot,
-    ts: store.snapshotWrittenAt,
-  });
+const logSnapshot = (label: string, snapshot: OrgContextSnapshot | null) => {
+  const payload = snapshot
+    ? {
+    membershipStatus: snapshot.membershipStatus,
+    activeOrgId: snapshot.activeOrgId ?? snapshot.orgId ?? null,
+    role: snapshot.role ?? null,
+    userId: snapshot.userId ?? null,
+    status: snapshot.status,
+    updatedAt: (snapshot.updatedAt ?? _getStore().snapshotWrittenAt) ?? Date.now(),
+      }
+    : {
+        membershipStatus: 'null',
+        activeOrgId: null,
+        role: null,
+        userId: null,
+        status: 'null',
+        updatedAt: null,
+      };
+  console.debug(label, payload);
 };
 
-export const readBridgeSnapshot = (): OrgContextSnapshot | null => _getStore().latestSnapshot;
+export const writeBridgeSnapshot = (snapshot: OrgContextSnapshot): void => {
+  const store = _getStore();
+  const normalized: OrgContextSnapshot = {
+    membershipStatus: snapshot.membershipStatus,
+    status:
+      snapshot.status ||
+      (snapshot.membershipStatus === 'ready' || snapshot.membershipStatus === 'degraded' ? 'ready' : 'loading'),
+    activeOrgId: snapshot.activeOrgId ?? snapshot.orgId ?? null,
+    orgId: snapshot.orgId ?? snapshot.activeOrgId ?? null,
+    role: snapshot.role ?? null,
+    userId: snapshot.userId ?? null,
+    updatedAt: Date.now(),
+  };
+  store.latestSnapshot = normalized;
+  store.snapshotWrittenAt = normalized.updatedAt ?? Date.now();
+  console.debug('[TRACE BRIDGE WRITE]', {
+    token: TRACE_TOKEN,
+    snapshot: normalized,
+    ts: store.snapshotWrittenAt,
+  });
+  if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+    try {
+      window.dispatchEvent(
+        new CustomEvent(BRIDGE_SNAPSHOT_EVENT, {
+          detail: {
+            updatedAt: normalized.updatedAt,
+            membershipStatus: normalized.membershipStatus,
+            status: normalized.status,
+          },
+        }),
+      );
+    } catch (error) {
+      console.warn('[courseStoreOrgBridge] Failed to dispatch snapshot event', error);
+    }
+  }
+};
+
+export const readBridgeSnapshot = (): OrgContextSnapshot | null => {
+  const snapshot = _getStore().latestSnapshot;
+  logSnapshot('[BRIDGE SNAPSHOT READ]', snapshot);
+  return snapshot;
+};
 
 export const getBridgeSnapshotAge = (): number => {
   const { snapshotWrittenAt } = _getStore();
@@ -135,20 +191,7 @@ export const resolveOrgContextFromBridge = (): OrgContextSnapshot | null => {
       : store.resolver
         ? store.resolver()
         : null;
-  console.debug('[TRACE BRIDGE READ]', {
-    token: TRACE_TOKEN,
-    status: result?.status ?? 'null',
-    orgId: result?.orgId ?? null,
-    role: result?.role ?? null,
-    userId: result?.userId ?? null,
-    source:
-      store.latestSnapshot !== null
-        ? 'snapshot'
-        : store.resolver
-          ? 'resolver'
-          : 'none',
-    ts: Date.now(),
-  });
+  logSnapshot('[BRIDGE SNAPSHOT READ]', result);
   return result;
 };
 

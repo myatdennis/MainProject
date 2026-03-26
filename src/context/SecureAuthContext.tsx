@@ -35,7 +35,8 @@ import { logAuthRedirect } from '../utils/logAuthRedirect';
 import { resolveLoginPath, isLoginPath, isAdminSurface } from '../utils/surface';
 import { resolvePreferredOrgId } from '../lib/authOrg';
 import { createMembershipSelfHealTracker } from '../lib/membershipSelfHeal';
-import { registerCourseStoreOrgResolver } from '../store/courseStoreOrgBridge';
+import { courseStore } from '../store/courseStore';
+import { registerCourseStoreOrgResolver, writeBridgeSnapshot, type OrgContextSnapshot } from '../store/courseStoreOrgBridge';
 
 if (axios?.defaults) {
   axios.defaults.withCredentials = true;
@@ -1404,6 +1405,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             `firstMembershipOrg=${firstMembershipOrgId ?? 'none'}`,
           ].join(' ');
           console.info('[SecureAuth] membership_applied', diagLine);
+          void courseStore
+            .init({ reason: 'auth_membership_applied' })
+            .catch((error) => console.warn('[SecureAuth] courseStore.init retry failed', error));
           finalizeMeta({
             statusCode: 200,
             membershipCount: membershipTrusted ? membershipCount : null,
@@ -2364,38 +2368,64 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     lastMembershipStatusRef.current = membershipStatus;
   }, [membershipStatus, activeOrgId, memberships.length, user?.id, sessionStatus]);
 
-  useEffect(() => {
-    registerCourseStoreOrgResolver(() => {
-      const sessionReady = sessionStatus === 'authenticated';
-      const membershipReady = membershipStatus === 'ready' || membershipStatus === 'degraded';
-      const membershipErrored = membershipStatus === 'error';
-      if (!sessionReady) {
-        return {
-          status: 'loading',
-          orgId: null,
-          role: null,
-          userId: null,
-        };
-      }
-      if (!membershipReady) {
-        return {
-          status: membershipErrored ? 'error' : 'loading',
-          orgId: null,
-          role: null,
-          userId: user?.id ?? null,
-        };
-      }
+  const deriveOrgContextSnapshot = useCallback((): OrgContextSnapshot => {
+    const normalizedMembership = membershipStatus ?? 'idle';
+    const sessionReady = sessionStatus === 'authenticated';
+    const membershipReady = normalizedMembership === 'ready' || normalizedMembership === 'degraded';
+
+    if (!sessionReady) {
       return {
-        status: 'ready',
-        orgId: activeOrgId ?? user?.activeOrgId ?? user?.organizationId ?? null,
+        status: 'loading',
+        membershipStatus: normalizedMembership,
+        activeOrgId: null,
+        orgId: null,
+        role: null,
+        userId: null,
+      };
+    }
+
+    if (!membershipReady) {
+      return {
+        status: normalizedMembership === 'error' ? 'error' : 'loading',
+        membershipStatus: normalizedMembership,
+        activeOrgId: null,
+        orgId: null,
         role: user?.role ?? null,
         userId: user?.id ?? null,
       };
-    });
+    }
+
+    const resolvedOrgId =
+      activeOrgId ??
+      user?.activeOrgId ??
+      user?.organizationId ??
+      lastActiveOrgId ??
+      null;
+
+    return {
+      status: 'ready',
+      membershipStatus: normalizedMembership,
+      activeOrgId: resolvedOrgId,
+      orgId: resolvedOrgId,
+      role: user?.role ?? null,
+      userId: user?.id ?? null,
+    };
+  }, [activeOrgId, lastActiveOrgId, membershipStatus, sessionStatus, user?.activeOrgId, user?.organizationId, user?.role, user?.id]);
+
+  useEffect(() => {
+    try {
+      writeBridgeSnapshot(deriveOrgContextSnapshot());
+    } catch (error) {
+      console.warn('[SecureAuthContext] Failed to write org snapshot bridge', error);
+    }
+  }, [deriveOrgContextSnapshot]);
+
+  useEffect(() => {
+    registerCourseStoreOrgResolver(() => deriveOrgContextSnapshot());
     return () => {
       registerCourseStoreOrgResolver(null);
     };
-  }, [activeOrgId, membershipStatus, sessionStatus, user?.activeOrgId, user?.organizationId, user?.role, user?.id]);
+  }, [deriveOrgContextSnapshot]);
 
 // ============================================================================
 // Login

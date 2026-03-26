@@ -77,6 +77,8 @@ vi.mock('../../dal/courseDrafts', () => courseDraftsMock);
 const orgBridgeMock = vi.hoisted(() => {
   let snapshot: OrgContextSnapshot | null = {
     status: 'ready',
+    membershipStatus: 'ready',
+    activeOrgId: 'org-1',
     orgId: 'org-1',
     role: 'admin',
     userId: 'admin-1',
@@ -96,6 +98,16 @@ vi.mock('../courseStoreOrgBridge', () => ({
   clearBridgeSnapshot: vi.fn(),
   isOrgResolverRegistered: vi.fn(() => true),
 }));
+
+const buildOrgContextSnapshot = (overrides: Partial<OrgContextSnapshot> = {}): OrgContextSnapshot => ({
+  status: 'ready',
+  membershipStatus: 'ready',
+  activeOrgId: adminSession.activeOrgId,
+  orgId: adminSession.activeOrgId,
+  role: adminSession.role,
+  userId: adminSession.id,
+  ...overrides,
+});
 
 const setOrgContextSnapshot = (next: OrgContextSnapshot | null) => {
   orgBridgeMock.setSnapshot(next);
@@ -189,12 +201,7 @@ beforeEach(() => {
   secureStorageMock.getUserSession.mockReturnValue(adminSession);
   secureStorageMock.getActiveOrgPreference.mockReturnValue(null);
   setRuntimeStatusSnapshot();
-  setOrgContextSnapshot({
-    status: 'ready',
-    orgId: adminSession.activeOrgId,
-    role: adminSession.role,
-    userId: adminSession.id,
-  });
+  setOrgContextSnapshot(buildOrgContextSnapshot());
 });
 
 describe('courseStore admin catalog phase transitions', () => {
@@ -295,12 +302,14 @@ describe('courseStore learner catalog fallbacks', () => {
       activeOrgId: 'org-learner',
       memberships: [{ orgId: 'org-learner', status: 'active' }],
     });
-    setOrgContextSnapshot({
-      status: 'ready',
-      orgId: 'org-learner',
-      role: 'learner',
-      userId: 'learner-101',
-    });
+    setOrgContextSnapshot(
+      buildOrgContextSnapshot({
+        orgId: 'org-learner',
+        activeOrgId: 'org-learner',
+        role: 'learner',
+        userId: 'learner-101',
+      }),
+    );
     assignmentStorageMock.getAssignmentsForUser.mockResolvedValue([]);
     clientCoursesMock.fetchPublishedCourses.mockResolvedValue([]);
 
