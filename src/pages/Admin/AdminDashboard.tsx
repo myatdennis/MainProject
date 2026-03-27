@@ -112,6 +112,10 @@ const AdminDashboard = () => {
   // singleton. It supersedes the old useState+subscribe pattern which could miss
   // a notification fired between the initial render and the subscribe() call.
   const catalogState = useSyncExternalStore(courseStore.subscribe, courseStore.getAdminCatalogState);
+  // Subscribe to the course array so gate conditions can check actual data presence,
+  // not just the status label. This prevents a stale 'empty'/'error' status from
+  // hiding courses that are still in the store from a prior successful load.
+  const courses = useSyncExternalStore(courseStore.subscribe, courseStore.getAllCourses);
 
   // Fetch real admin activity feed from audit_logs
   useEffect(() => {
@@ -308,14 +312,19 @@ const AdminDashboard = () => {
   // 1. It's the very first load AND we're still loading (never had a success).
   // 2. The catalog hit a fatal auth/access error on the first load.
   // After the catalog ever succeeds, errors and retries must NEVER block the dashboard.
+  // In all gates, also check courses.length: if courses are present in the store
+  // (from a prior load), we must never hide them behind an empty/error gate.
   const isFirstLoad = !_dashboardCatalogEverSucceeded;
   const isCatalogLoading = isFirstLoad && catalogState.phase === 'loading' && catalogStatus !== 'success';
-  const isCatalogEmpty = isFirstLoad && catalogStatus === 'empty';
+  const isCatalogEmpty = isFirstLoad && catalogStatus === 'empty' && courses.length === 0;
   const isCatalogUnauthorized = isFirstLoad && catalogStatus === 'unauthorized';
-  // Only gate on error during the very first load. Subsequent errors show an inline banner instead.
-  const isCatalogError = isFirstLoad && (catalogStatus === 'error' || catalogStatus === 'api_unreachable');
-  // Show a non-blocking inline warning when there's a catalog error but we've had prior success.
-  const showCatalogWarningBanner = !isFirstLoad && (catalogStatus === 'error' || catalogStatus === 'api_unreachable' || catalogStatus === 'unauthorized');
+  // Only gate on error during the very first load AND when there's nothing to show.
+  const isCatalogError = isFirstLoad && (catalogStatus === 'error' || catalogStatus === 'api_unreachable') && courses.length === 0;
+  // Show a non-blocking inline warning when there's a catalog error but we've had prior success,
+  // or when courses exist but the last sync errored (stale-data scenario — don't hide them behind a gate).
+  const showCatalogWarningBanner =
+    (!isFirstLoad && (catalogStatus === 'error' || catalogStatus === 'api_unreachable' || catalogStatus === 'unauthorized'))
+    || (courses.length > 0 && isFirstLoad && (catalogStatus === 'error' || catalogStatus === 'api_unreachable'));
   const lastSyncAttempt = catalogState.lastAttemptAt ? new Date(catalogState.lastAttemptAt).toLocaleString() : null;
 
   if (import.meta.env.DEV) {
@@ -324,9 +333,11 @@ const AdminDashboard = () => {
       isCatalogEmpty,
       isCatalogUnauthorized,
       isCatalogError,
+      showCatalogWarningBanner,
       isFirstLoad,
       phase: catalogState.phase,
       status: catalogStatus,
+      courseCount: courses.length,
       ts: Date.now(),
     });
   }

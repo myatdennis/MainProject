@@ -517,9 +517,15 @@ const AdminCourses = () => {
   // phase === 'idle' means no fetch is running — never gate on it.
   const isFirstLoad = !_coursesCatalogEverSucceeded;
   const isCatalogLoading = isFirstLoad && catalogState.phase === 'loading';
-  const isCatalogEmpty = catalogStatus === 'empty';
+  // Only show the "no courses" gate when the API truly returned 0 courses AND
+  // the store has no courses from a prior successful load. If courses[] is
+  // non-empty (e.g. from a previous fetch that is now stale, or a local draft),
+  // render them rather than hiding the entire page behind the empty-state gate.
+  const isCatalogEmpty = catalogStatus === 'empty' && courses.length === 0;
   const isCatalogUnauthorized = catalogStatus === 'unauthorized';
-  const isCatalogError = catalogStatus === 'error' || catalogStatus === 'api_unreachable';
+  // Similarly, don't hide an existing catalog behind an error gate — only show
+  // the error gate when we have nothing to display.
+  const isCatalogError = (catalogStatus === 'error' || catalogStatus === 'api_unreachable') && courses.length === 0;
   const lastSyncAttempt = catalogState.lastAttemptAt ? new Date(catalogState.lastAttemptAt).toLocaleString() : null;
 
   if (import.meta.env.DEV) {
@@ -617,6 +623,23 @@ const AdminCourses = () => {
               <h1 className="text-3xl font-bold text-gray-900 mb-2">Course Management</h1>
               <p className="text-gray-600">Create, edit, and manage training modules and learning paths</p>
             </div>
+            {/* Stale-data banner: shown when the last sync failed/returned empty but
+                we still have courses from a prior load to display. */}
+            {courses.length > 0 && (catalogStatus === 'error' || catalogStatus === 'api_unreachable') && (
+              <div className="mb-4 flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
+                <span>
+                  Showing cached courses — the last sync attempt failed.{' '}
+                  <button
+                    type="button"
+                    className="font-medium underline underline-offset-2 hover:text-amber-900"
+                    onClick={handleRetry}
+                  >
+                    Retry sync
+                  </button>
+                </span>
+              </div>
+            )}
             {/* Search and Filter Bar */}
             <div className="card-lg card-hover mb-8">
               <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
