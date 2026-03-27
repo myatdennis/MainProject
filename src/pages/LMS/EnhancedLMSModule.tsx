@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useSyncExternalStore } from 'react';
 import VideoPlayer from '../../components/VideoPlayer';
 import CompletionScreen from '../../components/CompletionScreen';
 import { useParams, useNavigate } from 'react-router-dom';
@@ -38,7 +38,11 @@ const EnhancedLMSModule = () => {
   const progressAvailability = progressService.getAvailability();
   const progressDisabled = !progressAvailability.enabled;
   // Removed unused videoProgress state
-  
+
+  // Subscribe to course store so the component re-renders when the catalog updates
+  // (e.g. after background init completes and the course becomes available).
+  void useSyncExternalStore(courseStore.subscribe, courseStore.getAdminCatalogState);
+
   // Get course from store
   const course = moduleId ? courseStore.getCourse(moduleId) : null;
   

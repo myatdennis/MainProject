@@ -1201,6 +1201,128 @@ void ((): void => {
 
 const storeSubscribers = new Set<() => void>();
 
+// Stable array returned by getAllCourses() — rebuilt only when explicitly
+// invalidated (i.e. after every notifySubscribers() call or direct write).
+//
+// WHY: useSyncExternalStore requires the snapshot function to return the SAME
+// reference between store notifications. Object.values(courses) creates a new
+// array on every call, causing React to detect a perpetual change and throw
+// error #185 (maximum update depth exceeded).
+//
+// HOW: _coursesArrayDirty is set to true whenever the courses map changes
+// (write, delete, reassign). getStableCourseArray() rebuilds and caches the
+// array only when dirty, then clears the flag. notifySubscribers() marks dirty
+// BEFORE firing listeners so that snapshot reads inside listeners are fresh.
+let _cachedCoursesArray: Course[] = [];
+let _coursesArrayDirty = true; // start dirty so first read builds the array
+// Monotonically-increasing counter bumped on every cache invalidation.
+// Used by the snapshot integrity guard's signature so that any mutation
+// (including title/content changes that don't alter IDs) is distinguishable
+// from a spurious new-reference-same-data allocation.
+let _storeWriteVersion = 0;
+
+const invalidateCourseCache = (): void => {
+  _coursesArrayDirty = true;
+  _storeWriteVersion += 1;
+};
+
+const getStableCourseArray = (): Course[] => {
+  if (_coursesArrayDirty) {
+    _cachedCoursesArray = Object.values(courses);
+    _coursesArrayDirty = false;
+  }
+  return _cachedCoursesArray;
+};
+
+// ── Dev-only snapshot integrity guard ────────────────────────────────────────
+//
+// Detects when a snapshot getter returns a NEW object/array reference even
+// though the underlying data has not changed.  That pattern is the root cause
+// of React error #185 (useSyncExternalStore sees a perpetual change and
+// re-renders infinitely).
+//
+// createSnapshotIntegrityGuard(label, signatureFn) returns a check() function.
+// Call check(snapshot) from the getter in DEV mode only — it is a no-op in
+// production because the factory itself returns a stub.
+//
+// Signature function guidelines
+//   • Must be O(1) or nearly O(1) — no JSON.stringify, no deep traversal.
+//   • Should uniquely identify the logical content of the snapshot.
+//   • A mismatch between sig change and ref change = a bug.
+//
+// Deduplication: each (label, prevSig, nextSig) triplet is warned only once
+// per module lifetime to avoid log spam during rapid re-renders.
+
+type SnapshotGuard<T> = (snapshot: T) => void;
+
+const createSnapshotIntegrityGuard = <T>(
+  label: string,
+  signatureFn: (snapshot: T) => string | number,
+): SnapshotGuard<T> => {
+  if (!import.meta.env.DEV) {
+    // Production: return a zero-cost no-op stub.
+    return (_snapshot: T) => { /* noop */ };
+  }
+
+  let _lastRef: T | undefined = undefined;
+  let _lastSig: string | number | undefined = undefined;
+  // Track already-warned (prevSig → nextSig) pairs so each unique transition
+  // is logged exactly once, not on every render cycle.
+  const _warnedPairs = new Set<string>();
+
+  return (snapshot: T): void => {
+    const nextSig = signatureFn(snapshot);
+
+    if (_lastRef !== undefined && snapshot !== _lastRef && nextSig === _lastSig) {
+      // Reference changed but signature did NOT — this is the problematic pattern.
+      const pairKey = `${_lastSig}`;
+      if (!_warnedPairs.has(pairKey)) {
+        _warnedPairs.add(pairKey);
+        console.warn('[SNAPSHOT INTEGRITY WARNING]', {
+          label,
+          reason: 'reference_changed_without_signature_change',
+          previousSignature: _lastSig,
+          nextSignature: nextSig,
+          hint: 'The getter is allocating a new object/array on every call without a real data change. ' +
+                'This will cause React error #185 (infinite update loop) in useSyncExternalStore consumers.',
+        });
+      }
+    }
+
+    _lastRef = snapshot;
+    _lastSig = nextSig;
+  };
+};
+
+// Guards for each public snapshot getter used by useSyncExternalStore consumers.
+//
+// Signatures are intentionally lightweight:
+//   getAllCourses    → count + sorted-ID prefix (catches length change or add/remove)
+//   adminCatalogState → all five discriminating fields concatenated
+//   learnerCatalogState → status + lastUpdatedAt + detail
+
+const _guardGetAllCourses = createSnapshotIntegrityGuard<Course[]>(
+  'getAllCourses',
+  (arr) => {
+    // _storeWriteVersion increments on every invalidateCourseCache() call, which
+    // happens inside notifySubscribers() before any listener fires.  This means
+    // ANY mutation (add, remove, title change, etc.) produces a new signature,
+    // so the guard only fires on genuine allocate-without-mutate bugs.
+    const head = arr.length > 0 ? arr.slice(0, 3).map((c) => c.id).join(',') : '';
+    return `v${_storeWriteVersion}:${arr.length}:${head}`;
+  },
+);
+
+const _guardGetAdminCatalogState = createSnapshotIntegrityGuard<AdminCatalogState>(
+  'getAdminCatalogState',
+  (s) => `${s.phase}|${s.adminLoadStatus}|${s.lastUpdatedAt ?? 0}|${s.lastAttemptAt ?? 0}|${s.lastError ?? ''}`,
+);
+
+const _guardGetLearnerCatalogState = createSnapshotIntegrityGuard<LearnerCatalogState>(
+  'getLearnerCatalogState',
+  (s) => `${s.status}|${s.lastUpdatedAt ?? 0}|${s.detail ?? ''}|${s.lastError ?? ''}`,
+);
+
 /** Returns a strictly-increasing timestamp so that consecutive setAdminCatalogState
  *  calls in the same millisecond never produce an identical lastUpdatedAt and are
  *  therefore never suppressed by shallowEqualState. */
@@ -1225,6 +1347,10 @@ const shallowEqualState = (current: AdminCatalogState, next: AdminCatalogState):
 };
 
 const notifySubscribers = () => {
+  // Always invalidate the course array cache BEFORE notifying listeners so
+  // that any useSyncExternalStore snapshot reads inside listener callbacks
+  // (or on the very next render) receive fresh data.
+  invalidateCourseCache();
   if (import.meta.env.DEV) {
     const courseList = Object.values(courses);
     console.debug('[STORE UPDATE] courseStore notifying', storeSubscribers.size, 'subscribers');
@@ -2428,6 +2554,9 @@ export const courseStore = {
     course.lastUpdated = nextCourse.lastUpdated;
     courses[nextCourse.id] = { ...nextCourse };
     _saveCoursesToLocalStorage(courses);
+    // Notify subscribers synchronously so useSyncExternalStore consumers
+    // re-render immediately (e.g. AdminCourseDetail after an in-editor save).
+    notifySubscribers();
     void saveDraftSnapshot(nextCourse, {
       dirty: true,
       cause: options.skipRemoteSync ? 'local-save' : 'store-save',
@@ -2488,13 +2617,18 @@ export const courseStore = {
   },
 
   getAllCourses: (): Course[] => {
-    return Object.values(courses);
+    const snapshot = getStableCourseArray();
+    if (import.meta.env.DEV) _guardGetAllCourses(snapshot);
+    return snapshot;
   },
 
   deleteCourse: (id: string, options: { skipRemote?: boolean } = {}): boolean => {
     if (courses[id]) {
       delete courses[id];
       _saveCoursesToLocalStorage(courses);
+      // Notify immediately so the UI removes the course from the list without
+      // waiting for the async remote delete to complete.
+      notifySubscribers();
       void deleteDraftSnapshot(id);
       if (
         !options.skipRemote &&
@@ -2561,6 +2695,8 @@ export const courseStore = {
     newCourse.modules = sanitizeModuleGraph(newCourse.modules || [], { forceNewIds: true });
     courses[newCourse.id] = newCourse;
     _saveCoursesToLocalStorage(courses);
+    // Notify synchronously so list views update immediately after createCourse().
+    notifySubscribers();
     void saveDraftSnapshot(newCourse, { dirty: true, cause: 'create-course' });
 
     // Always attempt to persist to backend API (DEV_FALLBACK or Supabase-backed) so courses survive reloads
@@ -2614,8 +2750,14 @@ export const courseStore = {
     }
   },
 
-  getAdminCatalogState: (): AdminCatalogState => adminCatalogState,
-  getLearnerCatalogState: (): LearnerCatalogState => learnerCatalogState,
+  getAdminCatalogState: (): AdminCatalogState => {
+    if (import.meta.env.DEV) _guardGetAdminCatalogState(adminCatalogState);
+    return adminCatalogState;
+  },
+  getLearnerCatalogState: (): LearnerCatalogState => {
+    if (import.meta.env.DEV) _guardGetLearnerCatalogState(learnerCatalogState);
+    return learnerCatalogState;
+  },
 
   subscribe: (listener: () => void): (() => void) => {
     storeSubscribers.add(listener);

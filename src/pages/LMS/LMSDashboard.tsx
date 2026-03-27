@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { Link } from 'react-router-dom';
 import { useSecureAuth } from '../../context/SecureAuthContext';
 import { 
@@ -48,6 +48,9 @@ const LMSDashboard = () => {
   const [progressSummary, setProgressSummary] = useState<ProgressSummary | null>(null);
   const [recentActivity, setRecentActivity] = useState<ActivityItem[]>([]);
   const [statsLoading, setStatsLoading] = useState(true);
+
+  // Subscribe to course store so learningPathCourses re-derives when the catalog updates.
+  const storeRevision = useSyncExternalStore(courseStore.subscribe, courseStore.getAdminCatalogState);
 
   // Load real progress summary from API
   useEffect(() => {
@@ -158,7 +161,7 @@ const LMSDashboard = () => {
           resumeLessonId,
         };
       });
-  }, [progressRefreshToken]);
+  }, [progressRefreshToken, storeRevision]);
 
   const completedValue = progressSummary
     ? `${progressSummary.modulesCompleted}/${Math.max(progressSummary.modulesTotal, progressSummary.modulesCompleted)}`

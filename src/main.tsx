@@ -229,6 +229,34 @@ class SecureAuthErrorBoundary extends React.Component<{ children: React.ReactNod
 
 const rootElement = document.getElementById('root');
 
+// ── Phase 5: Frontend environment guard ────────────────────────────────────
+// Detect missing or placeholder Supabase env vars at boot time so
+// misconfigured deployments fail loudly instead of silently showing blank
+// pages or cryptic auth errors.
+const _supabaseUrl = import.meta.env.VITE_SUPABASE_URL ?? '';
+const _supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY ?? '';
+const _missingEnv: string[] = [];
+if (!_supabaseUrl || _supabaseUrl === 'your-supabase-url') _missingEnv.push('VITE_SUPABASE_URL');
+if (!_supabaseKey || _supabaseKey === 'your-supabase-anon-key') _missingEnv.push('VITE_SUPABASE_ANON_KEY');
+if (_missingEnv.length > 0) {
+  console.error(
+    `[ENV] Missing required environment variable(s): ${_missingEnv.join(', ')}. ` +
+      'Auth and API calls will fail. Check your .env or deployment environment settings.',
+  );
+  if (import.meta.env.DEV) {
+    // Surface a visible banner in development so it is impossible to miss.
+    const banner = document.createElement('div');
+    banner.setAttribute('role', 'alert');
+    banner.style.cssText =
+      'position:fixed;top:0;left:0;right:0;z-index:99999;background:#D72638;color:#fff;' +
+      'font-family:system-ui;font-size:14px;padding:12px 20px;text-align:center;';
+    banner.textContent =
+      `⚠ DEV ENV ERROR: Missing ${_missingEnv.join(', ')}. ` +
+      'Add them to your .env.local file and restart the dev server.';
+    document.body?.prepend(banner);
+  }
+}
+
 ensureRuntimeStatusPolling();
 
 if (!rootElement) {

@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useSyncExternalStore } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Users, Send, AlertTriangle, ShieldCheck, WifiOff } from 'lucide-react';
 import Card from '../../components/ui/Card';
@@ -27,7 +27,11 @@ const AdminCourseAssign = () => {
     ? new Date(runtimeStatus.lastChecked).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : 'pending';
 
-  const course = useMemo(() => (courseId ? courseStore.getCourse(courseId) : null), [courseId]);
+  // Subscribe to course store so the course detail re-reads when the catalog updates
+  // (e.g. after background init or a save from another tab).
+  const _catalogState = useSyncExternalStore(courseStore.subscribe, courseStore.getAdminCatalogState);
+
+  const course = useMemo(() => (courseId ? courseStore.getCourse(courseId) : null), [courseId, _catalogState]);
 
   const [emails, setEmails] = useState('');
   const [dueDate, setDueDate] = useState('');
@@ -108,7 +112,7 @@ const AdminCourseAssign = () => {
           type: 'assignment_created',
           data: record,
           timestamp: Date.now(),
-          courseId: record.courseId,
+          courseId: record.courseId ?? undefined,
           userId: record.userId,
           source: 'admin',
         });

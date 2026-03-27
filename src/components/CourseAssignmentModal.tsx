@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import {
   AlertTriangle,
   BookOpen,
@@ -51,6 +51,10 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
     ? new Date(runtimeStatus.lastChecked).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : 'pending';
 
+  // Subscribe to course store so the available-courses list refreshes if the
+  // catalog updates while the modal is open.
+  const _catalogState = useSyncExternalStore(courseStore.subscribe, courseStore.getAdminCatalogState);
+
   const [loading, setLoading] = useState(false);
   const [selectedCourseId, setSelectedCourseId] = useState(course?.id ?? '');
   const [dueDate, setDueDate] = useState('');
@@ -62,7 +66,7 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
   const [selectedOrgIds, setSelectedOrgIds] = useState<string[]>([]);
   const [orgMembers, setOrgMembers] = useState<Record<string, AdminUserRecord[]>>({});
   const [usersLoading, setUsersLoading] = useState(false);
-  const [usersError, setUsersError] = useState<string | null>(null);
+  const [, setUsersError] = useState<string | null>(null);
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
   const [userSearch, setUserSearch] = useState('');
   const [queueItems, setQueueItems] = useState<AssignmentQueueItem[]>([]);
@@ -117,7 +121,7 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
         organizationId: entry.organizationId,
       };
     });
-  }, [course, isOpen]);
+  }, [course, isOpen, _catalogState]);
 
   const resolvedCourse = useMemo(() => {
     if (course?.id) {

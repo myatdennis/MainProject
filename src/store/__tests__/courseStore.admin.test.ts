@@ -422,3 +422,139 @@ describe('courseStore graph validation — belt-and-suspenders', () => {
     warnSpy.mockRestore();
   });
 });
+
+describe('courseStore write operations notify subscribers', () => {
+  beforeEach(() => {
+    window.history.pushState({}, '', '/admin/courses');
+  });
+
+  it('notifySubscribers is called after saveCourse', async () => {
+    adminCoursesMock.getAllCoursesFromDatabase.mockResolvedValue([createCourse({ id: 'c-save' })]);
+    const courseStore = await importCourseStore();
+    await courseStore.init();
+
+    const { seen, unsubscribe } = captureTransitions(courseStore);
+    const original = courseStore.getCourse('c-save')!;
+    courseStore.saveCourse({ ...original, title: 'Updated Title' });
+    unsubscribe();
+
+    expect(seen.length).toBeGreaterThan(0);
+    expect(courseStore.getCourse('c-save')?.title).toBe('Updated Title');
+  });
+
+  it('notifySubscribers is called after deleteCourse', async () => {
+    adminCoursesMock.getAllCoursesFromDatabase.mockResolvedValue([createCourse({ id: 'c-del' })]);
+    const courseStore = await importCourseStore();
+    await courseStore.init();
+
+    const { seen, unsubscribe } = captureTransitions(courseStore);
+    courseStore.deleteCourse('c-del');
+    unsubscribe();
+
+    expect(seen.length).toBeGreaterThan(0);
+    expect(courseStore.getCourse('c-del')).toBeNull();
+    expect(courseStore.getAllCourses().find((c) => c.id === 'c-del')).toBeUndefined();
+  });
+
+  it('getAllCourses returns stable reference between notifications', async () => {
+    adminCoursesMock.getAllCoursesFromDatabase.mockResolvedValue([createCourse({ id: 'c-stable' })]);
+    const courseStore = await importCourseStore();
+    await courseStore.init();
+
+    const first = courseStore.getAllCourses();
+    const second = courseStore.getAllCourses();
+    expect(first).toBe(second); // same array reference — no re-allocation between notifications
+
+    // After a write, the reference must change (cache invalidated)
+    const original = courseStore.getCourse('c-stable')!;
+    courseStore.saveCourse({ ...original, title: 'New Title' });
+    const afterSave = courseStore.getAllCourses();
+    expect(afterSave).not.toBe(first);
+    expect(afterSave[0]?.title).toBe('New Title');
+  });
+
+  it('getAllCourses returns stable reference between calls after deleteCourse', async () => {
+    adminCoursesMock.getAllCoursesFromDatabase.mockResolvedValue([
+      createCourse({ id: 'keep' }),
+      createCourse({ id: 'gone' }),
+    ]);
+    const courseStore = await importCourseStore();
+    await courseStore.init();
+
+    courseStore.deleteCourse('gone');
+    const afterDelete1 = courseStore.getAllCourses();
+    const afterDelete2 = courseStore.getAllCourses();
+    expect(afterDelete1).toBe(afterDelete2);
+    expect(afterDelete1.map((c) => c.id)).toEqual(['keep']);
+  });
+});
+
+describe('courseStore snapshot integrity guard', () => {
+  beforeEach(() => {
+    window.history.pushState({}, '', '/admin/courses');
+  });
+
+  it('does NOT warn when getAllCourses returns the same reference on consecutive calls', async () => {
+    adminCoursesMock.getAllCoursesFromDatabase.mockResolvedValue([createCourse({ id: 'ref-stable' })]);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const courseStore = await importCourseStore();
+    await courseStore.init();
+
+    // Multiple reads between notifications — must all return the same reference, no warnings.
+    courseStore.getAllCourses();
+    courseStore.getAllCourses();
+    courseStore.getAllCourses();
+
+    const integrityWarnings = warnSpy.mock.calls.filter(
+      (args) => typeof args[0] === 'string' && args[0].includes('[SNAPSHOT INTEGRITY WARNING]'),
+    );
+    expect(integrityWarnings).toHaveLength(0);
+    warnSpy.mockRestore();
+  });
+
+  it('does NOT warn when getAdminCatalogState returns the same object on consecutive calls', async () => {
+    adminCoursesMock.getAllCoursesFromDatabase.mockResolvedValue([createCourse({ id: 'cat-stable' })]);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const courseStore = await importCourseStore();
+    await courseStore.init();
+
+    courseStore.getAdminCatalogState();
+    courseStore.getAdminCatalogState();
+    courseStore.getAdminCatalogState();
+
+    const integrityWarnings = warnSpy.mock.calls.filter(
+      (args) => typeof args[0] === 'string' && args[0].includes('[SNAPSHOT INTEGRITY WARNING]'),
+    );
+    expect(integrityWarnings).toHaveLength(0);
+    warnSpy.mockRestore();
+  });
+
+  it('snapshot reference changes after saveCourse without triggering integrity warning', async () => {
+    // After a real mutation, the reference SHOULD change. The guard must NOT warn
+    // in this case because the signature also changes (different title, same id but
+    // the save triggers notifySubscribers which marks the cache dirty).
+    adminCoursesMock.getAllCoursesFromDatabase.mockResolvedValue([createCourse({ id: 'mutate-ok' })]);
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const courseStore = await importCourseStore();
+    await courseStore.init();
+
+    const before = courseStore.getAllCourses();
+    const original = courseStore.getCourse('mutate-ok')!;
+    courseStore.saveCourse({ ...original, title: 'Changed Title' });
+    const after = courseStore.getAllCourses();
+
+    // Reference changed because data changed — this is correct, not a bug.
+    expect(after).not.toBe(before);
+    expect(after[0]?.title).toBe('Changed Title');
+
+    // Guard must NOT warn because the signature also changed.
+    const integrityWarnings = warnSpy.mock.calls.filter(
+      (args) => typeof args[0] === 'string' && args[0].includes('[SNAPSHOT INTEGRITY WARNING]'),
+    );
+    expect(integrityWarnings).toHaveLength(0);
+    warnSpy.mockRestore();
+  });
+});
