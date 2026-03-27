@@ -1,4 +1,14 @@
+import type { LessonContent } from '../types/courseTypes';
+import { canonicalizeLessonContent } from './lessonContent';
+
 // Video utility functions for handling different video sources
+
+export type ResolvedVideoPlayback = {
+  src: string | null;
+  embedUrl: string | null;
+  provider: 'youtube' | 'vimeo' | 'ted' | 'loom' | 'external' | 'internal' | 'unknown';
+  mode: 'embed' | 'native' | 'none';
+};
 
 export const extractVideoId = (url: string): { type: 'youtube' | 'vimeo' | 'external' | null, id: string | null } => {
   if (!url) return { type: null, id: null };
@@ -86,5 +96,77 @@ export const getVideoSourceInfo = (url: string): {
     sourceType: type,
     videoId: id,
     embedUrl
+  };
+};
+
+const toEmbedUrl = (provider: ResolvedVideoPlayback['provider'], videoUrl: string): string | null => {
+  if (provider === 'youtube') {
+    const info = getVideoSourceInfo(videoUrl);
+    if (info?.sourceType === 'youtube' && info.videoId) {
+      return `https://www.youtube.com/embed/${info.videoId}`;
+    }
+    return null;
+  }
+
+  if (provider === 'vimeo') {
+    const info = getVideoSourceInfo(videoUrl);
+    if (info?.sourceType === 'vimeo' && info.videoId) {
+      return `https://player.vimeo.com/video/${info.videoId}`;
+    }
+    return null;
+  }
+
+  if (provider === 'ted') {
+    if (videoUrl.includes('embed.ted.com/talks')) return videoUrl;
+    if (videoUrl.includes('ted.com/talks')) {
+      return videoUrl.replace('www.ted.com/talks', 'embed.ted.com/talks');
+    }
+    return videoUrl;
+  }
+
+  if (provider === 'loom') {
+    return videoUrl;
+  }
+
+  return null;
+};
+
+export const resolveLessonVideoPlayback = (content?: LessonContent | null): ResolvedVideoPlayback => {
+  const normalized = canonicalizeLessonContent(content);
+  const videoUrl = normalized.videoUrl?.trim() || null;
+  const explicitSourceType = normalized.videoSourceType?.toLowerCase() || null;
+  const explicitProvider = normalized.videoProvider?.toLowerCase() || null;
+
+  if (!videoUrl) {
+    return { src: null, embedUrl: null, provider: 'unknown', mode: 'none' };
+  }
+
+  const lowerUrl = videoUrl.toLowerCase();
+  const provider: ResolvedVideoPlayback['provider'] =
+    explicitProvider === 'youtube' || explicitSourceType === 'youtube' || lowerUrl.includes('youtube.com') || lowerUrl.includes('youtu.be')
+      ? 'youtube'
+      : explicitProvider === 'vimeo' || explicitSourceType === 'vimeo' || lowerUrl.includes('vimeo.com')
+      ? 'vimeo'
+      : explicitProvider === 'ted' || lowerUrl.includes('ted.com/talks') || lowerUrl.includes('embed.ted.com/talks')
+      ? 'ted'
+      : explicitProvider === 'loom' || lowerUrl.includes('loom.com')
+      ? 'loom'
+      : explicitSourceType === 'internal'
+      ? 'internal'
+      : explicitSourceType === 'external'
+      ? 'external'
+      : 'unknown';
+
+  const embedUrl = toEmbedUrl(provider, videoUrl);
+  const mode =
+    provider === 'youtube' || provider === 'vimeo' || provider === 'ted' || provider === 'loom'
+      ? 'embed'
+      : 'native';
+
+  return {
+    src: videoUrl,
+    embedUrl,
+    provider,
+    mode,
   };
 };

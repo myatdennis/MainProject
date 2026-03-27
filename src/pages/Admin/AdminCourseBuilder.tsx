@@ -21,7 +21,7 @@ import { type CourseValidationIntent, type CourseValidationIssue } from '../../v
 import { getCourseValidationSummary, type CourseValidationSummary } from '../../validation/courseValidationSummary';
 import { getUserSession } from '../../lib/secureStorage';
 import { ApiError } from '../../utils/apiClient';
-import { getVideoEmbedUrl } from '../../utils/videoUtils';
+import { resolveLessonVideoPlayback } from '../../utils/videoUtils';
 import { uploadLessonVideo, uploadDocumentResource } from '../../dal/media';
 import { canonicalizeLessonContent, canonicalizeQuizQuestions } from '../../utils/lessonContent';
 import { COURSE_VIDEOS_BUCKET } from '../../config/mediaBuckets';
@@ -3827,14 +3827,12 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
                       <div className="space-y-2">
                         <div className="aspect-video bg-gray-900 rounded-lg overflow-hidden">
                           {(() => {
-                            const url = lesson.content.videoUrl || '';
-                            const embedUrl = getVideoEmbedUrl(lesson.content);
-                            
-                            // Check if it's a supported embed URL (YouTube, Vimeo)
-                            if (embedUrl && (url.includes('youtube.') || url.includes('youtu.be') || url.includes('vimeo.'))) {
+                            const playback = resolveLessonVideoPlayback(lesson.content);
+
+                            if (playback.mode === 'embed' && playback.embedUrl) {
                               return (
                                 <iframe
-                                  src={embedUrl}
+                                  src={playback.embedUrl}
                                   className="w-full h-full"
                                   frameBorder="0"
                                   allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
@@ -3849,7 +3847,7 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
                               <video 
                                 controls 
                                 className="w-full h-full"
-                                src={lesson.content.videoUrl}
+                                src={playback.src || lesson.content.videoUrl}
                               >
                                 Your browser does not support the video tag.
                               </video>

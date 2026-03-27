@@ -2084,16 +2084,41 @@ app.get('/api/admin/users', authenticate, requireAdmin, async (req, res) => {
 app.post('/api/admin/users', authenticate, requireAdmin, async (req, res) => {
   if (!ensureSupabase(res)) return;
 
-  const orgId = pickOrgId(req.body?.orgId, req.body?.organizationId);
-  const firstName = typeof req.body?.firstName === 'string' ? req.body.firstName.trim() : '';
-  const lastName = typeof req.body?.lastName === 'string' ? req.body.lastName.trim() : '';
+  const orgId = pickOrgId(
+    req.body?.orgId,
+    req.body?.organizationId,
+    req.body?.org_id,
+    req.body?.organization_id,
+  );
+  const firstName =
+    typeof req.body?.firstName === 'string'
+      ? req.body.firstName.trim()
+      : typeof req.body?.first_name === 'string'
+        ? req.body.first_name.trim()
+        : '';
+  const lastName =
+    typeof req.body?.lastName === 'string'
+      ? req.body.lastName.trim()
+      : typeof req.body?.last_name === 'string'
+        ? req.body.last_name.trim()
+        : '';
   const rawEmail = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
   const password = typeof req.body?.password === 'string' ? req.body.password : '';
-  const membershipRole = normalizeOrgRole(req.body?.membershipRole || 'member');
-  const jobTitle = typeof req.body?.jobTitle === 'string' ? req.body.jobTitle.trim() : '';
+  const membershipRole = normalizeOrgRole(req.body?.membershipRole || req.body?.membership_role || 'member');
+  const jobTitle =
+    typeof req.body?.jobTitle === 'string'
+      ? req.body.jobTitle.trim()
+      : typeof req.body?.job_title === 'string'
+        ? req.body.job_title.trim()
+        : '';
   const department = typeof req.body?.department === 'string' ? req.body.department.trim() : '';
   const cohort = typeof req.body?.cohort === 'string' ? req.body.cohort.trim() : '';
-  const phoneNumber = typeof req.body?.phoneNumber === 'string' ? req.body.phoneNumber.trim() : '';
+  const phoneNumber =
+    typeof req.body?.phoneNumber === 'string'
+      ? req.body.phoneNumber.trim()
+      : typeof req.body?.phone_number === 'string'
+        ? req.body.phone_number.trim()
+        : '';
 
   if (!orgId) {
     res.status(400).json({ error: 'org_id_required', message: 'organizationId is required.' });
@@ -2168,26 +2193,40 @@ app.post('/api/admin/users', authenticate, requireAdmin, async (req, res) => {
 app.patch('/api/admin/users/:userId', authenticate, requireAdmin, async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { userId } = req.params;
-  const orgId = pickOrgId(req.body?.orgId, req.body?.organizationId);
+  const orgId = pickOrgId(
+    req.body?.orgId,
+    req.body?.organizationId,
+    req.body?.org_id,
+    req.body?.organization_id,
+  );
   const {
     role,
     membershipRole,
+    membership_role,
     status,
     firstName,
+    first_name,
     lastName,
+    last_name,
     email,
     jobTitle,
+    job_title,
     department,
     cohort,
     phoneNumber,
+    phone_number,
   } = req.body || {};
 
   if (!orgId) {
     res.status(400).json({ error: 'org_id_required', message: 'organizationId is required.' });
     return;
   }
-  const requestedMembershipRole = membershipRole ?? role;
-  const hasProfileChanges = [firstName, lastName, email, jobTitle, department, cohort, phoneNumber]
+  const requestedMembershipRole = membershipRole ?? membership_role ?? role;
+  const resolvedFirstName = firstName ?? first_name;
+  const resolvedLastName = lastName ?? last_name;
+  const resolvedJobTitle = jobTitle ?? job_title;
+  const resolvedPhoneNumber = phoneNumber ?? phone_number;
+  const hasProfileChanges = [resolvedFirstName, resolvedLastName, email, resolvedJobTitle, department, cohort, resolvedPhoneNumber]
     .some((value) => value !== undefined);
   if (!requestedMembershipRole && !status && !hasProfileChanges) {
     res.status(400).json({ error: 'no_fields', message: 'Provide membership or profile fields to update.' });
@@ -2267,13 +2306,13 @@ app.patch('/api/admin/users/:userId', authenticate, requireAdmin, async (req, re
     if (hasProfileChanges || requestedMembershipRole) {
       currentStage = 'profile_update';
       await updateProvisionedUserProfile(userId, orgId, {
-        firstName,
-        lastName,
+        firstName: resolvedFirstName,
+        lastName: resolvedLastName,
         email,
-        jobTitle,
+        jobTitle: resolvedJobTitle,
         department,
         cohort,
-        phoneNumber,
+        phoneNumber: resolvedPhoneNumber,
         membershipRole: requestedMembershipRole,
       });
     }
@@ -6502,7 +6541,6 @@ async function fetchOrgMembersWithProfiles(orgId) {
   const rows = Array.isArray(memberships) ? memberships : [];
   const userIds = rows.map((row) => row?.user_id).filter(Boolean);
   const profileMap = new Map();
-  const userMap = new Map();
 
   if (userIds.length > 0) {
     const { data: profiles, error: profileError } = await supabase
@@ -6515,25 +6553,34 @@ async function fetchOrgMembersWithProfiles(orgId) {
         profileMap.set(profile.id, profile);
       }
     });
-
-    const { data: userRows, error: userError } = await supabase
-      .from('users')
-      .select('id, email, first_name, last_name, organization_id')
-      .in('id', userIds);
-    if (userError) throw userError;
-    (userRows || []).forEach((user) => {
-      if (user?.id) {
-        userMap.set(user.id, user);
-      }
-    });
   }
 
-  return rows.map((membership) => ({
-    ...membership,
-    user_id_uuid: membership.user_id ?? membership.user_id_uuid ?? null,
-    profile: profileMap.get(membership.user_id) || null,
-    user: userMap.get(membership.user_id) || null,
-  }));
+  const members = rows.map((membership) => {
+    const profile = profileMap.get(membership.user_id) || null;
+    return {
+      ...profile,
+      ...membership,
+      user_id_uuid: membership.user_id ?? membership.user_id_uuid ?? null,
+      profile,
+      user: {
+        id: membership.user_id ?? null,
+        email: profile?.email ?? null,
+        first_name: profile?.first_name ?? null,
+        last_name: profile?.last_name ?? null,
+        organization_id: profile?.organization_id ?? membership.organization_id ?? null,
+        role: profile?.role ?? null,
+        is_active: profile?.is_active ?? true,
+      },
+    };
+  });
+
+  logger.info('admin_users_memberships_query', {
+    source: 'organization_memberships+user_profiles',
+    orgId,
+    rowCount: members.length,
+  });
+
+  return members;
 }
 
 const DEFAULT_ASSIGNMENT_BUCKET = () => ({
@@ -7745,10 +7792,11 @@ async function upsertProvisionedUserRecord({
   if (passwordHash) {
     payload.password_hash = passwordHash;
   }
-  const { error } = await supabase.from('users').upsert(payload, { onConflict: 'id' });
-  if (error) {
-    throw error;
-  }
+  await runOptionalCleanupMutation(
+    'provision_user.users_upsert',
+    () => supabase.from('users').upsert(payload, { onConflict: 'id' }),
+    { userId, orgId, email },
+  );
 }
 
 async function updateProvisionedUserProfile(userId, orgId, updates = {}) {
@@ -7845,17 +7893,19 @@ async function updateProvisionedUserProfile(userId, orgId, updates = {}) {
     if (orgId) {
       userPayload.organization_id = orgId;
     }
-    const { error: userError } = await supabase.from('users').upsert(
-      {
-        id: userId,
-        ...userPayload,
-        is_active: true,
-      },
-      { onConflict: 'id' },
+    await runOptionalCleanupMutation(
+      'provision_user.users_sync',
+      () =>
+        supabase.from('users').upsert(
+          {
+            id: userId,
+            ...userPayload,
+            is_active: true,
+          },
+          { onConflict: 'id' },
+        ),
+      { userId, orgId, email: normalizedEmail ?? null },
     );
-    if (userError) {
-      throw userError;
-    }
   }
 
   return payload;

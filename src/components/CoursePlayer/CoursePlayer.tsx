@@ -46,6 +46,7 @@ import LoadingSpinner from '../ui/LoadingSpinner';
 import CourseCompletion from '../CourseCompletion';
 import { useSyncService } from '../../dal/sync';
 import { useToast } from '../../context/ToastContext';
+import { resolveLessonVideoPlayback } from '../../utils/videoUtils';
 import {
   updateAssignmentProgress,
 } from '../../utils/assignmentStorage';
@@ -1286,32 +1287,8 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
 
           <Card padding="none" className="overflow-hidden">
             {currentLesson.type === 'video' && (() => {
-              const raw = (currentLesson as any).content || {};
-              const videoObj = raw.video || {};
-              const videoUrl =
-                videoObj.url ||
-                raw.videoUrl ||
-                raw.src ||
-                raw.url ||
-                (raw.body && (raw.body.videoUrl || raw.body.src)) ||
-                undefined;
-              const derivedType = (videoObj.type || raw.videoType || raw.type || '').toLowerCase();
-              const embedOverride = videoObj.embedUrl;
-              const isTed = derivedType === 'ted' || (videoUrl?.includes('ted.com/talks') ?? false);
-              const isYouTube =
-                derivedType === 'youtube' ||
-                (videoUrl?.includes('youtube.com') ?? false) ||
-                (videoUrl?.includes('youtu.be') ?? false);
-              const isVimeo = derivedType === 'vimeo' || (videoUrl?.includes('vimeo.com') ?? false);
-              const isNativeVideo = Boolean(
-                videoUrl &&
-                  !isTed &&
-                  !isYouTube &&
-                  !isVimeo &&
-                  !videoUrl?.includes('loom.com') &&
-                  derivedType !== 'loom' &&
-                  !embedOverride
-              );
+              const playback = resolveLessonVideoPlayback((currentLesson as any).content || {});
+              const videoUrl = playback.src;
 
               const resumeLabel = canResumePlayback
                 ? `Resume from ${formatDurationLabel(resumePositionSeconds)}`
@@ -1339,48 +1316,15 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
                   );
                 }
 
-                if (embedOverride) {
-                  return renderIframe(embedOverride, 'fullscreen');
-                }
-
-                if (isTed) {
-                  let embedUrl = videoUrl;
-                  if (videoUrl.includes('ted.com/talks') && !videoUrl.includes('embed.ted.com')) {
-                    embedUrl = videoUrl.replace('www.ted.com/talks', 'embed.ted.com/talks');
-                  }
-                  return renderIframe(embedUrl, 'fullscreen');
-                }
-
-                if (isYouTube) {
-                  let videoId = '';
-                  if (videoUrl.includes('watch?v=')) {
-                    videoId = videoUrl.split('v=')[1]?.split('&')[0] ?? '';
-                  } else if (videoUrl.includes('youtu.be/')) {
-                    videoId = videoUrl.split('youtu.be/')[1]?.split('?')[0] ?? '';
-                  } else if (videoUrl.includes('embed/')) {
-                    videoId = videoUrl.split('embed/')[1]?.split('?')[0] ?? '';
-                  }
-                  if (videoId) {
-                    return renderIframe(
-                      `https://www.youtube.com/embed/${videoId}`,
-                      'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture'
-                    );
-                  }
-                }
-
-                if (isVimeo && videoUrl) {
-                  const parts = videoUrl.split('vimeo.com/')[1];
-                  const videoId = parts?.split('?')[0]?.split('/')[0];
-                  if (videoId) {
-                    return renderIframe(
-                      `https://player.vimeo.com/video/${videoId}`,
-                      'autoplay; fullscreen; picture-in-picture'
-                    );
-                  }
-                }
-
-                if (!isNativeVideo) {
-                  return renderIframe(videoUrl, 'fullscreen');
+                if (playback.mode === 'embed') {
+                  return renderIframe(
+                    playback.embedUrl || videoUrl,
+                    playback.provider === 'youtube'
+                      ? 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture'
+                      : playback.provider === 'vimeo'
+                      ? 'autoplay; fullscreen; picture-in-picture'
+                      : 'fullscreen'
+                  );
                 }
 
                 return (
