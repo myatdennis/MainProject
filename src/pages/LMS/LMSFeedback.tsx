@@ -1,4 +1,6 @@
 import React, { useState } from 'react';
+import apiRequest from '../../utils/apiClient';
+import { useToast } from '../../context/ToastContext';
 import { 
   MessageSquare, 
   Star, 
@@ -11,6 +13,7 @@ import {
 } from 'lucide-react';
 
 const LMSFeedback = () => {
+  const { showToast } = useToast();
   const [feedbackType, setFeedbackType] = useState('general');
   const [rating, setRating] = useState(0);
   const [hoverRating, setHoverRating] = useState(0);
@@ -23,6 +26,8 @@ const LMSFeedback = () => {
     anonymous: false
   });
   const [isSubmitted, setIsSubmitted] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const modules = [
     'Foundations of Inclusive Leadership',
@@ -71,10 +76,34 @@ const LMSFeedback = () => {
     }));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    // In a real app, this would send the feedback to your backend
-    setIsSubmitted(true);
+    setIsSubmitting(true);
+    setSubmitError(null);
+    try {
+      await apiRequest('/api/learner/feedback', {
+        method: 'POST',
+        body: {
+          feedbackType,
+          rating,
+          module: formData.module || null,
+          subject: formData.subject,
+          message: formData.message,
+          improvement: formData.improvement || null,
+          recommend: formData.recommend || null,
+          anonymous: formData.anonymous,
+          pagePath: '/lms/feedback',
+        },
+      });
+      setIsSubmitted(true);
+      showToast('Thank you for your feedback!', 'success');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to submit feedback right now.';
+      setSubmitError(message);
+      showToast(message, 'error');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const getRatingText = (rating: number) => {
@@ -162,6 +191,12 @@ const LMSFeedback = () => {
       {/* Feedback Form */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-8">
         <form onSubmit={handleSubmit} className="space-y-6">
+          {submitError && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+              {submitError}
+            </div>
+          )}
+
           {/* Rating Section */}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-4">
@@ -302,10 +337,11 @@ const LMSFeedback = () => {
           {/* Submit Button */}
           <button
             type="submit"
+            disabled={isSubmitting}
             className="w-full bg-gradient-to-r from-orange-400 to-red-500 text-white px-8 py-4 rounded-full font-semibold text-lg hover:from-orange-500 hover:to-red-600 transition-all duration-200 transform hover:scale-105 flex items-center justify-center space-x-2"
           >
             <Send className="h-5 w-5" />
-            <span>Submit Feedback</span>
+            <span>{isSubmitting ? 'Submitting…' : 'Submit Feedback'}</span>
           </button>
         </form>
       </div>

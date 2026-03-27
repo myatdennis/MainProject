@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Bell, Check, Loader2, Megaphone, RefreshCw, ShieldCheck, Sparkles } from 'lucide-react';
+import { Bell, Check, Loader2, Megaphone, MessageSquare, RefreshCw, ShieldCheck, Sparkles } from 'lucide-react';
 import { listAdminNotificationsWithMeta, markNotificationRead } from '../../services/notificationService';
 import type { Notification } from '../../services/notificationService';
 import { useSecureAuth } from '../../context/SecureAuthContext';
@@ -19,6 +19,8 @@ const notificationTone = (notification: Notification) => {
       return { wrapper: 'bg-sky-50 text-sky-700', icon: <BookIcon />, accent: 'text-sky-600' };
     case 'survey_assignment':
       return { wrapper: 'bg-emerald-50 text-emerald-700', icon: <Check className="h-4 w-4" />, accent: 'text-emerald-600' };
+    case 'feedback_submission':
+      return { wrapper: 'bg-violet-50 text-violet-700', icon: <MessageSquare className="h-4 w-4" />, accent: 'text-violet-600' };
     case 'announcement':
       return { wrapper: 'bg-indigo-50 text-indigo-700', icon: <Megaphone className="h-4 w-4" />, accent: 'text-indigo-600' };
     case 'reminder':

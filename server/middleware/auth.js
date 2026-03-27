@@ -309,6 +309,11 @@ const cacheSet = (store, key, value, ttlMs = MEMBERSHIP_CACHE_MS) => {
   }
 };
 
+export const invalidateMembershipCache = (userId) => {
+  if (!userId) return;
+  membershipCache.delete(`org-memberships:${userId}`);
+};
+
 export const mapMembershipRows = (rows = []) =>
   rows.map((row) => {
     const orgId = row.organization_id ?? null;

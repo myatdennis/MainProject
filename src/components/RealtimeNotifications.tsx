@@ -15,6 +15,7 @@ import {
 import { useSecureAuth } from '../context/SecureAuthContext';
 import {
   listLearnerNotifications,
+  deleteLearnerNotification,
   markLearnerNotificationRead,
   markLearnerNotificationsRead,
   type Notification as LearnerNotification,
@@ -22,7 +23,14 @@ import {
 import { wsClient } from '../dal/wsClient';
 import { useToast } from '../context/ToastContext';
 
-type NotificationCategory = 'course_assigned' | 'progress_sync' | 'achievement' | 'announcement' | 'reminder' | 'generic';
+type NotificationCategory =
+  | 'course_assigned'
+  | 'survey_assigned'
+  | 'progress_sync'
+  | 'achievement'
+  | 'announcement'
+  | 'reminder'
+  | 'generic';
 type NotificationPriority = 'low' | 'medium' | 'high';
 
 type DisplayNotification = {
@@ -60,6 +68,8 @@ const getNotificationIcon = (type: NotificationCategory) => {
   switch (type) {
     case 'course_assigned':
       return <BookOpen className="w-4 h-4 text-blue-600" />;
+    case 'survey_assigned':
+      return <CheckCircle className="w-4 h-4 text-emerald-600" />;
     case 'progress_sync':
       return <TrendingUp className="w-4 h-4 text-green-600" />;
     case 'achievement':
@@ -88,7 +98,11 @@ const formatTimestamp = (timestamp: Date) => {
 const deriveCategory = (input?: string | null): NotificationCategory => {
   switch ((input || '').toLowerCase()) {
     case 'course_assigned':
+    case 'course_assignment':
       return 'course_assigned';
+    case 'survey_assigned':
+    case 'survey_assignment':
+      return 'survey_assigned';
     case 'progress_sync':
     case 'progress_update':
       return 'progress_sync';
@@ -106,16 +120,24 @@ const deriveCategory = (input?: string | null): NotificationCategory => {
   }
 };
 
+const getPayloadRecord = (notification: LearnerNotification) => {
+  const payloadCandidate = (notification as LearnerNotification & { metadata?: unknown }).payload;
+  if (isRecord(payloadCandidate)) return payloadCandidate;
+  const metadataCandidate = (notification as LearnerNotification & { metadata?: unknown }).metadata;
+  if (isRecord(metadataCandidate)) return metadataCandidate;
+  return null;
+};
+
 const derivePriority = (notification: LearnerNotification, category: NotificationCategory): NotificationPriority => {
-  const payload = notification.payload;
-  if (isRecord(payload) && typeof payload.priority === 'string') {
+  const payload = getPayloadRecord(notification);
+  if (payload && typeof payload.priority === 'string') {
     const normalized = payload.priority.toLowerCase();
     if (normalized === 'high' || normalized === 'medium' || normalized === 'low') {
       return normalized;
     }
   }
 
-  if (category === 'course_assigned') return 'high';
+  if (category === 'course_assigned' || category === 'survey_assigned') return 'high';
   if (category === 'progress_sync' || category === 'reminder') return 'medium';
   return 'low';
 };
@@ -124,26 +146,69 @@ const deriveMessage = (notification: LearnerNotification) => {
   if (typeof notification.body === 'string' && notification.body.trim().length > 0) {
     return notification.body.trim();
   }
-  if (isRecord(notification.payload) && typeof notification.payload.message === 'string') {
-    return notification.payload.message.trim();
+  const payload = getPayloadRecord(notification);
+  if (payload && typeof payload.message === 'string') {
+    return payload.message.trim();
   }
   return '';
 };
 
 const deriveAction = (notification: LearnerNotification) => {
-  if (!isRecord(notification.payload)) return { actionUrl: undefined, actionLabel: undefined };
-  const actionUrl =
-    typeof notification.payload.actionUrl === 'string'
-      ? notification.payload.actionUrl
-      : typeof notification.payload.url === 'string'
-        ? notification.payload.url
+  const payload = getPayloadRecord(notification);
+  if (!payload) return { actionUrl: undefined, actionLabel: undefined };
+  const assignmentId =
+    typeof payload.assignmentId === 'string'
+      ? payload.assignmentId
+      : typeof payload.assignment_id === 'string'
+        ? payload.assignment_id
         : undefined;
+  const courseId =
+    typeof payload.courseId === 'string'
+      ? payload.courseId
+      : typeof payload.course_id === 'string'
+        ? payload.course_id
+        : undefined;
+  const surveyId =
+    typeof payload.surveyId === 'string'
+      ? payload.surveyId
+      : typeof payload.survey_id === 'string'
+        ? payload.survey_id
+        : undefined;
+
+  let actionUrl =
+    typeof payload.actionUrl === 'string'
+      ? payload.actionUrl
+      : typeof payload.action_url === 'string'
+        ? payload.action_url
+        : typeof payload.url === 'string'
+          ? payload.url
+          : typeof payload.link === 'string'
+            ? payload.link
+            : undefined;
+
+  if (!actionUrl && courseId) {
+    actionUrl = `/client/courses/${encodeURIComponent(courseId)}`;
+  }
+  if (!actionUrl && (surveyId || assignmentId)) {
+    const params = new URLSearchParams();
+    if (assignmentId) params.set('assignment', assignmentId);
+    if (surveyId) params.set('focus', surveyId);
+    const suffix = params.toString();
+    actionUrl = suffix ? `/client/surveys?${suffix}` : '/client/surveys';
+  }
+
   const actionLabel =
-    typeof notification.payload.actionLabel === 'string'
-      ? notification.payload.actionLabel
-      : actionUrl
-        ? 'Open'
-        : undefined;
+    typeof payload.actionLabel === 'string'
+      ? payload.actionLabel
+      : typeof payload.action_label === 'string'
+        ? payload.action_label
+        : courseId
+          ? 'Open course'
+          : surveyId || assignmentId
+            ? 'Open survey'
+            : actionUrl
+              ? 'Open'
+              : undefined;
 
   return { actionUrl, actionLabel };
 };
@@ -188,6 +253,23 @@ const RealtimeNotifications: React.FC<RealtimeNotificationsProps> = ({
     [overrideUserId]
   );
   const authUserId = useMemo(() => (user?.id ? String(user.id).trim().toLowerCase() : undefined), [user?.id]);
+  const effectiveOrgIds = useMemo(() => {
+    const candidates = [
+      user?.activeOrgId,
+      user?.organizationId,
+      user?.orgId,
+      ...(Array.isArray((user as { organizationIds?: unknown[] } | null)?.organizationIds)
+        ? (((user as { organizationIds?: unknown[] }).organizationIds as unknown[]) || [])
+        : []),
+    ];
+    return Array.from(
+      new Set(
+        candidates
+          .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+          .map((value) => value.trim())
+      )
+    );
+  }, [user]);
   const effectiveUserId = normalizedOverride ?? authUserId;
   const canFetchLearner = Boolean(isAuthenticated?.lms);
   const canFetch = enabled && canFetchLearner && Boolean(effectiveUserId) && !authInitializing;
@@ -247,10 +329,17 @@ const RealtimeNotifications: React.FC<RealtimeNotificationsProps> = ({
     if (!wsClient.isEnabled()) return;
 
     wsClient.connect();
-    const topic = `notifications:user:${effectiveUserId}`;
+    const topics = [
+      `notifications:user:${effectiveUserId}`,
+      ...effectiveOrgIds.map((orgId) => `notifications:org:${orgId}`),
+    ];
 
     const handleRealtimeNotification = (payload: any) => {
       if (!payload?.data) return;
+      if (payload.type === 'notification_deleted' && payload.data?.id) {
+        setNotifications((prev) => prev.filter((entry) => entry.id !== payload.data.id));
+        return;
+      }
       const normalized = toDisplayNotification(payload.data);
       setNotifications(prev => {
         const copy = [...prev];
@@ -265,13 +354,15 @@ const RealtimeNotifications: React.FC<RealtimeNotificationsProps> = ({
     };
 
     wsClient.on('notification', handleRealtimeNotification);
-    wsClient.subscribeTopic(topic);
+    topics.forEach((topic) => wsClient.subscribeTopic(topic));
+    wsClient.on('notification_deleted', handleRealtimeNotification);
 
     return () => {
-      wsClient.unsubscribeTopic(topic);
+      topics.forEach((topic) => wsClient.unsubscribeTopic(topic));
       wsClient.off('notification', handleRealtimeNotification);
+      wsClient.off('notification_deleted', handleRealtimeNotification);
     };
-  }, [canFetch, effectiveUserId, normalizedLimit]);
+  }, [canFetch, effectiveOrgIds, effectiveUserId, normalizedLimit]);
 
   useEffect(() => {
     if (!canFetch || !refreshIntervalMs || refreshIntervalMs <= 0 || typeof window === 'undefined') {
@@ -333,16 +424,18 @@ const RealtimeNotifications: React.FC<RealtimeNotificationsProps> = ({
     if (!pendingDeleteNotification) return;
     setDeletingNotification(true);
     try {
+      await deleteLearnerNotification(pendingDeleteNotification.id);
       dismissNotification(pendingDeleteNotification.id);
       showToast('Deleted notification.', 'success');
       setPendingDeleteNotification(null);
     } catch (error) {
       console.error('Failed to delete notification', error);
       showToast('Unable to delete notification. Please try again.', 'error');
+      void fetchNotifications({ silent: true });
     } finally {
       setDeletingNotification(false);
     }
-  }, [dismissNotification, pendingDeleteNotification, showToast]);
+  }, [dismissNotification, fetchNotifications, pendingDeleteNotification, showToast]);
 
   const handleActionClick = useCallback(
     (notification: DisplayNotification) => {

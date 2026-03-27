@@ -89,6 +89,30 @@ export const createNotificationService = ({ getSupabase, dispatcher, logger: cus
   const enqueueDispatch = dispatcher?.enqueueDispatch
     ? dispatcher.enqueueDispatch.bind(dispatcher)
     : () => {};
+  const broadcast = typeof dispatcher?.broadcast === 'function' ? dispatcher.broadcast.bind(dispatcher) : () => {};
+
+  const broadcastNotificationUpdate = (record, type = 'notification') => {
+    if (!record || typeof record !== 'object') return;
+
+    const payload = {
+      ...record,
+      payload:
+        record.metadata && typeof record.metadata === 'object'
+          ? record.metadata
+          : record.payload && typeof record.payload === 'object'
+            ? record.payload
+            : null,
+    };
+
+    if (record.user_id) {
+      broadcast(`notifications:user:${String(record.user_id).trim().toLowerCase()}`, { type, data: payload });
+    }
+
+    const resolvedOrgId = record.organization_id ?? record.org_id ?? null;
+    if (!record.user_id && resolvedOrgId) {
+      broadcast(`notifications:org:${resolvedOrgId}`, { type, data: payload });
+    }
+  };
 
   const createNotification = async (input) => {
     if (!input || !input.title) {
@@ -120,6 +144,7 @@ export const createNotificationService = ({ getSupabase, dispatcher, logger: cus
         sendEmail: payload.channel === 'email' || payload.channel === 'both' || input.sendEmail === true,
       });
     }
+    broadcastNotificationUpdate(data, 'notification');
     return data;
   };
 
@@ -137,6 +162,7 @@ export const createNotificationService = ({ getSupabase, dispatcher, logger: cus
       throw error;
     }
     log.info('notification_read', { notificationId: id, status });
+    broadcastNotificationUpdate(data, 'notification');
     return data;
   };
 

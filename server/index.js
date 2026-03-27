@@ -48,6 +48,7 @@ import {
   requireAdmin,
   optionalAuthenticate,
   resolveOrganizationContext,
+  invalidateMembershipCache,
 } from './middleware/auth.js';
 import requireAdminAccess from './middleware/requireAdminAccess.js';
 import supabaseJwtMiddleware, {
@@ -1272,12 +1273,13 @@ app.post('/api/admin/courses/:id/assign', authenticate, async (req, res) => {
     return { ...existingMeta, ...metadata };
   };
 
+  const assignmentsSupportUserIdUuid = await detectAssignmentsUserIdUuidColumnAvailability();
+
   const buildRecord = (userId) => {
     const record = {
       organization_id: finalOrganizationId,
       course_id: id,
       user_id: userId,
-      user_id_uuid: userId ?? null,
       assigned_by: assignedBy ?? null,
       status: statusValue,
       progress: progressValue ?? 0,
@@ -1288,6 +1290,9 @@ app.post('/api/admin/courses/:id/assign', authenticate, async (req, res) => {
       due_at: dueAtValue ?? null,
       note: noteValue ?? null,
     };
+    if (assignmentsSupportUserIdUuid) {
+      record.user_id_uuid = userId ?? null;
+    }
     return record;
   };
 
@@ -1456,12 +1461,14 @@ app.post('/api/admin/courses/:id/assign', authenticate, async (req, res) => {
         existingMap.set(resolveRowKey(row), row);
       });
 
-      const rowsByUuid = await fetchExistingByColumn('user_id_uuid');
-      rowsByUuid.forEach((row) => {
-        if (!row || seenAssignmentIds.has(row.id)) return;
-        seenAssignmentIds.add(row.id);
-        existingMap.set(resolveRowKey(row), row);
-      });
+      if (assignmentsSupportUserIdUuid) {
+        const rowsByUuid = await fetchExistingByColumn('user_id_uuid');
+        rowsByUuid.forEach((row) => {
+          if (!row || seenAssignmentIds.has(row.id)) return;
+          seenAssignmentIds.add(row.id);
+          existingMap.set(resolveRowKey(row), row);
+        });
+      }
     } else {
       const { data: existingOrg, error } = await supabase
         .from('assignments')
@@ -1488,9 +1495,11 @@ app.post('/api/admin/courses/:id/assign', authenticate, async (req, res) => {
           metadata: mergeMetadata(existing.metadata),
           updated_at: nowIso,
           active: true,
-          user_id_uuid: existing.user_id_uuid ?? existing.user_id ?? null,
           user_id: existing.user_id ?? existing.user_id_uuid ?? null,
         };
+        if (assignmentsSupportUserIdUuid) {
+          patch.user_id_uuid = existing.user_id_uuid ?? existing.user_id ?? null;
+        }
         if (dueProvided) patch.due_at = dueAtValue ?? null;
         if (noteProvided) patch.note = noteValue ?? null;
         if (statusProvided) patch.status = statusValue;
@@ -1507,7 +1516,7 @@ app.post('/api/admin/courses/:id/assign', authenticate, async (req, res) => {
       const { id: patchId, ...changes } = patch;
       const { data: updatedRow, error } = await supabase
         .from('assignments')
-        .update(changes)
+        .update(sanitizeAssignmentRecordForSchema(changes, { includeUserIdUuid: assignmentsSupportUserIdUuid }))
         .eq('id', patchId)
         .select('*')
         .maybeSingle();
@@ -1519,7 +1528,7 @@ app.post('/api/admin/courses/:id/assign', authenticate, async (req, res) => {
     if (inserts.length > 0) {
       const { data: newRows, error } = await supabase
         .from('assignments')
-        .insert(inserts)
+        .insert(inserts.map((record) => sanitizeAssignmentRecordForSchema(record, { includeUserIdUuid: assignmentsSupportUserIdUuid })))
         .select('*');
       if (error) throw error;
       insertedRows = newRows || [];
@@ -2538,6 +2547,47 @@ if (E2E_TEST_MODE) {
   supabaseAuthClient = null;
 }
 let loggedMissingSupabaseConfig = false;
+let assignmentsUserIdUuidColumnAvailable = null;
+
+const isAssignmentsUserIdUuidColumnMissing = (error) => {
+  if (!isMissingColumnError(error)) return false;
+  const missing = normalizeColumnIdentifier(extractMissingColumnName(error));
+  return missing === 'user_id_uuid';
+};
+
+const sanitizeAssignmentRecordForSchema = (record, { includeUserIdUuid }) => {
+  if (!record || typeof record !== 'object') return record;
+  if (includeUserIdUuid) return record;
+  const { user_id_uuid, ...legacyCompatible } = record;
+  return legacyCompatible;
+};
+
+const detectAssignmentsUserIdUuidColumnAvailability = async () => {
+  if (!supabase) return false;
+  if (typeof assignmentsUserIdUuidColumnAvailable === 'boolean') {
+    return assignmentsUserIdUuidColumnAvailable;
+  }
+
+  try {
+    const { error } = await supabase
+      .from('assignments')
+      .select('id', { head: true, count: 'exact' })
+      .is('user_id_uuid', null);
+    if (error) throw error;
+    assignmentsUserIdUuidColumnAvailable = true;
+  } catch (error) {
+    if (isAssignmentsUserIdUuidColumnMissing(error)) {
+      assignmentsUserIdUuidColumnAvailable = false;
+      logger.warn('assignments_user_id_uuid_column_missing', {
+        message: 'user_id_uuid column does not exist on assignments — assignment writes will use legacy user_id-only payloads',
+      });
+      return false;
+    }
+    throw error;
+  }
+
+  return assignmentsUserIdUuidColumnAvailable;
+};
 
 const auditUserCourseProgressUuid = async () => {
   if (!supabase) return;
@@ -2570,6 +2620,11 @@ const auditUserCourseProgressUuid = async () => {
 
 if (supabase) {
   auditUserCourseProgressUuid();
+  detectAssignmentsUserIdUuidColumnAvailability().catch((error) => {
+    logger.warn('assignments_user_id_uuid_audit_failed', {
+      message: error?.message ?? String(error),
+    });
+  });
 }
 
 const mediaService = createMediaService({
@@ -2581,7 +2636,10 @@ const mediaService = createMediaService({
 const notificationDispatcher = setupNotificationDispatcher({ supabase, emailSender: sendEmail });
 const notificationService = createNotificationService({
   getSupabase: () => supabase,
-  dispatcher: notificationDispatcher,
+  dispatcher: {
+    ...notificationDispatcher,
+    broadcast: broadcastToTopic,
+  },
   logger,
 });
 app.locals.notificationService = notificationService;
@@ -5206,6 +5264,65 @@ const normalizeOrgRole = (role, defaultRole = 'member') => {
 const normalizeProvisioningEmail = (value) =>
   typeof value === 'string' ? value.trim().toLowerCase() : '';
 
+const resolveSupabaseListUsersPageSize = () => {
+  const configured = Number(process.env.SUPABASE_AUTH_LIST_USERS_PAGE_SIZE || 200);
+  if (!Number.isFinite(configured)) return 200;
+  return Math.min(Math.max(Math.trunc(configured), 1), 1000);
+};
+
+const findAuthUserByEmail = async (email, { requestId = null, logPrefix = 'auth_user_lookup' } = {}) => {
+  if (!supabase) {
+    throw new Error('supabase_not_configured');
+  }
+
+  const normalizedEmail = normalizeProvisioningEmail(email);
+  if (!normalizedEmail) {
+    return null;
+  }
+
+  const directLookup = supabase.auth?.admin?.getUserByEmail;
+  if (typeof directLookup === 'function') {
+    const { data, error } = await directLookup.call(supabase.auth.admin, normalizedEmail);
+    if (error && error.message !== 'User not found') {
+      throw error;
+    }
+    return data?.user ?? null;
+  }
+
+  const perPage = resolveSupabaseListUsersPageSize();
+  let page = 1;
+  while (page <= 50) {
+    const { data, error } = await supabase.auth.admin.listUsers({ page, perPage });
+    if (error) {
+      throw error;
+    }
+
+    const users = Array.isArray(data?.users) ? data.users : [];
+    const match = users.find((user) => normalizeProvisioningEmail(user?.email) === normalizedEmail) ?? null;
+    if (match) {
+      return match;
+    }
+
+    const nextPage = Number(data?.nextPage ?? 0);
+    if (Number.isFinite(nextPage) && nextPage > page) {
+      page = nextPage;
+      continue;
+    }
+
+    if (users.length < perPage) {
+      break;
+    }
+
+    page += 1;
+  }
+
+  logger.info(`${logPrefix}_not_found`, {
+    requestId,
+    email: normalizedEmail,
+  });
+  return null;
+};
+
 const buildProvisionedProfileMetadata = ({
   firstName = '',
   lastName = '',
@@ -6195,11 +6312,10 @@ const seedOrgOwner = async ({ orgId, orgName, ownerEmail, ownerName, actor, requ
 
   let existingAuthUser = null;
   try {
-    const { data, error } = await supabase.auth.admin.getUserByEmail(normalizedEmail);
-    if (error && error.message !== 'User not found') {
-      throw error;
-    }
-    existingAuthUser = data?.user ?? null;
+    existingAuthUser = await findAuthUserByEmail(normalizedEmail, {
+      requestId,
+      logPrefix: 'organization_owner_lookup',
+    });
   } catch (error) {
     logger.warn('organization_owner_lookup_failed', {
       orgId,
@@ -6913,6 +7029,52 @@ const resolveUserMessageRecipients = async (userId, provided = []) => {
   return sanitizeRecipientEmails(candidates);
 };
 
+const resolveOrganizationAdminUserIds = async (orgId) => {
+  if (!supabase || !orgId) return [];
+
+  try {
+    const { data, error } = await supabase
+      .from('organization_memberships')
+      .select('user_id, role, status, organization_id, org_id')
+      .or(`organization_id.eq.${orgId},org_id.eq.${orgId}`)
+      .limit(500);
+    if (error) throw error;
+
+    return Array.from(
+      new Set(
+        (data || [])
+          .filter((row) => row?.user_id && String(row.status || 'active').toLowerCase() !== 'inactive')
+          .filter((row) => hasOrgAdminRole(row.role))
+          .map((row) => row.user_id)
+      )
+    );
+  } catch (error) {
+    logger.warn('organization_admin_recipient_lookup_failed', {
+      orgId,
+      message: error?.message || String(error),
+    });
+    return [];
+  }
+};
+
+const resolvePlatformAdminUserIds = async () => {
+  if (!supabase) return [];
+  try {
+    const { data, error } = await supabase
+      .from('admin_users')
+      .select('user_id, email')
+      .eq('is_active', true)
+      .limit(200);
+    if (error) throw error;
+    return Array.from(new Set((data || []).map((row) => row?.user_id).filter(Boolean)));
+  } catch (error) {
+    logger.warn('platform_admin_recipient_lookup_failed', {
+      message: error?.message || String(error),
+    });
+    return [];
+  }
+};
+
 const normalizeMessageChannel = (channel) => {
   const normalized = String(channel || '').toLowerCase();
   if (MESSAGE_CHANNELS.has(normalized)) {
@@ -7482,13 +7644,40 @@ const buildAssignmentNotificationTitle = (assignmentType, entityTitle) => {
     : `New survey assigned: ${entityTitle || fallback}`;
 };
 
-const assignmentNotificationMetadata = (row) => ({
+const buildAssignmentNotificationAction = (assignmentType, row) => {
+  if (assignmentType === 'course' && row?.course_id) {
+    return {
+      actionUrl: `/client/courses/${encodeURIComponent(row.course_id)}`,
+      actionLabel: 'Open course',
+    };
+  }
+
+  if (assignmentType === 'survey' && (row?.survey_id || row?.id)) {
+    const params = new URLSearchParams();
+    if (row?.id) params.set('assignment', row.id);
+    if (row?.survey_id) params.set('focus', row.survey_id);
+    const suffix = params.toString();
+    return {
+      actionUrl: suffix ? `/client/surveys?${suffix}` : '/client/surveys',
+      actionLabel: 'Open survey',
+    };
+  }
+
+  return {
+    actionUrl: '/lms/dashboard',
+    actionLabel: 'Open learning hub',
+  };
+};
+
+const assignmentNotificationMetadata = (assignmentType, row) => ({
   assignmentId: row?.id ?? null,
   courseId: row?.course_id ?? null,
   surveyId: row?.survey_id ?? null,
   organizationId: row?.organization_id ?? row?.org_id ?? null,
   dueAt: row?.due_at ?? null,
   status: row?.status ?? null,
+  assignmentType,
+  ...buildAssignmentNotificationAction(assignmentType, row),
 });
 
 const notifyAssignmentRecipients = async ({ assignmentType, assignments = [], actor = null }) => {
@@ -7537,7 +7726,7 @@ const notifyAssignmentRecipients = async ({ assignmentType, assignments = [], ac
         organizationId,
         userId,
         type: assignmentType === 'course' ? 'course_assignment' : 'survey_assignment',
-        metadata: assignmentNotificationMetadata(assignment),
+        metadata: assignmentNotificationMetadata(assignmentType, assignment),
         priority: 'normal',
         channel: 'in_app',
       });
@@ -7765,8 +7954,299 @@ async function upsertOrganizationMembership(orgId, userId, role, actor) {
   if (error) {
     throw error;
   }
+  invalidateMembershipCache(userId);
+  await assignPublishedOrganizationContentToUser({
+    orgId,
+    userId,
+    actorUserId: actor?.userId ?? null,
+  });
   await recordActivationEvent(orgId, 'membership_upserted', { userId, role }, actor);
   return data;
+}
+
+async function listPublishedOrganizationCourseIds(orgId) {
+  if (!supabase || !orgId) return [];
+
+  const candidates = [
+    { column: 'organization_id' },
+    { column: 'org_id' },
+  ];
+
+  for (const candidate of candidates) {
+    const { data, error } = await supabase
+      .from('courses')
+      .select('id')
+      .eq(candidate.column, orgId)
+      .eq('status', 'published');
+
+    if (error) {
+      if (isMissingColumnError(error)) {
+        continue;
+      }
+      throw error;
+    }
+
+    return Array.from(new Set((data || []).map((row) => row?.id).filter(Boolean)));
+  }
+
+  return [];
+}
+
+async function listPublishedOrganizationSurveyIds(orgId) {
+  if (!supabase || !orgId) return [];
+
+  const { data, error } = await supabase
+    .from('surveys')
+    .select('id')
+    .eq('status', 'published');
+  if (error) throw error;
+
+  const surveyIds = (data || []).map((row) => row?.id).filter(Boolean);
+  if (!surveyIds.length) return [];
+
+  const assignmentMap = await fetchSurveyAssignmentsMap(surveyIds);
+  return surveyIds.filter((surveyId) => {
+    const assignmentRecord = assignmentMap.get(surveyId);
+    const assignedTo = applyAssignmentToSurvey({ id: surveyId }, assignmentRecord)?.assignedTo;
+    const orgIds = Array.isArray(assignedTo?.organizationIds)
+      ? assignedTo.organizationIds.map((value) => String(value || '').trim()).filter(Boolean)
+      : [];
+    return orgIds.includes(String(orgId).trim());
+  });
+}
+
+async function assignPublishedOrganizationCoursesToUser({ orgId, userId, actorUserId = null }) {
+  if (!supabase || !orgId || !userId) return { inserted: 0, updated: 0, skipped: 0 };
+
+  const courseIds = await listPublishedOrganizationCourseIds(orgId);
+  if (!courseIds.length) return { inserted: 0, updated: 0, skipped: 0 };
+
+  const assignmentsSupportUserIdUuid = await detectAssignmentsUserIdUuidColumnAvailability();
+  const existingMap = new Map();
+  const seenAssignmentIds = new Set();
+
+  const fetchExistingByColumn = async (column) => {
+    const { data, error } = await supabase
+      .from('assignments')
+      .select('id,course_id,user_id,user_id_uuid,metadata,assigned_by,active')
+      .eq('organization_id', orgId)
+      .eq('active', true)
+      .in('course_id', courseIds)
+      .eq(column, userId);
+    if (error) throw error;
+    return data || [];
+  };
+
+  const rowsByUserId = await fetchExistingByColumn('user_id');
+  rowsByUserId.forEach((row) => {
+    if (!row?.course_id) return;
+    seenAssignmentIds.add(row.id);
+    existingMap.set(String(row.course_id), row);
+  });
+
+  if (assignmentsSupportUserIdUuid) {
+    const rowsByUuid = await fetchExistingByColumn('user_id_uuid');
+    rowsByUuid.forEach((row) => {
+      if (!row?.course_id || seenAssignmentIds.has(row.id)) return;
+      seenAssignmentIds.add(row.id);
+      existingMap.set(String(row.course_id), row);
+    });
+  }
+
+  const metadata = {
+    assigned_via: 'organization_membership_auto_assign',
+    assignment_source: 'organization_membership',
+  };
+
+  const updates = [];
+  const inserts = [];
+  const nowIso = new Date().toISOString();
+
+  courseIds.forEach((courseId) => {
+    const existing = existingMap.get(String(courseId));
+    if (existing) {
+      updates.push({
+        id: existing.id,
+        metadata: {
+          ...(existing.metadata && typeof existing.metadata === 'object' ? existing.metadata : {}),
+          ...metadata,
+        },
+        assigned_by: existing.assigned_by ?? actorUserId ?? null,
+        active: true,
+        updated_at: nowIso,
+      });
+      return;
+    }
+
+    const record = {
+      organization_id: orgId,
+      course_id: courseId,
+      user_id: userId,
+      user_id_uuid: userId,
+      assignment_type: 'course',
+      assigned_by: actorUserId ?? null,
+      status: 'assigned',
+      progress: 0,
+      metadata,
+      active: true,
+      due_at: null,
+      note: null,
+    };
+    inserts.push(sanitizeAssignmentRecordForSchema(record, { includeUserIdUuid: assignmentsSupportUserIdUuid }));
+  });
+
+  for (const update of updates) {
+    const { id, ...changes } = update;
+    const { error } = await supabase
+      .from('assignments')
+      .update(changes)
+      .eq('id', id);
+    if (error) throw error;
+  }
+
+  if (inserts.length > 0) {
+    const { error } = await supabase.from('assignments').insert(inserts);
+    if (error) throw error;
+  }
+
+  return {
+    inserted: inserts.length,
+    updated: updates.length,
+    skipped: Math.max(courseIds.length - inserts.length - updates.length, 0),
+  };
+}
+
+async function assignPublishedOrganizationSurveysToUser({ orgId, userId, actorUserId = null }) {
+  if (!supabase || !orgId || !userId) return { inserted: 0, updated: 0, skipped: 0 };
+
+  const surveyIds = await listPublishedOrganizationSurveyIds(orgId);
+  if (!surveyIds.length) return { inserted: 0, updated: 0, skipped: 0 };
+
+  const { data: existingRows, error: existingError } = await supabase
+    .from('assignments')
+    .select('id,survey_id,metadata,assigned_by,active')
+    .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
+    .eq('organization_id', orgId)
+    .eq('user_id', userId)
+    .eq('active', true)
+    .in('survey_id', surveyIds);
+  if (existingError) throw existingError;
+
+  const existingMap = new Map((existingRows || []).filter((row) => row?.survey_id).map((row) => [String(row.survey_id), row]));
+  const metadata = {
+    assigned_via: 'organization_membership_auto_assign',
+    assignment_source: 'organization_membership',
+  };
+
+  const updates = [];
+  const inserts = [];
+
+  surveyIds.forEach((surveyId) => {
+    const existing = existingMap.get(String(surveyId));
+    if (existing) {
+      updates.push({
+        id: existing.id,
+        metadata: {
+          ...(existing.metadata && typeof existing.metadata === 'object' ? existing.metadata : {}),
+          ...metadata,
+        },
+        assigned_by: existing.assigned_by ?? actorUserId ?? null,
+        active: true,
+      });
+      return;
+    }
+
+    inserts.push({
+      survey_id: surveyId,
+      course_id: null,
+      organization_id: orgId,
+      user_id: userId,
+      assignment_type: SURVEY_ASSIGNMENT_TYPE,
+      status: 'assigned',
+      due_at: null,
+      note: null,
+      assigned_by: actorUserId ?? null,
+      metadata,
+      active: true,
+    });
+  });
+
+  for (const update of updates) {
+    const { id, ...changes } = update;
+    const { error } = await supabase
+      .from('assignments')
+      .update(changes)
+      .eq('id', id);
+    if (error) throw error;
+  }
+
+  if (inserts.length > 0) {
+    const { error } = await supabase.from('assignments').insert(inserts);
+    if (error) throw error;
+    await Promise.all(
+      Array.from(new Set(inserts.map((row) => row.survey_id).filter(Boolean))).map((surveyId) =>
+        refreshSurveyAssignmentAggregates(surveyId),
+      ),
+    );
+  }
+
+  return {
+    inserted: inserts.length,
+    updated: updates.length,
+    skipped: Math.max(surveyIds.length - inserts.length - updates.length, 0),
+  };
+}
+
+async function assignPublishedOrganizationContentToUser({ orgId, userId, actorUserId = null }) {
+  if (!supabase || !orgId || !userId) {
+    return {
+      courses: { inserted: 0, updated: 0, skipped: 0 },
+      surveys: { inserted: 0, updated: 0, skipped: 0 },
+    };
+  }
+
+  const [courses, surveys] = await Promise.all([
+    assignPublishedOrganizationCoursesToUser({ orgId, userId, actorUserId }),
+    assignPublishedOrganizationSurveysToUser({ orgId, userId, actorUserId }),
+  ]);
+
+  logger.info('organization_membership_auto_assignment_completed', {
+    orgId,
+    userId,
+    actorUserId: actorUserId ?? null,
+    courseInserted: courses.inserted,
+    courseUpdated: courses.updated,
+    surveyInserted: surveys.inserted,
+    surveyUpdated: surveys.updated,
+  });
+
+  return { courses, surveys };
+}
+
+async function assignPublishedOrganizationCoursesToActiveMembers({ orgId, actorUserId = null }) {
+  if (!supabase || !orgId) return { assignedUsers: 0 };
+
+  const members = await fetchOrgMembersWithProfiles(orgId);
+  const userIds = Array.from(
+    new Set(
+      (members || [])
+        .filter((member) => String(member?.status || '').toLowerCase() === 'active')
+        .map((member) => member?.user_id ?? member?.user?.id ?? null)
+        .filter(Boolean),
+    ),
+  );
+
+  for (const userId of userIds) {
+    await assignPublishedOrganizationCoursesToUser({ orgId, userId, actorUserId });
+  }
+
+  logger.info('organization_course_backfill_completed', {
+    orgId,
+    actorUserId: actorUserId ?? null,
+    assignedUsers: userIds.length,
+  });
+
+  return { assignedUsers: userIds.length };
 }
 
 async function upsertProvisionedUserRecord({
@@ -7937,11 +8417,10 @@ async function provisionOrganizationUserAccount({
   let authUser = null;
   let created = false;
   try {
-    const { data, error } = await supabase.auth.admin.getUserByEmail(normalizedEmail);
-    if (error && error.message !== 'User not found') {
-      throw error;
-    }
-    authUser = data?.user ?? null;
+    authUser = await findAuthUserByEmail(normalizedEmail, {
+      requestId,
+      logPrefix: 'admin_user_lookup',
+    });
   } catch (error) {
     logger.error('admin_user_lookup_failed', {
       requestId,
@@ -10845,6 +11324,17 @@ app.post('/api/admin/courses/import', asyncHandler(async (req, res) => {
         courseIndex: entry.index,
       });
     }
+    const hasPublishedImports = results.some((row) => String(row?.status || '').toLowerCase() === 'published');
+    if (hasPublishedImports) {
+      await assignPublishedOrganizationCoursesToActiveMembers({
+        orgId: resolvedOrganizationId,
+        actorUserId: context.userId ?? null,
+      });
+      logCourseImportEvent('import_assignment_backfill_complete', {
+        requestId: req.requestId ?? null,
+        orgId: resolvedOrganizationId,
+      });
+    }
     logCourseImportEvent('import_complete', {
       requestId: req.requestId ?? null,
       orgId: resolvedOrganizationId,
@@ -11075,8 +11565,10 @@ app.get('/api/client/assignments', authenticate, async (req, res) => {
   }
 });
 
-app.get('/api/client/surveys', async (req, res) => {
+app.get('/api/client/surveys', authenticate, async (req, res) => {
   if (!ensureSupabase(res)) return;
+  const context = requireUserContext(req, res);
+  if (!context) return;
   const rawStatus = typeof req.query.status === 'string' ? req.query.status.trim().toLowerCase() : '';
   const statusFilter = rawStatus && rawStatus !== 'all' ? rawStatus : null;
   const wantsAllStatuses = rawStatus === 'all';
@@ -11087,7 +11579,29 @@ app.get('/api/client/surveys', async (req, res) => {
       : typeof req.query.organizationId === 'string'
       ? req.query.organizationId
       : '';
-  const orgFilter = rawOrgQuery.trim() || req.activeOrgId || null;
+  const requestedOrgId = rawOrgQuery.trim() || null;
+  const membershipOrgIds = Array.isArray(context.organizationIds)
+    ? context.organizationIds.map((value) => String(value || '').trim()).filter(Boolean)
+    : [];
+  const membershipOrgIdSet = new Set(membershipOrgIds);
+  const activeOrgId = req.activeOrgId ? String(req.activeOrgId).trim() : null;
+  const orgFilter = requestedOrgId || activeOrgId || null;
+
+  if (!context.isPlatformAdmin && membershipOrgIds.length === 0) {
+    res.status(403).json({
+      error: 'org_membership_required',
+      message: 'Organization membership required.',
+    });
+    return;
+  }
+
+  if (requestedOrgId && !context.isPlatformAdmin && !membershipOrgIdSet.has(requestedOrgId)) {
+    res.status(403).json({
+      error: 'org_forbidden',
+      message: 'You do not have access to this organization.',
+    });
+    return;
+  }
 
   try {
     if (!supabase) {
@@ -11107,6 +11621,15 @@ app.get('/api/client/surveys', async (req, res) => {
             [];
           if (!Array.isArray(orgIds) || orgIds.length === 0) return true;
           return orgIds.map(String).includes(orgFilter);
+        });
+      } else if (!context.isPlatformAdmin) {
+        records = records.filter((survey) => {
+          const orgIds =
+            survey.assignedTo?.organizationIds ||
+            survey.assigned_to?.organizationIds ||
+            [];
+          if (!Array.isArray(orgIds) || orgIds.length === 0) return false;
+          return orgIds.map(String).some((id) => membershipOrgIdSet.has(id));
         });
       }
 
@@ -11134,6 +11657,12 @@ app.get('/api/client/surveys', async (req, res) => {
         const orgIds = survey.assignedTo?.organizationIds ?? survey.assigned_to?.organizationIds ?? [];
         if (!Array.isArray(orgIds) || orgIds.length === 0) return true;
         return orgIds.map(String).includes(orgFilter);
+      });
+    } else if (!context.isPlatformAdmin) {
+      shaped = shaped.filter((survey) => {
+        const orgIds = survey.assignedTo?.organizationIds ?? survey.assigned_to?.organizationIds ?? [];
+        if (!Array.isArray(orgIds) || orgIds.length === 0) return false;
+        return orgIds.map(String).some((id) => membershipOrgIdSet.has(id));
       });
     }
 
@@ -15972,11 +16501,10 @@ app.post('/api/invite/:token/accept', async (req, res) => {
 
     let authUser = null;
     try {
-      const { data, error } = await supabase.auth.admin.getUserByEmail(inviteRecord.email);
-      if (error && error.message !== 'User not found') {
-        throw error;
-      }
-      authUser = data?.user ?? null;
+      authUser = await findAuthUserByEmail(inviteRecord.email, {
+        requestId: req.requestId ?? null,
+        logPrefix: 'invite_accept_lookup',
+      });
     } catch (error) {
       logger.error('invite_accept_lookup_failed', { message: error?.message || String(error) });
       res.status(500).json({ error: 'Unable to validate invite email' });
@@ -17510,14 +18038,18 @@ app.get('/api/client/documents', authenticate, asyncHandler(async (req, res) => 
       .order('created_at', { ascending: false });
 
     if (requestedOrgId) {
-      // Show global docs + docs scoped to this org
-      query = query.or(`visibility.eq.global,and(visibility.eq.org,organization_id.eq.${requestedOrgId})`);
+      const userId = context.userId;
+      // Show global docs + docs scoped to this org + docs shared directly with this user.
+      query = query.or(
+        `visibility.eq.global,and(visibility.eq.org,organization_id.eq.${requestedOrgId}),and(visibility.eq.user,user_id.eq.${userId})`
+      );
     } else {
-      query = query.eq('visibility', 'global');
+      query = query.or(`visibility.eq.global,and(visibility.eq.user,user_id.eq.${context.userId})`);
     }
 
     const { data, error } = await query;
     if (error) throw error;
+    await refreshDocumentSignedUrls(data ?? []);
     res.json({ data: data ?? [] });
   } catch (error) {
     console.error('[client.documents.list] Failed to fetch documents:', error);
@@ -17841,6 +18373,193 @@ app.post('/api/admin/documents/:id/download', async (req, res) => {
     res.status(500).json({ error: 'Unable to record download' });
   }
 });
+
+app.post('/api/client/documents/:id/download', authenticate, asyncHandler(async (req, res) => {
+  const context = requireUserContext(req, res);
+  if (!context) return;
+  if (!ensureSupabase(res)) return;
+
+  const { id } = req.params;
+  const requestedOrgIds = Array.isArray(context.organizationIds)
+    ? context.organizationIds.filter((value) => typeof value === 'string' && value.trim())
+    : [];
+
+  try {
+    const { data: documentRow, error: documentError } = await supabase
+      .from('documents')
+      .select('*')
+      .eq('id', id)
+      .maybeSingle();
+    if (documentError) throw documentError;
+    if (!documentRow) {
+      res.status(404).json({ error: 'Document not found' });
+      return;
+    }
+
+    const visibility = String(documentRow.visibility || 'global').toLowerCase();
+    const docOrgId = normalizeOrgIdValue(documentRow.organization_id ?? documentRow.org_id ?? null);
+    const docUserId = documentRow.user_id ?? null;
+
+    if (visibility === 'user') {
+      if (!docUserId || docUserId !== context.userId) {
+        res.status(403).json({ error: 'forbidden', message: 'Document is not assigned to this user' });
+        return;
+      }
+    } else if (visibility === 'org') {
+      if (!docOrgId) {
+        res.status(403).json({ error: 'forbidden', message: 'Document organization scope is invalid' });
+        return;
+      }
+      if (!requestedOrgIds.includes(docOrgId)) {
+        const access = await requireOrgAccess(req, res, docOrgId, { write: false });
+        if (!access) return;
+      }
+    }
+
+    const { data, error } = await supabase.rpc('increment_document_download', { doc_id: id });
+    if (error) throw error;
+    await refreshDocumentSignedUrls(data ? [data] : []);
+    res.json({ data });
+  } catch (error) {
+    console.error('Failed to record client document download:', error);
+    res.status(500).json({ error: 'Unable to record download' });
+  }
+}));
+
+app.post('/api/learner/feedback', authenticate, asyncHandler(async (req, res) => {
+  const context = requireUserContext(req, res);
+  if (!context) return;
+  if (!ensureSupabase(res)) return;
+
+  const payload = req.body || {};
+  const feedbackType = String(payload.feedbackType || payload.type || 'general').trim().toLowerCase();
+  const subject = String(payload.subject || '').trim();
+  const message = String(payload.message || '').trim();
+  const moduleName = String(payload.module || '').trim() || null;
+  const improvement = String(payload.improvement || '').trim() || null;
+  const recommend = String(payload.recommend || '').trim() || null;
+  const anonymous = payload.anonymous === true;
+  const ratingRaw = Number(payload.rating);
+  const rating = Number.isFinite(ratingRaw) && ratingRaw >= 1 && ratingRaw <= 5 ? ratingRaw : null;
+  const pagePath = String(payload.pagePath || req.headers.referer || '/lms/feedback').trim();
+  const organizationId = normalizeOrgIdValue(
+    payload.organizationId ?? payload.organization_id ?? context.organizationId ?? context.activeOrganizationId ?? null
+  );
+
+  if (!subject || !message) {
+    res.status(400).json({
+      ok: false,
+      code: 'validation_failed',
+      message: 'Subject and feedback message are required.',
+      requestId: req.requestId ?? null,
+    });
+    return;
+  }
+
+  const displayName =
+    (typeof context.name === 'string' && context.name.trim()) ||
+    (typeof context.email === 'string' && context.email.trim()) ||
+    'Learner';
+  const feedbackBody = [
+    `Type: ${feedbackType}`,
+    rating ? `Rating: ${rating}/5` : null,
+    moduleName ? `Module: ${moduleName}` : null,
+    recommend ? `Recommendation: ${recommend}` : null,
+    anonymous ? 'Submitted anonymously to admins' : `Submitted by: ${displayName}`,
+    '',
+    message,
+    improvement ? `\nImprovement suggestions:\n${improvement}` : null,
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  const metadata = {
+    source: 'learner_feedback',
+    feedbackType,
+    rating,
+    module: moduleName,
+    improvement,
+    recommend,
+    anonymous,
+    pagePath,
+    userId: anonymous ? null : context.userId,
+    userEmail: anonymous ? null : context.email ?? null,
+    organizationId: organizationId ?? null,
+    requestId: req.requestId ?? null,
+    userAgent: req.headers['user-agent'] ?? null,
+  };
+
+  const record = await insertMessageLog({
+    organizationId: organizationId ?? null,
+    recipientType: organizationId ? 'organization' : 'platform',
+    recipientId: organizationId ?? null,
+    subject: `Learner feedback: ${subject}`,
+    body: feedbackBody,
+    channel: 'in_app',
+    actor: anonymous ? null : { userId: context.userId },
+    metadata,
+  });
+
+  const adminRecipientIds = organizationId
+    ? await resolveOrganizationAdminUserIds(organizationId)
+    : await resolvePlatformAdminUserIds();
+  if (notificationService) {
+    const notificationPayload = {
+      title: anonymous ? 'New anonymous learner feedback' : 'New learner feedback submitted',
+      body: subject,
+      type: 'feedback_submission',
+      priority: 'normal',
+      channel: 'in_app',
+      metadata: {
+        ...metadata,
+        messageLogId: record.id,
+        actionUrl: '/admin/dashboard',
+        actionLabel: 'Review feedback',
+        subject,
+      },
+    };
+
+    if (adminRecipientIds.length > 0) {
+      await Promise.all(
+        adminRecipientIds.map((adminUserId) =>
+          notificationService.createNotification({
+            ...notificationPayload,
+            organizationId,
+            userId: adminUserId,
+          }).catch((error) => {
+            logger.warn('learner_feedback_admin_notification_failed', {
+              adminUserId,
+              organizationId,
+              message: error?.message || String(error),
+            });
+          })
+        )
+      );
+    } else {
+      await notificationService.createNotification({
+        ...notificationPayload,
+        organizationId,
+        userId: null,
+      }).catch((error) => {
+        logger.warn('learner_feedback_org_notification_failed', {
+          organizationId,
+          message: error?.message || String(error),
+        });
+      });
+    }
+  }
+
+  res.status(201).json({
+    ok: true,
+    requestId: req.requestId ?? null,
+    data: {
+      id: record.id,
+      subject,
+      feedbackType,
+      createdAt: record.created_at ?? new Date().toISOString(),
+    },
+  });
+}));
 
 app.delete('/api/admin/documents/:id', async (req, res) => {
   if (!ensureSupabase(res)) return;
@@ -18694,6 +19413,189 @@ app.get('/api/learner/notifications', async (req, res) => {
       ok: false,
       code: 'notifications_fetch_failed',
       message: 'Unable to load notifications',
+      requestId: req.requestId ?? null,
+    });
+  }
+});
+
+app.post('/api/learner/notifications/:id/read', async (req, res) => {
+  const context = requireUserContext(req, res);
+  if (!context) return;
+  if (!ENABLE_NOTIFICATIONS) {
+    res.json({ ok: true, data: null, notificationsDisabled: true, requestId: req.requestId ?? null });
+    return;
+  }
+  if (!ensureSupabase(res)) return;
+
+  const { id } = req.params;
+
+  try {
+    const existing = await supabase
+      .from('notifications')
+      .select('id, organization_id, org_id, user_id')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (existing.error) {
+      if (isNotificationsTableMissingError(existing.error)) {
+        logNotificationsMissingTable('learner.markRead.lookup', { code: existing.error.code });
+        res.json({ ok: true, data: null, notificationsDisabled: true, requestId: req.requestId ?? null });
+        return;
+      }
+      throw existing.error;
+    }
+
+    const note = existing.data;
+    if (!note) {
+      res.status(404).json({
+        ok: false,
+        code: 'not_found',
+        message: 'Notification not found',
+        requestId: req.requestId ?? null,
+      });
+      return;
+    }
+
+    const noteOrgId = normalizeOrgIdValue(note.organization_id ?? note.org_id ?? null);
+    if (note.user_id) {
+      if (note.user_id !== context.userId) {
+        res.status(403).json({
+          ok: false,
+          code: 'forbidden',
+          message: 'Cannot modify another user\'s notification',
+          requestId: req.requestId ?? null,
+        });
+        return;
+      }
+    } else if (noteOrgId) {
+      const access = await requireOrgAccess(req, res, noteOrgId, { write: false });
+      if (!access) return;
+    } else {
+      res.status(403).json({
+        ok: false,
+        code: 'forbidden',
+        message: 'Cannot modify global notification',
+        requestId: req.requestId ?? null,
+      });
+      return;
+    }
+
+    const data = notificationService
+      ? await notificationService.markNotificationRead(id, true)
+      : null;
+
+    res.json({
+      ok: true,
+      requestId: req.requestId ?? null,
+      data: mapNotificationRecord(data),
+    });
+  } catch (error) {
+    if (isNotificationsTableMissingError(error)) {
+      logNotificationsMissingTable('learner.markRead.catch', { message: error?.message });
+      res.json({ ok: true, data: null, notificationsDisabled: true, requestId: req.requestId ?? null });
+      return;
+    }
+    console.error('Failed to update learner notification status:', error);
+    res.status(500).json({
+      ok: false,
+      code: 'notifications_update_failed',
+      message: 'Unable to update notification',
+      requestId: req.requestId ?? null,
+    });
+  }
+});
+
+app.delete('/api/learner/notifications/:id', async (req, res) => {
+  const context = requireUserContext(req, res);
+  if (!context) return;
+  if (!ENABLE_NOTIFICATIONS) {
+    res.status(200).json({ ok: true, data: null, notificationsDisabled: true, requestId: req.requestId ?? null });
+    return;
+  }
+  if (!ensureSupabase(res)) return;
+
+  const { id } = req.params;
+
+  try {
+    const existing = await supabase
+      .from('notifications')
+      .select('id, organization_id, org_id, user_id')
+      .eq('id', id)
+      .maybeSingle();
+
+    if (existing.error) {
+      if (isNotificationsTableMissingError(existing.error)) {
+        logNotificationsMissingTable('learner.delete.lookup', { code: existing.error.code });
+        res.status(204).end();
+        return;
+      }
+      throw existing.error;
+    }
+
+    const note = existing.data;
+    if (!note) {
+      res.status(204).end();
+      return;
+    }
+
+    const noteOrgId = normalizeOrgIdValue(note.organization_id ?? note.org_id ?? null);
+    if (note.user_id) {
+      if (note.user_id !== context.userId) {
+        res.status(403).json({
+          ok: false,
+          code: 'forbidden',
+          message: 'Cannot delete another user\'s notification',
+          requestId: req.requestId ?? null,
+        });
+        return;
+      }
+    } else if (noteOrgId) {
+      const access = await requireOrgAccess(req, res, noteOrgId, { write: false });
+      if (!access) return;
+    } else {
+      res.status(403).json({
+        ok: false,
+        code: 'forbidden',
+        message: 'Cannot delete global notification',
+        requestId: req.requestId ?? null,
+      });
+      return;
+    }
+
+    const { error } = await supabase.from('notifications').delete().eq('id', id);
+    if (error) {
+      if (isNotificationsTableMissingError(error)) {
+        logNotificationsMissingTable('learner.delete.remove', { code: error.code });
+        res.status(204).end();
+        return;
+      }
+      throw error;
+    }
+
+    if (note.user_id) {
+      broadcastToTopic(`notifications:user:${String(note.user_id).trim().toLowerCase()}`, {
+        type: 'notification_deleted',
+        data: { id },
+      });
+    } else if (noteOrgId) {
+      broadcastToTopic(`notifications:org:${noteOrgId}`, {
+        type: 'notification_deleted',
+        data: { id },
+      });
+    }
+
+    res.status(204).end();
+  } catch (error) {
+    if (isNotificationsTableMissingError(error)) {
+      logNotificationsMissingTable('learner.delete.catch', { message: error?.message });
+      res.status(204).end();
+      return;
+    }
+    console.error('Failed to delete learner notification:', error);
+    res.status(500).json({
+      ok: false,
+      code: 'notifications_delete_failed',
+      message: 'Unable to delete notification',
       requestId: req.requestId ?? null,
     });
   }

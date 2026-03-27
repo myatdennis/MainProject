@@ -23,22 +23,20 @@ const SecureDocumentAction: React.FC<{ document: DocumentMeta }> = ({ document }
 const DocumentsPage: React.FC = () => {
   const { user } = useUserProfile();
   const orgId = user?.organizationId ?? null;
+  const userId = user?.id ?? null;
   const [docs, setDocs] = useState<DocumentMeta[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const load = async () => {
-      if (!orgId) {
-        setDocs([]);
-        setError('Join an organization to view shared documents.');
-        setLoading(false);
-        return;
-      }
       setLoading(true);
       setError(null);
       try {
-        const list = await documentService.listDocuments({ organizationId: orgId });
+        const list = await documentService.listDocuments({
+          organizationId: orgId ?? undefined,
+          userId: userId ?? undefined,
+        });
         setDocs(list);
       } catch (err) {
         setError('Unable to load documents right now.');
@@ -48,7 +46,7 @@ const DocumentsPage: React.FC = () => {
       }
     };
     load();
-  }, [orgId]);
+  }, [orgId, userId]);
 
   return (
     <div className="container">
@@ -71,7 +69,7 @@ const DocumentsPage: React.FC = () => {
               </div>
               <div className="flex items-center gap-4">
                 <div className="text-sm muted-text">Downloads: {d.downloadCount || 0}</div>
-                <div>{d.url ? <SecureDocumentAction document={d} /> : <span className="muted-text">No file</span>}</div>
+                <div>{d.id ? <SecureDocumentAction document={d} /> : <span className="muted-text">No file</span>}</div>
               </div>
             </div>
           ))}

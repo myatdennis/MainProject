@@ -126,6 +126,7 @@ export const listDocuments = async (opts?: {
   const endpoint = resolveDocumentsEndpoint(opts?.forceAdmin);
   const params = new URLSearchParams();
   if (opts?.organizationId) params.set('orgId', opts.organizationId);
+  if (opts?.userId) params.set('userId', opts.userId);
   const url = params.toString() ? `${endpoint}?${params.toString()}` : endpoint;
   const json = await request<{ data: any[] }>(url);
   let docs = (json.data || []).map(mapDocumentRecord);
@@ -169,13 +170,19 @@ export const listDocuments = async (opts?: {
 
   if (opts?.organizationId) {
     docs = docs.filter(
-      (doc) => doc.visibility === 'global' || (doc.visibility === 'org' && doc.organizationId === opts.organizationId),
+      (doc) =>
+        doc.visibility === 'global' ||
+        (doc.visibility === 'org' && doc.organizationId === opts.organizationId) ||
+        (opts?.userId ? doc.visibility === 'user' && doc.userId === opts.userId : false),
     );
   }
 
   if (opts?.userId) {
     docs = docs.filter(
-      (doc) => doc.visibility === 'global' || (doc.visibility === 'user' && doc.userId === opts.userId),
+      (doc) =>
+        doc.visibility === 'global' ||
+        (doc.visibility === 'user' && doc.userId === opts.userId) ||
+        (opts?.organizationId ? doc.visibility === 'org' && doc.organizationId === opts.organizationId : false),
     );
   }
 
@@ -265,7 +272,9 @@ export const addDocument = async (
 };
 
 export const recordDownload = async (id: string) => {
-  const json = await request<{ data: any }>(`/api/admin/documents/${id}/download`, {
+  const isAdmin = typeof window !== 'undefined' && window.location.pathname.startsWith('/admin');
+  const path = isAdmin ? `/api/admin/documents/${id}/download` : `/api/client/documents/${id}/download`;
+  const json = await request<{ data: any }>(path, {
     method: 'POST',
   });
   return mapDocumentRecord(json.data);

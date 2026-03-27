@@ -12,6 +12,7 @@ export type Notification = {
   readAt?: string | null;
   read?: boolean;
   payload?: Record<string, unknown> | null;
+  metadata?: Record<string, unknown> | null;
   messageId?: string | null;
 };
 
@@ -66,7 +67,8 @@ const mapNotification = (record: any): Notification => ({
       : typeof record.is_read === 'boolean'
         ? record.is_read
         : record.read ?? Boolean(record.readAt ?? record.read_at),
-  payload: record.payload ?? null,
+  payload: record.payload ?? record.metadata ?? null,
+  metadata: record.metadata ?? record.payload ?? null,
   messageId: record.messageId ?? record.message_id ?? null,
 });
 
@@ -209,6 +211,14 @@ export const markLearnerNotificationsRead = async (ids: string[]) => {
   );
 };
 
+export const deleteLearnerNotification = async (id: string) => {
+  await apiFetch<void>('learner.delete', `/api/learner/notifications/${id}`, {
+    method: 'DELETE',
+    expectedStatus: [200, 204],
+    rawResponse: true,
+  });
+};
+
 export default {
   listNotifications,
   listAdminNotificationsWithMeta,
@@ -218,5 +228,6 @@ export default {
   clearNotifications,
   listLearnerNotifications,
   markLearnerNotificationRead,
-  markLearnerNotificationsRead
+  markLearnerNotificationsRead,
+  deleteLearnerNotification,
 };

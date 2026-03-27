@@ -46,7 +46,7 @@ const LMSLogin: React.FC = () => {
 
   useEffect(() => {
     if (isAuthenticated.lms) {
-      navigate('/client/dashboard');
+      navigate('/lms/dashboard', { replace: true });
     }
   }, [isAuthenticated.lms, navigate]);
 
@@ -95,7 +95,7 @@ const LMSLogin: React.FC = () => {
     setIsLoading(false);
     
     if (result.success) {
-      navigate('/client/dashboard');
+      navigate('/lms/dashboard', { replace: true });
     } else {
       setMessage(result.error || 'Sign-in failed.');
       setMessageType('error');

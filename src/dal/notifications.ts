@@ -9,6 +9,7 @@ export {
   deleteNotification,
   clearNotifications,
   listLearnerNotifications,
+  deleteLearnerNotification,
   markLearnerNotificationRead,
   markLearnerNotificationsRead,
 } from '../services/notificationService';
