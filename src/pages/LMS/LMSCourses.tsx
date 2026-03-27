@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   ArrowUpRight,
@@ -46,9 +46,11 @@ const LMSCourses = () => {
   const [progressRefreshToken, setProgressRefreshToken] = useState(0);
   const [isSyncing, setIsSyncing] = useState(false);
   const [catalogRetrying, setCatalogRetrying] = useState(false);
-  const [learnerCatalogState, setLearnerCatalogState] = useState(courseStore.getLearnerCatalogState());
   const syncDebounceRef = useRef<number | null>(null);
   const syncRanRef = useRef(false);
+  const adminCatalogState = useSyncExternalStore(courseStore.subscribe, courseStore.getAdminCatalogState);
+  const learnerCatalogState = useSyncExternalStore(courseStore.subscribe, courseStore.getLearnerCatalogState);
+  const allCourses = useSyncExternalStore(courseStore.subscribe, courseStore.getAllCourses);
 
   const learnerId = useMemo(() => {
     if (user?.email) return user.email.toLowerCase();
@@ -57,17 +59,11 @@ const LMSCourses = () => {
   }, [user]);
 
   useEffect(() => {
-    const unsubscribe = courseStore.subscribe(() => {
-      setLearnerCatalogState(courseStore.getLearnerCatalogState());
-      // Also refresh the published-courses list whenever the store catalog changes.
-      setProgressRefreshToken((t) => t + 1);
-    });
-    return unsubscribe;
-  }, []);
+    setProgressRefreshToken((t) => t + 1);
+  }, [allCourses]);
 
   const publishedCourses = useMemo(() => {
-    return courseStore
-      .getAllCourses()
+    return allCourses
       .filter((course) => course.status === 'published')
       .map((course) => {
         const normalized = normalizeCourse(course);
@@ -103,7 +99,7 @@ const LMSCourses = () => {
           resumeLessonId: nextLessonEntry?.lessonId ?? null,
         };
       });
-  }, [progressRefreshToken]);
+  }, [allCourses, progressRefreshToken]);
 
   const canSyncProgress = sessionStatus === 'authenticated' && orgResolutionStatus === 'ready';
   const hasCatalogLoaded = learnerCatalogState.status !== 'idle' || publishedCourses.length > 0;
@@ -112,10 +108,8 @@ const LMSCourses = () => {
     if (catalogRetrying) return;
     setCatalogRetrying(true);
     try {
-      if (typeof (courseStore as any).init === 'function') {
-        await (courseStore as any).init();
-        setProgressRefreshToken((token) => token + 1);
-      }
+      await courseStore.forceInit();
+      setProgressRefreshToken((token) => token + 1);
     } catch (error) {
       console.warn('[LMSCourses] Catalog retry failed:', error);
     } finally {
@@ -123,28 +117,25 @@ const LMSCourses = () => {
     }
   }, [catalogRetrying]);
 
-  // Ensure course store refreshes on landing (always fetch & merge latest)
   useEffect(() => {
-    let active = true;
-    (async () => {
-      try {
-        if (typeof (courseStore as any).init === 'function') {
-          setIsSyncing(true);
-          await (courseStore as any).init();
-          if (!active) return;
-          // Trigger recompute
-          setProgressRefreshToken((t) => t + 1);
-        }
-      } catch (err) {
+    if (adminCatalogState.phase !== 'idle' || learnerCatalogState.status !== 'idle') {
+      return;
+    }
+    setIsSyncing(true);
+    courseStore
+      .init()
+      .catch((err) => {
         console.warn('[LMSCourses] Failed to initialize course store:', err);
-      } finally {
-        if (active) setIsSyncing(false);
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, []);
+      })
+      .finally(() => {
+        setIsSyncing(false);
+      });
+  }, [adminCatalogState.phase, learnerCatalogState.status]);
+
+  const catalogLoading =
+    isSyncing ||
+    adminCatalogState.phase === 'loading' ||
+    (learnerCatalogState.status === 'idle' && publishedCourses.length === 0);
 
   useEffect(() => {
     if (syncRanRef.current) {
@@ -209,7 +200,7 @@ const LMSCourses = () => {
     });
   }, [publishedCourses, searchTerm, filterStatus]);
 
-  const showEmptyCatalogState = !isSyncing && publishedCourses.length === 0;
+  const showEmptyCatalogState = !catalogLoading && publishedCourses.length === 0;
   const showNoAssignmentsState = showEmptyCatalogState && learnerCatalogState.status === 'empty';
   const showCatalogErrorState = showEmptyCatalogState && learnerCatalogState.status === 'error';
 
@@ -342,7 +333,7 @@ const LMSCourses = () => {
           onAction={() => navigate('/lms/progress')}
         />
 
-        {isSyncing ? (
+        {catalogLoading ? (
           <div className="mt-8 grid grid-cols-1 gap-6 md:grid-cols-2 xl:grid-cols-3" aria-label="Loading courses">
             {Array.from({ length: 6 }).map((_, i) => (
               <Card key={i} className="flex h-full flex-col">

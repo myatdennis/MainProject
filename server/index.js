@@ -1611,7 +1611,6 @@ app.post('/api/admin/courses/:id/assign', authenticate, async (req, res) => {
 });
 
 app.get('/api/admin/courses/:id/assignments', authenticate, async (req, res) => {
-  if (!ensureSupabase(res)) return;
   const { id } = req.params;
   const organizationId = pickOrgId(req.query.orgId, req.query.organizationId);
 
@@ -1628,6 +1627,31 @@ app.get('/api/admin/courses/:id/assignments', authenticate, async (req, res) => 
 
   try {
     const activeOnly = String(req.query.active ?? 'true').toLowerCase() !== 'false';
+    if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+      const rows = (Array.isArray(e2eStore.assignments) ? e2eStore.assignments : [])
+        .filter((assignment) => {
+          if (!assignment) return false;
+          if (String(assignment.course_id) !== String(id)) return false;
+          const assignmentOrgId = pickOrgId(
+            assignment.organization_id,
+            assignment.organizationId,
+            assignment.org_id,
+            assignment.orgId,
+          );
+          if (String(assignmentOrgId) !== String(organizationId)) return false;
+          if (activeOnly && assignment.active === false) return false;
+          return true;
+        })
+        .sort((left, right) => {
+          const a = String(left?.created_at || '');
+          const b = String(right?.created_at || '');
+          return a < b ? 1 : a > b ? -1 : 0;
+        });
+      res.json({ data: rows, demo: true });
+      return;
+    }
+
+    if (!ensureSupabase(res)) return;
     let query = supabase
       .from('assignments')
       .select('*')
@@ -2395,12 +2419,12 @@ const checkSupabaseHealth = async () => {
 };
 
 // Load persisted data if available.
-// When Supabase is configured, NEVER seed e2eStore.courses from demo-data.json —
-// that file is stale, lacks modules/lessons, and corrupts the admin catalog.
-// Supabase is the ONLY source of truth for courses in production.
+// In DEV_FALLBACK/E2E mode the in-memory demo store is the source of truth, even
+// if Supabase credentials exist in the environment. Production keeps Supabase as
+// the only source of truth.
 const persistedData = loadPersistedData();
-const _loadCoursesFromDisk = !supabaseServerConfigured && (E2E_TEST_MODE || DEV_FALLBACK);
-if (supabaseServerConfigured && (persistedData.courses || []).length > 0) {
+const _loadCoursesFromDisk = Boolean(E2E_TEST_MODE || DEV_FALLBACK);
+if (supabaseServerConfigured && !DEV_FALLBACK && !E2E_TEST_MODE && (persistedData.courses || []).length > 0) {
   logger.warn('persistent_storage_courses_ignored', {
     message: 'demo-data.json contains courses but Supabase is configured — disk courses will NOT be loaded. Supabase is the sole source of truth.',
     diskCourseCount: (persistedData.courses || []).length,
@@ -2408,8 +2432,9 @@ if (supabaseServerConfigured && (persistedData.courses || []).length > 0) {
 }
 
 const e2eStore = {
-  // Only populate from disk when Supabase is NOT configured (pure demo / E2E mode).
-  // When Supabase is available this Map starts empty; all course reads go to the DB.
+  // DEV_FALLBACK/E2E always boot the in-memory demo catalog from disk so admin
+  // and learner flows have stable content even when Supabase is configured but
+  // intentionally bypassed.
   courses: _loadCoursesFromDisk ? new Map(persistedData.courses || []) : new Map(),
   assignments: [],
   courseProgress: new Map(), // key `${user_id}:${course_id}` -> { user_id, course_id, percent, status, time_spent_s, updated_at }
@@ -2486,6 +2511,100 @@ const respondInvalidOrg = (res, identifier) => {
     identifier,
     message: 'Organization not found. Please select a valid organization.',
   });
+};
+
+const buildDemoOrganizations = ({
+  adminOrgIds = [],
+  requestedOrgId = null,
+  search = '',
+  statuses = [],
+  subscriptions = [],
+  sort = 'created_at',
+  ascending = false,
+} = {}) => {
+  const nowIso = new Date().toISOString();
+  const orgIds = new Set();
+  orgIds.add(DEFAULT_SANDBOX_ORG_ID);
+
+  for (const course of e2eStore.courses.values()) {
+    const courseOrgId = pickOrgId(course?.organization_id, course?.organizationId, course?.org_id);
+    if (courseOrgId) {
+      orgIds.add(courseOrgId);
+    }
+  }
+
+  for (const assignment of Array.isArray(e2eStore.assignments) ? e2eStore.assignments : []) {
+    const assignmentOrgId = pickOrgId(
+      assignment?.organization_id,
+      assignment?.organizationId,
+      assignment?.org_id,
+      assignment?.orgId,
+    );
+    if (assignmentOrgId) {
+      orgIds.add(assignmentOrgId);
+    }
+  }
+
+  for (const adminOrgId of adminOrgIds) {
+    if (adminOrgId) {
+      orgIds.add(adminOrgId);
+    }
+  }
+
+  let organizations = Array.from(orgIds).map((orgId) => ({
+    id: orgId,
+    organization_id: orgId,
+    name: orgId === DEFAULT_SANDBOX_ORG_ID ? 'Demo Sandbox Organization' : `Organization ${orgId}`,
+    slug: String(orgId).toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+    status: 'active',
+    subscription: 'enterprise',
+    contact_email: orgId === DEFAULT_SANDBOX_ORG_ID ? 'sandbox@demo.local' : null,
+    contact_person: orgId === DEFAULT_SANDBOX_ORG_ID ? 'Demo Admin' : null,
+    created_at: nowIso,
+    updated_at: nowIso,
+    total_learners: 0,
+    active_learners: 0,
+    completion_rate: 0,
+  }));
+
+  if (requestedOrgId) {
+    organizations = organizations.filter((org) => org.id === requestedOrgId);
+  }
+
+  if (search) {
+    const term = String(search).trim().toLowerCase();
+    organizations = organizations.filter((org) =>
+      [org.id, org.name, org.contact_email, org.contact_person].some(
+        (value) => typeof value === 'string' && value.toLowerCase().includes(term),
+      ),
+    );
+  }
+
+  if (statuses.length > 0) {
+    const statusSet = new Set(statuses.map((value) => String(value).toLowerCase()));
+    organizations = organizations.filter((org) => statusSet.has(String(org.status || '').toLowerCase()));
+  }
+
+  if (subscriptions.length > 0) {
+    const subscriptionSet = new Set(subscriptions.map((value) => String(value).toLowerCase()));
+    organizations = organizations.filter((org) => subscriptionSet.has(String(org.subscription || '').toLowerCase()));
+  }
+
+  const readSortValue = (org) => {
+    if (sort === 'name') return String(org.name || '').toLowerCase();
+    if (sort === 'updated_at') return String(org.updated_at || '');
+    return String(org.created_at || '');
+  };
+
+  organizations.sort((left, right) => {
+    const a = readSortValue(left);
+    const b = readSortValue(right);
+    if (a === b) return String(left.id).localeCompare(String(right.id));
+    if (ascending) return a > b ? 1 : -1;
+    return a < b ? 1 : -1;
+  });
+
+  return organizations;
 };
 
 const logOrgResolutionEvent = (level, req, metadata = {}) => {
@@ -8800,7 +8919,7 @@ const normalizeKeyTakeawaysInput = (input) => {
 
 async function handleAdminCourseUpsert(req, res, options = {}) {
   const { courseIdFromParams = null } = options;
-  if (courseIdFromParams && !isUuidIdentifier(courseIdFromParams)) {
+  if (courseIdFromParams && !isUuidIdentifier(courseIdFromParams) && !(E2E_TEST_MODE || DEV_FALLBACK)) {
     res.status(400).json({
       error: 'invalid_course_id',
       message: 'Course ID must be a UUID.',
@@ -9545,7 +9664,7 @@ app.post('/api/admin/courses', asyncHandler(async (req, res) => {
 
 app.put('/api/admin/courses/:id', asyncHandler(async (req, res) => {
   const { id } = req.params;
-  if (!isUuidIdentifier(id)) {
+  if (!isUuidIdentifier(id) && !(E2E_TEST_MODE || DEV_FALLBACK)) {
     res.status(400).json({ error: 'invalid_course_id', message: 'Course ID must be a UUID.' });
     return;
   }
@@ -13830,13 +13949,8 @@ const logUsersStageError = (stage, error, meta = {}) => {
 };
 
 app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req, res) => {
-  if (!ensureSupabase(res)) return;
-  const schemaOk = await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.list', {
-    requestId: req.requestId ?? null,
-  });
-  if (!schemaOk) return;
   res.set('X-Organizations-Handler', 'express-v4');
-
+  const requestId = req.requestId ?? null;
   const context = requireUserContext(req, res);
   if (!context) return;
 
@@ -13880,7 +13994,6 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
   const sort = allowedSortFields.has(String(req.query.sort)) ? String(req.query.sort) : 'created_at';
   const ascending = String(req.query.direction).toLowerCase() === 'asc';
 
-  const requestId = req.requestId ?? null;
   logOrganizationsEvent('request_received', {
     requestId,
     status: 'ok',
@@ -13894,6 +14007,45 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
       source: 'express',
     },
   });
+
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    const demoOrganizations = buildDemoOrganizations({
+      adminOrgIds,
+      requestedOrgId,
+      search,
+      statuses,
+      subscriptions,
+      sort,
+      ascending,
+    });
+    const totalCount = demoOrganizations.length;
+    const safeOrganizations = demoOrganizations.slice(from, to + 1);
+    const orgIdsForProgress = safeOrganizations
+      .map((org) => org?.id || org?.organization_id || null)
+      .filter((orgId) => Boolean(orgId));
+    const progressPayload = await buildOrgProgressPayload(orgIdsForProgress, {
+      includeProgress: Boolean(includeProgress),
+      requestId,
+    });
+    res.json({
+      data: safeOrganizations,
+      pagination: {
+        page,
+        pageSize,
+        total: totalCount,
+        hasMore: to + 1 < totalCount,
+      },
+      progress: progressPayload,
+      demo: true,
+    });
+    return;
+  }
+
+  if (!ensureSupabase(res)) return;
+  const schemaOk = await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.list', {
+    requestId,
+  });
+  if (!schemaOk) return;
 
   const buildOrgQuery = () => {
     let query = supabase
@@ -16562,8 +16714,6 @@ const ensureDocumentsSchemaOrRespond = async (res, label) => {
 // Returns only global or org-scoped documents visible to the authenticated learner.
 // Does NOT expose documents belonging to other orgs or private admin-only docs.
 app.get('/api/client/documents', authenticate, asyncHandler(async (req, res) => {
-  if (!ensureSupabase(res)) return;
-  if (!(await ensureDocumentsSchemaOrRespond(res, 'client.documents.list'))) return;
   const context = requireUserContext(req, res);
   if (!context) return;
 
@@ -16572,6 +16722,14 @@ app.get('/api/client/documents', authenticate, asyncHandler(async (req, res) => 
     || null;
 
   try {
+    if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+      res.json({ data: [] });
+      return;
+    }
+
+    if (!ensureSupabase(res)) return;
+    if (!(await ensureDocumentsSchemaOrRespond(res, 'client.documents.list'))) return;
+
     let query = supabase
       .from('documents')
       .select('*')
@@ -17789,6 +17947,11 @@ app.get('/api/admin/notifications', async (req, res) => {
     res.json(buildDisabledNotificationsResponse(1, 25, req.requestId ?? null));
     return;
   }
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    const { page, pageSize } = parsePaginationParams(req, { defaultSize: 25, maxSize: 200 });
+    res.json(buildDisabledNotificationsResponse(page, pageSize, req.requestId ?? null));
+    return;
+  }
   if (!ensureSupabase(res)) return;
   const context = requireUserContext(req, res);
   if (!context) return;
@@ -17887,6 +18050,15 @@ app.get('/api/admin/notifications', async (req, res) => {
 
 app.post('/api/admin/notifications', async (req, res) => {
   if (!ENABLE_NOTIFICATIONS) {
+    res.status(202).json({
+      ok: true,
+      data: null,
+      notificationsDisabled: true,
+      requestId: req.requestId ?? null,
+    });
+    return;
+  }
+  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
     res.status(202).json({
       ok: true,
       data: null,

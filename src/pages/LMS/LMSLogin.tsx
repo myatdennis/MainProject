@@ -45,7 +45,9 @@ const LMSLogin: React.FC = () => {
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (isAuthenticated.lms) navigate('/client/dashboard');
+    if (isAuthenticated.lms) {
+      navigate('/client/dashboard');
+    }
   }, [isAuthenticated.lms, navigate]);
 
   useEffect(() => {
@@ -88,7 +90,7 @@ const LMSLogin: React.FC = () => {
     
     // Sanitize inputs
     const sanitizedEmail = sanitizeText(email.toLowerCase().trim());
-    
+
     const result = await login(sanitizedEmail, password, 'lms');
     setIsLoading(false);
     
@@ -270,9 +272,14 @@ const LMSLogin: React.FC = () => {
             </div>
           )}
 
-          <div className="flex mb-6 rounded-lg bg-gray-100 p-1 text-sm font-medium">
+          <div className="flex mb-6 rounded-lg bg-gray-100 p-1 text-sm font-medium" role="tablist" aria-label="Authentication mode">
             <button
               type="button"
+              role="tab"
+              aria-selected={activeTab === 'login'}
+              aria-controls="lms-login-panel"
+              id="lms-login-tab"
+              aria-label="Sign In tab"
               onClick={() => setActiveTab('login')}
               className={`flex-1 py-2 rounded-md transition ${activeTab === 'login' ? 'bg-white shadow text-gray-900' : 'text-gray-500'}`}
             >
@@ -280,6 +287,11 @@ const LMSLogin: React.FC = () => {
             </button>
             <button
               type="button"
+              role="tab"
+              aria-selected={activeTab === 'register'}
+              aria-controls="lms-register-panel"
+              id="lms-register-tab"
+              aria-label="Create Account tab"
               onClick={() => registrationAvailable && setActiveTab('register')}
               disabled={!registrationAvailable}
               className={`flex-1 py-2 rounded-md transition ${activeTab === 'register' ? 'bg-white shadow text-gray-900' : 'text-gray-500'} ${registrationAvailable ? '' : 'opacity-50 cursor-not-allowed'}`}
@@ -306,7 +318,13 @@ const LMSLogin: React.FC = () => {
                   </ul>
                 </div>
               )}
-              <form onSubmit={handleSubmit} className="space-y-6">
+              <form
+                onSubmit={handleSubmit}
+                className="space-y-6"
+                id="lms-login-panel"
+                role="tabpanel"
+                aria-labelledby="lms-login-tab"
+              >
                 <div>
               <label htmlFor="email" className="block text-sm font-medium text-gray-700 mb-2">Email Address</label>
               <div className="relative">
@@ -377,7 +395,13 @@ const LMSLogin: React.FC = () => {
               </form>
             </>
           ) : (
-            <form onSubmit={handleRegisterSubmit} className="space-y-5">
+            <form
+              onSubmit={handleRegisterSubmit}
+              className="space-y-5"
+              id="lms-register-panel"
+              role="tabpanel"
+              aria-labelledby="lms-register-tab"
+            >
               <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                 <div>
                   <label htmlFor="firstName" className="block text-sm font-medium text-gray-700 mb-2">First Name</label>

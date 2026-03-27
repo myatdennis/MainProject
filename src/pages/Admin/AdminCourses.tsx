@@ -164,13 +164,15 @@ const AdminCourses = () => {
 
   if (import.meta.env.DEV) {
     console.info('[ADMIN COURSES RENDER]', {
-      count: courses.length,
-      loading: catalogState.phase === 'loading',
-      error: catalogState.adminLoadStatus === 'error' ? catalogState.lastError ?? null : null,
+      rawCount: courses.length,
+      filteredCount: filteredCourses.length,
       status: catalogState.adminLoadStatus,
       phase: catalogState.phase,
-      filtered: filteredCourses.length,
+      lastError: catalogState.lastError ?? null,
+      searchTerm: searchTerm || null,
+      filterStatus,
       routeKey,
+      ts: Date.now(),
     });
   }
 
@@ -529,7 +531,13 @@ const AdminCourses = () => {
   const lastSyncAttempt = catalogState.lastAttemptAt ? new Date(catalogState.lastAttemptAt).toLocaleString() : null;
 
   if (import.meta.env.DEV) {
+    const renderBranch = isCatalogLoading ? 'loading-gate'
+      : isCatalogEmpty ? 'empty-gate'
+      : isCatalogUnauthorized ? 'unauthorized-gate'
+      : isCatalogError ? 'error-gate'
+      : 'normal';
     console.debug('[PAGE GATE AdminCourses]', {
+      renderBranch,
       isCatalogLoading,
       isCatalogEmpty,
       isCatalogUnauthorized,
@@ -538,6 +546,7 @@ const AdminCourses = () => {
       phase: catalogState.phase,
       status: catalogStatus,
       courseCount: courses.length,
+      filteredCount: filteredCourses.length,
       ts: Date.now(),
     });
   }
@@ -616,6 +625,45 @@ const AdminCourses = () => {
         <div className="mb-6">
           <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Courses', to: '/admin/courses' }]} />
         </div>
+
+        {/* ── DEV STATE PANEL ─────────────────────────────────────────────────
+            Visible only in development. Pinned below the breadcrumb so it
+            renders regardless of whether gateContent or the normal UI is shown.
+            Remove or hide with ?devpanel=0 in the URL.
+        ──────────────────────────────────────────────────────────────────── */}
+        {import.meta.env.DEV && new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '').get('devpanel') !== '0' && (
+          <details
+            open
+            className="mb-4 rounded-xl border border-violet-300 bg-violet-50 text-xs font-mono text-violet-900"
+          >
+            <summary className="cursor-pointer select-none px-3 py-2 font-semibold tracking-wide">
+              🛠 DEV · AdminCourses state
+            </summary>
+            <div className="grid grid-cols-2 gap-x-6 gap-y-1 px-4 pb-3 pt-1 sm:grid-cols-3 lg:grid-cols-4">
+              <div><span className="text-violet-500">raw store count</span><br /><strong>{courses.length}</strong></div>
+              <div><span className="text-violet-500">filtered count</span><br /><strong>{filteredCourses.length}</strong></div>
+              <div><span className="text-violet-500">adminLoadStatus</span><br /><strong>{catalogStatus}</strong></div>
+              <div><span className="text-violet-500">phase</span><br /><strong>{catalogState.phase}</strong></div>
+              <div><span className="text-violet-500">render branch</span><br /><strong>
+                {isCatalogLoading ? '⏳ loading-gate'
+                  : isCatalogEmpty ? '🈳 empty-gate'
+                  : isCatalogUnauthorized ? '🔒 unauthorized-gate'
+                  : isCatalogError ? '❌ error-gate'
+                  : gateContent ? '⚠ gate(other)'
+                  : filteredCourses.length === 0 && courses.length > 0 ? '🔍 filter-empty'
+                  : filteredCourses.length === 0 ? '📭 no-courses'
+                  : '✅ normal'}
+              </strong></div>
+              <div><span className="text-violet-500">isFirstLoad</span><br /><strong>{String(isFirstLoad)}</strong></div>
+              <div><span className="text-violet-500">search</span><br /><strong>"{searchTerm || '—'}"</strong></div>
+              <div><span className="text-violet-500">filter</span><br /><strong>{filterStatus}</strong></div>
+              <div className="col-span-2"><span className="text-violet-500">lastError</span><br /><strong className="break-all">{catalogState.lastError ?? '—'}</strong></div>
+              <div><span className="text-violet-500">lastAttemptAt</span><br /><strong>{catalogState.lastAttemptAt ? new Date(catalogState.lastAttemptAt).toLocaleTimeString() : '—'}</strong></div>
+              <div><span className="text-violet-500">ts</span><br /><strong>{new Date().toLocaleTimeString()}</strong></div>
+            </div>
+          </details>
+        )}
+
         {gateContent ? gateContent : (
 
           <>
@@ -727,7 +775,32 @@ const AdminCourses = () => {
             {filteredCourses.length > 0 && (
               <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-3 gap-6 mb-8">
                 {filteredCourses.map((course: Course) => (
-                  <div key={course.id} className="card-lg card-hover overflow-hidden" data-test="admin-course-card">
+                  <div
+                    key={course.id}
+                    className="card-lg card-hover overflow-hidden cursor-pointer focus:outline-none focus:ring-2 focus:ring-[var(--hud-orange)] focus:ring-offset-2"
+                    data-test="admin-course-card"
+                    role="link"
+                    tabIndex={0}
+                    onClick={(event) => {
+                      const target = event.target as HTMLElement | null;
+                      if (target?.closest('a,button,input,select,textarea,label')) {
+                        return;
+                      }
+                      navigate(`/admin/course-builder/${course.id}`);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key !== 'Enter' && event.key !== ' ') {
+                        return;
+                      }
+                      const target = event.target as HTMLElement | null;
+                      if (target?.closest('a,button,input,select,textarea,label')) {
+                        return;
+                      }
+                      event.preventDefault();
+                      navigate(`/admin/course-builder/${course.id}`);
+                    }}
+                    aria-label={`Open course builder for ${course.title}`}
+                  >
                     {/* ...card content... */}
                   </div>
                 ))}

@@ -65,7 +65,7 @@ describe('LMSLogin runtime awareness', () => {
     renderScreen();
 
     expect(screen.getByText(/Demo mode active/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Create Account/i })).toBeDisabled();
+    expect(screen.getByRole('tab', { name: /Create Account tab/i })).toBeDisabled();
   });
 
   it('enables registration when Supabase is healthy', () => {
@@ -81,7 +81,7 @@ describe('LMSLogin runtime awareness', () => {
     renderScreen();
 
     expect(screen.getByText(/Secure mode connected/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Create Account/i })).not.toBeDisabled();
+    expect(screen.getByRole('tab', { name: /Create Account tab/i })).not.toBeDisabled();
   });
 
   it('shows a helpful message when forgot password is clicked offline', async () => {

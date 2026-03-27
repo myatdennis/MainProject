@@ -82,6 +82,6 @@ describe('ClientDashboard', () => {
     });
 
     expect(mockNavigate).not.toHaveBeenCalled();
-    expect(getAssignmentsForUserMock).toHaveBeenCalledWith('user@example.com');
+    expect(getAssignmentsForUserMock).toHaveBeenCalledWith('user-123');
   });
 });

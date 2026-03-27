@@ -78,7 +78,7 @@ const legacyDemoUsers = [
     firstName: 'Demo',
     lastName: 'User',
     password: 'user123',
-    organizationId: undefined,
+    organizationId: 'org-huddle',
   },
 ];
 
@@ -330,7 +330,7 @@ const refreshSessionFromToken = async (refreshToken) => {
     };
   }
 
-  if (isDemoModeExplicit || isE2ETestMode) {
+  if (demoLoginEnabled || isDemoModeExplicit || isE2ETestMode) {
     const payload = verifyRefreshToken(refreshToken);
     if (!payload) {
       return {
@@ -344,6 +344,8 @@ const refreshSessionFromToken = async (refreshToken) => {
       userId: payload.userId,
       email: payload.email,
       role: payload.role,
+      organizationId: payload.organizationId,
+      platformRole: payload.platformRole,
     });
     const userPayload = buildDemoUserPayloadFromToken(payload);
     return {
@@ -424,6 +426,54 @@ const loginHandler = async (req, res) => {
       });
     }
 
+    const normalizedEmail =
+      typeof normalizeEmail === 'function'
+        ? normalizeEmail(email)
+        : String(email ?? '').trim().toLowerCase();
+
+    const matchingDemoUser = findAnyDemoUserByEmail(normalizedEmail);
+    const shouldUseDemoLogin =
+      Boolean(matchingDemoUser) &&
+      (demoLoginEnabled || isDemoModeExplicit || isE2ETestMode || allowLegacyDemoUsers);
+
+    if (shouldUseDemoLogin) {
+      const demoUser = matchingDemoUser;
+      if (!demoUser) {
+        return res.status(401).json({
+          ok: false,
+          error: 'invalid_credentials',
+          message: 'The email or password you entered is incorrect.',
+        });
+      }
+
+      const passwordMatches = demoUser.passwordHash
+        ? await bcrypt.compare(password, demoUser.passwordHash)
+        : password === demoUser.password;
+
+      if (!passwordMatches) {
+        return res.status(401).json({
+          ok: false,
+          error: 'invalid_credentials',
+          message: 'The email or password you entered is incorrect.',
+        });
+      }
+
+      const tokens = generateTokens({
+        userId: demoUser.id,
+        email: normalizedEmail,
+        role: demoUser.role || 'user',
+        organizationId: demoUser.organizationId || null,
+        platformRole: demoUser.role === 'admin' ? 'platform_admin' : null,
+      });
+      const userPayload = buildDemoUserPayloadFromToken({
+        userId: demoUser.id,
+        email: normalizedEmail,
+        role: demoUser.role || 'user',
+      });
+
+      return res.status(200).json(buildSessionResponse(userPayload, tokens));
+    }
+
     if (!supabaseAuthClient) {
       const configError = buildAuthConfigError();
       return res.status(configError.status).json({
@@ -432,11 +482,6 @@ const loginHandler = async (req, res) => {
         message: configError.message,
       });
     }
-
-    const normalizedEmail =
-      typeof normalizeEmail === 'function'
-        ? normalizeEmail(email)
-        : String(email ?? '').trim().toLowerCase();
     const { data, error: authError } = await supabaseAuthClient.auth.signInWithPassword({
       email: normalizedEmail,
       password,

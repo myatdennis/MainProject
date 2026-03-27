@@ -21,6 +21,13 @@ const supabaseAuthMock = vi.hoisted(() => ({
   refreshSession: vi.fn(),
   signOut: vi.fn(),
   signInWithPassword: vi.fn(),
+  onAuthStateChange: vi.fn(() => ({
+    data: {
+      subscription: {
+        unsubscribe: vi.fn(),
+      },
+    },
+  })),
 }));
 
 vi.mock('../../lib/supabaseClient', () => {

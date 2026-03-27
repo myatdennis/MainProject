@@ -535,6 +535,30 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
     }
   }, [mode, adminGateStatus, adminGateError, logGuardEvent]);
 
+  useEffect(() => {
+    if (mode !== 'admin') {
+      return;
+    }
+    if (!hasSession || !sessionAuthenticated) {
+      return;
+    }
+    if (!adminPortalAllowed || adminGateStatus === 'allowed') {
+      return;
+    }
+    setAdminGateStatus('allowed');
+    setAdminGateError(null);
+    setAdminCapability((current) => {
+      if (current.status === 'granted') {
+        return current;
+      }
+      return {
+        status: 'granted',
+        payload: current.payload ?? getAdminAccessSnapshot()?.payload ?? null,
+        reason: current.reason,
+      };
+    });
+  }, [mode, hasSession, sessionAuthenticated, adminPortalAllowed, adminGateStatus]);
+
   const adminGateStateRef = useRef({
     waiting: false,
     sessionStatus,
@@ -597,7 +621,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
       return;
     }
 
-    const waiting = hasSession && adminGateStatus === 'checking';
+    const waiting = hasSession && adminGateStatus === 'checking' && !adminPortalAllowed;
 
     adminGateStateRef.current.waiting = waiting;
 
@@ -659,6 +683,7 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   }, [
     mode,
     hasSession,
+    adminPortalAllowed,
     adminGateStatus,
     sessionStatus,
     orgResolutionStatus,

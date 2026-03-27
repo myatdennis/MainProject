@@ -1603,7 +1603,7 @@ const ensureAssignmentScopedCatalog = async (
 
         return { source: 'empty' as const, catalog: {} as { [key: string]: Course } };
       })();
-      if (orgId && fallback.source === 'default') {
+      if (orgId && fallback.source === 'default' && !DEMO_ASSIGNMENT_FALLBACK_ALLOWED) {
         fallback = { source: 'empty' as const, catalog: {} as { [key: string]: Course } };
       }
 
@@ -1749,6 +1749,11 @@ const DEFAULT_CATALOG_ALLOWED =
   typeof import.meta.env?.VITE_ALLOW_DEFAULT_COURSES !== 'undefined'
     ? import.meta.env?.VITE_ALLOW_DEFAULT_COURSES === 'true'
     : import.meta.env?.MODE !== 'production';
+const DEMO_ASSIGNMENT_FALLBACK_ALLOWED = Boolean(
+  (import.meta as any)?.env?.DEV_FALLBACK === 'true' ||
+  (import.meta as any)?.env?.E2E_TEST_MODE === 'true' ||
+  (!import.meta.env?.VITE_SUPABASE_URL && !import.meta.env?.VITE_SUPABASE_ANON_KEY),
+);
 
 // Production safety-net: if someone accidentally sets VITE_ALLOW_DEFAULT_COURSES=true
 // in a production build, emit a loud console error so it's visible in logs / Sentry.

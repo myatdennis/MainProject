@@ -328,7 +328,14 @@ const AdminDashboard = () => {
   const lastSyncAttempt = catalogState.lastAttemptAt ? new Date(catalogState.lastAttemptAt).toLocaleString() : null;
 
   if (import.meta.env.DEV) {
+    const renderBranch = isCatalogLoading ? 'loading-gate'
+      : isCatalogEmpty ? 'empty-gate'
+      : isCatalogUnauthorized ? 'unauthorized-gate'
+      : isCatalogError ? 'error-gate'
+      : showCatalogWarningBanner ? 'normal+warning-banner'
+      : 'normal';
     console.debug('[PAGE GATE AdminDashboard]', {
+      renderBranch,
       isCatalogLoading,
       isCatalogEmpty,
       isCatalogUnauthorized,
@@ -435,6 +442,34 @@ const AdminDashboard = () => {
     return (
       <>
         <SEO title="Admin Dashboard" description="Monitor learner progress and organizational impact." />
+        {import.meta.env.DEV && new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '').get('devpanel') !== '0' && (
+          <div className="container-page">
+            <details
+              open
+              className="mb-4 rounded-xl border border-violet-300 bg-violet-50 text-xs font-mono text-violet-900"
+            >
+              <summary className="cursor-pointer select-none px-3 py-2 font-semibold tracking-wide">
+                🛠 DEV · AdminDashboard state (gate active)
+              </summary>
+              <div className="grid grid-cols-2 gap-x-6 gap-y-1 px-4 pb-3 pt-1 sm:grid-cols-3 lg:grid-cols-4">
+                <div><span className="text-violet-500">raw store count</span><br /><strong>{courses.length}</strong></div>
+                <div><span className="text-violet-500">adminLoadStatus</span><br /><strong>{catalogStatus}</strong></div>
+                <div><span className="text-violet-500">phase</span><br /><strong>{catalogState.phase}</strong></div>
+                <div><span className="text-violet-500">render branch</span><br /><strong>
+                  {isCatalogLoading ? '⏳ loading-gate'
+                    : isCatalogEmpty ? '🈳 empty-gate'
+                    : isCatalogUnauthorized ? '🔒 unauthorized-gate'
+                    : isCatalogError ? '❌ error-gate'
+                    : '⚠ gate(other)'}
+                </strong></div>
+                <div><span className="text-violet-500">isFirstLoad</span><br /><strong>{String(isFirstLoad)}</strong></div>
+                <div><span className="text-violet-500">showWarningBanner</span><br /><strong>{String(showCatalogWarningBanner)}</strong></div>
+                <div className="col-span-2"><span className="text-violet-500">lastError</span><br /><strong className="break-all">{catalogState.lastError ?? '—'}</strong></div>
+                <div><span className="text-violet-500">lastAttemptAt</span><br /><strong>{lastSyncAttempt ?? '—'}</strong></div>
+              </div>
+            </details>
+          </div>
+        )}
         {gateShell(gateContent)}
       </>
     );
@@ -445,6 +480,27 @@ const AdminDashboard = () => {
       <SEO title="Admin Dashboard" description="Monitor learner progress and organizational impact." />
       {gateShell(
         <section className="space-y-10">
+        {/* DEV state panel — visible in development only */}
+        {import.meta.env.DEV && new URLSearchParams(typeof window !== 'undefined' ? window.location.search : '').get('devpanel') !== '0' && (
+          <details
+            open
+            className="rounded-xl border border-violet-300 bg-violet-50 text-xs font-mono text-violet-900"
+          >
+            <summary className="cursor-pointer select-none px-3 py-2 font-semibold tracking-wide">
+              🛠 DEV · AdminDashboard state
+            </summary>
+            <div className="grid grid-cols-2 gap-x-6 gap-y-1 px-4 pb-3 pt-1 sm:grid-cols-3 lg:grid-cols-4">
+              <div><span className="text-violet-500">raw store count</span><br /><strong>{courses.length}</strong></div>
+              <div><span className="text-violet-500">adminLoadStatus</span><br /><strong>{catalogStatus}</strong></div>
+              <div><span className="text-violet-500">phase</span><br /><strong>{catalogState.phase}</strong></div>
+              <div><span className="text-violet-500">render branch</span><br /><strong>✅ normal</strong></div>
+              <div><span className="text-violet-500">isFirstLoad</span><br /><strong>{String(isFirstLoad)}</strong></div>
+              <div><span className="text-violet-500">showWarningBanner</span><br /><strong>{String(showCatalogWarningBanner)}</strong></div>
+              <div className="col-span-2"><span className="text-violet-500">lastError</span><br /><strong className="break-all">{catalogState.lastError ?? '—'}</strong></div>
+              <div><span className="text-violet-500">lastAttemptAt</span><br /><strong>{lastSyncAttempt ?? '—'}</strong></div>
+            </div>
+          </details>
+        )}
         {/* Non-blocking catalog warning — only shown after a prior success */}
         {showCatalogWarningBanner && (
           <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">

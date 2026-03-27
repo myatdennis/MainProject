@@ -211,6 +211,8 @@ const mapLessonTypeFromSupabase = (type: string): Lesson['type'] => {
     case 'quiz':
     case 'text':
       return type;
+    case 'resource':
+      return 'document';
     case 'interactive':
       return 'interactive';
     case 'download':
@@ -681,9 +683,9 @@ export class CourseService {
     body.modules = modules;
     CourseService.logLessonDiagnostics(modules as Record<string, any>[]);
     const courseIdIsServerAssigned = hasServerAssignedCourseId(course.id);
-    const hasRemoteRecord = courseIdIsServerAssigned && hasPersistedCourseRecord(course.id);
+    const hasRemoteRecord = hasPersistedCourseRecord(course.id);
     const isCreateOperation = !hasRemoteRecord;
-    if (!courseIdIsServerAssigned || isCreateOperation) {
+    if (isCreateOperation) {
       delete (body.course as Record<string, unknown>).id;
     }
 

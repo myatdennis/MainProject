@@ -925,9 +925,12 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         email: payload.user.email ?? payload.user.user_email ?? '',
         role:
           payload.user.role ||
+          payload.role ||
           payload.user.platformRole ||
+          payload.platformRole ||
           payload.user.platform_role ||
           payload.user.userRole ||
+          (payload.isPlatformAdmin ? 'admin' : null) ||
           'learner',
         firstName: payload.user.firstName ?? payload.user.first_name ?? payload.user.user_metadata?.first_name,
         lastName: payload.user.lastName ?? payload.user.last_name ?? payload.user.user_metadata?.last_name,
@@ -940,8 +943,21 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           payload.user.activeOrgId ??
           payload.user.organizationId ??
           null,
-        platformRole: payload.user.platformRole ?? payload.user.platform_role ?? null,
-        isPlatformAdmin: Boolean(payload.user.isPlatformAdmin ?? payload.user.platformRole === 'platform_admin'),
+        platformRole:
+          payload.user.platformRole ??
+          payload.user.platform_role ??
+          payload.platformRole ??
+          null,
+        // Determine platform admin: prefer explicit booleans from payload, fall
+        // back to checking platformRole strings. Avoid using nullish coalescing
+        // on boolean expressions (they are never nullish) to satisfy TS checks.
+        isPlatformAdmin: (() => {
+          const explicitFlag =
+            payload.user.isPlatformAdmin ?? payload.isPlatformAdmin ?? null;
+          const roleFlag =
+            (payload.user.platformRole === 'platform_admin') || (payload.platformRole === 'platform_admin');
+          return Boolean(explicitFlag || roleFlag);
+        })(),
         appMetadata: payload.user.appMetadata ?? payload.user.app_metadata ?? null,
         userMetadata: payload.user.userMetadata ?? payload.user.user_metadata ?? null,
       };
@@ -1384,6 +1400,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             reason: surface ? `${surface}_session_bootstrap` : 'session_bootstrap',
           });
           setAuthStatus('authenticated', `fetchServerSession:${surface ?? 'unknown'}`);
+          setSessionStatus('authenticated', `fetchServerSession:${surface ?? 'unknown'}`);
           if (!silent) {
             setBootstrapError(null);
           }
@@ -1667,6 +1684,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           if (payload?.user) {
             applySessionPayload(payload, { persistTokens: true, reason: 'refresh_success' });
             setAuthStatus('authenticated', 'refreshTokenCallback:refresh_success');
+            setSessionStatus('authenticated', 'refreshTokenCallback:refresh_success');
             refreshStatus = 'success';
           } else {
             await fetchServerSession({ silent: true });
@@ -2449,6 +2467,10 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       }
 
       const normalizedEmail = email.toLowerCase().trim();
+      const clientSupabaseConfigured = Boolean(
+        (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_SUPABASE_URL &&
+        (import.meta as ImportMeta & { env?: Record<string, string | undefined> }).env?.VITE_SUPABASE_ANON_KEY
+      );
       type SupabaseSignInOutcome = { success: true; session: Session | null } | (LoginResult & { success: false });
       const performSupabaseSignIn = async (context: 'admin' | 'lms'): Promise<SupabaseSignInOutcome> => {
         const supabaseClient = getSupabase();
@@ -2528,12 +2550,15 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
         logAuthSessionState('admin-login_success', getUserSession());
         setAuthStatus('authenticated', 'login:admin_success');
+        setSessionStatus('authenticated', 'login:admin_success');
         return { success: true };
       }
 
-      const supabaseOutcome = await performSupabaseSignIn('lms');
-      if (!supabaseOutcome.success) {
-        return supabaseOutcome;
+      if (clientSupabaseConfigured) {
+        const supabaseOutcome = await performSupabaseSignIn('lms');
+        if (!supabaseOutcome.success) {
+          return supabaseOutcome;
+        }
       }
 
       const rawPayload = await requestJsonWithClock<unknown>('/api/auth/login', {
@@ -2546,7 +2571,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           mfaCode,
         },
       });
-
       // If MFA required, backend should respond with mfaRequired
       if ((rawPayload as { mfaRequired?: boolean } | null)?.mfaRequired) {
         return {
@@ -2572,6 +2596,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         reason: `${type}_login_success`,
       });
       setAuthStatus('authenticated', `login:${type}_success`);
+      setSessionStatus('authenticated', `login:${type}_success`);
 
       logAuthSessionState(`${type}-login_success`, getUserSession());
 

@@ -128,8 +128,8 @@ const ClientDashboard = () => {
   const { user } = useUserProfile();
   const { sessionStatus, membershipStatus } = useSecureAuth();
   const learnerId = useMemo(() => {
-    if (user?.email) return user.email.toLowerCase();
     if (user?.id) return String(user.id).toLowerCase();
+    if (user?.email) return user.email.toLowerCase();
     return 'local-user';
   }, [user]);
   const [assignments, setAssignments] = useState<CourseAssignment[]>([]);

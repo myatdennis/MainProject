@@ -6,7 +6,7 @@
 import rateLimit from 'express-rate-limit';
 import supabase, { supabaseAuthClient, supabaseEnv } from '../lib/supabaseClient.js';
 import { getDatabaseConnectionInfo } from '../db.js';
-import { extractTokenFromHeader } from '../utils/jwt.js';
+import { extractTokenFromHeader, verifyAccessToken } from '../utils/jwt.js';
 import { getActiveOrgFromRequest } from '../utils/authCookies.js';
 import { getUserMemberships, getMembershipDiagnostics } from '../utils/memberships.js';
 import { E2E_TEST_MODE, DEV_FALLBACK, demoAutoAuthEnabled, NODE_ENV } from '../config/runtimeFlags.js';
@@ -253,6 +253,43 @@ const buildDemoAuthContextPayload = () => {
   };
 };
 
+const buildJwtAuthContextPayload = (claims = {}) => {
+  const organizationId = typeof claims.organizationId === 'string' && claims.organizationId.trim()
+    ? claims.organizationId.trim()
+    : null;
+  const role = typeof claims.role === 'string' && claims.role.trim() ? claims.role.trim().toLowerCase() : 'learner';
+  const platformRole =
+    typeof claims.platformRole === 'string' && claims.platformRole.trim()
+      ? claims.platformRole.trim().toLowerCase()
+      : role === 'admin'
+      ? 'platform_admin'
+      : null;
+  const user = {
+    id: claims.userId,
+    email: claims.email || '',
+    app_metadata: platformRole ? { platform_role: platformRole } : {},
+    user_metadata: {},
+  };
+  const memberships = organizationId
+    ? [
+        {
+          orgId: organizationId,
+          role: role === 'admin' ? 'owner' : role,
+          status: 'active',
+          organizationName: null,
+          organizationStatus: 'active',
+        },
+      ]
+    : [];
+  const payload = buildUserPayload(user, memberships, { membershipStatus: 'ready' });
+  return {
+    user: payload,
+    memberships,
+    membershipMap: buildMembershipMap(memberships),
+    activeOrgId: organizationId,
+  };
+};
+
 const cacheGet = (store, key) => {
   const hit = store.get(key);
   if (!hit) return null;
@@ -479,9 +516,39 @@ export async function buildAuthContext(req, { optional = false } = {}) {
     throw new Error('missing_token');
   }
 
+  const localJwtClaims = verifyAccessToken(token);
+  if (localJwtClaims?.userId) {
+    const jwtContext = buildJwtAuthContextPayload(localJwtClaims);
+    return {
+      user: jwtContext.user,
+      membershipsMap: jwtContext.membershipMap,
+      activeOrgId: jwtContext.activeOrgId,
+      membershipDiagnostics: null,
+      membershipStatus: 'ready',
+      membershipCount: jwtContext.memberships.length,
+      membershipDegraded: false,
+    };
+  }
+
   let supabaseUser = preValidatedUser;
   if (!supabaseUser) {
     if (!supabase) {
+      if (allowDemoBypassForRequest(req)) {
+        console.warn('[auth] Supabase unavailable; falling back to demo auto-auth context', {
+          path: req.originalUrl || req.url,
+          host: req.headers?.host,
+          origin: req.headers?.origin,
+          hadToken: Boolean(token),
+        });
+        const demo = buildDemoAuthContextPayload();
+        return {
+          user: demo.user,
+          membershipsMap: demo.membershipMap,
+          activeOrgId: demo.activeOrgId,
+          membershipDiagnostics: null,
+          membershipStatus: 'ready',
+        };
+      }
       if (optional && !STRICT_AUTH) return null;
       throw new Error('supabase_not_configured');
     }

@@ -35,6 +35,9 @@ interface OrgOption {
   name: string;
 }
 
+const sameStringArray = (left: string[], right: string[]) =>
+  left.length === right.length && left.every((value, index) => value === right[index]);
+
 const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
   isOpen,
   onClose,
@@ -71,6 +74,8 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
   const [userSearch, setUserSearch] = useState('');
   const [queueItems, setQueueItems] = useState<AssignmentQueueItem[]>([]);
   const [orgFetchToken, setOrgFetchToken] = useState(0);
+  const selectedUsersKey = useMemo(() => selectedUsers.join('|'), [selectedUsers]);
+  const defaultOrgIdsKey = useMemo(() => defaultOrgIds.join('|'), [defaultOrgIds]);
 
   useEffect(() => {
     const unsubscribe = subscribeToAssignmentQueue((items) => setQueueItems(items));
@@ -83,22 +88,22 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
 
   useEffect(() => {
     if (!isOpen) {
-      setSelectedOrgIds([]);
-      setSelectedUserIds([]);
-      setOrgSearch('');
-      setUserSearch('');
+      setSelectedOrgIds((prev) => (prev.length === 0 ? prev : []));
+      setSelectedUserIds((prev) => (prev.length === 0 ? prev : []));
+      setOrgSearch((prev) => (prev === '' ? prev : ''));
+      setUserSearch((prev) => (prev === '' ? prev : ''));
       setUsersError(null);
-      setNote('');
-      setDueDate('');
+      setNote((prev) => (prev === '' ? prev : ''));
+      setDueDate((prev) => (prev === '' ? prev : ''));
       return;
     }
     if (selectedUsers.length > 0) {
-      setSelectedUserIds(selectedUsers);
+      setSelectedUserIds((prev) => (sameStringArray(prev, selectedUsers) ? prev : selectedUsers));
     }
     if (defaultOrgIds.length > 0) {
-      setSelectedOrgIds(defaultOrgIds);
+      setSelectedOrgIds((prev) => (sameStringArray(prev, defaultOrgIds) ? prev : defaultOrgIds));
     }
-  }, [isOpen, selectedUsers, defaultOrgIds]);
+  }, [defaultOrgIds, defaultOrgIdsKey, isOpen, selectedUsers, selectedUsersKey]);
 
   useEffect(() => {
     if (isOpen) {

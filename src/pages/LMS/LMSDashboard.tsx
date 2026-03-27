@@ -43,14 +43,14 @@ const formatTimeInvested = (seconds: number): string => {
 
 const LMSDashboard = () => {
   const { user } = useSecureAuth();
-  const [progressRefreshToken, setProgressRefreshToken] = useState(0);
-  const [isLoadingCourses, setIsLoadingCourses] = useState(true);
+  const [progressRefreshToken, _setProgressRefreshToken] = useState(0);
   const [progressSummary, setProgressSummary] = useState<ProgressSummary | null>(null);
   const [recentActivity, setRecentActivity] = useState<ActivityItem[]>([]);
   const [statsLoading, setStatsLoading] = useState(true);
 
-  // Subscribe to course store so learningPathCourses re-derives when the catalog updates.
-  const storeRevision = useSyncExternalStore(courseStore.subscribe, courseStore.getAdminCatalogState);
+  const adminCatalogState = useSyncExternalStore(courseStore.subscribe, courseStore.getAdminCatalogState);
+  const learnerCatalogState = useSyncExternalStore(courseStore.subscribe, courseStore.getLearnerCatalogState);
+  const allCourses = useSyncExternalStore(courseStore.subscribe, courseStore.getAllCourses);
 
   // Load real progress summary from API
   useEffect(() => {
@@ -102,31 +102,16 @@ const LMSDashboard = () => {
   }, []);
 
   useEffect(() => {
-    let active = true;
-    (async () => {
-      try {
-        if (typeof (courseStore as any).init === 'function') {
-          await (courseStore as any).init();
-        }
-        if (active) {
-          setProgressRefreshToken((token) => token + 1);
-        }
-      } catch (error) {
-        console.warn('[LMSDashboard] Failed to initialize course store:', error);
-      } finally {
-        if (active) {
-          setIsLoadingCourses(false);
-        }
-      }
-    })();
-    return () => {
-      active = false;
-    };
-  }, []);
+    if (adminCatalogState.phase !== 'idle' || learnerCatalogState.status !== 'idle') {
+      return;
+    }
+    courseStore.init().catch((error) => {
+      console.warn('[LMSDashboard] Failed to initialize course store:', error);
+    });
+  }, [adminCatalogState.phase, learnerCatalogState.status]);
 
   const learningPathCourses = useMemo(() => {
-    return courseStore
-      .getAllCourses()
+    return allCourses
       .filter((course) => course.status === 'published')
       .map((course) => {
         const normalized = normalizeCourse(course);
@@ -161,7 +146,11 @@ const LMSDashboard = () => {
           resumeLessonId,
         };
       });
-  }, [progressRefreshToken, storeRevision]);
+  }, [allCourses, progressRefreshToken]);
+
+  const isLoadingCourses =
+    adminCatalogState.phase === 'loading' ||
+    (learnerCatalogState.status === 'idle' && learningPathCourses.length === 0);
 
   const completedValue = progressSummary
     ? `${progressSummary.modulesCompleted}/${Math.max(progressSummary.modulesTotal, progressSummary.modulesCompleted)}`

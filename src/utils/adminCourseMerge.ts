@@ -20,7 +20,7 @@ export const mapPersistedLessonType = (persistedType: string, fallback?: Lesson[
   if (fallback) return fallback;
   switch (persistedType) {
     case 'resource':
-      return 'interactive';
+      return 'document';
     case 'reflection':
       return 'text';
     default:

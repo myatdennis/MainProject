@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps } from 'react';
 import { AlertTriangle, ShieldCheck, Download as DownloadIcon } from 'lucide-react';
 import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import toast from 'react-hot-toast';
@@ -133,6 +133,9 @@ const LMSModule = () => {
     return 'local-user';
   }, [user]);
   const requestedLessonId = searchParams.get('lesson');
+  const adminCatalogState = useSyncExternalStore(courseStore.subscribe, courseStore.getAdminCatalogState);
+  const learnerCatalogState = useSyncExternalStore(courseStore.subscribe, courseStore.getLearnerCatalogState);
+  const allCourses = useSyncExternalStore(courseStore.subscribe, courseStore.getAllCourses);
 
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -298,41 +301,23 @@ const LMSModule = () => {
     [setSearchParams]
   );
 
-  // Track whether the store has finished its initial load so we don't show
-  // "Module not found" while the catalog is still being fetched.
-  // The store is considered ready when admin phase reaches 'ready' (meaning
-  // init() completed) OR when it started idle and was never kicked off.
-  const [storeReady, setStoreReady] = useState(() => {
-    const adminState = courseStore.getAdminCatalogState();
-    return adminState.phase === 'ready' || adminState.phase === 'idle';
-  });
-
   useEffect(() => {
-    // Subscribe to store changes so we can retry module resolution once the
-    // catalog finishes initialising.
-    const unsubscribe = courseStore.subscribe(() => {
-      const adminState = courseStore.getAdminCatalogState();
-      // Once phase transitions away from 'loading', the catalog attempt is done.
-      const ready = adminState.phase !== 'loading';
-      setStoreReady(ready);
-    });
-    // Kick off init if it hasn't started yet.
-    if (courseStore.getAdminCatalogState().phase === 'idle') {
-      void courseStore.init();
+    if (adminCatalogState.phase !== 'idle' || learnerCatalogState.status !== 'idle') {
+      return;
     }
-    return unsubscribe;
-  }, []);
+    void courseStore.init();
+  }, [adminCatalogState.phase, learnerCatalogState.status]);
 
   useEffect(() => {
     const loadModule = async () => {
       setIsLoading(true);
       setError(null);
       try {
-        // If the store hasn't finished loading yet, wait — don't declare "not found".
-        const adminState = courseStore.getAdminCatalogState();
-        if (adminState.phase === 'loading') {
-          // Leave isLoading=true; the store subscriber will flip storeReady and
-          // re-trigger this effect.
+        const stillLoadingCatalog =
+          adminCatalogState.phase === 'loading' ||
+          (learnerCatalogState.status === 'idle' && allCourses.length === 0);
+        if (stillLoadingCatalog) {
+          // Leave isLoading=true until the catalog finishes hydrating.
           setIsLoading(true);
           return;
         }
@@ -386,7 +371,15 @@ const LMSModule = () => {
       }
     };
     void loadModule();
-  }, [moduleIdentifier, requestedLessonId, learnerId, focusLesson, storeReady]);
+  }, [
+    adminCatalogState.phase,
+    allCourses.length,
+    focusLesson,
+    learnerCatalogState.status,
+    learnerId,
+    moduleIdentifier,
+    requestedLessonId,
+  ]);
 
   useEffect(() => {
     if (!requestedLessonId || !courseContext?.lessons?.length) return;

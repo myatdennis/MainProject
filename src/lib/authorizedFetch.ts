@@ -27,6 +27,10 @@ const API_BASE =
   (typeof import.meta !== 'undefined' && (import.meta as any)?.env?.VITE_API_BASE_URL) ||
   (typeof process !== 'undefined' ? process.env?.VITE_API_BASE_URL : '') ||
   '';
+const CLIENT_SUPABASE_CONFIGURED = Boolean(
+  (typeof import.meta !== 'undefined' && (import.meta as any)?.env?.VITE_SUPABASE_URL && (import.meta as any)?.env?.VITE_SUPABASE_ANON_KEY) ||
+  (typeof process !== 'undefined' && process.env?.VITE_SUPABASE_URL && process.env?.VITE_SUPABASE_ANON_KEY)
+);
 
 const normalizeUrl = (target: string): string => {
   if (!target) return target;
@@ -84,6 +88,7 @@ export const getAccessToken = async (): Promise<string | null> => {
 };
 
 const resolveSupabaseAccessToken = async (): Promise<string> => {
+  const storedToken = getStoredAccessToken();
   // In E2E/dev-bypass mode, use the token stored in secureStorage by the
   // mock session instead of attempting a real Supabase session lookup —
   // the Supabase client has a placeholder URL and will always fail.
@@ -92,7 +97,6 @@ const resolveSupabaseAccessToken = async (): Promise<string> => {
     (Boolean((window as any).__E2E_BYPASS) ||
       Boolean((window as any).__E2E_SUPABASE_CLIENT));
   if (isE2EBypass) {
-    const storedToken = getStoredAccessToken();
     if (storedToken) {
       return storedToken;
     }
@@ -100,10 +104,16 @@ const resolveSupabaseAccessToken = async (): Promise<string> => {
     // E2E server will accept via its demo-auth bypass.
     return 'e2e-access-token';
   }
+  if (!CLIENT_SUPABASE_CONFIGURED && storedToken) {
+    return storedToken;
+  }
   try {
     let token = await getAccessToken();
     if (token) {
       return token;
+    }
+    if (storedToken) {
+      return storedToken;
     }
 
     if (devMode) {

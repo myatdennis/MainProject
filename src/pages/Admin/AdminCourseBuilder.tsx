@@ -66,6 +66,7 @@ import AIContentAssistant from '../../components/AIContentAssistant';
 import MobileCourseToolbar from '../../components/Admin/MobileCourseToolbar';
 import MobileModuleNavigator from '../../components/Admin/MobileModuleNavigator';
 import SortableItem from '../../components/SortableItem';
+import Button from '../../components/ui/Button';
 import useIsMobile from '../../hooks/useIsMobile';
 import useRuntimeStatus from '../../hooks/useRuntimeStatus';
 import useSwipeNavigation from '../../hooks/useSwipeNavigation';
@@ -2407,20 +2408,15 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
     })();
     const isAutoSaveAttempt = derivedAction === 'course.auto-save';
     const gate = gateOverride ?? evaluateRuntimeGate(runtimeAction, runtimeStatus);
+    const hadLessonIntegrityRepair = lessonIntegrityIssues.length > 0;
 
-    if (lessonIntegrityIssues.length > 0) {
+    if (hadLessonIntegrityRepair) {
       courseStore.saveCourse(preparedCourse, { skipRemoteSync: true });
       setCourse(preparedCourse);
-      logDev('lesson_integrity_blocked_save', {
+      logDev('lesson_integrity_repaired_before_save', {
         courseId: preparedCourse.id,
         missingFields: lessonIntegrityIssues,
       });
-      showToast(
-        'A lesson was missing required details. We patched it locally—please review and save again.',
-        'warning',
-        6000,
-      );
-      return { course: preparedCourse, gate, remoteSynced: false };
     }
 
     const allowRemoteSync = gate.mode === 'remote';
@@ -2508,6 +2504,9 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
       suppressNextDirtyRef.current = true;
     }
     setCourse(mergedWithFallback);
+    if (hadLessonIntegrityRepair) {
+      showToast('We repaired missing lesson details while saving this draft.', 'warning', 5000);
+    }
     if (remoteSynced) {
       resetAutoSaveFailures();
       lastPersistedRef.current = mergedWithFallback;
@@ -4759,13 +4758,16 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
             <div className="order-2 xl:order-1 space-y-8">
       {/* Header */}
       <div>
-        <Link 
-          to="/admin/courses" 
-          className="inline-flex items-center text-orange-500 hover:text-orange-600 mb-4 font-medium"
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          onClick={() => navigate('/admin/courses')}
+          className="mb-4 inline-flex items-center text-orange-500 hover:text-orange-600"
         >
           <ArrowLeft className="h-4 w-4 mr-2" />
-          Back to Course Management
-        </Link>
+          Back to Courses
+        </Button>
         {staleFromOtherTab && (
           <div className="mb-4 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
             <div className="flex items-center justify-between gap-3">
@@ -5109,8 +5111,9 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
             <div className="space-y-6">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Course Title *</label>
+                  <label htmlFor="admin-course-title" className="block text-sm font-medium text-gray-700 mb-2">Course Title *</label>
                   <input
+                    id="admin-course-title"
                     type="text"
                     value={course.title}
                     onChange={(e) => setCourse(prev => ({ ...prev, title: e.target.value }))}
@@ -5119,8 +5122,9 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Difficulty Level</label>
+                  <label htmlFor="admin-course-difficulty" className="block text-sm font-medium text-gray-700 mb-2">Difficulty Level</label>
                   <select
+                    id="admin-course-difficulty"
                     value={course.difficulty}
                     onChange={(e) => setCourse(prev => ({ ...prev, difficulty: e.target.value as Course['difficulty'] }))}
                     className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
@@ -5133,8 +5137,9 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">Description</label>
+                <label htmlFor="admin-course-description" className="block text-sm font-medium text-gray-700 mb-2">Description</label>
                 <textarea
+                  id="admin-course-description"
                   value={course.description}
                   onChange={(e) => setCourse(prev => ({ ...prev, description: e.target.value }))}
                   rows={4}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from 'react';
+import { useEffect, useMemo, useState, useCallback, useSyncExternalStore } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 
 import ClientErrorBoundary from '../../components/ClientErrorBoundary';
@@ -20,6 +20,18 @@ const LMSCourseCompletion = () => {
   const [isLoading, setIsLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const { user } = useUserProfile();
+
+  const adminCatalogState = useSyncExternalStore(courseStore.subscribe, courseStore.getAdminCatalogState);
+  const learnerCatalogState = useSyncExternalStore(courseStore.subscribe, courseStore.getLearnerCatalogState);
+  const allCourses = useSyncExternalStore(courseStore.subscribe, courseStore.getAllCourses);
+
+  useEffect(() => {
+    if (adminCatalogState.phase !== 'idle' || learnerCatalogState.status !== 'idle') {
+      return;
+    }
+    void courseStore.init();
+  }, [adminCatalogState.phase, learnerCatalogState.status]);
+
   const learnerIdentity = useMemo(() => {
     const fallback = { id: 'local-user', email: 'demo@learner.com', name: 'Learner' };
     if (!user) {
@@ -41,6 +53,14 @@ const LMSCourseCompletion = () => {
         return;
       }
 
+      const stillLoadingCatalog =
+        adminCatalogState.phase === 'loading' ||
+        (learnerCatalogState.status === 'idle' && allCourses.length === 0);
+      if (stillLoadingCatalog) {
+        setIsLoading(true);
+        return;
+      }
+
       const rawCourse = courseStore.resolveCourse(courseId) || courseStore.getCourse(courseId);
       if (!rawCourse) {
         setNotFound(true);
@@ -48,12 +68,15 @@ const LMSCourseCompletion = () => {
         return;
       }
 
+      setNotFound(false);
       setCourse(normalizeCourse(rawCourse));
       setIsLoading(false);
     };
 
     resolveCourse();
-  }, [courseId]);
+  // allCourses.length re-fires this effect whenever new courses arrive.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [adminCatalogState.phase, learnerCatalogState.status, courseId, allCourses.length]);
 
   const storedProgress = useMemo(() => {
     if (!course) return null;
@@ -115,8 +138,7 @@ const LMSCourseCompletion = () => {
       ];
 
   const recommendedCourses = useMemo(() => {
-    const publishedCourses = courseStore
-      .getAllCourses()
+    const publishedCourses = allCourses
       .filter((entry) => entry.id !== course?.id && entry.status === 'published')
       .slice(0, 3)
       .map((entry) => ({
@@ -128,7 +150,7 @@ const LMSCourseCompletion = () => {
       }));
 
     return publishedCourses;
-  }, [course?.id]);
+  }, [allCourses, course?.id]);
 
   const nextSteps = useMemo(() => [
     {

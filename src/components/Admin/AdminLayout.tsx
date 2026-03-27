@@ -780,7 +780,7 @@ const AdminLayout: FC<AdminLayoutProps> = ({ children }) => {
             </button>
             <button
               type="button"
-              className="rounded-full bg-sunrise/600 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-white transition hover:bg-sunrise/700"
+              className="rounded-full bg-sunrise px-3 py-1 text-xs font-semibold uppercase tracking-wide text-white transition hover:bg-sunrise/90"
               onClick={() => startNavTransition(() => { void navigate('/admin/organizations'); })}
             >
               Choose organization

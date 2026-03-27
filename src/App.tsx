@@ -222,6 +222,36 @@ function AppContent() {
   const courseInitKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    const shouldExposeDebug = import.meta.env.DEV || Boolean((window as any).__E2E_BYPASS);
+    if (!shouldExposeDebug) {
+      return;
+    }
+
+    const globalWindow = window as typeof window & {
+      __HUDDLE_E2E_DEBUG__?: {
+        getSnapshot: () => Record<string, unknown>;
+      };
+    };
+
+    globalWindow.__HUDDLE_E2E_DEBUG__ = {
+      getSnapshot: () => ({
+        pathname: window.location.pathname,
+        adminCatalogState: courseStore.getAdminCatalogState(),
+        learnerCatalogState: courseStore.getLearnerCatalogState(),
+        courseCount: courseStore.getAllCourses().length,
+        courseIds: courseStore.getAllCourses().slice(0, 10).map((course) => course.id),
+      }),
+    };
+
+    return () => {
+      delete globalWindow.__HUDDLE_E2E_DEBUG__;
+    };
+  }, []);
+
+  useEffect(() => {
     if (sessionStatus !== 'authenticated') {
       return;
     }

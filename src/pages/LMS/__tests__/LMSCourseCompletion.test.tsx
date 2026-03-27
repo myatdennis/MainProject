@@ -6,7 +6,11 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 const mockResolveCourse = vi.fn();
 const mockGetCourse = vi.fn();
 const mockGetAllCourses = vi.fn();
+const mockGetAdminCatalogState = vi.fn();
+const mockGetLearnerCatalogState = vi.fn();
 const mockLoadStoredCourseProgress = vi.fn();
+const mockSubscribe = vi.fn(() => () => {});
+const mockInit = vi.fn(() => Promise.resolve());
 
 vi.mock('../../../components/CourseCompletion', () => ({
   __esModule: true,
@@ -20,6 +24,10 @@ vi.mock('../../../store/courseStore', () => ({
     resolveCourse: (...args: unknown[]) => mockResolveCourse(...args),
     getCourse: (...args: unknown[]) => mockGetCourse(...args),
     getAllCourses: (...args: unknown[]) => mockGetAllCourses(...args),
+    getAdminCatalogState: (...args: unknown[]) => mockGetAdminCatalogState(...args),
+    getLearnerCatalogState: (...args: unknown[]) => mockGetLearnerCatalogState(...args),
+    subscribe: (...args: unknown[]) => mockSubscribe(...args),
+    init: (...args: unknown[]) => mockInit(...args),
   },
 }));
 
@@ -79,6 +87,8 @@ beforeEach(() => {
   mockResolveCourse.mockReturnValue(baseCourse);
   mockGetCourse.mockReturnValue(baseCourse);
   mockGetAllCourses.mockReturnValue([baseCourse]);
+  mockGetAdminCatalogState.mockReturnValue({ phase: 'ready' });
+  mockGetLearnerCatalogState.mockReturnValue({ status: 'ok' });
   mockLoadStoredCourseProgress.mockReturnValue({
     completedLessonIds: baseCourse.modules.flatMap((module) => module.lessons?.map((lesson) => lesson.id) ?? []),
     lessonProgress: {},
@@ -108,5 +118,18 @@ describe('LMSCourseCompletion', () => {
     renderWithRouter();
     const message = await screen.findByText(/Almost there!/i);
     expect(message).toBeInTheDocument();
+  });
+
+  it('keeps the deep link in a loading state while the learner catalog is still booting', async () => {
+    mockResolveCourse.mockReturnValue(null);
+    mockGetCourse.mockReturnValue(null);
+    mockGetAllCourses.mockReturnValue([]);
+    mockGetAdminCatalogState.mockReturnValue({ phase: 'loading' });
+    mockGetLearnerCatalogState.mockReturnValue({ status: 'idle' });
+
+    renderWithRouter();
+
+    expect(await screen.findByLabelText(/Loading/i)).toBeInTheDocument();
+    expect(screen.queryByText(/Course not found/i)).not.toBeInTheDocument();
   });
 });

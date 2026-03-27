@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { LazyImage } from '../../components/PerformanceComponents';
 import { Link, useNavigate } from 'react-router-dom';
 import { BookOpen, Clock, Search, Filter, ArrowRight, Inbox } from 'lucide-react';
@@ -34,49 +34,30 @@ const ClientCourses = () => {
   const navigate = useNavigate();
 
   const learnerId = useMemo(() => {
-    if (user?.email) return user.email.toLowerCase();
     if (user?.id) return String(user.id).toLowerCase();
+    if (user?.email) return user.email.toLowerCase();
     return 'local-user';
   }, [user]);
 
   const [assignments, setAssignments] = useState<CourseAssignment[]>([]);
   const [progressRefreshToken, setProgressRefreshToken] = useState(0);
-  // Normalize courses (convert modules to chapters if needed)
-
-  // Add loading state for courses
-  const [coursesLoading, setCoursesLoading] = useState(true);
-  const [normalizedCoursesAll, setNormalizedCoursesAll] = useState<ReturnType<typeof normalizeCourse>[]>([]);
-
+  const adminCatalogState = useSyncExternalStore(courseStore.subscribe, courseStore.getAdminCatalogState);
+  const learnerCatalogState = useSyncExternalStore(courseStore.subscribe, courseStore.getLearnerCatalogState);
+  const allCourses = useSyncExternalStore(courseStore.subscribe, courseStore.getAllCourses);
 
   useEffect(() => {
-    let mounted = true;
-    const loadCourses = async () => {
-      setCoursesLoading(true);
-      try {
-        if (typeof (courseStore as any).init === 'function') {
-          await (courseStore as any).init();
-        }
-        if (mounted) {
-          const rawCourses = courseStore.getAllCourses();
-          const all = rawCourses.map((course) => {
-            const norm = normalizeCourse(course);
-            return norm;
-          });
-          setNormalizedCoursesAll(all);
-        }
-      } catch (err) {
-        console.warn('Failed to initialize course store:', err);
-      } finally {
-        if (mounted) setCoursesLoading(false);
-      }
-    };
-    loadCourses();
-    return () => { mounted = false; };
-  }, []);
+    if (adminCatalogState.phase !== 'idle' || learnerCatalogState.status !== 'idle') {
+      return;
+    }
+    courseStore.init().catch((err) => {
+      console.warn('Failed to initialize course store:', err);
+    });
+  }, [adminCatalogState.phase, learnerCatalogState.status]);
 
-  useEffect(() => {
-    // normalizedCoursesAll updated
-  }, [normalizedCoursesAll]);
+  const normalizedCoursesAll = useMemo(
+    () => allCourses.map((course) => normalizeCourse(course)),
+    [allCourses],
+  );
 
   useEffect(() => {
     let isMounted = true;
@@ -172,6 +153,9 @@ const ClientCourses = () => {
     return true;
   });
 
+  const coursesLoading =
+    adminCatalogState.phase === 'loading' ||
+    (learnerCatalogState.status === 'idle' && normalizedCoursesAll.length === 0);
   const noCoursesAvailable = !coursesLoading && normalizedCourses.length === 0;
 
   return (
