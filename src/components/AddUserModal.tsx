@@ -33,6 +33,8 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
       cohort: editUser?.cohort || '',
       department: '',
       phoneNumber: '',
+      password: '',
+      confirmPassword: '',
     },
     {
       firstName: [validators.required, validators.minLength(2)],
@@ -70,6 +72,13 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
       });
     return () => { cancelled = true; };
   }, [isOpen, orgsProp]);
+
+  useEffect(() => {
+    if (!isOpen || isEditMode) return;
+    if (!values.organization && activeOrgId) {
+      setValue('organization', activeOrgId);
+    }
+  }, [activeOrgId, isEditMode, isOpen, setValue, values.organization]);
 
   // Resolved org list: prefer prop, fall back to fetched
   const organizations = (orgsProp && orgsProp.length > 0) ? orgsProp : fetchedOrgs;
@@ -128,8 +137,21 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
       organization: SecurityUtils.sanitizeInput(values.organization),
       department: SecurityUtils.sanitizeInput(values.department || ''),
       role: SecurityUtils.sanitizeInput(values.role),
-      cohort: SecurityUtils.sanitizeInput(values.cohort)
+      cohort: SecurityUtils.sanitizeInput(values.cohort),
+      password: values.password,
+      confirmPassword: values.confirmPassword,
     };
+
+    if (!isEditMode) {
+      if (!sanitizedData.password || sanitizedData.password.length < 12) {
+        showToast('Password must be at least 12 characters', 'error');
+        return;
+      }
+      if (sanitizedData.password !== sanitizedData.confirmPassword) {
+        showToast('Passwords do not match', 'error');
+        return;
+      }
+    }
 
     // Log security event
     SecurityUtils.logSecurityEvent({
@@ -142,12 +164,18 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
 
     try {
       if (isEditMode && editUser) {
-        // Update existing user membership role/title via PATCH
+        // Update the real user profile and membership state via PATCH
         await apiRequest(`/api/admin/users/${editUser.id}`, {
           method: 'PATCH',
           body: {
             organizationId: activeOrgId,
-            role: sanitizedData.role.toLowerCase(),
+            firstName: sanitizedData.firstName,
+            lastName: sanitizedData.lastName,
+            email: sanitizedData.email,
+            jobTitle: sanitizedData.role,
+            department: sanitizedData.department,
+            cohort: sanitizedData.cohort,
+            phoneNumber: sanitizedData.phoneNumber,
           },
         });
         const updatedUser = {
@@ -161,42 +189,45 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
         onUserAdded?.(updatedUser);
         showToast('User updated successfully!', 'success');
       } else {
-        // Invite new user to the org via the invite endpoint
+        // Provision a real login-backed user account and activate membership immediately.
         const orgId = sanitizedData.organization || activeOrgId;
         if (!orgId) {
           showToast('Please select an organization', 'error');
           setLoading(false);
           return;
         }
-        await apiRequest(`/api/admin/organizations/${orgId}/invites`, {
+        const response = await apiRequest<{
+          data?: any;
+          created?: boolean;
+          existingAccount?: boolean;
+        }>(`/api/admin/users`, {
           method: 'POST',
           body: {
+            organizationId: orgId,
+            firstName: sanitizedData.firstName,
+            lastName: sanitizedData.lastName,
             email: sanitizedData.email,
-            role: 'member',
-            metadata: {
-              firstName: sanitizedData.firstName,
-              lastName: sanitizedData.lastName,
-              jobTitle: sanitizedData.role,
-              department: sanitizedData.department,
-              cohort: sanitizedData.cohort,
-              phoneNumber: sanitizedData.phoneNumber,
-            },
-            sendEmail: true,
+            password: sanitizedData.password,
+            membershipRole: 'member',
+            jobTitle: sanitizedData.role,
+            department: sanitizedData.department,
+            cohort: sanitizedData.cohort,
+            phoneNumber: sanitizedData.phoneNumber,
           },
         });
-        // Return a placeholder so the parent can optimistically show the user
+
         const newUser = {
-          id: `pending-${Date.now()}`,
+          id: response?.data?.user_id ?? response?.data?.user?.id ?? response?.data?.profile?.id ?? `user-${Date.now()}`,
           name: `${sanitizedData.firstName} ${sanitizedData.lastName}`,
           email: sanitizedData.email,
-          organization: sanitizedData.organization,
+          organization: orgId,
           cohort: sanitizedData.cohort,
           role: sanitizedData.role,
           department: sanitizedData.department,
           phoneNumber: sanitizedData.phoneNumber,
           enrolled: new Date().toISOString(),
           lastLogin: '',
-          status: 'pending' as const,
+          status: 'active' as const,
           progress: { foundations: 0, bias: 0, empathy: 0, conversations: 0, planning: 0 },
           overallProgress: 0,
           completedModules: 0,
@@ -204,7 +235,12 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
           feedbackSubmitted: false,
         };
         onUserAdded?.(newUser);
-        showToast(`Invite sent to ${sanitizedData.email}`, 'success');
+        showToast(
+          response?.existingAccount
+            ? `Existing account added to the organization`
+            : `Account created for ${sanitizedData.email}`,
+          'success',
+        );
       }
       
       // Reset form
@@ -217,10 +253,16 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
       setValue('cohort', '');
       setValue('department', '');
       setValue('phoneNumber', '');
+      setValue('password', '');
+      setValue('confirmPassword', '');
       
       onClose();
-    } catch (error) {
-      showToast(isEditMode ? 'Failed to update user. Please try again.' : 'Failed to add user. Please try again.', 'error');
+    } catch (error: any) {
+      showToast(
+        error?.message ??
+          (isEditMode ? 'Failed to update user. Please try again.' : 'Failed to add user. Please try again.'),
+        'error',
+      );
     } finally {
       setLoading(false);
     }
@@ -387,6 +429,37 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
                     />
                   </div>
                 </div>
+                {!isEditMode && (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Password *
+                      </label>
+                      <input
+                        type="password"
+                        value={values.password}
+                        onChange={(e) => setValue('password', e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                        disabled={loading}
+                        autoComplete="new-password"
+                      />
+                      <p className="mt-1 text-xs text-gray-500">Minimum 12 characters.</p>
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-2">
+                        Confirm Password *
+                      </label>
+                      <input
+                        type="password"
+                        value={values.confirmPassword}
+                        onChange={(e) => setValue('confirmPassword', e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                        disabled={loading}
+                        autoComplete="new-password"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
               {/* Organization Information */}
               <div>

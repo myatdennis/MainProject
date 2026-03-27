@@ -11,6 +11,7 @@ import cookieParser from 'cookie-parser';
 import fs from 'fs';
 import multer from 'multer';
 import { randomUUID, createHash } from 'crypto';
+import bcrypt from 'bcryptjs';
 import {
   moduleCreateSchema,
   modulePatchSchema as modulePatchValidator,
@@ -2080,18 +2081,116 @@ app.get('/api/admin/users', authenticate, requireAdmin, async (req, res) => {
   }
 });
 
-app.patch('/api/admin/users/:userId', authenticate, requireAdmin, async (req, res) => {
+app.post('/api/admin/users', authenticate, requireAdmin, async (req, res) => {
   if (!ensureSupabase(res)) return;
-  const { userId } = req.params;
+
   const orgId = pickOrgId(req.body?.orgId, req.body?.organizationId);
-  const { role, status } = req.body || {};
+  const firstName = typeof req.body?.firstName === 'string' ? req.body.firstName.trim() : '';
+  const lastName = typeof req.body?.lastName === 'string' ? req.body.lastName.trim() : '';
+  const rawEmail = typeof req.body?.email === 'string' ? req.body.email.trim().toLowerCase() : '';
+  const password = typeof req.body?.password === 'string' ? req.body.password : '';
+  const membershipRole = normalizeOrgRole(req.body?.membershipRole || 'member');
+  const jobTitle = typeof req.body?.jobTitle === 'string' ? req.body.jobTitle.trim() : '';
+  const department = typeof req.body?.department === 'string' ? req.body.department.trim() : '';
+  const cohort = typeof req.body?.cohort === 'string' ? req.body.cohort.trim() : '';
+  const phoneNumber = typeof req.body?.phoneNumber === 'string' ? req.body.phoneNumber.trim() : '';
 
   if (!orgId) {
     res.status(400).json({ error: 'org_id_required', message: 'organizationId is required.' });
     return;
   }
-  if (!role && !status) {
-    res.status(400).json({ error: 'no_fields', message: 'role or status must be provided.' });
+  if (!firstName || !lastName || !rawEmail) {
+    res.status(400).json({
+      error: 'missing_fields',
+      message: 'firstName, lastName, and email are required.',
+    });
+    return;
+  }
+  if (password && password.length < INVITE_PASSWORD_MIN_CHARS) {
+    res.status(400).json({
+      error: 'invalid_password',
+      message: `Password must be at least ${INVITE_PASSWORD_MIN_CHARS} characters.`,
+    });
+    return;
+  }
+
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  const access = await requireOrgAccess(req, res, orgId, { write: true, requireOrgAdmin: true });
+  if (!access) return;
+
+  try {
+    const actor = buildActorFromRequest(req);
+    const account = await provisionOrganizationUserAccount({
+      orgId,
+      email: rawEmail,
+      password,
+      firstName,
+      lastName,
+      membershipRole,
+      jobTitle,
+      department,
+      cohort,
+      phoneNumber,
+      actor,
+      requestId: req.requestId ?? null,
+    });
+
+    res.status(account.created ? 201 : 200).json({
+      data: account.member,
+      created: account.created,
+      existingAccount: !account.created,
+      membershipCreated: account.membershipCreated,
+    });
+  } catch (error) {
+    const normalized = logUsersStageError('user_create', error, {
+      requestId: req.requestId ?? null,
+      orgId,
+      email: rawEmail,
+    });
+    const status =
+      normalized.code === 'invalid_password' || normalized.code === 'missing_fields'
+        ? 400
+        : normalized.code === 'org_access_denied'
+          ? 403
+          : 500;
+    res.status(status).json({
+      error: 'Unable to create organization user',
+      code: normalized.code ?? 'internal_error',
+      message: normalized.message ?? 'Unexpected error while creating organization user',
+      details: normalized.details ?? null,
+      requestId: req.requestId ?? null,
+    });
+  }
+});
+
+app.patch('/api/admin/users/:userId', authenticate, requireAdmin, async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const { userId } = req.params;
+  const orgId = pickOrgId(req.body?.orgId, req.body?.organizationId);
+  const {
+    role,
+    membershipRole,
+    status,
+    firstName,
+    lastName,
+    email,
+    jobTitle,
+    department,
+    cohort,
+    phoneNumber,
+  } = req.body || {};
+
+  if (!orgId) {
+    res.status(400).json({ error: 'org_id_required', message: 'organizationId is required.' });
+    return;
+  }
+  const requestedMembershipRole = membershipRole ?? role;
+  const hasProfileChanges = [firstName, lastName, email, jobTitle, department, cohort, phoneNumber]
+    .some((value) => value !== undefined);
+  if (!requestedMembershipRole && !status && !hasProfileChanges) {
+    res.status(400).json({ error: 'no_fields', message: 'Provide membership or profile fields to update.' });
     return;
   }
 
@@ -2117,8 +2216,8 @@ app.patch('/api/admin/users/:userId', authenticate, requireAdmin, async (req, re
     }
 
     const updatePayload = {};
-    if (role) {
-      updatePayload.role = String(role).toLowerCase();
+    if (requestedMembershipRole) {
+      updatePayload.role = normalizeOrgRole(requestedMembershipRole);
     }
     if (status) {
       const normalizedStatus = String(status).toLowerCase();
@@ -2149,15 +2248,41 @@ app.patch('/api/admin/users/:userId', authenticate, requireAdmin, async (req, re
     }
 
     currentStage = 'membership_update';
-    const { data, error } = await supabase
-      .from('organization_memberships')
-      .update(updatePayload)
-      .eq('organization_id', orgId)
-      .eq('user_id', userId)
-      .select('*')
-      .maybeSingle();
+    let updatedMembership = membership;
+    if (Object.keys(updatePayload).length > 0) {
+      const { data, error } = await supabase
+        .from('organization_memberships')
+        .update(updatePayload)
+        .eq('organization_id', orgId)
+        .eq('user_id', userId)
+        .select('*')
+        .maybeSingle();
 
-    if (error) throw error;
+      if (error) throw error;
+      if (data) {
+        updatedMembership = data;
+      }
+    }
+
+    if (hasProfileChanges || requestedMembershipRole) {
+      currentStage = 'profile_update';
+      await updateProvisionedUserProfile(userId, orgId, {
+        firstName,
+        lastName,
+        email,
+        jobTitle,
+        department,
+        cohort,
+        phoneNumber,
+        membershipRole: requestedMembershipRole,
+      });
+    }
+
+    currentStage = 'member_reload';
+    const members = await fetchOrgMembersWithProfiles(orgId);
+    const data =
+      members.find((member) => String(member?.user_id ?? '') === String(userId)) ??
+      updatedMembership;
 
     res.json({ data });
   } catch (error) {
@@ -2172,6 +2297,81 @@ app.patch('/api/admin/users/:userId', authenticate, requireAdmin, async (req, re
       message: normalized.message ?? 'Unexpected error while updating organization user',
       details: normalized.details ?? null,
       requestId: req.requestId ?? null,
+    });
+  }
+});
+
+app.delete('/api/admin/users/:userId', authenticate, requireAdmin, async (req, res) => {
+  if (!ensureSupabase(res)) return;
+
+  const { userId } = req.params;
+  const orgId = pickOrgId(
+    req.query?.orgId,
+    req.query?.organizationId,
+    req.body?.orgId,
+    req.body?.organizationId,
+  );
+  const mode = String(req.query?.mode || req.body?.mode || 'archive').toLowerCase();
+  const requestId = req.requestId ?? null;
+
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  const isPlatformAdmin = Boolean(context.isPlatformAdmin || context.userRole === 'admin');
+  if (mode === 'archive') {
+    if (!orgId) {
+      res.status(400).json({ error: 'org_id_required', message: 'organizationId is required to archive a user.' });
+      return;
+    }
+    const access = await requireOrgAccess(req, res, orgId, { write: true, requireOrgAdmin: true });
+    if (!access) return;
+
+    try {
+      const result = await archiveOrganizationUserAccount({ userId, orgId, requestId });
+      res.json({ data: result });
+    } catch (error) {
+      const normalized = logUsersStageError('user_archive', error, { requestId, orgId, userId });
+      const statusCode =
+        normalized.code === 'membership_not_found'
+          ? 404
+          : normalized.code === 'owner_required' || normalized.code === 'invalid_archive_request'
+            ? 400
+            : 500;
+      res.status(statusCode).json({
+        error: 'Unable to archive organization user',
+        code: normalized.code ?? 'internal_error',
+        message: normalized.message ?? 'Unexpected error while archiving organization user',
+        details: normalized.details ?? null,
+        requestId,
+      });
+    }
+    return;
+  }
+
+  if (mode !== 'delete') {
+    res.status(400).json({ error: 'invalid_mode', message: 'mode must be archive or delete.' });
+    return;
+  }
+
+  if (!isPlatformAdmin) {
+    res.status(403).json({
+      error: 'platform_admin_required',
+      message: 'Hard-deleting a user requires platform admin access.',
+    });
+    return;
+  }
+
+  try {
+    await permanentlyDeleteUserAccount({ userId, requestId });
+    res.status(204).end();
+  } catch (error) {
+    const normalized = logUsersStageError('user_delete', error, { requestId, userId });
+    res.status(500).json({
+      error: 'Unable to permanently delete user',
+      code: normalized.code ?? 'internal_error',
+      message: normalized.message ?? 'Unexpected error while deleting user',
+      details: normalized.details ?? null,
+      requestId,
     });
   }
 });
@@ -4964,6 +5164,28 @@ const normalizeOrgRole = (role, defaultRole = 'member') => {
   return defaultRole;
 };
 
+const normalizeProvisioningEmail = (value) =>
+  typeof value === 'string' ? value.trim().toLowerCase() : '';
+
+const buildProvisionedProfileMetadata = ({
+  firstName = '',
+  lastName = '',
+  jobTitle = '',
+  department = '',
+  cohort = '',
+  phoneNumber = '',
+} = {}) => {
+  const fullName = [firstName, lastName].filter(Boolean).join(' ').trim();
+  return {
+    full_name: fullName || null,
+    name: fullName || null,
+    job_title: jobTitle || null,
+    department: department || null,
+    cohort: cohort || null,
+    phone_number: phoneNumber || null,
+  };
+};
+
 
 
 function ensureOrgFieldCompatibility(record, { fallbackOrgId = null } = {}) {
@@ -6295,7 +6517,7 @@ async function fetchOrgMembersWithProfiles(orgId) {
     });
 
     const { data: userRows, error: userError } = await supabase
-      .from('user_profiles')
+      .from('users')
       .select('id, email, first_name, last_name, organization_id')
       .in('id', userIds);
     if (userError) throw userError;
@@ -7498,6 +7720,433 @@ async function upsertOrganizationMembership(orgId, userId, role, actor) {
   }
   await recordActivationEvent(orgId, 'membership_upserted', { userId, role }, actor);
   return data;
+}
+
+async function upsertProvisionedUserRecord({
+  userId,
+  email,
+  password,
+  firstName,
+  lastName,
+  orgId,
+  isAdmin = false,
+}) {
+  if (!supabase || !userId || !email) return;
+  const passwordHash = password ? await bcrypt.hash(password, 12) : null;
+  const payload = {
+    id: userId,
+    email,
+    first_name: firstName || null,
+    last_name: lastName || null,
+    role: isAdmin ? 'admin' : 'user',
+    is_active: true,
+    organization_id: orgId ?? null,
+  };
+  if (passwordHash) {
+    payload.password_hash = passwordHash;
+  }
+  const { error } = await supabase.from('users').upsert(payload, { onConflict: 'id' });
+  if (error) {
+    throw error;
+  }
+}
+
+async function updateProvisionedUserProfile(userId, orgId, updates = {}) {
+  if (!supabase || !userId) return null;
+
+  const {
+    firstName,
+    lastName,
+    email,
+    jobTitle,
+    department,
+    cohort,
+    phoneNumber,
+    membershipRole,
+  } = updates;
+
+  const normalizedEmail = normalizeProvisioningEmail(email);
+  const { data: existingProfile, error: existingProfileError } = await supabase
+    .from('user_profiles')
+    .select('*')
+    .eq('id', userId)
+    .maybeSingle();
+
+  if (existingProfileError && !isMissingRelationError(existingProfileError)) {
+    throw existingProfileError;
+  }
+
+  const mergedFirstName = firstName !== undefined ? firstName?.trim?.() || null : existingProfile?.first_name ?? null;
+  const mergedLastName = lastName !== undefined ? lastName?.trim?.() || null : existingProfile?.last_name ?? null;
+  const metadata = {
+    ...(existingProfile?.metadata && typeof existingProfile.metadata === 'object' ? existingProfile.metadata : {}),
+    ...buildProvisionedProfileMetadata({
+      firstName: mergedFirstName || '',
+      lastName: mergedLastName || '',
+      jobTitle: jobTitle !== undefined ? String(jobTitle || '').trim() : String(existingProfile?.metadata?.job_title || ''),
+      department: department !== undefined ? String(department || '').trim() : String(existingProfile?.metadata?.department || ''),
+      cohort: cohort !== undefined ? String(cohort || '').trim() : String(existingProfile?.metadata?.cohort || ''),
+      phoneNumber: phoneNumber !== undefined ? String(phoneNumber || '').trim() : String(existingProfile?.metadata?.phone_number || ''),
+    }),
+  };
+
+  const requestedMembershipRole = membershipRole ? normalizeOrgRole(membershipRole) : null;
+  const shouldElevateAdmin = requestedMembershipRole ? writableMembershipRoles.has(requestedMembershipRole) : false;
+  const payload = {
+    id: userId,
+    email: normalizedEmail || existingProfile?.email || null,
+    first_name: mergedFirstName,
+    last_name: mergedLastName,
+    organization_id: orgId ?? existingProfile?.organization_id ?? null,
+    role: shouldElevateAdmin ? 'admin' : existingProfile?.role || 'learner',
+    is_active: existingProfile?.is_active ?? true,
+    is_admin: shouldElevateAdmin ? true : existingProfile?.is_admin ?? false,
+    metadata,
+  };
+
+  const { error } = await supabase.from('user_profiles').upsert(payload, { onConflict: 'id' });
+  if (error) {
+    throw error;
+  }
+
+  if (normalizedEmail || mergedFirstName !== null || mergedLastName !== null) {
+    const authUpdatePayload = {
+      user_metadata: {
+        first_name: mergedFirstName,
+        last_name: mergedLastName,
+        organization_id: orgId ?? null,
+      },
+    };
+    if (normalizedEmail) {
+      authUpdatePayload.email = normalizedEmail;
+      authUpdatePayload.email_confirm = true;
+    }
+    try {
+      await supabase.auth.admin.updateUserById(userId, authUpdatePayload);
+    } catch (error) {
+      logger.warn('user_profile_auth_sync_failed', {
+        userId,
+        message: error?.message || String(error),
+      });
+    }
+  }
+
+  const userPayload = {};
+  if (normalizedEmail) {
+    userPayload.email = normalizedEmail;
+  }
+  if (mergedFirstName !== null) {
+    userPayload.first_name = mergedFirstName;
+  }
+  if (mergedLastName !== null) {
+    userPayload.last_name = mergedLastName;
+  }
+  if (Object.keys(userPayload).length > 0 || orgId) {
+    if (orgId) {
+      userPayload.organization_id = orgId;
+    }
+    const { error: userError } = await supabase.from('users').upsert(
+      {
+        id: userId,
+        ...userPayload,
+        is_active: true,
+      },
+      { onConflict: 'id' },
+    );
+    if (userError) {
+      throw userError;
+    }
+  }
+
+  return payload;
+}
+
+async function provisionOrganizationUserAccount({
+  orgId,
+  email,
+  password,
+  firstName,
+  lastName,
+  membershipRole = 'member',
+  jobTitle = '',
+  department = '',
+  cohort = '',
+  phoneNumber = '',
+  actor = null,
+  requestId = null,
+}) {
+  if (!supabase) {
+    throw new Error('supabase_not_configured');
+  }
+
+  const normalizedEmail = normalizeProvisioningEmail(email);
+  if (!normalizedEmail || !firstName || !lastName) {
+    throw createHttpError(400, 'missing_fields', 'firstName, lastName, and email are required.');
+  }
+
+  let authUser = null;
+  let created = false;
+  try {
+    const { data, error } = await supabase.auth.admin.getUserByEmail(normalizedEmail);
+    if (error && error.message !== 'User not found') {
+      throw error;
+    }
+    authUser = data?.user ?? null;
+  } catch (error) {
+    logger.error('admin_user_lookup_failed', {
+      requestId,
+      email: normalizedEmail,
+      message: error?.message || String(error),
+    });
+    throw error;
+  }
+
+  if (!authUser) {
+    if (!password || password.length < INVITE_PASSWORD_MIN_CHARS) {
+      throw createHttpError(
+        400,
+        'invalid_password',
+        `Password must be at least ${INVITE_PASSWORD_MIN_CHARS} characters.`,
+      );
+    }
+    const { data, error } = await supabase.auth.admin.createUser({
+      email: normalizedEmail,
+      password,
+      email_confirm: true,
+      user_metadata: {
+        first_name: firstName,
+        last_name: lastName,
+        organization_id: orgId,
+      },
+    });
+    if (error) {
+      throw error;
+    }
+    authUser = data?.user ?? null;
+    created = true;
+  }
+
+  if (!authUser?.id) {
+    throw new Error('auth_user_resolution_failed');
+  }
+
+  await upsertProvisionedUserRecord({
+    userId: authUser.id,
+    email: normalizedEmail,
+    password,
+    firstName,
+    lastName,
+    orgId,
+  });
+
+  await updateProvisionedUserProfile(authUser.id, orgId, {
+    firstName,
+    lastName,
+    email: normalizedEmail,
+    jobTitle,
+    department,
+    cohort,
+    phoneNumber,
+    membershipRole,
+  });
+
+  const membership = await upsertOrganizationMembership(orgId, authUser.id, membershipRole, actor);
+
+  try {
+    await supabase
+      .from('org_invites')
+      .update({
+        status: 'accepted',
+        accepted_at: new Date().toISOString(),
+        accepted_user_id: authUser.id,
+      })
+      .eq('organization_id', orgId)
+      .eq('email', normalizedEmail)
+      .in('status', ['pending', 'sent']);
+  } catch (error) {
+    logger.warn('admin_user_invite_sync_failed', {
+      requestId,
+      orgId,
+      userId: authUser.id,
+      message: error?.message || String(error),
+    });
+  }
+
+  const members = await fetchOrgMembersWithProfiles(orgId);
+  const member = members.find((row) => String(row?.user_id ?? '') === String(authUser.id)) || membership;
+
+  return {
+    created,
+    membershipCreated: Boolean(membership?.id),
+    member,
+    userId: authUser.id,
+  };
+}
+
+async function runOptionalCleanupMutation(label, operation, meta = {}) {
+  try {
+    const result = await operation();
+    if (result?.error) {
+      if (isMissingRelationError(result.error) || isMissingColumnError(result.error)) {
+        logger.warn('optional_cleanup_skipped', {
+          label,
+          reason: result.error.message || String(result.error),
+          ...meta,
+        });
+        return null;
+      }
+      throw result.error;
+    }
+    return result?.data ?? null;
+  } catch (error) {
+    if (isMissingRelationError(error) || isMissingColumnError(error)) {
+      logger.warn('optional_cleanup_skipped', {
+        label,
+        reason: error?.message || String(error),
+        ...meta,
+      });
+      return null;
+    }
+    throw error;
+  }
+}
+
+async function archiveOrganizationUserAccount({ userId, orgId, requestId = null }) {
+  if (!supabase || !userId || !orgId) {
+    throw createHttpError(400, 'invalid_archive_request', 'userId and organizationId are required.');
+  }
+
+  const { data: membership, error: membershipError } = await supabase
+    .from('organization_memberships')
+    .select('id, organization_id, user_id, role, status')
+    .eq('organization_id', orgId)
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (membershipError) throw membershipError;
+  if (!membership) {
+    throw createHttpError(404, 'membership_not_found', 'Organization membership was not found.');
+  }
+
+  if (membership.role === 'owner' && membership.status === 'active') {
+    const { count, error: ownerCountError } = await supabase
+      .from('organization_memberships')
+      .select('id', { head: true, count: 'exact' })
+      .eq('organization_id', orgId)
+      .eq('role', 'owner')
+      .eq('status', 'active');
+    if (ownerCountError) throw ownerCountError;
+    if (!count || count <= 1) {
+      throw createHttpError(400, 'owner_required', 'At least one active owner is required.');
+    }
+  }
+
+  const { error: revokeError } = await supabase
+    .from('organization_memberships')
+    .update({ status: 'revoked', updated_at: new Date().toISOString() })
+    .eq('organization_id', orgId)
+    .eq('user_id', userId);
+  if (revokeError) throw revokeError;
+
+  const { data: remainingMemberships, error: remainingError } = await supabase
+    .from('organization_memberships')
+    .select('organization_id, status')
+    .eq('user_id', userId)
+    .eq('status', 'active');
+  if (remainingError) throw remainingError;
+
+  const nextOrgId =
+    Array.isArray(remainingMemberships) && remainingMemberships.length > 0
+      ? pickOrgId(remainingMemberships[0]?.organization_id, remainingMemberships[0]?.org_id)
+      : null;
+  const stillActive = Boolean(nextOrgId);
+
+  await runOptionalCleanupMutation(
+    'archive_user.users',
+    () =>
+      supabase
+        .from('users')
+        .update({
+          is_active: stillActive,
+          organization_id: nextOrgId,
+        })
+        .eq('id', userId),
+    { userId, orgId, requestId },
+  );
+
+  await runOptionalCleanupMutation(
+    'archive_user.user_profiles',
+    () =>
+      supabase
+        .from('user_profiles')
+        .update({
+          is_active: stillActive,
+          organization_id: nextOrgId,
+        })
+        .eq('id', userId),
+    { userId, orgId, requestId },
+  );
+
+  return { archived: true, userId, orgId, stillActive, nextOrgId };
+}
+
+async function permanentlyDeleteUserAccount({ userId, requestId = null }) {
+  if (!supabase || !userId) {
+    throw createHttpError(400, 'invalid_delete_request', 'userId is required.');
+  }
+
+  await runOptionalCleanupMutation(
+    'delete_user.assignments.user_id',
+    () => supabase.from('assignments').delete().eq('user_id', userId),
+    { userId, requestId },
+  );
+  await runOptionalCleanupMutation(
+    'delete_user.assignments.user_id_uuid',
+    () => supabase.from('assignments').delete().eq('user_id_uuid', userId),
+    { userId, requestId },
+  );
+  await runOptionalCleanupMutation(
+    'delete_user.survey_assignments',
+    () => supabase.from('survey_assignments').delete().eq('user_id', userId),
+    { userId, requestId },
+  );
+  await runOptionalCleanupMutation(
+    'delete_user.message_logs.recipient',
+    () => supabase.from('message_logs').delete().eq('recipient_id', userId),
+    { userId, requestId },
+  );
+  await runOptionalCleanupMutation(
+    'delete_user.message_logs.sent_by',
+    () => supabase.from('message_logs').update({ sent_by: null }).eq('sent_by', userId),
+    { userId, requestId },
+  );
+  await runOptionalCleanupMutation(
+    'delete_user.org_invites.accepted_user',
+    () => supabase.from('org_invites').update({ accepted_user_id: null }).eq('accepted_user_id', userId),
+    { userId, requestId },
+  );
+  await runOptionalCleanupMutation(
+    'delete_user.organization_memberships',
+    () => supabase.from('organization_memberships').delete().eq('user_id', userId),
+    { userId, requestId },
+  );
+  await runOptionalCleanupMutation(
+    'delete_user.user_profiles',
+    () => supabase.from('user_profiles').delete().eq('id', userId),
+    { userId, requestId },
+  );
+  await runOptionalCleanupMutation(
+    'delete_user.users',
+    () => supabase.from('users').delete().eq('id', userId),
+    { userId, requestId },
+  );
+
+  const { error: authDeleteError } = await supabase.auth.admin.deleteUser(userId);
+  if (authDeleteError) {
+    throw authDeleteError;
+  }
+
+  return { deleted: true, userId };
 }
 
 async function fetchOnboardingProgress(orgId) {
@@ -9253,6 +9902,7 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
     courseId: course?.id ?? courseIdFromParams ?? null,
   });
   modules = initialNormalization.modules;
+  normalizeModuleLessonIdentifiers(modules);
   const identifierIssues = collectInvalidIdentifierIssues(modules);
   if (identifierIssues.length > 0) {
     res.locals = res.locals || {};
@@ -14438,6 +15088,80 @@ app.delete('/api/admin/organizations/:id', requireAdminAccess, async (req, res) 
   if (!access) return;
 
   try {
+    await runOptionalCleanupMutation(
+      'delete_org.assignments',
+      () => supabase.from('assignments').delete().eq('organization_id', id),
+      { orgId: id, requestId: req.requestId ?? null },
+    );
+    await runOptionalCleanupMutation(
+      'delete_org.assignments.org_id',
+      () => supabase.from('assignments').delete().eq('org_id', id),
+      { orgId: id, requestId: req.requestId ?? null },
+    );
+    await runOptionalCleanupMutation(
+      'delete_org.survey_assignments',
+      () => supabase.from('survey_assignments').delete().eq('organization_id', id),
+      { orgId: id, requestId: req.requestId ?? null },
+    );
+    await runOptionalCleanupMutation(
+      'delete_org.survey_assignments.org_id',
+      () => supabase.from('survey_assignments').delete().eq('org_id', id),
+      { orgId: id, requestId: req.requestId ?? null },
+    );
+    await runOptionalCleanupMutation(
+      'delete_org.org_invites',
+      () => supabase.from('org_invites').delete().eq('organization_id', id),
+      { orgId: id, requestId: req.requestId ?? null },
+    );
+    await runOptionalCleanupMutation(
+      'delete_org.organization_memberships',
+      () => supabase.from('organization_memberships').delete().eq('organization_id', id),
+      { orgId: id, requestId: req.requestId ?? null },
+    );
+    await runOptionalCleanupMutation(
+      'delete_org.message_logs.organization_id',
+      () => supabase.from('message_logs').delete().eq('organization_id', id),
+      { orgId: id, requestId: req.requestId ?? null },
+    );
+    await runOptionalCleanupMutation(
+      'delete_org.message_logs.org_id',
+      () => supabase.from('message_logs').delete().eq('org_id', id),
+      { orgId: id, requestId: req.requestId ?? null },
+    );
+    await runOptionalCleanupMutation(
+      'delete_org.organization_profiles',
+      () => supabase.from('organization_profiles').delete().eq('organization_id', id),
+      { orgId: id, requestId: req.requestId ?? null },
+    );
+    await runOptionalCleanupMutation(
+      'delete_org.organization_branding',
+      () => supabase.from('organization_branding').delete().eq('org_id', id),
+      { orgId: id, requestId: req.requestId ?? null },
+    );
+    await runOptionalCleanupMutation(
+      'delete_org.organization_contacts',
+      () => supabase.from('organization_contacts').delete().eq('org_id', id),
+      { orgId: id, requestId: req.requestId ?? null },
+    );
+    await runOptionalCleanupMutation(
+      'delete_org.users',
+      () =>
+        supabase
+          .from('users')
+          .update({ organization_id: null })
+          .eq('organization_id', id),
+      { orgId: id, requestId: req.requestId ?? null },
+    );
+    await runOptionalCleanupMutation(
+      'delete_org.user_profiles',
+      () =>
+        supabase
+          .from('user_profiles')
+          .update({ organization_id: null })
+          .eq('organization_id', id),
+      { orgId: id, requestId: req.requestId ?? null },
+    );
+
     await runSupabaseQueryWithRetry('admin.organizations.delete', () =>
       supabase.from('organizations').delete().eq('id', id),
     );

@@ -752,6 +752,9 @@ const AdminCourseBuilder = () => {
     }
   }, []);
   const logAutoSaveEvent = useCallback((event: string, meta: Record<string, unknown> = {}) => {
+    if (!import.meta.env?.DEV) {
+      return;
+    }
     console.info('[AdminCourseBuilder.autosave]', { event, ...meta });
   }, []);
 
@@ -1109,12 +1112,14 @@ const AdminCourseBuilder = () => {
               }
             });
           });
-          console.info('[COURSE REFRESH]', {
-            courseId,
-            fetchedModuleCount: refreshed.modules?.length ?? null,
-            fetchedLessonCount: refreshed.modules ? countTotalLessons(refreshed.modules as Module[]) : null,
-            fetchedVersion: refreshed.version ?? null,
-          });
+          if (import.meta.env?.DEV) {
+            console.info('[COURSE REFRESH]', {
+              courseId,
+              fetchedModuleCount: refreshed.modules?.length ?? null,
+              fetchedLessonCount: refreshed.modules ? countTotalLessons(refreshed.modules as Module[]) : null,
+              fetchedVersion: refreshed.version ?? null,
+            });
+          }
           logAutoSaveEvent('autosave_recovered_from_stale_version', { courseId });
           return mergedCourse as Course;
         }
@@ -1346,23 +1351,29 @@ const scheduleAutosave = useCallback(
 
   const flushAutosave = useCallback(async () => {
     if (autoSaveHaltedRef.current) {
-      console.info('[COURSE SAVE BATCH]', { event: 'halted', dirty: dirtyRef.current });
+      if (import.meta.env?.DEV) {
+        console.info('[COURSE SAVE BATCH]', { event: 'halted', dirty: dirtyRef.current });
+      }
       return;
     }
 
     if (saveInFlightRef.current) {
-      console.info('[COURSE SAVE BATCH]', {
-        event: 'skip_inflight',
-        inFlight: saveInFlightRef.current,
-        dirty: dirtyRef.current,
-      });
+      if (import.meta.env?.DEV) {
+        console.info('[COURSE SAVE BATCH]', {
+          event: 'skip_inflight',
+          inFlight: saveInFlightRef.current,
+          dirty: dirtyRef.current,
+        });
+      }
       return;
     }
 
     while (dirtyRef.current && !autoSaveHaltedRef.current) {
       const snapshot = latestCourseRef.current;
       if (!snapshot || !snapshot.id || !snapshot.title?.trim()) {
-        console.info('[COURSE SAVE BATCH]', { event: 'skip_missing_snapshot' });
+        if (import.meta.env?.DEV) {
+          console.info('[COURSE SAVE BATCH]', { event: 'skip_missing_snapshot' });
+        }
         break;
       }
 
@@ -1391,18 +1402,20 @@ const scheduleAutosave = useCallback(
       try {
         logAutoSaveEvent('autosave_start', { courseId: snapshot.id, requestToken });
         const sendingVersion = snapshot.version ?? lastPersistedRef.current?.version ?? 1;
-        console.info('[COURSE SAVE DIRTY]', {
-          dirty: dirtyRef.current,
-          courseId: snapshot.id,
-          reason: 'flush_start',
-        });
-        console.info('[COURSE SAVE BATCH]', {
-          event: 'sending',
-          courseId: snapshot.id,
-          sendingVersion,
-          dirty: dirtyRef.current,
-          inFlight: saveInFlightRef.current,
-        });
+        if (import.meta.env?.DEV) {
+          console.info('[COURSE SAVE DIRTY]', {
+            dirty: dirtyRef.current,
+            courseId: snapshot.id,
+            reason: 'flush_start',
+          });
+          console.info('[COURSE SAVE BATCH]', {
+            event: 'sending',
+            courseId: snapshot.id,
+            sendingVersion,
+            dirty: dirtyRef.current,
+            inFlight: saveInFlightRef.current,
+          });
+        }
 
         const result = await persistHandler(
           { ...snapshot, slug: isEditing ? undefined : snapshot.slug },
@@ -1469,7 +1482,9 @@ const scheduleAutosave = useCallback(
         } else if (err instanceof SlugConflictError) {
           console.warn('⚠️ Remote auto-sync skipped: slug conflict requires user action.');
         } else {
-          console.error('❌ Remote auto-sync failed:', err);
+          if (import.meta.env?.DEV) {
+            console.error('❌ Remote auto-sync failed:', err);
+          }
         }
         setSaveStatus('error');
         setTimeout(() => setSaveStatus('idle'), 4000);
@@ -1977,7 +1992,7 @@ const logVideoSourceDebug = (
   content?: LessonContent | null,
   extra: Record<string, unknown> = {},
 ) => {
-  if (typeof console === 'undefined') {
+  if (typeof console === 'undefined' || !import.meta.env?.DEV) {
     return;
   }
   const safePayload = {
@@ -2460,10 +2475,12 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
             ? lastPersistedRef.current.version
             : 1;
         (apiCourse as Course).version = latestVersion;
-        console.info('[COURSE SAVE]', {
-          courseId: preparedCourse.id,
-          sendingVersion: latestVersion,
-        });
+        if (import.meta.env?.DEV) {
+          console.info('[COURSE SAVE]', {
+            courseId: preparedCourse.id,
+            sendingVersion: latestVersion,
+          });
+        }
         const persisted = await syncCourseToDatabase(apiCourse as Course, {
           action: derivedAction,
           signal: abortSignal,
@@ -2548,11 +2565,13 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
     }
     if (!diff.hasChanges || suppressDirty) return;
     dirtyRef.current = true;
-    console.info('[COURSE SAVE DIRTY]', {
-      dirty: dirtyRef.current,
-      courseId: course.id,
-      reason: 'diff_detected',
-    });
+    if (import.meta.env?.DEV) {
+      console.info('[COURSE SAVE DIRTY]', {
+        dirty: dirtyRef.current,
+        courseId: course.id,
+        reason: 'diff_detected',
+      });
+    }
     if (!course.modules || course.modules.length === 0) {
       return;
     }
@@ -2674,7 +2693,9 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
         const details = mapValidationErrorDetails(error, 'local.validation');
         presentValidationIssues({ issues: details, issueTargets: buildIssueTargets(details) }, 'draft');
       } else {
-        console.error('❌ Error saving course:', error);
+        if (import.meta.env?.DEV) {
+          console.error('❌ Error saving course:', error);
+        }
         if (error instanceof ApiError && error.status === 401) {
           handleAuthRequired('save-course');
         }

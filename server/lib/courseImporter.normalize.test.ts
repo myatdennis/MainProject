@@ -54,10 +54,11 @@ describe('course importer normalization', () => {
     };
 
     const normalized = normalizeLessonForImport(lesson, { moduleIndex: 0, lessonIndex: 0 });
-    expect(Array.isArray(normalized.content?.branchingElements)).toBe(true);
-    const [element] = normalized.content?.branchingElements ?? [];
-    expect(element?.prompt).toBe('Choose the branch');
-    expect(element?.options?.map((option) => option.nextNodeId)).toEqual(['node-2', 'node-3']);
+    expect(Array.isArray(normalized.content?.elements)).toBe(true);
+    const [element] = normalized.content?.elements ?? [];
+    const [node] = element?.data ?? [];
+    expect(node?.text).toBe('Choose the branch');
+    expect(node?.choices?.map((option) => option.to)).toEqual(['node-2', 'node-3']);
   });
 
   it('derives quiz questions directly from helpers', () => {
@@ -94,7 +95,73 @@ describe('course importer normalization', () => {
     };
     const elements = deriveBranchingElements(lesson);
     expect(elements.length).toBe(1);
-    expect(elements[0]?.options?.map((option) => option.nextNodeId)).toEqual(['next-1', 'next-2']);
+    expect(elements[0]?.data?.[0]?.choices?.map((option) => option.to)).toEqual(['next-1', 'next-2']);
+  });
+
+  it('normalizes builder-style scenario elements for interactive lessons', () => {
+    const lesson = {
+      type: 'interactive',
+      content: {
+        elements: [
+          {
+            id: 'bias-scenario-1',
+            type: 'scenario',
+            title: 'Hiring Bias Challenge',
+            order: 1,
+            data: [
+              {
+                id: 'bias-start',
+                title: 'The Hiring Decision',
+                text: 'You are reviewing candidates.',
+                choices: [
+                  {
+                    id: 'choice-a',
+                    text: 'Trust your instinct',
+                    nextScenarioId: 'bias-affinity',
+                  },
+                  {
+                    id: 'choice-b',
+                    text: 'Use structured criteria',
+                    nextScenarioId: 'bias-structured',
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    };
+
+    const normalized = normalizeLessonForImport(lesson, { moduleIndex: 0, lessonIndex: 0 });
+    expect(Array.isArray(normalized.content?.elements)).toBe(true);
+    expect(normalized.content?.elements?.[0]?.data?.[0]?.choices?.map((choice) => choice.to)).toEqual([
+      'bias-affinity',
+      'bias-structured',
+    ]);
+    expect(normalized.content_json?.body?.elements?.[0]?.data?.[0]?.text).toBe('You are reviewing candidates.');
+  });
+
+  it('derives quiz questions when the correct answer is provided by option id', () => {
+    const lesson = {
+      type: 'quiz',
+      content_json: {
+        questions: [
+          {
+            id: 'q1',
+            question: 'Choose the right answer',
+            options: [
+              { id: 'a', text: 'Wrong' },
+              { id: 'b', text: 'Right' },
+            ],
+            correctAnswer: 'b',
+          },
+        ],
+      },
+    };
+
+    const normalized = normalizeLessonForImport(lesson, { moduleIndex: 0, lessonIndex: 0 });
+    expect(normalized.content?.questions?.length).toBe(1);
+    expect(normalized.content?.questions?.[0]?.options?.find((option) => option.correct)?.id).toBe('b');
   });
 
   it('normalizes module lessons consistently', () => {

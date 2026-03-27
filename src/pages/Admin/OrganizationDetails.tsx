@@ -50,6 +50,7 @@ import {
 import { getOrganizationProfile, type OrganizationProfile } from '../../dal/profile';
 import LoadingButton from '../../components/LoadingButton';
 import EditOrganizationModal from '../../components/EditOrganizationModal';
+import AddUserModal from '../../components/AddUserModal';
 import { useToast } from '../../context/ToastContext';
 import { sendOrganizationMessage } from '../../services/adminCommunicationService';
 
@@ -106,6 +107,7 @@ const OrganizationDetails: React.FC = () => {
   const [messages, setMessages] = useState<OrgProfileMessage[]>([]);
   const [orgInvites, setOrgInvites] = useState<OrgProfileInvite[]>([]);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showAddUserModal, setShowAddUserModal] = useState(false);
   const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'analytics' | 'settings' | 'billing'>('overview');
   const [members, setMembers] = useState<OrgProfileUser[]>([]);
   const [memberForm, setMemberForm] = useState({ userId: '', role: 'member' });
@@ -173,6 +175,11 @@ const OrganizationDetails: React.FC = () => {
     showToast('Organization updated successfully!', 'success');
     loadOrganizationProfile();
     loadOrgAdminProfile();
+  };
+
+  const handleUserProvisioned = () => {
+    void loadOrgAdminProfile();
+    showToast('User account added successfully!', 'success');
   };
 
   const handleAddMember = async () => {
@@ -1352,7 +1359,7 @@ const OrganizationDetails: React.FC = () => {
                       type="text"
                       value={memberForm.userId}
                       onChange={(e) => setMemberForm((form) => ({ ...form, userId: e.target.value }))}
-                      placeholder="Supabase User ID"
+                      placeholder="Existing User ID"
                       className="w-full md:w-64 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                     />
                     <select
@@ -1372,7 +1379,14 @@ const OrganizationDetails: React.FC = () => {
                       className="inline-flex items-center justify-center px-3 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:opacity-60"
                     >
                       <UserPlus className="w-4 h-4 mr-2" />
-                      {memberSubmitting ? 'Adding…' : 'Add Member'}
+                      {memberSubmitting ? 'Linking…' : 'Link Existing User'}
+                    </button>
+                    <button
+                      onClick={() => setShowAddUserModal(true)}
+                      className="inline-flex items-center justify-center px-3 py-2 border border-blue-200 text-blue-700 rounded-lg hover:bg-blue-50"
+                    >
+                      <UserPlus className="w-4 h-4 mr-2" />
+                      Add User
                     </button>
                   </div>
                 </div>
@@ -1439,7 +1453,10 @@ const OrganizationDetails: React.FC = () => {
                   <button className="px-3 py-2 text-gray-700 border border-gray-300 rounded-lg hover:bg-gray-50">
                     Import Users
                   </button>
-                  <button className="px-3 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600">
+                  <button
+                    onClick={() => setShowAddUserModal(true)}
+                    className="px-3 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
+                  >
                     Add User
                   </button>
                 </div>
@@ -1702,6 +1719,13 @@ const OrganizationDetails: React.FC = () => {
         onClose={() => setShowEditModal(false)}
         organization={organization}
         onOrganizationUpdated={handleOrganizationUpdated}
+      />
+
+      <AddUserModal
+        isOpen={showAddUserModal}
+        onClose={() => setShowAddUserModal(false)}
+        onUserAdded={handleUserProvisioned}
+        organizations={organization ? [{ id: organization.id, name: organization.name }] : id ? [{ id, name: organization?.name ?? 'Current Organization' }] : []}
       />
     </div>
   );

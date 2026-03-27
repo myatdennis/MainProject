@@ -441,6 +441,26 @@ const buildLessonResources = (lesson: Lesson): { label: string; url: string }[] 
 
 const buildLessonContent = (lesson: Lesson, apiType: LessonDto['type']): LessonInput['content'] => {
   const canonical = canonicalizeLessonContent(lesson.content ?? {});
+  if (apiType === 'quiz') {
+    const quizQuestions = Array.isArray(canonical.questions)
+      ? canonical.questions
+      : Array.isArray((canonical as any)?.quiz?.questions)
+      ? (canonical as any).quiz.questions
+      : Array.isArray((canonical as any)?.body?.questions)
+      ? (canonical as any).body.questions
+      : null;
+    if (quizQuestions && quizQuestions.length > 0) {
+      (canonical as any).body =
+        canonical.body && typeof canonical.body === 'object'
+          ? { ...(canonical.body as Record<string, unknown>), questions: quizQuestions }
+          : { questions: quizQuestions };
+      (canonical as any).quiz =
+        (canonical as any).quiz && typeof (canonical as any).quiz === 'object'
+          ? { ...(canonical as any).quiz, questions: quizQuestions }
+          : { questions: quizQuestions };
+      canonical.questions = quizQuestions as any;
+    }
+  }
   if ((!canonical.videoUrl || canonical.videoUrl.length === 0) && canonical.videoAsset) {
     const assetUrl =
       canonical.videoAsset.signedUrl ||

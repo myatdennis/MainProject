@@ -13,6 +13,7 @@ export interface AdminUserRecord {
 
 const mapAdminUserRecord = (row: any): AdminUserRecord => {
   const profile = row?.profile ?? {};
+  const metadata = profile?.metadata ?? {};
   const firstName = profile.first_name ?? profile.firstName ?? '';
   const lastName = profile.last_name ?? profile.lastName ?? '';
   const displayName =
@@ -41,7 +42,7 @@ const mapAdminUserRecord = (row: any): AdminUserRecord => {
     name: displayName || undefined,
     role: row?.role ?? undefined,
     status: row?.status ?? undefined,
-    title: profile.title ?? profile.job_title ?? undefined,
+    title: profile.title ?? profile.job_title ?? metadata.job_title ?? metadata.title ?? undefined,
   };
 };
 

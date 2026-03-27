@@ -8,8 +8,79 @@ const REQUIRED_VIDEO_ASSET_FIELDS = ['storagePath', 'bucket', 'bytes', 'mimeType
 const OPTIONAL_VIDEO_ASSET_FIELDS = ['checksum', 'uploadedAt', 'source'];
 
 const ensureLessons = (lessons) => (Array.isArray(lessons) ? lessons : []);
+const pickString = (...values) => {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim().length > 0) {
+      return value;
+    }
+  }
+  return undefined;
+};
+
+const toNumber = (value) => {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string') {
+    const parsed = Number(value);
+    if (!Number.isNaN(parsed)) return parsed;
+  }
+  return undefined;
+};
+
+const normalizeVideoAsset = (lesson) => {
+  const content = lesson?.content || {};
+  const rawAsset = content.videoAsset || content.video_asset || content.video?.asset || null;
+  if (!rawAsset || typeof rawAsset !== 'object') {
+    return null;
+  }
+
+  return {
+    assetId:
+      rawAsset.assetId ??
+      rawAsset.asset_id ??
+      rawAsset.assetKey ??
+      rawAsset.asset_key ??
+      rawAsset.id ??
+      rawAsset.storageId ??
+      rawAsset.storage_id ??
+      undefined,
+    storagePath:
+      pickString(
+        rawAsset.storagePath,
+        rawAsset.storage_path,
+        rawAsset.storageKey,
+        rawAsset.storage_key,
+        rawAsset.path,
+        rawAsset.asset_path,
+        rawAsset.assetId,
+        rawAsset.asset_id,
+      ) ?? undefined,
+    bucket: pickString(rawAsset.bucket, rawAsset.bucket_id, rawAsset.bucketId) ?? undefined,
+    bytes: toNumber(rawAsset.bytes ?? rawAsset.size ?? rawAsset.fileSize),
+    mimeType: pickString(rawAsset.mimeType, rawAsset.mime_type, rawAsset.contentType, rawAsset.content_type) ?? undefined,
+    checksum: rawAsset.checksum ?? rawAsset.etag ?? rawAsset.hash ?? undefined,
+    uploadedAt: rawAsset.uploadedAt ?? rawAsset.uploaded_at ?? rawAsset.created_at ?? rawAsset.updated_at ?? undefined,
+    source: rawAsset.source ?? rawAsset.videoSource ?? rawAsset.provider ?? rawAsset.origin ?? undefined,
+  };
+};
+
+const lessonUsesExternalVideo = (lesson) => {
+  const sourceType = lesson?.content?.videoSourceType;
+  if (sourceType === 'external') return true;
+  const provider = lesson?.content?.videoProvider || lesson?.content?.video?.provider;
+  if (!provider) return false;
+  return provider === 'youtube' || provider === 'vimeo' || provider === 'wistia';
+};
+
 const validateVideoAsset = (lesson) => {
-  const asset = lesson?.content?.videoAsset;
+  if (lessonUsesExternalVideo(lesson)) {
+    return {
+      valid: Boolean(lesson?.content?.videoUrl),
+      missing: [],
+      warnings: [],
+    };
+  }
+
+  const asset = normalizeVideoAsset(lesson);
   if (!asset) {
     return {
       valid: false,
@@ -58,11 +129,19 @@ const isPlaceholderVideoUrl = (value) => {
 const hasVideoSource = (lesson, { allowPlaceholders = true } = {}) => {
   const videoUrl =
     lesson?.content?.videoUrl ||
+    lesson?.content?.video_url ||
     lesson?.content?.video?.url ||
     lesson?.content?.video?.embedUrl ||
     lesson?.content?.video?.source ||
     lesson?.content?.video?.src ||
     lesson?.content?.video?.file ||
+    lesson?.content?.video?.asset?.signedUrl ||
+    lesson?.content?.video?.asset?.publicUrl ||
+    lesson?.content?.video?.asset?.url ||
+    lesson?.content?.videoAsset?.signedUrl ||
+    lesson?.content?.videoAsset?.publicUrl ||
+    lesson?.content?.video_asset?.signedUrl ||
+    lesson?.content?.video_asset?.publicUrl ||
     lesson?.content?.videoFile;
 
   if (typeof videoUrl === 'string') {
@@ -87,7 +166,29 @@ const hasTextContent = (lesson) => {
 
 const hasDocumentSource = (lesson) => {
   const content = lesson?.content || {};
-  const candidates = [content.documentUrl, content.fileUrl, content.downloadUrl, content.url];
+  const candidates = [
+    content.documentUrl,
+    content.fileUrl,
+    content.downloadUrl,
+    content.url,
+    content.documentAsset?.signedUrl,
+    content.documentAsset?.publicUrl,
+    content.documentAsset?.url,
+  ];
+  return candidates.some((value) => (typeof value === 'string' ? trim(value).length > 0 : false));
+};
+
+const hasReflectionContent = (lesson) => {
+  const content = lesson?.content || {};
+  const candidates = [
+    content.textContent,
+    content.content,
+    content.notes,
+    content.reflectionPrompt,
+    content.question,
+    content.prompt,
+    content.instructions,
+  ];
   return candidates.some((value) => (typeof value === 'string' ? trim(value).length > 0 : false));
 };
 
@@ -109,6 +210,9 @@ const lessonHasPublishableMedia = (lesson, intent) => {
   }
   if (lesson?.type === 'text') {
     return hasTextContent(lesson);
+  }
+  if (lesson?.type === 'reflection') {
+    return hasReflectionContent(lesson);
   }
   return false;
 };
@@ -252,11 +356,24 @@ export const validateCourse = (course, options = {}) => {
           }
           break;
         case 'document':
+        case 'resource':
+        case 'download':
           if (!hasDocumentSource(lesson)) {
             pushIssue(issues, {
               code: 'lesson.document.source_missing',
               message: `Document lesson in Module ${moduleIndex + 1}, Lesson ${lessonIndex + 1} needs a file or URL`,
               path: `modules[${moduleIndex}].lessons[${lessonIndex}].content.fileUrl`,
+              moduleId: module.id,
+              lessonId: lesson?.id,
+            });
+          }
+          break;
+        case 'reflection':
+          if (!hasReflectionContent(lesson)) {
+            pushIssue(issues, {
+              code: 'lesson.reflection.content_missing',
+              message: `Reflection lesson in Module ${moduleIndex + 1}, Lesson ${lessonIndex + 1} needs learner-facing content or a prompt`,
+              path: `modules[${moduleIndex}].lessons[${lessonIndex}].content`,
               moduleId: module.id,
               lessonId: lesson?.id,
             });

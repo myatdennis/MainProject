@@ -189,12 +189,14 @@ const AuthBootstrapGate = ({ children }: { children: ReactNode }) => {
     location.pathname.startsWith('/invite/');
   const blocking = (authInitializing || authStatus === 'booting') && isProtectedSurface && !isPublicAuthPath;
 
-  console.debug('[AUTH ROOT GATE]', {
-    pathname: location.pathname,
-    authInitializing,
-    authStatus,
-    blocking,
-  });
+  if (import.meta.env.DEV) {
+    console.debug('[AUTH ROOT GATE]', {
+      pathname: location.pathname,
+      authInitializing,
+      authStatus,
+      blocking,
+    });
+  }
 
   // All hooks are above this line — this conditional return is safe.
   if (blocking) {
@@ -265,12 +267,14 @@ function AppContent() {
     let cancelled = false;
     const bootstrapCourseStore = async () => {
       try {
-        console.debug('[COURSE INIT CALLER]', {
-          source: 'App.tsx',
-          targetKey,
-          pathname: typeof window !== 'undefined' ? window.location?.pathname : 'ssr',
-          ts: Date.now(),
-        });
+        if (import.meta.env.DEV) {
+          console.debug('[COURSE INIT CALLER]', {
+            source: 'App.tsx',
+            targetKey,
+            pathname: typeof window !== 'undefined' ? window.location?.pathname : 'ssr',
+            ts: Date.now(),
+          });
+        }
         await courseStore.init();
         if (!cancelled) {
           courseInitKeyRef.current = targetKey;

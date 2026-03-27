@@ -29,7 +29,7 @@ const normalizeQuizOption = (option, index = 0) => {
   return {
     text: textCandidate,
     correct: option.correct === true || option.isCorrect === true || option.answer === true || option.value === true,
-    id: option.id || option.value || `choice-${index}`,
+    id: option.id || option.value || option.key || option.code || `choice-${index}`,
   };
 };
 
@@ -154,6 +154,9 @@ const normalizeQuizQuestion = (candidate, index = 0) => {
     (Array.isArray(source?.choices) && source.choices) ||
     (Array.isArray(source?.answers) && source.answers) ||
     (Array.isArray(source?.responses) && source.responses) ||
+    (Array.isArray(source?.items) && source.items.every((item) => typeof item === 'string' || typeof item === 'object') && !itemsLooksLikeQuestionArray
+      ? source.items
+      : null) ||
     (!itemsLooksLikeQuestionArray && Array.isArray(source?.items) ? source.items : null) ||
     null;
   if (!rawOptions || rawOptions.length === 0) {
@@ -167,6 +170,18 @@ const normalizeQuizQuestion = (candidate, index = 0) => {
   return {
     prompt,
     options: finalizedOptions,
+    correctAnswerIndex:
+      typeof source?.correctAnswerIndex === 'number'
+        ? source.correctAnswerIndex
+        : typeof source?.correctChoiceIndex === 'number'
+        ? source.correctChoiceIndex
+        : finalizedOptions.findIndex((option) => option.correct),
+    correctAnswer:
+      source?.correctAnswerId ||
+      source?.correct_option_id ||
+      source?.correctAnswer ||
+      finalizedOptions.find((option) => option.correct)?.id ||
+      null,
   };
 };
 
@@ -228,55 +243,108 @@ export const deriveQuizQuestions = (lesson) => {
   return questions.filter(Boolean);
 };
 
+const normalizeBranchChoice = (choice, index = 0) => {
+  if (typeof choice === 'string') {
+    return { id: `choice-${index}`, text: choice, to: null };
+  }
+  if (!choice || typeof choice !== 'object') {
+    return null;
+  }
+  const text =
+    (typeof choice.text === 'string' && choice.text.trim()) ||
+    (typeof choice.label === 'string' && choice.label.trim()) ||
+    (typeof choice.title === 'string' && choice.title.trim()) ||
+    null;
+  if (!text) return null;
+  return {
+    id: choice.id || choice.value || choice.key || `choice-${index}`,
+    text,
+    to:
+      choice.to ||
+      choice.next ||
+      choice.target ||
+      choice.nextNodeId ||
+      choice.nextScenarioId ||
+      choice.destinationId ||
+      choice.scenarioId ||
+      null,
+    feedback: choice.feedback || null,
+    isCorrect: choice.isCorrect === true || choice.correct === true || false,
+    points: typeof choice.points === 'number' ? choice.points : undefined,
+  };
+};
+
 const normalizeBranchNode = (node, index = 0) => {
   if (!node || typeof node !== 'object') return null;
   const source = node.props || node.data || node;
-  const prompt =
+  const text =
+    (typeof source?.text === 'string' && source.text.trim()) ||
     (typeof source?.prompt === 'string' && source.prompt.trim()) ||
     (typeof source?.question === 'string' && source.question.trim()) ||
-    (typeof source?.text === 'string' && source.text.trim()) ||
+    (typeof source?.title === 'string' && source.title.trim()) ||
+    (typeof source?.heading === 'string' && source.heading.trim()) ||
     (typeof node?.title === 'string' && node.title.trim()) ||
     null;
-  if (!prompt) return null;
-  const rawOptions =
+  if (!text) return null;
+  const rawChoices =
     (Array.isArray(source?.choices) && source.choices) ||
     (Array.isArray(source?.options) && source.options) ||
     (Array.isArray(source?.responses) && source.responses) ||
-    (Array.isArray(source?.nodes) && source.nodes) ||
-    (Array.isArray(source?.branches) && source.branches) ||
+    (Array.isArray(source?.answers) && source.answers) ||
     null;
-  if (!rawOptions || rawOptions.length === 0) return null;
-  const options = rawOptions
-    .map((option, optionIndex) => {
-      if (typeof option === 'string') {
-        return { text: option, nextNodeId: null };
-      }
-      if (!option || typeof option !== 'object') {
-        return null;
-      }
-      const text =
-        (typeof option.text === 'string' && option.text.trim()) ||
-        (typeof option.label === 'string' && option.label.trim()) ||
-        (typeof option.title === 'string' && option.title.trim()) ||
-        null;
-      if (!text) return null;
-      return {
-        id: option.id || option.value || `${index}-${optionIndex}`,
-        text,
-        nextNodeId: option.to || option.next || option.target || option.nextNodeId || null,
-      };
-    })
-    .filter(Boolean);
-  if (options.length === 0) return null;
+  if (!rawChoices || rawChoices.length === 0) return null;
+  const choices = rawChoices.map((choice, choiceIndex) => normalizeBranchChoice(choice, choiceIndex)).filter(Boolean);
+  if (choices.length === 0) return null;
   return {
     id: source.id || node.id || `node-${index}`,
-    prompt,
-    options,
+    text,
+    choices,
+  };
+};
+
+const normalizeBranchElement = (element, index = 0) => {
+  if (!element || typeof element !== 'object') return null;
+  const source = element.props || element;
+  const rawNodes =
+    (Array.isArray(source?.data) && source.data) ||
+    (Array.isArray(source?.nodes) && source.nodes) ||
+    (Array.isArray(source?.steps) && source.steps) ||
+    (Array.isArray(source?.branches) && source.branches) ||
+    null;
+  if (!rawNodes || rawNodes.length === 0) return null;
+  const data = rawNodes.map((node, nodeIndex) => normalizeBranchNode(node, nodeIndex)).filter(Boolean);
+  if (data.length === 0) return null;
+  return {
+    id: source.id || `element-${index}`,
+    type: typeof source.type === 'string' && source.type.trim() ? source.type : 'scenario',
+    title:
+      (typeof source.title === 'string' && source.title.trim()) ||
+      (typeof source.name === 'string' && source.name.trim()) ||
+      `Interactive Element ${index + 1}`,
+    order: typeof source.order === 'number' ? source.order : index + 1,
+    data,
   };
 };
 
 export const deriveBranchingElements = (lesson) => {
-  const candidates = [
+  const elementCandidates = [
+    Array.isArray(lesson?.elements) ? lesson.elements : null,
+    Array.isArray(lesson?.content?.elements) ? lesson.content.elements : null,
+    Array.isArray(lesson?.content?.body?.elements) ? lesson.content.body.elements : null,
+    Array.isArray(lesson?.content_json?.elements) ? lesson.content_json.elements : null,
+    Array.isArray(lesson?.content_json?.body?.elements) ? lesson.content_json.body.elements : null,
+    Array.isArray(lesson?.content?.interactive?.elements) ? lesson.content.interactive.elements : null,
+    Array.isArray(lesson?.content_json?.interactive?.elements) ? lesson.content_json.interactive.elements : null,
+  ].filter(Boolean);
+  const normalizedElements = elementCandidates
+    .flat()
+    .map((element, index) => normalizeBranchElement(element, index))
+    .filter(Boolean);
+  if (normalizedElements.length > 0) {
+    return normalizedElements;
+  }
+
+  const nodeCandidates = [
     Array.isArray(lesson?.branchingElements) ? lesson.branchingElements : null,
     Array.isArray(lesson?.branches) ? lesson.branches : null,
     Array.isArray(lesson?.nodes) ? lesson.nodes : null,
@@ -296,17 +364,31 @@ export const deriveBranchingElements = (lesson) => {
   ].filter(Boolean);
   const blockNodes = collectLessonFallbackBlocks(lesson)
     .map((block) => {
-      const dataNodes =
-        (Array.isArray(block?.props?.nodes) && block.props.nodes) ||
-        (Array.isArray(block?.data?.nodes) && block.data.nodes) ||
-        null;
-      return dataNodes || null;
+      const source = block?.props || block?.data || block;
+      return (
+        (Array.isArray(source?.nodes) && source.nodes) ||
+        (Array.isArray(source?.data) && source.data) ||
+        (Array.isArray(source?.steps) && source.steps) ||
+        null
+      );
     })
     .filter(Boolean);
-  candidates.push(...blockNodes);
-  const flattened = candidates.flat().filter(Boolean);
-  const normalized = flattened.map((node, index) => normalizeBranchNode(node, index)).filter(Boolean);
-  return normalized;
+  const flattenedNodes = [...nodeCandidates, ...blockNodes].flat().filter(Boolean);
+  const normalizedNodes = flattenedNodes.map((node, index) => normalizeBranchNode(node, index)).filter(Boolean);
+  if (normalizedNodes.length === 0) {
+    return [];
+  }
+  return [
+    {
+      id: lesson?.id || 'interactive-element-1',
+      type: 'scenario',
+      title:
+        (typeof lesson?.title === 'string' && lesson.title.trim()) ||
+        'Interactive Scenario',
+      order: 1,
+      data: normalizedNodes,
+    },
+  ];
 };
 
 const assignQuizQuestions = (lesson, questions) => {
@@ -331,17 +413,19 @@ const assignQuizQuestions = (lesson, questions) => {
 const assignInteractiveElements = (lesson, elements) => {
   if (!lesson || !Array.isArray(elements) || elements.length === 0) return;
   ensureLessonContentContainers(lesson);
+  lesson.content.elements = elements;
   lesson.content.branchingElements = elements;
   lesson.content.body =
     typeof lesson.content.body === 'object'
-      ? { ...lesson.content.body, branchingElements: elements }
-      : { branchingElements: elements };
+      ? { ...lesson.content.body, elements, branchingElements: elements }
+      : { elements, branchingElements: elements };
   const existingBody =
     lesson.content_json && typeof lesson.content_json.body === 'object' ? lesson.content_json.body : {};
   lesson.content_json = {
     ...(lesson.content_json && typeof lesson.content_json === 'object' ? lesson.content_json : {}),
     body: {
       ...(existingBody && typeof existingBody === 'object' ? existingBody : {}),
+      elements,
       branchingElements: elements,
     },
   };

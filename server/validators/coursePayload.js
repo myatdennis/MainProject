@@ -164,6 +164,22 @@ const extractQuestionsFromPath = (source, path) => {
   return Array.isArray(cursor) && cursor.length > 0 ? cursor : null;
 };
 
+const extractLessonQuestions = (lesson) => {
+  const existingBody = getLessonContentBody(lesson);
+  return (
+    (Array.isArray(existingBody?.questions) && existingBody.questions) ||
+    (Array.isArray(existingBody?.quiz?.questions) && existingBody.quiz.questions) ||
+    extractQuestionsFromPath(lesson, ['content', 'questions']) ||
+    extractQuestionsFromPath(lesson, ['content', 'body', 'questions']) ||
+    extractQuestionsFromPath(lesson, ['content', 'quiz', 'questions']) ||
+    extractQuestionsFromPath(lesson, ['content_json', 'questions']) ||
+    extractQuestionsFromPath(lesson, ['content_json', 'body', 'questions']) ||
+    extractQuestionsFromPath(lesson, ['content_json', 'quiz', 'questions']) ||
+    (Array.isArray(lesson?.questions) && lesson.questions.length > 0 ? lesson.questions : null) ||
+    deriveQuestionsFromBlocks(lesson)
+  );
+};
+
 const normalizeBlockQuestion = (block) => {
   if (!block || typeof block !== 'object') return null;
   const source = block.props || block.data || block;
@@ -325,15 +341,7 @@ const normalizeLessonInput = (lesson) => {
   }
   if (normalized.type === 'quiz') {
     const existingBody = getLessonContentBody(normalized);
-    let questions =
-      (Array.isArray(existingBody?.questions) && existingBody.questions) ||
-      extractQuestionsFromPath(normalized, ['content', 'questions']) ||
-      extractQuestionsFromPath(normalized, ['content', 'quiz', 'questions']) ||
-      extractQuestionsFromPath(normalized, ['content_json', 'quiz', 'questions']) ||
-      deriveQuestionsFromBlocks(normalized);
-    if (!questions && Array.isArray(normalized?.questions)) {
-      questions = normalized.questions;
-    }
+    const questions = extractLessonQuestions(normalized);
     if (questions && questions.length > 0) {
       const nextBody = {
         ...(existingBody && typeof existingBody === 'object' ? existingBody : {}),
@@ -402,12 +410,7 @@ const normalizeCoursePayloadInput = (payload) => {
 };
 
 const hasQuizQuestions = (lesson) => {
-  const body = getLessonContentBody(lesson);
-  const questionsSource = Array.isArray(body?.questions)
-    ? body.questions
-    : Array.isArray(body?.quiz?.questions)
-    ? body.quiz.questions
-    : null;
+  const questionsSource = extractLessonQuestions(lesson);
   if (!questionsSource || questionsSource.length === 0) {
     return { ok: false, reason: 'Lesson is missing quiz questions' };
   }

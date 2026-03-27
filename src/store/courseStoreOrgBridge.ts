@@ -32,8 +32,9 @@ export type OrgContextSnapshot = {
 export const BRIDGE_SNAPSHOT_EVENT = 'huddle:org_snapshot_updated';
 
 const TRACE_TOKEN = 'SEV1_REAL_FIX_01';
+const DEBUG_BRIDGE = import.meta.env.DEV;
 
-if (typeof window !== 'undefined') {
+if (typeof window !== 'undefined' && DEBUG_BRIDGE) {
   console.debug('[TRACE BUILD]', {
     token: TRACE_TOKEN,
     source: 'courseStoreOrgBridge',
@@ -74,17 +75,21 @@ const _getStore = (): BridgeStore => {
       resolver: null,
       resolverRegistered: false,
     };
-    console.debug('[TRACE BRIDGE WRITE]', {
-      token: TRACE_TOKEN,
-      event: 'singleton_created',
-      ts: Date.now(),
-    });
+    if (DEBUG_BRIDGE) {
+      console.debug('[TRACE BRIDGE WRITE]', {
+        token: TRACE_TOKEN,
+        event: 'singleton_created',
+        ts: Date.now(),
+      });
+    }
   } else {
-    console.debug('[TRACE BRIDGE WRITE]', {
-      token: TRACE_TOKEN,
-      event: 'singleton_reused',
-      ts: Date.now(),
-    });
+    if (DEBUG_BRIDGE) {
+      console.debug('[TRACE BRIDGE WRITE]', {
+        token: TRACE_TOKEN,
+        event: 'singleton_reused',
+        ts: Date.now(),
+      });
+    }
   }
   return window.__courseStoreOrgBridge;
 };
@@ -98,6 +103,7 @@ const _ssrStore: BridgeStore = {
 };
 
 const logSnapshot = (label: string, snapshot: OrgContextSnapshot | null) => {
+  if (!DEBUG_BRIDGE) return;
   const payload = snapshot
     ? {
     membershipStatus: snapshot.membershipStatus,
@@ -133,11 +139,13 @@ export const writeBridgeSnapshot = (snapshot: OrgContextSnapshot): void => {
   };
   store.latestSnapshot = normalized;
   store.snapshotWrittenAt = normalized.updatedAt ?? Date.now();
-  console.debug('[TRACE BRIDGE WRITE]', {
-    token: TRACE_TOKEN,
-    snapshot: normalized,
-    ts: store.snapshotWrittenAt,
-  });
+  if (DEBUG_BRIDGE) {
+    console.debug('[TRACE BRIDGE WRITE]', {
+      token: TRACE_TOKEN,
+      snapshot: normalized,
+      ts: store.snapshotWrittenAt,
+    });
+  }
   if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
     try {
       window.dispatchEvent(
@@ -207,9 +215,11 @@ export const clearBridgeSnapshot = (): void => {
   store.snapshotWrittenAt = 0;
   store.resolver = null;
   store.resolverRegistered = false;
-  console.debug('[TRACE BRIDGE WRITE]', {
-    token: TRACE_TOKEN,
-    event: 'clear',
-    ts: Date.now(),
-  });
+  if (DEBUG_BRIDGE) {
+    console.debug('[TRACE BRIDGE WRITE]', {
+      token: TRACE_TOKEN,
+      event: 'clear',
+      ts: Date.now(),
+    });
+  }
 };

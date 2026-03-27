@@ -38,9 +38,9 @@ devConsole.log('🚀 MainProject App initializing...');
 devConsole.log('📍 Environment:', import.meta.env.MODE);
 devConsole.log('🔧 Supabase configured:', !!(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY));
 devConsole.log('⚙️ React version detected:', React?.version || 'unknown');
-// Build version stamp — always logs regardless of DEV/PROD so stale-bundle issues are detectable.
-// After each Netlify deploy, this timestamp must change. If it does not, the old bundle is cached.
-console.info('[BUILD_VERSION]', typeof __APP_BUILD_TIME__ !== 'undefined' ? __APP_BUILD_TIME__ : 'unknown');
+if (import.meta.env.DEV) {
+  console.info('[BUILD_VERSION]', typeof __APP_BUILD_TIME__ !== 'undefined' ? __APP_BUILD_TIME__ : 'unknown');
+}
 devConsole.info('[api] Base URL resolved:', getApiBaseUrl() || '(not set)');
 const declaredBuildTag = serviceWorkerManager.getDeclaredVersionTag();
 if (import.meta.env.DEV) {

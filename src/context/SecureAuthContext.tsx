@@ -981,14 +981,16 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       lastAppliedActiveOrgIdRef.current = session.activeOrgId ?? null;
       lastActiveOrgSourceRef.current = activeOrgSource;
       clearMembershipRetryBackoff();
-      console.debug('[AUTH SESSION RESTORED]', {
-        userId: session.id,
-        role: session.role,
-        activeOrgId: session.activeOrgId,
-        reason,
-        pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
-        ts: Date.now(),
-      });
+      if (import.meta.env?.DEV) {
+        console.debug('[AUTH SESSION RESTORED]', {
+          userId: session.id,
+          role: session.role,
+          activeOrgId: session.activeOrgId,
+          reason,
+          pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+          ts: Date.now(),
+        });
+      }
 
       if (persistTokens) {
         if (payload.accessToken !== undefined) {
@@ -1421,7 +1423,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             `activeOrgSource=${lastActiveOrgSourceRef.current}`,
             `firstMembershipOrg=${firstMembershipOrgId ?? 'none'}`,
           ].join(' ');
-          console.info('[SecureAuth] membership_applied', diagLine);
+          if (import.meta.env?.DEV) {
+            console.info('[SecureAuth] membership_applied', diagLine);
+          }
           void courseStore
             .init({ reason: 'auth_membership_applied' })
             .catch((error) => console.warn('[SecureAuth] courseStore.init retry failed', error));
@@ -2300,25 +2304,25 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           redirectReason: reason,
           timestamp: new Date().toISOString(),
         };
-        const debugSnapshot: typeof payload & { dump?: () => Record<string, unknown> } = { ...payload };
-        debugSnapshot.dump = () => {
-          const { dump, ...rest } = debugSnapshot;
-          console.info('[SecureAuth][debug] dump', rest);
-          return rest;
-        };
-        window.__HUDDLE_AUTH_DEBUG__ = debugSnapshot;
-        const signature = JSON.stringify({
-          pathname,
-          surfaceStatus,
-          authStatus,
-          sessionStatus,
-          hasSession,
-          orgResolutionStatus,
-          surfaceAuthStatus,
-        });
-        if (authDebugSignatureRef.current !== signature) {
-          authDebugSignatureRef.current = signature;
-          if (import.meta.env?.DEV) {
+        if (import.meta.env?.DEV) {
+          const debugSnapshot: typeof payload & { dump?: () => Record<string, unknown> } = { ...payload };
+          debugSnapshot.dump = () => {
+            const { dump, ...rest } = debugSnapshot;
+            console.info('[SecureAuth][debug] dump', rest);
+            return rest;
+          };
+          window.__HUDDLE_AUTH_DEBUG__ = debugSnapshot;
+          const signature = JSON.stringify({
+            pathname,
+            surfaceStatus,
+            authStatus,
+            sessionStatus,
+            hasSession,
+            orgResolutionStatus,
+            surfaceAuthStatus,
+          });
+          if (authDebugSignatureRef.current !== signature) {
+            authDebugSignatureRef.current = signature;
             console.info('[SecureAuth][debug] auth_state_update', { reason, payload });
           }
         }
@@ -2352,15 +2356,17 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   // Fires on every transition of the canonical auth state.  This is the single
   // source of truth log — every gate decision elsewhere references these values.
   useEffect(() => {
-    console.debug('[AUTH_STATE_MACHINE]', {
-      pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
-      authInitializing,
-      authStatus,
-      sessionStatus,
-      membershipStatus,
-      activeOrgId: activeOrgId ?? null,
-      ts: Date.now(),
-    });
+    if (import.meta.env?.DEV) {
+      console.debug('[AUTH_STATE_MACHINE]', {
+        pathname: typeof window !== 'undefined' ? window.location?.pathname : '',
+        authInitializing,
+        authStatus,
+        sessionStatus,
+        membershipStatus,
+        activeOrgId: activeOrgId ?? null,
+        ts: Date.now(),
+      });
+    }
   }, [authInitializing, authStatus, sessionStatus, membershipStatus, activeOrgId]);
 
   useEffect(() => {
@@ -2371,15 +2377,17 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           membershipCount: memberships.length,
           userId: user?.id ?? null,
         };
-        console.debug('[AUTH READY]', {
-          sessionStatus,
-          membershipStatus,
-          activeOrgId: activeOrgId ?? null,
-          userId: user?.id ?? null,
-          membershipCount: memberships.length,
-          pathname: window.location?.pathname ?? 'ssr',
-          ts: Date.now(),
-        });
+        if (import.meta.env?.DEV) {
+          console.debug('[AUTH READY]', {
+            sessionStatus,
+            membershipStatus,
+            activeOrgId: activeOrgId ?? null,
+            userId: user?.id ?? null,
+            membershipCount: memberships.length,
+            pathname: window.location?.pathname ?? 'ssr',
+            ts: Date.now(),
+          });
+        }
         window.dispatchEvent(new CustomEvent('huddle:auth_ready', { detail }));
       }
     }

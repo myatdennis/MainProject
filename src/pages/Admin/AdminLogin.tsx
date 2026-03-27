@@ -515,10 +515,12 @@ const AdminLogin: React.FC = () => {
     if (result.success) {
       try {
         const { data, error } = await supabase.auth.getSession();
-        console.info('[AdminLogin] session_verified', {
-          sessionHasAccessToken: Boolean(data?.session?.access_token),
-          sessionError: error?.message ?? null,
-        });
+        if (import.meta.env.DEV) {
+          console.info('[AdminLogin] session_verified', {
+            sessionHasAccessToken: Boolean(data?.session?.access_token),
+            sessionError: error?.message ?? null,
+          });
+        }
         await updateDevSessionSnapshot('post-login-success');
         await flushAuditQueue();
       } catch (sessionCheckError) {

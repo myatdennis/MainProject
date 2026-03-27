@@ -153,8 +153,23 @@ const hasDocumentSource = (lesson: Lesson): boolean => {
     content.fileUrl,
     (content as Record<string, unknown>).downloadUrl,
     (content as Record<string, unknown>).url,
+    content.documentAsset?.signedUrl,
+    content.documentAsset?.publicUrl,
+    (content.documentAsset as any)?.url,
   ];
 
+  return candidates.some((value) => (typeof value === 'string' ? trim(value).length > 0 : false));
+};
+
+const hasReflectionContent = (lesson: Lesson): boolean => {
+  const content = lesson.content || {};
+  const candidates = [
+    deriveTextContent(lesson),
+    content.reflectionPrompt,
+    (content as Record<string, unknown>).question,
+    (content as Record<string, unknown>).prompt,
+    (content as Record<string, unknown>).instructions,
+  ];
   return candidates.some((value) => (typeof value === 'string' ? trim(value).length > 0 : false));
 };
 
@@ -183,6 +198,10 @@ const lessonHasPublishableMedia = (lesson: Lesson, intent: CourseValidationInten
 
   if (lesson.type === 'text') {
     return hasTextContent(lesson);
+  }
+
+  if (lesson.type === 'reflection') {
+    return hasReflectionContent(lesson);
   }
 
   return false;
@@ -327,11 +346,24 @@ export const validateCourse = (
           }
           break;
         case 'document':
+        case 'resource':
+        case 'download':
           if (!hasDocumentSource(lesson)) {
             pushIssue(issues, {
               code: 'lesson.document.source_missing',
               message: `Document lesson in Module ${moduleIndex + 1}, Lesson ${lessonIndex + 1} needs a file or URL`,
               path: `modules[${moduleIndex}].lessons[${lessonIndex}].content.fileUrl`,
+              moduleId: module.id,
+              lessonId: lesson.id,
+            });
+          }
+          break;
+        case 'reflection':
+          if (!hasReflectionContent(lesson)) {
+            pushIssue(issues, {
+              code: 'lesson.reflection.content_missing',
+              message: `Reflection lesson in Module ${moduleIndex + 1}, Lesson ${lessonIndex + 1} needs learner-facing content or a prompt`,
+              path: `modules[${moduleIndex}].lessons[${lessonIndex}].content`,
               moduleId: module.id,
               lessonId: lesson.id,
             });

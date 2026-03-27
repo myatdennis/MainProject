@@ -76,6 +76,7 @@ const AdminUsers = () => {
 
   const mapMemberToUser = useCallback((member: any): User | null => {
     const profile = member?.profile ?? {};
+    const profileMetadata = profile?.metadata ?? {};
     const userRow = member?.user ?? {};
     const userId = member?.user_id ?? member?.user_id_uuid ?? '';
     if (!userId) return null;
@@ -105,8 +106,15 @@ const AdminUsers = () => {
       name: fullName || email,
       email,
       organization: member?.org_id ?? member?.organization_id ?? activeOrgId ?? '',
-      cohort: profile.cohort ?? '',
-      role: profile.title ?? profile.job_title ?? userRow.role ?? member?.role ?? '',
+      cohort: profile.cohort ?? profileMetadata.cohort ?? '',
+      role:
+        profile.title ??
+        profile.job_title ??
+        profileMetadata.job_title ??
+        profileMetadata.title ??
+        userRow.role ??
+        member?.role ??
+        '',
       enrolled: member?.created_at ?? profile.created_at ?? '',
       lastLogin: userRow.last_login_at ?? profile.updated_at ?? '',
       progress: progressMap as User['progress'],
@@ -244,7 +252,7 @@ const AdminUsers = () => {
   const handleUserAdded = (_newUser: User) => {
     // Refresh from server to get real data instead of optimistic local append
     void fetchUsers();
-    showToast('User invited successfully!', 'success');
+    showToast('User account added successfully!', 'success');
   };
 
   const handleSendReminder = async () => {
@@ -343,17 +351,17 @@ const AdminUsers = () => {
     
     setLoading(true);
     try {
-      // Revoke the membership (status = 'revoked') via the real API
       await apiRequest(`/api/admin/users/${userToDelete}`, {
-        method: 'PATCH',
-        body: { organizationId: activeOrgId, status: 'revoked' },
+        method: 'DELETE',
+        body: { organizationId: activeOrgId, mode: 'archive' },
+        expectedStatus: [200, 204],
       });
       setUsersList((prev: User[]) => prev.filter((user: User) => user.id !== userToDelete));
-      showToast('User removed successfully!', 'success');
+      showToast('User archived successfully!', 'success');
       setShowDeleteModal(false);
       setUserToDelete(null);
     } catch (error: any) {
-      showToast(error?.message ?? 'Failed to remove user', 'error');
+      showToast(error?.message ?? 'Failed to archive user', 'error');
     } finally {
       setLoading(false);
     }
@@ -373,6 +381,7 @@ const AdminUsers = () => {
         user.id === updatedUser.id ? updatedUser : user
       )
     );
+    void fetchUsers();
     showToast('User updated successfully!', 'success');
     setShowEditUserModal(false);
     setUserToEdit(null);
@@ -714,9 +723,9 @@ const AdminUsers = () => {
           setUserToDelete(null);
         }}
         onConfirm={confirmDeleteUser}
-        title="Delete User"
-        message="Are you sure you want to delete this user? This action cannot be undone and will remove all their progress data."
-        confirmText="Delete User"
+        title="Archive User"
+        message="Are you sure you want to archive this user for the current organization? This revokes their membership and removes them from active assignment and messaging workflows."
+        confirmText="Archive User"
         type="danger"
         loading={loading}
       />

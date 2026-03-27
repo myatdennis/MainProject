@@ -715,14 +715,16 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   //                        before the server session call resolves)
   const bootstrapInProgress = authInitializing || authStatus === 'booting';
 
-  console.debug('[REQUIRE_AUTH_EVAL]', {
-    pathname: location.pathname,
-    authInitializing,
-    authStatus,
-    sessionStatus,
-    membershipStatus,
-    activeOrgId,
-  });
+  if (import.meta.env.DEV) {
+    console.debug('[REQUIRE_AUTH_EVAL]', {
+      pathname: location.pathname,
+      authInitializing,
+      authStatus,
+      sessionStatus,
+      membershipStatus,
+      activeOrgId,
+    });
+  }
 
   // Bootstrap-only gate: block rendering exclusively during the first cold-start
   // load (before we have any confirmed auth state).  Once hasResolvedAuthRef is
@@ -745,12 +747,14 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
     statusesReady &&
     (adminGateStatus === 'unauthorized' || adminGateStatus === 'error')
   ) {
-    console.debug('[REQUIRE_AUTH_UNAUTHORIZED]', {
-      pathname: location.pathname,
-      authStatus,
-      membershipStatus,
-      reason: adminGateError ?? adminGateStatus,
-    });
+    if (import.meta.env.DEV) {
+      console.debug('[REQUIRE_AUTH_UNAUTHORIZED]', {
+        pathname: location.pathname,
+        authStatus,
+        membershipStatus,
+        reason: adminGateError ?? adminGateStatus,
+      });
+    }
     const heading = adminGateStatus === 'unauthorized' ? 'Admin access required' : 'Unable to verify admin access';
     const description =
       adminGateStatus === 'unauthorized'
@@ -828,13 +832,15 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
         orgResolutionStatus,
         surfaceStatus: effectiveSurfaceState,
       });
-      console.debug('[REQUIRE_AUTH_REDIRECT]', {
-        pathname: location.pathname,
-        authInitializing,
-        authStatus,
-        membershipStatus,
-        target: targetPath,
-      });
+      if (import.meta.env.DEV) {
+        console.debug('[REQUIRE_AUTH_REDIRECT]', {
+          pathname: location.pathname,
+          authInitializing,
+          authStatus,
+          membershipStatus,
+          target: targetPath,
+        });
+      }
       return <Navigate to={targetPath} state={{ from: location, reason: 'missing_session' }} replace />;
     }
     logGuardEvent('render_login_route', { reason: 'missing_session', target: targetPath });
@@ -893,13 +899,15 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
         }
         logRedirectOnce(lmsTarget, 'missing_lms_session');
         logGuardEvent('redirect_login', { reason: 'missing_lms_session' });
-        console.debug('[REQUIRE_AUTH_REDIRECT]', {
-          pathname: location.pathname,
-          authInitializing,
-          authStatus,
-          membershipStatus,
-          target: lmsTarget,
-        });
+        if (import.meta.env.DEV) {
+          console.debug('[REQUIRE_AUTH_REDIRECT]', {
+            pathname: location.pathname,
+            authInitializing,
+            authStatus,
+            membershipStatus,
+            target: lmsTarget,
+          });
+        }
         return <Navigate to={lmsTarget} state={{ from: location, reason: 'missing_lms_session' }} replace />;
       }
       logGuardEvent('render_login_route', { reason: 'missing_lms_session', target: lmsTarget });
@@ -932,11 +940,13 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   }
 
   logGuardEvent('allow', { path: location.pathname, adminCapabilityStatus: adminCapability.status });
-  console.debug('[REQUIRE_AUTH_ALLOW]', {
-    pathname: location.pathname,
-    authStatus,
-    membershipStatus,
-  });
+  if (import.meta.env.DEV) {
+    console.debug('[REQUIRE_AUTH_ALLOW]', {
+      pathname: location.pathname,
+      authStatus,
+      membershipStatus,
+    });
+  }
   if (import.meta.env.DEV) {
     console.debug('[REQUIRE AUTH RENDER]', location.pathname, {
       mode,
