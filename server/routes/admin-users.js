@@ -1,5 +1,7 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
+import { sendEmail } from '../services/emailService.js';
+import { isSupabaseAuthCreateUserAlreadyExists, isSupabaseAuthCreateUserDatabaseError } from '../utils/authHelpers.js';
 import { randomUUID } from 'crypto';
 import supabase from '../lib/supabaseClient.js';
 import { buildOrgInviteInsertAttemptPayloads } from '../utils/orgInvites.js';
@@ -486,9 +488,6 @@ const provisionImportedUser = async (user, actorUserId, defaultOrgId) => {
   const derivedLastName = lastName || (fullName ? fullName.split(/\s+/).slice(1).join(' ') : '');
   const membershipRole = normalizeOrgRole(user.membershipRole || user.membership_role || user.orgRole || user.org_role || 'member');
   const passwordInput = typeof user.password === 'string' ? user.password : '';
-  const temporaryPassword = passwordInput && passwordInput.length >= INVITE_PASSWORD_MIN_CHARS
-    ? passwordInput
-    : randomUUID().replace(/-/g, '').slice(0, 16);
 
   if (!orgId) {
     throw createHttpError(400, 'org_id_required', 'organizationId is required for each imported user');
@@ -499,13 +498,9 @@ const provisionImportedUser = async (user, actorUserId, defaultOrgId) => {
 
   let authUser = await findAuthUserByEmail(email);
   let created = false;
-  let inviteOnly = false;
-  let inviteId = null;
-  let duplicateInvite = false;
   if (!authUser) {
-    const { data, error } = await supabase.auth.admin.createUser({
+    const createPayload = {
       email,
-      password: temporaryPassword,
       email_confirm: true,
       user_metadata: {
         first_name: derivedFirstName,
@@ -514,46 +509,31 @@ const provisionImportedUser = async (user, actorUserId, defaultOrgId) => {
         organization_id: orgId,
         onboarding_org_id: orgId,
       },
-    });
+    };
+    if (passwordInput && passwordInput.length >= INVITE_PASSWORD_MIN_CHARS) {
+      createPayload.password = passwordInput;
+    }
+
+    const { data, error } = await supabase.auth.admin.createUser(createPayload);
     if (error) {
-      if (isSupabaseAuthCreateUserDatabaseError(error)) {
-        const invite = await createInviteFallback({
-          orgId,
-          email,
-          role: membershipRole,
-          actorUserId,
-          firstName: derivedFirstName,
-          lastName: derivedLastName,
-        });
-        inviteOnly = true;
-        inviteId = invite.id;
-        duplicateInvite = Boolean(invite.duplicate);
+      if (isSupabaseAuthCreateUserAlreadyExists(error) || isSupabaseAuthCreateUserDatabaseError(error)) {
+        const existing = await findAuthUserByEmail(email);
+        if (!existing) throw error;
+        authUser = existing;
+        created = false;
       } else {
         throw error;
       }
+    } else {
+      authUser = data?.user ?? null;
+      created = Boolean(authUser);
     }
-    authUser = data?.user ?? null;
-    created = Boolean(authUser);
-  }
-
-  if (inviteOnly) {
-    return {
-      email,
-      userId: null,
-      orgId,
-      created: false,
-      temporaryPassword: null,
-      inviteOnly: true,
-      inviteId,
-      duplicateInvite,
-    };
   }
 
   if (!authUser?.id) {
     throw createHttpError(500, 'auth_user_resolution_failed', 'Unable to resolve imported auth user');
   }
 
-  const passwordHash = temporaryPassword ? await bcrypt.hash(temporaryPassword, 12) : null;
   const isAdmin = writableMembershipRoles.has(membershipRole);
 
   // NOTE: this project stores user records in `user_profiles` (not `users`).
@@ -622,12 +602,33 @@ const provisionImportedUser = async (user, actorUserId, defaultOrgId) => {
   await assignPublishedOrganizationCoursesToUser({ orgId, userId: authUser.id, actorUserId });
   await assignPublishedOrganizationSurveysToUser({ orgId, userId: authUser.id, actorUserId });
 
+  let setupLink = null;
+  let emailSent = false;
+  const { data: recoveryLink, error: recoveryError } = await supabase.auth.admin.generateLink({
+    type: 'recovery',
+    email,
+  });
+  if (recoveryError || !recoveryLink?.action_link) {
+    throw recoveryError || createHttpError(500, 'setup_link_not_generated', 'Unable to generate setup link');
+  }
+  setupLink = recoveryLink.action_link;
+  const subject = 'Set up your learner portal password';
+  const text = `Hi ${derivedFirstName},\n\nYour administrator has added you to the learning portal. Click the link below to set your password and sign in:\n\n${setupLink}\n\nIf you did not request this, please ignore.`;
+  const emailResult = await sendEmail({
+    to: email,
+    subject,
+    text,
+    logContext: { recipientType: 'new_user', organizationId: orgId, sentBy: actorUserId ?? null },
+  });
+  emailSent = Boolean(emailResult.delivered);
+
   return {
     email,
     userId: authUser.id,
     orgId,
     created,
-    temporaryPassword: created && !passwordInput ? temporaryPassword : null,
+    setupLink,
+    emailSent,
   };
 };
 
@@ -651,12 +652,10 @@ router.post('/import', async (req, res, next) => {
           email: result.email,
           userId: result.userId,
           organizationId: result.orgId,
-          status: result.inviteOnly ? 'invited' : 'ok',
+          status: 'ok',
           created: result.created,
-          temporaryPassword: result.temporaryPassword,
-          inviteOnly: Boolean(result.inviteOnly),
-          inviteId: result.inviteId ?? null,
-          duplicateInvite: Boolean(result.duplicateInvite),
+          setupLink: result.setupLink ?? null,
+          emailSent: Boolean(result.emailSent),
         });
       } catch (error) {
         results.push({

@@ -35,6 +35,7 @@ import setupNotificationDispatcher from './services/notificationDispatcher.js';
 import { validateCourse as validatePublishableCourse } from './lib/courseValidation.js';
 import { getSupabaseConfig } from './config/supabaseConfig.js';
 import { normalizeModuleLessonPayloads, shouldLogModuleNormalization, coerceTextId } from './lib/moduleLessonNormalizer.js';
+import { isSupabaseAuthCreateUserAlreadyExists, isSupabaseAuthCreateUserDatabaseError } from './utils/authHelpers.js';
 
 // Import auth routes and middleware
 import authRoutes from './routes/auth.js';
@@ -96,271 +97,282 @@ if (typeof dns.setDefaultResultOrder === 'function') {
   }
 }
 
-// Resolve __dirname in ESM
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-// Diagnostics/metrics helpers are optional; provide safe no-op fallbacks so
-// the server never crashes if the diagnostics bundle is missing.
-const recordCourseProgress = () => {};
-const recordLessonProgress = () => {};
-const recordProgressBatch = () => {};
-const recordSupabaseHealth = () => {};
-const getMetricsSnapshot = () => ({
-  analyticsIngest: { lastBatch: null, status: 'unknown' },
-  progressBatch: { lastSuccessAt: null, status: 'unknown' },
-});
-
-const isUuidIdentifier = (value) =>
-  typeof value === 'string' &&
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-
-const shouldLogAuthDebug =
-  NODE_ENV !== 'production' || String(process.env.ENABLE_AUTH_DEBUG || '').toLowerCase() === 'true';
-const ENABLE_NOTIFICATIONS = parseFlag(process.env.ENABLE_NOTIFICATIONS, true);
-const ORG_ADMIN_ROLES = new Set(['admin', 'owner', 'org_admin', 'organization_admin', 'super_admin', 'admin_user']);
-const hasOrgAdminRole = (role) => ORG_ADMIN_ROLES.has(String(role || '').toLowerCase());
-
-const describeUnhandledReason = (reason) => {
-  if (reason instanceof Error) {
-    return { type: reason.constructor.name, message: reason.message, stack: reason.stack };
+async function provisionOrganizationUserAccount({
+  orgId,
+  email,
+  password,
+  firstName,
+  lastName,
+  membershipRole = 'member',
+  jobTitle = '',
+  department = '',
+  cohort = '',
+  phoneNumber = '',
+  actor = null,
+  requestId = null,
+}) {
+  if (!supabase) {
+    throw new Error('supabase_not_configured');
   }
-  const serialized =
-    typeof reason === 'object'
-      ? (() => {
-          try {
-            return JSON.stringify(reason);
-          } catch {
-            return String(reason);
-          }
-        })()
-      : String(reason);
-  return { type: typeof reason, value: serialized };
-};
 
-process.on('unhandledRejection', (reason) => {
-  console.error('[process] unhandledRejection', describeUnhandledReason(reason));
-});
+  const normalizedEmail = normalizeProvisioningEmail(email);
+  const normalizedFirstName = typeof firstName === 'string' ? firstName.trim() : '';
+  const normalizedLastName = typeof lastName === 'string' ? lastName.trim() : '';
 
-process.on('uncaughtException', (error) => {
-  console.error('[process] uncaughtException', describeUnhandledReason(error));
-});
+  if (!normalizedEmail || !normalizedFirstName || !normalizedLastName) {
+    throw createHttpError(400, 'missing_fields', 'firstName, lastName, and email are required.');
+  }
 
-const asyncHandler = (handler) => (req, res, next) =>
-  Promise.resolve(handler(req, res, next)).catch((error) => {
-    console.error('[express] async_handler_error', {
-      path: req.originalUrl,
-      method: req.method,
-      reason: error instanceof Error ? error.message : error,
-    });
-    next(error);
+  const role = normalizeOrgRole(membershipRole || 'member');
+  let authUser = null;
+  let created = false;
+
+  logger.info('[ADD USER AUTH START]', {
+    email: normalizedEmail,
+    orgId,
   });
 
-const normalizeUnknownError = (error) => {
-  if (!error) {
-    return {
-      message: null,
-      code: null,
-      details: null,
-      hint: null,
-      stack: null,
-      rawType: 'null',
-    };
-  }
-  if (error instanceof Error) {
-    return {
-      message: error.message ?? null,
-      code: (error).code ?? null,
-      details: (error).details ?? null,
-      hint: (error).hint ?? null,
-      stack: error.stack ?? null,
-      rawType: error.constructor?.name ?? 'Error',
-    };
-  }
-  if (typeof error === 'object') {
-    return {
-      message: typeof error.message === 'string' ? error.message : null,
-      code: typeof error.code === 'string' ? error.code : null,
-      details: typeof error.details === 'string' ? error.details : null,
-      hint: typeof error.hint === 'string' ? error.hint : null,
-      stack: typeof error.stack === 'string' ? error.stack : null,
-      rawType: error.constructor?.name ?? 'Object',
-    };
-  }
-  return {
-    message: String(error),
-    code: null,
-    details: null,
-    hint: null,
-    stack: null,
-    rawType: typeof error,
-  };
-};
-
-const fatalEnvError = (message) => {
-  console.error(`[env] ${message}`);
-  process.exit(1);
-};
-
-const warnEnv = (message) => {
-  console.warn(`[env] ${message}`);
-};
-
-const placeholderPatterns = [
-  /REPLACE_ME/i,
-  /CHANGE_ME/i,
-  /your-very-secret/i,
-  /public-anon-key-here/i,
-  /service-role-secret/i,
-  /^PASTE_/,
-];
-
-const hasPlaceholderValue = (value) => {
-  if (!value || typeof value !== 'string') return false;
-  return placeholderPatterns.some((pattern) => pattern.test(value));
-};
-
-const isConflictConstraintMissing = (error) => {
-  if (!error) return false;
-  if (error.code === '42P10') return true;
-  const message = typeof error.message === 'string' ? error.message : '';
-  return /no unique or exclusion constraint matching the on conflict specification/i.test(message);
-};
-
-const isUserCourseProgressUuidColumnMissing = (error) => {
-  if (!isMissingColumnError(error)) return false;
-  const missing = normalizeColumnIdentifier(extractMissingColumnName(error));
-  return missing === 'user_id_uuid';
-};
-
-const warnOnPlaceholderSecrets = () => {
-  const sensitiveEnvVars = [
-    'SUPABASE_KEY',
-    'SUPABASE_SERVICE_ROLE_KEY',
-    'SUPABASE_SERVICE_KEY',
-    'SUPABASE_ANON_KEY',
-    'SUPABASE_JWT_SECRET',
-    'SUPABASE_URL',
-    'VITE_SUPABASE_URL',
-    'VITE_SUPABASE_ANON_KEY',
-    'JWT_ACCESS_SECRET',
-    'JWT_REFRESH_SECRET',
-    'DATABASE_URL',
-    'BROADCAST_API_KEY',
-  ];
-  const flagged = sensitiveEnvVars.filter((key) => hasPlaceholderValue(process.env[key]));
-  if (flagged.length > 0) {
-    warnEnv(`Placeholder values detected for sensitive env vars: ${flagged.join(', ')}. Update them before production.`);
-  }
-};
-
-const serializeErrorObject = (error) => {
-  if (!error || typeof error !== 'object') {
-    return { message: error ? String(error) : null };
-  }
   try {
-    return JSON.parse(JSON.stringify(error, Object.getOwnPropertyNames(error), 2));
-  } catch {
-    const entry = {};
-    Object.getOwnPropertyNames(error).forEach((key) => {
-      entry[key] = error[key];
+    const createPayload = {
+      email: normalizedEmail,
+      email_confirm: true,
+      user_metadata: buildAuthUserMetadata({ firstName: normalizedFirstName, lastName: normalizedLastName, orgId }),
+    };
+    if (password && password.length >= INVITE_PASSWORD_MIN_CHARS) {
+      createPayload.password = password;
+    }
+
+    const { data, error } = await supabase.auth.admin.createUser(createPayload);
+    if (error) {
+      throw error;
+    }
+    authUser = data?.user ?? null;
+    created = true;
+  } catch (error) {
+    const alreadyExistsDetected = isSupabaseAuthCreateUserAlreadyExists(error);
+    logger.error('[ADD USER AUTH CREATE ERROR]', {
+      email: normalizedEmail,
+      message: error?.message || String(error),
+      code: error?.code ?? null,
+      status: error?.status ?? error?.statusCode ?? null,
+      alreadyExistsDetected,
     });
-    return entry;
-  }
-};
 
-const emitConsolePayload = (label, payload, level = 'error') => {
-  const line = JSON.stringify(payload, null, 2);
-  if (level === 'warn') {
-    console.warn(`${label} ${line}`);
-    return;
-  }
-  console.error(`${label} ${line}`);
-};
-
-const logStructuredError = (label, error, meta = {}) => {
-  const enrichedMeta =
-    meta && typeof meta === 'object'
-      ? { ...meta }
-      : {};
-  if (enrichedMeta.queryName == null && error && typeof error === 'object' && 'queryName' in error) {
-    enrichedMeta.queryName = error.queryName;
-  }
-  if (enrichedMeta.sql == null && error && typeof error === 'object' && 'sql' in error) {
-    enrichedMeta.sql = error.sql;
-  }
-  const payload = {
-    label,
-    message: error?.message ?? String(error),
-    code: error?.code ?? null,
-    hint: error?.hint ?? null,
-    details: error?.details ?? null,
-    stack: error?.stack ?? null,
-    ...enrichedMeta,
-  };
-  const serializedMeta = JSON.stringify(payload, null, 2);
-  console.error(`[error] ${label} meta`, serializedMeta);
-  try {
-    const raw = serializeErrorObject(error);
-    console.error(`[error] ${label} raw`, JSON.stringify(raw, null, 2));
-  } catch {
-    console.error(`[error] ${label} raw`, String(error));
-  }
-  return payload;
-};
-
-const logRouteError = (route, error, meta = {}) => {
-  const payload = logStructuredError(route, error, { route, ...meta });
-  logger.error('api_route_error', payload);
-};
-
-const ORG_HEADER_KEYS = ['x-org-id', 'x-organization-id', 'x_org_id', 'x_organization_id'];
-
-const ensureEnvironmentIsValid = () => {
-  const baseRequired = ['CORS_ALLOWED_ORIGINS'];
-  const missingBase = baseRequired.filter((key) => !(process.env[key] || '').trim());
-  if (missingBase.length) {
-    const msg = `Missing recommended environment variables: ${missingBase.join(', ')}`;
-    if (isProduction) {
-      fatalEnvError(msg);
+    if (alreadyExistsDetected || isSupabaseAuthCreateUserDatabaseError(error)) {
+      const existingUser = await findAuthUserByEmail(normalizedEmail, {
+        requestId,
+        logPrefix: 'admin_user_lookup_retry',
+      });
+      if (existingUser) {
+        authUser = existingUser;
+        created = false;
+      } else {
+        throw error;
+      }
     } else {
-      warnEnv(msg);
+      throw error;
     }
   }
 
-  const prodRequired = ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_JWT_SECRET'];
-  const missingProd = prodRequired.filter((key) => {
-    const val = (process.env[key] || '').trim();
-    return !val || val.startsWith('PASTE_');
+  if (!authUser || !authUser.id) {
+    throw createHttpError(500, 'auth_user_resolution_failed', 'Unable to resolve auth user after provisioning.');
+  }
+
+  logger.info('[ADD USER AUTH RESOLVED]', {
+    email: normalizedEmail,
+    authUserId: authUser.id,
+    createdNewAuthUser: created,
+    reusedExistingAuthUser: !created,
   });
-  // Accept DATABASE_POOLER_URL as an alternative to DATABASE_URL
-  const hasDbUrl =
-    (process.env.DATABASE_URL || '').trim() ||
-    (process.env.DATABASE_POOLER_URL || '').trim() ||
-    (process.env.SUPABASE_DB_POOLER_URL || '').trim();
-  if (!hasDbUrl) {
-    missingProd.push('DATABASE_URL (or DATABASE_POOLER_URL)');
-  }
-  if (isProduction && missingProd.length) {
-    fatalEnvError(`Missing required production environment variables: ${missingProd.join(', ')}`);
+
+  const profilePayload = {
+    id: authUser.id,
+    email: normalizedEmail,
+    first_name: normalizedFirstName,
+    last_name: normalizedLastName,
+    full_name: `${normalizedFirstName} ${normalizedLastName}`.trim(),
+    organization_id: orgId,
+    role: role,
+    is_active: true,
+    metadata: {
+      job_title: jobTitle || null,
+      department: department || null,
+      cohort: cohort || null,
+      phone_number: phoneNumber || null,
+    },
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
+  const { error: profileError } = await supabase.from('user_profiles').upsert(profilePayload, { onConflict: 'id' });
+  if (profileError) {
+    logger.error('admin_user_profile_upsert_failed', {
+      requestId,
+      orgId,
+      email: normalizedEmail,
+      userId: authUser.id,
+      message: profileError?.message || String(profileError),
+    });
+    if (created) {
+      await cleanupProvisionedUserAccount(authUser.id, orgId);
+    }
+    throw profileError;
   }
 
-  if (isProduction && !supabaseServerConfigured) {
-    fatalEnvError('Supabase credentials are not configured. Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY.');
+  logger.info('[ADD USER PROFILE UPSERT]', {
+    authUserId: authUser.id,
+    email: normalizedEmail,
+    profileUpserted: true,
+  });
+
+  const { data: insertedProfile, error: profileCheckError } = await supabase
+    .from('user_profiles')
+    .select('id')
+    .eq('id', authUser.id)
+    .maybeSingle();
+  if (profileCheckError || !insertedProfile?.id) {
+    const profileFailError = profileCheckError || new Error('profile_not_found');
+    if (created) {
+      await cleanupProvisionedUserAccount(authUser.id, orgId);
+    }
+    throw profileFailError;
   }
 
-  if (isProduction) {
-    const demoFlags = ['ALLOW_DEMO', 'DEMO_MODE', 'DEV_FALLBACK'].filter((key) => parseFlag(process.env[key]));
-    if (demoFlags.length) {
-      fatalEnvError(`Demo fallback modes are disallowed in production. Remove: ${demoFlags.join(', ')}`);
+  let membership = null;
+  let membershipCreated = false;
+  try {
+    membership = await upsertOrganizationMembership(orgId, authUser.id, role, actor);
+    membershipCreated = Boolean(membership?.id);
+  } catch (error) {
+    logger.error('admin_user_membership_upsert_failed', {
+      requestId,
+      orgId,
+      userId: authUser.id,
+      message: error?.message || String(error),
+    });
+    if (created) {
+      await cleanupProvisionedUserAccount(authUser.id, orgId);
+    }
+    throw error;
+  }
+
+  const membershipOrgColumn = await getOrganizationMembershipsOrgColumnName();
+  const { data: membershipCheck, error: membershipCheckError } = await supabase
+    .from('organization_memberships')
+    .select('id')
+    .eq('user_id', authUser.id)
+    .eq(membershipOrgColumn, orgId)
+    .maybeSingle();
+
+  if (membershipCheckError || !membershipCheck?.id) {
+    const membershipFailError = membershipCheckError || new Error('membership_not_found');
+    if (created) {
+      await cleanupProvisionedUserAccount(authUser.id, orgId);
+    }
+    throw membershipFailError;
+  }
+
+  logger.info('[ADD USER MEMBERSHIP UPSERT]', {
+    authUserId: authUser.id,
+    orgId,
+    role,
+    membershipUpserted: true,
+  });
+
+  if (role === 'admin' || role === 'owner' || role === 'org_admin' || role === 'organization_admin' || role === 'super_admin') {
+    try {
+      await supabase.from('admin_users').upsert({ user_id: authUser.id, organization_id: orgId, meta: { role } });
+    } catch (adminError) {
+      logger.warn('admin_users_upsert_failed', {
+        requestId,
+        orgId,
+        userId: authUser.id,
+        message: adminError?.message || String(adminError),
+      });
     }
   }
 
-  warnOnPlaceholderSecrets();
-};
+  let setupLink = null;
+  let emailSent = false;
+  try {
+    const { data: recoveryLink, error: recoveryError } = await supabase.auth.admin.generateLink({
+      type: 'recovery',
+      email: normalizedEmail,
+    });
+    if (recoveryError || !recoveryLink?.action_link) {
+      throw recoveryError || new Error('setup_link_not_generated');
+    }
+    setupLink = recoveryLink.action_link;
 
-ensureEnvironmentIsValid();
+    logger.info('[ADD USER SETUP LINK]', {
+      email: normalizedEmail,
+      authUserId: authUser.id,
+      linkGenerated: true,
+      hasActionLink: true,
+    });
 
+    const subject = 'Set up your learner portal password';
+    const text = `Hi ${normalizedFirstName},\n\nYour administrator has added you to the learning portal. Click the link below to set your password and sign in:\n\n${setupLink}\n\nIf you did not request this, please ignore.`;
+
+    const emailResult = await sendEmail({
+      to: normalizedEmail,
+      subject,
+      text,
+      logContext: { recipientType: 'new_user', organizationId: orgId, sentBy: actor?.userId ?? null },
+    });
+    emailSent = Boolean(emailResult.delivered);
+
+    logger.info('[ADD USER EMAIL DELIVERY]', {
+      email: normalizedEmail,
+      provider: emailResult.id ? 'smtp' : null,
+      sent: emailSent,
+      setupLinkGenerated: true,
+      fallbackLinkExposed: !emailSent,
+    });
+  } catch (error) {
+    logger.warn('admin_user_setup_link_failed', {
+      requestId,
+      orgId,
+      userId: authUser.id,
+      message: error?.message || String(error),
+    });
+    if (created) {
+      await cleanupProvisionedUserAccount(authUser.id, orgId);
+    }
+    throw error;
+  }
+
+  let members = [];
+  try {
+    members = await fetchOrgMembersWithProfiles(orgId);
+  } catch (error) {
+    logger.warn('admin_user_member_reload_failed', {
+      requestId,
+      orgId,
+      userId: authUser.id,
+      message: error?.message || String(error),
+    });
+  }
+
+  const member = members.find((row) => String(row?.user_id ?? '') === String(authUser.id)) || membership;
+
+  logger.info('[ADD USER FINAL MODE B]', {
+    email: normalizedEmail,
+    authUserCreated: created,
+    profileCreated: true,
+    membershipCreated: membershipCreated,
+    orgId,
+  });
+
+  return {
+    created,
+    membershipCreated,
+    member,
+    userId: authUser.id,
+    setupLink,
+    emailSent,
+  };
+}
 const supabaseEnv = getSupabaseConfig();
 const initialDemoModeMetadata = describeDemoMode();
 const supabaseUrlHost = (() => {
@@ -2275,6 +2287,8 @@ app.post('/api/admin/users', authenticate, requireAdmin, async (req, res) => {
         created: account.created,
         existingAccount: !account.created,
         membershipCreated: account.membershipCreated,
+        setupLink: account.setupLink ?? null,
+        emailSent: account.emailSent ?? false,
       });
       return;
     } catch (error) {
@@ -8861,14 +8875,7 @@ function buildAuthUserMetadata({
   };
 }
 
-function isSupabaseAuthCreateUserDatabaseError(error) {
-  const message = String(error?.message || '').toLowerCase();
-  const code = String(error?.code || '').toLowerCase();
-  return (
-    code === 'unexpected_failure' ||
-    message.includes('database error creating new user')
-  );
-}
+// remove local helper - now imported from utils/authHelpers
 
 async function provisionOrganizationUserAccount({
   orgId,
@@ -9123,7 +9130,8 @@ async function provisionOrganizationUserAccount({
     membershipCreated,
     member,
     userId: authUser.id,
-    temporaryPassword: userPassword,
+    setupLink,
+    emailSent,
   };
 }
 async function runOptionalCleanupMutation(label, operation, meta = {}) {
