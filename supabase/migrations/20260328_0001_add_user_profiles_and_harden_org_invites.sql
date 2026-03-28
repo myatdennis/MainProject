@@ -50,7 +50,18 @@ CREATE TABLE IF NOT EXISTS public.admin_users (
   PRIMARY KEY (user_id, organization_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_admin_users_org_id ON public.admin_users (organization_id);
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+    FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'admin_users'
+      AND column_name = 'organization_id'
+  ) THEN
+    EXECUTE 'CREATE INDEX IF NOT EXISTS idx_admin_users_org_id ON public.admin_users (organization_id)';
+  END IF;
+END$$;
 
 -- 4) Harmonize org_invites columns safely: only operate when the table/columns exist.
 DO $$
