@@ -2,6 +2,7 @@ import express from 'express';
 import bcrypt from 'bcryptjs';
 import { randomUUID } from 'crypto';
 import supabase from '../lib/supabaseClient.js';
+import { buildOrgInviteInsertAttemptPayloads } from '../utils/orgInvites.js';
 import { authenticate, requireAdmin, invalidateMembershipCache } from '../middleware/auth.js';
 import { createHttpError, withHttpError } from '../middleware/apiErrorHandler.js';
 
@@ -151,7 +152,7 @@ const createInviteFallback = async ({ orgId, email, role, actorUserId = null, fi
     return { id: existing.id, email: normalizedEmail, duplicate: true };
   }
 
-  const payload = {
+  const basePayload = {
     email: normalizedEmail,
     role,
     status: 'pending',
@@ -160,32 +161,13 @@ const createInviteFallback = async ({ orgId, email, role, actorUserId = null, fi
     inviter_id: actorUserId ?? null,
     invited_name: `${normalizeText(firstName)} ${normalizeText(lastName)}`.trim() || null,
   };
-  payload[orgColumn] = orgId;
-  payload[tokenColumn] = token;
-  if (orgColumn !== 'organization_id') {
-    payload.organization_id = orgId;
-  }
-  if (orgColumn !== 'org_id') {
-    payload.org_id = orgId;
-  }
-  if (tokenColumn !== 'token') {
-    payload.token = token;
-  }
-  if (tokenColumn !== 'invite_token') {
-    payload.invite_token = token;
-  }
-
-  const attemptPayloads = [payload];
-  if ('token' in payload) {
-    const withoutToken = { ...payload };
-    delete withoutToken.token;
-    attemptPayloads.push(withoutToken);
-  }
-  if ('invite_token' in payload) {
-    const withoutInviteToken = { ...payload };
-    delete withoutInviteToken.invite_token;
-    attemptPayloads.push(withoutInviteToken);
-  }
+  const attemptPayloads = buildOrgInviteInsertAttemptPayloads({
+    orgColumn,
+    tokenColumn,
+    orgId,
+    token,
+    basePayload,
+  });
 
   let lastError = null;
   for (const candidate of attemptPayloads) {

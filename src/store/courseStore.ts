@@ -1534,7 +1534,6 @@ const waitForRoleResolution = async (
 };
 
 // Reserved for future use: checks whether a learner has any local progress stored for a given course.
-// @ts-ignore unused — retained for planned assignment-scope filtering feature
 const _hasLocalProgressForCourse = (course: Course): boolean => {
   if (typeof window === 'undefined') {
     return false;
@@ -1553,6 +1552,7 @@ const _hasLocalProgressForCourse = (course: Course): boolean => {
     return false;
   }
 };
+void _hasLocalProgressForCourse;
 
 
 // ─── Catalog cache helpers ────────────────────────────────────────────────────

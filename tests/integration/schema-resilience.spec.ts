@@ -56,7 +56,7 @@ describe('schema resilience guards', () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
     });
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(202);
     const json = await res.json();
     assertNoSchemaCacheWarning(json);
   });

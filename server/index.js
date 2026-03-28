@@ -767,6 +767,7 @@ import {
   normalizeColumnIdentifier,
   extractMissingColumnName,
 } from './utils/errors.js';
+import { buildOrgInviteInsertAttemptPayloads } from './utils/orgInvites.js';
 
 const fsp = fs.promises;
 const PROGRESS_BATCH_MAX_SIZE = Number(process.env.PROGRESS_BATCH_MAX_SIZE || 100);
@@ -1399,7 +1400,7 @@ app.post('/api/admin/courses/:id/assign', authenticate, async (req, res) => {
   };
 
   try {
-    if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    if (E2E_TEST_MODE || DEV_FALLBACK) {
       const updated = [];
       const inserted = [];
       for (const userId of targetUserIds) {
@@ -1731,7 +1732,7 @@ app.get('/api/admin/courses/:id/assignments', authenticate, async (req, res) => 
 
   try {
     const activeOnly = String(req.query.active ?? 'true').toLowerCase() !== 'false';
-    if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+      if (E2E_TEST_MODE || DEV_FALLBACK) {
       const rows = (Array.isArray(e2eStore.assignments) ? e2eStore.assignments : [])
         .filter((assignment) => {
           if (!assignment) return false;
@@ -2966,6 +2967,7 @@ const DEFAULT_SANDBOX_ORG_ID =
   process.env.DEMO_SANDBOX_ORG_ID ||
   process.env.DEFAULT_SANDBOX_ORG_ID ||
   'demo-sandbox-org';
+const DEFAULT_DEMO_LEARNER_USER_ID = '00000000-0000-0000-0000-000000000002';
 
 function normalizeOrgIdValue(value) {
   if (typeof value === 'string') {
@@ -4573,6 +4575,82 @@ const ensureSurveyAssignmentsForUserFromOrgScope = async ({ userId, orgIds = [],
   }
 };
 
+const ensureCourseAssignmentsForUserFromOrgScope = async ({ userId, orgIds = [], courseFilter = [] } = {}) => {
+  if (!supabase || !userId || !Array.isArray(orgIds) || orgIds.length === 0) return;
+  try {
+    let orgQuery = supabase
+      .from('assignments')
+      .select('id,course_id,organization_id,user_id,status,due_at,note,assigned_by,metadata,active,created_at,updated_at,assignment_type')
+      .in('organization_id', orgIds)
+      .is('user_id', null)
+      .eq('active', true);
+
+    if (Array.isArray(courseFilter) && courseFilter.length > 0) {
+      orgQuery = orgQuery.in('course_id', courseFilter);
+    }
+
+    const { data: orgAssignments, error: orgError } = await orgQuery;
+    if (orgError) throw orgError;
+    if (!orgAssignments || orgAssignments.length === 0) return;
+
+    const courseAssignments = orgAssignments.filter((row) => {
+      const assignmentType = row?.assignment_type ?? null;
+      return assignmentType === null || assignmentType === 'course';
+    });
+    if (courseAssignments.length === 0) return;
+
+    const courseIds = Array.from(new Set(courseAssignments.map((row) => row?.course_id).filter(Boolean)));
+    if (courseIds.length === 0) return;
+
+    const { data: existingRows, error: existingError } = await supabase
+      .from('assignments')
+      .select('course_id')
+      .eq('user_id', userId)
+      .in('course_id', courseIds);
+    if (existingError) throw existingError;
+
+    const existingSet = new Set((existingRows || []).map((row) => row?.course_id).filter(Boolean));
+    const inserts = [];
+    courseIds.forEach((courseId) => {
+      if (existingSet.has(courseId)) {
+        return;
+      }
+      const source = courseAssignments.find((row) => row?.course_id === courseId);
+      if (!source) return;
+      inserts.push({
+        course_id: courseId,
+        survey_id: null,
+        organization_id: source.organization_id ?? null,
+        user_id: userId,
+        assignment_type: 'course',
+        status: source.status ?? 'assigned',
+        due_at: source.due_at ?? null,
+        note: source.note ?? null,
+        assigned_by: source.assigned_by ?? null,
+        metadata: {
+          ...(source.metadata && typeof source.metadata === 'object' ? source.metadata : {}),
+          assigned_via: 'org_rollup',
+        },
+        active: true,
+      });
+    });
+
+    if (!inserts.length) return;
+
+    const { error: insertError } = await supabase.from('assignments').insert(inserts);
+    if (insertError) throw insertError;
+  } catch (error) {
+    if (isMissingRelationError(error) || isMissingColumnError(error)) {
+      logger.warn('course_assignment_user_materialize_skipped', {
+        code: error?.code ?? null,
+        message: error?.message ?? null,
+      });
+      return;
+    }
+    throw error;
+  }
+};
+
 const loadSurveyAssignmentForUser = async (surveyId, userId, { assignmentId = null, orgIds = [] } = {}) => {
   if (!supabase || !surveyId || !userId) return null;
   try {
@@ -5736,7 +5814,7 @@ const requireOrgAccess = async (
   }
 
   try {
-    if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    if (E2E_TEST_MODE || DEV_FALLBACK) {
       if (FORCE_ORG_ENFORCEMENT) {
         res.status(503).json({
           error: 'org_membership_unavailable',
@@ -6698,7 +6776,7 @@ async function createOrgInvite({
   const token = randomUUID().replace(/-/g, '');
   const expiresAt = new Date(Date.now() + INVITE_TOKEN_TTL_HOURS * 60 * 60 * 1000).toISOString();
 
-  const payload = {
+  const basePayload = {
     email: normalizedEmail,
     role,
     status: 'pending',
@@ -6706,32 +6784,13 @@ async function createOrgInvite({
     inviter_id: inviter?.userId ?? null,
     expires_at: expiresAt,
   };
-  payload[inviteOrgColumn] = orgId;
-  payload[inviteTokenColumn] = token;
-  if (inviteOrgColumn !== 'organization_id') {
-    payload.organization_id = orgId;
-  }
-  if (inviteOrgColumn !== 'org_id') {
-    payload.org_id = orgId;
-  }
-  if (inviteTokenColumn !== 'token') {
-    payload.token = token;
-  }
-  if (inviteTokenColumn !== 'invite_token') {
-    payload.invite_token = token;
-  }
-
-  const attemptPayloads = [payload];
-  if ('token' in payload) {
-    const withoutToken = { ...payload };
-    delete withoutToken.token;
-    attemptPayloads.push(withoutToken);
-  }
-  if ('invite_token' in payload) {
-    const withoutInviteToken = { ...payload };
-    delete withoutInviteToken.invite_token;
-    attemptPayloads.push(withoutInviteToken);
-  }
+  const attemptPayloads = buildOrgInviteInsertAttemptPayloads({
+    orgColumn: inviteOrgColumn,
+    tokenColumn: inviteTokenColumn,
+    orgId,
+    token,
+    basePayload,
+  });
 
   let data = null;
   let error = null;
@@ -10079,7 +10138,7 @@ app.get('/api/admin/courses', async (req, res) => {
     }
   }
 
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (E2E_TEST_MODE || DEV_FALLBACK) {
     try {
       const reqIncludeStructure = parseBooleanParam(req.query.includeStructure, false);
       const reqIncludeLessons = parseBooleanParam(req.query.includeLessons, reqIncludeStructure);
@@ -10372,7 +10431,7 @@ app.get('/api/admin/courses/:identifier', async (req, res) => {
     return;
   }
 
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (E2E_TEST_MODE || DEV_FALLBACK) {
     let courseRecord = e2eStore.courses.get(identifier) || null;
     if (!courseRecord) {
       for (const record of e2eStore.courses.values()) {
@@ -10609,7 +10668,7 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
     context.activeOrganizationId ??
     null;
   const resolveCurrentSlugForLog = () => req.body?.course?.slug ?? courseLocal?.slug ?? null;
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (E2E_TEST_MODE || DEV_FALLBACK) {
     const headerOrgId = getHeaderOrgId(req, { requireMembership: false });
     let organizationId = pickOrgId(
       courseLocal?.organization_id,
@@ -11465,7 +11524,7 @@ app.post('/api/admin/courses/import', asyncHandler(async (req, res) => {
   });
 
   // In demo/E2E, snapshot and rollback on failure
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (E2E_TEST_MODE || DEV_FALLBACK) {
     const snapshot = new Map(e2eStore.courses);
     const results = [];
     try {
@@ -11910,18 +11969,79 @@ app.get('/api/client/assignments', authenticate, async (req, res) => {
     });
 
   try {
-    if (!supabase) {
-      if (E2E_TEST_MODE || DEV_FALLBACK) {
-        const rows = (e2eStore.assignments || []).filter((assignment) => {
-          if (!assignment || assignment.active === false) return false;
-          return String(assignment.user_id || '').toLowerCase() === normalizedUserId;
+    if (E2E_TEST_MODE || DEV_FALLBACK) {
+        const allowedOrgIds = new Set(
+          [
+            resolvedOrgId,
+            ...(Array.isArray(context.organizationIds) ? context.organizationIds : []),
+            req.activeOrgId ?? null,
+          ]
+            .map((value) => normalizeOrgIdValue(value))
+            .filter(Boolean),
+        );
+        console.info('[client.assignments][demo]', {
+          requestId,
+          userId: normalizedUserId,
+          resolvedOrgId,
+          activeOrgId: req.activeOrgId ?? null,
+          contextOrgIds: Array.isArray(context.organizationIds) ? context.organizationIds : [],
+          allowedOrgIds: Array.from(allowedOrgIds),
+          assignmentCount: Array.isArray(e2eStore.assignments) ? e2eStore.assignments.length : 0,
         });
-        respond(200, rows);
+        const directRows = [];
+        const orgScopedByCourseId = new Map();
+        for (const rawAssignment of e2eStore.assignments || []) {
+          const assignment =
+            ensureOrgFieldCompatibility(rawAssignment, { fallbackOrgId: DEFAULT_SANDBOX_ORG_ID }) || rawAssignment;
+          if (!assignment || assignment.active === false) continue;
+          const assignmentType = assignment.assignment_type ?? assignment.assignmentType ?? null;
+          if (assignmentType && assignmentType !== 'course') continue;
+          const assignmentUserId = String(assignment.user_id || '').toLowerCase();
+          if (assignmentUserId === normalizedUserId) {
+            directRows.push(assignment);
+            continue;
+          }
+          if (assignment.user_id !== null && assignment.user_id !== undefined) continue;
+          const assignmentOrgId = normalizeOrgIdValue(
+            assignment.organization_id ?? assignment.organizationId ?? assignment.org_id ?? assignment.orgId ?? null,
+          );
+          if (!assignmentOrgId || !allowedOrgIds.has(assignmentOrgId)) continue;
+          const courseId = assignment.course_id ?? assignment.courseId ?? null;
+          if (!courseId || orgScopedByCourseId.has(courseId)) continue;
+          orgScopedByCourseId.set(courseId, {
+            ...assignment,
+            user_id: normalizedUserId,
+            assignment_type: 'course',
+            metadata: {
+              ...(assignment.metadata && typeof assignment.metadata === 'object' ? assignment.metadata : {}),
+              assigned_via: 'org_rollup',
+            },
+          });
+        }
+        const directCourseIds = new Set(
+          directRows
+            .map((assignment) => assignment?.course_id ?? assignment?.courseId ?? null)
+            .filter(Boolean),
+        );
+        const rows = [
+          ...directRows,
+          ...Array.from(orgScopedByCourseId.entries())
+            .filter(([courseId]) => !directCourseIds.has(courseId))
+            .map(([, assignment]) => assignment),
+        ];
+        respond(200, rows.map((row) => normalizeAssignmentRow(row)).filter(Boolean));
         return;
-      }
+    }
+
+    if (!supabase) {
       respond(200, []);
       return;
     }
+
+    await ensureCourseAssignmentsForUserFromOrgScope({
+      userId: normalizedUserId,
+      orgIds: Array.isArray(context.organizationIds) ? context.organizationIds : [],
+    });
 
     const assignmentTables = ['assignments', 'course_assignments'];
     let rows = [];
@@ -12276,7 +12396,7 @@ app.post('/api/admin/courses/:id/publish', async (req, res) => {
   });
 
   try {
-    if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    if (E2E_TEST_MODE || DEV_FALLBACK) {
       const existing = e2eStore.courses.get(id);
       if (!existing) {
         res.locals = res.locals || {};
@@ -12471,7 +12591,7 @@ app.delete('/api/admin/courses/:id', async (req, res) => {
   if (!context) return;
 
   // Dev/E2E fallback
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (E2E_TEST_MODE || DEV_FALLBACK) {
     try {
       const course = e2eStore.courses.get(id);
       if (!course) {
@@ -12681,7 +12801,19 @@ app.get('/api/client/courses', asyncHandler(async (req, res) => {
 
   const respondWithDemoCourses = async () => {
     // In dev/demo mode, show ALL courses (not just published)
-    let courses = Array.from(e2eStore.courses.values());
+    let courses = Array.from(e2eStore.courses.values()).map(
+      (course) => ensureOrgFieldCompatibility(course, { fallbackOrgId: DEFAULT_SANDBOX_ORG_ID }) || course,
+    );
+    console.info('[client.courses][demo]', {
+      requestId,
+      assignedOnly,
+      effectiveOrgId,
+      primaryOrgId,
+      scopedOrgIds,
+      isPlatformAdmin: context.isPlatformAdmin,
+      courseCountBeforeFilter: courses.length,
+      sampleCourseIds: courses.slice(0, 10).map((course) => course?.id ?? null),
+    });
 
     if (!context.isPlatformAdmin && scopedOrgIds.length > 0) {
       const scopedOrgIdSet = new Set(scopedOrgIds);
@@ -12694,18 +12826,29 @@ app.get('/api/client/courses', asyncHandler(async (req, res) => {
     }
 
     if (assignedOnly && assignmentOrgId) {
-      const demoAssignments = (e2eStore.assignments || []).filter(
-        (asn) =>
-          asn &&
-          asn.active !== false &&
-          String(asn.organization_id || '').trim() === assignmentOrgId &&
-          (!normalizedSessionUserId ||
-            asn.user_id === null ||
-            String(asn.user_id).trim().toLowerCase() === normalizedSessionUserId)
-      );
+      const demoAssignments = (e2eStore.assignments || [])
+        .map((assignment) => ensureOrgFieldCompatibility(assignment, { fallbackOrgId: DEFAULT_SANDBOX_ORG_ID }) || assignment)
+        .filter(
+          (asn) =>
+            asn &&
+            asn.active !== false &&
+            String(asn.organization_id || '').trim() === assignmentOrgId &&
+            (!normalizedSessionUserId ||
+              asn.user_id === null ||
+              String(asn.user_id).trim().toLowerCase() === normalizedSessionUserId)
+        );
       const assignedIds = new Set(demoAssignments.map((asn) => String(asn.course_id)));
       courses = courses.filter((course) => assignedIds.has(String(course.id)) || assignedIds.has(String(course.slug)));
     }
+
+    console.info('[client.courses][demo][post-filter]', {
+      requestId,
+      assignedOnly,
+      effectiveOrgId,
+      scopedOrgIds,
+      courseCountAfterFilter: courses.length,
+      sampleCourseIds: courses.slice(0, 10).map((course) => course?.id ?? null),
+    });
 
     const data = courses.map((courseRecord) => {
       const c = ensureOrgFieldCompatibility(courseRecord, { fallbackOrgId: DEFAULT_SANDBOX_ORG_ID }) || courseRecord;
@@ -12752,7 +12895,7 @@ app.get('/api/client/courses', asyncHandler(async (req, res) => {
     return data;
   };
 
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (E2E_TEST_MODE || DEV_FALLBACK) {
     const demoData = await respondWithDemoCourses();
     res.status(200).json({ ok: true, data: demoData, requestId });
     return;
@@ -12869,7 +13012,7 @@ app.get('/api/client/courses/:courseIdentifier', asyncHandler(async (req, res) =
     return query;
   };
 
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (E2E_TEST_MODE || DEV_FALLBACK) {
     try {
       const course = e2eFindCourse(courseIdentifier);
       if (!course) {
@@ -13000,7 +13143,7 @@ app.get('/api/client/courses/:courseIdentifier', asyncHandler(async (req, res) =
 
 // Admin Modules (E2E fallback)
 app.post('/api/admin/modules', async (req, res) => {
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (E2E_TEST_MODE || DEV_FALLBACK) {
     const parsed = validateOr400(moduleCreateSchema, req, res);
     if (!parsed) return;
     const courseId = pickId(parsed, 'course_id', 'courseId');
@@ -13072,7 +13215,7 @@ app.post('/api/admin/modules', async (req, res) => {
 });
 
 app.patch('/api/admin/modules/:id', async (req, res) => {
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (E2E_TEST_MODE || DEV_FALLBACK) {
     const { id } = req.params;
     const parsed = validateOr400(modulePatchValidator, req, res);
     if (!parsed) return;
@@ -13149,7 +13292,7 @@ app.patch('/api/admin/modules/:id', async (req, res) => {
 });
 
 app.delete('/api/admin/modules/:id', async (req, res) => {
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (E2E_TEST_MODE || DEV_FALLBACK) {
     const { id } = req.params;
     const found = e2eFindModule(id);
     if (!found) {
@@ -13176,7 +13319,7 @@ app.delete('/api/admin/modules/:id', async (req, res) => {
 });
 
 app.post('/api/admin/modules/reorder', async (req, res) => {
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (E2E_TEST_MODE || DEV_FALLBACK) {
     const parsed = validateOr400(moduleReorderSchema, req, res);
     if (!parsed) return;
     const courseId = pickId(parsed, 'course_id', 'courseId');
@@ -13286,7 +13429,7 @@ app.post('/api/admin/lessons', async (req, res) => {
 
   const completionRule = parsed.completion_rule_json ?? parsed.completionRule ?? null;
 
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (E2E_TEST_MODE || DEV_FALLBACK) {
     const found = e2eFindModule(moduleId);
     if (!found) {
       respondLessonError(res, lessonLogMeta, 'admin_lessons_create_error', 404, 'module_not_found', 'Module not found');
@@ -13521,7 +13664,7 @@ app.patch('/api/admin/lessons/:id', async (req, res) => {
     (parsed.content && typeof parsed.content === 'object' ? parsed.content.body ?? parsed.content : null);
   const completionRule = parsed.completion_rule_json ?? parsed.completionRule ?? null;
 
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (E2E_TEST_MODE || DEV_FALLBACK) {
     const found = e2eFindLesson(id);
     if (!found) {
       respondLessonError(res, lessonLogMeta, 'admin_lessons_update_error', 404, 'lesson_not_found', 'Lesson not found');
@@ -13748,7 +13891,7 @@ app.patch('/api/admin/lessons/:id', async (req, res) => {
 });
 
 app.delete('/api/admin/lessons/:id', async (req, res) => {
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (E2E_TEST_MODE || DEV_FALLBACK) {
     const { id } = req.params;
     for (const course of e2eStore.courses.values()) {
       for (const mod of course.modules || []) {
@@ -13777,7 +13920,7 @@ app.delete('/api/admin/lessons/:id', async (req, res) => {
 });
 
 app.post('/api/admin/lessons/reorder', async (req, res) => {
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (E2E_TEST_MODE || DEV_FALLBACK) {
     const parsed = validateOr400(lessonReorderSchema, req, res);
     if (!parsed) return;
     const moduleId = pickId(parsed, 'module_id', 'moduleId');
@@ -13922,7 +14065,7 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
   }
 
   // Demo/E2E path: persist to in-memory store
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (E2E_TEST_MODE || DEV_FALLBACK) {
     try {
       lessonList.forEach((lesson) => {
         const key = `${userId}:${lesson.lessonId}`;
@@ -14374,7 +14517,7 @@ app.get('/api/learner/progress', authenticate, async (req, res) => {
     return;
   }
 
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (E2E_TEST_MODE || DEV_FALLBACK) {
     const lessons = lessonIds.map((lessonId) => {
       const record = e2eStore.lessonProgress.get(`${normalizedUserId}:${lessonId}`) || null;
       return buildLessonRow(lessonId, record);
@@ -14484,7 +14627,7 @@ app.get('/api/client/progress/summary', authenticate, async (req, res) => {
     });
   }
 
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (E2E_TEST_MODE || DEV_FALLBACK) {
     let totalPercent = 0;
     let courseCount = 0;
     let completedCourses = 0;
@@ -14560,7 +14703,7 @@ app.get('/api/client/activity', authenticate, async (req, res) => {
   const userId = context.userId;
   const limit = Math.min(parseInt(req.query.limit, 10) || 10, 50);
 
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (E2E_TEST_MODE || DEV_FALLBACK) {
     const demoActivities = Array.from(e2eStore.auditLogs || [])
       .filter((entry) => entry.user_id === userId || entry.actor_id === userId)
       .sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime())
@@ -14611,7 +14754,7 @@ app.get('/api/client/activity', authenticate, async (req, res) => {
 app.get('/api/admin/activity', authenticate, requireAdmin, async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit, 10) || 10, 50);
 
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (E2E_TEST_MODE || DEV_FALLBACK) {
     const demoActivities = Array.from(e2eStore.auditLogs || [])
       .sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime())
       .slice(0, limit)
@@ -14656,7 +14799,7 @@ app.get('/api/admin/activity', authenticate, requireAdmin, async (req, res) => {
 });
 
 app.post('/api/client/progress/course', authenticate, async (req, res) => {
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (E2E_TEST_MODE || DEV_FALLBACK) {
     const { user_id: bodyUserId, course_id, percent, status, time_spent_s } = req.body || {};
     const clientEventId = req.body?.client_event_id ?? null;
     const sessionUserId = req.user?.userId || req.user?.id || null;
@@ -14879,7 +15022,7 @@ app.post('/api/client/progress/course', authenticate, async (req, res) => {
 });
 
 app.post('/api/client/progress/lesson', async (req, res) => {
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (E2E_TEST_MODE || DEV_FALLBACK) {
     const { user_id, lesson_id, percent, status, time_spent_s, resume_at_s } = req.body || {};
     const clientEventId = req.body?.client_event_id ?? null;
 
@@ -15094,7 +15237,7 @@ app.post('/api/client/progress/batch', async (req, res) => {
   }
 
   // Demo/E2E mode: apply in-memory updates
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (E2E_TEST_MODE || DEV_FALLBACK) {
     const accepted = [];
     const duplicates = [];
     const failed = [];
@@ -15290,7 +15433,7 @@ app.post('/api/analytics/events/batch', async (req, res) => {
   }
   const eventsWithOrg = normalizedEvents.filter((evt) => isUuid(evt.org_id || ''));
 
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (E2E_TEST_MODE || DEV_FALLBACK) {
     const accepted = [];
     const duplicates = [];
     const failed = [];
@@ -15654,7 +15797,7 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
     },
   });
 
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (E2E_TEST_MODE || DEV_FALLBACK) {
     const demoOrganizations = buildDemoOrganizations({
       adminOrgIds,
       requestedOrgId,
@@ -18471,7 +18614,7 @@ app.get('/api/client/documents', authenticate, asyncHandler(async (req, res) => 
     || null;
 
   try {
-    if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    if (E2E_TEST_MODE || DEV_FALLBACK) {
       res.json({ data: [] });
       return;
     }
@@ -19406,7 +19549,7 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
       throw new Error('org_access_denied');
     }
 
-    if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+    if (E2E_TEST_MODE || DEV_FALLBACK) {
       const now = new Date().toISOString();
       const rows = normalizedUserIds.length ? normalizedUserIds : [null];
       const inserted = rows.map((userId) => ({
@@ -19752,7 +19895,7 @@ app.get('/api/learner/notifications', async (req, res) => {
   const sinceIso = typeof req.query.since === 'string' ? req.query.since : null;
   const readFilter = typeof req.query.read === 'string' ? req.query.read.trim().toLowerCase() : null;
 
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (E2E_TEST_MODE || DEV_FALLBACK) {
     res.json({ ok: true, data: [], requestId: req.requestId ?? null });
     return;
   }
@@ -20085,7 +20228,7 @@ app.get('/api/admin/notifications', async (req, res) => {
     res.json(buildDisabledNotificationsResponse(1, 25, req.requestId ?? null));
     return;
   }
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (E2E_TEST_MODE || DEV_FALLBACK) {
     const { page, pageSize } = parsePaginationParams(req, { defaultSize: 25, maxSize: 200 });
     res.json(buildDisabledNotificationsResponse(page, pageSize, req.requestId ?? null));
     return;
@@ -20196,7 +20339,7 @@ app.post('/api/admin/notifications', async (req, res) => {
     });
     return;
   }
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (E2E_TEST_MODE || DEV_FALLBACK) {
     res.status(202).json({
       ok: true,
       data: null,
@@ -20662,7 +20805,7 @@ app.get('/api/analytics/events', optionalAuthenticate, async (req, res) => {
     return resolvedOrgIds.has(orgId);
   };
 
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (E2E_TEST_MODE || DEV_FALLBACK) {
     const events = Array.isArray(e2eStore.analyticsEvents) ? e2eStore.analyticsEvents : [];
     const filtered = events.filter((event) => {
       const eventOrgId = pickOrgId(event.org_id, event.organization_id, event.orgId);
@@ -20812,7 +20955,7 @@ app.post('/api/analytics/events', optionalAuthenticate, async (req, res) => {
     return;
   }
 
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (E2E_TEST_MODE || DEV_FALLBACK) {
     const eventId = useCustomPrimaryKey
       ? normalizedClientEventId
       : id || `demo-event-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -20943,7 +21086,7 @@ app.post('/api/audit-log', async (req, res) => {
 
   const respondOk = (meta = {}) => res.json({ ok: true, ...meta });
 
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (E2E_TEST_MODE || DEV_FALLBACK) {
     e2eStore.auditLogs.unshift(entry);
     if (e2eStore.auditLogs.length > 500) {
       e2eStore.auditLogs.length = 500;
@@ -21035,7 +21178,7 @@ app.post('/api/analytics/journeys', authenticate, resolveOrganizationContext, as
     organization_id: organizationId,
   };
 
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (E2E_TEST_MODE || DEV_FALLBACK) {
     const key = `${userId}:${course_id}`;
     e2eStore.learnerJourneys.set(key, { id: key, ...payload });
     persistE2EStore();
@@ -21209,7 +21352,7 @@ app.get('/api/analytics/journeys', authenticate, resolveOrganizationContext, asy
     limit,
   });
 
-  if (!supabase && (E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (E2E_TEST_MODE || DEV_FALLBACK) {
     let data = Array.from(e2eStore.learnerJourneys.values());
     if (effectiveUserId) {
       data = data.filter((journey) => journey.user_id === effectiveUserId);

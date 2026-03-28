@@ -54,7 +54,7 @@ const loginAsLearner = async (page: Page) => {
   await page.getByLabel('Password').fill('user123');
   await logFlowStep(page, 'learner-login-form');
   await page.getByRole('button', { name: 'Sign In' }).click();
-  await page.waitForURL('**/client/dashboard', { timeout: 30_000 });
+  await page.waitForURL('**/lms/dashboard', { timeout: 30_000 });
 };
 
 test.describe('Real user flow audit', () => {
@@ -144,7 +144,7 @@ test.describe('Real user flow audit', () => {
     await logFlowStep(learnerPage, 'learner-dashboard');
 
     await learnerPage.reload({ waitUntil: 'domcontentloaded' });
-    await expect(learnerPage).toHaveURL(/\/client\/dashboard/);
+    await expect(learnerPage).toHaveURL(/\/lms\/dashboard/);
     await expect(learnerPage.getByRole('heading', { name: /Welcome back/i })).toBeVisible({ timeout: 20_000 });
     await logFlowStep(learnerPage, 'learner-dashboard-refresh');
 

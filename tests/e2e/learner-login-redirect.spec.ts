@@ -16,12 +16,12 @@ test.describe('Learner login redirect', () => {
     await page.getByLabel('Password').fill('user123');
     await page.getByRole('button', { name: 'Sign In' }).click();
 
-    await page.waitForURL('**/client/dashboard', { timeout: 30_000 });
-    await expect(page.getByRole('heading', { name: /Welcome back/i })).toBeVisible({ timeout: 20_000 });
+    await page.waitForURL('**/lms/dashboard', { timeout: 30_000 });
+    await expect(page.getByRole('heading', { name: /Your Learning Path/i })).toBeVisible({ timeout: 20_000 });
 
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await expect(page).toHaveURL(/\/client\/dashboard/);
-    await expect(page.getByRole('heading', { name: /Welcome back/i })).toBeVisible({ timeout: 20_000 });
+    await expect(page).toHaveURL(/\/lms\/dashboard/);
+    await expect(page.getByRole('heading', { name: /Your Learning Path/i })).toBeVisible({ timeout: 20_000 });
 
     await page.goto(`${baseUrl}/client/courses`, { waitUntil: 'domcontentloaded' });
     await expect(page.locator('[data-test="client-course-card"]').first()).toBeVisible({ timeout: 20_000 });

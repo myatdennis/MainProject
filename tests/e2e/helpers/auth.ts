@@ -9,6 +9,8 @@ interface LoginOptions {
 }
 
 const boundPages = new WeakSet<Page>();
+type RealtimeStatusCallback = (status: string) => void;
+type RealtimeEventCallback = (...args: unknown[]) => void;
 
 export const loginAsAdmin = async (
   page: Page,
@@ -49,7 +51,7 @@ export const loginAsAdmin = async (
         // supabase.channel(...).on(...).subscribe()
         channel: (name: string) => {
           // Create a chainable channel object similar to Supabase client's channel
-          const handlers: Array<{ type?: string; filter?: any; callback?: Function }> = [];
+          const handlers: Array<{ type?: string; filter?: any; callback?: RealtimeEventCallback }> = [];
           const ch: any = {
             on: (typeOrCallback: any, filterOrCallback?: any, callback?: any) => {
               // Support both (event, filter, cb) and (event, cb) signatures
@@ -60,7 +62,7 @@ export const loginAsAdmin = async (
               }
               return ch;
             },
-            subscribe: (statusCb?: Function) => {
+            subscribe: (statusCb?: RealtimeStatusCallback) => {
               // Invoke provided status callback with SUBSCRIBED to mimic behavior
               if (typeof statusCb === 'function') {
                 try { statusCb('SUBSCRIBED'); } catch (e) {}

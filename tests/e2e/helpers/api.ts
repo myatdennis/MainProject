@@ -8,6 +8,7 @@ import { getFrontendBaseUrl, getApiBaseUrl } from './env';
 const FRONTEND_BASE = getFrontendBaseUrl();
 // Allow tests to call the backend API directly; default to API server port used by webServer
 const API_BASE = getApiBaseUrl();
+const TEST_ORG_ID = 'demo-sandbox-org';
 
 const buildUrl = (path: string) => `${API_BASE}${path.startsWith('/') ? path : `/${path}`}`;
 
@@ -42,7 +43,9 @@ export async function createAndPublishCourse(overrides: { title?: string; descri
   const { data: created } = await apiPost('/api/admin/courses', {
     course: {
       title,
-      description
+      description,
+      organization_id: TEST_ORG_ID,
+      organizationId: TEST_ORG_ID,
     },
     // Provide a minimal module + lesson so the frontend shows a player in E2E mode
     modules: [
@@ -86,6 +89,7 @@ export async function createAndPublishCourse(overrides: { title?: string; descri
 
   // Publish
   await apiPost(`/api/admin/courses/${courseId}/publish`, {});
+  await assignCourseToAll(courseId);
 
   return { courseId, course: created };
 }
@@ -95,21 +99,21 @@ export async function assignCourseToAll(courseId: string) {
   // Include several common shapes so the server's legacy normalization finds the org id.
   await apiPost(`/api/admin/courses/${courseId}/assign`, {
     // canonical top-level field
-    organization_id: 'e2e-org',
+    organization_id: TEST_ORG_ID,
     // camelCase alias
-    organizationId: 'e2e-org',
+    organizationId: TEST_ORG_ID,
     // legacy alias (kept for compatibility)
-    orgId: 'e2e-org',
+    orgId: TEST_ORG_ID,
     // also include a nested organization object (some clients send this)
     organization: {
-      id: 'e2e-org',
-      organization_id: 'e2e-org',
-      organizationId: 'e2e-org',
+      id: TEST_ORG_ID,
+      organization_id: TEST_ORG_ID,
+      organizationId: TEST_ORG_ID,
     },
   }, {
     // Also send header fallback; server looks for x-org-id/x-organization-id
-    'x-org-id': 'e2e-org',
-    'x-organization-id': 'e2e-org',
+    'x-org-id': TEST_ORG_ID,
+    'x-organization-id': TEST_ORG_ID,
   });
 }
 

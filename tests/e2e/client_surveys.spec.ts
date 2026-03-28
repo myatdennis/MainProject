@@ -1,6 +1,8 @@
 import { test, expect, type Page } from '@playwright/test';
 import { getFrontendBaseUrl, getApiBaseUrl } from './helpers/env';
 
+const TEST_ORG_ID = 'demo-sandbox-org';
+
 const loginAsLearner = async (page: Page) => {
   const base = getFrontendBaseUrl();
   await page.goto(`${base}/lms/login`, { waitUntil: 'domcontentloaded' });
@@ -10,9 +12,12 @@ const loginAsLearner = async (page: Page) => {
   await page.waitForURL('**/lms/dashboard', { timeout: 30_000 });
   await page.evaluate(() => {
     localStorage.setItem('huddle_lms_auth', 'true');
-    localStorage.setItem('huddle_user', JSON.stringify({ email: 'user@pacificcoast.edu', id: 'learner-surveys', role: 'user', activeOrgId: 'org-huddle' }));
-    localStorage.setItem('huddle_active_org', 'org-huddle');
-  });
+    localStorage.setItem(
+      'huddle_user',
+      JSON.stringify({ email: 'user@pacificcoast.edu', id: 'learner-surveys', role: 'user', activeOrgId: TEST_ORG_ID }),
+    );
+    localStorage.setItem('huddle_active_org', TEST_ORG_ID);
+  }, TEST_ORG_ID);
 };
 
 test.describe('Client survey entry points', () => {

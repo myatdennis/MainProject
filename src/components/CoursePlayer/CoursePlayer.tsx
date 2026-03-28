@@ -1289,6 +1289,7 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
             {currentLesson.type === 'video' && (() => {
               const playback = resolveLessonVideoPlayback((currentLesson as any).content || {});
               const videoUrl = playback.src;
+              const isNativeVideo = playback.mode !== 'embed';
 
               const resumeLabel = canResumePlayback
                 ? `Resume from ${formatDurationLabel(resumePositionSeconds)}`

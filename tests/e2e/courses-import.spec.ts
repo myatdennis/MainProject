@@ -1,19 +1,14 @@
 import { test, expect } from '@playwright/test';
 import { getFrontendBaseUrl } from './helpers/env';
+import { loginAsAdmin } from './helpers/auth';
 
 test.describe('Courses import UI', () => {
   test.setTimeout(120_000);
 
   test('JSON upload → summary → import → appears in Admin list', async ({ page }) => {
-  const base = getFrontendBaseUrl();
+    const { baseUrl } = await loginAsAdmin(page);
+    const base = baseUrl ?? getFrontendBaseUrl();
 
-    // Login via Admin UI (demo credentials are pre-filled)
-    await page.goto(`${base}/admin/login`);
-    await expect(page.getByRole('heading', { name: /secure access/i })).toBeVisible();
-    await page.getByRole('button', { name: /access admin portal/i }).click();
-    await page.waitForURL(/\/admin\/dashboard/);
-
-    // Navigate to Import page
     await page.goto(`${base}/admin/courses/import`);
     await expect(page.locator('h1:text("Import Courses")')).toBeVisible();
 
@@ -36,7 +31,7 @@ test.describe('Courses import UI', () => {
     const buffer = Buffer.from(JSON.stringify(payload, null, 2), 'utf-8');
 
     // The file input is hidden, but setInputFiles still works
-  const fileChooser = page.locator('input[type="file"]');
+    const fileChooser = page.locator('input[type="file"]');
     await fileChooser.setInputFiles({ name: 'e2e-import.json', mimeType: 'application/json', buffer });
 
     // Summary should show our course title and action badge

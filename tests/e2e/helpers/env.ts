@@ -1,7 +1,7 @@
 import type { APIRequestContext } from '@playwright/test';
 
-export const DEFAULT_FRONTEND_BASE = 'http://localhost:5174';
-export const DEFAULT_API_BASE = 'http://localhost:8888';
+export const DEFAULT_FRONTEND_BASE = 'http://127.0.0.1:5174';
+export const DEFAULT_API_BASE = 'http://127.0.0.1:8888';
 
 export const getFrontendBaseUrl = () => process.env.E2E_BASE_URL || DEFAULT_FRONTEND_BASE;
 export const getApiBaseUrl = () => process.env.E2E_API_BASE_URL || DEFAULT_API_BASE;

@@ -211,13 +211,13 @@ export const RequireAuth = ({ mode, children, loginPathOverride }: RequireAuthPr
   );
 
   // activeMembership is retained for future guard logic (e.g. feature-flag gating by membership tier).
-  // @ts-ignore unused — retained for planned role-scoped feature-flag guard
   const activeMembership = useMemo(() => {
     if (!activeOrgId) {
       return null;
     }
     return memberships.find((membership) => membership.orgId === activeOrgId) ?? null;
   }, [activeOrgId, memberships]);
+  void activeMembership;
 
   const requestedOrgParam = useMemo(() => {
     if (!location.search) {

@@ -162,6 +162,11 @@ const DEV_BYPASS_HOSTS = (process.env.DEV_FALLBACK_ALLOWED_HOSTS || 'localhost,1
   .split(',')
   .map((value) => value.trim().toLowerCase())
   .filter(Boolean);
+const DEMO_SANDBOX_ORG_ID =
+  process.env.E2E_SANDBOX_ORG_ID ||
+  process.env.DEMO_SANDBOX_ORG_ID ||
+  process.env.DEFAULT_SANDBOX_ORG_ID ||
+  'demo-sandbox-org';
 
 const matchesAllowedDevHost = (host) => {
   if (!host) return false;
@@ -229,18 +234,25 @@ const allowDemoBypassForRequest = (req) => {
   return isDevRequest(req);
 };
 
-const buildDemoAuthContextPayload = () => {
-  const demoUser = {
-    id: 'demo-admin',
-    email: 'demo-admin@localhost',
-    app_metadata: { platform_role: 'platform_admin' },
-  };
+const buildDemoAuthContextPayload = ({ role = 'learner' } = {}) => {
+  const wantsAdmin = String(role || '').toLowerCase() === 'admin';
+  const demoUser = wantsAdmin
+    ? {
+        id: '00000000-0000-0000-0000-000000000001',
+        email: 'mya@the-huddle.co',
+        app_metadata: { platform_role: 'platform_admin' },
+      }
+    : {
+        id: '00000000-0000-0000-0000-000000000002',
+        email: 'user@pacificcoast.edu',
+        app_metadata: {},
+      };
   const memberships = [
     {
-      orgId: 'demo-org',
-      role: 'owner',
+      orgId: DEMO_SANDBOX_ORG_ID,
+      role: wantsAdmin ? 'owner' : 'learner',
       status: 'active',
-      organizationName: 'Demo Org',
+      organizationName: 'Demo Sandbox Organization',
       organizationStatus: 'active',
     },
   ];
@@ -251,6 +263,18 @@ const buildDemoAuthContextPayload = () => {
     membershipMap: buildMembershipMap(memberships),
     activeOrgId: memberships[0].orgId,
   };
+};
+
+const resolveDemoBypassRole = (req) => {
+  const path = String(req?.originalUrl || req?.url || '').toLowerCase();
+  const explicitRole = String(req?.headers?.['x-user-role'] || '').trim().toLowerCase();
+  if (explicitRole === 'admin') {
+    return 'admin';
+  }
+  if (path.startsWith('/api/admin')) {
+    return 'admin';
+  }
+  return 'learner';
 };
 
 const buildJwtAuthContextPayload = (claims = {}) => {
@@ -506,7 +530,7 @@ export async function buildAuthContext(req, { optional = false } = {}) {
       host: req.headers?.host,
       origin: req.headers?.origin,
     });
-    const demo = buildDemoAuthContextPayload();
+    const demo = buildDemoAuthContextPayload({ role: resolveDemoBypassRole(req) });
     return {
       user: demo.user,
       membershipsMap: demo.membershipMap,
@@ -545,7 +569,7 @@ export async function buildAuthContext(req, { optional = false } = {}) {
           origin: req.headers?.origin,
           hadToken: Boolean(token),
         });
-        const demo = buildDemoAuthContextPayload();
+        const demo = buildDemoAuthContextPayload({ role: resolveDemoBypassRole(req) });
         return {
           user: demo.user,
           membershipsMap: demo.membershipMap,
@@ -564,7 +588,7 @@ export async function buildAuthContext(req, { optional = false } = {}) {
       console.warn('[auth] Token validation failed; falling back to demo auto-auth context', {
         path: req.originalUrl || req.url,
       });
-      const demo = buildDemoAuthContextPayload();
+      const demo = buildDemoAuthContextPayload({ role: resolveDemoBypassRole(req) });
       return {
         user: demo.user,
         membershipsMap: demo.membershipMap,

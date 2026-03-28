@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import { getApiBaseUrl } from './helpers/env';
 
 const apiBase = getApiBaseUrl();
+const TEST_ORG_ID = 'demo-sandbox-org';
 
 const adminHeaders = {
   'Content-Type': 'application/json',
@@ -22,17 +23,18 @@ test.describe('Admin courses with quiz + video content', () => {
           description: 'E2E test for video + quiz content',
           status: 'draft',
           version: 1,
+          organization_id: TEST_ORG_ID,
         },
         modules: [
           {
             title: 'Module 1',
-            order_index: 0,
+            order_index: 1,
             lessons: [
               {
                 id: videoLessonId,
                 type: 'video',
                 title: 'Lesson with video',
-                order_index: 0,
+                order_index: 1,
                 content_json: {
                   type: 'video',
                   body: {
@@ -45,7 +47,7 @@ test.describe('Admin courses with quiz + video content', () => {
                 id: quizLessonId,
                 type: 'quiz',
                 title: 'Lesson with quiz',
-                order_index: 1,
+                order_index: 2,
                 content_json: {
                   type: 'quiz',
                   body: {

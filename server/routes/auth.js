@@ -60,6 +60,11 @@ const getBearerToken = (req) => {
 const isE2ETestMode = e2eTestMode;
 const isDemoModeExplicit = demoModeExplicit || allowDemoExplicit;
 const allowLegacyDemoUsers = allowLegacyDemoUsersFlag || isE2ETestMode;
+const DEMO_SANDBOX_ORG_ID =
+  process.env.E2E_SANDBOX_ORG_ID ||
+  process.env.DEMO_SANDBOX_ORG_ID ||
+  process.env.DEFAULT_SANDBOX_ORG_ID ||
+  'demo-sandbox-org';
 
 const legacyDemoUsers = [
   {
@@ -78,7 +83,7 @@ const legacyDemoUsers = [
     firstName: 'Demo',
     lastName: 'User',
     password: 'user123',
-    organizationId: 'org-huddle',
+    organizationId: DEMO_SANDBOX_ORG_ID,
   },
 ];
 
@@ -114,7 +119,7 @@ const buildConfiguredDemoUsers = () => {
     role: 'user',
     firstName: 'Demo',
     lastName: 'User',
-    organizationId: undefined,
+    organizationId: DEMO_SANDBOX_ORG_ID,
   });
 
   const rawJson = process.env.DEMO_USERS_JSON;
