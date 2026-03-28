@@ -5,6 +5,7 @@ import supabase from '../lib/supabaseClient.js';
 import { buildOrgInviteInsertAttemptPayloads } from '../utils/orgInvites.js';
 import { authenticate, requireAdmin, invalidateMembershipCache } from '../middleware/auth.js';
 import { createHttpError, withHttpError } from '../middleware/apiErrorHandler.js';
+import { validateOrgId, logInviteInsertAttempt } from '../lib/inviteHelper.js';
 
 const router = express.Router();
 
@@ -135,10 +136,14 @@ const isSupabaseAuthCreateUserDatabaseError = (error) => {
 };
 
 const createInviteFallback = async ({ orgId, email, role, actorUserId = null, firstName = '', lastName = '' }) => {
+  validateOrgId(orgId, 'organizationId is required for invite fallback');
   const orgColumn = await resolveOrgInvitesOrganizationColumn();
   const tokenColumn = await resolveOrgInvitesTokenColumn();
   const normalizedEmail = normalizeEmail(email);
   const token = randomUUID().replace(/-/g, '');
+
+  // Helpful structured log for debugging invite creation attempts in fallback flow.
+  logInviteInsertAttempt({ orgId, email: normalizedEmail });
 
   const { data: existing, error: existingError } = await supabase
     .from('org_invites')
@@ -624,3 +629,6 @@ router.get('/export', async (req, res, next) => {
 });
 
 export default router;
+
+// Named exports for testing and reuse
+export { createInviteFallback, provisionImportedUser };

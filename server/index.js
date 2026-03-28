@@ -768,6 +768,7 @@ import {
   extractMissingColumnName,
 } from './utils/errors.js';
 import { buildOrgInviteInsertAttemptPayloads } from './utils/orgInvites.js';
+import { validateOrgId, logInviteInsertAttempt } from './lib/inviteHelper.js';
 
 const fsp = fs.promises;
 const PROGRESS_BATCH_MAX_SIZE = Number(process.env.PROGRESS_BATCH_MAX_SIZE || 100);
@@ -6745,6 +6746,7 @@ async function createOrgInvite({
   note = null,
   requestId = null,
 }) {
+  validateOrgId(orgId);
   if (!supabase) {
     throw new Error('supabase_not_configured');
   }
@@ -6791,6 +6793,11 @@ async function createOrgInvite({
     token,
     basePayload,
   });
+
+  // Log an informative debug entry before we attempt any DB inserts so failures
+  // involving missing organization identifiers or token columns are easier
+  // to diagnose in logs (includes requestId when available).
+  logInviteInsertAttempt({ orgId, email: normalizedEmail, requestId });
 
   let data = null;
   let error = null;
