@@ -166,6 +166,43 @@ const createInviteFallback = async ({ orgId, email, role, actorUserId = null, fi
     inviter_id: actorUserId ?? null,
     invited_name: `${normalizeText(firstName)} ${normalizeText(lastName)}`.trim() || null,
   };
+  // If the complementary org column exists, add both to the payload so
+  // database-side triggers that still reference the legacy column see a value.
+  try {
+    const complementaryOrgColumn = orgColumn === 'organization_id' ? 'org_id' : 'organization_id';
+    const { error: compErr } = await supabase
+      .from('org_invites')
+      .select('id', { head: true, count: 'exact' })
+      .is(complementaryOrgColumn, null)
+      .limit(1);
+    if (!compErr) {
+      basePayload[orgColumn] = orgId;
+      basePayload[complementaryOrgColumn] = orgId;
+    } else {
+      basePayload[orgColumn] = orgId;
+    }
+  } catch (probeErr) {
+    basePayload[orgColumn] = orgId;
+  }
+
+  // Likewise include both token column names when available.
+  try {
+    const complementaryTokenColumn = tokenColumn === 'token' ? 'invite_token' : 'token';
+    const { error: tErr } = await supabase
+      .from('org_invites')
+      .select('id', { head: true, count: 'exact' })
+      .is(complementaryTokenColumn, null)
+      .limit(1);
+    if (!tErr) {
+      basePayload[tokenColumn] = token;
+      basePayload[complementaryTokenColumn] = token;
+    } else {
+      basePayload[tokenColumn] = token;
+    }
+  } catch (probeErr) {
+    basePayload[tokenColumn] = token;
+  }
+
   const attemptPayloads = buildOrgInviteInsertAttemptPayloads({
     orgColumn,
     tokenColumn,

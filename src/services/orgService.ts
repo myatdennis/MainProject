@@ -225,7 +225,7 @@ export const mapOrgRecord = (record: any): Org => {
   const settings = fromRecord(record, 'settings') as Org['settings'] | undefined;
 
   return {
-    id: record.id,
+    id: record.id ?? record.organization_id ?? record.org_id ?? '',
     name: record.name,
     slug: fromRecord(record, 'slug') ?? undefined,
     type: record.type,

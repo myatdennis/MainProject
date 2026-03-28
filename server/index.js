@@ -2330,12 +2330,19 @@ app.post('/api/admin/users', authenticate, requireAdmin, async (req, res) => {
       orgId,
       email: rawEmail,
     });
-    const status =
-      normalized.code === 'invalid_password' || normalized.code === 'missing_fields'
-        ? 400
-        : normalized.code === 'org_access_denied'
-          ? 403
-          : 500;
+    const validationCodes = new Set([
+      'invalid_password',
+      'missing_fields',
+      'org_id_required',
+      'email_required',
+      'invalid_email',
+      'org_access_denied',
+    ]);
+    const status = validationCodes.has(normalized.code)
+      ? normalized.code === 'org_access_denied'
+        ? 403
+        : 400
+      : 500;
     res.status(status).json({
       error: 'Unable to create organization user',
       code: normalized.code ?? 'internal_error',
@@ -6786,6 +6793,47 @@ async function createOrgInvite({
     inviter_id: inviter?.userId ?? null,
     expires_at: expiresAt,
   };
+  // If the complementary org column exists (both `organization_id` and `org_id`),
+  // include both in the base payload so triggers/functions that still reference
+  // the legacy column don't observe NULL values during the migration window.
+  try {
+    const complementaryOrgColumn = inviteOrgColumn === 'organization_id' ? 'org_id' : 'organization_id';
+    const { error: compErr } = await supabase
+      .from('org_invites')
+      .select('id', { head: true, count: 'exact' })
+      .is(complementaryOrgColumn, null)
+      .limit(1);
+    if (!compErr) {
+      // both columns exist; set both on the base payload
+      basePayload[inviteOrgColumn] = orgId;
+      basePayload[complementaryOrgColumn] = orgId;
+    } else {
+      basePayload[inviteOrgColumn] = orgId;
+    }
+  } catch (probeErr) {
+    // Fallback: ensure at least the resolved column is present
+    basePayload[inviteOrgColumn] = orgId;
+  }
+
+  // Also attempt to include both token column names if both are present to be
+  // robust during migrations that rename `invite_token` -> `token`.
+  try {
+    const complementaryTokenColumn = inviteTokenColumn === 'token' ? 'invite_token' : 'token';
+    const { error: tErr } = await supabase
+      .from('org_invites')
+      .select('id', { head: true, count: 'exact' })
+      .is(complementaryTokenColumn, null)
+      .limit(1);
+    if (!tErr) {
+      basePayload[inviteTokenColumn] = token;
+      basePayload[complementaryTokenColumn] = token;
+    } else {
+      basePayload[inviteTokenColumn] = token;
+    }
+  } catch (probeErr) {
+    basePayload[inviteTokenColumn] = token;
+  }
+
   const attemptPayloads = buildOrgInviteInsertAttemptPayloads({
     orgColumn: inviteOrgColumn,
     tokenColumn: inviteTokenColumn,

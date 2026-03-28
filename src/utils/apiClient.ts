@@ -45,6 +45,15 @@ type ApiRequestOptions = {
   credentials?: RequestCredentials;
   skipAdminGateCheck?: boolean;
   expectedStatus?: number[];
+  /**
+   * Hint to callers that they want the raw Response object. Kept for backward
+   * compatibility with existing callsites that pass `rawResponse: true`.
+   *
+   * Note: `apiRequest` currently ignores this flag; callers that require the
+   * raw Response should use `apiRequestRaw` instead. This option exists only
+   * to satisfy TypeScript typings at call sites that still pass it.
+   */
+  rawResponse?: boolean;
 };
 
 type InternalRequestOptions = ApiRequestOptions & {};
@@ -710,8 +719,13 @@ const internalAuthorizedFetch = async (
 };
 
 export async function apiRequest<T = unknown>(path: string, options: ApiRequestOptions = {}): Promise<T> {
-  const { skipAdminGateCheck, ...rest } = options;
+  const { skipAdminGateCheck, rawResponse, ...rest } = options;
   const res = await internalAuthorizedFetch(path, { ...rest, skipAdminGateCheck });
+
+  if (rawResponse) {
+    return res as unknown as T;
+  }
+
   const contentType = res.headers.get('content-type');
 
   // No content
