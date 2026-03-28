@@ -6717,11 +6717,39 @@ async function createOrgInvite({
   void inviteOrgColumn;
   void inviteTokenColumn;
 
-  const { data, error } = await supabase
-    .from('org_invites')
-    .insert(payload)
-    .select('*')
-    .single();
+  const attemptPayloads = [payload];
+  if ('token' in payload) {
+    const withoutToken = { ...payload };
+    delete withoutToken.token;
+    attemptPayloads.push(withoutToken);
+  }
+  if ('invite_token' in payload) {
+    const withoutInviteToken = { ...payload };
+    delete withoutInviteToken.invite_token;
+    attemptPayloads.push(withoutInviteToken);
+  }
+
+  let data = null;
+  let error = null;
+  for (const candidate of attemptPayloads) {
+    const result = await supabase
+      .from('org_invites')
+      .insert(candidate)
+      .select('*')
+      .single();
+    data = result.data;
+    error = result.error;
+    if (!error) {
+      break;
+    }
+    if (!isMissingColumnError(error)) {
+      break;
+    }
+    const missingColumn = normalizeColumnIdentifier(extractMissingColumnName(error));
+    if (missingColumn !== 'token' && missingColumn !== 'invite_token') {
+      break;
+    }
+  }
 
   if (error) {
     throw error;

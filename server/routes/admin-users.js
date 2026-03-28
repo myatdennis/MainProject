@@ -21,7 +21,18 @@ const normalizeOrgRole = (value, fallback = 'member') => {
 };
 
 const isMissingColumnError = (error) =>
-  error?.code === '42703' || /column .* does not exist/i.test(String(error?.message || ''));
+  error?.code === '42703' ||
+  error?.code === 'PGRST204' ||
+  /column .* does not exist/i.test(String(error?.message || '')) ||
+  /Could not find ['"]?([\w.]+)['"]? column/i.test(String(error?.message || ''));
+
+const extractMissingColumnName = (error) => {
+  const text = String(error?.message || '');
+  const match =
+    text.match(/column\s+"?([\w.]+)"?\s+does not exist/i) ||
+    text.match(/Could not find ['"]?([\w.]+)['"]? column/i);
+  return match?.[1] ?? null;
+};
 
 let organizationMembershipsOrgColumn = null;
 let assignmentsOrgColumn = null;
@@ -156,9 +167,35 @@ const createInviteFallback = async ({ orgId, email, role, actorUserId = null, fi
   void orgColumn;
   void tokenColumn;
 
-  const { data, error } = await supabase.from('org_invites').insert(payload).select('id,email').single();
-  if (error) throw error;
-  return { id: data?.id ?? null, email: normalizedEmail, duplicate: false };
+  const attemptPayloads = [payload];
+  if ('token' in payload) {
+    const withoutToken = { ...payload };
+    delete withoutToken.token;
+    attemptPayloads.push(withoutToken);
+  }
+  if ('invite_token' in payload) {
+    const withoutInviteToken = { ...payload };
+    delete withoutInviteToken.invite_token;
+    attemptPayloads.push(withoutInviteToken);
+  }
+
+  let lastError = null;
+  for (const candidate of attemptPayloads) {
+    const { data, error } = await supabase.from('org_invites').insert(candidate).select('id,email').single();
+    if (!error) {
+      return { id: data?.id ?? null, email: normalizedEmail, duplicate: false };
+    }
+    lastError = error;
+    if (!isMissingColumnError(error)) {
+      throw error;
+    }
+    const missingColumn = extractMissingColumnName(error);
+    if (missingColumn !== 'token' && missingColumn !== 'invite_token') {
+      throw error;
+    }
+  }
+
+  throw lastError ?? new Error('org_invites_insert_failed');
 };
 
 const upsertOrganizationMembership = async ({ orgId, userId, role, actorUserId = null }) => {
