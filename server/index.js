@@ -2278,53 +2278,7 @@ app.post('/api/admin/users', authenticate, requireAdmin, async (req, res) => {
       });
       return;
     } catch (error) {
-      if (!isSupabaseAuthCreateUserDatabaseError(error)) {
-        throw error;
-      }
-
-      logger.warn('admin_user_create_auth_fallback_to_invite', {
-        requestId: req.requestId ?? null,
-        orgId,
-        email: rawEmail,
-        code: error?.code ?? null,
-        message: error?.message ?? null,
-      });
-
-      const orgSummary = await fetchOrganizationSummary(orgId);
-      const { invite, duplicate } = await createOrgInvite({
-        orgId,
-        email: rawEmail,
-        role: membershipRole,
-        inviter: actor,
-        orgName: orgSummary?.name || 'Your organization',
-        metadata: {
-          source: 'admin_user_create_fallback',
-          first_name: firstName,
-          last_name: lastName,
-          full_name: `${firstName} ${lastName}`.trim(),
-          job_title: jobTitle || null,
-          department: department || null,
-          cohort: cohort || null,
-          phone_number: phoneNumber || null,
-        },
-        requestId: req.requestId ?? null,
-      });
-
-      res.status(202).json({
-        data: {
-          inviteId: invite?.id ?? null,
-          email: rawEmail,
-          organization_id: orgId,
-          status: duplicate ? 'pending' : 'invited',
-        },
-        created: false,
-        existingAccount: false,
-        membershipCreated: false,
-        inviteOnly: true,
-        duplicateInvite: duplicate,
-        message: 'Direct account creation failed in Supabase auth, so an invite was created instead.',
-      });
-      return;
+      throw error;
     }
   } catch (error) {
     const normalized = logUsersStageError('user_create', error, {
@@ -8963,19 +8917,61 @@ async function provisionOrganizationUserAccount({
         `Password must be at least ${INVITE_PASSWORD_MIN_CHARS} characters.`,
       );
     }
-    const { data, error } = await supabase.auth.admin.createUser({
-      email: normalizedEmail,
-      password,
-      email_confirm: true,
-      user_metadata: buildAuthUserMetadata({ firstName, lastName, orgId }),
-    });
-    if (error) {
-      throw error;
+    try {
+      const { data, error } = await supabase.auth.admin.createUser({
+        email: normalizedEmail,
+        password,
+        email_confirm: true,
+        user_metadata: buildAuthUserMetadata({ firstName, lastName, orgId }),
+      });
+      if (error) {
+        throw error;
+      }
+      authUser = data?.user ?? null;
+      created = true;
+    } catch (error) {
+      if (isSupabaseAuthCreateUserDatabaseError(error)) {
+        logger.warn('admin_user_create_supabase_db_error', {
+          requestId,
+          orgId,
+          email: normalizedEmail,
+          code: error?.code ?? null,
+          message: error?.message ?? null,
+        });
+        const retryUser = await findAuthUserByEmail(normalizedEmail, {
+          requestId,
+          logPrefix: 'admin_user_lookup_retry',
+        });
+        if (retryUser?.id) {
+          authUser = retryUser;
+          created = false;
+        } else {
+          throw error;
+        }
+      } else {
+        throw error;
+      }
     }
-    authUser = data?.user ?? null;
-    created = true;
+  } else {
+    // Existing auth user: ensure password is set so user can login immediately
+    if (password && password.length >= INVITE_PASSWORD_MIN_CHARS) {
+      try {
+        await supabase.auth.admin.updateUserById(authUser.id, {
+          password,
+          email_confirm: true,
+          user_metadata: buildAuthUserMetadata({ firstName, lastName, orgId }),
+        });
+      } catch (error) {
+        logger.warn('admin_user_password_update_failed', {
+          requestId,
+          orgId,
+          userId: authUser.id,
+          message: error?.message || String(error),
+        });
+        throw error;
+      }
+    }
   }
-
   if (!authUser?.id) {
     throw new Error('auth_user_resolution_failed');
   }

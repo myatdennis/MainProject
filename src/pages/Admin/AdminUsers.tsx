@@ -130,13 +130,34 @@ const AdminUsers = () => {
   }, [activeOrgId]);
 
   const fetchUsers = useCallback(async () => {
-    if (!activeOrgId) return;
     setUsersLoading(true);
     setUsersError(null);
     try {
-      const records = await listUsersByOrg(activeOrgId);
+      let records: any[] = [];
+
+      if (activeOrgId) {
+        records = await listUsersByOrg(activeOrgId);
+      } else {
+        // Platform-admin fallback: fetch from all organizations
+        const orgs = await listOrgs();
+        const allResults = await Promise.all(
+          orgs.map((org) =>
+            listUsersByOrg(org.id).catch((err) => {
+              console.warn('[AdminUsers] Failed to load users for org', org.id, err);
+              return [];
+            }),
+          ),
+        );
+        records = allResults.flat();
+      }
+
       const mapped = records.map(mapMemberToUser).filter((u): u is User => u !== null);
-      setUsersList(mapped);
+      if (mapped.length === 0 && !activeOrgId) {
+        // If no active org and no members, clear with empty list but still show that no users were found.
+        setUsersList([]);
+      } else {
+        setUsersList(mapped);
+      }
     } catch (err: any) {
       console.error('[AdminUsers] Failed to load users', err);
       setUsersError(err?.message ?? 'Failed to load users');
