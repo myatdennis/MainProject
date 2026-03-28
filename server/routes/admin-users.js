@@ -24,6 +24,7 @@ const isMissingColumnError = (error) =>
   error?.code === '42703' || /column .* does not exist/i.test(String(error?.message || ''));
 
 let organizationMembershipsOrgColumn = null;
+let assignmentsOrgColumn = null;
 let orgInvitesOrganizationColumn = null;
 let orgInvitesTokenColumn = null;
 
@@ -69,6 +70,28 @@ const resolveOrgInvitesOrganizationColumn = async () => {
 
   orgInvitesOrganizationColumn = 'organization_id';
   return orgInvitesOrganizationColumn;
+};
+
+const resolveAssignmentsOrgColumn = async () => {
+  if (!supabase) return 'organization_id';
+  if (assignmentsOrgColumn) return assignmentsOrgColumn;
+
+  for (const column of ['organization_id', 'org_id']) {
+    const { error } = await supabase
+      .from('assignments')
+      .select('id', { head: true, count: 'exact' })
+      .is(column, null)
+      .limit(1);
+    if (error) {
+      if (isMissingColumnError(error)) continue;
+      throw error;
+    }
+    assignmentsOrgColumn = column;
+    return column;
+  }
+
+  assignmentsOrgColumn = 'organization_id';
+  return assignmentsOrgColumn;
 };
 
 const resolveOrgInvitesTokenColumn = async () => {
@@ -214,11 +237,12 @@ const listPublishedOrganizationSurveyIds = async (orgId) => {
   const publishedIds = new Set((surveyRows || []).map((row) => row?.id).filter(Boolean));
   if (!publishedIds.size) return [];
 
+  const assignmentOrgColumn = await resolveAssignmentsOrgColumn();
   const { data: assignmentRows, error: assignmentError } = await supabase
     .from('assignments')
     .select('survey_id')
     .eq('assignment_type', 'survey')
-    .eq('organization_id', orgId)
+    .eq(assignmentOrgColumn, orgId)
     .is('user_id', null)
     .eq('active', true);
 
@@ -243,10 +267,11 @@ const assignPublishedOrganizationCoursesToUser = async ({ orgId, userId, actorUs
   const courseIds = await listPublishedOrganizationCourseIds(orgId);
   if (!courseIds.length) return { inserted: 0, updated: 0 };
 
+  const assignmentOrgColumn = await resolveAssignmentsOrgColumn();
   const { data: existingRows, error: existingError } = await supabase
     .from('assignments')
     .select('id,course_id,metadata,assigned_by')
-    .eq('organization_id', orgId)
+    .eq(assignmentOrgColumn, orgId)
     .eq('user_id', userId)
     .eq('assignment_type', 'course')
     .eq('active', true)
@@ -309,10 +334,11 @@ const assignPublishedOrganizationSurveysToUser = async ({ orgId, userId, actorUs
   const surveyIds = await listPublishedOrganizationSurveyIds(orgId);
   if (!surveyIds.length) return { inserted: 0, updated: 0 };
 
+  const assignmentOrgColumn = await resolveAssignmentsOrgColumn();
   const { data: existingRows, error: existingError } = await supabase
     .from('assignments')
     .select('id,survey_id,metadata,assigned_by')
-    .eq('organization_id', orgId)
+    .eq(assignmentOrgColumn, orgId)
     .eq('user_id', userId)
     .eq('assignment_type', 'survey')
     .eq('active', true)

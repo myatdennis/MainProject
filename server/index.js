@@ -459,7 +459,7 @@ const runSchemaDoctor = async () => {
   }
   const checks = [
     { table: 'organization_memberships', column: 'organization_id', level: 'error' },
-    { table: 'org_invites', column: 'organization_id', level: 'error' },
+    { table: 'org_invites', column: 'organization_id|org_id', level: 'warn' },
     { table: 'organizations', column: 'id', level: 'error' },
     { table: 'organizations', column: 'name', level: 'warn' },
     { table: 'organizations', column: 'features', level: 'warn' },
@@ -473,7 +473,7 @@ const runSchemaDoctor = async () => {
       from information_schema.columns
       where table_schema = 'public' and (
         (table_name = 'organization_memberships' and column_name = 'organization_id') or
-        (table_name = 'org_invites' and column_name = 'organization_id') or
+        (table_name = 'org_invites' and column_name in ('organization_id', 'org_id')) or
         (table_name = 'organizations' and column_name = 'id') or
         (table_name = 'organizations' and column_name = 'name') or
         (table_name = 'organizations' and column_name = 'features') or
@@ -485,8 +485,15 @@ const runSchemaDoctor = async () => {
     const hasColumn = (table, column) =>
       rows.some((row) => row.table_name === table && row.column_name === column);
     checks.forEach((check) => {
-      const ok = hasColumn(check.table, check.column);
-      const payload = { table: check.table, column: check.column, ok };
+      const acceptableColumns = String(check.column).split('|');
+      const matchedColumn = acceptableColumns.find((column) => hasColumn(check.table, column)) || null;
+      const ok = Boolean(matchedColumn);
+      const payload = {
+        table: check.table,
+        column: check.column,
+        ok,
+        ...(matchedColumn ? { matchedColumn } : {}),
+      };
       if (ok) {
         logger.info('schema_doctor_check', payload);
       } else if (check.level === 'error') {
@@ -611,12 +618,32 @@ logger.info('startup_supabase_jwt_secret_state', {
   ...getSupabaseJwtSecretDiagnostics(),
 });
 
-const DOCUMENTS_BUCKET = process.env.SUPABASE_DOCUMENTS_BUCKET || 'course-resources';
+const STORAGE_BUCKET_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{1,62}$/;
+const resolveStorageBucketName = ({ envKey, fallback }) => {
+  const rawValue = typeof process.env[envKey] === 'string' ? process.env[envKey].trim() : '';
+  if (!rawValue) return fallback;
+  if (STORAGE_BUCKET_NAME_PATTERN.test(rawValue)) return rawValue;
+
+  logger.warn('storage_bucket_env_invalid', {
+    envKey,
+    invalidValue: rawValue,
+    fallbackBucket: fallback,
+  });
+  return fallback;
+};
+
+const DOCUMENTS_BUCKET = resolveStorageBucketName({
+  envKey: 'SUPABASE_DOCUMENTS_BUCKET',
+  fallback: 'course-resources',
+});
 const DOCUMENT_UPLOAD_MAX_BYTES = Number(process.env.DOCUMENT_UPLOAD_MAX_BYTES || 150 * 1024 * 1024);
 const DOCUMENT_URL_TTL_SECONDS = Number(process.env.DOCUMENT_SIGN_TTL_SECONDS || 60 * 60 * 24 * 7);
 const DOCUMENT_URL_REFRESH_BUFFER_SECONDS = Number(process.env.DOCUMENT_URL_REFRESH_BUFFER_SECONDS || 60 * 5);
 const DOCUMENT_URL_REFRESH_BUFFER_MS = DOCUMENT_URL_REFRESH_BUFFER_SECONDS * 1000;
-const COURSE_VIDEOS_BUCKET = process.env.SUPABASE_VIDEOS_BUCKET || 'course-videos';
+const COURSE_VIDEOS_BUCKET = resolveStorageBucketName({
+  envKey: 'SUPABASE_VIDEOS_BUCKET',
+  fallback: 'course-videos',
+});
 const COURSE_VIDEO_UPLOAD_MAX_BYTES = Number(process.env.COURSE_VIDEO_UPLOAD_MAX_BYTES || 750 * 1024 * 1024);
 const REQUIRED_SUPABASE_BUCKETS = Array.from(new Set([COURSE_VIDEOS_BUCKET, DOCUMENTS_BUCKET].filter(Boolean)));
 
@@ -2658,6 +2685,7 @@ if (E2E_TEST_MODE) {
 }
 let loggedMissingSupabaseConfig = false;
 let assignmentsUserIdUuidColumnAvailable = null;
+let assignmentsOrganizationIdColumnAvailable = null;
 
 await runStorageDoctor();
 
@@ -2672,6 +2700,12 @@ const sanitizeAssignmentRecordForSchema = (record, { includeUserIdUuid }) => {
   if (includeUserIdUuid) return record;
   const { user_id_uuid, ...legacyCompatible } = record;
   return legacyCompatible;
+};
+
+const isAssignmentsOrganizationIdColumnMissing = (error) => {
+  if (!isMissingColumnError(error)) return false;
+  const missing = normalizeColumnIdentifier(extractMissingColumnName(error));
+  return missing === 'organization_id';
 };
 
 const detectAssignmentsUserIdUuidColumnAvailability = async () => {
@@ -2700,6 +2734,36 @@ const detectAssignmentsUserIdUuidColumnAvailability = async () => {
 
   return assignmentsUserIdUuidColumnAvailable;
 };
+
+const detectAssignmentsOrganizationIdColumnAvailability = async () => {
+  if (!supabase) return false;
+  if (typeof assignmentsOrganizationIdColumnAvailable === 'boolean') {
+    return assignmentsOrganizationIdColumnAvailable;
+  }
+
+  try {
+    const { error } = await supabase
+      .from('assignments')
+      .select('id', { head: true, count: 'exact' })
+      .is('organization_id', null);
+    if (error) throw error;
+    assignmentsOrganizationIdColumnAvailable = true;
+  } catch (error) {
+    if (isAssignmentsOrganizationIdColumnMissing(error)) {
+      assignmentsOrganizationIdColumnAvailable = false;
+      logger.warn('assignments_organization_id_column_missing', {
+        message: 'organization_id column does not exist on assignments — assignment writes will use legacy org_id payloads',
+      });
+      return false;
+    }
+    throw error;
+  }
+
+  return assignmentsOrganizationIdColumnAvailable;
+};
+
+const getAssignmentsOrgColumnName = async () =>
+  ((await detectAssignmentsOrganizationIdColumnAvailability()) ? 'organization_id' : 'org_id');
 
 const auditUserCourseProgressUuid = async () => {
   if (!supabase) return;
@@ -2798,7 +2862,8 @@ const checkSupabaseHealth = async () => {
   }
   const start = Date.now();
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 2000);
+  const timeoutMs = Number(process.env.SUPABASE_HEALTH_TIMEOUT_MS || 2500);
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const { error } = await supabase
       .from('courses')
@@ -2818,6 +2883,20 @@ const checkSupabaseHealth = async () => {
       stack: error?.stack || null,
     };
     const latencyMs = Date.now() - start;
+    const isTimeoutAbort =
+      error?.name === 'AbortError' ||
+      /aborted/i.test(String(supabaseError.message || ''));
+    if (isTimeoutAbort) {
+      const timeoutMessage = `Supabase health check timed out after ${timeoutMs}ms`;
+      recordSupabaseHealth('degraded', latencyMs, timeoutMessage);
+      logger.warn('supabase_health_timeout', {
+        latencyMs,
+        timeoutMs,
+        message: supabaseError.message,
+      });
+      return { status: 'degraded', latencyMs, message: timeoutMessage };
+    }
+
     recordSupabaseHealth('error', latencyMs, supabaseError.message);
     console.error('[supabase error]', supabaseError);
     logger.warn('supabase_health_failed', { ...supabaseError, latencyMs });
@@ -8276,6 +8355,7 @@ async function assignPublishedOrganizationCoursesToUser({ orgId, userId, actorUs
   if (!courseIds.length) return { inserted: 0, updated: 0, skipped: 0 };
 
   const assignmentsSupportUserIdUuid = await detectAssignmentsUserIdUuidColumnAvailability();
+  const assignmentsOrgColumn = await getAssignmentsOrgColumnName();
   const existingMap = new Map();
   const seenAssignmentIds = new Set();
 
@@ -8283,7 +8363,7 @@ async function assignPublishedOrganizationCoursesToUser({ orgId, userId, actorUs
     const { data, error } = await supabase
       .from('assignments')
       .select('id,course_id,user_id,user_id_uuid,metadata,assigned_by,active')
-      .eq('organization_id', orgId)
+      .eq(assignmentsOrgColumn, orgId)
       .eq('active', true)
       .in('course_id', courseIds)
       .eq(column, userId);
@@ -8333,7 +8413,6 @@ async function assignPublishedOrganizationCoursesToUser({ orgId, userId, actorUs
     }
 
     const record = {
-      organization_id: orgId,
       course_id: courseId,
       user_id: userId,
       user_id_uuid: userId,
@@ -8346,6 +8425,7 @@ async function assignPublishedOrganizationCoursesToUser({ orgId, userId, actorUs
       due_at: null,
       note: null,
     };
+    record[assignmentsOrgColumn] = orgId;
     inserts.push(sanitizeAssignmentRecordForSchema(record, { includeUserIdUuid: assignmentsSupportUserIdUuid }));
   });
 
@@ -8375,12 +8455,13 @@ async function assignPublishedOrganizationSurveysToUser({ orgId, userId, actorUs
 
   const surveyIds = await listPublishedOrganizationSurveyIds(orgId);
   if (!surveyIds.length) return { inserted: 0, updated: 0, skipped: 0 };
+  const assignmentsOrgColumn = await getAssignmentsOrgColumnName();
 
   const { data: existingRows, error: existingError } = await supabase
     .from('assignments')
     .select('id,survey_id,metadata,assigned_by,active')
     .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
-    .eq('organization_id', orgId)
+    .eq(assignmentsOrgColumn, orgId)
     .eq('user_id', userId)
     .eq('active', true)
     .in('survey_id', surveyIds);
@@ -8413,7 +8494,6 @@ async function assignPublishedOrganizationSurveysToUser({ orgId, userId, actorUs
     inserts.push({
       survey_id: surveyId,
       course_id: null,
-      organization_id: orgId,
       user_id: userId,
       assignment_type: SURVEY_ASSIGNMENT_TYPE,
       status: 'assigned',
@@ -8423,6 +8503,7 @@ async function assignPublishedOrganizationSurveysToUser({ orgId, userId, actorUs
       metadata,
       active: true,
     });
+    inserts[inserts.length - 1][assignmentsOrgColumn] = orgId;
   });
 
   for (const update of updates) {
