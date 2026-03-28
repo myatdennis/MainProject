@@ -230,36 +230,36 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
           },
         });
 
-        if (!response?.inviteOnly) {
-          const newUser = {
-            id: response?.data?.user_id ?? response?.data?.user?.id ?? response?.data?.profile?.id ?? `user-${Date.now()}`,
-            name: `${sanitizedData.firstName} ${sanitizedData.lastName}`,
-            email: sanitizedData.email,
-            organization: orgId,
-            cohort: sanitizedData.cohort,
-            role: sanitizedData.role,
-            department: sanitizedData.department,
-            phoneNumber: sanitizedData.phoneNumber,
-            enrolled: new Date().toISOString(),
-            lastLogin: '',
-            status: 'active' as const,
-            progress: { foundations: 0, bias: 0, empathy: 0, conversations: 0, planning: 0 },
-            overallProgress: 0,
-            completedModules: 0,
-            totalModules: 5,
-            feedbackSubmitted: false,
-          };
-          onUserAdded?.(newUser);
+        if (response?.inviteOnly) {
+          showToast('Unable to create direct account. Invite-only fallback is disabled in this deployment.', 'error');
+          setLoading(false);
+          return;
         }
 
+        const newUser = {
+          id: response?.data?.user_id ?? response?.data?.user?.id ?? response?.data?.profile?.id ?? `user-${Date.now()}`,
+          name: `${sanitizedData.firstName} ${sanitizedData.lastName}`,
+          email: sanitizedData.email,
+          organization: orgId,
+          cohort: sanitizedData.cohort,
+          role: sanitizedData.role,
+          department: sanitizedData.department,
+          phoneNumber: sanitizedData.phoneNumber,
+          enrolled: new Date().toISOString(),
+          lastLogin: '',
+          status: 'active' as const,
+          progress: { foundations: 0, bias: 0, empathy: 0, conversations: 0, planning: 0 },
+          overallProgress: 0,
+          completedModules: 0,
+          totalModules: 5,
+          feedbackSubmitted: false,
+        };
+        onUserAdded?.(newUser);
+
         showToast(
-          response?.inviteOnly
-            ? (response?.duplicateInvite
-                ? `An invite is already pending for ${sanitizedData.email}`
-                : `Invite created for ${sanitizedData.email}. The user will activate their account when they accept it.`)
-            : response?.existingAccount
-              ? 'Existing account added to the organization'
-              : `Account created for ${sanitizedData.email}`,
+          response?.existingAccount
+            ? `Existing account linked to ${sanitizedData.email} and membership created for this organization.`
+            : `Account created for ${sanitizedData.email}. They can login with the provided credentials.`,
           'success',
         );
       }

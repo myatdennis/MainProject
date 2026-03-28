@@ -9041,6 +9041,8 @@ async function provisionOrganizationUserAccount({
     membershipCreated: Boolean(membership?.id),
     member,
     userId: authUser.id,
+    adminUserCreated,
+    temporaryPassword: password,
   };
 }
 

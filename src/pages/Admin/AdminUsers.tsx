@@ -4,7 +4,7 @@
  * Features: search/filter, bulk actions, modals, progress tracking, and summary stats.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { 
   Search, 
@@ -101,6 +101,9 @@ const AdminUsers = () => {
     const overallProgress = progressKeys.reduce((sum, k) => sum + (progressMap[k] ?? 0), 0) / progressKeys.length;
     const completedModules = progressKeys.filter((k) => (progressMap[k] ?? 0) >= 100).length;
 
+    const rawStatus = (member?.status || profile?.status || userRow?.status || 'inactive').toString().toLowerCase();
+    const normalizedStatus = ['active', 'pending', 'inactive'].includes(rawStatus) ? rawStatus : rawStatus;
+
     return {
       id: userId,
       name: fullName || email,
@@ -119,7 +122,7 @@ const AdminUsers = () => {
       lastLogin: userRow.last_login_at ?? profile.updated_at ?? '',
       progress: progressMap as User['progress'],
       overallProgress: Math.round(overallProgress),
-      status: member?.status === 'active' ? 'active' : member?.status === 'pending' ? 'pending' : 'inactive',
+      status: normalizedStatus,
       completedModules,
       totalModules: progressKeys.length,
       feedbackSubmitted: false,
@@ -234,11 +237,13 @@ const AdminUsers = () => {
   };
 
   const getStatusIcon = (status: string) => {
-    switch (status) {
+    switch (status.toLowerCase()) {
       case 'active':
         return <CheckCircle className="h-4 w-4 text-green-500" />;
       case 'inactive':
         return <Clock className="h-4 w-4 text-yellow-500" />;
+      case 'pending':
+        return <Clock className="h-4 w-4 text-blue-500" />;
       default:
         return <AlertTriangle className="h-4 w-4 text-red-500" />;
     }
@@ -387,6 +392,17 @@ const AdminUsers = () => {
     setUserToEdit(null);
   };
 
+  const statusOptions = useMemo(() => {
+    const unique = ['active', 'pending', 'inactive'];
+    usersList.forEach((u) => {
+      const status = (u.status || '').toString().toLowerCase();
+      if (status && !unique.includes(status)) {
+        unique.push(status);
+      }
+    });
+    return unique;
+  }, [usersList]);
+
   return (
     <PageWrapper>
       <Breadcrumbs items={[{ label: 'Admin', to: '/admin' }, { label: 'Users', to: '/admin/users' }]} />
@@ -448,8 +464,9 @@ const AdminUsers = () => {
                 aria-label="Filter by status"
               >
                 <option value="all">All Status</option>
-                <option value="active">Active</option>
-                <option value="inactive">Inactive</option>
+                {statusOptions.map((status) => (
+                  <option key={status} value={status}>{status[0]?.toUpperCase() + status.slice(1)}</option>
+                ))}
               </select>
             </div>
           </div>
@@ -590,7 +607,7 @@ const AdminUsers = () => {
                   <td className="table-cell text-center">
                     <div className="flex items-center justify-center gap-2">
                       {getStatusIcon(user.status)}
-                      <span className={`status-badge ${user.status === 'active' ? 'status-active' : user.status === 'inactive' ? 'status-inactive' : 'status-error'}`}>
+                      <span className={`status-badge ${user.status === 'active' ? 'status-active' : user.status === 'inactive' ? 'status-inactive' : user.status === 'pending' ? 'status-pending' : 'status-error'}`}>
                         {user.status}
                       </span>
                     </div>

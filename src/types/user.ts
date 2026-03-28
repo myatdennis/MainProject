@@ -15,7 +15,7 @@ export interface User {
     planning: number;
   };
   overallProgress: number;
-  status: 'active' | 'inactive' | 'pending';
+  status: string;
   completedModules: number;
   totalModules: number;
   feedbackSubmitted: boolean;
