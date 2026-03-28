@@ -152,8 +152,6 @@ const createInviteFallback = async ({ orgId, email, role, actorUserId = null, fi
   }
 
   const payload = {
-    organization_id: orgId,
-    org_id: orgId,
     email: normalizedEmail,
     role,
     status: 'pending',
@@ -161,11 +159,21 @@ const createInviteFallback = async ({ orgId, email, role, actorUserId = null, fi
     created_by: actorUserId ?? null,
     inviter_id: actorUserId ?? null,
     invited_name: `${normalizeText(firstName)} ${normalizeText(lastName)}`.trim() || null,
-    token,
-    invite_token: token,
   };
-  void orgColumn;
-  void tokenColumn;
+  payload[orgColumn] = orgId;
+  payload[tokenColumn] = token;
+  if (orgColumn !== 'organization_id') {
+    payload.organization_id = orgId;
+  }
+  if (orgColumn !== 'org_id') {
+    payload.org_id = orgId;
+  }
+  if (tokenColumn !== 'token') {
+    payload.token = token;
+  }
+  if (tokenColumn !== 'invite_token') {
+    payload.invite_token = token;
+  }
 
   const attemptPayloads = [payload];
   if ('token' in payload) {

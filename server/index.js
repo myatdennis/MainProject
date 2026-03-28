@@ -6699,23 +6699,27 @@ async function createOrgInvite({
   const expiresAt = new Date(Date.now() + INVITE_TOKEN_TTL_HOURS * 60 * 60 * 1000).toISOString();
 
   const payload = {
-    organization_id: orgId,
-    org_id: orgId,
     email: normalizedEmail,
     role,
-    token,
-    invite_token: token,
     status: 'pending',
     created_by: inviter?.userId ?? null,
     inviter_id: inviter?.userId ?? null,
     expires_at: expiresAt,
   };
-
-  // Keep both canonical and legacy fields populated. The live database still has
-  // trigger/procedure paths that read org_id/invite_token directly even when the
-  // canonical columns are present.
-  void inviteOrgColumn;
-  void inviteTokenColumn;
+  payload[inviteOrgColumn] = orgId;
+  payload[inviteTokenColumn] = token;
+  if (inviteOrgColumn !== 'organization_id') {
+    payload.organization_id = orgId;
+  }
+  if (inviteOrgColumn !== 'org_id') {
+    payload.org_id = orgId;
+  }
+  if (inviteTokenColumn !== 'token') {
+    payload.token = token;
+  }
+  if (inviteTokenColumn !== 'invite_token') {
+    payload.invite_token = token;
+  }
 
   const attemptPayloads = [payload];
   if ('token' in payload) {
