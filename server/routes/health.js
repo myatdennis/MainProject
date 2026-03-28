@@ -38,7 +38,7 @@ const buildHealthPayload = (overrides = {}) => {
   };
 };
 
-const HEALTH_PROBE_TABLE = process.env.HEALTH_PROBE_TABLE || 'users';
+const HEALTH_PROBE_TABLE = process.env.HEALTH_PROBE_TABLE || 'user_profiles';
 
 const probeDatabase = async () => {
   if (!supabase) {

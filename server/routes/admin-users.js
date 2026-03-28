@@ -519,17 +519,9 @@ const provisionImportedUser = async (user, actorUserId, defaultOrgId) => {
   const passwordHash = temporaryPassword ? await bcrypt.hash(temporaryPassword, 12) : null;
   const isAdmin = writableMembershipRoles.has(membershipRole);
 
-  const { error: usersError } = await supabase.from('users').upsert({
-    id: authUser.id,
-    email,
-    first_name: derivedFirstName,
-    last_name: derivedLastName,
-    role: isAdmin ? 'admin' : 'user',
-    is_active: true,
-    organization_id: orgId,
-    ...(passwordHash ? { password_hash: passwordHash } : {}),
-  }, { onConflict: 'id' });
-  if (usersError) throw usersError;
+  // NOTE: this project stores user records in `user_profiles` (not `users`).
+  // Upsert the profile (primary source of truth) rather than the non-existent
+  // `users` table which will cause PGRST205 errors when referenced.
 
   const metadata = {
     job_title: normalizeText(user.jobTitle || user.job_title || user.role),
@@ -551,6 +543,14 @@ const provisionImportedUser = async (user, actorUserId, defaultOrgId) => {
   }, { onConflict: 'id' });
   if (profileError) throw profileError;
 
+  // Defensive logging before membership creation to aid debugging.
+  console.log('[ADMIN ADD USER]', {
+    email,
+    userId: authUser.id,
+    orgId,
+    role: membershipRole,
+  });
+
   await upsertOrganizationMembership({
     orgId,
     userId: authUser.id,
@@ -558,7 +558,29 @@ const provisionImportedUser = async (user, actorUserId, defaultOrgId) => {
     actorUserId,
   });
 
+  // Log success of membership creation.
+  console.log('[ADMIN ADD USER SUCCESS]', { membershipCreated: true, userId: authUser.id, orgId });
+
   invalidateMembershipCache(authUser.id);
+
+  // If the membership role is an admin role, ensure an admin_users record exists
+  // for auditing/metadata purposes. Use upsert to avoid unique-constraint failures.
+  if (isAdmin) {
+    try {
+      const { error: adminError } = await supabase.from('admin_users').upsert({
+        user_id: authUser.id,
+        organization_id: orgId,
+      }, { onConflict: 'user_id,organization_id' });
+      if (adminError) {
+        // Don't fail the entire flow for admin_users bookkeeping — just log it.
+        console.warn('[ADMIN ADD USER] admin_users upsert failed', { userId: authUser.id, orgId, message: adminError.message || adminError });
+      } else {
+        console.log('[ADMIN ADD USER SUCCESS]', { adminUserCreated: true, userId: authUser.id, orgId });
+      }
+    } catch (err) {
+      console.warn('[ADMIN ADD USER] admin_users insert error', { userId: authUser.id, orgId, err: err?.message || String(err) });
+    }
+  }
 
   await assignPublishedOrganizationCoursesToUser({ orgId, userId: authUser.id, actorUserId });
   await assignPublishedOrganizationSurveysToUser({ orgId, userId: authUser.id, actorUserId });
@@ -620,7 +642,8 @@ router.post('/import', async (req, res, next) => {
 router.get('/export', async (req, res, next) => {
   try {
     if (!supabase) return next(createHttpError(503, 'supabase_not_configured', 'Supabase not configured'));
-    const { data, error } = await supabase.from('users').select('*');
+  // Export user profiles (this project keeps user data in `user_profiles`)
+  const { data, error } = await supabase.from('user_profiles').select('*');
     if (error) return next(createHttpError(500, 'admin_users_export_failed', error.message));
     res.json({ users: data });
   } catch (err) {

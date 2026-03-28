@@ -580,8 +580,9 @@ router.post('/register', authLimiter, async (req, res) => {
 
     const normalizedEmail = normalizeEmail(email);
 
+    // Check user_profiles for existing account — this project stores user data in user_profiles
     const { data: existingUsers } = await supabase
-      .from('users')
+      .from('user_profiles')
       .select('id')
       .eq('email', normalizedEmail)
       .limit(1);
@@ -636,17 +637,19 @@ router.post('/register', authLimiter, async (req, res) => {
     }
 
     try {
+      // Persist profile to user_profiles (single source of truth for profile data)
       const { data: newUser, error: createError } = await supabase
-        .from('users')
+        .from('user_profiles')
         .insert({
           id: createdAuthUserId,
           email: normalizedEmail,
-          password_hash: passwordHash,
           first_name: firstName,
           last_name: lastName,
           role: 'user',
           is_active: true,
           organization_id: organizationId ?? null,
+          // password_hash is intentionally omitted from public profile; if required,
+          // consider storing auth-related fields elsewhere or in a secure vault.
         })
         .select()
         .single();
@@ -967,7 +970,7 @@ router.get('/me', async (req, res) => {
     
     // Get fresh user data from database
     const { data: user, error } = await supabase
-      .from('users')
+      .from('user_profiles')
       .select('id, email, first_name, last_name, role, organization_id, is_active')
       .eq('id', req.user.userId)
       .single();

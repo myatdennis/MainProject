@@ -13,7 +13,7 @@ router.post('/challenge', async (req, res, next) => {
 	try {
 		if (!supabase) return next(createHttpError(503, 'supabase_not_configured', 'Supabase client not initialized'));
 		const { data: user, error } = await supabase
-			.from('users')
+			.from('user_profiles')
 			.select('id, email, mfa_secret')
 			.eq('email', email.toLowerCase())
 			.single();
@@ -22,7 +22,7 @@ router.post('/challenge', async (req, res, next) => {
 		let secret = user.mfa_secret;
 		if (!secret) {
 			const newSecret = generateTOTPSecret();
-			await supabase.from('users').update({ mfa_secret: newSecret.base32 }).eq('id', user.id);
+			await supabase.from('user_profiles').update({ mfa_secret: newSecret.base32 }).eq('id', user.id);
 			secret = newSecret.base32;
 		}
 
@@ -42,7 +42,7 @@ router.post('/verify', async (req, res, next) => {
 	try {
 		if (!supabase) return next(createHttpError(503, 'supabase_not_configured', 'Supabase client not initialized'));
 		const { data: user, error } = await supabase
-			.from('users')
+			.from('user_profiles')
 			.select('id, mfa_secret')
 			.eq('email', email.toLowerCase())
 			.single();

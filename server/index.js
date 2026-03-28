@@ -7815,10 +7815,10 @@ const loadCrmSummary = async () => {
         query.or('status.eq.trial,onboarding_status.neq.complete,onboarding_status.is.null'),
       ),
       countRows('organizations', (query) => query.gte('created_at', monthStart)),
-      countRows('users'),
-      countRows('users', (query) => query.eq('status', 'active')),
+  countRows('user_profiles'),
+  countRows('user_profiles', (query) => query.eq('status', 'active')),
       countRows('organization_memberships', (query) => query.eq('status', 'pending')),
-      countRows('users', (query) => query.gte('last_login_at', thirtyDaysAgoIso)),
+  countRows('user_profiles', (query) => query.gte('last_login_at', thirtyDaysAgoIso)),
       countRows('assignments', (query) =>
         query
           .eq('assignment_type', 'course')
@@ -7895,7 +7895,7 @@ const loadCrmActivity = async () => {
       label: 'organizations',
     }),
     fetchRecentRecords({
-      table: 'users',
+      table: 'user_profiles',
       columns: 'id,email,first_name,last_name,role,status,last_login_at,created_at',
       orderBy: 'created_at',
       label: 'users',
@@ -8718,8 +8718,8 @@ async function upsertProvisionedUserRecord({
     payload.password_hash = passwordHash;
   }
   await runOptionalCleanupMutation(
-    'provision_user.users_upsert',
-    () => supabase.from('users').upsert(payload, { onConflict: 'id' }),
+    'provision_user.user_profiles_upsert',
+    () => supabase.from('user_profiles').upsert(payload, { onConflict: 'id' }),
     { userId, orgId, email },
   );
 }
@@ -8819,9 +8819,9 @@ async function updateProvisionedUserProfile(userId, orgId, updates = {}) {
       userPayload.organization_id = orgId;
     }
     await runOptionalCleanupMutation(
-      'provision_user.users_sync',
+      'provision_user.user_profiles_sync',
       () =>
-        supabase.from('users').upsert(
+        supabase.from('user_profiles').upsert(
           {
             id: userId,
             ...userPayload,
@@ -9072,10 +9072,10 @@ async function archiveOrganizationUserAccount({ userId, orgId, requestId = null 
   const stillActive = Boolean(nextOrgId);
 
   await runOptionalCleanupMutation(
-    'archive_user.users',
+    'archive_user.user_profiles',
     () =>
       supabase
-        .from('users')
+        .from('user_profiles')
         .update({
           is_active: stillActive,
           organization_id: nextOrgId,
@@ -9146,8 +9146,8 @@ async function permanentlyDeleteUserAccount({ userId, requestId = null }) {
     { userId, requestId },
   );
   await runOptionalCleanupMutation(
-    'delete_user.users',
-    () => supabase.from('users').delete().eq('id', userId),
+    'delete_user.user_profiles_duplicate',
+    () => supabase.from('user_profiles').delete().eq('id', userId),
     { userId, requestId },
   );
 
@@ -16293,10 +16293,10 @@ app.delete('/api/admin/organizations/:id', requireAdminAccess, async (req, res) 
       { orgId: id, requestId: req.requestId ?? null },
     );
     await runOptionalCleanupMutation(
-      'delete_org.users',
+      'delete_org.user_profiles_org_null',
       () =>
         supabase
-          .from('users')
+          .from('user_profiles')
           .update({ organization_id: null })
           .eq('organization_id', id),
       { orgId: id, requestId: req.requestId ?? null },
