@@ -83,6 +83,8 @@ import {
   COURSE_MODULES_WITH_LESSON_FIELDS,
   COURSE_MODULES_NO_LESSONS_FIELDS,
 } from './constants/courseSelect.js';
+import { isPlatformAdminActor, canInviteToOrg } from './utils/adminAuthz.js';
+// ...existing code...
 import { courseUpsertPayloadSchema } from '../shared/contracts/courseContract.js';
 import sql, { pool, getDatabaseConnectionInfo } from './db.js';
 
@@ -6511,6 +6513,7 @@ const buildActorFromRequest = (req) => {
     userId: req.user?.userId || req.user?.id || null,
     email: req.user?.email || null,
     name,
+    isPlatformAdmin: Boolean(req.user?.isPlatformAdmin || req.user?.platformRole === 'platform_admin' || req.user?.role === 'admin'),
   };
 };
 
