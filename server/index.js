@@ -8889,12 +8889,18 @@ async function provisionOrganizationUserAccount({
   }
 
   const normalizedEmail = normalizeProvisioningEmail(email);
-  if (!normalizedEmail || !firstName || !lastName) {
+  const normalizedFirstName = typeof firstName === 'string' ? firstName.trim() : '';
+  const normalizedLastName = typeof lastName === 'string' ? lastName.trim() : '';
+
+  if (!normalizedEmail || !normalizedFirstName || !normalizedLastName) {
     throw createHttpError(400, 'missing_fields', 'firstName, lastName, and email are required.');
   }
 
+  const role = normalizeOrgRole(membershipRole || 'member');
+  let userPassword = password && password.length >= INVITE_PASSWORD_MIN_CHARS ? password : generateTempPassword();
   let authUser = null;
   let created = false;
+
   try {
     authUser = await findAuthUserByEmail(normalizedEmail, {
       requestId,
@@ -8910,19 +8916,12 @@ async function provisionOrganizationUserAccount({
   }
 
   if (!authUser) {
-    if (!password || password.length < INVITE_PASSWORD_MIN_CHARS) {
-      throw createHttpError(
-        400,
-        'invalid_password',
-        `Password must be at least ${INVITE_PASSWORD_MIN_CHARS} characters.`,
-      );
-    }
     try {
       const { data, error } = await supabase.auth.admin.createUser({
         email: normalizedEmail,
-        password,
+        password: userPassword,
         email_confirm: true,
-        user_metadata: buildAuthUserMetadata({ firstName, lastName, orgId }),
+        user_metadata: buildAuthUserMetadata({ firstName: normalizedFirstName, lastName: normalizedLastName, orgId }),
       });
       if (error) {
         throw error;
@@ -8930,20 +8929,13 @@ async function provisionOrganizationUserAccount({
       authUser = data?.user ?? null;
       created = true;
     } catch (error) {
-      if (isSupabaseAuthCreateUserDatabaseError(error)) {
-        logger.warn('admin_user_create_supabase_db_error', {
-          requestId,
-          orgId,
-          email: normalizedEmail,
-          code: error?.code ?? null,
-          message: error?.message ?? null,
-        });
-        const retryUser = await findAuthUserByEmail(normalizedEmail, {
+      if (isSupabaseAuthCreateUserAlreadyExists(error) || isSupabaseAuthCreateUserDatabaseError(error)) {
+        const existingUser = await findAuthUserByEmail(normalizedEmail, {
           requestId,
           logPrefix: 'admin_user_lookup_retry',
         });
-        if (retryUser?.id) {
-          authUser = retryUser;
+        if (existingUser) {
+          authUser = existingUser;
           created = false;
         } else {
           throw error;
@@ -8952,66 +8944,150 @@ async function provisionOrganizationUserAccount({
         throw error;
       }
     }
-  } else {
-    // Existing auth user: ensure password is set so user can login immediately
-    if (password && password.length >= INVITE_PASSWORD_MIN_CHARS) {
-      try {
-        await supabase.auth.admin.updateUserById(authUser.id, {
-          password,
-          email_confirm: true,
-          user_metadata: buildAuthUserMetadata({ firstName, lastName, orgId }),
-        });
-      } catch (error) {
-        logger.warn('admin_user_password_update_failed', {
-          requestId,
-          orgId,
-          userId: authUser.id,
-          message: error?.message || String(error),
-        });
-        throw error;
+  }
+
+  if (!authUser || !authUser.id) {
+    throw createHttpError(500, 'auth_user_resolution_failed', 'Unable to resolve auth user after provisioning.');
+  }
+
+  if (password && password.length >= INVITE_PASSWORD_MIN_CHARS) {
+    try {
+      await supabase.auth.admin.updateUserById(authUser.id, {
+        password: userPassword,
+        email_confirm: true,
+        user_metadata: buildAuthUserMetadata({ firstName: normalizedFirstName, lastName: normalizedLastName, orgId }),
+      });
+    } catch (error) {
+      logger.warn('admin_user_password_update_failed', {
+        requestId,
+        orgId,
+        userId: authUser.id,
+        message: error?.message || String(error),
+      });
+      if (created) {
+        await cleanupProvisionedUserAccount(authUser.id, orgId);
       }
+      throw error;
     }
   }
-  if (!authUser?.id) {
-    throw new Error('auth_user_resolution_failed');
+
+  const profilePayload = {
+    id: authUser.id,
+    email: normalizedEmail,
+    first_name: normalizedFirstName,
+    last_name: normalizedLastName,
+    full_name: `${normalizedFirstName} ${normalizedLastName}`.trim(),
+    organization_id: orgId,
+    role: role,
+    is_active: true,
+    metadata: {
+      job_title: jobTitle || null,
+      department: department || null,
+      cohort: cohort || null,
+      phone_number: phoneNumber || null,
+    },
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  };
+
+  const { error: profileError } = await supabase.from('user_profiles').upsert(profilePayload, { onConflict: 'id' });
+  if (profileError) {
+    logger.error('admin_user_profile_upsert_failed', {
+      requestId,
+      orgId,
+      email: normalizedEmail,
+      userId: authUser.id,
+      message: profileError?.message || String(profileError),
+    });
+    if (created) {
+      await cleanupProvisionedUserAccount(authUser.id, orgId);
+    }
+    throw profileError;
   }
 
-  await upsertProvisionedUserRecord({
-    userId: authUser.id,
-    email: normalizedEmail,
-    password,
-    firstName,
-    lastName,
-    orgId,
-  });
+  const { data: insertedProfile, error: profileCheckError } = await supabase
+    .from('user_profiles')
+    .select('id')
+    .eq('id', authUser.id)
+    .maybeSingle();
+  if (profileCheckError || !insertedProfile?.id) {
+    const profileFailError = profileCheckError || new Error('profile_not_found');
+    if (created) {
+      await cleanupProvisionedUserAccount(authUser.id, orgId);
+    }
+    throw profileFailError;
+  }
 
-  await updateProvisionedUserProfile(authUser.id, orgId, {
-    firstName,
-    lastName,
-    email: normalizedEmail,
-    jobTitle,
-    department,
-    cohort,
-    phoneNumber,
-    membershipRole,
-  });
+  let membership = null;
+  let membershipCreated = false;
+  try {
+    membership = await upsertOrganizationMembership(orgId, authUser.id, role, actor);
+    membershipCreated = Boolean(membership?.id);
+  } catch (error) {
+    logger.error('admin_user_membership_upsert_failed', {
+      requestId,
+      orgId,
+      userId: authUser.id,
+      message: error?.message || String(error),
+    });
+    if (created) {
+      await cleanupProvisionedUserAccount(authUser.id, orgId);
+    }
+    throw error;
+  }
 
-  const membership = await upsertOrganizationMembership(orgId, authUser.id, membershipRole, actor);
+  const membershipOrgColumn = await getOrganizationMembershipsOrgColumnName();
+  const { data: membershipCheck, error: membershipCheckError } = await supabase
+    .from('organization_memberships')
+    .select('id')
+    .eq('user_id', authUser.id)
+    .eq(membershipOrgColumn, orgId)
+    .maybeSingle();
+
+  if (membershipCheckError || !membershipCheck?.id) {
+    const membershipFailError = membershipCheckError || new Error('membership_not_found');
+    if (created) {
+      await cleanupProvisionedUserAccount(authUser.id, orgId);
+    }
+    throw membershipFailError;
+  }
+
+  if (role === 'admin' || role === 'owner' || role === 'org_admin' || role === 'organization_admin' || role === 'super_admin') {
+    try {
+      await supabase.from('admin_users').upsert({ user_id: authUser.id, organization_id: orgId, meta: { role } });
+    } catch (adminError) {
+      logger.warn('admin_users_upsert_failed', {
+        requestId,
+        orgId,
+        userId: authUser.id,
+        message: adminError?.message || String(adminError),
+      });
+      // do not fail the onboarding flow for bookkeeping errors
+    }
+  }
 
   try {
-    const inviteOrgColumn = await getOrgInvitesOrganizationColumnName();
-    await supabase
-      .from('org_invites')
-      .update({
-        status: 'accepted',
-        accepted_at: new Date().toISOString(),
-        accepted_user_id: authUser.id,
-      })
-      .eq(inviteOrgColumn, orgId)
-      .eq('email', normalizedEmail)
-      .in('status', ['pending', 'sent']);
+    const { data: recoveryLink, error: recoveryError } = await supabase.auth.admin.generateLink({
+      type: 'recovery',
+      email: normalizedEmail,
+    });
+    if (recoveryError) {
+      logger.warn('admin_user_recovery_link_failed', {
+        requestId,
+        orgId,
+        userId: authUser.id,
+        message: recoveryError?.message || String(recoveryError),
+      });
+    } else {
+      logger.info('admin_user_recovery_link_generated', {
+        requestId,
+        orgId,
+        userId: authUser.id,
+        recoveryLink,
+      });
+    }
   } catch (error) {
-    logger.warn('admin_user_invite_sync_failed', {
+    logger.warn('admin_user_recovery_link_exception', {
       requestId,
       orgId,
       userId: authUser.id,
@@ -9019,6 +9095,7 @@ async function provisionOrganizationUserAccount({
     });
   }
 
+  // Ensure the user is loaded in member list
   let members = [];
   try {
     members = await fetchOrgMembersWithProfiles(orgId);
@@ -9030,18 +9107,25 @@ async function provisionOrganizationUserAccount({
       message: error?.message || String(error),
     });
   }
+
   const member = members.find((row) => String(row?.user_id ?? '') === String(authUser.id)) || membership;
+
+  logger.info('[ADD USER FINAL MODE B]', {
+    email: normalizedEmail,
+    authUserCreated: created,
+    profileCreated: true,
+    membershipCreated: membershipCreated,
+    orgId,
+  });
 
   return {
     created,
-    membershipCreated: Boolean(membership?.id),
+    membershipCreated,
     member,
     userId: authUser.id,
-    adminUserCreated,
-    temporaryPassword: password,
+    temporaryPassword: userPassword,
   };
 }
-
 async function runOptionalCleanupMutation(label, operation, meta = {}) {
   try {
     const result = await operation();
