@@ -542,7 +542,6 @@ try {
   logger.warn('membership_schema_probe_failed', { reason, message: reason });
 }
 await runSchemaDoctor();
-await runStorageDoctor();
 
 // Persistent storage file for demo mode
 const STORAGE_FILE = path.join(__dirname, 'demo-data.json');
@@ -2658,6 +2657,8 @@ if (E2E_TEST_MODE) {
 }
 let loggedMissingSupabaseConfig = false;
 let assignmentsUserIdUuidColumnAvailable = null;
+
+await runStorageDoctor();
 
 const isAssignmentsUserIdUuidColumnMissing = (error) => {
   if (!isMissingColumnError(error)) return false;
