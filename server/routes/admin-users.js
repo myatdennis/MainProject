@@ -23,6 +23,133 @@ const normalizeOrgRole = (value, fallback = 'member') => {
 const isMissingColumnError = (error) =>
   error?.code === '42703' || /column .* does not exist/i.test(String(error?.message || ''));
 
+let organizationMembershipsOrgColumn = null;
+let orgInvitesOrganizationColumn = null;
+let orgInvitesTokenColumn = null;
+
+const resolveOrganizationMembershipsOrgColumn = async () => {
+  if (!supabase) return 'organization_id';
+  if (organizationMembershipsOrgColumn) return organizationMembershipsOrgColumn;
+
+  for (const column of ['organization_id', 'org_id']) {
+    const { error } = await supabase
+      .from('organization_memberships')
+      .select('user_id', { head: true, count: 'exact' })
+      .is(column, null)
+      .limit(1);
+    if (error) {
+      if (isMissingColumnError(error)) continue;
+      throw error;
+    }
+    organizationMembershipsOrgColumn = column;
+    return column;
+  }
+
+  organizationMembershipsOrgColumn = 'organization_id';
+  return organizationMembershipsOrgColumn;
+};
+
+const resolveOrgInvitesOrganizationColumn = async () => {
+  if (!supabase) return 'organization_id';
+  if (orgInvitesOrganizationColumn) return orgInvitesOrganizationColumn;
+
+  for (const column of ['organization_id', 'org_id']) {
+    const { error } = await supabase
+      .from('org_invites')
+      .select('email', { head: true, count: 'exact' })
+      .is(column, null)
+      .limit(1);
+    if (error) {
+      if (isMissingColumnError(error)) continue;
+      throw error;
+    }
+    orgInvitesOrganizationColumn = column;
+    return column;
+  }
+
+  orgInvitesOrganizationColumn = 'organization_id';
+  return orgInvitesOrganizationColumn;
+};
+
+const resolveOrgInvitesTokenColumn = async () => {
+  if (!supabase) return 'token';
+  if (orgInvitesTokenColumn) return orgInvitesTokenColumn;
+
+  for (const column of ['token', 'invite_token']) {
+    const { error } = await supabase
+      .from('org_invites')
+      .select('email', { head: true, count: 'exact' })
+      .is(column, null)
+      .limit(1);
+    if (error) {
+      if (isMissingColumnError(error)) continue;
+      throw error;
+    }
+    orgInvitesTokenColumn = column;
+    return column;
+  }
+
+  orgInvitesTokenColumn = 'token';
+  return orgInvitesTokenColumn;
+};
+
+const isSupabaseAuthCreateUserDatabaseError = (error) => {
+  const message = String(error?.message || '').toLowerCase();
+  const code = String(error?.code || '').toLowerCase();
+  return code === 'unexpected_failure' || message.includes('database error creating new user');
+};
+
+const createInviteFallback = async ({ orgId, email, role, actorUserId = null, firstName = '', lastName = '' }) => {
+  const orgColumn = await resolveOrgInvitesOrganizationColumn();
+  const tokenColumn = await resolveOrgInvitesTokenColumn();
+  const normalizedEmail = normalizeEmail(email);
+  const token = randomUUID().replace(/-/g, '');
+
+  const { data: existing, error: existingError } = await supabase
+    .from('org_invites')
+    .select('*')
+    .eq(orgColumn, orgId)
+    .eq('email', normalizedEmail)
+    .in('status', ['pending', 'sent'])
+    .maybeSingle();
+  if (existingError) throw existingError;
+  if (existing) {
+    return { id: existing.id, email: normalizedEmail, duplicate: true };
+  }
+
+  const payload = {
+    email: normalizedEmail,
+    role,
+    status: 'pending',
+    expires_at: new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString(),
+    created_by: actorUserId ?? null,
+    inviter_id: actorUserId ?? null,
+    invited_name: `${normalizeText(firstName)} ${normalizeText(lastName)}`.trim() || null,
+  };
+  payload[orgColumn] = orgId;
+  payload[tokenColumn] = token;
+
+  const { data, error } = await supabase.from('org_invites').insert(payload).select('id,email').single();
+  if (error) throw error;
+  return { id: data?.id ?? null, email: normalizedEmail, duplicate: false };
+};
+
+const upsertOrganizationMembership = async ({ orgId, userId, role, actorUserId = null }) => {
+  const orgColumn = await resolveOrganizationMembershipsOrgColumn();
+  const payload = {
+    user_id: userId,
+    role,
+    status: 'active',
+    invited_by: actorUserId ?? null,
+  };
+  payload[orgColumn] = orgId;
+
+  const { error } = await supabase
+    .from('organization_memberships')
+    .upsert(payload, { onConflict: `${orgColumn},user_id` });
+  if (error) throw error;
+};
+
 const findAuthUserByEmail = async (email) => {
   const normalizedEmail = normalizeEmail(email);
   if (!normalizedEmail || !supabase) return null;
@@ -273,6 +400,9 @@ const provisionImportedUser = async (user, actorUserId, defaultOrgId) => {
 
   let authUser = await findAuthUserByEmail(email);
   let created = false;
+  let inviteOnly = false;
+  let inviteId = null;
+  let duplicateInvite = false;
   if (!authUser) {
     const { data, error } = await supabase.auth.admin.createUser({
       email,
@@ -286,9 +416,38 @@ const provisionImportedUser = async (user, actorUserId, defaultOrgId) => {
         onboarding_org_id: orgId,
       },
     });
-    if (error) throw error;
+    if (error) {
+      if (isSupabaseAuthCreateUserDatabaseError(error)) {
+        const invite = await createInviteFallback({
+          orgId,
+          email,
+          role: membershipRole,
+          actorUserId,
+          firstName: derivedFirstName,
+          lastName: derivedLastName,
+        });
+        inviteOnly = true;
+        inviteId = invite.id;
+        duplicateInvite = Boolean(invite.duplicate);
+      } else {
+        throw error;
+      }
+    }
     authUser = data?.user ?? null;
-    created = true;
+    created = Boolean(authUser);
+  }
+
+  if (inviteOnly) {
+    return {
+      email,
+      userId: null,
+      orgId,
+      created: false,
+      temporaryPassword: null,
+      inviteOnly: true,
+      inviteId,
+      duplicateInvite,
+    };
   }
 
   if (!authUser?.id) {
@@ -330,16 +489,12 @@ const provisionImportedUser = async (user, actorUserId, defaultOrgId) => {
   }, { onConflict: 'id' });
   if (profileError) throw profileError;
 
-  const { error: membershipError } = await supabase
-    .from('organization_memberships')
-    .upsert({
-      organization_id: orgId,
-      user_id: authUser.id,
-      role: membershipRole,
-      status: 'active',
-      invited_by: actorUserId ?? null,
-    }, { onConflict: 'organization_id,user_id' });
-  if (membershipError) throw membershipError;
+  await upsertOrganizationMembership({
+    orgId,
+    userId: authUser.id,
+    role: membershipRole,
+    actorUserId,
+  });
 
   invalidateMembershipCache(authUser.id);
 
@@ -375,9 +530,12 @@ router.post('/import', async (req, res, next) => {
           email: result.email,
           userId: result.userId,
           organizationId: result.orgId,
-          status: 'ok',
+          status: result.inviteOnly ? 'invited' : 'ok',
           created: result.created,
           temporaryPassword: result.temporaryPassword,
+          inviteOnly: Boolean(result.inviteOnly),
+          inviteId: result.inviteId ?? null,
+          duplicateInvite: Boolean(result.duplicateInvite),
         });
       } catch (error) {
         results.push({

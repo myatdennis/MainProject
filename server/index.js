@@ -2359,10 +2359,11 @@ app.patch('/api/admin/users/:userId', authenticate, requireAdmin, async (req, re
 
   let currentStage = 'membership_lookup';
   try {
+    const membershipOrgColumn = await getOrganizationMembershipsOrgColumnName();
     const { data: membership, error: lookupError } = await supabase
       .from('organization_memberships')
-      .select('id, organization_id, user_id, role, status')
-      .eq('organization_id', orgId)
+      .select('id, organization_id, org_id, user_id, role, status')
+      .eq(membershipOrgColumn, orgId)
       .eq('user_id', userId)
       .maybeSingle();
 
@@ -2394,7 +2395,7 @@ app.patch('/api/admin/users/:userId', authenticate, requireAdmin, async (req, re
       const { count, error: ownerCountError } = await supabase
         .from('organization_memberships')
         .select('id', { head: true, count: 'exact' })
-        .eq('organization_id', orgId)
+        .eq(membershipOrgColumn, orgId)
         .eq('role', 'owner')
         .eq('status', 'active');
       if (ownerCountError) throw ownerCountError;
@@ -2410,7 +2411,7 @@ app.patch('/api/admin/users/:userId', authenticate, requireAdmin, async (req, re
       const { data, error } = await supabase
         .from('organization_memberships')
         .update(updatePayload)
-        .eq('organization_id', orgId)
+        .eq(membershipOrgColumn, orgId)
         .eq('user_id', userId)
         .select('*')
         .maybeSingle();
@@ -5949,6 +5950,79 @@ const INVITE_TOKEN_TTL_HOURS = Number(process.env.CLIENT_INVITE_TTL_HOURS || pro
 const INVITE_BULK_LIMIT = Number(process.env.CLIENT_INVITE_BULK_LIMIT || 50);
 const INVITE_PASSWORD_MIN_CHARS = Number(process.env.CLIENT_INVITE_PASSWORD_MIN || 8);
 const INVITE_ACCEPTABLE_STATUSES = new Set(['pending', 'sent']);
+let orgInvitesOrganizationIdColumnAvailable = null;
+let orgInvitesTokenColumnAvailable = null;
+
+async function detectOrgInvitesOrganizationIdColumnAvailability() {
+  if (!supabase) return false;
+  if (orgInvitesOrganizationIdColumnAvailable !== null) return orgInvitesOrganizationIdColumnAvailable;
+  try {
+    const { error } = await supabase
+      .from('org_invites')
+      .select('id', { head: true, count: 'exact' })
+      .is('organization_id', null)
+      .limit(1);
+    if (error) {
+      if (isMissingColumnError(error)) {
+        orgInvitesOrganizationIdColumnAvailable = false;
+        return false;
+      }
+      throw error;
+    }
+    orgInvitesOrganizationIdColumnAvailable = true;
+    return true;
+  } catch (error) {
+    logger.warn('org_invites_org_column_probe_failed', { message: error?.message || String(error) });
+    orgInvitesOrganizationIdColumnAvailable = false;
+    return false;
+  }
+}
+
+async function detectOrgInvitesTokenColumnAvailability() {
+  if (!supabase) return false;
+  if (orgInvitesTokenColumnAvailable !== null) return orgInvitesTokenColumnAvailable;
+  try {
+    const { error } = await supabase
+      .from('org_invites')
+      .select('id', { head: true, count: 'exact' })
+      .is('token', null)
+      .limit(1);
+    if (error) {
+      if (isMissingColumnError(error)) {
+        orgInvitesTokenColumnAvailable = false;
+        return false;
+      }
+      throw error;
+    }
+    orgInvitesTokenColumnAvailable = true;
+    return true;
+  } catch (error) {
+    logger.warn('org_invites_token_column_probe_failed', { message: error?.message || String(error) });
+    orgInvitesTokenColumnAvailable = false;
+    return false;
+  }
+}
+
+async function getOrgInvitesOrganizationColumnName() {
+  return (await detectOrgInvitesOrganizationIdColumnAvailability()) ? 'organization_id' : 'org_id';
+}
+
+async function getOrgInvitesTokenColumnName() {
+  return (await detectOrgInvitesTokenColumnAvailability()) ? 'token' : 'invite_token';
+}
+
+const normalizeOrgInviteRow = (row) => {
+  if (!row || typeof row !== 'object') return row;
+  const normalized = { ...row };
+  normalized.organization_id = row.organization_id ?? row.org_id ?? null;
+  normalized.org_id = row.org_id ?? normalized.organization_id ?? null;
+  normalized.token = row.token ?? row.invite_token ?? null;
+  normalized.invite_token = row.invite_token ?? normalized.token ?? null;
+  normalized.created_by = row.created_by ?? row.inviter_id ?? null;
+  normalized.inviter_id = row.inviter_id ?? normalized.created_by ?? null;
+  return normalized;
+};
+
 const resolveAbsoluteHttpUrl = (value, label) => {
   if (!value) return null;
   try {
@@ -6510,20 +6584,23 @@ async function createOrgInvite({
   if (!normalizedEmail) {
     throw new Error('invalid_email');
   }
+  const inviteOrgColumn = await getOrgInvitesOrganizationColumnName();
+  const inviteTokenColumn = await getOrgInvitesTokenColumnName();
 
   const { data: existing } = await supabase
     .from('org_invites')
     .select('*')
-    .eq('organization_id', orgId)
+    .eq(inviteOrgColumn, orgId)
     .eq('email', normalizedEmail)
     .in('status', ['pending', 'sent'])
     .maybeSingle();
 
   if (existing && duplicateStrategy === 'return') {
+    const normalizedExisting = normalizeOrgInviteRow(existing);
     if (shouldSendEmail) {
-      await deliverInviteEmail(existing, { orgName, inviterName: inviter?.name, requestId });
+      await deliverInviteEmail(normalizedExisting, { orgName, inviterName: inviter?.name, requestId });
     }
-    return { invite: existing, duplicate: true };
+    return { invite: normalizedExisting, duplicate: true };
   }
 
   const normalizedMetadata = metadata && typeof metadata === 'object' ? metadata : {};
@@ -6533,13 +6610,21 @@ async function createOrgInvite({
 
   const payload = {
     organization_id: orgId,
+    org_id: orgId,
     email: normalizedEmail,
     role,
     token,
+    invite_token: token,
     status: 'pending',
     created_by: inviter?.userId ?? null,
+    inviter_id: inviter?.userId ?? null,
     expires_at: expiresAt,
   };
+
+  if (inviteOrgColumn !== 'organization_id') delete payload.organization_id;
+  if (inviteOrgColumn !== 'org_id') delete payload.org_id;
+  if (inviteTokenColumn !== 'token') delete payload.token;
+  if (inviteTokenColumn !== 'invite_token') delete payload.invite_token;
 
   const { data, error } = await supabase
     .from('org_invites')
@@ -6551,7 +6636,7 @@ async function createOrgInvite({
     throw error;
   }
 
-  let inviteRecord = data;
+  let inviteRecord = normalizeOrgInviteRow(data);
 
   if (shouldSendEmail) {
     inviteRecord = await deliverInviteEmail(inviteRecord, {
@@ -6592,6 +6677,7 @@ async function runInviteReminderSweep({ limit = 50, reason = 'scheduled' } = {})
     }
 
     const candidates = (data || [])
+      .map((invite) => normalizeOrgInviteRow(invite))
       .filter((invite) => {
         const lastTouch = invite.created_at;
         if (!lastTouch) return true;
@@ -6689,31 +6775,33 @@ function deriveInviteStatus(invite) {
 
 async function loadInviteByToken(token) {
   if (!supabase || !token) return null;
+  const inviteTokenColumn = await getOrgInvitesTokenColumnName();
   const { data, error } = await supabase
     .from('org_invites')
     .select('*')
-    .eq('token', token)
+    .eq(inviteTokenColumn, token)
     .maybeSingle();
   if (error) {
     throw error;
   }
   if (!data) return null;
-  const derived = deriveInviteStatus(data);
-  if (derived === 'expired' && data.status !== 'expired') {
+  const normalizedData = normalizeOrgInviteRow(data);
+  const derived = deriveInviteStatus(normalizedData);
+  if (derived === 'expired' && normalizedData.status !== 'expired') {
     try {
       await supabase
         .from('org_invites')
         .update({ status: 'expired' })
-        .eq('id', data.id);
-      data.status = 'expired';
+        .eq('id', normalizedData.id);
+      normalizedData.status = 'expired';
     } catch (updateError) {
       logger.warn('invite_expire_flag_failed', {
-        inviteId: data.id,
+        inviteId: normalizedData.id,
         message: updateError?.message || String(updateError),
       });
     }
   }
-  return data;
+  return normalizedData;
 }
 
 const INVITE_LOGIN_URL = process.env.CLIENT_INVITE_LOGIN_URL || '/login';
@@ -6748,22 +6836,38 @@ async function fetchOrgMembersWithProfiles(orgId) {
     return [];
   }
 
-  const { data: memberships, error } = await supabase
-    .from('organization_memberships')
-    .select(
-      buildMembershipSelect(
-        'id',
-        'organization_id',
-        'user_id',
-        'role',
-        'status',
-        'invited_by',
-        'created_at',
-        'updated_at',
-      ),
-    )
-    .eq('organization_id', orgId);
-  if (error) throw error;
+  const membershipSelect = buildMembershipSelect(
+    'id',
+    'organization_id',
+    'org_id',
+    'user_id',
+    'role',
+    'status',
+    'invited_by',
+    'created_at',
+    'updated_at',
+  );
+  let memberships = null;
+  let membershipError = null;
+
+  for (const orgColumn of ['organization_id', 'org_id']) {
+    const result = await supabase
+      .from('organization_memberships')
+      .select(membershipSelect)
+      .eq(orgColumn, orgId);
+    if (result.error) {
+      if (isMissingColumnError(result.error)) {
+        membershipError = result.error;
+        continue;
+      }
+      throw result.error;
+    }
+    memberships = result.data || [];
+    membershipError = null;
+    break;
+  }
+
+  if (membershipError) throw membershipError;
 
   const rows = Array.isArray(memberships) ? memberships : [];
   const userIds = rows.map((row) => row?.user_id).filter(Boolean);
@@ -6787,6 +6891,8 @@ async function fetchOrgMembersWithProfiles(orgId) {
     return {
       ...profile,
       ...membership,
+      organization_id: membership.organization_id ?? membership.org_id ?? null,
+      org_id: membership.org_id ?? membership.organization_id ?? null,
       user_id_uuid: membership.user_id ?? membership.user_id_uuid ?? null,
       profile,
       user: {
@@ -6794,7 +6900,7 @@ async function fetchOrgMembersWithProfiles(orgId) {
         email: profile?.email ?? null,
         first_name: profile?.first_name ?? null,
         last_name: profile?.last_name ?? null,
-        organization_id: profile?.organization_id ?? membership.organization_id ?? null,
+        organization_id: profile?.organization_id ?? membership.organization_id ?? membership.org_id ?? null,
         role: profile?.role ?? null,
         is_active: profile?.is_active ?? true,
       },
@@ -7025,12 +7131,12 @@ const mapOrgProfileUser = (member) => {
 
 const mapOrgInviteRecord = (row) => ({
   id: row.id,
-  organizationId: row.organization_id ?? null,
+  organizationId: row.organization_id ?? row.org_id ?? null,
   email: row.email ?? null,
   role: row.role ?? null,
   status: row.status ?? 'pending',
-  token: row.token ?? null,
-  invitedBy: row.created_by ?? null,
+  token: row.token ?? row.invite_token ?? null,
+  invitedBy: row.created_by ?? row.inviter_id ?? null,
   invitedAt: row.created_at ?? null,
   acceptedAt: row.accepted_at ?? null,
   expiresAt: row.expires_at ?? null,
@@ -7863,10 +7969,11 @@ const notifyAssignmentRecipients = async ({ assignmentType, assignments = [], ac
 const fetchOrgInvites = async (orgId, { requestId } = {}) => {
   if (!supabase || !orgId) return [];
   try {
+    const inviteOrgColumn = await getOrgInvitesOrganizationColumnName();
     const { data, error } = await supabase
       .from('org_invites')
-      .select('id, organization_id, email, role, status, token, created_by, accepted_at, expires_at, reminder_count, created_at')
-      .eq('organization_id', orgId)
+      .select('id, organization_id, org_id, email, role, status, token, invite_token, created_by, inviter_id, accepted_at, expires_at, reminder_count, created_at')
+      .eq(inviteOrgColumn, orgId)
       .order('created_at', { ascending: false, nullsFirst: false })
       .limit(100);
     if (error) {
@@ -7875,7 +7982,7 @@ const fetchOrgInvites = async (orgId, { requestId } = {}) => {
       }
       throw error;
     }
-    return (data || []).map(mapOrgInviteRecord);
+    return (data || []).map((row) => mapOrgInviteRecord(normalizeOrgInviteRow(row)));
   } catch (error) {
     logOrganizationsStageError('profile_invites_fetch_failed', error, { orgId, requestId });
     return [];
@@ -8046,19 +8153,55 @@ const buildOrgOverviewPayload = ({
   };
 };
 
+let organizationMembershipsOrganizationIdColumnAvailable = null;
+
+async function detectOrganizationMembershipsOrganizationIdColumnAvailability() {
+  if (!supabase) return false;
+  if (organizationMembershipsOrganizationIdColumnAvailable !== null) {
+    return organizationMembershipsOrganizationIdColumnAvailable;
+  }
+  try {
+    const { error } = await supabase
+      .from('organization_memberships')
+      .select('user_id', { head: true, count: 'exact' })
+      .is('organization_id', null)
+      .limit(1);
+    if (error) {
+      if (isMissingColumnError(error)) {
+        organizationMembershipsOrganizationIdColumnAvailable = false;
+        return false;
+      }
+      throw error;
+    }
+    organizationMembershipsOrganizationIdColumnAvailable = true;
+    return true;
+  } catch (error) {
+    logger.warn('organization_memberships_org_column_probe_failed', {
+      message: error?.message || String(error),
+    });
+    organizationMembershipsOrganizationIdColumnAvailable = false;
+    return false;
+  }
+}
+
+async function getOrganizationMembershipsOrgColumnName() {
+  return (await detectOrganizationMembershipsOrganizationIdColumnAvailability()) ? 'organization_id' : 'org_id';
+}
+
 async function upsertOrganizationMembership(orgId, userId, role, actor) {
   if (!supabase) return null;
+  const membershipOrgColumn = await getOrganizationMembershipsOrgColumnName();
   const payload = {
-    organization_id: orgId,
     user_id: userId,
     role,
     status: 'active',
     invited_by: actor?.userId ?? null,
   };
+  payload[membershipOrgColumn] = orgId;
 
   const { data, error } = await supabase
     .from('organization_memberships')
-    .upsert(payload, { onConflict: 'organization_id,user_id' })
+    .upsert(payload, { onConflict: `${membershipOrgColumn},user_id` })
     .select('*')
     .single();
 
@@ -8618,6 +8761,7 @@ async function provisionOrganizationUserAccount({
   const membership = await upsertOrganizationMembership(orgId, authUser.id, membershipRole, actor);
 
   try {
+    const inviteOrgColumn = await getOrgInvitesOrganizationColumnName();
     await supabase
       .from('org_invites')
       .update({
@@ -8625,7 +8769,7 @@ async function provisionOrganizationUserAccount({
         accepted_at: new Date().toISOString(),
         accepted_user_id: authUser.id,
       })
-      .eq('organization_id', orgId)
+      .eq(inviteOrgColumn, orgId)
       .eq('email', normalizedEmail)
       .in('status', ['pending', 'sent']);
   } catch (error) {
@@ -8637,7 +8781,17 @@ async function provisionOrganizationUserAccount({
     });
   }
 
-  const members = await fetchOrgMembersWithProfiles(orgId);
+  let members = [];
+  try {
+    members = await fetchOrgMembersWithProfiles(orgId);
+  } catch (error) {
+    logger.warn('admin_user_member_reload_failed', {
+      requestId,
+      orgId,
+      userId: authUser.id,
+      message: error?.message || String(error),
+    });
+  }
   const member = members.find((row) => String(row?.user_id ?? '') === String(authUser.id)) || membership;
 
   return {
@@ -8817,6 +8971,7 @@ async function permanentlyDeleteUserAccount({ userId, requestId = null }) {
 async function fetchOnboardingProgress(orgId) {
   if (!supabase) return null;
   try {
+    const inviteOrgColumn = await getOrgInvitesOrganizationColumnName();
     const [{ data: progress }, { data: steps }, { data: invites }] = await Promise.all([
       supabase
         .from('org_onboarding_progress_vw')
@@ -8831,14 +8986,14 @@ async function fetchOnboardingProgress(orgId) {
       supabase
         .from('org_invites')
         .select('*')
-        .eq('organization_id', orgId)
+        .eq(inviteOrgColumn, orgId)
         .order('created_at', { ascending: false })
         .limit(50),
     ]);
     return {
       summary: progress,
       steps: steps || [],
-      invites: invites || [],
+      invites: (invites || []).map((invite) => normalizeOrgInviteRow(invite)),
     };
   } catch (error) {
     console.warn('[onboarding] Failed to fetch progress', { orgId, error });
@@ -15825,7 +15980,10 @@ app.delete('/api/admin/organizations/:id', requireAdminAccess, async (req, res) 
     );
     await runOptionalCleanupMutation(
       'delete_org.org_invites',
-      () => supabase.from('org_invites').delete().eq('organization_id', id),
+      async () => {
+        const inviteOrgColumn = await getOrgInvitesOrganizationColumnName();
+        return supabase.from('org_invites').delete().eq(inviteOrgColumn, id);
+      },
       { orgId: id, requestId: req.requestId ?? null },
     );
     await runOptionalCleanupMutation(
@@ -15906,6 +16064,7 @@ app.get('/api/admin/organizations/:orgId/members', async (req, res) => {
   if (!access) return;
 
   try {
+    const membershipOrgColumn = await getOrganizationMembershipsOrgColumnName();
     const { data, error } = await supabase
       .from('organization_memberships')
       .select(
@@ -15919,7 +16078,7 @@ app.get('/api/admin/organizations/:orgId/members', async (req, res) => {
           'updated_at',
         ),
       )
-      .eq('organization_id', orgId)
+      .eq(membershipOrgColumn, orgId)
       .order('created_at', { ascending: false });
 
     if (error) throw error;
@@ -15954,6 +16113,7 @@ app.post('/api/admin/organizations/:orgId/members', async (req, res) => {
   if (!access) return;
 
   try {
+    const membershipOrgColumn = await getOrganizationMembershipsOrgColumnName();
     const normalizedRole = String(role || 'member').toLowerCase();
     const normalizedStatus = (() => {
       const candidate = String(status || '').toLowerCase();
@@ -15963,20 +16123,21 @@ app.post('/api/admin/organizations/:orgId/members', async (req, res) => {
       return 'pending';
     })();
     const payload = withMembershipInvitedEmail({
-      organization_id: orgId,
       user_id: userId,
       role: normalizedRole,
       invited_by: context.userId ?? null,
       status: normalizedStatus,
     }, inviteEmail ?? null);
+    payload[membershipOrgColumn] = orgId;
 
     const { data, error } = await supabase
       .from('organization_memberships')
-      .upsert(payload, { onConflict: 'organization_id,user_id' })
+      .upsert(payload, { onConflict: `${membershipOrgColumn},user_id` })
       .select(
         buildMembershipSelect(
           'id',
           'organization_id',
+          'org_id',
           'user_id',
           'role',
           'status',
@@ -16019,11 +16180,12 @@ app.patch('/api/admin/organizations/:orgId/members/:membershipId', async (req, r
   if (!access) return;
 
   try {
+    const membershipOrgColumn = await getOrganizationMembershipsOrgColumnName();
     const { data: existing, error: existingError } = await supabase
       .from('organization_memberships')
-      .select('id, organization_id, role, status, user_id')
+      .select('id, organization_id, org_id, role, status, user_id')
       .eq('id', membershipId)
-      .eq('organization_id', orgId)
+      .eq(membershipOrgColumn, orgId)
       .maybeSingle();
 
     if (existingError) throw existingError;
@@ -16053,7 +16215,7 @@ app.patch('/api/admin/organizations/:orgId/members/:membershipId', async (req, r
       const { count, error: countError } = await supabase
         .from('organization_memberships')
         .select('id', { count: 'exact', head: true })
-        .eq('organization_id', orgId)
+        .eq(membershipOrgColumn, orgId)
         .eq('role', 'owner')
         .eq('status', 'active');
 
@@ -16068,11 +16230,12 @@ app.patch('/api/admin/organizations/:orgId/members/:membershipId', async (req, r
       .from('organization_memberships')
       .update(updatePayload)
       .eq('id', membershipId)
-      .eq('organization_id', orgId)
+      .eq(membershipOrgColumn, orgId)
       .select(
         buildMembershipSelect(
           'id',
           'organization_id',
+          'org_id',
           'user_id',
           'role',
           'status',
@@ -16113,7 +16276,7 @@ app.delete('/api/admin/organizations/:orgId/members/:membershipId', async (req, 
   try {
     const existing = await supabase
       .from('organization_memberships')
-      .select('id, organization_id, user_id, role')
+      .select('id, organization_id, org_id, user_id, role')
       .eq('id', membershipId)
       .maybeSingle();
 
@@ -16125,7 +16288,8 @@ app.delete('/api/admin/organizations/:orgId/members/:membershipId', async (req, 
       return;
     }
 
-    if (membership.organization_id !== orgId) {
+    const membershipOrgId = membership.organization_id ?? membership.org_id ?? null;
+    if (membershipOrgId !== orgId) {
       res.status(400).json({ error: 'Membership does not belong to organization' });
       return;
     }
@@ -16320,25 +16484,27 @@ app.post('/api/admin/organizations/:orgId/invites/:inviteId/resend', async (req,
 
   const actor = buildActorFromRequest(req);
   try {
+    const inviteOrgColumn = await getOrgInvitesOrganizationColumnName();
     const { data: invite, error } = await supabase
       .from('org_invites')
       .select('*')
       .eq('id', inviteId)
-      .eq('organization_id', orgId)
+      .eq(inviteOrgColumn, orgId)
       .maybeSingle();
 
     if (error) throw error;
-    if (!invite) {
+    const normalizedInvite = normalizeOrgInviteRow(invite);
+    if (!normalizedInvite) {
       res.status(404).json({ error: 'Invite not found' });
       return;
     }
-    if (invite.status === 'accepted' || invite.status === 'revoked') {
+    if (normalizedInvite.status === 'accepted' || normalizedInvite.status === 'revoked') {
       res.status(400).json({ error: 'Invite can no longer be resent' });
       return;
     }
 
     const orgSummary = await fetchOrganizationSummary(orgId);
-    const updated = await deliverInviteEmail(invite, { orgName: orgSummary?.name || '', inviterName: actor.name });
+    const updated = await deliverInviteEmail(normalizedInvite, { orgName: orgSummary?.name || '', inviterName: actor.name });
     await recordActivationEvent(orgId, 'invite_resent', { inviteId }, actor);
     logOrganizationsEvent('organization_invite_resent', {
       requestId: req.requestId ?? null,
@@ -16362,32 +16528,34 @@ app.post('/api/admin/organizations/:orgId/invites/:inviteId/remind', async (req,
 
   const actor = buildActorFromRequest(req);
   try {
+    const inviteOrgColumn = await getOrgInvitesOrganizationColumnName();
     const { data: invite, error } = await supabase
       .from('org_invites')
       .select('*')
       .eq('id', inviteId)
-      .eq('organization_id', orgId)
+      .eq(inviteOrgColumn, orgId)
       .maybeSingle();
 
     if (error) throw error;
-    if (!invite) {
+    const normalizedInvite = normalizeOrgInviteRow(invite);
+    if (!normalizedInvite) {
       res.status(404).json({ error: 'Invite not found' });
       return;
     }
 
-    const derivedStatus = deriveInviteStatus(invite);
+    const derivedStatus = deriveInviteStatus(normalizedInvite);
     if (derivedStatus === 'accepted' || derivedStatus === 'revoked') {
       res.status(400).json({ error: 'Invite can no longer be reminded' });
       return;
     }
 
-    const reminderCount = invite.reminder_count || 0;
+    const reminderCount = normalizedInvite.reminder_count || 0;
     if (reminderCount >= INVITE_REMINDER_MAX_SENDS) {
       res.status(429).json({ error: 'reminder_limit_reached' });
       return;
     }
 
-    const lastTouch = invite.created_at;
+    const lastTouch = normalizedInvite.created_at;
     const minGapMs = INVITE_REMINDER_LOOKBACK_HOURS * 60 * 60 * 1000;
     if (lastTouch && minGapMs > 0) {
       const elapsed = Date.now() - new Date(lastTouch).getTime();
@@ -16398,7 +16566,7 @@ app.post('/api/admin/organizations/:orgId/invites/:inviteId/remind', async (req,
     }
 
     const orgSummary = await fetchOrganizationSummary(orgId);
-    const updated = await deliverInviteEmail(invite, { orgName: orgSummary?.name || '', inviterName: actor.name });
+    const updated = await deliverInviteEmail(normalizedInvite, { orgName: orgSummary?.name || '', inviterName: actor.name });
     await recordActivationEvent(orgId, 'invite_reminder_sent', { inviteId }, actor);
     logOrganizationsEvent('organization_invite_reminder_sent', {
       requestId: req.requestId ?? null,
@@ -16425,11 +16593,12 @@ app.delete('/api/admin/organizations/:orgId/invites/:inviteId', async (req, res)
   if (!access) return;
 
   try {
+    const inviteOrgColumn = await getOrgInvitesOrganizationColumnName();
     const { error } = await supabase
       .from('org_invites')
       .update({ status: 'revoked' })
       .eq('id', inviteId)
-      .eq('organization_id', orgId);
+      .eq(inviteOrgColumn, orgId);
     if (error) throw error;
     await recordActivationEvent(orgId, 'invite_revoked', { inviteId }, buildActorFromRequest(req));
     logOrganizationsEvent('organization_invite_revoked', {
@@ -16711,10 +16880,11 @@ app.post('/api/invite/:token/accept', async (req, res) => {
     await recordActivationEvent(inviteRecord.organization_id, 'invite_accepted_public', { inviteId: inviteRecord.id }, actor);
     await createAuditLogEntry('org_invite_accepted', { inviteId: inviteRecord.id }, { userId: authUser.id, orgId: inviteRecord.organization_id });
 
+    const inviteOrgColumn = await getOrgInvitesOrganizationColumnName();
     const { count: remainingInvites } = await supabase
       .from('org_invites')
       .select('id', { count: 'exact', head: true })
-      .eq('organization_id', inviteRecord.organization_id)
+      .eq(inviteOrgColumn, inviteRecord.organization_id)
       .in('status', ['pending', 'sent']);
 
     if (!remainingInvites) {
@@ -16926,13 +17096,14 @@ app.get('/api/admin/onboarding/:orgId/invites', async (req, res) => {
   if (!access) return;
 
   try {
+    const inviteOrgColumn = await getOrgInvitesOrganizationColumnName();
     const { data, error } = await supabase
       .from('org_invites')
       .select('*')
-      .eq('organization_id', orgId)
+      .eq(inviteOrgColumn, orgId)
       .order('created_at', { ascending: false });
     if (error) throw error;
-    res.json({ data: data || [] });
+    res.json({ data: (data || []).map((invite) => normalizeOrgInviteRow(invite)) });
   } catch (error) {
     console.error('Failed to list org invites', error);
     res.status(500).json({ error: 'Unable to fetch invites' });
@@ -17035,25 +17206,27 @@ app.post('/api/admin/onboarding/:orgId/invites/:inviteId/resend', async (req, re
   const actor = buildActorFromRequest(req);
 
   try {
+    const inviteOrgColumn = await getOrgInvitesOrganizationColumnName();
     const { data: invite, error } = await supabase
       .from('org_invites')
       .select('*')
       .eq('id', inviteId)
-      .eq('organization_id', orgId)
+      .eq(inviteOrgColumn, orgId)
       .maybeSingle();
 
     if (error) throw error;
-    if (!invite) {
+    const normalizedInvite = normalizeOrgInviteRow(invite);
+    if (!normalizedInvite) {
       res.status(404).json({ error: 'Invite not found' });
       return;
     }
-    if (invite.status === 'accepted' || invite.status === 'revoked') {
+    if (normalizedInvite.status === 'accepted' || normalizedInvite.status === 'revoked') {
       res.status(400).json({ error: 'Invite can no longer be resent' });
       return;
     }
 
     const orgSummary = await fetchOrganizationSummary(orgId);
-    const updated = await deliverInviteEmail(invite, { orgName: orgSummary?.name || '', inviterName: actor.name });
+    const updated = await deliverInviteEmail(normalizedInvite, { orgName: orgSummary?.name || '', inviterName: actor.name });
     await recordActivationEvent(orgId, 'invite_resent', { inviteId }, actor);
     res.json({ data: updated });
   } catch (error) {
@@ -17069,11 +17242,12 @@ app.delete('/api/admin/onboarding/:orgId/invites/:inviteId', async (req, res) =>
   if (!access) return;
 
   try {
+    const inviteOrgColumn = await getOrgInvitesOrganizationColumnName();
     const { error } = await supabase
       .from('org_invites')
       .update({ status: 'revoked' })
       .eq('id', inviteId)
-      .eq('organization_id', orgId);
+      .eq(inviteOrgColumn, orgId);
     if (error) throw error;
     await recordActivationEvent(orgId, 'invite_revoked', { inviteId }, buildActorFromRequest(req));
     res.status(204).end();
@@ -17158,19 +17332,21 @@ app.post('/api/orgs/:orgId/memberships/accept', async (req, res) => {
 
     if (req.user?.email) {
       try {
+        const inviteOrgColumn = await getOrgInvitesOrganizationColumnName();
         await supabase
           .from('org_invites')
           .update({ status: 'accepted' })
-          .eq('organization_id', orgId)
+          .eq(inviteOrgColumn, orgId)
           .eq('email', req.user.email.toLowerCase())
           .in('status', ['pending', 'sent']);
       } catch (inviteError) {
         console.warn('[onboarding] Failed to sync invite acceptance', inviteError);
       }
+      const inviteOrgColumn = await getOrgInvitesOrganizationColumnName();
       const { count } = await supabase
         .from('org_invites')
         .select('id', { count: 'exact', head: true })
-        .eq('organization_id', orgId)
+        .eq(inviteOrgColumn, orgId)
         .in('status', ['pending', 'sent']);
       const actor = buildActorFromRequest(req);
       await recordActivationEvent(orgId, 'invite_accepted', { membershipId: data.id }, actor);
