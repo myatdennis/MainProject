@@ -31,6 +31,7 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
       role: editUser?.role || '',
       organization: editUser?.organization || '',
       cohort: editUser?.cohort || '',
+      membershipRole: editUser?.membershipRole || 'member',
       department: '',
       phoneNumber: '',
       password: '',
@@ -41,6 +42,7 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
       lastName: [validators.required, validators.minLength(2)],
       email: [validators.required, validators.email],
       role: [validators.required],
+      membershipRole: [validators.required],
       organization: [validators.required],
       cohort: [validators.required],
     }
@@ -101,6 +103,14 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
     'Other'
   ];
 
+  const membershipRoles = [
+    { label: 'Member', value: 'member' },
+    { label: 'Editor', value: 'editor' },
+    { label: 'Manager', value: 'manager' },
+    { label: 'Admin', value: 'admin' },
+    { label: 'Owner', value: 'owner' },
+  ];
+
   // Framer Motion modal animation
   const modalVariants = {
     hidden: { opacity: 0, y: 40 },
@@ -137,6 +147,7 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
       organization: SecurityUtils.sanitizeInput(values.organization),
       department: SecurityUtils.sanitizeInput(values.department || ''),
       role: SecurityUtils.sanitizeInput(values.role),
+      membershipRole: SecurityUtils.sanitizeInput(values.membershipRole || 'member'),
       cohort: SecurityUtils.sanitizeInput(values.cohort),
       password: values.password,
       confirmPassword: values.confirmPassword,
@@ -211,7 +222,7 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
             lastName: sanitizedData.lastName,
             email: sanitizedData.email,
             password: sanitizedData.password,
-            membershipRole: 'member',
+            membershipRole: sanitizedData.membershipRole,
             jobTitle: sanitizedData.role,
             department: sanitizedData.department,
             cohort: sanitizedData.cohort,
@@ -536,6 +547,31 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
                       <p className="mt-1 text-sm text-red-600">{errors.role}</p>
                     )}
                   </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Membership Role *
+                    </label>
+                    <select
+                      value={values.membershipRole}
+                      onChange={(e) => setValue('membershipRole', e.target.value)}
+                      className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent ${
+                        errors.membershipRole ? 'border-red-300' : 'border-gray-300'
+                      }`}
+                      disabled={loading}
+                    >
+                      <option value="">Select membership role</option>
+                      {membershipRoles.map((roleOption) => (
+                        <option key={roleOption.value} value={roleOption.value}>
+                          {roleOption.label}
+                        </option>
+                      ))}
+                    </select>
+                    {errors.membershipRole && (
+                      <p className="mt-1 text-sm text-red-600">{errors.membershipRole}</p>
+                    )}
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">
                       Cohort *
