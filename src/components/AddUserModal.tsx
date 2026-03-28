@@ -45,6 +45,8 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
       membershipRole: [validators.required],
       organization: [validators.required],
       cohort: [validators.required],
+      // no password required for Mode B Option A now
+      //password: [validators.required],
     }
   );
 
@@ -154,13 +156,15 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
     };
 
     if (!isEditMode) {
-      if (!sanitizedData.password || sanitizedData.password.length < 12) {
-        showToast('Password must be at least 12 characters', 'error');
-        return;
-      }
-      if (sanitizedData.password !== sanitizedData.confirmPassword) {
-        showToast('Passwords do not match', 'error');
-        return;
+      if (sanitizedData.password) {
+        if (sanitizedData.password.length < 12) {
+          showToast('Password must be at least 12 characters if provided', 'error');
+          return;
+        }
+        if (sanitizedData.password !== sanitizedData.confirmPassword) {
+          showToast('Passwords do not match', 'error');
+          return;
+        }
       }
     }
 
@@ -214,6 +218,8 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
           inviteOnly?: boolean;
           duplicateInvite?: boolean;
           message?: string;
+          setupLink?: string;
+          emailSent?: boolean;
         }>(`/api/admin/users`, {
           method: 'POST',
           body: {
@@ -256,12 +262,18 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
         };
         onUserAdded?.(newUser);
 
-        showToast(
-          response?.existingAccount
-            ? `Existing account linked to ${sanitizedData.email} and membership created for this organization.`
-            : `Account created for ${sanitizedData.email}. They can login with the provided credentials.`,
-          'success',
-        );
+        const baseMessage = response?.existingAccount
+          ? `Existing account linked to ${sanitizedData.email} and membership created for this organization.`
+          : `Account created for ${sanitizedData.email}.`;
+
+        if (response?.setupLink) {
+          showToast(
+            `${baseMessage} Setup link generated.${response.emailSent ? ' Email delivery was attempted.' : ` Copy this link to send manually: ${response.setupLink}`}`,
+            'success',
+          );
+        } else {
+          showToast(baseMessage, 'success');
+        }
       }
       
       // Reset form

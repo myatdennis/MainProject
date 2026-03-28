@@ -8897,7 +8897,7 @@ async function provisionOrganizationUserAccount({
   }
 
   const role = normalizeOrgRole(membershipRole || 'member');
-  let userPassword = password && password.length >= INVITE_PASSWORD_MIN_CHARS ? password : generateTempPassword();
+  const userPassword = password && password.length >= INVITE_PASSWORD_MIN_CHARS ? password : undefined;
   let authUser = null;
   let created = false;
 
