@@ -601,7 +601,9 @@ router.post('/register', authLimiter, async (req, res) => {
         user_metadata: {
           first_name: firstName,
           last_name: lastName,
+          full_name: `${firstName} ${lastName}`.trim() || null,
           organization_id: organizationId ?? null,
+          onboarding_org_id: organizationId ?? null,
         },
       });
 

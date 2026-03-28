@@ -372,6 +372,12 @@ const deriveProjectRefFromHost = (host) => {
 };
 const supabaseProjectRef = deriveProjectRefFromHost(supabaseUrlHost);
 const databaseProjectRef = databaseConnectionInfo.projectRef ?? null;
+const supabaseProjectAlignment =
+  supabaseProjectRef && databaseProjectRef
+    ? supabaseProjectRef === databaseProjectRef
+      ? 'match'
+      : 'mismatch'
+    : 'partial';
 if (supabaseProjectRef && databaseProjectRef && supabaseProjectRef !== databaseProjectRef) {
   console.warn('[env] Supabase URL and database connection appear to reference different project IDs.', {
     supabaseProjectRef,
@@ -453,7 +459,12 @@ const runSchemaDoctor = async () => {
   }
   const checks = [
     { table: 'organization_memberships', column: 'organization_id', level: 'error' },
+    { table: 'org_invites', column: 'organization_id', level: 'error' },
+    { table: 'organizations', column: 'id', level: 'error' },
+    { table: 'organizations', column: 'name', level: 'warn' },
     { table: 'organizations', column: 'features', level: 'warn' },
+    { table: 'user_profiles', column: 'id', level: 'error' },
+    { table: 'user_profiles', column: 'email', level: 'warn' },
     { table: 'course_assignments', column: 'updated_at', level: 'warn' },
   ];
   try {
@@ -462,7 +473,12 @@ const runSchemaDoctor = async () => {
       from information_schema.columns
       where table_schema = 'public' and (
         (table_name = 'organization_memberships' and column_name = 'organization_id') or
+        (table_name = 'org_invites' and column_name = 'organization_id') or
+        (table_name = 'organizations' and column_name = 'id') or
+        (table_name = 'organizations' and column_name = 'name') or
         (table_name = 'organizations' and column_name = 'features') or
+        (table_name = 'user_profiles' and column_name = 'id') or
+        (table_name = 'user_profiles' and column_name = 'email') or
         (table_name = 'course_assignments' and column_name = 'updated_at')
       )
     `;
@@ -487,6 +503,37 @@ const runSchemaDoctor = async () => {
   }
 };
 
+const runStorageDoctor = async () => {
+  if (!supabaseEnv.configured || !supabase) {
+    logger.warn('storage_doctor_skipped', { reason: 'supabase_unavailable' });
+    return;
+  }
+  try {
+    const { data, error } = await supabase.storage.listBuckets();
+    if (error) throw error;
+    const bucketNames = (data || []).map((bucket) => bucket.name).filter(Boolean);
+    const available = new Set(bucketNames);
+    REQUIRED_SUPABASE_BUCKETS.forEach((bucket) => {
+      const ok = available.has(bucket);
+      const payload = { bucket, ok };
+      if (ok) {
+        logger.info('storage_bucket_check', payload);
+      } else {
+        logger.error('storage_bucket_check_failed', payload);
+      }
+    });
+    logger.info('storage_bucket_inventory', {
+      count: bucketNames.length,
+      buckets: bucketNames,
+    });
+  } catch (error) {
+    logger.error('storage_doctor_unreachable', {
+      message: error?.message || String(error),
+      code: error?.code || null,
+    });
+  }
+};
+
 try {
   await requireCriticalSchema();
 } catch (error) {
@@ -495,6 +542,7 @@ try {
   logger.warn('membership_schema_probe_failed', { reason, message: reason });
 }
 await runSchemaDoctor();
+await runStorageDoctor();
 
 // Persistent storage file for demo mode
 const STORAGE_FILE = path.join(__dirname, 'demo-data.json');
@@ -508,6 +556,9 @@ logger.info('startup_supabase_config', {
   devFallback: Boolean(DEV_FALLBACK),
   demoMode: initialDemoModeMetadata.enabled ? initialDemoModeMetadata.source || 'enabled' : 'disabled',
   supabaseUrlHost,
+  supabaseProjectRef,
+  databaseProjectRef,
+  projectAlignment: supabaseProjectAlignment,
   serviceRoleKeyPresent: Boolean(supabaseEnv.serviceRoleKey),
 });
 if (supabaseEnv.configured && DEV_FALLBACK) {
@@ -545,6 +596,8 @@ logger.info('startup_env_diagnostics', {
   supabaseConfigured: supabaseEnv.configured,
   supabaseUrlHost,
   supabaseProjectRef,
+  databaseProjectRef,
+  projectAlignment: supabaseProjectAlignment,
   appJwtSecretConfigured: isJwtSecretConfigured,
   supabaseJwtSecretConfigured: SUPABASE_JWT_SECRET_CONFIGURED,
   cookie: {
@@ -567,6 +620,12 @@ const DOCUMENT_URL_REFRESH_BUFFER_MS = DOCUMENT_URL_REFRESH_BUFFER_SECONDS * 100
 const COURSE_VIDEOS_BUCKET = process.env.SUPABASE_VIDEOS_BUCKET || 'course-videos';
 const COURSE_VIDEO_UPLOAD_MAX_BYTES = Number(process.env.COURSE_VIDEO_UPLOAD_MAX_BYTES || 750 * 1024 * 1024);
 const REQUIRED_SUPABASE_BUCKETS = Array.from(new Set([COURSE_VIDEOS_BUCKET, DOCUMENTS_BUCKET].filter(Boolean)));
+
+logger.info('startup_storage_config', {
+  documentsBucket: DOCUMENTS_BUCKET,
+  courseVideosBucket: COURSE_VIDEOS_BUCKET,
+  requiredBuckets: REQUIRED_SUPABASE_BUCKETS,
+});
 
 const WS_SERVER_PATH = process.env.WS_SERVER_PATH || '/ws';
 const wsHealthSnapshot = {
@@ -2156,27 +2215,78 @@ app.post('/api/admin/users', authenticate, requireAdmin, async (req, res) => {
 
   try {
     const actor = buildActorFromRequest(req);
-    const account = await provisionOrganizationUserAccount({
-      orgId,
-      email: rawEmail,
-      password,
-      firstName,
-      lastName,
-      membershipRole,
-      jobTitle,
-      department,
-      cohort,
-      phoneNumber,
-      actor,
-      requestId: req.requestId ?? null,
-    });
+    try {
+      const account = await provisionOrganizationUserAccount({
+        orgId,
+        email: rawEmail,
+        password,
+        firstName,
+        lastName,
+        membershipRole,
+        jobTitle,
+        department,
+        cohort,
+        phoneNumber,
+        actor,
+        requestId: req.requestId ?? null,
+      });
 
-    res.status(account.created ? 201 : 200).json({
-      data: account.member,
-      created: account.created,
-      existingAccount: !account.created,
-      membershipCreated: account.membershipCreated,
-    });
+      res.status(account.created ? 201 : 200).json({
+        data: account.member,
+        created: account.created,
+        existingAccount: !account.created,
+        membershipCreated: account.membershipCreated,
+      });
+      return;
+    } catch (error) {
+      if (!isSupabaseAuthCreateUserDatabaseError(error)) {
+        throw error;
+      }
+
+      logger.warn('admin_user_create_auth_fallback_to_invite', {
+        requestId: req.requestId ?? null,
+        orgId,
+        email: rawEmail,
+        code: error?.code ?? null,
+        message: error?.message ?? null,
+      });
+
+      const orgSummary = await fetchOrganizationSummary(orgId);
+      const { invite, duplicate } = await createOrgInvite({
+        orgId,
+        email: rawEmail,
+        role: membershipRole,
+        inviter: actor,
+        orgName: orgSummary?.name || 'Your organization',
+        metadata: {
+          source: 'admin_user_create_fallback',
+          first_name: firstName,
+          last_name: lastName,
+          full_name: `${firstName} ${lastName}`.trim(),
+          job_title: jobTitle || null,
+          department: department || null,
+          cohort: cohort || null,
+          phone_number: phoneNumber || null,
+        },
+        requestId: req.requestId ?? null,
+      });
+
+      res.status(202).json({
+        data: {
+          inviteId: invite?.id ?? null,
+          email: rawEmail,
+          organization_id: orgId,
+          status: duplicate ? 'pending' : 'invited',
+        },
+        created: false,
+        existingAccount: false,
+        membershipCreated: false,
+        inviteOnly: true,
+        duplicateInvite: duplicate,
+        message: 'Direct account creation failed in Supabase auth, so an invite was created instead.',
+      });
+      return;
+    }
   } catch (error) {
     const normalized = logUsersStageError('user_create', error, {
       requestId: req.requestId ?? null,
@@ -7006,7 +7116,7 @@ const resolveUserMessageRecipients = async (userId, provided = []) => {
     const { data: profile } = await supabase
       .from('user_profiles')
       .select('email')
-      .eq('user_id', userId)
+      .eq('id', userId)
       .maybeSingle();
     if (profile?.email) {
       candidates.push(profile.email);
@@ -8391,6 +8501,35 @@ async function updateProvisionedUserProfile(userId, orgId, updates = {}) {
   return payload;
 }
 
+function buildAuthUserMetadata({
+  firstName,
+  lastName,
+  orgId = null,
+  extra = {},
+} = {}) {
+  const normalizedFirstName = typeof firstName === 'string' ? firstName.trim() : '';
+  const normalizedLastName = typeof lastName === 'string' ? lastName.trim() : '';
+  const fullName = `${normalizedFirstName} ${normalizedLastName}`.trim();
+
+  return {
+    first_name: normalizedFirstName || null,
+    last_name: normalizedLastName || null,
+    full_name: fullName || null,
+    organization_id: orgId ?? null,
+    onboarding_org_id: orgId ?? null,
+    ...extra,
+  };
+}
+
+function isSupabaseAuthCreateUserDatabaseError(error) {
+  const message = String(error?.message || '').toLowerCase();
+  const code = String(error?.code || '').toLowerCase();
+  return (
+    code === 'unexpected_failure' ||
+    message.includes('database error creating new user')
+  );
+}
+
 async function provisionOrganizationUserAccount({
   orgId,
   email,
@@ -8442,11 +8581,7 @@ async function provisionOrganizationUserAccount({
       email: normalizedEmail,
       password,
       email_confirm: true,
-      user_metadata: {
-        first_name: firstName,
-        last_name: lastName,
-        organization_id: orgId,
-      },
+      user_metadata: buildAuthUserMetadata({ firstName, lastName, orgId }),
     });
     if (error) {
       throw error;
@@ -16523,10 +16658,14 @@ app.post('/api/invite/:token/accept', async (req, res) => {
         email: inviteRecord.email,
         password,
         email_confirm: true,
-        user_metadata: {
-          full_name: fullName || inviteRecord.invited_name || null,
-          onboarding_org_id: inviteRecord.organization_id,
-        },
+        user_metadata: buildAuthUserMetadata({
+          firstName: fullName ? fullName.split(/\s+/).slice(0, -1).join(' ') || fullName.split(/\s+/)[0] || '' : '',
+          lastName: fullName ? fullName.split(/\s+/).slice(1).join(' ') : '',
+          orgId: inviteRecord.organization_id,
+          extra: {
+            full_name: fullName || inviteRecord.invited_name || null,
+          },
+        }),
       });
       if (error) {
         logger.error('invite_accept_user_create_failed', { message: error?.message || String(error) });
@@ -17005,9 +17144,9 @@ app.post('/api/orgs/:orgId/memberships/accept', async (req, res) => {
     const { data, error } = await supabase
       .from('organization_memberships')
       .update({ status: 'active', accepted_at: now, last_seen_at: now })
-      .eq('org_id', orgId)
+      .eq('organization_id', orgId)
       .eq('user_id', context.userId)
-      .select(buildMembershipSelect('id', 'org_id', 'user_id', 'role', 'status', 'accepted_at', 'last_seen_at'))
+      .select(buildMembershipSelect('id', 'organization_id', 'user_id', 'role', 'status', 'accepted_at', 'last_seen_at'))
       .maybeSingle();
 
     if (error) throw error;
@@ -17021,7 +17160,7 @@ app.post('/api/orgs/:orgId/memberships/accept', async (req, res) => {
         await supabase
           .from('org_invites')
           .update({ status: 'accepted' })
-          .eq('org_id', orgId)
+          .eq('organization_id', orgId)
           .eq('email', req.user.email.toLowerCase())
           .in('status', ['pending', 'sent']);
       } catch (inviteError) {
@@ -17030,7 +17169,7 @@ app.post('/api/orgs/:orgId/memberships/accept', async (req, res) => {
       const { count } = await supabase
         .from('org_invites')
         .select('id', { count: 'exact', head: true })
-        .eq('org_id', orgId)
+        .eq('organization_id', orgId)
         .in('status', ['pending', 'sent']);
       const actor = buildActorFromRequest(req);
       await recordActivationEvent(orgId, 'invite_accepted', { membershipId: data.id }, actor);
@@ -17056,7 +17195,7 @@ app.post('/api/orgs/:orgId/memberships/leave', async (req, res) => {
     const { data: membership, error } = await supabase
       .from('organization_memberships')
       .select('id, role, status')
-      .eq('org_id', orgId)
+      .eq('organization_id', orgId)
       .eq('user_id', context.userId)
       .maybeSingle();
 
@@ -17070,7 +17209,7 @@ app.post('/api/orgs/:orgId/memberships/leave', async (req, res) => {
       const { count, error: countError } = await supabase
         .from('organization_memberships')
         .select('id', { count: 'exact', head: true })
-        .eq('org_id', orgId)
+        .eq('organization_id', orgId)
         .eq('role', 'owner')
         .eq('status', 'active');
 
@@ -17085,7 +17224,7 @@ app.post('/api/orgs/:orgId/memberships/leave', async (req, res) => {
     const { error: updateError } = await supabase
       .from('organization_memberships')
       .update({ status: 'revoked', last_seen_at: now })
-      .eq('org_id', orgId)
+      .eq('organization_id', orgId)
       .eq('user_id', context.userId);
 
     if (updateError) throw updateError;
@@ -17324,7 +17463,7 @@ app.put('/api/users/me', async (req, res) => {
     const { data: existingProfile, error: profileError } = await supabase
       .from('user_profiles')
       .select('*')
-      .eq('user_id', context.userId)
+      .eq('id', context.userId)
       .maybeSingle();
 
     if (profileError) throw profileError;
@@ -17346,7 +17485,7 @@ app.put('/api/users/me', async (req, res) => {
 
     const { data: upsertedProfile, error: upsertError } = await supabase
       .from('user_profiles')
-      .upsert(profilePayload, { onConflict: 'user_id' })
+      .upsert(profilePayload, { onConflict: 'id' })
       .select('*')
       .single();
 
@@ -17863,11 +18002,15 @@ const buildLessonVideoStoragePath = ({ courseId, moduleId, lessonId, filename })
   return ['courses', safeCourse, safeModule, `${safeLesson}-${timestamp}`, safeName].join('/');
 };
 
-const createSignedDocumentUrl = async (storagePath, ttlSeconds = DOCUMENT_URL_TTL_SECONDS) => {
-  if (!supabase || !storagePath) return null;
+const createSignedDocumentUrl = async (
+  storagePath,
+  ttlSeconds = DOCUMENT_URL_TTL_SECONDS,
+  bucket = DOCUMENTS_BUCKET,
+) => {
+  if (!supabase || !storagePath || !bucket) return null;
   try {
     const { data, error } = await supabase.storage
-      .from(DOCUMENTS_BUCKET)
+      .from(bucket)
       .createSignedUrl(storagePath, ttlSeconds);
     if (error) throw error;
     if (!data?.signedUrl) return null;
@@ -17899,7 +18042,8 @@ const refreshDocumentSignedUrls = async (records = []) => {
     records.map(async (record) => {
       if (!needsSignedUrlRefresh(record)) return;
       const storagePath = record?.storage_path ?? record?.storagePath;
-      const signed = await createSignedDocumentUrl(storagePath);
+      const bucket = record?.bucket || DOCUMENTS_BUCKET;
+      const signed = await createSignedDocumentUrl(storagePath, DOCUMENT_URL_TTL_SECONDS, bucket);
       if (!signed) return;
       record.url = signed.url;
       record.url_expires_at = signed.expiresAt;
@@ -18198,9 +18342,10 @@ app.post('/api/admin/documents', async (req, res) => {
     let storagePath = payload.storagePath ?? null;
     let url = payload.url ?? null;
     let urlExpiresAt = payload.urlExpiresAt ?? null;
+    const documentBucket = payload.bucket ?? DOCUMENTS_BUCKET;
 
     if (storagePath && (!url || !urlExpiresAt)) {
-      const signed = await createSignedDocumentUrl(storagePath);
+      const signed = await createSignedDocumentUrl(storagePath, DOCUMENT_URL_TTL_SECONDS, documentBucket);
       if (signed) {
         url = signed.url;
         urlExpiresAt = signed.expiresAt;
@@ -18217,6 +18362,7 @@ app.post('/api/admin/documents', async (req, res) => {
       tags: Array.isArray(payload.tags) ? payload.tags : [],
       file_type: payload.fileType ?? null,
       file_size: typeof payload.fileSize === 'number' ? payload.fileSize : null,
+      bucket: payload.bucket ?? DOCUMENTS_BUCKET,
       storage_path: storagePath,
       url_expires_at: urlExpiresAt,
       visibility: payload.visibility ?? 'global',
@@ -18265,7 +18411,7 @@ app.put('/api/admin/documents/:id', async (req, res) => {
   try {
     const { data: existingDoc, error: existingError } = await supabase
       .from('documents')
-      .select('id, organization_id')
+      .select('id, organization_id, bucket, storage_path, url, url_expires_at')
       .eq('id', id)
       .maybeSingle();
     if (existingError) throw existingError;
@@ -18293,6 +18439,7 @@ app.put('/api/admin/documents/:id', async (req, res) => {
       tags: 'tags',
       fileType: 'file_type',
       fileSize: 'file_size',
+      bucket: 'bucket',
       storagePath: 'storage_path',
       urlExpiresAt: 'url_expires_at',
       visibility: 'visibility',
@@ -18327,6 +18474,18 @@ app.put('/api/admin/documents/:id', async (req, res) => {
       if (error) throw error;
       res.json({ data });
       return;
+    }
+
+    const effectiveStoragePath = updatePayload.storage_path ?? existingDoc.storage_path ?? null;
+    const effectiveBucket = updatePayload.bucket ?? existingDoc.bucket ?? DOCUMENTS_BUCKET;
+    const hasExplicitUrl = Object.prototype.hasOwnProperty.call(updatePayload, 'url');
+    const hasExplicitUrlExpiry = Object.prototype.hasOwnProperty.call(updatePayload, 'url_expires_at');
+    if (effectiveStoragePath && (!hasExplicitUrl || !hasExplicitUrlExpiry)) {
+      const signed = await createSignedDocumentUrl(effectiveStoragePath, DOCUMENT_URL_TTL_SECONDS, effectiveBucket);
+      if (signed) {
+        if (!hasExplicitUrl) updatePayload.url = signed.url;
+        if (!hasExplicitUrlExpiry) updatePayload.url_expires_at = signed.expiresAt;
+      }
     }
 
     const { data, error } = await supabase

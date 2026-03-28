@@ -24,7 +24,7 @@ import { ApiError } from '../../utils/apiClient';
 import { resolveLessonVideoPlayback } from '../../utils/videoUtils';
 import { uploadLessonVideo, uploadDocumentResource } from '../../dal/media';
 import { canonicalizeLessonContent, canonicalizeQuizQuestions } from '../../utils/lessonContent';
-import { COURSE_VIDEOS_BUCKET } from '../../config/mediaBuckets';
+import { COURSE_DOCUMENTS_BUCKET, COURSE_VIDEOS_BUCKET } from '../../config/mediaBuckets';
 import { 
   ArrowLeft, 
   Save, 
@@ -3421,7 +3421,7 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
       const documentAsset: LessonVideoAsset = {
         assetId: payload.assetId,
         storagePath: payload.storagePath,
-        bucket: payload.bucket || 'course-documents',
+        bucket: payload.bucket || COURSE_DOCUMENTS_BUCKET,
         bytes: payload.fileSize ?? file.size,
         mimeType: payload.fileType || file.type || 'application/octet-stream',
         uploadedAt: new Date().toISOString(),

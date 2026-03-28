@@ -281,7 +281,9 @@ const provisionImportedUser = async (user, actorUserId, defaultOrgId) => {
       user_metadata: {
         first_name: derivedFirstName,
         last_name: derivedLastName,
+        full_name: `${derivedFirstName} ${derivedLastName}`.trim() || null,
         organization_id: orgId,
+        onboarding_org_id: orgId,
       },
     });
     if (error) throw error;
