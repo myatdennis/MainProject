@@ -267,6 +267,15 @@ const serializeErrorObject = (error) => {
   }
 };
 
+const emitConsolePayload = (label, payload, level = 'error') => {
+  const line = JSON.stringify(payload, null, 2);
+  if (level === 'warn') {
+    console.warn(`${label} ${line}`);
+    return;
+  }
+  console.error(`${label} ${line}`);
+};
+
 const logStructuredError = (label, error, meta = {}) => {
   const enrichedMeta =
     meta && typeof meta === 'object'
@@ -2910,9 +2919,11 @@ const checkSupabaseHealth = async () => {
 // In DEV_FALLBACK/E2E mode the in-memory demo store is the source of truth, even
 // if Supabase credentials exist in the environment. Production keeps Supabase as
 // the only source of truth.
-const persistedData = loadPersistedData();
 const _loadCoursesFromDisk = Boolean(E2E_TEST_MODE || DEV_FALLBACK);
-if (supabaseServerConfigured && !DEV_FALLBACK && !E2E_TEST_MODE && (persistedData.courses || []).length > 0) {
+const persistedData = _loadCoursesFromDisk
+  ? loadPersistedData()
+  : { courses: [], surveys: [], surveyAssignments: [] };
+if (supabaseServerConfigured && !_loadCoursesFromDisk && (persistedData.courses || []).length > 0) {
   logger.warn('persistent_storage_courses_ignored', {
     message: 'demo-data.json contains courses but Supabase is configured — disk courses will NOT be loaded. Supabase is the sole source of truth.',
     diskCourseCount: (persistedData.courses || []).length,
@@ -6700,10 +6711,11 @@ async function createOrgInvite({
     expires_at: expiresAt,
   };
 
-  if (inviteOrgColumn !== 'organization_id') delete payload.organization_id;
-  if (inviteOrgColumn !== 'org_id') delete payload.org_id;
-  if (inviteTokenColumn !== 'token') delete payload.token;
-  if (inviteTokenColumn !== 'invite_token') delete payload.invite_token;
+  // Keep both canonical and legacy fields populated. The live database still has
+  // trigger/procedure paths that read org_id/invite_token directly even when the
+  // canonical columns are present.
+  void inviteOrgColumn;
+  void inviteTokenColumn;
 
   const { data, error } = await supabase
     .from('org_invites')
@@ -15423,7 +15435,7 @@ const ensureAdminOrgSchemaOrRespond = async (res, label, meta = {}) => {
       requestId,
       ...normalized,
     };
-    console.error('[organizations.schema_guard_failed]', payload);
+    emitConsolePayload('[organizations.schema_guard_failed]', payload);
     logger.error('organizations_schema_guard_failed', payload);
     logOrganizationsEvent('schema_guard_check', {
       requestId,
@@ -15503,7 +15515,7 @@ const logOrganizationsStageError = (stage, error, meta = {}) => {
     ...normalized,
     rawError: safeSerializeError(error),
   };
-  console.error('[organizations.stage_error]', payload);
+  emitConsolePayload('[organizations.stage_error]', payload);
   logger.error('organizations_stage_error', payload);
   return normalized;
 };
@@ -15543,8 +15555,9 @@ const logUsersStageError = (stage, error, meta = {}) => {
     stage,
     ...meta,
     ...normalized,
+    rawError: safeSerializeError(error),
   };
-  console.error('[admin.users.stage_error]', payload);
+  emitConsolePayload('[admin.users.stage_error]', payload);
   logger.error('admin_users_stage_error', payload);
   return normalized;
 };
@@ -21411,7 +21424,7 @@ app.use((err, req, res, next) => {
     message: err?.message || String(err),
     code: err?.code || null,
   };
-  console.error('[express] unhandled_error', payload);
+  emitConsolePayload('[express] unhandled_error', payload);
   if (res.headersSent) {
     return next(err);
   }

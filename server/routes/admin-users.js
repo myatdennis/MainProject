@@ -141,6 +141,8 @@ const createInviteFallback = async ({ orgId, email, role, actorUserId = null, fi
   }
 
   const payload = {
+    organization_id: orgId,
+    org_id: orgId,
     email: normalizedEmail,
     role,
     status: 'pending',
@@ -148,9 +150,11 @@ const createInviteFallback = async ({ orgId, email, role, actorUserId = null, fi
     created_by: actorUserId ?? null,
     inviter_id: actorUserId ?? null,
     invited_name: `${normalizeText(firstName)} ${normalizeText(lastName)}`.trim() || null,
+    token,
+    invite_token: token,
   };
-  payload[orgColumn] = orgId;
-  payload[tokenColumn] = token;
+  void orgColumn;
+  void tokenColumn;
 
   const { data, error } = await supabase.from('org_invites').insert(payload).select('id,email').single();
   if (error) throw error;
