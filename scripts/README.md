@@ -56,3 +56,18 @@ Optional overrides:
 - `SMOKE_NEW_USER_EMAIL` to force a specific test email.
 - `SMOKE_NEW_USER_PASSWORD` to force a specific test password.
 - `SMOKE_SKIP_IF_MISSING=1` to exit 0 when required env vars are missing.
+
+## reset_admin_login.cjs
+
+Reset a Supabase admin user's password (and optionally ensure they are allowlisted).
+
+```bash
+SUPABASE_URL=https://<project>.supabase.co \
+SUPABASE_SERVICE_ROLE_KEY=<service-role-key> \
+ADMIN_EMAIL=mya@the-huddle.co \
+NEW_PASSWORD='NewStrongPassword!123' \
+node scripts/reset_admin_login.cjs
+```
+
+Optional:
+- `ENSURE_ADMIN=1` to upsert the user into `admin_users` allowlist.
