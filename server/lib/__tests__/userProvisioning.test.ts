@@ -18,6 +18,7 @@ type MockOptions = {
   skipProfileStore?: boolean;
   skipMembershipStore?: boolean;
   setupLink?: string | null;
+  forceGetUserByEmailNotFound?: boolean;
 };
 
 const createMockSupabase = ({
@@ -28,6 +29,7 @@ const createMockSupabase = ({
   skipProfileStore = false,
   skipMembershipStore = false,
   setupLink = 'https://setup.link/token',
+  forceGetUserByEmailNotFound = false,
 }: MockOptions = {}) => {
   const store: SupabaseStore = {
     authUsers: new Map(),
@@ -49,6 +51,9 @@ const createMockSupabase = ({
       return { data: { user }, error: null };
     }),
     getUserByEmail: vi.fn(async (email: string) => {
+      if (forceGetUserByEmailNotFound) {
+        return { data: { user: null }, error: { message: 'User not found' } };
+      }
       const user = store.authUsers.get(email) ?? null;
       return { data: { user }, error: user ? null : { message: 'User not found' } };
     }),
@@ -198,6 +203,26 @@ describe('createOrProvisionOrganizationUser', () => {
 
     expect(result.created).toBe(false);
     expect(result.userId).toBe('user-10');
+  });
+
+  it('falls back to listUsers when getUserByEmail reports not found', async () => {
+    const { supabase, store } = createMockSupabase({ forceGetUserByEmailNotFound: true });
+    store.authUsers.set('fallback@user.com', { id: 'user-11', email: 'fallback@user.com' });
+    const sendEmail = vi.fn(async () => ({ delivered: true, id: 'msg-3' }));
+
+    const result = await createOrProvisionOrganizationUser(
+      {
+        orgId: 'org-1',
+        email: 'fallback@user.com',
+        firstName: 'Fallback',
+        lastName: 'User',
+        membershipRole: 'member',
+      },
+      { supabase, sendEmail, getOrganizationMembershipsOrgColumnName: async () => 'organization_id' },
+    );
+
+    expect(result.created).toBe(false);
+    expect(result.userId).toBe('user-11');
   });
 
   it('fails when profile upsert fails', async () => {

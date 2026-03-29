@@ -252,10 +252,16 @@ const findAuthUserByEmail = async (email) => {
   const directLookup = supabase.auth?.admin?.getUserByEmail;
   if (typeof directLookup === 'function') {
     const { data, error } = await directLookup.call(supabase.auth.admin, normalizedEmail);
-    if (error && error.message !== 'User not found') {
-      throw error;
+    if (error) {
+      const message = String(error?.message || '').toLowerCase();
+      const isNotFound = message.includes('user not found');
+      if (!isNotFound) {
+        throw error;
+      }
     }
-    return data?.user ?? null;
+    if (data?.user) {
+      return data.user;
+    }
   }
 
   const perPage = 200;
