@@ -52,7 +52,7 @@ import LoadingButton from '../../components/LoadingButton';
 import EditOrganizationModal from '../../components/EditOrganizationModal';
 import AddUserModal from '../../components/AddUserModal';
 import { useToast } from '../../context/ToastContext';
-import { sendOrganizationMessage } from '../../services/adminCommunicationService';
+import { sendOrganizationMessage } from '../../dal/adminCommunication';
 
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar, PieChart, Pie, Cell } from 'recharts';
 
@@ -244,6 +244,13 @@ const OrganizationDetails: React.FC = () => {
       setSendingMessage(false);
     }
   };
+
+  const organizationOptions: Array<{ id: string; name: string }> = [];
+  if (organization) {
+    organizationOptions.push({ id: organization.id, name: organization.name });
+  } else if (id) {
+    organizationOptions.push({ id: String(id), name: 'Current Organization' });
+  }
 
   if (loading) {
     // Inline skeleton — renders within the page shell so [PAGE COMMIT] fires
@@ -1725,7 +1732,8 @@ const OrganizationDetails: React.FC = () => {
         isOpen={showAddUserModal}
         onClose={() => setShowAddUserModal(false)}
         onUserAdded={handleUserProvisioned}
-        organizations={organization ? [{ id: organization.id, name: organization.name }] : id ? [{ id, name: organization?.name ?? 'Current Organization' }] : []}
+        organizations={organizationOptions}
+        defaultOrgId={organization?.id ?? (id ? String(id) : null)}
       />
     </div>
   );

@@ -227,7 +227,6 @@ const AdminDashboard = () => {
     },
   // routeKey: re-derive stat labels when we navigate back to the dashboard
   // so stale values from a prior visit don't persist.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   ], [ov, analyticsLoading, routeKey]);
 
   // Track whether the catalog has ever successfully loaded in this session.

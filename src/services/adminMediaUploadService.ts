@@ -1,5 +1,6 @@
 import { buildApiUrl } from '../config/apiBase';
 import buildAuthHeaders from '../utils/requestContext';
+import { getCSRFToken } from '../utils/csrfToken';
 
 export type UploadProgressHandler = (percent: number, event?: ProgressEvent<EventTarget>) => void;
 
@@ -15,13 +16,17 @@ const sendFormDataWithProgress = async (path: string, formData: FormData, option
     const xhr = new XMLHttpRequest();
     xhr.open('POST', url, true);
     xhr.responseType = 'json';
-    xhr.withCredentials = false;
+    xhr.withCredentials = true;
     xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
     Object.entries(headers).forEach(([key, value]) => {
       if (value) {
         xhr.setRequestHeader(key, value);
       }
     });
+    const csrfToken = getCSRFToken();
+    if (csrfToken && !headers['X-CSRF-Token']) {
+      xhr.setRequestHeader('X-CSRF-Token', csrfToken);
+    }
 
     const cleanup = () => {
       if (options.signal) {

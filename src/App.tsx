@@ -102,7 +102,6 @@ const AdminProtectedLayout = () => {
     // admin sub-tree and is about to commit the new route to the DOM.
     // If [NAV CLICK] appears but [ROUTE MATCHED] does not, the problem is
     // in the router match layer (unlikely) or a parent guard blocking render.
-    // eslint-disable-next-line no-console
     console.debug('[ROUTE MATCHED] admin', loc.pathname);
   }
   return (

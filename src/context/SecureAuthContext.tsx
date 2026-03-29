@@ -2104,8 +2104,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       // Ensure the Supabase client clears any persisted session in browser storage.
       try {
         const supabaseClient = getSupabase();
-        // signOut may fail in some E2E override scenarios; ignore errors.
-        // eslint-disable-next-line @typescript-eslint/no-floating-promises
+  // signOut may fail in some E2E override scenarios; ignore errors.
         supabaseClient?.auth.signOut();
       } catch (signOutErr) {
         console.warn('[SecureAuth] supabase.signOut() failed during logout cleanup', signOutErr);

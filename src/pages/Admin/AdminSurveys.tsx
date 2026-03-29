@@ -36,7 +36,7 @@ import EmptyState from '../../components/ui/EmptyState';
 import SurveyQueueStatus from '../../components/Survey/SurveyQueueStatus';
 import SurveyAssignmentModal from '../../components/Survey/SurveyAssignmentModal';
 import type { Survey } from '../../types/survey';
-import { listOrgs } from '../../services/orgService';
+import { listOrgs } from '../../dal/orgs';
 import {
   listSurveys,
   saveSurvey as persistSurvey,
@@ -121,7 +121,6 @@ const AdminSurveys = () => {
     setFilterStatus('all');
     setFilterType('all');
     setSelectedSurveys([]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routeKey]);
 
   const shapeSurveyRecord = useCallback(

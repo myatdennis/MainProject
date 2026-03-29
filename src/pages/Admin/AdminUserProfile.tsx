@@ -7,7 +7,7 @@ import {
   sendUserMessage,
   listUserMessages,
   type AdminMessageRecord,
-} from '../../services/adminCommunicationService';
+} from '../../dal/adminCommunication';
 
 const AdminUserProfile: React.FC = () => {
   const { userId } = useParams<{ userId: string }>();

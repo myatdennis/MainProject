@@ -23,6 +23,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import AddUserModal from '../../components/AddUserModal';
+import UserCsvImportModal from '../../components/Admin/UserCsvImportModal';
 import ConfirmationModal from '../../components/ConfirmationModal';
 import CourseAssignmentModal from '../../components/CourseAssignmentModal';
 import LoadingButton from '../../components/LoadingButton';
@@ -33,7 +34,7 @@ import PageWrapper from '../../components/PageWrapper';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import EmptyState from '../../components/ui/EmptyState';
 import ActionsMenu from '../../components/ui/ActionsMenu';
-import { listOrgs } from '../../services/orgService';
+import { listOrgs } from '../../dal/orgs';
 import { listUsersByOrg } from '../../dal/adminUsers';
 import { useSecureAuth } from '../../context/SecureAuthContext';
 import { LoadingSpinner } from '../../components/LoadingComponents';
@@ -53,7 +54,6 @@ const AdminUsers = () => {
     setFilterOrg('all');
     setFilterStatus('all');
     setSelectedUsers([]);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routeKey]);
 
   const { showToast } = useToast();
@@ -62,6 +62,7 @@ const AdminUsers = () => {
   const [filterStatus, setFilterStatus] = useState('all');
   const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
   const [showAddUserModal, setShowAddUserModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showCourseAssignModal, setShowCourseAssignModal] = useState(false);
   const [showEditUserModal, setShowEditUserModal] = useState(false);
@@ -331,21 +332,7 @@ const AdminUsers = () => {
   };
 
   const handleImportCSV = () => {
-    // Create file input element
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.csv';
-    input.onchange = (e: any) => {
-      const file = e.target?.files?.[0];
-      if (file) {
-        showToast(`Importing ${file.name}...`, 'info');
-        // Here you would implement the actual CSV import logic
-        setTimeout(() => {
-          showToast('CSV import completed successfully!', 'success');
-        }, 3000);
-      }
-    };
-    input.click();
+    setShowImportModal(true);
   };
 
   const handleExport = async () => {
@@ -755,6 +742,14 @@ const AdminUsers = () => {
         onClose={() => setShowAddUserModal(false)}
         onUserAdded={handleUserAdded}
         organizations={organizations}
+        defaultOrgId={filterOrg !== 'all' ? filterOrg : activeOrgId}
+      />
+
+      <UserCsvImportModal
+        isOpen={showImportModal}
+        onClose={() => setShowImportModal(false)}
+        organizations={organizations}
+        onImportComplete={() => void fetchUsers()}
       />
 
       <CourseAssignmentModal
@@ -789,6 +784,7 @@ const AdminUsers = () => {
           onUserAdded={handleUserUpdated}
           editUser={userToEdit}
           organizations={organizations}
+          defaultOrgId={filterOrg !== 'all' ? filterOrg : activeOrgId}
         />
       )}
     </PageWrapper>

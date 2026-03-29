@@ -118,7 +118,6 @@ const AdminOrgWorkspace = () => {
     setSubscriptionFilter('all');
     setSelectedOrgId(null);
     setSelectedOrgProfile(null);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [routeKey]);
 
   const [showDeleteModal, setShowDeleteModal] = useState(false);
@@ -224,7 +223,6 @@ const AdminOrgWorkspace = () => {
       return cleanup;
     },
     // selectedOrgId intentionally omitted — read via ref to prevent refetch storms
-    // eslint-disable-next-line react-hooks/exhaustive-deps
     [debouncedSearch, statusFilter, subscriptionFilter, showToast],
   );
 

@@ -1,0 +1,2 @@
+email,first_name,last_name,organization_id,role,job_title,department,phone_number,course_ids
+jane.doe@example.com,Jane,Doe,ORG_ID_HERE,member,Program Manager,Operations,555-0100,course-uuid-1|course-uuid-2

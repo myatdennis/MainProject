@@ -8,6 +8,7 @@ import {
   listOnboardingInvites,
   resendOnboardingInvite,
   revokeOnboardingInvite,
+  type InviteInput,
 } from '../../dal/onboarding';
 import {
   bulkOrgInvites as bulkAdminOrgInvites,
@@ -16,7 +17,8 @@ import {
   resendOrgInvite as resendAdminOrgInvite,
   remindOrgInvite as remindAdminOrgInvite,
   revokeOrgInvite as revokeAdminOrgInvite,
-} from '../../services/orgService';
+  type OrgInviteInput,
+} from '../../dal/orgs';
 
 interface InviteRecord {
   id: string;
@@ -129,8 +131,8 @@ const normalizeBulkEntries = (text: string, fallbackRole: string) => {
 
 type InviteApi = {
   list: (orgId: string) => Promise<{ data: any[] }>;
-  create: (orgId: string, payload: Record<string, any>) => Promise<any>;
-  bulk: (orgId: string, invites: Array<Record<string, any>>) => Promise<{ results: Array<Record<string, any>> }>;
+  create: (orgId: string, payload: InviteInput | OrgInviteInput) => Promise<any>;
+  bulk: (orgId: string, invites: Array<InviteInput | OrgInviteInput>) => Promise<{ results: Array<Record<string, any>> }>;
   resend: (orgId: string, inviteId: string) => Promise<any>;
   revoke: (orgId: string, inviteId: string) => Promise<any>;
   remind?: (orgId: string, inviteId: string) => Promise<any>;
@@ -558,7 +560,7 @@ const InviteManager = ({ orgId, defaultRole = 'member', onInvitesChanged, mode =
                         <LoadingButton
                           onClick={() => handleResend(invite.id, { reminder: true })}
                           loading={actionInviteId === invite.id}
-                          variant="ghost"
+                          variant="secondary"
                           disabled={!inviteApi.remind}
                         >
                           <Mail className="h-4 w-4" />

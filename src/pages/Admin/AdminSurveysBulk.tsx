@@ -65,7 +65,7 @@ const AdminSurveysBulk: React.FC = () => {
     );
     setRows(results);
     setIsLoading(false);
-  }, [rawIds]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [rawIds]);
 
   useEffect(() => {
     loadSurveys();

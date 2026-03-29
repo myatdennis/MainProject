@@ -28,7 +28,6 @@ export const useNavTrace = (pageName: string): void => {
     // Using a ref-based guard so the log only fires once per pathname (not on
     // every re-render caused by unrelated state updates in the same page).
     if (committedPathRef.current !== location.pathname) {
-      // eslint-disable-next-line no-console
       console.debug('[PAGE RENDER]', location.pathname, pageName);
     }
   }
@@ -40,7 +39,6 @@ export const useNavTrace = (pageName: string): void => {
     // started rendering but threw or was interrupted before committing.
     if (committedPathRef.current === location.pathname) return;
     committedPathRef.current = location.pathname;
-    // eslint-disable-next-line no-console
     console.debug('[PAGE COMMIT]', location.pathname, pageName);
   }, [location.pathname, pageName]);
 };

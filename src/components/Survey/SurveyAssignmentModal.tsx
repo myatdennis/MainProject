@@ -2,9 +2,8 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Calendar, Check, Loader2, Users, X } from 'lucide-react';
 import clsx from 'clsx';
 import { assignSurvey } from '../../dal/surveys';
-import orgService, { invalidateOrgListCache } from '../../services/orgService';
+import orgService, { invalidateOrgListCache, type Org } from '../../dal/orgs';
 import adminUsers, { AdminUserRecord } from '../../dal/adminUsers';
-import type { Org } from '../../services/orgService';
 import { useToast } from '../../context/ToastContext';
 
 type SurveyAssignmentModalProps = {

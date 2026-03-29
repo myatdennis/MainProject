@@ -24,6 +24,86 @@ const normalizeOrgRole = (value, fallback = 'member') => {
   const normalized = normalizeText(value).toLowerCase();
   return ORG_ROLE_VALUES.has(normalized) ? normalized : fallback;
 };
+const isValidEmail = (value = '') => {
+  const normalized = normalizeEmail(value);
+  if (!normalized) return false;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalized);
+};
+
+const parseCsvLine = (line) => {
+  const result = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const char = line[i];
+    if (char === '"') {
+      const nextChar = line[i + 1];
+      if (inQuotes && nextChar === '"') {
+        current += '"';
+        i += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+    if (char === ',' && !inQuotes) {
+      result.push(current);
+      current = '';
+      continue;
+    }
+    current += char;
+  }
+  result.push(current);
+  return result;
+};
+
+const parseCsvText = (text) => {
+  if (!text) return [];
+  const lines = String(text).replace(/\r/g, '').split('\n').filter((line) => line.trim().length > 0);
+  if (!lines.length) return [];
+  const headers = parseCsvLine(lines[0]).map((h) => normalizeText(h));
+  return lines.slice(1).map((line) => {
+    const values = parseCsvLine(line);
+    const row = {};
+    headers.forEach((header, idx) => {
+      row[header] = normalizeText(values[idx] ?? '');
+    });
+    return row;
+  });
+};
+
+const parseCourseIds = (value) => {
+  if (Array.isArray(value)) return value.map((id) => normalizeText(id)).filter(Boolean);
+  if (typeof value !== 'string') return [];
+  const normalized = value.trim();
+  if (!normalized) return [];
+  return normalized
+    .split(/[;|]/g)
+    .flatMap((chunk) => chunk.split(',').map((id) => id.trim()))
+    .filter(Boolean);
+};
+
+const normalizeImportRow = (row, index, fallbackOrgId) => {
+  const email = normalizeEmail(row.email || row.email_address || row.user_email);
+  const orgId =
+    normalizeText(row.organization_id || row.organizationId || row.org_id || row.orgId) ||
+    normalizeText(fallbackOrgId) ||
+    '';
+  const role = normalizeText(row.role || row.membership_role || row.membershipRole || '').toLowerCase();
+  return {
+    index,
+    raw: row,
+    email,
+    orgId,
+    role,
+    firstName: normalizeText(row.first_name || row.firstName || row.given_name || ''),
+    lastName: normalizeText(row.last_name || row.lastName || row.family_name || ''),
+    jobTitle: normalizeText(row.job_title || row.jobTitle || ''),
+    department: normalizeText(row.department || ''),
+    phoneNumber: normalizeText(row.phone_number || row.phoneNumber || ''),
+    courseIds: parseCourseIds(row.course_ids || row.courseIds || row.courses || ''),
+  };
+};
 
 const isMissingColumnError = (error) =>
   error?.code === '42703' ||
@@ -408,6 +488,246 @@ const assignPublishedOrganizationCoursesToUser = async ({ orgId, userId, actorUs
   return { inserted: inserts.length, updated: updates.length };
 };
 
+const assignCourseIdsToUser = async ({ orgId, userId, courseIds, actorUserId = null }) => {
+  if (!courseIds?.length) return { inserted: 0, updated: 0 };
+  const uniqueCourseIds = Array.from(new Set(courseIds.map((id) => String(id))));
+
+  const assignmentOrgColumn = await resolveAssignmentsOrgColumn();
+  const { data: existingRows, error: existingError } = await supabase
+    .from('assignments')
+    .select('id,course_id,metadata,assigned_by')
+    .eq(assignmentOrgColumn, orgId)
+    .eq('user_id', userId)
+    .eq('assignment_type', 'course')
+    .eq('active', true)
+    .in('course_id', uniqueCourseIds);
+  if (existingError) throw existingError;
+
+  const existingMap = new Map(
+    (existingRows || []).filter((row) => row?.course_id).map((row) => [String(row.course_id), row]),
+  );
+  const updates = [];
+  const inserts = [];
+
+  for (const courseId of uniqueCourseIds) {
+    const existing = existingMap.get(String(courseId));
+    if (existing) {
+      updates.push({
+        id: existing.id,
+        metadata: {
+          ...(existing.metadata && typeof existing.metadata === 'object' ? existing.metadata : {}),
+          assigned_via: 'csv_import',
+          assignment_source: 'csv_import',
+        },
+        assigned_by: existing.assigned_by ?? actorUserId ?? null,
+        active: true,
+      });
+      continue;
+    }
+
+    inserts.push({
+      organization_id: orgId,
+      user_id: userId,
+      assignment_type: 'course',
+      course_id: courseId,
+      status: 'assigned',
+      assigned_by: actorUserId ?? null,
+      active: true,
+      metadata: {
+        assigned_via: 'csv_import',
+        assignment_source: 'csv_import',
+      },
+    });
+  }
+
+  for (const update of updates) {
+    const { id, ...changes } = update;
+    const { error } = await supabase.from('assignments').update(changes).eq('id', id);
+    if (error) throw error;
+  }
+
+  if (inserts.length > 0) {
+    const { error } = await supabase.from('assignments').insert(inserts);
+    if (error) throw error;
+  }
+
+  return { inserted: inserts.length, updated: updates.length };
+};
+
+const fetchOrganizationsByIds = async (supabaseClient, orgIds) => {
+  const ids = Array.from(new Set((orgIds || []).filter(Boolean)));
+  if (!ids.length) return new Set();
+  const { data, error } = await supabaseClient.from('organizations').select('id').in('id', ids);
+  if (error) throw error;
+  return new Set((data || []).map((row) => row?.id).filter(Boolean));
+};
+
+const fetchCoursesByIds = async (supabaseClient, courseIds) => {
+  const ids = Array.from(new Set((courseIds || []).filter(Boolean)));
+  if (!ids.length) return new Map();
+  const { data, error } = await supabaseClient
+    .from('courses')
+    .select('id, organization_id')
+    .in('id', ids);
+  if (error) throw error;
+  const map = new Map();
+  (data || []).forEach((row) => {
+    if (!row?.id) return;
+    const orgId = row.organization_id ?? null;
+    if (!map.has(orgId)) map.set(orgId, new Set());
+    map.get(orgId).add(String(row.id));
+  });
+  return map;
+};
+
+const validateImportRows = ({ rows, validOrgIds, courseIdsByOrg }) => {
+  const errors = new Map();
+  const seenKeys = new Set();
+
+  rows.forEach((row) => {
+    const rowErrors = [];
+    if (!row.email || !isValidEmail(row.email)) {
+      rowErrors.push('invalid email');
+    }
+    if (!row.orgId) {
+      rowErrors.push('organization_id is required');
+    } else if (validOrgIds && validOrgIds.size && !validOrgIds.has(row.orgId)) {
+      rowErrors.push('organization_id not found');
+    }
+    if (!row.role || !ORG_ROLE_VALUES.has(row.role)) {
+      rowErrors.push('invalid role');
+    }
+
+    const key = `${row.email}|${row.orgId}`;
+    if (row.email && row.orgId) {
+      if (seenKeys.has(key)) {
+        rowErrors.push('duplicate row in file');
+      } else {
+        seenKeys.add(key);
+      }
+    }
+
+    if (row.courseIds?.length) {
+      const validCourses = courseIdsByOrg?.get(row.orgId) || new Set();
+      const invalid = row.courseIds.filter((id) => !validCourses.has(String(id)));
+      if (invalid.length) {
+        rowErrors.push(`invalid course_ids: ${invalid.join(', ')}`);
+      }
+    }
+
+    if (rowErrors.length) {
+      errors.set(row.index, rowErrors);
+    }
+  });
+
+  return errors;
+};
+
+const processUserImportRows = async ({ rows, defaultOrgId, actorUserId, requestId, deps = {} }) => {
+  const supabaseClient = deps.supabaseClient || supabase;
+  const loggerInstance = deps.logger || logger;
+  const provisionUser = deps.provisionUser || ((row) => provisionImportedUser(row, actorUserId, defaultOrgId));
+  const assignCourses = deps.assignCourses || assignCourseIdsToUser;
+
+  if (!supabaseClient) {
+    throw createHttpError(503, 'supabase_not_configured', 'Supabase not configured');
+  }
+
+  const normalizedRows = rows.map((row, index) => normalizeImportRow(row, index, defaultOrgId));
+  const orgIds = normalizedRows.map((row) => row.orgId).filter(Boolean);
+  const courseIds = normalizedRows.flatMap((row) => row.courseIds || []);
+
+  const validOrgIds = await fetchOrganizationsByIds(supabaseClient, orgIds);
+  const courseIdsByOrg = await fetchCoursesByIds(supabaseClient, courseIds);
+  const validationErrors = validateImportRows({ rows: normalizedRows, validOrgIds, courseIdsByOrg });
+
+  if (validationErrors.size) {
+    validationErrors.forEach((messages, index) => {
+      const row = normalizedRows.find((entry) => entry.index === index);
+      loggerInstance.warn('admin_users_import_validation_failed', {
+        requestId,
+        rowIndex: index,
+        email: row?.email ?? null,
+        organizationId: row?.orgId ?? null,
+        message: messages.join('; '),
+      });
+    });
+  }
+
+  const results = [];
+  const batchSize = 10;
+
+  for (let i = 0; i < normalizedRows.length; i += batchSize) {
+    const batch = normalizedRows.slice(i, i + batchSize);
+    const batchResults = await Promise.all(
+      batch.map(async (row) => {
+        if (validationErrors.has(row.index)) {
+          return {
+            email: row.email,
+            organizationId: row.orgId,
+            status: 'failed',
+            message: validationErrors.get(row.index).join('; '),
+            userId: null,
+            emailSent: false,
+            setupLinkPresent: false,
+          };
+        }
+
+        try {
+          const provisionResult = await provisionUser(row.raw);
+          if (row.courseIds?.length) {
+            await assignCourses({
+              orgId: provisionResult.orgId,
+              userId: provisionResult.userId,
+              courseIds: row.courseIds,
+              actorUserId,
+            });
+          }
+
+          const status = provisionResult.created
+            ? 'created'
+            : provisionResult.membershipCreated
+              ? 'updated'
+              : 'skipped';
+
+          return {
+            email: provisionResult.email,
+            organizationId: provisionResult.orgId,
+            status,
+            message: provisionResult.created
+              ? 'user created'
+              : provisionResult.membershipCreated
+                ? 'existing user updated'
+                : 'existing membership reused',
+            userId: provisionResult.userId,
+            emailSent: Boolean(provisionResult.emailSent),
+            setupLinkPresent: Boolean(provisionResult.setupLink),
+          };
+        } catch (error) {
+          loggerInstance.warn('admin_users_import_row_failed', {
+            requestId,
+            email: row.email,
+            organizationId: row.orgId,
+            message: error?.message || String(error),
+          });
+          return {
+            email: row.email,
+            organizationId: row.orgId,
+            status: 'failed',
+            message: error?.message || 'provisioning failed',
+            userId: null,
+            emailSent: false,
+            setupLinkPresent: false,
+          };
+        }
+      }),
+    );
+    results.push(...batchResults);
+  }
+
+  return { results };
+};
+
 const assignPublishedOrganizationSurveysToUser = async ({ orgId, userId, actorUserId = null }) => {
   const surveyIds = await listPublishedOrganizationSurveyIds(orgId);
   if (!surveyIds.length) return { inserted: 0, updated: 0 };
@@ -673,6 +993,7 @@ const provisionImportedUser = async (user, actorUserId, defaultOrgId) => {
     userId: result.userId,
     orgId,
     created: result.created,
+    membershipCreated: result.membershipCreated,
     setupLink: result.setupLink,
     emailSent: result.emailSent,
   };
@@ -681,38 +1002,25 @@ const provisionImportedUser = async (user, actorUserId, defaultOrgId) => {
 // POST /api/admin/users/import
 router.post('/import', async (req, res, next) => {
   try {
-    if (!supabase) return next(createHttpError(503, 'supabase_not_configured', 'Supabase not configured'));
-    const users = Array.isArray(req.body?.users) ? req.body.users : null;
     const defaultOrgId = normalizeText(req.body?.organizationId || req.body?.organization_id || req.body?.orgId || req.body?.org_id);
     const actorUserId = req.user?.id || req.user?.userId || null;
+    const requestId = req.requestId ?? null;
 
-    if (!users) {
-      return res.status(400).json({ error: 'invalid_users', message: 'Provide a users array.' });
+    const users = Array.isArray(req.body?.users) ? req.body.users : null;
+    const rows = Array.isArray(req.body?.rows) ? req.body.rows : users;
+    const csvText = typeof req.body?.csvText === 'string' ? req.body.csvText : null;
+
+    const parsedRows = rows ?? (csvText ? parseCsvText(csvText) : null);
+    if (!parsedRows || !Array.isArray(parsedRows) || parsedRows.length === 0) {
+      return res.status(400).json({ error: 'invalid_rows', message: 'Provide rows or csvText with at least one row.' });
     }
 
-    const results = [];
-    for (const user of users) {
-      try {
-        const result = await provisionImportedUser(user || {}, actorUserId, defaultOrgId);
-        results.push({
-          email: result.email,
-          userId: result.userId,
-          organizationId: result.orgId,
-          status: 'ok',
-          created: result.created,
-          setupLink: result.setupLink ?? null,
-          emailSent: Boolean(result.emailSent),
-        });
-      } catch (error) {
-        results.push({
-          email: normalizeEmail(user?.email),
-          organizationId: normalizeText(user?.organizationId || user?.organization_id || defaultOrgId),
-          status: 'error',
-          error: error?.message || String(error),
-          code: error?.code || null,
-        });
-      }
-    }
+    const { results } = await processUserImportRows({
+      rows: parsedRows,
+      defaultOrgId,
+      actorUserId,
+      requestId,
+    });
 
     res.json({ results });
   } catch (err) {
@@ -736,4 +1044,10 @@ router.get('/export', async (req, res, next) => {
 export default router;
 
 // Named exports for testing and reuse
-export { createInviteFallback, provisionImportedUser };
+export {
+  createInviteFallback,
+  provisionImportedUser,
+  processUserImportRows,
+  parseCsvText,
+  normalizeImportRow,
+};

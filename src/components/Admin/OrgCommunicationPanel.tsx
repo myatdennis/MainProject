@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Mail, MessageCircle, RefreshCw, Send } from 'lucide-react';
 import { useToast } from '../../context/ToastContext';
 import LoadingButton from '../LoadingButton';
-import { listOrganizationMessages, sendOrganizationMessage } from '../../services/adminCommunicationService';
-import type { OrgProfileMessage } from '../../services/orgService';
+import { listOrganizationMessages, sendOrganizationMessage } from '../../dal/adminCommunication';
+import type { OrgProfileMessage } from '../../dal/orgs';
 
 type OrgCommunicationPanelProps = {
   orgId: string;
@@ -59,9 +59,8 @@ const OrgCommunicationPanel: React.FC<OrgCommunicationPanelProps> = ({ orgId, or
     setHistoryLoading(true);
     setHistoryError(null);
     try {
-      const response = await listOrganizationMessages(orgId);
-      const rows = Array.isArray(response?.data) ? response.data : (response as OrgProfileMessage[]);
-      setHistory(rows ?? []);
+  const response = await listOrganizationMessages(orgId);
+  setHistory(response?.data ?? []);
       setLastSyncedAt(new Date().toISOString());
     } catch (error) {
       console.error('[OrgCommunicationPanel] Failed to refresh messages', error);
@@ -200,14 +199,13 @@ const OrgCommunicationPanel: React.FC<OrgCommunicationPanelProps> = ({ orgId, or
             onClick={handleSend}
             loading={sending}
             className="w-full justify-center"
-            leadingIcon={<Send className="h-4 w-4" />}
+            icon={Send}
           >
             Send Message
           </LoadingButton>
         </div>
-
-        <div className="min-h-[260px] rounded-2xl border border-gray-100 bg-white p-4">
-          <div className="mb-4 flex items-center justify-between">
+        <div className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm">
+          <div className="mb-3 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <MessageCircle className="h-4 w-4 text-skyblue" />
               <p className="text-sm font-semibold text-gray-900">Recent messages</p>

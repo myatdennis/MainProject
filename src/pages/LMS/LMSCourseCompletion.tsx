@@ -75,7 +75,6 @@ const LMSCourseCompletion = () => {
 
     resolveCourse();
   // allCourses.length re-fires this effect whenever new courses arrive.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [adminCatalogState.phase, learnerCatalogState.status, courseId, allCourses.length]);
 
   const storedProgress = useMemo(() => {

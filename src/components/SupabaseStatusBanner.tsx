@@ -45,17 +45,19 @@ export const SupabaseStatusBanner = () => {
   const isE2ERuntime =
     (import.meta.env.VITE_E2E_TEST_MODE ?? '').toString() === 'true' ||
     (import.meta.env.VITE_DEV_FALLBACK ?? '').toString() === 'true';
-  if (isE2ERuntime) {
-    return null;
-  }
   const [status, setStatus] = useState<StatusState>(() => deriveStatusState(getRuntimeStatus()));
 
   useEffect(() => {
+    if (isE2ERuntime) return undefined;
     const unsubscribe = subscribeRuntimeStatus((runtime) => {
       setStatus(deriveStatusState(runtime));
     });
     return unsubscribe;
-  }, []);
+  }, [isE2ERuntime]);
+
+  if (isE2ERuntime) {
+    return null;
+  }
 
   if (status.status === 'ready' || status.status === 'idle') {
     return null;

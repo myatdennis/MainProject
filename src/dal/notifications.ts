@@ -3,6 +3,7 @@ import * as notificationService from '../services/notificationService';
 export type { Notification } from '../services/notificationService';
 
 export {
+  listAdminNotificationsWithMeta,
   listNotifications,
   addNotification,
   markNotificationRead,

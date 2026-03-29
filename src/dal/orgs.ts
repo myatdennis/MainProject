@@ -7,6 +7,7 @@ export type {
   OrgProfileUser,
   OrgProfileInvite,
   OrgProfileMessage,
+  OrgInviteInput,
 } from '../services/orgService';
 
 export {
@@ -21,6 +22,12 @@ export {
   listOrgMembers,
   addOrgMember,
   removeOrgMember,
+  listOrgInvites,
+  createOrgInvite,
+  bulkOrgInvites,
+  resendOrgInvite,
+  remindOrgInvite,
+  revokeOrgInvite,
   invalidateOrgListCache,
 } from '../services/orgService';
 

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Bell, Check, Loader2, Megaphone, MessageSquare, RefreshCw, ShieldCheck, Sparkles } from 'lucide-react';
-import { listAdminNotificationsWithMeta, markNotificationRead } from '../../services/notificationService';
-import type { Notification } from '../../services/notificationService';
+import { listAdminNotificationsWithMeta, markNotificationRead } from '../../dal/notifications';
+import type { Notification } from '../../dal/notifications';
 import { useSecureAuth } from '../../context/SecureAuthContext';
 import { useToast } from '../../context/ToastContext';
 import Button from '../ui/Button';

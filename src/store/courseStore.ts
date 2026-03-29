@@ -228,7 +228,6 @@ const hasLoadedStructure = (candidate?: Course | null): boolean => {
 };
 
 // @ts-expect-error retained for future diagnostics (unused in production logging)
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const deriveModuleCount = (candidate?: Course | null): number | null => {
   if (!candidate) return null;
   if (typeof candidate.moduleCount === 'number') return candidate.moduleCount;
@@ -237,7 +236,6 @@ const deriveModuleCount = (candidate?: Course | null): number | null => {
 };
 
 // @ts-expect-error retained for future diagnostics (unused in production logging)
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
 const deriveLessonCount = (candidate?: Course | null): number | null => {
   if (!candidate) return null;
   if (typeof candidate.lessonCount === 'number') return candidate.lessonCount;

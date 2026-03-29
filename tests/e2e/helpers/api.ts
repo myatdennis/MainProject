@@ -16,7 +16,6 @@ async function apiPost(path: string, body: any, extraHeaders?: Record<string, st
   const url = buildUrl(path);
   // Debug: print outgoing request body so we can inspect what the test is sending
   try {
-    // eslint-disable-next-line no-console
     console.log('[E2E apiPost] POST', url, JSON.stringify(body));
   } catch {}
   const res = await fetch(url, {

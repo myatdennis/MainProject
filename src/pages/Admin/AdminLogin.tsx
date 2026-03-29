@@ -353,6 +353,8 @@ const AdminLogin: React.FC = () => {
     setCapabilityFallbackActive(false);
     const capability = await verifyAdminCapability();
     if (capability.allowed) {
+      setAuthError('');
+      setError('');
       setShowNotAuthorizedPanel(false);
       navigateToAdminLanding({ replace: true });
       return true;
@@ -363,13 +365,32 @@ const AdminLogin: React.FC = () => {
       return false;
     }
     const normalizedReason = normalizeCapabilityReason(capability.reason);
-    setShowNotAuthorizedPanel(normalizedReason === 'admin_privileges_required' || normalizedReason === 'not_authorized');
+    const shouldSoftFallback =
+      Boolean(isAuthenticated.admin) &&
+      (normalizedReason === 'admin_privileges_required' || normalizedReason === 'not_authorized');
+
+    if (shouldSoftFallback) {
+      setShowNotAuthorizedPanel(false);
+      setCapabilityFallbackActive(true);
+      setAuthError('We couldn’t confirm admin access yet. You can retry or continue to the dashboard.');
+      return false;
+    }
+
+    setShowNotAuthorizedPanel(
+      normalizedReason === 'admin_privileges_required' || normalizedReason === 'not_authorized',
+    );
     if (normalizedReason === 'admin_privileges_required') {
       void captureDeniedUserSnapshot();
     }
     setAuthError(capabilityErrorMessage(normalizedReason ?? undefined));
     return false;
-  }, [captureDeniedUserSnapshot, capabilityErrorMessage, navigateToAdminLanding, verifyAdminCapability]);
+  }, [
+    captureDeniedUserSnapshot,
+    capabilityErrorMessage,
+    isAuthenticated.admin,
+    navigateToAdminLanding,
+    verifyAdminCapability,
+  ]);
 
   const cachedRedirectSuccessRef = useRef(false);
   const cachedRedirectAttemptedRef = useRef(false);

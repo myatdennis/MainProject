@@ -28,7 +28,6 @@ import InviteManager from '../../components/onboarding/InviteManager';
 const logAdminEvent = (event: string, meta: Record<string, any> = {}) => {
   // In production, replace with analytics or server log
   if (process.env.NODE_ENV === 'development') {
-    // eslint-disable-next-line no-console
     console.info(`[ADMIN_LOG] ${event}`, meta);
   }
 };

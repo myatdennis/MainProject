@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { DndContext, PointerSensor, TouchSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { useParams, useNavigate, Link, useSearchParams } from 'react-router-dom';
+import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
 import {
   courseStore,
   generateId,
@@ -21,7 +21,7 @@ import { type CourseValidationIntent, type CourseValidationIssue } from '../../v
 import { getCourseValidationSummary, type CourseValidationSummary } from '../../validation/courseValidationSummary';
 import { getUserSession } from '../../lib/secureStorage';
 import { ApiError } from '../../utils/apiClient';
-import { resolveLessonVideoPlayback } from '../../utils/videoUtils';
+import { getVideoSourceInfo, resolveLessonVideoPlayback } from '../../utils/videoUtils';
 import { uploadLessonVideo, uploadDocumentResource } from '../../dal/media';
 import { canonicalizeLessonContent, canonicalizeQuizQuestions } from '../../utils/lessonContent';
 import { COURSE_DOCUMENTS_BUCKET, COURSE_VIDEOS_BUCKET } from '../../config/mediaBuckets';
@@ -1294,7 +1294,6 @@ const broadcastCourseSaved = useCallback((savedCourseId: string) => {
     setEditingLesson(null);
     setExpandedModules({});
     clearValidationIssues();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [courseId]);
 
 
@@ -3665,7 +3664,16 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
                 <div className="grid grid-cols-2 gap-4">
                   <button
                     onClick={() => updateLesson(moduleId, lesson.id, {
-                      content: { ...lesson.content, videoSourceType: 'internal' }
+                      content: {
+                        ...lesson.content,
+                        videoSourceType: 'internal',
+                        videoProvider: undefined,
+                        externalVideoId: undefined,
+                        videoUrl:
+                          lesson.content.videoSourceType === 'internal'
+                            ? lesson.content.videoUrl
+                            : lesson.content.videoAsset?.signedUrl ?? '',
+                      }
                     })}
                     className={`p-4 border-2 rounded-lg transition-all duration-200 ${
                       (!lesson.content.videoSourceType || lesson.content.videoSourceType === 'internal')
@@ -3678,7 +3686,13 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
                   </button>
                   <button
                     onClick={() => updateLesson(moduleId, lesson.id, {
-                      content: { ...lesson.content, videoSourceType: 'external' }
+                      content: {
+                        ...lesson.content,
+                        videoSourceType: 'external',
+                        videoAsset: undefined,
+                        fileName: undefined,
+                        fileSize: undefined,
+                      }
                     })}
                     className={`p-4 border-2 rounded-lg transition-all duration-200 ${
                       lesson.content.videoSourceType === 'external'
@@ -3818,7 +3832,28 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
                       type="url"
                       value={lesson.content.videoUrl || ''}
                       onChange={(e) => updateLesson(moduleId, lesson.id, {
-                        content: { ...lesson.content, videoUrl: e.target.value }
+                        content: (() => {
+                          const nextUrl = e.target.value;
+                          const sourceInfo = getVideoSourceInfo(nextUrl);
+                          const sourceType = sourceInfo?.sourceType ?? 'external';
+                          const provider =
+                            sourceType === 'youtube'
+                              ? 'youtube'
+                              : sourceType === 'vimeo'
+                                ? 'vimeo'
+                                : sourceType === 'external'
+                                  ? 'native'
+                                  : undefined;
+
+                          return {
+                            ...lesson.content,
+                            videoUrl: nextUrl,
+                            videoSourceType: sourceType,
+                            videoProvider: provider,
+                            externalVideoId: sourceInfo?.videoId ?? undefined,
+                            videoAsset: undefined,
+                          };
+                        })()
                       })}
                       placeholder="https://example.com/video.mp4 or YouTube/Vimeo URL"
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
@@ -3858,7 +3893,7 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
                           <span>Preview: Video will display like this to learners</span>
                           <button
                             onClick={() => updateLesson(moduleId, lesson.id, {
-                              content: { ...lesson.content, videoUrl: '', videoAsset: undefined }
+                              content: { ...lesson.content, videoUrl: '', videoAsset: undefined, externalVideoId: undefined }
                             })}
                             className="text-red-600 hover:text-red-800 flex items-center space-x-1"
                           >

@@ -5,7 +5,7 @@ import LoadingButton from './LoadingButton';
 import { useToast } from '../context/ToastContext';
 import { useFormValidation, validators } from './FormComponents';
 import SecurityUtils from '../utils/SecurityUtils';
-import { listOrgs } from '../services/orgService';
+import { listOrgs } from '../dal/orgs';
 import apiRequest from '../utils/apiClient';
 import { useSecureAuth } from '../context/SecureAuthContext';
 
@@ -16,9 +16,18 @@ interface AddUserModalProps {
   editUser?: any;
   /** Pass pre-fetched orgs from the parent page; the modal will also fetch its own if not provided. */
   organizations?: Array<{ id: string; name: string }>;
+  /** Optional default org to preselect (e.g., current filter selection). */
+  defaultOrgId?: string | null;
 }
 
-const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdded, editUser, organizations: orgsProp }) => {
+const AddUserModal: React.FC<AddUserModalProps> = ({
+  isOpen,
+  onClose,
+  onUserAdded,
+  editUser,
+  organizations: orgsProp,
+  defaultOrgId,
+}) => {
   const { showToast } = useToast();
   const { activeOrgId } = useSecureAuth();
   const [loading, setLoading] = useState(false);
@@ -93,10 +102,16 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
 
   useEffect(() => {
     if (!isOpen || isEditMode) return;
-    if (!values.organization && activeOrgId) {
-      setValue('organization', activeOrgId);
+    if (!values.organization) {
+      const fallbackOrgId =
+        defaultOrgId ||
+        (orgsProp && orgsProp.length === 1 ? orgsProp[0].id : null) ||
+        activeOrgId;
+      if (fallbackOrgId) {
+        setValue('organization', fallbackOrgId);
+      }
     }
-  }, [activeOrgId, isEditMode, isOpen, setValue, values.organization]);
+  }, [activeOrgId, defaultOrgId, isEditMode, isOpen, orgsProp, setValue, values.organization]);
 
   // Resolved org list: prefer prop, fall back to fetched
   const organizations = (orgsProp && orgsProp.length > 0) ? orgsProp : fetchedOrgs;
@@ -220,7 +235,7 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
         showToast('User updated successfully!', 'success');
       } else {
         // Provision a real login-backed user account and activate membership immediately.
-        const orgId = sanitizedData.organization || activeOrgId;
+        const orgId = sanitizedData.organization || defaultOrgId || activeOrgId;
         if (!orgId) {
           showToast('Please select an organization', 'error');
           setLoading(false);
@@ -238,6 +253,7 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
         }>(`/api/admin/users`, {
           method: 'POST',
           body: {
+            orgId,
             organizationId: orgId,
             firstName: sanitizedData.firstName,
             lastName: sanitizedData.lastName,

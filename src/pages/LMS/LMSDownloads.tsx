@@ -1,153 +1,117 @@
 
-import { useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Download, FileText, Video, Archive, Search, Filter, Calendar, Folder } from 'lucide-react';
 import EmptyState from '../../components/ui/EmptyState';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
-import { Link } from 'react-router-dom';
+import { useSecureAuth } from '../../context/SecureAuthContext';
+import documentsDal, { type DocumentMeta } from '../../dal/documents';
+import { useToast } from '../../context/ToastContext';
 
 const LMSDownloads = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterType, setFilterType] = useState('all');
   const [selectedItems, setSelectedItems] = useState<string[]>([]);
+  const [documents, setDocuments] = useState<DocumentMeta[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [activeCategory, setActiveCategory] = useState('all');
+  const [downloadingIds, setDownloadingIds] = useState<string[]>([]);
+  const [bulkDownloading, setBulkDownloading] = useState(false);
+  const { user, activeOrgId, sessionStatus, orgResolutionStatus } = useSecureAuth();
+  const { showToast } = useToast();
 
-  const resources = [
-    {
-      id: '1',
-      title: 'Leadership Self-Assessment',
-      type: 'PDF',
-      category: 'Foundations of Inclusive Leadership',
-      size: '2.3 MB',
-      uploadDate: '2025-01-15',
-      description: 'Comprehensive self-assessment tool to evaluate your current leadership style and identify areas for growth.',
-      downloadUrl: '#',
-      icon: FileText,
-      color: 'text-red-500'
-    },
-    {
-      id: '2',
-      title: 'Psychological Safety Checklist',
-      type: 'PDF',
-      category: 'Foundations of Inclusive Leadership',
-      size: '1.8 MB',
-      uploadDate: '2025-01-15',
-      description: 'Practical checklist to assess and improve psychological safety within your team.',
-      downloadUrl: '#',
-      icon: FileText,
-      color: 'text-red-500'
-    },
-    {
-      id: '3',
-      title: 'Team Reflection Worksheet',
-      type: 'PDF',
-      category: 'Foundations of Inclusive Leadership',
-      size: '1.2 MB',
-      uploadDate: '2025-01-15',
-      description: 'Guided worksheet for team reflection sessions and goal setting.',
-      downloadUrl: '#',
-      icon: FileText,
-      color: 'text-red-500'
-    },
-    {
-      id: '4',
-      title: 'Bias Recognition Toolkit',
-      type: 'PDF',
-      category: 'Recognizing and Mitigating Bias',
-      size: '3.1 MB',
-      uploadDate: '2025-01-10',
-      description: 'Complete toolkit with exercises and frameworks for identifying and addressing unconscious bias.',
-      downloadUrl: '#',
-      icon: FileText,
-      color: 'text-red-500'
-    },
-    {
-      id: '5',
-      title: 'Structured Interview Guide',
-      type: 'PDF',
-      category: 'Recognizing and Mitigating Bias',
-      size: '2.7 MB',
-      uploadDate: '2025-01-10',
-      description: 'Step-by-step guide for conducting bias-free interviews and evaluations.',
-      downloadUrl: '#',
-      icon: FileText,
-      color: 'text-red-500'
-    },
-    {
-      id: '6',
-      title: 'Introduction to Inclusive Leadership',
-      type: 'MP4',
-      category: 'Foundations of Inclusive Leadership',
-      size: '45.2 MB',
-      uploadDate: '2025-01-15',
-      description: 'Foundational video covering the principles and practices of inclusive leadership.',
-      downloadUrl: '#',
-      icon: Video,
-      color: 'text-blue-500'
-    },
-    {
-      id: '7',
-      title: 'Understanding Psychological Safety',
-      type: 'MP4',
-      category: 'Foundations of Inclusive Leadership',
-      size: '67.8 MB',
-      uploadDate: '2025-01-15',
-      description: 'Deep dive into creating and maintaining psychological safety in teams.',
-      downloadUrl: '#',
-      icon: Video,
-      color: 'text-blue-500'
-    },
-    {
-      id: '8',
-      title: 'Conversation Planning Template',
-      type: 'DOCX',
-      category: 'Courageous Conversations at Work',
-      size: '0.8 MB',
-      uploadDate: '2025-01-05',
-      description: 'Editable template for planning and structuring difficult conversations.',
-      downloadUrl: '#',
-      icon: FileText,
-      color: 'text-green-500'
-    },
-    {
-      id: '9',
-      title: 'Action Planning Workbook',
-      type: 'PDF',
-      category: 'Personal & Team Action Planning',
-      size: '4.2 MB',
-      uploadDate: '2025-01-01',
-      description: 'Comprehensive workbook for creating personal and team development action plans.',
-      downloadUrl: '#',
-      icon: FileText,
-      color: 'text-red-500'
-    },
-    {
-      id: '10',
-      title: 'Complete Resource Package',
-      type: 'ZIP',
-      category: 'All Modules',
-      size: '128.5 MB',
-      uploadDate: '2025-01-15',
-      description: 'All course materials, videos, and worksheets in one convenient package.',
-      downloadUrl: '#',
-      icon: Archive,
-      color: 'text-purple-500'
+  const loadDocuments = useCallback(async () => {
+    if (sessionStatus !== 'authenticated') return;
+    if (orgResolutionStatus !== 'ready') return;
+    setIsLoading(true);
+    setLoadError(null);
+    try {
+      const docs = await documentsDal.listDocuments({
+        organizationId: activeOrgId ?? undefined,
+        userId: user?.id ?? undefined,
+      });
+      setDocuments(docs);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to load downloads.';
+      setLoadError(message);
+    } finally {
+      setIsLoading(false);
     }
-  ];
+  }, [activeOrgId, orgResolutionStatus, sessionStatus, user?.id]);
 
-  const categories = [
-    'All Modules',
-    'Foundations of Inclusive Leadership',
-    'Recognizing and Mitigating Bias',
-    'Empathy in Action',
-    'Courageous Conversations at Work',
-    'Personal & Team Action Planning'
-  ];
+  useEffect(() => {
+    loadDocuments();
+  }, [loadDocuments]);
 
-  const filteredResources = resources.filter(resource => {
-    const matchesSearch = resource.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         resource.description.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesFilter = filterType === 'all' || resource.type.toLowerCase() === filterType.toLowerCase();
-    return matchesSearch && matchesFilter;
-  });
+  const normalizeFileType = (doc: DocumentMeta) => {
+    const explicit = doc.fileType ?? doc.metadata?.fileType;
+    if (explicit) return `${explicit}`.toLowerCase();
+    const filename = doc.filename ?? doc.name ?? '';
+    const extMatch = filename.split('.').pop();
+    return extMatch ? extMatch.toLowerCase() : 'file';
+  };
+
+  const formatFileSize = (bytes?: number | null) => {
+    if (!bytes || Number.isNaN(bytes)) return '—';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let size = bytes;
+    let unitIndex = 0;
+    while (size >= 1024 && unitIndex < units.length - 1) {
+      size /= 1024;
+      unitIndex += 1;
+    }
+    return `${size.toFixed(size >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
+  };
+
+  const resourceItems = useMemo(() =>
+    documents.map((doc) => {
+      const type = normalizeFileType(doc);
+      const Icon = type === 'mp4' || type === 'mov' ? Video : type === 'zip' ? Archive : FileText;
+      const color = type === 'mp4' || type === 'mov'
+        ? 'text-blue-500'
+        : type === 'zip'
+          ? 'text-purple-500'
+          : type === 'docx'
+            ? 'text-green-500'
+            : 'text-red-500';
+
+      return {
+        id: doc.id,
+        title: doc.name,
+        type: type.toUpperCase(),
+        category: doc.category || 'General',
+        size: formatFileSize(doc.fileSize),
+        uploadDate: doc.createdAt,
+        description: doc.metadata?.description ?? doc.metadata?.summary ?? 'Downloadable course resource.',
+        icon: Icon,
+        color,
+        document: doc,
+      };
+    }),
+  [documents]);
+
+  const categories = useMemo(() => {
+    const unique = new Set<string>();
+    resourceItems.forEach((item) => unique.add(item.category));
+    return ['All Modules', ...Array.from(unique).filter(Boolean)];
+  }, [resourceItems]);
+
+  const filteredResources = useMemo(() =>
+    resourceItems.filter((resource) => {
+      const matchesSearch = resource.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        resource.description.toLowerCase().includes(searchTerm.toLowerCase());
+      const matchesType = filterType === 'all' || resource.type.toLowerCase() === filterType.toLowerCase();
+      const matchesCategory = activeCategory === 'all'
+        || activeCategory === 'All Modules'
+        || resource.category === activeCategory;
+      return matchesSearch && matchesType && matchesCategory;
+    }),
+  [activeCategory, filterType, resourceItems, searchTerm]);
+
+  const fullPackage = useMemo(
+    () => resourceItems.find((item) => item.type.toLowerCase() === 'zip' || item.title.toLowerCase().includes('package')),
+    [resourceItems],
+  );
 
   const handleSelectItem = (id: string) => {
     setSelectedItems(prev => 
@@ -165,9 +129,35 @@ const LMSDownloads = () => {
     }
   };
 
-  const handleDownloadSelected = () => {
-    // In a real app, this would trigger downloads for selected items
-    console.log('Downloading selected items:', selectedItems);
+  const handleDownload = useCallback(async (doc: DocumentMeta) => {
+    if (!doc.id) return;
+    setDownloadingIds((prev) => (prev.includes(doc.id) ? prev : [...prev, doc.id]));
+    try {
+      const refreshed = await documentsDal.recordDownload(doc.id);
+      const url = refreshed?.url ?? doc.url;
+      if (!url) {
+        throw new Error('Download link not available yet.');
+      }
+      window.open(url, '_blank', 'noopener,noreferrer');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to download document.';
+      showToast(message, 'error');
+    } finally {
+      setDownloadingIds((prev) => prev.filter((id) => id !== doc.id));
+    }
+  }, [showToast]);
+
+  const handleDownloadSelected = async () => {
+    if (selectedItems.length === 0) return;
+    setBulkDownloading(true);
+    try {
+      const docs = filteredResources
+        .filter((resource) => selectedItems.includes(resource.id))
+        .map((resource) => resource.document);
+      await Promise.all(docs.map((doc) => handleDownload(doc)));
+    } finally {
+      setBulkDownloading(false);
+    }
   };
 
   const formatDate = (dateString: string) => {
@@ -203,6 +193,31 @@ const LMSDownloads = () => {
           <p className="lead">Access all your course materials, worksheets, and resources</p>
         </div>
 
+        {isLoading && (
+          <div className="mb-6 rounded-xl border border-cloud bg-white px-4 py-3 text-sm text-slate shadow-sm">
+            Loading your downloads…
+          </div>
+        )}
+
+        {loadError && !isLoading && (
+          <div className="mb-6">
+            <EmptyState
+              title="Downloads unavailable"
+              description={loadError}
+              action={(
+                <button
+                  type="button"
+                  onClick={loadDocuments}
+                  className="btn-outline"
+                >
+                  Retry
+                </button>
+              )}
+              illustrationSrc={undefined}
+            />
+          </div>
+        )}
+
       {/* Search and Filter Bar */}
       <div className="card-lg card-hover mb-8">
         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between space-y-4 lg:space-y-0">
@@ -237,10 +252,11 @@ const LMSDownloads = () => {
             {selectedItems.length > 0 && (
               <button
                 onClick={handleDownloadSelected}
-                className="btn-cta px-4 py-2 rounded-lg transition-colors duration-200 flex items-center space-x-2"
+                disabled={bulkDownloading}
+                className="btn-cta px-4 py-2 rounded-lg transition-colors duration-200 flex items-center space-x-2 disabled:opacity-70"
               >
                 <Download className="h-4 w-4" />
-                <span>Download Selected ({selectedItems.length})</span>
+                <span>{bulkDownloading ? 'Preparing downloads…' : `Download Selected (${selectedItems.length})`}</span>
               </button>
             )}
             <button
@@ -258,9 +274,17 @@ const LMSDownloads = () => {
         <h2 className="h2 mb-4">Browse by Category</h2>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {categories.map((category) => {
-            const categoryCount = resources.filter(r => r.category === category).length;
+            const categoryCount = resourceItems.filter((r) => r.category === category).length;
+            const isActive = activeCategory === category || (activeCategory === 'all' && category === 'All Modules');
             return (
-              <div key={category} className="card-lg card-hover cursor-pointer">
+              <button
+                key={category}
+                type="button"
+                onClick={() => setActiveCategory(category === 'All Modules' ? 'all' : category)}
+                className={`card-lg card-hover cursor-pointer text-left ${
+                  isActive ? 'ring-2 ring-orange-400' : ''
+                }`}
+              >
                 <div className="flex items-center space-x-3">
                   <div className="bg-orange-50 p-2 rounded-lg">
                     <Folder className="h-5 w-5 text-orange-500" />
@@ -270,7 +294,7 @@ const LMSDownloads = () => {
                     <p className="text-sm text-slate/80">{categoryCount} resources</p>
                   </div>
                 </div>
-              </div>
+              </button>
             );
           })}
         </div>
@@ -281,6 +305,7 @@ const LMSDownloads = () => {
         {filteredResources.map((resource) => {
           const Icon = resource.icon;
           const isSelected = selectedItems.includes(resource.id);
+          const isDownloading = downloadingIds.includes(resource.id);
           
           return (
             <div 
@@ -324,13 +349,15 @@ const LMSDownloads = () => {
                   <div className="text-sm text-slate/80">
                     <span className="font-medium">Category:</span> {resource.category}
                   </div>
-                  <a
-                    href={resource.downloadUrl}
-                    className="btn-outline px-4 py-2 rounded-lg transition-colors duration-200 flex items-center space-x-2"
+                  <button
+                    type="button"
+                    onClick={() => handleDownload(resource.document)}
+                    disabled={isDownloading}
+                    className="btn-outline px-4 py-2 rounded-lg transition-colors duration-200 flex items-center space-x-2 disabled:opacity-70"
                   >
                     <Download className="h-4 w-4" />
-                    <span>Download</span>
-                  </a>
+                    <span>{isDownloading ? 'Preparing…' : 'Download'}</span>
+                  </button>
                 </div>
               </div>
             </div>
@@ -338,7 +365,7 @@ const LMSDownloads = () => {
         })}
       </div>
 
-      {filteredResources.length === 0 && (
+      {!isLoading && filteredResources.length === 0 && !loadError && (
         <div className="mt-8">
           <EmptyState
             title="No resources found"
@@ -364,10 +391,15 @@ const LMSDownloads = () => {
           <p className="text-gray-600 mb-6 max-w-2xl mx-auto">
             Download our complete resource package containing all course materials, videos, and worksheets in one convenient ZIP file.
           </p>
-          <Link to="/lms/downloads/package" className="btn-cta px-8 py-4 rounded-full font-semibold text-lg transition-all duration-200 transform hover:scale-105 flex items-center mx-auto space-x-2">
+          <button
+            type="button"
+            onClick={() => fullPackage?.document && handleDownload(fullPackage.document)}
+            disabled={!fullPackage}
+            className="btn-cta px-8 py-4 rounded-full font-semibold text-lg transition-all duration-200 transform hover:scale-105 flex items-center mx-auto space-x-2 disabled:opacity-70"
+          >
             <Archive className="h-5 w-5" />
-            <span>Download Complete Package (128.5 MB)</span>
-          </Link>
+            <span>{fullPackage ? 'Download Complete Package' : 'Package not available yet'}</span>
+          </button>
         </div>
       </div>
       </div>
