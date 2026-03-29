@@ -185,6 +185,7 @@ const SurveyAssignmentModal: React.FC<SurveyAssignmentModalProps> = ({
         <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
           <div>
             <p className="text-sm uppercase tracking-wide text-gray-500">Assign Survey</p>
+            <h2 className="sr-only">Assign survey to organizations</h2>
             <h3 className="text-xl font-semibold text-gray-900">{surveyTitle}</h3>
           </div>
           <button
@@ -224,21 +225,31 @@ const SurveyAssignmentModal: React.FC<SurveyAssignmentModalProps> = ({
                 )}
                 {filteredOrganizations.map((org) => {
                   const isSelected = selectedOrgIds.includes(org.id);
+                  const inputId = `survey-assign-org-${org.id}`;
                   return (
-                    <button
-                      type="button"
+                    <label
                       key={org.id}
-                      onClick={() => toggleOrgSelection(org.id)}
+                      htmlFor={inputId}
                       className={clsx(
-                        'flex w-full items-center justify-between rounded-lg border px-3 py-2 text-left text-sm',
+                        'flex w-full cursor-pointer items-center justify-between rounded-lg border px-3 py-2 text-left text-sm',
                         isSelected ? 'border-indigo-500 bg-indigo-50 text-indigo-700' : 'border-gray-200 hover:bg-gray-50',
                       )}
                     >
-                      <div>
-                        <p className="font-medium">{org.name}</p>
-                        <p className="text-xs text-gray-500">
-                          {org.totalLearners?.toLocaleString() ?? 0} learners • {org.type ?? 'Org'}
-                        </p>
+                      <div className="flex items-start gap-3">
+                        <input
+                          id={inputId}
+                          type="checkbox"
+                          checked={isSelected}
+                          aria-label={org.name}
+                          onChange={() => toggleOrgSelection(org.id)}
+                          className="mt-1 h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
+                        />
+                        <div>
+                          <p className="font-medium">{org.name}</p>
+                          <p className="text-xs text-gray-500">
+                            {org.totalLearners?.toLocaleString() ?? 0} learners • {org.type ?? 'Org'}
+                          </p>
+                        </div>
                       </div>
                       <span
                         className={clsx(
@@ -248,7 +259,7 @@ const SurveyAssignmentModal: React.FC<SurveyAssignmentModalProps> = ({
                       >
                         {isSelected && <Check className="h-3 w-3" />}
                       </span>
-                    </button>
+                    </label>
                   );
                 })}
               </div>
@@ -351,9 +362,10 @@ const SurveyAssignmentModal: React.FC<SurveyAssignmentModalProps> = ({
                 type="submit"
                 disabled={submitting}
                 className="inline-flex items-center rounded-lg bg-indigo-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:opacity-60"
+                aria-label="Save assignment"
               >
                 {submitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-                Assign Survey
+                {submitting ? 'Saving…' : 'Save assignment'}
               </button>
             </div>
           </section>

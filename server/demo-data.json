@@ -1,5 +1,895 @@
 {
-  "courses": [],
-  "surveys": [],
-  "surveyAssignments": []
+  "courses": [
+    [
+      "foundations",
+      {
+        "id": "foundations",
+        "slug": "foundations-of-inclusive-leadership",
+        "title": "Foundations of Inclusive Leadership QA",
+        "description": "Learn the fundamentals of inclusive leadership through interactive lessons, including TED Talks, quizzes, and practical frameworks.",
+        "status": "published",
+        "version": 1,
+        "meta_json": {
+          "thumbnail": "/api/placeholder/400/300",
+          "difficulty": "Beginner",
+          "prerequisites": [],
+          "learning_objectives": [],
+          "key_takeaways": [],
+          "tags": [
+            "leadership",
+            "inclusion",
+            "management",
+            "professional development"
+          ],
+          "published_at": "2026-03-29T01:48:11.316Z"
+        },
+        "published_at": null,
+        "organization_id": "demo-sandbox-org",
+        "organizationId": "demo-sandbox-org",
+        "org_id": "demo-sandbox-org",
+        "modules": [
+          {
+            "id": "ad758a42-ea7a-4d51-bdba-869140db666b",
+            "course_id": "foundations",
+            "title": "Introduction to Leadership",
+            "description": "Core concepts and foundations",
+            "order_index": 1,
+            "lessons": [
+              {
+                "id": "b81b5214-c698-4cd6-a59a-36e112be610a",
+                "module_id": "ad758a42-ea7a-4d51-bdba-869140db666b",
+                "title": "The Power of Vulnerability",
+                "description": "Watch this inspiring TED Talk by Brené Brown",
+                "type": "video",
+                "order_index": 1,
+                "duration_s": 1200,
+                "content_json": {
+                  "videoUrl": "https://www.ted.com/talks/brene_brown_the_power_of_vulnerability",
+                  "videoType": "ted",
+                  "completionRule": {
+                    "requiredPercent": 85
+                  },
+                  "schema_version": 1,
+                  "type": "video",
+                  "video": {
+                    "type": "external",
+                    "url": "https://www.ted.com/talks/brene_brown_the_power_of_vulnerability",
+                    "embedUrl": "https://www.ted.com/talks/brene_brown_the_power_of_vulnerability",
+                    "provider": "external",
+                    "sourceType": "external",
+                    "thumbnailUrl": null,
+                    "durationSeconds": null,
+                    "title": null
+                  },
+                  "videoProvider": "external",
+                  "videoSourceType": "external",
+                  "body": {}
+                }
+              },
+              {
+                "id": "a1d8426b-8e49-4a7d-b4fa-167836352a4a",
+                "module_id": "ad758a42-ea7a-4d51-bdba-869140db666b",
+                "title": "Leadership Knowledge Check",
+                "description": "Test your understanding",
+                "type": "quiz",
+                "order_index": 2,
+                "duration_s": 300,
+                "content_json": {
+                  "questions": [
+                    {
+                      "id": "q1",
+                      "question": "What is the primary role of an inclusive leader?",
+                      "options": [
+                        {
+                          "id": "a",
+                          "text": "To make all decisions alone",
+                          "correct": true,
+                          "isCorrect": true
+                        },
+                        {
+                          "id": "b",
+                          "text": "To create an environment where all voices are heard",
+                          "correct": false,
+                          "isCorrect": false
+                        },
+                        {
+                          "id": "c",
+                          "text": "To maintain strict hierarchy",
+                          "correct": false,
+                          "isCorrect": false
+                        },
+                        {
+                          "id": "d",
+                          "text": "To avoid difficult conversations",
+                          "correct": false,
+                          "isCorrect": false
+                        }
+                      ],
+                      "correctAnswer": "a",
+                      "text": "What is the primary role of an inclusive leader?",
+                      "prompt": "What is the primary role of an inclusive leader?",
+                      "correctAnswerIndex": 0,
+                      "correctOptionIds": [
+                        "a"
+                      ],
+                      "type": "multiple_choice"
+                    },
+                    {
+                      "id": "q2",
+                      "question": "Which quality is essential for effective leadership?",
+                      "options": [
+                        {
+                          "id": "a",
+                          "text": "Vulnerability",
+                          "correct": true,
+                          "isCorrect": true
+                        },
+                        {
+                          "id": "b",
+                          "text": "Perfectionism",
+                          "correct": false,
+                          "isCorrect": false
+                        },
+                        {
+                          "id": "c",
+                          "text": "Control",
+                          "correct": false,
+                          "isCorrect": false
+                        },
+                        {
+                          "id": "d",
+                          "text": "Distance",
+                          "correct": false,
+                          "isCorrect": false
+                        }
+                      ],
+                      "correctAnswer": "a",
+                      "text": "Which quality is essential for effective leadership?",
+                      "prompt": "Which quality is essential for effective leadership?",
+                      "correctAnswerIndex": 0,
+                      "correctOptionIds": [
+                        "a"
+                      ],
+                      "type": "multiple_choice"
+                    }
+                  ],
+                  "completionRule": {
+                    "requiredScore": 70
+                  },
+                  "schema_version": 1,
+                  "type": "quiz",
+                  "videoSourceType": "external",
+                  "body": {
+                    "questions": [
+                      {
+                        "prompt": "What is the primary role of an inclusive leader?",
+                        "options": [
+                          {
+                            "text": "To make all decisions alone",
+                            "correct": true,
+                            "id": "a"
+                          },
+                          {
+                            "text": "To create an environment where all voices are heard",
+                            "correct": false,
+                            "id": "b"
+                          },
+                          {
+                            "text": "To maintain strict hierarchy",
+                            "correct": false,
+                            "id": "c"
+                          },
+                          {
+                            "text": "To avoid difficult conversations",
+                            "correct": false,
+                            "id": "d"
+                          }
+                        ],
+                        "correctAnswerIndex": 0,
+                        "correctAnswer": "a"
+                      },
+                      {
+                        "prompt": "Which quality is essential for effective leadership?",
+                        "options": [
+                          {
+                            "text": "Vulnerability",
+                            "correct": true,
+                            "id": "a"
+                          },
+                          {
+                            "text": "Perfectionism",
+                            "correct": false,
+                            "id": "b"
+                          },
+                          {
+                            "text": "Control",
+                            "correct": false,
+                            "id": "c"
+                          },
+                          {
+                            "text": "Distance",
+                            "correct": false,
+                            "id": "d"
+                          }
+                        ],
+                        "correctAnswerIndex": 0,
+                        "correctAnswer": "a"
+                      },
+                      {
+                        "prompt": "What is the primary role of an inclusive leader?",
+                        "options": [
+                          {
+                            "text": "To make all decisions alone",
+                            "correct": true,
+                            "id": "a"
+                          },
+                          {
+                            "text": "To create an environment where all voices are heard",
+                            "correct": false,
+                            "id": "b"
+                          },
+                          {
+                            "text": "To maintain strict hierarchy",
+                            "correct": false,
+                            "id": "c"
+                          },
+                          {
+                            "text": "To avoid difficult conversations",
+                            "correct": false,
+                            "id": "d"
+                          }
+                        ],
+                        "correctAnswerIndex": 0,
+                        "correctAnswer": "a"
+                      },
+                      {
+                        "prompt": "Which quality is essential for effective leadership?",
+                        "options": [
+                          {
+                            "text": "Vulnerability",
+                            "correct": true,
+                            "id": "a"
+                          },
+                          {
+                            "text": "Perfectionism",
+                            "correct": false,
+                            "id": "b"
+                          },
+                          {
+                            "text": "Control",
+                            "correct": false,
+                            "id": "c"
+                          },
+                          {
+                            "text": "Distance",
+                            "correct": false,
+                            "id": "d"
+                          }
+                        ],
+                        "correctAnswerIndex": 0,
+                        "correctAnswer": "a"
+                      },
+                      {
+                        "prompt": "What is the primary role of an inclusive leader?",
+                        "options": [
+                          {
+                            "text": "To make all decisions alone",
+                            "correct": true,
+                            "id": "a"
+                          },
+                          {
+                            "text": "To create an environment where all voices are heard",
+                            "correct": false,
+                            "id": "b"
+                          },
+                          {
+                            "text": "To maintain strict hierarchy",
+                            "correct": false,
+                            "id": "c"
+                          },
+                          {
+                            "text": "To avoid difficult conversations",
+                            "correct": false,
+                            "id": "d"
+                          }
+                        ],
+                        "correctAnswerIndex": 0,
+                        "correctAnswer": "a"
+                      },
+                      {
+                        "prompt": "Which quality is essential for effective leadership?",
+                        "options": [
+                          {
+                            "text": "Vulnerability",
+                            "correct": true,
+                            "id": "a"
+                          },
+                          {
+                            "text": "Perfectionism",
+                            "correct": false,
+                            "id": "b"
+                          },
+                          {
+                            "text": "Control",
+                            "correct": false,
+                            "id": "c"
+                          },
+                          {
+                            "text": "Distance",
+                            "correct": false,
+                            "id": "d"
+                          }
+                        ],
+                        "correctAnswerIndex": 0,
+                        "correctAnswer": "a"
+                      },
+                      {
+                        "prompt": "What is the primary role of an inclusive leader?",
+                        "options": [
+                          {
+                            "text": "To make all decisions alone",
+                            "correct": true,
+                            "id": "a"
+                          },
+                          {
+                            "text": "To create an environment where all voices are heard",
+                            "correct": false,
+                            "id": "b"
+                          },
+                          {
+                            "text": "To maintain strict hierarchy",
+                            "correct": false,
+                            "id": "c"
+                          },
+                          {
+                            "text": "To avoid difficult conversations",
+                            "correct": false,
+                            "id": "d"
+                          }
+                        ],
+                        "correctAnswerIndex": 0,
+                        "correctAnswer": "a"
+                      },
+                      {
+                        "prompt": "Which quality is essential for effective leadership?",
+                        "options": [
+                          {
+                            "text": "Vulnerability",
+                            "correct": true,
+                            "id": "a"
+                          },
+                          {
+                            "text": "Perfectionism",
+                            "correct": false,
+                            "id": "b"
+                          },
+                          {
+                            "text": "Control",
+                            "correct": false,
+                            "id": "c"
+                          },
+                          {
+                            "text": "Distance",
+                            "correct": false,
+                            "id": "d"
+                          }
+                        ],
+                        "correctAnswerIndex": 0,
+                        "correctAnswer": "a"
+                      },
+                      {
+                        "prompt": "What is the primary role of an inclusive leader?",
+                        "options": [
+                          {
+                            "text": "To make all decisions alone",
+                            "correct": true,
+                            "id": "a"
+                          },
+                          {
+                            "text": "To create an environment where all voices are heard",
+                            "correct": false,
+                            "id": "b"
+                          },
+                          {
+                            "text": "To maintain strict hierarchy",
+                            "correct": false,
+                            "id": "c"
+                          },
+                          {
+                            "text": "To avoid difficult conversations",
+                            "correct": false,
+                            "id": "d"
+                          }
+                        ],
+                        "correctAnswerIndex": 0,
+                        "correctAnswer": "a"
+                      },
+                      {
+                        "prompt": "Which quality is essential for effective leadership?",
+                        "options": [
+                          {
+                            "text": "Vulnerability",
+                            "correct": true,
+                            "id": "a"
+                          },
+                          {
+                            "text": "Perfectionism",
+                            "correct": false,
+                            "id": "b"
+                          },
+                          {
+                            "text": "Control",
+                            "correct": false,
+                            "id": "c"
+                          },
+                          {
+                            "text": "Distance",
+                            "correct": false,
+                            "id": "d"
+                          }
+                        ],
+                        "correctAnswerIndex": 0,
+                        "correctAnswer": "a"
+                      },
+                      {
+                        "prompt": "What is the primary role of an inclusive leader?",
+                        "options": [
+                          {
+                            "text": "To make all decisions alone",
+                            "correct": true,
+                            "id": "a"
+                          },
+                          {
+                            "text": "To create an environment where all voices are heard",
+                            "correct": false,
+                            "id": "b"
+                          },
+                          {
+                            "text": "To maintain strict hierarchy",
+                            "correct": false,
+                            "id": "c"
+                          },
+                          {
+                            "text": "To avoid difficult conversations",
+                            "correct": false,
+                            "id": "d"
+                          }
+                        ],
+                        "correctAnswerIndex": 0,
+                        "correctAnswer": "a"
+                      },
+                      {
+                        "prompt": "Which quality is essential for effective leadership?",
+                        "options": [
+                          {
+                            "text": "Vulnerability",
+                            "correct": true,
+                            "id": "a"
+                          },
+                          {
+                            "text": "Perfectionism",
+                            "correct": false,
+                            "id": "b"
+                          },
+                          {
+                            "text": "Control",
+                            "correct": false,
+                            "id": "c"
+                          },
+                          {
+                            "text": "Distance",
+                            "correct": false,
+                            "id": "d"
+                          }
+                        ],
+                        "correctAnswerIndex": 0,
+                        "correctAnswer": "a"
+                      }
+                    ]
+                  },
+                  "quiz": {
+                    "questions": [
+                      {
+                        "id": "q1",
+                        "question": "What is the primary role of an inclusive leader?",
+                        "options": [
+                          {
+                            "id": "a",
+                            "text": "To make all decisions alone",
+                            "correct": true,
+                            "isCorrect": true
+                          },
+                          {
+                            "id": "b",
+                            "text": "To create an environment where all voices are heard",
+                            "correct": false,
+                            "isCorrect": false
+                          },
+                          {
+                            "id": "c",
+                            "text": "To maintain strict hierarchy",
+                            "correct": false,
+                            "isCorrect": false
+                          },
+                          {
+                            "id": "d",
+                            "text": "To avoid difficult conversations",
+                            "correct": false,
+                            "isCorrect": false
+                          }
+                        ],
+                        "correctAnswer": "a",
+                        "text": "What is the primary role of an inclusive leader?",
+                        "prompt": "What is the primary role of an inclusive leader?",
+                        "correctAnswerIndex": 0,
+                        "correctOptionIds": [
+                          "a"
+                        ],
+                        "type": "multiple_choice"
+                      },
+                      {
+                        "id": "q2",
+                        "question": "Which quality is essential for effective leadership?",
+                        "options": [
+                          {
+                            "id": "a",
+                            "text": "Vulnerability",
+                            "correct": true,
+                            "isCorrect": true
+                          },
+                          {
+                            "id": "b",
+                            "text": "Perfectionism",
+                            "correct": false,
+                            "isCorrect": false
+                          },
+                          {
+                            "id": "c",
+                            "text": "Control",
+                            "correct": false,
+                            "isCorrect": false
+                          },
+                          {
+                            "id": "d",
+                            "text": "Distance",
+                            "correct": false,
+                            "isCorrect": false
+                          }
+                        ],
+                        "correctAnswer": "a",
+                        "text": "Which quality is essential for effective leadership?",
+                        "prompt": "Which quality is essential for effective leadership?",
+                        "correctAnswerIndex": 0,
+                        "correctOptionIds": [
+                          "a"
+                        ],
+                        "type": "multiple_choice"
+                      }
+                    ]
+                  }
+                }
+              },
+              {
+                "id": "72257221-8b79-41d3-9011-f7fd30db9b16",
+                "module_id": "ad758a42-ea7a-4d51-bdba-869140db666b",
+                "title": "Leadership Principles",
+                "description": "Core principles of effective leadership",
+                "type": "text",
+                "order_index": 3,
+                "duration_s": 600,
+                "content_json": {
+                  "body": {},
+                  "schema_version": 1,
+                  "videoSourceType": "external",
+                  "type": "text"
+                }
+              },
+              {
+                "id": "cb7b879c-ec43-47ff-94e2-df31bf907f2a",
+                "module_id": "ad758a42-ea7a-4d51-bdba-869140db666b",
+                "title": "Leadership Framework Guide",
+                "description": "Download the comprehensive leadership framework",
+                "type": "resource",
+                "order_index": 4,
+                "duration_s": 0,
+                "content_json": {
+                  "fileUrl": "/resources/leadership-framework.pdf",
+                  "fileType": "pdf",
+                  "fileSize": "2.4 MB",
+                  "fileName": "Leadership Framework Guide.pdf",
+                  "schema_version": 1,
+                  "videoSourceType": "external",
+                  "type": "resource",
+                  "body": {}
+                }
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  ],
+  "surveys": [
+    [
+      "pulse-2025",
+      {
+        "id": "pulse-2025",
+        "title": "2025 DEI Pulse Check",
+        "description": "Quick quarterly sentiment survey for the leadership cohort.",
+        "type": "pulse-check",
+        "status": "published",
+        "sections": [],
+        "blocks": [],
+        "branding": {},
+        "settings": {
+          "allowAnonymous": false,
+          "allowSaveAndContinue": true,
+          "showProgressBar": true,
+          "randomizeQuestions": false,
+          "randomizeOptions": false
+        },
+        "completion_settings": {
+          "thankYouMessage": "Thank you for completing our survey!",
+          "showResources": false,
+          "recommendedCourses": []
+        },
+        "reflection_prompts": [],
+        "default_language": "en",
+        "supported_languages": [
+          "en"
+        ],
+        "assigned_to": {
+          "organizationIds": [
+            "org-huddle",
+            "demo-sandbox-org"
+          ],
+          "userIds": [],
+          "cohortIds": [],
+          "departmentIds": []
+        },
+        "created_at": "2026-03-29T00:57:00.892Z",
+        "updated_at": "2026-03-29T04:05:08.098Z"
+      }
+    ],
+    [
+      "climate-2025-q1",
+      {
+        "id": "climate-2025-q1",
+        "title": "Q1 2025 Climate Assessment",
+        "description": "Quarterly organizational climate and culture assessment",
+        "type": "climate-assessment",
+        "status": "active",
+        "sections": [],
+        "blocks": [],
+        "branding": {},
+        "settings": {
+          "allowAnonymous": false,
+          "allowSaveAndContinue": true,
+          "showProgressBar": true,
+          "randomizeQuestions": false,
+          "randomizeOptions": false
+        },
+        "completion_settings": {
+          "thankYouMessage": "Thank you for completing our survey!",
+          "showResources": false,
+          "recommendedCourses": []
+        },
+        "reflection_prompts": [],
+        "default_language": "en",
+        "supported_languages": [
+          "en"
+        ],
+        "assigned_to": {
+          "organizationIds": [
+            "1",
+            "4",
+            "5",
+            "demo-sandbox-org"
+          ],
+          "userIds": [],
+          "cohortIds": [],
+          "departmentIds": []
+        },
+        "created_at": "2026-03-29T00:57:00.892Z",
+        "updated_at": "2026-03-29T04:05:08.098Z"
+      }
+    ],
+    [
+      "inclusion-index-2025",
+      {
+        "id": "inclusion-index-2025",
+        "title": "Annual Inclusion Index",
+        "description": "Comprehensive inclusion measurement with benchmarking",
+        "type": "inclusion-index",
+        "status": "draft",
+        "sections": [],
+        "blocks": [],
+        "branding": {},
+        "settings": {
+          "allowAnonymous": false,
+          "allowSaveAndContinue": true,
+          "showProgressBar": true,
+          "randomizeQuestions": false,
+          "randomizeOptions": false
+        },
+        "completion_settings": {
+          "thankYouMessage": "Thank you for completing our survey!",
+          "showResources": false,
+          "recommendedCourses": []
+        },
+        "reflection_prompts": [],
+        "default_language": "en",
+        "supported_languages": [
+          "en"
+        ],
+        "assigned_to": {
+          "organizationIds": [
+            "demo-sandbox-org"
+          ],
+          "userIds": [],
+          "cohortIds": [],
+          "departmentIds": []
+        },
+        "created_at": "2026-03-29T00:57:00.892Z",
+        "updated_at": "2026-03-29T04:05:08.098Z"
+      }
+    ],
+    [
+      "equity-lens-pilot",
+      {
+        "id": "equity-lens-pilot",
+        "title": "Equity Lens Pilot Study",
+        "description": "Pilot assessment of equity in organizational practices",
+        "type": "equity-lens",
+        "status": "completed",
+        "sections": [],
+        "blocks": [],
+        "branding": {},
+        "settings": {
+          "allowAnonymous": false,
+          "allowSaveAndContinue": true,
+          "showProgressBar": true,
+          "randomizeQuestions": false,
+          "randomizeOptions": false
+        },
+        "completion_settings": {
+          "thankYouMessage": "Thank you for completing our survey!",
+          "showResources": false,
+          "recommendedCourses": []
+        },
+        "reflection_prompts": [],
+        "default_language": "en",
+        "supported_languages": [
+          "en"
+        ],
+        "assigned_to": {
+          "organizationIds": [
+            "3",
+            "2",
+            "demo-sandbox-org"
+          ],
+          "userIds": [],
+          "cohortIds": [],
+          "departmentIds": []
+        },
+        "created_at": "2026-03-29T00:57:00.892Z",
+        "updated_at": "2026-03-29T04:05:08.098Z"
+      }
+    ],
+    [
+      "leadership-360",
+      {
+        "id": "leadership-360",
+        "title": "Leadership 360 Assessment",
+        "description": "Multi-rater feedback for inclusive leadership development",
+        "type": "custom",
+        "status": "paused",
+        "sections": [],
+        "blocks": [],
+        "branding": {},
+        "settings": {
+          "allowAnonymous": false,
+          "allowSaveAndContinue": true,
+          "showProgressBar": true,
+          "randomizeQuestions": false,
+          "randomizeOptions": false
+        },
+        "completion_settings": {
+          "thankYouMessage": "Thank you for completing our survey!",
+          "showResources": false,
+          "recommendedCourses": []
+        },
+        "reflection_prompts": [],
+        "default_language": "en",
+        "supported_languages": [
+          "en"
+        ],
+        "assigned_to": {
+          "organizationIds": [
+            "1",
+            "demo-sandbox-org"
+          ],
+          "userIds": [],
+          "cohortIds": [],
+          "departmentIds": []
+        },
+        "created_at": "2026-03-29T00:57:00.892Z",
+        "updated_at": "2026-03-29T04:05:08.098Z"
+      }
+    ]
+  ],
+  "surveyAssignments": [
+    [
+      "pulse-2025",
+      {
+        "survey_id": "pulse-2025",
+        "organization_ids": [
+          "org-huddle",
+          "demo-sandbox-org"
+        ],
+        "user_ids": [],
+        "cohort_ids": [],
+        "department_ids": [],
+        "updated_at": "2026-03-29T04:05:08.098Z"
+      }
+    ],
+    [
+      "climate-2025-q1",
+      {
+        "survey_id": "climate-2025-q1",
+        "organization_ids": [
+          "1",
+          "4",
+          "5",
+          "demo-sandbox-org"
+        ],
+        "user_ids": [],
+        "cohort_ids": [],
+        "department_ids": [],
+        "updated_at": "2026-03-29T04:05:08.098Z"
+      }
+    ],
+    [
+      "equity-lens-pilot",
+      {
+        "survey_id": "equity-lens-pilot",
+        "organization_ids": [
+          "3",
+          "2",
+          "demo-sandbox-org"
+        ],
+        "user_ids": [],
+        "cohort_ids": [],
+        "department_ids": [],
+        "updated_at": "2026-03-29T04:05:08.098Z"
+      }
+    ],
+    [
+      "leadership-360",
+      {
+        "survey_id": "leadership-360",
+        "organization_ids": [
+          "1",
+          "demo-sandbox-org"
+        ],
+        "user_ids": [],
+        "cohort_ids": [],
+        "department_ids": [],
+        "updated_at": "2026-03-29T04:05:08.098Z"
+      }
+    ],
+    [
+      "inclusion-index-2025",
+      {
+        "survey_id": "inclusion-index-2025",
+        "organization_ids": [
+          "demo-sandbox-org"
+        ],
+        "user_ids": [],
+        "cohort_ids": [],
+        "department_ids": [],
+        "updated_at": "2026-03-29T04:05:08.098Z"
+      }
+    ]
+  ]
 }

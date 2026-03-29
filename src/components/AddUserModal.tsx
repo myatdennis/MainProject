@@ -22,6 +22,7 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
   const { showToast } = useToast();
   const { activeOrgId } = useSecureAuth();
   const [loading, setLoading] = useState(false);
+  const PASSWORD_MIN_LENGTH = 8;
   const isEditMode = !!editUser;
   const { values, errors, setValue, validateAll } = useFormValidation(
     {
@@ -157,8 +158,8 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
 
     if (!isEditMode) {
       if (sanitizedData.password) {
-        if (sanitizedData.password.length < 12) {
-          showToast('Password must be at least 12 characters if provided', 'error');
+        if (sanitizedData.password.length < PASSWORD_MIN_LENGTH) {
+          showToast(`Password must be at least ${PASSWORD_MIN_LENGTH} characters if provided`, 'error');
           return;
         }
         if (sanitizedData.password !== sanitizedData.confirmPassword) {
@@ -466,7 +467,7 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Password *
+                        Password (optional)
                       </label>
                       <input
                         type="password"
@@ -476,11 +477,13 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
                         disabled={loading}
                         autoComplete="new-password"
                       />
-                      <p className="mt-1 text-xs text-gray-500">Minimum 12 characters.</p>
+                      <p className="mt-1 text-xs text-gray-500">
+                        Leave blank to send a password setup link. Minimum {PASSWORD_MIN_LENGTH} characters if provided.
+                      </p>
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Confirm Password *
+                        Confirm Password
                       </label>
                       <input
                         type="password"

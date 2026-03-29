@@ -506,40 +506,22 @@ const loginHandler = async (req, res) => {
       });
     }
 
-    let profileRole = null;
-    if (supabase && data.user?.id) {
-      try {
-        const { data: profile } = await supabase
-          .from('user_profiles')
-          .select('role')
-          .eq('id', data.user.id)
-          .single();
-        profileRole = profile?.role || null;
-      } catch (profileError) {
-        console.warn('[AUTH LOGIN] profile lookup failed', {
-          requestId,
-          userId: data.user.id,
-          error: profileError?.message || profileError,
-        });
-      }
+    let membershipRows = [];
+    try {
+      membershipRows = await getUserMemberships(data.user.id, { logPrefix: '[auth-login]' });
+    } catch (membershipError) {
+      console.warn('[AUTH LOGIN] membership lookup failed', {
+        requestId,
+        userId: data.user.id,
+        error: membershipError?.message || membershipError,
+      });
     }
 
-    const allowlistedAdmin = isAllowlistedAdminEmail(normalizedEmail);
-    const role = allowlistedAdmin ? 'admin' : profileRole || 'learner';
-    const isPlatformAdmin = allowlistedAdmin || role === 'admin';
-
-    const tokens = buildTokenResponseFromSession(data.session);
-    return res.status(200).json({
-      ok: true,
-      user: data.user,
-      session: {
-        ...data.session,
-        role,
-        platformRole: isPlatformAdmin ? 'platform_admin' : null,
-        isPlatformAdmin,
-      },
-      ...tokens,
+    const userPayload = buildUserPayloadFromSupabase(data.user, membershipRows, {
+      membershipStatus: membershipRows.length ? 'ready' : 'unknown',
     });
+    const tokens = buildTokenResponseFromSession(data.session);
+    return res.status(200).json(buildSessionResponse(userPayload, tokens));
   } catch (error) {
     console.error('[AUTH LOGIN] unexpected error', {
       requestId,

@@ -3,12 +3,24 @@ import { createAndPublishCourse } from './helpers/api';
 import { getApiBaseUrl } from './helpers/env';
 
 const getClientCatalog = async (request: APIRequestContext) => {
-  const res = await request.get(`${getApiBaseUrl()}/api/client/courses`, { failOnStatusCode: true });
+  const res = await request.get(`${getApiBaseUrl()}/api/client/courses`, {
+    failOnStatusCode: true,
+    headers: {
+      'x-user-role': 'admin',
+      'x-org-id': 'demo-sandbox-org',
+    },
+  });
   return res.json();
 };
 
 const getClientCourseDetail = async (request: APIRequestContext, slug: string) => {
-  const res = await request.get(`${getApiBaseUrl()}/api/client/courses/${slug}`, { failOnStatusCode: true });
+  const res = await request.get(`${getApiBaseUrl()}/api/client/courses/${slug}`, {
+    failOnStatusCode: true,
+    headers: {
+      'x-user-role': 'admin',
+      'x-org-id': 'demo-sandbox-org',
+    },
+  });
   return res.json();
 };
 

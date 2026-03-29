@@ -44,7 +44,7 @@ waitForUrl('http://localhost:8888/api/health', 2000)
   })
   .catch(() => {
     api = spawnProc('node', ['server/index.js'], {
-      env: { ...process.env, E2E_TEST_MODE: 'true', PORT: '8888' },
+      env: { ...process.env, E2E_TEST_MODE: 'true', DEV_FALLBACK: 'true', PORT: '8888' },
     });
   });
 
@@ -63,6 +63,8 @@ setTimeout(() => {
           PORT: '5174',
           // vite.config.ts reads VITE_PORT (not PORT) to set the dev server port
           VITE_PORT: '5174',
+          VITE_E2E_TEST_MODE: 'true',
+          VITE_DEV_FALLBACK: 'true',
           // Point Vite's /api and /ws proxies at the E2E API server (port 8888,
           // E2E_TEST_MODE=true) so browser fetch() calls reach the correct server.
           // Without this, Vite would proxy to port 3000 (the regular dev server)

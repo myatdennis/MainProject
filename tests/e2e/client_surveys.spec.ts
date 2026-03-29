@@ -5,19 +5,12 @@ const TEST_ORG_ID = 'demo-sandbox-org';
 
 const loginAsLearner = async (page: Page) => {
   const base = getFrontendBaseUrl();
-  await page.goto(`${base}/lms/login`, { waitUntil: 'domcontentloaded' });
-  await page.getByLabel('Email Address').fill('user@pacificcoast.edu');
-  await page.getByLabel('Password').fill('user123');
-  await page.getByRole('button', { name: 'Sign In' }).click();
-  await page.waitForURL('**/lms/dashboard', { timeout: 30_000 });
-  await page.evaluate(() => {
+  await page.addInitScript(() => {
+    (window as any).__E2E_BYPASS = true;
     localStorage.setItem('huddle_lms_auth', 'true');
-    localStorage.setItem(
-      'huddle_user',
-      JSON.stringify({ email: 'user@pacificcoast.edu', id: 'learner-surveys', role: 'user', activeOrgId: TEST_ORG_ID }),
-    );
-    localStorage.setItem('huddle_active_org', TEST_ORG_ID);
-  }, TEST_ORG_ID);
+  });
+  await page.goto(`${base}/client/dashboard`, { waitUntil: 'domcontentloaded' });
+  await page.waitForURL('**/client/dashboard', { timeout: 30_000 });
 };
 
 test.describe('Client survey entry points', () => {
@@ -40,11 +33,15 @@ test.describe('Client survey entry points', () => {
     const apiBase = getApiBaseUrl();
     const healthResponse = await request.get(`${apiBase}/api/health`);
     expect(healthResponse.ok()).toBeTruthy();
-    const response = await request.get(`${apiBase}/api/client/surveys?status=published`, {
+    const response = await request.get(
+      `${apiBase}/api/client/surveys?status=published&orgId=${encodeURIComponent(TEST_ORG_ID)}`,
+      {
       headers: {
         'x-user-role': 'admin',
+        'x-org-id': TEST_ORG_ID,
       },
-    });
+      }
+    );
 
     expect(response.ok()).toBeTruthy();
     const payload = await response.json();

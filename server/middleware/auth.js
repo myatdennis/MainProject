@@ -999,6 +999,11 @@ const RATE_LIMIT_BYPASS_EXACT = new Set(['/auth/csrf']);
 
 const shouldBypassApiRateLimit = (req) => {
   if (!req) return false;
+  const e2eMode = String(process.env.E2E_TEST_MODE || '').toLowerCase() === 'true';
+  const devFallback = String(process.env.DEV_FALLBACK || '').toLowerCase() === 'true';
+  if (e2eMode || devFallback) {
+    return true;
+  }
   if (req.method === 'OPTIONS') return true;
   const path = req.path || '';
   if (RATE_LIMIT_BYPASS_EXACT.has(path)) {

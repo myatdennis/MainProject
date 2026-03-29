@@ -238,7 +238,10 @@ const _supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY ?? '';
 const _missingEnv: string[] = [];
 if (!_supabaseUrl || _supabaseUrl === 'your-supabase-url') _missingEnv.push('VITE_SUPABASE_URL');
 if (!_supabaseKey || _supabaseKey === 'your-supabase-anon-key') _missingEnv.push('VITE_SUPABASE_ANON_KEY');
-if (_missingEnv.length > 0) {
+const isE2ERuntime =
+  (import.meta.env.VITE_E2E_TEST_MODE ?? '').toString() === 'true' ||
+  (import.meta.env.VITE_DEV_FALLBACK ?? '').toString() === 'true';
+if (_missingEnv.length > 0 && !isE2ERuntime) {
   console.error(
     `[ENV] Missing required environment variable(s): ${_missingEnv.join(', ')}. ` +
       'Auth and API calls will fail. Check your .env or deployment environment settings.',

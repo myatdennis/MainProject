@@ -36,6 +36,7 @@ import EmptyState from '../../components/ui/EmptyState';
 import SurveyQueueStatus from '../../components/Survey/SurveyQueueStatus';
 import SurveyAssignmentModal from '../../components/Survey/SurveyAssignmentModal';
 import type { Survey } from '../../types/survey';
+import { listOrgs } from '../../services/orgService';
 import {
   listSurveys,
   saveSurvey as persistSurvey,
@@ -81,6 +82,38 @@ const AdminSurveys = () => {
     organizationIds: string[];
   } | null>(null);
   const [duplicateTarget, setDuplicateTarget] = useState<string | null>(null);
+  const [orgNameMap, setOrgNameMap] = useState<Map<string, string>>(new Map());  
+  
+  useEffect(() => {
+    let cancelled = false;
+    listOrgs()
+      .then((orgs) => {
+        if (cancelled) return;
+        const next = new Map<string, string>();
+        orgs.forEach((org) => {
+          if (org?.id) {
+            next.set(org.id, org.name ?? org.id);
+          }
+        });
+        setOrgNameMap(next);
+      })
+      .catch((error) => {
+        console.warn('[AdminSurveys] Failed to load organization names', error);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (orgNameMap.size === 0) return;
+    setSurveys((prev) =>
+      prev.map((survey) => ({
+        ...survey,
+        assignedOrgs: survey.organizationIds.map((orgId) => orgNameMap.get(orgId) ?? orgId),
+      }))
+    );
+  }, [orgNameMap]);
 
   // Reset transient filter/selection state whenever the user navigates back to this page.
   useEffect(() => {
@@ -93,8 +126,8 @@ const AdminSurveys = () => {
 
   const shapeSurveyRecord = useCallback(
     (record: Survey): AdminSurveyCard => {
-  const organizationIds = record.assignedTo?.organizationIds ?? [];
-  const assignedOrgs = organizationIds;
+      const organizationIds = record.assignedTo?.organizationIds ?? [];
+      const assignedOrgs = organizationIds.map((orgId) => orgNameMap.get(orgId) ?? orgId);
       const metrics = (record as any).metrics ?? (record as any).analytics ?? {};
       const totalResponses =
         typeof (record as any).totalResponses === 'number'
@@ -134,11 +167,11 @@ const AdminSurveys = () => {
         completionRate: Number.isFinite(completionInput)
           ? Math.max(0, Math.min(100, Math.round(completionInput)))
           : 0,
-  organizationIds,
+        organizationIds,
         assignedOrgs,
       };
     },
-    []
+    [orgNameMap]
   );
 
   const fetchSurveys = useCallback(

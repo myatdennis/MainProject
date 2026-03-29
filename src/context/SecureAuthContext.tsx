@@ -1786,9 +1786,9 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           const mockPayload: SessionResponsePayload = {
             user: { id: '00000000-0000-0000-0000-000000000001', email: 'mya@the-huddle.co' } as any,
             memberships: [
-              { orgId: 'e2e-org-1', role: 'admin', status: 'active', organizationName: 'E2E Org' } as any,
+              { orgId: 'demo-sandbox-org', role: 'admin', status: 'active', organizationName: 'Demo Sandbox Org' } as any,
             ],
-            organizationIds: ['e2e-org-1'],
+            organizationIds: ['demo-sandbox-org'],
             accessToken: 'e2e-access-token',
             refreshToken: 'e2e-refresh-token',
             expiresAt: Math.floor(Date.now() / 1000) + 3600,

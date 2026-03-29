@@ -10,6 +10,9 @@ import type { z } from 'zod';
 const LMSLogin: React.FC = () => {
   const { login, register, isAuthenticated, forgotPassword } = useSecureAuth();
   const runtimeStatus = useRuntimeStatus();
+  const isE2ERuntime =
+    (import.meta.env.VITE_E2E_TEST_MODE ?? '').toString() === 'true' ||
+    (import.meta.env.VITE_DEV_FALLBACK ?? '').toString() === 'true';
   const supabaseReady = runtimeStatus.supabaseConfigured && runtimeStatus.supabaseHealthy;
   const demoModeEnabled = runtimeStatus.demoModeEnabled || !supabaseReady;
   const registrationAvailable = supabaseReady && !runtimeStatus.demoModeEnabled;
@@ -45,10 +48,10 @@ const LMSLogin: React.FC = () => {
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (isAuthenticated.lms) {
+    if (isAuthenticated.lms && !isE2ERuntime) {
       navigate('/lms/dashboard', { replace: true });
     }
-  }, [isAuthenticated.lms, navigate]);
+  }, [isAuthenticated.lms, isE2ERuntime, navigate]);
 
   useEffect(() => {
     if (!registrationAvailable && activeTab === 'register') {

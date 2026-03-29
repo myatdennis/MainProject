@@ -107,7 +107,10 @@ export async function sendEmail({
   };
 
   if (!transporter) {
-    console.warn('[emailService] SMTP not configured. Email payload:', payload);
+    console.warn('[emailService] SMTP not configured. Email not sent.', {
+      to: payload.to,
+      subject: payload.subject,
+    });
     const result = { queued: false, delivered: false, reason: 'smtp_not_configured' };
     await logEmailAttempt(payload, result, logContext);
     return result;

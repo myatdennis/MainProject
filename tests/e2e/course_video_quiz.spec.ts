@@ -20,7 +20,7 @@ test.describe('Admin courses with quiz + video content', () => {
       data: {
         course: {
           title: courseTitle,
-          description: 'E2E test for video + quiz content',
+          description: 'E2E test for video + quiz content with enough detail to satisfy publish validation requirements.',
           status: 'draft',
           version: 1,
           organization_id: TEST_ORG_ID,
@@ -37,6 +37,7 @@ test.describe('Admin courses with quiz + video content', () => {
                 order_index: 1,
                 content_json: {
                   type: 'video',
+                  videoSourceType: 'external',
                   body: {
                     videoUrl: 'https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4',
                     transcript: 'Sample transcript',

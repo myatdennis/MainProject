@@ -3,7 +3,13 @@ import { createAndPublishCourse } from './helpers/api';
 import { getApiBaseUrl } from './helpers/env';
 
 const getClientCourses = async (request: APIRequestContext) => {
-  const res = await request.get(`${getApiBaseUrl()}/api/client/courses`, { failOnStatusCode: false });
+  const res = await request.get(`${getApiBaseUrl()}/api/client/courses`, {
+    failOnStatusCode: false,
+    headers: {
+      'x-user-role': 'admin',
+      'x-org-id': 'demo-sandbox-org',
+    },
+  });
   if (!res.ok()) {
     throw new Error(`Failed to fetch client courses: ${res.status()}`);
   }

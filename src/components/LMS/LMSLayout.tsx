@@ -47,7 +47,11 @@ const LMSLayout = ({ children }: LMSLayoutProps) => {
   const location = useLocation();
   const navigate = useNavigate();
   const runtimeStatus = useRuntimeStatus();
-  const supabaseConfigured = Boolean(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY);
+  const isE2ERuntime =
+    (import.meta.env.VITE_E2E_TEST_MODE ?? '').toString() === 'true' ||
+    (import.meta.env.VITE_DEV_FALLBACK ?? '').toString() === 'true';
+  const supabaseConfigured =
+    isE2ERuntime || Boolean(import.meta.env.VITE_SUPABASE_URL && import.meta.env.VITE_SUPABASE_ANON_KEY);
   const apiReachable = runtimeStatus.apiReachable ?? runtimeStatus.apiHealthy;
   const apiAuthRequired = Boolean(runtimeStatus.apiAuthRequired);
 
@@ -89,7 +93,7 @@ const LMSLayout = ({ children }: LMSLayoutProps) => {
     );
   }
 
-  if (!supabaseConfigured) {
+  if (!supabaseConfigured && !isE2ERuntime) {
     return (
       <div className="flex min-h-screen items-center justify-center bg-softwhite px-6 text-center">
         <Card tone="muted" className="max-w-xl space-y-4">

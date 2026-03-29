@@ -27,6 +27,7 @@ const SurveyQueueStatus = ({
   showFlushButton = true,
   dataTestId,
 }: SurveyQueueStatusProps) => {
+  const resolvedTestId = dataTestId ?? (variant === 'inline' ? 'survey-queue-status-inline' : 'survey-queue-status');
   const [queueLength, setQueueLength] = useState(() => getQueueLength());
   const [lastFlushAt, setLastFlushAt] = useState(() => getLastFlushTime());
   const [isOnline, setIsOnline] = useState(() =>
@@ -130,7 +131,7 @@ const SurveyQueueStatus = ({
   return (
     <div
       className={`${containerClasses} ${toneClasses} ${className}`}
-      data-testid={dataTestId ?? 'survey-queue-status'}
+  data-testid={resolvedTestId}
     >
       <div className="flex items-center gap-3">
         <div

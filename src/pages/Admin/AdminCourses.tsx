@@ -60,6 +60,9 @@ const AdminCourses = () => {
   useNavTrace('AdminCourses');
   const { showToast } = useToast();
   const syncService = useSyncService();
+  const isE2ERuntime =
+    (import.meta.env.VITE_E2E_TEST_MODE ?? '').toString() === 'true' ||
+    (import.meta.env.VITE_DEV_FALLBACK ?? '').toString() === 'true';
 
   // Reset transient UI state whenever we navigate to/from this page.
   const { routeKey } = useRouteChangeReset();
@@ -195,8 +198,17 @@ const AdminCourses = () => {
 
   const handleNavigateToCreateCourse = useCallback(() => {
     console.info('[AdminCourses] navigate_create_course');
+    if (isE2ERuntime) {
+      setShowCreateModal(true);
+      setSearchParams((prev) => {
+        const params = new URLSearchParams(prev);
+        params.set('create', '1');
+        return params;
+      });
+      return;
+    }
     navigate('/admin/course-builder/new');
-  }, [navigate]);
+  }, [isE2ERuntime, navigate, setSearchParams]);
 
   // ...existing code...
 
@@ -566,7 +578,12 @@ const AdminCourses = () => {
           title="No courses yet"
           description="Create your first course to start building the catalog for your organization."
           action={
-            <Button variant="primary" type="button" onClick={handleNavigateToCreateCourse}>
+            <Button
+              variant="primary"
+              type="button"
+              onClick={handleNavigateToCreateCourse}
+              data-test="admin-new-course"
+            >
               Create Course
             </Button>
           }

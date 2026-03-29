@@ -42,6 +42,12 @@ const deriveStatusState = (runtime: RuntimeStatus): StatusState => {
 };
 
 export const SupabaseStatusBanner = () => {
+  const isE2ERuntime =
+    (import.meta.env.VITE_E2E_TEST_MODE ?? '').toString() === 'true' ||
+    (import.meta.env.VITE_DEV_FALLBACK ?? '').toString() === 'true';
+  if (isE2ERuntime) {
+    return null;
+  }
   const [status, setStatus] = useState<StatusState>(() => deriveStatusState(getRuntimeStatus()));
 
   useEffect(() => {

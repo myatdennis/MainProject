@@ -117,4 +117,28 @@ export async function assignCourseToAll(courseId: string) {
   });
 }
 
-export default { createAndPublishCourse, assignCourseToAll };
+export async function provisionUser(overrides: {
+  email?: string;
+  firstName?: string;
+  lastName?: string;
+  organizationId?: string;
+  membershipRole?: string;
+} = {}) {
+  const email = overrides.email ?? `e2e+${Date.now()}@example.com`;
+  const firstName = overrides.firstName ?? 'E2E';
+  const lastName = overrides.lastName ?? 'User';
+  const organizationId = overrides.organizationId ?? TEST_ORG_ID;
+  const membershipRole = overrides.membershipRole ?? 'member';
+
+  const response = await apiPost('/api/admin/users', {
+    organizationId,
+    firstName,
+    lastName,
+    email,
+    membershipRole,
+  });
+
+  return { email, organizationId, ...response };
+}
+
+export default { createAndPublishCourse, assignCourseToAll, provisionUser };

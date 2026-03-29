@@ -1,7 +1,8 @@
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import { sendEmail } from '../services/emailService.js';
-import { isSupabaseAuthCreateUserAlreadyExists, isSupabaseAuthCreateUserDatabaseError } from '../utils/authHelpers.js';
+import { logger } from '../lib/logger.js';
+import { createOrProvisionOrganizationUser } from '../services/userProvisioning.js';
 import { randomUUID } from 'crypto';
 import supabase from '../lib/supabaseClient.js';
 import { buildOrgInviteInsertAttemptPayloads } from '../utils/orgInvites.js';
@@ -131,11 +132,7 @@ const resolveOrgInvitesTokenColumn = async () => {
   return orgInvitesTokenColumn;
 };
 
-const isSupabaseAuthCreateUserDatabaseError = (error) => {
-  const message = String(error?.message || '').toLowerCase();
-  const code = String(error?.code || '').toLowerCase();
-  return code === 'unexpected_failure' || message.includes('database error creating new user');
-};
+const getOrganizationMembershipsOrgColumnName = async () => resolveOrganizationMembershipsOrgColumn();
 
 const createInviteFallback = async ({ orgId, email, role, actorUserId = null, firstName = '', lastName = '' }) => {
   validateOrgId(orgId, 'organizationId is required for invite fallback');
@@ -496,139 +493,41 @@ const provisionImportedUser = async (user, actorUserId, defaultOrgId) => {
     throw createHttpError(400, 'missing_fields', 'Imported users require first name, last name, and email');
   }
 
-  let authUser = await findAuthUserByEmail(email);
-  let created = false;
-  if (!authUser) {
-    const createPayload = {
+  const result = await createOrProvisionOrganizationUser(
+    {
+      orgId,
       email,
-      email_confirm: true,
-      user_metadata: {
-        first_name: derivedFirstName,
-        last_name: derivedLastName,
-        full_name: `${derivedFirstName} ${derivedLastName}`.trim() || null,
-        organization_id: orgId,
-        onboarding_org_id: orgId,
+      password: passwordInput,
+      firstName: derivedFirstName,
+      lastName: derivedLastName,
+      membershipRole,
+      jobTitle: normalizeText(user.jobTitle || user.job_title || user.role),
+      department: normalizeText(user.department),
+      cohort: normalizeText(user.cohort),
+      phoneNumber: normalizeText(user.phoneNumber || user.phone_number),
+      actor: actorUserId ? { userId: actorUserId } : null,
+      requestId: null,
+    },
+    {
+      supabase,
+      logger,
+      sendEmail,
+      getOrganizationMembershipsOrgColumnName,
+      invalidateMembershipCache,
+      assignContentToUser: async ({ orgId: targetOrgId, userId }) => {
+        await assignPublishedOrganizationCoursesToUser({ orgId: targetOrgId, userId, actorUserId });
+        await assignPublishedOrganizationSurveysToUser({ orgId: targetOrgId, userId, actorUserId });
       },
-    };
-    if (passwordInput && passwordInput.length >= INVITE_PASSWORD_MIN_CHARS) {
-      createPayload.password = passwordInput;
-    }
-
-    const { data, error } = await supabase.auth.admin.createUser(createPayload);
-    if (error) {
-      if (isSupabaseAuthCreateUserAlreadyExists(error) || isSupabaseAuthCreateUserDatabaseError(error)) {
-        const existing = await findAuthUserByEmail(email);
-        if (!existing) throw error;
-        authUser = existing;
-        created = false;
-      } else {
-        throw error;
-      }
-    } else {
-      authUser = data?.user ?? null;
-      created = Boolean(authUser);
-    }
-  }
-
-  if (!authUser?.id) {
-    throw createHttpError(500, 'auth_user_resolution_failed', 'Unable to resolve imported auth user');
-  }
-
-  const isAdmin = writableMembershipRoles.has(membershipRole);
-
-  // NOTE: this project stores user records in `user_profiles` (not `users`).
-  // Upsert the profile (primary source of truth) rather than the non-existent
-  // `users` table which will cause PGRST205 errors when referenced.
-
-  const metadata = {
-    job_title: normalizeText(user.jobTitle || user.job_title || user.role),
-    department: normalizeText(user.department),
-    cohort: normalizeText(user.cohort),
-    phone_number: normalizeText(user.phoneNumber || user.phone_number),
-  };
-
-  const { error: profileError } = await supabase.from('user_profiles').upsert({
-    id: authUser.id,
-    email,
-    first_name: derivedFirstName,
-    last_name: derivedLastName,
-    organization_id: orgId,
-    role: isAdmin ? 'admin' : 'learner',
-    is_active: true,
-    is_admin: isAdmin,
-    metadata,
-  }, { onConflict: 'id' });
-  if (profileError) throw profileError;
-
-  // Defensive logging before membership creation to aid debugging.
-  console.log('[ADMIN ADD USER]', {
-    email,
-    userId: authUser.id,
-    orgId,
-    role: membershipRole,
-  });
-
-  await upsertOrganizationMembership({
-    orgId,
-    userId: authUser.id,
-    role: membershipRole,
-    actorUserId,
-  });
-
-  // Log success of membership creation.
-  console.log('[ADMIN ADD USER SUCCESS]', { membershipCreated: true, userId: authUser.id, orgId });
-
-  invalidateMembershipCache(authUser.id);
-
-  // If the membership role is an admin role, ensure an admin_users record exists
-  // for auditing/metadata purposes. Use upsert to avoid unique-constraint failures.
-  if (isAdmin) {
-    try {
-      const { error: adminError } = await supabase.from('admin_users').upsert({
-        user_id: authUser.id,
-        organization_id: orgId,
-      }, { onConflict: 'user_id,organization_id' });
-      if (adminError) {
-        // Don't fail the entire flow for admin_users bookkeeping — just log it.
-        console.warn('[ADMIN ADD USER] admin_users upsert failed', { userId: authUser.id, orgId, message: adminError.message || adminError });
-      } else {
-        console.log('[ADMIN ADD USER SUCCESS]', { adminUserCreated: true, userId: authUser.id, orgId });
-      }
-    } catch (err) {
-      console.warn('[ADMIN ADD USER] admin_users insert error', { userId: authUser.id, orgId, err: err?.message || String(err) });
-    }
-  }
-
-  await assignPublishedOrganizationCoursesToUser({ orgId, userId: authUser.id, actorUserId });
-  await assignPublishedOrganizationSurveysToUser({ orgId, userId: authUser.id, actorUserId });
-
-  let setupLink = null;
-  let emailSent = false;
-  const { data: recoveryLink, error: recoveryError } = await supabase.auth.admin.generateLink({
-    type: 'recovery',
-    email,
-  });
-  if (recoveryError || !recoveryLink?.action_link) {
-    throw recoveryError || createHttpError(500, 'setup_link_not_generated', 'Unable to generate setup link');
-  }
-  setupLink = recoveryLink.action_link;
-  const subject = 'Set up your learner portal password';
-  const text = `Hi ${derivedFirstName},\n\nYour administrator has added you to the learning portal. Click the link below to set your password and sign in:\n\n${setupLink}\n\nIf you did not request this, please ignore.`;
-  const emailResult = await sendEmail({
-    to: email,
-    subject,
-    text,
-    logContext: { recipientType: 'new_user', organizationId: orgId, sentBy: actorUserId ?? null },
-  });
-  emailSent = Boolean(emailResult.delivered);
+    },
+  );
 
   return {
     email,
-    userId: authUser.id,
+    userId: result.userId,
     orgId,
-    created,
-    setupLink,
-    emailSent,
+    created: result.created,
+    setupLink: result.setupLink,
+    emailSent: result.emailSent,
   };
 };
 

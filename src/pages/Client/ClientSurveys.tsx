@@ -11,17 +11,20 @@ import {
   fetchAssignedSurveysForLearner,
   type LearnerSurveyAssignment,
 } from '../../dal/surveys';
+import type { CourseAssignmentStatus } from '../../types/assignment';
 
-const deriveStatusTone = (status: LearnerSurveyAssignment['assignment']['status'], overdue: boolean) => {
-  if (status === 'completed') return 'positive' as const;
-  if (overdue && status !== 'completed') return 'danger' as const;
-  if (status === 'in-progress') return 'info' as const;
+const deriveStatusTone = (status: CourseAssignmentStatus, overdue: boolean) => {
+  const statusValue = String(status);
+  if (statusValue === 'completed') return 'positive' as const;
+  if (overdue && statusValue !== 'completed') return 'danger' as const;
+  if (statusValue === 'in-progress') return 'info' as const;
   return 'attention' as const;
 };
 
-const statusLabel = (status: LearnerSurveyAssignment['assignment']['status']) => {
-  if (status === 'completed') return 'Completed';
-  if (status === 'in-progress') return 'In progress';
+const statusLabel = (status: CourseAssignmentStatus) => {
+  const statusValue = String(status);
+  if (statusValue === 'completed') return 'Completed';
+  if (statusValue === 'in-progress') return 'In progress';
   return 'Assigned';
 };
 
@@ -225,9 +228,7 @@ const ClientSurveys = () => {
             <ClipboardList className="h-6 w-6" />
           </div>
           <h2 className="font-heading text-lg font-semibold text-charcoal">No surveys assigned</h2>
-          <p className="text-sm text-slate/70">
-            Your facilitator will share surveys here when it’s time for feedback.
-          </p>
+          <p className="text-sm text-slate/70">You don’t have any surveys yet. Check back later.</p>
           <Button variant="ghost" asChild>
             <Link to="/client/dashboard">← Back to dashboard</Link>
           </Button>

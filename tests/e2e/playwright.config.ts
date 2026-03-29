@@ -6,6 +6,8 @@ process.env.E2E_API_BASE_URL = process.env.E2E_API_BASE_URL || 'http://127.0.0.1
 process.env.E2E_TEST_MODE = process.env.E2E_TEST_MODE || 'true';
 process.env.DEV_FALLBACK = process.env.DEV_FALLBACK || 'true';
 
+const shouldStartWebServer = process.env.E2E_SKIP_WEB_SERVER !== 'true';
+
 export default defineConfig({
   testDir: './',
   timeout: 90_000,
@@ -15,12 +17,14 @@ export default defineConfig({
     viewport: { width: 1280, height: 800 },
     actionTimeout: 10_000,
   },
-  webServer: {
-    // Start both API and Vite dev together
-    command: 'node ./server/start-e2e-dev.cjs',
-    cwd: process.cwd(),
-  url: process.env.E2E_BASE_URL || 'http://127.0.0.1:5174',
-    reuseExistingServer: true,
-    timeout: 120_000,
-  },
+  webServer: shouldStartWebServer
+    ? {
+        // Start both API and Vite dev together
+        command: 'node ./server/start-e2e-dev.cjs',
+        cwd: process.cwd(),
+        url: process.env.E2E_BASE_URL || 'http://127.0.0.1:5174',
+        reuseExistingServer: true,
+        timeout: 120_000,
+      }
+    : undefined,
 });

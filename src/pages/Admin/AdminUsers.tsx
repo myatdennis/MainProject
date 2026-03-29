@@ -78,12 +78,22 @@ const AdminUsers = () => {
     const profile = member?.profile ?? {};
     const profileMetadata = profile?.metadata ?? {};
     const userRow = member?.user ?? {};
-    const userId = member?.user_id ?? member?.user_id_uuid ?? '';
+    const userId =
+      member?.user_id ??
+      member?.userId ??
+      member?.user_id_uuid ??
+      member?.userUuid ??
+      member?.id ??
+      '';
     if (!userId) return null;
 
     const firstName = profile.first_name ?? userRow.first_name ?? '';
     const lastName = profile.last_name ?? userRow.last_name ?? '';
-    const fullName = profile.full_name ?? profile.fullName ?? `${firstName} ${lastName}`.trim();
+    const fullName =
+      profile.full_name ??
+      profile.fullName ??
+      member?.name ??
+      `${firstName} ${lastName}`.trim();
     const email = profile.email ?? userRow.email ?? member?.email ?? '';
     if (!email && !fullName) return null;
 
@@ -108,15 +118,15 @@ const AdminUsers = () => {
       id: userId,
       name: fullName || email,
       email,
-      organization: member?.org_id ?? member?.organization_id ?? activeOrgId ?? '',
+  organization: member?.org_id ?? member?.organization_id ?? member?.orgId ?? activeOrgId ?? '',
       cohort: profile.cohort ?? profileMetadata.cohort ?? '',
       role:
         profile.title ??
         profile.job_title ??
         profileMetadata.job_title ??
         profileMetadata.title ??
-        userRow.role ??
-        member?.role ??
+  userRow.role ??
+  member?.role ??
         '',
       enrolled: member?.created_at ?? profile.created_at ?? '',
       lastLogin: userRow.last_login_at ?? profile.updated_at ?? '',
