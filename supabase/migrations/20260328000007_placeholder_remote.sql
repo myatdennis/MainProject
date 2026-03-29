@@ -1,0 +1,3 @@
+-- Placeholder to align with remote migration history.
+-- The original migration is already applied in the remote Supabase project.
+-- Do NOT delete unless the remote history is fully normalized and re-synced.

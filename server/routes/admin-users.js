@@ -4,7 +4,7 @@ import { sendEmail } from '../services/emailService.js';
 import { logger } from '../lib/logger.js';
 import { createOrProvisionOrganizationUser } from '../services/userProvisioning.js';
 import { randomUUID } from 'crypto';
-import supabase from '../lib/supabaseClient.js';
+import supabase, { supabaseAuthClient } from '../lib/supabaseClient.js';
 import { buildOrgInviteInsertAttemptPayloads } from '../utils/orgInvites.js';
 import { authenticate, requireAdmin, invalidateMembershipCache } from '../middleware/auth.js';
 import { createHttpError, withHttpError } from '../middleware/apiErrorHandler.js';
@@ -474,6 +474,83 @@ const assignPublishedOrganizationSurveysToUser = async ({ orgId, userId, actorUs
 
   return { inserted: inserts.length, updated: updates.length };
 };
+
+// POST /api/admin/users
+router.post('/', async (req, res, next) => {
+  try {
+    if (!supabase) {
+      return next(createHttpError(503, 'supabase_not_configured', 'Supabase not configured'));
+    }
+
+    const orgId =
+      normalizeText(req.body?.orgId) ||
+      normalizeText(req.body?.organizationId) ||
+      normalizeText(req.body?.org_id) ||
+      normalizeText(req.body?.organization_id) ||
+      '';
+    const firstName = normalizeText(req.body?.firstName ?? req.body?.first_name ?? '');
+    const lastName = normalizeText(req.body?.lastName ?? req.body?.last_name ?? '');
+    const email = normalizeEmail(req.body?.email ?? '');
+    const password = typeof req.body?.password === 'string' ? req.body.password : '';
+    const membershipRole = normalizeOrgRole(req.body?.membershipRole || req.body?.membership_role || 'member');
+    const jobTitle = normalizeText(req.body?.jobTitle ?? req.body?.job_title ?? req.body?.role ?? '');
+    const department = normalizeText(req.body?.department ?? '');
+    const cohort = normalizeText(req.body?.cohort ?? '');
+    const phoneNumber = normalizeText(req.body?.phoneNumber ?? req.body?.phone_number ?? '');
+
+    if (!orgId) {
+      return next(createHttpError(400, 'org_id_required', 'organizationId is required.'));
+    }
+    if (!firstName || !lastName || !email) {
+      return next(createHttpError(400, 'missing_fields', 'firstName, lastName, and email are required.'));
+    }
+    if (password && password.length < INVITE_PASSWORD_MIN_CHARS) {
+      return next(createHttpError(400, 'invalid_password', `Password must be at least ${INVITE_PASSWORD_MIN_CHARS} characters.`));
+    }
+
+    const actorUserId = req.user?.userId || req.user?.id || null;
+    const result = await createOrProvisionOrganizationUser(
+      {
+        orgId,
+        email,
+        password,
+        firstName,
+        lastName,
+        membershipRole,
+        jobTitle,
+        department,
+        cohort,
+        phoneNumber,
+        actor: actorUserId ? { userId: actorUserId } : null,
+        requestId: req.requestId ?? null,
+      },
+      {
+        supabase,
+        supabaseAuthClient,
+        logger,
+        sendEmail,
+        getOrganizationMembershipsOrgColumnName: resolveOrganizationMembershipsOrgColumn,
+        invalidateMembershipCache,
+        assignContentToUser: async ({ orgId: targetOrgId, userId }) => {
+          await assignPublishedOrganizationCoursesToUser({ orgId: targetOrgId, userId, actorUserId });
+          await assignPublishedOrganizationSurveysToUser({ orgId: targetOrgId, userId, actorUserId });
+        },
+      },
+    );
+
+    res.status(result.created ? 201 : 200).json({
+      data: result.member ?? result.membership ?? result.profile ?? null,
+      created: result.created,
+      existingAccount: !result.created,
+      membershipCreated: result.membershipCreated,
+      setupLink: result.setupLink ?? null,
+      emailSent: result.emailSent ?? false,
+      emailStatus: result.emailResult?.reason ?? null,
+    });
+  } catch (err) {
+    return next(withHttpError(err, 500, 'admin_users_create_failed'));
+  }
+});
 
 const provisionImportedUser = async (user, actorUserId, defaultOrgId) => {
   const orgId =

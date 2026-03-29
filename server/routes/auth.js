@@ -476,6 +476,14 @@ const loginHandler = async (req, res) => {
         role: demoUser.role || 'user',
       });
 
+      console.info('[LOGIN SUCCESS]', {
+        requestId,
+        source: 'demo',
+        userId: demoUser.id,
+        email: normalizedEmail,
+        membershipCount: 0,
+      });
+
       return res.status(200).json(buildSessionResponse(userPayload, tokens));
     }
 
@@ -521,6 +529,13 @@ const loginHandler = async (req, res) => {
       membershipStatus: membershipRows.length ? 'ready' : 'unknown',
     });
     const tokens = buildTokenResponseFromSession(data.session);
+    console.info('[LOGIN SUCCESS]', {
+      requestId,
+      source: 'supabase',
+      userId: data.user.id,
+      email: normalizedEmail,
+      membershipCount: membershipRows.length,
+    });
     return res.status(200).json(buildSessionResponse(userPayload, tokens));
   } catch (error) {
     console.error('[AUTH LOGIN] unexpected error', {

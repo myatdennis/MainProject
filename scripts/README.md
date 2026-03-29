@@ -37,3 +37,22 @@ npx tsc scripts/create_demo_users.ts --outDir dist && SUPABASE_URL=https://<proj
 - user@pacificcoast.edu / user123 (role: user)
 
 Security: Do not commit your service role key. Run this from a secure environment.
+
+## auth_creation_smoke.cjs
+
+End-to-end smoke test for Supabase auth creation + login + client courses.
+
+Usage (expects the API server running locally):
+
+```bash
+SMOKE_BASE_URL=http://localhost:8787 \
+SMOKE_ADMIN_EMAIL=admin@example.com \
+SMOKE_ADMIN_PASSWORD=your-admin-password \
+SMOKE_ORG_ID=<org-id> \
+node scripts/auth_creation_smoke.cjs
+```
+
+Optional overrides:
+- `SMOKE_NEW_USER_EMAIL` to force a specific test email.
+- `SMOKE_NEW_USER_PASSWORD` to force a specific test password.
+- `SMOKE_SKIP_IF_MISSING=1` to exit 0 when required env vars are missing.

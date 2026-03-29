@@ -150,6 +150,32 @@ Use this checklist whenever you flip the platform between demo mode (in-memory d
 
 These steps ensure the DAL-guarded services (`assignmentStorage`, `progressService`, analytics dashboards) behave consistently with the documented runtime state.
 
+### Supabase auth user creation incident runbook (2026-03-29)
+
+**Failing object**
+- `public.handle_new_user_impl()` (invoked by `auth.users` trigger `on_auth_user_created` → `public.handle_new_user`).
+
+**Symptom**
+- Admin/user creation fails with **“Database error creating new user”**.
+
+**Why it happened**
+- `public.user_profiles.email` is `NOT NULL`, but the trigger path inserted only `id/created_at/updated_at`.
+- The insert failed during `auth.users` creation, which surfaced as the generic auth error.
+
+**How it was fixed**
+- Updated `public.handle_new_user_impl()` to upsert a full `user_profiles` row with safe defaults (email + names + role/org metadata).
+- Added missing `full_name` column + backfill (`20260329191500_add_full_name_to_user_profiles.sql`).
+- Server provisioning now reads `data.properties.action_link` for setup links (Supabase response shape update).
+
+**Fast verification**
+1. Run the smoke flow (`scripts/auth_creation_smoke.cjs`) to:
+   - Create a test user via `/api/admin/users` (generates setup link).
+   - Log in the user.
+   - Fetch `/api/client/courses` successfully.
+2. If it fails, re-check the trigger in the remote schema:
+   - `auth.users` should have **only** `on_auth_user_created` calling `public.handle_new_user`.
+3. Confirm `user_profiles` has `email` and `full_name` columns.
+
 ### SSL Certificate
 
 Most platforms (Vercel, Railway, Netlify) provide automatic SSL certificates through Let's Encrypt. If using a custom server:

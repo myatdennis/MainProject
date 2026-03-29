@@ -31,3 +31,6 @@ If you'd like, I can:
 - convert this into your project's preferred migration format (Knex, Flyway,
   Hasura, Rails, etc.) and commit it to the repo,
 - or run verification queries against a provided dev DB (with credentials).
+
+Supabase migration history note
+- The Supabase CLI history includes placeholder files (`supabase/migrations/20260328000005/6/7_placeholder_remote.sql`) used to align with the remote project's applied migrations. Keep them unless you plan a full history normalization + re-sync.

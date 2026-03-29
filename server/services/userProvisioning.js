@@ -26,6 +26,61 @@ const normalizeRole = (value, fallback = 'member') => {
 
 const isValidEmail = (value) => /\S+@\S+\.[A-Za-z]+/.test(value || '');
 
+const isAuthUserNotFoundError = (error) => {
+  const message = String(error?.message || '').toLowerCase();
+  return message.includes('user not found') || message.includes('not found');
+};
+
+const cleanupOrphanedProfileByEmail = async ({
+  supabase,
+  email,
+  logger = defaultLogger,
+  requestId = null,
+  getOrganizationMembershipsOrgColumnName,
+}) => {
+  if (!supabase || !email) return false;
+
+  const { data: profile, error: profileError } = await supabase
+    .from('user_profiles')
+    .select('id, email')
+    .eq('email', email)
+    .maybeSingle();
+
+  if (profileError || !profile?.id) return false;
+
+  try {
+    const { data: authData, error: authError } = await supabase.auth.admin.getUserById(profile.id);
+    if (authData?.user?.id) return false;
+    if (authError && !isAuthUserNotFoundError(authError)) return false;
+  } catch (error) {
+    if (!isAuthUserNotFoundError(error)) return false;
+  }
+
+  try {
+    const membershipOrgColumn = getOrganizationMembershipsOrgColumnName
+      ? await getOrganizationMembershipsOrgColumnName()
+      : 'organization_id';
+    await supabase.from('organization_memberships').delete().eq('user_id', profile.id);
+    await supabase.from('admin_users').delete().eq('user_id', profile.id);
+    await supabase.from('user_profiles').delete().eq('id', profile.id);
+    logger.warn('provisioning_orphaned_profile_removed', {
+      requestId,
+      email,
+      userId: profile.id,
+      membershipOrgColumn,
+    });
+    return true;
+  } catch (error) {
+    logger.warn('provisioning_orphaned_profile_cleanup_failed', {
+      requestId,
+      email,
+      userId: profile.id,
+      message: error?.message || String(error),
+    });
+    return false;
+  }
+};
+
 export const resolveSupabaseAuthUserByEmail = async ({ supabase, email, requestId = null, logger = defaultLogger }) => {
   const normalizedEmail = normalizeEmail(email);
   if (!supabase || !normalizedEmail) return null;
@@ -190,10 +245,19 @@ const ensureAdminRoleMapping = async ({ supabase, orgId, userId, role }) => {
 
 const generatePasswordSetupLink = async ({ supabase, email }) => {
   const { data, error } = await supabase.auth.admin.generateLink({ type: 'recovery', email });
-  if (error || !data?.action_link) {
+  const actionLink = data?.action_link || data?.properties?.action_link || null;
+  if (error || !actionLink) {
+    defaultLogger.warn('provisioning_setup_link_failed', {
+      email,
+      message: error?.message || String(error),
+      code: error?.code ?? null,
+      status: error?.status ?? error?.statusCode ?? null,
+      hasData: Boolean(data),
+      dataKeys: data ? Object.keys(data) : null,
+    });
     throw new ProvisioningError('setup_link_generate', 'setup_link_not_generated', 'Unable to generate password setup link', 500, error);
   }
-  return data.action_link;
+  return actionLink;
 };
 
 const sendProvisioningEmail = async ({ sendEmail, email, firstName, setupLink, orgName, actorId, orgId }) => {
@@ -250,12 +314,13 @@ const verifyProvisionedUserState = async ({ supabase, orgId, userId, email, setu
     throw new ProvisioningError('final_verify', 'email_mismatch', 'Profile email does not match auth email', 500);
   }
 
-  return { authUser: authData.user, profile, membership };
+  return { ok: true, authUser: authData.user, profile, membership };
 };
 
 export const createOrProvisionOrganizationUser = async (input, deps = {}) => {
   const {
     supabase,
+    supabaseAuthClient,
     logger = defaultLogger,
     sendEmail,
     getOrganizationMembershipsOrgColumnName,
@@ -307,6 +372,9 @@ export const createOrProvisionOrganizationUser = async (input, deps = {}) => {
   stage = 'auth_create_or_resolve';
   let authUser = null;
   let created = false;
+  let createError = null;
+  let createdWithMinimalPayload = false;
+  let createdViaSignUp = false;
 
   try {
     const { data, error } = await supabase.auth.admin.createUser({
@@ -325,6 +393,15 @@ export const createOrProvisionOrganizationUser = async (input, deps = {}) => {
     authUser = data?.user ?? null;
     created = Boolean(authUser?.id);
   } catch (error) {
+    createError = error;
+    logger.warn('auth_create_user_error', {
+      requestId,
+      email: normalizedEmail,
+      message: error?.message || String(error),
+      code: error?.code ?? null,
+      status: error?.status ?? error?.statusCode ?? null,
+      details: error?.details ?? null,
+    });
     if (isSupabaseAuthCreateUserAlreadyExists(error) || isSupabaseAuthCreateUserDatabaseError(error)) {
       authUser = await resolveSupabaseAuthUserByEmail({ supabase, email: normalizedEmail, requestId, logger });
       created = false;
@@ -334,13 +411,128 @@ export const createOrProvisionOrganizationUser = async (input, deps = {}) => {
   }
 
   if (!authUser?.id) {
+    if (isSupabaseAuthCreateUserDatabaseError(createError)) {
+      if (!authUser?.id && supabaseAuthClient && password) {
+        try {
+          const { data, error } = await supabaseAuthClient.auth.signUp({
+            email: normalizedEmail,
+            password,
+            options: {
+              data: {
+                first_name: normalizedFirstName,
+                last_name: normalizedLastName,
+                full_name: `${normalizedFirstName} ${normalizedLastName}`.trim(),
+                organization_id: orgId,
+                onboarding_org_id: orgId,
+              },
+            },
+          });
+          if (error) throw error;
+          authUser = data?.user ?? null;
+          created = Boolean(authUser?.id);
+          createdViaSignUp = created;
+        } catch (signupError) {
+          logger.warn('auth_signup_fallback_failed', {
+            requestId,
+            email: normalizedEmail,
+            message: signupError?.message || String(signupError),
+            code: signupError?.code ?? null,
+            status: signupError?.status ?? signupError?.statusCode ?? null,
+          });
+        }
+      }
+
+      if (!authUser?.id && password) {
+        try {
+          const { data, error } = await supabase.auth.admin.generateLink({
+            type: 'signup',
+            email: normalizedEmail,
+            password,
+            options: {
+              data: {
+                first_name: normalizedFirstName,
+                last_name: normalizedLastName,
+                full_name: `${normalizedFirstName} ${normalizedLastName}`.trim(),
+                organization_id: orgId,
+                onboarding_org_id: orgId,
+              },
+            },
+          });
+          if (error) throw error;
+          authUser = data?.user ?? null;
+          created = Boolean(authUser?.id);
+          createdViaSignUp = created;
+        } catch (linkError) {
+          logger.warn('auth_generate_signup_link_failed', {
+            requestId,
+            email: normalizedEmail,
+            message: linkError?.message || String(linkError),
+            code: linkError?.code ?? null,
+            status: linkError?.status ?? linkError?.statusCode ?? null,
+          });
+        }
+      }
+
+      if (!authUser?.id) {
+        try {
+          const { data, error } = await supabase.auth.admin.createUser({
+            email: normalizedEmail,
+            email_confirm: true,
+          });
+          if (error) throw error;
+          authUser = data?.user ?? null;
+          created = Boolean(authUser?.id);
+          createdWithMinimalPayload = created;
+        } catch (minimalError) {
+          logger.warn('auth_create_user_minimal_failed', {
+            requestId,
+            email: normalizedEmail,
+            message: minimalError?.message || String(minimalError),
+            code: minimalError?.code ?? null,
+            status: minimalError?.status ?? minimalError?.statusCode ?? null,
+          });
+        }
+      }
+
+      const cleaned = await cleanupOrphanedProfileByEmail({
+        supabase,
+        email: normalizedEmail,
+        logger,
+        requestId,
+        getOrganizationMembershipsOrgColumnName,
+      });
+      if (cleaned) {
+        try {
+          const { data, error } = await supabase.auth.admin.createUser({
+            email: normalizedEmail,
+            email_confirm: true,
+            user_metadata: {
+              first_name: normalizedFirstName,
+              last_name: normalizedLastName,
+              full_name: `${normalizedFirstName} ${normalizedLastName}`.trim(),
+              organization_id: orgId,
+              onboarding_org_id: orgId,
+            },
+            ...(password ? { password } : {}),
+          });
+          if (error) throw error;
+          authUser = data?.user ?? null;
+          created = Boolean(authUser?.id);
+        } catch (retryError) {
+          throw new ProvisioningError(stage, 'auth_create_retry_failed', retryError?.message || 'Unable to create auth user', 500, retryError);
+        }
+      }
+    }
+  }
+
+  if (!authUser?.id) {
     throw new ProvisioningError(stage, 'auth_user_resolution_failed', 'Unable to resolve auth user', 500);
   }
 
-  if (password) {
+  if (password || createdWithMinimalPayload || createdViaSignUp) {
     try {
       await supabase.auth.admin.updateUserById(authUser.id, {
-        password,
+        ...(password ? { password } : {}),
         email_confirm: true,
         user_metadata: {
           first_name: normalizedFirstName,
@@ -502,6 +694,18 @@ export const createOrProvisionOrganizationUser = async (input, deps = {}) => {
     email: normalizedEmail,
     setupLink,
     getOrganizationMembershipsOrgColumnName,
+  });
+  if (!verification?.ok) {
+    throw new ProvisioningError('final_verify', 'verification_failed', 'Provisioning verification failed', 500);
+  }
+
+  logger.info('[USER CREATED VERIFIED]', {
+    requestId,
+    orgId,
+    userId: authUser.id,
+    email: normalizedEmail,
+    membershipId: verification.membership?.id ?? null,
+    created,
   });
 
   let members = null;

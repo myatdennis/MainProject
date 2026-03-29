@@ -1883,8 +1883,7 @@ export const courseStore = {
         if (!orgContext.role) {
           adminLoadStatus = 'error';
           adminLoadError = 'role_context_unavailable';
-          console.warn('[courseStore.init] Role context unavailable after waiting; aborting admin catalog init.');
-          return;
+          console.warn('[courseStore.init] Role context unavailable after waiting; proceeding with admin surface fallback.');
         }
       }
       const roleResolved = typeof orgContext.role === 'string' && orgContext.role.length > 0;

@@ -1,9 +1,8 @@
-import { supabase } from './supabaseClient';
 import { getAccessToken as getStoredAccessToken } from './secureStorage';
 import { LEGACY_ORG_HEADER_NAME, ORG_HEADER_NAME, resolveOrgHeaderForRequest } from './orgContext';
 
 export class NotAuthenticatedError extends Error {
-  constructor(message = 'Supabase session is unavailable') {
+  constructor(message = 'Backend session is unavailable') {
     super(message);
     this.name = 'NotAuthenticatedError';
   }
@@ -27,10 +26,6 @@ const API_BASE =
   (typeof import.meta !== 'undefined' && (import.meta as any)?.env?.VITE_API_BASE_URL) ||
   (typeof process !== 'undefined' ? process.env?.VITE_API_BASE_URL : '') ||
   '';
-const CLIENT_SUPABASE_CONFIGURED = Boolean(
-  (typeof import.meta !== 'undefined' && (import.meta as any)?.env?.VITE_SUPABASE_URL && (import.meta as any)?.env?.VITE_SUPABASE_ANON_KEY) ||
-  (typeof process !== 'undefined' && process.env?.VITE_SUPABASE_URL && process.env?.VITE_SUPABASE_ANON_KEY)
-);
 
 const normalizeUrl = (target: string): string => {
   if (!target) return target;
@@ -74,17 +69,7 @@ const isPublicEndpoint = (target: string): boolean => {
 };
 
 export const getAccessToken = async (): Promise<string | null> => {
-  try {
-    const { data, error } = await supabase.auth.getSession();
-    if (error) {
-      console.warn('[authorizedFetch] Supabase getSession failed', error);
-      return null;
-    }
-    return data?.session?.access_token ?? null;
-  } catch (sessionError) {
-    console.warn('[authorizedFetch] Supabase session lookup failed', sessionError);
-    return null;
-  }
+  return getStoredAccessToken();
 };
 
 const resolveSupabaseAccessToken = async (): Promise<string> => {
@@ -104,52 +89,10 @@ const resolveSupabaseAccessToken = async (): Promise<string> => {
     // E2E server will accept via its demo-auth bypass.
     return 'e2e-access-token';
   }
-  if (!CLIENT_SUPABASE_CONFIGURED && storedToken) {
+  if (storedToken) {
     return storedToken;
   }
-  try {
-    let token = await getAccessToken();
-    if (token) {
-      return token;
-    }
-    if (storedToken) {
-      return storedToken;
-    }
-
-    if (devMode) {
-      console.warn('[authorizedFetch] Supabase session missing access_token, attempting refresh.');
-    }
-
-    token = await refreshSupabaseSession();
-    if (token) {
-      return token;
-    }
-
-    throw new NotAuthenticatedError('Supabase session is missing an access_token');
-  } catch (error) {
-    if (devMode && !(error instanceof NotAuthenticatedError)) {
-      console.warn('[authorizedFetch] Failed to resolve Supabase session', error);
-    }
-    throw error instanceof NotAuthenticatedError ? error : new NotAuthenticatedError();
-  }
-};
-
-const refreshSupabaseSession = async (): Promise<string | null> => {
-  try {
-    const { data, error } = await supabase.auth.refreshSession();
-    if (error) {
-      console.warn('[authorizedFetch] supabase.auth.refreshSession error', error);
-      return null;
-    }
-    const refreshedToken = data?.session?.access_token ?? null;
-    if (!refreshedToken && devMode) {
-      console.warn('[authorizedFetch] refreshSession returned without access_token');
-    }
-    return refreshedToken;
-  } catch (error) {
-    console.warn('[authorizedFetch] Failed to refresh Supabase session', error);
-    return null;
-  }
+  throw new NotAuthenticatedError('Backend access token is missing');
 };
 
 const DEFAULT_TIMEOUT_MS = 12_000;
@@ -271,13 +214,9 @@ export default async function authorizedFetch(
 
     if (attempt === 0) {
       if (devMode) {
-        console.debug('[authorizedFetch] 401 received. Attempting Supabase refresh.', { url, requestLabel });
+        console.debug('[authorizedFetch] 401 received. No backend refresh configured for this fetch.', { url, requestLabel });
       }
-      const refreshed = await refreshSupabaseSession();
       attempt += 1;
-      if (refreshed) {
-        continue;
-      }
       return response;
     }
 
