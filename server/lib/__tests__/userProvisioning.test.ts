@@ -205,6 +205,34 @@ describe('createOrProvisionOrganizationUser', () => {
     expect(result.userId).toBe('user-10');
   });
 
+  it('preserves existing profile organization when adding membership to another org', async () => {
+    const { supabase, store } = createMockSupabase();
+    store.authUsers.set('multi@user.com', { id: 'user-12', email: 'multi@user.com' });
+    store.profiles.set('user-12', {
+      id: 'user-12',
+      email: 'multi@user.com',
+      organization_id: 'org-1',
+      active_organization_id: 'org-1',
+    });
+    const sendEmail = vi.fn(async () => ({ delivered: true, id: 'msg-4' }));
+
+    await createOrProvisionOrganizationUser(
+      {
+        orgId: 'org-2',
+        email: 'multi@user.com',
+        firstName: 'Multi',
+        lastName: 'Org',
+        membershipRole: 'member',
+      },
+      { supabase, sendEmail, getOrganizationMembershipsOrgColumnName: async () => 'organization_id' },
+    );
+
+    const profile = store.profiles.get('user-12');
+    expect(profile.organization_id).toBe('org-1');
+    expect(profile.active_organization_id).toBe('org-1');
+    expect(store.memberships.has('org-2:user-12')).toBe(true);
+  });
+
   it('falls back to listUsers when getUserByEmail reports not found', async () => {
     const { supabase, store } = createMockSupabase({ forceGetUserByEmailNotFound: true });
     store.authUsers.set('fallback@user.com', { id: 'user-11', email: 'fallback@user.com' });

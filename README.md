@@ -10,9 +10,21 @@ PORT=8888
 SUPABASE_URL=http://localhost:54321
 SUPABASE_KEY=REPLACE_ME
 # SUPABASE_SERVICE_ROLE_KEY=REPLACE_ME (optional, used if SUPABASE_KEY is not set)
+
+# SMTP (outbound email)
+SMTP_HOST=smtp.example.com
+SMTP_PORT=587
+SMTP_USER=replace-with-smtp-username
+SMTP_PASS=replace-with-smtp-password
+SMTP_FROM="The Huddle <no-reply@the-huddle.co>"
+SMTP_SECURE=false
 ```
 
 **Important:** Never expose your Supabase service role key to the browser or client code. Do not prefix it with `VITE_`. Only use it in backend/server code.
+
+SMTP notes:
+- Use port `587` with `SMTP_SECURE=false` for STARTTLS, or port `465` with `SMTP_SECURE=true` for implicit TLS.
+- If SMTP is missing, the API will log `SMTP not configured` and still return setup links so you can send them manually.
 
 ## Running Backend and Frontend
 

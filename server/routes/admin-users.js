@@ -539,6 +539,7 @@ router.post('/', async (req, res, next) => {
     );
 
     res.status(result.created ? 201 : 200).json({
+      success: true,
       data: result.member ?? result.membership ?? result.profile ?? null,
       created: result.created,
       existingAccount: !result.created,
@@ -549,6 +550,69 @@ router.post('/', async (req, res, next) => {
     });
   } catch (err) {
     return next(withHttpError(err, 500, 'admin_users_create_failed'));
+  }
+});
+
+const buildProvisioningEmail = ({ firstName, setupLink, orgName }) => {
+  const subject = orgName
+    ? `Set up your ${orgName} learner portal password`
+    : 'Set up your learner portal password';
+  const text = `Hi ${firstName || 'there'},\n\nYour administrator added you to the learning portal. Click the link below to set your password and sign in:\n\n${setupLink}\n\nIf you did not request this, please ignore.`;
+  return { subject, text };
+};
+
+// POST /api/admin/users/:userId/resend-email
+router.post('/:userId/resend-email', async (req, res, next) => {
+  try {
+    if (!supabase) {
+      return next(createHttpError(503, 'supabase_not_configured', 'Supabase not configured'));
+    }
+
+    const userId = normalizeText(req.params?.userId || '');
+    if (!userId) {
+      return next(createHttpError(400, 'user_id_required', 'userId is required.'));
+    }
+
+    const { data: profile, error: profileError } = await supabase
+      .from('user_profiles')
+      .select('id, email, first_name, organization_id')
+      .eq('id', userId)
+      .maybeSingle();
+    if (profileError || !profile?.email) {
+      return next(createHttpError(404, 'user_not_found', 'User profile not found.'));
+    }
+
+    const { data: linkData, error: linkError } = await supabase.auth.admin.generateLink({
+      type: 'recovery',
+      email: profile.email,
+    });
+    const setupLink = linkData?.action_link || linkData?.properties?.action_link || null;
+    if (linkError || !setupLink) {
+      return next(createHttpError(500, 'setup_link_generate_failed', 'Unable to generate setup link.'));
+    }
+
+    const { subject, text } = buildProvisioningEmail({
+      firstName: profile.first_name,
+      setupLink,
+      orgName: null,
+    });
+
+    const emailResult = await sendEmail({
+      to: profile.email,
+      subject,
+      text,
+      logContext: { recipientType: 'resend_setup', recipientId: userId },
+    });
+
+    res.json({
+      success: true,
+      setupLink,
+      emailSent: Boolean(emailResult?.delivered),
+      messageId: emailResult?.id ?? null,
+      error: emailResult?.delivered ? null : emailResult?.reason ?? 'smtp_send_failed',
+    });
+  } catch (err) {
+    return next(withHttpError(err, 500, 'admin_users_resend_failed'));
   }
 });
 

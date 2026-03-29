@@ -22,6 +22,13 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
   const { showToast } = useToast();
   const { activeOrgId } = useSecureAuth();
   const [loading, setLoading] = useState(false);
+  const [resendLoading, setResendLoading] = useState(false);
+  const [deliveryInfo, setDeliveryInfo] = useState<{
+    setupLink?: string | null;
+    emailSent?: boolean;
+    userId?: string | null;
+    email?: string | null;
+  } | null>(null);
   const PASSWORD_MIN_LENGTH = 8;
   const isEditMode = !!editUser;
   const { values, errors, setValue, validateAll } = useFormValidation(
@@ -77,6 +84,12 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
       });
     return () => { cancelled = true; };
   }, [isOpen, orgsProp]);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setDeliveryInfo(null);
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     if (!isOpen || isEditMode) return;
@@ -178,7 +191,8 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
 
     setLoading(true);
 
-    try {
+  let shouldClose = true;
+  try {
       if (isEditMode && editUser) {
         // Update the real user profile and membership state via PATCH
         await apiRequest(`/api/admin/users/${editUser.id}`, {
@@ -243,6 +257,15 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
           return;
         }
 
+        const responseUserId = response?.data?.user_id ?? response?.data?.user?.id ?? response?.data?.profile?.id ?? null;
+        const latestDelivery = {
+          setupLink: response?.setupLink ?? null,
+          emailSent: response?.emailSent ?? false,
+          userId: responseUserId,
+          email: sanitizedData.email,
+        };
+        setDeliveryInfo(latestDelivery);
+
         const newUser = {
           id: response?.data?.user_id ?? response?.data?.user?.id ?? response?.data?.profile?.id ?? `user-${Date.now()}`,
           name: `${sanitizedData.firstName} ${sanitizedData.lastName}`,
@@ -267,14 +290,12 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
           ? `Existing account linked to ${sanitizedData.email} and membership created for this organization.`
           : `Account created for ${sanitizedData.email}.`;
 
-        if (response?.setupLink) {
-          showToast(
-            `${baseMessage} Setup link generated.${response.emailSent ? ' Email delivery was attempted.' : ` Copy this link to send manually: ${response.setupLink}`}`,
-            'success',
-          );
-        } else {
+        if (response?.emailSent) {
           showToast(baseMessage, 'success');
+        } else {
+          showToast(`${baseMessage} Email not sent. Use the setup link below.`, 'warning');
         }
+        shouldClose = !response?.setupLink;
       }
       
       // Reset form
@@ -290,7 +311,9 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
       setValue('password', '');
       setValue('confirmPassword', '');
       
-      onClose();
+      if (shouldClose) {
+        onClose();
+      }
     } catch (error: any) {
       showToast(
         error?.message ??
@@ -299,6 +322,57 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
       );
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleCopyLink = async () => {
+    if (!deliveryInfo?.setupLink) return;
+    try {
+      await navigator.clipboard.writeText(deliveryInfo.setupLink);
+      showToast('Setup link copied to clipboard', 'success');
+    } catch (err) {
+      console.warn('[AddUserModal] Failed to copy setup link', err);
+      showToast('Unable to copy link. Please copy it manually.', 'error');
+    }
+  };
+
+  const handleOpenLink = () => {
+    if (!deliveryInfo?.setupLink) return;
+    window.open(deliveryInfo.setupLink, '_blank', 'noopener');
+  };
+
+  const handleResendEmail = async () => {
+    if (!deliveryInfo?.userId) {
+      showToast('User id missing for resend.', 'error');
+      return;
+    }
+    setResendLoading(true);
+    try {
+      const resendResponse = await apiRequest<{
+        success?: boolean;
+        setupLink?: string;
+        emailSent?: boolean;
+        error?: string | null;
+      }>(`/api/admin/users/${deliveryInfo.userId}/resend-email`, {
+        method: 'POST',
+      });
+
+      setDeliveryInfo((prev) => ({
+        ...prev,
+        setupLink: resendResponse?.setupLink ?? prev?.setupLink,
+        emailSent: resendResponse?.emailSent ?? prev?.emailSent,
+      }));
+
+      if (resendResponse?.emailSent) {
+        showToast('Email sent successfully!', 'success');
+      } else {
+        showToast('Unable to send email. Use the setup link below.', 'warning');
+      }
+    } catch (err) {
+      console.warn('[AddUserModal] Resend email failed', err);
+      showToast('Failed to resend email.', 'error');
+    } finally {
+      setResendLoading(false);
     }
   };
 
@@ -610,6 +684,58 @@ const AddUserModal: React.FC<AddUserModalProps> = ({ isOpen, onClose, onUserAdde
                   </div>
                 </div>
               </div>
+              {deliveryInfo?.setupLink && !deliveryInfo?.emailSent && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                  <p className="font-semibold mb-2">Email not sent — share the setup link</p>
+                  <div className="flex flex-col gap-2">
+                    <input
+                      type="text"
+                      readOnly
+                      value={deliveryInfo.setupLink}
+                      className="w-full rounded-lg border border-amber-200 bg-white px-3 py-2 text-xs text-amber-900"
+                    />
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={handleCopyLink}
+                        className="px-3 py-2 rounded-lg bg-amber-600 text-white text-xs font-semibold"
+                      >
+                        Copy Link
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleOpenLink}
+                        className="px-3 py-2 rounded-lg bg-white border border-amber-300 text-amber-900 text-xs font-semibold"
+                      >
+                        Open Link
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleResendEmail}
+                        disabled={resendLoading}
+                        className="px-3 py-2 rounded-lg bg-amber-100 text-amber-900 text-xs font-semibold"
+                      >
+                        {resendLoading ? 'Resending…' : 'Resend Email'}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+              {deliveryInfo?.setupLink && deliveryInfo?.emailSent && (
+                <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-900">
+                  <p className="font-semibold">Email sent successfully.</p>
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={handleResendEmail}
+                      disabled={resendLoading}
+                      className="px-3 py-2 rounded-lg bg-emerald-100 text-emerald-900 text-xs font-semibold"
+                    >
+                      {resendLoading ? 'Resending…' : 'Resend Email'}
+                    </button>
+                  </div>
+                </div>
+              )}
               {/* Actions */}
               <div className="flex items-center justify-end space-x-4 pt-6 border-t border-gray-200">
                 <button

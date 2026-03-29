@@ -12,6 +12,12 @@ const smtpSecure = String(process.env.SMTP_SECURE || '').toLowerCase() === 'true
 const defaultFrom = process.env.SMTP_FROM || process.env.MAIL_FROM || 'no-reply@the-huddle.co';
 
 const canSend = Boolean(smtpHost && smtpPort && smtpUser && smtpPass);
+const shouldRedact = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
+
+const redactLinks = (value) => {
+  if (!shouldRedact || !value) return value;
+  return value.replace(/https?:\/\/\S+/gi, '[redacted-link]');
+};
 
 export const configureEmailLogging = ({ getSupabase }) => {
   if (typeof getSupabase === 'function') {
@@ -40,12 +46,16 @@ function getTransporter() {
 
 const sanitizeBody = (text, html) => {
   if (text && typeof text === 'string') {
-    return text;
+    return redactLinks(text);
   }
   if (html && typeof html === 'string') {
-    return html.replace(/<[^>]+>/g, ' ');
+    return redactLinks(html.replace(/<[^>]+>/g, ' '));
   }
   return '';
+};
+
+const logEmailEvent = (label, payload = {}) => {
+  logger.info(label, payload);
 };
 
 const statusFromResult = (result) => {
@@ -97,6 +107,11 @@ export async function sendEmail({
     throw new Error('email_missing_fields');
   }
 
+  logEmailEvent('[EMAIL SEND ATTEMPT]', {
+    to,
+    subject,
+  });
+
   const transporter = getTransporter();
   const payload = {
     from,
@@ -113,6 +128,11 @@ export async function sendEmail({
     });
     const result = { queued: false, delivered: false, reason: 'smtp_not_configured' };
     await logEmailAttempt(payload, result, logContext);
+    logEmailEvent('[EMAIL SEND FAILURE]', {
+      to,
+      subject,
+      error: result.reason,
+    });
     return result;
   }
 
@@ -120,11 +140,21 @@ export async function sendEmail({
     const info = await transporter.sendMail(payload);
     const result = { queued: true, delivered: true, id: info.messageId };
     await logEmailAttempt(payload, result, logContext);
+    logEmailEvent('[EMAIL SEND SUCCESS]', {
+      to,
+      subject,
+      messageId: info.messageId,
+    });
     return result;
   } catch (error) {
     console.error('[emailService] Failed to send email', { error, to, subject });
     const result = { queued: true, delivered: false, reason: error.message };
     await logEmailAttempt(payload, result, logContext);
+    logEmailEvent('[EMAIL SEND FAILURE]', {
+      to,
+      subject,
+      error: error?.message || String(error),
+    });
     return result;
   }
 }
@@ -132,3 +162,10 @@ export async function sendEmail({
 export function isEmailEnabled() {
   return canSend;
 }
+
+export const getEmailConfigSummary = () => ({
+  host: smtpHost || null,
+  port: smtpPort || null,
+  secure: smtpSecure,
+  configured: canSend,
+});

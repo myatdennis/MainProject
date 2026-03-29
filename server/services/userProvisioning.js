@@ -529,18 +529,44 @@ export const createOrProvisionOrganizationUser = async (input, deps = {}) => {
     throw new ProvisioningError(stage, 'auth_user_resolution_failed', 'Unable to resolve auth user', 500);
   }
 
-  if (password || createdWithMinimalPayload || createdViaSignUp) {
+  let existingProfile = null;
+  try {
+    const { data } = await supabase
+      .from('user_profiles')
+      .select('organization_id, active_organization_id')
+      .eq('id', authUser.id)
+      .maybeSingle();
+    existingProfile = data ?? null;
+  } catch (error) {
+    logger.warn('provisioning_existing_profile_lookup_failed', {
+      requestId,
+      userId: authUser.id,
+      message: error?.message || String(error),
+    });
+  }
+
+  const existingUserMetadata = authUser.user_metadata && typeof authUser.user_metadata === 'object'
+    ? authUser.user_metadata
+    : {};
+  const shouldSeedOrgMetadata = created || !existingUserMetadata.organization_id;
+  const shouldSeedOnboardingMetadata = created || !existingUserMetadata.onboarding_org_id;
+  const shouldSeedActiveOrgMetadata = created || !existingUserMetadata.active_organization_id;
+  const mergedUserMetadata = {
+    ...existingUserMetadata,
+    first_name: normalizedFirstName,
+    last_name: normalizedLastName,
+    full_name: `${normalizedFirstName} ${normalizedLastName}`.trim(),
+    ...(shouldSeedOrgMetadata ? { organization_id: orgId } : {}),
+    ...(shouldSeedOnboardingMetadata ? { onboarding_org_id: orgId } : {}),
+    ...(shouldSeedActiveOrgMetadata ? { active_organization_id: orgId } : {}),
+  };
+
+  if (password || createdWithMinimalPayload || createdViaSignUp || Object.keys(mergedUserMetadata).length > 0) {
     try {
       await supabase.auth.admin.updateUserById(authUser.id, {
         ...(password ? { password } : {}),
         email_confirm: true,
-        user_metadata: {
-          first_name: normalizedFirstName,
-          last_name: normalizedLastName,
-          full_name: `${normalizedFirstName} ${normalizedLastName}`.trim(),
-          organization_id: orgId,
-          onboarding_org_id: orgId,
-        },
+        user_metadata: mergedUserMetadata,
       });
     } catch (error) {
       await cleanupProvisionedUserAccount({
@@ -556,13 +582,23 @@ export const createOrProvisionOrganizationUser = async (input, deps = {}) => {
   }
 
   stage = 'profile_upsert';
+  const resolvedProfileOrgId =
+    created || !existingProfile?.organization_id
+      ? orgId
+      : existingProfile.organization_id;
+  const resolvedActiveOrgId =
+    created || !existingProfile?.active_organization_id
+      ? orgId
+      : existingProfile.active_organization_id;
+
   const profilePayload = {
     id: authUser.id,
     email: normalizedEmail,
     first_name: normalizedFirstName,
     last_name: normalizedLastName,
     full_name: `${normalizedFirstName} ${normalizedLastName}`.trim(),
-    organization_id: orgId,
+    organization_id: resolvedProfileOrgId,
+    active_organization_id: resolvedActiveOrgId,
     role: normalizedRole,
     is_active: true,
     metadata: {

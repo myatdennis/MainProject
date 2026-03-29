@@ -71,3 +71,13 @@ node scripts/reset_admin_login.cjs
 
 Optional:
 - `ENSURE_ADMIN=1` to upsert the user into `admin_users` allowlist.
+
+## send_test_email.cjs
+
+Send a one-off SMTP test email using the configured server env vars.
+
+```bash
+node scripts/send_test_email.cjs test@example.com
+```
+
+If SMTP is not configured, the script exits with a non-zero status and prints the config summary.

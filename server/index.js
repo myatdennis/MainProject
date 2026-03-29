@@ -72,7 +72,7 @@ import {
   supabaseServerConfigured,
   parseFlag,
 } from './config/runtimeFlags.js';
-import { sendEmail, configureEmailLogging } from './services/emailService.js';
+import { sendEmail, configureEmailLogging, getEmailConfigSummary, isEmailEnabled } from './services/emailService.js';
 import { createMediaService } from './services/mediaService.js';
 import { createNotificationService } from './services/notificationService.js';
 import { isJwtSecretConfigured } from './utils/jwt.js';
@@ -2536,6 +2536,52 @@ app.get('/api/admin/diagnostics/memberships', requireAdminAccess, asyncHandler(a
     queryA_org_id: queryOrgId,
     queryB_organization_id: queryOrganizationId,
     rawMembershipRows,
+  });
+}));
+
+app.get('/api/admin/email/test', requireAdminAccess, asyncHandler(async (req, res) => {
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  const configSummary = getEmailConfigSummary();
+  const recipientEmail = req.user?.email || null;
+
+  if (!recipientEmail) {
+    res.status(400).json({
+      success: false,
+      messageId: null,
+      error: 'admin_email_missing',
+      configSummary,
+    });
+    return;
+  }
+
+  if (!isEmailEnabled()) {
+    res.status(500).json({
+      success: false,
+      messageId: null,
+      error: 'smtp_not_configured',
+      configSummary,
+    });
+    return;
+  }
+
+  const result = await sendEmail({
+    to: recipientEmail,
+    subject: 'SMTP test email',
+    text: 'This is a test email confirming SMTP delivery for the admin portal.',
+    logContext: {
+      recipientType: 'admin_test',
+      recipientId: context.userId,
+      sentBy: context.userId,
+    },
+  });
+
+  res.status(result.delivered ? 200 : 500).json({
+    success: result.delivered,
+    messageId: result.id || null,
+    error: result.delivered ? null : result.reason || 'smtp_send_failed',
+    configSummary,
   });
 }));
 

@@ -31,13 +31,27 @@ const run = async () => {
     auth: { autoRefreshToken: false, persistSession: false },
   });
 
-  const { data: userData, error: userError } = await supabase.auth.admin.getUserByEmail(ADMIN_EMAIL);
-  if (userError || !userData?.user) {
-    console.error('[reset-admin-login] Unable to find user', userError?.message || userError);
-    process.exit(1);
+  let user = null;
+  if (typeof supabase.auth.admin.getUserByEmail === 'function') {
+    const { data: userData, error: userError } = await supabase.auth.admin.getUserByEmail(ADMIN_EMAIL);
+    if (userError) {
+      console.error('[reset-admin-login] Unable to find user', userError?.message || userError);
+      process.exit(1);
+    }
+    user = userData?.user ?? null;
+  } else {
+    const { data, error } = await supabase.auth.admin.listUsers({ page: 1, perPage: 200 });
+    if (error) {
+      console.error('[reset-admin-login] Unable to list users', error?.message || error);
+      process.exit(1);
+    }
+    user = data?.users?.find((entry) => String(entry?.email || '').toLowerCase() === ADMIN_EMAIL.toLowerCase()) ?? null;
   }
 
-  const user = userData.user;
+  if (!user) {
+    console.error('[reset-admin-login] Unable to find user');
+    process.exit(1);
+  }
   const { error: updateError } = await supabase.auth.admin.updateUserById(user.id, {
     password: NEW_PASSWORD,
     email_confirm: true,
