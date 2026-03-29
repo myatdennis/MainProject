@@ -2599,6 +2599,17 @@ const isAssignmentsOrganizationIdColumnMissing = (error) => {
   return missing === 'organization_id';
 };
 
+const isUserCourseProgressUuidColumnMissing = (error) => {
+  if (!isMissingColumnError(error)) return false;
+  const missing = normalizeColumnIdentifier(extractMissingColumnName(error));
+  return missing === 'user_id_uuid';
+};
+
+const isConflictConstraintMissing = (error) => {
+  const message = String(error?.message || '').toLowerCase();
+  return error?.code === '42P10' || message.includes('no unique') && message.includes('on conflict');
+};
+
 const detectAssignmentsUserIdUuidColumnAvailability = async () => {
   if (!supabase) return false;
   if (typeof assignmentsUserIdUuidColumnAvailable === 'boolean') {
