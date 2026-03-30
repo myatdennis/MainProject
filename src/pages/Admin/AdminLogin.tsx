@@ -6,15 +6,15 @@ import { loginSchema, emailSchema } from '../../utils/validators';
 import { sanitizeText } from '../../utils/sanitize';
 import useRuntimeStatus from '../../hooks/useRuntimeStatus';
 import type { RuntimeStatus } from '../../state/runtimeStatus';
-import { ApiError } from '../../utils/apiClient';
+import apiRequest, { ApiError } from '../../utils/apiClient';
 import { supabase } from '../../lib/supabaseClient';
-import { apiJson, ApiResponseError, AuthExpiredError, NotAuthenticatedError } from '../../lib/apiClient';
 import { flushAuditQueue } from '../../dal/auditLog';
 import {
   hasAdminPortalAccess,
   type AdminAccessPayload,
   getAdminAccessSnapshot,
   clearAdminAccessSnapshot,
+  setAdminAccessSnapshot,
   normalizeAdminAccessPayload,
 } from '../../lib/adminAccess';
 import { logAuthDiagnostic } from '../../utils/logAuthRedirect';
@@ -229,8 +229,9 @@ const AdminLogin: React.FC = () => {
 
   const verifyAdminCapability = async (): Promise<CapabilityCheckResult> => {
     try {
-      const response = await apiJson<AdminCapabilityResponse>('/admin/me');
+      const response = await apiRequest<AdminCapabilityResponse>('/api/admin/me');
       recordDevApiEvent('/admin/me', 200);
+      setAdminAccessSnapshot(response);
       const payload = normalizeAdminAccessPayload(response);
       if (computeAdminAllowed(payload)) {
         return { allowed: true, user: payload?.user ?? undefined, payload };
@@ -240,46 +241,29 @@ const AdminLogin: React.FC = () => {
       return { allowed: false, reason, payload };
     } catch (capabilityError) {
       let fallbackReason = 'admin_capability_error';
-      if (
-        capabilityError instanceof ApiResponseError ||
-        capabilityError instanceof AuthExpiredError ||
-        capabilityError instanceof NotAuthenticatedError
-      ) {
-        if (capabilityError instanceof ApiResponseError) {
-          let parsedPayload: AdminAccessPayload | null = null;
-          if (capabilityError.body) {
-            try {
-              parsedPayload = normalizeAdminAccessPayload(
-                JSON.parse(capabilityError.body) as AdminCapabilityResponse,
-              );
-            } catch {
-              parsedPayload = null;
-            }
-          }
-          if (capabilityError.status === 401) {
-            recordDevApiEvent('/admin/me', 401, 'unauthenticated');
-            markSessionExpired('admin_me_401');
-            return { allowed: false, reason: 'unauthenticated', payload: parsedPayload };
-          }
-          if (capabilityError.status === 403) {
-            recordDevApiEvent('/admin/me', 403, 'not_authorized');
-            return { allowed: false, reason: 'not_authorized', payload: parsedPayload };
-          }
-          fallbackReason =
-            parsedPayload?.access?.reason || parsedPayload?.reason || parsedPayload?.error || parsedPayload?.message || fallbackReason;
-          recordDevApiEvent('/admin/me', capabilityError.status, fallbackReason);
-          return { allowed: false, reason: fallbackReason, payload: parsedPayload };
-        } else {
-          recordDevApiEvent('/admin/me', 'error', capabilityError.message);
-          markSessionExpired('admin_me_generic_auth_error');
-          return { allowed: false, reason: 'unauthenticated' };
+      if (capabilityError instanceof ApiError) {
+        const parsedPayload = normalizeAdminAccessPayload(
+          capabilityError.body as AdminCapabilityResponse | null | undefined,
+        );
+        if (capabilityError.status === 401) {
+          recordDevApiEvent('/admin/me', 401, 'unauthenticated');
+          markSessionExpired('admin_me_401');
+          return { allowed: false, reason: 'unauthenticated', payload: parsedPayload };
         }
+        if (capabilityError.status === 403) {
+          recordDevApiEvent('/admin/me', 403, 'not_authorized');
+          return { allowed: false, reason: 'not_authorized', payload: parsedPayload };
+        }
+        fallbackReason =
+          parsedPayload?.access?.reason ||
+          parsedPayload?.reason ||
+          parsedPayload?.error ||
+          parsedPayload?.message ||
+          fallbackReason;
+        recordDevApiEvent('/admin/me', capabilityError.status, fallbackReason);
+        return { allowed: false, reason: fallbackReason, payload: parsedPayload };
       }
       console.warn('[AdminLogin] capability check failed', capabilityError);
-      if (capabilityError instanceof AuthExpiredError || capabilityError instanceof NotAuthenticatedError) {
-        markSessionExpired('admin_me_token_missing');
-        return { allowed: false, reason: 'unauthenticated' };
-      }
       return { allowed: false, reason: fallbackReason };
     }
   };

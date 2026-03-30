@@ -4,6 +4,7 @@ import Button from '../../components/ui/Button';
 import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import { useToast } from '../../context/ToastContext';
 import apiRequest from '../../utils/apiClient';
+import { courseStore } from '../../store/courseStore';
 import { BookOpen, CheckCircle2, FileJson, FileSpreadsheet, UploadCloud } from 'lucide-react';
 
 type ImportItem = {
@@ -241,7 +242,9 @@ const AdminCoursesImport: React.FC = () => {
           : `Imported ${count} course${count === 1 ? '' : 's'} as drafts`,
         'success',
       );
-      navigate('/admin/courses');
+  // Refresh the admin course store so imported courses appear immediately
+  await courseStore.forceInit();
+  navigate('/admin/courses');
     } catch (e: any) {
       const msg = e?.body?.error || e?.message || 'Import failed';
       showToast(msg, 'error');

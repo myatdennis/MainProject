@@ -22,7 +22,7 @@ import { getCourseValidationSummary, type CourseValidationSummary } from '../../
 import { getUserSession } from '../../lib/secureStorage';
 import { ApiError } from '../../utils/apiClient';
 import { getVideoSourceInfo, resolveLessonVideoPlayback } from '../../utils/videoUtils';
-import { uploadLessonVideo, uploadDocumentResource } from '../../dal/media';
+import { shouldRefreshSignedUrl, signMediaAsset, uploadLessonVideo, uploadDocumentResource } from '../../dal/media';
 import { canonicalizeLessonContent, canonicalizeQuizQuestions } from '../../utils/lessonContent';
 import { COURSE_DOCUMENTS_BUCKET, COURSE_VIDEOS_BUCKET } from '../../config/mediaBuckets';
 import { 
@@ -1313,6 +1313,7 @@ const autoSaveWarningIssuedRef = useRef(false);
 const autoSavePauseLoggedRef = useRef(false);
 const saveInFlightRef = useRef(false);
 const publishInFlightRef = useRef(false);
+const videoRefreshInFlightRef = useRef<Record<string, boolean>>({});
   const cancelScheduledAutosave = useCallback(
     (reason?: Error) => {
       if (!autosaveTimerRef.current) return;
@@ -3260,6 +3261,66 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
     }
   };
 
+  useEffect(() => {
+    if (!editingLesson) {
+      return;
+    }
+
+    const module = course.modules?.find((item) => item.id === editingLesson.moduleId);
+    const lesson = module?.lessons.find((item) => item.id === editingLesson.lessonId);
+    const lessonContent = lesson?.content;
+
+    if (!module || !lesson || lessonContent?.videoSourceType === 'external') {
+      return;
+    }
+
+    const videoAsset = lessonContent?.videoAsset;
+    const assetId = videoAsset?.assetId;
+    if (!assetId) {
+      return;
+    }
+
+    const needsRefresh =
+      !lessonContent?.videoUrl || shouldRefreshSignedUrl(videoAsset.urlExpiresAt);
+
+    if (!needsRefresh) {
+      return;
+    }
+
+    if (videoRefreshInFlightRef.current[assetId]) {
+      return;
+    }
+
+    videoRefreshInFlightRef.current[assetId] = true;
+
+    (async () => {
+      try {
+  const signedPayload = await signMediaAsset(assetId);
+        const refreshedAsset = {
+          ...videoAsset,
+          signedUrl: signedPayload.signedUrl,
+          urlExpiresAt: signedPayload.urlExpiresAt ?? videoAsset.urlExpiresAt,
+          bucket: signedPayload.bucket ?? videoAsset.bucket,
+          storagePath: signedPayload.storagePath ?? videoAsset.storagePath,
+          mimeType: signedPayload.mimeType ?? videoAsset.mimeType,
+          bytes: signedPayload.bytes ?? videoAsset.bytes,
+        };
+
+        updateLesson(module.id, lesson.id, {
+          content: {
+            ...lessonContent,
+            videoUrl: signedPayload.signedUrl,
+            videoAsset: refreshedAsset,
+          },
+        });
+      } catch (error) {
+        console.warn('[AdminCourseBuilder] video asset refresh failed', error);
+      } finally {
+        delete videoRefreshInFlightRef.current[assetId];
+      }
+    })();
+  }, [course.modules, editingLesson, updateLesson]);
+
   const deleteLesson = (moduleId: string, lessonId: string) => {
     const module = course.modules?.find(m => m.id === moduleId);
     if (!module) return;
@@ -3711,6 +3772,18 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
                 {(!lesson.content.videoSourceType || lesson.content.videoSourceType === 'internal') ? (
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-2">Video Upload</label>
+                    <input
+                      type="file"
+                      accept="video/*"
+                      onChange={(e) => {
+                        const file = e.target.files?.[0];
+                        if (file) {
+                          handleVideoUpload(moduleId, lesson.id, file);
+                        }
+                      }}
+                      className="hidden"
+                      id={videoInputId}
+                    />
                     {lesson.content.videoUrl ? (
                       <div className="space-y-3">
                         <div className="aspect-video bg-gray-900 rounded-lg overflow-hidden">
@@ -3730,14 +3803,28 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
                               {lesson.content.fileSize && ` (${lesson.content.fileSize})`}
                             </span>
                           </div>
-                          <button
-                            onClick={() => updateLesson(moduleId, lesson.id, {
-                              content: { ...lesson.content, videoUrl: '', fileName: '', fileSize: '', videoAsset: undefined }
-                            })}
-                            className="text-red-600 hover:text-red-800"
-                          >
-                            <X className="h-4 w-4" />
-                          </button>
+                          <div className="flex items-center space-x-3">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                if (typeof document !== 'undefined') {
+                                  const input = document.getElementById(videoInputId) as HTMLInputElement | null;
+                                  input?.click();
+                                }
+                              }}
+                              className="text-sm font-medium text-blue-600 hover:text-blue-800"
+                            >
+                              Replace
+                            </button>
+                            <button
+                              onClick={() => updateLesson(moduleId, lesson.id, {
+                                content: { ...lesson.content, videoUrl: '', fileName: '', fileSize: '', videoAsset: undefined }
+                              })}
+                              className="text-red-600 hover:text-red-800"
+                            >
+                              <X className="h-4 w-4" />
+                            </button>
+                          </div>
                         </div>
                       </div>
                     ) : (
@@ -3772,18 +3859,6 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
                           <div className="text-center">
                             <Video className="h-12 w-12 text-gray-400 mx-auto mb-4" />
                             <p className="text-gray-600 mb-4">Upload a video file for this lesson</p>
-                            <input
-                              type="file"
-                              accept="video/*"
-                              onChange={(e) => {
-                                const file = e.target.files?.[0];
-                                if (file) {
-                                  handleVideoUpload(moduleId, lesson.id, file);
-                                }
-                              }}
-                              className="hidden"
-                              id={videoInputId}
-                            />
                             <label
                               htmlFor={videoInputId}
                               className="bg-blue-500 text-white px-4 py-2 rounded-lg hover:bg-blue-600 transition-colors duration-200 cursor-pointer inline-flex items-center space-x-2"
