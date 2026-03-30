@@ -69,18 +69,9 @@ router.patch('/:userId', async (req, res, next) => {
     return next(withHttpError(err, 500, 'admin_users_update_failed'));
   }
 });
-import express from 'express';
-import bcrypt from 'bcryptjs';
-import { sendEmail } from '../services/emailService.js';
-import { logger } from '../lib/logger.js';
-import { createOrProvisionOrganizationUser } from '../services/userProvisioning.js';
-import { randomUUID } from 'crypto';
-import supabase, { supabaseAuthClient } from '../lib/supabaseClient.js';
-import { buildOrgInviteInsertAttemptPayloads } from '../utils/orgInvites.js';
-import { authenticate, requireAdmin, invalidateMembershipCache } from '../middleware/auth.js';
-import { createHttpError, withHttpError } from '../middleware/apiErrorHandler.js';
-import { validateOrgId, logInviteInsertAttempt } from '../lib/inviteHelper.js';
 
+import express from 'express';
+// ...existing code...
 const router = express.Router();
 
 router.use(authenticate, requireAdmin);
