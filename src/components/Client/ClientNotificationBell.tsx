@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Bell, Megaphone, BookOpen, Check, MessageSquare, Sparkles } from 'lucide-react';
-import { listLearnerNotifications, markLearnerNotificationRead } from '../../services/notificationService';
-import type { Notification } from '../../services/notificationService';
+import { listLearnerNotifications, markLearnerNotificationRead } from '../../dal/notifications';
+import type { Notification } from '../../dal/notifications';
 import Button from '../ui/Button';
 
 const notificationTone = (notification: Notification) => {
@@ -66,7 +66,9 @@ const ClientNotificationBell = () => {
     setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, read: true } : n)));
     try {
       await markLearnerNotificationRead(id);
-    } catch {}
+    } catch {
+      // ignore error
+    }
   }, []);
 
   return (

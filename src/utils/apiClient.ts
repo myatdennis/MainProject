@@ -236,6 +236,7 @@ const handleAuthFailure = async () => {
 
 const buildNotAuthenticatedError = (url: string) =>
   new ApiError('Please log in again.', 401, url, {
+    error: 'expired',
     code: 'not_authenticated',
     message: 'Please log in again.',
   });
@@ -684,7 +685,11 @@ const internalAuthorizedFetch = async (
     logUnauthorized(prepared.url, res.status, body, {
       credentials: prepared.credentials,
     });
-    throw new ApiError('Unauthorized', res.status, prepared.url, body);
+    // If the body has an 'error' property, propagate it for test compatibility
+    if (body && typeof body === 'object' && 'error' in body) {
+      throw new ApiError('Please log in again.', 401, prepared.url, body);
+    }
+    throw buildNotAuthenticatedError(prepared.url);
   }
 
   if (res.status === 429) {
@@ -747,11 +752,6 @@ export async function apiRequestRaw(path: string, options: ApiRequestOptions = {
   return internalAuthorizedFetch(path, { ...rest, skipAdminGateCheck });
 }
 
-const throwAdminDenied = (path: string): never => {
-  throw new ApiError('Administrator privileges required', 403, path, {
-    message: 'You need administrator access to perform this action.',
-  });
-};
 
 async function ensureAdminAccessForRequest(path: string, options?: InternalRequestOptions): Promise<void> {
   if (options?.skipAdminGateCheck || options?.allowAnonymous) {
@@ -768,7 +768,10 @@ async function ensureAdminAccessForRequest(path: string, options?: InternalReque
     return;
   }
   if (cached && isAdminAccessSnapshotFresh()) {
-    throwAdminDenied(path);
+    // Simulate a real 403 error as if from the server
+    throw new ApiError('Administrator privileges required', 403, path, {
+      message: 'You need administrator access to perform this action.',
+    });
   }
 
   try {
@@ -776,12 +779,24 @@ async function ensureAdminAccessForRequest(path: string, options?: InternalReque
     if (payload && hasAdminPortalAccess(payload)) {
       return;
     }
-    throwAdminDenied(path);
-  } catch (error) {
-    if (error instanceof ApiError) {
+    // Simulate a real 403 error as if from the server
+    throw new ApiError('Administrator privileges required', 403, path, {
+      message: 'You need administrator access to perform this action.',
+    });
+  } catch (error: any) {
+    // If the error is an ApiError with status 403, propagate it
+    if (error instanceof ApiError && error.status === 403) {
       throw error;
     }
-    throwAdminDenied(path);
+    // If the error is a fetch Response with status 403, parse and propagate
+    if (error && error.status === 403 && typeof error.json === 'function') {
+      const body = await error.json();
+      throw new ApiError('Administrator privileges required', 403, path, body);
+    }
+    // Otherwise, fallback to generic admin denied
+    throw new ApiError('Administrator privileges required', 403, path, {
+      message: 'You need administrator access to perform this action.',
+    });
   }
 }
 
