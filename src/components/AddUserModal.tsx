@@ -63,8 +63,17 @@ const AddUserModal: React.FC<AddUserModalProps> = ({
       membershipRole: [validators.required],
       organization: [validators.required],
       cohort: [validators.required],
-      // no password required for Mode B Option A now
-      //password: [validators.required],
+      // Require password and confirmPassword for new users only
+      password: isEditMode ? [] : [
+        validators.required,
+        (v: string) =>
+          v.length >= PASSWORD_MIN_LENGTH ? null : `Password must be at least ${PASSWORD_MIN_LENGTH} characters`,
+      ],
+      confirmPassword: isEditMode ? [] : [
+        validators.required,
+        (v: string): string | null =>
+          v === values.password ? null : 'Passwords do not match',
+      ],
     }
   );
 
@@ -191,16 +200,7 @@ const AddUserModal: React.FC<AddUserModalProps> = ({
     };
 
     if (!isEditMode) {
-      if (sanitizedData.password) {
-        if (sanitizedData.password.length < PASSWORD_MIN_LENGTH) {
-          showToast(`Password must be at least ${PASSWORD_MIN_LENGTH} characters if provided`, 'error');
-          return;
-        }
-        if (sanitizedData.password !== sanitizedData.confirmPassword) {
-          showToast('Passwords do not match', 'error');
-          return;
-        }
-      }
+      // Password and confirmPassword are now required and validated above
     }
 
     // Log security event
@@ -570,32 +570,35 @@ const AddUserModal: React.FC<AddUserModalProps> = ({
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Password (optional)
+                        Password *
                       </label>
                       <input
                         type="password"
                         value={values.password}
                         onChange={(e) => setValue('password', e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                        className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent ${errors.password ? 'border-red-300' : 'border-gray-300'}`}
                         disabled={loading}
                         autoComplete="new-password"
                       />
-                      <p className="mt-1 text-xs text-gray-500">
-                        Leave blank to send a password setup link. Minimum {PASSWORD_MIN_LENGTH} characters if provided.
-                      </p>
+                      {errors.password && (
+                        <p className="mt-1 text-sm text-red-600">{errors.password}</p>
+                      )}
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Confirm Password
+                        Confirm Password *
                       </label>
                       <input
                         type="password"
                         value={values.confirmPassword}
                         onChange={(e) => setValue('confirmPassword', e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+                        className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent ${errors.confirmPassword ? 'border-red-300' : 'border-gray-300'}`}
                         disabled={loading}
                         autoComplete="new-password"
                       />
+                      {errors.confirmPassword && (
+                        <p className="mt-1 text-sm text-red-600">{errors.confirmPassword}</p>
+                      )}
                     </div>
                   </div>
                 )}

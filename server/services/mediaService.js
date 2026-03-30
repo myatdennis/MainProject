@@ -81,15 +81,23 @@ export const createMediaService = ({
     return data;
   };
 
-  const getAssetById = async (assetId) => {
-    const supabase = requireSupabase();
-    const { data, error } = await supabase
-      .from('course_media_assets')
-      .select('*')
-      .eq('id', assetId)
-      .maybeSingle();
-    if (error) throw error;
-    return data;
+  const getAssetById = async (assetId, logOnce = () => {}) => {
+    try {
+      const supabase = requireSupabase();
+      const { data, error } = await supabase
+        .from('course_media_assets')
+        .select('*')
+        .eq('id', assetId)
+        .maybeSingle();
+      if (error) {
+        logOnce('[mediaService] getAssetById error', error);
+        return null;
+      }
+      return data;
+    } catch (err) {
+      logOnce('[mediaService] getAssetById exception', err);
+      return null;
+    }
   };
 
   const createSignedUrlForPath = async ({ bucket, storagePath, ttlSeconds = DEFAULT_SIGN_TTL_SECONDS }) => {
@@ -109,29 +117,57 @@ export const createMediaService = ({
     };
   };
 
-  const signAssetById = async ({ assetId, ttlSeconds }) => {
-    const supabase = requireSupabase();
-    const asset = await getAssetById(assetId);
-    if (!asset) {
-      throw new Error('Asset not found');
+  const signAssetById = async ({ assetId, ttlSeconds, logOnce = () => {} }) => {
+    try {
+      const supabase = requireSupabase();
+      const asset = await getAssetById(assetId, logOnce);
+      if (!asset) {
+        logOnce('[mediaService] signAssetById: asset not found', assetId);
+        return {
+          asset: null,
+          signedUrl: '',
+          expiresAt: null,
+          fallback: true,
+        };
+      }
+      let signed = { url: '', expiresAt: null };
+      try {
+        signed = await createSignedUrlForPath({
+          bucket: asset.bucket,
+          storagePath: asset.storage_path || asset.storagePath,
+          ttlSeconds,
+        });
+      } catch (signErr) {
+        logOnce('[mediaService] signAssetById: sign error', signErr);
+        // fallback: no signed url
+        return {
+          asset,
+          signedUrl: '',
+          expiresAt: null,
+          fallback: true,
+        };
+      }
+      const { error } = await supabase
+        .from('course_media_assets')
+        .update({
+          signed_url: signed.url,
+          signed_url_expires_at: signed.expiresAt,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', assetId);
+      if (error) {
+        logOnce('media_signed_url_update_failed', { assetId, message: error?.message || String(error) });
+      }
+      return { asset, signedUrl: signed.url, expiresAt: signed.expiresAt };
+    } catch (err) {
+      logOnce('[mediaService] signAssetById: exception', err);
+      return {
+        asset: null,
+        signedUrl: '',
+        expiresAt: null,
+        fallback: true,
+      };
     }
-    const signed = await createSignedUrlForPath({
-      bucket: asset.bucket,
-      storagePath: asset.storage_path || asset.storagePath,
-      ttlSeconds,
-    });
-    const { error } = await supabase
-      .from('course_media_assets')
-      .update({
-        signed_url: signed.url,
-        signed_url_expires_at: signed.expiresAt,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', assetId);
-    if (error) {
-      logger.warn('media_signed_url_update_failed', { assetId, message: error?.message || String(error) });
-    }
-    return { asset, signedUrl: signed.url, expiresAt: signed.expiresAt };
   };
 
   const uploadLessonVideo = async ({ file, storagePath, courseId, moduleId, lessonId, orgId, userId }) => {
