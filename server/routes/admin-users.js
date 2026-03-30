@@ -1,3 +1,74 @@
+// PATCH /api/admin/users/:userId
+router.patch('/:userId', async (req, res, next) => {
+  try {
+    if (!supabase) {
+      return next(createHttpError(503, 'supabase_not_configured', 'Supabase not configured'));
+    }
+    const userId = normalizeText(req.params?.userId || '');
+    if (!userId) {
+      return next(createHttpError(400, 'user_id_required', 'userId is required.'));
+    }
+
+    // Only allow updating these fields
+    const allowedFields = [
+      'firstName', 'lastName', 'email', 'jobTitle', 'department', 'cohort', 'phoneNumber', 'organizationId', 'membershipRole'
+    ];
+    const updates = {};
+    for (const field of allowedFields) {
+      if (req.body[field] !== undefined) {
+        updates[field] = req.body[field];
+      }
+    }
+
+    // Update user_profiles
+    const profileUpdate = {
+      first_name: updates.firstName,
+      last_name: updates.lastName,
+      email: updates.email,
+      job_title: updates.jobTitle,
+      department: updates.department,
+      cohort: updates.cohort,
+      phone_number: updates.phoneNumber,
+      organization_id: updates.organizationId,
+    };
+    // Remove undefined fields
+    Object.keys(profileUpdate).forEach((k) => profileUpdate[k] === undefined && delete profileUpdate[k]);
+    let profileError = null;
+    if (Object.keys(profileUpdate).length > 0) {
+      const { error } = await supabase
+        .from('user_profiles')
+        .update(profileUpdate)
+        .eq('id', userId);
+      profileError = error;
+    }
+
+    // Update organization_memberships if organizationId or membershipRole is present
+    let membershipError = null;
+    if (updates.organizationId || updates.membershipRole) {
+      const orgColumn = await resolveOrganizationMembershipsOrgColumn();
+      const membershipUpdate = {};
+      if (updates.organizationId) membershipUpdate[orgColumn] = updates.organizationId;
+      if (updates.membershipRole) membershipUpdate.role = updates.membershipRole;
+      // Remove undefined
+      Object.keys(membershipUpdate).forEach((k) => membershipUpdate[k] === undefined && delete membershipUpdate[k]);
+      if (Object.keys(membershipUpdate).length > 0) {
+        const { error } = await supabase
+          .from('organization_memberships')
+          .update(membershipUpdate)
+          .eq('user_id', userId);
+        membershipError = error;
+      }
+    }
+
+    if (profileError || membershipError) {
+      return next(createHttpError(500, 'user_update_failed', (profileError || membershipError).message));
+    }
+
+    res.json({ success: true });
+  } catch (err) {
+    return next(withHttpError(err, 500, 'admin_users_update_failed'));
+  }
+});
 import express from 'express';
 import bcrypt from 'bcryptjs';
 import { sendEmail } from '../services/emailService.js';
