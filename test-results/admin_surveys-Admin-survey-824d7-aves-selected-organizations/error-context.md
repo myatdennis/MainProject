@@ -1,0 +1,516 @@
+# Page snapshot
+
+```yaml
+- generic [ref=e3]:
+  - main [ref=e4]:
+    - generic [ref=e5]:
+      - complementary [ref=e6]:
+        - link "Admin Portal The Huddle Co." [ref=e8] [cursor=pointer]:
+          - /url: /
+          - img [ref=e10]
+          - generic [ref=e12]:
+            - paragraph [ref=e13]: Admin Portal
+            - paragraph [ref=e14]: The Huddle Co.
+        - generic [ref=e15]:
+          - generic [ref=e16]:
+            - generic [ref=e17]:
+              - generic [ref=e18]: System Online
+              - generic [ref=e19]:
+                - paragraph [ref=e20]: Welcome, Admin
+                - paragraph [ref=e21]: admin
+                - paragraph [ref=e22]: "Active org: Demo Sandbox Org"
+            - navigation [ref=e23]:
+              - link "Dashboard" [ref=e24] [cursor=pointer]:
+                - /url: /admin/dashboard
+                - img [ref=e26]
+                - generic [ref=e31]: Dashboard
+              - link "Users" [ref=e32] [cursor=pointer]:
+                - /url: /admin/users
+                - img [ref=e34]
+                - generic [ref=e39]: Users
+              - link "Organizations" [ref=e40] [cursor=pointer]:
+                - /url: /admin/organizations
+                - img [ref=e42]
+                - generic [ref=e46]: Organizations
+              - link "Courses" [ref=e47] [cursor=pointer]:
+                - /url: /admin/courses
+                - img [ref=e49]
+                - generic [ref=e52]: Courses
+              - link "Surveys" [ref=e53] [cursor=pointer]:
+                - /url: /admin/surveys
+                - img [ref=e55]
+                - generic [ref=e58]: Surveys
+              - link "Analytics" [ref=e59] [cursor=pointer]:
+                - /url: /admin/analytics
+                - img [ref=e61]
+                - generic [ref=e63]: Analytics
+              - link "Reports" [ref=e64] [cursor=pointer]:
+                - /url: /admin/reports
+                - img [ref=e66]
+                - generic [ref=e67]: Reports
+              - link "Documents" [ref=e68] [cursor=pointer]:
+                - /url: /admin/documents
+                - img [ref=e70]
+                - generic [ref=e73]: Documents
+              - link "Certificates" [ref=e74] [cursor=pointer]:
+                - /url: /admin/certificates
+                - img [ref=e76]
+                - generic [ref=e79]: Certificates
+              - link "Settings" [ref=e80] [cursor=pointer]:
+                - /url: /admin/settings
+                - img [ref=e82]
+                - generic [ref=e85]: Settings
+            - generic [ref=e86]:
+              - paragraph [ref=e87]: Quick actions
+              - link "Create course" [ref=e88] [cursor=pointer]:
+                - /url: /admin/courses/new
+              - link "Import courses" [ref=e89] [cursor=pointer]:
+                - /url: /admin/courses/import
+              - link "Survey queue" [ref=e90] [cursor=pointer]:
+                - /url: /admin/surveys/queue
+          - button "Logout" [ref=e91] [cursor=pointer]:
+            - img [ref=e93]
+            - generic [ref=e96]: Logout
+      - generic [ref=e97]:
+        - generic [ref=e98]:
+          - generic [ref=e99]:
+            - generic [ref=e101]:
+              - img [ref=e102]
+              - textbox "Search reports, orgs, or learners" [ref=e105]
+            - generic [ref=e106]:
+              - button "Admin notifications" [ref=e108] [cursor=pointer]:
+                - img [ref=e109]
+              - generic [ref=e112]:
+                - generic [ref=e113]:
+                  - paragraph [ref=e114]: Organization
+                  - paragraph [ref=e115]: Demo Sandbox Org
+                - button "Sync organizations" [ref=e116] [cursor=pointer]:
+                  - img [ref=e117]
+              - button "New survey" [ref=e122] [cursor=pointer]:
+                - img [ref=e124]
+                - generic [ref=e127]: New survey
+              - button "mya@the-huddle.co" [ref=e129] [cursor=pointer]:
+                - generic [ref=e130]: mya@the-huddle.co
+                - img [ref=e131]
+          - generic [ref=e135]:
+            - img [ref=e137]
+            - generic [ref=e140]:
+              - paragraph [ref=e141]: All survey changes synced
+              - paragraph [ref=e142]: Up to date
+        - main [ref=e143]:
+          - generic [ref=e145]:
+            - navigation "Breadcrumb" [ref=e147]:
+              - generic [ref=e148]:
+                - link "Admin" [ref=e149] [cursor=pointer]:
+                  - /url: /admin
+                - generic [ref=e150]: /
+              - generic [ref=e152]: Surveys
+            - generic [ref=e153]:
+              - heading "DEI Survey Platform" [level=1] [ref=e154]
+              - paragraph [ref=e155]: Create, manage, and analyze DEI surveys with advanced analytics and insights
+            - generic [ref=e156]:
+              - generic [ref=e158]:
+                - generic [ref=e159]:
+                  - paragraph [ref=e160]: Active Surveys
+                  - paragraph [ref=e161]: "1"
+                - img [ref=e163]
+              - generic [ref=e168]:
+                - generic [ref=e169]:
+                  - paragraph [ref=e170]: Total Responses
+                  - paragraph [ref=e171]: "0"
+                - img [ref=e173]
+              - generic [ref=e176]:
+                - generic [ref=e177]:
+                  - paragraph [ref=e178]: Avg. Completion
+                  - paragraph [ref=e179]: 0%
+                - img [ref=e181]
+              - generic [ref=e185]:
+                - generic [ref=e186]:
+                  - paragraph [ref=e187]: Organizations
+                  - paragraph [ref=e188]: "7"
+                - img [ref=e190]
+            - generic [ref=e196]:
+              - generic [ref=e197]:
+                - generic [ref=e198]:
+                  - img [ref=e199]
+                  - textbox "Search surveys..." [ref=e202]
+                - generic [ref=e203]:
+                  - img [ref=e204]
+                  - combobox [ref=e206]:
+                    - option "All Status" [selected]
+                    - option "Draft"
+                    - option "Active"
+                    - option "Paused"
+                    - option "Completed"
+                    - option "Archived"
+                  - combobox [ref=e207]:
+                    - option "All Types" [selected]
+                    - option "Climate Assessment"
+                    - option "Inclusion Index"
+                    - option "Equity Lens"
+                    - option "Custom"
+              - generic [ref=e208]:
+                - button "Refresh" [ref=e209] [cursor=pointer]:
+                  - img [ref=e210]
+                  - generic [ref=e215]: Refresh
+                - button "AI Survey Creator" [ref=e216] [cursor=pointer]:
+                  - img [ref=e217]
+                  - generic [ref=e227]: AI Survey Creator
+                - link "Create Survey" [ref=e228] [cursor=pointer]:
+                  - /url: /admin/surveys/builder
+                  - img [ref=e229]
+                  - generic [ref=e230]: Create Survey
+                - button "Import" [ref=e231] [cursor=pointer]:
+                  - img [ref=e232]
+                  - generic [ref=e235]: Import
+                - button "Queue" [ref=e236] [cursor=pointer]:
+                  - img [ref=e237]
+                  - generic [ref=e240]: Queue
+              - generic [ref=e243]:
+                - img [ref=e245]
+                - generic [ref=e248]:
+                  - paragraph [ref=e249]: All survey changes synced
+                  - paragraph [ref=e250]: Up to date
+            - generic [ref=e251]:
+              - generic [ref=e253]:
+                - generic [ref=e254]:
+                  - generic [ref=e255]:
+                    - generic [ref=e256]:
+                      - heading "2025 DEI Pulse Check" [level=3] [ref=e257]
+                      - generic [ref=e258]: published
+                    - paragraph [ref=e259]: Quick quarterly sentiment survey for the leadership cohort.
+                    - text: Pulse Check
+                  - generic [ref=e260]:
+                    - img [ref=e261]
+                    - checkbox [ref=e264]
+                - generic [ref=e265]:
+                  - generic [ref=e266]:
+                    - generic [ref=e267]: "0"
+                    - generic [ref=e268]: Responses
+                  - generic [ref=e269]:
+                    - generic [ref=e270]: 0%
+                    - generic [ref=e271]: Completion
+                - generic [ref=e272]:
+                  - generic [ref=e273]: "Assigned Organizations:"
+                  - generic [ref=e274]:
+                    - generic [ref=e275]: org-huddle
+                    - generic [ref=e276]: Demo Sandbox Organization
+                - generic [ref=e277]:
+                  - generic [ref=e278]: "Last activity: 3/28/2026"
+                  - generic [ref=e279]:
+                    - button "AI Insights" [ref=e280] [cursor=pointer]:
+                      - img [ref=e281]
+                    - link "View Analytics" [ref=e291] [cursor=pointer]:
+                      - /url: /admin/surveys/pulse-2025/analytics
+                      - img [ref=e292]
+                    - button "Assign to Organizations" [ref=e294] [cursor=pointer]:
+                      - img [ref=e295]
+                    - link "Preview Survey" [ref=e300] [cursor=pointer]:
+                      - /url: /admin/surveys/pulse-2025/preview
+                      - img [ref=e301]
+                    - link "Edit Survey" [ref=e304] [cursor=pointer]:
+                      - /url: /admin/surveys/builder/pulse-2025
+                      - img [ref=e305]
+                    - button "Duplicate" [ref=e308] [cursor=pointer]:
+                      - img [ref=e309]
+              - generic [ref=e313]:
+                - generic [ref=e314]:
+                  - generic [ref=e315]:
+                    - generic [ref=e316]:
+                      - heading "Q1 2025 Climate Assessment" [level=3] [ref=e317]
+                      - generic [ref=e318]: active
+                    - paragraph [ref=e319]: Quarterly organizational climate and culture assessment
+                    - text: Climate Assessment
+                  - generic [ref=e320]:
+                    - img [ref=e321]
+                    - checkbox [ref=e323]
+                - generic [ref=e324]:
+                  - generic [ref=e325]:
+                    - generic [ref=e326]: "0"
+                    - generic [ref=e327]: Responses
+                  - generic [ref=e328]:
+                    - generic [ref=e329]: 0%
+                    - generic [ref=e330]: Completion
+                - generic [ref=e332]:
+                  - generic [ref=e333]: Progress
+                  - generic [ref=e334]: 0%
+                - generic [ref=e336]:
+                  - generic [ref=e337]: "Assigned Organizations:"
+                  - generic [ref=e338]:
+                    - generic [ref=e339]: "1"
+                    - generic [ref=e340]: "4"
+                    - generic [ref=e341]: "5"
+                    - generic [ref=e342]: Demo Sandbox Organization
+                - generic [ref=e343]:
+                  - generic [ref=e344]: "Last activity: 3/28/2026"
+                  - generic [ref=e345]:
+                    - button "AI Insights" [ref=e346] [cursor=pointer]:
+                      - img [ref=e347]
+                    - link "View Analytics" [ref=e357] [cursor=pointer]:
+                      - /url: /admin/surveys/climate-2025-q1/analytics
+                      - img [ref=e358]
+                    - button "Assign to Organizations" [ref=e360] [cursor=pointer]:
+                      - img [ref=e361]
+                    - link "Preview Survey" [ref=e366] [cursor=pointer]:
+                      - /url: /admin/surveys/climate-2025-q1/preview
+                      - img [ref=e367]
+                    - link "Edit Survey" [ref=e370] [cursor=pointer]:
+                      - /url: /admin/surveys/builder/climate-2025-q1
+                      - img [ref=e371]
+                    - button "Duplicate" [ref=e374] [cursor=pointer]:
+                      - img [ref=e375]
+              - generic [ref=e379]:
+                - generic [ref=e380]:
+                  - generic [ref=e381]:
+                    - generic [ref=e382]:
+                      - heading "Annual Inclusion Index" [level=3] [ref=e383]
+                      - generic [ref=e384]: draft
+                    - paragraph [ref=e385]: Comprehensive inclusion measurement with benchmarking
+                    - text: Inclusion Index
+                  - generic [ref=e386]:
+                    - img [ref=e387]
+                    - checkbox [ref=e390]
+                - generic [ref=e391]:
+                  - generic [ref=e392]: "Assigned Organizations:"
+                  - generic [ref=e394]: Demo Sandbox Organization
+                - generic [ref=e395]:
+                  - generic [ref=e396]: "Created: 3/28/2026"
+                  - generic [ref=e397]:
+                    - button "AI Insights" [ref=e398] [cursor=pointer]:
+                      - img [ref=e399]
+                    - link "View Analytics" [ref=e409] [cursor=pointer]:
+                      - /url: /admin/surveys/inclusion-index-2025/analytics
+                      - img [ref=e410]
+                    - button "Assign to Organizations" [ref=e412] [cursor=pointer]:
+                      - img [ref=e413]
+                    - link "Preview Survey" [ref=e418] [cursor=pointer]:
+                      - /url: /admin/surveys/inclusion-index-2025/preview
+                      - img [ref=e419]
+                    - link "Edit Survey" [ref=e422] [cursor=pointer]:
+                      - /url: /admin/surveys/builder/inclusion-index-2025
+                      - img [ref=e423]
+                    - button "Duplicate" [ref=e426] [cursor=pointer]:
+                      - img [ref=e427]
+              - generic [ref=e431]:
+                - generic [ref=e432]:
+                  - generic [ref=e433]:
+                    - generic [ref=e434]:
+                      - heading "Equity Lens Pilot Study" [level=3] [ref=e435]
+                      - generic [ref=e436]: completed
+                    - paragraph [ref=e437]: Pilot assessment of equity in organizational practices
+                    - text: Equity Lens
+                  - generic [ref=e438]:
+                    - img [ref=e439]
+                    - checkbox [ref=e442]
+                - generic [ref=e443]:
+                  - generic [ref=e444]:
+                    - generic [ref=e445]: "0"
+                    - generic [ref=e446]: Responses
+                  - generic [ref=e447]:
+                    - generic [ref=e448]: 0%
+                    - generic [ref=e449]: Completion
+                - generic [ref=e450]:
+                  - generic [ref=e451]: "Assigned Organizations:"
+                  - generic [ref=e452]:
+                    - generic [ref=e453]: "3"
+                    - generic [ref=e454]: "2"
+                    - generic [ref=e455]: Demo Sandbox Organization
+                - generic [ref=e456]:
+                  - generic [ref=e457]: "Last activity: 3/28/2026"
+                  - generic [ref=e458]:
+                    - button "AI Insights" [ref=e459] [cursor=pointer]:
+                      - img [ref=e460]
+                    - link "View Analytics" [ref=e470] [cursor=pointer]:
+                      - /url: /admin/surveys/equity-lens-pilot/analytics
+                      - img [ref=e471]
+                    - button "Assign to Organizations" [ref=e473] [cursor=pointer]:
+                      - img [ref=e474]
+                    - link "Preview Survey" [ref=e479] [cursor=pointer]:
+                      - /url: /admin/surveys/equity-lens-pilot/preview
+                      - img [ref=e480]
+                    - link "Edit Survey" [ref=e483] [cursor=pointer]:
+                      - /url: /admin/surveys/builder/equity-lens-pilot
+                      - img [ref=e484]
+                    - button "Duplicate" [ref=e487] [cursor=pointer]:
+                      - img [ref=e488]
+              - generic [ref=e492]:
+                - generic [ref=e493]:
+                  - generic [ref=e494]:
+                    - generic [ref=e495]:
+                      - heading "Leadership 360 Assessment" [level=3] [ref=e496]
+                      - generic [ref=e497]: paused
+                    - paragraph [ref=e498]: Multi-rater feedback for inclusive leadership development
+                    - text: Custom
+                  - generic [ref=e499]:
+                    - img [ref=e500]
+                    - checkbox [ref=e503]
+                - generic [ref=e504]:
+                  - generic [ref=e505]:
+                    - generic [ref=e506]: "0"
+                    - generic [ref=e507]: Responses
+                  - generic [ref=e508]:
+                    - generic [ref=e509]: 0%
+                    - generic [ref=e510]: Completion
+                - generic [ref=e511]:
+                  - generic [ref=e512]: "Assigned Organizations:"
+                  - generic [ref=e513]:
+                    - generic [ref=e514]: "1"
+                    - generic [ref=e515]: Demo Sandbox Organization
+                - generic [ref=e516]:
+                  - generic [ref=e517]: "Last activity: 3/28/2026"
+                  - generic [ref=e518]:
+                    - button "AI Insights" [ref=e519] [cursor=pointer]:
+                      - img [ref=e520]
+                    - link "View Analytics" [ref=e530] [cursor=pointer]:
+                      - /url: /admin/surveys/leadership-360/analytics
+                      - img [ref=e531]
+                    - button "Assign to Organizations" [ref=e533] [cursor=pointer]:
+                      - img [ref=e534]
+                    - link "Preview Survey" [ref=e539] [cursor=pointer]:
+                      - /url: /admin/surveys/leadership-360/preview
+                      - img [ref=e540]
+                    - link "Edit Survey" [ref=e543] [cursor=pointer]:
+                      - /url: /admin/surveys/builder/leadership-360
+                      - img [ref=e544]
+                    - button "Duplicate" [ref=e547] [cursor=pointer]:
+                      - img [ref=e548]
+            - generic [ref=e551]:
+              - generic [ref=e552]:
+                - heading "Start with a Template" [level=2] [ref=e553]
+                - paragraph [ref=e554]: Choose from our research-backed DEI survey templates designed by experts in organizational psychology and inclusive leadership.
+              - generic [ref=e555]:
+                - generic [ref=e556]:
+                  - img [ref=e558]
+                  - heading "Climate Assessment" [level=3] [ref=e560]
+                  - paragraph [ref=e561]: Comprehensive workplace culture and belonging assessment
+                  - link "Use Template →" [ref=e562] [cursor=pointer]:
+                    - /url: /admin/surveys/builder?template=climate-assessment
+                - generic [ref=e563]:
+                  - img [ref=e565]
+                  - heading "Inclusion Index" [level=3] [ref=e569]
+                  - paragraph [ref=e570]: Measure inclusion across key dimensions with benchmarking
+                  - link "Use Template →" [ref=e571] [cursor=pointer]:
+                    - /url: /admin/surveys/builder?template=inclusion-index
+                - generic [ref=e572]:
+                  - img [ref=e574]
+                  - heading "Equity Lens" [level=3] [ref=e577]
+                  - paragraph [ref=e578]: Evaluate organizational practices through an equity framework
+                  - link "Use Template →" [ref=e579] [cursor=pointer]:
+                    - /url: /admin/surveys/builder?template=equity-lens
+            - generic [ref=e581]:
+              - generic [ref=e582]:
+                - generic [ref=e583]:
+                  - paragraph [ref=e584]: Assign Survey
+                  - heading "Assign survey to organizations" [level=2] [ref=e585]
+                  - heading "2025 DEI Pulse Check" [level=3] [ref=e586]
+                - button "Close assignment modal" [ref=e587] [cursor=pointer]:
+                  - img [ref=e588]
+              - generic [ref=e591]:
+                - generic [ref=e592]:
+                  - generic [ref=e593]:
+                    - text: Organizations
+                    - generic [ref=e594]:
+                      - img
+                      - searchbox "Search organizations" [ref=e595]
+                    - generic [ref=e596]:
+                      - generic [ref=e597] [cursor=pointer]:
+                        - generic [ref=e598]:
+                          - checkbox "Demo Sandbox Organization" [checked] [ref=e599]
+                          - generic [ref=e600]:
+                            - paragraph [ref=e601]: Demo Sandbox Organization
+                            - paragraph [ref=e602]: 0 learners • Org
+                        - img [ref=e604]
+                      - generic [ref=e606] [cursor=pointer]:
+                        - generic [ref=e607]:
+                          - checkbox "Mountain View High School" [checked] [active] [ref=e608]
+                          - generic [ref=e609]:
+                            - paragraph [ref=e610]: Mountain View High School
+                            - paragraph [ref=e611]: 0 learners • Org
+                        - img [ref=e613]
+                      - generic [ref=e615] [cursor=pointer]:
+                        - generic [ref=e616]:
+                          - checkbox "Pacific Coast University" [checked] [ref=e617]
+                          - generic [ref=e618]:
+                            - paragraph [ref=e619]: Pacific Coast University
+                            - paragraph [ref=e620]: 0 learners • Org
+                        - img [ref=e622]
+                    - paragraph [ref=e624]:
+                      - text: "Selected organizations:"
+                      - strong [ref=e625]: "4"
+                  - generic [ref=e626]:
+                    - text: Due date (optional)
+                    - generic [ref=e627]:
+                      - img [ref=e628]
+                      - textbox [ref=e630]
+                  - generic [ref=e631]:
+                    - text: Note to recipients (optional)
+                    - textbox "Share context or expectations for this assignment…" [ref=e632]
+                - generic [ref=e633]:
+                  - generic [ref=e634]:
+                    - text: Specific users (optional)
+                    - paragraph [ref=e635]: Select individual users within the chosen organizations to notify directly.
+                    - searchbox "Search members" [ref=e637]
+                    - generic [ref=e638]:
+                      - button "E2E User e2e.user.1774837159485@example.com" [ref=e639] [cursor=pointer]:
+                        - generic [ref=e640]:
+                          - paragraph [ref=e641]: E2E User
+                          - paragraph [ref=e642]: e2e.user.1774837159485@example.com
+                      - button "E2E User e2e.existing.1774837164180@example.com" [ref=e644] [cursor=pointer]:
+                        - generic [ref=e645]:
+                          - paragraph [ref=e646]: E2E User
+                          - paragraph [ref=e647]: e2e.existing.1774837164180@example.com
+                      - button "E2E User e2e.user.1774837159485@example.com" [ref=e649] [cursor=pointer]:
+                        - generic [ref=e650]:
+                          - paragraph [ref=e651]: E2E User
+                          - paragraph [ref=e652]: e2e.user.1774837159485@example.com
+                      - button "E2E User e2e.existing.1774837164180@example.com" [ref=e654] [cursor=pointer]:
+                        - generic [ref=e655]:
+                          - paragraph [ref=e656]: E2E User
+                          - paragraph [ref=e657]: e2e.existing.1774837164180@example.com
+                      - button "E2E User e2e.user.1774837159485@example.com" [ref=e659] [cursor=pointer]:
+                        - generic [ref=e660]:
+                          - paragraph [ref=e661]: E2E User
+                          - paragraph [ref=e662]: e2e.user.1774837159485@example.com
+                      - button "E2E User e2e.existing.1774837164180@example.com" [ref=e664] [cursor=pointer]:
+                        - generic [ref=e665]:
+                          - paragraph [ref=e666]: E2E User
+                          - paragraph [ref=e667]: e2e.existing.1774837164180@example.com
+                      - button "E2E User e2e.user.1774837159485@example.com" [ref=e669] [cursor=pointer]:
+                        - generic [ref=e670]:
+                          - paragraph [ref=e671]: E2E User
+                          - paragraph [ref=e672]: e2e.user.1774837159485@example.com
+                      - button "E2E User e2e.existing.1774837164180@example.com" [ref=e674] [cursor=pointer]:
+                        - generic [ref=e675]:
+                          - paragraph [ref=e676]: E2E User
+                          - paragraph [ref=e677]: e2e.existing.1774837164180@example.com
+                    - paragraph [ref=e679]:
+                      - text: "Selected users:"
+                      - strong [ref=e680]: "0"
+                  - generic [ref=e681]: Assignments notify every selected organization and user. Learners will also see this survey in their dashboard.
+                  - generic [ref=e682]:
+                    - button "Cancel" [ref=e683] [cursor=pointer]
+                    - button "Save assignment" [ref=e684] [cursor=pointer]
+  - generic [ref=e685]:
+    - generic [ref=e686]:
+      - heading "Connection Status All systems operational" [level=3] [ref=e687]:
+        - img [ref=e688]
+        - generic [ref=e691]: Connection Status
+        - generic [ref=e692]: All systems operational
+      - button "Close connection status panel" [ref=e693] [cursor=pointer]: ×
+    - generic [ref=e694]:
+      - generic [ref=e695]:
+        - generic [ref=e696]: Internet
+        - img [ref=e697]
+      - generic [ref=e700]:
+        - generic [ref=e701]: Server
+        - img [ref=e702]
+      - generic [ref=e705]:
+        - generic [ref=e706]: API health
+        - img [ref=e707]
+      - generic [ref=e710]:
+        - paragraph [ref=e711]: "Checked: 9:19:27 PM"
+        - button "Refresh Status" [ref=e712] [cursor=pointer]
+  - button "Troubleshooting Guide" [ref=e713] [cursor=pointer]:
+    - img [ref=e714]
+  - button "Show Dev Panel" [ref=e719] [cursor=pointer]
+```

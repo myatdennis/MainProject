@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import AIUserAssistant from './AIUserAssistant';
 import { X, User, Building, UserPlus } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import LoadingButton from './LoadingButton';
@@ -149,6 +150,11 @@ const AddUserModal: React.FC<AddUserModalProps> = ({
     exit: { opacity: 0, y: 40, transition: { duration: 0.18 } }
   };
 
+  // AIUserAssistant dismiss logic
+  const handleDismissSuggestion = (_id: string) => {};
+
+  // Optionally, you could add auto-apply logic here
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -213,7 +219,7 @@ const AddUserModal: React.FC<AddUserModalProps> = ({
         await apiRequest(`/api/admin/users/${editUser.id}`, {
           method: 'PATCH',
           body: {
-            organizationId: activeOrgId,
+            organizationId: sanitizedData.organization,
             firstName: sanitizedData.firstName,
             lastName: sanitizedData.lastName,
             email: sanitizedData.email,
@@ -478,6 +484,13 @@ const AddUserModal: React.FC<AddUserModalProps> = ({
                 <X className="h-6 w-6" />
               </button>
             </div>
+            {/* AI User Assistant Suggestions */}
+            <AIUserAssistant
+              values={values}
+              errors={errors}
+              onApplySuggestion={() => {}}
+              onDismissSuggestion={handleDismissSuggestion}
+            />
             {/* Form */}
             <form onSubmit={handleSubmit} className="p-6 space-y-6 font-body">
               {/* Personal Information */}
