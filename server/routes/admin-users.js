@@ -1,5 +1,5 @@
 import express from 'express';
-import { authenticate, requireAdmin } from '../middleware/auth.js';
+import { authenticate, requireAdmin, invalidateMembershipCache } from '../middleware/auth.js';
 import { createHttpError, withHttpError } from '../middleware/apiErrorHandler.js';
 import { validateOrgId } from '../lib/inviteHelper.js';
 const router = express.Router();
@@ -415,6 +415,13 @@ const upsertOrganizationMembership = async ({ orgId, userId, role, actorUserId =
     .from('organization_memberships')
     .upsert(payload, { onConflict: `${orgColumn},user_id` });
   if (error) throw error;
+
+  // Invalidate auth membership cache to force fresh memberships on next login/session refresh
+  try {
+    invalidateMembershipCache(userId);
+  } catch (err) {
+    console.warn('[admin-users] invalidateMembershipCache failed', { userId, error: err?.message || err });
+  }
 };
 
 const findAuthUserByEmail = async (email) => {
