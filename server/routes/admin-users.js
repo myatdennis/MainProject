@@ -84,33 +84,33 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
     let canonicalUserId = null;
     let canonicalSource = null;
 
-    const { data: profileRow, error: profileRowError } = await supabaseAdmin
-      .from('user_profiles')
-      .select('id')
+    const { data: membershipRow, error: membershipRowError } = await supabaseAdmin
+      .from('organization_memberships')
+      .select('user_id')
       .eq('id', userId)
       .maybeSingle();
 
-    if (profileRowError) {
-      throw new Error(`user_profile_lookup_failed: ${profileRowError.message}`);
+    if (membershipRowError) {
+      throw new Error(`organization_membership_lookup_failed: ${membershipRowError.message}`);
     }
 
-    if (profileRow?.id) {
-      canonicalUserId = profileRow.id;
-      canonicalSource = 'user_profiles';
+    if (membershipRow?.user_id) {
+      canonicalUserId = membershipRow.user_id;
+      canonicalSource = 'organization_memberships';
     } else {
-      const { data: membershipRow, error: membershipRowError } = await supabaseAdmin
-        .from('organization_memberships')
-        .select('user_id')
+      const { data: profileRow, error: profileRowError } = await supabaseAdmin
+        .from('user_profiles')
+        .select('id')
         .eq('id', userId)
         .maybeSingle();
 
-      if (membershipRowError) {
-        throw new Error(`organization_membership_lookup_failed: ${membershipRowError.message}`);
+      if (profileRowError) {
+        throw new Error(`user_profile_lookup_failed: ${profileRowError.message}`);
       }
 
-      if (membershipRow?.user_id) {
-        canonicalUserId = membershipRow.user_id;
-        canonicalSource = 'organization_memberships';
+      if (profileRow?.id) {
+        canonicalUserId = profileRow.id;
+        canonicalSource = 'user_profiles';
       }
     }
 
@@ -118,8 +118,10 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
       return res.status(404).json({ ok: false, code: 'user_not_found', message: 'User not found for provided userId.' });
     }
 
-    if (canonicalSource && canonicalSource !== 'user_profiles') {
-      console.log('Resolved canonical user id from non-profile id', { userId, canonicalUserId, canonicalSource });
+    if (canonicalSource === 'organization_memberships') {
+      console.log('Resolved canonical user id from organization_memberships id', { userId, canonicalUserId });
+    } else {
+      console.log('Resolved canonical user id from user_profiles id', { userId, canonicalUserId });
     }
 
     const targetUserId = canonicalUserId;
@@ -199,11 +201,12 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
     }
 
     let orgData = null;
-    if (activeMembership.organization_id) {
+    const activeOrgId = activeMembership.organization_id ?? activeMembership.org_id ?? null;
+    if (activeOrgId) {
       const { data: org } = await supabaseAdmin
         .from('organizations')
         .select('id, name')
-        .eq('id', activeMembership.organization_id)
+        .eq('id', activeOrgId)
         .maybeSingle();
       orgData = org || null;
     }
@@ -216,7 +219,7 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
         first_name: profile.first_name,
         last_name: profile.last_name,
         role: activeMembership.role,
-        organization_id: activeMembership.organization_id,
+        organization_id: activeOrgId,
         organization: orgData,
       },
     });

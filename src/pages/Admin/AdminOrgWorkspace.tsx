@@ -340,24 +340,29 @@ const AdminOrgWorkspace = () => {
     try {
       await orgService.deleteOrg(orgToDelete);
 
+      const currentPage = paginationMeta.page || 1;
+      const totalAfterDelete = Math.max(0, (paginationMeta.total || 0) - 1);
+      const pageCountAfterDelete = Math.max(1, Math.ceil(totalAfterDelete / PAGE_SIZE));
+      const nextPage = currentPage > pageCountAfterDelete ? pageCountAfterDelete : currentPage;
+
       setOrganizations((prev) => prev.filter((org) => org.id !== orgToDelete));
       setPaginationMeta((prev) => ({
         ...prev,
-        total: Math.max(0, (prev.total || 0) - 1),
+        total: totalAfterDelete,
+        page: nextPage,
+        hasMore: nextPage < pageCountAfterDelete,
       }));
 
       if (selectedOrgId === orgToDelete) {
         setSelectedOrgId(null);
       }
 
-      // Ensure the list is in sync with server, and if the current page is emptied, pull prior page.
-      const nextPage = Math.max(1, paginationMeta.page || 1);
-      void fetchOrganizations(nextPage);
+      await fetchOrganizations(nextPage);
 
       showToast?.('Organization deleted successfully', 'success');
       setShowDeleteModal(false);
       setOrgToDelete(null);
-      void loadCrmData();
+      await loadCrmData();
     } catch (error) {
       console.error('Failed to delete organization', error);
       showToast?.('Failed to delete organization', 'error');

@@ -513,7 +513,7 @@ export const updateOrg = async (id: string, patch: Partial<Org>): Promise<Org> =
 export const deleteOrg = async (id: string): Promise<void> => {
   await apiRequest(`/api/admin/organizations/${id}`, { method: 'DELETE' });
   // Invalidate org list cache so the deleted org can't reappear from stale cached list
-  invalidateOrgListCache((key) => key.includes('"page"') || key.includes('"status"') || key.includes('"subscription"'));
+  invalidateOrgListCache();
 };
 
 export const bulkUpdateOrgs = async (updates: Array<{ id: string; data: Partial<Org> }>): Promise<Org[]> => {
