@@ -90,6 +90,7 @@ const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
             className="modal-overlay"
             onClick={onClose}
             aria-label="Close modal background"
+            style={{ background: 'rgba(0,0,0,0.4)', backdropFilter: 'none' }}
           />
           <motion.div
             className="modal-panel"
@@ -99,9 +100,10 @@ const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
             animate="visible"
             exit="exit"
             aria-label="Confirmation Modal"
+            style={{ background: '#fff', borderRadius: 16, boxShadow: '0 8px 32px rgba(0,0,0,0.18)', padding: 0, filter: 'none' }}
           >
             {/* Header */}
-            <div className="modal-header">
+            <div className="modal-header" style={{ background: '#fff', borderTopLeftRadius: 16, borderTopRightRadius: 16 }}>
               <div style={{display: 'flex', alignItems: 'center', gap: 12}}>
                 <div className="icon-wrap" style={{background: headerBg}}>{typeConfig.icon}</div>
                 <h2 id="confirmation-modal-title" style={{fontSize: 20, fontWeight: 800, color: 'var(--neutral-text)'}}>{title}</h2>
@@ -116,11 +118,11 @@ const ConfirmationModal: React.FC<ConfirmationModalProps> = ({
               </button>
             </div>
             {/* Content */}
-            <div className="modal-content">
+            <div className="modal-content" style={{ background: '#fff' }}>
               <p>{message}</p>
             </div>
             {/* Actions */}
-            <div className="modal-actions">
+            <div className="modal-actions" style={{ background: '#fff', borderBottomLeftRadius: 16, borderBottomRightRadius: 16 }}>
               <button
                 onClick={onClose}
                 className="" 

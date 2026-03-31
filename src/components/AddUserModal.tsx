@@ -216,10 +216,14 @@ const AddUserModal: React.FC<AddUserModalProps> = ({
   try {
       if (isEditMode && editUser) {
         // Update the real user profile and membership state via PATCH
+        const orgId = sanitizedData.organization;
         await apiRequest(`/api/admin/users/${editUser.id}`, {
           method: 'PATCH',
           body: {
-            organizationId: sanitizedData.organization,
+            orgId,
+            organizationId: orgId,
+            org_id: orgId,
+            organization_id: orgId,
             firstName: sanitizedData.firstName,
             lastName: sanitizedData.lastName,
             email: sanitizedData.email,
