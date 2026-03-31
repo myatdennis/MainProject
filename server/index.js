@@ -1,4 +1,5 @@
 import 'dotenv/config';
+console.log('[startup] Entrypoint loaded');
 import express from 'express';
 import http from 'http';
 import path from 'path';
@@ -505,6 +506,7 @@ function savePersistedData(data) {
 }
 
 const app = express();
+console.log('[startup] Express app created');
 app.locals.schemaHealth = schemaHealth;
 app.set('etag', false);
 // CORS must run first — before any route handler — so that 401/403 responses
@@ -513,6 +515,7 @@ app.set('etag', false);
 // which meant browsers received CORS-less 401 responses and reported them as
 // network errors instead of auth errors.
 app.use(corsMiddleware);
+console.log('[startup] CORS middleware registered');
 
 import healthRouter from './routes/health.js';
 import corsMiddleware, { resolvedCorsOrigins, corsAllowedHeaders } from './middleware/cors.js';
@@ -1639,6 +1642,7 @@ logger.info('server_port', { port: PORT });
 // every route handler, including the early pre-2092 /api/admin routes.
 app.use(cookieParser());
 app.use(express.json({ limit: '10mb' }));
+console.log('[startup] JSON middleware registered');
 app.use(attachRequestId);
 
 const createCorsRouteLogger = (label) => (req, res, next) => {
