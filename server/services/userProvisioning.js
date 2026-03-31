@@ -138,11 +138,23 @@ const cleanupProvisionedUserAccount = async ({
         .delete()
         .eq(membershipOrgColumn, orgId)
         .eq('user_id', userId);
-      await supabase
-        .from('admin_users')
-        .delete()
-        .eq('organization_id', orgId)
-        .eq('user_id', userId);
+
+      try {
+        await supabase
+          .from('admin_users')
+          .delete()
+          .eq('organization_id', orgId)
+          .eq('user_id', userId);
+      } catch (adminDeleteError) {
+        if (isMissingColumnError(adminDeleteError)) {
+          await supabase
+            .from('admin_users')
+            .delete()
+            .eq('user_id', userId);
+        } else {
+          throw adminDeleteError;
+        }
+      }
     }
     await supabase.from('user_profiles').delete().eq('id', userId);
     await supabase.auth.admin.deleteUser(userId);
@@ -232,15 +244,64 @@ const ensureMembership = async ({
   return data;
 };
 
-const ensureAdminRoleMapping = async ({ supabase, orgId, userId, role }) => {
+const isMissingColumnError = (error) => {
+  const message = String(error?.message || error?.details || '');
+  return (
+    error?.code === '42703' ||
+    error?.code === 'PGRST204' ||
+    /column .* does not exist/i.test(message) ||
+    /Could not find .* column/i.test(message) ||
+    /Could not find the 'meta' column of 'admin_users' in the schema cache/i.test(message)
+  );
+};
+
+const ensureAdminRoleMapping = async ({ supabase, orgId, userId, role, email = null }) => {
   if (!ADMIN_ROLES.has(role)) return null;
-  const { error } = await supabase
-    .from('admin_users')
-    .upsert({ user_id: userId, organization_id: orgId, meta: { role } }, { onConflict: 'user_id,organization_id' });
-  if (error) {
+
+  if (!supabase || !userId) {
+    throw new ProvisioningError('admin_role_upsert', 'admin_role_upsert_failed', 'Supabase not configured or missing userId', 500);
+  }
+
+  const tryLegacyAdminUserUpsert = async () => {
+    const payload = {
+      user_id: userId,
+      is_active: true,
+      ...(email ? { email } : {}),
+    };
+    const { error } = await supabase.from('admin_users').upsert(payload, { onConflict: 'user_id' });
+    if (error) {
+      throw new ProvisioningError('admin_role_upsert', 'admin_role_upsert_failed', error.message || 'Admin role upsert failed', 500, error);
+    }
+    return true;
+  };
+
+  const modernPayload = {
+    user_id: userId,
+    organization_id: orgId,
+    meta: { role },
+    is_active: true,
+    ...(email ? { email } : {}),
+  };
+
+  try {
+    const { error } = await supabase
+      .from('admin_users')
+      .upsert(modernPayload, { onConflict: 'user_id,organization_id' });
+
+    if (error) {
+      if (isMissingColumnError(error)) {
+        return await tryLegacyAdminUserUpsert();
+      }
+      throw error;
+    }
+
+    return true;
+  } catch (error) {
+    if (isMissingColumnError(error)) {
+      return await tryLegacyAdminUserUpsert();
+    }
     throw new ProvisioningError('admin_role_upsert', 'admin_role_upsert_failed', error.message || 'Admin role upsert failed', 500, error);
   }
-  return true;
 };
 
 const generatePasswordSetupLink = async ({ supabase, email }) => {
@@ -665,7 +726,7 @@ export const createOrProvisionOrganizationUser = async (input, deps = {}) => {
 
   stage = 'admin_role_upsert';
   try {
-    await ensureAdminRoleMapping({ supabase, orgId, userId: authUser.id, role: normalizedRole });
+    await ensureAdminRoleMapping({ supabase, orgId, userId: authUser.id, role: normalizedRole, email: normalizedEmail });
   } catch (error) {
     if (created) {
       await cleanupProvisionedUserAccount({

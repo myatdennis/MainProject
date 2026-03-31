@@ -145,12 +145,19 @@ const resolveUserRole = (user = {}, memberships = []) => {
   return 'learner';
 };
 
+const isPlatformAdmin = (user = {}) => {
+  if (!user || typeof user !== 'object') return false;
+  const platformRole = derivePlatformRole(user);
+  return String(platformRole).toLowerCase() === 'platform_admin' || Boolean(user.isPlatformAdmin);
+};
+
 export {
   normalizeEmail,
   PRIMARY_ADMIN_EMAIL,
   isCanonicalAdminEmail,
   isAllowlistedAdminEmail,
   resolveUserRole,
+  isPlatformAdmin,
   syncUserProfileFlags,
 };
 
@@ -491,7 +498,7 @@ const buildUserPayload = (user, memberships, { membershipStatus = 'ready' } = {}
     email: normalizeEmail(user.email || ''),
     role: inferredRole,
     platformRole,
-    isPlatformAdmin: platformRole === 'platform_admin' || inferredRole === 'admin',
+    isPlatformAdmin: (platformRole === 'platform_admin') || isPlatformAdmin(user),
     organizationId: organizationIds[0] || null,
     organizationIds,
     memberships: trustedMemberships,
@@ -827,7 +834,7 @@ export async function requireAdmin(req, res, next) {
     if (profileFlags.role) {
       resolvedRole = profileFlags.role;
     }
-    if (profileFlags.isAdmin || profileFlags.role === 'admin') {
+    if (profileFlags.isAdmin || profileFlags.role === 'platform_admin') {
       isPlatformAdmin = true;
     }
   }
@@ -865,9 +872,9 @@ export async function requireAdmin(req, res, next) {
   });
 }
 
-export const requirePlatformAdmin = requireAdmin;
-
-
+/**
+ * Require specific permission(s)
+ */
 export function requirePermission(...permissions) {
   return (req, res, next) => {
     if (!req.user) {
@@ -899,10 +906,6 @@ export function requirePermission(...permissions) {
   };
 }
 
-
-/**
- * Require user to be authenticated (any role)
- */
 export function requireAuth(req, res, next) {
   if (!req.user) {
     return res.status(401).json({
@@ -913,9 +916,6 @@ export function requireAuth(req, res, next) {
   next();
 }
 
-/**
- * Require user to own the resource or be an admin
- */
 export function requireOwnerOrAdmin(getUserId) {
   return (req, res, next) => {
     if (!req.user) {
@@ -923,14 +923,12 @@ export function requireOwnerOrAdmin(getUserId) {
         error: 'Authentication required',
       });
     }
-    
+
     const resourceUserId = getUserId(req);
-    
-    // Allow if admin or resource owner
     if (req.user.role === 'admin' || req.user.userId === resourceUserId) {
       return next();
     }
-    
+
     return res.status(403).json({
       error: 'Forbidden',
       message: 'You can only access your own resources',
@@ -938,9 +936,6 @@ export function requireOwnerOrAdmin(getUserId) {
   };
 }
 
-/**
- * Require user to be in the same organization or be an admin
- */
 export function requireSameOrganizationOrAdmin(getOrganizationId) {
   return (req, res, next) => {
     if (!req.user) {
@@ -948,14 +943,12 @@ export function requireSameOrganizationOrAdmin(getOrganizationId) {
         error: 'Authentication required',
       });
     }
-    
-    // Platform admins can access all organizations
+
     if (req.user.isPlatformAdmin) {
       return next();
     }
-    
+
     const resourceOrgId = getOrganizationId(req);
-    
     if (!resourceOrgId) {
       return next();
     }
@@ -964,7 +957,7 @@ export function requireSameOrganizationOrAdmin(getOrganizationId) {
     if (membership && membership.status === 'active') {
       return next();
     }
-    
+
     return res.status(403).json({
       error: 'Forbidden',
       message: 'You can only access resources in your organization',
@@ -972,28 +965,18 @@ export function requireSameOrganizationOrAdmin(getOrganizationId) {
   };
 }
 
-// ============================================================================
-// Rate Limiting
-// ============================================================================
-
-/**
- * Rate limiter for authentication endpoints
- */
 export const authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 5, // 5 attempts per window
+  windowMs: 15 * 60 * 1000,
+  max: 5,
   message: {
     error: 'Too many attempts',
     message: 'Too many login attempts. Please try again later.',
   },
   standardHeaders: true,
   legacyHeaders: false,
-  skipSuccessfulRequests: true, // Don't count successful requests
+  skipSuccessfulRequests: true,
 });
 
-/**
- * Rate limiter for API endpoints
- */
 const RATE_LIMIT_BYPASS_PREFIXES = ['/auth', '/mfa', '/health', '/diagnostics'];
 const RATE_LIMIT_BYPASS_EXACT = new Set(['/auth/csrf']);
 
@@ -1013,8 +996,8 @@ const shouldBypassApiRateLimit = (req) => {
 };
 
 export const apiLimiter = rateLimit({
-  windowMs: 1 * 60 * 1000, // 1 minute
-  max: 500, // 500 requests per minute (increased for development)
+  windowMs: 1 * 60 * 1000,
+  max: 500,
   message: {
     error: 'Too many requests',
     message: 'Please slow down and try again later.',
@@ -1024,79 +1007,42 @@ export const apiLimiter = rateLimit({
   skip: (req) => shouldBypassApiRateLimit(req),
 });
 
-/**
- * Strict rate limiter for sensitive operations
- */
 export const strictLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000, // 1 hour
-  max: 10, // 10 requests per hour
+  windowMs: 60 * 60 * 1000,
+  max: 10,
   message: {
     error: 'Rate limit exceeded',
     message: 'Too many requests for this operation.',
   },
-  standardHeaders: true,
-  legacyHeaders: false,
 });
 
-// ============================================================================
-// Security Headers
-// ============================================================================
-
-/**
- * Add security headers to response
- */
 export function securityHeaders(req, res, next) {
-  // Prevent clickjacking (SAMEORIGIN still protects from framing by other sites
-  // but allows same-origin frames if needed). Change via env if you need
-  // a different policy.
   res.setHeader('X-Frame-Options', process.env.X_FRAME_OPTIONS || 'SAMEORIGIN');
-  
-  // Prevent MIME type sniffing
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  
-  // Enable XSS protection
   res.setHeader('X-XSS-Protection', '1; mode=block');
-  
-  // Referrer policy
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  
-  // Content Security Policy - relaxed for dev mode
   if (process.env.NODE_ENV === 'production') {
-    // Allow embedding of trusted frame sources (e.g. YouTube) while keeping
-    // a sensible default for other directives. You can override via
-    // ALLOWED_FRAME_SRC env (space-separated origins) and FRAME_ANCESTORS.
     const allowedFrameSrc = process.env.ALLOWED_FRAME_SRC || 'https://www.youtube.com https://www.youtube-nocookie.com';
     const frameAncestors = process.env.FRAME_ANCESTORS || "'self'";
-
     res.setHeader(
       'Content-Security-Policy',
       "default-src 'self'; " +
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval'; " +
-      "style-src 'self' 'unsafe-inline'; " +
-      "img-src 'self' data: https:; " +
-      "font-src 'self' data:; " +
-      "connect-src 'self' https:; " +
-      `frame-src ${allowedFrameSrc}; ` +
-      `child-src ${allowedFrameSrc}; ` +
-      `frame-ancestors ${frameAncestors};`
+        "script-src 'self' 'unsafe-inline' 'unsafe-eval'; " +
+        "style-src 'self' 'unsafe-inline'; " +
+        "img-src 'self' data: https:; " +
+        "font-src 'self' data:; " +
+        "connect-src 'self' https:; " +
+        `frame-src ${allowedFrameSrc}; ` +
+        `child-src ${allowedFrameSrc}; ` +
+        `frame-ancestors ${frameAncestors};`
     );
   }
-  
-  // Strict Transport Security (HTTPS only)
   if (req.secure && process.env.NODE_ENV === 'production') {
     res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
   }
-  
   next();
 }
 
-// ============================================================================
-// Request Logging
-// ============================================================================
-
-/**
- * Log authenticated requests
- */
 export function logAuthRequest(req, res, next) {
   if (req.user) {
     console.log(`[AUTH] ${req.method} ${req.path} - User: ${req.user.email} (${req.user.role})`);
@@ -1104,13 +1050,6 @@ export function logAuthRequest(req, res, next) {
   next();
 }
 
-// ============================================================================
-// Error Handler
-// ============================================================================
-
-/**
- * Handle authentication errors
- */
 export function authErrorHandler(err, req, res, next) {
   if (err.name === 'UnauthorizedError') {
     return res.status(401).json({
@@ -1118,6 +1057,5 @@ export function authErrorHandler(err, req, res, next) {
       message: 'Authentication failed',
     });
   }
-  
   next(err);
 }
