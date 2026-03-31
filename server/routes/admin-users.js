@@ -1,24 +1,85 @@
 import express from 'express';
-import supabaseClient from '../lib/supabaseClient.js';
+import supabaseClient, { supabaseAdminClient } from '../lib/supabaseClient.js';
+import { logger } from '../lib/logger.js';
 const supabase = supabaseClient || (typeof globalThis !== 'undefined' ? globalThis.supabase : null) || null;
+const supabaseAdmin = supabaseAdminClient || supabase;
 import { authenticate, requireAdmin, invalidateMembershipCache } from '../middleware/auth.js';
 import { createHttpError, withHttpError } from '../middleware/apiErrorHandler.js';
 import { validateOrgId } from '../lib/inviteHelper.js';
 const router = express.Router();
 
+let organizationMembershipsOrgColumn = null;
+let organizationMembershipsStatusColumn = null;
+
+const resolveOrganizationMembershipsOrgColumn = async () => {
+  if (!supabaseAdmin) return 'organization_id';
+  if (organizationMembershipsOrgColumn) return organizationMembershipsOrgColumn;
+
+  for (const column of ['organization_id', 'org_id']) {
+    const { error } = await supabaseAdmin
+      .from('organization_memberships')
+      .select('user_id', { head: true, count: 'exact' })
+      .is(column, null)
+      .limit(1);
+    if (error) {
+      if (isMissingColumnError(error)) continue;
+      throw error;
+    }
+    organizationMembershipsOrgColumn = column;
+    return column;
+  }
+
+  organizationMembershipsOrgColumn = 'organization_id';
+  return organizationMembershipsOrgColumn;
+};
+
+const resolveOrganizationMembershipsStatusColumn = async () => {
+  if (!supabaseAdmin) return 'status';
+  if (organizationMembershipsStatusColumn) return organizationMembershipsStatusColumn;
+
+  for (const column of ['status', 'is_active']) {
+    const { error } = await supabaseAdmin
+      .from('organization_memberships')
+      .select('user_id', { head: true, count: 'exact' })
+      .is(column, null)
+      .limit(1);
+    if (error) {
+      if (isMissingColumnError(error)) continue;
+      throw error;
+    }
+    organizationMembershipsStatusColumn = column;
+    return column;
+  }
+
+  organizationMembershipsStatusColumn = 'status';
+  return organizationMembershipsStatusColumn;
+};
+
+const isActiveValue = (statusColumn, value) => {
+  if (statusColumn === 'is_active') return Boolean(value);
+  return String(value);
+};
+
 // PATCH /api/admin/users/:userId
-router.patch('/:userId', async (req, res, next) => {
+router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
   try {
-    if (!supabase) {
-      return next(createHttpError(503, 'supabase_not_configured', 'Supabase not configured'));
+    if (!supabaseAdmin) {
+      return res.status(503).json({
+        ok: false,
+        code: 'supabase_not_configured',
+        message: 'Supabase not configured with service role key',
+      });
+    }
+
+    if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+      console.warn('[ADMIN USER UPDATE WARNING] SUPABASE_SERVICE_ROLE_KEY missing');
     }
 
     const userId = normalizeText(req.params?.userId || '');
     if (!userId) {
-      return next(createHttpError(400, 'user_id_required', 'userId is required.'));
+      return res.status(400).json({ ok: false, code: 'user_id_required', message: 'userId is required.' });
     }
 
-    // Only allow org transfer and membership role update for now
     const orgId =
       normalizeText(req.body?.orgId) ||
       normalizeText(req.body?.organizationId) ||
@@ -28,81 +89,101 @@ router.patch('/:userId', async (req, res, next) => {
     const membershipRole = normalizeOrgRole(req.body?.membershipRole || req.body?.membership_role || 'member');
 
     if (!orgId) {
-      return next(createHttpError(400, 'org_id_required', 'organizationId is required.'));
+      return res.status(400).json({ ok: false, code: 'org_id_required', message: 'organizationId is required.' });
     }
 
-    // Update user_profiles
-    const { error: profileError } = await supabase
+    const orgColumn = await resolveOrganizationMembershipsOrgColumn();
+    const statusColumn = await resolveOrganizationMembershipsStatusColumn();
+    console.log('STEP 1: deactivate memberships', { userId, statusColumn });
+
+    const deactivatePayload = {};
+    if (statusColumn === 'is_active') {
+      deactivatePayload.is_active = false;
+    } else {
+      deactivatePayload.status = 'inactive';
+    }
+
+    const { error: deactivateError } = await supabaseAdmin
+      .from('organization_memberships')
+      .update(deactivatePayload)
+      .eq('user_id', userId);
+
+    if (deactivateError) {
+      throw new Error(`membership_deactivate_failed: ${deactivateError.message}`);
+    }
+
+    console.log('STEP 2: insert membership', { userId, orgId, membershipRole, statusColumn });
+    await upsertOrganizationMembership({ orgId, userId, role: membershipRole, actorUserId: req.user?.id || req.user?.userId, statusColumn });
+
+    console.log('STEP 3: update profile', { userId, orgId });
+    const { error: profileError } = await supabaseAdmin
       .from('user_profiles')
       .update({ organization_id: orgId, active_organization_id: orgId })
       .eq('id', userId);
+
     if (profileError) {
-      return next(createHttpError(500, 'profile_update_failed', profileError.message));
+      throw new Error(`profile_update_failed: ${profileError.message}`);
     }
 
-    // Upsert organization_memberships (ensure only one active membership)
-    const orgColumn = await resolveOrganizationMembershipsOrgColumn();
-    // Deactivate all memberships for this user first
-    const { error: deactivateError } = await supabase
+    const statusFilter = statusColumn === 'is_active' ? { is_active: true } : { status: 'active' };
+
+    const { data: memberships, error: membershipsError } = await supabaseAdmin
       .from('organization_memberships')
-      .update({ status: 'inactive' })
-      .eq('user_id', userId);
-    if (deactivateError) {
-      return next(createHttpError(500, 'membership_deactivate_failed', deactivateError.message));
+      .select('*')
+      .eq('user_id', userId)
+      .match(statusFilter);
+
+    console.log('ACTIVE MEMBERSHIPS', memberships);
+
+    if (membershipsError) {
+      throw new Error(`fetch_memberships_failed: ${membershipsError.message}`);
     }
-    // Upsert new active membership
-    await upsertOrganizationMembership({ orgId, userId, role: membershipRole });
 
-    // Optionally assign org content (courses/surveys) to user
-    const actorUserId = req.user?.userId || req.user?.id || null;
-    await assignPublishedOrganizationCoursesToUser({ orgId, userId, actorUserId });
-    await assignPublishedOrganizationSurveysToUser({ orgId, userId, actorUserId });
-
-    // Fetch updated user profile and membership for response
-    const { data: profile, error: fetchProfileError } = await supabase
+    const { data: profile } = await supabaseAdmin
       .from('user_profiles')
       .select('*')
       .eq('id', userId)
       .maybeSingle();
-    if (fetchProfileError || !profile) {
-      return next(createHttpError(404, 'user_not_found', 'User profile not found after update.'));
-    }
-    const { data: membership, error: fetchMembershipError } = await supabase
-      .from('organization_memberships')
-      .select('*')
-      .eq('user_id', userId)
-      .eq(orgColumn, orgId)
-      .eq('status', 'active')
-      .maybeSingle();
-    if (fetchMembershipError || !membership) {
-      return next(createHttpError(404, 'membership_not_found', 'Active membership not found after update.'));
+
+    if (!profile) {
+      return res.status(404).json({ ok: false, code: 'user_not_found', message: 'User profile not found after update.' });
     }
 
-    // Normalize response: only one org, no conflicting org fields
-    // Canonical org: active membership.organization_id
+    const activeMembership = Array.isArray(memberships) ? memberships[0] : null;
+    if (!activeMembership) {
+      return res.status(404).json({ ok: false, code: 'membership_not_found', message: 'Active membership not found after update.' });
+    }
+
     let orgData = null;
-    if (membership && membership.organization_id) {
-      const { data: org, error: orgError } = await supabase
+    if (activeMembership.organization_id) {
+      const { data: org } = await supabaseAdmin
         .from('organizations')
         .select('id, name')
-        .eq('id', membership.organization_id)
+        .eq('id', activeMembership.organization_id)
         .maybeSingle();
-      if (!orgError && org) orgData = org;
+      orgData = org || null;
     }
-    res.json({
-      success: true,
+
+    return res.json({
+      ok: true,
       data: {
         id: profile.id,
         email: profile.email,
         first_name: profile.first_name,
         last_name: profile.last_name,
-        role: membership.role,
-        organization_id: membership.organization_id,
+        role: activeMembership.role,
+        organization_id: activeMembership.organization_id,
         organization: orgData,
       },
     });
-  } catch (err) {
-    return next(withHttpError(err, 500, 'admin_users_update_failed'));
+  } catch (error) {
+    console.error('[ADMIN USER UPDATE ERROR]', error);
+    return res.status(500).json({
+      ok: false,
+      code: 'admin_users_update_failed',
+      message: error?.message || 'admin_users_update_failed',
+      detail: error?.detail || null,
+    });
   }
 });
 
@@ -213,212 +294,27 @@ const extractMissingColumnName = (error) => {
   return match?.[1] ?? null;
 };
 
-let organizationMembershipsOrgColumn = null;
-let assignmentsOrgColumn = null;
-let orgInvitesOrganizationColumn = null;
-let orgInvitesTokenColumn = null;
-
-const resolveOrganizationMembershipsOrgColumn = async () => {
-  if (!supabase) return 'organization_id';
-  if (organizationMembershipsOrgColumn) return organizationMembershipsOrgColumn;
-
-  for (const column of ['organization_id', 'org_id']) {
-    const { error } = await supabase
-      .from('organization_memberships')
-      .select('user_id', { head: true, count: 'exact' })
-      .is(column, null)
-      .limit(1);
-    if (error) {
-      if (isMissingColumnError(error)) continue;
-      throw error;
-    }
-    organizationMembershipsOrgColumn = column;
-    return column;
-  }
-
-  organizationMembershipsOrgColumn = 'organization_id';
-  return organizationMembershipsOrgColumn;
-};
-
-const resolveOrgInvitesOrganizationColumn = async () => {
-  if (!supabase) return 'organization_id';
-  if (orgInvitesOrganizationColumn) return orgInvitesOrganizationColumn;
-
-  for (const column of ['organization_id', 'org_id']) {
-    const { error } = await supabase
-      .from('org_invites')
-      .select('email', { head: true, count: 'exact' })
-      .is(column, null)
-      .limit(1);
-    if (error) {
-      if (isMissingColumnError(error)) continue;
-      throw error;
-    }
-    orgInvitesOrganizationColumn = column;
-    return column;
-  }
-
-  orgInvitesOrganizationColumn = 'organization_id';
-  return orgInvitesOrganizationColumn;
-};
-
-const resolveAssignmentsOrgColumn = async () => {
-  if (!supabase) return 'organization_id';
-  if (assignmentsOrgColumn) return assignmentsOrgColumn;
-
-  for (const column of ['organization_id', 'org_id']) {
-    const { error } = await supabase
-      .from('assignments')
-      .select('id', { head: true, count: 'exact' })
-      .is(column, null)
-      .limit(1);
-    if (error) {
-      if (isMissingColumnError(error)) continue;
-      throw error;
-    }
-    assignmentsOrgColumn = column;
-    return column;
-  }
-
-  assignmentsOrgColumn = 'organization_id';
-  return assignmentsOrgColumn;
-};
-
-const resolveOrgInvitesTokenColumn = async () => {
-  if (!supabase) return 'token';
-  if (orgInvitesTokenColumn) return orgInvitesTokenColumn;
-
-  for (const column of ['token', 'invite_token']) {
-    const { error } = await supabase
-      .from('org_invites')
-      .select('email', { head: true, count: 'exact' })
-      .is(column, null)
-      .limit(1);
-    if (error) {
-      if (isMissingColumnError(error)) continue;
-      throw error;
-    }
-    orgInvitesTokenColumn = column;
-    return column;
-  }
-
-  orgInvitesTokenColumn = 'token';
-  return orgInvitesTokenColumn;
-};
-
-const getOrganizationMembershipsOrgColumnName = async () => resolveOrganizationMembershipsOrgColumn();
-
-const createInviteFallback = async ({ orgId, email, role, actorUserId = null, firstName = '', lastName = '' }) => {
-  validateOrgId(orgId, 'organizationId is required for invite fallback');
-  const orgColumn = await resolveOrgInvitesOrganizationColumn();
-  const tokenColumn = await resolveOrgInvitesTokenColumn();
-  const normalizedEmail = normalizeEmail(email);
-  const token = randomUUID().replace(/-/g, '');
-
-  // Helpful structured log for debugging invite creation attempts in fallback flow.
-  logInviteInsertAttempt({ orgId, email: normalizedEmail });
-
-  const { data: existing, error: existingError } = await supabase
-    .from('org_invites')
-    .select('*')
-    .eq(orgColumn, orgId)
-    .eq('email', normalizedEmail)
-    .in('status', ['pending', 'sent'])
-    .maybeSingle();
-  if (existingError) throw existingError;
-  if (existing) {
-    return { id: existing.id, email: normalizedEmail, duplicate: true };
-  }
-
-  const basePayload = {
-    email: normalizedEmail,
-    role,
-    status: 'pending',
-    expires_at: new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString(),
-    created_by: actorUserId ?? null,
-    inviter_id: actorUserId ?? null,
-    invited_name: `${normalizeText(firstName)} ${normalizeText(lastName)}`.trim() || null,
-  };
-  // If the complementary org column exists, add both to the payload so
-  // database-side triggers that still reference the legacy column see a value.
-  try {
-    const complementaryOrgColumn = orgColumn === 'organization_id' ? 'org_id' : 'organization_id';
-    const { error: compErr } = await supabase
-      .from('org_invites')
-      .select('id', { head: true, count: 'exact' })
-      .is(complementaryOrgColumn, null)
-      .limit(1);
-    if (!compErr) {
-      basePayload[orgColumn] = orgId;
-      basePayload[complementaryOrgColumn] = orgId;
-    } else {
-      basePayload[orgColumn] = orgId;
-    }
-  } catch (probeErr) {
-    basePayload[orgColumn] = orgId;
-  }
-
-  // Likewise include both token column names when available.
-  try {
-    const complementaryTokenColumn = tokenColumn === 'token' ? 'invite_token' : 'token';
-    const { error: tErr } = await supabase
-      .from('org_invites')
-      .select('id', { head: true, count: 'exact' })
-      .is(complementaryTokenColumn, null)
-      .limit(1);
-    if (!tErr) {
-      basePayload[tokenColumn] = token;
-      basePayload[complementaryTokenColumn] = token;
-    } else {
-      basePayload[tokenColumn] = token;
-    }
-  } catch (probeErr) {
-    basePayload[tokenColumn] = token;
-  }
-
-  const attemptPayloads = buildOrgInviteInsertAttemptPayloads({
-    orgColumn,
-    tokenColumn,
-    orgId,
-    token,
-    basePayload,
-  });
-
-  let lastError = null;
-  for (const candidate of attemptPayloads) {
-    const { data, error } = await supabase.from('org_invites').insert(candidate).select('id,email').single();
-    if (!error) {
-      return { id: data?.id ?? null, email: normalizedEmail, duplicate: false };
-    }
-    lastError = error;
-    if (!isMissingColumnError(error)) {
-      throw error;
-    }
-    const missingColumn = extractMissingColumnName(error);
-    if (missingColumn !== 'token' && missingColumn !== 'invite_token') {
-      throw error;
-    }
-  }
-
-  throw lastError ?? new Error('org_invites_insert_failed');
-};
-
-const upsertOrganizationMembership = async ({ orgId, userId, role, actorUserId = null }) => {
+const upsertOrganizationMembership = async ({ orgId, userId, role, actorUserId = null, statusColumn = 'status' }) => {
   const orgColumn = await resolveOrganizationMembershipsOrgColumn();
   const payload = {
     user_id: userId,
     role,
-    status: 'active',
     invited_by: actorUserId ?? null,
   };
+
+  if (statusColumn === 'is_active') {
+    payload.is_active = true;
+  } else {
+    payload.status = 'active';
+  }
+
   payload[orgColumn] = orgId;
 
-  const { error } = await supabase
+  const { error } = await supabaseAdmin
     .from('organization_memberships')
     .upsert(payload, { onConflict: `${orgColumn},user_id` });
   if (error) throw error;
 
-  // Invalidate auth membership cache to force fresh memberships on next login/session refresh
   try {
     invalidateMembershipCache(userId);
   } catch (err) {
@@ -527,6 +423,11 @@ const assignPublishedOrganizationCoursesToUser = async ({ orgId, userId, actorUs
   if (!courseIds.length) return { inserted: 0, updated: 0 };
 
   const assignmentOrgColumn = await resolveAssignmentsOrgColumn();
+  const assignmentOrgData = {
+    [assignmentOrgColumn]: orgId,
+    ...(assignmentOrgColumn !== 'organization_id' ? { organization_id: orgId } : {}),
+    ...(assignmentOrgColumn !== 'org_id' ? { org_id: orgId } : {}),
+  };
   const { data: existingRows, error: existingError } = await supabase
     .from('assignments')
     .select('id,course_id,metadata,assigned_by')
@@ -558,20 +459,17 @@ const assignPublishedOrganizationCoursesToUser = async ({ orgId, userId, actorUs
     }
 
     inserts.push({
-      organization_id: orgId,
-      course_id: courseId,
+      ...assignmentOrgData,
       user_id: userId,
       assignment_type: 'course',
-      assigned_by: actorUserId ?? null,
+      course_id: courseId,
       status: 'assigned',
-      progress: 0,
+      assigned_by: actorUserId ?? null,
+      active: true,
       metadata: {
         assigned_via: 'organization_membership_auto_assign',
         assignment_source: 'organization_membership',
       },
-      active: true,
-      due_at: null,
-      note: null,
     });
   }
 
@@ -587,246 +485,6 @@ const assignPublishedOrganizationCoursesToUser = async ({ orgId, userId, actorUs
   }
 
   return { inserted: inserts.length, updated: updates.length };
-};
-
-const assignCourseIdsToUser = async ({ orgId, userId, courseIds, actorUserId = null }) => {
-  if (!courseIds?.length) return { inserted: 0, updated: 0 };
-  const uniqueCourseIds = Array.from(new Set(courseIds.map((id) => String(id))));
-
-  const assignmentOrgColumn = await resolveAssignmentsOrgColumn();
-  const { data: existingRows, error: existingError } = await supabase
-    .from('assignments')
-    .select('id,course_id,metadata,assigned_by')
-    .eq(assignmentOrgColumn, orgId)
-    .eq('user_id', userId)
-    .eq('assignment_type', 'course')
-    .eq('active', true)
-    .in('course_id', uniqueCourseIds);
-  if (existingError) throw existingError;
-
-  const existingMap = new Map(
-    (existingRows || []).filter((row) => row?.course_id).map((row) => [String(row.course_id), row]),
-  );
-  const updates = [];
-  const inserts = [];
-
-  for (const courseId of uniqueCourseIds) {
-    const existing = existingMap.get(String(courseId));
-    if (existing) {
-      updates.push({
-        id: existing.id,
-        metadata: {
-          ...(existing.metadata && typeof existing.metadata === 'object' ? existing.metadata : {}),
-          assigned_via: 'csv_import',
-          assignment_source: 'csv_import',
-        },
-        assigned_by: existing.assigned_by ?? actorUserId ?? null,
-        active: true,
-      });
-      continue;
-    }
-
-    inserts.push({
-      organization_id: orgId,
-      user_id: userId,
-      assignment_type: 'course',
-      course_id: courseId,
-      status: 'assigned',
-      assigned_by: actorUserId ?? null,
-      active: true,
-      metadata: {
-        assigned_via: 'csv_import',
-        assignment_source: 'csv_import',
-      },
-    });
-  }
-
-  for (const update of updates) {
-    const { id, ...changes } = update;
-    const { error } = await supabase.from('assignments').update(changes).eq('id', id);
-    if (error) throw error;
-  }
-
-  if (inserts.length > 0) {
-    const { error } = await supabase.from('assignments').insert(inserts);
-    if (error) throw error;
-  }
-
-  return { inserted: inserts.length, updated: updates.length };
-};
-
-const fetchOrganizationsByIds = async (supabaseClient, orgIds) => {
-  const ids = Array.from(new Set((orgIds || []).filter(Boolean)));
-  if (!ids.length) return new Set();
-  const { data, error } = await supabaseClient.from('organizations').select('id').in('id', ids);
-  if (error) throw error;
-  return new Set((data || []).map((row) => row?.id).filter(Boolean));
-};
-
-const fetchCoursesByIds = async (supabaseClient, courseIds) => {
-  const ids = Array.from(new Set((courseIds || []).filter(Boolean)));
-  if (!ids.length) return new Map();
-  const { data, error } = await supabaseClient
-    .from('courses')
-    .select('id, organization_id')
-    .in('id', ids);
-  if (error) throw error;
-  const map = new Map();
-  (data || []).forEach((row) => {
-    if (!row?.id) return;
-    const orgId = row.organization_id ?? null;
-    if (!map.has(orgId)) map.set(orgId, new Set());
-    map.get(orgId).add(String(row.id));
-  });
-  return map;
-};
-
-const validateImportRows = ({ rows, validOrgIds, courseIdsByOrg }) => {
-  const errors = new Map();
-  const seenKeys = new Set();
-
-  rows.forEach((row) => {
-    const rowErrors = [];
-    if (!row.email || !isValidEmail(row.email)) {
-      rowErrors.push('invalid email');
-    }
-    if (!row.orgId) {
-      rowErrors.push('organization_id is required');
-    } else if (validOrgIds && validOrgIds.size && !validOrgIds.has(row.orgId)) {
-      rowErrors.push('organization_id not found');
-    }
-    if (!row.role || !ORG_ROLE_VALUES.has(row.role)) {
-      rowErrors.push('invalid role');
-    }
-
-    const key = `${row.email}|${row.orgId}`;
-    if (row.email && row.orgId) {
-      if (seenKeys.has(key)) {
-        rowErrors.push('duplicate row in file');
-      } else {
-        seenKeys.add(key);
-      }
-    }
-
-    if (row.courseIds?.length) {
-      const validCourses = courseIdsByOrg?.get(row.orgId) || new Set();
-      const invalid = row.courseIds.filter((id) => !validCourses.has(String(id)));
-      if (invalid.length) {
-        rowErrors.push(`invalid course_ids: ${invalid.join(', ')}`);
-      }
-    }
-
-    if (rowErrors.length) {
-      errors.set(row.index, rowErrors);
-    }
-  });
-
-  return errors;
-};
-
-const processUserImportRows = async ({ rows, defaultOrgId, actorUserId, requestId, deps = {} }) => {
-  const supabaseClient = deps.supabaseClient || supabase;
-  const loggerInstance = deps.logger || logger;
-  const provisionUser = deps.provisionUser || ((row) => provisionImportedUser(row, actorUserId, defaultOrgId));
-  const assignCourses = deps.assignCourses || assignCourseIdsToUser;
-
-  if (!supabaseClient) {
-    throw createHttpError(503, 'supabase_not_configured', 'Supabase not configured');
-  }
-
-  const normalizedRows = rows.map((row, index) => normalizeImportRow(row, index, defaultOrgId));
-  const orgIds = normalizedRows.map((row) => row.orgId).filter(Boolean);
-  const courseIds = normalizedRows.flatMap((row) => row.courseIds || []);
-
-  const validOrgIds = await fetchOrganizationsByIds(supabaseClient, orgIds);
-  const courseIdsByOrg = await fetchCoursesByIds(supabaseClient, courseIds);
-  const validationErrors = validateImportRows({ rows: normalizedRows, validOrgIds, courseIdsByOrg });
-
-  if (validationErrors.size) {
-    validationErrors.forEach((messages, index) => {
-      const row = normalizedRows.find((entry) => entry.index === index);
-      loggerInstance.warn('admin_users_import_validation_failed', {
-        requestId,
-        rowIndex: index,
-        email: row?.email ?? null,
-        organizationId: row?.orgId ?? null,
-        message: messages.join('; '),
-      });
-    });
-  }
-
-  const results = [];
-  const batchSize = 10;
-
-  for (let i = 0; i < normalizedRows.length; i += batchSize) {
-    const batch = normalizedRows.slice(i, i + batchSize);
-    const batchResults = await Promise.all(
-      batch.map(async (row) => {
-        if (validationErrors.has(row.index)) {
-          return {
-            email: row.email,
-            organizationId: row.orgId,
-            status: 'failed',
-            message: validationErrors.get(row.index).join('; '),
-            userId: null,
-            emailSent: false,
-            setupLinkPresent: false,
-          };
-        }
-
-        try {
-          const provisionResult = await provisionUser(row.raw);
-          if (row.courseIds?.length) {
-            await assignCourses({
-              orgId: provisionResult.orgId,
-              userId: provisionResult.userId,
-              courseIds: row.courseIds,
-              actorUserId,
-            });
-          }
-
-          const status = provisionResult.created
-            ? 'created'
-            : provisionResult.membershipCreated
-              ? 'updated'
-              : 'skipped';
-
-          return {
-            email: provisionResult.email,
-            organizationId: provisionResult.orgId,
-            status,
-            message: provisionResult.created
-              ? 'user created'
-              : provisionResult.membershipCreated
-                ? 'existing user updated'
-                : 'existing membership reused',
-            userId: provisionResult.userId,
-            emailSent: Boolean(provisionResult.emailSent),
-            setupLinkPresent: Boolean(provisionResult.setupLink),
-          };
-        } catch (error) {
-          loggerInstance.warn('admin_users_import_row_failed', {
-            requestId,
-            email: row.email,
-            organizationId: row.orgId,
-            message: error?.message || String(error),
-          });
-          return {
-            email: row.email,
-            organizationId: row.orgId,
-            status: 'failed',
-            message: error?.message || 'provisioning failed',
-            userId: null,
-            emailSent: false,
-            setupLinkPresent: false,
-          };
-        }
-      }),
-    );
-    results.push(...batchResults);
-  }
-
-  return { results };
 };
 
 const assignPublishedOrganizationSurveysToUser = async ({ orgId, userId, actorUserId = null }) => {
@@ -834,6 +492,11 @@ const assignPublishedOrganizationSurveysToUser = async ({ orgId, userId, actorUs
   if (!surveyIds.length) return { inserted: 0, updated: 0 };
 
   const assignmentOrgColumn = await resolveAssignmentsOrgColumn();
+  const assignmentOrgData = {
+    [assignmentOrgColumn]: orgId,
+    ...(assignmentOrgColumn !== 'organization_id' ? { organization_id: orgId } : {}),
+    ...(assignmentOrgColumn !== 'org_id' ? { org_id: orgId } : {}),
+  };
   const { data: existingRows, error: existingError } = await supabase
     .from('assignments')
     .select('id,survey_id,metadata,assigned_by')
@@ -867,7 +530,7 @@ const assignPublishedOrganizationSurveysToUser = async ({ orgId, userId, actorUs
     inserts.push({
       survey_id: surveyId,
       course_id: null,
-      organization_id: orgId,
+      ...assignmentOrgData,
       user_id: userId,
       assignment_type: 'survey',
       assigned_by: actorUserId ?? null,
@@ -1126,6 +789,154 @@ const provisionImportedUser = async (user, actorUserId, defaultOrgId) => {
   };
 };
 
+// GET /api/admin/users/export
+router.get('/export', async (req, res, next) => {
+  try {
+    if (!supabase) return next(createHttpError(503, 'supabase_not_configured', 'Supabase not configured'));
+  // Export user profiles (this project keeps user data in `user_profiles`)
+  const { data, error } = await supabase.from('user_profiles').select('*');
+    if (error) return next(createHttpError(500, 'admin_users_export_failed', error.message));
+    res.json({ users: data });
+  } catch (err) {
+    return next(withHttpError(err, 500, 'admin_users_export_failed'));
+  }
+});
+
+const fetchOrganizationsByIds = async (supabaseClient, orgIds) => {
+  const ids = Array.from(new Set((orgIds || []).filter(Boolean)));
+  if (!ids.length) return new Map();
+  const { data, error } = await supabaseClient
+    .from('organizations')
+    .select('id')
+    .in('id', ids);
+  if (error) throw error;
+  return new Map((data || []).map((org) => [org.id, org]));
+};
+
+const fetchCoursesByIds = async (supabaseClient, courseIds) => {
+  const ids = Array.from(new Set((courseIds || []).filter(Boolean)));
+  if (!ids.length) return new Map();
+  const { data, error } = await supabaseClient
+    .from('courses')
+    .select('id, organization_id')
+    .in('id', ids);
+  if (error) throw error;
+  const map = new Map();
+  (data || []).forEach((row) => {
+    if (!row?.id) return;
+    const orgId = row.organization_id ?? null;
+    if (!map.has(orgId)) map.set(orgId, new Set());
+    map.get(orgId).add(String(row.id));
+  });
+  return map;
+};
+
+const processUserImportRows = async ({ rows, defaultOrgId, actorUserId, requestId, deps = {} }) => {
+  const supabaseClient = deps.supabaseClient || supabase;
+  const loggerInstance = deps.logger || logger;
+  const provisionUser = deps.provisionUser || ((row) => provisionImportedUser(row, actorUserId, defaultOrgId));
+  const assignCourses = deps.assignCourses || assignCourseIdsToUser;
+
+  if (!supabaseClient) {
+    throw createHttpError(503, 'supabase_not_configured', 'Supabase not configured');
+  }
+
+  const normalizedRows = rows.map((row, index) => normalizeImportRow(row, index, defaultOrgId));
+  const orgIds = normalizedRows.map((row) => row.orgId).filter(Boolean);
+  const courseIds = normalizedRows.flatMap((row) => row.courseIds || []);
+
+  const validOrgIds = await fetchOrganizationsByIds(supabaseClient, orgIds);
+  const courseIdsByOrg = await fetchCoursesByIds(supabaseClient, courseIds);
+  const validationErrors = validateImportRows({ rows: normalizedRows, validOrgIds, courseIdsByOrg });
+
+  if (validationErrors.size) {
+    validationErrors.forEach((messages, index) => {
+      const row = normalizedRows.find((entry) => entry.index === index);
+      loggerInstance.warn('admin_users_import_validation_failed', {
+        requestId,
+        rowIndex: index,
+        email: row?.email ?? null,
+        organizationId: row?.orgId ?? null,
+        message: messages.join('; '),
+      });
+    });
+  }
+
+  const results = [];
+  const batchSize = 10;
+
+  for (let i = 0; i < normalizedRows.length; i += batchSize) {
+    const batch = normalizedRows.slice(i, i + batchSize);
+    const batchResults = await Promise.all(
+      batch.map(async (row) => {
+        if (validationErrors.has(row.index)) {
+          return {
+            email: row.email,
+            organizationId: row.orgId,
+            status: 'failed',
+            message: validationErrors.get(row.index).join('; '),
+            userId: null,
+            emailSent: false,
+            setupLinkPresent: false,
+          };
+        }
+
+        try {
+          const provisionResult = await provisionUser(row.raw);
+          if (row.courseIds?.length) {
+            await assignCourses({
+              orgId: provisionResult.orgId,
+              userId: provisionResult.userId,
+              courseIds: row.courseIds,
+              actorUserId,
+            });
+          }
+
+          const status = provisionResult.created
+            ? 'created'
+            : provisionResult.membershipCreated
+            ? 'updated'
+            : 'skipped';
+
+          return {
+            email: provisionResult.email,
+            organizationId: provisionResult.orgId,
+            status,
+            message: provisionResult.created
+              ? 'user created'
+              : provisionResult.membershipCreated
+              ? 'updated membership'
+              : 'already member',
+            userId: provisionResult.userId,
+            emailSent: provisionResult.emailSent,
+            setupLinkPresent: Boolean(provisionResult.setupLink),
+          };
+        } catch (err) {
+          loggerInstance.warn('admin_users_import_row_failed', {
+            requestId,
+            rowIndex: row.index,
+            email: row.email,
+            organizationId: row.orgId,
+            error: err?.message || err,
+          });
+          return {
+            email: row.email,
+            organizationId: row.orgId,
+            status: 'failed',
+            message: err?.message || 'import_row_failed',
+            userId: null,
+            emailSent: false,
+            setupLinkPresent: false,
+          };
+        }
+      }),
+    );
+    results.push(...batchResults);
+  }
+
+  return { results };
+};
+
 // POST /api/admin/users/import
 router.post('/import', async (req, res, next) => {
   try {
@@ -1155,24 +966,10 @@ router.post('/import', async (req, res, next) => {
   }
 });
 
-// GET /api/admin/users/export
-router.get('/export', async (req, res, next) => {
-  try {
-    if (!supabase) return next(createHttpError(503, 'supabase_not_configured', 'Supabase not configured'));
-  // Export user profiles (this project keeps user data in `user_profiles`)
-  const { data, error } = await supabase.from('user_profiles').select('*');
-    if (error) return next(createHttpError(500, 'admin_users_export_failed', error.message));
-    res.json({ users: data });
-  } catch (err) {
-    return next(withHttpError(err, 500, 'admin_users_export_failed'));
-  }
-});
-
 export default router;
 
 // Named exports for testing and reuse
 export {
-  createInviteFallback,
   provisionImportedUser,
   processUserImportRows,
   parseCsvText,

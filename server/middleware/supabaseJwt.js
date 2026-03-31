@@ -254,10 +254,19 @@ export default async function supabaseJwtMiddleware(req, res, next) {
     return next();
   } catch (error) {
     const code = error?.message || 'token_verification_failed';
-    // Distinguish between config errors and invalid tokens to aid Railway log triage
     const isConfigError = code === 'supabase_jwt_secret_missing';
+    const isExpired =
+      (error?.code === 'ERR_JWT_CLAIM_INVALID' && error?.claim === 'exp') ||
+      String(error?.message || '').includes('exp claim timestamp check failed');
+
     if (isConfigError) {
       // Already logged inside getHs256SecretKey — no need to repeat here
+    } else if (isExpired) {
+      console.warn('[supabaseJwt] token_expired', {
+        code: 'token_expired',
+        algorithm: (() => { try { return decodeProtectedHeader(token)?.alg; } catch { return 'unknown'; } })(),
+        secretConfigured: SUPABASE_JWT_SECRET_CONFIGURED,
+      });
     } else {
       console.warn('[supabaseJwt] token validation failed', {
         code,
@@ -265,16 +274,20 @@ export default async function supabaseJwtMiddleware(req, res, next) {
         secretConfigured: SUPABASE_JWT_SECRET_CONFIGURED,
       });
     }
-    // In E2E / dev-fallback mode, a token that fails JWT verification (e.g.
-    // a synthetic "e2e-access-token" placeholder) must NOT cause an immediate
-    // 401.  Instead we fall through to the authenticate middleware which has
-    // its own demo-bypass logic (buildAuthContext / allowDemoBypassForRequest).
-    // This keeps the two guards consistent: JWT pre-validation is optional in
-    // dev/E2E; the real auth gate is always buildAuthContext.
+
     if (shouldSkipAuthInDev) {
       console.warn('[supabaseJwt] dev/E2E mode — falling through after token validation failure');
       return next();
     }
+
+    if (isExpired) {
+      return res.status(401).json({
+        error: 'token_expired',
+        code: 'token_expired',
+        message: 'Your session has expired. Please refresh your authentication token.',
+      });
+    }
+
     return res.status(401).json({
       error: 'Authentication required',
       message: isConfigError

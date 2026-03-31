@@ -1,4 +1,5 @@
 import { getAccessToken as getStoredAccessToken } from './secureStorage';
+import { getRefreshToken, setAccessToken, setRefreshToken } from './secureStorage';
 import { LEGACY_ORG_HEADER_NAME, ORG_HEADER_NAME, resolveOrgHeaderForRequest } from './orgContext';
 
 export class NotAuthenticatedError extends Error {
@@ -93,6 +94,48 @@ const resolveSupabaseAccessToken = async (): Promise<string> => {
     return storedToken;
   }
   throw new NotAuthenticatedError('Backend access token is missing');
+};
+
+const refreshAuthToken = async (): Promise<boolean> => {
+  try {
+    const refreshToken = getRefreshToken();
+    if (!refreshToken) {
+      if (devMode) {
+        console.warn('[authorizedFetch] no refresh token available');
+      }
+      return false;
+    }
+
+    const refreshResponse = await fetch(normalizeUrl('/api/auth/refresh'), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ refreshToken }),
+      credentials: 'include',
+    });
+
+    if (!refreshResponse.ok) {
+      if (devMode) {
+        console.warn('[authorizedFetch] refresh request failed', { status: refreshResponse.status });
+      }
+      return false;
+    }
+
+    const json = await refreshResponse.json();
+    if (!json || !json.accessToken) {
+      return false;
+    }
+
+    setAccessToken(json.accessToken, 'authorizedFetch:refresh');
+    if (json.refreshToken) {
+      setRefreshToken(json.refreshToken, 'authorizedFetch:refresh');
+    }
+    return true;
+  } catch (error) {
+    console.warn('[authorizedFetch] token refresh failed', error);
+    return false;
+  }
 };
 
 const DEFAULT_TIMEOUT_MS = 12_000;
@@ -213,6 +256,16 @@ export default async function authorizedFetch(
     }
 
     if (attempt === 0) {
+      const tokenExpiredHint = response.headers.get('content-type')?.includes('application/json')
+        ? await response.clone().json().then((body: any) => body?.code === 'token_expired' || body?.error === 'token_expired').catch(() => false)
+        : false;
+      if (tokenExpiredHint) {
+        if (await refreshAuthToken()) {
+          attempt += 1;
+          continue;
+        }
+      }
+
       if (devMode) {
         console.debug('[authorizedFetch] 401 received. No backend refresh configured for this fetch.', { url, requestLabel });
       }
