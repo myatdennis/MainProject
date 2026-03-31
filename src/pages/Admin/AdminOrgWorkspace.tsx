@@ -339,10 +339,21 @@ const AdminOrgWorkspace = () => {
     setLoading(true);
     try {
       await orgService.deleteOrg(orgToDelete);
+
       setOrganizations((prev) => prev.filter((org) => org.id !== orgToDelete));
+      setPaginationMeta((prev) => ({
+        ...prev,
+        total: Math.max(0, (prev.total || 0) - 1),
+      }));
+
       if (selectedOrgId === orgToDelete) {
         setSelectedOrgId(null);
       }
+
+      // Ensure the list is in sync with server, and if the current page is emptied, pull prior page.
+      const nextPage = Math.max(1, paginationMeta.page || 1);
+      void fetchOrganizations(nextPage);
+
       showToast?.('Organization deleted successfully', 'success');
       setShowDeleteModal(false);
       setOrgToDelete(null);

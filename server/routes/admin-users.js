@@ -80,6 +80,50 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
       return res.status(400).json({ ok: false, code: 'user_id_required', message: 'userId is required.' });
     }
 
+    // Resolve canonical user id for membership FK safety
+    let canonicalUserId = null;
+    let canonicalSource = null;
+
+    const { data: profileRow, error: profileRowError } = await supabaseAdmin
+      .from('user_profiles')
+      .select('id')
+      .eq('id', userId)
+      .maybeSingle();
+
+    if (profileRowError) {
+      throw new Error(`user_profile_lookup_failed: ${profileRowError.message}`);
+    }
+
+    if (profileRow?.id) {
+      canonicalUserId = profileRow.id;
+      canonicalSource = 'user_profiles';
+    } else {
+      const { data: membershipRow, error: membershipRowError } = await supabaseAdmin
+        .from('organization_memberships')
+        .select('user_id')
+        .eq('id', userId)
+        .maybeSingle();
+
+      if (membershipRowError) {
+        throw new Error(`organization_membership_lookup_failed: ${membershipRowError.message}`);
+      }
+
+      if (membershipRow?.user_id) {
+        canonicalUserId = membershipRow.user_id;
+        canonicalSource = 'organization_memberships';
+      }
+    }
+
+    if (!canonicalUserId) {
+      return res.status(404).json({ ok: false, code: 'user_not_found', message: 'User not found for provided userId.' });
+    }
+
+    if (canonicalSource && canonicalSource !== 'user_profiles') {
+      console.log('Resolved canonical user id from non-profile id', { userId, canonicalUserId, canonicalSource });
+    }
+
+    const targetUserId = canonicalUserId;
+
     const orgId =
       normalizeText(req.body?.orgId) ||
       normalizeText(req.body?.organizationId) ||
@@ -94,7 +138,7 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
 
     const orgColumn = await resolveOrganizationMembershipsOrgColumn();
     const statusColumn = await resolveOrganizationMembershipsStatusColumn();
-    console.log('STEP 1: deactivate memberships', { userId, statusColumn });
+    console.log('STEP 1: deactivate memberships', { userId: targetUserId, statusColumn });
 
     const deactivatePayload = {};
     if (statusColumn === 'is_active') {
@@ -106,20 +150,20 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
     const { error: deactivateError } = await supabaseAdmin
       .from('organization_memberships')
       .update(deactivatePayload)
-      .eq('user_id', userId);
+      .eq('user_id', targetUserId);
 
     if (deactivateError) {
       throw new Error(`membership_deactivate_failed: ${deactivateError.message}`);
     }
 
-    console.log('STEP 2: insert membership', { userId, orgId, membershipRole, statusColumn });
-    await upsertOrganizationMembership({ orgId, userId, role: membershipRole, actorUserId: req.user?.id || req.user?.userId, statusColumn });
+    console.log('STEP 2: insert membership', { userId: targetUserId, orgId, membershipRole, statusColumn });
+    await upsertOrganizationMembership({ orgId, userId: targetUserId, role: membershipRole, actorUserId: req.user?.id || req.user?.userId, statusColumn });
 
-    console.log('STEP 3: update profile', { userId, orgId });
+    console.log('STEP 3: update profile', { userId: targetUserId, orgId });
     const { error: profileError } = await supabaseAdmin
       .from('user_profiles')
       .update({ organization_id: orgId, active_organization_id: orgId })
-      .eq('id', userId);
+      .eq('id', targetUserId);
 
     if (profileError) {
       throw new Error(`profile_update_failed: ${profileError.message}`);
@@ -130,7 +174,7 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
     const { data: memberships, error: membershipsError } = await supabaseAdmin
       .from('organization_memberships')
       .select('*')
-      .eq('user_id', userId)
+      .eq('user_id', targetUserId)
       .match(statusFilter);
 
     console.log('ACTIVE MEMBERSHIPS', memberships);
@@ -142,7 +186,7 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
     const { data: profile } = await supabaseAdmin
       .from('user_profiles')
       .select('*')
-      .eq('id', userId)
+      .eq('id', targetUserId)
       .maybeSingle();
 
     if (!profile) {
