@@ -1,4 +1,6 @@
 import express from 'express';
+import supabaseClient from '../lib/supabaseClient.js';
+const supabase = supabaseClient || (typeof globalThis !== 'undefined' ? globalThis.supabase : null) || null;
 import { authenticate, requireAdmin, invalidateMembershipCache } from '../middleware/auth.js';
 import { createHttpError, withHttpError } from '../middleware/apiErrorHandler.js';
 import { validateOrgId } from '../lib/inviteHelper.js';
@@ -32,7 +34,7 @@ router.patch('/:userId', async (req, res, next) => {
     // Update user_profiles
     const { error: profileError } = await supabase
       .from('user_profiles')
-      .update({ organization_id: orgId })
+      .update({ organization_id: orgId, active_organization_id: orgId })
       .eq('id', userId);
     if (profileError) {
       return next(createHttpError(500, 'profile_update_failed', profileError.message));
