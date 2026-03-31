@@ -1,17 +1,108 @@
 import express from 'express';
 import { authenticate, requireAdmin } from '../middleware/auth.js';
+import { createHttpError, withHttpError } from '../middleware/apiErrorHandler.js';
+import { validateOrgId } from '../lib/inviteHelper.js';
 const router = express.Router();
-// ...existing code...
 
+// PATCH /api/admin/users/:userId
+router.patch('/:userId', async (req, res, next) => {
+  try {
+    if (!supabase) {
+      return next(createHttpError(503, 'supabase_not_configured', 'Supabase not configured'));
+    }
 
-// ...existing code...
+    const userId = normalizeText(req.params?.userId || '');
+    if (!userId) {
+      return next(createHttpError(400, 'user_id_required', 'userId is required.'));
+    }
 
+    // Only allow org transfer and membership role update for now
+    const orgId =
+      normalizeText(req.body?.orgId) ||
+      normalizeText(req.body?.organizationId) ||
+      normalizeText(req.body?.org_id) ||
+      normalizeText(req.body?.organization_id) ||
+      '';
+    const membershipRole = normalizeOrgRole(req.body?.membershipRole || req.body?.membership_role || 'member');
 
-// ...existing code...
+    if (!orgId) {
+      return next(createHttpError(400, 'org_id_required', 'organizationId is required.'));
+    }
 
+    // Update user_profiles
+    const { error: profileError } = await supabase
+      .from('user_profiles')
+      .update({ organization_id: orgId })
+      .eq('id', userId);
+    if (profileError) {
+      return next(createHttpError(500, 'profile_update_failed', profileError.message));
+    }
 
-// ...existing code...
-// (removed duplicate router declaration)
+    // Upsert organization_memberships (ensure only one active membership)
+    const orgColumn = await resolveOrganizationMembershipsOrgColumn();
+    // Deactivate all memberships for this user first
+    const { error: deactivateError } = await supabase
+      .from('organization_memberships')
+      .update({ status: 'inactive' })
+      .eq('user_id', userId);
+    if (deactivateError) {
+      return next(createHttpError(500, 'membership_deactivate_failed', deactivateError.message));
+    }
+    // Upsert new active membership
+    await upsertOrganizationMembership({ orgId, userId, role: membershipRole });
+
+    // Optionally assign org content (courses/surveys) to user
+    const actorUserId = req.user?.userId || req.user?.id || null;
+    await assignPublishedOrganizationCoursesToUser({ orgId, userId, actorUserId });
+    await assignPublishedOrganizationSurveysToUser({ orgId, userId, actorUserId });
+
+    // Fetch updated user profile and membership for response
+    const { data: profile, error: fetchProfileError } = await supabase
+      .from('user_profiles')
+      .select('*')
+      .eq('id', userId)
+      .maybeSingle();
+    if (fetchProfileError || !profile) {
+      return next(createHttpError(404, 'user_not_found', 'User profile not found after update.'));
+    }
+    const { data: membership, error: fetchMembershipError } = await supabase
+      .from('organization_memberships')
+      .select('*')
+      .eq('user_id', userId)
+      .eq(orgColumn, orgId)
+      .eq('status', 'active')
+      .maybeSingle();
+    if (fetchMembershipError || !membership) {
+      return next(createHttpError(404, 'membership_not_found', 'Active membership not found after update.'));
+    }
+
+    // Normalize response: only one org, no conflicting org fields
+    // Canonical org: active membership.organization_id
+    let orgData = null;
+    if (membership && membership.organization_id) {
+      const { data: org, error: orgError } = await supabase
+        .from('organizations')
+        .select('id, name')
+        .eq('id', membership.organization_id)
+        .maybeSingle();
+      if (!orgError && org) orgData = org;
+    }
+    res.json({
+      success: true,
+      data: {
+        id: profile.id,
+        email: profile.email,
+        first_name: profile.first_name,
+        last_name: profile.last_name,
+        role: membership.role,
+        organization_id: membership.organization_id,
+        organization: orgData,
+      },
+    });
+  } catch (err) {
+    return next(withHttpError(err, 500, 'admin_users_update_failed'));
+  }
+});
 
 router.use(authenticate, requireAdmin);
 
@@ -859,9 +950,35 @@ router.post('/', async (req, res, next) => {
       },
     );
 
+    // Normalize response: only one org, no conflicting org fields
+    let orgData = null;
+    let canonicalOrgId = null;
+    if (result.membership && result.membership.organization_id) {
+      canonicalOrgId = result.membership.organization_id;
+    } else if (result.member && result.member.organization_id) {
+      canonicalOrgId = result.member.organization_id;
+    } else if (result.profile && result.profile.organization_id) {
+      canonicalOrgId = result.profile.organization_id;
+    }
+    if (canonicalOrgId) {
+      const { data: org, error: orgError } = await supabase
+        .from('organizations')
+        .select('id, name')
+        .eq('id', canonicalOrgId)
+        .maybeSingle();
+      if (!orgError && org) orgData = org;
+    }
     res.status(result.created ? 201 : 200).json({
       success: true,
-      data: result.member ?? result.membership ?? result.profile ?? null,
+      data: {
+        id: result.profile?.id ?? result.member?.id ?? result.membership?.user_id ?? null,
+        email: result.profile?.email ?? result.member?.email ?? null,
+        first_name: result.profile?.first_name ?? result.member?.first_name ?? null,
+        last_name: result.profile?.last_name ?? result.member?.last_name ?? null,
+        role: result.membership?.role ?? result.member?.role ?? null,
+        organization_id: canonicalOrgId,
+        organization: orgData,
+      },
       created: result.created,
       existingAccount: !result.created,
       membershipCreated: result.membershipCreated,

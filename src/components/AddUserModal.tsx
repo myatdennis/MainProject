@@ -217,7 +217,7 @@ const AddUserModal: React.FC<AddUserModalProps> = ({
       if (isEditMode && editUser) {
         // Update the real user profile and membership state via PATCH
         const orgId = sanitizedData.organization;
-        await apiRequest(`/api/admin/users/${editUser.id}`, {
+        const response: any = await apiRequest(`/api/admin/users/${editUser.id}`, {
           method: 'PATCH',
           body: {
             orgId,
@@ -233,11 +233,14 @@ const AddUserModal: React.FC<AddUserModalProps> = ({
             phoneNumber: sanitizedData.phoneNumber,
           },
         });
+        // Use normalized org from API response as canonical
+        const normalizedOrg = response?.data?.organization_id || orgId;
         const updatedUser = {
           ...editUser,
+          ...response?.data,
           name: `${sanitizedData.firstName} ${sanitizedData.lastName}`,
           email: sanitizedData.email,
-          organization: sanitizedData.organization || editUser.organization,
+          organization: normalizedOrg,
           cohort: sanitizedData.cohort,
           role: sanitizedData.role,
         };
@@ -283,7 +286,7 @@ const AddUserModal: React.FC<AddUserModalProps> = ({
           return;
         }
 
-        const responseUserId = response?.data?.user_id ?? response?.data?.user?.id ?? response?.data?.profile?.id ?? null;
+        const responseUserId = response?.data?.id ?? null;
         const latestDelivery = {
           setupLink: response?.setupLink ?? null,
           emailSent: response?.emailSent ?? false,
@@ -293,10 +296,10 @@ const AddUserModal: React.FC<AddUserModalProps> = ({
         setDeliveryInfo(latestDelivery);
 
         const newUser = {
-          id: response?.data?.user_id ?? response?.data?.user?.id ?? response?.data?.profile?.id ?? `user-${Date.now()}`,
+          id: response?.data?.id ?? `user-${Date.now()}`,
           name: `${sanitizedData.firstName} ${sanitizedData.lastName}`,
           email: sanitizedData.email,
-          organization: orgId,
+          organization: response?.data?.organization_id ?? orgId,
           cohort: sanitizedData.cohort,
           role: sanitizedData.role,
           department: sanitizedData.department,

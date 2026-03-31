@@ -12,37 +12,17 @@ export interface AdminUserRecord {
 }
 
 const mapAdminUserRecord = (row: any): AdminUserRecord => {
-  const profile = row?.profile ?? {};
-  const metadata = profile?.metadata ?? {};
-  const firstName = profile.first_name ?? profile.firstName ?? '';
-  const lastName = profile.last_name ?? profile.lastName ?? '';
-  const displayName =
-    profile.full_name ??
-    profile.fullName ??
-    profile.name ??
-    `${firstName} ${lastName}`.trim();
-
-  const normalizedEmailSource =
-    profile.email ??
-    profile.contact_email ??
-    row?.email ??
-    row?.user?.email ??
-    '';
-  const normalizedEmail = normalizedEmailSource ? normalizedEmailSource.toLowerCase() : undefined;
-  let userId = String(row?.user_id ?? row?.userId ?? row?.user_id_uuid ?? row?.userUuid ?? '').trim();
-  if (!userId && normalizedEmail) {
-    userId = normalizedEmail;
-  }
-
+  const userId = String(row?.id ?? row?.userId ?? '').trim();
+  const normalizedEmail = row?.email ? String(row.email).toLowerCase() : undefined;
   return {
-    membershipId: String(row?.id ?? row?.membership_id ?? row?.membershipId ?? ''),
-    orgId: String(row?.org_id ?? row?.organization_id ?? row?.orgId ?? ''),
+    membershipId: String(row?.membershipId ?? row?.id ?? ''),
+    orgId: String(row?.organization_id ?? row?.org?.id ?? row?.orgId ?? ''),
     userId,
-    email: normalizedEmail ?? profile.email ?? row?.profile?.contact_email ?? undefined,
-    name: displayName || undefined,
+    email: normalizedEmail ?? undefined,
+    name: row?.name ?? ((`${row?.first_name ?? ''} ${row?.last_name ?? ''}`).trim() || undefined),
     role: row?.role ?? undefined,
-    status: row?.status ?? undefined,
-    title: profile.title ?? profile.job_title ?? metadata.job_title ?? metadata.title ?? undefined,
+    status: row?.status ?? 'active',
+    title: undefined,
   };
 };
 

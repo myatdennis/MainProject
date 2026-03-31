@@ -115,11 +115,21 @@ const AdminUsers = () => {
     const rawStatus = (member?.status || profile?.status || userRow?.status || 'inactive').toString().toLowerCase();
     const normalizedStatus = ['active', 'pending', 'inactive'].includes(rawStatus) ? rawStatus : rawStatus;
 
+    const canonicalOrgId = member?.organization_id ?? member?.org?.id ?? activeOrgId ?? '';
+    if (member?.org_id && member?.org_id !== canonicalOrgId) {
+      console.warn('Conflicting organization IDs in admin user row', {
+        userId,
+        canonicalOrgId,
+        legacyOrgId: member?.org_id,
+      });
+    }
+
     return {
       id: userId,
       name: fullName || email,
       email,
-  organization: member?.org_id ?? member?.organization_id ?? member?.orgId ?? activeOrgId ?? '',
+      // Use only the normalized org field from the server response
+      organization: canonicalOrgId,
       cohort: profile.cohort ?? profileMetadata.cohort ?? '',
       role:
         profile.title ??
@@ -220,7 +230,7 @@ const AdminUsers = () => {
           `/api/admin/courses?orgId=${activeOrgId}&status=published&limit=5`
         );
         if (!active) return;
-        const allModules: Array<{ key: string; name: string }> = [];
+        const allModules: Array<{ key: string, name: string }> = [];
         const seen = new Set<string>();
         (res?.courses ?? []).forEach((course) => {
           (course.modules ?? []).forEach((mod) => {
@@ -398,12 +408,8 @@ const AdminUsers = () => {
     }
   };
 
-  const handleUserUpdated = (updatedUser: User) => {
-    setUsersList((prev: User[]) => 
-      prev.map((user: User) => 
-        user.id === updatedUser.id ? updatedUser : user
-      )
-    );
+  const handleUserUpdated = () => {
+    // Always refetch from server to avoid stale org/fields
     void fetchUsers();
     showToast('User updated successfully!', 'success');
     setShowEditUserModal(false);

@@ -7445,6 +7445,51 @@ const mapOrgInviteRecord = (row) => ({
   note: null,
 });
 
+// ---------------------------------------------------------------------------
+// Admin user normalization and strict active membership resolver
+// ---------------------------------------------------------------------------
+
+const normalizeAdminUser = async (member, organization = null) => {
+  const profile = member?.profile ?? {};
+  const userId = String(member?.user_id ?? profile?.id ?? member?.id ?? '').trim();
+  const email = (profile?.email || member?.email || member?.user?.email || '').toLowerCase();
+  const firstName = profile?.first_name || member?.first_name || '';
+  const lastName = profile?.last_name || member?.last_name || '';
+
+  const membershipOrgId = member?.organization_id ?? member?.org_id ?? member?.membership?.organization_id ?? null;
+  const role = member?.role ?? member?.membership?.role ?? profile?.role ?? null;
+
+  const normalized = {
+    id: userId,
+    email: email || null,
+    first_name: firstName || null,
+    last_name: lastName || null,
+    role: role || null,
+    organization_id: membershipOrgId || null,
+    organization: organization ? { id: organization.id, name: organization.name } : null,
+  };
+
+  return normalized;
+};
+
+const getActiveOrganizationMembership = async (userId) => {
+  if (!supabase || !userId) return null;
+
+  const orgColumn = await getOrganizationMembershipsOrgColumnName();
+  const { data: memberships, error } = await supabase
+    .from('organization_memberships')
+    .select('id,organization_id,org_id,user_id,role,status')
+    .eq('user_id', userId)
+    .eq('status', 'active');
+  if (error) throw error;
+
+  if (!Array.isArray(memberships) || memberships.length !== 1) {
+    throw new Error(`user ${userId} must have exactly one active membership (found ${Array.isArray(memberships) ? memberships.length : 0})`);
+  }
+
+  return memberships[0];
+};
+
 const mapOrgMessageRecord = (row) => ({
   id: row.id,
   organizationId: row.organization_id ?? row.org_id ?? null,
