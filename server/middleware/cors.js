@@ -63,20 +63,36 @@ if (!envOrigins.length) {
   );
 }
 
+const normalizeOrigin = (origin) => {
+  if (!origin || typeof origin !== 'string') return '';
+  let normalized = origin.trim();
+  // Strip trailing slash, if present (browsers may include it in some edge cases
+  // or proxies may canonicalize differently).
+  normalized = normalized.replace(/\/+$/, '');
+  if (!normalized) return '';
+  try {
+    const url = new URL(normalized);
+    return `${url.protocol}//${url.host}`;
+  } catch {
+    return normalized;
+  }
+};
+
 const resolveCorsOriginDecision = (origin) => {
-  if (!origin) {
+  const normalizedOrigin = normalizeOrigin(origin);
+  if (!normalizedOrigin) {
     return { allowed: false, reason: 'missing_origin', resolvedOrigin: null };
   }
-  if (resolvedCorsOrigins.includes(origin)) {
-    return { allowed: true, reason: 'allowlist', resolvedOrigin: origin };
+  if (resolvedCorsOrigins.includes(normalizedOrigin)) {
+    return { allowed: true, reason: 'allowlist', resolvedOrigin: normalizedOrigin };
   }
   // Allow all Netlify preview and branch-deploy URLs in all environments so PR
   // previews never hit CORS errors when calling the Railway API.
-  if (NETLIFY_PREVIEW_REGEX.test(origin) || NETLIFY_ANY_PREVIEW_REGEX.test(origin)) {
-    return { allowed: true, reason: 'netlify_preview', resolvedOrigin: origin };
+  if (NETLIFY_PREVIEW_REGEX.test(normalizedOrigin) || NETLIFY_ANY_PREVIEW_REGEX.test(normalizedOrigin)) {
+    return { allowed: true, reason: 'netlify_preview', resolvedOrigin: normalizedOrigin };
   }
-  if ((process.env.NODE_ENV || '').toLowerCase() !== 'production' && isLocalDevOrigin(origin)) {
-    return { allowed: true, reason: 'local_dev', resolvedOrigin: origin };
+  if ((process.env.NODE_ENV || '').toLowerCase() !== 'production' && isLocalDevOrigin(normalizedOrigin)) {
+    return { allowed: true, reason: 'local_dev', resolvedOrigin: normalizedOrigin };
   }
   return { allowed: false, reason: 'not_allowlisted', resolvedOrigin: null };
 };
@@ -186,16 +202,18 @@ const baseCorsOptions = {
     }
     return callback(null, false);
   },
+  methods: allowedMethodsHeader,
+  allowedHeaders: allowedHeadersHeader,
+  exposedHeaders: 'Content-Type, X-Request-Id, X-CSRF-Token, Set-Cookie',
   credentials: true,
-  allowedHeaders: allowHeaders,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  optionsSuccessStatus: 204,
+  optionsSuccessStatus: 200,
 };
 
-const healthCorsOptions = {
+const baseHandler = cors(baseCorsOptions);
+const healthHandler = cors({
   ...baseCorsOptions,
   origin: true,
-};
+});
 
 const handlePreflight = (req, res, decision) => {
   if (req.method !== 'OPTIONS') {
@@ -216,11 +234,9 @@ const handlePreflight = (req, res, decision) => {
   return true;
 };
 
-const baseHandler = cors(baseCorsOptions);
-const healthHandler = cors(healthCorsOptions);
-
 const corsMiddleware = (req, res, next) => {
   const decision = appendCorsResponseHeaders(req, res);
+
   if (decision.allowed === false && req.headers?.origin) {
     // For disallowed origins send consistent response (preflight handled separately)
     if (req.method === 'OPTIONS') {
@@ -243,6 +259,7 @@ const corsMiddleware = (req, res, next) => {
   if (isHealthRequest(req)) {
     return healthHandler(req, res, next);
   }
+
   return baseHandler(req, res, next);
 };
 

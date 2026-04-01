@@ -20,6 +20,34 @@ describe('Client assignments API', () => {
     server = null;
   });
 
+  it('responds to admin assign CORS preflight with correct headers', async () => {
+    const response = await server!.fetch('/api/admin/courses/f148624b-003d-44d9-9565-f73e8b059d23/assign', {
+      method: 'OPTIONS',
+      headers: {
+        Origin: 'https://the-huddle.co',
+        'Access-Control-Request-Method': 'POST',
+        'Access-Control-Request-Headers': 'Content-Type, Authorization',
+      },
+    });
+    expect(response.status).toBe(204);
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://the-huddle.co');
+    expect(response.headers.get('Access-Control-Allow-Methods')).toContain('POST');
+  });
+
+  it('responds to admin assignments listing CORS preflight with correct headers', async () => {
+    const response = await server!.fetch('/api/admin/courses/f148624b-003d-44d9-9565-f73e8b059d23/assignments?orgId=demo-sandbox-org', {
+      method: 'OPTIONS',
+      headers: {
+        Origin: 'https://the-huddle.co',
+        'Access-Control-Request-Method': 'GET',
+        'Access-Control-Request-Headers': 'Authorization',
+      },
+    });
+    expect(response.status).toBe(204);
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('https://the-huddle.co');
+    expect(response.headers.get('Access-Control-Allow-Methods')).toContain('GET');
+  });
+
   it('returns empty payload when user has no assignments', async () => {
     const userId = `learner-${randomUUID()}`;
     const headers = {

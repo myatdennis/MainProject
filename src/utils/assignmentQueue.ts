@@ -89,7 +89,13 @@ const shouldQueueError = (error: unknown): boolean => {
     }
     return false;
   }
-  // Network-level failures bubble up as TypeErrors
+
+  // Network-level failures bubble up as TypeErrors.
+  if (error instanceof TypeError) {
+    // If the browser reports online, this is likely CORS/bad endpoint and retry via queue is not helpful.
+    return typeof navigator !== 'undefined' && navigator.onLine === false;
+  }
+
   return true;
 };
 

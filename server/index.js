@@ -535,7 +535,7 @@ app.use(attachRequestId);
 console.log('[startup] JSON middleware registered before routes');
 
 import healthRouter from './routes/health.js';
-import corsMiddleware, { resolvedCorsOrigins, corsAllowedHeaders } from './middleware/cors.js';
+import corsMiddleware, { resolveCorsOriginDecision, resolvedCorsOrigins, corsAllowedHeaders } from './middleware/cors.js';
 import { describeCookiePolicy, getActiveOrgFromRequest } from './utils/authCookies.js';
 import { env } from './utils/env.js';
 import { log } from './utils/logger.js';

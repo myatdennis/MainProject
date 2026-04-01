@@ -9,7 +9,7 @@
         "description": "Learn the fundamentals of inclusive leadership through interactive lessons, including TED Talks, quizzes, and practical frameworks.",
         "status": "published",
         "version": 1,
-        "published_at": "2026-04-01T17:05:21.258Z",
+        "published_at": "2026-04-01T18:08:09.172Z",
         "thumbnail": "/api/placeholder/400/300",
         "difficulty": "Beginner",
         "duration": "2 hours",
@@ -153,10 +153,10 @@
       }
     ],
     [
-      "neal-course-b7ad526d-a660-4fec-9b77-a9e027c358b7",
+      "neal-course-22dd5a20-3c38-4496-bc58-96a37253a454",
       {
-        "id": "neal-course-b7ad526d-a660-4fec-9b77-a9e027c358b7",
-        "slug": "neal-course-b7ad526d-a660-4fec-9b77-a9e027c358b7",
+        "id": "neal-course-22dd5a20-3c38-4496-bc58-96a37253a454",
+        "slug": "neal-course-22dd5a20-3c38-4496-bc58-96a37253a454",
         "title": "Neal Assignment Test",
         "description": null,
         "status": "published",
@@ -169,7 +169,7 @@
         "modules": [
           {
             "id": "module-1",
-            "course_id": "neal-course-b7ad526d-a660-4fec-9b77-a9e027c358b7",
+            "course_id": "neal-course-22dd5a20-3c38-4496-bc58-96a37253a454",
             "title": "Module 1",
             "description": "Test module",
             "order_index": 1,
