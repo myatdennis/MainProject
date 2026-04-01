@@ -11946,8 +11946,8 @@ app.get('/api/client/assignments', authenticate, async (req, res) => {
   }
 
   if (!isUuid(normalizedUserId) && !(E2E_TEST_MODE || DEV_FALLBACK)) {
-    res.status(200).json({ data: [], count: 0, orgId: null });
-    return;
+    console.warn('[client/assignments] non_uuid_user_id', { requestId, userId: normalizedUserId });
+    // Legacy ID path: continue and return any matching assignments.
   }
 
   const parseBoolean = (value, defaultValue = true) => {
