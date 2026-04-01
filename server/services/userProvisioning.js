@@ -1,5 +1,6 @@
 import { isSupabaseAuthCreateUserAlreadyExists, isSupabaseAuthCreateUserDatabaseError } from '../utils/authHelpers.js';
 import { logger as defaultLogger } from '../lib/logger.js';
+import { resolveMembershipStatusUpdate } from '../lib/membershipUtils.js';
 
 const ADMIN_ROLES = new Set(['admin', 'owner', 'org_admin', 'organization_admin', 'super_admin']);
 const ALLOWED_ROLES = new Set(['owner', 'admin', 'member', 'learner', 'manager', 'editor', 'viewer', 'instructor', 'org_admin', 'organization_admin', 'super_admin']);
@@ -204,16 +205,31 @@ const ensureMembership = async ({
   actor,
   requestId,
   getOrganizationMembershipsOrgColumnName,
+  getOrganizationMembershipsStatusColumnName,
+  getOrganizationMembershipsHasIsActiveColumn,
 }) => {
   const membershipOrgColumn = getOrganizationMembershipsOrgColumnName
     ? await getOrganizationMembershipsOrgColumnName()
     : 'organization_id';
+  const statusColumn = getOrganizationMembershipsStatusColumnName
+    ? await getOrganizationMembershipsStatusColumnName()
+    : 'status';
+  const hasIsActiveColumn = getOrganizationMembershipsHasIsActiveColumn
+    ? await getOrganizationMembershipsHasIsActiveColumn()
+    : false;
+
+  const canonicalState = resolveMembershipStatusUpdate({ status: 'active', is_active: true });
   const payload = {
     user_id: userId,
     role,
-    status: 'active',
     invited_by: actor?.userId ?? null,
   };
+  if (statusColumn === 'status') {
+    payload.status = canonicalState.status;
+  }
+  if (hasIsActiveColumn) {
+    payload.is_active = canonicalState.is_active;
+  }
   payload[membershipOrgColumn] = orgId;
 
   const { data, error } = await supabase
@@ -385,6 +401,8 @@ export const createOrProvisionOrganizationUser = async (input, deps = {}) => {
     logger = defaultLogger,
     sendEmail,
     getOrganizationMembershipsOrgColumnName,
+    getOrganizationMembershipsStatusColumnName,
+    getOrganizationMembershipsHasIsActiveColumn,
     invalidateMembershipCache,
     assignContentToUser,
     fetchOrgMembersWithProfiles,
@@ -699,6 +717,8 @@ export const createOrProvisionOrganizationUser = async (input, deps = {}) => {
       actor,
       requestId,
       getOrganizationMembershipsOrgColumnName,
+      getOrganizationMembershipsStatusColumnName,
+      getOrganizationMembershipsHasIsActiveColumn,
     });
     if (invalidateMembershipCache) {
       invalidateMembershipCache(authUser.id);

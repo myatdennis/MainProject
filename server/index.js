@@ -30,6 +30,15 @@ import { validateCoursePayload } from './validators/coursePayload.js';
 import { normalizeImportEntries, normalizeModuleForImport } from './lib/courseImporter.js';
 import { logger } from './lib/logger.js';
 import { isAllowedWsOrigin } from './lib/wsOrigins.js';
+
+const logRouteError = (route, error) => {
+  logger.error('route_error', {
+    route,
+    message: error instanceof Error ? error.message : String(error),
+    stack: error?.stack ?? null,
+    isHandledRouteError: true,
+  });
+};
 import { withCache, invalidateCacheKeys } from './services/cacheService.js';
 import { enqueueJob, registerJobProcessor, hasQueueBackend } from './jobs/taskQueue.js';
 import setupNotificationDispatcher from './services/notificationDispatcher.js';
@@ -97,6 +106,8 @@ import {
 // ...existing code...
 import { courseUpsertPayloadSchema } from '../shared/contracts/courseContract.js';
 import sql, { pool, getDatabaseConnectionInfo } from './db.js';
+// ...existing imports...
+import { normalizeMembershipStatus, isMembershipActive, mergeMembershipWithProfile, resolveMembershipStatusUpdate } from './lib/membershipUtils.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -5964,6 +5975,66 @@ const normalizeMembershipForAdminResponse = (membership = {}) => {
   };
 };
 
+const normalizeOrganizationMembershipsStatusFlags = async () => {
+  if (!supabase) {
+    throw new Error('Supabase client is not initialized');
+  }
+
+  const pageSize = 100;
+  let offset = 0;
+  let processed = 0;
+
+  while (true) {
+    const { data: rows, error } = await supabase
+      .from('organization_memberships')
+      .select('id,status,is_active')
+      .range(offset, offset + pageSize - 1);
+
+    if (error) {
+      throw error;
+    }
+
+    if (!rows || rows.length === 0) {
+      break;
+    }
+
+    for (const row of rows) {
+      const canonical = resolveMembershipStatusUpdate({ status: row.status, is_active: row.is_active });
+      if (row.status !== canonical.status || row.is_active !== canonical.is_active) {
+        const { error: updateError } = await supabase
+          .from('organization_memberships')
+          .update({ status: canonical.status, is_active: canonical.is_active })
+          .eq('id', row.id);
+
+        if (updateError) {
+          throw updateError;
+        }
+        processed += 1;
+      }
+    }
+
+    if (rows.length < pageSize) {
+      break;
+    }
+    offset += pageSize;
+  }
+
+  return { processed };
+};
+
+// Admin endpoint to normalize organization_memberships status/is_active flags
+app.post('/api/admin/organization_memberships/normalize-status-flags', authenticate, requireAdmin, async (req, res) => {
+  if (!ensureSupabase(res)) return;
+
+  try {
+    const result = await normalizeOrganizationMembershipsStatusFlags();
+    res.json({ ok: true, data: { processed: result.processed } });
+  } catch (error) {
+    logRouteError('POST /api/admin/organization_memberships/normalize-status-flags', error);
+    res.status(500).json({ error: 'Unable to normalize organization membership status flags' });
+  }
+});
+
 const isActiveAdminMembership = (membership) => {
   if (!membership) return false;
   const role = membership.role ? String(membership.role).toLowerCase() : null;
@@ -7005,10 +7076,20 @@ async function fetchOrgMembersWithProfiles(orgId) {
   let membershipError = null;
 
   for (const orgColumn of ['organization_id', 'org_id']) {
-    const result = await supabase
+    const statusColumn = await getOrganizationMembershipsStatusColumnName();
+
+    let query = supabase
       .from('organization_memberships')
       .select(membershipSelect)
       .eq(orgColumn, orgId);
+
+    if (statusColumn === 'is_active') {
+      query = query.eq('is_active', true);
+    } else {
+      query = query.in('status', ['active', 'pending']);
+    }
+
+    const result = await query;
     if (result.error) {
       if (isMissingColumnError(result.error)) {
         membershipError = result.error;
@@ -7020,7 +7101,6 @@ async function fetchOrgMembersWithProfiles(orgId) {
     membershipError = null;
     break;
   }
-
   if (membershipError) throw membershipError;
 
   const rows = Array.isArray(memberships) ? memberships : [];
@@ -8385,6 +8465,30 @@ async function detectOrganizationMembershipsOrganizationIdColumnAvailability() {
 
 async function getOrganizationMembershipsOrgColumnName() {
   return (await detectOrganizationMembershipsOrganizationIdColumnAvailability()) ? 'organization_id' : 'org_id';
+}
+
+
+async function getOrganizationMembershipsStatusColumnName() {
+  if (!supabase) return 'status';
+  try {
+    const { error } = await supabase
+      .from('organization_memberships')
+      .select('user_id', { head: true, count: 'exact' })
+      .is('status', null)
+      .limit(1);
+    if (error) {
+      if (isMissingColumnError(error)) {
+        return 'is_active';
+      }
+      throw error;
+    }
+    return 'status';
+  } catch (err) {
+    logger.warn('organization_memberships_status_column_probe_failed', {
+      message: err?.message || String(err),
+    });
+    return 'status';
+  }
 }
 
 async function upsertOrganizationMembership(orgId, userId, role, actor) {
@@ -16246,7 +16350,8 @@ app.get('/api/admin/organizations/:orgId/members', async (req, res) => {
 
   try {
     const membershipOrgColumn = await getOrganizationMembershipsOrgColumnName();
-    const { data, error } = await supabase
+    const statusColumn = await getOrganizationMembershipsStatusColumnName();
+    let query = supabase
       .from('organization_memberships')
       .select(
         buildMembershipSelect(
@@ -16254,13 +16359,21 @@ app.get('/api/admin/organizations/:orgId/members', async (req, res) => {
           'user_id',
           'role',
           'status',
+          'is_active',
           'invited_by',
           'created_at',
           'updated_at',
         ),
       )
-      .eq(membershipOrgColumn, orgId)
-      .order('created_at', { ascending: false });
+      .eq(membershipOrgColumn, orgId);
+
+    if (statusColumn === 'is_active') {
+      query = query.eq('is_active', true);
+    } else {
+      query = query.in('status', ['active', 'pending']);
+    }
+
+    const { data, error } = await query.order('created_at', { ascending: false });
 
     if (error) throw error;
     res.json({ data: data ?? [] });

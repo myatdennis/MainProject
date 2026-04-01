@@ -7,6 +7,7 @@ import { authenticate, requireAdmin, invalidateMembershipCache } from '../middle
 import { createHttpError, withHttpError } from '../middleware/apiErrorHandler.js';
 import { validateOrgId } from '../lib/inviteHelper.js';
 import { isPlatformAdminActor, canModifyUser, canAssignAcrossOrganizations } from '../utils/adminAuthz.js';
+import { resolveMembershipStatusUpdate } from '../lib/membershipUtils.js';
 const router = express.Router();
 
 let organizationMembershipsOrgColumn = null;
@@ -54,6 +55,25 @@ const resolveOrganizationMembershipsStatusColumn = async () => {
 
   organizationMembershipsStatusColumn = 'status';
   return organizationMembershipsStatusColumn;
+};
+
+const resolveOrganizationMembershipsHasIsActiveColumn = async () => {
+  if (!supabaseAdmin) return false;
+
+  for (const column of ['is_active']) {
+    const { error } = await supabaseAdmin
+      .from('organization_memberships')
+      .select('user_id', { head: true, count: 'exact' })
+      .is(column, null)
+      .limit(1);
+    if (error) {
+      if (isMissingColumnError(error)) continue;
+      throw error;
+    }
+    return true;
+  }
+
+  return false;
 };
 
 const isActiveValue = (statusColumn, value) => {
@@ -183,13 +203,16 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
 
     const orgColumn = await resolveOrganizationMembershipsOrgColumn();
     const statusColumn = await resolveOrganizationMembershipsStatusColumn();
-    console.log('STEP 1: deactivate memberships', { userId: targetUserId, statusColumn });
+    const hasIsActiveColumn = await resolveOrganizationMembershipsHasIsActiveColumn();
+    console.log('STEP 1: deactivate memberships', { userId: targetUserId, statusColumn, hasIsActiveColumn });
 
+    const deactivateStatus = resolveMembershipStatusUpdate({ status: 'inactive', is_active: false });
     const deactivatePayload = {};
-    if (statusColumn === 'is_active') {
-      deactivatePayload.is_active = false;
-    } else {
-      deactivatePayload.status = 'inactive';
+    if (statusColumn === 'status') {
+      deactivatePayload.status = deactivateStatus.status;
+    }
+    if (hasIsActiveColumn) {
+      deactivatePayload.is_active = deactivateStatus.is_active;
     }
 
     const { error: deactivateError } = await supabaseAdmin
@@ -201,17 +224,19 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
       throw new Error(`membership_deactivate_failed: ${deactivateError.message}`);
     }
 
-    console.log('STEP 2: insert membership', { userId: targetUserId, orgId, membershipRole, orgColumn, statusColumn });
+    console.log('STEP 2: insert membership', { userId: targetUserId, orgId, membershipRole, orgColumn, statusColumn, hasIsActiveColumn });
     const insertPayload = {
       user_id: targetUserId,
       role: membershipRole,
       invited_by: req.user?.id || req.user?.userId || null,
       [orgColumn]: orgId,
     };
-    if (statusColumn === 'is_active') {
-      insertPayload.is_active = true;
-    } else {
-      insertPayload.status = 'active';
+    const activeStatus = resolveMembershipStatusUpdate({ status: 'active', is_active: true });
+    if (statusColumn === 'status') {
+      insertPayload.status = activeStatus.status;
+    }
+    if (hasIsActiveColumn) {
+      insertPayload.is_active = activeStatus.is_active;
     }
 
     const { error: insertError } = await supabaseAdmin
@@ -720,6 +745,8 @@ router.post('/', async (req, res, next) => {
         logger,
         sendEmail,
         getOrganizationMembershipsOrgColumnName: resolveOrganizationMembershipsOrgColumn,
+        getOrganizationMembershipsStatusColumnName: resolveOrganizationMembershipsStatusColumn,
+        getOrganizationMembershipsHasIsActiveColumn: resolveOrganizationMembershipsHasIsActiveColumn,
         invalidateMembershipCache,
         assignContentToUser: async ({ orgId: targetOrgId, userId }) => {
           await assignPublishedOrganizationCoursesToUser({ orgId: targetOrgId, userId, actorUserId });
@@ -876,6 +903,8 @@ const provisionImportedUser = async (user, actorUserId, defaultOrgId) => {
       logger,
       sendEmail,
       getOrganizationMembershipsOrgColumnName,
+      getOrganizationMembershipsStatusColumnName,
+      getOrganizationMembershipsHasIsActiveColumn,
       invalidateMembershipCache,
       assignContentToUser: async ({ orgId: targetOrgId, userId }) => {
         await assignPublishedOrganizationCoursesToUser({ orgId: targetOrgId, userId, actorUserId });
