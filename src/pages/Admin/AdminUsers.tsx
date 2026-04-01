@@ -408,8 +408,26 @@ const AdminUsers = () => {
     }
   };
 
-  const handleUserUpdated = () => {
-    // Always refetch from server to avoid stale org/fields
+  const handleUserUpdated = (updatedUser?: User, transfer?: { fromOrganizationId?: string | null; toOrganizationId?: string | null }) => {
+    if (updatedUser) {
+      const movedOutOfActiveOrg = activeOrgId && transfer?.fromOrganizationId === activeOrgId && transfer?.toOrganizationId && transfer.toOrganizationId !== activeOrgId;
+      const movedOutOfFilteredOrg = !activeOrgId && filterOrg !== 'all' && transfer?.fromOrganizationId === filterOrg && transfer?.toOrganizationId && transfer.toOrganizationId !== filterOrg;
+
+      if (movedOutOfActiveOrg) {
+        setUsersList((prev: User[]) => prev.filter((user: User) => user.id !== updatedUser.id));
+        showToast(`User moved to organization ${transfer.toOrganizationId} and removed from this organization list.`, 'success');
+        void fetchUsers();
+        return;
+      }
+
+      if (movedOutOfFilteredOrg) {
+        showToast(`User moved to organization ${transfer.toOrganizationId} and removed from this filtered list.`, 'success');
+        void fetchUsers();
+        return;
+      }
+    }
+
+    // General refresh for global and same-org updates
     void fetchUsers();
     showToast('User updated successfully!', 'success');
     setShowEditUserModal(false);

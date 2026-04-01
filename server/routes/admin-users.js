@@ -284,6 +284,8 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
       return res.status(404).json({ ok: false, code: 'user_not_found', message: 'User profile not found after update.' });
     }
 
+    const previousOrgId = profileRow?.active_organization_id || profileRow?.organization_id || null;
+
     let orgData = null;
     const activeOrgId = activeMembership.organization_id ?? activeMembership.org_id ?? null;
     if (activeOrgId) {
@@ -305,6 +307,10 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
         role: activeMembership.role,
         organization_id: activeOrgId,
         organization: orgData,
+      },
+      transfer: {
+        from_organization_id: previousOrgId,
+        to_organization_id: activeOrgId,
       },
     });
   } catch (error) {

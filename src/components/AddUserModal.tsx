@@ -13,7 +13,7 @@ import { useSecureAuth } from '../context/SecureAuthContext';
 interface AddUserModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onUserAdded?: (user: any) => void;
+  onUserAdded?: (user: any, transfer?: { fromOrganizationId?: string | null; toOrganizationId?: string | null }) => void;
   editUser?: any;
   /** Pass pre-fetched orgs from the parent page; the modal will also fetch its own if not provided. */
   organizations?: Array<{ id: string; name: string }>;
@@ -233,6 +233,7 @@ const AddUserModal: React.FC<AddUserModalProps> = ({
             phoneNumber: sanitizedData.phoneNumber,
           },
         });
+
         // Use normalized org from API response as canonical
         const normalizedOrg = response?.data?.organization_id || orgId;
         const updatedUser = {
@@ -244,8 +245,13 @@ const AddUserModal: React.FC<AddUserModalProps> = ({
           cohort: sanitizedData.cohort,
           role: sanitizedData.role,
         };
-        onUserAdded?.(updatedUser);
-        showToast('User updated successfully!', 'success');
+
+        const transfer = {
+          fromOrganizationId: editUser.organization || editUser.orgId || editUser.organization_id || null,
+          toOrganizationId: normalizedOrg || null,
+        };
+
+        onUserAdded?.(updatedUser, transfer);
       } else {
         // Provision a real login-backed user account and activate membership immediately.
         const orgId = sanitizedData.organization || defaultOrgId || activeOrgId;
@@ -314,34 +320,6 @@ const AddUserModal: React.FC<AddUserModalProps> = ({
           feedbackSubmitted: false,
         };
         onUserAdded?.(newUser);
-
-        const baseMessage = response?.existingAccount
-          ? `Existing account linked to ${sanitizedData.email} and membership created for this organization.`
-          : `Account created for ${sanitizedData.email}.`;
-
-        if (response?.emailSent) {
-          showToast(baseMessage, 'success');
-        } else {
-          showToast(`${baseMessage} Email not sent. Use the setup link below.`, 'warning');
-        }
-        shouldClose = !response?.setupLink;
-      }
-      
-      // Reset form
-      // Reset form values
-      setValue('firstName', '');
-      setValue('lastName', '');
-      setValue('email', '');
-      setValue('role', '');
-      setValue('organization', '');
-      setValue('cohort', '');
-      setValue('department', '');
-      setValue('phoneNumber', '');
-      setValue('password', '');
-      setValue('confirmPassword', '');
-      
-      if (shouldClose) {
-        onClose();
       }
     } catch (error: any) {
       showToast(
@@ -351,6 +329,7 @@ const AddUserModal: React.FC<AddUserModalProps> = ({
       );
     } finally {
       setLoading(false);
+      if (shouldClose) onClose();
     }
   };
 

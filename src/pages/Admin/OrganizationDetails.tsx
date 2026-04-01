@@ -177,9 +177,18 @@ const OrganizationDetails: React.FC = () => {
     loadOrgAdminProfile();
   };
 
-  const handleUserProvisioned = () => {
+  const handleUserProvisioned = (_user?: any, transfer?: { fromOrganizationId?: string | null; toOrganizationId?: string | null }) => {
+    if (transfer?.fromOrganizationId && transfer?.toOrganizationId && transfer.fromOrganizationId !== transfer.toOrganizationId) {
+      if (transfer.fromOrganizationId === id) {
+        showToast(`User moved to ${transfer.toOrganizationId} and removed from this organization view.`, 'success');
+      } else {
+        showToast('User organization updated successfully.', 'success');
+      }
+    } else {
+      showToast('User account added/updated successfully!', 'success');
+    }
+
     void loadOrgAdminProfile();
-    showToast('User account added successfully!', 'success');
   };
 
   const handleAddMember = async () => {
