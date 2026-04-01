@@ -1,4 +1,5 @@
 import 'dotenv/config';
+// TEST_EDIT_INSERTION - unique marker
 console.log('[startup] Entrypoint loaded');
 import express from 'express';
 import http from 'http';
@@ -527,6 +528,11 @@ app.set('etag', false);
 // network errors instead of auth errors.
 app.use(corsMiddleware);
 console.log('[startup] CORS middleware registered');
+
+app.use(cookieParser());
+app.use(express.json({ limit: '10mb' }));
+app.use(attachRequestId);
+console.log('[startup] JSON middleware registered before routes');
 
 import healthRouter from './routes/health.js';
 import corsMiddleware, { resolvedCorsOrigins, corsAllowedHeaders } from './middleware/cors.js';
@@ -1078,6 +1084,8 @@ app.post('/api/admin/courses/:id/assign', authenticate, async (req, res) => {
   const normalizedUserIds = Array.from(normalizedUserIdSet);
   const invalidTargetIds = Array.from(invalidTargetIdSet);
   const assignmentMode = body.mode === 'organization' ? 'organization' : normalizedUserIds.length > 0 ? 'learners' : 'organization';
+
+  // ...existing code...
 
   const context = requireUserContext(req, res);
   if (!context) return;
@@ -1651,10 +1659,7 @@ logger.info('server_port', { port: PORT });
 // Core middleware ordering: cookies -> JSON -> request metadata.
 // NOTE: corsMiddleware is registered at app creation (above) so it runs before
 // every route handler, including the early pre-2092 /api/admin routes.
-app.use(cookieParser());
-app.use(express.json({ limit: '10mb' }));
-console.log('[startup] JSON middleware registered');
-app.use(attachRequestId);
+// (Moved cookieParser, express.json, and attachRequestId before routes)
 
 const createCorsRouteLogger = (label) => (req, res, next) => {
   const origin = req.headers?.origin ?? null;
@@ -4518,11 +4523,14 @@ const ensureCourseAssignmentsForUserFromOrgScope = async ({ userId, orgIds = [],
     const courseIds = Array.from(new Set(courseAssignments.map((row) => row?.course_id).filter(Boolean)));
     if (courseIds.length === 0) return;
 
-    const { data: existingRows, error: existingError } = await supabase
-      .from('assignments')
-      .select('course_id')
-      .eq('user_id', userId)
-      .in('course_id', courseIds);
+    const assignmentsSupportUserIdUuid = await detectAssignmentsUserIdUuidColumnAvailability();
+    let existingQuery = supabase.from('assignments').select('course_id').in('course_id', courseIds);
+    if (assignmentsSupportUserIdUuid) {
+      existingQuery = existingQuery.or(`user_id.eq.${userId},user_id_uuid.eq.${userId}`);
+    } else {
+      existingQuery = existingQuery.eq('user_id', userId);
+    }
+    const { data: existingRows, error: existingError } = await existingQuery;
     if (existingError) throw existingError;
 
     const existingSet = new Set((existingRows || []).map((row) => row?.course_id).filter(Boolean));
@@ -11930,18 +11938,14 @@ app.get('/api/client/assignments', authenticate, async (req, res) => {
   if (!context) return;
 
   const requestId = req.requestId;
-  const normalizedUserId = String(context.userId || '')
-    .trim()
-    .toLowerCase();
+  const normalizedUserId = String(context.userId || '').trim().toLowerCase();
 
   if (!normalizedUserId) {
     res.status(401).json({ data: [], count: 0, orgId: null, error: 'not_authenticated' });
     return;
   }
 
-  // In dev/demo mode the injected user ID may be a non-UUID placeholder.
-  // Return empty assignments rather than a DB 22P02 error.
-  if (!isUuid(normalizedUserId) && (E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (!isUuid(normalizedUserId) && !(E2E_TEST_MODE || DEV_FALLBACK)) {
     res.status(200).json({ data: [], count: 0, orgId: null });
     return;
   }
@@ -11971,73 +11975,82 @@ app.get('/api/client/assignments', authenticate, async (req, res) => {
     res.status(status).json({
       data: rows,
       count: Array.isArray(rows) ? rows.length : 0,
-      orgId: resolvedOrgId,
+      orgId: Array.isArray(rows) && rows.length > 0 ? resolvedOrgId : null,
       ...extra,
     });
 
   try {
     if (E2E_TEST_MODE || DEV_FALLBACK) {
-        const allowedOrgIds = new Set(
-          [
-            resolvedOrgId,
-            ...(Array.isArray(context.organizationIds) ? context.organizationIds : []),
-            req.activeOrgId ?? null,
-          ]
-            .map((value) => normalizeOrgIdValue(value))
-            .filter(Boolean),
-        );
-        console.info('[client.assignments][demo]', {
-          requestId,
-          userId: normalizedUserId,
+      const allowedOrgIds = new Set(
+        [
           resolvedOrgId,
-          activeOrgId: req.activeOrgId ?? null,
-          contextOrgIds: Array.isArray(context.organizationIds) ? context.organizationIds : [],
-          allowedOrgIds: Array.from(allowedOrgIds),
-          assignmentCount: Array.isArray(e2eStore.assignments) ? e2eStore.assignments.length : 0,
-        });
-        const directRows = [];
-        const orgScopedByCourseId = new Map();
-        for (const rawAssignment of e2eStore.assignments || []) {
-          const assignment =
-            ensureOrgFieldCompatibility(rawAssignment, { fallbackOrgId: DEFAULT_SANDBOX_ORG_ID }) || rawAssignment;
-          if (!assignment || assignment.active === false) continue;
-          const assignmentType = assignment.assignment_type ?? assignment.assignmentType ?? null;
-          if (assignmentType && assignmentType !== 'course') continue;
-          const assignmentUserId = String(assignment.user_id || '').toLowerCase();
-          if (assignmentUserId === normalizedUserId) {
-            directRows.push(assignment);
-            continue;
-          }
-          if (assignment.user_id !== null && assignment.user_id !== undefined) continue;
-          const assignmentOrgId = normalizeOrgIdValue(
-            assignment.organization_id ?? assignment.organizationId ?? assignment.org_id ?? assignment.orgId ?? null,
-          );
-          if (!assignmentOrgId || !allowedOrgIds.has(assignmentOrgId)) continue;
-          const courseId = assignment.course_id ?? assignment.courseId ?? null;
-          if (!courseId || orgScopedByCourseId.has(courseId)) continue;
-          orgScopedByCourseId.set(courseId, {
-            ...assignment,
-            user_id: normalizedUserId,
-            assignment_type: 'course',
-            metadata: {
-              ...(assignment.metadata && typeof assignment.metadata === 'object' ? assignment.metadata : {}),
-              assigned_via: 'org_rollup',
-            },
-          });
+          ...(Array.isArray(context.organizationIds) ? context.organizationIds : []),
+          req.activeOrgId ?? null,
+        ]
+          .map((value) => normalizeOrgIdValue(value))
+          .filter(Boolean),
+      );
+
+      console.info('[client.assignments][demo]', {
+        requestId,
+        userId: normalizedUserId,
+        resolvedOrgId,
+        activeOrgId: req.activeOrgId ?? null,
+        contextOrgIds: Array.isArray(context.organizationIds) ? context.organizationIds : [],
+        allowedOrgIds: Array.from(allowedOrgIds),
+        assignmentCount: Array.isArray(e2eStore.assignments) ? e2eStore.assignments.length : 0,
+      });
+
+      const directRows = [];
+      const orgScopedByCourseId = new Map();
+      for (const rawAssignment of e2eStore.assignments || []) {
+        const assignment =
+          ensureOrgFieldCompatibility(rawAssignment, { fallbackOrgId: DEFAULT_SANDBOX_ORG_ID }) || rawAssignment;
+        if (!assignment || assignment.active === false) continue;
+        const assignmentType = assignment.assignment_type ?? assignment.assignmentType ?? null;
+        if (assignmentType && assignmentType !== 'course') continue;
+
+        const assignmentUserId = String(assignment.user_id || '').toLowerCase();
+        if (assignmentUserId === normalizedUserId) {
+          directRows.push(assignment);
+          continue;
         }
-        const directCourseIds = new Set(
-          directRows
-            .map((assignment) => assignment?.course_id ?? assignment?.courseId ?? null)
-            .filter(Boolean),
+
+        if (assignment.user_id !== null && assignment.user_id !== undefined) continue;
+
+        const assignmentOrgId = normalizeOrgIdValue(
+          assignment.organization_id ?? assignment.organizationId ?? assignment.org_id ?? assignment.orgId ?? null,
         );
-        const rows = [
-          ...directRows,
-          ...Array.from(orgScopedByCourseId.entries())
-            .filter(([courseId]) => !directCourseIds.has(courseId))
-            .map(([, assignment]) => assignment),
-        ];
-        respond(200, rows.map((row) => normalizeAssignmentRow(row)).filter(Boolean));
-        return;
+        if (!assignmentOrgId || !allowedOrgIds.has(assignmentOrgId)) continue;
+
+        const courseId = assignment.course_id ?? assignment.courseId ?? null;
+        if (!courseId || orgScopedByCourseId.has(courseId)) continue;
+
+        orgScopedByCourseId.set(courseId, {
+          ...assignment,
+          user_id: normalizedUserId,
+          assignment_type: 'course',
+          metadata: {
+            ...(assignment.metadata && typeof assignment.metadata === 'object' ? assignment.metadata : {}),
+            assigned_via: 'org_rollup',
+          },
+        });
+      }
+
+      const directCourseIds = new Set(
+        directRows
+          .map((assignment) => assignment?.course_id ?? assignment?.courseId ?? null)
+          .filter(Boolean),
+      );
+
+      const rows = [
+        ...directRows,
+        ...Array.from(orgScopedByCourseId.entries())
+          .filter(([courseId]) => !directCourseIds.has(courseId))
+          .map(([, assignment]) => assignment),
+      ];
+      respond(200, rows.map((row) => normalizeAssignmentRow(row)).filter(Boolean));
+      return;
     }
 
     if (!supabase) {
@@ -12050,25 +12063,33 @@ app.get('/api/client/assignments', authenticate, async (req, res) => {
       orgIds: Array.isArray(context.organizationIds) ? context.organizationIds : [],
     });
 
+    const assignmentsSupportUserIdUuid = await detectAssignmentsUserIdUuidColumnAvailability();
     const assignmentTables = ['assignments', 'course_assignments'];
     let rows = [];
     let sourceTable = null;
+
     for (const table of assignmentTables) {
-      let query = supabase
-        .from(table)
-        .select('*')
-        .eq('user_id', normalizedUserId)
-        .order('updated_at', { ascending: false, nullsFirst: false })
-        .order('created_at', { ascending: false, nullsFirst: false });
+      let query = supabase.from(table).select('*');
+
+      if (table === 'assignments') {
+        if (assignmentsSupportUserIdUuid) {
+          query = query.or(`user_id.eq.${normalizedUserId},user_id_uuid.eq.${normalizedUserId}`);
+        } else {
+          query = query.eq('user_id', normalizedUserId);
+        }
+      } else {
+        query = query.eq('user_id', normalizedUserId);
+      }
 
       if (!includeCompletedAssignments) {
         query = query.eq('active', true).in('status', ['assigned', 'in-progress']);
       }
 
       if (resolvedOrgId) {
-        const orgColumn = table === 'assignments' ? 'organization_id' : 'organization_id';
-        query = query.eq(orgColumn, resolvedOrgId);
+        query = query.eq('organization_id', resolvedOrgId);
       }
+
+      query = query.order('updated_at', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false, nullsFirst: false });
 
       const { data, error } = await query;
       if (error) {
@@ -12084,9 +12105,13 @@ app.get('/api/client/assignments', authenticate, async (req, res) => {
         }
         throw error;
       }
+
       rows = data || [];
       sourceTable = table;
-      break;
+
+      if (rows.length > 0 || table === assignmentTables[assignmentTables.length - 1]) {
+        break;
+      }
     }
 
     if (!sourceTable) {
@@ -12660,7 +12685,7 @@ app.get('/api/client/courses', asyncHandler(async (req, res) => {
 
   // In dev/demo mode the injected user/org IDs may be non-UUID placeholders.
   // Return empty catalog rather than a DB 22P02 error.
-  if ((E2E_TEST_MODE || DEV_FALLBACK) && !isUuid(context.userId || '') && !context.isPlatformAdmin) {
+  if (!(E2E_TEST_MODE || DEV_FALLBACK) && !isUuid(context.userId || '') && !context.isPlatformAdmin) {
     return res.json({ ok: true, courses: [], total: 0, requestId });
   }
 
@@ -12765,13 +12790,19 @@ app.get('/api/client/courses', asyncHandler(async (req, res) => {
       },
     ];
 
+    const assignmentsSupportUserIdUuid = await detectAssignmentsUserIdUuidColumnAvailability();
+
     for (const table of tablesToTry) {
       let tableResults = null;
 
       for (const candidate of orgColumnCandidates) {
         let query = supabase.from(table).select(candidate.select).eq(candidate.column, assignmentOrgId);
         if (normalizedSessionUserId) {
-          query = query.or(`user_id.eq.${normalizedSessionUserId},user_id.is.null`);
+          if (table === 'assignments' && assignmentsSupportUserIdUuid) {
+            query = query.or(`user_id.eq.${normalizedSessionUserId},user_id_uuid.eq.${normalizedSessionUserId},user_id.is.null`);
+          } else {
+            query = query.or(`user_id.eq.${normalizedSessionUserId},user_id.is.null`);
+          }
         } else {
           query = query.is('user_id', null);
         }
