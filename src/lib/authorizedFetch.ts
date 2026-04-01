@@ -256,20 +256,19 @@ export default async function authorizedFetch(
     }
 
     if (attempt === 0) {
-      const tokenExpiredHint = response.headers.get('content-type')?.includes('application/json')
-        ? await response.clone().json().then((body: any) => body?.code === 'token_expired' || body?.error === 'token_expired').catch(() => false)
-        : false;
-      if (tokenExpiredHint) {
-        if (await refreshAuthToken()) {
+      const isRefreshEndpoint = extractPathname(url).startsWith('/api/auth/refresh');
+
+      if (!isRefreshEndpoint) {
+        // Always attempt a refresh on first 401 for authenticated requests.
+        const refreshed = await refreshAuthToken();
+        if (refreshed) {
           attempt += 1;
+          console.info('[authorizedFetch] token refreshed after 401, retrying request', { url: extractPathname(url) });
           continue;
         }
       }
 
-      if (devMode) {
-        console.debug('[authorizedFetch] 401 received. No backend refresh configured for this fetch.', { url, requestLabel });
-      }
-      attempt += 1;
+      // No refresh possible or refresh failed.
       return response;
     }
 

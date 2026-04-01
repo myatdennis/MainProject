@@ -297,6 +297,12 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
     }
 
     setLoading(true);
+    console.info('[CourseAssignmentModal] assign_request_start', {
+      courseId: targetCourseId,
+      selectedOrgIds,
+      selectedUserIds: resolvedSelectedUsers,
+      mode: 'batch',
+    });
     const assignmentPayloads: CourseAssignment[] = [];
 
     try {
@@ -323,13 +329,25 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
         if (result.assignments?.length) {
           assignmentPayloads.push(...result.assignments);
         }
-        console.info('[CourseAssignmentModal] assign_request_success', {
-          courseId: targetCourseId,
-          orgId,
-          mode,
-          userCount: userIds.length,
-          status: result.status,
-        });
+
+        if (result.status === 'sent') {
+          console.info('[CourseAssignmentModal] assign_request_success', {
+            courseId: targetCourseId,
+            orgId,
+            mode,
+            userCount: userIds.length,
+            status: result.status,
+          });
+        } else {
+          console.warn('[CourseAssignmentModal] assign_request_queued', {
+            courseId: targetCourseId,
+            orgId,
+            mode,
+            userCount: userIds.length,
+            status: result.status,
+          });
+        }
+
         return result.status;
       };
 
@@ -341,20 +359,46 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
         statuses.push(await runAssignment(orgId, 'learners', userIds));
       }
 
+      const sentCount = statuses.filter((status) => status === 'sent').length;
       const queuedCount = statuses.filter((status) => status === 'queued').length;
-      const successMessage = queuedCount > 0
-        ? `Assignments queued for ${selectedOrgIds.length} org(s) and ${resolvedSelectedUsers.length} learner(s). We'll sync them when the connection recovers.`
-        : `Assignments sent to ${selectedOrgIds.length} org(s) and ${resolvedSelectedUsers.length} learner(s).`;
-      showToast(successMessage, 'success');
-      invalidateOrgListCache();
-      setOrganizationOptions([]);
-      setOrgFetchToken((token) => token + 1);
-      console.info('[CourseAssignmentModal] assign_success', {
-        courseId: targetCourseId,
-        orgCount: selectedOrgIds.length,
-        userCount: resolvedSelectedUsers.length,
-      });
-      onAssignComplete?.(assignmentPayloads);
+
+      if (queuedCount > 0 && sentCount === 0) {
+        showToast(
+          `Assignments queued for ${selectedOrgIds.length} org(s) and ${resolvedSelectedUsers.length} learner(s). We will retry when the connection is restored.`,
+          'warning'
+        );
+        console.info('[CourseAssignmentModal] assign_queued', {
+          courseId: targetCourseId,
+          orgCount: selectedOrgIds.length,
+          userCount: resolvedSelectedUsers.length,
+          queuedCount,
+        });
+      } else if (queuedCount > 0) {
+        showToast(
+          `Assignments processed. ${sentCount} sent, ${queuedCount} queued for retry.`,
+          'info'
+        );
+        console.info('[CourseAssignmentModal] assign_partial_success', {
+          courseId: targetCourseId,
+          orgCount: selectedOrgIds.length,
+          userCount: resolvedSelectedUsers.length,
+          sentCount,
+          queuedCount,
+        });
+      } else {
+        showToast(`Assignments sent to ${selectedOrgIds.length} org(s) and ${resolvedSelectedUsers.length} learner(s).`, 'success');
+        console.info('[CourseAssignmentModal] assign_success', {
+          courseId: targetCourseId,
+          orgCount: selectedOrgIds.length,
+          userCount: resolvedSelectedUsers.length,
+        });
+      }
+
+      if (sentCount > 0) {
+        invalidateOrgListCache();
+        onAssignComplete?.(assignmentPayloads);
+      }
+
       setSelectedUserIds([]);
       setSelectedOrgIds([]);
       setDueDate('');

@@ -84,7 +84,7 @@ const shouldQueueError = (error: unknown): boolean => {
   const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
   if (offline) return true;
   if (error instanceof ApiError) {
-    if (error.status === 0 || error.code === 'timeout') {
+    if (error.status === 0 || (error as any).code === 'timeout') {
       return true;
     }
     return false;
@@ -135,6 +135,7 @@ export const processAssignmentQueue = async (): Promise<void> => {
 
   processing = true;
   try {
+    console.info('[assignmentQueue] Starting processing for', assignmentQueue.length, 'items');
     for (const item of assignmentQueue) {
       if (item.status === 'pending' || item.status === 'retrying') {
         try {

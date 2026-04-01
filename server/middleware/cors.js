@@ -169,6 +169,7 @@ const appendCorsResponseHeaders = (req, res) => {
   if (decision.allowed && decision.resolvedOrigin) {
     setHeader(res, 'Access-Control-Allow-Origin', decision.resolvedOrigin);
     setHeader(res, 'Access-Control-Allow-Credentials', 'true');
+    setHeader(res, 'Access-Control-Expose-Headers', 'Content-Type, X-Request-Id, X-CSRF-Token, Set-Cookie');
   }
   return decision;
 };
