@@ -79,24 +79,49 @@ const AdminUsers = () => {
     const profile = member?.profile ?? {};
     const profileMetadata = profile?.metadata ?? {};
     const userRow = member?.user ?? {};
+
     const userId =
       member?.user_id ??
       member?.userId ??
+      member?.user?.id ??
       member?.user_id_uuid ??
-      member?.userUuid ??
       member?.id ??
+      member?.membershipId ??
       '';
-    if (!userId) return null;
+    if (!userId || !String(userId).trim()) return null;
 
-    const firstName = profile.first_name ?? userRow.first_name ?? '';
-    const lastName = profile.last_name ?? userRow.last_name ?? '';
+    const firstName =
+      profile.first_name ??
+      userRow.first_name ??
+      member?.first_name ??
+      '';
+    const lastName =
+      profile.last_name ??
+      userRow.last_name ??
+      member?.last_name ??
+      '';
     const fullName =
       profile.full_name ??
       profile.fullName ??
       member?.name ??
       `${firstName} ${lastName}`.trim();
-    const email = profile.email ?? userRow.email ?? member?.email ?? '';
+
+    const email =
+      profile.email ??
+      userRow.email ??
+      member?.email ??
+      member?.user?.email ??
+      '';
     if (!email && !fullName) return null;
+
+    const orgFromMember =
+      member?.organization_id ??
+      member?.org_id ??
+      member?.orgId ??
+      member?.organization ??
+      member?.org?.id ??
+      member?.org?.organization_id ??
+      '';
 
     const orgProgress = member?.progress ?? {};
     // Derive keys from whichever modules are present in the progress object,
@@ -112,23 +137,16 @@ const AdminUsers = () => {
     const overallProgress = progressKeys.reduce((sum, k) => sum + (progressMap[k] ?? 0), 0) / progressKeys.length;
     const completedModules = progressKeys.filter((k) => (progressMap[k] ?? 0) >= 100).length;
 
-    const rawStatus = (member?.status || profile?.status || userRow?.status || 'inactive').toString().toLowerCase();
+    const rawStatus =
+      (member?.status || profile?.status || userRow?.status || 'inactive').toString().toLowerCase();
     const normalizedStatus = ['active', 'pending', 'inactive'].includes(rawStatus) ? rawStatus : rawStatus;
 
-    const canonicalOrgId = member?.organization_id ?? member?.org?.id ?? activeOrgId ?? '';
-    if (member?.org_id && member?.org_id !== canonicalOrgId) {
-      console.warn('Conflicting organization IDs in admin user row', {
-        userId,
-        canonicalOrgId,
-        legacyOrgId: member?.org_id,
-      });
-    }
+    const canonicalOrgId = orgFromMember || activeOrgId || '';
 
     return {
-      id: userId,
+      id: String(userId),
       name: fullName || email,
       email,
-      // Use only the normalized org field from the server response
       organization: canonicalOrgId,
       cohort: profile.cohort ?? profileMetadata.cohort ?? '',
       role:
@@ -136,8 +154,8 @@ const AdminUsers = () => {
         profile.job_title ??
         profileMetadata.job_title ??
         profileMetadata.title ??
-  userRow.role ??
-  member?.role ??
+        userRow.role ??
+        member?.role ??
         '',
       enrolled: member?.created_at ?? profile.created_at ?? '',
       lastLogin: userRow.last_login_at ?? profile.updated_at ?? '',
@@ -297,7 +315,12 @@ const AdminUsers = () => {
   };
 
   const handleUserAdded = (_newUser: User) => {
-    // Refresh from server to get real data instead of optimistic local append
+    setUsersList((prev: User[]) => {
+      const deduped = prev.filter((user) => user.id !== _newUser.id);
+      return [...deduped, _newUser];
+    });
+
+    // Refresh data in the background to ensure canonical values are shown
     void fetchUsers();
     showToast('User account added successfully!', 'success');
   };
@@ -410,6 +433,10 @@ const AdminUsers = () => {
 
   const handleUserUpdated = (updatedUser?: User, transfer?: { fromOrganizationId?: string | null; toOrganizationId?: string | null }) => {
     if (updatedUser) {
+      setUsersList((prev: User[]) =>
+        prev.map((user) => (user.id === updatedUser.id ? { ...user, ...updatedUser } : user)),
+      );
+
       const movedOutOfActiveOrg = activeOrgId && transfer?.fromOrganizationId === activeOrgId && transfer?.toOrganizationId && transfer.toOrganizationId !== activeOrgId;
       const movedOutOfFilteredOrg = !activeOrgId && filterOrg !== 'all' && transfer?.fromOrganizationId === filterOrg && transfer?.toOrganizationId && transfer.toOrganizationId !== filterOrg;
 
