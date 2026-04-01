@@ -162,6 +162,8 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
       memberships: req.user?.memberships || [],
     };
 
+    let previousOrgId = null;
+
     if (!isPlatformAdminActor(actor)) {
       const { data: profileRow, error: profileRowError } = await supabaseAdmin
         .from('user_profiles')
@@ -174,6 +176,7 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
       }
 
       const sourceOrgId = (String(profileRow?.active_organization_id || profileRow?.organization_id || '').trim() || null);
+      previousOrgId = sourceOrgId;
 
       logger.info('[USER TRANSFER] org_admin action', {
         actor: { id: req.user?.id || req.user?.userId, memberships: actor.memberships },
@@ -195,6 +198,18 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
         logger.warn('[USER TRANSFER] org_admin cross-org denied', { actor, targetUserId, sourceOrgId, targetOrgId: orgId });
         return res.status(403).json({ ok: false, code: 'cross_org_transfer_forbidden', message: 'Organization admin cannot transfer users across organizations.' });
       }
+    } else {
+      const { data: profileRow, error: profileRowError } = await supabaseAdmin
+        .from('user_profiles')
+        .select('organization_id, active_organization_id')
+        .eq('id', targetUserId)
+        .maybeSingle();
+
+      if (profileRowError) {
+        throw new Error(`user_profile_load_failed: ${profileRowError.message}`);
+      }
+
+      previousOrgId = (String(profileRow?.active_organization_id || profileRow?.organization_id || '').trim() || null);
     }
 
     if (!orgId) {
@@ -284,7 +299,7 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
       return res.status(404).json({ ok: false, code: 'user_not_found', message: 'User profile not found after update.' });
     }
 
-    const previousOrgId = profileRow?.active_organization_id || profileRow?.organization_id || null;
+    const previousOrgIdFromProfile = previousOrgId || null;
 
     let orgData = null;
     const activeOrgId = activeMembership.organization_id ?? activeMembership.org_id ?? null;
@@ -309,7 +324,7 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
         organization: orgData,
       },
       transfer: {
-        from_organization_id: previousOrgId,
+        from_organization_id: previousOrgIdFromProfile,
         to_organization_id: activeOrgId,
       },
     });
