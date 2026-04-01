@@ -186,6 +186,7 @@ const AdminOrgWorkspace = () => {
 
   const fetchOrganizations = useCallback(
     async (targetPage = 1) => {
+      console.info('[AdminOrgWorkspace] fetch orgs', { targetPage, search: debouncedSearch, statusFilter, subscriptionFilter });
       setFetching(true);
       setLoadError(null);
       let cancelled = false;
@@ -203,6 +204,7 @@ const AdminOrgWorkspace = () => {
         setOrganizations(response.data);
         setProgressMap(response.progress ?? {});
         setPaginationMeta(response.pagination);
+        console.info('[AdminOrgWorkspace] org count received', { count: response.data.length, total: response.pagination.total });
         // Only auto-select the first org if the user hasn't already made a selection
         // (read via ref, NOT from state, to avoid re-creating this callback on every
         // org click and causing a refetch → auto-select → refetch loop).
@@ -338,23 +340,26 @@ const AdminOrgWorkspace = () => {
     if (!orgToDelete) return;
     setLoading(true);
     try {
+      console.info('[AdminOrgWorkspace] confirmDeleteOrganization', { orgToDelete });
       await orgService.deleteOrg(orgToDelete);
 
       const currentPage = paginationMeta.page || 1;
-      const totalAfterDelete = Math.max(0, (paginationMeta.total || 0) - 1);
-      const pageCountAfterDelete = Math.max(1, Math.ceil(totalAfterDelete / PAGE_SIZE));
-      const nextPage = currentPage > pageCountAfterDelete ? pageCountAfterDelete : currentPage;
+      const currentPageSize = paginationMeta.pageSize || PAGE_SIZE;
+      const currentTotal = paginationMeta.total || organizations.length;
+      const isLastItemOnPage = organizations.length === 1;
+      const nextPage = isLastItemOnPage && currentPage > 1 ? currentPage - 1 : currentPage;
 
       setOrganizations((prev) => prev.filter((org) => org.id !== orgToDelete));
       setPaginationMeta((prev) => ({
         ...prev,
-        total: totalAfterDelete,
+        total: Math.max(0, currentTotal - 1),
         page: nextPage,
-        hasMore: nextPage < pageCountAfterDelete,
+        hasMore: nextPage * currentPageSize < Math.max(0, currentTotal - 1),
       }));
 
       if (selectedOrgId === orgToDelete) {
         setSelectedOrgId(null);
+        setSelectedOrgProfile(null);
       }
 
       await fetchOrganizations(nextPage);
@@ -375,10 +380,11 @@ const AdminOrgWorkspace = () => {
     if (!orgToArchive) return;
     setLoading(true);
     try {
+      console.info('[AdminOrgWorkspace] confirmArchiveOrganization', { orgToArchive });
       await orgService.updateOrg(orgToArchive, { status: 'inactive' });
-      setOrganizations((prev) => prev.map((org) => (org.id === orgToArchive ? { ...org, status: 'inactive' } : org)));
+      await fetchOrganizations(paginationMeta.page || 1);
       if (selectedOrgId === orgToArchive) {
-        void loadSelectedOrgProfile(selectedOrgId);
+        await loadSelectedOrgProfile(selectedOrgId);
       }
       showToast?.('Organization archived (set to inactive).', 'success');
       setShowArchiveModal(false);
@@ -396,10 +402,11 @@ const AdminOrgWorkspace = () => {
     if (!orgToRestore) return;
     setLoading(true);
     try {
+      console.info('[AdminOrgWorkspace] confirmRestoreOrganization', { orgToRestore });
       await orgService.updateOrg(orgToRestore, { status: 'active' });
-      setOrganizations((prev) => prev.map((org) => (org.id === orgToRestore ? { ...org, status: 'active' } : org)));
+      await fetchOrganizations(paginationMeta.page || 1);
       if (selectedOrgId === orgToRestore) {
-        void loadSelectedOrgProfile(selectedOrgId);
+        await loadSelectedOrgProfile(selectedOrgId);
       }
       showToast?.('Organization restored (set to active).', 'success');
       setShowRestoreModal(false);
