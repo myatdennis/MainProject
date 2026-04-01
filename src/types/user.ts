@@ -3,6 +3,8 @@ export interface User {
   name: string;
   email: string;
   organization: string;
+  organization_id?: string;
+  organizationName?: string;
   cohort: string;
   role: string;
   enrolled: string;

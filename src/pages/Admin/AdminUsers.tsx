@@ -35,16 +35,32 @@ import Breadcrumbs from '../../components/ui/Breadcrumbs';
 import EmptyState from '../../components/ui/EmptyState';
 import ActionsMenu from '../../components/ui/ActionsMenu';
 import { listOrgs } from '../../dal/orgs';
-import { listUsersByOrg } from '../../dal/adminUsers';
 import { useSecureAuth } from '../../context/SecureAuthContext';
 import { LoadingSpinner } from '../../components/LoadingComponents';
 import apiRequest from '../../utils/apiClient';
 import { useRouteChangeReset } from '../../hooks/useRouteChangeReset';
 import { useNavTrace } from '../../hooks/useNavTrace';
 
+export const getUserTransferToastMessage = (
+  currentOrgContext: string | null,
+  transfer: { fromOrganizationId?: string | null; toOrganizationId?: string | null } | undefined,
+  organizations: Array<{ id: string; name: string }>,
+): string | null => {
+  if (!currentOrgContext || !transfer || !transfer.fromOrganizationId || !transfer.toOrganizationId) {
+    return null;
+  }
+
+  const movedOut = transfer.fromOrganizationId === currentOrgContext && transfer.toOrganizationId !== currentOrgContext;
+  if (!movedOut) return null;
+
+  const targetOrgName = organizations.find((org) => org.id === transfer.toOrganizationId)?.name || transfer.toOrganizationId;
+  return `User moved to ${targetOrgName} and removed from this list.`;
+};
+
 const AdminUsers = () => {
   useNavTrace('AdminUsers');
-  const { activeOrgId } = useSecureAuth();
+  const { activeOrgId, user } = useSecureAuth();
+  const isPlatformAdmin = Boolean(user?.isPlatformAdmin || user?.platformRole === 'platform_admin' || user?.role === 'admin');
   const { routeKey } = useRouteChangeReset();
 
   // Reset transient UI state (filters, selections) whenever the user navigates
@@ -142,12 +158,22 @@ const AdminUsers = () => {
     const normalizedStatus = ['active', 'pending', 'inactive'].includes(rawStatus) ? rawStatus : rawStatus;
 
     const canonicalOrgId = orgFromMember || activeOrgId || '';
+    const profileOrgId = profile.organization_id ?? profile.org_id ?? null;
+    if (profileOrgId && profileOrgId !== canonicalOrgId) {
+      console.warn('[AdminUsers] organization_id mismatch', {
+        userId: String(userId),
+        canonicalOrgId,
+        profileOrgId,
+      });
+    }
 
     return {
       id: String(userId),
       name: fullName || email,
       email,
       organization: canonicalOrgId,
+      organization_id: canonicalOrgId,
+      organizationName: profile.organization_name ?? profile.organizationName ?? (member?.organization || null),
       cohort: profile.cohort ?? profileMetadata.cohort ?? '',
       role:
         profile.title ??
@@ -172,38 +198,49 @@ const AdminUsers = () => {
     setUsersLoading(true);
     setUsersError(null);
     try {
-      let records: any[] = [];
+      const normalizedFilterOrg = filterOrg !== 'all' ? filterOrg : null;
 
-      if (activeOrgId) {
-        records = await listUsersByOrg(activeOrgId);
+      let queryOrgId: string | null = null;
+      if (isPlatformAdmin) {
+        queryOrgId = normalizedFilterOrg;
       } else {
-        // Platform-admin fallback: fetch from all organizations
-        const orgs = await listOrgs();
-        const allResults = await Promise.all(
-          orgs.map((org) =>
-            listUsersByOrg(org.id).catch((err) => {
-              console.warn('[AdminUsers] Failed to load users for org', org.id, err);
-              return [];
-            }),
-          ),
-        );
-        records = allResults.flat();
+        queryOrgId = activeOrgId || normalizedFilterOrg;
       }
+
+      if (!isPlatformAdmin && !queryOrgId) {
+        throw new Error('Organization context is required for non-platform administrators.');
+      }
+
+      const queryString = queryOrgId ? `?orgId=${encodeURIComponent(queryOrgId)}` : '';
+      const apiPath = `/api/admin/users${queryString}`;
+
+      console.info('[AdminUsers] fetchUsers:', { apiPath, activeOrgId, isPlatformAdmin, filterOrg });
+
+      const json = await apiRequest<{ data: any[] }>(apiPath, { noTransform: true });
+      const records = Array.isArray(json?.data) ? json.data : [];
 
       const mapped = records.map(mapMemberToUser).filter((u): u is User => u !== null);
-      if (mapped.length === 0 && !activeOrgId) {
-        // If no active org and no members, clear with empty list but still show that no users were found.
-        setUsersList([]);
-      } else {
-        setUsersList(mapped);
-      }
+
+      // Strict invariants
+      const duplicates = mapped.reduce<Record<string, number>>((acc, user) => {
+        acc[user.id] = (acc[user.id] || 0) + 1;
+        return acc;
+      }, {});
+      Object.entries(duplicates).forEach(([id, count]) => {
+        if (count > 1) {
+          console.error('[AdminUsers] duplicate_user_id', { id, count });
+        }
+      });
+
+      setUsersList(mapped);
     } catch (err: any) {
       console.error('[AdminUsers] Failed to load users', err);
       setUsersError(err?.message ?? 'Failed to load users');
+      setUsersList([]);
     } finally {
       setUsersLoading(false);
     }
-  }, [activeOrgId, mapMemberToUser]);
+  }, [activeOrgId, filterOrg, isPlatformAdmin, mapMemberToUser]);
 
   useEffect(() => {
     void fetchUsers();
@@ -315,12 +352,7 @@ const AdminUsers = () => {
   };
 
   const handleUserAdded = (_newUser: User) => {
-    setUsersList((prev: User[]) => {
-      const deduped = prev.filter((user) => user.id !== _newUser.id);
-      return [...deduped, _newUser];
-    });
-
-    // Refresh data in the background to ensure canonical values are shown
+    // Full source of truth from server - force refetch after create
     void fetchUsers();
     showToast('User account added successfully!', 'success');
   };
@@ -403,8 +435,8 @@ const AdminUsers = () => {
   };
 
   const confirmDeleteUser = async () => {
-    if (!userToDelete || !activeOrgId) return;
-    
+    if (!userToDelete || (!activeOrgId && filterOrg === 'all' && !isPlatformAdmin)) return;
+
     setLoading(true);
     try {
       await apiRequest(`/api/admin/users/${userToDelete}`, {
@@ -412,10 +444,12 @@ const AdminUsers = () => {
         body: { organizationId: activeOrgId, mode: 'archive' },
         expectedStatus: [200, 204],
       });
-      setUsersList((prev: User[]) => prev.filter((user: User) => user.id !== userToDelete));
+
       showToast('User archived successfully!', 'success');
       setShowDeleteModal(false);
       setUserToDelete(null);
+      // full refetch to avoid stale partial state
+      void fetchUsers();
     } catch (error: any) {
       showToast(error?.message ?? 'Failed to archive user', 'error');
     } finally {
@@ -433,32 +467,20 @@ const AdminUsers = () => {
 
   const handleUserUpdated = (updatedUser?: User, transfer?: { fromOrganizationId?: string | null; toOrganizationId?: string | null }) => {
     if (updatedUser) {
-      setUsersList((prev: User[]) =>
-        prev.map((user) => (user.id === updatedUser.id ? { ...user, ...updatedUser } : user)),
-      );
-
-      const movedOutOfActiveOrg = activeOrgId && transfer?.fromOrganizationId === activeOrgId && transfer?.toOrganizationId && transfer.toOrganizationId !== activeOrgId;
-      const movedOutOfFilteredOrg = !activeOrgId && filterOrg !== 'all' && transfer?.fromOrganizationId === filterOrg && transfer?.toOrganizationId && transfer.toOrganizationId !== filterOrg;
-
-      if (movedOutOfActiveOrg) {
-        setUsersList((prev: User[]) => prev.filter((user: User) => user.id !== updatedUser.id));
-        showToast(`User moved to organization ${transfer.toOrganizationId} and removed from this organization list.`, 'success');
-        void fetchUsers();
-        return;
-      }
-
-      if (movedOutOfFilteredOrg) {
-        showToast(`User moved to organization ${transfer.toOrganizationId} and removed from this filtered list.`, 'success');
-        void fetchUsers();
-        return;
+      const currentOrgContext = activeOrgId || (filterOrg !== 'all' ? filterOrg : null);
+      const transferMessage = getUserTransferToastMessage(currentOrgContext, transfer, organizations);
+      if (transferMessage) {
+        showToast(transferMessage, 'success');
+      } else {
+        showToast('User updated successfully!', 'success');
       }
     }
 
-    // General refresh for global and same-org updates
-    void fetchUsers();
-    showToast('User updated successfully!', 'success');
     setShowEditUserModal(false);
     setUserToEdit(null);
+
+    // Always re-fetch server state to avoid stale locality from prior list contents.
+    void fetchUsers();
   };
 
   const statusOptions = useMemo(() => {

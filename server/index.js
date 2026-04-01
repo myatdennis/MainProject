@@ -1978,14 +1978,16 @@ const shouldUseAdminUsersFallback = (req) => {
 
 app.get('/api/admin/users', authenticate, requireAdmin, async (req, res) => {
   const orgId = pickOrgId(req.query.orgId, req.query.organizationId);
-  if (!orgId) {
-    res.status(400).json({ error: 'org_id_required', message: 'orgId query parameter is required.' });
-    return;
-  }
 
   if (shouldUseAdminUsersFallback(req)) {
     const normalizedOrgId = normalizeOrgIdValue(orgId);
     const allMembers = Array.isArray(e2eStore.users) ? e2eStore.users : [];
+
+    if (!normalizedOrgId && req.user?.isPlatformAdmin) {
+      res.json({ data: allMembers });
+      return;
+    }
+
     const members = allMembers.filter((member) => {
       const memberOrg = normalizeOrgIdValue(member?.organization_id ?? member?.org_id ?? null);
       return normalizedOrgId ? memberOrg === normalizedOrgId : true;
@@ -2002,17 +2004,26 @@ app.get('/api/admin/users', authenticate, requireAdmin, async (req, res) => {
 
   const context = requireUserContext(req, res);
   if (!context) return;
+  const isPlatformAdmin = Boolean(context.isPlatformAdmin || context.userRole === 'admin');
 
-  const access = await requireOrgAccess(req, res, orgId, { write: false, requireOrgAdmin: true });
-  if (!access) return;
+  if (!isPlatformAdmin && !orgId) {
+    res.status(400).json({ error: 'org_id_required', message: 'orgId query parameter is required.' });
+    return;
+  }
+
+  if (!isPlatformAdmin) {
+    const access = await requireOrgAccess(req, res, orgId, { write: false, requireOrgAdmin: true });
+    if (!access) return;
+  }
 
   try {
-    const members = await fetchOrgMembersWithProfiles(orgId);
+    const members = isPlatformAdmin && !orgId ? await fetchAllOrgMembersWithProfiles() : await fetchOrgMembersWithProfiles(orgId);
     res.json({ data: members });
   } catch (error) {
     const normalized = logUsersStageError('memberships_fetch', error, {
       requestId: req.requestId ?? null,
       orgId,
+      isPlatformAdmin,
     });
     res.status(500).json({
       error: 'Unable to load organization users',
@@ -7149,6 +7160,36 @@ async function fetchOrgMembersWithProfiles(orgId) {
 
   return members;
 }
+
+async function fetchAllOrgMembersWithProfiles() {
+  if (!supabase) {
+    return [];
+  }
+
+  const { data: organizations, error: orgError } = await supabase
+    .from('organizations')
+    .select('id');
+
+  if (orgError) {
+    throw orgError;
+  }
+
+  const orgIds = Array.isArray(organizations) ? organizations.map((org) => org?.id).filter(Boolean) : [];
+  const memberSets = await Promise.all(
+    orgIds.map(async (orgId) => {
+      try {
+        return await fetchOrgMembersWithProfiles(orgId);
+      } catch (error) {
+        logger.warn('admin_users_fetch_org_members_failed', { orgId, error: error?.message || String(error) });
+        return [];
+      }
+    }),
+  );
+
+  return memberSets.flat();
+}
+
+
 
 const DEFAULT_ASSIGNMENT_BUCKET = () => ({
   assignmentCount: 0,

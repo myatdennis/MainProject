@@ -489,8 +489,20 @@ const buildUserPayload = (user, memberships, { membershipStatus = 'ready' } = {}
 
   const rolePermissions = getPermissionsForRole(inferredRole);
   const platformPermissions = platformRole ? getPermissionsForRole(platformRole) : new Set();
-  const mergedPermissions = mergePermissions(rolePermissions, platformPermissions);
+  const mergedPermissions = mergePermissions
   const serializedPermissions = Array.from(mergedPermissions);
+
+  if (AUTH_VERBOSE_LOGGING) {
+    console.info('[auth] build_user_payload', {
+      userId: user?.id ?? null,
+      email: user?.email ?? null,
+      platformRole,
+      inferredRole,
+      isPlatformAdmin: (platformRole === 'platform_admin') || isPlatformAdmin(user),
+      activeOrgIds: organizationIds,
+      membershipCount: trustedMemberships.length,
+    });
+  }
 
   return {
     id: user.id,

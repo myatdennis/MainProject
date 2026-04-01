@@ -39,7 +39,24 @@ const normalizeOrgId = (row: any) =>
   ).trim();
 
 const mapAdminUserRecord = (row: any): AdminUserRecord => {
-  const userId = normalizeUserId(row);
+  const hierarchicalUserId = normalizeUserId(row);
+  const membershipUserId = String(row?.user_id ?? row?.user?.id ?? '').trim();
+
+  if (!hierarchicalUserId) {
+    console.error('[adminUsers] userId_invariant_failed', { row });
+    throw new Error('adminUsers:userId_missing');
+  }
+
+  if (membershipUserId && membershipUserId !== hierarchicalUserId) {
+    console.warn('[adminUsers] userId_mismatch', {
+      membershipUserId,
+      canonicalUserId: hierarchicalUserId,
+      rowId: row?.id ?? null,
+      membershipId: row?.membershipId ?? row?.id ?? null,
+    });
+  }
+
+  const userId = hierarchicalUserId;
   const orgId = normalizeOrgId(row);
 
   const rawName =
@@ -58,7 +75,7 @@ const mapAdminUserRecord = (row: any): AdminUserRecord => {
     organization_id: orgId,
     org_id: orgId,
     userId,
-    user_id: String(row?.user_id ?? row?.user?.id ?? '').trim(),
+    user_id: membershipUserId || userId,
     email:
       row?.email ??
       row?.profile?.email ??
