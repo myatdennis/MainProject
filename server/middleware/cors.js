@@ -66,13 +66,21 @@ if (!envOrigins.length) {
 const normalizeOrigin = (origin) => {
   if (!origin || typeof origin !== 'string') return '';
   let normalized = origin.trim();
-  // Strip trailing slash, if present (browsers may include it in some edge cases
-  // or proxies may canonicalize differently).
+  // Strip trailing slashes.
   normalized = normalized.replace(/\/+$/, '');
-  if (!normalized) return '';
+
   try {
     const url = new URL(normalized);
-    return `${url.protocol}//${url.host}`;
+    const scheme = String(url.protocol).toLowerCase();
+    const hostname = String(url.hostname).toLowerCase();
+    const port = String(url.port || '');
+    let host = hostname;
+
+    if (port && !(scheme === 'https:' && port === '443') && !(scheme === 'http:' && port === '80')) {
+      host = `${hostname}:${port}`;
+    }
+
+    return `${scheme}//${host}`;
   } catch {
     return normalized;
   }
@@ -83,17 +91,28 @@ const resolveCorsOriginDecision = (origin) => {
   if (!normalizedOrigin) {
     return { allowed: false, reason: 'missing_origin', resolvedOrigin: null };
   }
-  if (resolvedCorsOrigins.includes(normalizedOrigin)) {
-    return { allowed: true, reason: 'allowlist', resolvedOrigin: normalizedOrigin };
+
+  const originWithoutDefaultPort = normalizedOrigin.replace(/:(443|80)$/i, '');
+
+  const isAllowed =
+    resolvedCorsOrigins.includes(normalizedOrigin) ||
+    resolvedCorsOrigins.includes(originWithoutDefaultPort);
+
+  if (isAllowed) {
+    return { allowed: true, reason: 'allowlist', resolvedOrigin: originWithoutDefaultPort || normalizedOrigin };
   }
+
   // Allow all Netlify preview and branch-deploy URLs in all environments so PR
   // previews never hit CORS errors when calling the Railway API.
   if (NETLIFY_PREVIEW_REGEX.test(normalizedOrigin) || NETLIFY_ANY_PREVIEW_REGEX.test(normalizedOrigin)) {
     return { allowed: true, reason: 'netlify_preview', resolvedOrigin: normalizedOrigin };
   }
+
   if ((process.env.NODE_ENV || '').toLowerCase() !== 'production' && isLocalDevOrigin(normalizedOrigin)) {
     return { allowed: true, reason: 'local_dev', resolvedOrigin: normalizedOrigin };
   }
+
+  console.warn('[cors] rejecting_origin', { origin, normalizedOrigin, originWithoutDefaultPort, allowedOrigins: resolvedCorsOrigins });
   return { allowed: false, reason: 'not_allowlisted', resolvedOrigin: null };
 };
 
