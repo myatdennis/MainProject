@@ -101,11 +101,17 @@ const AdminCourseAssign = () => {
         },
       });
 
-      courseStore.saveCourse({
-        ...course,
-        enrollments: (course.enrollments || 0) + result.count,
-        lastUpdated: new Date().toISOString(),
-      }, { skipRemoteSync: true });
+      if (!result || !['sent', 'queued'].includes(result.status)) {
+        throw new Error('Invalid assignment response status');
+      }
+
+      if (result.status === 'sent') {
+        courseStore.saveCourse({
+          ...course,
+          enrollments: (course.enrollments || 0) + result.count,
+          lastUpdated: new Date().toISOString(),
+        }, { skipRemoteSync: true });
+      }
 
       (result.assignments ?? []).forEach((record: CourseAssignment) => {
         syncService.logEvent({

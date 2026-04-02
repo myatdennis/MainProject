@@ -65,16 +65,39 @@ const logRefreshResult = (status: string) => logAuthDebug('[auth] refresh result
 const readSupabaseSessionTokens = async (
   options: { refreshIfMissing?: boolean } = {},
 ): Promise<{ accessToken: string | null; refreshToken: string | null }> => {
-  const accessToken = getAccessToken() ?? null;
-  const refreshToken = getRefreshToken() ?? null;
+  let accessToken = getAccessToken() ?? null;
+  let refreshToken = getRefreshToken() ?? null;
+  const authStorageMode = (() => {
+    try {
+      return AUTH_STORAGE_MODE;
+    } catch {
+      return 'unknown';
+    }
+  })();
+
   if (import.meta.env?.DEV) {
     console.info('[SecureAuth] boot', {
-      storageMode: AUTH_STORAGE_MODE,
+      storageMode: authStorageMode,
       hasAccessToken: Boolean(accessToken),
       hasRefreshToken: Boolean(refreshToken),
       refreshIfMissing: options.refreshIfMissing !== false,
     });
   }
+
+  if (options.refreshIfMissing !== false && (!accessToken || !refreshToken)) {
+    try {
+      const supabase = getSupabase();
+      const sessionResult = await supabase?.auth?.getSession();
+      const supabaseSession = sessionResult?.data?.session as SupabaseSessionLike | null;
+      if (supabaseSession) {
+        accessToken = accessToken || supabaseSession.access_token || supabaseSession.accessToken || null;
+        refreshToken = refreshToken || supabaseSession.refresh_token || supabaseSession.refreshToken || null;
+      }
+    } catch (sessionError) {
+      console.warn('[SecureAuth] readSupabaseSessionTokens fallback failed', sessionError);
+    }
+  }
+
   return { accessToken, refreshToken };
 };
 
@@ -665,32 +688,37 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
     if (typeof window === 'undefined') {
       return;
     }
+
     if (membershipRetryTimerRef.current) {
       return;
     }
-    const attempt = membershipRetryAttemptRef.current;
-    const delay = MEMBERSHIP_RETRY_DELAYS_MS[Math.min(attempt, MEMBERSHIP_RETRY_DELAYS_MS.length - 1)];
-    membershipRetryAttemptRef.current = Math.min(attempt + 1, MEMBERSHIP_RETRY_DELAYS_MS.length - 1);
-  membershipRetryTimerRef.current = window.setTimeout(async () => {
+
+    const currentAttempt = membershipRetryAttemptRef.current;
+    const delay = MEMBERSHIP_RETRY_DELAYS_MS[Math.min(currentAttempt, MEMBERSHIP_RETRY_DELAYS_MS.length - 1)];
+    membershipRetryAttemptRef.current += 1;
+
+    membershipRetryTimerRef.current = window.setTimeout(async () => {
       membershipRetryTimerRef.current = null;
-      const fetchFn = fetchServerSessionRef.current;
-      if (!fetchFn) {
-        scheduleRetry('retry_waiting_for_fetch');
-        return;
-      }
+
       try {
-        // Use the current path to determine which surface to retry on so admin
-        // users don't accidentally hit the LMS session endpoint on the admin surface.
-        const retrySurface: 'admin' | 'lms' =
-          typeof window !== 'undefined' && isAdminSurface(window.location.pathname)
+        const fetchFn = fetchServerSessionRef.current;
+        if (!fetchFn) {
+          return;
+        }
+
+        const retrySurface: SessionSurface =
+          typeof window !== 'undefined' && isAdminSurface(window.location?.pathname ?? '')
             ? 'admin'
             : 'lms';
+
         await fetchFn({ surface: retrySurface, silent: true, allowRefresh: false, skipMembershipSelfHeal: true });
       } catch (retryError) {
         console.warn('[SecureAuth] membership retry backoff failed', retryError);
       } finally {
         if (membershipStatusRef.current !== 'ready') {
           scheduleRetry('retry_followup');
+        } else {
+          clearMembershipRetryBackoff();
         }
       }
     }, delay);
@@ -1517,9 +1545,11 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
   const refreshTokenCallback = useCallback(
     async (options: RefreshOptions = {}): Promise<boolean> => {
       const reason: RefreshReason = options.reason ?? 'protected_401';
+      console.debug('[SecureAuth] refreshTokenCallback start', { reason, isPlatformAdmin: hasAuthenticatedSessionRef.current });
 
       const allowedByReason = reason === 'user_retry' || (reason === 'protected_401' && hasAuthenticatedSessionRef.current);
       if (!allowedByReason) {
+        console.debug('[SecureAuth] refreshTokenCallback suppressed (not allowed yet)', { reason });
         return false;
       }
 
@@ -1579,16 +1609,19 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             }
           }
 
-          if (!refreshToken) {
-            try {
-              const supabaseClient = getSupabase();
-              if (supabaseClient) {
-                const { data } = await supabaseClient.auth.getSession();
-                refreshToken = data?.session?.refresh_token ?? refreshToken;
+          // Prefer Supabase token over existing persistent token to avoid stale values.
+          try {
+            const supabaseClient = getSupabase();
+            if (supabaseClient) {
+              const { data } = await supabaseClient.auth.getSession();
+              const supabaseRefreshToken =
+                (data as any)?.session?.refresh_token ?? (data as any)?.session?.refreshToken ?? null;
+              if (supabaseRefreshToken) {
+                refreshToken = supabaseRefreshToken;
               }
-            } catch (supabaseError) {
-              console.warn('[SecureAuth] Unable to read Supabase session for refresh token', supabaseError);
             }
+          } catch (supabaseError) {
+            console.warn('[SecureAuth] Unable to read Supabase session for refresh token', supabaseError);
           }
 
           if (!refreshToken) {
@@ -1615,12 +1648,16 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
             setAuthStatus('authenticated', 'refreshTokenCallback:refresh_success');
             setSessionStatus('authenticated', 'refreshTokenCallback:refresh_success');
             refreshStatus = 'success';
+            lastRefreshSuccessRef.current = getSkewedNow();
+            console.debug('[SecureAuth] refreshTokenCallback success', { reason, refreshStatus, refreshToken });
+            return true;
           } else {
             await fetchServerSession({ silent: true });
             refreshStatus = 'success';
           }
 
           lastRefreshSuccessRef.current = getSkewedNow();
+          console.debug('[SecureAuth] refreshTokenCallback success', { reason, refreshStatus, refreshToken });
           return true;
         } catch (error) {
           if (error instanceof ApiError) {
@@ -1676,8 +1713,6 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
 
   const runBootstrap = useCallback(
     async (signal?: AbortSignal, runId?: number) => {
-      // Guard: if a newer bootstrap run has started since this one was dispatched,
-      // discard all state updates to prevent stale responses from overwriting
       // the outcome of the newer run.
       const isStale = () =>
         typeof runId === 'number' && bootstrapRunIdRef.current !== runId;
@@ -1763,7 +1798,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       }
 
       // Detect E2E bypass outside the try block too, so a throw can't override it
-      // Restrict the localStorage key to non-production environments (same rule as above).
+      // Restrict the localStorage key to non-production environments.
       const _isNotProduction = import.meta.env.DEV || import.meta.env.MODE !== 'production';
       const _e2eFallbackBypass =
         typeof window !== 'undefined' &&
@@ -1839,6 +1874,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           return;
         }
         if (isStale()) {
+
           return;
         }
         if (error instanceof NotAuthenticatedError) {
@@ -1851,9 +1887,14 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         }
         if (error instanceof ApiError) {
           if (error.status === 401 || error.status === 403) {
+            console.debug('[SecureAuth] runBootstrap detected 401/403, attempting refresh', {
+              status: error.status,
+              reason: 'bootstrap_401',
+            });
             const refreshFn = refreshTokenCallbackRef.current;
             if (refreshFn) {
               const recovered = await refreshFn({ reason: 'user_retry' });
+              console.debug('[SecureAuth] refreshTokenCallback result', { recovered });
               if (isStale()) {
                 return;
               }
@@ -1870,10 +1911,18 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
           }
 
           const severeServerError = isServerOrNetworkErrorStatus(error.status);
+          console.warn('[SecureAuth] runBootstrap caught ApiError', {
+            status: error.status,
+            severeServerError,
+            authStatus: authStatus,
+            bootstrapError: bootstrapError,
+          });
           if (severeServerError) {
             lastSessionFetchResultRef.current = 'error';
             setBootstrapError('Network issue while restoring your session. Please retry.');
             setAuthStatus('error');
+            // ensure we do not clear this error by forcing unauthenticated flow
+            setShouldRedirectToLogin(false);
             logSessionResult('error');
           } else {
             continueAsGuest('bootstrap_http_error', { redirect: false });
@@ -2443,7 +2492,63 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       }
 
       const normalizedPayload = normalizeSessionResponsePayload(rawPayload);
-      if (!normalizedPayload) {
+
+      // Fallback path for environments where /api/auth/login is not available or
+      // returns empty results (e.g. integration test stubs). Try to recover from
+      // Supabase signInWithPassword if configured.
+      let payloadFromFallback: SessionResponsePayload | null = normalizedPayload;
+      if (!payloadFromFallback) {
+        const supabase = getSupabase();
+        if (supabase?.auth?.signInWithPassword) {
+          const signInResult = await supabase.auth.signInWithPassword({
+            email: normalizedEmail,
+            password,
+          } as any);
+
+          if (signInResult.error) {
+            if (signInResult.error.status === 400) {
+              return {
+                success: false,
+                error: 'Invalid email or password',
+                errorType: 'invalid_credentials',
+              };
+            }
+            return {
+              success: false,
+              error: signInResult.error.message || 'Login failed. Please try again.',
+              errorType: 'unknown_error',
+            };
+          }
+
+          try {
+            const sessionPayloadRaw = await requestJsonWithClock<unknown>('/auth/session', {
+              method: 'GET',
+              requireAuth: true,
+            });
+            payloadFromFallback = normalizeSessionResponsePayload(sessionPayloadRaw);
+          } catch (sessionError) {
+            console.warn('[SecureAuth] login fallback /auth/session failed', sessionError);
+            payloadFromFallback = null;
+          }
+        } else {
+          try {
+            const sessionPayloadRaw = await requestJsonWithClock<unknown>('/auth/session', {
+              method: 'GET',
+              requireAuth: true,
+            });
+            payloadFromFallback = normalizeSessionResponsePayload(sessionPayloadRaw);
+          } catch {
+            payloadFromFallback = null;
+          }
+        }
+      }
+
+      if (!payloadFromFallback) {
+        console.debug('[SecureAuth] login fallback failed', {
+          hasNormalizedPayload: Boolean(normalizedPayload),
+          supabaseSignInAvailable: Boolean(getSupabase()?.auth?.signInWithPassword),
+          signInResult: undefined,
+        });
         return {
           success: false,
           error: 'Authentication failed. Please try again.',
@@ -2451,7 +2556,7 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
         };
       }
 
-      applySessionPayload(normalizedPayload, {
+      applySessionPayload(payloadFromFallback, {
         surface: type,
         persistTokens: true,
         reason: `${type}_login_success`,
@@ -2462,16 +2567,16 @@ export function SecureAuthProvider({ children }: AuthProviderProps) {
       logAuthSessionState(`${type}-login_success`, getUserSession());
       console.info('[LOGIN SUCCESS]', {
         surface: type,
-        userId: normalizedPayload.user?.id ?? null,
-        membershipCount: normalizedPayload.memberships?.length ?? 0,
+        userId: payloadFromFallback.user?.id ?? null,
+        membershipCount: payloadFromFallback.memberships?.length ?? 0,
       });
 
       if (type === 'admin') {
         enqueueAudit({
           action: 'admin_login',
           details: {
-            email: normalizedPayload.user?.email ?? normalizedEmail,
-            id: normalizedPayload.user?.id ?? null,
+            email: payloadFromFallback.user?.email ?? normalizedEmail,
+            id: payloadFromFallback.user?.id ?? null,
           },
         });
         void flushAuditQueue();
@@ -2757,6 +2862,16 @@ const renderAuthState = ({
   }
 
   const shouldBypassErrorOverlay = authStatus === 'error' && isPublicAuthPath;
+
+  if (bootstrapError && authStatus !== 'authenticated') {
+    return (
+      <BootstrapErrorOverlay
+        message={bootstrapError}
+        onRetry={onRetry}
+        onGoToLogin={onGoToLogin}
+      />
+    );
+  }
 
   if (authStatus === 'error' && !shouldBypassErrorOverlay) {
     return (

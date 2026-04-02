@@ -107,6 +107,13 @@ const isCanonicalAdminEmail = (email) => {
   return normalizeEmail(email) === PRIMARY_ADMIN_EMAIL;
 };
 
+const ORG_ADMIN_ROLES = new Set(['owner', 'admin', 'manager']);
+
+const hasOrgAdminRole = (role) => {
+  if (!role) return false;
+  return ORG_ADMIN_ROLES.has(String(role).toLowerCase());
+};
+
 const derivePlatformRole = (user = {}) => {
   const metadataRole =
     user.app_metadata?.platform_role ||
@@ -124,6 +131,13 @@ const derivePlatformRole = (user = {}) => {
   }
 
   return null;
+};
+
+export function isPlatformAdmin(user = {}) {
+  if (!user || typeof user !== 'object') return false;
+  const explicitPlatformRole = user.platformRole || user.role || null;
+  const platformRole = (derivePlatformRole(user) || String(explicitPlatformRole || '').toLowerCase()).toLowerCase();
+  return platformRole === 'platform_admin' || Boolean(user.isPlatformAdmin);
 };
 
 const resolveUserRole = (user = {}, memberships = []) => {
@@ -145,10 +159,49 @@ const resolveUserRole = (user = {}, memberships = []) => {
   return 'learner';
 };
 
-const isPlatformAdmin = (user = {}) => {
-  if (!user || typeof user !== 'object') return false;
-  const platformRole = derivePlatformRole(user);
-  return String(platformRole).toLowerCase() === 'platform_admin' || Boolean(user.isPlatformAdmin);
+export function isOrgAdministrator(user = {}, orgId = null) {
+  if (isPlatformAdmin(user)) return true;
+  const memberships = Array.isArray(user.memberships) ? user.memberships : [];
+  if (orgId) {
+    const membership = memberships.find((m) => pickOrgId(m.orgId, m.organizationId, m.organization_id) === orgId);
+    return membership ? hasOrgAdminRole(membership.role) : false;
+  }
+  return memberships.some((membership) => hasOrgAdminRole(membership.role));
+};
+
+export function canManageOrganization(actor = {}, targetOrgId = null) {
+  if (isPlatformAdmin(actor)) return true;
+  if (!targetOrgId) return false;
+  return isOrgAdministrator(actor, targetOrgId);
+};
+
+export function canAssignAcrossOrganizations(actor = {}, targetOrgId = null, courseOrgId = null) {
+  if (isPlatformAdmin(actor)) return true;
+  if (!targetOrgId || !courseOrgId) return false;
+  if (String(targetOrgId) !== String(courseOrgId)) return false;
+  return isOrgAdministrator(actor, targetOrgId);
+};
+
+const canManageUser = (actor = {}, targetUser = {}) => {
+  if (isPlatformAdmin(actor)) return true;
+  const targetOrgs = new Set(
+    (Array.isArray(targetUser.memberships) ? targetUser.memberships : [])
+      .filter((membership) => membership.organizationId || membership.organization_id || membership.orgId)
+      .map((membership) => pickOrgId(membership.orgId, membership.organizationId, membership.organization_id))
+      .filter(Boolean),
+  );
+
+  const actorOrgs = new Set(
+    (Array.isArray(actor.memberships) ? actor.memberships : [])
+      .filter((membership) => membership.role && hasOrgAdminRole(membership.role))
+      .map((membership) => pickOrgId(membership.orgId, membership.organizationId, membership.organization_id))
+      .filter(Boolean),
+  );
+
+  for (const orgId of targetOrgs) {
+    if (actorOrgs.has(orgId)) return true;
+  }
+  return false;
 };
 
 export {
@@ -157,7 +210,9 @@ export {
   isCanonicalAdminEmail,
   isAllowlistedAdminEmail,
   resolveUserRole,
-  isPlatformAdmin,
+  hasOrgAdminRole,
+  canManageUser,
+  getRequestedOrgId,
   syncUserProfileFlags,
 };
 
@@ -273,6 +328,9 @@ const buildDemoAuthContextPayload = ({ role = 'learner' } = {}) => {
 };
 
 const resolveDemoBypassRole = (req) => {
+  if (isProduction) {
+    return 'learner';
+  }
   const path = String(req?.originalUrl || req?.url || '').toLowerCase();
   const explicitRole = String(req?.headers?.['x-user-role'] || '').trim().toLowerCase();
   if (explicitRole === 'admin') {
@@ -390,9 +448,23 @@ const coerceUuid = (value) => {
   return UUID_PATTERN.test(trimmed) ? trimmed : null;
 };
 
+const normalizeOrgId = (orgId) => {
+  if (!orgId && orgId !== 0) return null;
+  const post = String(orgId).trim().toLowerCase();
+  return post || null;
+};
+
+const pickOrgId = (...candidates) => {
+  for (const candidate of candidates) {
+    const normalized = normalizeOrgId(candidate);
+    if (normalized) return normalized;
+  }
+  return null;
+};
+
 const getRequestedOrgId = (req) => {
   if (!req) return null;
-  const headerOrg = coerceUuid(req.headers?.['x-org-id']);
+  const headerOrg = !isProduction ? coerceUuid(req.headers?.['x-org-id']) : null;
   const cookieOrg = getActiveOrgFromRequest(req);
   const candidates = [
     headerOrg,
@@ -489,7 +561,7 @@ const buildUserPayload = (user, memberships, { membershipStatus = 'ready' } = {}
 
   const rolePermissions = getPermissionsForRole(inferredRole);
   const platformPermissions = platformRole ? getPermissionsForRole(platformRole) : new Set();
-  const mergedPermissions = mergePermissions
+  const mergedPermissions = mergePermissions(rolePermissions, platformPermissions);
   const serializedPermissions = Array.from(mergedPermissions);
 
   if (AUTH_VERBOSE_LOGGING) {
@@ -831,57 +903,32 @@ const hasWritableOrgRole = (membership) => {
  */
 export async function requireAdmin(req, res, next) {
   if (!req.user) {
-    return res.status(401).json({
-      error: 'Authentication required',
-      message: 'Must be logged in',
-    });
+    return res.status(401).json({ error: 'Authentication required', message: 'Must be logged in' });
   }
 
   const userId = req.user.userId || req.user.id || null;
-  let resolvedRole = req.user.role ? String(req.user.role).toLowerCase() : null;
-  let isPlatformAdmin = Boolean(req.user.isPlatformAdmin || req.user.platformRole === 'platform_admin');
+  let isPlatformAdminRole = Boolean(req.user.isPlatformAdmin || req.user.platformRole === 'platform_admin');
 
-  if (!isPlatformAdmin && userId) {
+  if (!isPlatformAdminRole && userId) {
     const profileFlags = await fetchUserProfileRole(userId);
-    if (profileFlags.role) {
-      resolvedRole = profileFlags.role;
-    }
     if (profileFlags.isAdmin || profileFlags.role === 'platform_admin') {
-      isPlatformAdmin = true;
+      isPlatformAdminRole = true;
     }
   }
 
-  const hasOrgAdminRole = Array.isArray(req.user.memberships)
-    ? req.user.memberships.some((membership) => String(membership.role || '').toLowerCase() === 'admin')
-    : false;
-
-  if (isPlatformAdmin || hasOrgAdminRole) {
-    if (resolvedRole) {
-      req.user.role = resolvedRole;
-    }
-    if (isPlatformAdmin) {
-      req.user.isPlatformAdmin = true;
-      req.user.platformRole = 'platform_admin';
-    }
-    return next();
+  if (!isPlatformAdminRole) {
+    console.warn('[requireAdmin] Access denied', {
+      userId,
+      email: req.user.email || null,
+      role: req.user.role || null,
+      platformRole: req.user.platformRole || null,
+    });
+    return res.status(403).json({ error: 'Forbidden', message: 'Platform admin access required' });
   }
 
-  const deniedMeta = {
-    userId: req.user.userId || req.user.id || null,
-    email: req.user.email || null,
-    platformRole: req.user.platformRole || null,
-    resolvedRole: req.user.role || null,
-    memberships: Array.isArray(req.user.memberships)
-      ? req.user.memberships.map((m) => ({ orgId: m.orgId, role: m.role, status: m.status }))
-      : [],
-    path: req.originalUrl,
-  };
-  console.warn('[requireAdmin] Access denied', deniedMeta);
-
-  return res.status(403).json({
-    error: 'Forbidden',
-    message: 'Platform admin access required',
-  });
+  req.user.isPlatformAdmin = true;
+  req.user.platformRole = 'platform_admin';
+  return next();
 }
 
 /**
@@ -975,6 +1022,63 @@ export function requireSameOrganizationOrAdmin(getOrganizationId) {
       message: 'You can only access resources in your organization',
     });
   };
+}
+
+export async function requirePlatformAdmin(req, res, next) {
+  return requireAdmin(req, res, next);
+}
+
+export async function requireOrgAdmin(req, res, next) {
+  if (!req.user) {
+    return res.status(401).json({ error: 'Authentication required', message: 'Must be logged in' });
+  }
+
+  if (isPlatformAdmin(req.user)) {
+    return next();
+  }
+
+  const orgId =
+    req.params?.orgId ||
+    req.body?.organizationId ||
+    req.body?.organization_id ||
+    req.query?.orgId ||
+    req.query?.organizationId ||
+    req.query?.organization_id ||
+    req.activeOrgId ||
+    null;
+
+  if (!orgId) {
+    return res.status(400).json({ error: 'organization_id_required', message: 'Organization context is required' });
+  }
+
+  let resolvedOrgId = String(orgId).trim();
+  let membership = null;
+
+  if (req.orgMemberships instanceof Map) {
+    membership = req.orgMemberships.get(resolvedOrgId);
+  }
+
+  if (!membership && Array.isArray(req.user.memberships)) {
+    membership = req.user.memberships.find((m) => pickOrgId(m.orgId, m.organizationId, m.organization_id) === resolvedOrgId);
+  }
+
+  if (!membership && req.user.userId && supabase) {
+    try {
+      const rows = await getUserMemberships(req.user.userId, { logPrefix: 'requireOrgAdmin' });
+      membership = Array.isArray(rows)
+        ? rows.find((m) => pickOrgId(m.orgId, m.organizationId, m.organization_id) === resolvedOrgId)
+        : null;
+    } catch (error) {
+      console.error('[requireOrgAdmin] membership lookup failed', error);
+      return res.status(500).json({ error: 'Unable to verify organization membership' });
+    }
+  }
+
+  if (!membership || !hasOrgAdminRole(membership.role)) {
+    return res.status(403).json({ error: 'org_admin_required', message: 'Organizational admin access required' });
+  }
+
+  next();
 }
 
 export const authLimiter = rateLimit({

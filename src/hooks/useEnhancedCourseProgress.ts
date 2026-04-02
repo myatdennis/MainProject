@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { getSupabase } from '../lib/supabaseClient';
+import { getSupabase } from '../lib/supabase';
 import { useRealtimeSync, RealtimeEvent } from './useRealtimeSync';
 import { useAutoSaveProgress } from './useAutoSaveProgress';
 import { useOfflineProgressQueue } from './useOfflineProgressQueue';
 import toast from 'react-hot-toast';
-import type { UserLessonProgress, UserCourseEnrollment, UserReflection } from '../lib/supabaseClient';
+import type { UserLessonProgress, UserCourseEnrollment, UserReflection } from '../lib/supabase';
 
 interface UseCourseProgressOptions {
   userId?: string;
@@ -271,12 +271,12 @@ export const useEnhancedCourseProgress = (courseId: string, options: UseCoursePr
           courseId,
           lessonId,
           moduleId,
-          progress: updatedProgress.progress_percentage,
-          timeSpent: updatedProgress.time_spent,
-          completed: updatedProgress.completed,
-          lastAccessed: new Date(updatedProgress.last_accessed_at),
+          progress: updatedProgress.progress_percentage ?? 0,
+          timeSpent: updatedProgress.time_spent ?? 0,
+          completed: updatedProgress.completed ?? false,
+          lastAccessed: new Date(updatedProgress.last_accessed_at ?? new Date().toISOString()),
           quizScores: undefined, // Will be handled separately in quiz attempts
-          videoProgress: updatedProgress.progress_percentage
+          videoProgress: updatedProgress.progress_percentage ?? 0
         });
       }
 
@@ -357,6 +357,7 @@ export const useEnhancedCourseProgress = (courseId: string, options: UseCoursePr
       const reflection: UserReflection = {
         id: reflections[lessonId]?.id || `reflection_${Date.now()}`,
         user_id: userId,
+        course_id: courseId,
         lesson_id: lessonId,
         content,
         created_at: reflections[lessonId]?.created_at || new Date().toISOString(),
@@ -422,7 +423,7 @@ export const useEnhancedCourseProgress = (courseId: string, options: UseCoursePr
     const progressValues = Object.values(lessonProgress);
     if (progressValues.length === 0) return 0;
     
-    const totalProgress = progressValues.reduce((sum, progress) => sum + progress.progress_percentage, 0);
+    const totalProgress = progressValues.reduce((sum, progress) => sum + (progress.progress_percentage ?? 0), 0);
     return Math.round(totalProgress / progressValues.length);
   }, [lessonProgress]);
 

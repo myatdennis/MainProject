@@ -32,7 +32,11 @@ export function extractDalErrorDetail(err: unknown): {
   return { message, fields };
 }
 
-export type RequestOptions = RequestInit & { noTransform?: boolean; expectedStatus?: number[] };
+export type RequestOptions = Omit<RequestInit, 'body'> & {
+  body?: unknown;
+  noTransform?: boolean;
+  expectedStatus?: number[];
+};
 
 export async function request<T = any>(url: string, options: RequestOptions = {}): Promise<T> {
   const doFetch = async () => {

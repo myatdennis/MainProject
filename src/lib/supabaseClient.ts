@@ -106,6 +106,19 @@ export function getSupabase(): SupabaseClient | null {
   return supabase;
 }
 
+export function getSupabaseClient(): SupabaseClient | null {
+  return getSupabase();
+}
+
+export function getSupabaseStatus(): 'initialized' | 'unconfigured' {
+  return hasSupabaseConfig() ? 'initialized' : 'unconfigured';
+}
+
+export function getSupabaseSync(): null {
+  // no-op; placeholder for compatibility with existing code paths.
+  return null;
+}
+
 if (typeof window !== 'undefined') {
   if (import.meta.env?.DEV) {
     console.info('[supabaseClient] auth storage mode', AUTH_STORAGE_MODE);
@@ -324,3 +337,44 @@ export function captureAuthDiagnostics(label: string) {
   debugAuthStorage(label);
   void logSupabaseSessionStatus(label);
 }
+
+export type UserCourseEnrollment = {
+  id: string;
+  user_id: string;
+  course_id: string;
+  enrolled_at?: string;
+  status?: string;
+  [key: string]: unknown;
+};
+
+export type UserLessonProgress = {
+  id: string;
+  user_id: string;
+  course_id: string;
+  module_id: string;
+  lesson_id: string;
+  time_spent?: number;
+  completed?: boolean;
+  progress_percentage?: number;
+  last_accessed_at?: string;
+  completed_at?: string;
+  status?: 'in-progress' | 'completed' | 'not-started';
+  [key: string]: unknown;
+};
+
+export type UserReflection = {
+  id: string;
+  user_id: string;
+  course_id: string;
+  lesson_id: string;
+  reflection?: string;
+  created_at?: string;
+  updated_at?: string;
+  [key: string]: unknown;
+};
+
+export type Course = Record<string, unknown>;
+export type Lesson = Record<string, unknown>;
+export type Module = Record<string, unknown>;
+export type UserProfile = Record<string, unknown>;
+export type UserQuizAttempt = Record<string, unknown>;

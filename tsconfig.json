@@ -1,6 +1,8 @@
 {
   "compilerOptions": {
+    "allowJs": true,
     "baseUrl": ".",
+    "checkJs": false,
     "esModuleInterop": true,
     "module": "es2020",
     "paths": {

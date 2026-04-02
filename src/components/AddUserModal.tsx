@@ -212,7 +212,7 @@ const AddUserModal: React.FC<AddUserModalProps> = ({
 
     setLoading(true);
 
-  let shouldClose = true;
+  const shouldClose = true;
   try {
       if (isEditMode && editUser) {
         // Update the real user profile and membership state via PATCH

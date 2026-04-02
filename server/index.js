@@ -67,7 +67,7 @@ import supabaseJwtMiddleware, {
   SUPABASE_JWT_SECRET_CONFIGURED,
   getSupabaseJwtSecretDiagnostics,
 } from './middleware/supabaseJwt.js';
-import { setDoubleSubmitCSRF, getCSRFToken } from './middleware/csrf.js';
+import { setDoubleSubmitCSRF, getCSRFToken, doubleSubmitCSRF } from './middleware/csrf.js';
 import adminUsersRouter from './routes/admin-users.js';
 import mfaRoutes from './routes/mfa.js';
 import { attachRequestId, apiErrorHandler, createHttpError, withHttpError } from './middleware/apiErrorHandler.js';
@@ -939,7 +939,7 @@ const respondWithHealthPayload = async (_req, res) => {
   }
 };
 
-app.post('/api/admin/courses/:id/assign', authenticate, async (req, res) => {
+app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { id } = req.params;
   try {
@@ -1035,7 +1035,8 @@ app.post('/api/admin/courses/:id/assign', authenticate, async (req, res) => {
     const hostHeader = String(req.headers.host || '');
     const remoteIp = String(req.ip || req.connection?.remoteAddress || '');
     const looksLocal = hostHeader.includes('localhost') || hostHeader.includes('127.0.0.1') || remoteIp === '127.0.0.1' || remoteIp === '::1' || remoteIp.startsWith('::ffff:127.');
-    if (!isProduction || E2E_TEST_MODE || DEV_FALLBACK || userRoleHeader === 'admin' || looksLocal) {
+
+    if (!isProduction && (E2E_TEST_MODE || DEV_FALLBACK || userRoleHeader === 'admin' || looksLocal)) {
       finalOrganizationId = DEFAULT_SANDBOX_ORG_ID;
       console.info('[assign] using DEFAULT_SANDBOX_ORG_ID for demo/E2E/admin-header/localhost fallback', { finalOrganizationId, requestId: req.requestId ?? null, remoteIp, hostHeader });
     } else {
@@ -1761,6 +1762,18 @@ app.use('/api/auth', authRoutes);
 app.use('/', healthRouter);
 
 app.use(setDoubleSubmitCSRF);
+
+// Protect all non-auth state-changing endpoints with CSRF tokens.
+app.use((req, res, next) => {
+  const path = req.path || '';
+  if (path.startsWith('/api/auth') || path.startsWith('/api/health') || path.startsWith('/ws')) {
+    return next();
+  }
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+    return next();
+  }
+  return doubleSubmitCSRF(req, res, next);
+});
 
 // Expose CSRF token endpoint for clients and scripts that use the double-submit cookie pattern
 app.get('/api/auth/csrf', getCSRFToken);
@@ -10059,7 +10072,7 @@ app.post('/api/broadcast', async (req, res) => {
 // Expose broadcast helper to other server modules
 app.locals.broadcastToTopic = broadcastToTopic;
 
-app.get('/api/admin/courses', async (req, res) => {
+app.get('/api/admin/courses', authenticate, requireOrgAdmin, async (req, res) => {
   console.debug('[ADMIN COURSES HANDLER HIT]', { url: req.url, method: req.method });
   const context = requireUserContext(req, res);
   if (!context) return;
@@ -10409,7 +10422,7 @@ app.get('/api/admin/courses', async (req, res) => {
   }
 });
 
-app.get('/api/admin/courses/:identifier', async (req, res) => {
+app.get('/api/admin/courses/:identifier', authenticate, requireOrgAdmin, async (req, res) => {
   const context = requireUserContext(req, res);
   if (!context) return;
   const identifier = (req.params?.identifier || '').trim();
@@ -11327,11 +11340,11 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
   }
 }
 
-app.post('/api/admin/courses', asyncHandler(async (req, res) => {
+app.post('/api/admin/courses', authenticate, requireOrgAdmin, asyncHandler(async (req, res) => {
   await handleAdminCourseUpsert(req, res);
 }));
 
-app.put('/api/admin/courses/:id', asyncHandler(async (req, res) => {
+app.put('/api/admin/courses/:id', authenticate, requireOrgAdmin, asyncHandler(async (req, res) => {
   const { id } = req.params;
   if (!isUuid(id) && !(E2E_TEST_MODE || DEV_FALLBACK)) {
     res.status(400).json({ error: 'invalid_course_id', message: 'Course ID must be a UUID.' });

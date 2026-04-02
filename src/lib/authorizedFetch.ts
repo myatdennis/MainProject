@@ -1,5 +1,5 @@
-import { getAccessToken as getStoredAccessToken } from './secureStorage';
-import { getRefreshToken, setAccessToken, setRefreshToken } from './secureStorage';
+import { getSupabase } from './supabaseClient';
+import { getAccessToken as getStoredAccessToken, getRefreshToken, setAccessToken, setRefreshToken } from './secureStorage';
 import { LEGACY_ORG_HEADER_NAME, ORG_HEADER_NAME, resolveOrgHeaderForRequest } from './orgContext';
 
 export class NotAuthenticatedError extends Error {
@@ -67,33 +67,6 @@ const isPublicEndpoint = (target: string): boolean => {
   const pathname = extractPathname(target);
   if (PUBLIC_ENDPOINTS.has(pathname)) return true;
   return PUBLIC_ENDPOINT_PREFIXES.some((prefix) => pathname.startsWith(prefix));
-};
-
-export const getAccessToken = async (): Promise<string | null> => {
-  return getStoredAccessToken();
-};
-
-const resolveSupabaseAccessToken = async (): Promise<string> => {
-  const storedToken = getStoredAccessToken();
-  // In E2E/dev-bypass mode, use the token stored in secureStorage by the
-  // mock session instead of attempting a real Supabase session lookup —
-  // the Supabase client has a placeholder URL and will always fail.
-  const isE2EBypass =
-    typeof window !== 'undefined' &&
-    (Boolean((window as any).__E2E_BYPASS) ||
-      Boolean((window as any).__E2E_SUPABASE_CLIENT));
-  if (isE2EBypass) {
-    if (storedToken) {
-      return storedToken;
-    }
-    // E2E bypass active but no stored token — return a placeholder that the
-    // E2E server will accept via its demo-auth bypass.
-    return 'e2e-access-token';
-  }
-  if (storedToken) {
-    return storedToken;
-  }
-  throw new NotAuthenticatedError('Backend access token is missing');
 };
 
 const refreshAuthToken = async (): Promise<boolean> => {
@@ -211,8 +184,17 @@ export default async function authorizedFetch(
     let token: string | null = null;
 
     if (requireAuth) {
-      token = await resolveSupabaseAccessToken();
-      headers.set('Authorization', `Bearer ${token}`);
+      token = getStoredAccessToken();
+      if (!token) {
+        const supabase = getSupabase();
+        if (supabase && supabase.auth && typeof supabase.auth.getSession === 'function') {
+          const sessionResult = await supabase.auth.getSession();
+          token = sessionResult?.data?.session?.access_token ?? null;
+        }
+      }
+      if (token) {
+        headers.set('Authorization', `Bearer ${token}`);
+      }
     }
 
     const orgId = resolveOrgHeaderForRequest(url);

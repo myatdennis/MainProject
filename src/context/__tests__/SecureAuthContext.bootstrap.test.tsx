@@ -1,6 +1,5 @@
-import React from 'react';
 import { describe, it, beforeEach, expect, vi } from 'vitest';
-import { render, screen, waitFor, waitForElementToBeRemoved } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { SecureAuthProvider, useSecureAuth } from '../SecureAuthContext';
 import { ApiError } from '../../utils/apiClient';
@@ -28,6 +27,7 @@ vi.mock('../../lib/supabaseClient', () => {
     getSupabase: () => supabaseClient,
     supabase: supabaseClient,
     hasSupabaseConfig: () => true,
+    AUTH_STORAGE_MODE: 'secure',
   };
 });
 

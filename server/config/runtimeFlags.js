@@ -1,4 +1,4 @@
-const truthyValues = new Set(['true', '1', 'yes', 'y', 'on']);
+;const truthyValues = new Set(['true', '1', 'yes', 'y', 'on']);
 const falsyValues = new Set(['false', '0', 'no', 'n', 'off']);
 
 const normalizeFlag = (value) => {
@@ -28,6 +28,12 @@ export const supabaseServerConfigured = Boolean(supabaseUrlEnv && supabaseServic
 const allowDemoFlag = parseFlag(process.env.ALLOW_DEMO);
 const demoModeFlag = parseFlag(process.env.DEMO_MODE);
 const devFallbackFlag = parseFlag(process.env.DEV_FALLBACK);
+
+if (isProduction && (allowDemoFlag || demoModeFlag || devFallbackFlag)) {
+  console.error('[FATAL] DEMO_MODE, DEV_FALLBACK or ALLOW_DEMO cannot be enabled in production.');
+  console.error('Set NODE_ENV=production without these flags to start safely.');
+  process.exit(1);
+}
 
 export const allowDemoExplicit = !isProduction && allowDemoFlag;
 export const demoModeExplicit = !isProduction && demoModeFlag;

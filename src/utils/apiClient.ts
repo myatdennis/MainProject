@@ -3,7 +3,8 @@ import { buildApiUrl, assertNoDoubleApi, getApiOrigin } from '../config/apiBase'
 import { shouldRequireSession } from '../lib/sessionGate';
 import { clearAuth } from '../lib/secureStorage';
 import { getSupabase } from '../lib/supabaseClient';
-import authorizedFetch, { NotAuthenticatedError, getAccessToken } from '../lib/authorizedFetch';
+import authorizedFetch, { NotAuthenticatedError } from '../lib/authorizedFetch';
+import { getAccessToken } from '../lib/apiClient';
 import {
   hasAdminPortalAccess,
   getAdminAccessSnapshot,
@@ -784,14 +785,13 @@ async function ensureAdminAccessForRequest(path: string, options?: InternalReque
       message: 'You need administrator access to perform this action.',
     });
   } catch (error: any) {
-    // If the error is an ApiError with status 403, propagate it
-    if (error instanceof ApiError && error.status === 403) {
+    // preserve 401/403 in the admin-access check to surface underlying auth issues.
+    if (error instanceof ApiError && (error.status === 401 || error.status === 403)) {
       throw error;
     }
-    // If the error is a fetch Response with status 403, parse and propagate
-    if (error && error.status === 403 && typeof error.json === 'function') {
+    if (error && (error.status === 401 || error.status === 403) && typeof error.json === 'function') {
       const body = await error.json();
-      throw new ApiError('Administrator privileges required', 403, path, body);
+      throw new ApiError('Administrator privileges required', error.status, path, body);
     }
     // Otherwise, fallback to generic admin denied
     throw new ApiError('Administrator privileges required', 403, path, {
@@ -804,12 +804,25 @@ async function fetchAdminAccessPayload(): Promise<AdminAccessPayload | null> {
   if (!adminAccessInFlight) {
     adminAccessInFlight = (async () => {
       try {
-        const payload = await apiRequest<AdminAccessPayload>('/api/admin/me', {
-          skipAdminGateCheck: true,
-        });
-        const normalized = normalizeAdminAccessPayload(payload);
-        setAdminAccessSnapshot(normalized);
-        return normalized;
+        try {
+          const payload = await apiRequest<AdminAccessPayload>('/api/admin/me', {
+            skipAdminGateCheck: true,
+          });
+          const normalized = normalizeAdminAccessPayload(payload);
+          setAdminAccessSnapshot(normalized);
+          return normalized;
+        } catch (error: any) {
+          if (error instanceof ApiError && error.status === 401) {
+            // Retry once for token refresh path in authorizedFetch.
+            const retryPayload = await apiRequest<AdminAccessPayload>('/api/admin/me', {
+              skipAdminGateCheck: true,
+            });
+            const normalizedRetry = normalizeAdminAccessPayload(retryPayload);
+            setAdminAccessSnapshot(normalizedRetry);
+            return normalizedRetry;
+          }
+          throw error;
+        }
       } catch (error) {
         setAdminAccessSnapshot(null);
         throw error;
