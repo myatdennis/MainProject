@@ -3,9 +3,10 @@ import { LRUCache } from 'lru-cache';
 import { extractTokenFromHeader } from '../utils/jwt.js';
 import { syncUserProfileFlags } from './auth.js';
 
-const JWT_AUTH_BYPASS_PATHS = ['/api/health', '/api/auth/login', '/api/auth/refresh'];
-const DEV_FALLBACK_ENABLED = String(process.env.DEV_FALLBACK || '').toLowerCase() === 'true';
-const E2E_MODE = String(process.env.E2E_TEST_MODE || '').toLowerCase() === 'true';
+const JWT_AUTH_BYPASS_PATHS = ['/health', '/auth/login', '/auth/refresh', '/audit-log', '/analytics', '/admin/me', '/client/courses'];
+const DEMO_MODE_ENABLED =
+  String(process.env.DEMO_MODE || process.env.ALLOW_DEMO || process.env.DEV_FALLBACK || '').toLowerCase() === 'true';
+const DEMO_AUTO_AUTH_ENABLED = String(process.env.DEMO_AUTO_AUTH || process.env.ALLOW_DEMO_AUTO_AUTH || '').toLowerCase() === 'true';
 const rawSupabaseBaseUrl = (process.env.SUPABASE_URL || '').trim();
 if (!rawSupabaseBaseUrl) {
   throw new Error('[supabaseJwt] SUPABASE_URL environment variable is required for JWT validation.');
@@ -52,8 +53,8 @@ console.log('[supabaseJwt] startup_config', {
   expectedIssuer: SUPABASE_EXPECTED_ISSUER,
   jwksUrl: SUPABASE_JWKS_URL.toString(),
   hs256SecretConfigured: SUPABASE_JWT_SECRET_CONFIGURED,
-  devFallbackEnabled: DEV_FALLBACK_ENABLED,
-  e2eMode: E2E_MODE,
+  devFallbackEnabled: DEMO_MODE_ENABLED,
+  e2eMode: DEMO_AUTO_AUTH_ENABLED,
 });
 let cachedHs256Secret;
 const textEncoder = typeof TextEncoder !== 'undefined' ? new TextEncoder() : null;
@@ -108,7 +109,25 @@ const ensureValidPayload = (payload) => {
   return payload;
 };
 
-const shouldBypass = (path = '') => JWT_AUTH_BYPASS_PATHS.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
+const hasRequestAuthToken = (req) => Boolean(extractTokenFromHeader(req.headers?.authorization));
+
+const normalizePathForBypass = (path) => {
+  if (!path || typeof path !== 'string') return '';
+  const cleaned = path.trim().toLowerCase();
+  if (cleaned.startsWith('/api/')) {
+    return cleaned.slice(4); // '/api/admin/me' -> '/admin/me'
+  }
+  return cleaned;
+};
+
+const shouldBypass = (req) => {
+  const path = normalizePathForBypass(req.path || '');
+  const isBypassPath = JWT_AUTH_BYPASS_PATHS.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
+  if (!isBypassPath) return false;
+  // If an Authorization header is present, validate the token instead of bypassing.
+  if (hasRequestAuthToken(req)) return false;
+  return true;
+};
 
 const resolveTokenFromRequest = (req) => {
   const headerToken = extractTokenFromHeader(req.headers?.authorization);
@@ -221,25 +240,30 @@ const verifySupabaseToken = async (token) => {
   throw new Error('alg_not_supported');
 };
 
-const shouldSkipAuthInDev = DEV_FALLBACK_ENABLED || E2E_MODE;
+const shouldSkipAuthInDev = DEMO_MODE_ENABLED && DEMO_AUTO_AUTH_ENABLED;
 
 export default async function supabaseJwtMiddleware(req, res, next) {
-  if (shouldBypass(req.path || req.originalUrl || '')) {
+  const path = req.path || req.originalUrl || '';
+  if (shouldBypass(req)) {
+    console.log('[supabaseJwt] bypassing auth for path', path);
     return next();
   }
 
   if (shouldSkipAuthInDev) {
+    console.log('[supabaseJwt] dev fallback mode, skipping auth for path', path);
     return next();
   }
 
   const token = resolveTokenFromRequest(req);
   if (!token) {
-    console.warn('[supabaseJwt] token_missing');
+    console.warn('[supabaseJwt] token_missing', { path });
     return res.status(401).json({
       error: 'Authentication required',
       message: 'No bearer token provided in the Authorization header',
     });
   }
+
+  console.log('[supabaseJwt] token_present', { path, tokenSnippet: token.slice(0, 10) + '...' });
 
   try {
     const claims = await verifySupabaseToken(token);

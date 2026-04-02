@@ -1,7 +1,9 @@
+import 'dotenv/config';
 import { spawn, ChildProcess } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import fetch from 'node-fetch';
+import jwt from 'jsonwebtoken';
 
 const repoRoot = path.resolve(__dirname, '../../..');
 const demoDataPath = path.join(repoRoot, 'server', 'demo-data.json');
@@ -92,8 +94,9 @@ export async function startTestServer({ resetDemo = true }: { resetDemo?: boolea
     ...process.env,
     PORT: String(port),
     NODE_ENV: 'test',
-    E2E_TEST_MODE: 'true',
-    DEV_FALLBACK: 'true',
+    E2E_TEST_MODE: 'false',
+    DEV_FALLBACK: 'false',
+    DEMO_MODE: 'false',
   };
 
   const child = spawn(process.execPath, ['server/index.js'], {
@@ -140,30 +143,114 @@ export async function stopTestServer(handle?: TestServerHandle | null) {
   await handle.stop();
 }
 
-async function createSupabaseJwt(claims: Record<string, any> = {}) {
+async function createSupabaseUserIfMissing(email: string, password: string, role = 'admin') {
   const supabaseUrl = process.env.SUPABASE_URL;
   const svcKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+  if (!supabaseUrl || !svcKey) return false;
+
+  try {
+    const response = await fetch(`${supabaseUrl}/auth/v1/admin/users`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${svcKey}`,
+        apikey: svcKey,
+      },
+      body: JSON.stringify({
+        email,
+        password,
+        user_metadata: { role, email },
+      }),
+    });
+    if (response.ok) {
+      return true;
+    }
+    const data = (await response.json().catch(() => ({}))) as Record<string, any>;
+    // If the user already exists, not an error for us.
+    if (
+      (typeof data.message === 'string' && data.message.includes('already exists')) ||
+      data.code === 'PGRST116' ||
+      Boolean(data.request_id)
+    ) {
+      return true;
+    }
+    return false;
+  } catch (error) {
+    console.warn('[tests] createSupabaseUserIfMissing failed', error);
+    return false;
+  }
+}
+
+async function createSupabaseJwt(claims: Record<string, any> = {}) {
+  const requiredJwtSecret = process.env.SUPABASE_JWT_SECRET || process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET;
+  const supabaseUrl = process.env.SUPABASE_URL;
+  if (process.env.NODE_ENV === 'test' && requiredJwtSecret && supabaseUrl) {
+    const normalizedUrl = String(supabaseUrl).replace(/\/+$/, '');
+    const iss = `${normalizedUrl}/auth/v1`;
+    const payload: Record<string, any> = {
+      sub: claims.userId || claims.email || 'test-user',
+      email: claims.email || 'test-user@local',
+      role: claims.role || 'admin',
+      app_metadata: { platform_role: (claims.role || 'admin') === 'admin' ? 'platform_admin' : null },
+      iss,
+      aud: 'authenticated',
+    };
+    return jwt.sign(payload, requiredJwtSecret, { algorithm: 'HS256', expiresIn: '15m' });
+  }
+
+  const svcKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+  const email = claims.email || 'integration@tests.local';
+  const password = process.env.TEST_SUPABASE_PASSWORD || 'admin123';
+
   if (!supabaseUrl || !svcKey) {
     const role = typeof claims.role === 'string' && claims.role.length > 0 ? claims.role : 'member';
     return role === 'admin' ? 'e2e-access-token' : 'member-access-token';
   }
-  const response = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
-    method: 'POST',
-    headers: {
-      apikey: svcKey,
-      'Content-Type': 'application/json',
-    },
-    credentials: 'include',
-    body: JSON.stringify({
-      email: claims.email || 'integration@tests.local',
-      password: process.env.TEST_SUPABASE_PASSWORD || 'integration-password',
-    }),
-  });
-  const data = await response.json();
-  if (!response.ok) {
-    throw new Error(`Failed to fetch Supabase token: ${response.status} ${JSON.stringify(data)}`);
+
+  const getToken = async () => {
+    const response = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
+      method: 'POST',
+      headers: {
+        apikey: svcKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        email,
+        password,
+      }),
+    });
+
+    const data = (await response.json().catch(() => ({}))) as Record<string, any>;
+    if (!response.ok) {
+      throw { response, data };
+    }
+    return data.access_token;
+  };
+
+  try {
+    return await getToken();
+  } catch (error: any) {
+    const data = (error?.data ?? {}) as Record<string, any>;
+    const invalidCredentials =
+      data?.error_code === 'invalid_credentials' ||
+      (typeof data?.msg === 'string' && data.msg.includes('Invalid login credentials'));
+    if (invalidCredentials) {
+      const created = await createSupabaseUserIfMissing(email, password, claims.role || 'admin');
+      if (created) {
+        try {
+          return await getToken();
+        } catch (retryError: any) {
+          const retryData = (retryError?.data || {}) as Record<string, any>;
+          throw new Error(
+            `Failed to fetch Supabase token (after user creation): ${retryError?.response?.status ?? 'unknown'} ${JSON.stringify(retryData)}`
+          );
+        }
+      }
+    }
+    throw new Error(
+      `Failed to fetch Supabase token: ${error?.response?.status ?? 'unknown'} ${JSON.stringify(data || error)}`
+    );
   }
-  return data.access_token;
 }
 
 async function buildAuthHeaders(claims: Record<string, any> = {}) {

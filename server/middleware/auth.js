@@ -7,10 +7,11 @@ import rateLimit from 'express-rate-limit';
 import supabase, { supabaseAuthClient, supabaseEnv } from '../lib/supabaseClient.js';
 import { getDatabaseConnectionInfo } from '../db.js';
 import { extractTokenFromHeader, verifyAccessToken } from '../utils/jwt.js';
-import { getActiveOrgFromRequest } from '../utils/authCookies.js';
+import { getActiveOrgFromRequest, getAccessTokenFromRequest } from '../utils/authCookies.js';
 import { getUserMemberships, getMembershipDiagnostics } from '../utils/memberships.js';
-import { E2E_TEST_MODE, DEV_FALLBACK, demoAutoAuthEnabled, NODE_ENV, isProduction } from '../config/runtimeFlags.js';
+import { isDemoMode, isDevMode, isTestMode, isProduction, demoAutoAuthEnabled, NODE_ENV } from '../config/runtimeFlags.js';
 import { getPermissionsForRole, mergePermissions } from '../../shared/permissions/index.js';
+import jwt from 'jsonwebtoken';
 
 // Verbose per-request auth diagnostics are only emitted in non-production environments
 // to avoid flooding Railway logs with `membership_snapshot` / `resolved_org_context`
@@ -137,7 +138,7 @@ export function isPlatformAdmin(user = {}) {
   if (!user || typeof user !== 'object') return false;
   const explicitPlatformRole = user.platformRole || user.role || null;
   const platformRole = (derivePlatformRole(user) || String(explicitPlatformRole || '').toLowerCase()).toLowerCase();
-  return platformRole === 'platform_admin' || Boolean(user.isPlatformAdmin);
+  return platformRole === 'platform_admin' || platformRole === 'admin' || Boolean(user.isPlatformAdmin);
 };
 
 const resolveUserRole = (user = {}, memberships = []) => {
@@ -153,7 +154,7 @@ const resolveUserRole = (user = {}, memberships = []) => {
 
   const membershipRoles = memberships.map((m) => String(m.role || '').toLowerCase());
   if (membershipRoles.some((role) => writableOrgRoles.has(role))) {
-    return 'admin';
+    return
   }
 
   return 'learner';
@@ -284,15 +285,18 @@ const isDevRequest = (req) => {
 };
 
 const allowDemoBypassForRequest = (req) => {
-  if (E2E_TEST_MODE) {
-    return true;
+  if (!isDemoMode) {
+    return false;
   }
+
   if (!demoAutoAuthEnabled) {
     return false;
   }
-  if (!DEV_FALLBACK) {
+
+  if (isProduction) {
     return false;
   }
+
   return isDevRequest(req);
 };
 
@@ -597,22 +601,66 @@ export const __testables = {
   deriveMembershipStatusLabel,
 };
 
+const SUPABASE_JWT_SECRET = (process.env.SUPABASE_JWT_SECRET || '').trim();
+const SUPABASE_JWT_AUDIENCE = 'authenticated';
+const SUPABASE_JWT_ISSUER = (() => {
+  try {
+    const rawSupabaseUrl = (process.env.SUPABASE_URL || '').trim().replace(/\/+$/, '');
+    return rawSupabaseUrl ? `${rawSupabaseUrl}/auth/v1` : null;
+  } catch {
+    return null;
+  }
+})();
+
+const verifySupabaseJwtToken = (token) => {
+  if (!token || !SUPABASE_JWT_SECRET || !SUPABASE_JWT_ISSUER) {
+    return null;
+  }
+  try {
+    const decoded = jwt.verify(token, SUPABASE_JWT_SECRET, {
+      algorithms: ['HS256'],
+      issuer: SUPABASE_JWT_ISSUER,
+      audience: SUPABASE_JWT_AUDIENCE,
+      clockTolerance: 5,
+    });
+    return decoded;
+  } catch (error) {
+    return null;
+  }
+};
+
+const normalizeSupabaseClaimsToJwtClaims = (claims = {}) => {
+  const appMetadata = claims.app_metadata || claims.appMetadata || {};
+  const platformRole = appMetadata.platform_role || claims.platform_role || claims.platformRole || null;
+  const role = claims.role || appMetadata.role || (platformRole === 'platform_admin' ? 'admin' : null) || 'learner';
+  const organizationId = claims.organizationId || appMetadata.organizationId || null;
+  return {
+    userId: claims.sub || claims.userId || null,
+    email: claims.email || claims.user_email || null,
+    role,
+    platformRole,
+    organizationId,
+  };
+};
+
 const resolveAccessTokenFromRequest = (req) => {
   if (req.supabaseJwtToken) {
-    return { token: req.supabaseJwtToken, source: 'supabase-jwt' };
+    return req.supabaseJwtToken;
   }
   const authorizationHeader = req.headers?.authorization;
   const headerToken = extractTokenFromHeader(authorizationHeader);
   if (headerToken) {
-    return { token: headerToken, source: 'authorization' };
+    return headerToken;
   }
-
-
-  return { token: null, source: null };
+  const cookieToken = getAccessTokenFromRequest(req);
+  if (cookieToken) {
+    return cookieToken;
+  }
+  return null;
 };
 
 export async function buildAuthContext(req, { optional = false } = {}) {
-  const { token } = resolveAccessTokenFromRequest(req);
+  const token = resolveAccessTokenFromRequest(req);
   const preValidatedUser = req.supabaseJwtUser || null;
 
   if (!token && allowDemoBypassForRequest(req)) {
@@ -651,7 +699,23 @@ export async function buildAuthContext(req, { optional = false } = {}) {
   }
 
   let supabaseUser = preValidatedUser;
+
   if (!supabaseUser) {
+    const supabaseJwtClaims = verifySupabaseJwtToken(token);
+    if (supabaseJwtClaims?.sub) {
+      const normalizedClaims = normalizeSupabaseClaimsToJwtClaims(supabaseJwtClaims);
+      const jwtContext = buildJwtAuthContextPayload(normalizedClaims);
+      return {
+        user: jwtContext.user,
+        membershipsMap: jwtContext.membershipMap,
+        activeOrgId: jwtContext.activeOrgId,
+        membershipDiagnostics: null,
+        membershipStatus: 'ready',
+        membershipCount: jwtContext.memberships.length,
+        membershipDegraded: false,
+      };
+    }
+
     if (!supabase) {
       if (allowDemoBypassForRequest(req)) {
         console.warn('[auth] Supabase unavailable; falling back to demo auto-auth context', {
@@ -674,6 +738,7 @@ export async function buildAuthContext(req, { optional = false } = {}) {
     }
     supabaseUser = await loadSupabaseUser(token);
   }
+
   if (!supabaseUser) {
     if (allowDemoBypassForRequest(req)) {
       console.warn('[auth] Token validation failed; falling back to demo auto-auth context', {
@@ -688,7 +753,7 @@ export async function buildAuthContext(req, { optional = false } = {}) {
         membershipStatus: 'ready',
       };
     }
-    if (optional) return null;
+    if (optional && !STRICT_AUTH) return null;
     throw new Error('invalid_token');
   }
 
@@ -757,8 +822,23 @@ export async function buildAuthContext(req, { optional = false } = {}) {
  */
 export async function authenticate(req, res, next) {
   try {
+    const token = resolveAccessTokenFromRequest(req);
+    console.log('[auth] authenticate start', {
+      path: req.originalUrl || req.url,
+      method: req.method,
+      tokenProvided: Boolean(token),
+      xUserId: req.headers?.['x-user-id'] || null,
+      xUserRole: req.headers?.['x-user-role'] || null,
+      supabaseJwtUser: !!req.supabaseJwtUser,
+    });
     const context = await buildAuthContext(req);
+    console.log('[auth] buildAuthContext result', {
+      userId: context?.user?.userId ?? null,
+      userRole: context?.user?.role ?? null,
+      platformRole: context?.user?.platformRole ?? null,
+    });
     if (!context) {
+      console.warn('[auth] authenticate failed: no context');
       return res.status(401).json({
         error: 'Authentication required',
         message: 'No valid session token',
@@ -774,8 +854,10 @@ export async function authenticate(req, res, next) {
     req.membershipCount = context.membershipCount ?? null;
     req.membershipDegraded = Boolean(context.membershipDegraded);
     req.userPermissions = new Set(Array.isArray(context.user.permissions) ? context.user.permissions : []);
+    console.log('[auth] authenticate success', { userId: req.userId, userRole: req.user.role, isPlatformAdmin: req.user.isPlatformAdmin });
     return next();
   } catch (error) {
+    console.error('[auth] Unexpected authentication error', error);
     if (error.message === 'supabase_not_configured') {
       console.error('[auth] Supabase credentials missing while STRICT_AUTH enabled');
       return res.status(503).json({
@@ -806,108 +888,20 @@ export async function authenticate(req, res, next) {
   }
 }
 
-/**
- * Optional authentication - doesn't fail if no token
- */
-export async function optionalAuthenticate(req, res, next) {
-  try {
-    const context = await buildAuthContext(req, { optional: true });
-    if (context) {
-      req.user = context.user;
-      req.orgMemberships = context.membershipsMap;
-      req.activeOrgId = context.activeOrgId;
-      req.membershipDiagnostics = context.membershipDiagnostics || null;
-      req.membershipStatus = context.membershipStatus || 'ready';
-      req.membershipCount = context.membershipCount ?? null;
-      req.membershipDegraded = Boolean(context.membershipDegraded);
-      req.userPermissions = new Set(Array.isArray(context.user.permissions) ? context.user.permissions : []);
-    }
-  } catch (error) {
-    console.warn('[auth] optional auth failed:', error.message);
-  }
-
-  next();
-}
-
-export function resolveOrganizationContext(req, res, next) {
-  const requestedOrgId = getRequestedOrgId(req);
-  const activeOrgId = req.activeOrgId ?? null;
-  const orgIds = Array.isArray(req.user?.organizationIds) ? req.user.organizationIds.filter(Boolean) : [];
-
-  if (orgIds.length === 0 && req.orgMemberships instanceof Map) {
-    orgIds.push(...Array.from(req.orgMemberships.keys()).filter(Boolean));
-  }
-
-  const resolvedOrgId = requestedOrgId || activeOrgId || (orgIds.length ? orgIds[0] : null);
-
-  if (AUTH_VERBOSE_LOGGING) {
-    console.info('[auth] resolved_org_context', {
-      userId: req.user?.id ?? req.user?.userId ?? null,
-      requestedOrgId: requestedOrgId ?? null,
-      activeOrgId: activeOrgId ?? null,
-      resolvedOrgId,
-    });
-  }
-
-  if (!resolvedOrgId) {
-    return res.status(400).json({
-      error: 'organization_context_required',
-      message: 'Organization context is required for this operation.',
-    });
-  }
-
-  req.organizationId = resolvedOrgId;
-  res.locals.organizationId = resolvedOrgId;
-  req.requestedOrgId = requestedOrgId ?? null;
-  req.resolvedOrgId = resolvedOrgId;
-
-  return next();
-}
-
-// ============================================================================
-// Authorization Middleware
-// ============================================================================
-
-/**
- * Require specific role(s)
- */
-export function requireRole(...allowedRoles) {
-  return (req, res, next) => {
-    if (!req.user) {
-      return res.status(401).json({
-        error: 'Authentication required',
-        message: 'Must be logged in',
-      });
-    }
-    
-    if (!allowedRoles.includes(req.user.role)) {
-      return res.status(403).json({
-        error: 'Forbidden',
-        message: 'Insufficient permissions',
-        requiredRoles: allowedRoles,
-        userRole: req.user.role,
-      });
-    }
-    
-    next();
-  };
-}
-
-const hasWritableOrgRole = (membership) => {
-  if (!membership) return false;
-  return writableOrgRoles.has(String(membership.role || '').toLowerCase());
-};
-
-/**
- * Require platform admin role (global)
- */
 export async function requireAdmin(req, res, next) {
   if (!req.user) {
+    console.warn('[requireAdmin] missing req.user');
     return res.status(401).json({ error: 'Authentication required', message: 'Must be logged in' });
   }
 
+  console.log('[requireAdmin] context', { userId: req.user.userId, role: req.user.role, platformRole: req.user.platformRole, isPlatformAdmin: req.user.isPlatformAdmin });
+
   const userId = req.user.userId || req.user.id || null;
-  let isPlatformAdminRole = Boolean(req.user.isPlatformAdmin || req.user.platformRole === 'platform_admin');
+  let isPlatformAdminRole = Boolean(
+    req.user.isPlatformAdmin ||
+      req.user.platformRole === 'platform_admin' ||
+      req.user.role === 'admin',
+  );
 
   if (!isPlatformAdminRole && userId) {
     const profileFlags = await fetchUserProfileRole(userId);
@@ -1098,9 +1092,7 @@ const RATE_LIMIT_BYPASS_EXACT = new Set(['/auth/csrf']);
 
 const shouldBypassApiRateLimit = (req) => {
   if (!req) return false;
-  const e2eMode = String(process.env.E2E_TEST_MODE || '').toLowerCase() === 'true';
-  const devFallback = String(process.env.DEV_FALLBACK || '').toLowerCase() === 'true';
-  if (e2eMode || devFallback) {
+  if (isDemoMode) {
     return true;
   }
   if (req.method === 'OPTIONS') return true;
@@ -1174,4 +1166,44 @@ export function authErrorHandler(err, req, res, next) {
     });
   }
   next(err);
+}
+
+export async function optionalAuthenticate(req, res, next) {
+  try {
+    const context = await buildAuthContext(req, { optional: true });
+    if (context) {
+      req.user = context.user;
+      req.orgMemberships = context.membershipsMap;
+      req.activeOrgId = context.activeOrgId;
+      req.membershipDiagnostics = context.membershipDiagnostics || null;
+      req.membershipStatus = context.membershipStatus || 'ready';
+      req.membershipCount = context.membershipCount ?? null;
+      req.membershipDegraded = Boolean(context.membershipDegraded);
+      req.userPermissions = new Set(Array.isArray(context.user.permissions) ? context.user.permissions : []);
+    }
+  } catch (error) {
+    console.warn('[auth] optional auth failed:', error.message);
+  }
+  next();
+}
+
+export function resolveOrganizationContext(req, res, next) {
+  if (!req.user) {
+    return res.status(401).json({ error: 'Authentication required', message: 'Must be logged in' });
+  }
+
+  const requestedOrgId = getRequestedOrgId(req);
+  const inferredOrgId =
+    requestedOrgId ||
+    req.activeOrgId ||
+    req.user.activeOrgId ||
+    req.user.organizationId ||
+    (Array.isArray(req.user.organizationIds) ? req.user.organizationIds[0] : null) ||
+    null;
+
+  req.requestedOrgId = requestedOrgId || null;
+  req.activeOrgId = inferredOrgId;
+  req.organizationId = inferredOrgId;
+
+  return next();
 }

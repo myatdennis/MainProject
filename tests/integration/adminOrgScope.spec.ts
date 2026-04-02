@@ -1,5 +1,5 @@
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
-import { startTestServer, stopTestServer, TestServerHandle } from './utils/server.ts';
+import { startTestServer, stopTestServer, TestServerHandle, createAdminAuthHeaders } from './utils/server.ts';
 
 const DEMO_ORG_ID = 'demo-org';
 const JSON_HEADERS = {
@@ -8,9 +8,11 @@ const JSON_HEADERS = {
 
 describe('Admin organization scoping', () => {
   let server: TestServerHandle | null = null;
+  let adminHeaders: Record<string, string> = {};
 
   beforeAll(async () => {
     server = await startTestServer();
+    adminHeaders = await createAdminAuthHeaders({ email: 'mya@the-huddle.co' });
   });
 
   afterAll(async () => {
@@ -19,7 +21,7 @@ describe('Admin organization scoping', () => {
   });
 
   const fetchJson = async (path: string) => {
-    const res = await server!.fetch(path, { headers: JSON_HEADERS });
+    const res = await server!.fetch(path, { headers: { ...JSON_HEADERS, ...adminHeaders } });
     const body = await res.json().catch(() => ({}));
     return { res, body };
   };

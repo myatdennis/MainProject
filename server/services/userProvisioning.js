@@ -197,6 +197,37 @@ const ensureProfile = async ({ supabase, userId, profilePayload, requestId, logg
   return profileRow;
 };
 
+const isUuid = (value) => {
+  if (!value || typeof value !== 'string') return false;
+  const normalized = value.trim();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(normalized);
+};
+
+const resolveUserIdentifierToUuid = async (supabase, identifier) => {
+  if (!supabase || identifier === null || identifier === undefined) return null;
+  const raw = String(identifier).trim();
+  if (!raw) return null;
+  if (isUuid(raw)) return raw;
+
+  const lookupEmail = /^[^@\s]+@[^@\s]+\.[A-Za-z]+$/.test(raw);
+  if (lookupEmail) {
+    const { data, error } = await supabase.from('user_profiles').select('id').ilike('email', raw).maybeSingle();
+    if (!error && data && data.id && isUuid(data.id)) return data.id;
+  }
+
+  const idFields = ['id', 'external_id', 'username'];
+  for (const field of idFields) {
+    try {
+      const { data, error } = await supabase.from('user_profiles').select('id').eq(field, raw).maybeSingle();
+      if (!error && data && data.id && isUuid(data.id)) return data.id;
+    } catch (_err) {
+      continue;
+    }
+  }
+
+  return null;
+};
+
 const ensureMembership = async ({
   supabase,
   orgId,
@@ -219,10 +250,29 @@ const ensureMembership = async ({
     : false;
 
   const canonicalState = resolveMembershipStatusUpdate({ status: 'active', is_active: true });
+
+  let invitedBy = actor?.userId ?? null;
+  if (invitedBy && !isUuid(invitedBy)) {
+    const resolved = await resolveUserIdentifierToUuid(supabase, invitedBy).catch(() => null);
+    invitedBy = resolved && isUuid(resolved) ? resolved : null;
+  }
+
+  defaultLogger.info('provisioning_ensure_membership_payload', {
+    requestId,
+    orgId,
+    userId,
+    actorUserId: actor?.userId ?? null,
+    resolvedInvitedBy: invitedBy,
+    role,
+    membershipOrgColumn,
+    statusColumn,
+    hasIsActiveColumn,
+  });
+
   const payload = {
     user_id: userId,
     role,
-    invited_by: actor?.userId ?? null,
+    invited_by: invitedBy,
   };
   if (statusColumn === 'status') {
     payload.status = canonicalState.status;
@@ -709,6 +759,15 @@ export const createOrProvisionOrganizationUser = async (input, deps = {}) => {
   stage = 'membership_upsert';
   let membership = null;
   try {
+    const resolvedActorId = actor?.userId ?? null;
+    defaultLogger.info('provisioning_membership_upsert_start', {
+      requestId,
+      orgId,
+      userId: authUser.id,
+      actorUserId: actor?.userId ?? null,
+      resolvedActorId,
+    });
+
     membership = await ensureMembership({
       supabase,
       orgId,
@@ -720,14 +779,28 @@ export const createOrProvisionOrganizationUser = async (input, deps = {}) => {
       getOrganizationMembershipsStatusColumnName,
       getOrganizationMembershipsHasIsActiveColumn,
     });
+
+    defaultLogger.info('provisioning_membership_upsert_success', {
+      requestId,
+      orgId,
+      userId: authUser.id,
+      membershipId: membership?.id ?? null,
+    });
+
     if (invalidateMembershipCache) {
       invalidateMembershipCache(authUser.id);
     }
+
+    let actorUserUuid = actor?.userId ?? null;
+    if (actorUserUuid && !isUuid(actorUserUuid)) {
+      actorUserUuid = await resolveUserIdentifierToUuid(supabase, actorUserUuid).catch(() => null);
+    }
+
     if (assignContentToUser) {
       await assignContentToUser({
         orgId,
         userId: authUser.id,
-        actorUserId: actor?.userId ?? null,
+        actorUserId: actorUserUuid,
       });
     }
   } catch (error) {

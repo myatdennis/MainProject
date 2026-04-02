@@ -346,26 +346,67 @@ const fetchMembershipsFromBaseTables = async (userId, logPrefix) => {
   }
 };
 
+const isUuid = (value) => {
+  if (typeof value !== 'string') return false;
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value.trim());
+};
+
+const resolveUserIdFromEmail = async (userId) => {
+  if (!supabase || !userId || isUuid(userId)) return userId;
+  const email = String(userId).trim().toLowerCase();
+  if (!email.includes('@')) return userId;
+
+  try {
+    const { data, error } = await supabase.from('user_profiles').select('id').eq('email', email).maybeSingle();
+    if (error) {
+      console.warn('[memberships] user_profile_lookup_failed', { userId, code: error.code, message: error.message });
+      return userId;
+    }
+    if (data && data.id) {
+      return data.id;
+    }
+    return userId;
+  } catch (err) {
+    console.warn('[memberships] user_profile_lookup_error', { userId, error: err instanceof Error ? err.message : err });
+    return userId;
+  }
+};
+
 export const getUserMemberships = async (userId, { logPrefix = '[memberships]' } = {}) => {
   if (!supabase || !userId) {
     return attachDiagnostics([], buildDiagnostics({ code: 'membership_query_error', severity: 'error', message: 'Supabase client unavailable' }));
   }
+
+  const normalizedUserId = await resolveUserIdFromEmail(userId);
+
+  if (!isUuid(normalizedUserId)) {
+    console.warn('[memberships] non_uuid_user_id', { userId: normalizedUserId });
+    return attachDiagnostics(
+      [],
+      buildDiagnostics({
+        code: 'non_uuid_user_id',
+        severity: 'warn',
+        message: 'Skipping membership lookup for non-UUID user identifier.',
+      }),
+    );
+  }
+
   try {
     console.info(`${logPrefix} membership_view_query`, {
       view: MEMBERSHIP_VIEW_NAME,
       columns: VIEW_COLUMNS,
-      userId,
+      userId: normalizedUserId,
     });
-    const { data, error } = await supabase.from(MEMBERSHIP_VIEW_NAME).select(VIEW_COLUMNS).eq('user_id', userId);
+    const { data, error } = await supabase.from(MEMBERSHIP_VIEW_NAME).select(VIEW_COLUMNS).eq('user_id', normalizedUserId);
 
     if (error) {
       if (isViewMissingError(error)) {
         console.debug(`${logPrefix} membership_view_unavailable`, {
-          userId,
+          userId: normalizedUserId,
           code: error.code,
           message: error.message,
         });
-        const fallbackResult = await fetchMembershipsFromBaseTables(userId, logPrefix);
+        const fallbackResult = await fetchMembershipsFromBaseTables(normalizedUserId, logPrefix);
         const diag = buildDiagnostics({
           code: error.code || 'view_unavailable',
           severity: fallbackResult.error ? 'error' : 'warn',
@@ -375,8 +416,9 @@ export const getUserMemberships = async (userId, { logPrefix = '[memberships]' }
         });
         return attachDiagnostics(fallbackResult.rows, diag);
       }
+
       console.warn(`${logPrefix} membership_view_query_failed`, {
-        userId,
+        userId: normalizedUserId,
         code: error.code,
         message: error.message,
       });

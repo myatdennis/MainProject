@@ -195,12 +195,13 @@ export function doubleSubmitCSRF(req, res, next) {
  * Set CSRF cookie for double-submit pattern
  */
 export function setDoubleSubmitCSRF(req, res, next) {
+  console.log('[csrf] setDoubleSubmitCSRF', { path: req.path, method: req.method });
   if (!req.cookies?.[CSRF_COOKIE_NAME]) {
     const token = generateCSRFToken();
-    res.cookie(CSRF_COOKIE_NAME, token, {
+    res.cookie('csrf_token', token, {
       ...getCsrfCookieOptions(req, { httpOnly: false, name: CSRF_COOKIE_NAME }),
       maxAge: 24 * 60 * 60 * 1000,
     });
   }
-  next();
+  return next();
 }

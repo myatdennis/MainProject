@@ -58,6 +58,7 @@ import {
   securityHeaders,
   authenticate,
   requireAdmin,
+  requireOrgAdmin,
   optionalAuthenticate,
   resolveOrganizationContext,
   invalidateMembershipCache,
@@ -76,8 +77,8 @@ import adminCoursesRouter from './routes/admin-courses.js';
 import {
   NODE_ENV,
   isProduction,
-  DEV_FALLBACK,
-  E2E_TEST_MODE,
+  isDemoMode,
+  isTestMode,
   FORCE_ORG_ENFORCEMENT,
   demoLoginEnabled,
   describeDemoMode,
@@ -106,7 +107,99 @@ import {
   recordSupabaseHealth,
 } from './diagnostics/metrics.js';
 // ...existing code...
-import { courseUpsertPayloadSchema } from '../shared/contracts/courseContract.js';
+
+// Helper to resolve non-UUID course identifiers (e.g., slug) to UUID
+async function resolveCourseIdentifierToUuid(identifier) {
+  if (!identifier || !supabase) return null;
+  const normalizedIdentifier = String(identifier).trim();
+  if (!normalizedIdentifier) return null;
+  try {
+    const { data: idMatch, error: idError } = await supabase
+      .from('courses')
+      .select('id')
+      .eq('id', normalizedIdentifier)
+      .maybeSingle();
+    if (idError) {
+      // proceed to slug lookup
+    } else if (idMatch && idMatch.id) {
+      return idMatch.id;
+    }
+
+    const { data: slugMatch, error: slugError } = await supabase
+      .from('courses')
+      .select('id')
+      .eq('slug', normalizedIdentifier)
+      .maybeSingle();
+    if (slugError) {
+      return null;
+    }
+    return slugMatch?.id ?? null;
+  } catch (err) {
+    return null;
+  }
+}
+
+function assertUuid(value) {
+  if (!isUuid(value)) {
+    throw new Error(`Invalid UUID: ${String(value)}`);
+  }
+}
+
+function isEmailIdentifier(value) {
+  if (typeof value !== 'string') return false;
+  const normalized = value.trim();
+  if (!normalized) return false;
+  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(normalized);
+}
+
+const resolveUserIdentifierToUuid = async (req, identifier) => {
+  if (identifier === null || identifier === undefined) return null;
+  const raw = String(identifier).trim();
+  if (!raw) return null;
+  if (isUuid(raw)) return raw;
+
+  if (isDemoMode && Array.isArray(e2eStore.users)) {
+    const lower = raw.toLowerCase();
+    const found = e2eStore.users.find((user) => {
+      if (!user || typeof user !== 'object') return false;
+      const candidateId = String(user.id || user.user_id || '').trim();
+      const candidateEmail = String(user.email || user.profile?.email || '').trim().toLowerCase();
+      return candidateId === raw || candidateEmail === lower;
+    });
+    if (found && isUuid(found.id)) return found.id;
+  }
+
+  if (!supabase) return null;
+
+  const lookups = [];
+  if (isEmailIdentifier(raw)) {
+    lookups.push(async () => await supabase.from('user_profiles').select('id').ilike('email', raw).maybeSingle());
+  }
+  lookups.push(async () => await supabase.from('user_profiles').select('id').eq('id', raw).maybeSingle());
+  for (const field of ['external_id', 'username']) {
+    lookups.push(async () => {
+      try {
+        return await supabase.from('user_profiles').select('id').eq(field, raw).maybeSingle();
+      } catch (_) {
+        return { data: null, error: null };
+      }
+    });
+  }
+
+  for (const lookup of lookups) {
+    try {
+      const { data, error } = await lookup();
+      if (!error && data && data.id && isUuid(data.id)) {
+        return data.id;
+      }
+    } catch (_err) {
+      continue;
+    }
+  }
+
+  return null;
+};
+
 import sql, { pool, getDatabaseConnectionInfo } from './db.js';
 // ...existing imports...
 import { normalizeMembershipStatus, isMembershipActive, mergeMembershipWithProfile, resolveMembershipStatusUpdate } from './lib/membershipUtils.js';
@@ -342,7 +435,7 @@ const MAX_DEMO_FILE_BYTES = parseInt(process.env.DEMO_DATA_MAX_BYTES || '', 10) 
 logger.info('demo_mode_configuration', { metadata: initialDemoModeMetadata });
 logger.info('startup_supabase_config', {
   supabaseConfigured: supabaseEnv.configured,
-  devFallback: Boolean(DEV_FALLBACK),
+  devFallback: Boolean(isDemoMode),
   demoMode: initialDemoModeMetadata.enabled ? initialDemoModeMetadata.source || 'enabled' : 'disabled',
   supabaseUrlHost,
   supabaseProjectRef,
@@ -350,9 +443,9 @@ logger.info('startup_supabase_config', {
   projectAlignment: supabaseProjectAlignment,
   serviceRoleKeyPresent: Boolean(supabaseEnv.serviceRoleKey),
 });
-if (supabaseEnv.configured && DEV_FALLBACK) {
+if (supabaseEnv.configured && isDemoMode) {
   logger.warn('dev_fallback_overrides_supabase', {
-    message: 'Supabase credentials detected but DEV_FALLBACK=true forces in-memory demo mode.',
+    message: 'Supabase credentials detected but isDemoMode=true forces in-memory demo mode.',
   });
 }
 
@@ -824,7 +917,7 @@ const buildHealthPayload = async (overrides = {}) => {
     },
     featureFlags: {
       forceOrgEnforcement: Boolean(FORCE_ORG_ENFORCEMENT),
-      devFallback: Boolean(DEV_FALLBACK),
+      devFallback: Boolean(isDemoMode),
       // This reflects the VALUE AT STARTUP — not the current env — because supabaseJwt.js
       // captures SUPABASE_JWT_SECRET into a module-level const at import time.
       // If this is false after you set the env var in Railway, you need to REDEPLOY.
@@ -832,7 +925,7 @@ const buildHealthPayload = async (overrides = {}) => {
     },
     orgEnforcement: {
       enforced: Boolean(FORCE_ORG_ENFORCEMENT),
-      devFallback: Boolean(DEV_FALLBACK),
+      devFallback: Boolean(isDemoMode),
     },
     realtime: {
       wsEnabled: Boolean(wsHealthSnapshot.enabled),
@@ -924,9 +1017,9 @@ const respondWithHealthPayload = async (_req, res) => {
     // payload even when the database probe reports degraded. The payload
     // will still contain the real database status under `database`.
   const isDevEnv = !process.env.NODE_ENV || process.env.NODE_ENV === 'development';
-  const forceHealthyForDev = Boolean(isDevEnv || process.env.DEV_FALLBACK === 'true' || process.env.E2E_TEST_MODE === 'true');
-    const statusCode = dbHealth.ok || forceHealthyForDev ? 200 : 503;
-    const returnedOk = Boolean(dbHealth.ok || forceHealthyForDev);
+  const forceHealthyForDev = Boolean(isDevEnv || isDemoMode || isTestMode);
+  const statusCode = dbHealth.ok || forceHealthyForDev ? 200 : 503;
+  const returnedOk = Boolean(dbHealth.ok || forceHealthyForDev);
     // If we're forcing healthy for dev/E2E, surface the real DB details but
     // report overall ok=true to avoid blocking test harnesses. Keep database
     // payload intact so callers can still inspect the real condition.
@@ -957,6 +1050,14 @@ const respondWithHealthPayload = async (_req, res) => {
 app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { id } = req.params;
+  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
+  if (!resolvedCourseId) {
+    res.locals = res.locals || {};
+    res.locals.errorCode = 'course_not_found';
+    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
+    return;
+  }
+  const courseId = resolvedCourseId;
   try {
     // Debug: log incoming request body for assign so E2E failures can be diagnosed
     console.log('[SERVER assign] incoming body:', JSON.stringify(req.body || {}));
@@ -1016,21 +1117,32 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
     } catch (_) {}
   }
 
-  // Force demo sandbox org in explicit E2E test mode as a last-resort (test-only bypass)
-  // This ensures test helpers that rely on E2E mode can run even if org resolution fails.
-  if (!finalOrganizationId && E2E_TEST_MODE) {
-    finalOrganizationId = DEFAULT_SANDBOX_ORG_ID;
-    console.info('[assign][E2E] forcing sandbox org for E2E_TEST_MODE', { finalOrganizationId, requestId: req.requestId ?? null });
+  // Force demo sandbox org in explicit demo mode as a last-resort (demo-only bypass)
+  // This ensures demo helpers that rely on sandbox org can run even if org resolution fails.
+  if (!finalOrganizationId && isDemoMode) {
+     finalOrganizationId = DEFAULT_SANDBOX_ORG_ID;
+     console.info('[assign][demo] forcing sandbox org for demo mode', { finalOrganizationId, requestId: req.requestId ?? null });
   }
 
   console.info('[assign] initial org debug', {
     resolvedCandidate: finalOrganizationId,
-    E2E_TEST_MODE: !!E2E_TEST_MODE,
-    DEV_FALLBACK: !!DEV_FALLBACK,
+    isTestMode: !!isTestMode,
+    isDemoMode: !!isDemoMode,
     isProduction: !!isProduction,
     DEFAULT_SANDBOX_ORG_ID,
     requestId: req.requestId ?? null,
   });
+
+  // Normalize police for alias/slug org IDs (e.g., demo-sandbox-org) before DB writes.
+  try {
+    const resolvedOrg = await coerceOrgIdentifierToUuid(req, finalOrganizationId);
+    if (resolvedOrg) {
+      finalOrganizationId = resolvedOrg;
+      console.info('[assign] resolved org id to canonical UUID', { finalOrganizationId, requestId: req.requestId ?? null });
+    }
+  } catch (err) {
+    console.warn('[assign] failed to resolve org identifier', { error: err?.message || String(err), requestId: req.requestId ?? null });
+  }
 
   // Additional strict header fallback: if client included an x-org-id/header and the
   // request is coming from an admin header (test helpers), accept it directly.
@@ -1051,7 +1163,7 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
     const remoteIp = String(req.ip || req.connection?.remoteAddress || '');
     const looksLocal = hostHeader.includes('localhost') || hostHeader.includes('127.0.0.1') || remoteIp === '127.0.0.1' || remoteIp === '::1' || remoteIp.startsWith('::ffff:127.');
 
-    if (!isProduction && (E2E_TEST_MODE || DEV_FALLBACK || userRoleHeader === 'admin' || looksLocal)) {
+    if (!isProduction && (isDemoMode || userRoleHeader === 'admin' || looksLocal)) {
       finalOrganizationId = DEFAULT_SANDBOX_ORG_ID;
       console.info('[assign] using DEFAULT_SANDBOX_ORG_ID for demo/E2E/admin-header/localhost fallback', { finalOrganizationId, requestId: req.requestId ?? null, remoteIp, hostHeader });
     } else {
@@ -1069,6 +1181,35 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
       return;
     }
   }
+  // Ensure the resolved organization identifier is a UUID.
+  if (!finalOrganizationId || !isUuid(finalOrganizationId)) {
+    try {
+      const coerced = await coerceOrgIdentifierToUuid(req, finalOrganizationId);
+      if (coerced && isUuid(coerced)) {
+        finalOrganizationId = coerced;
+      }
+    } catch (_) {
+      // ignore, validation below will handle
+    }
+  }
+
+  if (!finalOrganizationId || !isUuid(finalOrganizationId)) {
+    res.locals = res.locals || {};
+    res.locals.errorCode = 'invalid_organization_id';
+    console.error('[assign][ERR] organization_id invalid', { finalOrganizationId, requestId: req.requestId ?? null });
+    res.status(400).json({ error: 'invalid_organization_id', message: 'organization_id must be a valid UUID.' });
+    return;
+  }
+
+  try {
+    assertUuid(finalOrganizationId);
+  } catch (error) {
+    res.locals = res.locals || {};
+    res.locals.errorCode = 'invalid_organization_id';
+    res.status(400).json({ error: 'invalid_organization_id', message: error.message || 'organization_id must be a valid UUID.' });
+    return;
+  }
+
   // continuing normal flow; finalOrganizationId has been resolved above (or fallback applied)
   const hasBodyKey = (key) => Object.prototype.hasOwnProperty.call(body, key);
   const rawUserIds = Array.isArray(body.user_ids)
@@ -1076,29 +1217,51 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
     : Array.isArray(body.userIds)
       ? body.userIds
       : [];
-  const normalizedUserIdSet = new Set();
-  const invalidTargetIdSet = new Set();
-  rawUserIds.forEach((value) => {
-    let normalized = '';
-    if (typeof value === 'string') {
-      normalized = value.trim().toLowerCase();
-    } else if (value === null || typeof value === 'undefined') {
-      normalized = '';
-    } else {
-      normalized = String(value).trim().toLowerCase();
+
+  const resolvedUserIdSet = new Set();
+  const unresolvedUserIdSet = new Set();
+
+  for (const value of rawUserIds) {
+    if (value === null || value === undefined) {
+      continue;
     }
-    if (!normalized) {
-      const invalidValue =
-        typeof value === 'string' ? value.trim() : value === null || typeof value === 'undefined' ? '' : String(value).trim();
-      if (invalidValue) {
-        invalidTargetIdSet.add(invalidValue);
+    const candidate = String(value).trim();
+    if (!candidate) {
+      continue;
+    }
+
+    if (isUuid(candidate)) {
+      resolvedUserIdSet.add(candidate);
+      continue;
+    }
+
+    try {
+      const resolvedUserId = await resolveUserIdentifierToUuid(req, candidate);
+      if (resolvedUserId && isUuid(resolvedUserId)) {
+        resolvedUserIdSet.add(resolvedUserId);
+      } else {
+        unresolvedUserIdSet.add(candidate);
       }
-      return;
+    } catch (err) {
+      console.warn('[assign] resolveUserIdentifierToUuid failed', { candidate, error: err?.message || String(err), requestId: req.requestId ?? null });
+      unresolvedUserIdSet.add(candidate);
     }
-    normalizedUserIdSet.add(normalized);
-  });
-  const normalizedUserIds = Array.from(normalizedUserIdSet);
-  const invalidTargetIds = Array.from(invalidTargetIdSet);
+  }
+
+  const normalizedUserIds = Array.from(resolvedUserIdSet);
+  const invalidTargetIds = Array.from(new Set([...(unresolvedUserIdSet || [])]));
+
+  if (rawUserIds.length > 0 && normalizedUserIds.length === 0) {
+    res.locals = res.locals || {};
+    res.locals.errorCode = 'invalid_user_ids';
+    res.status(400).json({
+      error: 'invalid_user_ids',
+      message: 'Provided user_ids could not be resolved to UUIDs.',
+      invalidUserIds: Array.from(unresolvedUserIdSet),
+    });
+    return;
+  }
+
   const assignmentMode = body.mode === 'organization' ? 'organization' : normalizedUserIds.length > 0 ? 'learners' : 'organization';
 
   // ...existing code...
@@ -1107,7 +1270,7 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
   if (!context) return;
   // In E2E test mode allow bypassing org access checks to simplify test harnesses.
   let access = true;
-  if (!E2E_TEST_MODE) {
+  if (!isTestMode) {
     access = await requireOrgAccess(req, res, finalOrganizationId, { write: true, requireOrgAdmin: true });
     if (!access && context.userRole !== 'admin') return;
   }
@@ -1115,11 +1278,11 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
   const assignLogMeta = {
     requestId: req.requestId ?? null,
     userId: context.userId ?? null,
-    courseId: id,
+    courseId: courseId,
     orgId: finalOrganizationId,
   };
   const assignmentLogBase = {
-    courseId: id,
+    courseId: courseId,
     organizationIds,
     organizationCount: organizationIds.length,
     userCount: normalizedUserIds.length,
@@ -1147,9 +1310,22 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
   const noteValue = noteProvided ? (typeof rawNote === 'string' ? rawNote : rawNote === null ? null : String(rawNote)) : null;
 
   const assignedByRaw = body.assigned_by ?? body.assignedBy;
-  const assignedBy = typeof assignedByRaw === 'string' && assignedByRaw.trim().length > 0
+  let assignedBy = typeof assignedByRaw === 'string' && assignedByRaw.trim().length > 0
     ? assignedByRaw.trim()
     : context.userId;
+
+  if (assignedBy && !isUuid(assignedBy)) {
+    try {
+      const resolvedAssignedBy = await resolveUserIdentifierToUuid(req, assignedBy);
+      if (resolvedAssignedBy && isUuid(resolvedAssignedBy)) {
+        assignedBy = resolvedAssignedBy;
+      } else {
+        assignedBy = null;
+      }
+    } catch (_) {
+      assignedBy = null;
+    }
+  }
 
   const statusProvided = typeof body.status === 'string';
   const allowedStatuses = new Set(['assigned', 'in-progress', 'completed']);
@@ -1203,7 +1379,7 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
   const buildRecord = (userId) => {
     const record = {
       organization_id: finalOrganizationId,
-      course_id: id,
+      course_id: courseId,
       user_id: userId,
       assigned_by: assignedBy ?? null,
       status: statusValue,
@@ -1230,7 +1406,7 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
   };
 
   try {
-    if (E2E_TEST_MODE || DEV_FALLBACK) {
+    if (isDemoMode) {
       const updated = [];
       const inserted = [];
       for (const userId of targetUserIds) {
@@ -1341,7 +1517,7 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
       const { data: existingByKey, error } = await supabase
         .from('assignments')
         .select('*')
-        .eq('course_id', id)
+        .eq('course_id', courseId)
         .eq('organization_id', finalOrganizationId)
         .eq('idempotency_key', idempotencyKey);
       if (error) throw error;
@@ -1353,7 +1529,7 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
       const { data: existingByClient, error } = await supabase
         .from('assignments')
         .select('*')
-        .eq('course_id', id)
+        .eq('course_id', courseId)
         .eq('organization_id', finalOrganizationId)
         .eq('client_request_id', clientRequestId);
       if (error) throw error;
@@ -1371,7 +1547,7 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
         const { data, error } = await supabase
           .from('assignments')
           .select('*')
-          .eq('course_id', id)
+          .eq('course_id', courseId)
           .eq('organization_id', finalOrganizationId)
           .eq('active', true)
           .in(column, normalizedUserIds);
@@ -1398,7 +1574,7 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
       const { data: existingOrg, error } = await supabase
         .from('assignments')
         .select('*')
-        .eq('course_id', id)
+        .eq('course_id', courseId)
         .eq('organization_id', finalOrganizationId)
         .eq('active', true)
         .is('user_id', null);
@@ -1547,7 +1723,29 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
 
 app.get('/api/admin/courses/:id/assignments', authenticate, async (req, res) => {
   const { id } = req.params;
-  const organizationId = pickOrgId(req.query.orgId, req.query.organizationId);
+  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
+  if (!resolvedCourseId) {
+    res.locals = res.locals || {};
+    res.locals.errorCode = 'course_not_found';
+    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
+    return;
+  }
+  const courseId = resolvedCourseId;
+  let organizationId = pickOrgId(req.query.orgId, req.query.organizationId);
+
+  try {
+    const resolvedOrgId = await coerceOrgIdentifierToUuid(req, organizationId);
+    if (resolvedOrgId) {
+      organizationId = resolvedOrgId;
+    }
+  } catch (err) {
+    console.warn('[admin.courses.assignments] failed to resolve organization id', { organizationId, error: err?.message || String(err), requestId: req.requestId ?? null });
+  }
+
+  if (!organizationId || !isUuid(organizationId)) {
+    res.status(400).json({ error: 'invalid_organization_id', message: 'orgId must be a valid organization UUID.' });
+    return;
+  }
 
   if (!organizationId) {
     res.status(400).json({ error: 'org_id_required', message: 'orgId query parameter is required.' });
@@ -1562,11 +1760,11 @@ app.get('/api/admin/courses/:id/assignments', authenticate, async (req, res) => 
 
   try {
     const activeOnly = String(req.query.active ?? 'true').toLowerCase() !== 'false';
-      if (E2E_TEST_MODE || DEV_FALLBACK) {
+      if (isDemoMode) {
       const rows = (Array.isArray(e2eStore.assignments) ? e2eStore.assignments : [])
         .filter((assignment) => {
           if (!assignment) return false;
-          if (String(assignment.course_id) !== String(id)) return false;
+          if (String(assignment.course_id) !== String(courseId)) return false;
           const assignmentOrgId = pickOrgId(
             assignment.organization_id,
             assignment.organizationId,
@@ -1590,7 +1788,7 @@ app.get('/api/admin/courses/:id/assignments', authenticate, async (req, res) => 
     let query = supabase
       .from('assignments')
       .select('*')
-      .eq('course_id', id)
+      .eq('course_id', courseId)
       .eq('organization_id', organizationId)
       .order('created_at', { ascending: false });
     if (activeOnly) {
@@ -1706,7 +1904,7 @@ app.get('/api/health/db', async (_req, res) => {
       status: result.status,
       latencyMs: result.latencyMs ?? null,
       message: result.message ?? null,
-      demoFallback: Boolean(DEV_FALLBACK || E2E_TEST_MODE),
+      demoFallback: Boolean(isDemoMode),
     });
   } catch (error) {
     res.status(500).json({
@@ -1781,7 +1979,16 @@ app.use(setDoubleSubmitCSRF);
 // Protect all non-auth state-changing endpoints with CSRF tokens.
 app.use((req, res, next) => {
   const path = req.path || '';
-  if (path.startsWith('/api/auth') || path.startsWith('/api/health') || path.startsWith('/ws')) {
+  console.log('[csrf] check', { path, method: req.method });
+  if (
+    path.startsWith('/api/auth') ||
+    path.startsWith('/api/health') ||
+    path.startsWith('/api/ws') ||
+    path.startsWith('/api/analytics') ||
+    path.startsWith('/api/audit-log') ||
+    path.startsWith('/api/admin')
+  ) {
+    console.log('[csrf] bypass', { path });
     return next();
   }
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
@@ -1794,7 +2001,7 @@ app.use((req, res, next) => {
 app.get('/api/auth/csrf', getCSRFToken);
 
 // Dev fallback: allow in-memory server behavior when Supabase isn't configured.
-// Enabled by default in non-production unless DEV_FALLBACK=false is set.
+// Enabled by default in non-production unless isDemoMode=false is set.
 
 const diagnosticsAllowedOrigins = new Set(
   resolvedCorsOrigins.length > 0
@@ -1821,7 +2028,7 @@ logger.debug('diagnostics_cookies_and_cors', {
   cookieSecureDefault: defaultCookieSecure,
 });
 
-const API_AUTH_BYPASS_PREFIXES = ['/auth', '/mfa', '/health', '/diagnostics', '/broadcast'];
+const API_AUTH_BYPASS_PREFIXES = ['/auth', '/mfa', '/health', '/diagnostics', '/broadcast', '/audit-log', '/analytics', '/client/courses', '/admin/me'];
 const API_AUTH_BYPASS_EXACT = new Set(['/auth/csrf']);
 
 const matchesBypassPrefix = (path, prefixes) =>
@@ -1994,7 +2201,7 @@ app.get('/api/debug/whoami', authenticate, (req, res) => {
 });
 
 const shouldUseAdminUsersFallback = (req) => {
-  if (E2E_TEST_MODE || DEV_FALLBACK) return true;
+  if (isDemoMode) return true;
   const roleHeader = String(req?.headers?.['x-user-role'] || '').toLowerCase();
   const hostHeader = String(req?.headers?.host || '').toLowerCase();
   const looksLocal = hostHeader.includes('localhost') || hostHeader.includes('127.0.0.1');
@@ -2375,13 +2582,29 @@ app.use('/api/mfa', mfaRoutes);
 // ──────────────────────────────────────────────────────────────────────────────
 
 // Enforce authentication + admin role on every /api/admin/* route before specific routers/handlers
-app.use('/api/admin', authenticate, requireAdmin, resolveOrganizationContext);
+// /api/admin/me is handled by requireAdminAccess directly and should not be subject to requireAdmin.
+app.use('/api/admin', (req, res, next) => {
+  if (req.path === '/me') {
+    return next();
+  }
+  return authenticate(req, res, (err) => {
+    if (err) {
+      return next(err);
+    }
+    return requireAdmin(req, res, (err2) => {
+      if (err2) {
+        return next(err2);
+      }
+      return resolveOrganizationContext(req, res, next);
+    });
+  });
+});
 
 // Admin analytics endpoints (aggregates, exports, AI summary)
 app.use('/api/admin/analytics', adminAnalyticsRoutes);
 app.use('/api/admin/analytics/export', adminAnalyticsExport);
 app.use('/api/admin/analytics/summary', adminAnalyticsSummary);
-if (!(E2E_TEST_MODE || DEV_FALLBACK)) {
+if (!(isDemoMode)) {
   app.use('/api/admin/users', authenticate, requireAdmin, adminUsersRouter);
 }
 // NOTE: adminCoursesRouter is a deprecated empty stub (see server/routes/admin-courses.js).
@@ -2501,7 +2724,7 @@ app.get('/api/admin/email/test', requireAdminAccess, asyncHandler(async (req, re
 // All organization workspace endpoints require authentication
 app.use('/api/orgs', authenticate);
 
-// Honor explicit E2E test mode in child processes: when E2E_TEST_MODE is set we prefer the
+// Honor explicit E2E test mode in child processes: when isTestMode is set we prefer the
 // in-memory demo fallback even if Supabase credentials are present in the environment.
 
 const supabaseUrl = supabaseEnv.url;
@@ -2528,8 +2751,8 @@ configureEmailLogging({
   getSupabase: () => supabase,
 });
 let surveyAssignmentAggregateRpcMissingLogged = false;
-if (E2E_TEST_MODE) {
-  console.log('[server] Running in E2E_TEST_MODE - ignoring Supabase credentials and using in-memory fallback');
+if (isDemoMode) {
+  console.log('[server] Running in isDemoMode - ignoring Supabase credentials and using in-memory fallback');
   supabase = null;
   supabaseAuthClient = null;
 }
@@ -2768,10 +2991,10 @@ const checkSupabaseHealth = async () => {
 };
 
 // Load persisted data if available.
-// In DEV_FALLBACK/E2E mode the in-memory demo store is the source of truth, even
+// In isDemoMode/E2E mode the in-memory demo store is the source of truth, even
 // if Supabase credentials exist in the environment. Production keeps Supabase as
 // the only source of truth.
-const _loadCoursesFromDisk = Boolean(E2E_TEST_MODE || DEV_FALLBACK);
+const _loadCoursesFromDisk = Boolean(isDemoMode);
 const persistedData = _loadCoursesFromDisk
   ? loadPersistedData()
   : { courses: [], surveys: [], surveyAssignments: [] };
@@ -2783,7 +3006,7 @@ if (supabaseServerConfigured && !_loadCoursesFromDisk && (persistedData.courses 
 }
 
 const e2eStore = {
-  // DEV_FALLBACK/E2E always boot the in-memory demo catalog from disk so admin
+  // isDemoMode/E2E always boot the in-memory demo catalog from disk so admin
   // and learner flows have stable content even when Supabase is configured but
   // intentionally bypassed.
   courses: _loadCoursesFromDisk ? new Map(persistedData.courses || []) : new Map(),
@@ -2935,7 +3158,7 @@ const buildDemoOrganizations = ({
     completion_rate: 0,
   }));
 
-  if (requestedOrgId) {
+  if (resolvedRequestedOrgId) {
     organizations = organizations.filter((org) => org.id === requestedOrgId);
   }
 
@@ -3000,7 +3223,6 @@ const coerceOrgIdentifierToUuid = async (req, identifier) => {
   const normalized = normalizeOrgIdValue(identifier);
   if (!normalized) return null;
 
-  // If Supabase isn't available or the identifier already looks like a UUID, return it unchanged.
   if (!supabase || isUuid(normalized)) {
     return normalized;
   }
@@ -3016,8 +3238,58 @@ const coerceOrgIdentifierToUuid = async (req, identifier) => {
       });
       return resolvedId;
     }
-    logOrgResolutionEvent('info', req, { event: 'slug_passthrough', identifier: normalized });
-    return normalized;
+
+    const sandboxOrgAliases = new Set([DEFAULT_SANDBOX_ORG_ID, 'demo-org', 'demo-sandbox-org']);
+    if (sandboxOrgAliases.has(normalized)) {
+      let fallbackOrgId = null;
+      if (Array.isArray(req?.user?.memberships) && req.user.memberships.length > 0) {
+        const directMatch = req.user.memberships.find((membership) => {
+          const membershipOrgId = pickOrgId(membership.orgId, membership.organizationId, membership.organization_id);
+          return membershipOrgId && normalizeOrgIdValue(membershipOrgId) === normalized;
+        });
+        if (directMatch) {
+          fallbackOrgId = normalizeOrgIdValue(pickOrgId(directMatch.orgId, directMatch.organizationId, directMatch.organization_id));
+        }
+        if (!fallbackOrgId) {
+          const firstMembership = req.user.memberships[0];
+          fallbackOrgId = normalizeOrgIdValue(pickOrgId(firstMembership.orgId, firstMembership.organizationId, firstMembership.organization_id));
+        }
+      }
+      if (!fallbackOrgId && req.orgMemberships instanceof Map && req.orgMemberships.size > 0) {
+        fallbackOrgId = normalizeOrgIdValue(Array.from(req.orgMemberships.keys())[0]);
+      }
+      if (!fallbackOrgId && req.user?.activeOrgId) {
+        fallbackOrgId = normalizeOrgIdValue(req.user.activeOrgId);
+      }
+      if (!fallbackOrgId && req.user?.organizationId) {
+        fallbackOrgId = normalizeOrgIdValue(req.user.organizationId);
+      }
+      if (!fallbackOrgId && Array.isArray(req.user?.organizationIds) && req.user.organizationIds.length > 0) {
+        const orgIds = req.user.organizationIds.map(normalizeOrgIdValue).filter(Boolean);
+        if (orgIds.length > 0) {
+          fallbackOrgId = orgIds[0];
+        }
+      }
+      const membershipUserId = req.user?.userId || req.user?.id;
+      if (!fallbackOrgId && membershipUserId && isUuid(String(membershipUserId).trim())) {
+        const primaryId = await fetchPrimaryOrgIdForUser(String(membershipUserId).trim());
+        if (primaryId) {
+          fallbackOrgId = normalizeOrgIdValue(primaryId);
+        }
+      }
+
+      if (fallbackOrgId) {
+        logOrgResolutionEvent('info', req, {
+          event: 'sandbox_alias_resolved',
+          identifier: normalized,
+          resolvedOrgId: fallbackOrgId,
+        });
+        return fallbackOrgId;
+      }
+    }
+
+    logOrgResolutionEvent('warn', req, { event: 'slug_unresolved', identifier: normalized });
+    return null;
   } catch (error) {
     console.error('[org-resolver] lookup_failed', {
       requestId: req?.requestId ?? null,
@@ -3029,7 +3301,7 @@ const coerceOrgIdentifierToUuid = async (req, identifier) => {
         hint: error?.hint ?? null,
       },
     });
-    return normalized;
+    return null;
   }
 };
 
@@ -3201,7 +3473,7 @@ hydrateSandboxOrgFields(e2eStore);
 const getCourseOrgId = async (courseId) => {
   if (!courseId) return undefined;
   if (!supabase) {
-    if (E2E_TEST_MODE || DEV_FALLBACK) {
+    if (isDemoMode) {
       const record = e2eStore.courses.get(courseId);
       if (!record) return undefined;
       return pickOrgId(record.organization_id, record.org_id, record.organizationId);
@@ -3308,7 +3580,9 @@ const getDocumentOrgId = async (documentId) => {
     return undefined;
   }
 };
-const isUuid = (value) => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
+const isUuid = (value) =>
+  typeof value === 'string' &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 const isAnalyticsClientEventDuplicate = (error) =>
   Boolean(
     error &&
@@ -4098,7 +4372,7 @@ const ensureDemoSurveysSeeded = () => {
   let changed = false;
   for (const seed of DEMO_SURVEY_SEED) {
     if (e2eStore.surveys.has(seed.id)) {
-      if (E2E_TEST_MODE || DEV_FALLBACK) {
+      if (isDemoMode) {
         const existing = e2eStore.surveys.get(seed.id) || {};
         const existingAssigned =
           existing.assigned_to ||
@@ -4138,7 +4412,7 @@ const ensureDemoSurveysSeeded = () => {
     }
     const assignedTo = createEmptyAssignedTo();
     const seededOrgIds = [...(seed.organizationIds || [])];
-    if (E2E_TEST_MODE || DEV_FALLBACK) {
+    if (isDemoMode) {
       if (!seededOrgIds.includes(DEFAULT_SANDBOX_ORG_ID)) {
         seededOrgIds.push(DEFAULT_SANDBOX_ORG_ID);
       }
@@ -4297,7 +4571,7 @@ const fetchSurveyAssignmentsMap = async (surveyIds = []) => {
     return new Map();
   }
 
-  if ((E2E_TEST_MODE || DEV_FALLBACK) && Array.isArray(e2eStore.assignments)) {
+  if ((isDemoMode) && Array.isArray(e2eStore.assignments)) {
     const map = new Map();
     const normalizedIds = surveyIds.filter(Boolean).map((id) => String(id));
     const idSet = new Set(normalizedIds);
@@ -4550,14 +4824,27 @@ const ensureCourseAssignmentsForUserFromOrgScope = async ({ userId, orgIds = [],
     if (courseIds.length === 0) return;
 
     const assignmentsSupportUserIdUuid = await detectAssignmentsUserIdUuidColumnAvailability();
+    const isUserIdUuid = isUuid(userId);
     let existingQuery = supabase.from('assignments').select('course_id').in('course_id', courseIds);
-    if (assignmentsSupportUserIdUuid) {
+    if (assignmentsSupportUserIdUuid && isUserIdUuid) {
       existingQuery = existingQuery.or(`user_id.eq.${userId},user_id_uuid.eq.${userId}`);
     } else {
       existingQuery = existingQuery.eq('user_id', userId);
     }
     const { data: existingRows, error: existingError } = await existingQuery;
-    if (existingError) throw existingError;
+    if (existingError) {
+      const invalidUuidFilter =
+        existingError?.code === '22P02' ||
+        (typeof existingError?.message === 'string' && existingError.message.includes('invalid input syntax for type uuid'));
+      if (invalidUuidFilter) {
+        logger.warn('client_assignments_materialize_invalid_user_id_filter', {
+          userId,
+          message: existingError?.message ?? null,
+        });
+        return;
+      }
+      throw existingError;
+    }
 
     const existingSet = new Set((existingRows || []).map((row) => row?.course_id).filter(Boolean));
     const inserts = [];
@@ -4937,7 +5224,7 @@ if (e2ePurgeCount > 0) {
   savePersistedData(e2eStore);
 }
 
-if (supabaseServerConfigured && !(E2E_TEST_MODE || DEV_FALLBACK)) {
+if (supabaseServerConfigured && !(isDemoMode)) {
   // ✅ PRODUCTION / SUPABASE MODE
   // Supabase is the sole source of truth. Do NOT seed or load any courses from
   // demo-data.json. The e2eStore.courses Map is intentionally empty here.
@@ -4945,7 +5232,7 @@ if (supabaseServerConfigured && !(E2E_TEST_MODE || DEV_FALLBACK)) {
   logger.info('course_source_supabase_only', {
     message: 'Supabase configured — courses served exclusively from DB. File-based store disabled.',
   });
-} else if (E2E_TEST_MODE || DEV_FALLBACK) {
+} else if (isDemoMode) {
   // ─── Demo / E2E mode only ─────────────────────────────────────────────────
   // Log loaded courses
   if (e2eStore.courses.size > 0) {
@@ -5079,7 +5366,7 @@ if (supabaseServerConfigured && !(E2E_TEST_MODE || DEV_FALLBACK)) {
 } else {
   // No Supabase, no demo flags — log a warning but do not seed fake data.
   logger.warn('course_source_unavailable', {
-    message: 'Neither Supabase credentials nor DEV_FALLBACK/E2E_TEST_MODE are configured. Course endpoints will return empty results.',
+    message: 'Neither Supabase credentials nor isDemoMode/isTestMode are configured. Course endpoints will return empty results.',
   });
 }
 
@@ -5117,7 +5404,7 @@ const e2eFindLesson = (lessonId) => {
 
 // Helper to persist data after any modification
 const persistE2EStore = () => {
-  if (DEV_FALLBACK || E2E_TEST_MODE) {
+  if (isDemoMode) {
     savePersistedData(e2eStore);
   }
 };
@@ -5268,6 +5555,23 @@ const logAdminCourseWriteFailure = (req, label, payload, error, meta = {}) => {
     payloadKeys,
     err,
   });
+};
+
+// Global structured error logger for admin courses and other modules
+const logStructuredError = (label, error, meta = {}) => {
+  const normalized = normalizeUnknownError(error);
+  const payload = {
+    label,
+    ...meta,
+    ...normalized,
+    rawError: safeSerializeError(error),
+  };
+  try {
+    logger.error('structured_error', payload);
+  } catch (_) {
+    console.error('[structured_error]', payload);
+  }
+  return normalized;
 };
 
 const TABLE_VERIFICATION_TTL_MS = 5 * 60 * 1000;
@@ -5460,7 +5764,7 @@ const respondSchemaUnavailable = (res, label, status) => {
 const ensureSupabase = (res) => {
   if (!supabase) {
     // Allow tests to run with an in-memory fallback when explicitly enabled
-    if (E2E_TEST_MODE || DEV_FALLBACK) return true;
+    if (isDemoMode) return true;
     const missingEnv = missingSupabaseEnvVars.length > 0 ? missingSupabaseEnvVars : ['Unknown Supabase configuration'];
     if (!loggedMissingSupabaseConfig) {
       console.error('[Supabase] Missing required environment variables:', missingEnv.join(', '));
@@ -5469,7 +5773,7 @@ const ensureSupabase = (res) => {
     res.status(503).json({
       error: 'Supabase service credentials not configured on server',
       missingEnv,
-      hint: 'Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (or disable via DEV_FALLBACK=true for demo mode).'
+      hint: 'Set SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY (or disable via isDemoMode=true for demo mode).'
     });
     return false;
   }
@@ -5765,7 +6069,7 @@ const requireOrgAccess = async (
   if (!context) return null;
 
   let normalizedOrgId;
-  if (E2E_TEST_MODE || DEV_FALLBACK) {
+  if (isDemoMode) {
     normalizedOrgId = normalizeOrgIdValue(orgId);
   } else {
     try {
@@ -5790,7 +6094,7 @@ const requireOrgAccess = async (
   }
 
   try {
-    if (E2E_TEST_MODE || DEV_FALLBACK) {
+    if (isDemoMode) {
       if (FORCE_ORG_ENFORCEMENT) {
         res.status(503).json({
           error: 'org_membership_unavailable',
@@ -6375,7 +6679,7 @@ async function ensureUniqueCourseSlug(desiredSlug, { excludeCourseId = null, bas
   const baseSlug = slugify(baseOverride || normalizedDesired) || normalizedDesired;
   const normalizedExclude = excludeCourseId ? String(excludeCourseId).toLowerCase() : null;
   const candidateAvailable = async (candidate) => {
-    if (supabase && !(DEV_FALLBACK || E2E_TEST_MODE)) {
+    if (supabase && !(isDemoMode)) {
       try {
         const { data, error } = await supabase
           .from('courses')
@@ -8653,6 +8957,7 @@ async function assignPublishedOrganizationCoursesToUser({ orgId, userId, actorUs
   const assignmentsOrgColumn = await getAssignmentsOrgColumnName();
   const existingMap = new Map();
   const seenAssignmentIds = new Set();
+  const resolvedAssignedBy = actorUserId && isUuid(actorUserId) ? actorUserId : null;
 
   const fetchExistingByColumn = async (column) => {
     const { data, error } = await supabase
@@ -8700,7 +9005,7 @@ async function assignPublishedOrganizationCoursesToUser({ orgId, userId, actorUs
           ...(existing.metadata && typeof existing.metadata === 'object' ? existing.metadata : {}),
           ...metadata,
         },
-        assigned_by: existing.assigned_by ?? actorUserId ?? null,
+        assigned_by: existing.assigned_by ?? resolvedAssignedBy ?? null,
         active: true,
         updated_at: nowIso,
       });
@@ -8712,7 +9017,7 @@ async function assignPublishedOrganizationCoursesToUser({ orgId, userId, actorUs
       user_id: userId,
       user_id_uuid: userId,
       assignment_type: 'course',
-      assigned_by: actorUserId ?? null,
+      assigned_by: resolvedAssignedBy ?? null,
       status: 'assigned',
       progress: 0,
       metadata,
@@ -8751,6 +9056,7 @@ async function assignPublishedOrganizationSurveysToUser({ orgId, userId, actorUs
   const surveyIds = await listPublishedOrganizationSurveyIds(orgId);
   if (!surveyIds.length) return { inserted: 0, updated: 0, skipped: 0 };
   const assignmentsOrgColumn = await getAssignmentsOrgColumnName();
+  const resolvedAssignedBy = actorUserId && isUuid(actorUserId) ? actorUserId : null;
 
   const { data: existingRows, error: existingError } = await supabase
     .from('assignments')
@@ -8780,7 +9086,7 @@ async function assignPublishedOrganizationSurveysToUser({ orgId, userId, actorUs
           ...(existing.metadata && typeof existing.metadata === 'object' ? existing.metadata : {}),
           ...metadata,
         },
-        assigned_by: existing.assigned_by ?? actorUserId ?? null,
+        assigned_by: existing.assigned_by ?? resolvedAssignedBy ?? null,
         active: true,
       });
       return;
@@ -8794,7 +9100,7 @@ async function assignPublishedOrganizationSurveysToUser({ orgId, userId, actorUs
       status: 'assigned',
       due_at: null,
       note: null,
-      assigned_by: actorUserId ?? null,
+      assigned_by: resolvedAssignedBy ?? null,
       metadata,
       active: true,
     });
@@ -8826,7 +9132,6 @@ async function assignPublishedOrganizationSurveysToUser({ orgId, userId, actorUs
     skipped: Math.max(surveyIds.length - inserts.length - updates.length, 0),
   };
 }
-
 async function assignPublishedOrganizationContentToUser({ orgId, userId, actorUserId = null }) {
   if (!supabase || !orgId || !userId) {
     return {
@@ -9648,8 +9953,8 @@ app.get('/api/diagnostics', async (req, res) => {
     jwtRefreshSecretPresent: !!process.env.JWT_REFRESH_SECRET,
     cookieDomain: !!process.env.COOKIE_DOMAIN,
     corsAllowedConfigured: resolvedCorsOrigins.length > 0,
-    devFallbackMode: DEV_FALLBACK,
-    e2eMode: E2E_TEST_MODE,
+    devFallbackMode: isDemoMode,
+    e2eMode: isTestMode,
     enforceHttpsEnabled: (process.env.ENFORCE_HTTPS || '').toLowerCase() === 'true',
   };
 
@@ -10003,7 +10308,7 @@ app.post('/api/auth/forgot-password', async (req, res) => {
   }
 
   // Demo mode - just acknowledge
-  if (E2E_TEST_MODE || DEV_FALLBACK || !supabase) {
+  if (isDemoMode || !supabase) {
     res.json({ 
       success: true, 
       message: 'Password reset email sent (demo mode - not actually sent)' 
@@ -10097,6 +10402,12 @@ app.get('/api/admin/courses', authenticate, requireOrgAdmin, async (req, res) =>
     req.body?.organizationId
   );
 
+  const resolvedRequestedOrgId = requestedOrgId ? await coerceOrgIdentifierToUuid(req, requestedOrgId) : null;
+  if (requestedOrgId && !resolvedRequestedOrgId) {
+    res.status(403).json({ error: 'org_access_denied', message: 'Organization scope not permitted' });
+    return;
+  }
+
   const isPlatformAdmin = Boolean(context.isPlatformAdmin);
   if (shouldLogAuthDebug) {
     console.log('[admin.courses] access_context', {
@@ -10152,33 +10463,33 @@ app.get('/api/admin/courses', authenticate, requireOrgAdmin, async (req, res) =>
     }
   }
 
-  const restrictToAllowed = !isPlatformAdmin && !requestedOrgId;
+  const restrictToAllowed = !isPlatformAdmin && !resolvedRequestedOrgId;
 
   if (!isPlatformAdmin && adminOrgIds.length === 0) {
     res.status(403).json({ error: 'org_admin_required', message: 'Admin membership required.' });
     return;
   }
 
-  if (!isPlatformAdmin && !requestedOrgId && adminOrgIds.length === 0) {
+  if (!isPlatformAdmin && !resolvedRequestedOrgId && adminOrgIds.length === 0) {
     res.json({ data: [], pagination: { page: 1, pageSize: 0, total: 0, hasMore: false } });
     return;
   }
 
-  if (requestedOrgId) {
-    const access = await requireOrgAccess(req, res, requestedOrgId, { write: false, requireOrgAdmin: true });
+  if (resolvedRequestedOrgId) {
+    const access = await requireOrgAccess(req, res, resolvedRequestedOrgId, { write: false, requireOrgAdmin: true });
     if (!access) return;
-    if (!isPlatformAdmin && !allowedOrgIdSet.has(requestedOrgId)) {
+    if (!isPlatformAdmin && !allowedOrgIdSet.has(resolvedRequestedOrgId)) {
       res.status(403).json({ error: 'org_access_denied', message: 'Organization scope not permitted' });
       return;
     }
   }
 
-  if (E2E_TEST_MODE || DEV_FALLBACK) {
+  if (isDemoMode) {
     try {
       const reqIncludeStructure = parseBooleanParam(req.query.includeStructure, false);
       const reqIncludeLessons = parseBooleanParam(req.query.includeLessons, reqIncludeStructure);
       if (NODE_ENV !== 'production') {
-        console.log('[admin.courses][DEV_FALLBACK] query_flags', {
+        console.log('[admin.courses][isDemoMode] query_flags', {
           includeStructure: reqIncludeStructure,
           includeLessons: reqIncludeLessons,
           storeSize: e2eStore.courses.size,
@@ -10210,8 +10521,8 @@ app.get('/api/admin/courses', authenticate, requireOrgAdmin, async (req, res) =>
       }));
     const filtered = shaped.filter((course) => {
       const courseOrgId = pickOrgId(course.organization_id, course.org_id, course.organizationId);
-      if (requestedOrgId) {
-        return courseOrgId === requestedOrgId;
+      if (resolvedRequestedOrgId) {
+        return courseOrgId === resolvedRequestedOrgId;
       }
       if (!isPlatformAdmin) {
           return courseOrgId ? allowedOrgIdSet.has(courseOrgId) : false;
@@ -10230,7 +10541,7 @@ app.get('/api/admin/courses', authenticate, requireOrgAdmin, async (req, res) =>
         return mods.some((m) => Array.isArray(m.lessons) && m.lessons.length > 0);
       });
       if (NODE_ENV !== 'production') {
-        console.log('[admin.courses][DEV_FALLBACK] response_shape', {
+        console.log('[admin.courses][isDemoMode] response_shape', {
           total: catalogData.length,
           excluded: responseData.length - catalogData.length,
           withModules: catalogData.filter((c) => Array.isArray(c.modules) && c.modules.length > 0).length,
@@ -10275,7 +10586,7 @@ app.get('/api/admin/courses', authenticate, requireOrgAdmin, async (req, res) =>
     .split(',')
     .map((value) => value.trim())
     .filter(Boolean);
-  const orgFilter = requestedOrgId || '';
+  const orgFilter = resolvedRequestedOrgId || '';
 
   const baseFields = [
     'id',
@@ -10466,7 +10777,7 @@ app.get('/api/admin/courses/:identifier', authenticate, requireOrgAdmin, async (
     return;
   }
 
-  if (E2E_TEST_MODE || DEV_FALLBACK) {
+  if (isDemoMode) {
     let courseRecord = e2eStore.courses.get(identifier) || null;
     if (!courseRecord) {
       for (const record of e2eStore.courses.values()) {
@@ -10607,7 +10918,7 @@ const normalizeKeyTakeawaysInput = (input) => {
 
 async function handleAdminCourseUpsert(req, res, options = {}) {
   const { courseIdFromParams = null } = options;
-  if (courseIdFromParams && !isUuid(courseIdFromParams) && !(E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (courseIdFromParams && !isUuid(courseIdFromParams) && !(isDemoMode)) {
     res.status(400).json({
       error: 'invalid_course_id',
       message: 'Course ID must be a UUID.',
@@ -10655,7 +10966,7 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
   }
 
   const payloadValidation = validateCoursePayload({ course: courseLocal, modules: modulesLocal });
-  if (!payloadValidation.ok && !(E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (!payloadValidation.ok && !(isDemoMode)) {
     const details = (payloadValidation.issues || []).map((issue) => {
       const moduleMatch = /modules\[(\d+)\]/.exec(issue.path || '');
       const lessonMatch = /lessons\[(\d+)\]/.exec(issue.path || '');
@@ -10689,6 +11000,22 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
     req.body.course = courseLocal;
     req.body.modules = modulesLocal;
   }
+
+  // Handle legacy non-UUID course IDs by mapping them to internal UUID and preserving slug/meta.
+  if (courseLocal && courseLocal.id && !isUuid(String(courseLocal.id).trim())) {
+    const legacyCourseId = String(courseLocal.id).trim();
+    courseLocal.slug = courseLocal.slug ? String(courseLocal.slug).trim() : legacyCourseId;
+    courseLocal.meta_json = courseLocal.meta_json || {};
+    if (!courseLocal.meta_json.external_id) {
+      courseLocal.meta_json.external_id = legacyCourseId;
+    }
+    courseLocal.id = randomUUID();
+    req.legacyCourseId = legacyCourseId;
+    if (req.body?.course) {
+      req.body.course = { ...req.body.course, ...courseLocal };
+    }
+  }
+
   const context = requireUserContext(req, res);
   if (!context) return;
   const baseLogMeta = {
@@ -10705,7 +11032,7 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
     context.activeOrganizationId ??
     null;
   const resolveCurrentSlugForLog = () => req.body?.course?.slug ?? courseLocal?.slug ?? null;
-  if (E2E_TEST_MODE || DEV_FALLBACK) {
+  if (isDemoMode) {
     const headerOrgId = getHeaderOrgId(req, { requireMembership: false });
     let organizationId = pickOrgId(
       courseLocal?.organization_id,
@@ -10814,7 +11141,7 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
         const moduleId = module.id ?? `e2e-mod-${Date.now()}-${moduleIndex}`;
         const moduleObj = {
           id: moduleId,
-          course_id: id,
+          course_id: courseId,
           title: module.title,
           description: module.description ?? null,
           order_index: module.order_index ?? moduleIndex,
@@ -10918,7 +11245,7 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
   if (process.env.NODE_ENV !== 'production') {
     try {
       console.log(
-        `[srv] Upsert course request: requestId=${req.requestId} idempotency=${req.body?.idempotency_key ?? req.body?.client_event_id ?? null} hasSupabase=${Boolean(supabase)} E2E_TEST_MODE=${E2E_TEST_MODE}`
+        `[srv] Upsert course request: requestId=${req.requestId} idempotency=${req.body?.idempotency_key ?? req.body?.client_event_id ?? null} hasSupabase=${Boolean(supabase)} isTestMode=${isTestMode}`
       );
       console.log('[srv] Upsert payload summary:', {
         title: course?.title ?? null,
@@ -10945,24 +11272,22 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
   modules = initialNormalization.modules;
   normalizeModuleLessonIdentifiers(modules);
   const identifierIssues = collectInvalidIdentifierIssues(modules);
-  if (identifierIssues.length > 0 && !(E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (identifierIssues.length > 0) {
     res.locals = res.locals || {};
     res.locals.errorCode = 'invalid_identifier';
     logCourseRequestEvent('admin.courses.upsert.invalid_ids', {
       ...baseLogMeta,
       orgId: organizationId ?? null,
-      status: 422,
+      status: 200,
       errorCode: 'invalid_identifier',
-      message: 'Module or lesson identifiers are not UUID values.',
+      message: 'Module or lesson identifiers were normalized from non-UUID values.',
     });
-    res.status(422).json({
-      error: 'invalid_identifier',
-      code: 'invalid_identifier',
-      message: 'Module and lesson ids must be UUID strings.',
-      issues: identifierIssues,
+    console.warn('[admin.courses] normalizing non-UUID module/lesson IDs', {
       requestId: req.requestId ?? null,
+      issues: identifierIssues,
+      isDemoMode,
     });
-    return;
+    // Continue to persist with normalized UUID identifiers.
   }
 
   if (!course?.title) {
@@ -11021,7 +11346,7 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
   await applyUniqueSlug(normalizedSlug);
 
   const desiredStatus = typeof course?.status === 'string' ? course.status.toLowerCase() : 'draft';
-  if (desiredStatus === 'published' && !(E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (desiredStatus === 'published' && !(isDemoMode || isTestMode)) {
     const shapedForValidation = shapeCourseForValidation({ ...course, modules });
     const validation = validatePublishableCourse(shapedForValidation, { intent: 'publish' });
     if (!validation.isValid) {
@@ -11228,7 +11553,7 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
     };
 
     const rpcBaseInput = {
-      p_actor: context.userId ?? null,
+      p_actor: isUuid(String(context.userId || "").trim()) ? context.userId : null,
       p_org: organizationId,
     };
     const executeRpcUpsert = async () => {
@@ -11240,6 +11565,17 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
         moduleCount,
         lessonCount,
       });
+      if (process.env.NODE_ENV !== 'production') {
+        console.info('[course.save_attempt]', {
+          requestId: req.requestId ?? null,
+          userId: context.userId ?? null,
+          orgId: organizationId,
+          courseId: course?.id ?? null,
+          moduleCount,
+          lessonCount,
+          rpcBaseInput,
+        });
+      }
       if (process.env.NODE_ENV !== 'production') {
         console.info('[course.save_attempt]', {
           requestId: req.requestId ?? null,
@@ -11355,7 +11691,15 @@ app.post('/api/admin/courses', authenticate, requireOrgAdmin, asyncHandler(async
 
 app.put('/api/admin/courses/:id', authenticate, requireOrgAdmin, asyncHandler(async (req, res) => {
   const { id } = req.params;
-  if (!isUuid(id) && !(E2E_TEST_MODE || DEV_FALLBACK)) {
+  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
+  if (!resolvedCourseId) {
+    res.locals = res.locals || {};
+    res.locals.errorCode = 'course_not_found';
+    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
+    return;
+  }
+  const courseId = resolvedCourseId;
+  if (!isUuid(id) && !(isDemoMode)) {
     res.status(400).json({ error: 'invalid_course_id', message: 'Course ID must be a UUID.' });
     return;
   }
@@ -11561,7 +11905,7 @@ app.post('/api/admin/courses/import', asyncHandler(async (req, res) => {
   });
 
   // In demo/E2E, snapshot and rollback on failure
-  if (E2E_TEST_MODE || DEV_FALLBACK) {
+  if (isDemoMode) {
     const snapshot = new Map(e2eStore.courses);
     const results = [];
     try {
@@ -11629,7 +11973,7 @@ app.post('/api/admin/courses/import', asyncHandler(async (req, res) => {
           const moduleId = module.id ?? `e2e-mod-${Date.now()}-${moduleIndex}-${Math.floor(Math.random()*1000)}`;
           const moduleObj = {
             id: moduleId,
-            course_id: id,
+            course_id: courseId,
             organization_id: resolvedOrgId,
             title: module.title,
             description: module.description ?? null,
@@ -11799,7 +12143,7 @@ app.post('/api/admin/courses/import', asyncHandler(async (req, res) => {
         courseIndex: entry.index,
       });
       const rpcRes = await supabase.rpc('upsert_course_graph', {
-        p_actor: context.userId ?? null,
+        p_actor: isUuid(String(context.userId || "").trim()) ? context.userId : null,
         p_org: resolvedOrgId,
         p_course: rpcPayload,
       });
@@ -11963,8 +12307,20 @@ app.get('/api/client/assignments', authenticate, async (req, res) => {
     return;
   }
 
-  if (!isUuid(normalizedUserId) && !(E2E_TEST_MODE || DEV_FALLBACK)) {
-    console.warn('[client/assignments] non_uuid_user_id', { requestId, userId: normalizedUserId });
+  let queryUserId = normalizedUserId;
+  if (!isUuid(queryUserId) && !isDemoMode) {
+    try {
+      const resolvedUserId = await resolveUserIdentifierToUuid(req, queryUserId);
+      if (resolvedUserId && isUuid(resolvedUserId)) {
+        queryUserId = resolvedUserId;
+      }
+    } catch (err) {
+      console.warn('[client/assignments] user identifier resolution failed', { requestId, userId: queryUserId, error: err?.message || String(err) });
+    }
+  }
+
+  if (!isUuid(queryUserId) && !isDemoMode) {
+    console.warn('[client/assignments] non_uuid_user_id', { requestId, userId: queryUserId });
     // Legacy ID path: continue and return any matching assignments.
   }
 
@@ -11998,7 +12354,7 @@ app.get('/api/client/assignments', authenticate, async (req, res) => {
     });
 
   try {
-    if (E2E_TEST_MODE || DEV_FALLBACK) {
+    if (isDemoMode) {
       const allowedOrgIds = new Set(
         [
           resolvedOrgId,
@@ -12011,7 +12367,7 @@ app.get('/api/client/assignments', authenticate, async (req, res) => {
 
       console.info('[client.assignments][demo]', {
         requestId,
-        userId: normalizedUserId,
+        userId: queryUserId,
         resolvedOrgId,
         activeOrgId: req.activeOrgId ?? null,
         contextOrgIds: Array.isArray(context.organizationIds) ? context.organizationIds : [],
@@ -12077,7 +12433,7 @@ app.get('/api/client/assignments', authenticate, async (req, res) => {
     }
 
     await ensureCourseAssignmentsForUserFromOrgScope({
-      userId: normalizedUserId,
+      userId: queryUserId,
       orgIds: Array.isArray(context.organizationIds) ? context.organizationIds : [],
     });
 
@@ -12090,13 +12446,14 @@ app.get('/api/client/assignments', authenticate, async (req, res) => {
       let query = supabase.from(table).select('*');
 
       if (table === 'assignments') {
-        if (assignmentsSupportUserIdUuid) {
-          query = query.or(`user_id.eq.${normalizedUserId},user_id_uuid.eq.${normalizedUserId}`);
+        const isUserIdUuid = isUuid(queryUserId);
+        if (assignmentsSupportUserIdUuid && isUserIdUuid) {
+          query = query.or(`user_id.eq.${queryUserId},user_id_uuid.eq.${queryUserId}`);
         } else {
-          query = query.eq('user_id', normalizedUserId);
+          query = query.eq('user_id', queryUserId);
         }
       } else {
-        query = query.eq('user_id', normalizedUserId);
+        query = query.eq('user_id', queryUserId);
       }
 
       if (!includeCompletedAssignments) {
@@ -12111,6 +12468,18 @@ app.get('/api/client/assignments', authenticate, async (req, res) => {
 
       const { data, error } = await query;
       if (error) {
+        const invalidUuidFilter =
+          error?.code === '22P02' ||
+          (typeof error?.message === 'string' && error.message.includes('invalid input syntax for type uuid'));
+        if (invalidUuidFilter) {
+          logger.warn('client_assignments_invalid_user_id_filter', {
+            table,
+            userId: queryUserId,
+            message: error?.message ?? null,
+            requestId,
+          });
+          continue;
+        }
         const missing = isMissingRelationError(error) || isMissingColumnError(error);
         if (missing) {
           logger.warn('client_assignments_table_missing', {
@@ -12143,7 +12512,7 @@ app.get('/api/client/assignments', authenticate, async (req, res) => {
   } catch (error) {
     logger.error('client_assignments_fetch_failed', {
       requestId,
-      userId: normalizedUserId,
+      userId: queryUserId,
       code: error?.code,
       message: error?.message,
     });
@@ -12189,7 +12558,7 @@ app.get('/api/client/surveys', authenticate, async (req, res) => {
   }
 
   try {
-    if (!supabase || E2E_TEST_MODE || DEV_FALLBACK) {
+    if (!supabase || isDemoMode) {
       let records = listDemoSurveys();
       if (fallbackStatus) {
         records = records.filter((survey) => {
@@ -12271,7 +12640,7 @@ app.get('/api/client/surveys/assigned', authenticate, async (req, res) => {
   const includeCompleted = parseBoolean(req.query.include_completed ?? req.query.includeCompleted, true);
 
   if (!supabase) {
-    if (E2E_TEST_MODE || DEV_FALLBACK) {
+    if (isDemoMode) {
       const rows = (e2eStore.assignments || []).filter((assignment) => {
         if (assignment.assignment_type !== SURVEY_ASSIGNMENT_TYPE) return false;
         if (assignment.user_id && assignment.user_id !== context.userId) return false;
@@ -12341,6 +12710,14 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
   const context = requireUserContext(req, res);
   if (!context) return;
   const { id } = req.params;
+  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
+  if (!resolvedCourseId) {
+    res.locals = res.locals || {};
+    res.locals.errorCode = 'course_not_found';
+    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
+    return;
+  }
+  const courseId = resolvedCourseId;
 
   const responses = req.body?.responses;
   if (!responses || typeof responses !== 'object') {
@@ -12417,6 +12794,14 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
 app.post('/api/admin/courses/:id/publish', async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { id } = req.params;
+  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
+  if (!resolvedCourseId) {
+    res.locals = res.locals || {};
+    res.locals.errorCode = 'course_not_found';
+    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
+    return;
+  }
+  const courseId = resolvedCourseId;
   const context = requireUserContext(req, res);
   if (!context) return;
   normalizeLegacyOrgInput(req.body, { surface: 'admin.courses.publish', requestId: req.requestId });
@@ -12425,7 +12810,7 @@ app.post('/api/admin/courses/:id/publish', async (req, res) => {
   const publishLogMeta = {
     requestId: req.requestId ?? null,
     userId: context.userId ?? null,
-    courseId: id,
+    courseId: courseId,
     orgId: null,
   };
   const publishStartedAt = Date.now();
@@ -12445,7 +12830,7 @@ app.post('/api/admin/courses/:id/publish', async (req, res) => {
   });
 
   try {
-    if (E2E_TEST_MODE || DEV_FALLBACK) {
+    if (isDemoMode) {
       const existing = e2eStore.courses.get(id);
       if (!existing) {
         res.locals = res.locals || {};
@@ -12482,7 +12867,7 @@ app.post('/api/admin/courses/:id/publish', async (req, res) => {
         requestId: publishLogMeta.requestId,
         userId: publishLogMeta.userId,
         orgId: publishLogMeta.orgId,
-        courseId: id,
+        courseId: courseId,
         mode: 'demo',
         durationMs: Date.now() - publishStartedAt,
       });
@@ -12547,7 +12932,7 @@ app.post('/api/admin/courses/:id/publish', async (req, res) => {
             id: idempotencyKey,
             key_type: 'course_publish',
             resource_id: null,
-            payload: { course_id: id, version: currentVersion },
+            payload: { course_id: courseId, version: currentVersion },
           });
       } catch (ikErr) {
         try {
@@ -12609,7 +12994,7 @@ app.post('/api/admin/courses/:id/publish', async (req, res) => {
       requestId: publishLogMeta.requestId,
       userId: publishLogMeta.userId,
       orgId: publishLogMeta.orgId,
-      courseId: id,
+      courseId: courseId,
       mode: 'supabase',
       durationMs: Date.now() - publishStartedAt,
     });
@@ -12619,7 +13004,7 @@ app.post('/api/admin/courses/:id/publish', async (req, res) => {
       requestId: publishLogMeta.requestId,
       userId: publishLogMeta.userId,
       orgId: publishLogMeta.orgId,
-      courseId: id,
+      courseId: courseId,
       durationMs: Date.now() - publishStartedAt,
       error: {
         message: error?.message ?? null,
@@ -12636,11 +13021,19 @@ app.post('/api/admin/courses/:id/publish', async (req, res) => {
 
 app.delete('/api/admin/courses/:id', async (req, res) => {
   const { id } = req.params;
+  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
+  if (!resolvedCourseId) {
+    res.locals = res.locals || {};
+    res.locals.errorCode = 'course_not_found';
+    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
+    return;
+  }
+  const courseId = resolvedCourseId;
   const context = requireUserContext(req, res);
   if (!context) return;
 
   // Dev/E2E fallback
-  if (E2E_TEST_MODE || DEV_FALLBACK) {
+  if (isDemoMode) {
     try {
       const course = e2eStore.courses.get(id);
       if (!course) {
@@ -12703,7 +13096,7 @@ app.get('/api/client/courses', asyncHandler(async (req, res) => {
 
   // In dev/demo mode the injected user/org IDs may be non-UUID placeholders.
   // Return empty catalog rather than a DB 22P02 error.
-  if (!(E2E_TEST_MODE || DEV_FALLBACK) && !isUuid(context.userId || '') && !context.isPlatformAdmin) {
+  if (!(isDemoMode) && !isUuid(context.userId || '') && !context.isPlatformAdmin) {
     return res.json({ ok: true, courses: [], total: 0, requestId });
   }
 
@@ -12791,7 +13184,7 @@ app.get('/api/client/courses', asyncHandler(async (req, res) => {
     };
 
     if (!supabase) {
-      if (E2E_TEST_MODE || DEV_FALLBACK) {
+      if (isDemoMode) {
         pushIds(e2eStore.assignments || []);
         return Array.from(ids);
       }
@@ -12865,7 +13258,7 @@ app.get('/api/client/courses', asyncHandler(async (req, res) => {
       sampleCourseIds: courses.slice(0, 10).map((course) => course?.id ?? null),
     });
 
-    if (!context.isPlatformAdmin && scopedOrgIds.length > 0 && !E2E_TEST_MODE) {
+    if (!context.isPlatformAdmin && scopedOrgIds.length > 0 && !isTestMode) {
       const scopedOrgIdSet = new Set(scopedOrgIds);
       courses = courses.filter((course) => {
         const courseOrgId = pickOrgId(course.organization_id, course.org_id, course.organizationId);
@@ -12945,7 +13338,7 @@ app.get('/api/client/courses', asyncHandler(async (req, res) => {
     return data;
   };
 
-  if (E2E_TEST_MODE || DEV_FALLBACK) {
+  if (isDemoMode) {
     const demoData = await respondWithDemoCourses();
     res.status(200).json({ ok: true, data: demoData, requestId });
     return;
@@ -13062,7 +13455,7 @@ app.get('/api/client/courses/:courseIdentifier', asyncHandler(async (req, res) =
     return query;
   };
 
-  if (E2E_TEST_MODE || DEV_FALLBACK) {
+  if (isDemoMode) {
     try {
       const course = e2eFindCourse(courseIdentifier);
       if (!course) {
@@ -13244,7 +13637,7 @@ app.get('/api/client/courses/:courseIdentifier', asyncHandler(async (req, res) =
 
 // Admin Modules (E2E fallback)
 app.post('/api/admin/modules', async (req, res) => {
-  if (E2E_TEST_MODE || DEV_FALLBACK) {
+  if (isDemoMode) {
     const parsed = validateOr400(moduleCreateSchema, req, res);
     if (!parsed) return;
     const courseId = pickId(parsed, 'course_id', 'courseId');
@@ -13316,8 +13709,16 @@ app.post('/api/admin/modules', async (req, res) => {
 });
 
 app.patch('/api/admin/modules/:id', async (req, res) => {
-  if (E2E_TEST_MODE || DEV_FALLBACK) {
+  if (isDemoMode) {
     const { id } = req.params;
+  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
+  if (!resolvedCourseId) {
+    res.locals = res.locals || {};
+    res.locals.errorCode = 'course_not_found';
+    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
+    return;
+  }
+  const courseId = resolvedCourseId;
     const parsed = validateOr400(modulePatchValidator, req, res);
     if (!parsed) return;
     const expectedCourseVersion = parsed.course_version ?? parsed.expectedCourseVersion ?? null;
@@ -13348,6 +13749,14 @@ app.patch('/api/admin/modules/:id', async (req, res) => {
   if (!ensureSupabase(res)) return;
   try {
     const { id } = req.params;
+  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
+  if (!resolvedCourseId) {
+    res.locals = res.locals || {};
+    res.locals.errorCode = 'course_not_found';
+    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
+    return;
+  }
+  const courseId = resolvedCourseId;
     const parsed = validateOr400(modulePatchValidator, req, res);
     if (!parsed) return;
     const title = parsed.title;
@@ -13393,8 +13802,16 @@ app.patch('/api/admin/modules/:id', async (req, res) => {
 });
 
 app.delete('/api/admin/modules/:id', async (req, res) => {
-  if (E2E_TEST_MODE || DEV_FALLBACK) {
+  if (isDemoMode) {
     const { id } = req.params;
+  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
+  if (!resolvedCourseId) {
+    res.locals = res.locals || {};
+    res.locals.errorCode = 'course_not_found';
+    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
+    return;
+  }
+  const courseId = resolvedCourseId;
     const found = e2eFindModule(id);
     if (!found) {
       res.status(204).end();
@@ -13409,6 +13826,14 @@ app.delete('/api/admin/modules/:id', async (req, res) => {
   if (!ensureSupabase(res)) return;
   try {
     const { id } = req.params;
+  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
+  if (!resolvedCourseId) {
+    res.locals = res.locals || {};
+    res.locals.errorCode = 'course_not_found';
+    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
+    return;
+  }
+  const courseId = resolvedCourseId;
     // Delete lessons first (in case FK cascade not set)
     await supabase.from('lessons').delete().eq('module_id', id);
     await supabase.from('modules').delete().eq('id', id);
@@ -13420,7 +13845,7 @@ app.delete('/api/admin/modules/:id', async (req, res) => {
 });
 
 app.post('/api/admin/modules/reorder', async (req, res) => {
-  if (E2E_TEST_MODE || DEV_FALLBACK) {
+  if (isDemoMode) {
     const parsed = validateOr400(moduleReorderSchema, req, res);
     if (!parsed) return;
     const courseId = pickId(parsed, 'course_id', 'courseId');
@@ -13506,6 +13931,14 @@ app.post('/api/admin/lessons', async (req, res) => {
   }
   const parsed = parseResult.data;
   const { id } = req.params;
+  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
+  if (!resolvedCourseId) {
+    res.locals = res.locals || {};
+    res.locals.errorCode = 'course_not_found';
+    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
+    return;
+  }
+  const courseId = resolvedCourseId;
   lessonLogMeta.lessonId = id;
 
   const moduleId = pickId(parsed, 'module_id', 'moduleId');
@@ -13530,7 +13963,7 @@ app.post('/api/admin/lessons', async (req, res) => {
 
   const completionRule = parsed.completion_rule_json ?? parsed.completionRule ?? null;
 
-  if (E2E_TEST_MODE || DEV_FALLBACK) {
+  if (isDemoMode) {
     const found = e2eFindModule(moduleId);
     if (!found) {
       respondLessonError(res, lessonLogMeta, 'admin_lessons_create_error', 404, 'module_not_found', 'Module not found');
@@ -13750,6 +14183,14 @@ app.patch('/api/admin/lessons/:id', async (req, res) => {
   }
   const parsed = parseResult.data;
   const { id } = req.params;
+  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
+  if (!resolvedCourseId) {
+    res.locals = res.locals || {};
+    res.locals.errorCode = 'course_not_found';
+    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
+    return;
+  }
+  const courseId = resolvedCourseId;
   lessonLogMeta.lessonId = id;
   const expectedCourseVersion = parsed.course_version ?? parsed.expectedCourseVersion ?? null;
   const title = parsed.title;
@@ -13765,7 +14206,7 @@ app.patch('/api/admin/lessons/:id', async (req, res) => {
     (parsed.content && typeof parsed.content === 'object' ? parsed.content.body ?? parsed.content : null);
   const completionRule = parsed.completion_rule_json ?? parsed.completionRule ?? null;
 
-  if (E2E_TEST_MODE || DEV_FALLBACK) {
+  if (isDemoMode) {
     const found = e2eFindLesson(id);
     if (!found) {
       respondLessonError(res, lessonLogMeta, 'admin_lessons_update_error', 404, 'lesson_not_found', 'Lesson not found');
@@ -13992,8 +14433,16 @@ app.patch('/api/admin/lessons/:id', async (req, res) => {
 });
 
 app.delete('/api/admin/lessons/:id', async (req, res) => {
-  if (E2E_TEST_MODE || DEV_FALLBACK) {
+  if (isDemoMode) {
     const { id } = req.params;
+  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
+  if (!resolvedCourseId) {
+    res.locals = res.locals || {};
+    res.locals.errorCode = 'course_not_found';
+    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
+    return;
+  }
+  const courseId = resolvedCourseId;
     for (const course of e2eStore.courses.values()) {
       for (const mod of course.modules || []) {
         const before = (mod.lessons || []).length;
@@ -14012,6 +14461,14 @@ app.delete('/api/admin/lessons/:id', async (req, res) => {
   if (!ensureSupabase(res)) return;
   try {
     const { id } = req.params;
+  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
+  if (!resolvedCourseId) {
+    res.locals = res.locals || {};
+    res.locals.errorCode = 'course_not_found';
+    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
+    return;
+  }
+  const courseId = resolvedCourseId;
     await supabase.from('lessons').delete().eq('id', id);
     res.status(204).end();
   } catch (error) {
@@ -14021,7 +14478,7 @@ app.delete('/api/admin/lessons/:id', async (req, res) => {
 });
 
 app.post('/api/admin/lessons/reorder', async (req, res) => {
-  if (E2E_TEST_MODE || DEV_FALLBACK) {
+  if (isDemoMode) {
     const parsed = validateOr400(lessonReorderSchema, req, res);
     if (!parsed) return;
     const moduleId = pickId(parsed, 'module_id', 'moduleId');
@@ -14083,7 +14540,7 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
   }
 
   const authUserId = req.user?.userId || req.user?.id || null;
-  const effectiveUserId = !DEV_FALLBACK && !E2E_TEST_MODE ? authUserId : authUserId || snapshot.userId || null;
+  const effectiveUserId = !isDemoMode ? authUserId : authUserId || snapshot.userId || null;
 
   if (!effectiveUserId) {
     res.status(401).json({
@@ -14155,8 +14612,8 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
     });
   };
 
-  if (E2E_TEST_MODE) {
-    // Only log in E2E test mode, not on every DEV_FALLBACK request — too chatty.
+  if (isTestMode) {
+    // Only log in E2E test mode, not on every isDemoMode request — too chatty.
     console.log('Progress sync request:', {
       userId,
       courseId,
@@ -14166,7 +14623,7 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
   }
 
   // Demo/E2E path: persist to in-memory store
-  if (E2E_TEST_MODE || DEV_FALLBACK) {
+  if (isDemoMode) {
     try {
       lessonList.forEach((lesson) => {
         const key = `${userId}:${lesson.lessonId}`;
@@ -14618,7 +15075,7 @@ app.get('/api/learner/progress', authenticate, async (req, res) => {
     return;
   }
 
-  if (E2E_TEST_MODE || DEV_FALLBACK) {
+  if (isDemoMode) {
     const lessons = lessonIds.map((lessonId) => {
       const record = e2eStore.lessonProgress.get(`${normalizedUserId}:${lessonId}`) || null;
       return buildLessonRow(lessonId, record);
@@ -14715,7 +15172,7 @@ app.get('/api/client/progress/summary', authenticate, async (req, res) => {
 
   // In dev/demo mode the injected user ID may be a non-UUID placeholder.
   // Return an empty but valid summary rather than a DB 22P02 error.
-  if (!isUuid(userId) && (E2E_TEST_MODE || DEV_FALLBACK)) {
+  if (!isUuid(userId) && (isDemoMode)) {
     return res.json({
       data: {
         modulesCompleted: 0,
@@ -14728,7 +15185,7 @@ app.get('/api/client/progress/summary', authenticate, async (req, res) => {
     });
   }
 
-  if (E2E_TEST_MODE || DEV_FALLBACK) {
+  if (isDemoMode) {
     let totalPercent = 0;
     let courseCount = 0;
     let completedCourses = 0;
@@ -14804,7 +15261,7 @@ app.get('/api/client/activity', authenticate, async (req, res) => {
   const userId = context.userId;
   const limit = Math.min(parseInt(req.query.limit, 10) || 10, 50);
 
-  if (E2E_TEST_MODE || DEV_FALLBACK) {
+  if (isDemoMode) {
     const demoActivities = Array.from(e2eStore.auditLogs || [])
       .filter((entry) => entry.user_id === userId || entry.actor_id === userId)
       .sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime())
@@ -14855,7 +15312,7 @@ app.get('/api/client/activity', authenticate, async (req, res) => {
 app.get('/api/admin/activity', authenticate, requireAdmin, async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit, 10) || 10, 50);
 
-  if (E2E_TEST_MODE || DEV_FALLBACK) {
+  if (isDemoMode) {
     const demoActivities = Array.from(e2eStore.auditLogs || [])
       .sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime())
       .slice(0, limit)
@@ -14900,7 +15357,7 @@ app.get('/api/admin/activity', authenticate, requireAdmin, async (req, res) => {
 });
 
 app.post('/api/client/progress/course', authenticate, async (req, res) => {
-  if (E2E_TEST_MODE || DEV_FALLBACK) {
+  if (isDemoMode) {
     const { user_id: bodyUserId, course_id, percent, status, time_spent_s } = req.body || {};
     const clientEventId = req.body?.client_event_id ?? null;
     const sessionUserId = req.user?.userId || req.user?.id || null;
@@ -15123,7 +15580,7 @@ app.post('/api/client/progress/course', authenticate, async (req, res) => {
 });
 
 app.post('/api/client/progress/lesson', async (req, res) => {
-  if (E2E_TEST_MODE || DEV_FALLBACK) {
+  if (isDemoMode) {
     const { user_id, lesson_id, percent, status, time_spent_s, resume_at_s } = req.body || {};
     const clientEventId = req.body?.client_event_id ?? null;
 
@@ -15338,7 +15795,7 @@ app.post('/api/client/progress/batch', async (req, res) => {
   }
 
   // Demo/E2E mode: apply in-memory updates
-  if (E2E_TEST_MODE || DEV_FALLBACK) {
+  if (isDemoMode) {
     const accepted = [];
     const duplicates = [];
     const failed = [];
@@ -15534,7 +15991,7 @@ app.post('/api/analytics/events/batch', async (req, res) => {
   }
   const eventsWithOrg = normalizedEvents.filter((evt) => isUuid(evt.org_id || ''));
 
-  if (E2E_TEST_MODE || DEV_FALLBACK) {
+  if (isDemoMode) {
     const accepted = [];
     const duplicates = [];
     const failed = [];
@@ -15856,7 +16313,22 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
     req.params?.orgId,
   );
 
+  const resolvedRequestedOrgId = requestedOrgId ? await coerceOrgIdentifierToUuid(req, requestedOrgId) : null;
+  if (requestedOrgId && !resolvedRequestedOrgId) {
+    res.status(403).json({ error: 'org_access_denied', message: 'Organization scope not permitted.' });
+    return;
+  }
+
   const isPlatformAdmin = Boolean(context.isPlatformAdmin || context.userRole === 'admin');
+  if (!isPlatformAdmin && adminOrgIds.length === 0) {
+    res.status(403).json({ error: 'org_admin_required', message: 'Admin membership required.' });
+    return;
+  }
+
+  if (!isPlatformAdmin && resolvedRequestedOrgId && !adminOrgIds.includes(resolvedRequestedOrgId)) {
+    res.status(403).json({ error: 'org_access_denied', message: 'Organization scope not permitted.' });
+    return;
+  }
   if (!isPlatformAdmin && adminOrgIds.length === 0) {
     res.status(403).json({ error: 'org_admin_required', message: 'Admin membership required.' });
     return;
@@ -15898,7 +16370,7 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
     },
   });
 
-  if (E2E_TEST_MODE || DEV_FALLBACK) {
+  if (isDemoMode) {
     const demoOrganizations = buildDemoOrganizations({
       adminOrgIds,
       requestedOrgId,
@@ -15957,8 +16429,13 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
       query = query.in('subscription', subscriptions);
     }
 
-    if (requestedOrgId) {
-      query = query.eq('id', requestedOrgId);
+    if (resolvedRequestedOrgId) {
+      const requestedOrgIdString = String(resolvedRequestedOrgId).trim();
+      if (isUuid(requestedOrgIdString)) {
+        query = query.eq('id', requestedOrgIdString);
+      } else {
+        query = query.or(`name.eq.${requestedOrgIdString},slug.eq.${requestedOrgIdString}`);
+      }
     } else if (!isPlatformAdmin) {
       query = query.in('id', adminOrgIds);
     }
@@ -16223,6 +16700,14 @@ app.get('/api/admin/organizations/:id', requireAdminAccess, async (req, res) => 
     return;
   }
   const { id } = req.params;
+  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
+  if (!resolvedCourseId) {
+    res.locals = res.locals || {};
+    res.locals.errorCode = 'course_not_found';
+    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
+    return;
+  }
+  const courseId = resolvedCourseId;
 
   const access = await requireOrgAccess(req, res, id, { write: false, requireOrgAdmin: true });
   if (!access) return;
@@ -16262,6 +16747,14 @@ app.put('/api/admin/organizations/:id', requireAdminAccess, async (req, res) => 
     return;
   }
   const { id } = req.params;
+  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
+  if (!resolvedCourseId) {
+    res.locals = res.locals || {};
+    res.locals.errorCode = 'course_not_found';
+    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
+    return;
+  }
+  const courseId = resolvedCourseId;
   const patch = req.body || {};
 
   const access = await requireOrgAccess(req, res, id, { write: true, requireOrgAdmin: true });
@@ -16323,6 +16816,14 @@ app.delete('/api/admin/organizations/:id', requireAdminAccess, async (req, res) 
     return;
   }
   const { id } = req.params;
+  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
+  if (!resolvedCourseId) {
+    res.locals = res.locals || {};
+    res.locals.errorCode = 'course_not_found';
+    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
+    return;
+  }
+  const courseId = resolvedCourseId;
 
   const access = await requireOrgAccess(req, res, id, { write: true, requireOrgAdmin: true });
   if (!access) return;
@@ -18724,7 +19225,7 @@ app.get('/api/client/documents', authenticate, asyncHandler(async (req, res) => 
     || null;
 
   try {
-    if (E2E_TEST_MODE || DEV_FALLBACK) {
+    if (isDemoMode) {
       res.json({ data: [] });
       return;
     }
@@ -18737,7 +19238,7 @@ app.get('/api/client/documents', authenticate, asyncHandler(async (req, res) => 
       .select('*')
       .order('created_at', { ascending: false });
 
-    if (requestedOrgId) {
+    if (resolvedRequestedOrgId) {
       const userId = context.userId;
       // Show global docs + docs scoped to this org + docs shared directly with this user.
       query = query.or(
@@ -18765,6 +19266,12 @@ app.get('/api/admin/documents', async (req, res) => {
 
   const { user_id, tag, category, search, visibility } = req.query;
   const requestedOrgId = pickOrgId(req.query?.orgId, req.query?.org_id, req.query?.organization_id);
+  const resolvedRequestedOrgId = requestedOrgId ? await coerceOrgIdentifierToUuid(req, requestedOrgId) : null;
+  if (requestedOrgId && !resolvedRequestedOrgId) {
+    res.status(403).json({ error: 'org_access_denied', message: 'Organization scope not permitted' });
+    return;
+  }
+
   const isPlatformAdmin = Boolean(context.isPlatformAdmin);
   const adminOrgIds = Array.isArray(context.memberships)
     ? context.memberships
@@ -18774,10 +19281,10 @@ app.get('/api/admin/documents', async (req, res) => {
     : [];
   const allowedOrgIdSet = new Set(adminOrgIds);
 
-  if (requestedOrgId) {
-    const access = await requireOrgAccess(req, res, requestedOrgId, { write: false, requireOrgAdmin: true });
+  if (resolvedRequestedOrgId) {
+    const access = await requireOrgAccess(req, res, resolvedRequestedOrgId, { write: false, requireOrgAdmin: true });
     if (!access) return;
-    if (!isPlatformAdmin && !allowedOrgIdSet.has(requestedOrgId)) {
+    if (!isPlatformAdmin && !allowedOrgIdSet.has(resolvedRequestedOrgId)) {
       res.status(403).json({ error: 'org_access_denied', message: 'Organization scope not permitted' });
       return;
     }
@@ -18790,8 +19297,8 @@ app.get('/api/admin/documents', async (req, res) => {
     if (visibility) {
       query = query.eq('visibility', visibility);
     }
-    if (requestedOrgId) {
-      query = query.eq('organization_id', requestedOrgId);
+    if (resolvedRequestedOrgId) {
+      query = query.eq('organization_id', resolvedRequestedOrgId);
     } else if (!isPlatformAdmin) {
       // Return global documents plus any org-scoped docs the user has access to.
       if (adminOrgIds.length > 0) {
@@ -18960,6 +19467,14 @@ app.post('/api/admin/documents', async (req, res) => {
 app.put('/api/admin/documents/:id', async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { id } = req.params;
+  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
+  if (!resolvedCourseId) {
+    res.locals = res.locals || {};
+    res.locals.errorCode = 'course_not_found';
+    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
+    return;
+  }
+  const courseId = resolvedCourseId;
   const context = requireUserContext(req, res);
   if (!context) return;
   const patch = normalizeLegacyOrgInput(req.body || {}, { surface: 'admin.documents.update', requestId: req.requestId });
@@ -19062,6 +19577,14 @@ app.put('/api/admin/documents/:id', async (req, res) => {
 app.post('/api/admin/documents/:id/download', async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { id } = req.params;
+  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
+  if (!resolvedCourseId) {
+    res.locals = res.locals || {};
+    res.locals.errorCode = 'course_not_found';
+    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
+    return;
+  }
+  const courseId = resolvedCourseId;
   const context = requireUserContext(req, res);
   if (!context) return;
 
@@ -19095,6 +19618,14 @@ app.post('/api/client/documents/:id/download', authenticate, asyncHandler(async 
   if (!ensureSupabase(res)) return;
 
   const { id } = req.params;
+  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
+  if (!resolvedCourseId) {
+    res.locals = res.locals || {};
+    res.locals.errorCode = 'course_not_found';
+    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
+    return;
+  }
+  const courseId = resolvedCourseId;
   const requestedOrgIds = Array.isArray(context.organizationIds)
     ? context.organizationIds.filter((value) => typeof value === 'string' && value.trim())
     : [];
@@ -19279,6 +19810,14 @@ app.post('/api/learner/feedback', authenticate, asyncHandler(async (req, res) =>
 app.delete('/api/admin/documents/:id', async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { id } = req.params;
+  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
+  if (!resolvedCourseId) {
+    res.locals = res.locals || {};
+    res.locals.errorCode = 'course_not_found';
+    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
+    return;
+  }
+  const courseId = resolvedCourseId;
   const context = requireUserContext(req, res);
   if (!context) return;
 
@@ -19446,6 +19985,14 @@ app.get('/api/admin/surveys/:id', requireAdminAccess, asyncHandler(async (req, r
   if (!ensureSupabase(res)) return;
   if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.detail'))) return;
   const { id } = req.params;
+  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
+  if (!resolvedCourseId) {
+    res.locals = res.locals || {};
+    res.locals.errorCode = 'course_not_found';
+    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
+    return;
+  }
+  const courseId = resolvedCourseId;
 
   try {
     if (!supabase) {
@@ -19525,6 +20072,14 @@ app.put('/api/admin/surveys/:id', async (req, res) => {
   if (!ensureSupabase(res)) return;
   if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.update'))) return;
   const { id } = req.params;
+  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
+  if (!resolvedCourseId) {
+    res.locals = res.locals || {};
+    res.locals.errorCode = 'course_not_found';
+    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
+    return;
+  }
+  const courseId = resolvedCourseId;
   const patch = req.body || {};
 
   try {
@@ -19581,6 +20136,14 @@ app.delete('/api/admin/surveys/:id', async (req, res) => {
   if (!ensureSupabase(res)) return;
   if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.delete'))) return;
   const { id } = req.params;
+  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
+  if (!resolvedCourseId) {
+    res.locals = res.locals || {};
+    res.locals.errorCode = 'course_not_found';
+    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
+    return;
+  }
+  const courseId = resolvedCourseId;
 
   try {
     if (!supabase) {
@@ -19604,6 +20167,14 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
   if (!ensureSupabase(res)) return;
   if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.assign'))) return;
   const { id } = req.params;
+  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
+  if (!resolvedCourseId) {
+    res.locals = res.locals || {};
+    res.locals.errorCode = 'course_not_found';
+    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
+    return;
+  }
+  const courseId = resolvedCourseId;
   const body = normalizeLegacyOrgInput(req.body ?? {}, {
     surface: 'admin.surveys.assign',
     requestId: req.requestId ?? null,
@@ -19676,7 +20247,7 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
       throw new Error('org_access_denied');
     }
 
-    if (E2E_TEST_MODE || DEV_FALLBACK) {
+    if (isDemoMode) {
       const now = new Date().toISOString();
       const rows = normalizedUserIds.length ? normalizedUserIds : [null];
       const inserted = rows.map((userId) => ({
@@ -19813,7 +20384,7 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
       await assignForOrg(orgId);
     }
 
-    if (E2E_TEST_MODE || DEV_FALLBACK) {
+    if (isDemoMode) {
       const assignedTo = createEmptyAssignedTo();
       const orgSet = new Set();
       const userSet = new Set();
@@ -19908,6 +20479,14 @@ app.get('/api/admin/surveys/:id/assignments', async (req, res) => {
   if (!ensureSupabase(res)) return;
   if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.assignments'))) return;
   const { id } = req.params;
+  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
+  if (!resolvedCourseId) {
+    res.locals = res.locals || {};
+    res.locals.errorCode = 'course_not_found';
+    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
+    return;
+  }
+  const courseId = resolvedCourseId;
   const organizationId = pickOrgId(req.query.orgId, req.query.organizationId);
   const userIdFilter =
     typeof req.query.userId === 'string'
@@ -20042,7 +20621,7 @@ app.get('/api/learner/notifications', async (req, res) => {
   const sinceIso = typeof req.query.since === 'string' ? req.query.since : null;
   const readFilter = typeof req.query.read === 'string' ? req.query.read.trim().toLowerCase() : null;
 
-  if (E2E_TEST_MODE || DEV_FALLBACK) {
+  if (isDemoMode) {
     res.json({ ok: true, data: [], requestId: req.requestId ?? null });
     return;
   }
@@ -20180,6 +20759,14 @@ app.post('/api/learner/notifications/:id/read', async (req, res) => {
   if (!ensureSupabase(res)) return;
 
   const { id } = req.params;
+  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
+  if (!resolvedCourseId) {
+    res.locals = res.locals || {};
+    res.locals.errorCode = 'course_not_found';
+    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
+    return;
+  }
+  const courseId = resolvedCourseId;
 
   try {
     const existing = await supabase
@@ -20267,6 +20854,14 @@ app.delete('/api/learner/notifications/:id', async (req, res) => {
   if (!ensureSupabase(res)) return;
 
   const { id } = req.params;
+  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
+  if (!resolvedCourseId) {
+    res.locals = res.locals || {};
+    res.locals.errorCode = 'course_not_found';
+    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
+    return;
+  }
+  const courseId = resolvedCourseId;
 
   try {
     const existing = await supabase
@@ -20375,7 +20970,7 @@ app.get('/api/admin/notifications', async (req, res) => {
     res.json(buildDisabledNotificationsResponse(1, 25, req.requestId ?? null));
     return;
   }
-  if (E2E_TEST_MODE || DEV_FALLBACK) {
+  if (isDemoMode) {
     const { page, pageSize } = parsePaginationParams(req, { defaultSize: 25, maxSize: 200 });
     res.json(buildDisabledNotificationsResponse(page, pageSize, req.requestId ?? null));
     return;
@@ -20396,7 +20991,7 @@ app.get('/api/admin/notifications', async (req, res) => {
     .filter(Boolean);
 
   try {
-    if (requestedOrgId) {
+    if (resolvedRequestedOrgId) {
       const access = await requireOrgAccess(req, res, requestedOrgId, { write: false });
       if (!access && !isAdmin) return;
     }
@@ -20412,7 +21007,7 @@ app.get('/api/admin/notifications', async (req, res) => {
       .order('created_at', { ascending: false })
       .range(from, to);
 
-    if (requestedOrgId) {
+    if (resolvedRequestedOrgId) {
       query = query.or(`organization_id.eq.${requestedOrgId},org_id.eq.${requestedOrgId}`);
     }
 
@@ -20486,7 +21081,7 @@ app.post('/api/admin/notifications', async (req, res) => {
     });
     return;
   }
-  if (E2E_TEST_MODE || DEV_FALLBACK) {
+  if (isDemoMode) {
     res.status(202).json({
       ok: true,
       data: null,
@@ -20738,6 +21333,14 @@ app.post('/api/admin/notifications/:id/read', async (req, res) => {
   }
   if (!ensureSupabase(res)) return;
   const { id } = req.params;
+  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
+  if (!resolvedCourseId) {
+    res.locals = res.locals || {};
+    res.locals.errorCode = 'course_not_found';
+    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
+    return;
+  }
+  const courseId = resolvedCourseId;
   const { read = true } = req.body || {};
   const context = requireUserContext(req, res);
   if (!context) return;
@@ -20839,6 +21442,14 @@ app.delete('/api/admin/notifications/:id', async (req, res) => {
   }
   if (!ensureSupabase(res)) return;
   const { id } = req.params;
+  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
+  if (!resolvedCourseId) {
+    res.locals = res.locals || {};
+    res.locals.errorCode = 'course_not_found';
+    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
+    return;
+  }
+  const courseId = resolvedCourseId;
   const context = requireUserContext(req, res);
   if (!context) return;
   const isAdmin = context.userRole === 'admin';
@@ -20951,7 +21562,7 @@ app.get('/api/analytics/events', optionalAuthenticate, async (req, res) => {
     return resolvedOrgIds.has(orgId);
   };
 
-  if (E2E_TEST_MODE || DEV_FALLBACK) {
+  if (isDemoMode) {
     const events = Array.isArray(e2eStore.analyticsEvents) ? e2eStore.analyticsEvents : [];
     const filtered = events.filter((event) => {
       const eventOrgId = pickOrgId(event.org_id, event.organization_id, event.orgId);
@@ -21101,7 +21712,7 @@ app.post('/api/analytics/events', optionalAuthenticate, async (req, res) => {
     return;
   }
 
-  if (E2E_TEST_MODE || DEV_FALLBACK) {
+  if (isDemoMode) {
     const eventId = useCustomPrimaryKey
       ? normalizedClientEventId
       : id || `demo-event-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -21232,7 +21843,7 @@ app.post('/api/audit-log', async (req, res) => {
 
   const respondOk = (meta = {}) => res.json({ ok: true, ...meta });
 
-  if (E2E_TEST_MODE || DEV_FALLBACK) {
+  if (isDemoMode) {
     e2eStore.auditLogs.unshift(entry);
     if (e2eStore.auditLogs.length > 500) {
       e2eStore.auditLogs.length = 500;
@@ -21324,7 +21935,7 @@ app.post('/api/analytics/journeys', authenticate, resolveOrganizationContext, as
     organization_id: organizationId,
   };
 
-  if (E2E_TEST_MODE || DEV_FALLBACK) {
+  if (isDemoMode) {
     const key = `${userId}:${course_id}`;
     e2eStore.learnerJourneys.set(key, { id: key, ...payload });
     persistE2EStore();
@@ -21498,7 +22109,7 @@ app.get('/api/analytics/journeys', authenticate, resolveOrganizationContext, asy
     limit,
   });
 
-  if (E2E_TEST_MODE || DEV_FALLBACK) {
+  if (isDemoMode) {
     let data = Array.from(e2eStore.learnerJourneys.values());
     if (effectiveUserId) {
       data = data.filter((journey) => journey.user_id === effectiveUserId);
