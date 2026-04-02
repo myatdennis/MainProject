@@ -253,10 +253,6 @@ const getMembershipSelectColumns = async () => {
     'user_id',
     'id',
   ];
-  if (membershipColumnState.columns.has('org_id')) {
-    baseColumns.push('org_id');
-    // TODO: remove org_id/profile_id compatibility after launch stabilization
-  }
   return baseColumns.join(',');
 };
 

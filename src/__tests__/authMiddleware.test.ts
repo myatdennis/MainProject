@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 import {
   isPlatformAdmin,
   isOrgAdministrator,
@@ -6,9 +6,20 @@ import {
   requireOrgAdmin,
   canManageOrganization,
   canAssignAcrossOrganizations,
+  getRequestedOrgId,
 } from '../../server/middleware/auth.js';
 
 describe('Auth middleware helpers', () => {
+  beforeAll(() => {
+    process.env.SUPABASE_URL = process.env.SUPABASE_URL || 'http://localhost:54321';
+    process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || 'test-service-key';
+  });
+
+  afterAll(() => {
+    delete process.env.SUPABASE_URL;
+    delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+  });
+
   it('recognizes platform admin users', () => {
     expect(isPlatformAdmin({ platformRole: 'platform_admin' })).toBe(true);
     expect(isPlatformAdmin({ isPlatformAdmin: true })).toBe(true);
@@ -86,5 +97,37 @@ describe('Auth middleware helpers', () => {
     expect(next).not.toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(403);
     expect(res.json).toHaveBeenCalledWith({ error: 'org_admin_required', message: 'Organizational admin access required' });
+  });
+
+  it('getRequestedOrgId ignores x-org headers in production mode', () => {
+    process.env.NODE_ENV = 'production';
+    const req = {
+      headers: { 'x-org-id': 'org-1' },
+      query: {},
+      body: {},
+      params: {},
+    };
+    expect(getRequestedOrgId(req)).toBe(null);
+  });
+
+  it('getRequestedOrgId allows x-org headers in non-production mode', () => {
+    process.env.NODE_ENV = 'development';
+    const req = {
+      headers: { 'x-org-id': 'org-1' },
+      query: {},
+      body: {},
+      params: {},
+    };
+    expect(getRequestedOrgId(req)).toBe('org-1');
+  });
+
+  it('ensureAdminAccess rejects if role is not platform admin and not allowlisted', async () => {
+    const { ensureAdminAccess } = await import('../../server/middleware/requireAdminAccess.js');
+    const req = { supabaseJwtUser: { id: 'user-123', email: 'user@example.com' }, requestId: 'rid' };
+    const res = { status: vi.fn().mockReturnThis(), json: vi.fn() };
+
+    const result = await ensureAdminAccess(req, res);
+    expect(result).toBe(false);
+    expect([403, 503]).toContain(res.status.mock.calls[0][0]);
   });
 });

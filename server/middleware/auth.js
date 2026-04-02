@@ -9,7 +9,7 @@ import { getDatabaseConnectionInfo } from '../db.js';
 import { extractTokenFromHeader, verifyAccessToken } from '../utils/jwt.js';
 import { getActiveOrgFromRequest } from '../utils/authCookies.js';
 import { getUserMemberships, getMembershipDiagnostics } from '../utils/memberships.js';
-import { E2E_TEST_MODE, DEV_FALLBACK, demoAutoAuthEnabled, NODE_ENV } from '../config/runtimeFlags.js';
+import { E2E_TEST_MODE, DEV_FALLBACK, demoAutoAuthEnabled, NODE_ENV, isProduction } from '../config/runtimeFlags.js';
 import { getPermissionsForRole, mergePermissions } from '../../shared/permissions/index.js';
 
 // Verbose per-request auth diagnostics are only emitted in non-production environments
@@ -464,7 +464,7 @@ const pickOrgId = (...candidates) => {
 
 const getRequestedOrgId = (req) => {
   if (!req) return null;
-  const headerOrg = !isProduction ? coerceUuid(req.headers?.['x-org-id']) : null;
+  const headerOrg = process.env.NODE_ENV !== 'production' ? normalizeOrgId(req.headers?.['x-org-id']) : null;
   const cookieOrg = getActiveOrgFromRequest(req);
   const candidates = [
     headerOrg,

@@ -36,6 +36,8 @@ const NETLIFY_PREVIEW_REGEX = /^https:\/\/[a-z0-9-]+--the-huddleco\.netlify\.app
 // Broader fallback: any *.netlify.app origin is also allowed for previews.
 const NETLIFY_ANY_PREVIEW_REGEX = /^https:\/\/[a-z0-9-]+\.netlify\.app$/i;
 
+const isPreviewAllowed = () => process.env.NODE_ENV !== 'production';
+
 const STATIC_ALLOWED_ORIGINS = ['https://the-huddle.co', 'https://www.the-huddle.co', 'http://localhost:5173', 'http://localhost:5174'];
 const devDefaults = STATIC_ALLOWED_ORIGINS;
 const requiredProdOrigins = ['https://the-huddle.co', 'https://www.the-huddle.co'];
@@ -102,14 +104,10 @@ const resolveCorsOriginDecision = (origin) => {
     return { allowed: true, reason: 'allowlist', resolvedOrigin: originWithoutDefaultPort || normalizedOrigin };
   }
 
-  // Allow all Netlify preview and branch-deploy URLs in all environments so PR
-  // previews never hit CORS errors when calling the Railway API.
-  if (NETLIFY_PREVIEW_REGEX.test(normalizedOrigin) || NETLIFY_ANY_PREVIEW_REGEX.test(normalizedOrigin)) {
-    return { allowed: true, reason: 'netlify_preview', resolvedOrigin: normalizedOrigin };
-  }
-
-  if ((process.env.NODE_ENV || '').toLowerCase() !== 'production' && isLocalDevOrigin(normalizedOrigin)) {
-    return { allowed: true, reason: 'local_dev', resolvedOrigin: normalizedOrigin };
+  if (isPreviewAllowed()) {
+    if (NETLIFY_PREVIEW_REGEX.test(normalizedOrigin) || NETLIFY_ANY_PREVIEW_REGEX.test(normalizedOrigin)) {
+      return { allowed: true, reason: 'netlify_preview', resolvedOrigin: normalizedOrigin };
+    }
   }
 
   console.warn('[cors] rejecting_origin', { origin, normalizedOrigin, originWithoutDefaultPort, allowedOrigins: resolvedCorsOrigins });

@@ -61,6 +61,7 @@ import {
   optionalAuthenticate,
   resolveOrganizationContext,
   invalidateMembershipCache,
+  getRequestedOrgId,
 } from './middleware/auth.js';
 import requireAdminAccess from './middleware/requireAdminAccess.js';
 import supabaseJwtMiddleware, {
@@ -532,6 +533,20 @@ console.log('[startup] CORS middleware registered');
 app.use(cookieParser());
 app.use(express.json({ limit: '10mb' }));
 app.use(attachRequestId);
+
+// Guard against unsafe header-based overrides in production.
+app.use((req, res, next) => {
+  if (
+    isProduction &&
+    (req.headers['x-user-role'] || req.headers['x-org-id'] || req.headers['x-organization-id'])
+  ) {
+    return res.status(400).json({
+      error: 'header_override_forbidden',
+      message: 'Request header overrides are not permitted in production',
+    });
+  }
+  next();
+});
 console.log('[startup] JSON middleware registered before routes');
 
 import healthRouter from './routes/health.js';
@@ -2822,7 +2837,6 @@ function normalizeOrgIdValue(value) {
       value.organization_id ??
       value.organizationId ??
       value.orgId ??
-      value.org_id ?? // TODO: remove org_id/profile_id compatibility after launch stabilization
       value.id ??
       null;
     if (typeof candidate === 'string') {
@@ -3637,11 +3651,10 @@ const mapNotificationRecord = (row) => {
   if (!row || typeof row !== 'object') {
     return row;
   }
-  const resolvedOrgId = normalizeOrgIdValue(row.organization_id ?? row.org_id ?? null);
+  const resolvedOrgId = normalizeOrgIdValue(row.organization_id);
   return {
     ...row,
     organization_id: resolvedOrgId,
-    org_id: row.org_id ?? resolvedOrgId ?? null, // TODO: remove org_id/profile_id compatibility after launch stabilization
   };
 };
 
@@ -5177,12 +5190,8 @@ const handleLessonOrgColumnMissing = (missingColumn) => {
 const attachLessonOrgScope = (record, orgId) => {
   if (!record || !orgId) return;
   record.organization_id = orgId;
-  if (schemaSupportFlags.lessonProgressOrgColumn === LESSON_PROGRESS_LEGACY_ORG_COLUMN) {
-    // TODO: remove org_id/profile_id compatibility after launch stabilization
-    record.org_id = orgId;
-  } else {
-    delete record.org_id;
-  }
+  // canonical only; legacy org_id removed as per compatibility removal plan
+  delete record.org_id;
 };
 
 let courseVersionColumnAvailable = true;
@@ -11613,8 +11622,6 @@ app.post('/api/admin/courses/import', asyncHandler(async (req, res) => {
           meta_json: { ...(course.meta ?? {}), ...(incomingExternalId ? { external_id: incomingExternalId } : {}) },
           published_at: null,
           organization_id: resolvedOrgId,
-          organizationId: resolvedOrgId, // TODO: remove org_id/organizationId compatibility after launch stabilization
-          org_id: resolvedOrgId,
           modules: [],
         };
         const modulesArr = modules || [];
@@ -11714,8 +11721,6 @@ app.post('/api/admin/courses/import', asyncHandler(async (req, res) => {
         }
       }
       course.organization_id = resolvedOrgId;
-      course.organizationId = resolvedOrgId; // TODO: remove org_id/organizationId compatibility after launch stabilization
-      course.org_id = resolvedOrgId;
       const slugSource = course.slug || course.title || course.id || `course-${randomUUID().slice(0, 8)}`;
       course.slug = slugify(slugSource);
       const { data: existingCourse, error: existingError } = await supabase
@@ -12772,7 +12777,7 @@ app.get('/api/client/courses', asyncHandler(async (req, res) => {
         }
         if (!targetUser && normalizedSessionUserId) {
           // only include org-level assignments with null user scope when caller belongs to org
-          const assignmentOrg = pickOrgId(assignment.organization_id, assignment.org_id);
+          const assignmentOrg = pickOrgId(assignment.organization_id);
           const isOrgMatch = String(assignmentOrg || '').trim() === assignmentOrgId;
           if (!isOrgMatch) {
             return;
@@ -12796,11 +12801,6 @@ app.get('/api/client/courses', asyncHandler(async (req, res) => {
     const tablesToTry = ['assignments', 'course_assignments'];
     const orgColumnCandidates = [
       { column: 'organization_id', select: 'course_id,organization_id,user_id,active' },
-      {
-        column: 'org_id',
-        select: 'course_id,org_id,user_id,active',
-        // TODO: remove org_id compatibility after launch stabilization
-      },
     ];
 
     const assignmentsSupportUserIdUuid = await detectAssignmentsUserIdUuidColumnAvailability();
@@ -20547,7 +20547,6 @@ app.post('/api/admin/notifications', async (req, res) => {
       title: payload.title,
       body: payload.body ?? null,
       organization_id: targetOrgId ?? null,
-      org_id: targetOrgId ?? null, // TODO: remove org_id/profile_id compatibility after launch stabilization
       user_id: payload.userId ?? null,
       read: payload.read ?? false,
       channels,

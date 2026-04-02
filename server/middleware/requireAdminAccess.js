@@ -1,6 +1,7 @@
 import supabaseJwtMiddleware from './supabaseJwt.js';
 import supabase from '../lib/supabaseClient.js';
-import { DEV_FALLBACK, E2E_TEST_MODE } from '../config/runtimeFlags.js';
+import { DEV_FALLBACK, E2E_TEST_MODE, isProduction } from '../config/runtimeFlags.js';
+import { isPlatformAdmin } from './auth.js';
 
 const FALLBACK_SUPERUSER = {
   id: 'dev-admin',
@@ -68,8 +69,20 @@ const grantAdminAccess = (req, reason, meta = {}) => {
 };
 
 const ensureAdminAccess = async (req, res) => {
-  if (DEV_FALLBACK || E2E_TEST_MODE) {
+  if (isProduction && (DEV_FALLBACK || E2E_TEST_MODE)) {
+    console.error('[requireAdminAccess] fatal: fallback/E2E mode active in production');
+    res.status(500).json({
+      code: 'INVALID_CONFIGURATION',
+      error: 'Server configuration invalid',
+      message: 'Demo/fallback authentication modes are not allowed in production.',
+    });
+    return false;
+  }
+
+  const safeFallbackEnabled = !isProduction && (DEV_FALLBACK || E2E_TEST_MODE);
+  if (safeFallbackEnabled) {
     req.supabaseJwtUser = req.supabaseJwtUser || { ...FALLBACK_SUPERUSER };
+    req.supabaseJwtUser.isPlatformAdmin = true;
     return grantAdminAccess(req, 'dev_fallback');
   }
 
@@ -84,6 +97,10 @@ const ensureAdminAccess = async (req, res) => {
   }
 
   try {
+    if (isPlatformAdmin(user)) {
+      return grantAdminAccess(req, 'platform_admin_profile');
+    }
+
     if (!supabase) {
       res.status(503).json({
         code: 'SUPABASE_NOT_CONFIGURED',

@@ -62,7 +62,6 @@ export const createMediaService = ({
       module_id: moduleId || null,
       lesson_id: lessonId || null,
       organization_id: orgId || null,
-      org_id: orgId || null, // TODO: remove org_id/profile_id compatibility after launch stabilization
       bucket,
       storage_path: storagePath,
       mime_type: mimeType,
