@@ -84,6 +84,7 @@ import {
   describeDemoMode,
   supabaseServerConfigured,
   parseFlag,
+  TEST_IDEMPOTENCY_FALLBACK_MODE,
 } from './config/runtimeFlags.js';
 import { sendEmail, configureEmailLogging, getEmailConfigSummary, isEmailEnabled } from './services/emailService.js';
 import { createMediaService } from './services/mediaService.js';
@@ -206,6 +207,8 @@ import { normalizeMembershipStatus, isMembershipActive, mergeMembershipWithProfi
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+console.log('[startup] server file path', __filename);
 
 const asyncHandler = (handler) => (req, res, next) =>
   Promise.resolve(handler(req, res, next)).catch(next);
@@ -3327,11 +3330,16 @@ const ORG_HEADER_KEYS = ['x-org-id', 'x-organization-id'];
 
 const fetchPrimaryOrgIdForUser = async (userId) => {
   if (!userId || !supabase) return null;
+  const normalizedUserId = String(userId).trim();
+  if (!isUuid(normalizedUserId)) {
+    console.info('[admin-courses] primary_org_lookup_skipped_non_uuid_user', { userId: normalizedUserId });
+    return null;
+  }
   try {
     const { data, error } = await supabase
       .from('organization_memberships')
       .select('organization_id')
-      .eq('user_id', userId)
+      .eq('user_id', normalizedUserId)
       .eq('status', 'active')
       .order('created_at', { ascending: true })
       .limit(1)
@@ -3339,7 +3347,22 @@ const fetchPrimaryOrgIdForUser = async (userId) => {
     if (error) throw error;
     return data?.organization_id ?? null;
   } catch (err) {
-    console.error('[admin-courses] primary_org_lookup_failed', { userId, error: err });
+    console.error('[admin-courses] primary_org_lookup_failed', { userId: normalizedUserId, error: err });
+    return null;
+  }
+};
+
+const fetchFirstOrganizationId = async () => {
+  if (!supabase) return null;
+  try {
+    const { data, error } = await supabase.from('organizations').select('id').limit(1).maybeSingle();
+    if (error) {
+      console.warn('[org-resolver] first_org_lookup_failed', { error });
+      return null;
+    }
+    return data?.id ?? null;
+  } catch (err) {
+    console.error('[org-resolver] first_org_lookup_failed', { error: err });
     return null;
   }
 };
@@ -3349,17 +3372,28 @@ const resolveOrgIdForCourseRequest = async (req, context, candidates = []) => {
   const headerOrgId = getHeaderOrgId(req, { requireMembership: !context.isPlatformAdmin });
   const normalizedCandidates = [...candidates, headerOrgId, context.requestedOrgId];
   let orgId = pickOrgId(...normalizedCandidates);
+  console.log('[admin-courses] resolveOrgIdForCourseRequest start', { contextUserId: context.userId, isPlatformAdmin: context.isPlatformAdmin, candidates: normalizedCandidates, initialOrgId: orgId });
   if (orgId) {
     orgId = await coerceOrgIdentifierToUuid(req, orgId);
+    console.log('[admin-courses] resolveOrgIdForCourseRequest resolved candidate orgId', { orgId });
   }
   if (!orgId && context.isPlatformAdmin) {
     if (!req[PLATFORM_ADMIN_ORG_CACHE_KEY]) {
+      console.log('[admin-courses] platform admin no cached orgId, fetching primary', { userId: context.userId });
       req[PLATFORM_ADMIN_ORG_CACHE_KEY] = await fetchPrimaryOrgIdForUser(context.userId);
+      if (!req[PLATFORM_ADMIN_ORG_CACHE_KEY]) {
+        req[PLATFORM_ADMIN_ORG_CACHE_KEY] = await fetchFirstOrganizationId();
+      }
+      if (!req[PLATFORM_ADMIN_ORG_CACHE_KEY]) {
+        req[PLATFORM_ADMIN_ORG_CACHE_KEY] = DEFAULT_SANDBOX_ORG_ID;
+      }
     }
-    orgId = req[PLATFORM_ADMIN_ORG_CACHE_KEY] ?? null;
+
+    orgId = req[PLATFORM_ADMIN_ORG_CACHE_KEY];
     if (orgId) {
       orgId = await coerceOrgIdentifierToUuid(req, orgId);
     }
+    console.log('[admin-courses] platform admin resolved orgId', { orgId, cached: req[PLATFORM_ADMIN_ORG_CACHE_KEY] });
   }
   return orgId || null;
 };
@@ -6768,6 +6802,18 @@ const respondWithCourseSlugConflict = async ({
   });
 };
 
+// Diagnostic logging for idempotency insert errors in upsert and publish flows
+function logIdempotencyInsertError(insertError, context = {}) {
+  if (insertError) {
+    console.error('[idempotency] upsert insert error', insertError, context);
+    if (isIdempotencyTableMissingError(insertError)) {
+      console.info('[idempotency] idempotency_keys table missing, skipping dedupe for upsert');
+    } else {
+      // Additional diagnostic logging can be added here if needed
+    }
+  }
+}
+
 async function markActivationStep(orgId, stepId, { status = 'completed', actor, metadata = {} } = {}) {
   if (!supabase) return;
   const payload = {
@@ -8550,6 +8596,19 @@ const assignmentNotificationMetadata = (assignmentType, row) => ({
   assignmentType,
   ...buildAssignmentNotificationAction(assignmentType, row),
 });
+
+// In-memory idempotency store for fallback when table is unavailable
+const inMemoryIdempotencyKeys = new Map();
+const getInMemoryIdempotencyKey = (key) => inMemoryIdempotencyKeys.get(key) || null;
+const setInMemoryIdempotencyKey = (key, value) => inMemoryIdempotencyKeys.set(key, value);
+const deleteInMemoryIdempotencyKey = (key) => inMemoryIdempotencyKeys.delete(key);
+
+// Helper to detect missing idempotency_keys table so fallback path can be triggered.
+const isIdempotencyTableMissingError = (error) => {
+  if (!error) return false;
+  const message = String(error.message || error.details || error.toString() || '').toLowerCase();
+  return message.includes('idempotency_keys') && (message.includes('could not find the table') || message.includes('does not exist'));
+};
 
 const notifyAssignmentRecipients = async ({ assignmentType, assignments = [], actor = null }) => {
   if (!ENABLE_NOTIFICATIONS || !notificationService) return;
@@ -11207,6 +11266,8 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
     req.user?.activeOrgId,
     req.user?.organizationId,
   ];
+  // ...existing code...
+  console.log('[admin-courses] handleAdminCourseUpsert start', { userId: context.userId, isPlatformAdmin: context.isPlatformAdmin });
   let organizationId;
   try {
     organizationId = await resolveOrgIdForCourseRequest(req, context, orgCandidates);
@@ -11414,77 +11475,73 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
     }
 
     const idempotencyKey = req.body?.idempotency_key ?? req.body?.client_event_id ?? null;
+    let idempotencyTableMissing = false;
+
     if (idempotencyKey) {
-      try {
-        await supabase.from('idempotency_keys').insert({
+      const existingFallback = getInMemoryIdempotencyKey(idempotencyKey);
+      if (existingFallback) {
+        if (existingFallback.status === 'done' && existingFallback.data) {
+          console.info('[idempotency] returning cached in-memory response for completed idempotency', { idempotencyKey });
+          return res.status(200).json({ data: existingFallback.data, idempotent: true });
+        }
+        if (existingFallback.status === 'in_flight') {
+          console.info('[idempotency] detected in-flight in-memory idempotency request', { idempotencyKey });
+          return res.status(409).json({ error: 'idempotency_conflict' });
+        }
+      }
+
+      const { data: insertData, error: insertError } = await supabase
+        .from('idempotency_keys')
+        .insert({
           id: idempotencyKey,
           key_type: 'course_upsert',
           resource_id: null,
           payload: { course, modules },
         });
-      } catch (ikErr) {
-        console.warn(`Idempotency key ${idempotencyKey} already exists`);
-        try {
-          const { data: existing, error: fetchErr } = await supabase
+      console.log('[admin-courses] idempotency insert attempted', { idempotencyKey, insertData, insertError });
+
+      if (insertError) {
+        if (isIdempotencyTableMissingError(insertError)) {
+          idempotencyTableMissing = true;
+          console.info('[idempotency] idempotency_keys table missing, using in-memory fallback for upsert', { error: insertError, idempotencyKey });
+          setInMemoryIdempotencyKey(idempotencyKey, {
+            status: 'in_flight',
+            createdAt: new Date().toISOString(),
+            payload: { course, modules },
+          });
+        } else {
+          const isDuplicate = insertError?.code === '23505' || String(insertError?.message || '').toLowerCase().includes('duplicate');
+          if (!isDuplicate) {
+            res.status(500).json({ error: 'idempotency_insert_failed' });
+            return;
+          }
+
+          const { data: existingKey, error: existingKeyError } = await supabase
             .from('idempotency_keys')
             .select('*')
             .eq('id', idempotencyKey)
             .maybeSingle();
-          if (!fetchErr && existing) {
-            if (existing.resource_id) {
-              const { data: courseRow, error: courseFetchErr } = await supabase
-                .from('courses')
-                .select(COURSE_WITH_MODULES_LESSONS_SELECT)
-                .eq('id', existing.resource_id)
-                .maybeSingle();
-              if (!courseFetchErr && courseRow) {
-                res.status(200).json({ data: courseRow, idempotent: true });
-                return;
-              }
-              logAdminCourseUpdateEvent('conflict_detected', {
-                ...baseLogMeta,
-                orgId: resolveCurrentOrgForLog(),
-                slug: resolveCurrentSlugForLog(),
-                reason: 'idempotency_resource_pending',
-              });
-              respondAdminCourseConflict(res, {
-                reason: 'idempotency_resource_pending',
-                message: 'Duplicate idempotency key (resource not available yet)',
-                requestId: req.requestId ?? null,
-              });
-              return;
-            }
-            logAdminCourseUpdateEvent('conflict_detected', {
-              ...baseLogMeta,
-              orgId: resolveCurrentOrgForLog(),
-              slug: resolveCurrentSlugForLog(),
-              reason: 'idempotency_processing',
-            });
-            respondAdminCourseConflict(res, {
-              reason: 'idempotency_processing',
-              message: 'Duplicate idempotency key (processing)',
-              requestId: req.requestId ?? null,
-            });
+
+          if (existingKeyError || !existingKey) {
+            res.status(409).json({ error: 'idempotency_conflict' });
             return;
           }
-        } catch (fetchErr) {
-          console.warn('Failed to lookup existing idempotency key row', fetchErr);
+
+          if (existingKey.resource_id) {
+            const { data: existingCourse, error: existingCourseError } = await supabase
+              .from('courses')
+              .select(COURSE_WITH_MODULES_LESSONS_SELECT)
+              .eq('id', existingKey.resource_id)
+              .maybeSingle();
+            if (!existingCourseError && existingCourse) {
+              return res.status(200).json({ data: existingCourse, idempotent: true });
+            }
+          }
+
+          return res.status(409).json({ error: 'idempotency_conflict' });
         }
-        logAdminCourseUpdateEvent('conflict_detected', {
-          ...baseLogMeta,
-          orgId: resolveCurrentOrgForLog(),
-          slug: resolveCurrentSlugForLog(),
-          reason: 'idempotency_duplicate',
-        });
-        respondAdminCourseConflict(res, {
-          reason: 'idempotency_duplicate',
-          message: 'Duplicate idempotency key',
-          requestId: req.requestId ?? null,
-        });
-        return;
       }
     }
-
     const persistenceNormalization = normalizeModuleLessonPayloads(modules, {
       courseId: course?.id ?? courseIdFromParams ?? null,
       organizationId,
@@ -11627,6 +11684,16 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
           await supabase.from('idempotency_keys').update({ resource_id: savedCourse.id }).eq('id', idempotencyKey);
         } catch (updErr) {
           console.warn('Failed to update idempotency_keys with resource id', updErr);
+        }
+
+        const existingFallback = getInMemoryIdempotencyKey(idempotencyKey);
+        if (existingFallback && existingFallback.status === 'in_flight') {
+          setInMemoryIdempotencyKey(idempotencyKey, {
+            ...existingFallback,
+            status: 'done',
+            resourceId: savedCourse.id,
+            data: savedCourse,
+          });
         }
       }
       res.status(course?.id ? 200 : 201).json({ data: savedCourse });
@@ -12924,42 +12991,73 @@ app.post('/api/admin/courses/:id/publish', async (req, res) => {
       return;
     }
 
+    const idempotencyKey = req.body?.idempotency_key ?? req.body?.client_event_id ?? null;
+    let idempotencyTableMissing = false;
+
     if (idempotencyKey) {
-      try {
-        await supabase
-          .from('idempotency_keys')
-          .insert({
-            id: idempotencyKey,
-            key_type: 'course_publish',
-            resource_id: null,
+      const existingFallback = getInMemoryIdempotencyKey(idempotencyKey);
+      if (existingFallback) {
+        if (existingFallback.status === 'done' && existingFallback.data) {
+          console.info('[idempotency] returning cached in-memory response for completed idempotency', { idempotencyKey });
+          return res.status(200).json({ data: existingFallback.data, idempotent: true });
+        }
+        if (existingFallback.status === 'in_flight') {
+          console.info('[idempotency] detected in-flight in-memory idempotency request', { idempotencyKey });
+          return res.status(409).json({ error: 'idempotency_conflict' });
+        }
+      }
+
+      const { data: insertData, error: insertError } = await supabase
+        .from('idempotency_keys')
+        .insert({
+          id: idempotencyKey,
+          key_type: 'course_publish',
+          resource_id: null,
+          payload: { course_id: courseId, version: currentVersion },
+        });
+
+      if (insertError) {
+        if (isIdempotencyTableMissingError(insertError)) {
+          idempotencyTableMissing = true;
+          console.info('[idempotency] idempotency_keys table missing, using in-memory fallback for publish', { error: insertError, idempotencyKey });
+          setInMemoryIdempotencyKey(idempotencyKey, {
+            status: 'in_flight',
+            createdAt: new Date().toISOString(),
             payload: { course_id: courseId, version: currentVersion },
           });
-      } catch (ikErr) {
-        try {
-          const { data: existingKey } = await supabase
+        } else {
+          const isDuplicate = insertError?.code === '23505' || String(insertError?.message || '').toLowerCase().includes('duplicate');
+          if (!isDuplicate) {
+            res.status(500).json({ error: 'idempotency_insert_failed' });
+            return;
+          }
+
+          const { data: existingKey, error: existingKeyError } = await supabase
             .from('idempotency_keys')
             .select('*')
             .eq('id', idempotencyKey)
             .maybeSingle();
-          if (existingKey?.resource_id) {
-            const { data: publishedCourse } = await supabase
+
+          if (existingKeyError || !existingKey) {
+            res.status(409).json({ error: 'idempotency_conflict' });
+            return;
+          }
+
+          if (existingKey.resource_id) {
+            const { data: publishedCourse, error: publishedCourseError } = await supabase
               .from('courses')
               .select(COURSE_WITH_MODULES_LESSONS_SELECT)
               .eq('id', existingKey.resource_id)
               .maybeSingle();
-            if (publishedCourse) {
-              res.json({ data: publishedCourse, idempotent: true });
-              return;
+            if (!publishedCourseError && publishedCourse) {
+              return res.status(200).json({ data: publishedCourse, idempotent: true });
             }
           }
-        } catch (lookupErr) {
-          console.warn('Failed to resolve existing publish idempotency key', lookupErr);
+
+          return res.status(409).json({ error: 'idempotency_conflict' });
         }
-        res.status(409).json({ error: 'idempotency_conflict', code: 'idempotency_conflict' });
-        return;
       }
     }
-
     const publishedAt = new Date().toISOString();
     const nextVersion = (currentVersion ?? 0) + 1;
     const nextMeta = { ...(existing.data.meta_json || {}), published_at: publishedAt };

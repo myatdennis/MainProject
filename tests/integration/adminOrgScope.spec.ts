@@ -1,7 +1,7 @@
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
 import { startTestServer, stopTestServer, TestServerHandle, createAdminAuthHeaders } from './utils/server.ts';
 
-const DEMO_ORG_ID = 'demo-org';
+const DEMO_ORG_ID = 'd28e403a-cdab-42cd-8fc7-2c9327ca40f8';
 const JSON_HEADERS = {
   Accept: 'application/json',
 };

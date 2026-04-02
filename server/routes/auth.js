@@ -69,11 +69,11 @@ const DEMO_SANDBOX_ORG_ID =
 const legacyDemoUsers = [
   {
     id: '00000000-0000-0000-0000-000000000001',
-  email: 'mya@the-huddle.co',
+    email: 'mya@the-huddle.co',
     role: 'admin',
     firstName: 'Admin',
     lastName: 'User',
-    password: '3Cr0wns2014!',
+    password: 'admin123',
     organizationId: undefined,
   },
   {
@@ -992,11 +992,14 @@ router.get('/me', async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('Get user error:', error);
+    console.error('[AUTH ME] failed', {
+      userId: req.user?.userId ?? null,
+      error: error instanceof Error ? error.message : String(error),
+    });
     res.status(500).json({
-      code: 'USER_LOOKUP_FAILED',
-      error: 'internal_server_error',
-      message: 'Unable to load user profile',
+      code: 'INTERNAL_SERVER_ERROR',
+      error: 'internal_error',
+      message: 'Unable to fetch user information.',
     });
   }
 });

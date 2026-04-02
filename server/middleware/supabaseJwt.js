@@ -1,7 +1,8 @@
 import { createRemoteJWKSet, decodeProtectedHeader, jwtVerify } from 'jose';
 import { LRUCache } from 'lru-cache';
-import { extractTokenFromHeader } from '../utils/jwt.js';
+import { extractTokenFromHeader, verifyAccessToken } from '../utils/jwt.js';
 import { syncUserProfileFlags } from './auth.js';
+import { isProduction } from '../config/runtimeFlags.js';
 
 const JWT_AUTH_BYPASS_PATHS = ['/health', '/auth/login', '/auth/refresh', '/audit-log', '/analytics', '/admin/me', '/client/courses'];
 const DEMO_MODE_ENABLED =
@@ -242,6 +243,23 @@ const verifySupabaseToken = async (token) => {
 
 const shouldSkipAuthInDev = DEMO_MODE_ENABLED && DEMO_AUTO_AUTH_ENABLED;
 
+const mapLocalClaimsToSupabaseClaims = (claims = {}) => {
+  const platformRole = claims.platformRole || null;
+  return {
+    sub: claims.userId || claims.sub || null,
+    email: claims.email || null,
+    role: claims.role || null,
+    app_metadata: {
+      platform_role: platformRole,
+      organization_ids: Array.isArray(claims.organizationIds) ? claims.organizationIds : [],
+      memberships: Array.isArray(claims.memberships) ? claims.memberships : [],
+      permissions: Array.isArray(claims.permissions) ? claims.permissions : [],
+    },
+    user_metadata: {},
+    organization_ids: Array.isArray(claims.organizationIds) ? claims.organizationIds : [],
+  };
+};
+
 export default async function supabaseJwtMiddleware(req, res, next) {
   const path = req.path || req.originalUrl || '';
   if (shouldBypass(req)) {
@@ -279,8 +297,25 @@ export default async function supabaseJwtMiddleware(req, res, next) {
   } catch (error) {
     const code = error?.message || 'token_verification_failed';
     const isConfigError = code === 'supabase_jwt_secret_missing';
+
+    if (!isProduction) {
+      const localClaims = verifyAccessToken(token);
+      if (localClaims && localClaims.userId) {
+        console.warn('[supabaseJwt] local access token accepted for non-production environment');
+        const supabaseClaims = mapLocalClaimsToSupabaseClaims(localClaims);
+        const supabaseUser = mapClaimsToUser(supabaseClaims);
+        syncUserProfileFlags(supabaseUser);
+        req.supabaseJwtUser = supabaseUser;
+        req.supabaseJwtToken = token;
+        if (!req.user) {
+          req.user = supabaseUser;
+        }
+        return next();
+      }
+    }
+
     const isExpired =
-      (error?.code === 'ERR_JWT_CLAIM_INVALID' && error?.claim === 'exp') ||
+      (error?.code === 'ERR_JWT_CLAIM_INVALID' && error?.claim === 'iss') ||
       String(error?.message || '').includes('exp claim timestamp check failed');
 
     if (isConfigError) {

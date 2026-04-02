@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { __testables } from '../../middleware/auth.js';
+import { __testables, isPlatformAdmin } from '../../middleware/auth.js';
 
 const { buildUserPayload } = __testables;
 
@@ -26,5 +26,9 @@ describe('auth membership status handling', () => {
   it('downgrades to learner when memberships missing without errors', () => {
     const payload = buildUserPayload(regularUser, [], { membershipStatus: 'ready' });
     expect(payload.role).toBe('learner');
+  });
+
+  it('treats mya@the-huddle.co as a platform admin', () => {
+    expect(isPlatformAdmin({ email: 'mya@the-huddle.co' })).toBe(true);
   });
 });

@@ -29,6 +29,7 @@ const allowDemoExplicitRaw = parseFlag(process.env.ALLOW_DEMO_EXPLICIT);
 const demoModeExplicitRaw = parseFlag(process.env.DEMO_MODE_EXPLICIT);
 const allowLegacyDemoUsersRaw = parseFlag(process.env.ALLOW_LEGACY_DEMO_USERS);
 const forceOrgEnforcementRaw = parseFlag(process.env.FORCE_ORG_ENFORCEMENT);
+const idempotencyFallbackRaw = parseFlag(process.env.TEST_IDEMPOTENCY_FALLBACK_MODE);
 
 if (isProduction && (demoModeRaw || allowDemoRaw || devFallbackRaw || e2eTestRaw)) {
   console.error('[FATAL] DEMO_MODE, DEV_FALLBACK, ALLOW_DEMO or E2E_TEST_MODE cannot be enabled in production.');
@@ -39,6 +40,7 @@ if (isProduction && (demoModeRaw || allowDemoRaw || devFallbackRaw || e2eTestRaw
 export const DEMO_MODE = !isProduction && (demoModeRaw || allowDemoRaw || devFallbackRaw);
 export const E2E_TEST_MODE = !isProduction && e2eTestRaw;
 export const DEV_FALLBACK = DEMO_MODE;
+export const TEST_IDEMPOTENCY_FALLBACK_MODE = !isProduction && idempotencyFallbackRaw;
 
 export const allowDemoExplicit = !isProduction && allowDemoExplicitRaw;
 export const demoModeExplicit = !isProduction && demoModeExplicitRaw;

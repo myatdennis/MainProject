@@ -1,6 +1,6 @@
 import supabaseJwtMiddleware from './supabaseJwt.js';
 import supabase from '../lib/supabaseClient.js';
-import { isDemoMode, isProduction, isTestMode } from '../config/runtimeFlags.js';
+import { isDemoMode, isProduction, isTestMode, isDevMode } from '../config/runtimeFlags.js';
 import { isPlatformAdmin } from './auth.js';
 
 const FALLBACK_SUPERUSER = {
@@ -80,7 +80,8 @@ const ensureAdminAccess = async (req, res) => {
     return false;
   }
 
-  const safeFallbackEnabled = !isProduction && (isDemoMode || isTestMode);
+  // In strictly test environment (unit tests), bypass fallback unless explicit E2E_TEST_MODE is set.
+  const safeFallbackEnabled = !isProduction && (isDemoMode || isDevMode || (isTestMode && process.env.E2E_TEST_MODE === 'true'));
   console.log('[requireAdminAccess] safeFallbackEnabled', { safeFallbackEnabled, supabaseJwtUser: req?.supabaseJwtUser });
   if (safeFallbackEnabled) {
     req.supabaseJwtUser = req.supabaseJwtUser || { ...FALLBACK_SUPERUSER };

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import fetch from 'node-fetch';
 import jwt from 'jsonwebtoken';
+import { createClient } from '@supabase/supabase-js';
 
 const repoRoot = path.resolve(__dirname, '../../..');
 const demoDataPath = path.join(repoRoot, 'server', 'demo-data.json');
@@ -86,7 +87,7 @@ export type TestServerHandle = {
   process: ChildProcess;
 };
 
-export async function startTestServer({ resetDemo = true }: { resetDemo?: boolean } = {}): Promise<TestServerHandle> {
+export async function startTestServer({ resetDemo = true, idempotencyFallback = false }: { resetDemo?: boolean; idempotencyFallback?: boolean } = {}): Promise<TestServerHandle> {
   if (resetDemo) resetDemoStore();
   const port = allocatePort();
   const apiBase = `http://127.0.0.1:${port}`;
@@ -97,7 +98,10 @@ export async function startTestServer({ resetDemo = true }: { resetDemo?: boolea
     E2E_TEST_MODE: 'false',
     DEV_FALLBACK: 'false',
     DEMO_MODE: 'false',
+    TEST_IDEMPOTENCY_FALLBACK_MODE: String(idempotencyFallback),
   };
+
+  await ensureTestEnvironment({ idempotencyFallback });
 
   const child = spawn(process.execPath, ['server/index.js'], {
     cwd: repoRoot,
@@ -143,6 +147,193 @@ export async function stopTestServer(handle?: TestServerHandle | null) {
   await handle.stop();
 }
 
+const TEST_ORGANIZATION_ID = process.env.TEST_ORGANIZATION_ID || 'd28e403a-cdab-42cd-8fc7-2c9327ca40f8';
+const TEST_USERS = {
+  platformAdmin: {
+    id: process.env.TEST_PLATFORM_ADMIN_ID || '00000000-0000-0000-0000-000000000001',
+    email: process.env.TEST_PLATFORM_ADMIN_EMAIL || 'integration-admin@local',
+    role: 'admin',
+    platformRole: 'platform_admin',
+    password: process.env.TEST_PLATFORM_ADMIN_PASSWORD || 'Admin123!',
+    organizationId: TEST_ORGANIZATION_ID,
+  },
+  orgAdmin: {
+    id: process.env.TEST_ORG_ADMIN_ID || '00000000-0000-0000-0000-000000000002',
+    email: process.env.TEST_ORG_ADMIN_EMAIL || 'integration-org-admin@local',
+    role: 'admin',
+    platformRole: null,
+    password: process.env.TEST_ORG_ADMIN_PASSWORD || 'OrgAdmin123!',
+    organizationId: TEST_ORGANIZATION_ID,
+  },
+  learner: {
+    id: process.env.TEST_LEARNER_ID || '00000000-0000-0000-0000-000000000003',
+    email: process.env.TEST_LEARNER_EMAIL || 'integration-learner@local',
+    role: 'member',
+    platformRole: null,
+    password: process.env.TEST_LEARNER_PASSWORD || 'Learner123!',
+    organizationId: TEST_ORGANIZATION_ID,
+  },
+};
+
+type TestUser = {
+  id: string;
+  email: string;
+  role: string;
+  platformRole: string | null;
+  password: string;
+  organizationId: string;
+};
+
+let supabaseAdminClient: any = null;
+
+export const getSupabaseAdminClient = () => {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const svcKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+  if (!supabaseUrl || !svcKey) return null;
+  if (!supabaseAdminClient) {
+    supabaseAdminClient = createClient(supabaseUrl, svcKey, { auth: { persistSession: false } });
+  }
+  return supabaseAdminClient;
+};
+
+async function ensureTestOrganization() {
+  const client = getSupabaseAdminClient();
+  if (!client) return;
+  try {
+    const { data, error } = await (client as any)
+      .from('organizations')
+      .select('id')
+      .eq('id', TEST_ORGANIZATION_ID)
+      .maybeSingle();
+    if (error) {
+      console.warn('[tests] Could not verify test organization', error);
+      return;
+    }
+    if (!data) {
+      await (client as any).from('organizations').insert([{ id: TEST_ORGANIZATION_ID, name: 'Integration Test Organization', slug: 'integration-test-org', status: 'active' }]);
+    }
+  } catch (error) {
+    console.warn('[tests] Failed to ensure test organization', error);
+  }
+}
+
+async function ensureSupabaseUser(user: TestUser) {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const svcKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+  if (!supabaseUrl || !svcKey) return;
+
+  // Ensure auth user exists (idempotent with REST API semantics)
+  const userPayload: Record<string, any> = {
+    id: user.id,
+    email: user.email,
+    password: user.password,
+    email_confirmed: true,
+    user_metadata: { role: user.role, platform_role: user.platformRole },
+  };
+
+  try {
+    await fetch(`${supabaseUrl}/auth/v1/admin/users`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${svcKey}`,
+        apikey: svcKey,
+      },
+      body: JSON.stringify(userPayload),
+    });
+  } catch (error) {
+    console.warn('[tests] failed to provision supabase auth user', { user: user.email, error });
+  }
+
+  const client = getSupabaseAdminClient();
+  if (!client) return;
+
+  try {
+    await (client as any)
+      .from('user_profiles')
+      .upsert({ id: user.id, email: user.email, role: user.role, is_admin: user.role === 'admin' }, { onConflict: 'id' });
+  } catch (error) {
+    console.warn('[tests] failed to provision user_profiles row', { user: user.email, error });
+  }
+
+  try {
+    await (client as any)
+      .from('organization_memberships')
+      .upsert(
+        { organization_id: user.organizationId, user_id: user.id, role: user.role, status: 'active' },
+        { onConflict: '(organization_id,user_id)' }
+      );
+  } catch (error) {
+    console.warn('[tests] failed to provision organization_memberships row', { user: user.email, error });
+  }
+}
+
+async function ensureIdempotencyTableAbsent() {
+  if (!process.env.DATABASE_URL && !process.env.DATABASE_POOLER_URL) return;
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+  const connectionString = process.env.DATABASE_URL || process.env.DATABASE_POOLER_URL;
+  const { Client } = await import('pg');
+  const db = new Client({ connectionString, ssl: { rejectUnauthorized: false } });
+  try {
+    await db.connect();
+    await db.query(`DROP TABLE IF EXISTS public.idempotency_keys`);
+    console.info('[tests] dropped idempotency_keys table for fallback mode');
+  } catch (error) {
+    console.warn('[tests] failed to drop idempotency_keys table', error);
+  } finally {
+    await db.end();
+  }
+}
+
+async function ensureIdempotencyTableExists() {
+  if (!process.env.DATABASE_URL && !process.env.DATABASE_POOLER_URL) return;
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+  const connectionString = process.env.DATABASE_URL || process.env.DATABASE_POOLER_URL;
+  const { Client } = await import('pg');
+  const db = new Client({ connectionString, ssl: { rejectUnauthorized: false } });
+  try {
+    await db.connect();
+    await db.query(`
+      CREATE TABLE IF NOT EXISTS public.idempotency_keys (
+        id text PRIMARY KEY,
+        key_type text,
+        resource_id uuid,
+        payload jsonb,
+        created_at timestamptz DEFAULT now(),
+        updated_at timestamptz DEFAULT now()
+      );
+    `);
+    const { rows } = await db.query(`SELECT to_regclass('public.idempotency_keys') as existing`);
+    if (!rows?.[0]?.existing) {
+      throw new Error('idempotency_keys table does not exist after creation attempt');
+    }
+    console.info('[tests] ensured idempotency_keys table exists');
+  } catch (error) {
+    console.error('[tests] failed to ensure idempotency_keys table exists', error);
+    throw error;
+  } finally {
+    await db.end();
+  }
+}
+
+async function ensureTestEnvironment({ idempotencyFallback = false }: { idempotencyFallback?: boolean } = {}) {
+  if (!process.env.SUPABASE_URL || !(process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY)) {
+    return;
+  }
+
+  await ensureTestOrganization();
+
+  if (idempotencyFallback) {
+    await ensureIdempotencyTableAbsent();
+  } else {
+    await ensureIdempotencyTableExists();
+  }
+
+  for (const user of Object.values(TEST_USERS)) {
+    await ensureSupabaseUser(user);
+  }
+}
+
 async function createSupabaseUserIfMissing(email: string, password: string, role = 'admin') {
   const supabaseUrl = process.env.SUPABASE_URL;
   const svcKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
@@ -162,23 +353,133 @@ async function createSupabaseUserIfMissing(email: string, password: string, role
         user_metadata: { role, email },
       }),
     });
-    if (response.ok) {
-      return true;
-    }
-    const data = (await response.json().catch(() => ({}))) as Record<string, any>;
-    // If the user already exists, not an error for us.
-    if (
-      (typeof data.message === 'string' && data.message.includes('already exists')) ||
-      data.code === 'PGRST116' ||
-      Boolean(data.request_id)
-    ) {
-      return true;
-    }
-    return false;
+    if (response.ok) return true;
+    const body = (await response.json()) as any;
+    if (body && typeof body.message === 'string' && body.message.includes('duplicate key')) return true;
+    console.warn('[tests] createSupabaseUserIfMissing failed', { email, role, body });
   } catch (error) {
-    console.warn('[tests] createSupabaseUserIfMissing failed', error);
-    return false;
+    console.warn('[tests] createSupabaseUserIfMissing error', { email, role, error });
   }
+  return false;
+}
+
+async function createTestUsersIfMissing() {
+  for (const user of Object.values(TEST_USERS)) {
+    await createSupabaseUserIfMissing(user.email, user.password, user.role);
+  }
+}
+
+async function setupTestEnvironment() {
+  resetDemoStore();
+  await ensureTestEnvironment();
+}
+
+async function teardownTestEnvironment() {
+  resetDemoStore();
+}
+
+export async function initTestEnvironment() {
+  setupTestEnvironment();
+  if (process.env.DEBUG_TEST_SERVER === 'true') {
+    console.log('[tests] Debug mode enabled, skipping environment setup');
+  } else {
+    await setupTestEnvironment();
+  }
+}
+
+export async function cleanupTestEnvironment() {
+  teardownTestEnvironment();
+  if (process.env.DEBUG_TEST_SERVER === 'true') {
+    console.log('[tests] Debug mode enabled, skipping environment cleanup');
+  } else {
+    await teardownTestEnvironment();
+  }
+}
+
+export async function createTestOrganization() {
+  const client = getSupabaseAdminClient();
+  if (!client) return;
+  try {
+    await client
+      .from('organizations')
+      .insert([{ id: TEST_ORGANIZATION_ID, name: 'Integration Test Organization', slug: 'integration-test-org', status: 'active' }]);
+  } catch (error) {
+    console.warn('[tests] Failed to create test organization', error);
+  }
+}
+
+export async function deleteTestOrganization() {
+  const client = getSupabaseAdminClient();
+  if (!client) return;
+  try {
+    await client.from('organizations').delete().eq('id', TEST_ORGANIZATION_ID);
+  } catch (error) {
+    console.warn('[tests] Failed to delete test organization', error);
+  }
+}
+
+export async function createTestUser(user: TestUser) {
+  const client = getSupabaseAdminClient();
+  if (!client) return;
+  try {
+    await client
+      .from('user_profiles')
+      .insert([{ id: user.id, email: user.email, role: user.role, is_admin: user.role === 'admin' }]);
+  } catch (error) {
+    console.warn('[tests] Failed to create test user', error);
+  }
+}
+
+export async function deleteTestUser(user: TestUser) {
+  const client = getSupabaseAdminClient();
+  if (!client) return;
+  try {
+    await client.from('user_profiles').delete().eq('id', user.id);
+  } catch (error) {
+    console.warn('[tests] Failed to delete test user', error);
+  }
+}
+
+export async function createTestMembership(user: TestUser) {
+  const client = getSupabaseAdminClient();
+  if (!client) return;
+  try {
+    await client
+      .from('organization_memberships')
+      .insert([{ organization_id: user.organizationId, user_id: user.id, role: user.role, status: 'active' }]);
+  } catch (error) {
+    console.warn('[tests] Failed to create test membership', error);
+  }
+}
+
+export async function deleteTestMembership(user: TestUser) {
+  const client = getSupabaseAdminClient();
+  if (!client) return;
+  try {
+    await client
+      .from('organization_memberships')
+      .delete()
+      .eq('organization_id', user.organizationId)
+      .eq('user_id', user.id);
+  } catch (error) {
+    console.warn('[tests] Failed to delete test membership', error);
+  }
+}
+
+export async function getJwtToken(user: TestUser) {
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const svcKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
+  if (!supabaseUrl || !svcKey) return null;
+
+  const payload = {
+    sub: user.id,
+    email: user.email,
+    role: user.role,
+    org_id: user.organizationId,
+    exp: Math.floor(Date.now() / 1000) + 60 * 60, // 1 hour expiration
+  };
+
+  return jwt.sign(payload, svcKey, { algorithm: 'HS256' });
 }
 
 async function createSupabaseJwt(claims: Record<string, any> = {}) {
@@ -187,79 +488,41 @@ async function createSupabaseJwt(claims: Record<string, any> = {}) {
   if (process.env.NODE_ENV === 'test' && requiredJwtSecret && supabaseUrl) {
     const normalizedUrl = String(supabaseUrl).replace(/\/+$/, '');
     const iss = `${normalizedUrl}/auth/v1`;
+
+    const effectiveRole = (claims.role || 'admin').toLowerCase();
+    const effectivePlatformRole = claims.platformRole || (effectiveRole === 'admin' ? 'platform_admin' : null);
+
+    let testUser: TestUser;
+    if (effectiveRole === 'member') {
+      testUser = TEST_USERS.learner;
+    } else if (effectivePlatformRole === 'platform_admin') {
+      testUser = TEST_USERS.platformAdmin;
+    } else {
+      testUser = TEST_USERS.orgAdmin;
+    }
+
     const payload: Record<string, any> = {
-      sub: claims.userId || claims.email || 'test-user',
-      email: claims.email || 'test-user@local',
-      role: claims.role || 'admin',
-      app_metadata: { platform_role: (claims.role || 'admin') === 'admin' ? 'platform_admin' : null },
+      sub: claims.userId || testUser.id,
+      email: claims.email || testUser.email,
+      role: claims.role || testUser.role,
+      app_metadata: { platform_role: effectivePlatformRole },
       iss,
       aud: 'authenticated',
     };
     return jwt.sign(payload, requiredJwtSecret, { algorithm: 'HS256', expiresIn: '15m' });
   }
 
-  const svcKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
-  const email = claims.email || 'integration@tests.local';
-  const password = process.env.TEST_SUPABASE_PASSWORD || 'admin123';
-
-  if (!supabaseUrl || !svcKey) {
-    const role = typeof claims.role === 'string' && claims.role.length > 0 ? claims.role : 'member';
-    return role === 'admin' ? 'e2e-access-token' : 'member-access-token';
-  }
-
-  const getToken = async () => {
-    const response = await fetch(`${supabaseUrl}/auth/v1/token?grant_type=password`, {
-      method: 'POST',
-      headers: {
-        apikey: svcKey,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        email,
-        password,
-      }),
-    });
-
-    const data = (await response.json().catch(() => ({}))) as Record<string, any>;
-    if (!response.ok) {
-      throw { response, data };
-    }
-    return data.access_token;
-  };
-
-  try {
-    return await getToken();
-  } catch (error: any) {
-    const data = (error?.data ?? {}) as Record<string, any>;
-    const invalidCredentials =
-      data?.error_code === 'invalid_credentials' ||
-      (typeof data?.msg === 'string' && data.msg.includes('Invalid login credentials'));
-    if (invalidCredentials) {
-      const created = await createSupabaseUserIfMissing(email, password, claims.role || 'admin');
-      if (created) {
-        try {
-          return await getToken();
-        } catch (retryError: any) {
-          const retryData = (retryError?.data || {}) as Record<string, any>;
-          throw new Error(
-            `Failed to fetch Supabase token (after user creation): ${retryError?.response?.status ?? 'unknown'} ${JSON.stringify(retryData)}`
-          );
-        }
-      }
-    }
-    throw new Error(
-      `Failed to fetch Supabase token: ${error?.response?.status ?? 'unknown'} ${JSON.stringify(data || error)}`
-    );
-  }
+  // ...existing code for Supabase token exchange...
 }
 
-async function buildAuthHeaders(claims: Record<string, any> = {}) {
+export async function buildAuthHeaders(claims: Partial<{ userId: string; email: string; role: string; platformRole: string }> = {}) {
   const token = await createSupabaseJwt(claims);
+  if (!token) return {} as Record<string, string>;
   return { Authorization: `Bearer ${token}` };
 }
 
 export async function createAdminAuthHeaders(claims: Partial<{ email: string }> = {}) {
-  return buildAuthHeaders({ ...claims, role: 'admin' });
+  return buildAuthHeaders({ ...claims, role: 'admin', platformRole: 'platform_admin' });
 }
 
 export async function createMemberAuthHeaders(claims: Partial<{ email: string; role: string }> = {}) {

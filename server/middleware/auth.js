@@ -136,9 +136,16 @@ const derivePlatformRole = (user = {}) => {
 
 export function isPlatformAdmin(user = {}) {
   if (!user || typeof user !== 'object') return false;
-  const explicitPlatformRole = user.platformRole || user.role || null;
+
+  const normalizedEmail = normalizeEmail(user.email || '');
+  if (isAllowlistedAdminEmail(normalizedEmail)) {
+    return true;
+  }
+
+  const explicitPlatformRole = user.platformRole || null;
   const platformRole = (derivePlatformRole(user) || String(explicitPlatformRole || '').toLowerCase()).toLowerCase();
-  return platformRole === 'platform_admin' || platformRole === 'admin' || Boolean(user.isPlatformAdmin);
+
+  return platformRole === 'platform_admin' || Boolean(user.isPlatformAdmin);
 };
 
 const resolveUserRole = (user = {}, memberships = []) => {
@@ -629,13 +636,33 @@ const verifySupabaseJwtToken = (token) => {
   }
 };
 
+const isUuid = (value) =>
+  typeof value === 'string' &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.trim());
+
 const normalizeSupabaseClaimsToJwtClaims = (claims = {}) => {
   const appMetadata = claims.app_metadata || claims.appMetadata || {};
   const platformRole = appMetadata.platform_role || claims.platform_role || claims.platformRole || null;
   const role = claims.role || appMetadata.role || (platformRole === 'platform_admin' ? 'admin' : null) || 'learner';
   const organizationId = claims.organizationId || appMetadata.organizationId || null;
+  let userId = claims.sub || claims.userId || null;
+
+  if (userId && !isUuid(String(userId).trim())) {
+    logger.warn('[auth] invalid_user_id_format', { userId });
+    if (isTestMode) {
+      userId = null;
+    }
+  }
+
+  if (!userId && isTestMode) {
+    // In a well-configured test environment, userId must always be a valid UUID.
+    // Do not inject non-production user IDs to avoid masking issues.
+    logger.warn('[auth] missing_test_user_id', { claims });
+    userId = null;
+  }
+
   return {
-    userId: claims.sub || claims.userId || null,
+    userId,
     email: claims.email || claims.user_email || null,
     role,
     platformRole,
@@ -897,11 +924,7 @@ export async function requireAdmin(req, res, next) {
   console.log('[requireAdmin] context', { userId: req.user.userId, role: req.user.role, platformRole: req.user.platformRole, isPlatformAdmin: req.user.isPlatformAdmin });
 
   const userId = req.user.userId || req.user.id || null;
-  let isPlatformAdminRole = Boolean(
-    req.user.isPlatformAdmin ||
-      req.user.platformRole === 'platform_admin' ||
-      req.user.role === 'admin',
-  );
+  let isPlatformAdminRole = isPlatformAdmin(req.user);
 
   if (!isPlatformAdminRole && userId) {
     const profileFlags = await fetchUserProfileRole(userId);
