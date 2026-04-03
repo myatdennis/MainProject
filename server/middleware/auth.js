@@ -27,7 +27,13 @@ const ADMIN_EMAIL_ALLOWLIST = new Set(
     .filter(Boolean),
 );
 const STRICT_AUTH = String(process.env.STRICT_AUTH || 'false').toLowerCase() === 'true';
-const MEMBERSHIP_CACHE_MS = Number(process.env.AUTH_MEMBERSHIP_CACHE_MS || 60_000);
+// PRODUCTION NOTE: membershipCache and tokenCache are in-process Maps.
+// In a multi-instance deployment (e.g. Railway), cache invalidation via
+// invalidateMembershipCache() only clears the local instance's cache.
+// TTL is reduced to 5s to minimize stale-role windows; role/membership changes
+// are also actively invalidated so the effective window is near-zero on single-instance.
+// TODO: Replace with Redis/distributed cache before scaling past 2 instances.
+const MEMBERSHIP_CACHE_MS = Number(process.env.AUTH_MEMBERSHIP_CACHE_MS || 5_000);
 const TOKEN_CACHE_LIMIT = Number(process.env.AUTH_TOKEN_CACHE_LIMIT || 5000);
 
 const membershipCache = new Map();
@@ -162,7 +168,7 @@ const resolveUserRole = (user = {}, memberships = []) => {
 
   const membershipRoles = memberships.map((m) => String(m.role || '').toLowerCase());
   if (membershipRoles.some((role) => writableOrgRoles.has(role))) {
-    return
+    return 'admin';
   }
 
   return 'learner';
@@ -343,12 +349,10 @@ const resolveDemoBypassRole = (req) => {
   if (isProduction) {
     return 'learner';
   }
-  const path = String(req?.originalUrl || req?.url || '').toLowerCase();
+  // Require an explicit header — never derive admin from the URL path alone.
+  // Callers must send `x-user-role: admin` to receive admin context.
   const explicitRole = String(req?.headers?.['x-user-role'] || '').trim().toLowerCase();
   if (explicitRole === 'admin') {
-    return 'admin';
-  }
-  if (path.startsWith('/api/admin')) {
     return 'admin';
   }
   return 'learner';
@@ -410,9 +414,20 @@ const cacheSet = (store, key, value, ttlMs = MEMBERSHIP_CACHE_MS) => {
   }
 };
 
-export const invalidateMembershipCache = (userId) => {
-  if (!userId) return;
-  membershipCache.delete(`org-memberships:${userId}`);
+export const invalidateMembershipCache = (userId, { orgId } = {}) => {
+  if (userId) {
+    membershipCache.delete(`org-memberships:${userId}`);
+  }
+  // When a role or membership changes for an org, purge all cached entries for
+  // that org's members so no user retains a stale role beyond TTL.
+  if (orgId) {
+    for (const [key, entry] of membershipCache.entries()) {
+      const memberships = entry?.value;
+      if (Array.isArray(memberships) && memberships.some((m) => m.orgId === orgId || m.organizationId === orgId)) {
+        membershipCache.delete(key);
+      }
+    }
+  }
 };
 
 export const mapMembershipRows = (rows = []) =>
@@ -909,7 +924,7 @@ export async function authenticate(req, res, next) {
       });
     }
 
-    req.user = context.user;
+    req.user = context.user ?? null;
     req.userId = context.user?.userId ?? context.user?.id ?? null;
     req.orgMemberships = context.membershipsMap;
     req.activeOrgId = context.activeOrgId;
@@ -1177,17 +1192,28 @@ export const authLimiter = rateLimit({
 const RATE_LIMIT_BYPASS_PREFIXES = ['/auth', '/mfa', '/health', '/diagnostics'];
 const RATE_LIMIT_BYPASS_EXACT = new Set(['/auth/csrf']);
 
+// Allow explicit test IPs to bypass rate limiting (e.g. CI loopback), but never
+// bypass globally for demo/dev mode — that would leave staging unprotected.
+const RATE_LIMIT_BYPASS_TEST_IPS = new Set(
+  (process.env.RATE_LIMIT_BYPASS_IPS || '').split(',').map((s) => s.trim()).filter(Boolean),
+);
+
 const shouldBypassApiRateLimit = (req) => {
   if (!req) return false;
-  if (isDemoMode) {
-    return true;
-  }
   if (req.method === 'OPTIONS') return true;
   const path = req.path || '';
   if (RATE_LIMIT_BYPASS_EXACT.has(path)) {
     return true;
   }
-  return RATE_LIMIT_BYPASS_PREFIXES.some((prefix) => path === prefix || path.startsWith(`${prefix}/`));
+  if (RATE_LIMIT_BYPASS_PREFIXES.some((prefix) => path === prefix || path.startsWith(`${prefix}/`))) {
+    return true;
+  }
+  // Only bypass for explicitly allowlisted test IPs (e.g. 127.0.0.1 in CI).
+  const clientIp = req.ip || req.connection?.remoteAddress || '';
+  if (RATE_LIMIT_BYPASS_TEST_IPS.size > 0 && RATE_LIMIT_BYPASS_TEST_IPS.has(clientIp)) {
+    return true;
+  }
+  return false;
 };
 
 export const apiLimiter = rateLimit({
@@ -1326,6 +1352,11 @@ export function resolveOrganizationContext(req, res, next) {
     null;
 
   req.activeOrgId = inferredOrgId;
+
+  // Enforce org scoping for non-platform admins: all admin endpoints should be bound to an org.
+  if (!req.user?.isPlatformAdmin && !inferredOrgId) {
+    return res.status(403).json({ error: 'org_scope_required', message: 'Organization context required for admin ops.' });
+  }
 
   next();
 }

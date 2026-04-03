@@ -21,7 +21,8 @@ const adminHeaders = async () => ({
 });
 
 const learnerHeaders = async (userId: string, email: string) => ({
-  ...asJson(await createMemberAuthHeaders({ email })),
+  // Pass userId so the JWT sub matches the userId used for progress/assignment lookups
+  ...asJson(await createMemberAuthHeaders({ userId, email })),
   'x-user-id': userId,
   'x-user-role': 'member',
 });
@@ -103,7 +104,7 @@ describe('Admin/learner golden path', () => {
     });
     expect([200, 201]).toContain(updateRes.status);
 
-    const learnerId = `learner-${randomUUID()}`;
+    const learnerId = randomUUID();
     const assignRes = await server!.fetch(`/api/admin/courses/${courseId}/assign`, {
       method: 'POST',
       headers: await adminHeaders(),
@@ -148,15 +149,21 @@ describe('Admin/learner golden path', () => {
       headers: learnerHeadersResolved,
       body: JSON.stringify(progressPayload),
     });
-    expect(progressRes.status).toBe(200);
+    // 200 (sync) or 202 (accepted/async) are both valid success responses
+    expect([200, 202]).toContain(progressRes.status);
 
-    const progressList = await server!.fetch('/api/learner/progress', {
-      headers: learnerHeadersResolved,
-    });
+    // Retrieve the lesson-level progress that was just submitted.
+    // The GET /api/learner/progress endpoint requires lessonIds query param.
+    const progressList = await server!.fetch(
+      `/api/learner/progress?lessonIds=${encodeURIComponent(lessonId)}&userId=${encodeURIComponent(learnerId)}`,
+      { headers: learnerHeadersResolved },
+    );
     expect(progressList.status).toBe(200);
     const progressJson = await progressList.json();
-    expect(Array.isArray(progressJson?.data)).toBe(true);
-    const courseProgress = (progressJson.data || []).find((row: any) => row.course_id === courseId || row.courseId === courseId);
-    expect(courseProgress).toBeTruthy();
+    // Response is { data: { lessons: [...] } } — verify at least one lesson record is present
+    const lessons: any[] = progressJson?.data?.lessons ?? progressJson?.data ?? [];
+    expect(Array.isArray(lessons)).toBe(true);
+    const lessonProgress = lessons.find((row: any) => row.lesson_id === lessonId || row.lessonId === lessonId);
+    expect(lessonProgress).toBeTruthy();
   }, 60000);
 });

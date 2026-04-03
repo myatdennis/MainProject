@@ -229,6 +229,7 @@ const AdminLogin: React.FC = () => {
 
   const verifyAdminCapability = async (): Promise<CapabilityCheckResult> => {
     try {
+      clearAdminAccessSnapshot();
       const response = await apiRequest<AdminCapabilityResponse>('/api/admin/me');
       recordDevApiEvent('/admin/me', 200);
       setAdminAccessSnapshot(response);

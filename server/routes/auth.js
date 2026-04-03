@@ -28,6 +28,7 @@ import {
   allowLegacyDemoUsers as allowLegacyDemoUsersFlag,
   allowDemoExplicit,
   demoModeExplicit,
+  isProduction,
 } from '../config/runtimeFlags.js';
 import { getSupabaseConfig } from '../config/supabaseConfig.js';
 
@@ -66,26 +67,26 @@ const DEMO_SANDBOX_ORG_ID =
   process.env.DEFAULT_SANDBOX_ORG_ID ||
   'demo-sandbox-org';
 
-const legacyDemoUsers = [
+const legacyDemoUsers = isProduction ? [] : [
   {
     id: '00000000-0000-0000-0000-000000000001',
-    email: 'mya@the-huddle.co',
+    email: process.env.DEMO_ADMIN_EMAIL || 'mya@the-huddle.co',
     role: 'admin',
     firstName: 'Admin',
     lastName: 'User',
-    password: 'admin123',
+    password: process.env.DEMO_ADMIN_PASSWORD || null,
     organizationId: undefined,
   },
   {
     id: '00000000-0000-0000-0000-000000000002',
-    email: 'user@pacificcoast.edu',
+    email: process.env.DEMO_USER_EMAIL || 'user@pacificcoast.edu',
     role: 'user',
     firstName: 'Demo',
     lastName: 'User',
-    password: 'user123',
+    password: process.env.DEMO_USER_PASSWORD || null,
     organizationId: DEMO_SANDBOX_ORG_ID,
   },
-];
+].filter((u) => Boolean(u.password));
 
 const buildConfiguredDemoUsers = () => {
   const users = [];

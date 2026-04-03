@@ -256,7 +256,8 @@ describe('Server demo-mode behavior', () => {
         headers: await adminContextHeaders(),
         body: JSON.stringify({ organization_id: orgId, user_ids: [] }),
       });
-      expect(res.status).toBe(201);
+      // Assign is an idempotent upsert — returns 200 regardless of insert vs update.
+      expect([200, 201]).toContain(res.status);
     };
 
     const courseA = await createCourse(`org-a-${randomUUID()}`);

@@ -40,6 +40,20 @@ const logRouteError = (route, error) => {
     isHandledRouteError: true,
   });
 };
+
+// ---------------------------------------------------------------------------
+// Standardized API response helpers — use these on ALL new/updated routes.
+// Shape: { ok: true, data, meta? } | { ok: false, error, code, message? }
+// ---------------------------------------------------------------------------
+const sendApiResponse = (res, data, meta = null, statusCode = 200) => {
+  const payload = { ok: true, data };
+  if (meta && typeof meta === 'object') payload.meta = meta;
+  return res.status(statusCode).json(payload);
+};
+
+const sendApiError = (res, statusCode, code, message, extra = {}) => {
+  return res.status(statusCode).json({ ok: false, error: code, code, message, ...extra });
+};
 import { withCache, invalidateCacheKeys } from './services/cacheService.js';
 import { enqueueJob, registerJobProcessor, hasQueueBackend } from './jobs/taskQueue.js';
 import setupNotificationDispatcher from './services/notificationDispatcher.js';
@@ -88,7 +102,7 @@ import {
   TEST_IDEMPOTENCY_FALLBACK_MODE,
 } from './config/runtimeFlags.js';
 
-const isDemoOrTestMode = isDemoMode || isTestMode;
+const isDemoOrTestMode = E2E_TEST_MODE;
 const isFallbackMode = isDemoMode || E2E_TEST_MODE || TEST_IDEMPOTENCY_FALLBACK_MODE;
 import { sendEmail, configureEmailLogging, getEmailConfigSummary, isEmailEnabled } from './services/emailService.js';
 import { createMediaService } from './services/mediaService.js';
@@ -657,6 +671,27 @@ app.use(cookieParser());
 app.use(express.json({ limit: '10mb' }));
 app.use(attachRequestId);
 
+// ---------------------------------------------------------------------------
+// API Response Normalizer — ensures { ok: bool } is present on every /api/*
+// response without modifying the 135+ existing call sites individually.
+// Routes that already include ok: are passed through unchanged.
+// ---------------------------------------------------------------------------
+app.use('/api', (req, res, next) => {
+  const originalJson = res.json.bind(res);
+  res.json = function normalizedJson(body) {
+    if (body && typeof body === 'object' && !Array.isArray(body) && !('ok' in body)) {
+      const statusCode = res.statusCode || 200;
+      if (statusCode >= 400) {
+        body = { ok: false, ...body };
+      } else {
+        body = { ok: true, ...body };
+      }
+    }
+    return originalJson(body);
+  };
+  next();
+});
+
 // Guard against unsafe header-based overrides in production.
 app.use((req, res, next) => {
   if (
@@ -1088,10 +1123,6 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
     return;
   }
   const courseId = resolvedCourseId;
-  try {
-    // Debug: log incoming request body for assign so E2E failures can be diagnosed
-    console.log('[SERVER assign] incoming body:', JSON.stringify(req.body || {}));
-  } catch (_) {}
   const body = normalizeLegacyOrgInput(req.body ?? {}, {
     surface: 'admin.courses.assign',
     requestId: req.requestId,
@@ -1111,10 +1142,6 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
         console.info('[assign] injected org id from header into body', { headerValStr, requestId: req.requestId ?? null });
       }
     }
-  } catch (_) {}
-
-  try {
-    console.info('[assign] normalized body (truncated):', JSON.stringify(body).slice(0, 2000));
   } catch (_) {}
 
   // Compute finalOrganizationId up-front in a safe, deterministic way.
@@ -1309,12 +1336,9 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
 
   const context = requireUserContext(req, res);
   if (!context) return;
-  // In E2E test mode allow bypassing org access checks to simplify test harnesses.
-  let access = true;
-  if (!isTestMode) {
-    access = await requireOrgAccess(req, res, finalOrganizationId, { write: true, requireOrgAdmin: true });
-    if (!access && context.userRole !== 'admin') return;
-  }
+  // Always enforce org access — demo/test mode uses the demo org UUID, not a bypass.
+  const access = await requireOrgAccess(req, res, finalOrganizationId, { write: true, requireOrgAdmin: true });
+  if (!access) return;
   const organizationIds = finalOrganizationId ? [finalOrganizationId] : [];
   const assignLogMeta = {
     requestId: req.requestId ?? null,
@@ -1542,7 +1566,9 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
           });
         }
       }
-      res.status(inserted.length > 0 ? 201 : 200).json({
+      // Always return 200 — idempotent upsert semantics (insert OR update both succeed).
+      res.status(200).json({
+        ok: true,
         data: responseRows,
         meta: {
           fallback: true,
@@ -1738,7 +1764,8 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
         });
       }
     }
-    res.status(insertedRows.length > 0 ? 201 : 200).json({
+    res.status(200).json({
+      ok: true,
       data: responseRows,
       meta: {
         organizationId: finalOrganizationId,
@@ -1783,21 +1810,31 @@ app.get('/api/admin/courses/:id/assignments', authenticate, async (req, res) => 
     console.warn('[admin.courses.assignments] failed to resolve organization id', { organizationId, error: err?.message || String(err), requestId: req.requestId ?? null });
   }
 
-  if ((!organizationId || !isUuid(organizationId)) && !isDemoMode) {
+  if ((!organizationId || !isUuid(organizationId)) && !isFallbackMode) {
     res.status(400).json({ error: 'invalid_organization_id', message: 'orgId must be a valid organization UUID.' });
     return;
   }
 
-  if (!organizationId) {
+  if (!organizationId && !isFallbackMode) {
     res.status(400).json({ error: 'org_id_required', message: 'orgId query parameter is required.' });
     return;
+  }
+
+  // In fallback/E2E mode with no orgId supplied, default to the sandbox org so
+  // downstream filtering and requireOrgAccess still work correctly.
+  if (!organizationId && isFallbackMode) {
+    organizationId = DEFAULT_SANDBOX_ORG_ID;
   }
 
   const context = requireUserContext(req, res);
   if (!context) return;
 
-  const access = await requireOrgAccess(req, res, organizationId, { write: false, requireOrgAdmin: true });
-  if (!access) return;
+  // In fallback/demo mode requireOrgAccess always returns {role:'owner'} anyway;
+  // skip it when orgId was not supplied to avoid the org_required guard.
+  if (!isFallbackMode) {
+    const access = await requireOrgAccess(req, res, organizationId, { write: false, requireOrgAdmin: true });
+    if (!access) return;
+  }
 
   try {
     const activeOnly = String(req.query.active ?? 'true').toLowerCase() !== 'false';
@@ -1870,7 +1907,7 @@ app.delete('/api/admin/assignments/:assignmentId', authenticate, async (req, res
     }
 
     const access = await requireOrgAccess(req, res, orgId, { write: true, requireOrgAdmin: true });
-    if (!access && context.userRole !== 'admin') return;
+    if (!access) return;
 
     const { data, error } = await supabase
       .from('assignments')
@@ -2274,7 +2311,7 @@ app.get('/api/admin/users', authenticate, requireAdmin, async (req, res) => {
       return normalizedOrgId ? memberOrg === normalizedOrgId : true;
     });
     if (members.length === 0 && allMembers.length > 0 && normalizedOrgId) {
-      res.json({ data: allMembers });
+      res.json({ data: [] });
       return;
     }
     res.json({ data: members });
@@ -2298,8 +2335,12 @@ app.get('/api/admin/users', authenticate, requireAdmin, async (req, res) => {
   }
 
   try {
-    const members = isPlatformAdmin && !orgId ? await fetchAllOrgMembersWithProfiles() : await fetchOrgMembersWithProfiles(orgId);
-    res.json({ data: members });
+    const offset = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+    const limit = Math.min(parseInt(req.query.limit, 10) || 500, 1000);
+    const members = isPlatformAdmin && !orgId
+      ? await fetchAllOrgMembersWithProfiles({ offset, limit })
+      : await fetchOrgMembersWithProfiles(orgId);
+    res.json({ data: members, meta: { offset, limit } });
   } catch (error) {
     const normalized = logUsersStageError('memberships_fetch', error, {
       requestId: req.requestId ?? null,
@@ -3605,37 +3646,16 @@ const ensureCourseStructureLoaded = async (courseRecord, { includeLessons = fals
   if (!courseRecord || !courseRecord.id) {
     return courseRecord;
   }
-  if (!supabase) {
-    if (Array.isArray(courseRecord.modules)) {
-      return { ...courseRecord, modules: normalizeModuleGraph(courseRecord.modules, { includeLessons }) };
-    }
-    return { ...courseRecord, modules: [] };
+  // Normalize whatever modules array was returned by the initial query.
+  // If the initial SELECT already includes the full module/lesson graph (via
+  // COURSE_WITH_MODULES_LESSONS_SELECT), this is a no-op normalisation only.
+  // We NEVER issue a secondary per-course DB query here — that was the N+1 source.
+  // Courses with no modules are genuinely empty and should be returned as [].
+  if (Array.isArray(courseRecord.modules)) {
+    return { ...courseRecord, modules: normalizeModuleGraph(courseRecord.modules, { includeLessons }) };
   }
-  // When modules is a non-empty array the inline join already returned the full
-  // graph — normalise and return immediately.
-  if (Array.isArray(courseRecord.modules) && courseRecord.modules.length > 0) {
-    const normalized = normalizeModuleGraph(courseRecord.modules, { includeLessons });
-    return { ...courseRecord, modules: normalized };
-  }
-  // modules is null, undefined, or [] — the inline select either wasn't
-  // requested or returned empty.  Always attempt a direct fetch so that
-  // courses with real modules in the DB are not rejected by the client store.
-  try {
-    const hydratedModules = await fetchModulesForCourse(courseRecord.id, { includeLessons });
-    if (NODE_ENV !== 'production' && hydratedModules.length > 0) {
-      console.log('[admin.courses] ensureCourseStructureLoaded rescued modules via direct fetch', {
-        courseId: courseRecord.id,
-        moduleCount: hydratedModules.length,
-      });
-    }
-    return { ...courseRecord, modules: hydratedModules };
-  } catch (error) {
-    console.warn('[admin.courses] Failed to hydrate modules for course', {
-      courseId: courseRecord.id,
-      message: error?.message || error,
-    });
-    return { ...courseRecord, modules: [] };
-  }
+  // modules field is absent (not fetched at all): return as-is, do not query.
+  return { ...courseRecord, modules: [] };
 };
 
 const getDocumentOrgId = async (documentId) => {
@@ -7591,32 +7611,88 @@ async function fetchOrgMembersWithProfiles(orgId) {
   return members;
 }
 
-async function fetchAllOrgMembersWithProfiles() {
+async function fetchAllOrgMembersWithProfiles({ offset = 0, limit = 500, orgId = null } = {}) {
   if (!supabase) {
     return [];
   }
 
-  const { data: organizations, error: orgError } = await supabase
-    .from('organizations')
-    .select('id');
-
-  if (orgError) {
-    throw orgError;
-  }
-
-  const orgIds = Array.isArray(organizations) ? organizations.map((org) => org?.id).filter(Boolean) : [];
-  const memberSets = await Promise.all(
-    orgIds.map(async (orgId) => {
-      try {
-        return await fetchOrgMembersWithProfiles(orgId);
-      } catch (error) {
-        logger.warn('admin_users_fetch_org_members_failed', { orgId, error: error?.message || String(error) });
-        return [];
-      }
-    }),
+  // Single JOIN query — no per-org N+1 loop.
+  // Fetches organization_memberships joined with user_profiles in one round-trip.
+  const membershipSelect = buildMembershipSelect(
+    'id',
+    'organization_id',
+    'org_id',
+    'user_id',
+    'role',
+    'status',
+    'invited_by',
+    'created_at',
+    'updated_at',
   );
 
-  return memberSets.flat();
+  let query = supabase
+    .from('organization_memberships')
+    .select(`${membershipSelect}, user_profiles (*)`)
+    .in('status', ['active', 'pending'])
+    .order('created_at', { ascending: false })
+    .range(offset, offset + limit - 1);
+
+  if (orgId) {
+    // Try organization_id first; schema probe will detect which column exists.
+    query = query.eq('organization_id', orgId);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    // If organization_id column is missing, fall back to org_id column.
+    if (isMissingColumnError(error) && !orgId) {
+      const { data: fallbackData, error: fallbackError } = await supabase
+        .from('organization_memberships')
+        .select(`id, org_id, user_id, role, status, invited_by, created_at, updated_at, user_profiles (*)`)
+        .in('status', ['active', 'pending'])
+        .order('created_at', { ascending: false })
+        .range(offset, offset + limit - 1);
+      if (fallbackError) throw fallbackError;
+      data = fallbackData;
+    } else {
+      throw error;
+    }
+  }
+
+  const rows = Array.isArray(data) ? data : [];
+
+  const members = rows.map((membership) => {
+    const profile = membership.user_profiles || null;
+    return {
+      ...(profile || {}),
+      ...membership,
+      user_profiles: undefined, // remove the nested join artifact
+      organization_id: membership.organization_id ?? membership.org_id ?? null,
+      org_id: membership.org_id ?? membership.organization_id ?? null,
+      user_id_uuid: membership.user_id ?? null,
+      profile,
+      user: {
+        id: membership.user_id ?? null,
+        email: profile?.email ?? null,
+        first_name: profile?.first_name ?? null,
+        last_name: profile?.last_name ?? null,
+        organization_id: profile?.organization_id ?? membership.organization_id ?? membership.org_id ?? null,
+        role: profile?.role ?? null,
+        is_active: profile?.is_active ?? true,
+      },
+    };
+  });
+
+  logger.info('admin_users_all_memberships_query', {
+    source: 'organization_memberships+user_profiles_join',
+    orgId: orgId ?? 'all',
+    rowCount: members.length,
+    offset,
+    limit,
+  });
+
+  return members;
 }
 
 
@@ -8995,7 +9071,7 @@ async function upsertOrganizationMembership(orgId, userId, role, actor) {
   if (error) {
     throw error;
   }
-  invalidateMembershipCache(userId);
+  invalidateMembershipCache(userId, { orgId });
   await assignPublishedOrganizationContentToUser({
     orgId,
     userId,
@@ -10512,7 +10588,8 @@ app.get('/api/admin/courses', authenticate, requireOrgAdmin, async (req, res) =>
   );
 
   const resolvedRequestedOrgId = requestedOrgId ? await coerceOrgIdentifierToUuid(req, requestedOrgId) : null;
-  if (requestedOrgId && !resolvedRequestedOrgId) {
+  // Blocker 3: even platform admins must request a valid, resolvable org scope
+  if (requestedOrgId && (!resolvedRequestedOrgId || !isUuid(String(resolvedRequestedOrgId).trim()))) {
     res.status(403).json({ error: 'org_access_denied', message: 'Organization scope not permitted' });
     return;
   }
@@ -11029,7 +11106,7 @@ const normalizeKeyTakeawaysInput = (input) => {
 
 async function handleAdminCourseUpsert(req, res, options = {}) {
   const { courseIdFromParams = null } = options;
-  if (courseIdFromParams && !isUuid(courseIdFromParams) && !isDemoMode) {
+  if (courseIdFromParams && !isUuid(courseIdFromParams) && !isFallbackMode) {
     res.status(400).json({
       error: 'invalid_course_id',
       message: 'Course ID must be a UUID.',
@@ -11113,7 +11190,8 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
   }
 
   // Handle legacy non-UUID course IDs by mapping them to internal UUID and preserving slug/meta.
-  if (courseLocal && courseLocal.id && !isUuid(String(courseLocal.id).trim())) {
+  // In fallback/E2E mode, non-UUID ids (like 'e2e-course-xxx') are valid store keys — skip remapping.
+  if (courseLocal && courseLocal.id && !isUuid(String(courseLocal.id).trim()) && !isFallbackMode) {
     const legacyCourseId = String(courseLocal.id).trim();
     courseLocal.slug = courseLocal.slug ? String(courseLocal.slug).trim() : legacyCourseId;
     courseLocal.meta_json = courseLocal.meta_json || {};
@@ -11844,7 +11922,7 @@ app.put('/api/admin/courses/:id', authenticate, requireOrgAdmin, asyncHandler(as
     return;
   }
   const courseId = resolvedCourseId;
-  if (!isUuid(id) && !isDemoMode) {
+  if (!isUuid(id) && !isFallbackMode) {
     res.status(400).json({ error: 'invalid_course_id', message: 'Course ID must be a UUID.' });
     return;
   }
@@ -11883,7 +11961,7 @@ const respondImportError = ({
   });
 };
 
-app.post('/api/admin/courses/import', asyncHandler(async (req, res) => {
+app.post('/api/admin/courses/import', authenticate, requireOrgAdmin, asyncHandler(async (req, res) => {
   normalizeLegacyOrgInput(req.body, { surface: 'admin.courses.import', requestId: req.requestId });
   const parseBooleanFlag = (value) => {
     if (typeof value === 'boolean') return value;
@@ -12936,7 +13014,7 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
   }
 });
 
-app.post('/api/admin/courses/:id/publish', async (req, res) => {
+app.post('/api/admin/courses/:id/publish', authenticate, requireOrgAdmin, async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { id } = req.params;
   const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
@@ -13187,7 +13265,7 @@ app.post('/api/admin/courses/:id/publish', async (req, res) => {
   }
 });
 
-app.delete('/api/admin/courses/:id', async (req, res) => {
+app.delete('/api/admin/courses/:id', authenticate, requireOrgAdmin, async (req, res) => {
   const { id } = req.params;
   const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
   if (!resolvedCourseId) {
@@ -13832,7 +13910,7 @@ app.get('/api/client/courses/:courseIdentifier', asyncHandler(async (req, res) =
 }));
 
 // Admin Modules (E2E fallback)
-app.post('/api/admin/modules', async (req, res) => {
+app.post('/api/admin/modules', authenticate, requireOrgAdmin, async (req, res) => {
   if (isDemoOrTestMode) {
     const parsed = validateOr400(moduleCreateSchema, req, res);
     if (!parsed) return;
@@ -13904,7 +13982,7 @@ app.post('/api/admin/modules', async (req, res) => {
   }
 });
 
-app.patch('/api/admin/modules/:id', async (req, res) => {
+app.patch('/api/admin/modules/:id', authenticate, requireOrgAdmin, async (req, res) => {
   if (isDemoOrTestMode) {
     const { id } = req.params;
   const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
@@ -13997,7 +14075,7 @@ app.patch('/api/admin/modules/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/admin/modules/:id', async (req, res) => {
+app.delete('/api/admin/modules/:id', authenticate, requireOrgAdmin, async (req, res) => {
   if (isDemoOrTestMode) {
     const { id } = req.params;
   const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
@@ -14020,16 +14098,40 @@ app.delete('/api/admin/modules/:id', async (req, res) => {
     return;
   }
   if (!ensureSupabase(res)) return;
+  const context = requireUserContext(req, res);
+  if (!context) return;
   try {
     const { id } = req.params;
-  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
-  if (!resolvedCourseId) {
-    res.locals = res.locals || {};
-    res.locals.errorCode = 'course_not_found';
-    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
-    return;
-  }
-  const courseId = resolvedCourseId;
+    // Resolve the module's parent course to enforce org scope
+    const { data: moduleRow, error: moduleErr } = await supabase
+      .from('modules')
+      .select('id, course_id')
+      .eq('id', id)
+      .maybeSingle();
+    if (moduleErr) throw moduleErr;
+    if (!moduleRow) {
+      res.status(204).end();
+      return;
+    }
+    if (moduleRow.course_id) {
+      const { data: courseRow, error: courseErr } = await supabase
+        .from('courses')
+        .select('id, organization_id')
+        .eq('id', moduleRow.course_id)
+        .maybeSingle();
+      if (courseErr) throw courseErr;
+      const moduleOrgId = courseRow?.organization_id ?? null;
+      if (moduleOrgId) {
+        const access = await requireOrgAccess(req, res, moduleOrgId, { write: true, requireOrgAdmin: true });
+        if (!access) return;
+      } else if (!context.isPlatformAdmin) {
+        res.status(403).json({ error: 'organization_required', message: 'Module course is not scoped to an organization.' });
+        return;
+      }
+    } else if (!context.isPlatformAdmin) {
+      res.status(403).json({ error: 'organization_required', message: 'Module is not scoped to an organization.' });
+      return;
+    }
     // Delete lessons first (in case FK cascade not set)
     await supabase.from('lessons').delete().eq('module_id', id);
     await supabase.from('modules').delete().eq('id', id);
@@ -14040,7 +14142,7 @@ app.delete('/api/admin/modules/:id', async (req, res) => {
   }
 });
 
-app.post('/api/admin/modules/reorder', async (req, res) => {
+app.post('/api/admin/modules/reorder', authenticate, requireOrgAdmin, async (req, res) => {
   if (isDemoOrTestMode) {
     const parsed = validateOr400(moduleReorderSchema, req, res);
     if (!parsed) return;
@@ -14107,7 +14209,7 @@ const respondLessonError = (res, logMeta, event, status, code, message, detail =
 };
 
 // Admin Lessons (E2E fallback)
-app.post('/api/admin/lessons', async (req, res) => {
+app.post('/api/admin/lessons', authenticate, requireOrgAdmin, async (req, res) => {
   const context = requireUserContext(req, res);
   if (!context) return;
   const lessonLogMeta = buildLessonLogMeta(req, context);
@@ -14359,7 +14461,7 @@ app.post('/api/admin/lessons', async (req, res) => {
   }
 });
 
-app.patch('/api/admin/lessons/:id', async (req, res) => {
+app.patch('/api/admin/lessons/:id', authenticate, requireOrgAdmin, async (req, res) => {
   const context = requireUserContext(req, res);
   if (!context) return;
   const lessonLogMeta = buildLessonLogMeta(req, context);
@@ -14628,7 +14730,7 @@ app.patch('/api/admin/lessons/:id', async (req, res) => {
   }
 });
 
-app.delete('/api/admin/lessons/:id', async (req, res) => {
+app.delete('/api/admin/lessons/:id', authenticate, requireOrgAdmin, async (req, res) => {
   if (isDemoOrTestMode) {
     const { id } = req.params;
   const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
@@ -14655,16 +14757,51 @@ app.delete('/api/admin/lessons/:id', async (req, res) => {
     return;
   }
   if (!ensureSupabase(res)) return;
+  const context = requireUserContext(req, res);
+  if (!context) return;
   try {
     const { id } = req.params;
-  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
-  if (!resolvedCourseId) {
-    res.locals = res.locals || {};
-    res.locals.errorCode = 'course_not_found';
-    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
-    return;
-  }
-  const courseId = resolvedCourseId;
+    // Resolve the lesson's parent course to enforce org scope
+    const { data: lessonRow, error: lessonErr } = await supabase
+      .from('lessons')
+      .select('id, module_id')
+      .eq('id', id)
+      .maybeSingle();
+    if (lessonErr) throw lessonErr;
+    if (!lessonRow) {
+      res.status(204).end();
+      return;
+    }
+    if (lessonRow.module_id) {
+      const { data: moduleRow, error: moduleErr } = await supabase
+        .from('modules')
+        .select('id, course_id')
+        .eq('id', lessonRow.module_id)
+        .maybeSingle();
+      if (moduleErr) throw moduleErr;
+      if (moduleRow?.course_id) {
+        const { data: courseRow, error: courseErr } = await supabase
+          .from('courses')
+          .select('id, organization_id')
+          .eq('id', moduleRow.course_id)
+          .maybeSingle();
+        if (courseErr) throw courseErr;
+        const lessonOrgId = courseRow?.organization_id ?? null;
+        if (lessonOrgId) {
+          const access = await requireOrgAccess(req, res, lessonOrgId, { write: true, requireOrgAdmin: true });
+          if (!access) return;
+        } else if (!context.isPlatformAdmin) {
+          res.status(403).json({ error: 'organization_required', message: 'Lesson course is not scoped to an organization.' });
+          return;
+        }
+      } else if (!context.isPlatformAdmin) {
+        res.status(403).json({ error: 'organization_required', message: 'Lesson module is not scoped to a course.' });
+        return;
+      }
+    } else if (!context.isPlatformAdmin) {
+      res.status(403).json({ error: 'organization_required', message: 'Lesson is not scoped to a module.' });
+      return;
+    }
     await supabase.from('lessons').delete().eq('id', id);
     res.status(204).end();
   } catch (error) {
@@ -14673,7 +14810,7 @@ app.delete('/api/admin/lessons/:id', async (req, res) => {
   }
 });
 
-app.post('/api/admin/lessons/reorder', async (req, res) => {
+app.post('/api/admin/lessons/reorder', authenticate, requireOrgAdmin, async (req, res) => {
   if (isDemoOrTestMode) {
     const parsed = validateOr400(lessonReorderSchema, req, res);
     if (!parsed) return;
@@ -16510,7 +16647,8 @@ app.get('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req,
   );
 
   const resolvedRequestedOrgId = requestedOrgId ? await coerceOrgIdentifierToUuid(req, requestedOrgId) : null;
-  if (requestedOrgId && !resolvedRequestedOrgId) {
+  // Blocker 3: even platform admins must request a valid, resolvable org scope
+  if (requestedOrgId && (!resolvedRequestedOrgId || !isUuid(String(resolvedRequestedOrgId).trim()))) {
     res.status(403).json({ error: 'org_access_denied', message: 'Organization scope not permitted.' });
     return;
   }
@@ -17113,7 +17251,7 @@ app.delete('/api/admin/organizations/:id', requireAdminAccess, async (req, res) 
 });
 
 // Organization memberships
-app.get('/api/admin/organizations/:orgId/members', async (req, res) => {
+app.get('/api/admin/organizations/:orgId/members', authenticate, requireOrgAdmin, async (req, res) => {
   if (!ensureSupabase(res)) return;
   if (
     !(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.members.list', {
@@ -17165,7 +17303,7 @@ app.get('/api/admin/organizations/:orgId/members', async (req, res) => {
   }
 });
 
-app.post('/api/admin/organizations/:orgId/members', async (req, res) => {
+app.post('/api/admin/organizations/:orgId/members', authenticate, requireOrgAdmin, async (req, res) => {
   if (!ensureSupabase(res)) return;
   if (
     !(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.members.create', {
@@ -17225,14 +17363,20 @@ app.post('/api/admin/organizations/:orgId/members', async (req, res) => {
       .single();
 
     if (error) throw error;
-    res.status(201).json({ data });
+
+    // Invalidate stale cached membership so the new role takes effect immediately.
+    try {
+      invalidateMembershipCache(userId, { orgId });
+    } catch (_) {}
+
+    res.status(201).json({ ok: true, data });
   } catch (error) {
     logRouteError('POST /api/admin/organizations/:orgId/members', error);
     res.status(500).json({ error: 'Unable to add organization member' });
   }
 });
 
-app.patch('/api/admin/organizations/:orgId/members/:membershipId', async (req, res) => {
+app.patch('/api/admin/organizations/:orgId/members/:membershipId', authenticate, requireOrgAdmin, async (req, res) => {
   if (!ensureSupabase(res)) return;
   if (
     !(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.members.update', {
@@ -17328,14 +17472,21 @@ app.patch('/api/admin/organizations/:orgId/members/:membershipId', async (req, r
       return;
     }
 
-    res.json({ data });
+    // Invalidate cache for the affected user AND the entire org so no instance
+    // serves a stale role beyond the TTL window.
+    try {
+      const affectedUserId = data.user_id ?? existing.user_id ?? null;
+      invalidateMembershipCache(affectedUserId, { orgId });
+    } catch (_) {}
+
+    res.json({ ok: true, data });
   } catch (error) {
     logRouteError('PATCH /api/admin/organizations/:orgId/members/:membershipId', error);
     res.status(500).json({ error: 'Unable to update organization member' });
   }
 });
 
-app.delete('/api/admin/organizations/:orgId/members/:membershipId', async (req, res) => {
+app.delete('/api/admin/organizations/:orgId/members/:membershipId', authenticate, requireOrgAdmin, async (req, res) => {
   if (!ensureSupabase(res)) return;
   if (
     !(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.members.delete', {
@@ -17371,9 +17522,7 @@ app.delete('/api/admin/organizations/:orgId/members/:membershipId', async (req, 
     }
 
     const access = await requireOrgAccess(req, res, orgId, { write: true });
-    if (!access && context.userRole !== 'admin' && context.userId !== membership.user_id) {
-      return;
-    }
+    if (!access) return;
 
     const { error } = await supabase
       .from('organization_memberships')
@@ -17381,6 +17530,13 @@ app.delete('/api/admin/organizations/:orgId/members/:membershipId', async (req, 
       .eq('id', membershipId);
 
     if (error) throw error;
+
+    // Invalidate cache so the removed member can no longer access org resources.
+    try {
+      const affectedUserId = membership.user_id ?? null;
+      invalidateMembershipCache(affectedUserId, { orgId });
+    } catch (_) {}
+
     res.status(204).end();
   } catch (error) {
     logRouteError('DELETE /api/admin/organizations/:orgId/members/:membershipId', error);
@@ -17388,7 +17544,7 @@ app.delete('/api/admin/organizations/:orgId/members/:membershipId', async (req, 
   }
 });
 
-app.get('/api/admin/organizations/:orgId/users', async (req, res) => {
+app.get('/api/admin/organizations/:orgId/users', authenticate, requireOrgAdmin, async (req, res) => {
   if (!ensureSupabase(res)) return;
   if (
     !(await ensureAdminOrgSchemaOrRespond(res, 'admin.organizations.users.list', {
@@ -17414,7 +17570,7 @@ app.get('/api/admin/organizations/:orgId/users', async (req, res) => {
   }
 });
 
-app.post('/api/admin/organizations/:orgId/invites', async (req, res) => {
+app.post('/api/admin/organizations/:orgId/invites', authenticate, requireOrgAdmin, async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { orgId } = req.params;
   const { email, role = 'member', metadata = {}, sendEmail = true, note: noteInput } = req.body || {};
@@ -17477,7 +17633,7 @@ app.post('/api/admin/organizations/:orgId/invites', async (req, res) => {
   }
 });
 
-app.get('/api/admin/organizations/:orgId/invites', async (req, res) => {
+app.get('/api/admin/organizations/:orgId/invites', authenticate, requireOrgAdmin, async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { orgId } = req.params;
   const context = requireUserContext(req, res);
@@ -17495,7 +17651,7 @@ app.get('/api/admin/organizations/:orgId/invites', async (req, res) => {
   }
 });
 
-app.post('/api/admin/organizations/:orgId/invites/bulk', async (req, res) => {
+app.post('/api/admin/organizations/:orgId/invites/bulk', authenticate, requireOrgAdmin, async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { orgId } = req.params;
   const context = requireUserContext(req, res);
@@ -17549,7 +17705,7 @@ app.post('/api/admin/organizations/:orgId/invites/bulk', async (req, res) => {
   res.status(201).json({ results });
 });
 
-app.post('/api/admin/organizations/:orgId/invites/:inviteId/resend', async (req, res) => {
+app.post('/api/admin/organizations/:orgId/invites/:inviteId/resend', authenticate, requireOrgAdmin, async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { orgId, inviteId } = req.params;
   const context = requireUserContext(req, res);
@@ -17593,7 +17749,7 @@ app.post('/api/admin/organizations/:orgId/invites/:inviteId/resend', async (req,
   }
 });
 
-app.post('/api/admin/organizations/:orgId/invites/:inviteId/remind', async (req, res) => {
+app.post('/api/admin/organizations/:orgId/invites/:inviteId/remind', authenticate, requireOrgAdmin, async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { orgId, inviteId } = req.params;
   const context = requireUserContext(req, res);
@@ -17659,7 +17815,7 @@ app.post('/api/admin/organizations/:orgId/invites/:inviteId/remind', async (req,
   }
 });
 
-app.delete('/api/admin/organizations/:orgId/invites/:inviteId', async (req, res) => {
+app.delete('/api/admin/organizations/:orgId/invites/:inviteId', authenticate, requireOrgAdmin, async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { orgId, inviteId } = req.params;
   const context = requireUserContext(req, res);
@@ -17688,7 +17844,7 @@ app.delete('/api/admin/organizations/:orgId/invites/:inviteId', async (req, res)
   }
 });
 
-app.get('/api/admin/organizations/:orgId/messages', async (req, res) => {
+app.get('/api/admin/organizations/:orgId/messages', authenticate, requireOrgAdmin, async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { orgId } = req.params;
   const context = requireUserContext(req, res);
@@ -17707,7 +17863,7 @@ app.get('/api/admin/organizations/:orgId/messages', async (req, res) => {
   }
 });
 
-app.post('/api/admin/organizations/:orgId/messages', async (req, res) => {
+app.post('/api/admin/organizations/:orgId/messages', authenticate, requireOrgAdmin, async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { orgId } = req.params;
   const context = requireUserContext(req, res);
@@ -17947,6 +18103,9 @@ app.post('/api/invite/:token/accept', async (req, res) => {
 
     await upsertOrganizationMembership(inviteRecord.organization_id, authUser.id, normalizeOrgRole(inviteRecord.role), actor);
 
+    // Invalidate so the accepted membership is immediately visible.
+    try { invalidateMembershipCache(authUser.id, { orgId: inviteRecord.organization_id }); } catch (_) {}
+
     const nowIso = new Date().toISOString();
     await supabase
       .from('org_invites')
@@ -18014,7 +18173,7 @@ app.post('/api/invite/:token/accept', async (req, res) => {
 // Client onboarding orchestration
 // ---------------------------------------------------------------------------
 
-app.post('/api/admin/onboarding/orgs', async (req, res) => {
+app.post('/api/admin/onboarding/orgs', authenticate, requireAdmin, async (req, res) => {
   if (!ensureSupabase(res)) return;
   const context = requireUserContext(req, res);
   if (!context) return;
@@ -18165,7 +18324,7 @@ app.post('/api/admin/onboarding/orgs', async (req, res) => {
   }
 });
 
-app.get('/api/admin/onboarding/:orgId/invites', async (req, res) => {
+app.get('/api/admin/onboarding/:orgId/invites', authenticate, requireOrgAdmin, async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { orgId } = req.params;
   const access = await requireOrgAccess(req, res, orgId, { write: false });
@@ -18186,7 +18345,7 @@ app.get('/api/admin/onboarding/:orgId/invites', async (req, res) => {
   }
 });
 
-app.post('/api/admin/onboarding/:orgId/invites', async (req, res) => {
+app.post('/api/admin/onboarding/:orgId/invites', authenticate, requireOrgAdmin, async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { orgId } = req.params;
   const access = await requireOrgAccess(req, res, orgId, { write: true, requireOrgAdmin: true });
@@ -18229,7 +18388,7 @@ app.post('/api/admin/onboarding/:orgId/invites', async (req, res) => {
   }
 });
 
-app.post('/api/admin/onboarding/:orgId/invites/bulk', async (req, res) => {
+app.post('/api/admin/onboarding/:orgId/invites/bulk', authenticate, requireOrgAdmin, async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { orgId } = req.params;
   const access = await requireOrgAccess(req, res, orgId, { write: true });
@@ -18274,7 +18433,7 @@ app.post('/api/admin/onboarding/:orgId/invites/bulk', async (req, res) => {
   res.status(201).json({ results });
 });
 
-app.post('/api/admin/onboarding/:orgId/invites/:inviteId/resend', async (req, res) => {
+app.post('/api/admin/onboarding/:orgId/invites/:inviteId/resend', authenticate, requireOrgAdmin, async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { orgId, inviteId } = req.params;
   const access = await requireOrgAccess(req, res, orgId, { write: true });
@@ -18311,7 +18470,7 @@ app.post('/api/admin/onboarding/:orgId/invites/:inviteId/resend', async (req, re
   }
 });
 
-app.delete('/api/admin/onboarding/:orgId/invites/:inviteId', async (req, res) => {
+app.delete('/api/admin/onboarding/:orgId/invites/:inviteId', authenticate, requireOrgAdmin, async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { orgId, inviteId } = req.params;
   const access = await requireOrgAccess(req, res, orgId, { write: true });
@@ -18333,7 +18492,7 @@ app.delete('/api/admin/onboarding/:orgId/invites/:inviteId', async (req, res) =>
   }
 });
 
-app.get('/api/admin/onboarding/:orgId/progress', async (req, res) => {
+app.get('/api/admin/onboarding/:orgId/progress', authenticate, requireOrgAdmin, async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { orgId } = req.params;
   const access = await requireOrgAccess(req, res, orgId, { write: false });
@@ -18343,7 +18502,7 @@ app.get('/api/admin/onboarding/:orgId/progress', async (req, res) => {
   res.json({ data: progress });
 });
 
-app.patch('/api/admin/onboarding/:orgId/steps/:stepId', async (req, res) => {
+app.patch('/api/admin/onboarding/:orgId/steps/:stepId', authenticate, requireOrgAdmin, async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { orgId, stepId } = req.params;
   const access = await requireOrgAccess(req, res, orgId, { write: true });
@@ -18431,6 +18590,9 @@ app.post('/api/orgs/:orgId/memberships/accept', async (req, res) => {
       }
     }
 
+    // Invalidate so the newly-active membership is visible immediately.
+    try { invalidateMembershipCache(context.userId, { orgId }); } catch (_) {}
+
     res.json({ data });
   } catch (error) {
     console.error(`Failed to accept membership for org ${orgId}:`, error);
@@ -18481,6 +18643,10 @@ app.post('/api/orgs/:orgId/memberships/leave', async (req, res) => {
       .eq('user_id', context.userId);
 
     if (updateError) throw updateError;
+
+    // Invalidate so the revoked membership is no longer served from cache.
+    try { invalidateMembershipCache(context.userId, { orgId }); } catch (_) {}
+
     res.json({ success: true });
   } catch (error) {
     console.error(`Failed to leave organization ${orgId}:`, error);
@@ -18536,7 +18702,7 @@ app.put(
   asyncHandler((req, res) => handleOrgProfileUpsert(req, res)),
 );
 
-app.delete('/api/admin/org-profiles/:orgId', async (req, res) => {
+app.delete('/api/admin/org-profiles/:orgId', authenticate, requireOrgAdmin, async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { orgId } = req.params;
   const access = await requireOrgAccess(req, res, orgId, { write: true });
@@ -18555,7 +18721,7 @@ app.delete('/api/admin/org-profiles/:orgId', async (req, res) => {
   }
 });
 
-app.post('/api/admin/org-profiles/:orgId/contacts', async (req, res) => {
+app.post('/api/admin/org-profiles/:orgId/contacts', authenticate, requireOrgAdmin, async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { orgId } = req.params;
   const access = await requireOrgAccess(req, res, orgId, { write: true });
@@ -18593,7 +18759,7 @@ app.post('/api/admin/org-profiles/:orgId/contacts', async (req, res) => {
   }
 });
 
-app.put('/api/admin/org-profiles/:orgId/contacts/:contactId', async (req, res) => {
+app.put('/api/admin/org-profiles/:orgId/contacts/:contactId', authenticate, requireOrgAdmin, async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { orgId, contactId } = req.params;
   const access = await requireOrgAccess(req, res, orgId, { write: true });
@@ -18639,7 +18805,7 @@ app.put('/api/admin/org-profiles/:orgId/contacts/:contactId', async (req, res) =
   }
 });
 
-app.delete('/api/admin/org-profiles/:orgId/contacts/:contactId', async (req, res) => {
+app.delete('/api/admin/org-profiles/:orgId/contacts/:contactId', authenticate, requireOrgAdmin, async (req, res) => {
   if (!ensureSupabase(res)) return;
   const { orgId, contactId } = req.params;
   const access = await requireOrgAccess(req, res, orgId, { write: true });
@@ -18657,16 +18823,22 @@ app.delete('/api/admin/org-profiles/:orgId/contacts/:contactId', async (req, res
 ['/api/admin/orgs/:orgId/profile', '/api/admin/organizations/:orgId/profile'].forEach((path) => {
   app.get(
     path,
+    authenticate,
+    requireOrgAdmin,
     asyncHandler((req, res) => handleOrgProfileBundleRequest(req, res, { mode: 'profile' })),
   );
   app.put(
     path,
+    authenticate,
+    requireOrgAdmin,
     asyncHandler((req, res) => handleOrgProfileUpsert(req, res, (body) => ({ profile: body }))),
   );
 });
 
 app.get(
   '/api/admin/orgs/:orgId/profile/context',
+  authenticate,
+  requireOrgAdmin,
   asyncHandler((req, res) => handleOrgProfileBundleRequest(req, res, { mode: 'context' })),
 );
 
@@ -19454,16 +19626,15 @@ app.get('/api/client/documents', authenticate, asyncHandler(async (req, res) => 
   }
 }));
 
-app.get('/api/admin/documents', async (req, res) => {
-  if (!ensureSupabase(res)) return;
-  if (!(await ensureDocumentsSchemaOrRespond(res, 'admin.documents.list'))) return;
+app.get('/api/admin/documents', authenticate, requireOrgAdmin, async (req, res) => {
   const context = requireUserContext(req, res);
   if (!context) return;
 
   const { user_id, tag, category, search, visibility } = req.query;
   const requestedOrgId = pickOrgId(req.query?.orgId, req.query?.org_id, req.query?.organization_id);
   const resolvedRequestedOrgId = requestedOrgId ? await coerceOrgIdentifierToUuid(req, requestedOrgId) : null;
-  if (requestedOrgId && !resolvedRequestedOrgId) {
+  // Blocker 3: even platform admins must request a valid, resolvable org scope
+  if (requestedOrgId && (!resolvedRequestedOrgId || !isUuid(String(resolvedRequestedOrgId).trim()))) {
     res.status(403).json({ error: 'org_access_denied', message: 'Organization scope not permitted' });
     return;
   }
@@ -19485,6 +19656,15 @@ app.get('/api/admin/documents', async (req, res) => {
       return;
     }
   }
+
+  // Demo/test mode: return empty document list (no Supabase available)
+  if (isDemoOrTestMode) {
+    res.json({ data: [], demo: true });
+    return;
+  }
+
+  if (!ensureSupabase(res)) return;
+  if (!(await ensureDocumentsSchemaOrRespond(res, 'admin.documents.list'))) return;
   // Non-platform-admins with no org memberships can still see global documents — don't return early.
 
   const buildDocumentsQuery = () => {
@@ -20439,7 +20619,7 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
   const assignForOrg = async (organizationId) => {
     if (!organizationId) return;
     const access = await requireOrgAccess(req, res, organizationId, { write: true, requireOrgAdmin: true });
-    if (!access && context.userRole !== 'admin') {
+    if (!access) {
       throw new Error('org_access_denied');
     }
 
@@ -20699,7 +20879,9 @@ app.get('/api/admin/surveys/:id/assignments', async (req, res) => {
 
   if (organizationId) {
     const access = await requireOrgAccess(req, res, organizationId, { write: false, requireOrgAdmin: false });
-    if (!access && !context.isPlatformAdmin) return;
+    if (!access) {
+      return res.status(403).json({ error: 'forbidden', code: 'org_access_denied' });
+    }
   } else if (!context.isPlatformAdmin) {
     res.status(403).json({
       error: 'org_required',
@@ -20767,7 +20949,9 @@ app.delete('/api/admin/surveys/:surveyId/assignments/:assignmentId', async (req,
         write: true,
         requireOrgAdmin: true,
       });
-      if (!access && !context.isPlatformAdmin) return;
+      if (!access) {
+        return res.status(403).json({ error: 'forbidden', code: 'org_access_denied' });
+      }
     } else if (!context.isPlatformAdmin) {
       res.status(403).json({ error: 'org_required', message: 'Only platform admins can remove global assignments.' });
       return;
@@ -21187,9 +21371,13 @@ app.get('/api/admin/notifications', async (req, res) => {
     .filter(Boolean);
 
   try {
-    if (resolvedRequestedOrgId) {
+    if (requestedOrgId) {
       const access = await requireOrgAccess(req, res, requestedOrgId, { write: false });
-      if (!access && !isAdmin) return;
+      if (!access) {
+        return res.status(403).json({ ok: false, error: 'forbidden', code: 'org_access_denied' });
+      }
+    } else if (!isAdmin) {
+      return res.status(403).json({ ok: false, error: 'forbidden', code: 'org_id_required', message: 'org_id is required for non-admin users' });
     }
 
     let query = supabase
@@ -21203,7 +21391,7 @@ app.get('/api/admin/notifications', async (req, res) => {
       .order('created_at', { ascending: false })
       .range(from, to);
 
-    if (resolvedRequestedOrgId) {
+    if (requestedOrgId) {
       query = query.or(`organization_id.eq.${requestedOrgId},org_id.eq.${requestedOrgId}`);
     }
 
@@ -21306,7 +21494,9 @@ app.post('/api/admin/notifications', async (req, res) => {
 
   if (targetOrgId) {
     const access = await requireOrgAccess(req, res, targetOrgId, { write: true });
-    if (!access && !isAdmin) return;
+    if (!access) {
+      return res.status(403).json({ ok: false, error: 'forbidden', code: 'org_access_denied' });
+    }
   } else if (payload.userId) {
     if (!isAdmin && payload.userId !== context.userId) {
       res.status(403).json({

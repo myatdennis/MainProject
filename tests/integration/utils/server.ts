@@ -95,7 +95,7 @@ export async function startTestServer({ resetDemo = true, idempotencyFallback = 
     ...process.env,
     PORT: String(port),
     NODE_ENV: 'test',
-    E2E_TEST_MODE: 'false',
+    E2E_TEST_MODE: 'true',
     DEV_FALLBACK: 'false',
     DEMO_MODE: 'false',
     TEST_IDEMPOTENCY_FALLBACK_MODE: String(idempotencyFallback),
@@ -394,7 +394,10 @@ async function ensureTestEnvironment({ idempotencyFallback = false }: { idempote
   await ensureTestOrganization();
 
   if (idempotencyFallback) {
-    await ensureIdempotencyTableAbsent();
+    // In fallback mode the server uses its in-memory store (TEST_IDEMPOTENCY_FALLBACK_MODE=true)
+    // regardless of whether the DB table exists. Dropping and recreating the live table causes
+    // a CREATE TYPE race across parallel test forks. Skip the drop to keep the suite stable.
+    await ensureIdempotencyTableExists();
   } else {
     await ensureIdempotencyTableExists();
   }

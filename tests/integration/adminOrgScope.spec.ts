@@ -59,4 +59,13 @@ describe('Admin organization scoping', () => {
     expect(authorized.res.status).toBe(200);
     expect(Array.isArray(authorized.body?.data || [])).toBe(true);
   });
+
+  it('prevents platform admin from bypassing org scope between orgs', async () => {
+    const { res: resA } = await fetchJson(`/api/admin/courses?orgId=${DEMO_ORG_ID}`);
+    expect(resA.status).toBe(200);
+
+    const { res: resB, body: bodyB } = await fetchJson('/api/admin/courses?orgId=forbidden-org');
+    expect(resB.status).toBe(403);
+    expect(bodyB).toHaveProperty('error', 'org_access_denied');
+  });
 });

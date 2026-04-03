@@ -1,7 +1,6 @@
 import supabaseJwtMiddleware from './supabaseJwt.js';
 import supabase from '../lib/supabaseClient.js';
 import { isDemoMode, isProduction, isTestMode, isDevMode } from '../config/runtimeFlags.js';
-import { isPlatformAdmin } from './auth.js';
 
 const FALLBACK_SUPERUSER = {
   id: 'dev-admin',
@@ -9,6 +8,15 @@ const FALLBACK_SUPERUSER = {
   role: 'admin',
   platformRole: 'platform_admin',
   isPlatformAdmin: true,
+};
+
+const ALLOWLISTED_ADMIN_EMAILS = [
+  'mya@the-huddle.co',
+  // Add other allowlisted admin emails here
+];
+
+const isAllowlistedAdminEmail = (email) => {
+  return ALLOWLISTED_ADMIN_EMAILS.includes(email.trim().toLowerCase());
 };
 
 const fetchAdminAllowlistEntry = async (userId, email, { requestId } = {}) => {
@@ -68,39 +76,32 @@ const grantAdminAccess = (req, reason, meta = {}) => {
   return true;
 };
 
+const fallbackFlagEnabled = (value) => String(value || '').trim().toLowerCase() === 'true';
+
 const ensureAdminAccess = async (req, res) => {
-  console.log('[requireAdminAccess] start', {
-    requestId: req.requestId ?? null,
-    userId: req?.supabaseJwtUser?.id ?? null,
-    email: req?.supabaseJwtUser?.email ?? null,
-    userRole: req?.supabaseJwtUser?.role ?? null,
-    platformRole: req?.supabaseJwtUser?.platformRole ?? null,
-    isPlatformAdmin: req?.supabaseJwtUser?.isPlatformAdmin ?? null,
-    isProduction,
-    isDemoMode,
-    isTestMode,
-    path: req.originalUrl || req.url,
-    method: req.method,
-  });
-  if (isProduction && isDemoMode) {
-    console.error('[requireAdminAccess] fatal: demo mode active in production');
+  if (isProduction && (fallbackFlagEnabled(process.env.DEV_FALLBACK) || fallbackFlagEnabled(process.env.DEMO_MODE) || fallbackFlagEnabled(process.env.E2E_TEST_MODE))) {
+    console.error('[requireAdminAccess] FALLBACK_MODE_NOT_ALLOWED_IN_PRODUCTION', {
+      DEV_FALLBACK: process.env.DEV_FALLBACK,
+      DEMO_MODE: process.env.DEMO_MODE,
+      E2E_TEST_MODE: process.env.E2E_TEST_MODE,
+    });
     res.status(500).json({
-      code: 'INVALID_CONFIGURATION',
-      error: 'Server configuration invalid',
-      message: 'Demo/fallback authentication modes are not allowed in production.',
+      code: 'FALLBACK_MODE_NOT_ALLOWED_IN_PRODUCTION',
+      error: 'Invalid configuration',
+      message: 'Fallback modes are not allowed in production.',
     });
     return false;
   }
 
-  // In strictly test environment (unit tests), bypass fallback unless explicit E2E_TEST_MODE is set.
-  const safeFallbackEnabled = !isProduction && (isDemoMode || isDevMode || isTestMode || process.env.E2E_TEST_MODE === 'true');
+  const safeFallbackEnabled = !isProduction && fallbackFlagEnabled(process.env.E2E_TEST_MODE);
   console.log('[requireAdminAccess] safeFallbackEnabled', { safeFallbackEnabled, supabaseJwtUser: req?.supabaseJwtUser });
+
   if (safeFallbackEnabled) {
     req.supabaseJwtUser = req.supabaseJwtUser || { ...FALLBACK_SUPERUSER };
     req.supabaseJwtUser.isPlatformAdmin = true;
     req.user = req.user || req.supabaseJwtUser;
-    console.log('[requireAdminAccess] granted dev_fallback', { userId: req.user?.id });
-    return grantAdminAccess(req, 'dev_fallback');
+    console.log('[requireAdminAccess] granted e2e_fallback', { userId: req.user?.id });
+    return grantAdminAccess(req, 'e2e_fallback');
   }
 
   const user = req.supabaseJwtUser;
@@ -120,103 +121,76 @@ const ensureAdminAccess = async (req, res) => {
 
   req.user = req.user || req.supabaseJwtUser;
 
-  try {
-    if (isPlatformAdmin(user)) {
-      console.info('[admin-auth] platform_admin_access_check', {
-        requestId: req.requestId ?? null,
-        userId: user.id,
-        email: user.email ?? null,
-        platformRole: user.platformRole ?? null,
-        identitySource: 'supabaseJwt',
-      });
-      return grantAdminAccess(req, 'platform_admin_profile');
-    }
+  // Strong admin checks derived from authoritative DB data.
+  // 1) allowlist email
+  const normalizedEmail = user.email ? normalizeEmail(user.email) : null;
+  if (normalizedEmail && isAllowlistedAdminEmail(normalizedEmail)) {
+    console.info('[requireAdminAccess] allowlisted_admin_email', { userId: user.id, email: normalizedEmail });
+    return grantAdminAccess(req, 'allowlisted_email');
+  }
 
-    // If platform admin via user_profiles is detected it is considered equal to full admin.
-    if (req.user && isPlatformAdmin(req.user)) {
-      console.info('[admin-auth] platform_admin_access_check', {
-        requestId: req.requestId ?? null,
-        userId: req.user.id ?? null,
-        email: req.user.email ?? null,
-        platformRole: req.user.platformRole ?? null,
-        identitySource: 'user_payload',
-      });
-      return grantAdminAccess(req, 'platform_admin_profile');
-    }
+  // 2) admin_users lookup
+  const { entry: allowlistEntry, error: allowlistError } = await fetchAdminAllowlistEntry(user.id, user.email, { requestId: req.requestId ?? null });
+  if (allowlistError) {
+    throw allowlistError;
+  }
+  if (allowlistEntry) {
+    return grantAdminAccess(req, 'allowlist', { allowlistEntry });
+  }
 
-    if (!supabase) {
-      console.error('[requireAdminAccess] supabase_not_configured', {
-        requestId: req.requestId ?? null,
-        userId: user.id,
-        email: user.email ?? null,
-      });
-      res.status(503).json({
-        code: 'SUPABASE_NOT_CONFIGURED',
-        error: 'Service unavailable',
-        message: 'Supabase service role client is not configured.',
-      });
-      return false;
-    }
-
-    const { entry: allowlistEntry, error: allowlistError } = await fetchAdminAllowlistEntry(
-      user.id,
-      user.email,
-      { requestId: req.requestId ?? null },
-    );
-    if (allowlistError) {
-      throw allowlistError;
-    }
-    if (allowlistEntry) {
-      return grantAdminAccess(req, 'allowlist', { allowlistEntry });
-    }
-
-    const { data, error } = await supabase
-      .from('user_profiles')
-      .select('is_admin')
-      .eq('id', user.id)
-      .maybeSingle();
-
-    if (error) {
-      throw error;
-    }
-
-    if (data?.is_admin === true) {
-      console.info('[requireAdminAccess] profile_flag_passed', {
-        requestId: req.requestId ?? null,
-        userId: user.id,
-        email: user.email ?? null,
-        is_admin: true,
-      });
-      return grantAdminAccess(req, 'profile_flag');
-    }
-
-    req.adminPortalAllowed = false;
-    req.adminPortalDeniedReason = 'not_allowlisted';
-    console.warn('[admin-auth] deny_reason', {
+  // 3) user_profiles is_admin check
+  if (!supabase) {
+    console.error('[requireAdminAccess] supabase_not_configured', {
       requestId: req.requestId ?? null,
-      userId: user.id ?? null,
+      userId: user.id,
       email: user.email ?? null,
-      platformRole: user.platformRole ?? null,
-      isPlatformAdmin: user.isPlatformAdmin ?? null,
-      reason: 'not_allowlisted',
     });
-    res.status(403).json({
-      code: 'ADMIN_REQUIRED',
-      error: 'Forbidden',
-      message: 'Administrator privileges required. Ask an existing admin to add you to admin_users allowlist.',
-      reason: 'not_allowlisted',
-    });
-    return false;
-  } catch (err) {
-    console.error('[requireAdminAccess] profile lookup failed', err);
-    res.status(500).json({
-      code: 'ADMIN_LOOKUP_FAILED',
-      error: 'Internal Server Error',
-      message: 'Unable to verify administrator privileges.',
-      requestId: req.requestId ?? null,
+    res.status(503).json({
+      code: 'SUPABASE_NOT_CONFIGURED',
+      error: 'Service unavailable',
+      message: 'Supabase service role client is not configured.',
     });
     return false;
   }
+
+  const { data, error } = await supabase
+    .from('user_profiles')
+    .select('is_admin, role')
+    .eq('id', user.id)
+    .maybeSingle();
+
+  if (error) {
+    throw error;
+  }
+
+  if (data?.is_admin === true) {
+    console.info('[requireAdminAccess] profile_flag_passed', {
+      requestId: req.requestId ?? null,
+      userId: user.id,
+      email: user.email ?? null,
+      role: data.role ?? null,
+      is_admin: true,
+    });
+    return grantAdminAccess(req, 'profile_flag');
+  }
+
+  req.adminPortalAllowed = false;
+  req.adminPortalDeniedReason = 'not_allowlisted';
+  console.warn('[admin-auth] deny_reason', {
+    requestId: req.requestId ?? null,
+    userId: user.id ?? null,
+    email: user.email ?? null,
+    platformRole: user.platformRole ?? null,
+    isPlatformAdmin: user.isPlatformAdmin ?? null,
+    reason: 'not_allowlisted',
+  });
+  res.status(403).json({
+    code: 'ADMIN_REQUIRED',
+    error: 'Forbidden',
+    message: 'Administrator privileges required. Ask an existing admin to add you to admin_users allowlist.',
+    reason: 'not_allowlisted',
+  });
+  return false;
 };
 
 const requireAdminAccess = [

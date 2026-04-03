@@ -9,8 +9,12 @@ const JWT_AUTH_BYPASS_PATHS = ['/health', '/auth/login', '/auth/refresh', '/audi
 const DEMO_MODE_ENABLED =
   String(process.env.DEMO_MODE || process.env.ALLOW_DEMO || process.env.DEV_FALLBACK || '').toLowerCase() === 'true';
 const DEMO_AUTO_AUTH_ENABLED = String(process.env.DEMO_AUTO_AUTH || process.env.ALLOW_DEMO_AUTO_AUTH || '').toLowerCase() === 'true';
+// In E2E test mode, requireAdminAccess provides its own fallback superuser.
+// supabaseJwtMiddleware must not block token-less requests — it should call next()
+// and let downstream middleware (requireAdminAccess.safeFallbackEnabled) handle auth.
+const E2E_TEST_MODE_ACTIVE = String(process.env.E2E_TEST_MODE || '').toLowerCase() === 'true';
 const rawSupabaseBaseUrl = (process.env.SUPABASE_URL || '').trim();
-if (!rawSupabaseBaseUrl) {
+if (!rawSupabaseBaseUrl && !E2E_TEST_MODE_ACTIVE) {
   throw new Error('[supabaseJwt] SUPABASE_URL environment variable is required for JWT validation.');
 }
 
@@ -24,11 +28,14 @@ const buildSupabaseUrl = (path) => {
   }
 };
 
-const SUPABASE_JWKS_URL = new URL('/auth/v1/.well-known/jwks.json', rawSupabaseBaseUrl);
-const SUPABASE_EXPECTED_ISSUER = new URL('/auth/v1', rawSupabaseBaseUrl).toString().replace(/\/+$/, '');
+// When SUPABASE_URL is absent (E2E-only env), use a safe placeholder to avoid
+// URL constructor throws. JWKS validation is never reached in E2E mode.
+const _effectiveSupabaseBaseUrl = rawSupabaseBaseUrl || 'http://localhost:54321';
+const SUPABASE_JWKS_URL = new URL('/auth/v1/.well-known/jwks.json', _effectiveSupabaseBaseUrl);
+const SUPABASE_EXPECTED_ISSUER = new URL('/auth/v1', _effectiveSupabaseBaseUrl).toString().replace(/\/+$/, '');
 const SUPABASE_URL_HOST = (() => {
   try {
-    return new URL(rawSupabaseBaseUrl).host;
+    return new URL(_effectiveSupabaseBaseUrl).host;
   } catch {
     return null;
   }

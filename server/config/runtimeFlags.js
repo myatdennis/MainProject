@@ -42,6 +42,21 @@ export const E2E_TEST_MODE = !isProduction && e2eTestRaw;
 export const DEV_FALLBACK = DEMO_MODE;
 export const TEST_IDEMPOTENCY_FALLBACK_MODE = !isProduction && idempotencyFallbackRaw;
 
+// SAFETY: E2E_TEST_MODE with a real Supabase service role key is forbidden
+// outside of the official test environment (NODE_ENV=test).
+// This prevents staging/dev environments from bypassing all org membership
+// checks while pointing at a real production or shared database.
+const supabaseUrlEnvEarly = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL || '';
+const supabaseServiceEnvEarly =
+  process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_KEY || '';
+const supabaseConfiguredEarly = Boolean(supabaseUrlEnvEarly && supabaseServiceEnvEarly);
+
+if (E2E_TEST_MODE && supabaseConfiguredEarly && NODE_ENV !== 'test') {
+  console.error('[FATAL] E2E_TEST_MODE cannot be used with a real Supabase configuration outside NODE_ENV=test.');
+  console.error('E2E mode bypasses all org membership checks. Remove Supabase credentials or set NODE_ENV=test.');
+  process.exit(1);
+}
+
 export const allowDemoExplicit = !isProduction && allowDemoExplicitRaw;
 export const demoModeExplicit = !isProduction && demoModeExplicitRaw;
 export const allowLegacyDemoUsers = !isProduction && allowLegacyDemoUsersRaw;

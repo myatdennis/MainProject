@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { startTestServer, stopTestServer, type TestServerHandle } from './utils/server';
+import { startTestServer, stopTestServer, createAdminAuthHeaders, type TestServerHandle } from './utils/server';
 
 const SCHEMA_ERROR_CODES = new Set(['PGRST204', 'PGRST205']);
 
@@ -62,7 +62,12 @@ describe('schema resilience guards', () => {
   });
 
   it('exposes membership diagnostics without schema cache errors on /api/admin/me', async () => {
-    const res = await server!.fetch('/api/admin/me');
+    // Send admin auth headers so the request is authenticated — the endpoint
+    // requires valid credentials even in E2E mode (unauthenticated → 401).
+    const authHeaders = await createAdminAuthHeaders();
+    const res = await server!.fetch('/api/admin/me', {
+      headers: { ...authHeaders, Accept: 'application/json' },
+    });
     expect(res.status).toBe(200);
     const json = await res.json();
     assertNoSchemaCacheWarning(json);
