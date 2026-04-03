@@ -368,7 +368,11 @@ const AdminSurveys = () => {
         <div className="mb-6 flex items-start space-x-3 rounded-lg border border-red-200 bg-red-50 p-4">
           <AlertTriangle className="h-5 w-5 text-red-500 mt-0.5" />
           <div>
-            <p className="text-sm font-medium text-red-700">{errorMessage}</p>
+            <p className="text-sm font-medium text-red-700">
+              {errorMessage.toLowerCase().includes('administrator privileges required')
+                ? 'Administrator privileges required.'
+                : errorMessage}
+            </p>
             <p className="text-xs text-red-600">
               Verify the admin API is running (or DEV_FALLBACK is enabled) and then refresh the surveys list.
             </p>

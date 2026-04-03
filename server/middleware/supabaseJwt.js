@@ -5,7 +5,7 @@ import { getAccessTokenFromRequest } from '../utils/authCookies.js';
 import { syncUserProfileFlags } from './auth.js';
 import { isProduction } from '../config/runtimeFlags.js';
 
-const JWT_AUTH_BYPASS_PATHS = ['/health', '/auth/login', '/auth/refresh', '/audit-log', '/analytics', '/admin/me', '/client/courses'];
+const JWT_AUTH_BYPASS_PATHS = ['/health', '/auth/login', '/auth/refresh', '/audit-log', '/analytics', '/client/courses'];
 const DEMO_MODE_ENABLED =
   String(process.env.DEMO_MODE || process.env.ALLOW_DEMO || process.env.DEV_FALLBACK || '').toLowerCase() === 'true';
 const DEMO_AUTO_AUTH_ENABLED = String(process.env.DEMO_AUTO_AUTH || process.env.ALLOW_DEMO_AUTO_AUTH || '').toLowerCase() === 'true';
