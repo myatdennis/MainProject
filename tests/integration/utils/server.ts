@@ -291,27 +291,97 @@ async function ensureIdempotencyTableExists() {
   const connectionString = process.env.DATABASE_URL || process.env.DATABASE_POOLER_URL;
   const { Client } = await import('pg');
   const db = new Client({ connectionString, ssl: { rejectUnauthorized: false } });
+  const advisoryLockId = 545912353; // deterministic key for idempotency table setup
+  let lockAcquired = false;
   try {
     await db.connect();
-    await db.query(`
-      CREATE TABLE IF NOT EXISTS public.idempotency_keys (
-        id text PRIMARY KEY,
-        key_type text,
-        resource_id uuid,
-        payload jsonb,
-        created_at timestamptz DEFAULT now(),
-        updated_at timestamptz DEFAULT now()
-      );
-    `);
-    const { rows } = await db.query(`SELECT to_regclass('public.idempotency_keys') as existing`);
-    if (!rows?.[0]?.existing) {
+    // Ensure we can acquire the advisory lock in a non-blocking manner with retries.
+    for (let attempt = 0; attempt < 20; attempt += 1) {
+      await db.query("SET LOCAL statement_timeout = '15000'");
+      const lockResult = await db.query('SELECT pg_try_advisory_lock($1) AS acquired', [advisoryLockId]);
+      const acquired = lockResult?.rows?.[0]?.acquired;
+      if (acquired) {
+        lockAcquired = true;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    if (!lockAcquired) {
+      console.warn('[idempotency-table] unable to acquire advisory lock; proceeding without lock');
+    }
+
+    const existingResult = await db.query(`SELECT to_regclass('public.idempotency_keys') AS existing`);
+    const tableExists = Boolean(existingResult?.rows?.[0]?.existing);
+    console.info('[idempotency-table] exists_check', { tableExists });
+
+    if (tableExists) {
+      console.info('[idempotency-table] no-op needed (already exists)');
+      return;
+    }
+
+    try {
+      await db.query(`
+        CREATE TABLE IF NOT EXISTS public.idempotency_keys (
+          id text PRIMARY KEY,
+          key_type text,
+          resource_id uuid,
+          payload jsonb,
+          created_at timestamptz DEFAULT now(),
+          updated_at timestamptz DEFAULT now()
+        );
+      `);
+    } catch (createError) {
+      const pgError = createError as any;
+      const isTypeConflict =
+        (pgError?.code === '23505' && String(pgError?.message || '').includes('pg_type_typname_nsp_index')) ||
+        (pgError?.code === '42710' && String(pgError?.message || '').toLowerCase().includes('type "idempotency_keys" already exists'));
+      if (isTypeConflict) {
+        console.warn('[idempotency-table] type conflict detected on create, repairing...', { createError });
+        await db.query(`DROP TABLE IF EXISTS public.idempotency_keys CASCADE;`);
+        await db.query(`DROP TYPE IF EXISTS public.idempotency_keys CASCADE;`);
+        await db.query(`
+          CREATE TABLE IF NOT EXISTS public.idempotency_keys (
+            id text PRIMARY KEY,
+            key_type text,
+            resource_id uuid,
+            payload jsonb,
+            created_at timestamptz DEFAULT now(),
+            updated_at timestamptz DEFAULT now()
+          );
+        `);
+        console.info('[idempotency-table] repaired and ensured existence');
+      } else {
+        throw createError;
+      }
+    }
+
+    const verify = await db.query(`SELECT to_regclass('public.idempotency_keys') AS existing`);
+    if (!verify?.rows?.[0]?.existing) {
       throw new Error('idempotency_keys table does not exist after creation attempt');
     }
-    console.info('[tests] ensured idempotency_keys table exists');
+
+    const supabaseClient = getSupabaseAdminClient();
+    if (supabaseClient) {
+      try {
+        await (supabaseClient as any).from('idempotency_keys').select('id').limit(1);
+        console.info('[idempotency-table] cache primed via supabase client');
+      } catch (cacheError) {
+        console.warn('[idempotency-table] failed to prime schema cache', cacheError);
+      }
+    }
+
+    console.info('[idempotency-table] create_if_missing');
   } catch (error) {
-    console.error('[tests] failed to ensure idempotency_keys table exists', error);
+    console.error('[idempotency-table] ensure_failed', error);
     throw error;
   } finally {
+    if (lockAcquired) {
+      try {
+        await db.query('SELECT pg_advisory_unlock($1)', [advisoryLockId]);
+      } catch (unlockError) {
+        console.warn('[idempotency-table] advisory unlock failed', unlockError);
+      }
+    }
     await db.end();
   }
 }
@@ -360,6 +430,7 @@ async function createSupabaseUserIfMissing(email: string, password: string, role
   } catch (error) {
     console.warn('[tests] createSupabaseUserIfMissing error', { email, role, error });
   }
+
   return false;
 }
 
@@ -408,64 +479,6 @@ export async function createTestOrganization() {
   }
 }
 
-export async function deleteTestOrganization() {
-  const client = getSupabaseAdminClient();
-  if (!client) return;
-  try {
-    await client.from('organizations').delete().eq('id', TEST_ORGANIZATION_ID);
-  } catch (error) {
-    console.warn('[tests] Failed to delete test organization', error);
-  }
-}
-
-export async function createTestUser(user: TestUser) {
-  const client = getSupabaseAdminClient();
-  if (!client) return;
-  try {
-    await client
-      .from('user_profiles')
-      .insert([{ id: user.id, email: user.email, role: user.role, is_admin: user.role === 'admin' }]);
-  } catch (error) {
-    console.warn('[tests] Failed to create test user', error);
-  }
-}
-
-export async function deleteTestUser(user: TestUser) {
-  const client = getSupabaseAdminClient();
-  if (!client) return;
-  try {
-    await client.from('user_profiles').delete().eq('id', user.id);
-  } catch (error) {
-    console.warn('[tests] Failed to delete test user', error);
-  }
-}
-
-export async function createTestMembership(user: TestUser) {
-  const client = getSupabaseAdminClient();
-  if (!client) return;
-  try {
-    await client
-      .from('organization_memberships')
-      .insert([{ organization_id: user.organizationId, user_id: user.id, role: user.role, status: 'active' }]);
-  } catch (error) {
-    console.warn('[tests] Failed to create test membership', error);
-  }
-}
-
-export async function deleteTestMembership(user: TestUser) {
-  const client = getSupabaseAdminClient();
-  if (!client) return;
-  try {
-    await client
-      .from('organization_memberships')
-      .delete()
-      .eq('organization_id', user.organizationId)
-      .eq('user_id', user.id);
-  } catch (error) {
-    console.warn('[tests] Failed to delete test membership', error);
-  }
-}
-
 export async function getJwtToken(user: TestUser) {
   const supabaseUrl = process.env.SUPABASE_URL;
   const svcKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_KEY;
@@ -476,7 +489,7 @@ export async function getJwtToken(user: TestUser) {
     email: user.email,
     role: user.role,
     org_id: user.organizationId,
-    exp: Math.floor(Date.now() / 1000) + 60 * 60, // 1 hour expiration
+    exp: Math.floor(Date.now() / 1000) + 60 * 60,
   };
 
   return jwt.sign(payload, svcKey, { algorithm: 'HS256' });
@@ -485,8 +498,8 @@ export async function getJwtToken(user: TestUser) {
 async function createSupabaseJwt(claims: Record<string, any> = {}) {
   const requiredJwtSecret = process.env.SUPABASE_JWT_SECRET || process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET;
   const supabaseUrl = process.env.SUPABASE_URL;
-  if (process.env.NODE_ENV === 'test' && requiredJwtSecret && supabaseUrl) {
-    const normalizedUrl = String(supabaseUrl).replace(/\/+$/, '');
+  if (process.env.NODE_ENV === 'test' && requiredJwtSecret) {
+    const normalizedUrl = supabaseUrl ? String(supabaseUrl).replace(/\/+$|$/, '') : 'http://localhost';
     const iss = `${normalizedUrl}/auth/v1`;
 
     const effectiveRole = (claims.role || 'admin').toLowerCase();
@@ -512,7 +525,7 @@ async function createSupabaseJwt(claims: Record<string, any> = {}) {
     return jwt.sign(payload, requiredJwtSecret, { algorithm: 'HS256', expiresIn: '15m' });
   }
 
-  // ...existing code for Supabase token exchange...
+  return null;
 }
 
 export async function buildAuthHeaders(claims: Partial<{ userId: string; email: string; role: string; platformRole: string }> = {}) {
@@ -525,6 +538,6 @@ export async function createAdminAuthHeaders(claims: Partial<{ email: string }> 
   return buildAuthHeaders({ ...claims, role: 'admin', platformRole: 'platform_admin' });
 }
 
-export async function createMemberAuthHeaders(claims: Partial<{ email: string; role: string }> = {}) {
+export async function createMemberAuthHeaders(claims: Partial<{ userId: string; email: string; role: string }> = {}) {
   return buildAuthHeaders({ ...claims, role: claims.role || 'member' });
 }

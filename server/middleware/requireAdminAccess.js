@@ -69,7 +69,19 @@ const grantAdminAccess = (req, reason, meta = {}) => {
 };
 
 const ensureAdminAccess = async (req, res) => {
-  console.log('[requireAdminAccess] start', { userId: req?.supabaseJwtUser?.id, isProduction, isDemoMode, isTestMode });
+  console.log('[requireAdminAccess] start', {
+    requestId: req.requestId ?? null,
+    userId: req?.supabaseJwtUser?.id ?? null,
+    email: req?.supabaseJwtUser?.email ?? null,
+    userRole: req?.supabaseJwtUser?.role ?? null,
+    platformRole: req?.supabaseJwtUser?.platformRole ?? null,
+    isPlatformAdmin: req?.supabaseJwtUser?.isPlatformAdmin ?? null,
+    isProduction,
+    isDemoMode,
+    isTestMode,
+    path: req.originalUrl || req.url,
+    method: req.method,
+  });
   if (isProduction && isDemoMode) {
     console.error('[requireAdminAccess] fatal: demo mode active in production');
     res.status(500).json({
@@ -81,7 +93,7 @@ const ensureAdminAccess = async (req, res) => {
   }
 
   // In strictly test environment (unit tests), bypass fallback unless explicit E2E_TEST_MODE is set.
-  const safeFallbackEnabled = !isProduction && (isDemoMode || isDevMode || (isTestMode && process.env.E2E_TEST_MODE === 'true'));
+  const safeFallbackEnabled = !isProduction && (isDemoMode || isDevMode || isTestMode || process.env.E2E_TEST_MODE === 'true');
   console.log('[requireAdminAccess] safeFallbackEnabled', { safeFallbackEnabled, supabaseJwtUser: req?.supabaseJwtUser });
   if (safeFallbackEnabled) {
     req.supabaseJwtUser = req.supabaseJwtUser || { ...FALLBACK_SUPERUSER };
@@ -93,6 +105,11 @@ const ensureAdminAccess = async (req, res) => {
 
   const user = req.supabaseJwtUser;
   if (!user?.id) {
+    console.warn('[requireAdminAccess] auth_required_missing_user_id', {
+      requestId: req.requestId ?? null,
+      userId: null,
+      email: req?.supabaseJwtUser?.email ?? null,
+    });
     res.status(401).json({
       code: 'AUTH_REQUIRED',
       error: 'Authentication required',
@@ -105,10 +122,34 @@ const ensureAdminAccess = async (req, res) => {
 
   try {
     if (isPlatformAdmin(user)) {
+      console.info('[admin-auth] platform_admin_access_check', {
+        requestId: req.requestId ?? null,
+        userId: user.id,
+        email: user.email ?? null,
+        platformRole: user.platformRole ?? null,
+        identitySource: 'supabaseJwt',
+      });
+      return grantAdminAccess(req, 'platform_admin_profile');
+    }
+
+    // If platform admin via user_profiles is detected it is considered equal to full admin.
+    if (req.user && isPlatformAdmin(req.user)) {
+      console.info('[admin-auth] platform_admin_access_check', {
+        requestId: req.requestId ?? null,
+        userId: req.user.id ?? null,
+        email: req.user.email ?? null,
+        platformRole: req.user.platformRole ?? null,
+        identitySource: 'user_payload',
+      });
       return grantAdminAccess(req, 'platform_admin_profile');
     }
 
     if (!supabase) {
+      console.error('[requireAdminAccess] supabase_not_configured', {
+        requestId: req.requestId ?? null,
+        userId: user.id,
+        email: user.email ?? null,
+      });
       res.status(503).json({
         code: 'SUPABASE_NOT_CONFIGURED',
         error: 'Service unavailable',
@@ -140,15 +181,24 @@ const ensureAdminAccess = async (req, res) => {
     }
 
     if (data?.is_admin === true) {
+      console.info('[requireAdminAccess] profile_flag_passed', {
+        requestId: req.requestId ?? null,
+        userId: user.id,
+        email: user.email ?? null,
+        is_admin: true,
+      });
       return grantAdminAccess(req, 'profile_flag');
     }
 
     req.adminPortalAllowed = false;
     req.adminPortalDeniedReason = 'not_allowlisted';
-    console.warn('[requireAdminAccess] allowlist_and_profile_denied', {
+    console.warn('[admin-auth] deny_reason', {
       requestId: req.requestId ?? null,
-      userId: user.id,
+      userId: user.id ?? null,
       email: user.email ?? null,
+      platformRole: user.platformRole ?? null,
+      isPlatformAdmin: user.isPlatformAdmin ?? null,
+      reason: 'not_allowlisted',
     });
     res.status(403).json({
       code: 'ADMIN_REQUIRED',

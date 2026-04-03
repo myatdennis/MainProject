@@ -127,11 +127,12 @@ describe('Client assignments API', () => {
       headers: adminRequestHeaders,
       body: JSON.stringify({
         organization_id: 'd28e403a-cdab-42cd-8fc7-2c9327ca40f8',
-        user_ids: [learnerEmail, 'legacy-user'],
+        user_ids: [learnerEmail],
         status: 'assigned',
       }),
     });
     const assignmentJson = await assignmentRes.json().catch(() => null);
+    console.log('[test] assignment response', assignmentRes.status, assignmentJson);
     expect([200, 201]).toContain(assignmentRes.status);
 
     const assignedCourseId = assignmentJson?.data?.[0]?.course_id || null;
@@ -144,5 +145,74 @@ describe('Client assignments API', () => {
     const adminAssignmentsJson = await adminCourseAssignments.json();
     const adminAssignedCourses = (adminAssignmentsJson.data || []).map((a: any) => a.course_id || a.courseId);
     expect(adminAssignedCourses).toContain(assignedCourseId);
+  });
+
+  it('returns 400 for invalid user identifiers', async () => {
+    const courseId = `neal-course-${randomUUID()}`;
+    const learnerEmail = `neal.hagberg-${randomUUID()}@example.com`;
+
+    const adminHeaders = await createAdminAuthHeaders({ email: 'mya@the-huddle.co' });
+    const adminRequestHeaders = {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      ...adminHeaders,
+    };
+
+    const createCourse = await server!.fetch('/api/admin/courses', {
+      method: 'POST',
+      headers: adminRequestHeaders,
+      body: JSON.stringify({
+        course: {
+          id: courseId,
+          title: 'Neal Assignment Test',
+          slug: courseId,
+          modules: [
+            {
+              id: 'module-1',
+              title: 'Module 1',
+              description: 'Test module',
+              lessons: [
+                {
+                  id: 'lesson-1',
+                  title: 'Lesson 1',
+                  type: 'text',
+                  content_json: { type: 'text', body: { blocks: [{ type: 'paragraph', data: { text: 'Hello Neal' } }] } },
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    });
+    const createCourseJson = await createCourse.json().catch(() => null);
+    expect([200, 201]).toContain(createCourse.status);
+
+    // Ensure this learner exists in the system before assignment.
+    const createLearnerUser = await server!.fetch('/api/admin/users', {
+      method: 'POST',
+      headers: adminRequestHeaders,
+      body: JSON.stringify({
+        orgId: 'd28e403a-cdab-42cd-8fc7-2c9327ca40f8',
+        firstName: 'Neal',
+        lastName: 'Hagberg',
+        email: learnerEmail,
+        password: 'password123',
+      }),
+    });
+    expect([200, 201]).toContain(createLearnerUser.status);
+
+    const assignmentRes = await server!.fetch(`/api/admin/courses/${courseId}/assign`, {
+      method: 'POST',
+      headers: adminRequestHeaders,
+      body: JSON.stringify({
+        organization_id: 'd28e403a-cdab-42cd-8fc7-2c9327ca40f8',
+        user_ids: [learnerEmail, 'legacy-user'],
+        status: 'assigned',
+      }),
+    });
+    const invalidJson = await assignmentRes.json().catch(() => null);
+    expect(assignmentRes.status).toBe(400);
+    expect(invalidJson).toHaveProperty('error', 'invalid_user_ids');
+    expect(invalidJson.invalidUserIds).toContain('legacy-user');
   });
 });

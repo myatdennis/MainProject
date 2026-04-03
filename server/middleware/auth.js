@@ -17,6 +17,7 @@ import jwt from 'jsonwebtoken';
 // to avoid flooding Railway logs with `membership_snapshot` / `resolved_org_context`
 // on every authenticated request.
 const AUTH_VERBOSE_LOGGING = NODE_ENV !== 'production' || process.env.AUTH_VERBOSE_LOGGING === 'true';
+const AUTH_DEBUG = process.env.AUTH_DEBUG === 'true';
 
 const normalizeEmail = (value = '') => value.trim().toLowerCase();
 const PRIMARY_ADMIN_EMAIL = normalizeEmail(process.env.PRIMARY_ADMIN_EMAIL || 'mya@the-huddle.co');
@@ -549,6 +550,11 @@ const buildUserPayload = (user, memberships, { membershipStatus = 'ready' } = {}
   const platformRole = derivePlatformRole(user);
   let inferredRole = resolveUserRole(user, trustedMemberships);
 
+  // Platform admins should always have at least admin privileges.
+  if (isPlatformAdmin(user) && inferredRole !== 'admin') {
+    inferredRole = 'admin';
+  }
+
   if (inferredRole === 'admin' && trustedMemberships.length === 0 && !platformRole) {
     if (!membershipDataTrusted) {
       console.warn('[auth] Preserving admin role despite unverified memberships', {
@@ -689,6 +695,20 @@ const resolveAccessTokenFromRequest = (req) => {
 export async function buildAuthContext(req, { optional = false } = {}) {
   const token = resolveAccessTokenFromRequest(req);
   const preValidatedUser = req.supabaseJwtUser || null;
+  if (AUTH_DEBUG) {
+    console.log('[auth] buildAuthContext start', {
+      path: req.originalUrl || req.url,
+      method: req.method,
+      tokenProvided: Boolean(token),
+      supabaseJwtUser: !!req.supabaseJwtUser,
+      userId: preValidatedUser?.id ?? null,
+      email: preValidatedUser?.email ?? null,
+      userRole: preValidatedUser?.role ?? null,
+      platformRole: preValidatedUser?.platformRole ?? null,
+      isPlatformAdmin: preValidatedUser?.isPlatformAdmin ?? null,
+      requestedOrgId: getRequestedOrgId(req),
+    });
+  }
 
   if (!token && allowDemoBypassForRequest(req)) {
     console.warn('[auth] Granting demo auto-auth bypass for request', {
@@ -796,11 +816,21 @@ export async function buildAuthContext(req, { optional = false } = {}) {
   }
   const membershipsTrusted = membershipStatus === 'ready';
   const effectiveMembershipCount = membershipsTrusted ? memberships.length : null;
+  const membershipDegraded = membershipStatus !== 'ready';
   const userPayload = buildUserPayload(supabaseUser, memberships, { membershipStatus });
   const membershipMap = membershipsTrusted ? buildMembershipMap(memberships) : new Map();
-  const activeOrgId = membershipsTrusted ? determineActiveOrgId(req, memberships) : null;
-  const membershipDegraded = membershipStatus !== 'ready';
-
+  let activeOrgId = membershipsTrusted ? determineActiveOrgId(req, memberships) : null;
+  if (!activeOrgId && isPlatformAdmin(userPayload)) {
+    const requestedOrg = getRequestedOrgId(req);
+    if (requestedOrg) {
+      activeOrgId = requestedOrg;
+      console.info('[admin-auth] resolved_org_for_platform_admin', {
+        userId: supabaseUser?.id ?? null,
+        requestedOrg,
+        activeOrgId,
+      });
+    }
+  }
   const requestedOrgId = getRequestedOrgId(req);
   const membershipOrgIds = membershipsTrusted ? memberships.map((m) => m.orgId).filter(Boolean) : [];
   const snapshot = {
@@ -857,12 +887,19 @@ export async function authenticate(req, res, next) {
       xUserId: req.headers?.['x-user-id'] || null,
       xUserRole: req.headers?.['x-user-role'] || null,
       supabaseJwtUser: !!req.supabaseJwtUser,
+      requestedOrgId: getRequestedOrgId(req),
     });
     const context = await buildAuthContext(req);
     console.log('[auth] buildAuthContext result', {
       userId: context?.user?.userId ?? null,
+      email: context?.user?.email ?? null,
       userRole: context?.user?.role ?? null,
       platformRole: context?.user?.platformRole ?? null,
+      isPlatformAdmin: context?.user?.isPlatformAdmin ?? null,
+      membershipStatus: context?.membershipStatus ?? null,
+      membershipCount: context?.membershipCount ?? null,
+      activeOrgId: context?.activeOrgId ?? null,
+      requestedOrgId: getRequestedOrgId(req),
     });
     if (!context) {
       console.warn('[auth] authenticate failed: no context');
@@ -881,7 +918,16 @@ export async function authenticate(req, res, next) {
     req.membershipCount = context.membershipCount ?? null;
     req.membershipDegraded = Boolean(context.membershipDegraded);
     req.userPermissions = new Set(Array.isArray(context.user.permissions) ? context.user.permissions : []);
-    console.log('[auth] authenticate success', { userId: req.userId, userRole: req.user.role, isPlatformAdmin: req.user.isPlatformAdmin });
+    console.log('[auth] authenticate success', {
+      userId: req.userId,
+      email: req.user?.email || null,
+      userRole: req.user?.role || null,
+      platformRole: req.user?.platformRole || null,
+      isPlatformAdmin: req.user?.isPlatformAdmin,
+      membershipCount: req.membershipCount,
+      activeOrgId: req.activeOrgId,
+      requestedOrgId: getRequestedOrgId(req),
+    });
     return next();
   } catch (error) {
     console.error('[auth] Unexpected authentication error', error);
@@ -926,19 +972,37 @@ export async function requireAdmin(req, res, next) {
   const userId = req.user.userId || req.user.id || null;
   let isPlatformAdminRole = isPlatformAdmin(req.user);
 
+  if (isPlatformAdminRole) {
+    console.info('[admin-auth] platform_admin_access_check', {
+      userId,
+      email: req.user.email || null,
+      platformRole: req.user.platformRole || null,
+      resolvedRole: req.user.role || null,
+      reason: 'platform_admin_granted',
+    });
+  }
+
   if (!isPlatformAdminRole && userId) {
     const profileFlags = await fetchUserProfileRole(userId);
     if (profileFlags.isAdmin || profileFlags.role === 'platform_admin') {
       isPlatformAdminRole = true;
+      console.info('[admin-auth] platform_admin_access_check', {
+        userId,
+        profileRole: profileFlags.role,
+        profileIsAdmin: profileFlags.isAdmin,
+        reason: 'platform_admin_via_profile',
+      });
     }
   }
 
   if (!isPlatformAdminRole) {
-    console.warn('[requireAdmin] Access denied', {
+    console.warn('[admin-auth] deny_reason', {
       userId,
       email: req.user.email || null,
       role: req.user.role || null,
       platformRole: req.user.platformRole || null,
+      isPlatformAdmin: req.user.isPlatformAdmin,
+      reason: 'not_platform_admin',
     });
     return res.status(403).json({ error: 'Forbidden', message: 'Platform admin access required' });
   }
@@ -1192,22 +1256,60 @@ export function authErrorHandler(err, req, res, next) {
 }
 
 export async function optionalAuthenticate(req, res, next) {
+  // Always provide a safe user context for downstream handlers.
+  req.user = null;
+  req.userId = null;
+  req.orgMemberships = new Map();
+  req.activeOrgId = null;
+  req.membershipDiagnostics = null;
+  req.membershipStatus = 'unauthenticated';
+  req.membershipCount = 0;
+  req.membershipDegraded = false;
+  req.userPermissions = new Set();
+  req.authContext = {
+    userId: null,
+    isAuthenticated: false,
+    isPlatformAdmin: false,
+    memberships: [],
+  };
   try {
     const context = await buildAuthContext(req, { optional: true });
     if (context) {
-      req.user = context.user;
-      req.orgMemberships = context.membershipsMap;
-      req.activeOrgId = context.activeOrgId;
+      req.user = context.user || null;
+      req.userId = context.user?.userId || context.user?.id || null;
+      req.orgMemberships = context.membershipsMap || new Map();
+      req.activeOrgId = context.activeOrgId || null;
       req.membershipDiagnostics = context.membershipDiagnostics || null;
       req.membershipStatus = context.membershipStatus || 'ready';
       req.membershipCount = context.membershipCount ?? null;
       req.membershipDegraded = Boolean(context.membershipDegraded);
-      req.userPermissions = new Set(Array.isArray(context.user.permissions) ? context.user.permissions : []);
+      req.userPermissions = new Set(Array.isArray(context.user?.permissions) ? context.user.permissions : []);
+      req.authContext = {
+        userId: req.userId,
+        isAuthenticated: Boolean(req.user),
+        isPlatformAdmin: Boolean(req.user?.isPlatformAdmin),
+        memberships: Array.from((context.membershipsMap && context.membershipsMap.values && typeof context.membershipsMap.values === 'function') ? context.membershipsMap.values() : []),
+      };
     }
   } catch (error) {
-    console.warn('[auth] optional auth failed:', error.message);
+    console.warn('[auth] optional auth failed:', error?.message || error);
+  } finally {
+    // Ensure baseline auth context is always set.
+    if (!req.authContext) {
+      req.authContext = {
+        userId: req.userId || null,
+        isAuthenticated: Boolean(req.user),
+        isPlatformAdmin: Boolean(req.user?.isPlatformAdmin),
+        memberships: [],
+      };
+    }
+    console.info('[auth] optional_auth_context_initialized', {
+      userId: req.authContext.userId,
+      isAuthenticated: req.authContext.isAuthenticated,
+      isPlatformAdmin: req.authContext.isPlatformAdmin,
+    });
+    return next();
   }
-  next();
 }
 
 export function resolveOrganizationContext(req, res, next) {
@@ -1221,12 +1323,9 @@ export function resolveOrganizationContext(req, res, next) {
     req.activeOrgId ||
     req.user.activeOrgId ||
     req.user.organizationId ||
-    (Array.isArray(req.user.organizationIds) ? req.user.organizationIds[0] : null) ||
     null;
 
-  req.requestedOrgId = requestedOrgId || null;
   req.activeOrgId = inferredOrgId;
-  req.organizationId = inferredOrgId;
 
-  return next();
+  next();
 }

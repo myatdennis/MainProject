@@ -1,6 +1,7 @@
 import { createRemoteJWKSet, decodeProtectedHeader, jwtVerify } from 'jose';
 import { LRUCache } from 'lru-cache';
 import { extractTokenFromHeader, verifyAccessToken } from '../utils/jwt.js';
+import { getAccessTokenFromRequest } from '../utils/authCookies.js';
 import { syncUserProfileFlags } from './auth.js';
 import { isProduction } from '../config/runtimeFlags.js';
 
@@ -133,6 +134,8 @@ const shouldBypass = (req) => {
 const resolveTokenFromRequest = (req) => {
   const headerToken = extractTokenFromHeader(req.headers?.authorization);
   if (headerToken) return headerToken;
+  const cookieToken = getAccessTokenFromRequest(req);
+  if (cookieToken) return cookieToken;
   return null;
 };
 

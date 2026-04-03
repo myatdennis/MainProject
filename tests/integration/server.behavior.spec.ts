@@ -27,7 +27,7 @@ describe('Server demo-mode behavior', () => {
   let server: TestServerHandle | null = null;
 
   beforeAll(async () => {
-    server = await startTestServer();
+    server = await startTestServer({ idempotencyFallback: true });
   });
 
   afterAll(async () => {
