@@ -2,6 +2,19 @@ import { isSupabaseAuthCreateUserAlreadyExists, isSupabaseAuthCreateUserDatabase
 import { logger as defaultLogger } from '../lib/logger.js';
 import { resolveMembershipStatusUpdate } from '../lib/membershipUtils.js';
 
+// In-process deduplication: if concurrent requests arrive for the same (orgId, email)
+// pair, only the first call runs; all others await the same promise result.
+const provisioningInFlight = new Map();
+
+const coalesceProvision = (key, fn) => {
+  if (provisioningInFlight.has(key)) {
+    return provisioningInFlight.get(key);
+  }
+  const promise = fn().finally(() => provisioningInFlight.delete(key));
+  provisioningInFlight.set(key, promise);
+  return promise;
+};
+
 const ADMIN_ROLES = new Set(['admin', 'owner', 'org_admin', 'organization_admin', 'super_admin']);
 const ALLOWED_ROLES = new Set(['owner', 'admin', 'member', 'learner', 'manager', 'editor', 'viewer', 'instructor', 'org_admin', 'organization_admin', 'super_admin']);
 
@@ -282,14 +295,50 @@ const ensureMembership = async ({
   }
   payload[membershipOrgColumn] = orgId;
 
-  const { data, error } = await supabase
+  // Also populate the legacy org_id column so the (org_id, user_id) non-partial
+  // unique index stays in sync and the fallback conflict target always works.
+  if (membershipOrgColumn === 'organization_id') {
+    payload.org_id = String(orgId);
+  }
+
+  let data = null;
+  let upsertError = null;
+
+  // Primary attempt: use the detected org column as the conflict target.
+  const primaryResult = await supabase
     .from('organization_memberships')
     .upsert(payload, { onConflict: `${membershipOrgColumn},user_id` })
     .select('*')
     .single();
 
-  if (error) {
-    throw new ProvisioningError('membership_upsert', 'membership_upsert_failed', error.message || 'Membership upsert failed', 500, error);
+  upsertError = primaryResult.error;
+  data = primaryResult.data;
+
+  // Fallback: if PostgREST rejected the conflict target (partial index / no
+  // non-partial unique index found), retry with the legacy org_id column.
+  // This happens when only a partial unique index exists on organization_id.
+  if (upsertError && isConflictTargetError(upsertError) && membershipOrgColumn !== 'org_id') {
+    defaultLogger.warn('provisioning_membership_upsert_conflict_target_fallback', {
+      requestId,
+      orgId,
+      userId,
+      primaryColumn: membershipOrgColumn,
+      error: upsertError?.message || String(upsertError),
+    });
+
+    const fallbackPayload = { ...payload, org_id: String(orgId) };
+    const fallbackResult = await supabase
+      .from('organization_memberships')
+      .upsert(fallbackPayload, { onConflict: 'org_id,user_id' })
+      .select('*')
+      .single();
+
+    upsertError = fallbackResult.error;
+    data = fallbackResult.data;
+  }
+
+  if (upsertError) {
+    throw new ProvisioningError('membership_upsert', 'membership_upsert_failed', upsertError.message || 'Membership upsert failed', 500, upsertError);
   }
 
   const { data: membershipCheck, error: membershipCheckError } = await supabase
@@ -318,6 +367,25 @@ const isMissingColumnError = (error) => {
     /column .* does not exist/i.test(message) ||
     /Could not find .* column/i.test(message) ||
     /Could not find the 'meta' column of 'admin_users' in the schema cache/i.test(message)
+  );
+};
+
+// PostgREST returns a 400 / PGRST109 when the requested onConflict columns do
+// not map to a non-partial unique index or primary key.  This happens when the
+// database has only a PARTIAL unique index (e.g. WHERE organization_id IS NOT
+// NULL) for the (organization_id, user_id) pair — which PostgREST cannot use
+// as an upsert conflict target.
+const isConflictTargetError = (error) => {
+  if (!error) return false;
+  const code = String(error?.code || '').toUpperCase();
+  const message = String(error?.message || error?.details || error?.hint || '').toLowerCase();
+  return (
+    code === 'PGRST109' ||
+    message.includes('there is no unique or exclusion constraint') ||
+    message.includes('no unique or exclusion constraint') ||
+    message.includes('could not find a unique index') ||
+    message.includes('conflict_target') ||
+    message.includes('on_conflict')
   );
 };
 
@@ -498,7 +566,63 @@ export const createOrProvisionOrganizationUser = async (input, deps = {}) => {
     throw new ProvisioningError(stage, 'invalid_password', `Password must be at least ${MIN_PASSWORD_LENGTH} characters`, 400);
   }
 
-  stage = 'auth_create_or_resolve';
+  // Coalesce concurrent requests for the same (orgId, email) to a single in-flight promise.
+  const coalescingKey = `${String(orgId).toLowerCase()}::${normalizedEmail}`;
+  return coalesceProvision(coalescingKey, () =>
+    _provisionOrganizationUser({
+      supabase,
+      supabaseAuthClient,
+      logger,
+      sendEmail,
+      getOrganizationMembershipsOrgColumnName,
+      getOrganizationMembershipsStatusColumnName,
+      getOrganizationMembershipsHasIsActiveColumn,
+      invalidateMembershipCache,
+      assignContentToUser,
+      fetchOrgMembersWithProfiles,
+      orgId,
+      normalizedEmail,
+      normalizedFirstName,
+      normalizedLastName,
+      normalizedRole,
+      password,
+      jobTitle,
+      department,
+      cohort,
+      phoneNumber,
+      actor,
+      requestId,
+      orgName,
+    }),
+  );
+};
+
+const _provisionOrganizationUser = async ({
+  supabase,
+  supabaseAuthClient,
+  logger,
+  sendEmail,
+  getOrganizationMembershipsOrgColumnName,
+  getOrganizationMembershipsStatusColumnName,
+  getOrganizationMembershipsHasIsActiveColumn,
+  invalidateMembershipCache,
+  assignContentToUser,
+  fetchOrgMembersWithProfiles,
+  orgId,
+  normalizedEmail,
+  normalizedFirstName,
+  normalizedLastName,
+  normalizedRole,
+  password,
+  jobTitle,
+  department,
+  cohort,
+  phoneNumber,
+  actor,
+  requestId,
+  orgName,
+}) => {
+  let stage = 'auth_create_or_resolve';
   let authUser = null;
   let created = false;
   let createError = null;

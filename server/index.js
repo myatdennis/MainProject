@@ -723,6 +723,7 @@ import {
   isMissingColumnError,
   isMissingRelationError,
   isMissingFunctionError,
+  isMembershipConflictTargetError,
   normalizeColumnIdentifier,
   extractMissingColumnName,
 } from './utils/errors.js';
@@ -9067,15 +9068,33 @@ async function upsertOrganizationMembership(orgId, userId, role, actor) {
     invited_by: actor?.userId ?? null,
   };
   payload[membershipOrgColumn] = orgId;
+  // Always populate org_id so the non-partial (org_id, user_id) index is usable
+  // as a fallback conflict target when organization_id has only a partial index.
+  if (membershipOrgColumn === 'organization_id') {
+    payload.org_id = String(orgId);
+  }
 
-  const { data, error } = await supabase
+  let data, upsertError;
+  ({ data, error: upsertError } = await supabase
     .from('organization_memberships')
     .upsert(payload, { onConflict: `${membershipOrgColumn},user_id` })
     .select('*')
-    .single();
+    .single());
 
-  if (error) {
-    throw error;
+  if (upsertError && isMembershipConflictTargetError(upsertError) && membershipOrgColumn !== 'org_id') {
+    logger.warn('upsert_membership_conflict_target_fallback', {
+      primaryColumn: membershipOrgColumn, orgId, userId,
+      error: upsertError?.message,
+    });
+    ({ data, error: upsertError } = await supabase
+      .from('organization_memberships')
+      .upsert({ ...payload, org_id: String(orgId) }, { onConflict: 'org_id,user_id' })
+      .select('*')
+      .single());
+  }
+
+  if (upsertError) {
+    throw upsertError;
   }
   invalidateMembershipCache(userId, { orgId });
   await assignPublishedOrganizationContentToUser({
@@ -17349,33 +17368,42 @@ app.post('/api/admin/organizations/:orgId/members', authenticate, requireOrgAdmi
       status: normalizedStatus,
     }, inviteEmail ?? null);
     payload[membershipOrgColumn] = orgId;
+    if (membershipOrgColumn === 'organization_id') {
+      payload.org_id = String(orgId);
+    }
 
-    const { data, error } = await supabase
+    const membershipSelect = buildMembershipSelect(
+      'id', 'organization_id', 'org_id', 'user_id', 'role', 'status',
+      'invited_by', 'created_at', 'updated_at',
+    );
+
+    let memberData, memberError;
+    ({ data: memberData, error: memberError } = await supabase
       .from('organization_memberships')
       .upsert(payload, { onConflict: `${membershipOrgColumn},user_id` })
-      .select(
-        buildMembershipSelect(
-          'id',
-          'organization_id',
-          'org_id',
-          'user_id',
-          'role',
-          'status',
-          'invited_by',
-          'created_at',
-          'updated_at',
-        ),
-      )
-      .single();
+      .select(membershipSelect)
+      .single());
 
-    if (error) throw error;
+    if (memberError && isMembershipConflictTargetError(memberError) && membershipOrgColumn !== 'org_id') {
+      logger.warn('add_member_conflict_target_fallback', {
+        primaryColumn: membershipOrgColumn, orgId, userId,
+        error: memberError?.message,
+      });
+      ({ data: memberData, error: memberError } = await supabase
+        .from('organization_memberships')
+        .upsert({ ...payload, org_id: String(orgId) }, { onConflict: 'org_id,user_id' })
+        .select(membershipSelect)
+        .single());
+    }
+
+    if (memberError) throw memberError;
 
     // Invalidate stale cached membership so the new role takes effect immediately.
     try {
       invalidateMembershipCache(userId, { orgId });
     } catch (_) {}
 
-    res.status(201).json({ ok: true, data });
+    res.status(201).json({ ok: true, data: memberData });
   } catch (error) {
     logRouteError('POST /api/admin/organizations/:orgId/members', error);
     res.status(500).json({ error: 'Unable to add organization member' });

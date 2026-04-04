@@ -8,6 +8,7 @@ import { createHttpError, withHttpError } from '../middleware/apiErrorHandler.js
 import { validateOrgId } from '../lib/inviteHelper.js';
 import { isPlatformAdminActor, canModifyUser, canAssignAcrossOrganizations } from '../utils/adminAuthz.js';
 import { resolveMembershipStatusUpdate } from '../lib/membershipUtils.js';
+import { isMembershipConflictTargetError } from '../utils/errors.js';
 const router = express.Router();
 
 let organizationMembershipsOrgColumn = null;
@@ -246,6 +247,9 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
       invited_by: req.user?.id || req.user?.userId || null,
       [orgColumn]: orgId,
     };
+    if (orgColumn === 'organization_id') {
+      insertPayload.org_id = String(orgId);
+    }
     const activeStatus = resolveMembershipStatusUpdate({ status: 'active', is_active: true });
     if (statusColumn === 'status') {
       insertPayload.status = activeStatus.status;
@@ -254,9 +258,16 @@ router.patch('/:userId', authenticate, requireAdmin, async (req, res, next) => {
       insertPayload.is_active = activeStatus.is_active;
     }
 
-    const { error: insertError } = await supabaseAdmin
+    let insertError;
+    ({ error: insertError } = await supabaseAdmin
       .from('organization_memberships')
-      .upsert(insertPayload, { onConflict: `${orgColumn},user_id` });
+      .upsert(insertPayload, { onConflict: `${orgColumn},user_id` }));
+
+    if (insertError && isMembershipConflictTargetError(insertError) && orgColumn !== 'org_id') {
+      ({ error: insertError } = await supabaseAdmin
+        .from('organization_memberships')
+        .upsert({ ...insertPayload, org_id: String(orgId) }, { onConflict: 'org_id,user_id' }));
+    }
 
     if (insertError) {
       throw new Error(`membership_insert_failed: ${insertError.message}`);
@@ -461,11 +472,21 @@ const upsertOrganizationMembership = async ({ orgId, userId, role, actorUserId =
   }
 
   payload[orgColumn] = orgId;
+  if (orgColumn === 'organization_id') {
+    payload.org_id = String(orgId);
+  }
 
-  const { error } = await supabaseAdmin
+  let { error: upsertError } = await supabaseAdmin
     .from('organization_memberships')
     .upsert(payload, { onConflict: `${orgColumn},user_id` });
-  if (error) throw error;
+
+  if (upsertError && isMembershipConflictTargetError(upsertError) && orgColumn !== 'org_id') {
+    ({ error: upsertError } = await supabaseAdmin
+      .from('organization_memberships')
+      .upsert({ ...payload, org_id: String(orgId) }, { onConflict: 'org_id,user_id' }));
+  }
+
+  if (upsertError) throw upsertError;
 
   try {
     invalidateMembershipCache(userId);

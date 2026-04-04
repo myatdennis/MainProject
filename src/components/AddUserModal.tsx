@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import AIUserAssistant from './AIUserAssistant';
 import { X, User, Building, UserPlus } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -31,6 +31,7 @@ const AddUserModal: React.FC<AddUserModalProps> = ({
 }) => {
   const { showToast } = useToast();
   const { activeOrgId } = useSecureAuth();
+  const submitInFlightRef = useRef(false);
   const [loading, setLoading] = useState(false);
   const [resendLoading, setResendLoading] = useState(false);
   const [deliveryInfo, setDeliveryInfo] = useState<{
@@ -167,6 +168,9 @@ const AddUserModal: React.FC<AddUserModalProps> = ({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
+    // Prevent duplicate concurrent submits (button spam, StrictMode double-invoke, etc.)
+    if (submitInFlightRef.current) return;
+
     if (!validateAll()) {
       return;
     }
@@ -210,9 +214,9 @@ const AddUserModal: React.FC<AddUserModalProps> = ({
       severity: 'low'
     });
 
+    submitInFlightRef.current = true;
     setLoading(true);
-
-  const shouldClose = true;
+    let succeeded = false;
   try {
       if (isEditMode && editUser) {
         // Update the real user profile and membership state via PATCH
@@ -252,12 +256,12 @@ const AddUserModal: React.FC<AddUserModalProps> = ({
         };
 
         onUserAdded?.(updatedUser, transfer);
+        succeeded = true;
       } else {
         // Provision a real login-backed user account and activate membership immediately.
         const orgId = sanitizedData.organization || defaultOrgId || activeOrgId;
         if (!orgId) {
           showToast('Please select an organization', 'error');
-          setLoading(false);
           return;
         }
         const response = await apiRequest<{
@@ -288,7 +292,6 @@ const AddUserModal: React.FC<AddUserModalProps> = ({
 
         if (response?.inviteOnly) {
           showToast('Unable to create direct account. Invite-only fallback is disabled in this deployment.', 'error');
-          setLoading(false);
           return;
         }
 
@@ -320,6 +323,7 @@ const AddUserModal: React.FC<AddUserModalProps> = ({
           feedbackSubmitted: false,
         };
         onUserAdded?.(newUser);
+        succeeded = true;
       }
     } catch (error: any) {
       showToast(
@@ -328,8 +332,10 @@ const AddUserModal: React.FC<AddUserModalProps> = ({
         'error',
       );
     } finally {
+      submitInFlightRef.current = false;
       setLoading(false);
-      if (shouldClose) onClose();
+      // Only close the modal on success; keep it open on error so the user sees the toast
+      if (succeeded) onClose();
     }
   };
 

@@ -13,7 +13,7 @@ const isHttpOrigin = (origin) => {
 const normalizeOrigins = (value = '') =>
   value
     .split(',')
-    .map((entry) => entry.trim())
+    .map((entry) => entry.trim().replace(/\/+$/, '')) // strip trailing slashes
     .filter(Boolean)
     .filter((origin) => {
       // Silently discard wildcard glob patterns — they are not valid browser origins
@@ -35,12 +35,14 @@ const normalizeOrigins = (value = '') =>
 const NETLIFY_PREVIEW_REGEX = /^https:\/\/[a-z0-9-]+--the-huddleco\.netlify\.app$/i;
 // Broader fallback: any *.netlify.app origin is also allowed for previews.
 const NETLIFY_ANY_PREVIEW_REGEX = /^https:\/\/[a-z0-9-]+\.netlify\.app$/i;
+// Any subdomain of the-huddle.co (e.g. admin.the-huddle.co, app.the-huddle.co)
+const THE_HUDDLE_SUBDOMAIN_REGEX = /^https:\/\/[a-z0-9-]+\.the-huddle\.co$/i;
 
 const isPreviewAllowed = () => process.env.NODE_ENV !== 'production';
 
-const STATIC_ALLOWED_ORIGINS = ['https://the-huddle.co', 'https://www.the-huddle.co', 'http://localhost:5173', 'http://localhost:5174'];
+const STATIC_ALLOWED_ORIGINS = ['https://the-huddle.co', 'https://www.the-huddle.co', 'https://admin.the-huddle.co', 'http://localhost:5173', 'http://localhost:5174'];
 const devDefaults = STATIC_ALLOWED_ORIGINS;
-const requiredProdOrigins = ['https://the-huddle.co', 'https://www.the-huddle.co'];
+const requiredProdOrigins = ['https://the-huddle.co', 'https://www.the-huddle.co', 'https://admin.the-huddle.co'];
 const prodDefaults = STATIC_ALLOWED_ORIGINS;
 
 const envOrigins = normalizeOrigins(process.env.CORS_ALLOWED_ORIGINS || '');
@@ -102,6 +104,11 @@ const resolveCorsOriginDecision = (origin) => {
 
   if (isAllowed) {
     return { allowed: true, reason: 'allowlist', resolvedOrigin: originWithoutDefaultPort || normalizedOrigin };
+  }
+
+  // Always allow any subdomain of the-huddle.co (admin, app, www, etc.)
+  if (THE_HUDDLE_SUBDOMAIN_REGEX.test(normalizedOrigin)) {
+    return { allowed: true, reason: 'huddle_subdomain', resolvedOrigin: normalizedOrigin };
   }
 
   if (isPreviewAllowed()) {

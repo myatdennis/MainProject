@@ -69,3 +69,24 @@ export const isMissingFunctionError = (error) =>
             : typeof error.details === 'string' && pattern.test(error.details),
         )),
   );
+
+// PostgREST returns this when the onConflict column list does not correspond
+// to a non-partial unique index or primary key.  This happens when the DB has
+// only a PARTIAL unique index (WHERE clause) for the requested columns.
+export const isMembershipConflictTargetError = (error) => {
+  if (!error) return false;
+  const code = String(error?.code || '').toUpperCase();
+  const text = [error?.message, error?.details, error?.hint]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase();
+  return (
+    code === 'PGRST109' ||
+    text.includes('there is no unique or exclusion constraint') ||
+    text.includes('no unique or exclusion constraint') ||
+    text.includes('could not find a unique index') ||
+    text.includes('conflict_target') ||
+    // Supabase sometimes surfaces this as a generic PostgREST 400 with this hint
+    text.includes('on_conflict')
+  );
+};

@@ -36,6 +36,7 @@ begin
 end;
 $$ language plpgsql;
 
+drop trigger if exists course_media_assets_updated_at on public.course_media_assets;
 create trigger course_media_assets_updated_at
 before update on public.course_media_assets
 for each row execute procedure public.course_media_assets_set_updated_at();
