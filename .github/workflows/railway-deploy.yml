@@ -22,7 +22,7 @@ jobs:
         run: npm ci
 
       - name: Build (frontend static assets)
-        run: npm run build
+        run: npm run build:server
 
       - name: Install Railway CLI
         run: npm i -g @railway/cli
