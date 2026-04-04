@@ -10809,14 +10809,10 @@ app.get('/api/admin/courses', authenticate, async (req, res) => {
       const responseData = reqIncludeStructure
         ? await Promise.all(filtered.map((c) => ensureCourseStructureLoaded(c, { includeLessons: reqIncludeLessons })))
         : filtered;
-      // Apply the same catalog contract as the Supabase path: only complete courses.
-      const catalogData = isDemoOrTestMode
-        ? responseData
-        : responseData.filter((c) => {
-            const mods = Array.isArray(c.modules) ? c.modules : [];
-            if (mods.length === 0) return false;
-            return mods.some((m) => Array.isArray(m.lessons) && m.lessons.length > 0);
-          });
+      // Admin surfaces must show all saved courses, including historical drafts
+      // and partially-built rows, otherwise previously created content appears to
+      // disappear after login or org switches.
+      const catalogData = responseData;
       if (NODE_ENV !== 'production') {
         console.log('[admin.courses][isDemoMode] response_shape', {
           total: catalogData.length,
@@ -10923,33 +10919,9 @@ app.get('/api/admin/courses', authenticate, async (req, res) => {
         )
       : normalizedData;
 
-    // CATALOG CONTRACT: only return courses that are structurally complete.
-    // A course is complete when it has ≥1 module AND at least one module
-    // has ≥1 lesson.  Empty drafts are real DB rows but do not belong in the
-    // graph-backed admin catalog — they cause [COURSE GRAPH REJECTED] noise on
-    // every client init.  Incomplete rows are logged here (server-side) and
-    // must be managed through a separate drafts endpoint or the course builder.
-    const catalogData = hydratedData.filter((c) => {
-      const mods = Array.isArray(c.modules) ? c.modules : [];
-      if (mods.length === 0) {
-        if (NODE_ENV !== 'production') {
-          console.log('[admin.courses] incomplete_draft_excluded', {
-            courseId: c.id, title: c.title, status: c.status, reason: 'no_modules',
-          });
-        }
-        return false;
-      }
-      const hasLessons = mods.some((m) => Array.isArray(m.lessons) && m.lessons.length > 0);
-      if (!hasLessons) {
-        if (NODE_ENV !== 'production') {
-          console.log('[admin.courses] incomplete_draft_excluded', {
-            courseId: c.id, title: c.title, status: c.status, reason: 'no_lessons_in_any_module',
-          });
-        }
-        return false;
-      }
-      return true;
-    });
+    // Admin catalog must include draft/incomplete courses so previously created
+    // content remains discoverable and editable after deploys.
+    const catalogData = hydratedData;
 
     if (NODE_ENV !== 'production') {
       console.log('[admin.courses][supabase] response_shape', {
