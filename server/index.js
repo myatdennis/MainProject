@@ -7709,7 +7709,7 @@ async function fetchAllOrgMembersWithProfiles({ offset = 0, limit = 500, orgId =
     query = query.eq('organization_id', orgId);
   }
 
-  const { data, error } = await query;
+  let { data, error } = await query;
 
   if (error) {
     // If organization_id column is missing, fall back to org_id column.

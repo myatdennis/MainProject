@@ -123,7 +123,7 @@ const ensureAdminAccess = async (req, res) => {
 
   // Strong admin checks derived from authoritative DB data.
   // 1) allowlist email
-  const normalizedEmail = user.email ? normalizeEmail(user.email) : null;
+  const normalizedEmail = user.email ? user.email.trim().toLowerCase() : null;
   if (normalizedEmail && isAllowlistedAdminEmail(normalizedEmail)) {
     console.info('[requireAdminAccess] allowlisted_admin_email', { userId: user.id, email: normalizedEmail });
     return grantAdminAccess(req, 'allowlisted_email');
