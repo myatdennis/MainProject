@@ -6,14 +6,23 @@
     "esModuleInterop": true,
     "module": "es2020",
     "paths": {
-      "@/*": ["src/*"],
-      "@shared/*": ["shared/*"]
+      "@/*": [
+        "src/*"
+      ],
+      "@shared/*": [
+        "shared/*"
+      ]
     },
-    "target": "es2020"
+    "target": "es2020",
+    "moduleResolution": "Bundler"
   },
   "files": [],
   "references": [
-    { "path": "./tsconfig.app.json" },
-    { "path": "./tsconfig.node.json" }
+    {
+      "path": "./tsconfig.app.json"
+    },
+    {
+      "path": "./tsconfig.node.json"
+    }
   ]
 }
