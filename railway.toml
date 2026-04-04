@@ -8,4 +8,4 @@ restartPolicyMaxRetries = 10
 
 [deploy.healthcheck]
 path = "/api/health"
-timeout = 30
+timeout = 60
