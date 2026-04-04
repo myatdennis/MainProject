@@ -1,0 +1,28 @@
+# nixpacks.toml — controls how Railway builds this Node.js project.
+#
+# Problem: vite (and all other build tools) live in devDependencies.
+# When NODE_ENV=production, `npm ci` skips devDependencies by default,
+# so `vite` is not found during the build step.
+#
+# Solution: run `npm ci` (no --omit=dev) in the install phase so all
+# dependencies including devDependencies are present when `npm run build`
+# executes. The runtime container runs `node index.js` directly — it does
+# not need the build tools after the build completes.
+
+[phases.setup]
+nixPkgs = ["nodejs_22"]
+
+[phases.install]
+# Install ALL dependencies (including devDeps) so vite is available.
+# Do NOT set --omit=dev or --production here.
+cmds = ["npm ci"]
+
+[phases.build]
+cmds = [
+  # Build the client bundle. Vite must be available at this point.
+  "npm run build:client",
+]
+dependsOn = ["install"]
+
+[start]
+cmd = "node index.js"

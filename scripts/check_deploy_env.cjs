@@ -29,9 +29,15 @@ const shouldEnforceStrict =
   forceFlag === 'true' ||
   (forceFlag !== 'false' && (process.env.CI === 'true' || process.env.CI === '1'));
 const invokingScript = process.env.npm_lifecycle_event || '';
+// Skip client-env validation when invoked from a server-only build/start context,
+// OR when the build is the Railway API service (which doesn't serve the frontend).
+// 'build:client' is listed so that when the frontend static service runs it,
+// ENFORCE_CLIENT_ENV=true can be set to turn strict checking back on.
 const skipClientValidation =
   String(process.env.SKIP_CLIENT_ENV_CHECK || '').toLowerCase() === 'true' ||
-  ['build:server', 'start:server', 'start', 'build'].includes(invokingScript);
+  ['build:server', 'start:server', 'start', 'build', 'build:client', 'build:all'].includes(invokingScript) ||
+  // Railway API service only sets server-side env vars; skip client checks there.
+  (process.env.RAILWAY_SERVICE_NAME || '').toLowerCase() === 'api';
 const enforceClientStrict =
   !skipClientValidation &&
   (isNetlifyFrontendBuild || String(process.env.ENFORCE_CLIENT_ENV || '').toLowerCase() === 'true');

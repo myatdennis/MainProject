@@ -1,5 +1,7 @@
 [build]
 builder = "nixpacks"
+# buildCommand is handled by nixpacks.toml phases. Setting it here as a fallback.
+buildCommand = "npm ci && npm run build:client"
 
 [deploy]
 startCommand = "node index.js"

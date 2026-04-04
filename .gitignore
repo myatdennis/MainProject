@@ -39,4 +39,7 @@ server/diagnostics/*.log
 !server/diagnostics/metrics.js
 .env
 .env.*
+# Allow .env.production to be committed — it contains only PUBLIC Vite build-time values
+# (Supabase anon key, API URLs). No secrets. Railway/Netlify env vars override at build time.
+!.env.production
 public/sw-version.json
