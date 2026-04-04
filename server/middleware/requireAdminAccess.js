@@ -132,6 +132,19 @@ const ensureAdminAccess = async (req, res) => {
   // 2) admin_users lookup
   const { entry: allowlistEntry, error: allowlistError } = await fetchAdminAllowlistEntry(user.id, user.email, { requestId: req.requestId ?? null });
   if (allowlistError) {
+    if (allowlistError.message === 'SUPABASE_NOT_CONFIGURED') {
+      console.error('[requireAdminAccess] supabase_not_configured', {
+        requestId: req.requestId ?? null,
+        userId: user.id,
+        email: user.email ?? null,
+      });
+      res.status(503).json({
+        code: 'SUPABASE_NOT_CONFIGURED',
+        error: 'Service unavailable',
+        message: 'Supabase service role client is not configured.',
+      });
+      return false;
+    }
     throw allowlistError;
   }
   if (allowlistEntry) {

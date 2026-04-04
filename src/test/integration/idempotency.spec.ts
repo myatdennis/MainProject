@@ -104,6 +104,10 @@ describe('Idempotency keys (integration)', () => {
       console.warn('[integration] Skipping idempotency test because server was unavailable.');
       return;
     }
+    if (!adminAuthHeader) {
+      console.warn('[integration] Skipping idempotency test because admin auth token could not be bootstrapped.');
+      return;
+    }
     const body = {
       course: { title: 'Integration Test Course' },
       modules: [],
