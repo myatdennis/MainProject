@@ -71,12 +71,12 @@ export const createMediaService = ({
       source,
       metadata,
     };
-    const { data, error } = await supabase
+    const _mediaInsert = await supabase
       .from('course_media_assets')
       .insert(payload)
-      .select('*')
-      .single();
-    if (error) throw error;
+      .select('*');
+    if (_mediaInsert.error) throw _mediaInsert.error;
+    const data = Array.isArray(_mediaInsert.data) ? (_mediaInsert.data[0] ?? null) : _mediaInsert.data;
     return data;
   };
 

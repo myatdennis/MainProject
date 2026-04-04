@@ -120,7 +120,9 @@ export const createNotificationService = ({ getSupabase, dispatcher, logger: cus
     }
     const supabase = ensureSupabase(getSupabase);
     const payload = toNotificationPayload(input);
-    const { data, error } = await supabase.from('notifications').insert(payload).select('*').single();
+    const _notifCreate = await supabase.from('notifications').insert(payload).select('*');
+    const data = Array.isArray(_notifCreate.data) ? _notifCreate.data[0] ?? null : _notifCreate.data ?? null;
+    const error = _notifCreate.error;
     if (error) {
       log.error('notification_created_failed', {
         message: error.message,
@@ -151,12 +153,13 @@ export const createNotificationService = ({ getSupabase, dispatcher, logger: cus
   const markNotificationRead = async (id, read = true) => {
     const supabase = ensureSupabase(getSupabase);
     const status = read ? 'read' : 'unread';
-    const { data, error } = await supabase
+    const _markRead = await supabase
       .from('notifications')
       .update({ status, read, read_at: read ? new Date().toISOString() : null })
       .eq('id', id)
-      .select('*')
-      .single();
+      .select('*');
+    const data = Array.isArray(_markRead.data) ? _markRead.data[0] ?? null : _markRead.data ?? null;
+    const error = _markRead.error;
     if (error) {
       log.warn('notification_mark_read_failed', { notificationId: id, message: error.message });
       throw error;

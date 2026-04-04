@@ -305,14 +305,14 @@ const ensureMembership = async ({
   let upsertError = null;
 
   // Primary attempt: use the detected org column as the conflict target.
+  // Use array result to avoid PGRST116 when duplicate membership rows exist.
   const primaryResult = await supabase
     .from('organization_memberships')
     .upsert(payload, { onConflict: `${membershipOrgColumn},user_id` })
-    .select('*')
-    .single();
+    .select('*');
 
   upsertError = primaryResult.error;
-  data = primaryResult.data;
+  data = Array.isArray(primaryResult.data) ? (primaryResult.data[0] ?? null) : primaryResult.data;
 
   // Fallback: if PostgREST rejected the conflict target (partial index / no
   // non-partial unique index found), retry with the legacy org_id column.
@@ -330,11 +330,10 @@ const ensureMembership = async ({
     const fallbackResult = await supabase
       .from('organization_memberships')
       .upsert(fallbackPayload, { onConflict: 'org_id,user_id' })
-      .select('*')
-      .single();
+      .select('*');
 
     upsertError = fallbackResult.error;
-    data = fallbackResult.data;
+    data = Array.isArray(fallbackResult.data) ? (fallbackResult.data[0] ?? null) : fallbackResult.data;
   }
 
   if (upsertError) {

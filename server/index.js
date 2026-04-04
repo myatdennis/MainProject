@@ -4793,8 +4793,9 @@ const loadSurveyWithAssignments = async (id) => {
   if (!supabase) {
     return getDemoSurveyById(id);
   }
-  const { data, error } = await supabase.from('surveys').select('*').eq('id', id).single();
+  const { data, error } = await supabase.from('surveys').select('*').eq('id', id).maybeSingle();
   if (error) throw error;
+  if (!data) return null;
   const assignments = await fetchSurveyAssignmentsMap([id]);
   return applyAssignmentToSurvey({ ...data }, assignments.get(id));
 };
@@ -5027,7 +5028,7 @@ const loadSurveyAssignmentForUser = async (surveyId, userId, { assignmentId = nu
       if (hydrated) return hydrated;
     }
 
-    const { data: created, error: insertError } = await supabase
+    const _assignInsert = await supabase
       .from('assignments')
       .insert({
         survey_id: surveyId,
@@ -5038,9 +5039,9 @@ const loadSurveyAssignmentForUser = async (surveyId, userId, { assignmentId = nu
         active: true,
         metadata: { assigned_via: 'learner_self_enroll' },
       })
-      .select(SURVEY_ASSIGNMENT_SELECT)
-      .single();
-    if (insertError) throw insertError;
+      .select(SURVEY_ASSIGNMENT_SELECT);
+    if (_assignInsert.error) throw _assignInsert.error;
+    const created = firstRow(_assignInsert);
     await refreshSurveyAssignmentAggregates(surveyId);
     return created ?? null;
   } catch (error) {
@@ -5747,6 +5748,61 @@ const runSupabaseQueryWithRetry = async (label, buildQuery) => {
     if (result?.error) throw result.error;
     return result;
   });
+};
+
+// ---------------------------------------------------------------------------
+// Supabase query timeout + safe first-row helpers
+// ---------------------------------------------------------------------------
+
+/** Wraps any Supabase promise in a timeout. Rejects with a structured error
+ *  when Supabase takes longer than `ms` milliseconds (default 5 000 ms).
+ *  Use this instead of awaiting Supabase calls directly in admin routes. */
+const SUPABASE_QUERY_TIMEOUT_MS = Number(process.env.SUPABASE_QUERY_TIMEOUT_MS || 5000);
+
+const withSupabaseTimeout = (promise, label = 'supabase_query') => {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      const err = new Error(`${label} timed out after ${SUPABASE_QUERY_TIMEOUT_MS}ms`);
+      err.code = 'SUPABASE_TIMEOUT';
+      err.label = label;
+      reject(err);
+    }, SUPABASE_QUERY_TIMEOUT_MS);
+
+    Promise.resolve(promise)
+      .then((value) => { clearTimeout(timer); resolve(value); })
+      .catch((error) => { clearTimeout(timer); reject(error); });
+  });
+};
+
+/** Runs a Supabase query builder fn with timeout + schema retry.
+ *  Returns the full PostgREST result object { data, error, count }.
+ *  Throws on error or timeout. */
+const runTimedQuery = (label, buildQuery) =>
+  withSupabaseTimeout(runSupabaseQueryWithRetry(label, buildQuery), label);
+
+/** Extract the first row from an INSERT/UPDATE/UPSERT result safely.
+ *  Replaces .single() — tolerates multiple rows (duplicates) without throwing PGRST116.
+ *  @param {{ data: unknown }} result - PostgREST result object
+ *  @returns {object|null} first row or null */
+const firstRow = (result) => {
+  const rows = Array.isArray(result?.data) ? result.data : result?.data ? [result.data] : [];
+  return rows[0] ?? null;
+};
+
+/** Log a structured admin-route error with consistent fields. */
+const logAdminError = (label, error, meta = {}) => {
+  const code = error?.code ?? 'unknown';
+  const message = error?.message ?? String(error ?? 'unknown error');
+  const isTimeout = code === 'SUPABASE_TIMEOUT';
+  const isPgrst = String(code).startsWith('PGRST');
+  console.error(`[admin.error] ${label}`, {
+    code,
+    message,
+    isTimeout,
+    isPgrst,
+    ...meta,
+  });
+  return { code, message, isTimeout, isPgrst };
 };
 
 const ORG_PROGRESS_VIEW = 'org_onboarding_progress_vw';
@@ -6996,7 +7052,7 @@ async function createCertificateIfNotExists(userId, courseId, organizationId) {
     }
 
     // Create new certificate
-    const { data: created, error: insertError } = await supabase
+    const _certResult = await supabase
       .from('certificates')
       .insert({
         user_id: userId,
@@ -7004,8 +7060,10 @@ async function createCertificateIfNotExists(userId, courseId, organizationId) {
         organization_id: organizationId ?? null,
         metadata: { source: 'auto_completion' },
       })
-      .select('*')
-      .single();
+      .select('*');
+
+    const created = firstRow(_certResult);
+    const insertError = _certResult?.error;
 
     if (insertError) {
       // Unique constraint violation — race condition, cert was just created by another request
@@ -7306,12 +7364,12 @@ async function createOrgInvite({
   let data = null;
   let error = null;
   for (const candidate of attemptPayloads) {
+    // Use array result + firstRow() — .single() throws PGRST116 if a duplicate exists.
     const result = await supabase
       .from('org_invites')
       .insert(candidate)
-      .select('*')
-      .single();
-    data = result.data;
+      .select('*');
+    data = firstRow(result);
     error = result.error;
     if (!error) {
       break;
@@ -8160,15 +8218,15 @@ const insertMessageLog = async ({
     metadata: metadata && typeof metadata === 'object' ? metadata : {},
     sent_at: normalizedChannel === 'email' ? null : new Date().toISOString(),
   };
-  const { data, error } = await supabase.from('message_logs').insert(payload).select('*').single();
-  if (error) throw error;
-  return data;
+  const _msgInsert = await supabase.from('message_logs').insert(payload).select('*');
+  if (_msgInsert.error) throw _msgInsert.error;
+  return firstRow(_msgInsert);
 };
 
 const finalizeMessageLog = async (id, updates = {}) => {
-  const { data, error } = await supabase.from('message_logs').update(updates).eq('id', id).select('*').single();
-  if (error) throw error;
-  return data;
+  const _msgUpdate = await supabase.from('message_logs').update(updates).eq('id', id).select('*');
+  if (_msgUpdate.error) throw _msgUpdate.error;
+  return firstRow(_msgUpdate);
 };
 
 const sendOrganizationMessage = async ({
@@ -9077,22 +9135,26 @@ async function upsertOrganizationMembership(orgId, userId, role, actor) {
   }
 
   let data, upsertError;
-  ({ data, error: upsertError } = await supabase
+  // Use .select('*') without .single() to avoid PGRST116 when duplicate rows exist.
+  // firstRow() safely picks the first returned row.
+  let _upsertResult = await supabase
     .from('organization_memberships')
     .upsert(payload, { onConflict: `${membershipOrgColumn},user_id` })
-    .select('*')
-    .single());
+    .select('*');
+  data = firstRow(_upsertResult);
+  upsertError = _upsertResult.error;
 
   if (upsertError && isMembershipConflictTargetError(upsertError) && membershipOrgColumn !== 'org_id') {
     logger.warn('upsert_membership_conflict_target_fallback', {
       primaryColumn: membershipOrgColumn, orgId, userId,
       error: upsertError?.message,
     });
-    ({ data, error: upsertError } = await supabase
+    _upsertResult = await supabase
       .from('organization_memberships')
       .upsert({ ...payload, org_id: String(orgId) }, { onConflict: 'org_id,user_id' })
-      .select('*')
-      .single());
+      .select('*');
+    data = firstRow(_upsertResult);
+    upsertError = _upsertResult.error;
   }
 
   if (upsertError) {
@@ -12996,12 +13058,12 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
       completed_at: nowIso,
     };
 
-    const { data: inserted, error: insertError } = await supabase
+    const _surveyResp = await supabase
       .from('survey_responses')
       .insert(responsePayload)
-      .select('*')
-      .single();
-    if (insertError) throw insertError;
+      .select('*');
+    if (_surveyResp.error) throw _surveyResp.error;
+    const inserted = firstRow(_surveyResp);
 
     if (assignment?.id) {
       const mergedMetadata = {
@@ -13237,26 +13299,27 @@ app.post('/api/admin/courses/:id/publish', authenticate, requireOrgAdmin, async 
     const nextVersion = (currentVersion ?? 0) + 1;
     const nextMeta = { ...(existing.data.meta_json || {}), published_at: publishedAt };
 
-    const updated = await supabase
+    // Use array result + firstRow() to avoid PGRST116 on duplicate course rows.
+    const _updateResult = await supabase
       .from('courses')
       .update({ status: 'published', published_at: publishedAt, version: nextVersion, meta_json: nextMeta })
       .eq('id', id)
-      .select(COURSE_WITH_MODULES_LESSONS_SELECT)
-      .single();
+      .select(COURSE_WITH_MODULES_LESSONS_SELECT);
 
-    if (updated.error) throw updated.error;
+    if (_updateResult.error) throw _updateResult.error;
+    const updatedData = firstRow(_updateResult);
 
     if (idempotencyKey) {
       try {
-        await supabase.from('idempotency_keys').update({ resource_id: updated.data?.id }).eq('id', idempotencyKey);
+        await supabase.from('idempotency_keys').update({ resource_id: updatedData?.id }).eq('id', idempotencyKey);
       } catch (updateErr) {
         console.warn('Failed to update publish idempotency key with resource id', updateErr);
       }
     }
 
     try {
-      const orgId = updated.data?.organization_id || updated.data?.org_id || null;
-      const payload = { type: 'course_updated', data: updated.data, timestamp: Date.now() };
+      const orgId = updatedData?.organization_id || updatedData?.org_id || null;
+      const payload = { type: 'course_updated', data: updatedData, timestamp: Date.now() };
       if (orgId) broadcastToTopic(`course:updates:${orgId}`, payload);
       broadcastToTopic('course:updates', payload);
     } catch (bErr) {
@@ -13271,7 +13334,7 @@ app.post('/api/admin/courses/:id/publish', authenticate, requireOrgAdmin, async 
       mode: 'supabase',
       durationMs: Date.now() - publishStartedAt,
     });
-    res.json({ data: updated.data });
+    res.json({ data: updatedData });
   } catch (error) {
     console.error('[course.publish_error]', {
       requestId: publishLogMeta.requestId,
@@ -13996,12 +14059,13 @@ app.post('/api/admin/modules', authenticate, requireOrgAdmin, async (req, res) =
         return;
       }
     }
-    const { data, error } = await supabase
+    const _modInsert = await supabase
       .from('modules')
       .insert({ course_id: courseId, title, description, order_index: orderIndex })
-      .select('*')
-      .single();
-    if (error) throw error;
+      .select('*');
+    if (_modInsert.error) throw _modInsert.error;
+    const data = firstRow(_modInsert);
+    if (!data) throw new Error('module_insert_no_rows');
     res.status(201).json({ data: { id: data.id, course_id: data.course_id, title: data.title, description: data.description, order_index: data.order_index ?? 0 } });
   } catch (error) {
     console.error('Failed to create module:', error);
@@ -14088,13 +14152,17 @@ app.patch('/api/admin/modules/:id', authenticate, requireOrgAdmin, async (req, r
         }
       }
     }
-    const { data, error } = await supabase
+    const _modPatch = await supabase
       .from('modules')
       .update(patch)
       .eq('id', id)
-      .select('*')
-      .single();
-    if (error) throw error;
+      .select('*');
+    if (_modPatch.error) throw _modPatch.error;
+    const data = firstRow(_modPatch);
+    if (!data) {
+      res.status(404).json({ error: 'module_not_found', message: 'Module not found or no rows updated' });
+      return;
+    }
     res.json({ data: { id: data.id, course_id: data.course_id, title: data.title, description: data.description, order_index: data.order_index ?? 0 } });
   } catch (error) {
     console.error('Failed to update module:', error);
@@ -14455,11 +14523,13 @@ app.post('/api/admin/lessons', authenticate, requireOrgAdmin, async (req, res) =
       content_json: normalizedContent,
       completionRule,
     });
-    const { data, error } = await supabase
+    // Use array result + firstRow() — .single() throws PGRST116 on duplicate lesson rows.
+    const _lessonInsert = await supabase
       .from('lessons')
       .insert(payload)
-      .select('*')
-      .single();
+      .select('*');
+    const data = firstRow(_lessonInsert);
+    const error = _lessonInsert.error;
     if (error) {
       respondLessonError(
         res,
@@ -15166,13 +15236,13 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
         organization_id: resolvedOrgId ?? null,
       };
       try {
-        const { data, error } = await supabase
+        // Use array + firstRow() — .single() throws PGRST116 when duplicate progress rows exist.
+        const _r = await supabase
           .from('user_course_progress')
           .upsert(payload, { onConflict: 'user_id_uuid,course_id' })
-          .select('*')
-          .single();
-        if (error) throw error;
-        return data;
+          .select('*');
+        if (_r.error) throw _r.error;
+        return firstRow(_r);
       } catch (error) {
         if (isUserCourseProgressUuidColumnMissing(error) || isConflictConstraintMissing(error)) {
           logger.warn('user_course_progress_uuid_modern_fallback', {
@@ -15181,13 +15251,12 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
           });
           const fallbackPayload = { ...payload };
           delete fallbackPayload.user_id_uuid;
-          const { data, error: legacyError } = await supabase
+          const _fr = await supabase
             .from('user_course_progress')
             .upsert(fallbackPayload, { onConflict: 'user_id,course_id' })
-            .select('*')
-            .single();
-          if (legacyError) throw legacyError;
-          return data;
+            .select('*');
+          if (_fr.error) throw _fr.error;
+          return firstRow(_fr);
         }
         throw error;
       }
@@ -15210,13 +15279,13 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
         payload.time_spent_s = Math.max(0, Math.round(courseProgress.totalTimeSeconds ?? 0));
       }
       try {
-        const { data, error } = await supabase
+        // Use array + firstRow() — .single() throws PGRST116 on duplicate rows.
+        const _r = await supabase
           .from('user_course_progress')
           .upsert(payload, { onConflict: 'user_id_uuid,course_id' })
-          .select('*')
-          .single();
-        if (error) throw error;
-        return data;
+          .select('*');
+        if (_r.error) throw _r.error;
+        return firstRow(_r);
       } catch (error) {
         if (isMissingColumnError(error)) {
           const missingColumn = normalizeColumnIdentifier(extractMissingColumnName(error));
@@ -15246,13 +15315,12 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
           });
           const fallbackPayload = { ...payload };
           delete fallbackPayload.user_id_uuid;
-          const { data, error: legacyError } = await supabase
+          const _fr = await supabase
             .from('user_course_progress')
             .upsert(fallbackPayload, { onConflict: 'user_id,course_id' })
-            .select('*')
-            .single();
-          if (legacyError) throw legacyError;
-          return data;
+            .select('*');
+          if (_fr.error) throw _fr.error;
+          return firstRow(_fr);
         }
         throw error;
       }
@@ -15882,8 +15950,9 @@ app.post('/api/client/progress/course', authenticate, async (req, res) => {
       completed: normalizedCompleted,
       organization_id: resolvedOrgId ?? null,
     };
+    // Use array + firstRow() — .single() throws PGRST116 on duplicate progress rows.
     const upsertCourseProgress = async (payload, conflictTarget) =>
-      supabase.from('user_course_progress').upsert(payload, { onConflict: conflictTarget }).select('*').single();
+      supabase.from('user_course_progress').upsert(payload, { onConflict: conflictTarget }).select('*');
 
     let upsertResult;
     try {
@@ -15903,7 +15972,7 @@ app.post('/api/client/progress/course', authenticate, async (req, res) => {
         throw error;
       }
     }
-    const data = upsertResult.data;
+    const data = firstRow(upsertResult);
     try {
       const apiRecord = toApiCourseRecord(data, time_spent_s);
       const userId = apiRecord?.user_id || canonicalUserId;
@@ -16088,7 +16157,7 @@ app.post('/api/client/progress/lesson', async (req, res) => {
         }
       }
     }
-    const { data, error } = await supabase
+    const _lessonProg = await supabase
       .from('user_lesson_progress')
       .upsert({
         user_id: resolvedUserId,
@@ -16097,8 +16166,9 @@ app.post('/api/client/progress/lesson', async (req, res) => {
         completed: normalizedCompleted,
         time_spent_seconds: Math.max(0, Math.round(typeof time_spent_s === 'number' ? time_spent_s : 0)),
       }, { onConflict: 'user_id,lesson_id' })
-      .select('*')
-      .single();
+      .select('*');
+    const data = firstRow(_lessonProg);
+    const error = _lessonProg.error;
 
     if (error) throw error;
     try {
@@ -16426,7 +16496,7 @@ app.post('/api/client/certificates/:courseId', async (req, res) => {
   const resolvedCertUserId = certContext.userId;
 
   try {
-    const { data, error } = await supabase
+    const _certCreate = await supabase
       .from('certificates')
       .insert({
         id: id ?? undefined,
@@ -16435,11 +16505,10 @@ app.post('/api/client/certificates/:courseId', async (req, res) => {
         pdf_url: pdf_url ?? null,
         metadata
       })
-      .select('*')
-      .single();
+      .select('*');
 
-    if (error) throw error;
-    res.status(201).json({ data });
+    if (_certCreate.error) throw _certCreate.error;
+    res.status(201).json({ data: firstRow(_certCreate) });
   } catch (error) {
     console.error('Failed to create certificate:', error);
     res.status(500).json({ error: 'Unable to create certificate' });
@@ -17002,24 +17071,26 @@ app.post('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req
         modules: payload.modules ?? {},
         notes: payload.notes ?? null,
         tags: payload.tags ?? []
-      }).select('*').single(),
+      }).select('*'),
     );
 
+    // firstRow() — tolerates duplicate org rows without PGRST116
+    const orgData = firstRow(result);
     logOrganizationsEvent('org_create_success', {
       requestId: req.requestId ?? null,
       status: 'ok',
-      metadata: { orgId: result?.data?.id ?? null },
+      metadata: { orgId: orgData?.id ?? null },
     });
     logOrganizationsEvent('create_success', {
       requestId: req.requestId ?? null,
       status: 'ok',
-      metadata: { orgId: result?.data?.id ?? null },
+      metadata: { orgId: orgData?.id ?? null },
     });
-    if (result?.data?.id && ownerEmail) {
+    if (orgData?.id && ownerEmail) {
       try {
         await seedOrgOwner({
-          orgId: result.data.id,
-          orgName: result.data.name,
+          orgId: orgData.id,
+          orgName: orgData.name,
           ownerEmail,
           ownerName,
           actor,
@@ -17027,13 +17098,13 @@ app.post('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req
         });
       } catch (seedError) {
         logger.warn('organization_owner_seed_error', {
-          orgId: result.data.id,
+          orgId: orgData.id,
           targetEmail: ownerEmail,
           message: seedError?.message ?? String(seedError),
         });
       }
     }
-    res.status(201).json({ data: result.data });
+    res.status(201).json({ data: orgData });
   } catch (error) {
     const normalized = logOrganizationsStageError('create_failed', error, {
       requestId: req.requestId ?? null,
@@ -17159,10 +17230,15 @@ app.put('/api/admin/organizations/:id', requireAdminAccess, async (req, res) => 
       tags: patch.tags
     };
 
-    const result = await runSupabaseQueryWithRetry('admin.organizations.update', () =>
-      supabase.from('organizations').update(updatePayload).eq('id', id).select('*').single(),
+    const result = await runTimedQuery('admin.organizations.update', () =>
+      supabase.from('organizations').update(updatePayload).eq('id', id).select('*'),
     );
-    res.json({ data: result.data });
+    const orgRow = firstRow(result);
+    if (!orgRow) {
+      res.status(404).json({ error: 'organization_not_found', message: 'Organization not found or no rows updated' });
+      return;
+    }
+    res.json({ data: orgRow });
   } catch (error) {
     logRouteError('PUT /api/admin/organizations/:id', error);
     res.status(500).json({ error: 'Unable to update organization' });
@@ -17380,22 +17456,25 @@ app.post('/api/admin/organizations/:orgId/members', authenticate, requireOrgAdmi
     );
 
     let memberData, memberError;
-    ({ data: memberData, error: memberError } = await supabase
+    // Use array result + firstRow() — .single() throws PGRST116 when duplicate memberships exist.
+    let _memberResult = await supabase
       .from('organization_memberships')
       .upsert(payload, { onConflict: `${membershipOrgColumn},user_id` })
-      .select(membershipSelect)
-      .single());
+      .select(membershipSelect);
+    memberData = firstRow(_memberResult);
+    memberError = _memberResult.error;
 
     if (memberError && isMembershipConflictTargetError(memberError) && membershipOrgColumn !== 'org_id') {
       logger.warn('add_member_conflict_target_fallback', {
         primaryColumn: membershipOrgColumn, orgId, userId,
         error: memberError?.message,
       });
-      ({ data: memberData, error: memberError } = await supabase
+      _memberResult = await supabase
         .from('organization_memberships')
         .upsert({ ...payload, org_id: String(orgId) }, { onConflict: 'org_id,user_id' })
-        .select(membershipSelect)
-        .single());
+        .select(membershipSelect);
+      memberData = firstRow(_memberResult);
+      memberError = _memberResult.error;
     }
 
     if (memberError) throw memberError;
@@ -18278,13 +18357,14 @@ app.post('/api/admin/onboarding/orgs', authenticate, requireAdmin, async (req, r
       timezone,
     };
 
-    const { data: org, error } = await supabase
+    const _orgOnboard = await supabase
       .from('organizations')
       .insert(orgInsert)
-      .select('*')
-      .single();
+      .select('*');
 
-    if (error) throw error;
+    if (_orgOnboard.error) throw _orgOnboard.error;
+    const org = firstRow(_orgOnboard);
+    if (!org) throw new Error('org_insert_no_rows');
 
     await initializeActivationSteps(org.id, actor);
     await recordActivationEvent(org.id, 'org_created', { name }, actor);
@@ -18781,14 +18861,13 @@ app.post('/api/admin/org-profiles/:orgId/contacts', authenticate, requireOrgAdmi
       is_primary: Boolean(isPrimary),
     };
 
-    const { data, error } = await supabase
+    const _contactInsert = await supabase
       .from('organization_contacts')
       .insert(payload)
-      .select('*')
-      .single();
+      .select('*');
 
-    if (error) throw error;
-    res.status(201).json({ data: mapContactResponse(data) });
+    if (_contactInsert.error) throw _contactInsert.error;
+    res.status(201).json({ data: mapContactResponse(firstRow(_contactInsert)) });
   } catch (error) {
     console.error(`Failed to create contact for org ${orgId}:`, error);
     res.status(500).json({ error: 'Unable to create contact' });
@@ -18944,13 +19023,14 @@ app.put('/api/users/me', async (req, res) => {
       profilePayload.id = existingProfile.id;
     }
 
-    const { data: upsertedProfile, error: upsertError } = await supabase
+    const _profUpsert = await supabase
       .from('user_profiles')
       .upsert(profilePayload, { onConflict: 'id' })
-      .select('*')
-      .single();
+      .select('*');
 
-    if (upsertError) throw upsertError;
+    if (_profUpsert.error) throw _profUpsert.error;
+    const upsertedProfile = firstRow(_profUpsert);
+    if (!upsertedProfile) throw new Error('profile_upsert_no_rows');
 
     let organizationRow = null;
     const orgId = upsertedProfile.organization_id || userRow?.organization_id || userRow?.organizationId;
@@ -19103,14 +19183,13 @@ app.post('/api/orgs/:orgId/workspace/strategic-plans', async (req, res) => {
       metadata: payload.metadata ?? {}
     };
 
-    const { data, error } = await supabase
+    const _planInsert = await supabase
       .from('org_workspace_strategic_plans')
       .insert(insertPayload)
-      .select('*')
-      .single();
+      .select('*');
 
-    if (error) throw error;
-    res.status(201).json({ data: toStrategicPlan(data) });
+    if (_planInsert.error) throw _planInsert.error;
+    res.status(201).json({ data: toStrategicPlan(firstRow(_planInsert)) });
   } catch (error) {
     console.error(`Failed to create strategic plan for org ${orgId}:`, error);
     res.status(500).json({ error: 'Unable to create strategic plan version' });
@@ -19186,14 +19265,13 @@ app.post('/api/orgs/:orgId/workspace/session-notes', async (req, res) => {
       created_by: payload.createdBy ?? null
     };
 
-    const { data, error } = await supabase
+    const _noteInsert = await supabase
       .from('org_workspace_session_notes')
       .insert(insertPayload)
-      .select('*')
-      .single();
+      .select('*');
 
-    if (error) throw error;
-    res.status(201).json({ data: toSessionNote(data) });
+    if (_noteInsert.error) throw _noteInsert.error;
+    res.status(201).json({ data: toSessionNote(firstRow(_noteInsert)) });
   } catch (error) {
     console.error(`Failed to create session note for org ${orgId}:`, error);
     res.status(500).json({ error: 'Unable to create session note' });
@@ -19245,14 +19323,13 @@ app.post('/api/orgs/:orgId/workspace/action-items', async (req, res) => {
       metadata: payload.metadata ?? {}
     };
 
-    const { data, error } = await supabase
+    const _actionInsert = await supabase
       .from('org_workspace_action_items')
       .insert(insertPayload)
-      .select('*')
-      .single();
+      .select('*');
 
-    if (error) throw error;
-    res.status(201).json({ data: toActionItem(data) });
+    if (_actionInsert.error) throw _actionInsert.error;
+    res.status(201).json({ data: toActionItem(firstRow(_actionInsert)) });
   } catch (error) {
     console.error(`Failed to create action item for org ${orgId}:`, error);
     res.status(500).json({ error: 'Unable to create action item' });
@@ -19302,16 +19379,20 @@ app.put('/api/orgs/:orgId/workspace/action-items/:id', async (req, res) => {
       return;
     }
 
-    const { data, error } = await supabase
+    const _itemUpdate = await supabase
       .from('org_workspace_action_items')
       .update(updatePayload)
       .eq('org_id', orgId)
       .eq('id', id)
-      .select('*')
-      .single();
+      .select('*');
 
-    if (error) throw error;
-    res.json({ data: toActionItem(data) });
+    if (_itemUpdate.error) throw _itemUpdate.error;
+    const itemRow = firstRow(_itemUpdate);
+    if (!itemRow) {
+      res.status(404).json({ error: 'action_item_not_found', message: 'Action item not found or no rows updated' });
+      return;
+    }
+    res.json({ data: toActionItem(itemRow) });
   } catch (error) {
     console.error(`Failed to update action item ${id} for org ${orgId}:`, error);
     res.status(500).json({ error: 'Unable to update action item' });
@@ -19847,24 +19928,24 @@ app.post('/api/admin/documents', async (req, res) => {
       metadata: payload.metadata ?? {},
     };
 
-    const { data, error } = await supabase
+    const _docInsert = await supabase
       .from('documents')
       .insert(insertPayload)
-      .select('*')
-      .single();
+      .select('*');
 
-    if (error) throw error;
+    if (_docInsert.error) throw _docInsert.error;
+    const docRow = firstRow(_docInsert);
 
     logger.info('[admin.documents.create] success', {
       requestId,
       orgId: organizationId,
       userId: context.userId,
-      documentId: data.id,
-      name: data.name,
-      visibility: data.visibility,
+      documentId: docRow?.id,
+      name: docRow?.name,
+      visibility: docRow?.visibility,
     });
 
-    res.status(201).json({ data });
+    res.status(201).json({ data: docRow });
   } catch (error) {
     logger.error('[admin.documents.create] failed', {
       requestId,
@@ -19953,9 +20034,9 @@ app.put('/api/admin/documents/:id', async (req, res) => {
     }
 
     if (Object.keys(updatePayload).length === 0) {
-      const { data, error } = await supabase.from('documents').select('*').eq('id', id).single();
-      if (error) throw error;
-      res.json({ data });
+      const { data: docOnly, error: docErr } = await supabase.from('documents').select('*').eq('id', id).maybeSingle();
+      if (docErr) throw docErr;
+      res.json({ data: docOnly });
       return;
     }
 
@@ -19971,15 +20052,14 @@ app.put('/api/admin/documents/:id', async (req, res) => {
       }
     }
 
-    const { data, error } = await supabase
+    const _docUpdate = await supabase
       .from('documents')
       .update(updatePayload)
       .eq('id', id)
-      .select('*')
-      .single();
+      .select('*');
 
-    if (error) throw error;
-    res.json({ data });
+    if (_docUpdate.error) throw _docUpdate.error;
+    res.json({ data: firstRow(_docUpdate) });
   } catch (error) {
     console.error('Failed to update document:', error);
     res.status(500).json({ error: 'Unable to update document' });
@@ -20447,18 +20527,18 @@ app.post('/api/admin/surveys', async (req, res) => {
     const performUpsert = async () => {
       const insertPayload = buildSurveyPersistencePayload(payload);
       try {
-        const { data } = await runSupabaseQueryWithRetry('admin.surveys.upsert', () =>
-          supabase.from('surveys').upsert(insertPayload).select('*').single(),
+        const result = await runTimedQuery('admin.surveys.upsert', () =>
+          supabase.from('surveys').upsert(insertPayload).select('*'),
         );
-        return data;
+        return firstRow(result);
       } catch (err) {
         if (isMissingColumnError(err) && maybeHandleSurveyColumnError(err)) {
           // Retry once with the offending column stripped
           const retryPayload = buildSurveyPersistencePayload(payload);
-          const { data } = await runSupabaseQueryWithRetry('admin.surveys.upsert.retry', () =>
-            supabase.from('surveys').upsert(retryPayload).select('*').single(),
+          const retryResult = await runTimedQuery('admin.surveys.upsert.retry', () =>
+            supabase.from('surveys').upsert(retryPayload).select('*'),
           );
-          return data;
+          return firstRow(retryResult);
         }
         throw err;
       }
@@ -20510,18 +20590,18 @@ app.put('/api/admin/surveys/:id', async (req, res) => {
       const updatePayload = buildSurveyPersistencePayload({ ...patch, id });
       delete updatePayload.id;
       try {
-        const { data } = await runSupabaseQueryWithRetry('admin.surveys.update', () =>
-          supabase.from('surveys').update(updatePayload).eq('id', id).select('*').single(),
+        const result = await runTimedQuery('admin.surveys.update', () =>
+          supabase.from('surveys').update(updatePayload).eq('id', id).select('*'),
         );
-        return data;
+        return firstRow(result);
       } catch (err) {
         if (isMissingColumnError(err) && maybeHandleSurveyColumnError(err)) {
           const retryPayload = buildSurveyPersistencePayload({ ...patch, id });
           delete retryPayload.id;
-          const { data } = await runSupabaseQueryWithRetry('admin.surveys.update.retry', () =>
-            supabase.from('surveys').update(retryPayload).eq('id', id).select('*').single(),
+          const retryResult = await runTimedQuery('admin.surveys.update.retry', () =>
+            supabase.from('surveys').update(retryPayload).eq('id', id).select('*'),
           );
-          return data;
+          return firstRow(retryResult);
         }
         throw err;
       }
@@ -21572,11 +21652,12 @@ app.post('/api/admin/notifications', async (req, res) => {
       metadata: payload.metadata ?? {},
     };
 
-    const { data, error } = await supabase
+    const _notifInsert = await supabase
       .from('notifications')
       .insert(insertPayload)
-      .select('*')
-      .single();
+      .select('*');
+    const data = firstRow(_notifInsert);
+    const error = _notifInsert.error;
 
     if (error) {
       if (isNotificationsTableMissingError(error)) {
@@ -21594,7 +21675,7 @@ app.post('/api/admin/notifications', async (req, res) => {
 
     if (!scheduledFor && notificationDispatcher?.enqueueDispatch) {
       notificationDispatcher.enqueueDispatch({
-        notificationId: data.id,
+        notificationId: data?.id,
         channels,
         sendEmail: sendEmailFlag,
       });
@@ -21821,12 +21902,13 @@ app.post('/api/admin/notifications/:id/read', async (req, res) => {
       }
     }
 
-    const { data, error } = await supabase
+    const _notifUpdate = await supabase
       .from('notifications')
       .update({ read })
       .eq('id', id)
-      .select('*')
-      .single();
+      .select('*');
+    const data = firstRow(_notifUpdate);
+    const error = _notifUpdate.error;
 
     if (error) {
       if (isNotificationsTableMissingError(error)) {
@@ -22208,11 +22290,12 @@ app.post('/api/analytics/events', optionalAuthenticate, async (req, res) => {
       insertPayload.id = normalizedClientEventId;
     }
 
-    let { data, error } = await supabase
+    let _analInsert = await supabase
       .from('analytics_events')
       .insert(insertPayload)
-      .select('*')
-      .single();
+      .select('*');
+    let data = firstRow(_analInsert);
+    let error = _analInsert.error;
 
     if (error) {
       const missingColumn = normalizeColumnIdentifier(extractMissingColumnName(error));
@@ -22222,13 +22305,12 @@ app.post('/api/analytics/events', optionalAuthenticate, async (req, res) => {
           code: error.code,
         });
         delete insertPayload.client_event_id;
-        const retry = await supabase
+        _analInsert = await supabase
           .from('analytics_events')
           .insert(insertPayload)
-          .select('*')
-          .single();
-        data = retry.data;
-        error = retry.error;
+          .select('*');
+        data = firstRow(_analInsert);
+        error = _analInsert.error;
       }
     }
 
@@ -22393,14 +22475,13 @@ app.post('/api/analytics/journeys', authenticate, resolveOrganizationContext, as
   if (!ensureSupabase(res)) return;
 
   try {
-    const { data, error } = await supabase
+    const _journeyUpsert = await supabase
       .from('learner_journeys')
       .upsert(payload, { onConflict: 'user_id,course_id' })
-      .select('*')
-      .single();
+      .select('*');
 
-    if (error) throw error;
-    res.status(201).json({ ok: true, data, requestId: req.requestId ?? null });
+    if (_journeyUpsert.error) throw _journeyUpsert.error;
+    res.status(201).json({ ok: true, data: firstRow(_journeyUpsert), requestId: req.requestId ?? null });
   } catch (error) {
     const tableMissing =
       error?.code === 'PGRST205' ||
