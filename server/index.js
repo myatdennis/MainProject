@@ -7637,9 +7637,11 @@ async function fetchAllOrgMembersWithProfiles({ offset = 0, limit = 500, orgId =
     'updated_at',
   );
 
+  // Use explicit FK hint to disambiguate: organization_memberships has two FKs to user_profiles
+  // (user_id and invited_by). PostgREST throws PGRST201 without the hint.
   let query = supabase
     .from('organization_memberships')
-    .select(`${membershipSelect}, user_profiles (*)`)
+    .select(`${membershipSelect}, user_profiles!organization_memberships_user_id_fkey (*)`)
     .in('status', ['active', 'pending'])
     .order('created_at', { ascending: false })
     .range(offset, offset + limit - 1);
@@ -7656,7 +7658,7 @@ async function fetchAllOrgMembersWithProfiles({ offset = 0, limit = 500, orgId =
     if (isMissingColumnError(error) && !orgId) {
       const { data: fallbackData, error: fallbackError } = await supabase
         .from('organization_memberships')
-        .select(`id, org_id, user_id, role, status, invited_by, created_at, updated_at, user_profiles (*)`)
+        .select(`id, org_id, user_id, role, status, invited_by, created_at, updated_at, user_profiles!organization_memberships_user_id_fkey (*)`)
         .in('status', ['active', 'pending'])
         .order('created_at', { ascending: false })
         .range(offset, offset + limit - 1);
