@@ -1,11 +1,8 @@
 [build]
 builder = "nixpacks"
-# Fallback buildCommand if nixpacks.toml phases are not picked up.
-# NODE_ENV=development ensures npm ci includes devDependencies (vite etc.)
-buildCommand = "NODE_ENV=development npm ci && npm run build:client"
 
 [deploy]
-startCommand = "node index.js"
+startCommand = "npm run start"
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 10
 

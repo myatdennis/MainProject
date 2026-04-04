@@ -170,6 +170,7 @@ export default async () => {
       exclude: ['lucide-react'],
     },
     build: {
+      outDir: 'dist',
       sourcemap: process.env.NODE_ENV !== 'production',
       minify: process.env.NODE_ENV === 'production' ? 'esbuild' : false,
       target: 'es2015',

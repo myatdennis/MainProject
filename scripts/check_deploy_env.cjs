@@ -5,13 +5,10 @@
  * Run: node scripts/check_deploy_env.cjs
  */
 
-const requiredServer = [
-  'SUPABASE_URL',
-  'SUPABASE_SERVICE_ROLE_KEY',
-  'DATABASE_URL',
-  'JWT_ACCESS_SECRET',
-  'JWT_REFRESH_SECRET',
-  'COOKIE_DOMAIN',
+const requiredServer = ['SUPABASE_URL', 'JWT_ACCESS_SECRET', 'JWT_REFRESH_SECRET', 'SUPABASE_JWT_SECRET'];
+const requiredServerAnyOf = [
+  ['SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_SERVICE_KEY', 'SUPABASE_KEY'],
+  ['DATABASE_POOLER_URL', 'SUPABASE_DB_POOLER_URL', 'SUPABASE_DB_URL', 'DATABASE_URL'],
 ];
 
 const requiredClient = ['VITE_SUPABASE_URL', 'VITE_SUPABASE_ANON_KEY', 'VITE_API_BASE_URL'];
@@ -34,13 +31,10 @@ const shouldEnforceStrict =
   forceFlag === 'true' ||
   (forceFlag !== 'false' && (process.env.CI === 'true' || process.env.CI === '1') && !isRailwayDeployContext);
 const invokingScript = process.env.npm_lifecycle_event || '';
-// Skip client-env validation when invoked from a server-only build/start context,
-// OR when the build is the Railway API service (which doesn't serve the frontend).
-// 'build:client' is listed so that when the frontend static service runs it,
-// ENFORCE_CLIENT_ENV=true can be set to turn strict checking back on.
+// Skip client-env validation only for server-only workflows or the Railway API service.
 const skipClientValidation =
   String(process.env.SKIP_CLIENT_ENV_CHECK || '').toLowerCase() === 'true' ||
-  ['build:server', 'start:server', 'start', 'build', 'build:client', 'build:all'].includes(invokingScript) ||
+  ['build:server', 'start:server', 'start'].includes(invokingScript) ||
   // Railway API service only sets server-side env vars; skip client checks there.
   (process.env.RAILWAY_SERVICE_NAME || '').toLowerCase() === 'api';
 const enforceClientStrict =
@@ -52,12 +46,18 @@ function check(list) {
   return missing;
 }
 
+function checkAnyOf(groups) {
+  return groups
+    .filter((group) => group.every((name) => !process.env[name] || String(process.env[name]).trim().length === 0))
+    .map((group) => group.join(' | '));
+}
+
 let missingServer = [];
 if (isNetlifyFrontendBuild) {
   console.log('Skipping server env validation for Netlify frontend build.');
 } else {
   console.log('Server environment check (production):');
-  missingServer = check(requiredServer);
+  missingServer = [...check(requiredServer), ...checkAnyOf(requiredServerAnyOf)];
   if (missingServer.length === 0) {
     console.log('  All required server environment variables appear set');
   } else {
@@ -85,10 +85,16 @@ console.log(
   '  supabaseServiceRoleKeyPresent:',
   !!process.env.SUPABASE_SERVICE_ROLE_KEY || !!process.env.SUPABASE_SERVICE_KEY,
 );
-console.log('  dbUrlPresent:', !!process.env.DATABASE_URL);
+console.log(
+  '  dbUrlPresent:',
+  !!process.env.DATABASE_POOLER_URL ||
+    !!process.env.SUPABASE_DB_POOLER_URL ||
+    !!process.env.SUPABASE_DB_URL ||
+    !!process.env.DATABASE_URL,
+);
 console.log('  jwtAccessSecretPresent:', !!process.env.JWT_ACCESS_SECRET);
 console.log('  jwtRefreshSecretPresent:', !!process.env.JWT_REFRESH_SECRET);
-console.log('  cookieDomainPresent:', !!process.env.COOKIE_DOMAIN);
+console.log('  supabaseJwtSecretPresent:', !!process.env.SUPABASE_JWT_SECRET);
 console.log('  viteApiBasePresent:', !!process.env.VITE_API_BASE_URL || !!process.env.VITE_API_URL);
 
 const hasMissing = missingServer.length > 0 || (detectedMissingClient.length > 0 && !skipClientValidation);

@@ -1,28 +1,8 @@
-# nixpacks.toml — controls how Railway builds this Node.js project.
-#
-# Root cause of "vite: not found":
-#   vite lives in devDependencies. When NODE_ENV=production is set in the
-#   Railway service variables, npm ci silently omits devDependencies, so
-#   vite is never installed before `npm run build:client` runs.
-#
-# Fix: force NODE_ENV=development during the install phase so npm ci
-# includes ALL dependencies. NODE_ENV=production is restored at runtime
-# by Railway's environment variables.
-
 [phases.setup]
 nixPkgs = ["nodejs_22"]
 
 [phases.install]
-# Explicitly override NODE_ENV to development so npm ci includes devDeps.
-# vite, vitest, typescript, tailwindcss etc. are all devDependencies.
-cmds = ["NODE_ENV=development npm ci"]
-
-[phases.build]
-# NODE_ENV is still development here — that's fine. Vite sets its own
-# production mode internally during `vite build`.
-cmds = ["npm run build:client"]
-dependsOn = ["install"]
+cmds = ["npm ci --omit=dev"]
 
 [start]
-# Railway injects NODE_ENV=production from service env vars at runtime.
-cmd = "node index.js"
+cmd = "npm run start"

@@ -1,43 +1,13 @@
-
 [build]
-  base = "."
-  # Client-only build; server ships via Railway
-  command = "npm run build"
+  command = "npm run build:client"
   publish = "dist"
 
 [build.environment]
   NODE_VERSION = "20"
   NPM_FLAGS = "--include=dev"
   NPM_CONFIG_PRODUCTION = "false"
-  API_MODE = "absolute"
-  VITE_ENABLE_WS = "true"
-  VITE_API_BASE_URL = "https://api.the-huddle.co/api"
-  VITE_WS_URL = "wss://api.the-huddle.co/ws"
-  VITE_DEPLOY_CONTEXT = "$CONTEXT"
-  # VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are NOT set here.
-  # They MUST be set in the Netlify dashboard → Site → Environment Variables.
-  # Project: eprsgmfzqjptfywoecuy
-  # Without these, the frontend will use placeholder Supabase credentials and
-  # all authenticated API calls will fail (no real session token issued).
-
-[context.deploy-preview.environment]
-  API_MODE = "proxy"
-  VITE_ENABLE_WS = "true"
   VITE_API_BASE_URL = "/api"
-  VITE_WS_URL = "/ws"
-  BUILD_SOURCEMAP = "true"
-
-[context.branch-deploy.environment]
-  API_MODE = "proxy"
-  VITE_ENABLE_WS = "true"
-  VITE_API_BASE_URL = "/api"
-  VITE_WS_URL = "/ws"
-  BUILD_SOURCEMAP = "true"
-
-[dev]
-  command = "npm run dev"
-  port = 5174
-  targetPort = 5174
+  VITE_ENABLE_WS = "false"
 
 [[headers]]
   for = "/index.html"
@@ -55,19 +25,12 @@
     Cache-Control = "no-cache, no-store, must-revalidate"
 
 [[headers]]
-  for = "/api/*"
-  [headers.values]
-    Cache-Control = "no-store"
-    Pragma = "no-cache"
-
-[[headers]]
   for = "/*"
   [headers.values]
     X-Frame-Options = "SAMEORIGIN"
     X-Content-Type-Options = "nosniff"
     Referrer-Policy = "strict-origin-when-cross-origin"
 
-# API proxy: map API and WebSocket paths to external Railway backend.
 [[redirects]]
   from = "/api/*"
   to = "https://api.the-huddle.co/api/:splat"
@@ -75,24 +38,6 @@
   force = true
 
 [[redirects]]
-  from = "/ws"
-  to = "https://api.the-huddle.co/ws"
-  status = 200
-  force = true
-
-[[redirects]]
-  from = "/ws/*"
-  to = "https://api.the-huddle.co/ws/:splat"
-  status = 200
-  force = true
-
-[[redirects]]
-  from = "/assets/*"
-  to = "/assets/:splat"
-  status = 200
-
-[[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200
-  # Allow static assets (e.g., /assets/*.js) to be served directly; only fall back to SPA when no file exists.
