@@ -30,6 +30,6 @@ jobs:
           curl -fsS "$URL/api/health/db" | jq -e '.ok == true' >/dev/null
       - name: CORS preflight
         run: |
-          API_HOST=${API_HOST:-miqzywzuqzeffqpiupjm.supabase.co}
+          API_HOST=${API_HOST:-eprsgmfzqjptfywoecuy.supabase.co}
           DOMAIN=${DOMAIN:-the-huddle.co}
           curl -i -X OPTIONS https://$API_HOST/functions/v1/api/auth/login -H "Origin: https://$DOMAIN" -H "Access-Control-Request-Method: POST" | grep -i "Access-Control-Allow-Origin" || exit 1
