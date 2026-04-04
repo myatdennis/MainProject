@@ -1,25 +1,38 @@
 import { describe, expect, it } from 'vitest';
 import corsMiddleware, { resolveCorsOriginDecision } from '../../middleware/cors.js';
 
-const runMiddleware = (req) => {
-  const headers = new Map();
-  const res = {
-    header(key, value) {
+interface MockRequest {
+  method: string;
+  headers: Record<string, string>;
+  path: string;
+}
+
+interface MockRes {
+  header(key: string, value: string): this;
+  setHeader(key: string, value: string): void;
+  getHeader(key: string): string | undefined;
+  get(key: string): string | undefined;
+}
+
+const runMiddleware = (req: MockRequest): Promise<Map<string, string>> => {
+  const headers = new Map<string, string>();
+  const res: MockRes = {
+    header(key: string, value: string) {
       headers.set(key, value);
       return this;
     },
-    setHeader(key, value) {
+    setHeader(key: string, value: string): void {
       headers.set(key, value);
     },
-    getHeader(key) {
+    getHeader(key: string): string | undefined {
       return headers.get(key);
     },
-    get(key) {
+    get(key: string): string | undefined {
       return headers.get(key);
     },
   };
-  return new Promise((resolve, reject) => {
-    corsMiddleware(req, res, (err) => {
+  return new Promise<Map<string, string>>((resolve, reject) => {
+    corsMiddleware(req, res, (err: unknown) => {
       if (err) {
         reject(err);
         return;

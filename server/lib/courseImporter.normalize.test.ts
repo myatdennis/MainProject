@@ -7,6 +7,49 @@ import {
   deriveBranchingElements,
 } from './courseImporter.js';
 
+// ---------------------------------------------------------------------------
+// Test-local types — satisfy strict-mode inference without touching production JS.
+// ---------------------------------------------------------------------------
+
+/** Minimal shape of an option/choice item returned by the normalizer. */
+type ItemLike = Record<string, unknown>;
+
+/** Minimal shape of the object returned by normalizeLessonForImport. */
+type NormalizedLesson = {
+  content?: {
+    questions?: Array<{
+      prompt?: string;
+      options?: ItemLike[];
+    }>;
+    elements?: Array<{
+      data?: Array<{
+        text?: string;
+        choices?: ItemLike[];
+      }>;
+    }>;
+  };
+  content_json?: {
+    body?: {
+      elements?: Array<{
+        data?: Array<{
+          text?: string;
+        }>;
+      }>;
+    };
+  };
+};
+
+/** Shape expected from deriveQuizQuestions. */
+type QuestionResult = {
+  prompt?: string;
+  options?: ItemLike[];
+};
+
+/** Shape expected from deriveBranchingElements. */
+type ElementResult = {
+  data?: Array<{ choices?: ItemLike[] }>;
+};
+
 describe('course importer normalization', () => {
   it('normalizes quiz lessons from nested blocks', () => {
     const lesson = {
@@ -26,14 +69,14 @@ describe('course importer normalization', () => {
       },
     };
 
-    const normalized = normalizeLessonForImport(lesson, { moduleIndex: 0, lessonIndex: 0 });
+    const normalized = normalizeLessonForImport(lesson, { moduleIndex: 0, lessonIndex: 0 }) as NormalizedLesson;
     expect(Array.isArray(normalized.content?.questions)).toBe(true);
     expect(normalized.content?.questions?.length).toBe(1);
     const [question] = normalized.content?.questions ?? [];
     expect(question?.prompt).toBe('What is empathy?');
     expect(question?.options?.length).toBe(2);
-    const correct = question?.options?.find((option) => option.correct);
-    expect(correct?.text).toBe('Understanding others');
+    const correct = question?.options?.find((option: ItemLike) => option['correct']);
+    expect(correct?.['text']).toBe('Understanding others');
   });
 
   it('normalizes interactive lessons from nested nodes', () => {
@@ -53,12 +96,12 @@ describe('course importer normalization', () => {
       },
     };
 
-    const normalized = normalizeLessonForImport(lesson, { moduleIndex: 0, lessonIndex: 0 });
+    const normalized = normalizeLessonForImport(lesson, { moduleIndex: 0, lessonIndex: 0 }) as NormalizedLesson;
     expect(Array.isArray(normalized.content?.elements)).toBe(true);
     const [element] = normalized.content?.elements ?? [];
     const [node] = element?.data ?? [];
     expect(node?.text).toBe('Choose the branch');
-    expect(node?.choices?.map((option) => option.to)).toEqual(['node-2', 'node-3']);
+    expect(node?.choices?.map((option: ItemLike) => option['to'])).toEqual(['node-2', 'node-3']);
   });
 
   it('derives quiz questions directly from helpers', () => {
@@ -75,10 +118,10 @@ describe('course importer normalization', () => {
         ],
       },
     };
-    const questions = deriveQuizQuestions(lesson);
+    const questions = deriveQuizQuestions(lesson) as QuestionResult[];
     expect(questions.length).toBe(1);
     expect(questions[0]?.prompt).toBe('Direct prompt');
-    expect(questions[0]?.options?.some((option) => option.correct)).toBe(true);
+    expect(questions[0]?.options?.some((option: ItemLike) => option['correct'])).toBe(true);
   });
 
   it('derives branching elements directly from helpers', () => {
@@ -93,9 +136,9 @@ describe('course importer normalization', () => {
         },
       ],
     };
-    const elements = deriveBranchingElements(lesson);
+    const elements = deriveBranchingElements(lesson) as ElementResult[];
     expect(elements.length).toBe(1);
-    expect(elements[0]?.data?.[0]?.choices?.map((option) => option.to)).toEqual(['next-1', 'next-2']);
+    expect(elements[0]?.data?.[0]?.choices?.map((option: ItemLike) => option['to'])).toEqual(['next-1', 'next-2']);
   });
 
   it('normalizes builder-style scenario elements for interactive lessons', () => {
@@ -132,9 +175,9 @@ describe('course importer normalization', () => {
       },
     };
 
-    const normalized = normalizeLessonForImport(lesson, { moduleIndex: 0, lessonIndex: 0 });
+    const normalized = normalizeLessonForImport(lesson, { moduleIndex: 0, lessonIndex: 0 }) as NormalizedLesson;
     expect(Array.isArray(normalized.content?.elements)).toBe(true);
-    expect(normalized.content?.elements?.[0]?.data?.[0]?.choices?.map((choice) => choice.to)).toEqual([
+    expect(normalized.content?.elements?.[0]?.data?.[0]?.choices?.map((choice: ItemLike) => choice['to'])).toEqual([
       'bias-affinity',
       'bias-structured',
     ]);
@@ -159,9 +202,9 @@ describe('course importer normalization', () => {
       },
     };
 
-    const normalized = normalizeLessonForImport(lesson, { moduleIndex: 0, lessonIndex: 0 });
+    const normalized = normalizeLessonForImport(lesson, { moduleIndex: 0, lessonIndex: 0 }) as NormalizedLesson;
     expect(normalized.content?.questions?.length).toBe(1);
-    expect(normalized.content?.questions?.[0]?.options?.find((option) => option.correct)?.id).toBe('b');
+    expect(normalized.content?.questions?.[0]?.options?.find((option: ItemLike) => option['correct'])?.['id']).toBe('b');
   });
 
   it('normalizes module lessons consistently', () => {
