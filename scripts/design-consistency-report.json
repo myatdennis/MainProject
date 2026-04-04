@@ -1,4 +1,53 @@
 {
-  "colorIssues": [],
+  "colorIssues": [
+    {
+      "file": "/Users/myadennis/Downloads/MainProject/src/index.css",
+      "color": "#fef3c7"
+    },
+    {
+      "file": "/Users/myadennis/Downloads/MainProject/src/index.css",
+      "color": "#92400e"
+    },
+    {
+      "file": "/Users/myadennis/Downloads/MainProject/src/main.tsx",
+      "color": "#0f172a"
+    },
+    {
+      "file": "/Users/myadennis/Downloads/MainProject/src/main.tsx",
+      "color": "#475569"
+    },
+    {
+      "file": "/Users/myadennis/Downloads/MainProject/src/main.tsx",
+      "color": "#f1f5f9"
+    },
+    {
+      "file": "/Users/myadennis/Downloads/MainProject/src/main.tsx",
+      "color": "#0f172a"
+    },
+    {
+      "file": "/Users/myadennis/Downloads/MainProject/src/main.tsx",
+      "color": "#0f172a"
+    },
+    {
+      "file": "/Users/myadennis/Downloads/MainProject/src/main.tsx",
+      "color": "#e2e8f0"
+    },
+    {
+      "file": "/Users/myadennis/Downloads/MainProject/src/main.tsx",
+      "color": "#0f172a"
+    },
+    {
+      "file": "/Users/myadennis/Downloads/MainProject/src/pages/Admin/AdminProfilePage.tsx",
+      "color": "#0f172a"
+    },
+    {
+      "file": "/Users/myadennis/Downloads/MainProject/src/pages/Admin/OrganizationDetails.tsx",
+      "color": "#2563eb"
+    },
+    {
+      "file": "/Users/myadennis/Downloads/MainProject/src/pages/Admin/OrganizationDetails.tsx",
+      "color": "#7c3aed"
+    }
+  ],
   "fontIssues": []
 }
