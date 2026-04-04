@@ -261,4 +261,89 @@ describe('CoursePlayer progress integration', () => {
       expect(mockLogEvent).toHaveBeenCalledWith(expect.objectContaining({ type: 'user_progress' }));
     });
   });
+
+  it('renders reflection prompts and download lessons as first-class learner content', async () => {
+    mockLoadCourse.mockResolvedValue({
+      course: {
+        ...mockCourse,
+        chapters: [
+          {
+            id: 'chapter-1',
+            title: 'Chapter 1',
+            order: 1,
+            lessons: [
+              {
+                id: 'lesson-reflection',
+                title: 'Reflection Lesson',
+                type: 'reflection',
+                order: 1,
+                duration: '5 min',
+                content: {
+                  reflectionPrompt: '<p>What stood out to you most?</p>',
+                },
+              },
+              {
+                id: 'lesson-download',
+                title: 'Download Lesson',
+                type: 'download',
+                order: 2,
+                duration: '3 min',
+                content: {
+                  fileUrl: 'https://example.com/resource.pdf',
+                  description: 'Take this worksheet with you.',
+                },
+              },
+            ],
+          },
+        ],
+      },
+      modules: [],
+      lessons: [
+        {
+          id: 'lesson-reflection',
+          title: 'Reflection Lesson',
+          type: 'reflection',
+          order: 1,
+          duration: '5 min',
+          content: {
+            reflectionPrompt: '<p>What stood out to you most?</p>',
+          },
+        },
+        {
+          id: 'lesson-download',
+          title: 'Download Lesson',
+          type: 'download',
+          order: 2,
+          duration: '3 min',
+          content: {
+            fileUrl: 'https://example.com/resource.pdf',
+            description: 'Take this worksheet with you.',
+          },
+        },
+      ],
+      source: 'supabase' as const,
+    });
+
+    const queryClient = new QueryClient();
+    render(
+      <QueryClientProvider client={queryClient}>
+        <MemoryRouter initialEntries={['/lms/course/course-1/lesson/lesson-reflection']}>
+          <Routes>
+            <Route path="/lms/course/:courseId/lesson/:lessonId" element={<CoursePlayer namespace="admin" />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>
+    );
+
+    expect(await screen.findByText('Reflection')).toBeInTheDocument();
+    expect(screen.getByText('What stood out to you most?')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /complete reflection/i })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByText('Download Lesson'));
+
+    expect(await screen.findByRole('link', { name: /download resource/i })).toHaveAttribute(
+      'href',
+      'https://example.com/resource.pdf',
+    );
+  });
 });

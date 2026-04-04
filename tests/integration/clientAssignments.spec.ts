@@ -215,4 +215,71 @@ describe('Client assignments API', () => {
     expect(invalidJson).toHaveProperty('error', 'invalid_user_ids');
     expect(invalidJson.invalidUserIds).toContain('legacy-user');
   });
+
+  it('accepts legacy assignedTo.userIds payloads for course assignment', async () => {
+    const courseId = `legacy-assignedto-${randomUUID()}`;
+    const learnerEmail = `legacy.assignedto-${randomUUID()}@example.com`;
+
+    const adminHeaders = await createAdminAuthHeaders({ email: 'mya@the-huddle.co' });
+    const adminRequestHeaders = {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      ...adminHeaders,
+    };
+
+    const createCourse = await server!.fetch('/api/admin/courses', {
+      method: 'POST',
+      headers: adminRequestHeaders,
+      body: JSON.stringify({
+        course: {
+          id: courseId,
+          title: 'Legacy assignedTo payload test',
+          slug: courseId,
+          modules: [
+            {
+              id: 'module-1',
+              title: 'Module 1',
+              description: 'Test module',
+              lessons: [
+                {
+                  id: 'lesson-1',
+                  title: 'Lesson 1',
+                  type: 'text',
+                  content_json: { type: 'text', body: { blocks: [{ type: 'paragraph', data: { text: 'Hello legacy payload' } }] } },
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    });
+    expect([200, 201]).toContain(createCourse.status);
+
+    const createLearnerUser = await server!.fetch('/api/admin/users', {
+      method: 'POST',
+      headers: adminRequestHeaders,
+      body: JSON.stringify({
+        orgId: 'd28e403a-cdab-42cd-8fc7-2c9327ca40f8',
+        firstName: 'Legacy',
+        lastName: 'Payload',
+        email: learnerEmail,
+        password: 'password123',
+      }),
+    });
+    expect([200, 201]).toContain(createLearnerUser.status);
+
+    const assignmentRes = await server!.fetch(`/api/admin/courses/${courseId}/assign`, {
+      method: 'POST',
+      headers: adminRequestHeaders,
+      body: JSON.stringify({
+        organization_id: 'd28e403a-cdab-42cd-8fc7-2c9327ca40f8',
+        assignedTo: { userIds: [learnerEmail] },
+        status: 'assigned',
+      }),
+    });
+    const assignmentJson = await assignmentRes.json().catch(() => null);
+    expect(assignmentRes.status).toBe(200);
+    expect(Array.isArray(assignmentJson?.data)).toBe(true);
+    expect(assignmentJson?.data?.[0]?.user_id || assignmentJson?.data?.[0]?.userId).toBeTruthy();
+  });
 });

@@ -1595,10 +1595,6 @@ const ensureAssignmentScopedCatalog = async (
           }
         }
 
-        if (hasAnyCourses(currentCourses)) {
-          return { source: 'published' as const, catalog: currentCourses };
-        }
-
         return { source: 'empty' as const, catalog: {} as { [key: string]: Course } };
       })();
       if (orgId && fallback.source === 'default' && !DEMO_ASSIGNMENT_FALLBACK_ALLOWED) {
@@ -1609,14 +1605,11 @@ const ensureAssignmentScopedCatalog = async (
         saveCachedCatalog(cacheKey, fallback.catalog);
       }
 
-      console.info(
-        `[courseStore] No assignments (200 empty) — using fallback catalog: ${fallback.source}`,
-      );
+      console.info(`[courseStore] No assignments (200 empty) — resulting catalog: ${fallback.source}`);
 
       const detail = (() => {
         if (fallback.source === 'empty') return orgId ? 'no_assignments' : 'no_assignments_global';
         if (fallback.source === 'default') return 'fallback_default' as const;
-        if (fallback.source === 'published') return 'fallback_published' as const;
         return 'fallback_default' as const;
       })();
 
@@ -1712,7 +1705,7 @@ const ensureAssignmentScopedCatalog = async (
     // Cache is only a fallback when the server request itself failed (network error,
     // timeout, etc.).  Mark UI as degraded so the user knows they may be seeing
     // stale data.
-    const cached = loadCachedCatalog(cacheKey);
+    const cached = !import.meta.env.PROD ? loadCachedCatalog(cacheKey) : null;
     if (cached) {
       // CACHE USED: this log ONLY fires in degraded mode (server threw).
       // If you see this log and the server is healthy, the catch above fired
@@ -1744,7 +1737,9 @@ const ensureAssignmentScopedCatalog = async (
 };
 
 const DEFAULT_CATALOG_ALLOWED =
-  typeof import.meta.env?.VITE_ALLOW_DEFAULT_COURSES !== 'undefined'
+  import.meta.env?.PROD
+    ? false
+    : typeof import.meta.env?.VITE_ALLOW_DEFAULT_COURSES !== 'undefined'
     ? import.meta.env?.VITE_ALLOW_DEFAULT_COURSES === 'true'
     : import.meta.env?.MODE !== 'production';
 const DEMO_ASSIGNMENT_FALLBACK_ALLOWED = Boolean(

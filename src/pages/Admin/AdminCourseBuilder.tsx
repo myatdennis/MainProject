@@ -22,7 +22,13 @@ import { getCourseValidationSummary, type CourseValidationSummary } from '../../
 import { getUserSession } from '../../lib/secureStorage';
 import { ApiError } from '../../utils/apiClient';
 import { getVideoSourceInfo, resolveLessonVideoPlayback } from '../../utils/videoUtils';
-import { shouldRefreshSignedUrl, signMediaAsset, uploadLessonVideo, uploadDocumentResource } from '../../dal/media';
+import {
+  shouldBypassMediaSigning,
+  shouldRefreshSignedUrl,
+  signMediaAsset,
+  uploadLessonVideo,
+  uploadDocumentResource,
+} from '../../dal/media';
 import { canonicalizeLessonContent, canonicalizeQuizQuestions } from '../../utils/lessonContent';
 import { COURSE_DOCUMENTS_BUCKET, COURSE_VIDEOS_BUCKET } from '../../config/mediaBuckets';
 import { 
@@ -1227,6 +1233,65 @@ const AdminCourseBuilder = () => {
 
 const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 const [lastSaveTime, setLastSaveTime] = useState<Date | null>(null);
+
+const syncTruth = useMemo(() => {
+  if (!effectiveValidationSummary.isValid) {
+    return {
+      state: 'publish_blocked' as const,
+      label: 'Publish blocked',
+      detail: 'Resolve validation blockers before this draft can be published.',
+      tone: 'text-amber-700',
+      dot: 'bg-amber-500',
+    };
+  }
+  if (saveStatus === 'saving' || lessonAutosaveState.pending || lessonAutosaveState.status === 'saving') {
+    return {
+      state: 'syncing' as const,
+      label: 'Syncing',
+      detail: 'Changes are being written to Huddle now.',
+      tone: 'text-blue-600',
+      dot: 'bg-blue-500',
+    };
+  }
+  if (saveStatus === 'error') {
+    return {
+      state: 'failed' as const,
+      label: 'Sync failed',
+      detail: 'The latest save did not reach Huddle. Review the error banner and retry.',
+      tone: 'text-red-600',
+      dot: 'bg-red-500',
+    };
+  }
+  if (!supabaseConnected || draftSnapshotPrompt || hasPendingChanges) {
+    return {
+      state: 'local_only' as const,
+      label: 'Local only',
+      detail: !supabaseConnected
+        ? 'Changes are stored locally until the backend is healthy again.'
+        : 'You have local changes that have not reached Huddle yet.',
+      tone: 'text-amber-600',
+      dot: 'bg-amber-500',
+    };
+  }
+  return {
+    state: 'synced' as const,
+    label: 'Synced',
+    detail: lastSaveTime
+      ? `Last synced at ${lastSaveTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`
+      : 'Draft is synced with Huddle.',
+    tone: 'text-green-600',
+    dot: 'bg-green-500',
+  };
+}, [
+  draftSnapshotPrompt,
+  effectiveValidationSummary.isValid,
+  hasPendingChanges,
+  lastSaveTime,
+  lessonAutosaveState.pending,
+  lessonAutosaveState.status,
+  saveStatus,
+  supabaseConnected,
+]);
 
 // ── Multi-tab safety: detect when another tab saves the same course ──────────
 const [staleFromOtherTab, setStaleFromOtherTab] = useState(false);
@@ -3279,6 +3344,9 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
     if (!assetId) {
       return;
     }
+    if (shouldBypassMediaSigning(assetId)) {
+      return;
+    }
 
     const needsRefresh =
       !lessonContent?.videoUrl || shouldRefreshSignedUrl(videoAsset.urlExpiresAt);
@@ -5186,16 +5254,11 @@ const ensureLessonIntegrity = (input: Course): { course: Course; issues: string[
 
             {/* Auto-save status indicator */}
             <div className="flex flex-col text-sm text-right">
-              <span className={`flex items-center justify-end ${hasPendingChanges ? 'text-amber-600' : 'text-green-600'}`}>
-                <span className={`mr-2 h-2 w-2 rounded-full ${hasPendingChanges ? 'bg-amber-500' : 'bg-green-500'}`}></span>
-                {hasPendingChanges ? 'Local changes pending sync…' : 'Draft synced to Supabase'}
+              <span className={`flex items-center justify-end ${syncTruth.tone}`}>
+                <span className={`mr-2 h-2 w-2 rounded-full ${syncTruth.dot}`}></span>
+                {syncTruth.label}
               </span>
-              {lastSaveTime && saveStatus === 'idle' && (
-                <span className="text-gray-500 flex items-center justify-end">
-                  <CheckCircle className="h-3 w-3 mr-1 text-green-500" />
-                  Auto-saved at {lastSaveTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </span>
-              )}
+              <span className="max-w-md text-xs text-gray-500">{syncTruth.detail}</span>
             </div>
           </div>
         </div>

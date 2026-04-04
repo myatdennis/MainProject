@@ -116,7 +116,11 @@ export async function fetchCourseAssignments(
     const rows = Array.isArray(response.data) ? response.data : [];
     return mapAssignmentsFromApiRows(rows);
   } catch (error) {
-    console.error('[fetchCourseAssignments] fetch_error — returning empty list', { courseId, organizationId, error });
-    return [];
+    console.error('[fetchCourseAssignments] fetch_error', { courseId, organizationId, error });
+    throw new CourseValidationError(
+      'fetchCourseAssignments',
+      ['Unable to load course assignments from the server.'],
+      { cause: error }
+    );
   }
 }

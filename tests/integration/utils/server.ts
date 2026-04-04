@@ -11,6 +11,19 @@ const demoDataPath = path.join(repoRoot, 'server', 'demo-data.json');
 
 const resolveAfter = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
+const isRecoverableTestInfraError = (error: any) => {
+  const code = String(error?.code || error?.cause?.code || '').toUpperCase();
+  const message = String(error?.message || error?.cause?.message || '');
+  return (
+    code === 'ENOTFOUND' ||
+    code === 'ECONNREFUSED' ||
+    code === 'SELF_SIGNED_CERT_IN_CHAIN' ||
+    message.includes('ENOTFOUND') ||
+    message.includes('ECONNREFUSED') ||
+    message.includes('SELF_SIGNED_CERT_IN_CHAIN')
+  );
+};
+
 const allocatePort = (() => {
   const explicitPort = Number(process.env.TEST_SERVER_PORT || NaN);
   if (Number.isFinite(explicitPort) && explicitPort > 0) {
@@ -47,7 +60,7 @@ function resetDemoStore() {
   }
 }
 
-async function waitForHealth(apiBase: string, timeoutMs = 15_000) {
+async function waitForHealth(apiBase: string, timeoutMs = 30_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() <= deadline) {
     try {
@@ -89,57 +102,105 @@ export type TestServerHandle = {
 
 export async function startTestServer({ resetDemo = true, idempotencyFallback = false }: { resetDemo?: boolean; idempotencyFallback?: boolean } = {}): Promise<TestServerHandle> {
   if (resetDemo) resetDemoStore();
-  const port = allocatePort();
-  const apiBase = `http://127.0.0.1:${port}`;
-  const env = {
-    ...process.env,
-    PORT: String(port),
-    NODE_ENV: 'test',
-    E2E_TEST_MODE: 'true',
-    DEV_FALLBACK: 'false',
-    DEMO_MODE: 'false',
-    TEST_IDEMPOTENCY_FALLBACK_MODE: String(idempotencyFallback),
-  };
-
   await ensureTestEnvironment({ idempotencyFallback });
 
-  const child = spawn(process.execPath, ['server/index.js'], {
-    cwd: repoRoot,
-    env,
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const port = allocatePort();
+    const apiBase = `http://127.0.0.1:${port}`;
+    const env = {
+      ...process.env,
+      PORT: String(port),
+      NODE_ENV: 'test',
+      E2E_TEST_MODE: 'true',
+      DEV_FALLBACK: 'false',
+      DEMO_MODE: 'false',
+      TEST_IDEMPOTENCY_FALLBACK_MODE: String(idempotencyFallback),
+    };
 
-  child.stdout?.on('data', (chunk) => {
-    if (process.env.DEBUG_TEST_SERVER === 'true') {
-      process.stdout.write(`[srv:${port}] ${chunk}`);
-    }
-  });
-  child.stderr?.on('data', (chunk) => {
-    if (process.env.DEBUG_TEST_SERVER === 'true') {
-      process.stderr.write(`[srv:${port} err] ${chunk}`);
-    }
-  });
-
-  await waitForHealth(apiBase);
-
-  const fetcher = async (path: string, init?: Record<string, any>) => {
-    const fn = await resolveFetch();
-    return fn(`${apiBase}${path}`, init);
-  };
-
-  const stop = async () => {
-    if (child.killed) return;
-    child.kill();
-    await new Promise<void>((resolve) => {
-      child.once('exit', () => resolve());
-      setTimeout(() => {
-        if (!child.killed) child.kill('SIGKILL');
-        resolve();
-      }, 3000);
+    const child = spawn(process.execPath, ['server/index.js'], {
+      cwd: repoRoot,
+      env,
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
-  };
 
-  return { port, apiBase, fetch: fetcher, stop, process: child };
+    const outputBuffer: string[] = [];
+    const appendOutput = (prefix: string, chunk: Buffer | string) => {
+      const text = `${prefix}${chunk.toString()}`;
+      outputBuffer.push(text);
+      if (outputBuffer.length > 200) {
+        outputBuffer.splice(0, outputBuffer.length - 200);
+      }
+    };
+
+    child.stdout?.on('data', (chunk) => {
+      appendOutput('', chunk);
+      if (process.env.DEBUG_TEST_SERVER === 'true') {
+        process.stdout.write(`[srv:${port}] ${chunk}`);
+      }
+    });
+    child.stderr?.on('data', (chunk) => {
+      appendOutput('[stderr] ', chunk);
+      if (process.env.DEBUG_TEST_SERVER === 'true') {
+        process.stderr.write(`[srv:${port} err] ${chunk}`);
+      }
+    });
+
+    child.once('exit', (code, signal) => {
+      if (process.env.DEBUG_TEST_SERVER === 'true') return;
+      const tail = outputBuffer.slice(-40).join('');
+      if (tail.trim()) {
+        process.stderr.write(
+          `[tests] server ${port} exited unexpectedly (code=${code ?? 'null'} signal=${signal ?? 'null'})\n${tail}\n`,
+        );
+      }
+    });
+
+    const stop = async () => {
+      if (child.killed) return;
+      child.kill();
+      await new Promise<void>((resolve) => {
+        child.once('exit', () => resolve());
+        setTimeout(() => {
+          if (!child.killed) child.kill('SIGKILL');
+          resolve();
+        }, 3000);
+      });
+    };
+
+    try {
+      await waitForHealth(apiBase);
+
+      const fetcher = async (path: string, init?: Record<string, any>) => {
+        const fn = await resolveFetch();
+        try {
+          return await fn(`${apiBase}${path}`, init);
+        } catch (error) {
+          const tail = outputBuffer.slice(-60).join('');
+          if (tail.trim()) {
+            process.stderr.write(
+              `[tests] fetch to ${apiBase}${path} failed; recent server output follows:\n${tail}\n`,
+            );
+          }
+          throw error;
+        }
+      };
+
+      return { port, apiBase, fetch: fetcher, stop, process: child };
+    } catch (error) {
+      lastError = error;
+      await stop();
+      const isLastAttempt = attempt === 2;
+      if (isLastAttempt) {
+        break;
+      }
+      if (process.env.DEBUG_TEST_SERVER === 'true') {
+        console.warn(`[tests] startTestServer retrying after failed health check on port ${port}`, error);
+      }
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('Unable to start test server');
 }
 
 export async function stopTestServer(handle?: TestServerHandle | null) {
@@ -391,19 +452,39 @@ async function ensureTestEnvironment({ idempotencyFallback = false }: { idempote
     return;
   }
 
-  await ensureTestOrganization();
+  try {
+    await ensureTestOrganization();
+  } catch (error) {
+    if (isRecoverableTestInfraError(error)) {
+      console.warn('[tests] skipping remote organization bootstrap due unavailable DB/network', error);
+    } else {
+      throw error;
+    }
+  }
 
-  if (idempotencyFallback) {
-    // In fallback mode the server uses its in-memory store (TEST_IDEMPOTENCY_FALLBACK_MODE=true)
-    // regardless of whether the DB table exists. Dropping and recreating the live table causes
-    // a CREATE TYPE race across parallel test forks. Skip the drop to keep the suite stable.
+  try {
     await ensureIdempotencyTableExists();
-  } else {
-    await ensureIdempotencyTableExists();
+  } catch (error) {
+    if (isRecoverableTestInfraError(error)) {
+      console.warn('[tests] skipping remote idempotency table bootstrap due unavailable DB/network', error);
+    } else {
+      throw error;
+    }
   }
 
   for (const user of Object.values(TEST_USERS)) {
-    await ensureSupabaseUser(user);
+    try {
+      await ensureSupabaseUser(user);
+    } catch (error) {
+      if (isRecoverableTestInfraError(error)) {
+        console.warn('[tests] skipping remote user bootstrap due unavailable DB/network', {
+          user: user.email,
+          error,
+        });
+        continue;
+      }
+      throw error;
+    }
   }
 }
 

@@ -2024,6 +2024,19 @@ const LessonContent: React.FC<{
   onComplete: () => void;
   onShowQuizModal: (show: boolean) => void;
 }> = ({ lesson, onComplete, onShowQuizModal }) => {
+  const documentUrlCandidates = [
+    (lesson.content as any)?.downloadUrl,
+    (lesson.content as any)?.url,
+    (lesson.content as any)?.resourceUrl,
+    (lesson.content as any)?.src,
+    (lesson.content as any)?.link,
+    lesson.content?.fileUrl,
+    lesson.content?.documentUrl,
+    lesson.content?.documentAsset?.signedUrl,
+    lesson.content?.documentAsset?.publicUrl,
+    (lesson.content?.documentAsset as any)?.url,
+  ];
+
   const renderFallback = (message: string) => (
     <Card tone="muted" className="space-y-3">
       <p className="text-sm text-slate/80">{message}</p>
@@ -2038,17 +2051,33 @@ const LessonContent: React.FC<{
   if (!lesson.content || (typeof lesson.content === 'object' && Object.keys(lesson.content).length === 0)) {
     return renderFallback('Lesson content unavailable. Please check back later.');
   }
-  if (lessonType === 'text') {
-    const html = lesson.content.textContent || lesson.content.content || lesson.description || '';
+  if (lessonType === 'text' || lessonType === 'reflection') {
+    const html =
+      lesson.content.textContent ||
+      lesson.content.content ||
+      lesson.content.reflectionPrompt ||
+      (lesson.content as any)?.prompt ||
+      (lesson.content as any)?.question ||
+      lesson.description ||
+      '';
     if (!html.trim()) {
-      return renderFallback('Lesson notes will appear here once your facilitator adds them.');
+      return renderFallback(
+        lessonType === 'reflection'
+          ? 'Reflection prompt will appear here once your facilitator adds it.'
+          : 'Lesson notes will appear here once your facilitator adds them.',
+      );
     }
     return (
       <div className="prose max-w-none text-charcoal">
+        {lessonType === 'reflection' && (
+          <Badge tone="info" className="mb-4 bg-sunrise/10 text-sunrise">
+            Reflection
+          </Badge>
+        )}
         <div dangerouslySetInnerHTML={{ __html: html }} />
         <div className="mt-8 flex justify-end border-t border-mist/60 pt-6">
           <Button onClick={onComplete} trailingIcon={<CheckCircle className="h-4 w-4" />}>
-            Mark as complete
+            {lessonType === 'reflection' ? 'Complete reflection' : 'Mark as complete'}
           </Button>
         </div>
       </div>
@@ -2125,17 +2154,12 @@ const LessonContent: React.FC<{
     );
   }
 
-  if (lessonType === 'resource' || lessonType === 'document') {
+  if (lessonType === 'resource' || lessonType === 'document' || lessonType === 'download') {
     const resource: any = lesson.content;
     // Try multiple possible field names for the download URL
-    const downloadUrl = 
-      resource.downloadUrl || 
-      resource.url || 
-      resource.resourceUrl ||
-      resource.src ||
-      resource.link;
+    const downloadUrl = documentUrlCandidates.find((value) => typeof value === 'string' && value.trim().length > 0);
     const fileSize = resource.fileSize || resource.size;
-    const resourceType = resource.resourceType || resource.type || 'file';
+    const resourceType = resource.resourceType || lessonType || resource.type || 'file';
     
     return (
       <div className="space-y-6">

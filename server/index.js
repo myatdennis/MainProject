@@ -1,6 +1,4 @@
 import 'dotenv/config';
-// TEST_EDIT_INSERTION - unique marker
-console.log('[startup] Entrypoint loaded');
 import express from 'express';
 import http from 'http';
 import path from 'path';
@@ -43,16 +41,43 @@ const logRouteError = (route, error) => {
 
 // ---------------------------------------------------------------------------
 // Standardized API response helpers — use these on ALL new/updated routes.
-// Shape: { ok: true, data, meta? } | { ok: false, error, code, message? }
+// Shape: { ok, data, code, message, meta }
 // ---------------------------------------------------------------------------
-const sendApiResponse = (res, data, meta = null, statusCode = 200) => {
-  const payload = { ok: true, data };
-  if (meta && typeof meta === 'object') payload.meta = meta;
-  return res.status(statusCode).json(payload);
+const sendApiResponse = (res, data, options = {}) => {
+  const {
+    statusCode = 200,
+    code = null,
+    message = null,
+    meta = null,
+  } = options;
+  return res.status(statusCode).json({
+    ok: true,
+    data: data ?? null,
+    code,
+    message,
+    meta: meta && typeof meta === 'object' ? meta : null,
+  });
 };
 
 const sendApiError = (res, statusCode, code, message, extra = {}) => {
-  return res.status(statusCode).json({ ok: false, error: code, code, message, ...extra });
+  const {
+    meta = null,
+    ...rest
+  } = extra ?? {};
+  const resolvedMeta =
+    meta && typeof meta === 'object'
+      ? meta
+      : extra?.requestId
+      ? { requestId: extra.requestId }
+      : null;
+  return res.status(statusCode).json({
+    ok: false,
+    data: null,
+    code: code ?? null,
+    message: message ?? null,
+    meta: resolvedMeta,
+    ...rest,
+  });
 };
 import { withCache, invalidateCacheKeys } from './services/cacheService.js';
 import { enqueueJob, registerJobProcessor, hasQueueBackend } from './jobs/taskQueue.js';
@@ -307,6 +332,35 @@ const schemaHealth = {
     checkedAt: null,
   },
 };
+class ExplicitOrgSelectionRequiredError extends Error {
+  constructor(message = 'Explicit organization selection required for this write operation.') {
+    super(message);
+    this.name = 'ExplicitOrgSelectionRequiredError';
+    this.code = 'explicit_org_selection_required';
+    this.status = 400;
+  }
+}
+const STRICT_STARTUP_GUARDS = isProduction || parseFlag(process.env.STRICT_STARTUP_GUARDS);
+
+function validateCriticalStartupEnv() {
+  if (!STRICT_STARTUP_GUARDS) {
+    return;
+  }
+  const requiredEnv = [
+    ['SUPABASE_URL'],
+    ['SUPABASE_JWT_SECRET'],
+    ['JWT_ACCESS_SECRET'],
+    ['JWT_REFRESH_SECRET'],
+    ['SUPABASE_SERVICE_ROLE_KEY', 'SUPABASE_SERVICE_KEY', 'SUPABASE_KEY'],
+  ];
+  const missing = requiredEnv
+    .filter((group) => group.every((key) => !String(process.env[key] || '').trim()))
+    .map((group) => group.join(' | '));
+
+  if (missing.length > 0) {
+    throw new Error(`critical_env_missing:${missing.join(',')}`);
+  }
+}
 
 function setMembershipSchemaHealth(status, reason = null) {
   schemaHealth.membership = {
@@ -328,27 +382,91 @@ function setMembershipSchemaHealth(status, reason = null) {
 }
 
 async function requireCriticalSchema () {
+  const failStartup = (reason, extra = {}) => {
+    setMembershipSchemaHealth('degraded', reason);
+    logger.warn('membership_schema_status_changed', {
+      status: 'degraded',
+      reason,
+      ...extra,
+    });
+    if (STRICT_STARTUP_GUARDS) {
+      throw new Error(reason);
+    }
+  };
+
   if (!databaseConnectionInfo.connectionStringDefined) {
     console.warn('[schema] Database connection string missing; skipping critical schema verification.');
-    setMembershipSchemaHealth('degraded', 'database_url_missing');
+    failStartup('database_url_missing');
     return;
   }
   try {
     const rows = await sql`
-      select column_name
+      select table_name, column_name
       from information_schema.columns
-      where table_schema = 'public' and table_name = 'organization_memberships'
+      where table_schema = 'public'
+        and (
+          table_name = 'organization_memberships'
+          or table_name = 'user_organizations_vw'
+        )
     `;
-    const columnNames = rows.map((row) => row.column_name);
-    const requiredColumns = ['organization_id', 'user_id'];
-    const missing = requiredColumns.filter((column) => !columnNames.includes(column));
+    const getColumns = (tableName) =>
+      rows
+        .filter((row) => row.table_name === tableName)
+        .map((row) => row.column_name);
+    const membershipColumns = getColumns('organization_memberships');
+    const membershipRequiredColumns = ['organization_id', 'user_id'];
+    const membershipMissing = membershipRequiredColumns.filter((column) => !membershipColumns.includes(column));
+    const membershipViewColumns = getColumns('user_organizations_vw');
+    const membershipViewRequiredColumns = ['organization_id', 'user_id', 'role', 'status'];
+    const membershipViewMissing = membershipViewRequiredColumns.filter((column) => !membershipViewColumns.includes(column));
+    const missing = [...membershipMissing, ...membershipViewMissing.map((column) => `user_organizations_vw.${column}`)];
     if (missing.length) {
-      setMembershipSchemaHealth(
-        'degraded',
-        `Missing columns: ${missing.join(', ')}`,
-      );
-      logger.warn('organization_memberships_schema_missing_columns', {
+      failStartup(`Missing columns: ${missing.join(', ')}`, {
         missing,
+        dbHost: databaseHost,
+      });
+      return;
+    }
+
+    const indexRows = await sql`
+      select indexname
+      from pg_indexes
+      where schemaname = 'public'
+        and indexname in (
+          'courses_org_slug_unique_idx',
+          'user_course_progress_unique',
+          'user_lesson_progress_unique',
+          'organization_memberships_unique',
+          'organization_memberships_unique_organization_id_user_id'
+        )
+    `;
+    const indexNames = new Set(indexRows.map((row) => row.indexname));
+    const requiredIndexGroups = [
+      ['courses_org_slug_unique_idx'],
+      ['user_course_progress_unique'],
+      ['user_lesson_progress_unique'],
+      ['organization_memberships_unique', 'organization_memberships_unique_organization_id_user_id'],
+    ];
+    const missingIndexGroups = requiredIndexGroups.filter((group) => group.every((name) => !indexNames.has(name)));
+    if (missingIndexGroups.length > 0) {
+      const missingIndexes = missingIndexGroups.map((group) => group.join(' | '));
+      failStartup(`Missing critical indexes: ${missingIndexes.join(', ')}`, {
+        missingIndexes,
+        dbHost: databaseHost,
+      });
+      return;
+    }
+
+    const functionRows = await sql`
+      select proname
+      from pg_proc p
+      join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'public'
+        and proname in ('upsert_course_graph')
+    `;
+    const functionNames = new Set(functionRows.map((row) => row.proname));
+    if (!functionNames.has('upsert_course_graph')) {
+      failStartup('Missing critical function: upsert_course_graph', {
         dbHost: databaseHost,
       });
       return;
@@ -356,11 +474,16 @@ async function requireCriticalSchema () {
     setMembershipSchemaHealth('ok', null);
   } catch (error) {
     const reason = error?.message || 'schema_check_failed';
-    setMembershipSchemaHealth('degraded', reason);
+    if (!String(reason).startsWith('Missing columns:')) {
+      setMembershipSchemaHealth('degraded', reason);
+    }
     console.warn('[schema] membership schema degraded', {
       message: error?.message || error,
       dbHost: databaseHost,
     });
+    if (STRICT_STARTUP_GUARDS) {
+      throw error;
+    }
   }
 }
 
@@ -454,20 +577,27 @@ const runStorageDoctor = async () => {
 };
 
 const runStartupChecks = async () => {
+  validateCriticalStartupEnv();
   try {
     await requireCriticalSchema();
   } catch (error) {
     const reason = error?.message || 'schema_probe_failed';
     setMembershipSchemaHealth('degraded', reason);
     logger.warn('membership_schema_probe_failed', { reason, message: reason });
+    if (STRICT_STARTUP_GUARDS) {
+      throw error;
+    }
   }
   await runSchemaDoctor();
 };
 
-runStartupChecks().catch((error) => {
+const startupChecksPromise = runStartupChecks().catch((error) => {
   logger.warn('startup_schema_checks_failed', {
     message: error?.message || String(error),
   });
+  if (STRICT_STARTUP_GUARDS) {
+    throw error;
+  }
 });
 
 // Persistent storage file for demo mode
@@ -1126,7 +1256,9 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
   if (!resolvedCourseId) {
     res.locals = res.locals || {};
     res.locals.errorCode = 'course_not_found';
-    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
+    sendApiError(res, 404, 'course_not_found', `Course not found for identifier ${id}`, {
+      meta: { requestId: req.requestId ?? null },
+    });
     return;
   }
   const courseId = resolvedCourseId;
@@ -1282,7 +1414,11 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
     ? body.user_ids
     : Array.isArray(body.userIds)
       ? body.userIds
-      : [];
+      : Array.isArray(body.assignedTo?.user_ids)
+        ? body.assignedTo.user_ids
+        : Array.isArray(body.assignedTo?.userIds)
+          ? body.assignedTo.userIds
+          : [];
 
   const resolvedUserIdSet = new Set();
   const unresolvedUserIdSet = new Set();
@@ -3465,6 +3601,17 @@ const resolveOrgIdForCourseRequest = async (req, context, candidates = []) => {
     orgId = await coerceOrgIdentifierToUuid(req, orgId);
     console.log('[admin-courses] resolveOrgIdForCourseRequest resolved candidate orgId', { orgId });
   }
+  if (!orgId) {
+    const scopedOrgIds = Array.from(collectOrgIdsFromContext(context, req));
+    if (scopedOrgIds.length > 1) {
+      throw new ExplicitOrgSelectionRequiredError(
+        'This action is ambiguous across multiple organizations. Provide an organizationId explicitly.',
+      );
+    }
+    if (scopedOrgIds.length === 1) {
+      orgId = scopedOrgIds[0];
+    }
+  }
   if (!orgId && context.isPlatformAdmin) {
     if (!req[PLATFORM_ADMIN_ORG_CACHE_KEY]) {
       console.log('[admin-courses] platform admin no cached orgId, fetching primary', { userId: context.userId });
@@ -5196,7 +5343,8 @@ const normalizeSnapshotPayload = (body = {}, fallbackUserId) => {
   };
 };
 
-const resolveOrgIdFromRequest = (req, context) => {
+const resolveOrgScopeFromRequest = (req, context, options = {}) => {
+  const { requireExplicitSelection = false } = options;
   const rawHeaderOrg =
     req.organizationId ??
     req.activeOrgId ??
@@ -5239,16 +5387,26 @@ const resolveOrgIdFromRequest = (req, context) => {
   for (const candidate of orderedCandidates) {
     const allowed = canUseOrg(candidate);
     if (allowed) {
-      return allowed;
+      return { orgId: allowed, requiresExplicitSelection: false };
+    }
+  }
+  if (requireExplicitSelection && !context?.isPlatformAdmin) {
+    const distinctMembershipOrgIds = Array.from(new Set([...membershipOrgIds, ...organizationIds]));
+    if (distinctMembershipOrgIds.length > 1) {
+      return { orgId: null, requiresExplicitSelection: true };
     }
   }
   if (membershipOrgIds.length > 0) {
-    return membershipOrgIds[0];
+    return { orgId: membershipOrgIds[0], requiresExplicitSelection: false };
   }
   if (organizationIds.length > 0) {
-    return organizationIds[0];
+    return { orgId: organizationIds[0], requiresExplicitSelection: false };
   }
-  return null;
+  return { orgId: null, requiresExplicitSelection: false };
+};
+
+const resolveOrgIdFromRequest = (req, context) => {
+  return resolveOrgScopeFromRequest(req, context).orgId;
 };
 
 const buildLessonRow = (lessonId, record) => {
@@ -6407,6 +6565,100 @@ const shapeCourseForValidation = (courseRow) => {
       })),
     })),
   };
+};
+
+const serializeSqlLessonRow = (row) => ({
+  id: row.id,
+  module_id: row.module_id,
+  course_id: row.course_id,
+  organization_id: row.organization_id ?? null,
+  title: row.title ?? '',
+  type: row.type ?? 'text',
+  description: row.description ?? null,
+  order_index: row.order_index ?? 0,
+  duration_s: row.duration_s ?? null,
+  content_json: row.content_json ?? {},
+});
+
+const serializeSqlModuleRow = (row, lessons = []) => ({
+  id: row.id,
+  course_id: row.course_id,
+  organization_id: row.organization_id ?? null,
+  title: row.title ?? '',
+  description: row.description ?? null,
+  order_index: row.order_index ?? 0,
+  lessons,
+});
+
+const buildCourseGraphFromSqlRows = (courseRow, moduleRows = [], lessonRows = []) => {
+  const lessonsByModuleId = new Map();
+  lessonRows.forEach((lesson) => {
+    const moduleId = lesson.module_id;
+    if (!moduleId) return;
+    if (!lessonsByModuleId.has(moduleId)) {
+      lessonsByModuleId.set(moduleId, []);
+    }
+    lessonsByModuleId.get(moduleId).push(serializeSqlLessonRow(lesson));
+  });
+  const modules = moduleRows
+    .map((module) =>
+      serializeSqlModuleRow(
+        module,
+        [...(lessonsByModuleId.get(module.id) ?? [])].sort((left, right) => (left.order_index ?? 0) - (right.order_index ?? 0)),
+      ),
+    )
+    .sort((left, right) => (left.order_index ?? 0) - (right.order_index ?? 0));
+  return {
+    id: courseRow.id,
+    organization_id: courseRow.organization_id ?? null,
+    slug: courseRow.slug ?? null,
+    title: courseRow.title ?? '',
+    description: courseRow.description ?? null,
+    status: courseRow.status ?? 'draft',
+    meta_json: courseRow.meta_json ?? {},
+    key_takeaways: courseRow.key_takeaways ?? [],
+    version: courseRow.version ?? 1,
+    published_at: courseRow.published_at ?? null,
+    updated_at: courseRow.updated_at ?? null,
+    modules,
+  };
+};
+
+const loadCourseGraphWithTx = async (tx, courseId) => {
+  const courseRows = await tx`
+    select id, organization_id, slug, title, description, status, meta_json, key_takeaways, version, published_at, updated_at
+    from public.courses
+    where id = ${courseId}::uuid
+    limit 1
+  `;
+  const courseRow = firstRow(courseRows);
+  if (!courseRow) {
+    return null;
+  }
+  const moduleRows = await tx`
+    select id, course_id, organization_id, title, description, order_index
+    from public.modules
+    where course_id = ${courseId}::uuid
+    order by order_index asc, id asc
+  `;
+  const lessonRows = await tx`
+    select id, module_id, course_id, organization_id, title, type, description, order_index, duration_s, content_json
+    from public.lessons
+    where course_id = ${courseId}::uuid
+    order by order_index asc, id asc
+  `;
+  return buildCourseGraphFromSqlRows(courseRow, moduleRows, lessonRows);
+};
+
+const upsertCourseGraphWithTx = async (tx, { actorUserId, organizationId, coursePayload }) => {
+  const result = await tx`
+    select public.upsert_course_graph(
+      ${JSON.stringify(coursePayload)}::jsonb,
+      ${actorUserId ? actorUserId : null}::uuid,
+      ${organizationId}::uuid
+    ) as course
+  `;
+  return firstRow(result)?.course ?? null;
 };
 
 const toStrategicPlan = (row) => ({
@@ -9324,6 +9576,118 @@ async function assignPublishedOrganizationCoursesToUser({ orgId, userId, actorUs
   };
 }
 
+async function backfillPublishedCourseAssignmentsWithTx(
+  tx,
+  {
+    orgId,
+    courseId,
+    actorUserId = null,
+    assignmentsOrgColumn = 'organization_id',
+    assignmentsSupportUserIdUuid = false,
+  },
+) {
+  if (!orgId || !courseId) {
+    return { inserted: 0, updated: 0, skipped: 0 };
+  }
+
+  const memberRows = await tx`
+    select distinct user_id
+    from public.organization_memberships
+    where organization_id = ${orgId}::uuid
+      and user_id is not null
+      and lower(coalesce(status, 'active')) = 'active'
+  `;
+  const userIds = Array.from(new Set(memberRows.map((row) => row.user_id).filter(Boolean)));
+  if (userIds.length === 0) {
+    return { inserted: 0, updated: 0, skipped: 0 };
+  }
+
+  const existingRows = await tx.unsafe(
+    assignmentsSupportUserIdUuid
+      ? `
+        select id, user_id, user_id_uuid, metadata, assigned_by
+        from public.assignments
+        where ${assignmentsOrgColumn === 'org_id' ? 'org_id' : 'organization_id'} = $1::uuid
+          and course_id = $2::uuid
+          and assignment_type = 'course'
+          and active = true
+      `
+      : `
+        select id, user_id, metadata, assigned_by
+        from public.assignments
+        where ${assignmentsOrgColumn === 'org_id' ? 'org_id' : 'organization_id'} = $1::uuid
+          and course_id = $2::uuid
+          and assignment_type = 'course'
+          and active = true
+      `,
+    [orgId, courseId],
+  );
+
+  const existingByUserId = new Map();
+  existingRows.forEach((row) => {
+    if (row?.user_id) existingByUserId.set(String(row.user_id), row);
+    if (assignmentsSupportUserIdUuid && row?.user_id_uuid) {
+      existingByUserId.set(String(row.user_id_uuid), row);
+    }
+  });
+
+  const metadata = JSON.stringify({
+    assigned_via: 'organization_membership_auto_assign',
+    assignment_source: 'organization_membership',
+  });
+  const resolvedAssignedBy = actorUserId && isUuid(actorUserId) ? actorUserId : null;
+  let inserted = 0;
+  let updated = 0;
+
+  for (const userId of userIds) {
+    const existing = existingByUserId.get(String(userId));
+    if (existing?.id) {
+      await tx.unsafe(
+        `
+          update public.assignments
+          set metadata = coalesce(metadata, '{}'::jsonb) || $1::jsonb,
+              assigned_by = coalesce(assigned_by, $2::uuid),
+              active = true,
+              updated_at = now()
+          where id = $3::uuid
+        `,
+        [metadata, resolvedAssignedBy, existing.id],
+      );
+      updated += 1;
+      continue;
+    }
+
+    if (assignmentsSupportUserIdUuid) {
+      await tx.unsafe(
+        `
+          insert into public.assignments
+            (course_id, ${assignmentsOrgColumn === 'org_id' ? 'org_id' : 'organization_id'}, user_id, user_id_uuid, assignment_type, assigned_by, status, progress, metadata, active, due_at, note, created_at, updated_at)
+          values
+            ($1::uuid, $2::uuid, $3, $4::uuid, 'course', $5::uuid, 'assigned', 0, $6::jsonb, true, null, null, now(), now())
+        `,
+        [courseId, orgId, String(userId), userId, resolvedAssignedBy, metadata],
+      );
+    } else {
+      await tx.unsafe(
+        `
+          insert into public.assignments
+            (course_id, ${assignmentsOrgColumn === 'org_id' ? 'org_id' : 'organization_id'}, user_id, assignment_type, assigned_by, status, progress, metadata, active, due_at, note, created_at, updated_at)
+          values
+            ($1::uuid, $2::uuid, $3, 'course', $4::uuid, 'assigned', 0, $5::jsonb, true, null, null, now(), now())
+        `,
+        [courseId, orgId, String(userId), resolvedAssignedBy, metadata],
+      );
+    }
+    inserted += 1;
+  }
+
+  return {
+    inserted,
+    updated,
+    skipped: Math.max(userIds.length - inserted - updated, 0),
+  };
+}
+
 async function assignPublishedOrganizationSurveysToUser({ orgId, userId, actorUserId = null }) {
   if (!supabase || !orgId || !userId) return { inserted: 0, updated: 0, skipped: 0 };
 
@@ -11168,9 +11532,8 @@ const normalizeKeyTakeawaysInput = (input) => {
 async function handleAdminCourseUpsert(req, res, options = {}) {
   const { courseIdFromParams = null } = options;
   if (courseIdFromParams && !isUuid(courseIdFromParams) && !isFallbackMode) {
-    res.status(400).json({
-      error: 'invalid_course_id',
-      message: 'Course ID must be a UUID.',
+    sendApiError(res, 400, 'invalid_course_id', 'Course ID must be a UUID.', {
+      meta: { requestId: req.requestId ?? null },
     });
     return;
   }
@@ -11182,13 +11545,17 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
     : [];
   req.body.modules = modulesLocal;
   if (!courseLocal) {
-    res.status(400).json({ error: 'course_required', message: 'Missing course object in request body.' });
+    sendApiError(res, 400, 'course_required', 'Missing course object in request body.', {
+      meta: { requestId: req.requestId ?? null },
+    });
     return;
   }
   if (courseIdFromParams) {
     const incomingId = courseLocal?.id ?? null;
     if (incomingId && String(incomingId) !== String(courseIdFromParams)) {
-      res.status(400).json({ error: 'course_id_mismatch', message: 'Course ID in payload must match URL parameter.' });
+      sendApiError(res, 400, 'course_id_mismatch', 'Course ID in payload must match URL parameter.', {
+        meta: { requestId: req.requestId ?? null },
+      });
       return;
     }
     courseLocal = { ...(courseLocal || {}), id: courseIdFromParams };
@@ -11491,6 +11858,12 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
   } catch (orgErr) {
     if (orgErr instanceof InvalidOrgIdentifierError) {
       respondInvalidOrg(res, orgErr.identifier);
+      return;
+    }
+    if (orgErr instanceof ExplicitOrgSelectionRequiredError) {
+      sendApiError(res, orgErr.status || 400, orgErr.code, orgErr.message, {
+        meta: { requestId: req.requestId ?? null },
+      });
       return;
     }
     throw orgErr;
@@ -11913,7 +12286,16 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
           });
         }
       }
-      res.status(course?.id ? 200 : 201).json({ data: savedCourse });
+      sendApiResponse(res, savedCourse, {
+        statusCode: course?.id ? 200 : 201,
+        code: course?.id ? 'course_saved' : 'course_created',
+        message: course?.id ? 'Course saved.' : 'Course created.',
+        meta: {
+          requestId: req.requestId ?? null,
+          courseId: savedCourse?.id ?? null,
+          orgId: organizationId ?? null,
+        },
+      });
       return true;
     };
 
@@ -11959,12 +12341,14 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
     // Provide more details to the client for debugging
     const errorMessage = error?.message || 'Unable to save course';
     const errorDetails = error?.details || error?.hint || null;
-    res.status(500).json({
-      error: errorMessage,
+    sendApiError(res, 500, error?.code ?? 'upsert_failed', errorMessage, {
       details: errorDetails,
-      code: error?.code ?? null,
       hint: error?.hint ?? null,
-      timestamp: new Date().toISOString(),
+      meta: {
+        requestId: req.requestId ?? null,
+        timestamp: new Date().toISOString(),
+        orgId: organizationId ?? null,
+      },
     });
   }
 }
@@ -11979,12 +12363,16 @@ app.put('/api/admin/courses/:id', authenticate, requireOrgAdmin, asyncHandler(as
   if (!resolvedCourseId) {
     res.locals = res.locals || {};
     res.locals.errorCode = 'course_not_found';
-    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
+    sendApiError(res, 404, 'course_not_found', `Course not found for identifier ${id}`, {
+      meta: { requestId: req.requestId ?? null },
+    });
     return;
   }
   const courseId = resolvedCourseId;
   if (!isUuid(id) && !isFallbackMode) {
-    res.status(400).json({ error: 'invalid_course_id', message: 'Course ID must be a UUID.' });
+    sendApiError(res, 400, 'invalid_course_id', 'Course ID must be a UUID.', {
+      meta: { requestId: req.requestId ?? null },
+    });
     return;
   }
   await handleAdminCourseUpsert(req, res, { courseIdFromParams: id });
@@ -12011,14 +12399,13 @@ const respondImportError = ({
   details = null,
   queryName = 'admin_courses_import',
 }) => {
-  res.status(status).json({
-    ok: false,
-    code,
-    message,
+  sendApiError(res, status, code, message, {
     hint,
-    requestId,
-    queryName,
     details,
+    meta: {
+      requestId,
+      queryName,
+    },
   });
 };
 
@@ -12065,12 +12452,27 @@ app.post('/api/admin/courses/import', authenticate, requireOrgAdmin, asyncHandle
   const userScopedOrgIds = Array.isArray(context.organizationIds)
     ? context.organizationIds.map((orgId) => normalizeOrgIdValue(orgId)).filter(Boolean)
     : [];
-  const resolvedOrganizationId =
+  const availableOrgIds = Array.from(new Set([
+    normalizedRequestOrgId,
+    contextActiveOrgId,
+    ...membershipOrgIds,
+    ...userScopedOrgIds,
+  ].filter(Boolean)));
+  let resolvedOrganizationId =
     normalizedRequestOrgId ||
     contextActiveOrgId ||
-    membershipOrgIds[0] ||
-    userScopedOrgIds[0] ||
-    null;
+    (availableOrgIds.length === 1 ? availableOrgIds[0] : null);
+  if (!resolvedOrganizationId && availableOrgIds.length > 1) {
+    respondImportError({
+      res,
+      status: 400,
+      code: 'explicit_org_selection_required',
+      message: 'This import is ambiguous across multiple organizations. Pass an organizationId explicitly.',
+      requestId: req.requestId ?? null,
+      details: { availableOrgIds },
+    });
+    return;
+  }
   if (!resolvedOrganizationId) {
     respondImportError({
       res,
@@ -12182,6 +12584,29 @@ app.post('/api/admin/courses/import', authenticate, requireOrgAdmin, asyncHandle
     return;
   }
   const preparedEntries = normalizedItems.filter(Boolean);
+  const batchSlugCounts = new Map();
+  for (const entry of preparedEntries) {
+    const slugSource =
+      entry?.course?.slug ||
+      entry?.course?.title ||
+      entry?.course?.id ||
+      `course-${entry?.index ?? 'import'}`;
+    const normalizedSlug = slugify(slugSource);
+    if (!normalizedSlug) continue;
+    batchSlugCounts.set(normalizedSlug, (batchSlugCounts.get(normalizedSlug) || 0) + 1);
+  }
+  const duplicateBatchSlug = Array.from(batchSlugCounts.entries()).find(([, count]) => count > 1)?.[0] ?? null;
+  if (duplicateBatchSlug) {
+    respondImportError({
+      res,
+      status: 409,
+      code: 'slug_conflict',
+      message: 'Import batch contains duplicate course slugs. Each imported course must have a unique slug.',
+      requestId: req.requestId ?? null,
+      details: { slug: duplicateBatchSlug },
+    });
+    return;
+  }
   logCourseImportEvent('import_validated', {
     requestId: req.requestId ?? null,
     orgId: resolvedOrganizationId,
@@ -12239,6 +12664,14 @@ app.post('/api/admin/courses/import', authenticate, requireOrgAdmin, asyncHandle
             }
           }
         }
+        if (existingId && !payload?.overwrite) {
+          const error = new Error(
+            'A course with this slug already exists in the selected organization. Choose a different slug or set "overwrite": true to replace it.',
+          );
+          error.code = 'slug_conflict';
+          error.status = 409;
+          throw error;
+        }
         const id = course.id ?? existingId ?? `e2e-course-${Date.now()}-${Math.floor(Math.random()*1000)}`;
         const courseObj = {
           id,
@@ -12257,7 +12690,7 @@ app.post('/api/admin/courses/import', authenticate, requireOrgAdmin, asyncHandle
           const moduleId = module.id ?? `e2e-mod-${Date.now()}-${moduleIndex}-${Math.floor(Math.random()*1000)}`;
           const moduleObj = {
             id: moduleId,
-            course_id: courseId,
+            course_id: id,
             organization_id: resolvedOrgId,
             title: module.title,
             description: module.description ?? null,
@@ -12287,7 +12720,12 @@ app.post('/api/admin/courses/import', authenticate, requireOrgAdmin, asyncHandle
         results.push({ id, slug: courseObj.slug, title: courseObj.title });
       }
       persistE2EStore();
-      res.status(201).json({ ok: true, data: results, requestId: req.requestId ?? null });
+      sendApiResponse(res, results, {
+        statusCode: 201,
+        code: 'courses_imported',
+        message: 'Courses imported successfully.',
+        meta: { requestId: req.requestId ?? null, mode: 'demo' },
+      });
     } catch (err) {
       // Rollback
       e2eStore.courses = snapshot;
@@ -12297,9 +12735,9 @@ app.post('/api/admin/courses/import', authenticate, requireOrgAdmin, asyncHandle
       });
       respondImportError({
         res,
-        status: 400,
-        code: 'import_failed',
-        message: 'Import failed',
+        status: Number.isInteger(err?.status) ? err.status : 400,
+        code: err?.code ?? 'import_failed',
+        message: err?.message ?? 'Import failed',
         requestId: req.requestId ?? null,
         details: String(err?.message || err),
       });
@@ -12315,151 +12753,136 @@ app.post('/api/admin/courses/import', authenticate, requireOrgAdmin, asyncHandle
     return;
   }
   try {
-    const results = [];
-    for (const entry of preparedEntries) {
-      const { course, modules, index: courseIndex } = entry;
-      const resolvedOrgId = resolvedOrganizationId;
-      const userProvidedStatus = typeof course.status === 'string' && course.status.trim().length > 0;
-      let normalizedStatus = canonicalizeStatus(course.status, publishRequested ? 'published' : 'draft');
-      if (!userProvidedStatus && publishRequested) {
-        normalizedStatus = 'published';
-      }
-      course.status = normalizedStatus;
+    const results = await sql.begin(async (tx) => {
+      const persistedResults = [];
+      for (const entry of preparedEntries) {
+        const { course, modules, index: courseIndex } = entry;
+        const resolvedOrgId = resolvedOrganizationId;
+        const userProvidedStatus = typeof course.status === 'string' && course.status.trim().length > 0;
+        let normalizedStatus = canonicalizeStatus(course.status, publishRequested ? 'published' : 'draft');
+        if (!userProvidedStatus && publishRequested) {
+          normalizedStatus = 'published';
+        }
+        course.status = normalizedStatus;
 
-      if (course.status === 'published') {
-        const shaped = shapeCourseForValidation({ ...course, modules });
-        const validation = validatePublishableCourse(shaped, { intent: 'publish' });
-        if (!validation.isValid) {
-          const publishDetails = validation.issues.map((issue) => ({
-            courseIndex,
-            field: issue.path || issue.field || null,
-            message: issue.message,
-            code: issue.code || 'invalid',
-            receivedValueType: issue.receivedValueType ?? null,
-          }));
-          respondImportError({
-            res,
-            status: 422,
-            code: 'validation_failed',
-            message: 'Publish validation failed.',
-            requestId: req.requestId ?? null,
-            details: publishDetails,
-          });
-          return;
+        if (course.status === 'published') {
+          const shaped = shapeCourseForValidation({ ...course, modules });
+          const validation = validatePublishableCourse(shaped, { intent: 'publish' });
+          if (!validation.isValid) {
+            const publishDetails = validation.issues.map((issue) => ({
+              courseIndex,
+              field: issue.path || issue.field || null,
+              message: issue.message,
+              code: issue.code || 'invalid',
+              receivedValueType: issue.receivedValueType ?? null,
+            }));
+            const error = new Error('Publish validation failed.');
+            error.code = 'validation_failed';
+            error.status = 422;
+            error.details = publishDetails;
+            throw error;
+          }
         }
-      }
-      course.organization_id = resolvedOrgId;
-      const slugSource = course.slug || course.title || course.id || `course-${randomUUID().slice(0, 8)}`;
-      course.slug = slugify(slugSource);
-      const { data: existingCourse, error: existingError } = await supabase
-        .from('courses')
-        .select('id, slug')
-        .eq('organization_id', resolvedOrgId)
-        .eq('slug', course.slug)
-        .maybeSingle();
-      if (existingError) {
-        throw existingError;
-      }
+
+        course.organization_id = resolvedOrgId;
+        const slugSource = course.slug || course.title || course.id || `course-${randomUUID().slice(0, 8)}`;
+        course.slug = slugify(slugSource);
+        const existingCourseRows = await tx`
+          select id, slug
+          from public.courses
+          where organization_id = ${resolvedOrgId}::uuid
+            and slug = ${course.slug}
+          limit 1
+        `;
+        const existingCourse = firstRow(existingCourseRows);
         if (existingCourse && !entry.overwrite) {
-          logCourseImportEvent('import_slug_conflict', {
-            requestId: req.requestId ?? null,
-            orgId: resolvedOrgId,
-            slug: course.slug,
-            courseIndex: entry.index,
-          });
-          respondImportError({
-            res,
-            status: 409,
-            code: 'slug_conflict',
-            message:
-              'A course with this slug already exists in the selected organization. Choose a different slug or set "overwrite": true to replace it.',
-            requestId: req.requestId ?? null,
-            details: { slug: course.slug, courseIndex: entry.index },
-          });
-          return;
+          const error = new Error(
+            'A course with this slug already exists in the selected organization. Choose a different slug or set "overwrite": true to replace it.',
+          );
+          error.code = 'slug_conflict';
+          error.status = 409;
+          error.details = { slug: course.slug, courseIndex: entry.index };
+          throw error;
         }
-      if (existingCourse && entry.overwrite) {
-        course.id = course.id ?? existingCourse.id;
-      }
-      logCourseImportEvent('import_slug_checked', {
-        requestId: req.requestId ?? null,
-        orgId: resolvedOrgId,
-        slug: course.slug,
-        courseIndex: entry.index,
-        overwrite: entry.overwrite,
-      });
-      const modulesForRpc = modules.map((module, moduleIndex) => ({
-        id: module.id ?? undefined,
-        organization_id: resolvedOrgId,
-        title: module.title,
-        description: module.description ?? null,
-        order_index: module.order_index ?? moduleIndex + 1,
-        lessons: (module.lessons || []).map((lesson, lessonIndex) =>
-          prepareLessonPersistencePayload({
-            id: lesson.id ?? undefined,
-            organization_id: resolvedOrgId,
-            type: lesson.type,
-            title: lesson.title,
-            description: lesson.description ?? null,
-            order_index: lesson.order_index ?? lessonIndex + 1,
-            duration_s: lesson.duration_s ?? null,
-            content_json: lesson.content_json ?? lesson.content ?? {},
-            completionRule: extractCompletionRule(lesson),
-          }),
-        ),
-      }));
-      const rpcPayload = {
-        id: course.id ?? undefined,
-        slug: course.slug,
-        title: course.title,
-        description: course.description ?? null,
-        status: course.status ?? 'draft',
-        version: course.version ?? 1,
-        meta_json: course.meta ?? {},
-        modules: modulesForRpc,
-      };
-      logCourseImportEvent('import_persist_start', {
-        requestId: req.requestId ?? null,
-        orgId: resolvedOrgId,
-        slug: course.slug,
-        courseId: course.id ?? null,
-        moduleCount: modulesForRpc.length,
-        courseIndex: entry.index,
-      });
-      const rpcRes = await supabase.rpc('upsert_course_graph', {
-        p_actor: isUuid(String(context.userId || "").trim()) ? context.userId : null,
-        p_org: resolvedOrgId,
-        p_course: rpcPayload,
-      });
-      if (rpcRes.error) {
-        logCourseImportEvent('import_persist_failed', {
+        if (existingCourse && entry.overwrite) {
+          course.id = course.id ?? existingCourse.id;
+        }
+        logCourseImportEvent('import_slug_checked', {
           requestId: req.requestId ?? null,
           orgId: resolvedOrgId,
           slug: course.slug,
-          code: rpcRes.error?.code ?? null,
-          message: rpcRes.error?.message ?? null,
+          courseIndex: entry.index,
+          overwrite: entry.overwrite,
+        });
+        const modulesForRpc = modules.map((module, moduleIndex) => ({
+          id: module.id ?? undefined,
+          organization_id: resolvedOrgId,
+          title: module.title,
+          description: module.description ?? null,
+          order_index: module.order_index ?? moduleIndex + 1,
+          lessons: (module.lessons || []).map((lesson, lessonIndex) =>
+            prepareLessonPersistencePayload({
+              id: lesson.id ?? undefined,
+              organization_id: resolvedOrgId,
+              type: lesson.type,
+              title: lesson.title,
+              description: lesson.description ?? null,
+              order_index: lesson.order_index ?? lessonIndex + 1,
+              duration_s: lesson.duration_s ?? null,
+              content_json: lesson.content_json ?? lesson.content ?? {},
+              completionRule: extractCompletionRule(lesson),
+            }),
+          ),
+        }));
+        const rpcPayload = {
+          id: course.id ?? undefined,
+          slug: course.slug,
+          title: course.title,
+          description: course.description ?? null,
+          status: course.status ?? 'draft',
+          version: course.version ?? 1,
+          meta_json: course.meta ?? {},
+          modules: modulesForRpc,
+        };
+        logCourseImportEvent('import_persist_start', {
+          requestId: req.requestId ?? null,
+          orgId: resolvedOrgId,
+          slug: course.slug,
+          courseId: course.id ?? null,
+          moduleCount: modulesForRpc.length,
           courseIndex: entry.index,
         });
-        throw rpcRes.error;
+        const savedCourse = await upsertCourseGraphWithTx(tx, {
+          actorUserId: isUuid(String(context.userId || '').trim()) ? context.userId : null,
+          organizationId: resolvedOrgId,
+          coursePayload: rpcPayload,
+        });
+        if (!savedCourse) {
+          const error = new Error('Course import persistence returned no record.');
+          error.code = 'import_persist_failed';
+          error.status = 500;
+          throw error;
+        }
+        persistedResults.push({
+          id: savedCourse?.id ?? course.id ?? null,
+          slug: savedCourse?.slug ?? course.slug,
+          title: savedCourse?.title ?? course.title,
+          status: savedCourse?.status ?? course.status ?? 'draft',
+          organization_id: savedCourse?.organization_id ?? resolvedOrgId,
+          published_at: savedCourse?.published_at ?? null,
+        });
+        logCourseImportEvent('import_persist_success', {
+          requestId: req.requestId ?? null,
+          orgId: resolvedOrgId,
+          slug: course.slug,
+          courseId: savedCourse?.id ?? course.id ?? null,
+          status: savedCourse?.status ?? course.status ?? null,
+          organizationId: savedCourse?.organization_id ?? resolvedOrgId,
+          courseIndex: entry.index,
+        });
       }
-      results.push({
-        id: rpcRes.data?.id ?? course.id ?? null,
-        slug: rpcRes.data?.slug ?? course.slug,
-        title: rpcRes.data?.title ?? course.title,
-        status: rpcRes.data?.status ?? course.status ?? 'draft',
-        organization_id: rpcRes.data?.organization_id ?? resolvedOrgId,
-        published_at: rpcRes.data?.published_at ?? null,
-      });
-      logCourseImportEvent('import_persist_success', {
-        requestId: req.requestId ?? null,
-        orgId: resolvedOrgId,
-        slug: course.slug,
-        courseId: rpcRes.data?.id ?? course.id ?? null,
-        status: rpcRes.data?.status ?? course.status ?? null,
-        organizationId: rpcRes.data?.organization_id ?? resolvedOrgId,
-        courseIndex: entry.index,
-      });
-    }
+      return persistedResults;
+    });
     const hasPublishedImports = results.some((row) => String(row?.status || '').toLowerCase() === 'published');
     if (hasPublishedImports) {
       await assignPublishedOrganizationCoursesToActiveMembers({
@@ -12476,14 +12899,15 @@ app.post('/api/admin/courses/import', authenticate, requireOrgAdmin, asyncHandle
       orgId: resolvedOrganizationId,
       imported: results.length,
     });
-    res.status(201).json({
-      ok: true,
-      data: results,
+    sendApiResponse(res, results, {
+      statusCode: 201,
+      code: 'courses_imported',
+      message: 'Courses imported successfully.',
       meta: {
         publishMode: publishRequested ? 'published' : 'draft',
         imported: results.length,
+        requestId: req.requestId ?? null,
       },
-      requestId: req.requestId ?? null,
     });
   } catch (error) {
     logCourseImportEvent('import_failed', {
@@ -12496,9 +12920,9 @@ app.post('/api/admin/courses/import', authenticate, requireOrgAdmin, asyncHandle
     });
     respondImportError({
       res,
-      status: 500,
+      status: Number.isInteger(error?.status) ? error.status : 500,
       code: error?.code ?? 'import_failed',
-      message: 'Import failed',
+      message: error?.status === 409 || error?.status === 422 ? (error?.message ?? 'Import failed') : 'Import failed',
       hint: error?.hint ?? null,
       requestId: req.requestId ?? null,
       details: error?.details ?? error?.message ?? null,
@@ -13119,7 +13543,9 @@ app.post('/api/admin/courses/:id/publish', authenticate, requireOrgAdmin, async 
       if (!existing) {
         res.locals = res.locals || {};
         res.locals.errorCode = 'not_found';
-        res.status(404).json({ error: 'Course not found', code: 'not_found' });
+        sendApiError(res, 404, 'not_found', 'Course not found', {
+          meta: { requestId: req.requestId ?? null, courseId },
+        });
         return;
       }
       publishLogMeta.orgId = existing.organization_id || existing.org_id || existing.organizationId || null;
@@ -13147,25 +13573,37 @@ app.post('/api/admin/courses/:id/publish', authenticate, requireOrgAdmin, async 
         mode: 'demo',
         durationMs: Date.now() - publishStartedAt,
       });
-      res.json({ data: existing });
+      sendApiResponse(res, existing, {
+        statusCode: 200,
+        code: 'course_published',
+        message: 'Course published successfully.',
+        meta: {
+          requestId: req.requestId ?? null,
+          courseId: existing.id ?? courseId,
+          orgId: publishLogMeta.orgId ?? null,
+          mode: 'demo',
+        },
+      });
       return;
     }
 
-    const existing = await supabase
-      .from('courses')
-      .select(COURSE_WITH_MODULES_LESSONS_SELECT)
-      .eq('id', id)
-      .maybeSingle();
-
-    if (existing.error) throw existing.error;
-    if (!existing.data) {
+    const existingCourseRows = await sql`
+      select id, organization_id, version
+      from public.courses
+      where id = ${courseId}::uuid
+      limit 1
+    `;
+    const existingCourseRow = firstRow(existingCourseRows);
+    if (!existingCourseRow) {
       res.locals = res.locals || {};
       res.locals.errorCode = 'not_found';
-      res.status(404).json({ error: 'Course not found', code: 'not_found' });
+      sendApiError(res, 404, 'not_found', 'Course not found', {
+        meta: { requestId: req.requestId ?? null, courseId },
+      });
       return;
     }
 
-    const courseOrgId = existing.data.organization_id || existing.data.org_id || null;
+    const courseOrgId = existingCourseRow.organization_id || null;
     publishLogMeta.orgId = courseOrgId;
     if (courseOrgId) {
       const access = await requireOrgAccess(req, res, courseOrgId, { write: true, requireOrgAdmin: true });
@@ -13173,46 +13611,51 @@ app.post('/api/admin/courses/:id/publish', authenticate, requireOrgAdmin, async 
     } else if (!context.isPlatformAdmin) {
       res.locals = res.locals || {};
       res.locals.errorCode = 'org_required';
-      res.status(403).json({ error: 'Organization membership required to publish', code: 'org_required' });
-      return;
-    }
-
-    const incomingVersion = typeof req.body?.version === 'number' ? req.body.version : null;
-    const currentVersion = typeof existing.data.version === 'number' ? existing.data.version : null;
-    if (incomingVersion !== null && currentVersion !== null && incomingVersion !== currentVersion) {
-      res.locals = res.locals || {};
-      res.locals.errorCode = 'version_conflict';
-      res.status(409).json({
-        error: 'version_conflict',
-        code: 'version_conflict',
-        message: `Course has newer version ${currentVersion}`,
-        currentVersion,
+      sendApiError(res, 403, 'org_required', 'Organization membership required to publish', {
+        meta: { requestId: req.requestId ?? null, courseId },
       });
       return;
     }
 
-    const shaped = shapeCourseForValidation(existing.data);
-    const validation = validatePublishableCourse(shaped, { intent: 'publish' });
-    if (!validation.isValid) {
+    const incomingVersion = typeof req.body?.version === 'number' ? req.body.version : null;
+    const currentVersion = typeof existingCourseRow.version === 'number' ? existingCourseRow.version : null;
+    if (incomingVersion !== null && currentVersion !== null && incomingVersion !== currentVersion) {
       res.locals = res.locals || {};
-      res.locals.errorCode = 'validation_failed';
-      res.status(422).json({ error: 'validation_failed', code: 'validation_failed', issues: validation.issues });
+      res.locals.errorCode = 'version_conflict';
+      sendApiError(res, 409, 'version_conflict', `Course has newer version ${currentVersion}`, {
+        message: `Course has newer version ${currentVersion}`,
+        currentVersion,
+        meta: { requestId: req.requestId ?? null, courseId },
+      });
       return;
     }
 
     const idempotencyKey = req.body?.idempotency_key ?? req.body?.client_event_id ?? null;
     let idempotencyTableMissing = false;
+    const assignmentsSupportUserIdUuid = await detectAssignmentsUserIdUuidColumnAvailability();
+    const assignmentsOrgColumn = await getAssignmentsOrgColumnName();
 
     if (idempotencyKey) {
       const existingFallback = getInMemoryIdempotencyKey(idempotencyKey);
       if (existingFallback) {
         if (existingFallback.status === 'done' && existingFallback.data) {
           console.info('[idempotency] returning cached in-memory response for completed idempotency', { idempotencyKey });
-          return res.status(200).json({ data: existingFallback.data, idempotent: true });
+          return sendApiResponse(res, existingFallback.data, {
+            statusCode: 200,
+            code: 'course_publish_idempotent',
+            message: 'Course already published for this idempotency key.',
+            meta: {
+              idempotent: true,
+              key: idempotencyKey,
+              requestId: req.requestId ?? null,
+            },
+          });
         }
         if (existingFallback.status === 'in_flight') {
           console.info('[idempotency] detected in-flight in-memory idempotency request', { idempotencyKey });
-          return res.status(409).json({ error: 'idempotency_conflict' });
+          return sendApiError(res, 409, 'idempotency_conflict', 'Another publish request is already in flight.', {
+            meta: { requestId: req.requestId ?? null, courseId },
+          });
         }
       }
 
@@ -13237,7 +13680,9 @@ app.post('/api/admin/courses/:id/publish', authenticate, requireOrgAdmin, async 
         } else {
           const isDuplicate = insertError?.code === '23505' || String(insertError?.message || '').toLowerCase().includes('duplicate');
           if (!isDuplicate) {
-            res.status(500).json({ error: 'idempotency_insert_failed' });
+            sendApiError(res, 500, 'idempotency_insert_failed', 'Unable to register publish idempotency key.', {
+              meta: { requestId: req.requestId ?? null, courseId },
+            });
             return;
           }
 
@@ -13248,7 +13693,9 @@ app.post('/api/admin/courses/:id/publish', authenticate, requireOrgAdmin, async 
             .maybeSingle();
 
           if (existingKeyError || !existingKey) {
-            res.status(409).json({ error: 'idempotency_conflict' });
+            sendApiError(res, 409, 'idempotency_conflict', 'Another publish request is already in flight.', {
+              meta: { requestId: req.requestId ?? null, courseId },
+            });
             return;
           }
 
@@ -13259,33 +13706,114 @@ app.post('/api/admin/courses/:id/publish', authenticate, requireOrgAdmin, async 
               .eq('id', existingKey.resource_id)
               .maybeSingle();
             if (!publishedCourseError && publishedCourse) {
-              return res.status(200).json({ data: publishedCourse, idempotent: true });
+              return sendApiResponse(res, publishedCourse, {
+                statusCode: 200,
+                code: 'course_publish_idempotent',
+                message: 'Course already published for this idempotency key.',
+                meta: {
+                  idempotent: true,
+                  key: idempotencyKey,
+                  requestId: req.requestId ?? null,
+                },
+              });
             }
           }
 
-          return res.status(409).json({ error: 'idempotency_conflict' });
+          return sendApiError(res, 409, 'idempotency_conflict', 'Another publish request is already in flight.', {
+            meta: { requestId: req.requestId ?? null, courseId },
+          });
         }
       }
     }
-    const publishedAt = new Date().toISOString();
-    const nextVersion = (currentVersion ?? 0) + 1;
-    const nextMeta = { ...(existing.data.meta_json || {}), published_at: publishedAt };
+    const updatedData = await sql.begin(async (tx) => {
+      const lockedCourse = await loadCourseGraphWithTx(tx, courseId);
+      if (!lockedCourse) {
+        const error = new Error('Course not found');
+        error.code = 'not_found';
+        error.status = 404;
+        throw error;
+      }
 
-    // Use array result + firstRow() to avoid PGRST116 on duplicate course rows.
-    const _updateResult = await supabase
-      .from('courses')
-      .update({ status: 'published', published_at: publishedAt, version: nextVersion, meta_json: nextMeta })
-      .eq('id', id)
-      .select(COURSE_WITH_MODULES_LESSONS_SELECT);
+      const lockedVersion = typeof lockedCourse.version === 'number' ? lockedCourse.version : null;
+      if (incomingVersion !== null && lockedVersion !== null && incomingVersion !== lockedVersion) {
+        const error = new Error(`Course has newer version ${lockedVersion}`);
+        error.code = 'version_conflict';
+        error.status = 409;
+        error.currentVersion = lockedVersion;
+        throw error;
+      }
 
-    if (_updateResult.error) throw _updateResult.error;
-    const updatedData = firstRow(_updateResult);
+      const validation = validatePublishableCourse(shapeCourseForValidation(lockedCourse), { intent: 'publish' });
+      if (!validation.isValid) {
+        const error = new Error('Course is not publishable.');
+        error.code = 'validation_failed';
+        error.status = 422;
+        error.issues = validation.issues;
+        throw error;
+      }
+
+      const publishedAt = new Date().toISOString();
+      const nextVersion = (lockedVersion ?? 0) + 1;
+      const nextMeta = { ...(lockedCourse.meta_json || {}), published_at: publishedAt };
+
+      const updatedRows =
+        lockedVersion !== null
+          ? await tx`
+              update public.courses
+              set status = 'published',
+                  published_at = ${publishedAt}::timestamptz,
+                  version = ${nextVersion},
+                  meta_json = ${JSON.stringify(nextMeta)}::jsonb,
+                  updated_at = now(),
+                  updated_by = ${context.userId && isUuid(String(context.userId)) ? context.userId : null}::uuid
+              where id = ${courseId}::uuid
+                and version = ${lockedVersion}
+              returning id
+            `
+          : await tx`
+              update public.courses
+              set status = 'published',
+                  published_at = ${publishedAt}::timestamptz,
+                  version = ${nextVersion},
+                  meta_json = ${JSON.stringify(nextMeta)}::jsonb,
+                  updated_at = now(),
+                  updated_by = ${context.userId && isUuid(String(context.userId)) ? context.userId : null}::uuid
+              where id = ${courseId}::uuid
+              returning id
+            `;
+      if (!firstRow(updatedRows)?.id) {
+        const error = new Error('Course publish failed because the course changed before publish completed.');
+        error.code = 'version_conflict';
+        error.status = 409;
+        error.currentVersion = lockedVersion;
+        throw error;
+      }
+
+      await backfillPublishedCourseAssignmentsWithTx(tx, {
+        orgId: courseOrgId,
+        courseId,
+        actorUserId: context.userId ?? null,
+        assignmentsOrgColumn,
+        assignmentsSupportUserIdUuid,
+      });
+
+      return loadCourseGraphWithTx(tx, courseId);
+    });
 
     if (idempotencyKey) {
       try {
         await supabase.from('idempotency_keys').update({ resource_id: updatedData?.id }).eq('id', idempotencyKey);
       } catch (updateErr) {
         console.warn('Failed to update publish idempotency key with resource id', updateErr);
+      }
+      if (idempotencyTableMissing) {
+        setInMemoryIdempotencyKey(idempotencyKey, {
+          status: 'done',
+          createdAt: new Date().toISOString(),
+          payload: { course_id: courseId, version: currentVersion },
+          resourceId: updatedData?.id ?? courseId,
+          data: updatedData,
+        });
       }
     }
 
@@ -13306,7 +13834,16 @@ app.post('/api/admin/courses/:id/publish', authenticate, requireOrgAdmin, async 
       mode: 'supabase',
       durationMs: Date.now() - publishStartedAt,
     });
-    res.json({ data: updatedData });
+    sendApiResponse(res, updatedData, {
+      statusCode: 200,
+      code: 'course_published',
+      message: 'Course published successfully.',
+      meta: {
+        requestId: req.requestId ?? null,
+        courseId: updatedData?.id ?? courseId,
+        orgId: publishLogMeta.orgId ?? null,
+      },
+    });
   } catch (error) {
     console.error('[course.publish_error]', {
       requestId: publishLogMeta.requestId,
@@ -13323,7 +13860,29 @@ app.post('/api/admin/courses/:id/publish', authenticate, requireOrgAdmin, async 
     logAdminCoursesError(req, error, `Failed to publish course ${id}`);
     res.locals = res.locals || {};
     res.locals.errorCode = error?.code ?? 'publish_failed';
-    res.status(500).json({ error: 'Unable to publish course', code: 'publish_failed' });
+    if (error?.status === 409) {
+      sendApiError(res, 409, error?.code ?? 'version_conflict', error?.message ?? 'Publish conflict.', {
+        currentVersion: error?.currentVersion ?? null,
+        meta: { requestId: req.requestId ?? null, courseId },
+      });
+      return;
+    }
+    if (error?.status === 422) {
+      sendApiError(res, 422, error?.code ?? 'validation_failed', 'Course is not publishable.', {
+        issues: Array.isArray(error?.issues) ? error.issues : [],
+        meta: { requestId: req.requestId ?? null, courseId },
+      });
+      return;
+    }
+    if (error?.status === 404) {
+      sendApiError(res, 404, error?.code ?? 'not_found', error?.message ?? 'Course not found', {
+        meta: { requestId: req.requestId ?? null, courseId },
+      });
+      return;
+    }
+    sendApiError(res, 500, 'publish_failed', 'Unable to publish course', {
+      meta: { requestId: req.requestId ?? null, courseId },
+    });
   }
 });
 
@@ -13983,7 +14542,7 @@ app.post('/api/admin/modules', authenticate, requireOrgAdmin, async (req, res) =
     const orderIndex = pickOrder(parsed);
     const metadata = parsed.metadata ?? {};
     if (!courseId || !title) {
-      res.status(400).json({ error: 'courseId and title are required' });
+      sendApiError(res, 400, 'validation_failed', 'courseId and title are required');
       return;
     }
     const course = e2eFindCourse(courseId);
@@ -13995,7 +14554,7 @@ app.post('/api/admin/modules', authenticate, requireOrgAdmin, async (req, res) =
     if (typeof expectedCourseVersion === 'number') {
       const current = course.version ?? 1;
       if (expectedCourseVersion < current) {
-        res.status(409).json({ error: 'version_conflict', message: `Course has newer version ${current}` });
+        sendApiError(res, 409, 'version_conflict', `Course has newer version ${current}`);
         return;
       }
     }
@@ -14005,7 +14564,12 @@ app.post('/api/admin/modules', authenticate, requireOrgAdmin, async (req, res) =
     course.modules.push(mod);
     persistE2EStore();
     console.log(`✅ Created module "${title}" in course "${course.title}"`);
-    res.status(201).json({ data: { id, course_id: course.id, title, description, order_index: orderIndex } });
+    sendApiResponse(res, { id, course_id: course.id, title, description, order_index: orderIndex }, {
+      statusCode: 201,
+      code: 'module_created',
+      message: 'Module created.',
+      meta: { requestId: req.requestId ?? null, courseId: course.id, moduleId: id },
+    });
     return;
   }
   if (!ensureSupabase(res)) return;
@@ -14018,7 +14582,9 @@ app.post('/api/admin/modules', authenticate, requireOrgAdmin, async (req, res) =
     const description = parsed.description ?? null;
     const orderIndex = pickOrder(parsed);
     if (!courseId || !title) {
-      res.status(400).json({ error: 'courseId and title are required' });
+      sendApiError(res, 400, 'validation_failed', 'courseId and title are required', {
+        meta: { requestId: req.requestId ?? null },
+      });
       return;
     }
     // Optional optimistic check against parent course version to avoid stale edits
@@ -14027,7 +14593,9 @@ app.post('/api/admin/modules', authenticate, requireOrgAdmin, async (req, res) =
       if (fetchErr) throw fetchErr;
       const current = courseRow?.version ?? null;
       if (current !== null && expectedCourseVersion < current) {
-        res.status(409).json({ error: 'version_conflict', message: `Course has newer version ${current}` });
+        sendApiError(res, 409, 'version_conflict', `Course has newer version ${current}`, {
+          meta: { requestId: req.requestId ?? null, courseId },
+        });
         return;
       }
     }
@@ -14038,24 +14606,23 @@ app.post('/api/admin/modules', authenticate, requireOrgAdmin, async (req, res) =
     if (_modInsert.error) throw _modInsert.error;
     const data = firstRow(_modInsert);
     if (!data) throw new Error('module_insert_no_rows');
-    res.status(201).json({ data: { id: data.id, course_id: data.course_id, title: data.title, description: data.description, order_index: data.order_index ?? 0 } });
+    sendApiResponse(res, { id: data.id, course_id: data.course_id, title: data.title, description: data.description, order_index: data.order_index ?? 0 }, {
+      statusCode: 201,
+      code: 'module_created',
+      message: 'Module created.',
+      meta: { requestId: req.requestId ?? null, courseId: data.course_id, moduleId: data.id },
+    });
   } catch (error) {
     console.error('Failed to create module:', error);
-    res.status(500).json({ error: 'Unable to create module' });
+    sendApiError(res, 500, 'module_create_failed', 'Unable to create module', {
+      meta: { requestId: req.requestId ?? null },
+    });
   }
 });
 
 app.patch('/api/admin/modules/:id', authenticate, requireOrgAdmin, async (req, res) => {
   if (isDemoOrTestMode) {
     const { id } = req.params;
-  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
-  if (!resolvedCourseId) {
-    res.locals = res.locals || {};
-    res.locals.errorCode = 'course_not_found';
-    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
-    return;
-  }
-  const courseId = resolvedCourseId;
     const parsed = validateOr400(modulePatchValidator, req, res);
     if (!parsed) return;
     const expectedCourseVersion = parsed.course_version ?? parsed.expectedCourseVersion ?? null;
@@ -14064,14 +14631,18 @@ app.patch('/api/admin/modules/:id', authenticate, requireOrgAdmin, async (req, r
     const orderIndex = pickOrder(parsed);
     const found = e2eFindModule(id);
     if (!found) {
-      res.status(404).json({ error: 'Module not found' });
+      sendApiError(res, 404, 'module_not_found', 'Module not found', {
+        meta: { requestId: req.requestId ?? null, moduleId: id },
+      });
       return;
     }
     // Optional optimistic check: ensure client is targeting expected course version
     if (typeof expectedCourseVersion === 'number') {
       const current = found.module.version ?? 1;
       if (expectedCourseVersion < current) {
-        res.status(409).json({ error: 'version_conflict', message: `Module has newer version ${current}` });
+        sendApiError(res, 409, 'version_conflict', `Module has newer version ${current}`, {
+          meta: { requestId: req.requestId ?? null, moduleId: id },
+        });
         return;
       }
     }
@@ -14080,20 +14651,16 @@ app.patch('/api/admin/modules/:id', authenticate, requireOrgAdmin, async (req, r
     if (typeof orderIndex === 'number') found.module.order_index = orderIndex;
     persistE2EStore();
     console.log(`✅ Updated module ${id}`);
-    res.json({ data: { id: found.module.id, course_id: found.course.id, title: found.module.title, description: found.module.description, order_index: found.module.order_index ?? 0 } });
+    sendApiResponse(res, { id: found.module.id, course_id: found.course.id, title: found.module.title, description: found.module.description, order_index: found.module.order_index ?? 0 }, {
+      code: 'module_updated',
+      message: 'Module updated.',
+      meta: { requestId: req.requestId ?? null, courseId: found.course.id, moduleId: found.module.id },
+    });
     return;
   }
   if (!ensureSupabase(res)) return;
   try {
     const { id } = req.params;
-  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
-  if (!resolvedCourseId) {
-    res.locals = res.locals || {};
-    res.locals.errorCode = 'course_not_found';
-    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
-    return;
-  }
-  const courseId = resolvedCourseId;
     const parsed = validateOr400(modulePatchValidator, req, res);
     if (!parsed) return;
     const title = parsed.title;
@@ -14105,7 +14672,9 @@ app.patch('/api/admin/modules/:id', authenticate, requireOrgAdmin, async (req, r
     if (description !== undefined) patch.description = description;
     if (typeof orderIndex === 'number') patch.order_index = orderIndex;
     if (Object.keys(patch).length === 0) {
-      res.status(400).json({ error: 'No fields to update' });
+      sendApiError(res, 400, 'no_fields_to_update', 'No fields to update', {
+        meta: { requestId: req.requestId ?? null, moduleId: id },
+      });
       return;
     }
     // If client provided expected course version, validate against course to avoid stale updates
@@ -14119,7 +14688,9 @@ app.patch('/api/admin/modules/:id', authenticate, requireOrgAdmin, async (req, r
         if (fetchErr) throw fetchErr;
         const current = courseRow?.version ?? null;
         if (current !== null && expectedCourseVersion < current) {
-          res.status(409).json({ error: 'version_conflict', message: `Course has newer version ${current}` });
+          sendApiError(res, 409, 'version_conflict', `Course has newer version ${current}`, {
+            meta: { requestId: req.requestId ?? null, courseId, moduleId: id },
+          });
           return;
         }
       }
@@ -14132,27 +14703,27 @@ app.patch('/api/admin/modules/:id', authenticate, requireOrgAdmin, async (req, r
     if (_modPatch.error) throw _modPatch.error;
     const data = firstRow(_modPatch);
     if (!data) {
-      res.status(404).json({ error: 'module_not_found', message: 'Module not found or no rows updated' });
+      sendApiError(res, 404, 'module_not_found', 'Module not found or no rows updated', {
+        meta: { requestId: req.requestId ?? null, moduleId: id },
+      });
       return;
     }
-    res.json({ data: { id: data.id, course_id: data.course_id, title: data.title, description: data.description, order_index: data.order_index ?? 0 } });
+    sendApiResponse(res, { id: data.id, course_id: data.course_id, title: data.title, description: data.description, order_index: data.order_index ?? 0 }, {
+      code: 'module_updated',
+      message: 'Module updated.',
+      meta: { requestId: req.requestId ?? null, courseId: data.course_id, moduleId: data.id },
+    });
   } catch (error) {
     console.error('Failed to update module:', error);
-    res.status(500).json({ error: 'Unable to update module' });
+    sendApiError(res, 500, 'module_update_failed', 'Unable to update module', {
+      meta: { requestId: req.requestId ?? null, moduleId: req.params?.id ?? null },
+    });
   }
 });
 
 app.delete('/api/admin/modules/:id', authenticate, requireOrgAdmin, async (req, res) => {
   if (isDemoOrTestMode) {
     const { id } = req.params;
-  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
-  if (!resolvedCourseId) {
-    res.locals = res.locals || {};
-    res.locals.errorCode = 'course_not_found';
-    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
-    return;
-  }
-  const courseId = resolvedCourseId;
     const found = e2eFindModule(id);
     if (!found) {
       res.status(204).end();
@@ -14217,7 +14788,9 @@ app.post('/api/admin/modules/reorder', authenticate, requireOrgAdmin, async (req
     const modules = parsed.modules;
     const course = e2eFindCourse(courseId);
     if (!course) {
-      res.status(404).json({ error: 'Course not found' });
+      sendApiError(res, 404, 'course_not_found', 'Course not found', {
+        meta: { requestId: req.requestId ?? null, courseId },
+      });
       return;
     }
     const orderMap = new Map((modules || []).map((m) => [String(m.id), pickOrder(m)]));
@@ -14230,7 +14803,11 @@ app.post('/api/admin/modules/reorder', authenticate, requireOrgAdmin, async (req
     persistE2EStore();
     console.log(`✅ Reordered modules in course "${course.title}"`);
     const response = sorted.map((m) => ({ id: m.id, order_index: m.order_index ?? 0 }));
-    res.json({ data: response });
+    sendApiResponse(res, response, {
+      code: 'modules_reordered',
+      message: 'Modules reordered.',
+      meta: { requestId: req.requestId ?? null, courseId },
+    });
     return;
   }
   if (!ensureSupabase(res)) return;
@@ -14240,7 +14817,9 @@ app.post('/api/admin/modules/reorder', authenticate, requireOrgAdmin, async (req
     const courseId = pickId(parsed, 'course_id', 'courseId');
     const modules = parsed.modules;
     if (!courseId || !Array.isArray(modules)) {
-      res.status(400).json({ error: 'courseId and modules are required' });
+      sendApiError(res, 400, 'validation_failed', 'courseId and modules are required', {
+        meta: { requestId: req.requestId ?? null },
+      });
       return;
     }
     const updates = (modules || []).map((m) => {
@@ -14248,10 +14827,16 @@ app.post('/api/admin/modules/reorder', authenticate, requireOrgAdmin, async (req
     });
     await Promise.all(updates);
     const order = modules.map((m) => ({ id: m.id, order_index: pickOrder(m) }));
-    res.json({ data: order });
+    sendApiResponse(res, order, {
+      code: 'modules_reordered',
+      message: 'Modules reordered.',
+      meta: { requestId: req.requestId ?? null, courseId },
+    });
   } catch (error) {
     console.error('Failed to reorder modules:', error);
-    res.status(500).json({ error: 'Unable to reorder modules' });
+    sendApiError(res, 500, 'module_reorder_failed', 'Unable to reorder modules', {
+      meta: { requestId: req.requestId ?? null },
+    });
   }
 });
 
@@ -14295,21 +14880,10 @@ app.post('/api/admin/lessons', authenticate, requireOrgAdmin, async (req, res) =
     return;
   }
   const parsed = parseResult.data;
-  const { id } = req.params;
-  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
-  if (!resolvedCourseId) {
-    res.locals = res.locals || {};
-    res.locals.errorCode = 'course_not_found';
-    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
-    return;
-  }
-  const courseId = resolvedCourseId;
-  lessonLogMeta.lessonId = id;
-
   const moduleId = pickId(parsed, 'module_id', 'moduleId');
-  lessonLogMeta.moduleId = moduleId ?? null;
-
   const lessonId = parsed.id ?? randomUUID();
+  lessonLogMeta.lessonId = lessonId;
+  lessonLogMeta.moduleId = moduleId ?? null;
   const expectedCourseVersion = parsed.course_version ?? parsed.expectedCourseVersion ?? null;
   const title = parsed.title;
   const type = parsed.type ?? null;
@@ -14329,65 +14903,78 @@ app.post('/api/admin/lessons', authenticate, requireOrgAdmin, async (req, res) =
   const completionRule = parsed.completion_rule_json ?? parsed.completionRule ?? null;
 
   if (isDemoOrTestMode) {
-    const found = e2eFindModule(moduleId);
-    if (!found) {
-      respondLessonError(res, lessonLogMeta, 'admin_lessons_create_error', 404, 'module_not_found', 'Module not found');
-      return;
-    }
-    const resolvedOrgId = pickOrgId(
-      found.course?.organization_id,
-      found.course?.org_id,
-      found.course?.organizationId,
-    );
-    lessonLogMeta.orgId = resolvedOrgId ?? null;
-    if (resolvedOrgId) {
-      const access = await requireOrgAccess(req, res, resolvedOrgId, { write: true, requireOrgAdmin: true });
-      if (!access) return;
-    } else if (!context.isPlatformAdmin) {
-      respondLessonError(
-        res,
-        lessonLogMeta,
-        'admin_lessons_create_error',
-        403,
-        'organization_required',
-        'Lesson creation requires an organization scope',
+    try {
+      const found = e2eFindModule(moduleId);
+      if (!found) {
+        respondLessonError(res, lessonLogMeta, 'admin_lessons_create_error', 404, 'module_not_found', 'Module not found');
+        return;
+      }
+      const resolvedOrgId = pickOrgId(
+        found.course?.organization_id,
+        found.course?.org_id,
+        found.course?.organizationId,
       );
-      return;
-    }
-    if (typeof expectedCourseVersion === 'number') {
-      const current = found.course?.version ?? 1;
-      if (expectedCourseVersion < current) {
+      lessonLogMeta.orgId = resolvedOrgId ?? null;
+      if (!resolvedOrgId && !context.isPlatformAdmin) {
         respondLessonError(
           res,
           lessonLogMeta,
           'admin_lessons_create_error',
-          409,
-          'version_conflict',
-          `Course has newer version ${current}`,
+          403,
+          'organization_required',
+          'Lesson creation requires an organization scope',
         );
         return;
       }
+      if (typeof expectedCourseVersion === 'number') {
+        const current = found.course?.version ?? 1;
+        if (expectedCourseVersion < current) {
+          respondLessonError(
+            res,
+            lessonLogMeta,
+            'admin_lessons_create_error',
+            409,
+            'version_conflict',
+            `Course has newer version ${current}`,
+          );
+          return;
+        }
+      }
+      const id = lessonId.startsWith('e2e-') ? lessonId : `e2e-less-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+      const lesson = {
+        id,
+        module_id: moduleId,
+        organization_id: resolvedOrgId ?? null,
+        title,
+        description,
+        type,
+        order_index: orderIndex,
+        duration_s: durationSeconds,
+        content_json: normalizedContent,
+      };
+      prepareLessonContentWithCompletionRule(lesson, completionRule);
+      found.module.lessons = found.module.lessons || [];
+      found.module.lessons.push(lesson);
+      persistE2EStore();
+      sendApiResponse(res, lesson, {
+        statusCode: 201,
+        code: 'lesson_created',
+        message: 'Lesson created.',
+        meta: { requestId: req.requestId ?? null, moduleId, lessonId: id },
+      });
+      return;
+    } catch (error) {
+      respondLessonError(
+        res,
+        lessonLogMeta,
+        'admin_lessons_create_error',
+        500,
+        'lesson_create_failed',
+        'Unable to create lesson',
+        error instanceof Error ? error.message : null,
+      );
+      return;
     }
-    logLessonEvent('info', 'admin_lessons_create_request', lessonLogMeta);
-    const id = lessonId.startsWith('e2e-') ? lessonId : `e2e-less-${Date.now()}-${Math.floor(Math.random() * 100000)}`;
-    const lesson = {
-      id,
-      module_id: moduleId,
-      organization_id: resolvedOrgId ?? null,
-      title,
-      description,
-      type,
-      order_index: orderIndex,
-      duration_s: durationSeconds,
-      content_json: normalizedContent,
-    };
-    prepareLessonContentWithCompletionRule(lesson, completionRule);
-    found.module.lessons = found.module.lessons || [];
-    found.module.lessons.push(lesson);
-    persistE2EStore();
-    res.status(201).json({ data: lesson });
-    logLessonEvent('info', 'admin_lessons_create_success', { ...lessonLogMeta, lessonId: id, status: 201 });
-    return;
   }
 
   if (!ensureSupabase(res)) return;
@@ -14515,7 +15102,12 @@ app.post('/api/admin/lessons', authenticate, requireOrgAdmin, async (req, res) =
       return;
     }
     lessonLogMeta.lessonId = data.id;
-    res.status(201).json({ data });
+    sendApiResponse(res, data, {
+      statusCode: 201,
+      code: 'lesson_created',
+      message: 'Lesson created.',
+      meta: { requestId: req.requestId ?? null, moduleId, lessonId: data.id },
+    });
     logLessonEvent('info', 'admin_lessons_create_success', { ...lessonLogMeta, status: 201 });
   } catch (error) {
     respondLessonError(
@@ -14535,7 +15127,7 @@ app.patch('/api/admin/lessons/:id', authenticate, requireOrgAdmin, async (req, r
   if (!context) return;
   const lessonLogMeta = buildLessonLogMeta(req, context);
 
-  const parseResult = lessonPatchSchema.safeParse(req.body || {});
+  const parseResult = lessonPatchValidator.safeParse(req.body || {});
   if (!parseResult.success) {
     respondLessonError(
       res,
@@ -14550,14 +15142,6 @@ app.patch('/api/admin/lessons/:id', authenticate, requireOrgAdmin, async (req, r
   }
   const parsed = parseResult.data;
   const { id } = req.params;
-  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
-  if (!resolvedCourseId) {
-    res.locals = res.locals || {};
-    res.locals.errorCode = 'course_not_found';
-    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
-    return;
-  }
-  const courseId = resolvedCourseId;
   lessonLogMeta.lessonId = id;
   const expectedCourseVersion = parsed.course_version ?? parsed.expectedCourseVersion ?? null;
   const title = parsed.title;
@@ -14574,64 +15158,76 @@ app.patch('/api/admin/lessons/:id', authenticate, requireOrgAdmin, async (req, r
   const completionRule = parsed.completion_rule_json ?? parsed.completionRule ?? null;
 
   if (isDemoOrTestMode) {
-    const found = e2eFindLesson(id);
-    if (!found) {
-      respondLessonError(res, lessonLogMeta, 'admin_lessons_update_error', 404, 'lesson_not_found', 'Lesson not found');
-      return;
-    }
-    const resolvedOrgId = pickOrgId(
-      found.course?.organization_id,
-      found.course?.org_id,
-      found.course?.organizationId,
-      found.module?.organization_id,
-      found.module?.org_id,
-    );
-    lessonLogMeta.orgId = resolvedOrgId ?? null;
-    lessonLogMeta.moduleId = found.module?.id ?? null;
-    if (resolvedOrgId) {
-      const access = await requireOrgAccess(req, res, resolvedOrgId, { write: true, requireOrgAdmin: true });
-      if (!access) return;
-    } else if (!context.isPlatformAdmin) {
-      respondLessonError(
-        res,
-        lessonLogMeta,
-        'admin_lessons_update_error',
-        403,
-        'organization_required',
-        'Lesson updates require an organization scope',
+    try {
+      const found = e2eFindLesson(id);
+      if (!found) {
+        respondLessonError(res, lessonLogMeta, 'admin_lessons_update_error', 404, 'lesson_not_found', 'Lesson not found');
+        return;
+      }
+      const resolvedOrgId = pickOrgId(
+        found.course?.organization_id,
+        found.course?.org_id,
+        found.course?.organizationId,
+        found.module?.organization_id,
+        found.module?.org_id,
       );
-      return;
-    }
-    if (typeof expectedCourseVersion === 'number') {
-      const current = found.module?.version ?? 1;
-      if (expectedCourseVersion < current) {
+      lessonLogMeta.orgId = resolvedOrgId ?? null;
+      lessonLogMeta.moduleId = found.module?.id ?? null;
+      if (!resolvedOrgId && !context.isPlatformAdmin) {
         respondLessonError(
           res,
           lessonLogMeta,
           'admin_lessons_update_error',
-          409,
-          'version_conflict',
-          `Module has newer version ${current}`,
+          403,
+          'organization_required',
+          'Lesson updates require an organization scope',
         );
         return;
       }
+      if (typeof expectedCourseVersion === 'number') {
+        const current = found.module?.version ?? 1;
+        if (expectedCourseVersion < current) {
+          respondLessonError(
+            res,
+            lessonLogMeta,
+            'admin_lessons_update_error',
+            409,
+            'version_conflict',
+            `Module has newer version ${current}`,
+          );
+          return;
+        }
+      }
+      if (typeof title === 'string') found.lesson.title = title;
+      if (typeof type === 'string') found.lesson.type = type;
+      if (description !== undefined) found.lesson.description = description;
+      if (typeof orderIndex === 'number') found.lesson.order_index = orderIndex;
+      if (typeof durationSeconds === 'number' || durationSeconds === null) found.lesson.duration_s = durationSeconds;
+      if (contentPayload !== undefined) {
+        found.lesson.content_json = contentPayload ?? {};
+      }
+      if (completionRule !== undefined) {
+        prepareLessonContentWithCompletionRule(found.lesson, completionRule);
+      }
+      persistE2EStore();
+      sendApiResponse(res, found.lesson, {
+        code: 'lesson_updated',
+        message: 'Lesson updated.',
+        meta: { requestId: req.requestId ?? null, moduleId: found.module?.id ?? null, lessonId: found.lesson.id },
+      });
+      return;
+    } catch (error) {
+      respondLessonError(
+        res,
+        lessonLogMeta,
+        'admin_lessons_update_error',
+        500,
+        'lesson_update_failed',
+        'Unable to update lesson',
+        error instanceof Error ? error.message : null,
+      );
+      return;
     }
-    logLessonEvent('info', 'admin_lessons_update_request', lessonLogMeta);
-    if (typeof title === 'string') found.lesson.title = title;
-    if (typeof type === 'string') found.lesson.type = type;
-    if (description !== undefined) found.lesson.description = description;
-    if (typeof orderIndex === 'number') found.lesson.order_index = orderIndex;
-    if (typeof durationSeconds === 'number' || durationSeconds === null) found.lesson.duration_s = durationSeconds;
-    if (contentPayload !== undefined) {
-      found.lesson.content_json = contentPayload ?? {};
-    }
-    if (completionRule !== undefined) {
-      prepareLessonContentWithCompletionRule(found.lesson, completionRule);
-    }
-    persistE2EStore();
-    res.json({ data: found.lesson });
-    logLessonEvent('info', 'admin_lessons_update_success', { ...lessonLogMeta, status: 200 });
-    return;
   }
   if (!ensureSupabase(res)) return;
   try {
@@ -14784,7 +15380,11 @@ app.patch('/api/admin/lessons/:id', authenticate, requireOrgAdmin, async (req, r
       );
       return;
     }
-    res.json({ data: { id: data.id, module_id: data.module_id, title: data.title, type: data.type, order_index: data.order_index ?? 0 } });
+    sendApiResponse(res, { id: data.id, module_id: data.module_id, title: data.title, type: data.type, order_index: data.order_index ?? 0 }, {
+      code: 'lesson_updated',
+      message: 'Lesson updated.',
+      meta: { requestId: req.requestId ?? null, moduleId: data.module_id, lessonId: data.id },
+    });
     logLessonEvent('info', 'admin_lessons_update_success', { ...lessonLogMeta, status: 200 });
   } catch (error) {
     respondLessonError(
@@ -14802,14 +15402,6 @@ app.patch('/api/admin/lessons/:id', authenticate, requireOrgAdmin, async (req, r
 app.delete('/api/admin/lessons/:id', authenticate, requireOrgAdmin, async (req, res) => {
   if (isDemoOrTestMode) {
     const { id } = req.params;
-  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
-  if (!resolvedCourseId) {
-    res.locals = res.locals || {};
-    res.locals.errorCode = 'course_not_found';
-    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
-    return;
-  }
-  const courseId = resolvedCourseId;
     for (const course of e2eStore.courses.values()) {
       for (const mod of course.modules || []) {
         const before = (mod.lessons || []).length;
@@ -14887,7 +15479,9 @@ app.post('/api/admin/lessons/reorder', authenticate, requireOrgAdmin, async (req
     const lessons = parsed.lessons;
     const found = e2eFindModule(moduleId);
     if (!found) {
-      res.status(404).json({ error: 'Module not found' });
+      sendApiError(res, 404, 'module_not_found', 'Module not found', {
+        meta: { requestId: req.requestId ?? null, moduleId },
+      });
       return;
     }
     const orderMap = new Map((lessons || []).map((l) => [String(l.id), pickOrder(l)]));
@@ -14899,7 +15493,11 @@ app.post('/api/admin/lessons/reorder', authenticate, requireOrgAdmin, async (req
     persistE2EStore();
     console.log(`✅ Reordered lessons in module "${found.module.title}"`);
     const response = (found.module.lessons || []).map((l) => ({ id: l.id, order_index: l.order_index ?? 0 }));
-    res.json({ data: response });
+    sendApiResponse(res, response, {
+      code: 'lessons_reordered',
+      message: 'Lessons reordered.',
+      meta: { requestId: req.requestId ?? null, moduleId },
+    });
     return;
   }
   if (!ensureSupabase(res)) return;
@@ -14909,7 +15507,9 @@ app.post('/api/admin/lessons/reorder', authenticate, requireOrgAdmin, async (req
     const moduleId = pickId(parsed, 'module_id', 'moduleId');
     const lessons = parsed.lessons;
     if (!moduleId || !Array.isArray(lessons)) {
-      res.status(400).json({ error: 'moduleId and lessons are required' });
+      sendApiError(res, 400, 'validation_failed', 'moduleId and lessons are required', {
+        meta: { requestId: req.requestId ?? null },
+      });
       return;
     }
     const updates = (lessons || []).map((l) => {
@@ -14917,10 +15517,16 @@ app.post('/api/admin/lessons/reorder', authenticate, requireOrgAdmin, async (req
     });
     await Promise.all(updates);
     const order = lessons.map((l) => ({ id: l.id, order_index: pickOrder(l) }));
-    res.json({ data: order });
+    sendApiResponse(res, order, {
+      code: 'lessons_reordered',
+      message: 'Lessons reordered.',
+      meta: { requestId: req.requestId ?? null, moduleId },
+    });
   } catch (error) {
     console.error('Failed to reorder lessons:', error);
-    res.status(500).json({ error: 'Unable to reorder lessons' });
+    sendApiError(res, 500, 'lesson_reorder_failed', 'Unable to reorder lessons', {
+      meta: { requestId: req.requestId ?? null },
+    });
   }
 });
 
@@ -14978,7 +15584,12 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
 
   const context = requireUserContext(req, res);
   if (!context) return;
-  const resolvedOrgId = resolveOrgIdFromRequest(req, context);
+  const orgScope = resolveOrgScopeFromRequest(req, context, { requireExplicitSelection: true });
+  if (orgScope.requiresExplicitSelection) {
+    respondWithError(403, 'org_selection_required', 'Select an organization before saving progress.', null);
+    return;
+  }
+  const resolvedOrgId = orgScope.orgId;
   baseLogMeta.orgId = resolvedOrgId;
 
   const logSnapshotSuccess = (mode) => {
@@ -15848,7 +16459,18 @@ app.post('/api/client/progress/course', authenticate, async (req, res) => {
     return;
   }
 
-  const resolvedOrgId = resolveOrgIdFromRequest(req, context);
+  const orgScope = resolveOrgScopeFromRequest(req, context, { requireExplicitSelection: true });
+  if (orgScope.requiresExplicitSelection) {
+    res.status(403).json({
+      ok: false,
+      data: null,
+      code: 'org_selection_required',
+      message: 'Select an organization before saving course progress.',
+      meta: { requestId: req.requestId ?? null },
+    });
+    return;
+  }
+  const resolvedOrgId = orgScope.orgId;
 
   if (bodyUserId && bodyUserId !== canonicalUserId) {
     logger.warn('progress_course_user_mismatch', {
@@ -19829,21 +20451,31 @@ app.post('/api/admin/documents', async (req, res) => {
 
   try {
     if (!organizationId && !context.isPlatformAdmin) {
-      // Auto-resolve from the authenticated user's active/primary org so that
-      // org-admin users can upload documents without passing orgId explicitly.
-      // Priority: active org header > context.activeOrganizationId > first membership.
       const headerOrgId = getHeaderOrgId(req, { requireMembership: true }) || null;
       const membershipOrgIds = Array.isArray(context.memberships)
         ? context.memberships
             .map((m) => normalizeOrgIdValue(pickOrgId(m.organization_id, m.organizationId, m.org_id, m.orgId)))
             .filter(Boolean)
         : [];
+      const orgCandidates = Array.from(new Set([
+        headerOrgId,
+        normalizeOrgIdValue(context.activeOrganizationId ?? context.requestedOrgId),
+        ...membershipOrgIds,
+        ...(Array.isArray(context.organizationIds) ? context.organizationIds.map((orgId) => normalizeOrgIdValue(orgId)) : []),
+      ].filter(Boolean)));
       const fallbackOrgId =
         headerOrgId ||
         normalizeOrgIdValue(context.activeOrganizationId ?? context.requestedOrgId) ||
-        membershipOrgIds[0] ||
-        (Array.isArray(context.organizationIds) ? normalizeOrgIdValue(context.organizationIds[0]) : null) ||
-        null;
+        (orgCandidates.length === 1 ? orgCandidates[0] : null);
+      if (!fallbackOrgId && orgCandidates.length > 1) {
+        res.status(400).json({
+          ok: false,
+          error: 'explicit_org_selection_required',
+          code: 'explicit_org_selection_required',
+          message: 'This document upload is ambiguous across multiple organizations. Pass an organizationId explicitly.',
+        });
+        return;
+      }
       if (fallbackOrgId) {
         organizationId = fallbackOrgId;
         logger.info('[admin.documents.create] org_id_auto_resolved', {
@@ -22051,19 +22683,27 @@ app.get('/api/analytics/events', optionalAuthenticate, async (req, res) => {
       const ts = event.created_at || event.timestamp;
       return ts ? Date.parse(ts) >= Date.parse(sinceIso) : false;
     });
-    res.json({
-      data: filtered.slice(0, limit),
-      pagination: { limit, hasMore: filtered.length > limit },
-      demo: true,
+    return sendApiResponse(res, filtered.slice(0, limit), {
+      code: 'analytics_events_loaded',
+      message: 'Analytics events loaded.',
+      meta: {
+        pagination: { limit, hasMore: filtered.length > limit },
+        demo: true,
+      },
     });
-    return;
   }
 
   if (!ensureSupabase(res)) return;
 
   if (!context.isPlatformAdmin && !resolvedOrgIds.size) {
-    res.json({ data: [], pagination: { limit, hasMore: false }, reason: 'org_scope_required' });
-    return;
+    return sendApiResponse(res, [], {
+      code: 'analytics_events_loaded',
+      message: 'Analytics events loaded.',
+      meta: {
+        pagination: { limit, hasMore: false },
+        reason: 'org_scope_required',
+      },
+    });
   }
 
   try {
@@ -22086,16 +22726,21 @@ app.get('/api/analytics/events', optionalAuthenticate, async (req, res) => {
     const { data, error } = await query;
     if (error) throw error;
     const rows = Array.isArray(data) ? data : [];
-    res.json({
-      data: rows,
-      pagination: { limit, hasMore: rows.length === limit },
+    return sendApiResponse(res, rows, {
+      code: 'analytics_events_loaded',
+      message: 'Analytics events loaded.',
+      meta: {
+        pagination: { limit, hasMore: rows.length === limit },
+      },
     });
   } catch (error) {
     console.error('[analytics.events] fetch_failed', {
       requestId: req.requestId,
       message: error?.message || error,
     });
-    res.status(500).json({ error: 'Unable to fetch analytics events' });
+    sendApiError(res, 500, 'analytics_events_fetch_failed', 'Unable to fetch analytics events', {
+      requestId: req.requestId ?? null,
+    });
   }
 });
 
@@ -22183,16 +22828,36 @@ app.post('/api/analytics/events', optionalAuthenticate, async (req, res) => {
   const useCustomPrimaryKey = normalizedClientEventId ? isUuid(normalizedClientEventId) : false;
 
   function respondQueued(meta = {}, statusCode = 202) {
-    if (!res.headersSent) {
-      res.status(statusCode);
-    }
-    return res.json({ status: 'queued', stored: false, missingOrgContext: false, ...meta });
+    return sendApiResponse(
+      res,
+      {
+        status: 'queued',
+        stored: false,
+        missingOrgContext: false,
+        ...meta,
+      },
+      {
+        statusCode,
+        code: 'analytics_event_queued',
+        message: 'Analytics event queued.',
+      },
+    );
   }
   function respondStored(meta = {}) {
-    if (!res.headersSent) {
-      res.status(200);
-    }
-    return res.json({ status: 'stored', stored: true, missingOrgContext: false, ...meta });
+    return sendApiResponse(
+      res,
+      {
+        status: 'stored',
+        stored: true,
+        missingOrgContext: false,
+        ...meta,
+      },
+      {
+        statusCode: 200,
+        code: 'analytics_event_stored',
+        message: 'Analytics event stored.',
+      },
+    );
   }
 
   if (!resolvedOrgId) {
@@ -22327,7 +22992,9 @@ app.post('/api/audit-log', async (req, res) => {
 
   const normalizedAction = typeof action === 'string' ? action.trim() : '';
   if (!normalizedAction) {
-    res.status(400).json({ error: 'action is required' });
+    sendApiError(res, 400, 'validation_failed', 'Action is required.', {
+      meta: { requestId: req.requestId ?? null },
+    });
     return;
   }
 
@@ -22342,7 +23009,15 @@ app.post('/api/audit-log', async (req, res) => {
     timestamp: timestamp || new Date().toISOString(),
   };
 
-  const respondOk = (meta = {}) => res.json({ ok: true, ...meta });
+  const respondOk = (data = {}, meta = {}) =>
+    sendApiResponse(res, data, {
+      code: 'audit_log_recorded',
+      message: 'Audit log request processed.',
+      meta: {
+        requestId: req.requestId ?? null,
+        ...meta,
+      },
+    });
 
   if (isDemoOrTestMode) {
     e2eStore.auditLogs.unshift(entry);
@@ -22350,7 +23025,7 @@ app.post('/api/audit-log', async (req, res) => {
       e2eStore.auditLogs.length = 500;
     }
     persistE2EStore();
-    respondOk({ demo: true, stored: true, entry });
+    respondOk({ stored: true, entry }, { demo: true });
     return;
   }
 
@@ -22873,9 +23548,18 @@ app.use(apiErrorHandler);
 
 const server = http.createServer(app);
 
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`Serving production build from ${distPath} at http://0.0.0.0:${PORT}`);
-});
+startupChecksPromise
+  .then(() => {
+    server.listen(PORT, '0.0.0.0', () => {
+      console.log(`Serving production build from ${distPath} at http://0.0.0.0:${PORT}`);
+    });
+  })
+  .catch((error) => {
+    console.error('[startup] refusing_to_listen_due_to_failed_startup_checks', {
+      message: error?.message || String(error),
+    });
+    process.exit(1);
+  });
 
 // Initialize WebSocket server (ws) to handle realtime broadcasts at /ws
 try {

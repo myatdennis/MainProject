@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { LessonVideoAsset } from '../types/courseTypes';
-import { signMediaAsset, shouldRefreshSignedUrl } from '../dal/media';
+import { shouldBypassMediaSigning, signMediaAsset, shouldRefreshSignedUrl } from '../dal/media';
 
 const DEFAULT_REFRESH_BUFFER_MS = 60_000;
 
@@ -32,7 +32,9 @@ export const useSignedMediaUrl = ({
   autoRefresh = true,
 }: UseSignedMediaUrlOptions) => {
   const mountedRef = useRef(true);
-  const cacheKey = asset?.assetId ? `signed-media:${asset.assetId}` : null;
+  const bypassSigning = Boolean(asset?.assetId && shouldBypassMediaSigning(asset.assetId));
+  const bypassUrl = asset?.signedUrl ?? fallbackUrl ?? (asset?.assetId?.startsWith('http') ? asset.assetId : null);
+  const cacheKey = asset?.assetId && !bypassSigning ? `signed-media:${asset.assetId}` : null;
 
   const readCachedEntry = () => {
     if (!cacheKey || typeof window === 'undefined') return null;
@@ -59,6 +61,15 @@ export const useSignedMediaUrl = ({
   const [state, setState] = useState<SignedMediaState>(() => {
     if (!asset?.assetId) {
       return createUnavailableState(fallbackUrl);
+    }
+
+    if (bypassSigning) {
+      return {
+        url: bypassUrl,
+        expiresAt: null,
+        isLoading: false,
+        error: bypassUrl ? null : 'Media source unavailable.',
+      };
     }
 
     const initialSignedUrl = cacheEntry?.url || asset.signedUrl;
@@ -94,6 +105,16 @@ export const useSignedMediaUrl = ({
     async (force = false) => {
       if (!asset?.assetId) {
         setSafeState(createUnavailableState(fallbackUrl));
+        return;
+      }
+
+      if (bypassSigning) {
+        setSafeState({
+          url: bypassUrl,
+          expiresAt: null,
+          isLoading: false,
+          error: bypassUrl ? null : 'Media source unavailable.',
+        });
         return;
       }
 
@@ -142,7 +163,7 @@ export const useSignedMediaUrl = ({
         });
       }
     },
-    [asset, fallbackUrl, refreshBufferMs, setSafeState],
+    [asset, bypassSigning, bypassUrl, fallbackUrl, refreshBufferMs, setSafeState],
   );
 
   useEffect(() => {
@@ -151,8 +172,17 @@ export const useSignedMediaUrl = ({
       setSafeState(createUnavailableState(fallbackUrl));
       return;
     }
+    if (bypassSigning) {
+      setSafeState({
+        url: bypassUrl,
+        expiresAt: null,
+        isLoading: false,
+        error: bypassUrl ? null : 'Media source unavailable.',
+      });
+      return;
+    }
     void refresh(true);
-  }, [asset?.assetId, asset?.signedUrl, asset?.urlExpiresAt, fallbackUrl, refresh, setSafeState]);
+  }, [asset?.assetId, asset?.signedUrl, asset?.urlExpiresAt, bypassSigning, bypassUrl, fallbackUrl, refresh, setSafeState]);
 
   useEffect(() => {
     if (!autoRefresh || !state.expiresAt) return;

@@ -1,7 +1,7 @@
 import express from 'express'
 import fetch from 'node-fetch'
 import sql from '../db.js'
-import { withHttpError } from '../middleware/apiErrorHandler.js'
+import { createHttpError, sendApiSuccess, withHttpError } from '../middleware/apiErrorHandler.js'
 
 const router = express.Router()
 
@@ -207,7 +207,11 @@ router.get('/health', async (req, res, next) => {
   try {
     const orgId = parseOrgId(req.query.orgId || req.query.org_id)
     const rows = await fetchHealthRows(orgId)
-    res.json({ data: rows, count: rows.length })
+    sendApiSuccess(res, rows, {
+      code: 'leadership_health_loaded',
+      message: 'Leadership health loaded.',
+      meta: { count: rows.length },
+    })
   } catch (error) {
     next(withHttpError(error, 500, 'leadership_health_failed'))
   }
@@ -217,8 +221,7 @@ router.get('/:orgId/recommendations', async (req, res, next) => {
   try {
     const orgId = parseOrgId(req.params.orgId)
     if (!orgId) {
-      res.status(400).json({ error: 'org_id_required' })
-      return
+      return next(createHttpError(400, 'org_id_required', 'Organization id is required.'))
     }
     const rows = await sql`
       select *
@@ -227,7 +230,10 @@ router.get('/:orgId/recommendations', async (req, res, next) => {
       order by case when status = 'resolved' then 1 else 0 end, priority desc, generated_at desc
       limit 100
     `
-    res.json({ data: rows })
+    sendApiSuccess(res, rows, {
+      code: 'leadership_recommendations_loaded',
+      message: 'Leadership recommendations loaded.',
+    })
   } catch (error) {
     next(withHttpError(error, 500, 'leadership_recommendations_failed'))
   }
@@ -237,8 +243,7 @@ router.post('/:orgId/recommendations', async (req, res, next) => {
   try {
     const orgId = parseOrgId(req.params.orgId)
     if (!orgId) {
-      res.status(400).json({ error: 'org_id_required' })
-      return
+      return next(createHttpError(400, 'org_id_required', 'Organization id is required.'))
     }
 
     const limit = Math.max(1, Math.min(5, Number(req.body?.limit ?? 3)))
@@ -246,8 +251,7 @@ router.post('/:orgId/recommendations', async (req, res, next) => {
 
     const [health] = await fetchHealthRows(orgId)
     if (!health) {
-      res.status(404).json({ error: 'org_not_found_or_no_metrics' })
-      return
+      return next(createHttpError(404, 'org_not_found_or_no_metrics', 'Organization metrics not found.'))
     }
 
     const existing = await sql`
@@ -273,12 +277,13 @@ router.post('/:orgId/recommendations', async (req, res, next) => {
   const fresh = merged.filter((suggestion) => !hasSimilarOpenRecommendation(existing, suggestion)).slice(0, limit)
 
     if (!fresh.length) {
-        res.json({
-          data: [],
-          message: 'no_new_recommendations',
+      return sendApiSuccess(res, [], {
+        code: 'no_new_recommendations',
+        message: 'No new recommendations generated.',
+        meta: {
           mode: (aiCandidates?.length ?? 0) > 0 ? 'ai' : 'heuristic',
-        })
-      return
+        },
+      })
     }
 
     const inserted = []
@@ -323,7 +328,11 @@ router.post('/:orgId/recommendations', async (req, res, next) => {
       ? 'heuristic'
       : 'mixed'
 
-    res.json({ data: inserted, mode })
+    sendApiSuccess(res, inserted, {
+      code: 'leadership_recommendations_generated',
+      message: 'Leadership recommendations generated.',
+      meta: { mode },
+    })
   } catch (error) {
     next(withHttpError(error, 500, 'leadership_recommendations_generate_failed'))
   }
@@ -335,16 +344,14 @@ router.patch('/recommendations/:recommendationId', async (req, res, next) => {
   try {
     const recommendationId = req.params.recommendationId
     if (!recommendationId) {
-      res.status(400).json({ error: 'recommendation_id_required' })
-      return
+      return next(createHttpError(400, 'recommendation_id_required', 'Recommendation id is required.'))
     }
 
     const updates = {}
     const status = typeof req.body?.status === 'string' ? req.body.status.toLowerCase() : null
     if (status) {
       if (!ALLOWED_STATUSES.has(status)) {
-        res.status(400).json({ error: 'invalid_status' })
-        return
+        return next(createHttpError(400, 'invalid_status', 'Invalid recommendation status.'))
       }
       updates.status = status
       if (status === 'resolved') {
@@ -357,8 +364,7 @@ router.patch('/recommendations/:recommendationId', async (req, res, next) => {
     }
 
     if (!Object.keys(updates).length) {
-      res.status(400).json({ error: 'no_updates_provided' })
-      return
+      return next(createHttpError(400, 'no_updates_provided', 'No updates were provided.'))
     }
 
     updates.updated_at = new Date().toISOString()
@@ -377,11 +383,13 @@ router.patch('/recommendations/:recommendationId', async (req, res, next) => {
     `
 
     if (!row) {
-      res.status(404).json({ error: 'recommendation_not_found' })
-      return
+      return next(createHttpError(404, 'recommendation_not_found', 'Recommendation not found.'))
     }
 
-    res.json({ data: row })
+    sendApiSuccess(res, row, {
+      code: 'leadership_recommendation_updated',
+      message: 'Leadership recommendation updated.',
+    })
   } catch (error) {
     next(withHttpError(error, 500, 'leadership_recommendation_update_failed'))
   }

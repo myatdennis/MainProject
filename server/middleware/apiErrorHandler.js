@@ -39,6 +39,23 @@ export const withHttpError = (err, status = 500, code = 'server_error') => {
   return err;
 };
 
+export const sendApiSuccess = (res, data = null, options = {}) => {
+  const {
+    statusCode = 200,
+    code = null,
+    message = null,
+    meta = null,
+  } = options;
+
+  return res.status(statusCode).json({
+    ok: true,
+    data: data ?? null,
+    code,
+    message,
+    meta: meta && typeof meta === 'object' ? meta : null,
+  });
+};
+
 export const apiErrorHandler = (err, req, res, next) => {
   if (!err) {
     return next();
@@ -91,14 +108,17 @@ export const apiErrorHandler = (err, req, res, next) => {
   const wantsJson = typeof req?.headers?.accept === 'string' && req.headers.accept.includes('application/json');
   if (wantsJson) {
     res.setHeader('content-type', 'application/json; charset=utf-8');
-    
   }
 
   const payload = JSON.stringify({
-    status: 'error',
+    ok: false,
+    data: null,
     code,
     message,
-    requestId,
+    meta: {
+      requestId,
+      status,
+    },
   });
   res.statusCode = status;
   res.end(payload);

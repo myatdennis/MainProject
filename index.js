@@ -1,19 +1,33 @@
-// Global safety net — prevent unhandled rejections/exceptions from silently killing the process on Railway
+let fatalShutdownScheduled = false;
+
+const scheduleFatalShutdown = (type, payload = {}) => {
+  if (fatalShutdownScheduled) {
+    return;
+  }
+  fatalShutdownScheduled = true;
+  console.error('[process] fatal_runtime_error', {
+    type,
+    ...payload,
+  });
+  process.exitCode = 1;
+  setTimeout(() => {
+    process.exit(1);
+  }, 250).unref();
+};
+
 process.on('unhandledRejection', (reason, promise) => {
-  console.error('[process] unhandledRejection', {
+  scheduleFatalShutdown('unhandledRejection', {
     reason: reason instanceof Error ? reason.stack : String(reason),
     promise: String(promise),
   });
-  // Do NOT exit — log and continue so Railway doesn't cycle-crash
 });
 
 process.on('uncaughtException', (err, origin) => {
-  console.error('[process] uncaughtException', {
+  scheduleFatalShutdown('uncaughtException', {
     message: err instanceof Error ? err.message : String(err),
     stack: err instanceof Error ? err.stack : undefined,
     origin,
   });
-  // Do NOT exit — keep the process alive
 });
 
 import './server/index.js';

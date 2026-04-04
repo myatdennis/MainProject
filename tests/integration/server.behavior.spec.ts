@@ -314,6 +314,172 @@ describe('Server demo-mode behavior', () => {
     expect(JSON.stringify(listJson)).not.toContain('org_id');
   }, 20000);
 
+  it('publishes courses with the standardized success envelope', async () => {
+    const slug = `publish-contract-${randomUUID()}`;
+    const createRes = await server!.fetch('/api/admin/courses', {
+      method: 'POST',
+      headers: await adminContextHeaders(),
+      body: JSON.stringify({
+        course: { title: `Publish Contract ${slug}`, slug, status: 'draft' },
+        modules: [
+          {
+            title: 'Module 1',
+            lessons: [{ title: 'Lesson 1', type: 'text', content: { textContent: 'Ready to publish' } }],
+          },
+        ],
+      }),
+    });
+    expect([200, 201]).toContain(createRes.status);
+    const created = await createRes.json();
+    const courseId = created.data?.id;
+    expect(courseId).toBeTruthy();
+
+    const publishRes = await server!.fetch(`/api/admin/courses/${courseId}/publish`, {
+      method: 'POST',
+      headers: await adminContextHeaders(),
+      body: JSON.stringify({ version: created.data?.version ?? 1 }),
+    });
+    expect(publishRes.status).toBe(200);
+    const body = await publishRes.json();
+    expect(body).toMatchObject({
+      ok: true,
+      code: 'course_published',
+      message: 'Course published successfully.',
+    });
+    expect(body?.meta?.courseId).toBe(courseId);
+    expect(body?.data?.status).toBe('published');
+  }, 20000);
+
+  it('rolls back a batched import when one course in the batch fails', async () => {
+    const slugA = `batch-rollback-a-${randomUUID()}`;
+    const slugB = `batch-rollback-b-${randomUUID()}`;
+    const importRes = await server!.fetch('/api/admin/courses/import', {
+      method: 'POST',
+      headers: await adminContextHeaders(),
+      body: JSON.stringify({
+        organizationId: 'd28e403a-cdab-42cd-8fc7-2c9327ca40f8',
+        items: [
+          {
+            course: { title: `Course ${slugA}`, slug: slugA, status: 'draft' },
+            modules: [],
+          },
+          {
+            course: { title: `Course ${slugA}`, slug: slugA, status: 'draft' },
+            modules: [],
+          },
+        ],
+      }),
+    });
+    expect(importRes.status).toBe(409);
+    const importJson = await importRes.json();
+    expect(importJson).toMatchObject({
+      ok: false,
+      code: 'slug_conflict',
+    });
+
+    const listRes = await server!.fetch('/api/admin/courses', {
+      headers: await adminContextHeaders(),
+    });
+    expect(listRes.status).toBe(200);
+    const listJson = await listRes.json();
+    const slugs = (listJson.data || []).map((course: any) => course.slug);
+    expect(slugs).not.toContain(slugA);
+    expect(slugs).not.toContain(slugB);
+  }, 20000);
+
+  it('creates and updates modules without falsely resolving module ids as course ids', async () => {
+    const slug = `module-update-${randomUUID()}`;
+    const createCourseRes = await server!.fetch('/api/admin/courses', {
+      method: 'POST',
+      headers: await adminContextHeaders(),
+      body: JSON.stringify({
+        course: { title: `Module Course ${slug}`, slug, status: 'draft' },
+        modules: [],
+      }),
+    });
+    expect([200, 201]).toContain(createCourseRes.status);
+    const createdCourse = await createCourseRes.json();
+    const courseId = createdCourse.data?.id;
+
+    const createModuleRes = await server!.fetch('/api/admin/modules', {
+      method: 'POST',
+      headers: await adminContextHeaders(),
+      body: JSON.stringify({ courseId, title: 'Original Module' }),
+    });
+    expect(createModuleRes.status).toBe(201);
+    const createdModule = await createModuleRes.json();
+    expect(createdModule).toMatchObject({
+      ok: true,
+      code: 'module_created',
+    });
+    const moduleId = createdModule.data?.id;
+    expect(moduleId).toBeTruthy();
+
+    const updateModuleRes = await server!.fetch(`/api/admin/modules/${moduleId}`, {
+      method: 'PATCH',
+      headers: await adminContextHeaders(),
+      body: JSON.stringify({ title: 'Updated Module' }),
+    });
+    expect(updateModuleRes.status).toBe(200);
+    const updatedModule = await updateModuleRes.json();
+    expect(updatedModule).toMatchObject({
+      ok: true,
+      code: 'module_updated',
+      message: 'Module updated.',
+    });
+    expect(updatedModule.data?.title).toBe('Updated Module');
+  }, 20000);
+
+  it('creates and updates lessons without falsely resolving lesson ids as course ids', async () => {
+    const slug = `lesson-update-${randomUUID()}`;
+    const createCourseRes = await server!.fetch('/api/admin/courses', {
+      method: 'POST',
+      headers: await adminContextHeaders(),
+      body: JSON.stringify({
+        course: { title: `Lesson Course ${slug}`, slug, status: 'draft' },
+        modules: [{ title: 'Module A', lessons: [] }],
+      }),
+    });
+    expect([200, 201]).toContain(createCourseRes.status);
+    const createdCourse = await createCourseRes.json();
+    const moduleId = createdCourse.data?.modules?.[0]?.id;
+    expect(moduleId).toBeTruthy();
+
+    const createLessonRes = await server!.fetch('/api/admin/lessons', {
+      method: 'POST',
+      headers: await adminContextHeaders(),
+      body: JSON.stringify({
+        moduleId,
+        title: 'Original Lesson',
+        type: 'text',
+        orderIndex: 0,
+        content: { textContent: 'Hello' },
+      }),
+    });
+    expect(createLessonRes.status).toBe(201);
+    const createdLesson = await createLessonRes.json();
+    expect(createdLesson).toMatchObject({
+      ok: true,
+      code: 'lesson_created',
+    });
+    const lessonId = createdLesson.data?.id;
+    expect(lessonId).toBeTruthy();
+
+    const updateLessonRes = await server!.fetch(`/api/admin/lessons/${lessonId}`, {
+      method: 'PATCH',
+      headers: await adminContextHeaders(),
+      body: JSON.stringify({ title: 'Updated Lesson' }),
+    });
+    expect(updateLessonRes.status).toBe(200);
+    const updatedLesson = await updateLessonRes.json();
+    expect(updatedLesson).toMatchObject({
+      ok: true,
+      code: 'lesson_updated',
+      message: 'Lesson updated.',
+    });
+    expect(updatedLesson.data?.title).toBe('Updated Lesson');
+  }, 20000);
+
   it('records audit log metadata when provided', async () => {
     const payload = {
       action: `integration_audit_${Date.now()}`,
@@ -328,10 +494,14 @@ describe('Server demo-mode behavior', () => {
     });
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body).toHaveProperty('ok', true);
-    expect(body).toHaveProperty('stored');
-    expect(body).toHaveProperty('entry');
-    expect(body.entry).toMatchObject({
+    expect(body).toMatchObject({
+      ok: true,
+      code: 'audit_log_recorded',
+      message: 'Audit log request processed.',
+    });
+    expect(body.data).toHaveProperty('stored', true);
+    expect(body.data).toHaveProperty('entry');
+    expect(body.data.entry).toMatchObject({
       user_id: payload.userId,
       org_id: payload.orgId,
       action: payload.action,

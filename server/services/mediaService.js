@@ -2,6 +2,9 @@ import { createHash } from 'crypto';
 import { logger } from '../lib/logger.js';
 
 const DEFAULT_SIGN_TTL_SECONDS = Number(process.env.MEDIA_SIGN_TTL_SECONDS || 60 * 15);
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const DIRECT_URL_RE = /^https?:\/\//i;
+const EXTERNAL_REF_RE = /^external:\/\//i;
 
 const toHexChecksum = (buffer) => {
   try {
@@ -13,6 +16,47 @@ const toHexChecksum = (buffer) => {
 };
 
 const normalizePath = (value = '') => value.replace(/^\/+/, '');
+const isUuid = (value = '') => UUID_RE.test(String(value).trim());
+const isDirectUrl = (value = '') => DIRECT_URL_RE.test(String(value).trim());
+const isExternalRef = (value = '') => EXTERNAL_REF_RE.test(String(value).trim());
+
+const parseSupabaseStorageUrl = (value = '') => {
+  try {
+    const parsed = new URL(value);
+    const publicMatch = parsed.pathname.match(/^\/storage\/v1\/object\/public\/([^/]+)\/(.+)$/i);
+    if (publicMatch) {
+      return {
+        bucket: decodeURIComponent(publicMatch[1]),
+        storagePath: decodeURIComponent(publicMatch[2]),
+      };
+    }
+    const signedMatch = parsed.pathname.match(/^\/storage\/v1\/object\/sign\/([^/]+)\/(.+)$/i);
+    if (signedMatch) {
+      return {
+        bucket: decodeURIComponent(signedMatch[1]),
+        storagePath: decodeURIComponent(signedMatch[2]),
+      };
+    }
+  } catch {
+    return null;
+  }
+  return null;
+};
+
+const createDirectUrlAsset = (assetId) => {
+  const storageRef = parseSupabaseStorageUrl(assetId);
+  return {
+    id: assetId,
+    bucket: storageRef?.bucket || 'external',
+    storage_path: storageRef?.storagePath || assetId,
+    mime_type: null,
+    bytes: 0,
+    metadata: {
+      directUrl: true,
+      external: true,
+    },
+  };
+};
 
 export const createMediaService = ({
   getSupabase,
@@ -81,6 +125,12 @@ export const createMediaService = ({
   };
 
   const getAssetById = async (assetId, logOnce = () => {}) => {
+    if (!isUuid(assetId)) {
+      if (!isDirectUrl(assetId) && !isExternalRef(assetId)) {
+        logOnce('[mediaService] getAssetById skipped non-uuid asset id', assetId);
+      }
+      return null;
+    }
     try {
       const supabase = requireSupabase();
       const { data, error } = await supabase
@@ -118,6 +168,35 @@ export const createMediaService = ({
 
   const signAssetById = async ({ assetId, ttlSeconds, logOnce = () => {} }) => {
     try {
+      if (isDirectUrl(assetId)) {
+        const asset = createDirectUrlAsset(assetId);
+        return {
+          asset,
+          signedUrl: assetId,
+          expiresAt: null,
+          fallback: false,
+        };
+      }
+
+      if (isExternalRef(assetId)) {
+        return {
+          asset: {
+            id: assetId,
+            bucket: 'external',
+            storage_path: assetId,
+            mime_type: null,
+            bytes: 0,
+            metadata: {
+              external: true,
+              unresolved: true,
+            },
+          },
+          signedUrl: '',
+          expiresAt: null,
+          fallback: true,
+        };
+      }
+
       const supabase = requireSupabase();
       const asset = await getAssetById(assetId, logOnce);
       if (!asset) {

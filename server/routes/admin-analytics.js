@@ -3,7 +3,7 @@
 
 import express from 'express'
 import sql from '../db.js'
-import { withHttpError } from '../middleware/apiErrorHandler.js'
+import { createHttpError, sendApiSuccess, withHttpError } from '../middleware/apiErrorHandler.js'
 
 const router = express.Router()
 
@@ -15,7 +15,7 @@ router.get('/', async (req, res, next) => {
     const untilDate = until ? new Date(until) : null
 
     if ((since && Number.isNaN(sinceDate?.getTime())) || (until && Number.isNaN(untilDate?.getTime()))) {
-      return res.status(400).json({ error: 'invalid_date_range' })
+      return next(createHttpError(400, 'invalid_date_range', 'Invalid date range.'))
     }
 
     // ── Overview ─────────────────────────────────────────────────────────
@@ -193,7 +193,7 @@ router.get('/', async (req, res, next) => {
     `
 
     // Map all DB rows from snake_case to camelCase to match the frontend hook interface.
-    res.json({
+    return sendApiSuccess(res, {
       overview: {
         totalActiveLearners: overview.total_active_learners,
         totalOrgs:           overview.total_orgs,
@@ -243,6 +243,9 @@ router.get('/', async (req, res, next) => {
         quizAttempts:      r.quiz_attempts,
       })),
       surveySummary: [],   // no survey_responses table yet; kept for API compat
+    }, {
+      code: 'admin_analytics_loaded',
+      message: 'Admin analytics loaded.',
     })
   } catch (err) {
     console.error('[admin-analytics] error', err)

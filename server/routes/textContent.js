@@ -2,7 +2,7 @@ import express from 'express';
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { createHttpError, withHttpError } from '../middleware/apiErrorHandler.js';
+import { createHttpError, sendApiSuccess, withHttpError } from '../middleware/apiErrorHandler.js';
 
 const router = express.Router();
 const __filename = fileURLToPath(import.meta.url);
@@ -23,7 +23,10 @@ router.get('/', async (req, res, next) => {
   try {
     const data = await readContent();
     const items = Object.entries(data).map(([key, value]) => ({ key, value }));
-    res.json(items);
+    sendApiSuccess(res, items, {
+      code: 'text_content_loaded',
+      message: 'Text content loaded.',
+    });
   } catch (error) {
     next(withHttpError(error, 500, 'text_content_load_failed'));
   }
@@ -45,7 +48,10 @@ router.put('/', async (req, res, next) => {
     });
 
     await writeContent(contentJson);
-    res.json({ success: true });
+    sendApiSuccess(res, null, {
+      code: 'text_content_saved',
+      message: 'Text content saved.',
+    });
   } catch (error) {
     next(withHttpError(error, 500, 'text_content_save_failed'));
   }

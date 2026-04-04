@@ -518,6 +518,8 @@ const LMSModule = () => {
 
   const videoSourceType = (activeLesson?.content?.videoSourceType ?? 'internal').toLowerCase();
   const usesExternalVideoSource = ['external', 'youtube', 'vimeo'].includes(videoSourceType);
+  const isDocumentLikeLesson = ['document', 'resource', 'download'].includes(activeLesson?.type ?? '');
+  const isTextLikeLesson = ['text', 'reflection'].includes(activeLesson?.type ?? '');
   const {
     url: securedVideoUrl,
     isLoading: securingVideo,
@@ -773,7 +775,7 @@ const LMSModule = () => {
                           </div>
                         )}
 
-                        {activeLesson.type === 'document' && (
+                        {isDocumentLikeLesson && (
                           <div className="space-y-4 rounded-xl bg-white/60 p-4">
                             <div>
                               <p className="text-sm text-slate/80">
@@ -831,7 +833,7 @@ const LMSModule = () => {
                           </div>
                         )}
 
-                        {activeLesson.type !== 'video' && activeLesson.type !== 'document' && (
+                        {activeLesson.type !== 'video' && !isDocumentLikeLesson && (
                           <div className="space-y-3 rounded-xl bg-white/60 p-4">
                             <p className="text-sm text-slate/80">This lesson includes rich interactive content.</p>
                             <Button size="sm" onClick={() => handleOpenInPlayer(activeLesson.id)}>
@@ -841,13 +843,13 @@ const LMSModule = () => {
                         )}
 
                         <div className="space-y-4 text-sm leading-relaxed text-slate/80">
-                          {activeLesson.content?.textContent ? (
-                            <p>{activeLesson.content.textContent}</p>
+                          {isTextLikeLesson && (activeLesson.content?.textContent || activeLesson.content?.content || activeLesson.content?.reflectionPrompt) ? (
+                            <p>{activeLesson.content?.textContent || activeLesson.content?.content || activeLesson.content?.reflectionPrompt}</p>
                           ) : activeLesson.type === 'video' ? (
                             <p className="text-slate/60">
                               Video lessons include transcripts and resources inside the player above.
                             </p>
-                          ) : activeLesson.type === 'document' ? (
+                          ) : isDocumentLikeLesson ? (
                             <p className="text-slate/60">
                               Resource downloads open in a new tab. Keep this window open to continue when you’re ready.
                             </p>

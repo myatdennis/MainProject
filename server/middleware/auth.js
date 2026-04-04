@@ -18,6 +18,13 @@ import jwt from 'jsonwebtoken';
 // on every authenticated request.
 const AUTH_VERBOSE_LOGGING = NODE_ENV !== 'production' || process.env.AUTH_VERBOSE_LOGGING === 'true';
 const AUTH_DEBUG = process.env.AUTH_DEBUG === 'true';
+const SHOULD_LOG_PII = NODE_ENV !== 'production' && AUTH_DEBUG;
+
+const authLog = (level, event, detail = {}, { allowPII = false } = {}) => {
+  const logger = console[level] || console.log;
+  const payload = allowPII && SHOULD_LOG_PII ? detail : detail;
+  logger(`[auth] ${event}`, payload);
+};
 
 const normalizeEmail = (value = '') => value.trim().toLowerCase();
 const PRIMARY_ADMIN_EMAIL = normalizeEmail(process.env.PRIMARY_ADMIN_EMAIL || 'mya@the-huddle.co');
@@ -65,7 +72,7 @@ const fetchUserProfileRole = async (userId) => {
       isAdmin: data?.is_admin === true,
     };
   } catch (error) {
-    console.warn('[auth] Failed to fetch user profile role', {
+    authLog('warn', 'fetch_user_profile_role_failed', {
       userId,
       error: error?.message || error,
     });
@@ -136,7 +143,7 @@ const syncUserProfileFlags = async (user) => {
         .upsert(payload, { onConflict: 'id' });
     }
   } catch (error) {
-    console.warn('[auth] Failed to sync user profile flags', {
+    authLog('warn', 'sync_user_profile_flags_failed', {
       userId: user.id,
       error: error?.message || error,
     });
@@ -605,17 +612,15 @@ const buildUserPayload = (user, memberships, { membershipStatus = 'ready' } = {}
 
   if (inferredRole === 'admin' && trustedMemberships.length === 0 && !platformRole) {
     if (!membershipDataTrusted) {
-      console.warn('[auth] Preserving admin role despite unverified memberships', {
+      authLog('warn', 'preserving_admin_role_unverified_memberships', {
         userId: user?.id ?? null,
-        email: user?.email ?? null,
         membershipCount: trustedMemberships.length,
         platformRole,
         membershipStatus,
       });
     } else {
-      console.warn('[auth] Suppressing admin role due to missing memberships', {
+      authLog('warn', 'suppressing_admin_role_missing_memberships', {
         userId: user?.id ?? null,
-        email: user?.email ?? null,
         membershipCount: trustedMemberships.length,
         platformRole,
         reason: 'no_memberships',
@@ -630,9 +635,8 @@ const buildUserPayload = (user, memberships, { membershipStatus = 'ready' } = {}
   const serializedPermissions = Array.from(mergedPermissions);
 
   if (AUTH_VERBOSE_LOGGING) {
-    console.info('[auth] build_user_payload', {
+    authLog('info', 'build_user_payload', {
       userId: user?.id ?? null,
-      email: user?.email ?? null,
       platformRole,
       inferredRole,
       isPlatformAdmin: (platformRole === 'platform_admin') || isPlatformAdmin(user),
@@ -744,13 +748,12 @@ export async function buildAuthContext(req, { optional = false } = {}) {
   const token = resolveAccessTokenFromRequest(req);
   const preValidatedUser = req.supabaseJwtUser || null;
   if (AUTH_DEBUG) {
-    console.log('[auth] buildAuthContext start', {
+    authLog('info', 'buildAuthContext_start', {
       path: req.originalUrl || req.url,
       method: req.method,
       tokenProvided: Boolean(token),
       supabaseJwtUser: !!req.supabaseJwtUser,
       userId: preValidatedUser?.id ?? null,
-      email: preValidatedUser?.email ?? null,
       userRole: preValidatedUser?.role ?? null,
       platformRole: preValidatedUser?.platformRole ?? null,
       isPlatformAdmin: preValidatedUser?.isPlatformAdmin ?? null,
@@ -759,7 +762,7 @@ export async function buildAuthContext(req, { optional = false } = {}) {
   }
 
   if (!token && allowDemoBypassForRequest(req)) {
-    console.warn('[auth] Granting demo auto-auth bypass for request', {
+    authLog('warn', 'granting_demo_auto_auth_bypass', {
       path: req.originalUrl || req.url,
       host: req.headers?.host,
       origin: req.headers?.origin,
@@ -813,7 +816,7 @@ export async function buildAuthContext(req, { optional = false } = {}) {
 
     if (!supabase) {
       if (allowDemoBypassForRequest(req)) {
-        console.warn('[auth] Supabase unavailable; falling back to demo auto-auth context', {
+        authLog('warn', 'supabase_unavailable_demo_auto_auth_bypass', {
           path: req.originalUrl || req.url,
           host: req.headers?.host,
           origin: req.headers?.origin,
@@ -836,7 +839,7 @@ export async function buildAuthContext(req, { optional = false } = {}) {
 
   if (!supabaseUser) {
     if (allowDemoBypassForRequest(req)) {
-      console.warn('[auth] Token validation failed; falling back to demo auto-auth context', {
+      authLog('warn', 'token_validation_failed_demo_auto_auth_bypass', {
         path: req.originalUrl || req.url,
       });
       const demo = buildDemoAuthContextPayload({ role: resolveDemoBypassRole(req) });
@@ -872,7 +875,7 @@ export async function buildAuthContext(req, { optional = false } = {}) {
     const requestedOrg = getRequestedOrgId(req);
     if (requestedOrg) {
       activeOrgId = requestedOrg;
-      console.info('[admin-auth] resolved_org_for_platform_admin', {
+      authLog('info', 'resolved_org_for_platform_admin', {
         userId: supabaseUser?.id ?? null,
         requestedOrg,
         activeOrgId,
@@ -883,7 +886,6 @@ export async function buildAuthContext(req, { optional = false } = {}) {
   const membershipOrgIds = membershipsTrusted ? memberships.map((m) => m.orgId).filter(Boolean) : [];
   const snapshot = {
     userId: supabaseUser.id,
-    email: supabaseUser.email ?? null,
     membershipStatus,
     membershipCount: effectiveMembershipCount,
     activeOrgId,
@@ -928,19 +930,16 @@ export async function buildAuthContext(req, { optional = false } = {}) {
 export async function authenticate(req, res, next) {
   try {
     const token = resolveAccessTokenFromRequest(req);
-    console.log('[auth] authenticate start', {
+    authLog('info', 'authenticate_start', {
       path: req.originalUrl || req.url,
       method: req.method,
       tokenProvided: Boolean(token),
-      xUserId: req.headers?.['x-user-id'] || null,
-      xUserRole: req.headers?.['x-user-role'] || null,
       supabaseJwtUser: !!req.supabaseJwtUser,
       requestedOrgId: getRequestedOrgId(req),
     });
     const context = await buildAuthContext(req);
-    console.log('[auth] buildAuthContext result', {
+    authLog('info', 'buildAuthContext_result', {
       userId: context?.user?.userId ?? null,
-      email: context?.user?.email ?? null,
       userRole: context?.user?.role ?? null,
       platformRole: context?.user?.platformRole ?? null,
       isPlatformAdmin: context?.user?.isPlatformAdmin ?? null,
@@ -950,7 +949,7 @@ export async function authenticate(req, res, next) {
       requestedOrgId: getRequestedOrgId(req),
     });
     if (!context) {
-      console.warn('[auth] authenticate failed: no context');
+      authLog('warn', 'authenticate_failed_no_context');
       return res.status(401).json({
         error: 'Authentication required',
         message: 'No valid session token',
@@ -966,9 +965,8 @@ export async function authenticate(req, res, next) {
     req.membershipCount = context.membershipCount ?? null;
     req.membershipDegraded = Boolean(context.membershipDegraded);
     req.userPermissions = new Set(Array.isArray(context.user.permissions) ? context.user.permissions : []);
-    console.log('[auth] authenticate success', {
+    authLog('info', 'authenticate_success', {
       userId: req.userId,
-      email: req.user?.email || null,
       userRole: req.user?.role || null,
       platformRole: req.user?.platformRole || null,
       isPlatformAdmin: req.user?.isPlatformAdmin,
@@ -978,9 +976,12 @@ export async function authenticate(req, res, next) {
     });
     return next();
   } catch (error) {
-    console.error('[auth] Unexpected authentication error', error);
+    authLog('error', 'unexpected_authentication_error', {
+      message: error?.message || String(error),
+      stack: error?.stack ?? null,
+    });
     if (error.message === 'supabase_not_configured') {
-      console.error('[auth] Supabase credentials missing while STRICT_AUTH enabled');
+      authLog('error', 'supabase_credentials_missing_strict_auth');
       return res.status(503).json({
         error: 'auth_unavailable',
         message: 'Authentication service not configured',
@@ -1001,7 +1002,6 @@ export async function authenticate(req, res, next) {
       });
     }
 
-    console.error('[auth] Unexpected authentication error', error);
     return res.status(500).json({
       error: 'auth_error',
       message: 'Unable to authenticate request',
@@ -1351,7 +1351,9 @@ export async function optionalAuthenticate(req, res, next) {
       };
     }
   } catch (error) {
-    console.warn('[auth] optional auth failed:', error?.message || error);
+    authLog('warn', 'optional_auth_failed', {
+      message: error?.message || String(error),
+    });
   } finally {
     // Ensure baseline auth context is always set.
     if (!req.authContext) {
@@ -1362,7 +1364,7 @@ export async function optionalAuthenticate(req, res, next) {
         memberships: [],
       };
     }
-    console.info('[auth] optional_auth_context_initialized', {
+    authLog('info', 'optional_auth_context_initialized', {
       userId: req.authContext.userId,
       isAuthenticated: req.authContext.isAuthenticated,
       isPlatformAdmin: req.authContext.isPlatformAdmin,

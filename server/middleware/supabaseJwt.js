@@ -55,9 +55,14 @@ const getSupabaseJwtSecretDiagnostics = () => {
   };
 };
 
+const jwtLog = (level, event, detail = {}) => {
+  const logger = console[level] || console.log;
+  logger(`[supabaseJwt] ${event}`, detail);
+};
+
 // Emit a single startup log so Railway logs always show the JWT config state.
 // Never log the secret value itself.
-console.log('[supabaseJwt] startup_config', {
+jwtLog('info', 'startup_config', {
   ...getSupabaseJwtSecretDiagnostics(),
   expectedIssuer: SUPABASE_EXPECTED_ISSUER,
   jwksUrl: SUPABASE_JWKS_URL.toString(),
@@ -105,7 +110,7 @@ const getRemoteJwks = () => {
 };
 const logIssuerMismatch = (error) => {
   if (error?.code === 'ERR_JWT_CLAIM_INVALID' && error?.claim === 'iss') {
-    console.warn('[supabaseJwt] issuer_mismatch', {
+    jwtLog('warn', 'issuer_mismatch', {
       expected: SUPABASE_EXPECTED_ISSUER,
       received: error?.claimValue,
     });
@@ -211,7 +216,7 @@ const verifyAsymmetricToken = async (token, algorithm) => {
     logIssuerMismatch(error);
     if (error?.code && String(error.code).startsWith('ERR_JWKS')) {
       jwksCache.delete(JWKS_CACHE_KEY);
-      console.error('[supabaseJwt] jwks_fetch_failed', {
+      jwtLog('error', 'jwks_fetch_failed', {
         message: error.message,
         code: error.code,
       });
@@ -273,25 +278,27 @@ const mapLocalClaimsToSupabaseClaims = (claims = {}) => {
 export default async function supabaseJwtMiddleware(req, res, next) {
   const path = req.path || req.originalUrl || '';
   if (shouldBypass(req)) {
-    console.log('[supabaseJwt] bypassing auth for path', path);
+    if (!isProduction) {
+      jwtLog('info', 'bypassing_auth', { path });
+    }
     return next();
   }
 
   if (shouldSkipAuthInDev) {
-    console.log('[supabaseJwt] dev fallback mode, skipping auth for path', path);
+    if (!isProduction) {
+      jwtLog('info', 'dev_fallback_skip_auth', { path });
+    }
     return next();
   }
 
   const token = resolveTokenFromRequest(req);
   if (!token) {
-    console.warn('[supabaseJwt] token_missing', { path });
+    jwtLog('warn', 'token_missing', { path });
     return res.status(401).json({
       error: 'Authentication required',
       message: 'No bearer token provided in the Authorization header',
     });
   }
-
-  console.log('[supabaseJwt] token_present', { path, tokenSnippet: token.slice(0, 10) + '...' });
 
   try {
     const claims = await verifySupabaseToken(token);
@@ -311,7 +318,7 @@ export default async function supabaseJwtMiddleware(req, res, next) {
     if (!isProduction) {
       const localClaims = verifyAccessToken(token);
       if (localClaims && localClaims.userId) {
-        console.warn('[supabaseJwt] local access token accepted for non-production environment');
+        jwtLog('warn', 'local_access_token_accepted_non_production', { path });
         const supabaseClaims = mapLocalClaimsToSupabaseClaims(localClaims);
         const supabaseUser = mapClaimsToUser(supabaseClaims);
         syncUserProfileFlags(supabaseUser);
@@ -331,13 +338,13 @@ export default async function supabaseJwtMiddleware(req, res, next) {
     if (isConfigError) {
       // Already logged inside getHs256SecretKey — no need to repeat here
     } else if (isExpired) {
-      console.warn('[supabaseJwt] token_expired', {
+      jwtLog('warn', 'token_expired', {
         code: 'token_expired',
         algorithm: (() => { try { return decodeProtectedHeader(token)?.alg; } catch { return 'unknown'; } })(),
         secretConfigured: SUPABASE_JWT_SECRET_CONFIGURED,
       });
     } else {
-      console.warn('[supabaseJwt] token validation failed', {
+      jwtLog('warn', 'token_validation_failed', {
         code,
         algorithm: (() => { try { return decodeProtectedHeader(token)?.alg; } catch { return 'unknown'; } })(),
         secretConfigured: SUPABASE_JWT_SECRET_CONFIGURED,
@@ -345,7 +352,7 @@ export default async function supabaseJwtMiddleware(req, res, next) {
     }
 
     if (shouldSkipAuthInDev) {
-      console.warn('[supabaseJwt] dev/E2E mode — falling through after token validation failure');
+      jwtLog('warn', 'dev_or_e2e_auth_fallthrough', { path, code });
       return next();
     }
 

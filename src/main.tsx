@@ -354,6 +354,7 @@ const supportsServiceWorker = typeof navigator !== 'undefined' && 'serviceWorker
 const deployContext = (import.meta.env.VITE_DEPLOY_CONTEXT || '').toLowerCase();
 const hostLooksLikePreview =
   typeof window !== 'undefined' && /deploy-preview|preview|staging/.test(window.location.hostname);
+const isAdminSurface = typeof window !== 'undefined' && /^\/admin(?:\/|$)/.test(window.location.pathname);
 const isPreviewBuild =
   deployContext === 'deploy-preview' ||
   deployContext === 'preview' ||
@@ -365,7 +366,8 @@ const serviceWorkerEnabled =
   swFlag === 'true' &&
   import.meta.env.VITE_ENABLE_SW !== 'false' &&
   !isPreviewBuild &&
-  !hostLooksLikePreview;
+  !hostLooksLikePreview &&
+  !isAdminSurface;
 
 if (serviceWorkerEnabled) {
   if (import.meta.env.DEV) {
@@ -405,8 +407,9 @@ if (serviceWorkerEnabled) {
     console.log('🛠️ Service worker disabled for this build', {
       deployContext,
       hostLooksLikePreview,
+      isAdminSurface,
       swAllowed: supportsServiceWorker && import.meta.env.PROD,
-      reason: swFlag === 'true' ? 'preview_guard' : 'flag_disabled',
+      reason: swFlag === 'true' ? (isAdminSurface ? 'admin_surface_guard' : 'preview_guard') : 'flag_disabled',
     });
   }
   serviceWorkerManager.forceCleanup().catch((error) => {

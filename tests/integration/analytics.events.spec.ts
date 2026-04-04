@@ -7,8 +7,6 @@ const adminContextHeaders = async () => ({
   'Content-Type': 'application/json',
   Accept: 'application/json',
   ...(await createAdminAuthHeaders()),
-  'x-user-id': 'integration-admin',
-  'x-user-role': 'admin',
 });
 
 describe('analytics events API', () => {
@@ -43,8 +41,9 @@ describe('analytics events API', () => {
     });
     expect(res.status).toBe(200);
     const json = await res.json();
-    expect(json).toHaveProperty('status');
-    expect(json.missingOrgContext).toBe(false);
+    expect(json.ok).toBe(true);
+    expect(json.code).toBe('analytics_event_stored');
+    expect(json.data?.missingOrgContext).toBe(false);
   });
 
   it('accepts payloads without org context but flags missingOrgContext', async () => {
@@ -61,8 +60,9 @@ describe('analytics events API', () => {
     });
     expect(res.status).toBe(202);
     const json = await res.json();
-    expect(json).toHaveProperty('status');
-    expect(json.missingOrgContext).toBe(true);
+    expect(json.ok).toBe(true);
+    expect(json.code).toBe('analytics_event_queued');
+    expect(json.data?.missingOrgContext).toBe(true);
   });
 
   it('rejects empty payloads with structured error details', async () => {
@@ -90,6 +90,8 @@ describe('analytics events API', () => {
     });
     expect(res.status).toBe(200);
     const json = await res.json();
+    expect(json.ok).toBe(true);
+    expect(json.code).toBe('analytics_events_loaded');
     expect(Array.isArray(json.data)).toBe(true);
     const ids = (json.data || []).map((entry: any) => entry.id || entry.client_event_id).filter(Boolean);
     expect(Array.isArray(ids)).toBe(true);

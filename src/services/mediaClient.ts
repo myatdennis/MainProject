@@ -11,10 +11,33 @@ export type SignedMediaResponse = {
   metadata?: Record<string, any> | null;
 };
 
+export const isDirectMediaUrl = (value: string) => /^https?:\/\//i.test(value.trim());
+export const isExternalMediaReference = (value: string) => /^external:\/\//i.test(value.trim());
+export const shouldBypassMediaSigning = (value: string) =>
+  isDirectMediaUrl(value) || isExternalMediaReference(value);
+
 export const signMediaAsset = async (assetId: string): Promise<SignedMediaResponse> => {
   if (!assetId) {
     throw new Error('assetId is required to sign media');
   }
+
+  if (isDirectMediaUrl(assetId)) {
+    return {
+      assetId,
+      signedUrl: assetId,
+      urlExpiresAt: '',
+      bucket: 'external',
+      storagePath: assetId,
+      mimeType: '',
+      bytes: 0,
+      metadata: { directUrl: true, external: true },
+    };
+  }
+
+  if (isExternalMediaReference(assetId)) {
+    throw new Error('Media source is external and does not require signing.');
+  }
+
   const payload = await apiRequest<{ data: SignedMediaResponse }>(`/api/media/assets/${encodeURIComponent(assetId)}/sign`, {
     method: 'POST',
   });
@@ -32,6 +55,9 @@ export const shouldRefreshSignedUrl = (expiresAt?: string | null, bufferMs = 60_
 };
 
 export default {
+  isDirectMediaUrl,
+  isExternalMediaReference,
+  shouldBypassMediaSigning,
   signMediaAsset,
   shouldRefreshSignedUrl,
 };

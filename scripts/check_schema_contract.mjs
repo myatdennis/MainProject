@@ -19,6 +19,9 @@ const contracts = {
   courses: ['id', 'slug', 'title', 'description', 'status', 'organization_id', 'meta_json'],
   modules: ['id', 'course_id', 'title', 'description', 'order_index'],
   lessons: ['id', 'module_id', 'title', 'type', 'order_index', 'content_json'],
+  user_organizations_vw: ['organization_id', 'user_id', 'role', 'status'],
+  user_course_progress: ['user_id', 'course_id', 'organization_id', 'progress', 'completed_lessons', 'updated_at'],
+  user_lesson_progress: ['user_id', 'lesson_id', 'organization_id', 'status', 'updated_at'],
 };
 
 const connectionString = process.env.DATABASE_URL;

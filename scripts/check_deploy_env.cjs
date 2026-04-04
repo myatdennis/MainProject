@@ -27,9 +27,13 @@ const isRailwayDeployContext =
   Boolean(process.env.RAILWAY_TOKEN) ||
   Boolean(process.env.RAILWAY_PROJECT_ID) ||
   (process.env.RAILWAY_SERVICE_NAME || '').length > 0;
+const isProductionRuntime = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
 const shouldEnforceStrict =
   forceFlag === 'true' ||
-  (forceFlag !== 'false' && (process.env.CI === 'true' || process.env.CI === '1') && !isRailwayDeployContext);
+  (forceFlag !== 'false' && (
+    isProductionRuntime ||
+    ((process.env.CI === 'true' || process.env.CI === '1') && !isRailwayDeployContext)
+  ));
 const invokingScript = process.env.npm_lifecycle_event || '';
 // Skip client-env validation only for server-only workflows or the Railway API service.
 const skipClientValidation =
