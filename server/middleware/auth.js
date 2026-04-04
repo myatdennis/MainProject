@@ -78,30 +78,63 @@ const isAllowlistedAdminEmail = (email) => {
   return ADMIN_EMAIL_ALLOWLIST.has(normalizeEmail(email));
 };
 
+// Supabase system roles that must never be written to user_profiles.role.
+// The 'authenticated' role is a built-in Postgres/Supabase JWT role — not an app role.
+const SUPABASE_SYSTEM_ROLES = new Set(['authenticated', 'anon', 'service_role', 'postgres', 'supabase_admin']);
+// App roles that should never be downgraded by a sync operation.
+const ELEVATED_APP_ROLES = new Set(['admin', 'platform_admin']);
+
 const syncUserProfileFlags = async (user) => {
   if (!supabase || !user?.id) {
     return;
   }
-  const normalizedRole = user.role ? String(user.role).toLowerCase() : null;
+  const rawRole = user.role ? String(user.role).toLowerCase() : null;
   const normalizedPlatformRole = user.platformRole ? String(user.platformRole).toLowerCase() : null;
   const normalizedEmail = user.email ? normalizeEmail(user.email) : null;
+
+  // Determine is_admin from all available signals — email allowlist is the authoritative source.
   const isAdmin =
-    normalizedRole === 'admin' ||
+    rawRole === 'admin' ||
     normalizedPlatformRole === 'platform_admin' ||
     (normalizedEmail ? isAllowlistedAdminEmail(normalizedEmail) : false);
 
+  // Derive the app-level role to sync.
+  // If the incoming role is a Supabase system role (e.g. 'authenticated'), DO NOT overwrite
+  // the existing app role — use the allowlist / platformRole to derive the correct app role.
+  let appRole = rawRole;
+  if (!rawRole || SUPABASE_SYSTEM_ROLES.has(rawRole)) {
+    if (normalizedPlatformRole === 'platform_admin' || isAdmin) {
+      appRole = 'admin';
+    } else {
+      // Don't write anything for the role field — leave existing DB value intact.
+      appRole = null;
+    }
+  }
+
   try {
-    await supabase
-      .from('user_profiles')
-      .upsert(
-        {
-          id: user.id,
-          email: user.email ?? null,
-          role: normalizedRole,
-          is_admin: isAdmin,
-        },
-        { onConflict: 'id' }
-      );
+    // Build the upsert payload. Only include `role` if we have a meaningful app role to write.
+    const payload = {
+      id: user.id,
+      email: user.email ?? null,
+      is_admin: isAdmin,
+    };
+    if (appRole) {
+      payload.role = appRole;
+    }
+
+    if (appRole && ELEVATED_APP_ROLES.has(appRole)) {
+      // For elevated roles, use .update() to avoid accidentally creating a new row
+      // with a wrong role on conflict. We only want to SET is_admin and email, not role,
+      // unless we're explicitly elevating.
+      await supabase
+        .from('user_profiles')
+        .update({ email: user.email ?? null, is_admin: isAdmin, role: appRole })
+        .eq('id', user.id);
+    } else {
+      await supabase
+        .from('user_profiles')
+        .upsert(payload, { onConflict: 'id' });
+    }
   } catch (error) {
     console.warn('[auth] Failed to sync user profile flags', {
       userId: user.id,
