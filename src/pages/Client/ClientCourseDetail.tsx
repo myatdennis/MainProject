@@ -255,7 +255,7 @@ const ClientCourseDetail = () => {
             variant="ghost"
             size="sm"
             leadingIcon={<Download className="h-4 w-4" />}
-            onClick={() => navigate(`/lms/course/${normalized.slug}`)}
+            onClick={() => navigate(`/lms/courses/${normalized.slug}`)}
           >
             Download resources in LMS
           </Button>
@@ -263,7 +263,7 @@ const ClientCourseDetail = () => {
             variant="ghost"
             size="sm"
             trailingIcon={<ArrowRight className="h-4 w-4" />}
-            onClick={() => navigate(`/lms/course/${normalized.slug}`)}
+            onClick={() => navigate(`/lms/courses/${normalized.slug}`)}
           >
             View full LMS experience
           </Button>

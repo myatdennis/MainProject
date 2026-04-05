@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AnimatePresence, motion } from 'framer-motion';
 import { UploadCloud, AlertTriangle, CheckCircle, Download, X } from 'lucide-react';
 import LoadingButton from '../LoadingButton';
+import Modal from '../Modal';
 import { useToast } from '../../context/ToastContext';
 import apiRequest from '../../utils/apiClient';
+import { resolveUserFacingError } from '../../utils/userFacingError';
 import {
   buildFailedRowsCsv,
   buildResultsCsv,
@@ -103,7 +104,13 @@ const UserCsvImportModal: React.FC<UserCsvImportModalProps> = ({
       setIssues(newIssues);
       setResults(null);
     } catch (error: any) {
-      showToast(error?.message ?? 'Unable to read CSV file', 'error');
+      showToast(
+        resolveUserFacingError(error, {
+          fallback: 'Unable to read CSV file.',
+          action: 'Upload a valid CSV and retry.',
+        }),
+        'error',
+      );
     }
   };
 
@@ -132,7 +139,13 @@ const UserCsvImportModal: React.FC<UserCsvImportModalProps> = ({
       setResults(response.results || []);
       onImportComplete?.();
     } catch (error: any) {
-      showToast(error?.message ?? 'Import failed', 'error');
+      showToast(
+        resolveUserFacingError(error, {
+          fallback: 'Import failed.',
+          action: 'Fix invalid rows and try again.',
+        }),
+        'error',
+      );
     } finally {
       setImporting(false);
     }
@@ -163,31 +176,9 @@ const UserCsvImportModal: React.FC<UserCsvImportModalProps> = ({
   const previewRows = rows.slice(0, 5);
   const importStatus = importing ? `Importing ${rows.length} row${rows.length === 1 ? '' : 's'}…` : null;
 
-  const modalVariants = {
-    hidden: { opacity: 0, y: 40 },
-    visible: { opacity: 1, y: 0, transition: { duration: 0.2 } },
-    exit: { opacity: 0, y: 40, transition: { duration: 0.15 } },
-  };
-
   return (
-    <AnimatePresence>
-      {isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center" role="dialog" aria-modal="true">
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            className="fixed inset-0 bg-black/40"
-            onClick={onClose}
-            aria-label="Close modal background"
-          />
-          <motion.div
-            className="relative z-50 w-full max-w-4xl rounded-2xl border border-cloud bg-white shadow-2xl"
-            variants={modalVariants}
-            initial="hidden"
-            animate="visible"
-            exit="exit"
-          >
+    <Modal isOpen={isOpen} onClose={onClose} ariaLabel="Import users via CSV" maxWidth="2xl" closeOnOverlayClick={!importing}>
+      <div className="relative z-50 w-full rounded-2xl border border-cloud bg-white shadow-2xl">
             <div className="flex items-center justify-between border-b border-cloud px-6 py-4">
               <div>
                 <h2 className="text-xl font-heading font-semibold text-charcoal">Import users via CSV</h2>
@@ -354,10 +345,8 @@ const UserCsvImportModal: React.FC<UserCsvImportModalProps> = ({
                 {importing ? 'Importing…' : 'Import users'}
               </LoadingButton>
             </div>
-          </motion.div>
-        </div>
-      )}
-    </AnimatePresence>
+      </div>
+    </Modal>
   );
 };
 

@@ -11,6 +11,7 @@ import {
   X,
 } from 'lucide-react';
 import LoadingButton from './LoadingButton';
+import Modal from './Modal';
 import { useToast } from '../context/ToastContext';
 import { courseStore } from '../store/courseStore';
 import type { CourseAssignment } from '../types/assignment';
@@ -428,8 +429,14 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
   const filteredOrgSelections = filteredOrganizations.slice(0, 50); // safety for very large org lists
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-4">
-      <div className="bg-white rounded-xl shadow-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto">
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      ariaLabel="Assign course"
+      maxWidth="2xl"
+      closeOnOverlayClick={!loading}
+    >
+      <div className="bg-white rounded-xl shadow-xl w-full max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between p-6 border-b border-gray-200">
           <div className="flex items-center space-x-3">
             <div className="bg-green-100 p-2 rounded-lg">
@@ -714,7 +721,7 @@ const CourseAssignmentModal: React.FC<CourseAssignmentModalProps> = ({
           </div>
         </form>
       </div>
-    </div>
+    </Modal>
   );
 };
 

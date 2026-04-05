@@ -1,10 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Calendar, Check, Loader2, Users, X } from 'lucide-react';
 import clsx from 'clsx';
+import Modal from '../Modal';
 import { assignSurvey } from '../../dal/surveys';
 import orgService, { invalidateOrgListCache, type Org } from '../../dal/orgs';
 import adminUsers, { AdminUserRecord } from '../../dal/adminUsers';
 import { useToast } from '../../context/ToastContext';
+import { resolveUserFacingError } from '../../utils/userFacingError';
 
 type SurveyAssignmentModalProps = {
   isOpen: boolean;
@@ -167,7 +169,10 @@ const SurveyAssignmentModal: React.FC<SurveyAssignmentModalProps> = ({
       onClose();
     } catch (error) {
       console.warn('[SurveyAssignmentModal] assign failed', error);
-      const message = error instanceof Error ? error.message : 'Unable to assign survey';
+      const message = resolveUserFacingError(error, {
+        fallback: 'Unable to assign survey.',
+        action: 'Retry once the assignment service is healthy.',
+      });
       showToast(message, 'error');
     } finally {
       setSubmitting(false);
@@ -179,8 +184,14 @@ const SurveyAssignmentModal: React.FC<SurveyAssignmentModalProps> = ({
   }
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="w-full max-w-4xl rounded-2xl bg-white shadow-2xl">
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      ariaLabel="Assign survey"
+      maxWidth="2xl"
+      closeOnOverlayClick={!submitting}
+    >
+      <div className="w-full rounded-2xl bg-white">
         <div className="flex items-center justify-between border-b border-gray-200 px-6 py-4">
           <div>
             <p className="text-sm uppercase tracking-wide text-gray-500">Assign Survey</p>
@@ -370,7 +381,7 @@ const SurveyAssignmentModal: React.FC<SurveyAssignmentModalProps> = ({
           </section>
         </form>
       </div>
-    </div>
+    </Modal>
   );
 };
 

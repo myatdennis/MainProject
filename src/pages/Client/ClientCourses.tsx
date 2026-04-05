@@ -7,6 +7,7 @@ import Button from '../../components/ui/Button';
 import Input from '../../components/ui/Input';
 import Badge from '../../components/ui/Badge';
 import ProgressBar from '../../components/ui/ProgressBar';
+import AsyncStatePanel from '../../components/system/AsyncStatePanel';
 import { courseStore } from '../../store/courseStore';
 import { normalizeCourse } from '../../utils/courseNormalization';
 import { getAssignmentsForUser } from '../../utils/assignmentStorage';
@@ -31,6 +32,7 @@ const ClientCourses = () => {
   const { user } = useUserProfile();
   const [searchTerm, setSearchTerm] = useState('');
   const [filterStatus, setFilterStatus] = useState<'all' | 'in-progress' | 'completed' | 'not-started'>('all');
+  const [coursesError, setCoursesError] = useState<string | null>(null);
   const navigate = useNavigate();
 
   const learnerId = useMemo(() => {
@@ -49,14 +51,24 @@ const ClientCourses = () => {
     if (adminCatalogState.phase !== 'idle' || learnerCatalogState.status !== 'idle') {
       return;
     }
+    setCoursesError(null);
     courseStore.init().catch((err) => {
       console.warn('Failed to initialize course store:', err);
+      const message = err instanceof Error ? err.message : 'Unable to load course catalog right now.';
+      setCoursesError(message || 'Unable to load course catalog right now.');
     });
   }, [adminCatalogState.phase, learnerCatalogState.status]);
 
   const normalizedCoursesAll = useMemo(
     () => allCourses.map((course) => normalizeCourse(course)),
     [allCourses],
+  );
+
+  // Learners see published + assigned only
+  const assignedSet = useMemo(() => new Set(assignments.map((a) => a.courseId)), [assignments]);
+  const normalizedCourses = useMemo(
+    () => normalizedCoursesAll.filter((c) => c.status === 'published' || assignedSet.has(c.id)),
+    [normalizedCoursesAll, assignedSet],
   );
 
   useEffect(() => {
@@ -88,7 +100,7 @@ const ClientCourses = () => {
     return () => {
       isMounted = false;
     };
-  }, [normalizedCoursesAll, learnerId]);
+  }, [normalizedCourses, learnerId]);
 
   useEffect(() => {
     let isMounted = true;
@@ -124,13 +136,6 @@ const ClientCourses = () => {
     };
   }, [learnerId]);
 
-  // Learners see published + assigned only
-  const assignedSet = useMemo(() => new Set(assignments.map((a) => a.courseId)), [assignments]);
-  const normalizedCourses = useMemo(
-  () => normalizedCoursesAll.filter((c) => c.status === 'published' || assignedSet.has(c.id)),
-  [normalizedCoursesAll, assignedSet],
-  );
-
   const courseSnapshots = useMemo(() => normalizedCourses.map((course) => {
     const stored = loadStoredCourseProgress(course.slug);
     return {
@@ -156,15 +161,27 @@ const ClientCourses = () => {
   const coursesLoading =
     adminCatalogState.phase === 'loading' ||
     (learnerCatalogState.status === 'idle' && normalizedCoursesAll.length === 0);
+  const showCatalogError = !coursesLoading && Boolean(coursesError) && normalizedCoursesAll.length === 0;
   const noCoursesAvailable = !coursesLoading && normalizedCourses.length === 0;
+  const asyncState = coursesLoading ? 'loading' : showCatalogError ? 'error' : 'ready';
 
   return (
     <div className="max-w-7xl px-6 py-10 lg:px-12">
-      {coursesLoading ? (
-        <div className="flex items-center justify-center py-20">
-          <span className="text-lg text-slate-500">Loading courses...</span>
-        </div>
-      ) : (
+      <AsyncStatePanel
+        state={asyncState}
+        loadingLabel="Loading courses..."
+        title="We couldn’t load your courses"
+        message={coursesError || undefined}
+        onRetry={() => {
+          setCoursesError(null);
+          void courseStore.init().catch((error) => {
+            const message = error instanceof Error ? error.message : 'Unable to load course catalog right now.';
+            setCoursesError(message || 'Unable to load course catalog right now.');
+          });
+        }}
+        secondaryActionLabel="Back to dashboard"
+        onSecondaryAction={() => navigate('/client/dashboard')}
+      >
         <>
           <div className="mb-8">
             <h1 className="font-heading text-3xl font-bold text-charcoal">My courses</h1>
@@ -187,6 +204,7 @@ const ClientCourses = () => {
                   <select
                     value={filterStatus}
                     onChange={(event) => setFilterStatus(event.target.value as typeof filterStatus)}
+                    aria-label="Filter courses by progress status"
                     className="rounded-lg border border-mist px-3 py-2 text-sm text-charcoal focus:outline-none focus:ring-2 focus:ring-skyblue"
                   >
                     <option value="all">All</option>
@@ -288,7 +306,7 @@ const ClientCourses = () => {
             </>
           )}
         </>
-      )}
+      </AsyncStatePanel>
     </div>
   );
 };

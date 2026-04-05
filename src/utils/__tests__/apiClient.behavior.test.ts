@@ -337,7 +337,7 @@ describe('apiClient', () => {
     const [, options] = fetchSpy.mock.calls[0];
     const headers = headersToObject(options?.headers as HeadersInit);
     expect(getHeaderValue(headers, 'Authorization')).toBe('Bearer supabase-test-token');
-    expect(getHeaderValue(headers, 'X-Org-Id')).toBe('org-99');
+    expect(getHeaderValue(headers, 'X-Org-Id')).toBeUndefined();
   });
 
   it('uses explicit E2E bypass headers and strips Authorization in bypass mode', async () => {

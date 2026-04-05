@@ -70,6 +70,7 @@ import CoursePreviewDock from '../../components/preview/CoursePreviewDock';
 import AIContentAssistant from '../../components/AIContentAssistant';
 import MobileCourseToolbar from '../../components/Admin/MobileCourseToolbar';
 import MobileModuleNavigator from '../../components/Admin/MobileModuleNavigator';
+import CourseSyncTruthIndicator from '../../components/Admin/CourseSyncTruthIndicator';
 import SortableItem from '../../components/SortableItem';
 import Button from '../../components/ui/Button';
 import useIsMobile from '../../hooks/useIsMobile';
@@ -97,6 +98,12 @@ import {
   isClientGeneratedId,
   logVideoSourceDebug,
 } from './courseBuilder/persistenceIntegrity';
+import {
+  extractApiErrorInfo,
+  extractConflictDetails,
+  formatApiErrorToast,
+} from './courseBuilder/apiErrors';
+import { resolveCourseSyncTruth } from './courseBuilder/syncTruth';
 
 const buildUploadKey = (moduleId: string, lessonId: string) => `${moduleId}::${lessonId}`;
 const parseUploadKey = (key: string) => {
@@ -122,50 +129,6 @@ const generateStableLessonId = (): string => {
     return crypto.randomUUID();
   }
   return createLessonId();
-};
-
-type ApiErrorInfo = {
-  status: number | null;
-  code: string | null;
-  message: string | null;
-};
-
-const extractApiErrorInfo = (error: unknown): ApiErrorInfo | null => {
-  if (!(error instanceof ApiError)) return null;
-  const body = (typeof error.body === 'object' && error.body !== null ? error.body : null) as Record<
-    string,
-    unknown
-  > | null;
-  const code =
-    typeof body?.code === 'string'
-      ? body.code
-      : typeof body?.error_code === 'string'
-      ? (body?.error_code as string)
-      : null;
-  const messageCandidates = [
-    typeof body?.error === 'string' ? (body.error as string) : null,
-    typeof body?.message === 'string' ? (body.message as string) : null,
-    typeof body?.detail === 'string' ? (body.detail as string) : null,
-  ];
-  const message = messageCandidates.find((value) => Boolean(value)) ?? error.message ?? null;
-  return {
-    status: typeof error.status === 'number' ? error.status : null,
-    code,
-    message,
-  };
-};
-
-const formatApiErrorToast = (info: ApiErrorInfo, context: string): string => {
-  const parts: string[] = [];
-  if (info.status) {
-    parts.push(String(info.status));
-  }
-  if (info.code) {
-    parts.push(info.code);
-  }
-  const prefix = parts.length ? `${parts.join(' · ')} ` : '';
-  const detail = info.message ?? 'Please try again.';
-  return `${context} failed. ${prefix}${detail}`.trim();
 };
 
 const toMegabytes = (bytes: number): string => (bytes / (1024 * 1024)).toFixed(0);
@@ -209,29 +172,6 @@ const nextRequestToken = () =>
 const isUuid = (value?: string | null): boolean =>
   typeof value === 'string' &&
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value);
-
-const extractConflictDetails = (
-  error: unknown,
-): { reason: string | null; message: string | null; details?: Record<string, unknown> | null } | null => {
-  if (!(error instanceof ApiError)) return null;
-  if (error.status !== 409) return null;
-  const body = (error.body && typeof error.body === 'object') ? (error.body as Record<string, any>) : null;
-  const details = body?.details && typeof body.details === 'object' ? (body.details as Record<string, unknown>) : null;
-  const explicitReason =
-    (typeof details?.reason === 'string' && details.reason) ||
-    (typeof body?.reason === 'string' && body.reason) ||
-    null;
-  const code =
-    (typeof body?.code === 'string' && body.code) ||
-    (typeof body?.error === 'string' && body.error) ||
-    null;
-  const reason =
-    explicitReason ||
-    (code === 'version_conflict' ? 'stale_version' : null) ||
-    (code === 'idempotency_conflict' ? 'idempotency_in_flight' : null);
-  const message = typeof body?.message === 'string' ? body.message : error.message ?? null;
-  return { reason, message, details };
-};
 
 type BuilderConfirmAction = 'discard' | 'reset' | 'delete';
 type ConfirmTone = 'info' | 'warning' | 'danger';
@@ -1323,64 +1263,29 @@ const AdminCourseBuilder = () => {
 const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
 const [lastSaveTime, setLastSaveTime] = useState<Date | null>(null);
 
-const syncTruth = useMemo(() => {
-  if (!effectiveValidationSummary.isValid) {
-    return {
-      state: 'publish_blocked' as const,
-      label: 'Publish blocked',
-      detail: 'Resolve validation blockers before this draft can be published.',
-      tone: 'text-amber-700',
-      dot: 'bg-amber-500',
-    };
-  }
-  if (saveStatus === 'saving' || lessonAutosaveState.pending || lessonAutosaveState.status === 'saving') {
-    return {
-      state: 'syncing' as const,
-      label: 'Syncing',
-      detail: 'Changes are being written to Huddle now.',
-      tone: 'text-blue-600',
-      dot: 'bg-blue-500',
-    };
-  }
-  if (saveStatus === 'error') {
-    return {
-      state: 'failed' as const,
-      label: 'Sync failed',
-      detail: 'The latest save did not reach Huddle. Review the error banner and retry.',
-      tone: 'text-red-600',
-      dot: 'bg-red-500',
-    };
-  }
-  if (!supabaseConnected || draftSnapshotPrompt || hasPendingChanges) {
-    return {
-      state: 'local_only' as const,
-      label: 'Local only',
-      detail: !supabaseConnected
-        ? 'Changes are stored locally until the backend is healthy again.'
-        : 'You have local changes that have not reached Huddle yet.',
-      tone: 'text-amber-600',
-      dot: 'bg-amber-500',
-    };
-  }
-  return {
-    state: 'synced' as const,
-    label: 'Synced',
-    detail: lastSaveTime
-      ? `Last synced at ${lastSaveTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.`
-      : 'Draft is synced with Huddle.',
-    tone: 'text-green-600',
-    dot: 'bg-green-500',
-  };
-}, [
-  draftSnapshotPrompt,
-  effectiveValidationSummary.isValid,
-  hasPendingChanges,
-  lastSaveTime,
-  lessonAutosaveState.pending,
-  lessonAutosaveState.status,
-  saveStatus,
-  supabaseConnected,
-]);
+const syncTruth = useMemo(
+  () =>
+    resolveCourseSyncTruth({
+      validationIsValid: effectiveValidationSummary.isValid,
+      saveStatus,
+      lessonAutosavePending: lessonAutosaveState.pending,
+      lessonAutosaveStatus: lessonAutosaveState.status,
+      supabaseConnected,
+      hasDraftSnapshotPrompt: Boolean(draftSnapshotPrompt),
+      hasPendingChanges,
+      lastSaveTime,
+    }),
+  [
+    draftSnapshotPrompt,
+    effectiveValidationSummary.isValid,
+    hasPendingChanges,
+    lastSaveTime,
+    lessonAutosaveState.pending,
+    lessonAutosaveState.status,
+    saveStatus,
+    supabaseConnected,
+  ],
+);
 
 // ── Multi-tab safety: detect when another tab saves the same course ──────────
 const [staleFromOtherTab, setStaleFromOtherTab] = useState(false);
@@ -5122,13 +5027,7 @@ const scheduleAutosave = useCallback(
             </div>
 
             {/* Auto-save status indicator */}
-            <div className="flex flex-col text-sm text-right">
-              <span className={`flex items-center justify-end ${syncTruth.tone}`}>
-                <span className={`mr-2 h-2 w-2 rounded-full ${syncTruth.dot}`}></span>
-                {syncTruth.label}
-              </span>
-              <span className="max-w-md text-xs text-gray-500">{syncTruth.detail}</span>
-            </div>
+            <CourseSyncTruthIndicator syncTruth={syncTruth} />
           </div>
         </div>
       </div>

@@ -1,8 +1,10 @@
 import React, { useState } from 'react';
 import { X, Building2, User } from 'lucide-react';
 import LoadingButton from './LoadingButton';
+import Modal from './Modal';
 import { useToast } from '../context/ToastContext';
 import orgService, { type Org } from '../dal/orgs';
+import { resolveUserFacingError } from '../utils/userFacingError';
 
 interface AddOrganizationModalProps {
   isOpen: boolean;
@@ -107,7 +109,6 @@ const AddOrganizationModal: React.FC<AddOrganizationModalProps> = ({ isOpen, onC
         type: formData.type,
         contactPerson: formData.contactPerson,
         contactEmail: formData.contactEmail,
-        contact_email: formData.contactEmail,
         contactPhone: formData.contactPhone || undefined,
         website: formData.website || undefined,
         address: formData.address || undefined,
@@ -141,11 +142,10 @@ const AddOrganizationModal: React.FC<AddOrganizationModalProps> = ({ isOpen, onC
       
       onClose();
     } catch (error: any) {
-      const message =
-        error?.message ||
-        error?.response?.message ||
-        error?.response?.data?.message ||
-        'Failed to add organization. Please try again.';
+      const message = resolveUserFacingError(error, {
+        fallback: 'Failed to add organization. Please try again.',
+        action: 'Confirm required fields and retry.',
+      });
       showToast(message, 'error');
     } finally {
       setLoading(false);
@@ -163,8 +163,14 @@ const AddOrganizationModal: React.FC<AddOrganizationModalProps> = ({ isOpen, onC
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      ariaLabel="Add new organization"
+      maxWidth="2xl"
+      closeOnOverlayClick={!loading}
+    >
+      <div className="bg-white rounded-xl shadow-xl w-full max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-200">
           <div className="flex items-center space-x-3">
@@ -415,7 +421,7 @@ const AddOrganizationModal: React.FC<AddOrganizationModalProps> = ({ isOpen, onC
           </div>
         </form>
       </div>
-    </div>
+    </Modal>
   );
 };
 

@@ -102,6 +102,7 @@ const LearnerDashboard = () => {
         markStepSuccess(assignmentsStepId);
         const mergedCourses = [...normalizedCourses];
         assignmentRecords.forEach((record) => {
+          if (!record.courseId) return;
           if (!mergedCourses.some((course) => course.id === record.courseId)) {
             const fromStore = courseStore.getCourse(record.courseId);
             if (fromStore) {
@@ -299,7 +300,7 @@ const LearnerDashboard = () => {
   }, [enrolledCourses, debouncedSearchQuery, filterStatus, progressData, progressRefreshToken]);
 
   const handleCourseClick = (course: Course) => {
-    navigate(`/lms/course/${course.slug || course.id}`);
+    navigate(`/lms/courses/${course.slug || course.id}`);
   };
 
   const handleContinueCourse = (course: Course) => {
@@ -307,24 +308,24 @@ const LearnerDashboard = () => {
     if (progress && progress.lessonProgress.length > 0) {
       const nextLesson = progress.lessonProgress.find((p) => !p.isCompleted);
       if (nextLesson) {
-        navigate(`/lms/course/${course.slug || course.id}/lesson/${nextLesson.lessonId}`);
+        navigate(`/lms/courses/${course.slug || course.id}/lesson/${nextLesson.lessonId}`);
         return;
       }
     }
 
     const storedProgress = loadStoredCourseProgress(course.slug);
     if (storedProgress.lastLessonId) {
-      navigate(`/lms/course/${course.slug || course.id}/lesson/${storedProgress.lastLessonId}`);
+      navigate(`/lms/courses/${course.slug || course.id}/lesson/${storedProgress.lastLessonId}`);
       return;
     }
 
     const firstLesson = course.chapters?.[0]?.lessons?.[0] || course.modules?.[0]?.lessons?.[0];
     if (firstLesson) {
-      navigate(`/lms/course/${course.slug || course.id}/lesson/${firstLesson.id}`);
+      navigate(`/lms/courses/${course.slug || course.id}/lesson/${firstLesson.id}`);
       return;
     }
 
-    navigate(`/lms/course/${course.slug || course.id}`);
+    navigate(`/lms/courses/${course.slug || course.id}`);
   };
 
   const getCourseStats = (course: Course): CourseStats => {
@@ -782,10 +783,11 @@ type BootDebugOverlayProps = {
   onRetry: () => void;
 };
 
-const statusColorMap: Record<'running' | 'ok' | 'error', string> = {
+const statusColorMap: Record<'running' | 'ok' | 'error' | 'timeout', string> = {
   running: 'text-blue-600',
   ok: 'text-emerald-600',
   error: 'text-rose-600',
+  timeout: 'text-amber-600',
 };
 
 const BootDebugOverlay = ({ steps, lastError, onRetry }: BootDebugOverlayProps) => {

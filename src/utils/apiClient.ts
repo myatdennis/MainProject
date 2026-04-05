@@ -281,6 +281,8 @@ const ADMIN_PATH_PATTERN = /\/api\/admin\b/i;
 const AUTH_ENDPOINT_REGEX = /\/api\/auth\/(login|refresh|session)/i;
 const ABSOLUTE_URL_REGEX = /^https?:\/\//i;
 const ADMIN_API_PATTERN = /^\/api\/admin\//i;
+const LEARNER_OR_CLIENT_API_PATTERN = /^\/api\/(client|learner)(\/|$)/i;
+const ORG_HEADER_CANDIDATES = ['x-org-id', 'x-organization-id'];
 
 const API_ORIGIN_FOR_CREDENTIALS = (() => {
   try {
@@ -342,6 +344,20 @@ const resolveCSRFToken = (): string | null => {
   } catch {
     return null;
   }
+};
+
+const hasExplicitOrgHeader = (headers?: Record<string, string>): boolean => {
+  if (!headers) return false;
+  const normalizedKeys = Object.keys(headers).map((key) => key.toLowerCase());
+  return ORG_HEADER_CANDIDATES.some((candidate) => normalizedKeys.includes(candidate));
+};
+
+const stripOrgHeaders = (headers: Record<string, string>) => {
+  Object.keys(headers).forEach((key) => {
+    if (ORG_HEADER_CANDIDATES.includes(key.toLowerCase())) {
+      delete headers[key];
+    }
+  });
 };
 
 const redactHeaders = (headers?: Headers | Record<string, string> | null): Record<string, string> => {
@@ -492,6 +508,12 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
 
   const baseHeaders: Record<string, string> = {};
   const headers = mergeHeadersSafely(baseHeaders, authHeaders, options.headers);
+
+  // Learner/client routes should not inherit org headers from stale browser state.
+  // If an org header is required for a specific request, callers can pass it explicitly.
+  if (LEARNER_OR_CLIENT_API_PATTERN.test(pathname) && !hasExplicitOrgHeader(options.headers)) {
+    stripOrgHeaders(headers);
+  }
 
   if (isE2EBypassActive()) {
     // In browser E2E bypass mode, auth is represented by explicit test headers.

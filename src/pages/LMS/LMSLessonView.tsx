@@ -6,6 +6,7 @@ import Card from '../../components/ui/Card';
 import Button from '../../components/ui/Button';
 import Badge from '../../components/ui/Badge';
 import ProgressBar from '../../components/ui/ProgressBar';
+import AsyncStatePanel from '../../components/system/AsyncStatePanel';
 import { courseStore } from '../../store/courseStore';
 import { normalizeCourse } from '../../utils/courseNormalization';
 import { buildLearnerProgressSnapshot, loadStoredCourseProgress } from '../../utils/courseProgress';
@@ -71,22 +72,19 @@ const LMSLessonView = () => {
     if (stillLoadingCatalog) {
       return (
         <div className="mx-auto flex min-h-[60vh] max-w-3xl flex-col items-center justify-center px-6 py-12 lg:px-12">
-          <div className="h-8 w-8 animate-spin rounded-full border-4 border-mist border-t-skyblue" />
-          <p className="mt-4 text-sm text-slate/70">Loading course…</p>
+          <AsyncStatePanel state="loading" loadingLabel="Loading course..." className="w-full" />
         </div>
       );
     }
     return (
       <div className="mx-auto flex min-h-[60vh] max-w-3xl flex-col justify-center px-6 py-12 lg:px-12">
-        <Card tone="muted" className="space-y-4 text-center">
-          <h1 className="font-heading text-2xl font-bold text-charcoal">Course not available</h1>
-          <p className="text-sm text-slate/80">
-            We couldn't find the course you were trying to open. It might have been unpublished or reassigned.
-          </p>
-          <Button size="sm" onClick={() => navigate('/lms/courses')}>
-            Browse courses
-          </Button>
-        </Card>
+        <AsyncStatePanel
+          state="error"
+          title="Course not available"
+          message="We couldn't find the course you were trying to open. It might have been unpublished or reassigned."
+          retryLabel="Browse courses"
+          onRetry={() => navigate('/lms/courses')}
+        />
       </div>
     );
   }

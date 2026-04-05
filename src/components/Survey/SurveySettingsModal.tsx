@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { X, Settings, Users, Shield, Bell } from 'lucide-react';
+import Modal from '../Modal';
 
 interface SurveySettings {
   accessControl: {
@@ -36,8 +37,6 @@ const SurveySettingsModal: React.FC<SurveySettingsModalProps> = ({
 }) => {
   const [tempSettings, setTempSettings] = useState<SurveySettings>(settings);
 
-  if (!isOpen) return null;
-
   const handleSave = () => {
     onSave(tempSettings);
     onClose();
@@ -54,13 +53,8 @@ const SurveySettingsModal: React.FC<SurveySettingsModalProps> = ({
   };
 
   return (
-    <div 
-      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="settings-modal-title"
-    >
-      <div className="bg-white rounded-xl shadow-xl max-w-2xl w-full mx-4 max-h-[80vh] overflow-hidden">
+    <Modal isOpen={isOpen} onClose={onClose} ariaLabel="Survey settings" maxWidth="2xl">
+      <div className="bg-white rounded-xl shadow-xl w-full max-h-[80vh] overflow-hidden">
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-200">
           <div className="flex items-center space-x-3">
@@ -184,7 +178,7 @@ const SurveySettingsModal: React.FC<SurveySettingsModalProps> = ({
                 <input
                   type="checkbox"
                   checked={tempSettings.advanced.allowBack}
-                  onChange={(e) => updateSettings('advanced', 'allowBack', e.target.value)}
+                  onChange={(e) => updateSettings('advanced', 'allowBack', e.target.checked)}
                   className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
                 />
                 <span className="text-sm text-gray-700">Allow navigating back to previous questions</span>
@@ -239,7 +233,7 @@ const SurveySettingsModal: React.FC<SurveySettingsModalProps> = ({
           </button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 };
 

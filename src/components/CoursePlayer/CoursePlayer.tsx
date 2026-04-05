@@ -82,7 +82,7 @@ const CoursePlayer: React.FC<CoursePlayerProps> = ({ namespace = 'admin' }) => {
   const syncService = useSyncService();
   const { showToast } = useToast();
   const isClientNamespace = namespace === 'client' || namespace === 'lms';
-  const coursePathBase = namespace === 'client' ? '/client/courses' : '/lms/course';
+  const coursePathBase = namespace === 'client' ? '/client/courses' : '/lms/courses';
   const lessonPathSegment = namespace === 'client' ? 'lessons' : 'lesson';
   const coursesIndexPath = namespace === 'client' ? '/client/courses' : '/lms/courses';
   const eventSource = namespace === 'client' ? 'client' : namespace === 'lms' ? 'lms' : 'admin';

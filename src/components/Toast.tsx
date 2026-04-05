@@ -9,6 +9,7 @@ interface ToastProps {
   isVisible: boolean;
   onClose: () => void;
   duration?: number;
+  className?: string;
 }
 
 const toneConfig: Record<ToastType, { icon: React.ReactNode; title: string; tone: ToastType }> = {
@@ -34,7 +35,7 @@ const toneConfig: Record<ToastType, { icon: React.ReactNode; title: string; tone
   },
 };
 
-const Toast: React.FC<ToastProps> = ({ message, type, isVisible, onClose, duration = 3000 }) => {
+const Toast: React.FC<ToastProps> = ({ message, type, isVisible, onClose, duration = 3000, className = '' }) => {
   useEffect(() => {
     if (isVisible && duration > 0) {
       const timer = setTimeout(() => {
@@ -49,7 +50,7 @@ const Toast: React.FC<ToastProps> = ({ message, type, isVisible, onClose, durati
   const config = toneConfig[type] ?? toneConfig.info;
 
   return (
-    <div className="fixed top-4 right-4 z-50 animate-in slide-in-from-right duration-300">
+    <div className={`animate-in slide-in-from-right duration-300 ${className}`}>
       <div
         className="hud-toast"
         data-tone={config.tone}

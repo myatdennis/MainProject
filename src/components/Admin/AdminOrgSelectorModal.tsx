@@ -2,6 +2,7 @@ import Card from '../ui/Card';
 import Button from '../ui/Button';
 import Badge from '../ui/Badge';
 import type { FC } from 'react';
+import Modal from '../Modal';
 
 interface OrgOption {
   id: string;
@@ -18,10 +19,9 @@ interface Props {
 }
 
 const AdminOrgSelectorModal: FC<Props> = ({ open, onClose, organizationOptions, activeOrgId, selectOrganization }) => {
-  if (!open) return null;
   return (
-    <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/40">
-      <div className="w-full max-w-xl">
+    <Modal isOpen={open} onClose={onClose} ariaLabel="Choose organization" maxWidth="xl">
+      <div className="w-full">
         <Card className="p-6">
           <div className="flex items-start justify-between">
             <div>
@@ -76,7 +76,7 @@ const AdminOrgSelectorModal: FC<Props> = ({ open, onClose, organizationOptions, 
           </div>
         </Card>
       </div>
-    </div>
+    </Modal>
   );
 };
 

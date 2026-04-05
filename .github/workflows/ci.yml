@@ -65,6 +65,23 @@ jobs:
       - name: Build
         run: npm run -s build
 
+      - name: Bundle budget gate
+        run: npm run -s check:bundle
+
+      - name: Accessibility smoke (axe)
+        run: |
+          npm run -s preview -- --host 127.0.0.1 --port 4173 >/tmp/vite-preview.log 2>&1 &
+          PREVIEW_PID=$!
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:4173 >/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          npx axe http://127.0.0.1:4173 --exit
+          kill $PREVIEW_PID
+          wait $PREVIEW_PID || true
+
       - name: Verify dist does not contain deprecated hosts
         run: |
           if [ -d dist ]; then
