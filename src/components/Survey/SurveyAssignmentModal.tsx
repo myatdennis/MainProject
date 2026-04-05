@@ -37,6 +37,9 @@ const SurveyAssignmentModal: React.FC<SurveyAssignmentModalProps> = ({
   const [userError, setUserError] = useState<string | null>(null);
   const [dueDate, setDueDate] = useState('');
   const [note, setNote] = useState('');
+  const [assessmentType, setAssessmentType] = useState<'standard' | 'hdi'>('standard');
+  const [administrationType, setAdministrationType] = useState<'single' | 'pre' | 'post' | 'pulse'>('single');
+  const [linkedAssessmentId, setLinkedAssessmentId] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
@@ -47,6 +50,9 @@ const SurveyAssignmentModal: React.FC<SurveyAssignmentModalProps> = ({
       setUserSearch('');
       setNote('');
       setDueDate('');
+      setAssessmentType('standard');
+      setAdministrationType('single');
+      setLinkedAssessmentId('');
       setOrgError(null);
       setUserError(null);
     }
@@ -159,6 +165,14 @@ const SurveyAssignmentModal: React.FC<SurveyAssignmentModalProps> = ({
         userIds: selectedUserIds,
         dueAt: dueDate ? new Date(dueDate).toISOString() : undefined,
         note: note || undefined,
+        metadata:
+          assessmentType === 'hdi'
+            ? {
+                assessmentType: 'hdi',
+                administrationType,
+                linkedAssessmentId: linkedAssessmentId.trim() || null,
+              }
+            : undefined,
       });
       invalidateOrgListCache();
       showToast(
@@ -300,6 +314,48 @@ const SurveyAssignmentModal: React.FC<SurveyAssignmentModalProps> = ({
                 value={note}
                 onChange={(event) => setNote(event.target.value)}
               />
+            </div>
+
+            <div className="rounded-lg border border-gray-200 bg-gray-50 p-3 space-y-3">
+              <div>
+                <label className="text-sm font-semibold text-gray-800">Assessment mode</label>
+                <select
+                  value={assessmentType}
+                  onChange={(event) => setAssessmentType(event.target.value as 'standard' | 'hdi')}
+                  className="mt-2 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                >
+                  <option value="standard">Standard survey assignment</option>
+                  <option value="hdi">HDI assessment assignment</option>
+                </select>
+              </div>
+
+              {assessmentType === 'hdi' && (
+                <>
+                  <div>
+                    <label className="text-sm font-semibold text-gray-800">Administration type</label>
+                    <select
+                      value={administrationType}
+                      onChange={(event) => setAdministrationType(event.target.value as 'single' | 'pre' | 'post' | 'pulse')}
+                      className="mt-2 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                    >
+                      <option value="single">Single administration</option>
+                      <option value="pre">Pre-assessment</option>
+                      <option value="post">Post-assessment</option>
+                      <option value="pulse">Pulse / follow-up</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-sm font-semibold text-gray-800">Linked pre-assessment response ID (optional)</label>
+                    <input
+                      type="text"
+                      value={linkedAssessmentId}
+                      onChange={(event) => setLinkedAssessmentId(event.target.value)}
+                      placeholder="Paste related pre response id"
+                      className="mt-2 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                    />
+                  </div>
+                </>
+              )}
             </div>
           </section>
 

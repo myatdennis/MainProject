@@ -169,6 +169,13 @@ const ClientSurveys = () => {
           <Button size="sm" onClick={() => handleOpenSurvey(entry)}>
             {assignment.status === 'completed' ? 'Review submission' : 'Open survey'}
           </Button>
+          {assignment.status === 'completed' && survey?.id && (
+            <Button size="sm" variant="ghost" asChild>
+              <Link to={`/client/surveys/${survey.id}/results?assignmentId=${assignment.id}`}>
+                View insights
+              </Link>
+            </Button>
+          )}
           {surveyUrl && (
             <Button size="sm" variant="ghost" asChild>
               <a href={surveyUrl} target="_blank" rel="noreferrer">

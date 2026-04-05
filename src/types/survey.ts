@@ -70,6 +70,23 @@ export interface SurveyQuestion {
     pattern?: string;
     customMessage?: string;
   };
+
+  // Assessment metadata (optional; used by HDI and other scored instruments)
+  dimensionKey?: string;
+  dimensionLabel?: string;
+  scoringWeight?: number;
+  reverseScored?: boolean;
+  assessmentType?: string;
+  metadata?: {
+    assessmentType?: string;
+    dimensionKey?: string;
+    dimensionLabel?: string;
+    scoringWeight?: number;
+    reverseScored?: boolean;
+    questionOrder?: number;
+    scoringLocked?: boolean;
+    [key: string]: any;
+  };
 }
 
 export interface SurveySection {

@@ -151,6 +151,15 @@ import {
   recordProgressBatch,
   recordSupabaseHealth,
 } from './diagnostics/metrics.js';
+import { buildHdiSurveyTemplate, isHdiAssessment } from './lib/hdiTemplate.js';
+import { scoreHdiSubmission } from './lib/hdiScoring.js';
+import { generateHdiFeedback } from './lib/hdiFeedback.js';
+import {
+  buildHdiParticipantRows,
+  buildHdiCohortAnalytics,
+  buildHdiComparison,
+  toHdiRecord,
+} from './lib/hdiAnalytics.js';
 // ...existing code...
 
 // Helper to resolve non-UUID course identifiers (e.g., slug) to UUID
@@ -13968,10 +13977,113 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
   }
 
   try {
+    const surveyRecord = await loadSurveyWithAssignments(id);
+    if (!surveyRecord) {
+      res.status(404).json({ error: 'survey_not_found', message: `Survey not found for identifier ${id}` });
+      return;
+    }
+
     const assignment = await loadSurveyAssignmentForUser(id, context.userId, {
       assignmentId: req.body?.assignmentId ?? req.body?.assignment_id ?? null,
       orgIds: Array.isArray(context.organizationIds) ? context.organizationIds : [],
     });
+
+    const metadataInput = typeof req.body?.metadata === 'object' && req.body.metadata !== null ? req.body.metadata : {};
+    const assignmentMetadata =
+      assignment?.metadata && typeof assignment.metadata === 'object' ? assignment.metadata : {};
+
+    let enrichedMetadata = { ...metadataInput };
+    const isHdiSubmission =
+      isHdiAssessment(surveyRecord) ||
+      String(metadataInput.assessmentType ?? '').toLowerCase() === 'hdi' ||
+      String(assignmentMetadata.assessmentType ?? '').toLowerCase() === 'hdi';
+
+    if (isHdiSubmission) {
+      const administrationType = normalizeHdiAdministrationType(
+        req.body?.administrationType ??
+          metadataInput.administrationType ??
+          assignmentMetadata.administrationType,
+      );
+      const linkedAssessmentId =
+        req.body?.linkedAssessmentId ??
+        metadataInput.linkedAssessmentId ??
+        assignmentMetadata.linkedAssessmentId ??
+        null;
+
+      const scoring = scoreHdiSubmission({
+        survey: surveyRecord,
+        responses,
+      });
+
+      const participantKeys = extractStableParticipantKeys({
+        ...assignmentMetadata,
+        ...metadataInput,
+      });
+
+      let prePostComparison = null;
+      if (administrationType === 'post' || administrationType === 'pulse') {
+        const { data: historicalRows, error: historyError } = await supabase
+          .from('survey_responses')
+          .select('*')
+          .eq('survey_id', id)
+          .eq('user_id', context.userId)
+          .order('completed_at', { ascending: false, nullsFirst: false })
+          .limit(50);
+        if (!historyError && Array.isArray(historicalRows) && historicalRows.length > 0) {
+          const currentRecord = {
+            id: null,
+            userId: context.userId,
+            participantKeys,
+            linkedAssessmentId,
+            administrationType,
+            scoring,
+          };
+          const preRecord = findLatestHdiPreRecord(historicalRows, currentRecord);
+          if (preRecord) {
+            prePostComparison = buildHdiComparison({
+              pre: preRecord,
+              post: {
+                id: null,
+                userId: context.userId,
+                participantKeys,
+                linkedAssessmentId,
+                administrationType,
+                scoring,
+              },
+            });
+          }
+        }
+      }
+
+      const feedback = generateHdiFeedback({
+        scoring,
+        prePostComparison,
+      });
+
+      enrichedMetadata = {
+        ...metadataInput,
+        assessmentType: 'hdi',
+        administrationType,
+        linkedAssessmentId,
+        participantKey: metadataInput.participantKey ?? assignmentMetadata.participantKey ?? null,
+        participant: {
+          ...(assignmentMetadata.participant && typeof assignmentMetadata.participant === 'object'
+            ? assignmentMetadata.participant
+            : {}),
+          ...(metadataInput.participant && typeof metadataInput.participant === 'object'
+            ? metadataInput.participant
+            : {}),
+        },
+        hdi: {
+          scoring,
+          feedback,
+          administrationType,
+          linkedAssessmentId,
+          computedAt: new Date().toISOString(),
+          prePostComparison,
+        },
+      };
+    }
 
     const nowIso = new Date().toISOString();
     const responsePayload = {
@@ -13982,7 +14094,7 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
       response_text: null,
       question_id: null,
       rating: null,
-      metadata: typeof req.body?.metadata === 'object' && req.body.metadata !== null ? req.body.metadata : {},
+      metadata: enrichedMetadata,
       status: 'completed',
       assignment_id: assignment?.id ?? null,
       completed_at: nowIso,
@@ -21787,6 +21899,60 @@ const SURVEY_ASSIGNMENT_TYPE = 'survey';
 const SURVEY_ASSIGNMENT_SELECT =
   'id,survey_id,organization_id,user_id,status,due_at,note,assigned_by,metadata,active,created_at,updated_at';
 
+const normalizeHdiAdministrationType = (value) => {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (normalized === 'pre') return 'pre';
+  if (normalized === 'post') return 'post';
+  if (normalized === 'pulse' || normalized === 'follow-up' || normalized === 'followup') return 'pulse';
+  return 'single';
+};
+
+const extractStableParticipantKeys = (metadata = {}) => {
+  if (!metadata || typeof metadata !== 'object') return [];
+  const participant = metadata.participant && typeof metadata.participant === 'object' ? metadata.participant : {};
+  const keys = [
+    metadata.participantKey,
+    metadata.participant_key,
+    participant.key,
+    metadata.email,
+    participant.email,
+    metadata.confidentialCode,
+    metadata.confidential_code,
+    participant.confidentialCode,
+  ];
+  return Array.from(
+    new Set(
+      keys
+        .filter((candidate) => typeof candidate === 'string' && candidate.trim().length > 0)
+        .map((candidate) => candidate.trim().toLowerCase()),
+    ),
+  );
+};
+
+const findLatestHdiPreRecord = (records = [], currentRecord = null) => {
+  if (!Array.isArray(records) || records.length === 0 || !currentRecord) return null;
+  const currentKeys = new Set(currentRecord.participantKeys || []);
+  const currentUser = currentRecord.userId ? String(currentRecord.userId) : null;
+
+  const preCandidates = records
+    .map((row) => toHdiRecord(row))
+    .filter(Boolean)
+    .filter((record) => record.administrationType === 'pre')
+    .filter((record) => {
+      if (currentRecord.linkedAssessmentId && record.id === currentRecord.linkedAssessmentId) return true;
+      if (currentUser && record.userId && String(record.userId) === currentUser) return true;
+      if (currentKeys.size === 0 || !Array.isArray(record.participantKeys)) return false;
+      return record.participantKeys.some((key) => currentKeys.has(key));
+    })
+    .sort((a, b) => {
+      const aDate = Date.parse(a.completedAt ?? '') || 0;
+      const bDate = Date.parse(b.completedAt ?? '') || 0;
+      return bDate - aDate;
+    });
+
+  return preCandidates[0] ?? null;
+};
+
 const ensureAdminSurveySchemaOrRespond = async (res, label) => {
   const requiredStatus = await ensureTablesReady(label, REQUIRED_ADMIN_SURVEY_TABLES);
   if (!requiredStatus.ok) {
@@ -21810,6 +21976,10 @@ const ensureAdminSurveySchemaOrRespond = async (res, label) => {
   }
   return true;
 };
+
+app.get('/api/admin/surveys/templates/hdi', requireAdminAccess, asyncHandler(async (_req, res) => {
+  res.json({ data: buildHdiSurveyTemplate() });
+}));
 
 app.get('/api/admin/surveys', requireAdminAccess, asyncHandler(async (_req, res) => {
   if (!ensureSupabase(res)) return;
@@ -22459,6 +22629,249 @@ app.delete('/api/admin/surveys/:surveyId/assignments/:assignmentId', async (req,
   } catch (error) {
     console.error('[admin.surveys.assignments.delete] failed', error);
     res.status(500).json({ error: 'Unable to remove survey assignment' });
+  }
+});
+
+app.get('/api/admin/surveys/:id/hdi/participant-report', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.hdi.participant-report'))) return;
+
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  const { id } = req.params;
+  const surveyRecord = await loadSurveyWithAssignments(id);
+  if (!surveyRecord) {
+    res.status(404).json({ error: 'survey_not_found', message: `Survey not found for identifier ${id}` });
+    return;
+  }
+
+  const organizationId = pickOrgId(req.query.orgId, req.query.organizationId);
+  if (organizationId) {
+    const access = await requireOrgAccess(req, res, organizationId, { write: false, requireOrgAdmin: false });
+    if (!access) {
+      return res.status(403).json({ error: 'forbidden', code: 'org_access_denied' });
+    }
+  } else if (!context.isPlatformAdmin) {
+    res.status(403).json({ error: 'org_required', message: 'Organization filter is required unless you are a platform administrator.' });
+    return;
+  }
+
+  try {
+    const limit = clampNumber(parseInt(req.query.limit, 10) || 500, 1, 2000);
+    let query = supabase
+      .from('survey_responses')
+      .select('*')
+      .eq('survey_id', surveyRecord.id)
+      .order('completed_at', { ascending: false, nullsFirst: false })
+      .limit(limit);
+
+    if (organizationId) {
+      query = query.eq('organization_id', organizationId);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    const participantFilter =
+      typeof req.query.participant === 'string' && req.query.participant.trim().length
+        ? req.query.participant.trim().toLowerCase()
+        : null;
+
+    let rows = buildHdiParticipantRows(data || []);
+    if (participantFilter) {
+      rows = rows.filter((row) => String(row.participantIdentifier || '').toLowerCase() === participantFilter);
+    }
+
+    res.json({ data: rows });
+  } catch (error) {
+    logger.error('admin_hdi_participant_report_failed', {
+      surveyId: surveyRecord.id,
+      message: error?.message ?? String(error),
+      code: error?.code ?? null,
+    });
+    res.status(500).json({ error: 'Unable to load HDI participant report' });
+  }
+});
+
+app.get('/api/admin/surveys/:id/hdi/cohort-analytics', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.hdi.cohort-analytics'))) return;
+
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  const { id } = req.params;
+  const surveyRecord = await loadSurveyWithAssignments(id);
+  if (!surveyRecord) {
+    res.status(404).json({ error: 'survey_not_found', message: `Survey not found for identifier ${id}` });
+    return;
+  }
+
+  const organizationId = pickOrgId(req.query.orgId, req.query.organizationId);
+  if (organizationId) {
+    const access = await requireOrgAccess(req, res, organizationId, { write: false, requireOrgAdmin: false });
+    if (!access) {
+      return res.status(403).json({ error: 'forbidden', code: 'org_access_denied' });
+    }
+  } else if (!context.isPlatformAdmin) {
+    res.status(403).json({ error: 'org_required', message: 'Organization filter is required unless you are a platform administrator.' });
+    return;
+  }
+
+  try {
+    const limit = clampNumber(parseInt(req.query.limit, 10) || 2000, 1, 5000);
+    let query = supabase
+      .from('survey_responses')
+      .select('*')
+      .eq('survey_id', surveyRecord.id)
+      .order('completed_at', { ascending: false, nullsFirst: false })
+      .limit(limit);
+
+    if (organizationId) {
+      query = query.eq('organization_id', organizationId);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    const analytics = buildHdiCohortAnalytics(data || []);
+    res.json({ data: analytics });
+  } catch (error) {
+    logger.error('admin_hdi_cohort_analytics_failed', {
+      surveyId: surveyRecord.id,
+      message: error?.message ?? String(error),
+      code: error?.code ?? null,
+    });
+    res.status(500).json({ error: 'Unable to load HDI cohort analytics' });
+  }
+});
+
+app.get('/api/admin/surveys/:id/hdi/pre-post-comparison', async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.hdi.pre-post-comparison'))) return;
+
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  const { id } = req.params;
+  const surveyRecord = await loadSurveyWithAssignments(id);
+  if (!surveyRecord) {
+    res.status(404).json({ error: 'survey_not_found', message: `Survey not found for identifier ${id}` });
+    return;
+  }
+
+  const organizationId = pickOrgId(req.query.orgId, req.query.organizationId);
+  if (organizationId) {
+    const access = await requireOrgAccess(req, res, organizationId, { write: false, requireOrgAdmin: false });
+    if (!access) {
+      return res.status(403).json({ error: 'forbidden', code: 'org_access_denied' });
+    }
+  } else if (!context.isPlatformAdmin) {
+    res.status(403).json({ error: 'org_required', message: 'Organization filter is required unless you are a platform administrator.' });
+    return;
+  }
+
+  const participantFilter =
+    typeof req.query.participant === 'string' && req.query.participant.trim().length
+      ? req.query.participant.trim().toLowerCase()
+      : null;
+  if (!participantFilter) {
+    res.status(400).json({ error: 'participant_required', message: 'participant query parameter is required.' });
+    return;
+  }
+
+  try {
+    let query = supabase
+      .from('survey_responses')
+      .select('*')
+      .eq('survey_id', surveyRecord.id)
+      .order('completed_at', { ascending: false, nullsFirst: false })
+      .limit(2000);
+    if (organizationId) {
+      query = query.eq('organization_id', organizationId);
+    }
+
+    const { data, error } = await query;
+    if (error) throw error;
+
+    const records = (data || [])
+      .map((row) => toHdiRecord(row))
+      .filter(Boolean)
+      .filter((record) => {
+        if (record.userId && String(record.userId).toLowerCase() === participantFilter) return true;
+        return Array.isArray(record.participantKeys) && record.participantKeys.includes(participantFilter);
+      });
+
+    const latestPost = records
+      .filter((record) => record.administrationType === 'post' || record.administrationType === 'pulse')
+      .sort((a, b) => (Date.parse(b.completedAt ?? '') || 0) - (Date.parse(a.completedAt ?? '') || 0))[0];
+    const preRecord = records
+      .filter((record) => record.administrationType === 'pre')
+      .sort((a, b) => (Date.parse(b.completedAt ?? '') || 0) - (Date.parse(a.completedAt ?? '') || 0))[0];
+
+    const comparison = latestPost && preRecord ? buildHdiComparison({ pre: preRecord, post: latestPost }) : null;
+    res.json({ data: comparison });
+  } catch (error) {
+    logger.error('admin_hdi_pre_post_comparison_failed', {
+      surveyId: surveyRecord.id,
+      message: error?.message ?? String(error),
+      code: error?.code ?? null,
+    });
+    res.status(500).json({ error: 'Unable to load HDI pre/post comparison' });
+  }
+});
+
+app.get('/api/client/surveys/:id/results', authenticate, async (req, res) => {
+  if (!ensureSupabase(res)) return;
+  const context = requireUserContext(req, res);
+  if (!context) return;
+
+  const { id } = req.params;
+  const surveyRecord = await loadSurveyWithAssignments(id);
+  if (!surveyRecord) {
+    res.status(404).json({ error: 'survey_not_found', message: `Survey not found for identifier ${id}` });
+    return;
+  }
+
+  try {
+    const assignment = await loadSurveyAssignmentForUser(id, context.userId, {
+      assignmentId: req.query.assignmentId ?? req.query.assignment_id ?? null,
+      orgIds: Array.isArray(context.organizationIds) ? context.organizationIds : [],
+    });
+
+    const { data, error } = await supabase
+      .from('survey_responses')
+      .select('*')
+      .eq('survey_id', surveyRecord.id)
+      .eq('user_id', context.userId)
+      .order('completed_at', { ascending: false, nullsFirst: false })
+      .limit(100);
+    if (error) throw error;
+
+    const records = (data || []).map((row) => toHdiRecord(row)).filter(Boolean);
+    const latest = records[0] ?? null;
+    const preRecord = latest ? findLatestHdiPreRecord(data || [], latest) : null;
+    const comparison = latest && preRecord && latest.id !== preRecord.id
+      ? buildHdiComparison({ pre: preRecord, post: latest })
+      : null;
+
+    res.json({
+      data: {
+        surveyId: surveyRecord.id,
+        assignmentId: assignment?.id ?? null,
+        latest,
+        comparison,
+      },
+    });
+  } catch (error) {
+    logger.error('client_hdi_results_failed', {
+      surveyId: surveyRecord.id,
+      userId: context.userId,
+      message: error?.message ?? String(error),
+      code: error?.code ?? null,
+    });
+    res.status(500).json({ error: 'Unable to load survey results' });
   }
 });
 

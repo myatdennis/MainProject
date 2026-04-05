@@ -24,6 +24,7 @@ import ClientCourseDetail from './pages/Client/ClientCourseDetail';
 import ClientLessonView from './pages/Client/ClientLessonView';
 import ClientCourseCompletion from './pages/Client/ClientCourseCompletion';
 import ClientSurveys from './pages/Client/ClientSurveys';
+import ClientSurveyResults from './pages/Client/ClientSurveyResults';
 import ClientDocuments from './pages/Client/DocumentsPage';
 import ClientProfile from './pages/Client/ClientProfile';
 import ClientLayout from './pages/Client/ClientLayout';
@@ -421,6 +422,7 @@ function AppContent() {
             <Route path="courses/:courseId/lessons/:lessonId" element={<ClientLessonView />} />
             <Route path="courses/:courseId/completion" element={<ClientCourseCompletion />} />
             <Route path="surveys" element={<ClientSurveys />} />
+            <Route path="surveys/:surveyId/results" element={<ClientSurveyResults />} />
             <Route path="documents" element={<ClientDocuments />} />
             <Route path="profile" element={<ClientProfile />} />
             <Route path="*" element={<Navigate to="dashboard" replace />} />

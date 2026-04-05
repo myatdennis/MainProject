@@ -1,6 +1,8 @@
 import type { SurveyTemplate, SurveyBranding } from '../types/survey';
+import { hdiTemplate } from './hdiTemplate';
 
 export const surveyTemplates: SurveyTemplate[] = [
+  hdiTemplate,
   {
     id: 'climate-assessment',
     name: 'Organizational Climate Assessment',

@@ -329,6 +329,10 @@ const AdminSurveys = () => {
 
   const getTypeColor = (type: string) => {
     switch (type) {
+      case 'hdi':
+      case 'hdi-assessment':
+      case 'hdi-intercultural-development-index':
+        return 'bg-rose-100 text-rose-800';
       case 'climate-assessment':
         return 'bg-blue-100 text-blue-800';
       case 'inclusion-index':
@@ -470,6 +474,7 @@ const AdminSurveys = () => {
                 className="border border-gray-300 rounded-lg px-3 py-2 focus:ring-2 focus:ring-[var(--hud-orange)] focus:border-transparent"
               >
                 <option value="all">All Types</option>
+                <option value="hdi">HDI Assessment</option>
                 <option value="climate-assessment">Climate Assessment</option>
                 <option value="inclusion-index">Inclusion Index</option>
                 <option value="equity-lens">Equity Lens</option>
@@ -692,7 +697,21 @@ const AdminSurveys = () => {
           </p>
         </div>
         
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
+          <div className="card-lg hover:shadow-md transition-shadow duration-200 border border-rose-100">
+            <div className="bg-rose-100 w-12 h-12 rounded-lg flex items-center justify-center mb-4">
+              <Brain className="h-6 w-6 text-rose-600" />
+            </div>
+            <h3 className="font-bold text-gray-900 mb-2">HDI Assessment</h3>
+            <p className="text-gray-600 text-sm mb-4">Intercultural Development Index with pre/post progress scoring and feedback.</p>
+            <Link
+              to="/admin/surveys/builder?template=hdi-intercultural-development-index"
+              className="text-rose-600 hover:text-rose-700 font-medium text-sm"
+            >
+              Use Template →
+            </Link>
+          </div>
+
           <div className="card-lg hover:shadow-md transition-shadow duration-200">
             <div className="bg-blue-100 w-12 h-12 rounded-lg flex items-center justify-center mb-4">
               <BarChart3 className="h-6 w-6 text-blue-600" />

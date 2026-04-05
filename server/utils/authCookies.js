@@ -20,14 +20,16 @@ const parseBoolean = (value, fallback = false) => {
 
 const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production';
 const configuredSameSite = (process.env.COOKIE_SAMESITE || '').trim().toLowerCase();
-const sameSite = ['lax', 'strict', 'none'].includes(configuredSameSite)
-  ? configuredSameSite
-  : isProduction
-  ? 'none'
-  : 'lax';
-const secureByDefault = parseBoolean(process.env.COOKIE_SECURE, isProduction);
+const sameSite = ['lax', 'strict', 'none'].includes(configuredSameSite) ? configuredSameSite : '';
+const rawCookieSecure = process.env.COOKIE_SECURE;
+const secureByDefault =
+  rawCookieSecure === undefined || String(rawCookieSecure).trim() === ''
+    ? null
+    : parseBoolean(rawCookieSecure, isProduction);
 const configuredCookieDomain = (process.env.COOKIE_DOMAIN || '').trim();
-const primaryCookieDomain = configuredCookieDomain || (isProduction ? '.the-huddle.co' : '');
+const primaryCookieDomain = configuredCookieDomain || '.the-huddle.co';
+
+const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '0.0.0.0']);
 
 const hostMatchesDomain = (host, domain) => {
   if (!host || !domain) return false;
@@ -58,25 +60,45 @@ function getRequestHost(req) {
   return '';
 }
 
+const isLocalHost = (host = '') => {
+  if (!host) return false;
+  const normalized = host.trim().toLowerCase();
+  if (!normalized) return false;
+  if (LOCAL_HOSTS.has(normalized)) return true;
+  if (normalized.endsWith('.local')) return true;
+  return false;
+};
+
 // Per-request cookie domain logic
 function resolveCookieDomain(req) {
-  if (!primaryCookieDomain) return undefined;
   const host = getRequestHost(req);
   if (!host) return undefined;
   return hostMatchesDomain(host, primaryCookieDomain) ? primaryCookieDomain : undefined;
 }
-function resolveCookieSameSite() {
-  return sameSite;
+function resolveCookieSameSite(req) {
+  if (sameSite) return sameSite;
+  const host = getRequestHost(req);
+  if (host && !isLocalHost(host)) {
+    return 'none';
+  }
+  return 'lax';
 }
-function resolveCookieSecure() {
-  return secureByDefault;
+function resolveCookieSecure(req) {
+  if (typeof secureByDefault === 'boolean') {
+    return secureByDefault;
+  }
+  const host = getRequestHost(req);
+  if (host && !isLocalHost(host)) {
+    return true;
+  }
+  return isProduction;
 }
 export function getCookieOptions(req, { httpOnly = true, name } = {}) {
   const domain = resolveCookieDomain(req);
   const opts = {
     httpOnly,
-    secure: resolveCookieSecure(),
-    sameSite: resolveCookieSameSite(),
+    secure: resolveCookieSecure(req),
+    sameSite: resolveCookieSameSite(req),
     path: '/',
   };
   if (domain) opts.domain = domain;
@@ -97,8 +119,8 @@ export function getCookieOptions(req, { httpOnly = true, name } = {}) {
 
 export const describeCookiePolicy = () => ({
   production: isProduction,
-  secure: resolveCookieSecure(),
-  sameSite: resolveCookieSameSite(),
+  secure: typeof secureByDefault === 'boolean' ? secureByDefault : isProduction,
+  sameSite: sameSite || (isProduction ? 'none' : 'lax'),
   domain: primaryCookieDomain || null,
   path: '/',
 });
@@ -124,11 +146,18 @@ const setCookie = (res, name, value, maxAgeMs, req, opts = {}) => {
 const applyCookie = (req, res, name, value, maxAgeSeconds, overrides = {}) => {
   const request = req || res.req || null;
   const baseOptions = getCookieOptions(request || undefined, { httpOnly: overrides.httpOnly ?? true, name });
+  const normalizedMaxAgeMs =
+    typeof maxAgeSeconds === 'number' && Number.isFinite(maxAgeSeconds) && maxAgeSeconds <= 0
+      ? 0
+      : Math.max(1000, Math.trunc(maxAgeSeconds * 1000));
   const merged = {
     ...baseOptions,
     ...overrides,
-    maxAge: Math.max(1000, Math.trunc(maxAgeSeconds * 1000)),
+    maxAge: normalizedMaxAgeMs,
   };
+  if (normalizedMaxAgeMs === 0) {
+    merged.expires = new Date(0);
+  }
   if (merged.sameSite === 'none' && !merged.secure) {
     merged.secure = true;
   }

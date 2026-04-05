@@ -83,11 +83,9 @@ const inferE2EBypassRole = (): 'admin' | 'learner' => {
 const refreshAuthToken = async (): Promise<boolean> => {
   try {
     const refreshToken = getRefreshToken();
-    if (!refreshToken) {
-      if (devMode) {
-        console.warn('[authorizedFetch] no refresh token available');
-      }
-      return false;
+    const hasRefreshToken = Boolean(refreshToken);
+    if (!hasRefreshToken && devMode) {
+      console.warn('[authorizedFetch] no refresh token in secureStorage; attempting cookie-based refresh fallback');
     }
 
     const refreshResponse = await fetch(normalizeUrl('/api/auth/refresh'), {
@@ -95,7 +93,7 @@ const refreshAuthToken = async (): Promise<boolean> => {
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ refreshToken }),
+      body: hasRefreshToken ? JSON.stringify({ refreshToken }) : JSON.stringify({}),
       credentials: 'include',
     });
 

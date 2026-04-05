@@ -20,7 +20,7 @@ import supabase, { supabaseAuthClient } from '../lib/supabaseClient.js';
 import { getUserMemberships } from '../utils/memberships.js';
 import { verifySupabaseToken } from '../middleware/supabaseJwt.js';
 
-import { clearAuthCookies } from '../utils/authCookies.js';
+import { attachAuthCookies, clearAuthCookies, getRefreshTokenFromRequest } from '../utils/authCookies.js';
 
 import {
   demoLoginEnabled,
@@ -484,7 +484,10 @@ const loginHandler = async (req, res) => {
         email: normalizedEmail,
         membershipCount: 0,
       });
-
+      attachAuthCookies(req, res, {
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+      });
       return res.status(200).json(buildSessionResponse(userPayload, tokens));
     }
 
@@ -536,6 +539,10 @@ const loginHandler = async (req, res) => {
       userId: data.user.id,
       email: normalizedEmail,
       membershipCount: membershipRows.length,
+    });
+    attachAuthCookies(req, res, {
+      accessToken: tokens.accessToken,
+      refreshToken: tokens.refreshToken,
     });
     return res.status(200).json(buildSessionResponse(userPayload, tokens));
   } catch (error) {
@@ -687,6 +694,10 @@ router.post('/register', authLimiter, async (req, res) => {
       const userPayload = buildUserPayloadFromSupabase(sessionData.user, membershipRows);
       const tokens = buildTokenResponseFromSession(sessionData.session);
 
+      attachAuthCookies(req, res, {
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
+      });
 
       res.status(201).json({
         ok: true,
@@ -721,24 +732,41 @@ router.post('/register', authLimiter, async (req, res) => {
 
 router.post('/refresh', async (req, res) => {
   try {
-    const refreshToken =
+    const bodyRefreshToken =
       typeof req.body?.refreshToken === 'string' ? req.body.refreshToken.trim() : '';
-    if (!refreshToken) {
+    const cookieRefreshToken =
+      typeof getRefreshTokenFromRequest === 'function'
+        ? String(getRefreshTokenFromRequest(req) || '').trim()
+        : '';
+
+    const candidates = [bodyRefreshToken, cookieRefreshToken].filter(Boolean);
+    const uniqueCandidates = Array.from(new Set(candidates));
+    if (uniqueCandidates.length === 0) {
       return res.status(400).json({
         error: 'missing_refresh_token',
         code: 'MISSING_REFRESH_TOKEN',
         message: 'refreshToken is required',
       });
     }
-    const result = await refreshSessionFromToken(refreshToken);
-    if (!result.ok) {
-      return res.status(result.status || 401).json({
-        error: result.error || 'refresh_failed',
-        code: result.code || result.error || 'refresh_failed',
-        message: result.message || 'Unable to refresh session',
-      });
+
+    let lastFailure = null;
+    for (const refreshToken of uniqueCandidates) {
+      const result = await refreshSessionFromToken(refreshToken);
+      if (result.ok) {
+        attachAuthCookies(req, res, {
+          accessToken: result.body?.accessToken,
+          refreshToken: result.body?.refreshToken,
+        });
+        return res.json(result.body);
+      }
+      lastFailure = result;
     }
-    return res.json(result.body);
+
+    return res.status(lastFailure?.status || 401).json({
+      error: lastFailure?.error || 'refresh_failed',
+      code: lastFailure?.code || lastFailure?.error || 'refresh_failed',
+      message: lastFailure?.message || 'Unable to refresh session',
+    });
   } catch (error) {
     console.error('[AUTH REFRESH ERROR]', {
       error: error instanceof Error ? error.message : error,

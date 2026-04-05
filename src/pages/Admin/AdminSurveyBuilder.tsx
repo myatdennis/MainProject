@@ -346,6 +346,7 @@ const AdminSurveyBuilder = () => {
       id: `survey-${Date.now()}`,
       title: template.name,
       description: template.description,
+      type: template.id === 'hdi-intercultural-development-index' ? 'hdi' : template.id,
       status: 'draft',
       createdBy: 'Mya Dennis',
       createdAt: new Date().toISOString(),
@@ -361,6 +362,7 @@ const AdminSurveyBuilder = () => {
       branding: defaultBranding,
       settings: {
         ...template.defaultSettings,
+        assessmentType: template.id === 'hdi-intercultural-development-index' ? 'hdi' : undefined,
         accessControl: {
           requireLogin: false,
           ...template.defaultSettings?.accessControl

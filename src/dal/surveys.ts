@@ -310,3 +310,49 @@ export async function fetchAssignedSurveysForLearner(): Promise<LearnerSurveyAss
     })
     .filter((entry): entry is LearnerSurveyAssignment => Boolean(entry));
 }
+
+export async function fetchHdiParticipantReport(
+  surveyId: string,
+  params: { orgId?: string; participant?: string; limit?: number } = {},
+) {
+  const query = new URLSearchParams();
+  if (params.orgId) query.set('orgId', params.orgId);
+  if (params.participant) query.set('participant', params.participant);
+  if (typeof params.limit === 'number') query.set('limit', String(params.limit));
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  const json = await request<{ data: any[] }>(`/api/admin/surveys/${surveyId}/hdi/participant-report${suffix}`);
+  return Array.isArray(json.data) ? json.data : [];
+}
+
+export async function fetchHdiCohortAnalytics(
+  surveyId: string,
+  params: { orgId?: string; limit?: number } = {},
+) {
+  const query = new URLSearchParams();
+  if (params.orgId) query.set('orgId', params.orgId);
+  if (typeof params.limit === 'number') query.set('limit', String(params.limit));
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  const json = await request<{ data: any }>(`/api/admin/surveys/${surveyId}/hdi/cohort-analytics${suffix}`);
+  return json.data ?? null;
+}
+
+export async function fetchHdiPrePostComparison(
+  surveyId: string,
+  params: { participant: string; orgId?: string },
+) {
+  const query = new URLSearchParams();
+  query.set('participant', params.participant);
+  if (params.orgId) query.set('orgId', params.orgId);
+  const json = await request<{ data: any }>(
+    `/api/admin/surveys/${surveyId}/hdi/pre-post-comparison?${query.toString()}`,
+  );
+  return json.data ?? null;
+}
+
+export async function fetchLearnerSurveyResults(surveyId: string, assignmentId?: string) {
+  const query = new URLSearchParams();
+  if (assignmentId) query.set('assignmentId', assignmentId);
+  const suffix = query.toString() ? `?${query.toString()}` : '';
+  const json = await request<{ data: any }>(`/api/client/surveys/${surveyId}/results${suffix}`);
+  return json.data ?? null;
+}

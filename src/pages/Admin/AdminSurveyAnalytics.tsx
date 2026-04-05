@@ -23,7 +23,7 @@ import {
   SurveyAnalyticsDashboardView,
   buildSurveySummary,
 } from '../../components/Survey/SurveyAnalyticsDashboard';
-import { getSurveyById } from '../../dal/surveys';
+import { getSurveyById, fetchHdiCohortAnalytics, fetchHdiParticipantReport } from '../../dal/surveys';
 
 const RANGE_OPTIONS: { label: string; value: AnalyticsDateRange }[] = [
   { label: '7 days', value: 'last-7-days' },
@@ -45,8 +45,13 @@ const AdminSurveyAnalytics = () => {
   const { data, loading, error, refresh, lastUpdated } = useAnalyticsDashboard({ dateRange });
 
   const [surveyTitle, setSurveyTitle] = useState<string | null>(null);
+  const [surveyType, setSurveyType] = useState<string | null>(null);
   const [surveyNotFound, setSurveyNotFound] = useState(false);
   const [surveyTitleLoading, setSurveyTitleLoading] = useState(false);
+  const [hdiLoading, setHdiLoading] = useState(false);
+  const [hdiError, setHdiError] = useState<string | null>(null);
+  const [hdiParticipants, setHdiParticipants] = useState<any[]>([]);
+  const [hdiCohort, setHdiCohort] = useState<any | null>(null);
 
   useEffect(() => {
     if (!surveyId) return;
@@ -58,11 +63,49 @@ const AdminSurveyAnalytics = () => {
           setSurveyNotFound(true);
         } else {
           setSurveyTitle(survey.title || null);
+          setSurveyType(String(survey.type ?? (survey.settings as any)?.assessmentType ?? '').toLowerCase());
         }
       })
       .catch(() => setSurveyNotFound(true))
       .finally(() => setSurveyTitleLoading(false));
   }, [surveyId]);
+
+  const isHdiSurvey =
+    surveyType === 'hdi' ||
+    surveyType === 'hdi-assessment' ||
+    surveyType === 'hdi-intercultural-development-index';
+
+  useEffect(() => {
+    if (!surveyId || !isHdiSurvey) {
+      setHdiParticipants([]);
+      setHdiCohort(null);
+      setHdiError(null);
+      return;
+    }
+
+    let active = true;
+    setHdiLoading(true);
+    setHdiError(null);
+
+    Promise.all([fetchHdiCohortAnalytics(surveyId), fetchHdiParticipantReport(surveyId, { limit: 500 })])
+      .then(([cohort, participants]) => {
+        if (!active) return;
+        setHdiCohort(cohort);
+        setHdiParticipants(Array.isArray(participants) ? participants : []);
+      })
+      .catch((error) => {
+        if (!active) return;
+        console.error('[AdminSurveyAnalytics] failed to load HDI analytics', error);
+        setHdiError('Unable to load HDI analytics right now.');
+      })
+      .finally(() => {
+        if (active) setHdiLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [surveyId, isHdiSurvey]);
 
   const displayTitle = surveyTitle
     ? surveyTitle
@@ -244,6 +287,80 @@ const AdminSurveyAnalytics = () => {
         data={data}
         onRefresh={refresh}
       />
+
+      {isHdiSurvey && (
+        <div className="space-y-6">
+          <div className="card-lg space-y-4 border border-rose-100">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold text-gray-900">HDI Cohort Overview</h2>
+              {hdiLoading && <Loader2 className="h-4 w-4 animate-spin text-gray-500" />}
+            </div>
+            {hdiError ? (
+              <p className="text-sm text-red-600">{hdiError}</p>
+            ) : hdiCohort ? (
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div>
+                  <p className="text-xs text-gray-500">Average pre</p>
+                  <p className="text-xl font-semibold text-gray-900">{hdiCohort.averageOverallPre ?? 0}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500">Average post</p>
+                  <p className="text-xl font-semibold text-gray-900">{hdiCohort.averageOverallPost ?? 0}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500">Delta</p>
+                  <p className="text-xl font-semibold text-gray-900">
+                    {hdiCohort.averageDelta > 0 ? '+' : ''}
+                    {hdiCohort.averageDelta ?? 0}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-gray-500">Meaningful improvement</p>
+                  <p className="text-xl font-semibold text-gray-900">{hdiCohort.meaningfulImprovementPercent ?? 0}%</p>
+                </div>
+              </div>
+            ) : (
+              <p className="text-sm text-gray-500">No cohort data yet.</p>
+            )}
+          </div>
+
+          <div className="card-lg space-y-4">
+            <h2 className="text-lg font-semibold text-gray-900">HDI Participant Insights</h2>
+            {hdiError ? (
+              <p className="text-sm text-red-600">{hdiError}</p>
+            ) : hdiParticipants.length ? (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left border-b border-gray-200">
+                      <th className="py-2 pr-3">Participant</th>
+                      <th className="py-2 pr-3">Administration</th>
+                      <th className="py-2 pr-3">Score</th>
+                      <th className="py-2 pr-3">Band</th>
+                      <th className="py-2 pr-3">Top strengths</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {hdiParticipants.slice(0, 50).map((row, index) => (
+                      <tr key={`${row.responseId}-${index}`} className="border-b border-gray-100">
+                        <td className="py-2 pr-3 text-gray-700">{row.participantIdentifier}</td>
+                        <td className="py-2 pr-3 text-gray-700">{String(row.administrationType || 'single').toUpperCase()}</td>
+                        <td className="py-2 pr-3 text-gray-900 font-medium">{row.overallScore}</td>
+                        <td className="py-2 pr-3 text-gray-700">{row.scoreBand}</td>
+                        <td className="py-2 pr-3 text-gray-600">
+                          {(row.topStrengths || []).map((strength: any) => strength.label).join(', ') || '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="text-sm text-gray-500">No participant HDI data available yet.</p>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         <div className="card-lg space-y-4">
