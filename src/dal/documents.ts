@@ -114,6 +114,14 @@ const uploadDocumentFile = async (
   return response.data;
 };
 
+const readFileAsDataUrl = (file: File): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error ?? new Error('Unable to read file'));
+    reader.readAsDataURL(file);
+  });
+
 export const listDocuments = async (opts?: {
   organizationId?: string;
   userId?: string;
@@ -223,17 +231,28 @@ export const addDocument = async (
   let fileSize = meta.fileSize ?? null;
 
   if (file) {
-    const uploadResult = await uploadDocumentFile(file, {
-      documentId: docId,
-      organizationId: meta.organizationId,
-      visibility: meta.visibility,
-    });
+    try {
+      const uploadResult = await uploadDocumentFile(file, {
+        documentId: docId,
+        organizationId: meta.organizationId,
+        visibility: meta.visibility,
+      });
 
-    storagePath = uploadResult.storagePath;
-    url = uploadResult.signedUrl;
-    urlExpiresAt = uploadResult.urlExpiresAt;
-    fileType = uploadResult.fileType || fileType || file.type;
-    fileSize = typeof uploadResult.fileSize === 'number' ? uploadResult.fileSize : file.size;
+      storagePath = uploadResult.storagePath;
+      url = uploadResult.signedUrl;
+      urlExpiresAt = uploadResult.urlExpiresAt;
+      fileType = uploadResult.fileType || fileType || file.type;
+      fileSize = typeof uploadResult.fileSize === 'number' ? uploadResult.fileSize : file.size;
+    } catch (uploadError) {
+      console.warn('[documents] storage upload failed, falling back to inline document URL', {
+        message: (uploadError as any)?.message || String(uploadError),
+      });
+      url = await readFileAsDataUrl(file);
+      fileType = file.type || fileType;
+      fileSize = file.size;
+      storagePath = null;
+      urlExpiresAt = null;
+    }
   }
 
   // Build the payload using the snake_case organization_id key that the backend

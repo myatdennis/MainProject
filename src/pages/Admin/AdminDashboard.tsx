@@ -469,7 +469,14 @@ const AdminDashboard = () => {
             </details>
           </div>
         )}
-        {gateShell(gateContent)}
+        {gateShell(
+          <section>
+            <h1 className="font-heading text-2xl font-bold text-charcoal md:text-3xl">
+              Track impact across every cohort and organization.
+            </h1>
+            <div className="mt-6">{gateContent}</div>
+          </section>,
+        )}
       </>
     );
   }

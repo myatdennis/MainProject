@@ -1270,10 +1270,15 @@ const RATE_LIMIT_BYPASS_EXACT = new Set(['/auth/csrf']);
 const RATE_LIMIT_BYPASS_TEST_IPS = new Set(
   (process.env.RATE_LIMIT_BYPASS_IPS || '').split(',').map((s) => s.trim()).filter(Boolean),
 );
+const RATE_LIMIT_LOOPBACK_IPS = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1', 'localhost']);
+const API_LIMIT_MAX = Number(process.env.API_RATE_LIMIT_MAX || (isProduction ? 500 : 5000));
 
 const shouldBypassApiRateLimit = (req) => {
   if (!req) return false;
-  if (isTestMode || req.headers?.['x-e2e-bypass'] === 'true') {
+  const bypassHeader = String(req.headers?.['x-e2e-bypass'] || '')
+    .trim()
+    .toLowerCase();
+  if (isTestMode || bypassHeader === 'true' || bypassHeader === '1' || bypassHeader === 'yes') {
     return true;
   }
   if (req.method === 'OPTIONS') return true;
@@ -1285,7 +1290,10 @@ const shouldBypassApiRateLimit = (req) => {
     return true;
   }
   // Only bypass for explicitly allowlisted test IPs (e.g. 127.0.0.1 in CI).
-  const clientIp = req.ip || req.connection?.remoteAddress || '';
+  const clientIp = String(req.ip || req.connection?.remoteAddress || '').trim();
+  if (!isProduction && RATE_LIMIT_LOOPBACK_IPS.has(clientIp)) {
+    return true;
+  }
   if (RATE_LIMIT_BYPASS_TEST_IPS.size > 0 && RATE_LIMIT_BYPASS_TEST_IPS.has(clientIp)) {
     return true;
   }
@@ -1294,7 +1302,7 @@ const shouldBypassApiRateLimit = (req) => {
 
 export const apiLimiter = rateLimit({
   windowMs: 1 * 60 * 1000,
-  max: 500,
+  max: API_LIMIT_MAX,
   message: {
     error: 'Too many requests',
     message: 'Please slow down and try again later.',

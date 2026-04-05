@@ -82,7 +82,8 @@ const AdminUsers = () => {
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [showCourseAssignModal, setShowCourseAssignModal] = useState(false);
   const [showEditUserModal, setShowEditUserModal] = useState(false);
-  const [userToDelete, setUserToDelete] = useState<string | null>(null);
+  const [pendingUserActionIds, setPendingUserActionIds] = useState<string[]>([]);
+  const [pendingUserActionMode, setPendingUserActionMode] = useState<'archive' | 'delete'>('archive');
   const [userToEdit, setUserToEdit] = useState<User | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -430,28 +431,79 @@ const AdminUsers = () => {
   };
 
   const handleDeleteUser = (userId: string) => {
-    setUserToDelete(userId);
+    setPendingUserActionMode('archive');
+    setPendingUserActionIds([userId]);
+    setShowDeleteModal(true);
+  };
+
+  const handleArchiveSelectedUsers = () => {
+    if (selectedUsers.length === 0) return;
+    setPendingUserActionMode('archive');
+    setPendingUserActionIds([...selectedUsers]);
+    setShowDeleteModal(true);
+  };
+
+  const handleDeleteSelectedUsers = () => {
+    if (selectedUsers.length === 0) return;
+    setPendingUserActionMode('delete');
+    setPendingUserActionIds([...selectedUsers]);
     setShowDeleteModal(true);
   };
 
   const confirmDeleteUser = async () => {
-    if (!userToDelete || (!activeOrgId && filterOrg === 'all' && !isPlatformAdmin)) return;
+    if (pendingUserActionIds.length === 0) return;
+
+    const resolveArchiveOrganizationId = (userId: string): string | null => {
+      const target = usersList.find((entry) => entry.id === userId);
+      return target?.organization || activeOrgId || (filterOrg !== 'all' ? filterOrg : null);
+    };
+
+    if (pendingUserActionMode === 'archive' && !isPlatformAdmin && !activeOrgId && filterOrg === 'all') {
+      showToast('Select an organization before archiving users.', 'error');
+      return;
+    }
 
     setLoading(true);
     try {
-      await apiRequest(`/api/admin/users/${userToDelete}`, {
-        method: 'DELETE',
-        body: { organizationId: activeOrgId, mode: 'archive' },
-        expectedStatus: [200, 204],
-      });
+      const results = await Promise.allSettled(
+        pendingUserActionIds.map(async (userId) => {
+          const body: Record<string, unknown> = { mode: pendingUserActionMode };
+          if (pendingUserActionMode === 'archive') {
+            const organizationId = resolveArchiveOrganizationId(userId);
+            if (!organizationId) {
+              throw new Error('organizationId is required to archive selected users.');
+            }
+            body.organizationId = organizationId;
+          }
 
-      showToast('User archived successfully!', 'success');
+          await apiRequest(`/api/admin/users/${userId}`, {
+            method: 'DELETE',
+            body,
+            expectedStatus: [200, 204],
+          });
+        }),
+      );
+
+      const successCount = results.filter((entry) => entry.status === 'fulfilled').length;
+      const failureCount = results.length - successCount;
+      const actionLabel = pendingUserActionMode === 'delete' ? 'deleted' : 'archived';
+
+      if (successCount > 0) {
+        showToast(
+          `${successCount} user${successCount === 1 ? '' : 's'} ${actionLabel} successfully${failureCount > 0 ? ` (${failureCount} failed)` : ''}.`,
+          failureCount > 0 ? 'warning' : 'success',
+        );
+      } else {
+        showToast(`Failed to ${pendingUserActionMode} selected users.`, 'error');
+      }
+
       setShowDeleteModal(false);
-      setUserToDelete(null);
+      setPendingUserActionIds([]);
+      setSelectedUsers((prev) => prev.filter((id) => !pendingUserActionIds.includes(id)));
       // full refetch to avoid stale partial state
       void fetchUsers();
     } catch (error: any) {
-      showToast(error?.message ?? 'Failed to archive user', 'error');
+      showToast(error?.message ?? `Failed to ${pendingUserActionMode} user`, 'error');
     } finally {
       setLoading(false);
     }
@@ -580,6 +632,24 @@ const AdminUsers = () => {
                 >
                   Assign Course
                 </LoadingButton>
+                <LoadingButton
+                  onClick={handleArchiveSelectedUsers}
+                  loading={loading}
+                  variant="secondary"
+                >
+                  <Clock className="icon-16" />
+                  Archive Selected ({selectedUsers.length})
+                </LoadingButton>
+                {isPlatformAdmin && (
+                  <LoadingButton
+                    onClick={handleDeleteSelectedUsers}
+                    loading={loading}
+                    variant="danger"
+                  >
+                    <Trash2 className="icon-16" />
+                    Delete Selected ({selectedUsers.length})
+                  </LoadingButton>
+                )}
               </div>
             )}
             <LoadingButton
@@ -732,8 +802,8 @@ const AdminUsers = () => {
                       </button>
                       <button
                         onClick={() => handleDeleteUser(user.id)}
-                        title="Delete User"
-                        aria-label={`Delete ${user.name}`}
+                        title="Archive User"
+                        aria-label={`Archive ${user.name}`}
                         className="icon-action primary"
                         tabIndex={0}
                         role="button"
@@ -745,13 +815,20 @@ const AdminUsers = () => {
                         items={[
                           { key: 'view', label: 'View', onClick: () => navigate(`/admin/users/${user.id}`) },
                           { key: 'edit', label: 'Edit', onClick: () => handleEditUser(user.id) },
-                          { key: 'delete', label: 'Delete', onClick: () => handleDeleteUser(user.id), destructive: true },
+                          { key: 'archive', label: 'Archive', onClick: () => handleDeleteUser(user.id), destructive: true },
+                          ...(isPlatformAdmin
+                            ? [{ key: 'delete', label: 'Delete permanently', onClick: () => {
+                                setPendingUserActionMode('delete');
+                                setPendingUserActionIds([user.id]);
+                                setShowDeleteModal(true);
+                              }, destructive: true }]
+                            : []),
                         ]}
                       />
                       {/* Tooltips for icon-only actions */}
                       <span id={`tooltip-view-${user.id}`} className="sr-only">View profile</span>
                       <span id={`tooltip-edit-${user.id}`} className="sr-only">Edit user</span>
-                      <span id={`tooltip-delete-${user.id}`} className="sr-only">Delete user</span>
+                      <span id={`tooltip-delete-${user.id}`} className="sr-only">Archive user</span>
                     </div>
                   </td>
                 </tr>
@@ -836,12 +913,16 @@ const AdminUsers = () => {
         isOpen={showDeleteModal}
         onClose={() => {
           setShowDeleteModal(false);
-          setUserToDelete(null);
+          setPendingUserActionIds([]);
         }}
         onConfirm={confirmDeleteUser}
-        title="Archive User"
-        message="Are you sure you want to archive this user for the current organization? This revokes their membership and removes them from active assignment and messaging workflows."
-        confirmText="Archive User"
+        title={pendingUserActionMode === 'delete' ? 'Delete User' : 'Archive User'}
+        message={
+          pendingUserActionMode === 'delete'
+            ? `Are you sure you want to permanently delete ${pendingUserActionIds.length > 1 ? `${pendingUserActionIds.length} users` : 'this user'}? This cannot be undone.`
+            : `Are you sure you want to archive ${pendingUserActionIds.length > 1 ? `${pendingUserActionIds.length} users` : 'this user'} for the current organization? This revokes memberships and removes them from active assignment and messaging workflows.`
+        }
+        confirmText={pendingUserActionMode === 'delete' ? 'Delete User' : 'Archive User'}
         type="danger"
         loading={loading}
       />

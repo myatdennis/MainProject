@@ -19,8 +19,15 @@ const parseBoolean = (value, fallback = false) => {
 };
 
 const isProduction = (process.env.NODE_ENV || '').toLowerCase() === 'production';
-const secureByDefault = true;
-const sameSite = 'none'; // enables cross-site cookies via api.the-huddle.co <-> the-huddle.co
+const configuredSameSite = (process.env.COOKIE_SAMESITE || '').trim().toLowerCase();
+const sameSite = ['lax', 'strict', 'none'].includes(configuredSameSite)
+  ? configuredSameSite
+  : isProduction
+  ? 'none'
+  : 'lax';
+const secureByDefault = parseBoolean(process.env.COOKIE_SECURE, isProduction);
+const configuredCookieDomain = (process.env.COOKIE_DOMAIN || '').trim();
+const primaryCookieDomain = configuredCookieDomain || (isProduction ? '.the-huddle.co' : '');
 
 const hostMatchesDomain = (host, domain) => {
   if (!host || !domain) return false;
@@ -34,6 +41,7 @@ const hostMatchesDomain = (host, domain) => {
 
 // Shared helper to get request host for cookie logic
 function getRequestHost(req) {
+  if (!req || typeof req !== 'object') return '';
   let host = req.headers && req.headers.host;
   if (host && typeof host === 'string' && host.length > 0) {
     host = host.split(',')[0].trim().split(':')[0].toLowerCase();
@@ -52,9 +60,10 @@ function getRequestHost(req) {
 
 // Per-request cookie domain logic
 function resolveCookieDomain(req) {
+  if (!primaryCookieDomain) return undefined;
   const host = getRequestHost(req);
   if (!host) return undefined;
-  return hostMatchesDomain(host, '.the-huddle.co') ? '.the-huddle.co' : undefined;
+  return hostMatchesDomain(host, primaryCookieDomain) ? primaryCookieDomain : undefined;
 }
 function resolveCookieSameSite() {
   return sameSite;
@@ -90,7 +99,7 @@ export const describeCookiePolicy = () => ({
   production: isProduction,
   secure: resolveCookieSecure(),
   sameSite: resolveCookieSameSite(),
-  domain: '.the-huddle.co',
+  domain: primaryCookieDomain || null,
   path: '/',
 });
 

@@ -156,6 +156,43 @@ interface UseAnalyticsDashboardOptions {
   dateRange?: AnalyticsDateRange;
 }
 
+type AnalyticsEnvelope = {
+  ok?: boolean;
+  data?: AdminAnalyticsResponse | null;
+  code?: string | null;
+  message?: string | null;
+  meta?: Record<string, unknown> | null;
+};
+
+const isAdminAnalyticsResponse = (value: unknown): value is AdminAnalyticsResponse => {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  return (
+    'overview' in record ||
+    'courses' in record ||
+    'dropoffs' in record ||
+    'engagementTrend' in record ||
+    'heatmap' in record ||
+    'topOrgs' in record ||
+    'courseDetail' in record
+  );
+};
+
+const normalizeAnalyticsApiPayload = (raw: unknown): AdminAnalyticsResponse => {
+  if (isAdminAnalyticsResponse(raw)) {
+    return raw;
+  }
+
+  if (raw && typeof raw === 'object') {
+    const envelope = raw as AnalyticsEnvelope;
+    if (isAdminAnalyticsResponse(envelope.data)) {
+      return envelope.data;
+    }
+  }
+
+  return {};
+};
+
 const RANGE_LOOKUP: Record<AnalyticsDateRange, number> = {
   'last-7-days': 7,
   'last-30-days': 30,
@@ -313,10 +350,10 @@ export const useAnalyticsDashboard = (options: UseAnalyticsDashboardOptions = {}
       params.set('since', start.toISOString());
       params.set('until', end.toISOString());
       const query = params.toString();
-      const response = await apiRequest<AdminAnalyticsResponse>(
+      const response = await apiRequest<AdminAnalyticsResponse | AnalyticsEnvelope>(
         query ? `/api/admin/analytics?${query}` : '/api/admin/analytics',
       );
-      setApiData(response);
+      setApiData(normalizeAnalyticsApiPayload(response));
       setLastUpdated(Date.now());
     } catch (err) {
       const nextError = err instanceof Error ? err : new Error('Failed to load analytics');
