@@ -143,6 +143,16 @@ const shouldBypass = (req) => {
   return true;
 };
 
+const hasExplicitE2EBypassHeader = (req) =>
+  String(req?.headers?.['x-e2e-bypass'] || '').trim().toLowerCase() === 'true' ||
+  String(req?.headers?.['x-user-role'] || '').trim().length > 0;
+
+const shouldBypassForE2ETokenlessRequest = (req) => {
+  if (!E2E_TEST_MODE_ACTIVE) return false;
+  if (hasRequestAuthToken(req)) return false;
+  return hasExplicitE2EBypassHeader(req);
+};
+
 const resolveTokenFromRequest = (req) => {
   const headerToken = extractTokenFromHeader(req.headers?.authorization);
   if (headerToken) return headerToken;
@@ -287,6 +297,17 @@ export default async function supabaseJwtMiddleware(req, res, next) {
   if (shouldSkipAuthInDev) {
     if (!isProduction) {
       jwtLog('info', 'dev_fallback_skip_auth', { path });
+    }
+    return next();
+  }
+
+  if (shouldBypassForE2ETokenlessRequest(req)) {
+    if (!isProduction) {
+      jwtLog('info', 'e2e_tokenless_bypass', {
+        path,
+        e2eBypass: String(req?.headers?.['x-e2e-bypass'] || '').trim().toLowerCase() === 'true',
+        roleHeaderPresent: String(req?.headers?.['x-user-role'] || '').trim().length > 0,
+      });
     }
     return next();
   }

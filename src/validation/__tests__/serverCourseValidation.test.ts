@@ -142,6 +142,37 @@ describe('server course publish validation', () => {
     expect(result.issues.find((issue) => issue.code === 'lesson.document.source_missing')).toBeUndefined();
   });
 
+  it('rejects malformed quiz questions during publish validation', () => {
+    const course = {
+      ...buildBaseCourse(),
+      modules: [
+        {
+          id: 'mod-1',
+          title: 'Module 1',
+          lessons: [
+            {
+              id: 'lesson-quiz-invalid',
+              title: 'Quiz lesson',
+              type: 'quiz',
+              content: {
+                questions: [
+                  {
+                    prompt: 'Question without a valid answer key',
+                    options: ['Option A', 'Option B'],
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = validateServerCourse(course, { intent: 'publish' });
+    expect(result.isValid).toBe(false);
+    expect(result.issues.find((issue) => issue.code === 'lesson.quiz.invalid_question')).toBeDefined();
+  });
+
   it('requires reflection lessons to include learner-facing content', () => {
     const invalidCourse = {
       ...buildBaseCourse(),

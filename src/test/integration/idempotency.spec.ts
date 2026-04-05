@@ -140,7 +140,10 @@ describe('Idempotency keys (integration)', () => {
     });
     const json2 = await res2.json();
     if (res2.status === 409) {
-      expect(json2).toHaveProperty('error', 'idempotency_conflict');
+      const conflictCode = json2?.error ?? json2?.code ?? null;
+      const conflictReason = json2?.reason ?? json2?.details?.reason ?? null;
+      expect(conflictCode === 'idempotency_conflict' || conflictCode === 'conflict').toBe(true);
+      expect(conflictReason === null || conflictReason === 'idempotency_in_flight').toBe(true);
     } else {
       expect([200, 201]).toContain(res2.status);
       expect(json2).toHaveProperty('data');

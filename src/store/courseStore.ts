@@ -1977,22 +1977,28 @@ export const courseStore = {
           dbCourses = dbCourses.filter((c) => {
             const hasModules = Array.isArray(c.modules) && c.modules.length > 0;
             if (!hasModules) {
-              console.warn('[COURSE GRAPH REJECTED] no_modules — server should have excluded this row', {
-                courseId: c.id, title: c.title, status: c.status, source: 'server',
-              });
+              if (import.meta.env.DEV) {
+                console.warn('[COURSE GRAPH REJECTED] no_modules — server should have excluded this row', {
+                  courseId: c.id, title: c.title, status: c.status, source: 'server',
+                });
+              }
               return false;
             }
             if (typeof c.version === 'number' && c.version <= 0) {
-              console.warn('[COURSE GRAPH REJECTED] invalid_version', { courseId: c.id, version: c.version, source: 'server' });
+              if (import.meta.env.DEV) {
+                console.warn('[COURSE GRAPH REJECTED] invalid_version', { courseId: c.id, version: c.version, source: 'server' });
+              }
               return false;
             }
             const hasLessons = (c.modules ?? []).some(
               (m) => Array.isArray(m.lessons) && m.lessons.length > 0,
             );
             if (!hasLessons) {
-              console.warn('[COURSE GRAPH REJECTED] no_lessons_in_any_module — server should have excluded this row', {
-                courseId: c.id, title: c.title, source: 'server',
-              });
+              if (import.meta.env.DEV) {
+                console.warn('[COURSE GRAPH REJECTED] no_lessons_in_any_module — server should have excluded this row', {
+                  courseId: c.id, title: c.title, source: 'server',
+                });
+              }
               return false;
             }
             if (import.meta.env.DEV) {

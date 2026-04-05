@@ -44,7 +44,7 @@ waitForUrl('http://localhost:8888/api/health', 2000)
   })
   .catch(() => {
     api = spawnProc('node', ['server/index.js'], {
-      env: { ...process.env, E2E_TEST_MODE: 'true', DEV_FALLBACK: 'true', PORT: '8888' },
+      env: { ...process.env, NODE_ENV: 'test', E2E_TEST_MODE: 'true', DEV_FALLBACK: 'true', PORT: '8888' },
     });
   });
 

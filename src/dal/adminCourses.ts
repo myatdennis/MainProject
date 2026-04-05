@@ -5,6 +5,7 @@ import apiRequest from '../utils/apiClient';
 import { CourseService, CourseValidationError } from '../services/courseService';
 import type { IdempotentAction } from '../utils/idempotency';
 import { mapAssignmentsFromApiRows } from '../utils/assignmentStorage';
+import { publishRequestBodySchema } from '../contracts/courseWriteContract';
 
 export { CourseValidationError };
 
@@ -46,7 +47,7 @@ export interface PublishCourseOptions {
 }
 
 export async function adminPublishCourse(courseId: string, options: PublishCourseOptions = {}): Promise<any> {
-  const body: Record<string, unknown> = {};
+  const body: Record<string, unknown> = { action: 'course.publish' };
   if (typeof options.version === 'number') {
     body.version = options.version;
   }
@@ -56,9 +57,11 @@ export async function adminPublishCourse(courseId: string, options: PublishCours
     body.client_event_id = options.clientEventId;
   }
 
+  const parsedBody = publishRequestBodySchema.parse(Object.keys(body).length > 0 ? body : {});
+
   const response = await apiRequest<{ data: any }>(`/api/admin/courses/${courseId}/publish`, {
     method: 'POST',
-    body: Object.keys(body).length > 0 ? body : undefined,
+    body: Object.keys(parsedBody).length > 0 ? parsedBody : undefined,
     skipAdminGateCheck: true,
   });
 
@@ -119,8 +122,7 @@ export async function fetchCourseAssignments(
     console.error('[fetchCourseAssignments] fetch_error', { courseId, organizationId, error });
     throw new CourseValidationError(
       'fetchCourseAssignments',
-      ['Unable to load course assignments from the server.'],
-      { cause: error }
+      ['Unable to load course assignments from the server.']
     );
   }
 }

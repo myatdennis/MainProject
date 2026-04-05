@@ -6,6 +6,9 @@ const buildBaseCourse = (): Course => ({
   id: 'course-1',
   title: 'Test Course Title',
   description: 'A sufficiently long description for validation to pass.',
+  thumbnail: '/api/placeholder/400/300',
+  difficulty: 'Beginner',
+  duration: '30 min',
   status: 'draft',
   modules: [],
 });
@@ -91,6 +94,37 @@ describe('courseValidation', () => {
 
     const result = validateCourse(course, { intent: 'publish' });
     expect(result.isValid).toBe(true);
+  });
+
+  it('rejects malformed quiz questions during publish validation', () => {
+    const course: Course = {
+      ...buildBaseCourse(),
+      modules: [
+        {
+          id: 'mod-1',
+          title: 'Module 1',
+          lessons: [
+            {
+              id: 'lesson-quiz-invalid',
+              title: 'Quiz lesson',
+              type: 'quiz',
+              content: {
+                questions: [
+                  {
+                    prompt: 'Question without a valid answer key',
+                    options: [],
+                  },
+                ],
+              },
+            } as any,
+          ],
+        } as any,
+      ],
+    };
+
+    const result = validateCourse(course, { intent: 'publish' });
+    expect(result.isValid).toBe(false);
+    expect(result.issues.find((issue) => issue.code === 'lesson.quiz.invalid_question')).toBeDefined();
   });
 
   it('accepts resource and download lessons with file sources', () => {

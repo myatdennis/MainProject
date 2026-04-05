@@ -35,6 +35,7 @@ import { getSupabase } from '../lib/supabaseClient';
 import queryClient from '../lib/queryClient';
 import { invalidateCourseQueries } from '../lib/courseQueryKeys';
 import isUuid from '../utils/isUuid';
+import { upsertRequestBodySchema } from '../contracts/courseWriteContract';
 
 export type SupabaseCourseRecord = {
   id: string;
@@ -451,8 +452,8 @@ const buildLessonContent = (lesson: Lesson, apiType: LessonDto['type']): LessonI
       : null;
     if (quizQuestions && quizQuestions.length > 0) {
       (canonical as any).body =
-        canonical.body && typeof canonical.body === 'object'
-          ? { ...(canonical.body as Record<string, unknown>), questions: quizQuestions }
+        (canonical as any).body && typeof (canonical as any).body === 'object'
+          ? { ...((canonical as any).body as Record<string, unknown>), questions: quizQuestions }
           : { questions: quizQuestions };
       (canonical as any).quiz =
         (canonical as any).quiz && typeof (canonical as any).quiz === 'object'
@@ -675,13 +676,16 @@ export class CourseService {
 
   private static async upsertCourse(
     course: NormalizedCourse,
-    options: { idempotencyKey?: string; signal?: AbortSignal } = {},
+    options: { idempotencyKey?: string; action?: IdempotentAction; signal?: AbortSignal } = {},
   ): Promise<SupabaseCourseRecord | null> {
     const payload = buildCoursePayload(course);
     let modules = CourseService.buildModulesPayloadForUpsert(course);
     const body: Record<string, unknown> = { course: payload, modules };
     if (options.idempotencyKey) {
       body.idempotency_key = options.idempotencyKey;
+    }
+    if (options.action === 'course.save' || options.action === 'course.auto-save') {
+      body.action = options.action;
     }
 
     const {
@@ -701,8 +705,8 @@ export class CourseService {
     body.course = canonicalCourse;
     modules = CourseService.withOrgContextForModules(modules, canonicalOrgId) as typeof modules;
     body.modules = modules;
+    const parsedBody = upsertRequestBodySchema.parse(body);
     CourseService.logLessonDiagnostics(modules as Record<string, any>[]);
-    const courseIdIsServerAssigned = hasServerAssignedCourseId(course.id);
     const hasRemoteRecord = hasPersistedCourseRecord(course.id);
     const isCreateOperation = !hasRemoteRecord;
     if (isCreateOperation) {
@@ -717,7 +721,7 @@ export class CourseService {
     try {
       const response = await apiRequest<{ data?: SupabaseCourseRecord; course?: SupabaseCourseRecord }>(endpoint, {
         method,
-        body,
+        body: parsedBody,
         signal: options.signal,
         skipAdminGateCheck: true,
       });
@@ -889,7 +893,7 @@ export class CourseService {
     // Single upsert with full graph (course + modules + lessons).
     // The server response contains the authoritative saved course with server-assigned UUIDs.
     const serverCourse = await withSupabaseAuthRetry(() =>
-      CourseService.upsertCourse(normalizedCourse, { idempotencyKey, signal }),
+      CourseService.upsertCourse(normalizedCourse, { idempotencyKey, action, signal }),
     );
 
     // Use the server response directly (now includes module_id and course_id on each lesson).

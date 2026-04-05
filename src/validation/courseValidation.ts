@@ -187,13 +187,117 @@ const hasQuizQuestions = (lesson: Lesson): boolean => {
   return Array.isArray(questions) && questions.length > 0;
 };
 
+const getQuizQuestionPrompt = (question: Record<string, unknown>): string =>
+  trim(
+    typeof question.prompt === 'string'
+      ? question.prompt
+      : typeof question.question === 'string'
+      ? question.question
+      : typeof question.text === 'string'
+      ? question.text
+      : '',
+  );
+
+const hasQuizOptionText = (option: unknown): boolean => {
+  if (typeof option === 'string') {
+    return trim(option).length > 0;
+  }
+  if (option && typeof option === 'object') {
+    const candidate = option as Record<string, unknown>;
+    const textValue =
+      typeof candidate.text === 'string'
+        ? candidate.text
+        : typeof candidate.label === 'string'
+        ? candidate.label
+        : typeof candidate.value === 'string'
+        ? candidate.value
+        : '';
+    return trim(textValue).length > 0;
+  }
+  return false;
+};
+
+const getMarkedQuizCorrectCount = (options: unknown[]): number =>
+  options.reduce<number>((count, option) => {
+    if (!option || typeof option !== 'object') return count;
+    const candidate = option as Record<string, unknown>;
+    if (candidate.correct === true || candidate.isCorrect === true) {
+      return count + 1;
+    }
+    return count;
+  }, 0);
+
+const hasValidQuizCorrectAnswer = (question: Record<string, unknown>, options: unknown[]): boolean => {
+  const correctAnswerIndex =
+    typeof question.correctAnswerIndex === 'number' &&
+    Number.isInteger(question.correctAnswerIndex) &&
+    question.correctAnswerIndex >= 0 &&
+    question.correctAnswerIndex < options.length;
+  if (correctAnswerIndex) return true;
+  return getMarkedQuizCorrectCount(options) === 1;
+};
+
+const validateQuizQuestions = (
+  lesson: Lesson,
+): { valid: boolean; message: string | null; pathSuffix: string } => {
+  const questions = lesson.content?.questions;
+  if (!Array.isArray(questions) || questions.length === 0) {
+    return {
+      valid: false,
+      message: 'Add at least one quiz question before publishing',
+      pathSuffix: 'questions',
+    };
+  }
+
+  for (let index = 0; index < questions.length; index += 1) {
+    const questionRaw = questions[index] as unknown;
+    const question =
+      questionRaw && typeof questionRaw === 'object' ? (questionRaw as Record<string, unknown>) : ({} as Record<string, unknown>);
+    const prompt = getQuizQuestionPrompt(question);
+    if (prompt.length === 0) {
+      return {
+        valid: false,
+        message: `Quiz question ${index + 1} needs a prompt`,
+        pathSuffix: `questions[${index}].prompt`,
+      };
+    }
+
+    const options = Array.isArray(question.options) ? (question.options as unknown[]) : [];
+    if (options.length < 2) {
+      return {
+        valid: false,
+        message: `Quiz question ${index + 1} needs at least 2 answer options`,
+        pathSuffix: `questions[${index}].options`,
+      };
+    }
+
+    if (!options.every(hasQuizOptionText)) {
+      return {
+        valid: false,
+        message: `Quiz question ${index + 1} has an empty answer option`,
+        pathSuffix: `questions[${index}].options`,
+      };
+    }
+
+    if (!hasValidQuizCorrectAnswer(question, options)) {
+      return {
+        valid: false,
+        message: `Quiz question ${index + 1} must define exactly one correct answer`,
+        pathSuffix: `questions[${index}].correctAnswerIndex`,
+      };
+    }
+  }
+
+  return { valid: true, message: null, pathSuffix: 'questions' };
+};
+
 const lessonHasPublishableMedia = (lesson: Lesson, intent: CourseValidationIntent): boolean => {
   if (lesson.type === 'video') {
     return hasVideoSource(lesson, { allowPlaceholders: intent !== 'publish' });
   }
 
   if (lesson.type === 'quiz') {
-    return hasQuizQuestions(lesson);
+    return intent === 'publish' ? validateQuizQuestions(lesson).valid : hasQuizQuestions(lesson);
   }
 
   if (lesson.type === 'text') {
@@ -332,6 +436,19 @@ export const validateCourse = (
               moduleId: module.id,
               lessonId: lesson.id,
             });
+          } else if (intent === 'publish') {
+            const quizValidation = validateQuizQuestions(lesson);
+            if (!quizValidation.valid) {
+              pushIssue(issues, {
+                code: 'lesson.quiz.invalid_question',
+                message:
+                  quizValidation.message ||
+                  `Quiz in Module ${moduleIndex + 1}, Lesson ${lessonIndex + 1} has invalid questions`,
+                path: `modules[${moduleIndex}].lessons[${lessonIndex}].content.${quizValidation.pathSuffix}`,
+                moduleId: module.id,
+                lessonId: lesson.id,
+              });
+            }
           }
           break;
         case 'text':

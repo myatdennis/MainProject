@@ -26,6 +26,7 @@ import {
   analyticsEventIngestSchema,
 } from './validators.js';
 import { validateCoursePayload } from './validators/coursePayload.js';
+import { parsePublishRequestBody, parseUpsertRequestBody } from './validators/courseWriteContract.js';
 import { normalizeImportEntries, normalizeModuleForImport } from './lib/courseImporter.js';
 import { logger } from './lib/logger.js';
 import { isAllowedWsOrigin } from './lib/wsOrigins.js';
@@ -11539,7 +11540,30 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
   }
   req.body = req.body || {};
   normalizeLegacyOrgInput(req.body, { surface: 'admin.courses.upsert', requestId: req.requestId });
-  let { course: courseLocal, modules: modulesLocal = [] } = req.body || {};
+  let upsertRequest;
+  try {
+    upsertRequest = parseUpsertRequestBody(req.body);
+  } catch (parseError) {
+    sendApiError(
+      res,
+      parseError?.status || 400,
+      parseError?.code || 'invalid_upsert_payload',
+      parseError?.message || 'Invalid upsert payload.',
+      {
+        issues: Array.isArray(parseError?.issues) ? parseError.issues : undefined,
+        meta: { requestId: req.requestId ?? null },
+      },
+    );
+    return;
+  }
+
+  const writeMeta = {
+    idempotencyKey: upsertRequest.idempotency_key ?? null,
+    clientEventId: upsertRequest.client_event_id ?? null,
+    action: upsertRequest.action ?? null,
+  };
+
+  let { course: courseLocal, modules: modulesLocal = [] } = upsertRequest;
   modulesLocal = Array.isArray(modulesLocal)
     ? modulesLocal.map((module, moduleIndex) => normalizeModuleForImport(module, { moduleIndex }))
     : [];
@@ -11692,7 +11716,7 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
           : rawSlugInput;
       const normalizedSlug = slugify(slugSource) || `course-${Date.now().toString(36)}`;
 
-      const demoIdempotencyKey = req.body?.idempotency_key ?? req.body?.client_event_id ?? null;
+    const demoIdempotencyKey = writeMeta.idempotencyKey ?? writeMeta.clientEventId ?? null;
       if (demoIdempotencyKey) {
         const existingResourceId = e2eStore.idempotencyKeys[demoIdempotencyKey];
         console.log('[admin-courses][demo] idempotency lookup', { demoIdempotencyKey, existingResourceId });
@@ -12064,7 +12088,7 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
       if (!access) return;
     }
 
-    const idempotencyKey = req.body?.idempotency_key ?? req.body?.client_event_id ?? null;
+    const idempotencyKey = writeMeta.idempotencyKey ?? writeMeta.clientEventId ?? null;
     let idempotencyTableMissing = false;
 
     if (idempotencyKey) {
@@ -12076,7 +12100,11 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
         }
         if (existingFallback.status === 'in_flight') {
           console.info('[idempotency] detected in-flight in-memory idempotency request', { idempotencyKey });
-          return res.status(409).json({ error: 'idempotency_conflict' });
+          return respondAdminCourseConflict(res, {
+            reason: 'idempotency_in_flight',
+            message: 'Another save request is already in flight.',
+            requestId: req.requestId ?? null,
+          });
         }
       }
 
@@ -12113,7 +12141,11 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
             .maybeSingle();
 
           if (existingKeyError || !existingKey) {
-            res.status(409).json({ error: 'idempotency_conflict' });
+            respondAdminCourseConflict(res, {
+              reason: 'idempotency_in_flight',
+              message: 'Another save request is already in flight.',
+              requestId: req.requestId ?? null,
+            });
             return;
           }
 
@@ -12128,7 +12160,11 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
             }
           }
 
-          return res.status(409).json({ error: 'idempotency_conflict' });
+          return respondAdminCourseConflict(res, {
+            reason: 'idempotency_in_flight',
+            message: 'Another save request is already in flight.',
+            requestId: req.requestId ?? null,
+          });
         }
       }
     }
@@ -13514,7 +13550,24 @@ app.post('/api/admin/courses/:id/publish', authenticate, requireOrgAdmin, async 
   if (!context) return;
   normalizeLegacyOrgInput(req.body, { surface: 'admin.courses.publish', requestId: req.requestId });
 
-  const idempotencyKey = req.body?.idempotency_key ?? req.body?.client_event_id ?? null;
+  let publishRequest;
+  try {
+    publishRequest = parsePublishRequestBody(req.body || {});
+  } catch (parseError) {
+    sendApiError(
+      res,
+      parseError?.status || 400,
+      parseError?.code || 'invalid_publish_payload',
+      parseError?.message || 'Invalid publish payload.',
+      {
+        issues: Array.isArray(parseError?.issues) ? parseError.issues : undefined,
+        meta: { requestId: req.requestId ?? null, courseId },
+      },
+    );
+    return;
+  }
+  const idempotencyKey = publishRequest.idempotencyKey ?? publishRequest.clientEventId ?? null;
+
   const publishLogMeta = {
     requestId: req.requestId ?? null,
     userId: context.userId ?? null,
@@ -13617,12 +13670,13 @@ app.post('/api/admin/courses/:id/publish', authenticate, requireOrgAdmin, async 
       return;
     }
 
-    const incomingVersion = typeof req.body?.version === 'number' ? req.body.version : null;
+  const incomingVersion = publishRequest.version;
     const currentVersion = typeof existingCourseRow.version === 'number' ? existingCourseRow.version : null;
     if (incomingVersion !== null && currentVersion !== null && incomingVersion !== currentVersion) {
       res.locals = res.locals || {};
       res.locals.errorCode = 'version_conflict';
       sendApiError(res, 409, 'version_conflict', `Course has newer version ${currentVersion}`, {
+        reason: 'stale_version',
         message: `Course has newer version ${currentVersion}`,
         currentVersion,
         meta: { requestId: req.requestId ?? null, courseId },
@@ -13630,7 +13684,6 @@ app.post('/api/admin/courses/:id/publish', authenticate, requireOrgAdmin, async 
       return;
     }
 
-    const idempotencyKey = req.body?.idempotency_key ?? req.body?.client_event_id ?? null;
     let idempotencyTableMissing = false;
     const assignmentsSupportUserIdUuid = await detectAssignmentsUserIdUuidColumnAvailability();
     const assignmentsOrgColumn = await getAssignmentsOrgColumnName();
@@ -13654,6 +13707,7 @@ app.post('/api/admin/courses/:id/publish', authenticate, requireOrgAdmin, async 
         if (existingFallback.status === 'in_flight') {
           console.info('[idempotency] detected in-flight in-memory idempotency request', { idempotencyKey });
           return sendApiError(res, 409, 'idempotency_conflict', 'Another publish request is already in flight.', {
+            reason: 'idempotency_in_flight',
             meta: { requestId: req.requestId ?? null, courseId },
           });
         }
@@ -13694,6 +13748,7 @@ app.post('/api/admin/courses/:id/publish', authenticate, requireOrgAdmin, async 
 
           if (existingKeyError || !existingKey) {
             sendApiError(res, 409, 'idempotency_conflict', 'Another publish request is already in flight.', {
+              reason: 'idempotency_in_flight',
               meta: { requestId: req.requestId ?? null, courseId },
             });
             return;
@@ -13720,6 +13775,7 @@ app.post('/api/admin/courses/:id/publish', authenticate, requireOrgAdmin, async 
           }
 
           return sendApiError(res, 409, 'idempotency_conflict', 'Another publish request is already in flight.', {
+            reason: 'idempotency_in_flight',
             meta: { requestId: req.requestId ?? null, courseId },
           });
         }
@@ -13861,7 +13917,11 @@ app.post('/api/admin/courses/:id/publish', authenticate, requireOrgAdmin, async 
     res.locals = res.locals || {};
     res.locals.errorCode = error?.code ?? 'publish_failed';
     if (error?.status === 409) {
+      const conflictCode = error?.code ?? 'version_conflict';
       sendApiError(res, 409, error?.code ?? 'version_conflict', error?.message ?? 'Publish conflict.', {
+        reason:
+          error?.reason ??
+          (conflictCode === 'idempotency_conflict' ? 'idempotency_in_flight' : 'stale_version'),
         currentVersion: error?.currentVersion ?? null,
         meta: { requestId: req.requestId ?? null, courseId },
       });
@@ -17726,14 +17786,6 @@ app.get('/api/admin/organizations/:id', requireAdminAccess, async (req, res) => 
     return;
   }
   const { id } = req.params;
-  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
-  if (!resolvedCourseId) {
-    res.locals = res.locals || {};
-    res.locals.errorCode = 'course_not_found';
-    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
-    return;
-  }
-  const courseId = resolvedCourseId;
 
   const access = await requireOrgAccess(req, res, id, { write: false, requireOrgAdmin: true });
   if (!access) return;
@@ -17773,14 +17825,6 @@ app.put('/api/admin/organizations/:id', requireAdminAccess, async (req, res) => 
     return;
   }
   const { id } = req.params;
-  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
-  if (!resolvedCourseId) {
-    res.locals = res.locals || {};
-    res.locals.errorCode = 'course_not_found';
-    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
-    return;
-  }
-  const courseId = resolvedCourseId;
   const patch = req.body || {};
 
   const access = await requireOrgAccess(req, res, id, { write: true, requireOrgAdmin: true });
@@ -17847,14 +17891,6 @@ app.delete('/api/admin/organizations/:id', requireAdminAccess, async (req, res) 
     return;
   }
   const { id } = req.params;
-  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
-  if (!resolvedCourseId) {
-    res.locals = res.locals || {};
-    res.locals.errorCode = 'course_not_found';
-    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
-    return;
-  }
-  const courseId = resolvedCourseId;
 
   const access = await requireOrgAccess(req, res, id, { write: true, requireOrgAdmin: true });
   if (!access) return;
