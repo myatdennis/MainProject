@@ -39,7 +39,7 @@ const withQuery = (path: string, params?: Record<string, any>) => {
 
 const apiFetch = async <T>(path: string, options: RequestInit = {}, params?: Record<string, any>) => {
   const resolvedPath = withQuery(path, params);
-  return apiRequest<T>(resolvedPath, options);
+  return apiRequest<T>(resolvedPath, options as any);
 };
 
 const mapDocumentRecord = (record: any): DocumentMeta => ({
@@ -175,7 +175,6 @@ export const addDocument = async (meta: Omit<DocumentMeta,'id'|'createdAt'>, fil
   }
 
   const payload = buildDocumentPayload({
-    id: docId,
     name: meta.name,
     filename: meta.filename,
     url,
@@ -199,7 +198,7 @@ export const addDocument = async (meta: Omit<DocumentMeta,'id'|'createdAt'>, fil
 
   const json = await apiFetch<{ data: any }>('/api/admin/documents', {
     method: 'POST',
-    body: payload
+    body: payload as any
   });
 
   return mapDocumentRecord(json.data);
@@ -215,7 +214,7 @@ export const recordDownload = async (id: string) => {
 export const updateDocument = async (id: string, patch: Partial<DocumentMeta>) => {
   const json = await apiFetch<{ data: any }>(`/api/admin/documents/${id}`, {
     method: 'PUT',
-    body: buildDocumentPayload(patch as Record<string, any>)
+    body: buildDocumentPayload(patch as Record<string, any>) as any
   });
   return mapDocumentRecord(json.data);
 };

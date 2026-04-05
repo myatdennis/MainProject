@@ -4935,8 +4935,14 @@ const maybeHandleSurveyColumnError = (error) => {
 };
 
 const buildSurveyPersistencePayload = (payload = {}) => {
+  const incomingId = typeof payload.id === 'string' ? payload.id.trim() : null;
+  const persistedId = incomingId && isUuid(incomingId) ? incomingId : undefined;
+  if (incomingId && !persistedId) {
+    logger.warn('survey_upsert_ignoring_non_uuid_id', { incomingId });
+  }
+
   const shaped = {
-    id: payload.id ?? undefined,
+    id: persistedId,
     title: payload.title,
     description: payload.description ?? null,
     type: payload.type ?? null,
@@ -5311,6 +5317,17 @@ const fetchSurveyAssignmentsMap = async (surveyIds = []) => {
       }
       return map;
     } catch (error) {
+      const invalidUuidFilter =
+        error?.code === '22P02' ||
+        (typeof error?.message === 'string' && error.message.includes('invalid input syntax for type uuid'));
+      if (invalidUuidFilter) {
+        logger.warn('survey_assignments_query_invalid_uuid_filter', {
+          surveyIds: normalizedIds,
+          code: error?.code ?? null,
+          message: error?.message ?? null,
+        });
+        return map;
+      }
       if (isMissingRelationError(error) || isMissingColumnError(error)) {
         logger.warn('survey_assignments_table_unavailable', {
           code: error?.code ?? null,
@@ -21196,6 +21213,76 @@ const ensureDocumentsSchemaOrRespond = async (res, label) => {
   return true;
 };
 
+const buildDocumentsInsertPayload = ({ payload, contextUserId, organizationId, fallbackBucket, url, storagePath, urlExpiresAt }) => {
+  const incomingId = typeof payload?.id === 'string' ? payload.id.trim() : null;
+  const persistedId = incomingId && isUuid(incomingId) ? incomingId : undefined;
+  if (incomingId && !persistedId) {
+    logger.warn('[admin.documents.create] ignoring_non_uuid_id', { incomingId });
+  }
+
+  return {
+    id: persistedId,
+    name: payload.name,
+    filename: payload.filename ?? null,
+    category: payload.category,
+    subcategory: payload.subcategory ?? null,
+    tags: Array.isArray(payload.tags) ? payload.tags : [],
+    file_type: payload.fileType ?? null,
+    file_size: typeof payload.fileSize === 'number' ? payload.fileSize : null,
+    bucket: payload.bucket ?? fallbackBucket,
+    storage_path: storagePath,
+    url_expires_at: urlExpiresAt,
+    visibility: payload.visibility ?? 'global',
+    organization_id: organizationId ?? null,
+    user_id: payload.userId ?? null,
+    created_by: payload.createdBy ?? contextUserId ?? null,
+    metadata: payload.metadata ?? {},
+    // Prefer newer schema field, but retain legacy alias fallback handling below.
+    file_url: url,
+  };
+};
+
+const applyDocumentsInsertCompatibilityFallback = (insertPayload, error) => {
+  if (!isMissingColumnError(error)) return null;
+
+  const missingColumn = normalizeColumnIdentifier(extractMissingColumnName(error));
+  if (!missingColumn) return null;
+
+  const next = { ...insertPayload };
+  switch (missingColumn) {
+    case 'file_url': {
+      if (Object.prototype.hasOwnProperty.call(next, 'file_url')) {
+        next.url = next.file_url;
+        delete next.file_url;
+        return next;
+      }
+      break;
+    }
+    case 'url': {
+      if (Object.prototype.hasOwnProperty.call(next, 'url')) {
+        next.file_url = next.url;
+        delete next.url;
+        return next;
+      }
+      break;
+    }
+    case 'organization_id': {
+      next.org_id = next.organization_id ?? null;
+      delete next.organization_id;
+      return next;
+    }
+    case 'org_id': {
+      next.organization_id = next.org_id ?? null;
+      delete next.org_id;
+      return next;
+    }
+    default:
+      break;
+  }
+
+  return null;
+};
+
 // ── Client-facing documents endpoint ────────────────────────────────────────
 // Returns only global or org-scoped documents visible to the authenticated learner.
 // Does NOT expose documents belonging to other orgs or private admin-only docs.
@@ -21416,30 +21503,31 @@ app.post('/api/admin/documents', async (req, res) => {
       }
     }
 
-    const insertPayload = {
-      id: payload.id ?? undefined,
-      name: payload.name,
-      filename: payload.filename ?? null,
+    let insertPayload = buildDocumentsInsertPayload({
+      payload,
+      contextUserId: context.userId,
+      organizationId,
+      fallbackBucket: DOCUMENTS_BUCKET,
       url,
-      category: payload.category,
-      subcategory: payload.subcategory ?? null,
-      tags: Array.isArray(payload.tags) ? payload.tags : [],
-      file_type: payload.fileType ?? null,
-      file_size: typeof payload.fileSize === 'number' ? payload.fileSize : null,
-      bucket: payload.bucket ?? DOCUMENTS_BUCKET,
-      storage_path: storagePath,
-      url_expires_at: urlExpiresAt,
-      visibility: payload.visibility ?? 'global',
-      organization_id: organizationId ?? null,
-      user_id: payload.userId ?? null,
-      created_by: payload.createdBy ?? context.userId ?? null,
-      metadata: payload.metadata ?? {},
-    };
+      storagePath,
+      urlExpiresAt,
+    });
 
-    const _docInsert = await supabase
+    let _docInsert = await supabase
       .from('documents')
       .insert(insertPayload)
       .select('*');
+
+    if (_docInsert.error) {
+      const fallbackPayload = applyDocumentsInsertCompatibilityFallback(insertPayload, _docInsert.error);
+      if (fallbackPayload) {
+        insertPayload = fallbackPayload;
+        _docInsert = await supabase
+          .from('documents')
+          .insert(insertPayload)
+          .select('*');
+      }
+    }
 
     if (_docInsert.error) throw _docInsert.error;
     const docRow = firstRow(_docInsert);
@@ -22256,7 +22344,22 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
   if (!ensureSupabase(res)) return;
   if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.assign'))) return;
   const { id } = req.params;
-  const surveyRecord = await loadSurveyWithAssignments(id);
+  let surveyRecord;
+  try {
+    surveyRecord = await loadSurveyWithAssignments(id);
+  } catch (error) {
+    const invalidSurveyId =
+      error?.code === '22P02' ||
+      (typeof error?.message === 'string' && error.message.includes('invalid input syntax for type uuid'));
+    if (invalidSurveyId) {
+      res.status(400).json({
+        error: 'invalid_survey_id',
+        message: `Survey identifier ${id} is not valid for this environment. Refresh surveys and retry.`,
+      });
+      return;
+    }
+    throw error;
+  }
   if (!surveyRecord) {
     res.locals = res.locals || {};
     res.locals.errorCode = 'survey_not_found';

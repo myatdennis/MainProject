@@ -35,56 +35,67 @@ function spawnProc(cmd, args, opts = {}) {
   return child;
 }
 
+const API_HEALTH_URL = 'http://127.0.0.1:8888/api/health';
+const VITE_URL = 'http://localhost:5174';
+
 let api;
-// Start API server (express) in E2E mode if not already running
-// NOTE: We use port 8888 to match Vite's proxy target in vite.config.ts
-waitForUrl('http://localhost:8888/api/health', 2000)
-  .then(() => {
+let vite;
+
+const cleanup = () => {
+  try { api && api.kill(); } catch {}
+  try { vite && vite.kill(); } catch {}
+};
+
+process.on('SIGINT', cleanup);
+process.on('SIGTERM', cleanup);
+
+async function ensureApi() {
+  try {
+    await waitForUrl(API_HEALTH_URL, 2000);
     console.log('[e2e-dev] API already running on 8888');
-  })
-  .catch(() => {
+    return;
+  } catch {
     api = spawnProc('node', ['server/index.js'], {
       env: { ...process.env, NODE_ENV: 'test', E2E_TEST_MODE: 'true', DEV_FALLBACK: 'true', PORT: '8888' },
     });
-  });
+    await waitForUrl(API_HEALTH_URL, 30_000);
+    console.log('[e2e-dev] API ready on 8888');
+  }
+}
 
-// Give API a moment to boot
-setTimeout(() => {
-  // Start Vite dev server on 5174 (as configured in vite.config)
-  let vite;
-  waitForUrl('http://localhost:5174', 2000)
-    .then(() => {
-      console.log('[e2e-dev] Vite dev already running on 5174');
-    })
-    .catch(() => {
-      vite = spawnProc('npm', ['run', 'dev'], {
-        env: {
-          ...process.env,
-          PORT: '5174',
-          // vite.config.ts reads VITE_PORT (not PORT) to set the dev server port
-          VITE_PORT: '5174',
-          VITE_E2E_TEST_MODE: 'true',
-          VITE_DEV_FALLBACK: 'true',
-          // Point Vite's /api and /ws proxies at the E2E API server (port 8888,
-          // E2E_TEST_MODE=true) so browser fetch() calls reach the correct server.
-          // Without this, Vite would proxy to port 3000 (the regular dev server)
-          // which does not have E2E_TEST_MODE set and therefore rejects e2e tokens.
-          VITE_API_PROXY_TARGET: 'http://localhost:8888',
-          // Force API client to use relative /api (Vite proxy) instead of any pre-set external base
-          VITE_API_BASE_URL: '',
-          // Disable Supabase during E2E runs so the app uses demo mode and Vite proxy for /api
-          VITE_SUPABASE_URL: '',
-          VITE_SUPABASE_ANON_KEY: ''
-        },
-        shell: true,
-      });
+async function ensureVite() {
+  try {
+    await waitForUrl(VITE_URL, 2000);
+    console.log('[e2e-dev] Vite dev already running on 5174');
+    return;
+  } catch {
+    vite = spawnProc('npm', ['run', 'dev'], {
+      env: {
+        ...process.env,
+        PORT: '5174',
+        // vite.config.ts reads VITE_PORT (not PORT) to set the dev server port
+        VITE_PORT: '5174',
+        VITE_E2E_TEST_MODE: 'true',
+        VITE_DEV_FALLBACK: 'true',
+        // Point Vite's /api and /ws proxies at the E2E API server (port 8888,
+        // E2E_TEST_MODE=true) so browser fetch() calls reach the correct server.
+        // Without this, Vite would proxy to port 3000 (the regular dev server)
+        // which does not have E2E_TEST_MODE set and therefore rejects e2e tokens.
+        VITE_API_PROXY_TARGET: 'http://127.0.0.1:8888',
+        // Force API client to use relative /api (Vite proxy) instead of any pre-set external base
+        VITE_API_BASE_URL: '',
+        // Disable Supabase during E2E runs so the app uses demo mode and Vite proxy for /api
+        VITE_SUPABASE_URL: '',
+        VITE_SUPABASE_ANON_KEY: ''
+      },
+      shell: true,
     });
+    await waitForUrl(VITE_URL, 30_000);
+    console.log('[e2e-dev] Vite ready on 5174');
+  }
+}
 
-  // Clean up both on exit
-  const cleanup = () => {
-    try { api && api.kill(); } catch {}
-    try { vite && vite.kill(); } catch {}
-  };
-  process.on('SIGINT', cleanup);
-  process.on('SIGTERM', cleanup);
-}, 500);
+(async () => {
+  await ensureApi();
+  await ensureVite();
+})();

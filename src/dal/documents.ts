@@ -261,7 +261,6 @@ export const addDocument = async (
   // organization_id from the explicit key below, which is fine — pickOrgId reads
   // whichever arrives first and is non-null.
   const payload: Record<string, any> = {
-    id: docId,
     name: meta.name,
     filename: meta.filename ?? null,
     url,

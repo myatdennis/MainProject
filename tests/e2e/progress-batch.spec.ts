@@ -5,7 +5,7 @@ import { test, expect, request } from '@playwright/test';
 test.describe('Progress Batch Endpoint', () => {
   test('accepts a single lesson_progress event', async () => {
     const apiContext = await request.newContext({
-      baseURL: 'http://localhost:8888',
+      baseURL: 'http://127.0.0.1:8888',
       extraHTTPHeaders: {
         'x-e2e-bypass': 'true',
         'x-user-role': 'learner',

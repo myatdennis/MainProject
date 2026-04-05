@@ -206,6 +206,7 @@ const INTEGRITY_REPAIR_LABELS: Record<string, string> = {
   lesson_missing_type: 'Defaulted missing lesson types',
   text_content_filled: 'Filled empty text lesson content',
   video_metadata_filled: 'Filled missing video metadata',
+  video_external_preserved: 'Preserved external video links',
   quiz_questions_seeded: 'Seeded empty quizzes with starter questions',
   quiz_prompt_filled: 'Filled missing quiz prompts',
   quiz_options_filled: 'Filled missing quiz options',
@@ -3173,6 +3174,15 @@ const scheduleAutosave = useCallback(
   const handleVideoUpload = async (moduleId: string, lessonId: string, file: File) => {
     const uploadKey = buildUploadKey(moduleId, lessonId);
     const limitLabel = (VIDEO_UPLOAD_LIMIT_BYTES / (1024 * 1024)).toFixed(0);
+
+    if (!isUuid(course.id)) {
+      const message = 'Save this course once before uploading files so we can create a stable storage path.';
+      setUploadErrors((prev) => ({ ...prev, [uploadKey]: message }));
+      setUploadStatuses((prev) => ({ ...prev, [uploadKey]: { status: 'error', message } }));
+      showToast(message, 'warning');
+      return;
+    }
+
     if (file.size > VIDEO_UPLOAD_LIMIT_BYTES) {
       const message = `File size (${formatFileSize(file.size)}) exceeds the ${limitLabel}MB limit.`;
       setUploadErrors((prev) => ({ ...prev, [uploadKey]: message }));
@@ -3272,6 +3282,10 @@ const scheduleAutosave = useCallback(
               ? ((body.meta as Record<string, unknown>).maxBytes as number)
               : VIDEO_UPLOAD_LIMIT_BYTES;
           message = `Video is too large for upload. Max allowed is ${toMegabytes(maxBytes)}MB. Try a smaller file or use an external URL.`;
+        }
+
+        if (apiInfo?.status === 404 && /course not found/i.test(message)) {
+          message = 'Course sync is still in progress. Save once, wait a moment, and retry the upload.';
         }
 
         setUploadErrors((prev) => ({ ...prev, [uploadKey]: message }));

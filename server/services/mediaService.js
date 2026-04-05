@@ -105,7 +105,7 @@ export const createMediaService = ({
       course_id: courseId || null,
       module_id: moduleId || null,
       lesson_id: lessonId || null,
-      organization_id: orgId || null,
+      org_id: orgId || null,
       bucket,
       storage_path: storagePath,
       mime_type: mimeType,

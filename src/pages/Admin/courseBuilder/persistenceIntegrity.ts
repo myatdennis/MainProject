@@ -13,6 +13,8 @@ const generateStableLessonId = (): string => {
   return createLessonId();
 };
 
+const EXTERNAL_VIDEO_PROVIDERS = new Set(['youtube', 'vimeo', 'wistia']);
+
 export const logVideoSourceDebug = (
   label: string,
   params: { courseId?: string | null; moduleId?: string | null; lessonId?: string | null; phase?: string },
@@ -81,6 +83,36 @@ export const ensureLessonIntegrity = (input: Course): { course: Course; issues: 
     if (lesson.type !== 'video') return lesson;
     const nextLesson = { ...lesson };
     const content = (nextLesson.content ? { ...nextLesson.content } : {}) as LessonContent & Record<string, any>;
+    const currentVideoUrl = typeof content.videoUrl === 'string' ? content.videoUrl.trim() : '';
+    const provider = typeof content.videoProvider === 'string' ? content.videoProvider.toLowerCase() : '';
+    const explicitExternal =
+      content.videoSourceType === 'external' ||
+      EXTERNAL_VIDEO_PROVIDERS.has(provider);
+
+    if (explicitExternal) {
+      let changed = false;
+      if (content.videoSourceType !== 'external') {
+        content.videoSourceType = 'external';
+        changed = true;
+      }
+      if (typeof content.videoUrl === 'string' && content.videoUrl !== currentVideoUrl) {
+        content.videoUrl = currentVideoUrl;
+        changed = true;
+      }
+      if (content.videoAsset) {
+        content.videoAsset = undefined;
+        changed = true;
+      }
+
+      if (changed) {
+        nextLesson.content = content as LessonContent;
+        issues.push(`video_external_preserved:${nextLesson.id}`);
+        return nextLesson;
+      }
+
+      return lesson;
+    }
+
     const asset: Partial<LessonVideoAsset> & Record<string, any> = content.videoAsset ? { ...content.videoAsset } : {};
     let changed = false;
 
