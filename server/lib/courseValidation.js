@@ -441,7 +441,7 @@ export const validateCourse = (course, options = {}) => {
               moduleId: module.id,
               lessonId: lesson?.id,
             });
-          } else if (intent === 'publish') {
+          } else {
             const quizValidation = validateQuizQuestions(lesson);
             if (!quizValidation.valid) {
               pushIssue(issues, {

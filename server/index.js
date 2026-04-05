@@ -1796,10 +1796,10 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
   };
 
   const assignmentsSupportUserIdUuid = await detectAssignmentsUserIdUuidColumnAvailability();
+  const assignmentsOrgColumn = await getAssignmentsOrgColumnName();
 
   const buildRecord = (userId) => {
     const record = {
-      organization_id: finalOrganizationId,
       course_id: courseId,
       user_id: userId,
       assigned_by: assignedBy ?? null,
@@ -1815,6 +1815,7 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
     if (assignmentsSupportUserIdUuid) {
       record.user_id_uuid = userId ?? null;
     }
+    record[assignmentsOrgColumn] = finalOrganizationId;
     return record;
   };
 
@@ -1996,7 +1997,7 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
         .from('assignments')
         .select('*')
         .eq('course_id', courseId)
-        .eq('organization_id', finalOrganizationId)
+        .eq(assignmentsOrgColumn, finalOrganizationId)
         .eq('idempotency_key', assignmentIdempotencyKey);
       if (error) throw error;
       if (existingByKey && existingByKey.length > 0) {
@@ -2008,7 +2009,7 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
         .from('assignments')
         .select('*')
         .eq('course_id', courseId)
-        .eq('organization_id', finalOrganizationId)
+        .eq(assignmentsOrgColumn, finalOrganizationId)
         .eq('client_request_id', clientRequestId);
       if (error) throw error;
       if (existingByClient && existingByClient.length > 0) {
@@ -2031,7 +2032,7 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
           .from('assignments')
           .select('*')
           .eq('course_id', courseId)
-          .eq('organization_id', finalOrganizationId)
+          .eq(assignmentsOrgColumn, finalOrganizationId)
           .eq('active', true)
           .in(column, userScopedTargetIds);
         if (error) throw error;
@@ -2059,7 +2060,7 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
           .from('assignments')
           .select('*')
           .eq('course_id', courseId)
-          .eq('organization_id', finalOrganizationId)
+          .eq(assignmentsOrgColumn, finalOrganizationId)
           .eq('active', true)
           .is('user_id', null);
         if (error) throw error;
@@ -2128,7 +2129,7 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
             .from('assignments')
             .select('*')
             .eq('course_id', courseId)
-            .eq('organization_id', finalOrganizationId)
+            .eq(assignmentsOrgColumn, finalOrganizationId)
             .eq('idempotency_key', assignmentIdempotencyKey);
           if (!existingByKeyError && existingByKey && existingByKey.length > 0) {
             logger.info('course_assignment_idempotency_conflict_recovered', {
@@ -4100,7 +4101,67 @@ const normalizeModuleGraph = (modules, { includeLessons = false } = {}) => {
     }
     return {
       ...module,
-      lessons: Array.isArray(module.lessons) ? module.lessons : [],
+      lessons: Array.isArray(module.lessons)
+        ? module.lessons.map((lesson) => {
+            const baseContent = lesson?.content_json ?? lesson?.content ?? {};
+            const normalizedContent = { ...(baseContent || {}) };
+            const body =
+              baseContent && typeof baseContent === 'object' && typeof baseContent.body === 'object'
+                ? baseContent.body
+                : null;
+
+            if (!normalizedContent.videoUrl && body?.videoUrl) {
+              normalizedContent.videoUrl = body.videoUrl;
+            }
+            if (!normalizedContent.video && normalizedContent.videoUrl) {
+              normalizedContent.video = { url: normalizedContent.videoUrl };
+            }
+
+            if (lesson?.type === 'quiz') {
+              const questions = Array.isArray(normalizedContent.questions)
+                ? normalizedContent.questions
+                : Array.isArray(body?.questions)
+                  ? body.questions
+                  : [];
+              normalizedContent.questions = questions.map((question, index) => {
+                const q = { ...(question || {}) };
+                const correctIndex =
+                  typeof q.correctAnswerIndex === 'number'
+                    ? q.correctAnswerIndex
+                    : null;
+                if (Array.isArray(q.options)) {
+                  q.options = q.options.map((option, optIndex) => {
+                    if (typeof option === 'string') {
+                      return {
+                        id: `opt-${index + 1}-${optIndex + 1}`,
+                        text: option,
+                        correct: correctIndex === optIndex,
+                      };
+                    }
+                    return {
+                      ...(option || {}),
+                      id: option?.id ?? `opt-${index + 1}-${optIndex + 1}`,
+                      correct: option?.correct ?? option?.isCorrect ?? correctIndex === optIndex,
+                    };
+                  });
+                }
+                return q;
+              });
+            }
+
+            const responseLessonId =
+              (typeof lesson?.client_temp_id === 'string' && lesson.client_temp_id.trim()) ||
+              (typeof lesson?.clientTempId === 'string' && lesson.clientTempId.trim()) ||
+              lesson?.id;
+
+            return {
+              ...lesson,
+              id: responseLessonId,
+              content: normalizedContent,
+              content_json: normalizedContent,
+            };
+          })
+        : [],
     };
   });
 };
@@ -11925,7 +11986,10 @@ async function handleAdminCourseUpsert(req, res, options = {}) {
     delete courseLocal.version;
   }
 
-  const payloadValidation = validateCoursePayload({ course: courseLocal, modules: modulesLocal });
+  const payloadValidation = validateCoursePayload(
+    { course: courseLocal, modules: modulesLocal },
+    { enforceLessonContent: true },
+  );
   if (!payloadValidation.ok && !isDemoMode) {
     const details = (payloadValidation.issues || []).map((issue) => {
       const moduleMatch = /modules\[(\d+)\]/.exec(issue.path || '');
@@ -13504,6 +13568,7 @@ app.get('/api/client/assignments', authenticate, async (req, res) => {
     });
 
     const assignmentsSupportUserIdUuid = await detectAssignmentsUserIdUuidColumnAvailability();
+    const assignmentsOrgColumn = await getAssignmentsOrgColumnName();
     const assignmentTables = ['assignments', 'course_assignments'];
     let rows = [];
     let sourceTable = null;
@@ -13527,7 +13592,11 @@ app.get('/api/client/assignments', authenticate, async (req, res) => {
       }
 
       if (resolvedOrgId) {
-        query = query.eq('organization_id', resolvedOrgId);
+        if (table === 'assignments') {
+          query = query.eq(assignmentsOrgColumn, resolvedOrgId);
+        } else {
+          query = query.eq('organization_id', resolvedOrgId);
+        }
       }
 
       query = query.order('updated_at', { ascending: false, nullsFirst: false }).order('created_at', { ascending: false, nullsFirst: false });
@@ -13548,6 +13617,24 @@ app.get('/api/client/assignments', authenticate, async (req, res) => {
         }
         const missing = isMissingRelationError(error) || isMissingColumnError(error);
         if (missing) {
+          if (resolvedOrgId && table === 'course_assignments') {
+            const fallbackQuery = supabase
+              .from(table)
+              .select('*')
+              .eq('user_id', queryUserId)
+              .eq('org_id', resolvedOrgId)
+              .order('updated_at', { ascending: false, nullsFirst: false })
+              .order('created_at', { ascending: false, nullsFirst: false });
+            const { data: fallbackData, error: fallbackError } = await fallbackQuery;
+            if (!fallbackError) {
+              rows = fallbackData || [];
+              sourceTable = table;
+              if (rows.length > 0 || table === assignmentTables[assignmentTables.length - 1]) {
+                break;
+              }
+              continue;
+            }
+          }
           logger.warn('client_assignments_table_missing', {
             table,
             code: error?.code ?? null,
@@ -13968,7 +14055,26 @@ app.post('/api/admin/courses/:id/publish', authenticate, requireOrgAdmin, async 
       where id = ${courseId}::uuid
       limit 1
     `;
-    const existingCourseRow = firstRow(existingCourseRows);
+    let existingCourseRow = firstRow(existingCourseRows);
+    let publishViaSupabaseFallback = false;
+    if (!existingCourseRow) {
+      const { data: supabaseCourseRow, error: supabaseCourseRowError } = await supabase
+        .from('courses')
+        .select('id, organization_id, version')
+        .eq('id', courseId)
+        .maybeSingle();
+      if (supabaseCourseRowError) {
+        throw supabaseCourseRowError;
+      }
+      if (supabaseCourseRow) {
+        existingCourseRow = supabaseCourseRow;
+        publishViaSupabaseFallback = true;
+        console.warn('[course.publish] SQL lookup missed course; using Supabase fallback path', {
+          requestId: req.requestId ?? null,
+          courseId,
+        });
+      }
+    }
     if (!existingCourseRow) {
       res.locals = res.locals || {};
       res.locals.errorCode = 'not_found';
@@ -14103,7 +14209,130 @@ app.post('/api/admin/courses/:id/publish', authenticate, requireOrgAdmin, async 
         }
       }
     }
-    const updatedData = await sql.begin(async (tx) => {
+    const publishCourseViaSupabaseFallback = async () => {
+      const { data: lockedCourse, error: lockedCourseError } = await supabase
+        .from('courses')
+        .select(COURSE_WITH_MODULES_LESSONS_SELECT)
+        .eq('id', courseId)
+        .maybeSingle();
+      if (lockedCourseError) {
+        throw lockedCourseError;
+      }
+      if (!lockedCourse) {
+        const error = new Error('Course not found');
+        error.code = 'not_found';
+        error.status = 404;
+        throw error;
+      }
+
+      const lockedVersion = typeof lockedCourse.version === 'number' ? lockedCourse.version : null;
+      if (incomingVersion !== null && lockedVersion !== null && incomingVersion !== lockedVersion) {
+        const error = new Error(`Course has newer version ${lockedVersion}`);
+        error.code = 'version_conflict';
+        error.status = 409;
+        error.currentVersion = lockedVersion;
+        throw error;
+      }
+
+      const validation = validatePublishableCourse(shapeCourseForValidation(lockedCourse), { intent: 'publish' });
+      if (!validation.isValid) {
+        const error = new Error('Course is not publishable.');
+        error.code = 'validation_failed';
+        error.status = 422;
+        error.issues = validation.issues;
+        throw error;
+      }
+
+      const publishedAt = new Date().toISOString();
+      const nextVersion = (lockedVersion ?? 0) + 1;
+      const nextMeta = { ...(lockedCourse.meta_json || {}), published_at: publishedAt };
+
+      let updateQuery = supabase
+        .from('courses')
+        .update({
+          status: 'published',
+          published_at: publishedAt,
+          version: nextVersion,
+          meta_json: nextMeta,
+          updated_by: context.userId && isUuid(String(context.userId)) ? context.userId : null,
+        })
+        .eq('id', courseId)
+        .select('id')
+        .maybeSingle();
+
+      if (lockedVersion !== null) {
+        updateQuery = supabase
+          .from('courses')
+          .update({
+            status: 'published',
+            published_at: publishedAt,
+            version: nextVersion,
+            meta_json: nextMeta,
+            updated_by: context.userId && isUuid(String(context.userId)) ? context.userId : null,
+          })
+          .eq('id', courseId)
+          .eq('version', lockedVersion)
+          .select('id')
+          .maybeSingle();
+      }
+
+      const { data: updatedRow, error: updateError } = await updateQuery;
+      if (updateError) {
+        throw updateError;
+      }
+      if (!updatedRow?.id) {
+        const error = new Error('Course publish failed because the course changed before publish completed.');
+        error.code = 'version_conflict';
+        error.status = 409;
+        error.currentVersion = lockedVersion;
+        throw error;
+      }
+
+      if (courseOrgId) {
+        const membershipOrgColumn = await getOrganizationMembershipsOrgColumnName();
+        let membershipQuery = supabase
+          .from('organization_memberships')
+          .select('user_id')
+          .eq(membershipOrgColumn, courseOrgId)
+          .not('user_id', 'is', null);
+
+        const membershipsStatusColumn = await getOrganizationMembershipsStatusColumnName();
+        if (membershipsStatusColumn === 'is_active') {
+          membershipQuery = membershipQuery.eq('is_active', true);
+        } else {
+          membershipQuery = membershipQuery.eq('status', 'active');
+        }
+
+        const { data: memberRows, error: memberRowsError } = await membershipQuery;
+        if (memberRowsError) {
+          throw memberRowsError;
+        }
+
+        const memberIds = Array.from(
+          new Set((memberRows || []).map((row) => row?.user_id).filter(Boolean).map((value) => String(value))),
+        );
+        for (const memberId of memberIds) {
+          await assignPublishedOrganizationCoursesToUser({
+            orgId: courseOrgId,
+            userId: memberId,
+            actorUserId: context.userId ?? null,
+          });
+        }
+      }
+
+      const { data: refreshedCourse, error: refreshedCourseError } = await supabase
+        .from('courses')
+        .select(COURSE_WITH_MODULES_LESSONS_SELECT)
+        .eq('id', courseId)
+        .maybeSingle();
+      if (refreshedCourseError) {
+        throw refreshedCourseError;
+      }
+
+      return refreshedCourse || lockedCourse;
+    };
+
+    const updatedData = publishViaSupabaseFallback ? await publishCourseViaSupabaseFallback() : await sql.begin(async (tx) => {
       const lockedCourse = await loadCourseGraphWithTx(tx, courseId);
       if (!lockedCourse) {
         const error = new Error('Course not found');
@@ -14432,7 +14661,12 @@ app.get('/api/client/courses', asyncHandler(async (req, res) => {
         }
         if (!targetUser && normalizedSessionUserId) {
           // only include org-level assignments with null user scope when caller belongs to org
-          const assignmentOrg = pickOrgId(assignment.organization_id);
+          const assignmentOrg = pickOrgId(
+            assignment.organization_id,
+            assignment.org_id,
+            assignment.organizationId,
+            assignment.orgId,
+          );
           const isOrgMatch = String(assignmentOrg || '').trim() === assignmentOrgId;
           if (!isOrgMatch) {
             return;
@@ -14454,14 +14688,34 @@ app.get('/api/client/courses', asyncHandler(async (req, res) => {
     }
 
     const tablesToTry = ['assignments', 'course_assignments'];
-    const orgColumnCandidates = [
-      { column: 'organization_id', select: 'course_id,organization_id,user_id,active' },
-    ];
 
-    const assignmentsSupportUserIdUuid = await detectAssignmentsUserIdUuidColumnAvailability();
+  const assignmentsSupportUserIdUuid = await detectAssignmentsUserIdUuidColumnAvailability();
+  const assignmentsOrgColumn = await getAssignmentsOrgColumnName();
 
     for (const table of tablesToTry) {
       let tableResults = null;
+      const orgColumnCandidates =
+        table === 'assignments'
+          ? [
+              {
+                column: assignmentsOrgColumn,
+                select:
+                  assignmentsOrgColumn === 'organization_id'
+                    ? 'course_id,organization_id,user_id,active'
+                    : 'course_id,org_id,user_id,active',
+              },
+              {
+                column: assignmentsOrgColumn === 'organization_id' ? 'org_id' : 'organization_id',
+                select:
+                  assignmentsOrgColumn === 'organization_id'
+                    ? 'course_id,org_id,user_id,active'
+                    : 'course_id,organization_id,user_id,active',
+              },
+            ]
+          : [
+              { column: 'organization_id', select: 'course_id,organization_id,user_id,active' },
+              { column: 'org_id', select: 'course_id,org_id,user_id,active' },
+            ];
 
       for (const candidate of orgColumnCandidates) {
         let query = supabase.from(table).select(candidate.select).eq(candidate.column, assignmentOrgId);
@@ -14826,8 +15080,12 @@ app.get('/api/client/courses/:courseIdentifier', asyncHandler(async (req, res) =
           order_index: m.order_index ?? m.order ?? 0,
           lessons: (m.lessons || []).map((l) => {
             const normalizedContent = normalizeLessonContent(l);
+            const responseLessonId =
+              (typeof l?.client_temp_id === 'string' && l.client_temp_id.trim()) ||
+              (typeof l?.clientTempId === 'string' && l.clientTempId.trim()) ||
+              l.id;
             const lessonRecord = {
-              id: l.id,
+              id: responseLessonId,
               module_id: m.id,
               title: l.title,
               description: l.description ?? null,
@@ -21640,14 +21898,14 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
   if (!ensureSupabase(res)) return;
   if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.assign'))) return;
   const { id } = req.params;
-  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
-  if (!resolvedCourseId) {
+  const surveyRecord = await loadSurveyWithAssignments(id);
+  if (!surveyRecord) {
     res.locals = res.locals || {};
-    res.locals.errorCode = 'course_not_found';
-    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
+    res.locals.errorCode = 'survey_not_found';
+    res.status(404).json({ error: 'survey_not_found', message: `Survey not found for identifier ${id}` });
     return;
   }
-  const courseId = resolvedCourseId;
+  const surveyId = surveyRecord.id ?? id;
   const body = normalizeLegacyOrgInput(req.body ?? {}, {
     surface: 'admin.surveys.assign',
     requestId: req.requestId ?? null,
@@ -21725,7 +21983,7 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
       const rows = normalizedUserIds.length ? normalizedUserIds : [null];
       const inserted = rows.map((userId) => ({
         id: `survey-asn-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-        survey_id: id,
+        survey_id: surveyId,
         organization_id: organizationId,
         user_id: userId,
         due_at: dueAtValue ?? null,
@@ -21752,7 +22010,7 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
       const { data, error } = await supabase
         .from('assignments')
         .select(SURVEY_ASSIGNMENT_SELECT)
-        .eq('survey_id', id)
+        .eq('survey_id', surveyId)
         .eq('organization_id', organizationId)
         .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
         .eq('active', true)
@@ -21766,7 +22024,7 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
       const { data, error } = await supabase
         .from('assignments')
         .select(SURVEY_ASSIGNMENT_SELECT)
-        .eq('survey_id', id)
+        .eq('survey_id', surveyId)
         .eq('organization_id', organizationId)
         .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
         .eq('active', true)
@@ -21785,7 +22043,7 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
     };
 
     const buildRecord = (userId) => ({
-      survey_id: id,
+      survey_id: surveyId,
       course_id: null,
       organization_id: organizationId,
       organizationId,
@@ -21865,8 +22123,8 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
         if (!assignment) continue;
         const assignmentType = assignment.assignment_type ?? assignment.assignmentType ?? null;
         if (assignmentType && assignmentType !== SURVEY_ASSIGNMENT_TYPE) continue;
-        const surveyId = assignment.survey_id ?? assignment.surveyId ?? null;
-        if (String(surveyId) !== String(id)) continue;
+        const assignmentSurveyId = assignment.survey_id ?? assignment.surveyId ?? null;
+        if (String(assignmentSurveyId) !== String(surveyId)) continue;
         const orgId = assignment.organization_id ?? assignment.organizationId ?? assignment.org_id ?? assignment.orgId;
         if (orgId) orgSet.add(String(orgId));
         const userId = assignment.user_id ?? assignment.userId ?? null;
@@ -21874,13 +22132,13 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
       }
       assignedTo.organizationIds = Array.from(orgSet);
       assignedTo.userIds = Array.from(userSet);
-      updateDemoSurveyAssignments(id, assignedTo);
+      updateDemoSurveyAssignments(surveyId, assignedTo);
     }
 
     if (insertedTotal > 0) {
       logSurveyAssignmentEvent('survey_assignment_created', {
         requestId: req.requestId ?? null,
-        surveyId: id,
+  surveyId,
         organizationCount: organizationIds.length,
         userCount: normalizedUserIds.length,
         insertedRowCount: insertedTotal,
@@ -21890,7 +22148,7 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
     } else if (updatedTotal > 0) {
       logSurveyAssignmentEvent('survey_assignment_updated', {
         requestId: req.requestId ?? null,
-        surveyId: id,
+  surveyId,
         organizationCount: organizationIds.length,
         userCount: normalizedUserIds.length,
         insertedRowCount: insertedTotal,
@@ -21900,7 +22158,7 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
     } else if (skippedTotal > 0) {
       logSurveyAssignmentEvent('survey_assignment_skipped_duplicate', {
         requestId: req.requestId ?? null,
-        surveyId: id,
+  surveyId,
         organizationCount: organizationIds.length,
         userCount: normalizedUserIds.length,
         skippedRowCount: skippedTotal,
@@ -21922,7 +22180,7 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
       }
     }
 
-    await refreshSurveyAssignmentAggregates(id);
+  await refreshSurveyAssignmentAggregates(surveyId);
 
     res.status(insertedTotal > 0 ? 201 : 200).json({
       data: aggregateResponse,
@@ -21936,7 +22194,7 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
   } catch (error) {
     logSurveyAssignmentEvent('survey_assignment_failed', {
       requestId: req.requestId ?? null,
-      surveyId: id,
+  surveyId,
       organizationCount: organizationIds.length,
       userCount: normalizedUserIds.length,
       insertedRowCount: insertedTotal,
@@ -21952,14 +22210,14 @@ app.get('/api/admin/surveys/:id/assignments', async (req, res) => {
   if (!ensureSupabase(res)) return;
   if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.assignments'))) return;
   const { id } = req.params;
-  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
-  if (!resolvedCourseId) {
+  const surveyRecord = await loadSurveyWithAssignments(id);
+  if (!surveyRecord) {
     res.locals = res.locals || {};
-    res.locals.errorCode = 'course_not_found';
-    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
+    res.locals.errorCode = 'survey_not_found';
+    res.status(404).json({ error: 'survey_not_found', message: `Survey not found for identifier ${id}` });
     return;
   }
-  const courseId = resolvedCourseId;
+  const surveyId = surveyRecord.id ?? id;
   const organizationId = pickOrgId(req.query.orgId, req.query.organizationId);
   const userIdFilter =
     typeof req.query.userId === 'string'
@@ -21991,7 +22249,7 @@ app.get('/api/admin/surveys/:id/assignments', async (req, res) => {
     let query = supabase
       .from('assignments')
       .select(SURVEY_ASSIGNMENT_SELECT, { count: 'exact' })
-      .eq('survey_id', id)
+      .eq('survey_id', surveyId)
       .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
       .order('updated_at', { ascending: false, nullsFirst: false })
       .range(offset, offset + limit - 1);

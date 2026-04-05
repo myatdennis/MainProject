@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { LazyImage } from '../../components/PerformanceComponents';
 import { Link, useNavigate } from 'react-router-dom';
 import { BookOpen, Clock, Search, Filter, ArrowRight, Inbox } from 'lucide-react';
@@ -43,6 +43,9 @@ const ClientCourses = () => {
 
   const [assignments, setAssignments] = useState<CourseAssignment[]>([]);
   const [progressRefreshToken, setProgressRefreshToken] = useState(0);
+  const assignmentsRefreshInFlightRef = useRef<Promise<void> | null>(null);
+  const assignmentRefreshCooldownUntilRef = useRef(0);
+  const assignmentRefreshFailuresRef = useRef(0);
   const adminCatalogState = useSyncExternalStore(courseStore.subscribe, courseStore.getAdminCatalogState);
   const learnerCatalogState = useSyncExternalStore(courseStore.subscribe, courseStore.getLearnerCatalogState);
   const allCourses = useSyncExternalStore(courseStore.subscribe, courseStore.getAllCourses);
@@ -106,14 +109,35 @@ const ClientCourses = () => {
     let isMounted = true;
 
     const refreshAssignments = async () => {
-      try {
-        const records = await getAssignmentsForUser(learnerId);
-        if (isMounted) {
-          setAssignments(records);
-        }
-      } catch (error) {
-        console.error('Failed to load assignments:', error);
+      if (assignmentsRefreshInFlightRef.current) {
+        return assignmentsRefreshInFlightRef.current;
       }
+
+      const now = Date.now();
+      if (now < assignmentRefreshCooldownUntilRef.current) {
+        return;
+      }
+
+      const request = (async () => {
+        try {
+          const records = await getAssignmentsForUser(learnerId);
+          if (isMounted) {
+            setAssignments(records);
+          }
+          assignmentRefreshFailuresRef.current = 0;
+          assignmentRefreshCooldownUntilRef.current = 0;
+        } catch (error) {
+          assignmentRefreshFailuresRef.current += 1;
+          const backoffMs = Math.min(30_000, 1_000 * 2 ** assignmentRefreshFailuresRef.current);
+          assignmentRefreshCooldownUntilRef.current = Date.now() + backoffMs;
+          console.error('Failed to load assignments:', error);
+        } finally {
+          assignmentsRefreshInFlightRef.current = null;
+        }
+      })();
+
+      assignmentsRefreshInFlightRef.current = request;
+      return request;
     };
 
     void refreshAssignments();
