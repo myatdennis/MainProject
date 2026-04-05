@@ -18266,12 +18266,15 @@ app.post('/api/admin/organizations', requireAdminAccess, asyncHandler(async (req
   ).toLowerCase();
   const ownerName =
     resolveOwnerString(ownerInput.name, payload.ownerName, payload.owner_name, payload.contactPerson) || null;
+  const desiredSlug = payload.slug ?? payload.name;
+  const resolvedSlug = await ensureUniqueOrgSlug(desiredSlug);
 
   try {
     const result = await runSupabaseQueryWithRetry('admin.organizations.create', () =>
       supabase.from('organizations').insert({
         id: payload.id ?? undefined,
         name: payload.name,
+        slug: resolvedSlug,
         type: payload.type ?? null,
         description: payload.description ?? null,
         logo: payload.logo ?? null,

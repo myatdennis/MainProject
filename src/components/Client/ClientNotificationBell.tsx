@@ -2,7 +2,22 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Bell, Megaphone, BookOpen, Check, MessageSquare, Sparkles } from 'lucide-react';
 import { listLearnerNotifications, markLearnerNotificationRead } from '../../dal/notifications';
 import type { Notification } from '../../dal/notifications';
+import { syncService } from '../../dal/sync';
+import { wsClient } from '../../dal/wsClient';
 import Button from '../ui/Button';
+
+const REALTIME_REFRESH_DEBOUNCE_MS = 300;
+
+const REALTIME_REFRESH_EVENT_TYPES = new Set([
+  'assignment_created',
+  'assignment_updated',
+  'assignment_deleted',
+  'message_sent',
+  'org_message_sent',
+  'notification',
+  'notification_created',
+  'notification_deleted',
+]);
 
 const notificationTone = (notification: Notification) => {
   switch (notification.type) {
@@ -35,6 +50,7 @@ const ClientNotificationBell = () => {
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [loading, setLoading] = useState(false);
   const dropdownRef = useRef<HTMLDivElement | null>(null);
+  const refreshTimerRef = useRef<number | null>(null);
 
   const unreadCount = useMemo(() => notifications.filter((n) => !n.read).length, [notifications]);
 
@@ -48,7 +64,80 @@ const ClientNotificationBell = () => {
     }
   }, []);
 
+  const scheduleNotificationRefresh = useCallback(() => {
+    if (refreshTimerRef.current) {
+      window.clearTimeout(refreshTimerRef.current);
+    }
+    refreshTimerRef.current = window.setTimeout(() => {
+      refreshTimerRef.current = null;
+      void loadNotifications();
+    }, REALTIME_REFRESH_DEBOUNCE_MS);
+  }, [loadNotifications]);
+
   useEffect(() => { void loadNotifications(); }, [loadNotifications]);
+
+  useEffect(() => {
+    if (open) {
+      void loadNotifications();
+    }
+  }, [open, loadNotifications]);
+
+  useEffect(() => {
+    const refreshFromSync = () => {
+      scheduleNotificationRefresh();
+    };
+
+    const unsubs = [
+      syncService.subscribe('assignment_created', refreshFromSync),
+      syncService.subscribe('assignment_updated', refreshFromSync),
+      syncService.subscribe('assignment_deleted', refreshFromSync),
+      syncService.subscribe('refresh_all', refreshFromSync),
+    ];
+
+    return () => {
+      unsubs.forEach((unsubscribe) => unsubscribe?.());
+    };
+  }, [scheduleNotificationRefresh]);
+
+  useEffect(() => {
+    const handleRealtimeEvent = (payload: unknown) => {
+      const record = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : null;
+      const eventType =
+        typeof record?.type === 'string'
+          ? record.type
+          : typeof record?.event === 'string'
+            ? record.event
+            : null;
+      if (!eventType) return;
+      if (!REALTIME_REFRESH_EVENT_TYPES.has(eventType)) return;
+      scheduleNotificationRefresh();
+    };
+
+    wsClient.on('event', handleRealtimeEvent);
+    wsClient.on('notification', handleRealtimeEvent);
+    wsClient.on('notification_deleted', handleRealtimeEvent);
+    wsClient.on('message_sent', handleRealtimeEvent);
+
+    if (wsClient.isEnabled()) {
+      wsClient.connect();
+    }
+
+    return () => {
+      wsClient.off('event', handleRealtimeEvent);
+      wsClient.off('notification', handleRealtimeEvent);
+      wsClient.off('notification_deleted', handleRealtimeEvent);
+      wsClient.off('message_sent', handleRealtimeEvent);
+    };
+  }, [scheduleNotificationRefresh]);
+
+  useEffect(() => {
+    return () => {
+      if (refreshTimerRef.current) {
+        window.clearTimeout(refreshTimerRef.current);
+        refreshTimerRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!open) return;

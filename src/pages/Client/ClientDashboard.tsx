@@ -26,6 +26,7 @@ import {
   syncCourseProgressWithRemote,
   loadStoredCourseProgress,
   buildLearnerProgressSnapshot,
+  PROGRESS_STORAGE_KEY,
 } from '../../utils/courseProgress';
 import { getPreferredLessonId, getFirstLessonId } from '../../utils/courseNavigation';
 import { syncService } from '../../dal/sync';
@@ -169,6 +170,7 @@ const ClientDashboard = () => {
     [],
   );
   const [progressRefreshToken, setProgressRefreshToken] = useState(0);
+  const [analyticsRefreshToken, setAnalyticsRefreshToken] = useState(0);
   const courseStoreAdapter = useMemo(buildCourseStoreAdapter, []);
   // Track learner catalog load status so we can show a targeted empty-state when the
   // server confirms there are genuinely no courses available (status === 'empty'), rather
@@ -208,6 +210,35 @@ const ClientDashboard = () => {
       updateBootStep('membership', 'error', 'Unable to load memberships');
     }
   }, [membershipStatus, updateBootStep]);
+
+  useEffect(() => {
+    const handleProgressStorageChange = (event: StorageEvent) => {
+      if (event.key !== PROGRESS_STORAGE_KEY) return;
+      setProgressRefreshToken((token) => token + 1);
+      setAnalyticsRefreshToken((token) => token + 1);
+    };
+
+    window.addEventListener('storage', handleProgressStorageChange);
+
+    return () => {
+      window.removeEventListener('storage', handleProgressStorageChange);
+    };
+  }, []);
+
+  useEffect(() => {
+    const handleProgressUpdated = () => {
+      setProgressRefreshToken((token) => token + 1);
+      setAnalyticsRefreshToken((token) => token + 1);
+    };
+
+    const unsubscribeLessonCompleted = syncService.subscribe('user_completed', handleProgressUpdated);
+    const unsubscribeCourseCompleted = syncService.subscribe('course_completed', handleProgressUpdated);
+
+    return () => {
+      unsubscribeLessonCompleted?.();
+      unsubscribeCourseCompleted?.();
+    };
+  }, []);
 
   useEffect(() => {
     let isMounted = true;
@@ -254,6 +285,7 @@ const ClientDashboard = () => {
     const handleVisibilityChange = () => {
       if (!document.hidden) {
         void refreshAssignments();
+        setProgressRefreshToken((token) => token + 1);
       }
     };
 
@@ -462,7 +494,11 @@ const ClientDashboard = () => {
       stored.lessonPositions || {}
     );
     const assignment = assignments.find((record) => record.courseId === course.id);
-    const progressPercent = (assignment?.progress ?? 0) || Math.round((snapshot.overallProgress || 0) * 100);
+  const assignmentProgress = Number(assignment?.progress ?? 0);
+  const snapshotProgress = Math.round((snapshot.overallProgress || 0) * 100);
+  const progressPercent = Math.max(assignmentProgress, snapshotProgress);
+  const isCompleted = assignment?.status === 'completed' || progressPercent >= 100;
+  const isInProgress = !isCompleted && progressPercent > 0;
     const preferredLessonId = getPreferredLessonId(course, stored) ?? getFirstLessonId(course);
 
     return {
@@ -471,6 +507,8 @@ const ClientDashboard = () => {
       assignment,
       stored,
       progressPercent,
+      isCompleted,
+      isInProgress,
       preferredLessonId,
     };
   }), [assignments, courses, progressRefreshToken]);
@@ -488,6 +526,8 @@ const ClientDashboard = () => {
         stored.lessonPositions || {}
       );
       const progressPercent = Math.round((snapshot.overallProgress || 0) * 100);
+      const isCompleted = progressPercent >= 100;
+      const isInProgress = progressPercent > 0 && progressPercent < 100;
       const preferredLessonId = getPreferredLessonId(normalized, stored) ?? getFirstLessonId(normalized);
       return {
         course: normalized,
@@ -495,6 +535,8 @@ const ClientDashboard = () => {
         assignment: null,
         stored,
         progressPercent,
+        isCompleted,
+        isInProgress,
         preferredLessonId,
       };
     });
@@ -558,14 +600,8 @@ const ClientDashboard = () => {
   const showingFallbackCatalog = !hasAssignedCourses && fallbackCourseDetails.length > 0;
   const displayedCourseDetails = hasAssignedCourses ? courseDetails : fallbackCourseDetails;
   const assignedCourseCount = hasAssignedCourses ? assignments.length : fallbackCourseDetails.length;
-  const completedCount = hasAssignedCourses
-    ? assignments.filter((record) => record.status === 'completed').length
-    : fallbackCourseDetails.filter((entry) => entry.progressPercent >= 100).length;
-  const inProgressCount = hasAssignedCourses
-    ? assignments.filter((record) => record.status === 'in-progress').length
-    : fallbackCourseDetails.filter(
-        (entry) => entry.progressPercent > 0 && entry.progressPercent < 100
-      ).length;
+  const completedCount = displayedCourseDetails.filter((entry) => entry.isCompleted).length;
+  const inProgressCount = displayedCourseDetails.filter((entry) => entry.isInProgress).length;
   const featuredResources = useMemo(() => resources.slice(0, 3), [resources]);
   const extraResources = Math.max(0, resources.length - featuredResources.length);
 
@@ -619,7 +655,7 @@ const ClientDashboard = () => {
       cancelled = true;
       controller.abort();
     };
-  }, [essentialReady, bootAttempt, updateBootStep]);
+  }, [essentialReady, bootAttempt, analyticsRefreshToken, updateBootStep]);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
