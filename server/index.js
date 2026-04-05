@@ -1806,7 +1806,7 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
       status: statusValue,
       progress: progressValue ?? 0,
       metadata,
-      idempotency_key: idempotencyKey,
+      idempotency_key: assignmentIdempotencyKey,
       client_request_id: clientRequestId,
       active: true,
       due_at: dueAtValue ?? null,
@@ -1820,6 +1820,7 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
 
   let targetUserIds = normalizedUserIds.length > 0 ? [...normalizedUserIds] : [];
   const shouldCreateOrgLevelAssignment = assignmentMode === 'organization';
+  let assignmentIdempotencyKey = null;
   const buildAssignmentKey = (value) => (value === null ? '__org__' : String(value).toLowerCase());
   const resolveRowKey = (row) => {
     if (!row) return '__org__';
@@ -1871,6 +1872,14 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
       if (shouldCreateOrgLevelAssignment && targetUserIds.length === 0) {
         targetUserIds = [null];
       }
+    }
+
+    assignmentIdempotencyKey = idempotencyKey && targetUserIds.length <= 1 ? idempotencyKey : null;
+    if (idempotencyKey && !assignmentIdempotencyKey) {
+      logger.info('course_assignment_idempotency_key_skipped_for_multi_target', {
+        ...assignmentLogBase,
+        targetCount: targetUserIds.length,
+      });
     }
 
     if (isFallbackMode) {
@@ -1982,16 +1991,16 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
       return;
     }
 
-    if (idempotencyKey) {
+    if (assignmentIdempotencyKey) {
       const { data: existingByKey, error } = await supabase
         .from('assignments')
         .select('*')
         .eq('course_id', courseId)
         .eq('organization_id', finalOrganizationId)
-        .eq('idempotency_key', idempotencyKey);
+        .eq('idempotency_key', assignmentIdempotencyKey);
       if (error) throw error;
       if (existingByKey && existingByKey.length > 0) {
-        res.status(200).json({ data: existingByKey, meta: { idempotent: true, key: idempotencyKey } });
+        res.status(200).json({ data: existingByKey, idempotent: true, meta: { idempotent: true, key: assignmentIdempotencyKey } });
         return;
       }
     } else if (clientRequestId) {
@@ -2109,7 +2118,40 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
         .from('assignments')
         .insert(inserts.map((record) => sanitizeAssignmentRecordForSchema(record, { includeUserIdUuid: assignmentsSupportUserIdUuid })))
         .select('*');
-      if (error) throw error;
+      if (error) {
+        const errorText = `${error?.constraint || ''} ${error?.message || ''} ${error?.details || ''}`.toLowerCase();
+        const isIdempotencyConflict =
+          error?.code === '23505' &&
+          (errorText.includes('idempotency_key') || errorText.includes('assignments_idempotency_key_idx'));
+        if (isIdempotencyConflict && assignmentIdempotencyKey) {
+          const { data: existingByKey, error: existingByKeyError } = await supabase
+            .from('assignments')
+            .select('*')
+            .eq('course_id', courseId)
+            .eq('organization_id', finalOrganizationId)
+            .eq('idempotency_key', assignmentIdempotencyKey);
+          if (!existingByKeyError && existingByKey && existingByKey.length > 0) {
+            logger.info('course_assignment_idempotency_conflict_recovered', {
+              ...assignmentLogBase,
+              key: assignmentIdempotencyKey,
+              recoveredRows: existingByKey.length,
+            });
+            res.status(200).json({
+              ok: true,
+              data: existingByKey,
+              idempotent: true,
+              meta: {
+                organizationId: finalOrganizationId,
+                idempotent: true,
+                key: assignmentIdempotencyKey,
+                recoveredFromConflict: true,
+              },
+            });
+            return;
+          }
+        }
+        throw error;
+      }
       insertedRows = newRows || [];
     }
 

@@ -165,5 +165,17 @@ describe('Admin/learner golden path', () => {
     expect(Array.isArray(lessons)).toBe(true);
     const lessonProgress = lessons.find((row: any) => row.lesson_id === lessonId || row.lessonId === lessonId);
     expect(lessonProgress).toBeTruthy();
+
+    // Admin should also be able to retrieve learner progress for reporting views.
+    const adminProgressList = await server!.fetch(
+      `/api/learner/progress?lessonIds=${encodeURIComponent(lessonId)}&userId=${encodeURIComponent(learnerId)}`,
+      { headers: await adminHeaders() },
+    );
+    expect(adminProgressList.status).toBe(200);
+    const adminProgressJson = await adminProgressList.json();
+    const adminLessons: any[] = adminProgressJson?.data?.lessons ?? adminProgressJson?.data ?? [];
+    expect(Array.isArray(adminLessons)).toBe(true);
+    const adminLessonProgress = adminLessons.find((row: any) => row.lesson_id === lessonId || row.lessonId === lessonId);
+    expect(adminLessonProgress).toBeTruthy();
   }, 60000);
 });

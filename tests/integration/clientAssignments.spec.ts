@@ -282,4 +282,72 @@ describe('Client assignments API', () => {
     expect(Array.isArray(assignmentJson?.data)).toBe(true);
     expect(assignmentJson?.data?.[0]?.user_id || assignmentJson?.data?.[0]?.userId).toBeTruthy();
   });
+
+  it('does not 500 when organization-mode assignment includes an idempotency key', async () => {
+    const courseId = `org-idempotency-${randomUUID()}`;
+
+    const adminHeaders = await createAdminAuthHeaders({ email: 'mya@the-huddle.co' });
+    const adminRequestHeaders = {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      ...adminHeaders,
+    };
+
+    const createCourse = await server!.fetch('/api/admin/courses', {
+      method: 'POST',
+      headers: adminRequestHeaders,
+      body: JSON.stringify({
+        course: {
+          id: courseId,
+          title: 'Org Assignment Idempotency Regression',
+          slug: courseId,
+          modules: [
+            {
+              id: 'module-1',
+              title: 'Module 1',
+              lessons: [
+                {
+                  id: 'lesson-1',
+                  title: 'Lesson 1',
+                  type: 'text',
+                  content_json: {
+                    type: 'text',
+                    body: { blocks: [{ type: 'paragraph', data: { text: 'Regression lesson' } }] },
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      }),
+    });
+    expect([200, 201]).toContain(createCourse.status);
+
+    const idempotencyKey = `assign-org-${Date.now()}-${randomUUID()}`;
+    const payload = {
+      organization_id: 'd28e403a-cdab-42cd-8fc7-2c9327ca40f8',
+      mode: 'organization',
+      user_ids: [],
+      status: 'assigned',
+      idempotency_key: idempotencyKey,
+    };
+
+    const firstAssign = await server!.fetch(`/api/admin/courses/${courseId}/assign`, {
+      method: 'POST',
+      headers: adminRequestHeaders,
+      body: JSON.stringify(payload),
+    });
+    const firstAssignJson = await firstAssign.json().catch(() => null);
+    expect(firstAssign.status).toBe(200);
+    expect(Array.isArray(firstAssignJson?.data)).toBe(true);
+
+    const secondAssign = await server!.fetch(`/api/admin/courses/${courseId}/assign`, {
+      method: 'POST',
+      headers: adminRequestHeaders,
+      body: JSON.stringify(payload),
+    });
+    const secondAssignJson = await secondAssign.json().catch(() => null);
+    expect(secondAssign.status).toBe(200);
+    expect(Array.isArray(secondAssignJson?.data)).toBe(true);
+  });
 });
