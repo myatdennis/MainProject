@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { buildHdiSurveyTemplate } from '../hdiTemplate.js';
 import { scoreHdiSubmission } from '../hdiScoring.js';
-import { generateHdiFeedback } from '../hdiFeedback.js';
-import { buildHdiCohortAnalytics, buildHdiComparison } from '../hdiAnalytics.js';
+import { buildHdiProfile } from '../hdiProfiles.js';
+import { buildHdiReport } from '../hdiReportBuilder.js';
+import { compareHdiReports } from '../hdiComparison.js';
+import { buildHdiCohortAnalytics } from '../hdiAnalytics.js';
 
 const templateSurvey = {
   type: 'hdi',
@@ -10,74 +12,68 @@ const templateSurvey = {
 };
 
 const allQuestionIds = templateSurvey.sections[0].questions.map((question) => question.id);
-const reverseQuestionIds = ['hdi-q-25', 'hdi-q-26', 'hdi-q-27', 'hdi-q-28'];
-
-const buildResponses = ({ base = 4, reverse = 1 } = {}) =>
+const buildResponses = ({ base = 4 } = {}) =>
   allQuestionIds.reduce((acc, id) => {
-    acc[id] = reverseQuestionIds.includes(id) ? reverse : base;
+    acc[id] = base;
     return acc;
   }, {});
 
 describe('HDI scoring engine', () => {
-  it('scores core dimensions and applies reverse scoring', () => {
+  it('computes stage scores and developmental orientation mapping', () => {
     const scoring = scoreHdiSubmission({
       survey: templateSurvey,
-      responses: buildResponses({ base: 4, reverse: 1 }),
+      responses: buildResponses({ base: 4 }),
     });
 
-    expect(scoring.dimensionScores.length).toBeGreaterThanOrEqual(6);
-    expect(scoring.overall.rawAverage).toBe(4);
-    expect(scoring.overall.normalizedScore).toBe(75);
-    expect(scoring.overall.band).toBe('Practicing');
-
-    const reverseSample = scoring.scoredItems.find((item) => item.questionId === 'hdi-q-25');
-    expect(reverseSample?.raw).toBe(1);
-    expect(reverseSample?.scored).toBe(5);
+    expect(scoring.validation.isValid).toBe(true);
+    expect(scoring.stageScores.avoidance.average).toBe(4);
+    expect(scoring.stageScores.integration.average).toBe(4);
+    expect(scoring.developmentalOrientation.score).toBe(4);
+    expect(scoring.developmentalOrientation.primaryStage.label).toBe('Acceptance');
   });
 
-  it('produces individualized feedback from scoring output', () => {
+  it('assigns profile and builds structured report', () => {
     const scoring = scoreHdiSubmission({
       survey: templateSurvey,
-      responses: buildResponses({ base: 3, reverse: 3 }),
+      responses: buildResponses({ base: 3 }),
     });
 
-    const feedback = generateHdiFeedback({ scoring });
+    const profile = buildHdiProfile({ scoring });
+    const report = buildHdiReport({
+      participant: { userId: 'user-1' },
+      scoring,
+      profile,
+    });
 
-    expect(feedback.profile).toBeTruthy();
-    expect(feedback.overallSummary.length).toBeGreaterThan(20);
-    expect(feedback.topStrengths).toHaveLength(2);
-    expect(feedback.growthAreas).toHaveLength(2);
-    expect(feedback.practicalNextStep.length).toBeGreaterThan(20);
+    expect(profile.name).toBeTruthy();
+    expect(profile.nextAction.length).toBeGreaterThan(20);
+    expect(report.stagePlacement.primaryStage.label).toBeTruthy();
+    expect(Array.isArray(report.strengths)).toBe(true);
+    expect(Array.isArray(report.growthAreas)).toBe(true);
   });
 
-  it('computes pre/post cohort analytics and meaningful growth', () => {
+  it('computes pre/post comparison and cohort analytics', () => {
     const preScoring = scoreHdiSubmission({
       survey: templateSurvey,
-      responses: buildResponses({ base: 3, reverse: 3 }),
+      responses: buildResponses({ base: 3 }),
     });
     const postScoring = scoreHdiSubmission({
       survey: templateSurvey,
-      responses: buildResponses({ base: 4, reverse: 2 }),
+      responses: buildResponses({ base: 4 }),
     });
 
-    const comparison = buildHdiComparison({
-      pre: {
-        id: 'pre-1',
-        userId: 'user-1',
-        participantKeys: ['user-1'],
-        administrationType: 'pre',
-        scoring: preScoring,
-      },
-      post: {
-        id: 'post-1',
-        userId: 'user-1',
-        participantKeys: ['user-1'],
-        administrationType: 'post',
-        scoring: postScoring,
-      },
+    const preProfile = buildHdiProfile({ scoring: preScoring });
+    const postProfile = buildHdiProfile({ scoring: postScoring });
+
+    const preReport = buildHdiReport({ participant: { userId: 'user-1' }, scoring: preScoring, profile: preProfile });
+    const postReport = buildHdiReport({ participant: { userId: 'user-1' }, scoring: postScoring, profile: postProfile });
+
+    const comparison = compareHdiReports({
+      preReport,
+      postReport,
     });
 
-    expect(comparison?.deltaNormalized).toBeGreaterThan(5);
+    expect(comparison?.doScoreDelta).toBeGreaterThan(0.75);
     expect(comparison?.growthBand).toMatch(/Meaningful|Strong/);
 
     const rows = [
@@ -89,7 +85,8 @@ describe('HDI scoring engine', () => {
           hdi: {
             administrationType: 'pre',
             scoring: preScoring,
-            feedback: generateHdiFeedback({ scoring: preScoring }),
+            report: preReport,
+            profile: preProfile,
           },
         },
         completed_at: '2026-01-01T00:00:00.000Z',
@@ -102,7 +99,8 @@ describe('HDI scoring engine', () => {
           hdi: {
             administrationType: 'post',
             scoring: postScoring,
-            feedback: generateHdiFeedback({ scoring: postScoring }),
+            report: postReport,
+            profile: postProfile,
           },
         },
         completed_at: '2026-02-01T00:00:00.000Z',
@@ -113,7 +111,7 @@ describe('HDI scoring engine', () => {
     expect(cohort.totalPre).toBe(1);
     expect(cohort.totalPost).toBe(1);
     expect(cohort.matchedComparisons).toBe(1);
-    expect(cohort.averageDelta).toBeGreaterThan(5);
+    expect(cohort.averageDelta).toBeGreaterThan(0.75);
     expect(cohort.meaningfulImprovementPercent).toBe(100);
   });
 });

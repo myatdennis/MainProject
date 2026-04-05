@@ -342,11 +342,15 @@ const AdminSurveyBuilder = () => {
       return;
     }
 
+    const isHdiTemplate =
+      template.id === 'hdi-huddle-development-inventory' ||
+      template.id === 'hdi-intercultural-development-index';
+
     const newSurvey: Survey = {
       id: `survey-${Date.now()}`,
       title: template.name,
       description: template.description,
-      type: template.id === 'hdi-intercultural-development-index' ? 'hdi' : template.id,
+      type: isHdiTemplate ? 'hdi' : template.id,
       status: 'draft',
       createdBy: 'Mya Dennis',
       createdAt: new Date().toISOString(),
@@ -362,7 +366,7 @@ const AdminSurveyBuilder = () => {
       branding: defaultBranding,
       settings: {
         ...template.defaultSettings,
-        assessmentType: template.id === 'hdi-intercultural-development-index' ? 'hdi' : undefined,
+        assessmentType: isHdiTemplate ? 'hdi' : undefined,
         accessControl: {
           requireLogin: false,
           ...template.defaultSettings?.accessControl

@@ -73,6 +73,7 @@ const AdminSurveyAnalytics = () => {
   const isHdiSurvey =
     surveyType === 'hdi' ||
     surveyType === 'hdi-assessment' ||
+    surveyType === 'hdi-huddle-development-inventory' ||
     surveyType === 'hdi-intercultural-development-index';
 
   useEffect(() => {

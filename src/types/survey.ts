@@ -72,6 +72,11 @@ export interface SurveyQuestion {
   };
 
   // Assessment metadata (optional; used by HDI and other scored instruments)
+  stageKey?: string;
+  stageLabel?: string;
+  stage_key?: string;
+  reverse_scored?: boolean;
+  weight?: number;
   dimensionKey?: string;
   dimensionLabel?: string;
   scoringWeight?: number;
@@ -79,6 +84,11 @@ export interface SurveyQuestion {
   assessmentType?: string;
   metadata?: {
     assessmentType?: string;
+    stageKey?: string;
+    stageLabel?: string;
+    stage_key?: string;
+    reverse_scored?: boolean;
+    weight?: number;
     dimensionKey?: string;
     dimensionLabel?: string;
     scoringWeight?: number;

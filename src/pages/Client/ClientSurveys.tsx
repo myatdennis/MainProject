@@ -170,11 +170,18 @@ const ClientSurveys = () => {
             {assignment.status === 'completed' ? 'Review submission' : 'Open survey'}
           </Button>
           {assignment.status === 'completed' && survey?.id && (
-            <Button size="sm" variant="ghost" asChild>
-              <Link to={`/client/surveys/${survey.id}/results?assignmentId=${assignment.id}`}>
-                View insights
-              </Link>
-            </Button>
+            <>
+              <Button size="sm" variant="ghost" asChild>
+                <Link to={`/client/surveys/${survey.id}/results?assignmentId=${assignment.id}`}>
+                  View report
+                </Link>
+              </Button>
+              <Button size="sm" variant="ghost" asChild>
+                <Link to={`/client/surveys/${survey.id}/progress?assignmentId=${assignment.id}`}>
+                  View progress
+                </Link>
+              </Button>
+            </>
           )}
           {surveyUrl && (
             <Button size="sm" variant="ghost" asChild>

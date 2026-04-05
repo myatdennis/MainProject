@@ -331,6 +331,7 @@ const AdminSurveys = () => {
     switch (type) {
       case 'hdi':
       case 'hdi-assessment':
+      case 'hdi-huddle-development-inventory':
       case 'hdi-intercultural-development-index':
         return 'bg-rose-100 text-rose-800';
       case 'climate-assessment':
@@ -705,7 +706,7 @@ const AdminSurveys = () => {
             <h3 className="font-bold text-gray-900 mb-2">HDI Assessment</h3>
             <p className="text-gray-600 text-sm mb-4">Intercultural Development Index with pre/post progress scoring and feedback.</p>
             <Link
-              to="/admin/surveys/builder?template=hdi-intercultural-development-index"
+              to="/admin/surveys/builder?template=hdi-huddle-development-inventory"
               className="text-rose-600 hover:text-rose-700 font-medium text-sm"
             >
               Use Template →

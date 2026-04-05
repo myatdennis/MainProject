@@ -153,7 +153,9 @@ import {
 } from './diagnostics/metrics.js';
 import { buildHdiSurveyTemplate, isHdiAssessment } from './lib/hdiTemplate.js';
 import { scoreHdiSubmission } from './lib/hdiScoring.js';
-import { generateHdiFeedback } from './lib/hdiFeedback.js';
+import { buildHdiProfile } from './lib/hdiProfiles.js';
+import { buildHdiReport } from './lib/hdiReportBuilder.js';
+import { compareHdiReports } from './lib/hdiComparison.js';
 import {
   buildHdiParticipantRows,
   buildHdiCohortAnalytics,
@@ -14015,9 +14017,32 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
         responses,
       });
 
+      if (!scoring?.validation?.isValid) {
+        res.status(400).json({
+          error: 'invalid_hdi_submission',
+          message: 'All 36 HDI items require valid Likert values (1-5).',
+          details: scoring.validation,
+        });
+        return;
+      }
+
       const participantKeys = extractStableParticipantKeys({
         ...assignmentMetadata,
         ...metadataInput,
+      });
+
+      const participant = {
+        userId: context.userId,
+        participantKey: metadataInput.participantKey ?? assignmentMetadata.participantKey ?? null,
+        participantKeys,
+        organizationId: assignment?.organization_id ?? context.activeOrganizationId ?? null,
+      };
+
+      const profile = buildHdiProfile({ scoring });
+      const report = buildHdiReport({
+        participant,
+        scoring,
+        profile,
       });
 
       let prePostComparison = null;
@@ -14037,9 +14062,15 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
             linkedAssessmentId,
             administrationType,
             scoring,
+            report,
           };
           const preRecord = findLatestHdiPreRecord(historicalRows, currentRecord);
-          if (preRecord) {
+          if (preRecord?.report) {
+            prePostComparison = compareHdiReports({
+              preReport: preRecord.report,
+              postReport: report,
+            });
+          } else if (preRecord) {
             prePostComparison = buildHdiComparison({
               pre: preRecord,
               post: {
@@ -14049,16 +14080,12 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
                 linkedAssessmentId,
                 administrationType,
                 scoring,
+                report,
               },
             });
           }
         }
       }
-
-      const feedback = generateHdiFeedback({
-        scoring,
-        prePostComparison,
-      });
 
       enrichedMetadata = {
         ...metadataInput,
@@ -14076,7 +14103,8 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
         },
         hdi: {
           scoring,
-          feedback,
+          profile,
+          report,
           administrationType,
           linkedAssessmentId,
           computedAt: new Date().toISOString(),
@@ -14106,6 +14134,43 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
       .select('*');
     if (_surveyResp.error) throw _surveyResp.error;
     const inserted = firstRow(_surveyResp);
+
+    if (isHdiSubmission && inserted?.id && enrichedMetadata?.hdi) {
+      const hdiPayload = enrichedMetadata.hdi;
+      const report = hdiPayload.report ?? null;
+      const scoring = hdiPayload.scoring ?? null;
+      const profile = hdiPayload.profile ?? report?.profile ?? null;
+      try {
+        await supabase.from('hdi_assessment_results').upsert(
+          {
+            survey_response_id: inserted.id,
+            survey_id: id,
+            user_id: context.userId,
+            organization_id: assignment?.organization_id ?? context.activeOrganizationId ?? null,
+            stage_scores: report?.stageScores ?? scoring?.stageScores ?? {},
+            normalized_scores: report?.normalizedScores ?? scoring?.normalizedScores ?? {},
+            do_score: scoring?.developmentalOrientation?.score ?? scoring?.doScore ?? null,
+            stage_placement: report?.stagePlacement ?? null,
+            profile: profile ?? null,
+            feedback: {
+              summary: report?.summary ?? null,
+              strengths: report?.strengths ?? [],
+              growthAreas: report?.growthAreas ?? [],
+              nextSteps: report?.nextSteps ?? [],
+            },
+            comparison: hdiPayload.prePostComparison ?? null,
+          },
+          { onConflict: 'survey_response_id' },
+        );
+      } catch (persistError) {
+        logger.warn('hdi_result_persist_skipped', {
+          surveyId: id,
+          responseId: inserted.id,
+          message: persistError?.message ?? String(persistError),
+          code: persistError?.code ?? null,
+        });
+      }
+    }
 
     if (assignment?.id) {
       const mergedMetadata = {

@@ -1,4 +1,5 @@
 import { computeGrowthBand } from './hdiScoring.js';
+import { compareHdiReports } from './hdiComparison.js';
 
 const stableKeyCandidates = (response = {}) => {
   const metadata = response?.metadata && typeof response.metadata === 'object' ? response.metadata : {};
@@ -21,7 +22,11 @@ const stableKeyCandidates = (response = {}) => {
 export const toHdiRecord = (row = {}) => {
   const metadata = row?.metadata && typeof row.metadata === 'object' ? row.metadata : {};
   const hdi = metadata?.hdi && typeof metadata.hdi === 'object' ? metadata.hdi : null;
-  if (!hdi?.scoring) return null;
+  if (!hdi?.scoring && !hdi?.report) return null;
+
+  const scoring = hdi?.scoring ?? null;
+  const report = hdi?.report ?? null;
+  const profile = hdi?.profile ?? report?.profile ?? null;
 
   return {
     id: row.id,
@@ -33,7 +38,9 @@ export const toHdiRecord = (row = {}) => {
     administrationType: String(hdi.administrationType ?? metadata.administrationType ?? 'single').toLowerCase(),
     linkedAssessmentId: hdi.linkedAssessmentId ?? metadata.linkedAssessmentId ?? null,
     participantKeys: stableKeyCandidates(row),
-    scoring: hdi.scoring,
+    scoring,
+    report,
+    profile,
     feedback: hdi.feedback ?? null,
   };
 };
@@ -51,54 +58,59 @@ export const buildHdiParticipantRows = (responseRows = []) => {
     participantIdentifier: record.participantKeys[0] ?? record.userId ?? 'anonymous',
     assessmentDate: record.completedAt,
     administrationType: record.administrationType,
-    overallScore: record.scoring?.overall?.normalizedScore ?? 0,
-    rawAverage: record.scoring?.overall?.rawAverage ?? 0,
-    scoreBand: record.scoring?.overall?.band ?? 'Unknown',
-    dimensionScores: record.scoring?.dimensionScores ?? [],
-    topStrengths: record.feedback?.topStrengths ?? [],
-    growthAreas: record.feedback?.growthAreas ?? [],
-    individualizedInsight: record.feedback?.overallSummary ?? '',
-    practicalNextStep: record.feedback?.practicalNextStep ?? '',
+    overallScore: record.scoring?.developmentalOrientation?.score ?? record.scoring?.doScore ?? 0,
+    normalizedScore: record.scoring?.developmentalOrientation?.normalizedScore ?? record.scoring?.overall?.normalizedScore ?? 0,
+    rawAverage: record.scoring?.developmentalOrientation?.score ?? record.scoring?.overall?.rawAverage ?? 0,
+    scoreBand: record.scoring?.developmentalOrientation?.primaryStage?.label ?? record.scoring?.overall?.band ?? 'Unknown',
+    stagePlacement: record.report?.stagePlacement ?? {
+      primaryStage: record.scoring?.primaryStage ?? null,
+      secondaryStage: record.scoring?.secondaryStage ?? null,
+    },
+    stageScores: record.scoring?.stageScores ?? {},
+    normalizedScores: record.scoring?.normalizedScores ?? {},
+    topStrengths: record.report?.strengths ?? [],
+    growthAreas: record.report?.growthAreas ?? [],
+    individualizedInsight: record.report?.summary ?? record.feedback?.overallSummary ?? '',
+    practicalNextStep: record.profile?.nextAction ?? record.feedback?.practicalNextStep ?? '',
+    profile: record.profile ?? record.report?.profile ?? null,
   }));
 };
 
 export const buildHdiComparison = ({ pre = null, post = null }) => {
   if (!pre || !post) return null;
-  const preScore = pre?.scoring?.overall?.normalizedScore;
-  const postScore = post?.scoring?.overall?.normalizedScore;
-  if (!Number.isFinite(preScore) || !Number.isFinite(postScore)) return null;
+  const preReport = pre.report ?? {
+    stageScores: pre.scoring?.stageScores ?? {},
+    normalizedScores: pre.scoring?.normalizedScores ?? {},
+    developmentalOrientation: pre.scoring?.developmentalOrientation ?? null,
+    stagePlacement: {
+      primaryStage: pre.scoring?.primaryStage ?? null,
+      secondaryStage: pre.scoring?.secondaryStage ?? null,
+    },
+  };
+  const postReport = post.report ?? {
+    stageScores: post.scoring?.stageScores ?? {},
+    normalizedScores: post.scoring?.normalizedScores ?? {},
+    developmentalOrientation: post.scoring?.developmentalOrientation ?? null,
+    stagePlacement: {
+      primaryStage: post.scoring?.primaryStage ?? null,
+      secondaryStage: post.scoring?.secondaryStage ?? null,
+    },
+  };
 
-  const dimensionMap = new Map();
-  (pre.scoring?.dimensionScores ?? []).forEach((dimension) => {
-    dimensionMap.set(dimension.key, { key: dimension.key, label: dimension.label, pre: dimension.normalizedScore, post: null });
-  });
-  (post.scoring?.dimensionScores ?? []).forEach((dimension) => {
-    if (!dimensionMap.has(dimension.key)) {
-      dimensionMap.set(dimension.key, { key: dimension.key, label: dimension.label, pre: null, post: dimension.normalizedScore });
-      return;
-    }
-    const current = dimensionMap.get(dimension.key);
-    current.post = dimension.normalizedScore;
-  });
-
-  const dimensionDelta = Array.from(dimensionMap.values()).map((dimension) => ({
-    ...dimension,
-    delta:
-      Number.isFinite(dimension.pre) && Number.isFinite(dimension.post)
-        ? Math.round((dimension.post - dimension.pre) * 100) / 100
-        : null,
-  }));
-
-  const deltaNormalized = Math.round((postScore - preScore) * 100) / 100;
+  const comparison = compareHdiReports({ preReport, postReport });
+  if (!comparison) return null;
 
   return {
     preResponseId: pre.id,
     postResponseId: post.id,
-    preScore,
-    postScore,
-    deltaNormalized,
-    growthBand: computeGrowthBand(deltaNormalized),
-    dimensionDelta,
+    preScore: preReport?.developmentalOrientation?.score ?? null,
+    postScore: postReport?.developmentalOrientation?.score ?? null,
+    deltaNormalized: comparison.doScoreDelta,
+    growthBand: comparison.growthBand ?? computeGrowthBand(comparison.doScoreDelta),
+    dimensionDelta: comparison.dimensionGrowth,
+    stageMovement: comparison.stageMovement,
+    recommendedFocus: comparison.recommendedFocus,
+    improvementSummary: comparison.improvementSummary,
   };
 };
 
@@ -137,22 +149,23 @@ export const buildHdiCohortAnalytics = (responseRows = []) => {
     })
     .filter(Boolean);
 
-  const avgOverallPre = avg(preRecords.map((record) => record.scoring?.overall?.normalizedScore));
-  const avgOverallPost = avg(postRecords.map((record) => record.scoring?.overall?.normalizedScore));
+  const avgOverallPre = avg(preRecords.map((record) => record.scoring?.developmentalOrientation?.score));
+  const avgOverallPost = avg(postRecords.map((record) => record.scoring?.developmentalOrientation?.score));
   const delta = Math.round((avgOverallPost - avgOverallPre) * 100) / 100;
 
   const byDimension = new Map();
   const collectDimension = (source, bucket) => {
-    (source?.scoring?.dimensionScores ?? []).forEach((dimension) => {
-      if (!byDimension.has(dimension.key)) {
-        byDimension.set(dimension.key, {
-          key: dimension.key,
-          label: dimension.label,
+    const stageScores = source?.scoring?.stageScores ?? {};
+    Object.entries(source?.scoring?.normalizedScores ?? {}).forEach(([stageKey, normalizedScore]) => {
+      if (!byDimension.has(stageKey)) {
+        byDimension.set(stageKey, {
+          key: stageKey,
+          label: stageScores?.[stageKey]?.label ?? stageKey,
           pre: [],
           post: [],
         });
       }
-      byDimension.get(dimension.key)[bucket].push(dimension.normalizedScore);
+      byDimension.get(stageKey)[bucket].push(normalizedScore);
     });
   };
   preRecords.forEach((record) => collectDimension(record, 'pre'));
@@ -172,14 +185,14 @@ export const buildHdiCohortAnalytics = (responseRows = []) => {
 
   const distribution = records.reduce(
     (acc, record) => {
-      const band = String(record.scoring?.overall?.band ?? 'Unknown');
+  const band = String(record.scoring?.developmentalOrientation?.primaryStage?.label ?? 'Unknown');
       acc[band] = (acc[band] ?? 0) + 1;
       return acc;
     },
     {},
   );
 
-  const meaningfulThresholdCount = comparisons.filter((comparison) => comparison.deltaNormalized >= 5).length;
+  const meaningfulThresholdCount = comparisons.filter((comparison) => comparison.deltaNormalized >= 0.35).length;
 
   return {
     totalResponses: records.length,
@@ -194,9 +207,9 @@ export const buildHdiCohortAnalytics = (responseRows = []) => {
     meaningfulImprovementPercent:
       comparisons.length > 0 ? Math.round((meaningfulThresholdCount / comparisons.length) * 10000) / 100 : 0,
     growthBreakdown: {
-      minimal: comparisons.filter((comparison) => comparison.deltaNormalized >= 1 && comparison.deltaNormalized < 5).length,
-      meaningful: comparisons.filter((comparison) => comparison.deltaNormalized >= 5 && comparison.deltaNormalized < 10).length,
-      strong: comparisons.filter((comparison) => comparison.deltaNormalized >= 10).length,
+      minimal: comparisons.filter((comparison) => comparison.deltaNormalized >= 0.1 && comparison.deltaNormalized < 0.35).length,
+      meaningful: comparisons.filter((comparison) => comparison.deltaNormalized >= 0.35 && comparison.deltaNormalized < 0.75).length,
+      strong: comparisons.filter((comparison) => comparison.deltaNormalized >= 0.75).length,
     },
   };
 };
