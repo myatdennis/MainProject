@@ -64,8 +64,8 @@ export const canonicalizeQuizQuestions = (questions: any[] = []): QuizQuestion[]
           correct: Boolean(option.correct || option.isCorrect),
           isCorrect: Boolean(option.correct || option.isCorrect),
         };
-      })
-      .filter((option): option is QuizOption => Boolean(option?.id));
+    })
+    .filter((option: QuizOption): option is QuizOption => Boolean(option?.id));
 
     const markedIndex =
       typeof question?.correctAnswerIndex === 'number'
@@ -194,6 +194,11 @@ export const canonicalizeLessonContent = (content?: LessonContent): LessonConten
 
   const migrated = migrateLessonContent(content);
   const next: LessonContent = { ...migrated };
+  const nextAny = next as any;
+  const body =
+    nextAny.body && typeof nextAny.body === 'object' && !Array.isArray(nextAny.body)
+      ? (nextAny.body as Record<string, unknown>)
+      : undefined;
 
   const fallbackQuestions =
     Array.isArray((next as any)?.quiz?.questions)
@@ -216,7 +221,15 @@ export const canonicalizeLessonContent = (content?: LessonContent): LessonConten
     next.videoUrl = (next as any).video_url;
   }
 
-  const rawAsset = next.videoAsset ?? (next as any).video_asset ?? (next.video as any)?.asset;
+  if (!next.videoUrl && typeof body?.videoUrl === 'string' && body.videoUrl.trim().length > 0) {
+    next.videoUrl = body.videoUrl;
+  }
+
+  if (!next.video && body?.video && typeof body.video === 'object') {
+    next.video = body.video as any;
+  }
+
+  const rawAsset = next.videoAsset ?? (next as any).video_asset ?? (next.video as any)?.asset ?? body?.videoAsset;
   const normalizedAsset = normalizeVideoAsset(rawAsset);
   if (normalizedAsset) {
     next.videoAsset = normalizedAsset;
@@ -227,7 +240,8 @@ export const canonicalizeLessonContent = (content?: LessonContent): LessonConten
     (next as any).video_url,
     next.video?.url,
     next.video?.embedUrl,
-    next.video?.source,
+    nextAny.video?.source,
+    typeof body?.videoUrl === 'string' ? body.videoUrl : undefined,
     next.videoAsset?.signedUrl ?? undefined,
     (next.videoAsset as any)?.url ?? (next.videoAsset as any)?.publicUrl ?? undefined,
     next.videoAsset?.bucket === 'external' && next.videoAsset?.storagePath?.startsWith('http')
@@ -237,10 +251,10 @@ export const canonicalizeLessonContent = (content?: LessonContent): LessonConten
 
   if (resolvedVideoUrl) {
     next.videoUrl = resolvedVideoUrl;
-    if (!next.video) {
-      next.video = {};
+    if (!nextAny.video || typeof nextAny.video !== 'object') {
+      nextAny.video = {};
     }
-    next.video.url = next.video.url || resolvedVideoUrl;
+    nextAny.video.url = nextAny.video.url || resolvedVideoUrl;
   }
 
   const assetBucket = next.videoAsset?.bucket ?? null;
@@ -254,13 +268,20 @@ export const canonicalizeLessonContent = (content?: LessonContent): LessonConten
       : undefined;
 
   if (!next.videoSourceType) {
-    next.videoSourceType = next.video?.sourceType || assetSource || (next.videoAsset ? 'internal' : 'external');
+    const rawSourceType = nextAny.video?.sourceType || assetSource || (next.videoAsset ? 'internal' : 'external');
+    const normalizedSourceType = ['external', 'internal', 'youtube', 'vimeo'].includes(String(rawSourceType))
+      ? rawSourceType
+      : 'internal';
+    next.videoSourceType = normalizedSourceType as LessonContent['videoSourceType'];
   } else if (next.videoAsset && assetBucket && assetBucket !== 'external' && next.videoSourceType === 'external') {
     next.videoSourceType = 'internal';
   }
 
-  if (!next.videoProvider && typeof next.video?.provider === 'string') {
-    next.videoProvider = next.video.provider;
+  if (!next.videoProvider && typeof nextAny.video?.provider === 'string') {
+    const provider = String(nextAny.video.provider).toLowerCase();
+    if (provider === 'youtube' || provider === 'vimeo' || provider === 'wistia' || provider === 'native') {
+      next.videoProvider = provider as LessonContent['videoProvider'];
+    }
   }
 
   if (!next.textContent && typeof next.content === 'string') {

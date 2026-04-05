@@ -4128,6 +4128,15 @@ const normalizeModuleGraph = (modules, { includeLessons = false } = {}) => {
             if (!normalizedContent.videoUrl && body?.videoUrl) {
               normalizedContent.videoUrl = body.videoUrl;
             }
+            if (!normalizedContent.videoAsset && body?.videoAsset && typeof body.videoAsset === 'object') {
+              normalizedContent.videoAsset = { ...body.videoAsset };
+            }
+            if (!normalizedContent.video && body?.video && typeof body.video === 'object') {
+              normalizedContent.video = { ...body.video };
+            }
+            if (!normalizedContent.videoUrl && normalizedContent.video?.url) {
+              normalizedContent.videoUrl = normalizedContent.video.url;
+            }
             if (!normalizedContent.video && normalizedContent.videoUrl) {
               normalizedContent.video = { url: normalizedContent.videoUrl };
             }
@@ -4941,6 +4950,16 @@ const buildSurveyPersistencePayload = (payload = {}) => {
     logger.warn('survey_upsert_ignoring_non_uuid_id', { incomingId });
   }
 
+  const baseSettings =
+    payload.settings && typeof payload.settings === 'object' && !Array.isArray(payload.settings)
+      ? { ...payload.settings }
+      : {};
+  const existingClientIdentifier =
+    typeof baseSettings.clientIdentifier === 'string' ? baseSettings.clientIdentifier.trim() : '';
+  if (incomingId && !persistedId && !existingClientIdentifier) {
+    baseSettings.clientIdentifier = incomingId;
+  }
+
   const shaped = {
     id: persistedId,
     title: payload.title,
@@ -4949,7 +4968,7 @@ const buildSurveyPersistencePayload = (payload = {}) => {
     status: payload.status ?? 'draft',
     sections: payload.sections ?? [],
     branding: payload.branding ?? {},
-    settings: payload.settings ?? {},
+    settings: baseSettings,
     updated_at: new Date().toISOString(),
   };
 
@@ -5117,9 +5136,78 @@ const listDemoSurveys = () => {
 const getDemoSurveyById = (id) => {
   if (!id) return null;
   ensureDemoSurveysSeeded();
-  const survey = e2eStore.surveys.get(id);
+  const canonicalId = surveyIdentifierAliasMap.get(id) ?? id;
+  const survey = e2eStore.surveys.get(canonicalId) || e2eStore.surveys.get(id);
   if (!survey) return null;
-  return applyAssignmentToSurvey(deepClone(survey), e2eStore.surveyAssignments.get(id));
+  const assignmentKey = survey.id ?? canonicalId;
+  return applyAssignmentToSurvey(deepClone(survey), e2eStore.surveyAssignments.get(assignmentKey));
+};
+
+const surveyIdentifierAliasMap = new Map();
+
+const rememberSurveyIdentifierAlias = (identifier, surveyId) => {
+  const alias = typeof identifier === 'string' ? identifier.trim() : '';
+  const canonical = typeof surveyId === 'string' ? surveyId.trim() : '';
+  if (!alias || !canonical || alias === canonical) return;
+  surveyIdentifierAliasMap.set(alias, canonical);
+};
+
+const resolveSurveyIdentifierToCanonicalId = async (identifier) => {
+  const normalized = typeof identifier === 'string' ? identifier.trim() : '';
+  if (!normalized) return null;
+
+  const mapped = surveyIdentifierAliasMap.get(normalized);
+  if (mapped) return mapped;
+
+  if (!supabase || isUuid(normalized)) {
+    return normalized;
+  }
+
+  const lookupStrategies = [
+    () =>
+      supabase
+        .from('surveys')
+        .select('id')
+        .eq('settings->>clientIdentifier', normalized)
+        .limit(1)
+        .maybeSingle(),
+    () =>
+      supabase
+        .from('surveys')
+        .select('id')
+        .contains('settings', { clientIdentifier: normalized })
+        .limit(1)
+        .maybeSingle(),
+  ];
+
+  for (const lookup of lookupStrategies) {
+    try {
+      const { data, error } = await lookup();
+      if (error) {
+        if (isMissingColumnError(error) || isMissingRelationError(error)) {
+          return normalized;
+        }
+        logger.warn('survey_identifier_lookup_strategy_failed', {
+          identifier: normalized,
+          code: error?.code ?? null,
+          message: error?.message ?? null,
+        });
+        continue;
+      }
+      if (data?.id) {
+        rememberSurveyIdentifierAlias(normalized, data.id);
+        return data.id;
+      }
+    } catch (error) {
+      logger.warn('survey_identifier_resolution_failed', {
+        identifier: normalized,
+        code: error?.code ?? null,
+        message: error?.message ?? null,
+      });
+    }
+  }
+
+  return normalized;
 };
 
 const updateDemoSurveyAssignments = (surveyId, assignedTo = createEmptyAssignedTo()) => {
@@ -5351,14 +5439,27 @@ const fetchSurveyAssignmentsMap = async (surveyIds = []) => {
 
 const loadSurveyWithAssignments = async (id) => {
   if (!id) return null;
+  const canonicalId = await resolveSurveyIdentifierToCanonicalId(id);
+  if (!canonicalId) return null;
   if (!supabase) {
-    return getDemoSurveyById(id);
+    return getDemoSurveyById(canonicalId);
   }
-  const { data, error } = await supabase.from('surveys').select('*').eq('id', id).maybeSingle();
-  if (error) throw error;
+  let data = null;
+  let error = null;
+  ({ data, error } = await supabase.from('surveys').select('*').eq('id', canonicalId).maybeSingle());
+  if (error) {
+    const invalidUuidFilter =
+      error?.code === '22P02' ||
+      (typeof error?.message === 'string' && error.message.includes('invalid input syntax for type uuid'));
+    if (!invalidUuidFilter) {
+      throw error;
+    }
+    return null;
+  }
   if (!data) return null;
-  const assignments = await fetchSurveyAssignmentsMap([id]);
-  return applyAssignmentToSurvey({ ...data }, assignments.get(id));
+  rememberSurveyIdentifierAlias(id, data.id);
+  const assignments = await fetchSurveyAssignmentsMap([data.id]);
+  return applyAssignmentToSurvey({ ...data }, assignments.get(data.id));
 };
 
 const refreshSurveyAssignmentAggregates = async (surveyId) => {
@@ -13980,14 +14081,6 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
   const context = requireUserContext(req, res);
   if (!context) return;
   const { id } = req.params;
-  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
-  if (!resolvedCourseId) {
-    res.locals = res.locals || {};
-    res.locals.errorCode = 'course_not_found';
-    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
-    return;
-  }
-  const courseId = resolvedCourseId;
 
   const responses = req.body?.responses;
   if (!responses || typeof responses !== 'object') {
@@ -14002,7 +14095,8 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
       return;
     }
 
-    const assignment = await loadSurveyAssignmentForUser(id, context.userId, {
+    const surveyId = surveyRecord.id ?? id;
+    const assignment = await loadSurveyAssignmentForUser(surveyId, context.userId, {
       assignmentId: req.body?.assignmentId ?? req.body?.assignment_id ?? null,
       orgIds: Array.isArray(context.organizationIds) ? context.organizationIds : [],
     });
@@ -14067,7 +14161,7 @@ app.post('/api/client/surveys/:id/submit', authenticate, async (req, res) => {
         const { data: historicalRows, error: historyError } = await supabase
           .from('survey_responses')
           .select('*')
-          .eq('survey_id', id)
+          .eq('survey_id', surveyId)
           .eq('user_id', context.userId)
           .order('completed_at', { ascending: false, nullsFirst: false })
           .limit(50);
@@ -22162,14 +22256,6 @@ app.get('/api/admin/surveys/:id', requireAdminAccess, asyncHandler(async (req, r
   if (!ensureSupabase(res)) return;
   if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.detail'))) return;
   const { id } = req.params;
-  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
-  if (!resolvedCourseId) {
-    res.locals = res.locals || {};
-    res.locals.errorCode = 'course_not_found';
-    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
-    return;
-  }
-  const courseId = resolvedCourseId;
 
   try {
     if (!supabase) {
@@ -22194,6 +22280,7 @@ app.post('/api/admin/surveys', async (req, res) => {
   if (!ensureSupabase(res)) return;
   if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.upsert'))) return;
   const payload = req.body || {};
+  const incomingSurveyIdentifier = typeof payload.id === 'string' ? payload.id.trim() : null;
 
   if (!payload.title) {
     res.status(400).json({ error: 'title is required' });
@@ -22230,6 +22317,7 @@ app.post('/api/admin/surveys', async (req, res) => {
     };
 
     const data = await performUpsert();
+    rememberSurveyIdentifierAlias(incomingSurveyIdentifier, data?.id ?? null);
     await syncSurveyAssignments(data.id, assignedTo);
     const survey = await loadSurveyWithAssignments(data.id);
     res.status(201).json({ data: survey });
@@ -22249,14 +22337,8 @@ app.put('/api/admin/surveys/:id', async (req, res) => {
   if (!ensureSupabase(res)) return;
   if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.update'))) return;
   const { id } = req.params;
-  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
-  if (!resolvedCourseId) {
-    res.locals = res.locals || {};
-    res.locals.errorCode = 'course_not_found';
-    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
-    return;
-  }
-  const courseId = resolvedCourseId;
+  const canonicalSurveyId = await resolveSurveyIdentifierToCanonicalId(id);
+  const surveyIdForWrite = canonicalSurveyId ?? id;
   const patch = req.body || {};
 
   try {
@@ -22276,7 +22358,7 @@ app.put('/api/admin/surveys/:id', async (req, res) => {
       delete updatePayload.id;
       try {
         const result = await runTimedQuery('admin.surveys.update', () =>
-          supabase.from('surveys').update(updatePayload).eq('id', id).select('*'),
+          supabase.from('surveys').update(updatePayload).eq('id', surveyIdForWrite).select('*'),
         );
         return firstRow(result);
       } catch (err) {
@@ -22284,7 +22366,7 @@ app.put('/api/admin/surveys/:id', async (req, res) => {
           const retryPayload = buildSurveyPersistencePayload({ ...patch, id });
           delete retryPayload.id;
           const retryResult = await runTimedQuery('admin.surveys.update.retry', () =>
-            supabase.from('surveys').update(retryPayload).eq('id', id).select('*'),
+            supabase.from('surveys').update(retryPayload).eq('id', surveyIdForWrite).select('*'),
           );
           return firstRow(retryResult);
         }
@@ -22294,9 +22376,10 @@ app.put('/api/admin/surveys/:id', async (req, res) => {
 
     await performUpdate();
     if (assignmentUpdateRequested) {
-      await syncSurveyAssignments(id, assignedTo);
+      await syncSurveyAssignments(surveyIdForWrite, assignedTo);
     }
-    const survey = await loadSurveyWithAssignments(id);
+    const survey = await loadSurveyWithAssignments(surveyIdForWrite);
+    rememberSurveyIdentifierAlias(id, survey?.id ?? surveyIdForWrite);
     res.json({ data: survey });
   } catch (error) {
     logger.error('survey_update_failed', {
@@ -22313,14 +22396,8 @@ app.delete('/api/admin/surveys/:id', async (req, res) => {
   if (!ensureSupabase(res)) return;
   if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.delete'))) return;
   const { id } = req.params;
-  const resolvedCourseId = await resolveCourseIdentifierToUuid(id);
-  if (!resolvedCourseId) {
-    res.locals = res.locals || {};
-    res.locals.errorCode = 'course_not_found';
-    res.status(404).json({ error: 'course_not_found', message: `Course not found for identifier ${id}` });
-    return;
-  }
-  const courseId = resolvedCourseId;
+  const canonicalSurveyId = await resolveSurveyIdentifierToCanonicalId(id);
+  const surveyIdForDelete = canonicalSurveyId ?? id;
 
   try {
     if (!supabase) {
@@ -22330,9 +22407,11 @@ app.delete('/api/admin/surveys/:id', async (req, res) => {
     }
 
     await runSupabaseQueryWithRetry('admin.surveys.delete.assignments', () =>
-      supabase.from('survey_assignments').delete().eq('survey_id', id),
+      supabase.from('survey_assignments').delete().eq('survey_id', surveyIdForDelete),
     );
-    await runSupabaseQueryWithRetry('admin.surveys.delete', () => supabase.from('surveys').delete().eq('id', id));
+    await runSupabaseQueryWithRetry('admin.surveys.delete', () =>
+      supabase.from('surveys').delete().eq('id', surveyIdForDelete),
+    );
     res.status(204).end();
   } catch (error) {
     console.error('Failed to delete survey:', error);
@@ -22367,6 +22446,7 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
     return;
   }
   const surveyId = surveyRecord.id ?? id;
+  rememberSurveyIdentifierAlias(id, surveyId);
   const body = normalizeLegacyOrgInput(req.body ?? {}, {
     surface: 'admin.surveys.assign',
     requestId: req.requestId ?? null,
@@ -22738,6 +22818,8 @@ app.delete('/api/admin/surveys/:surveyId/assignments/:assignmentId', async (req,
   if (!ensureSupabase(res)) return;
   if (!(await ensureAdminSurveySchemaOrRespond(res, 'admin.surveys.assignments.delete'))) return;
   const { surveyId, assignmentId } = req.params;
+  const canonicalSurveyId = await resolveSurveyIdentifierToCanonicalId(surveyId);
+  const surveyIdForLookup = canonicalSurveyId ?? surveyId;
   if (!assignmentId) {
     res.status(400).json({ error: 'assignment_id_required' });
     return;
@@ -22751,7 +22833,7 @@ app.delete('/api/admin/surveys/:surveyId/assignments/:assignmentId', async (req,
       .from('assignments')
       .select(SURVEY_ASSIGNMENT_SELECT)
       .eq('id', assignmentId)
-      .eq('survey_id', surveyId)
+      .eq('survey_id', surveyIdForLookup)
       .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
       .maybeSingle();
     if (fetchError) throw fetchError;
@@ -22784,7 +22866,7 @@ app.delete('/api/admin/surveys/:surveyId/assignments/:assignmentId', async (req,
 
     logSurveyAssignmentEvent('survey_assignment_updated', {
       requestId: req.requestId ?? null,
-      surveyId,
+      surveyId: surveyIdForLookup,
       organizationCount: existing.organization_id ? 1 : 0,
       userCount: existing.user_id ? 1 : 0,
       insertedRowCount: 0,
@@ -22792,7 +22874,7 @@ app.delete('/api/admin/surveys/:surveyId/assignments/:assignmentId', async (req,
       metadata: { action: hardDelete ? 'deleted' : 'deactivated', assignmentId },
     });
 
-    await refreshSurveyAssignmentAggregates(surveyId);
+    await refreshSurveyAssignmentAggregates(surveyIdForLookup);
     res.status(204).end();
   } catch (error) {
     console.error('[admin.surveys.assignments.delete] failed', error);
@@ -23003,7 +23085,8 @@ app.get('/api/client/surveys/:id/results', authenticate, async (req, res) => {
   }
 
   try {
-    const assignment = await loadSurveyAssignmentForUser(id, context.userId, {
+    const surveyId = surveyRecord.id ?? id;
+    const assignment = await loadSurveyAssignmentForUser(surveyId, context.userId, {
       assignmentId: req.query.assignmentId ?? req.query.assignment_id ?? null,
       orgIds: Array.isArray(context.organizationIds) ? context.organizationIds : [],
     });
