@@ -65,6 +65,8 @@ export type Org = {
   // Usage Statistics
   totalLearners: number;
   activeLearners: number;
+  totalUsers?: number;
+  activeUsers?: number;
   completionRate: number;
   cohorts: string[];
   lastActivity?: string;
@@ -223,6 +225,24 @@ const fromRecord = <T = any>(record: any, key: string): T | undefined => {
 export const mapOrgRecord = (record: any): Org => {
   const features = fromRecord(record, 'features') as Org['features'] | undefined;
   const settings = fromRecord(record, 'settings') as Org['settings'] | undefined;
+  const totalUsers = Number(
+    fromRecord(record, 'total_users') ??
+      fromRecord(record, 'totalUsers') ??
+      fromRecord(record, 'total_learners') ??
+      fromRecord(record, 'totalLearners') ??
+      record?.metrics?.totalUsers ??
+      record?.metrics?.total_users ??
+      0,
+  );
+  const activeUsers = Number(
+    fromRecord(record, 'active_users') ??
+      fromRecord(record, 'activeUsers') ??
+      fromRecord(record, 'active_learners') ??
+      fromRecord(record, 'activeLearners') ??
+      record?.metrics?.activeUsers ??
+      record?.metrics?.active_users ??
+      0,
+  );
 
   return {
     id: record.id ?? record.organization_id ?? record.org_id ?? '',
@@ -257,8 +277,10 @@ export const mapOrgRecord = (record: any): Org => {
     updatedAt: fromRecord(record, 'updated_at') ?? undefined,
     timezone: fromRecord(record, 'timezone') ?? undefined,
     onboardingStatus: fromRecord(record, 'onboarding_status') ?? undefined,
-    totalLearners: fromRecord(record, 'total_learners') ?? 0,
-    activeLearners: fromRecord(record, 'active_learners') ?? 0,
+  totalLearners: Number.isFinite(totalUsers) ? totalUsers : 0,
+  activeLearners: Number.isFinite(activeUsers) ? activeUsers : 0,
+  totalUsers: Number.isFinite(totalUsers) ? totalUsers : 0,
+  activeUsers: Number.isFinite(activeUsers) ? activeUsers : 0,
     completionRate: Number(fromRecord(record, 'completion_rate') ?? 0),
     cohorts: fromRecord(record, 'cohorts') ?? [],
     lastActivity: fromRecord(record, 'last_activity') ?? undefined,

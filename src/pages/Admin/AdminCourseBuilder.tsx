@@ -20,7 +20,7 @@ import { type CourseValidationIntent, type CourseValidationIssue } from '../../v
 import { getCourseValidationSummary, type CourseValidationSummary } from '../../validation/courseValidationSummary';
 import { getUserSession } from '../../lib/secureStorage';
 import { ApiError } from '../../utils/apiClient';
-import { getVideoSourceInfo, resolveLessonVideoPlayback } from '../../utils/videoUtils';
+import { deriveExternalVideoCommitMetadata, resolveLessonVideoPlayback } from '../../utils/videoUtils';
 import {
   shouldBypassMediaSigning,
   shouldRefreshSignedUrl,
@@ -449,6 +449,7 @@ const AdminCourseBuilder = () => {
   const [uploadProgress, setUploadProgress] = useState<Record<string, number>>({});
   const [uploadErrors, setUploadErrors] = useState<Record<string, string | null>>({});
   const [uploadStatuses, setUploadStatuses] = useState<Record<string, { status: UploadStatus; message?: string | null }>>({});
+  const [externalVideoUrlDrafts, setExternalVideoUrlDrafts] = useState<Record<string, string>>({});
   const uploadControllers = useRef<Record<string, AbortController | null>>({});
   const pendingUploadFiles = useRef<Record<string, File | null>>({});
   const uploadChannels = useRef<Record<string, 'video' | 'document'>>({});
@@ -2944,6 +2945,18 @@ const scheduleAutosave = useCallback(
     });
   };
 
+  const clearExternalVideoUrlDraft = useCallback((moduleId: string, lessonId: string) => {
+    const draftKey = buildUploadKey(moduleId, lessonId);
+    setExternalVideoUrlDrafts((prev) => {
+      if (!(draftKey in prev)) {
+        return prev;
+      }
+      const next = { ...prev };
+      delete next[draftKey];
+      return next;
+    });
+  }, []);
+
   const updateLesson = (moduleId: string, lessonId: string, updates: Partial<Lesson>) => {
     setCourse((prev) => {
       const modules = prev.modules || [];
@@ -2986,6 +2999,67 @@ const scheduleAutosave = useCallback(
       }));
     }
   };
+
+  const commitExternalVideoUrl = useCallback(
+    (moduleId: string, lessonId: string, rawUrl: string) => {
+      const module = course.modules?.find((item) => item.id === moduleId);
+      const lesson = module?.lessons.find((item) => item.id === lessonId);
+      if (!lesson || lesson.type !== 'video') {
+        clearExternalVideoUrlDraft(moduleId, lessonId);
+        return;
+      }
+
+      const next = deriveExternalVideoCommitMetadata(rawUrl);
+      if (!next.isValid) {
+        showToast('Enter a valid video URL before saving this lesson.', 'warning');
+        return;
+      }
+
+      const currentUrl = (lesson.content.videoUrl || '').trim();
+      const currentSourceType = lesson.content.videoSourceType ?? 'external';
+      const currentProvider = lesson.content.videoProvider;
+      const currentVideoId = lesson.content.externalVideoId;
+
+      if (
+        next.normalizedUrl === currentUrl &&
+        next.sourceType === currentSourceType &&
+        (next.videoProvider ?? undefined) === (currentProvider ?? undefined) &&
+        (next.externalVideoId ?? undefined) === (currentVideoId ?? undefined)
+      ) {
+        clearExternalVideoUrlDraft(moduleId, lessonId);
+        return;
+      }
+
+      updateLesson(moduleId, lessonId, {
+        content: {
+          ...lesson.content,
+          videoUrl: next.normalizedUrl,
+          videoSourceType: next.sourceType,
+          videoProvider: next.videoProvider,
+          externalVideoId: next.externalVideoId,
+          videoAsset: undefined,
+        },
+      });
+
+      clearExternalVideoUrlDraft(moduleId, lessonId);
+    },
+    [clearExternalVideoUrlDraft, course.modules, showToast],
+  );
+
+  useEffect(() => {
+    if (!editingLesson) {
+      setExternalVideoUrlDrafts({});
+      return;
+    }
+
+    const activeKey = buildUploadKey(editingLesson.moduleId, editingLesson.lessonId);
+    setExternalVideoUrlDrafts((prev) => {
+      if (!(activeKey in prev)) {
+        return {};
+      }
+      return { [activeKey]: prev[activeKey] };
+    });
+  }, [editingLesson]);
 
   useEffect(() => {
     if (!editingLesson) {
@@ -3544,16 +3618,19 @@ const scheduleAutosave = useCallback(
                     <span className="text-sm font-medium">Upload File</span>
                   </button>
                   <button
-                    onClick={() => updateLesson(moduleId, lesson.id, {
-                      content: {
-                        ...buildClearedVideoContent(lesson.content, 'external'),
-                        videoSourceType: 'external',
-                        videoAsset: undefined,
-                        fileName: undefined,
-                        fileSize: undefined,
-                        videoUrl: lesson.content.videoSourceType === 'external' ? lesson.content.videoUrl || '' : '',
-                      }
-                    })}
+                    onClick={() => {
+                      clearExternalVideoUrlDraft(moduleId, lesson.id);
+                      updateLesson(moduleId, lesson.id, {
+                        content: {
+                          ...buildClearedVideoContent(lesson.content, 'external'),
+                          videoSourceType: 'external',
+                          videoAsset: undefined,
+                          fileName: undefined,
+                          fileSize: undefined,
+                          videoUrl: lesson.content.videoSourceType === 'external' ? lesson.content.videoUrl || '' : '',
+                        }
+                      });
+                    }}
                     className={`p-4 border-2 rounded-lg transition-all duration-200 ${
                       lesson.content.videoSourceType === 'external'
                         ? 'border-blue-500 bg-blue-50 text-blue-700'
@@ -3716,37 +3793,50 @@ const scheduleAutosave = useCallback(
                   </div>
                 ) : (
                   <div className="space-y-3">
+                    {(() => {
+                      const draftKey = buildUploadKey(moduleId, lesson.id);
+                      const externalVideoInputValue = externalVideoUrlDrafts[draftKey] ?? (lesson.content.videoUrl || '');
+                      const draftMetadata = deriveExternalVideoCommitMetadata(externalVideoInputValue);
+                      const showDraftValidationError =
+                        externalVideoInputValue.trim().length > 0 && !draftMetadata.isValid;
+
+                      return (
+                        <>
                     <label className="block text-sm font-medium text-gray-700">Video URL</label>
                     <input
                       type="url"
-                      value={lesson.content.videoUrl || ''}
-                      onChange={(e) => updateLesson(moduleId, lesson.id, {
-                        content: (() => {
-                          const nextUrl = e.target.value;
-                          const sourceInfo = getVideoSourceInfo(nextUrl);
-                          const sourceType = sourceInfo?.sourceType ?? 'external';
-                          const provider =
-                            sourceType === 'youtube'
-                              ? 'youtube'
-                              : sourceType === 'vimeo'
-                                ? 'vimeo'
-                                : sourceType === 'external'
-                                  ? 'native'
-                                  : undefined;
+                      value={externalVideoInputValue}
+                      onChange={(e) => {
+                        const nextValue = e.target.value;
+                        setExternalVideoUrlDrafts((prev) => ({
+                          ...prev,
+                          [draftKey]: nextValue,
+                        }));
+                      }}
+                      onBlur={(e) => {
+                        commitExternalVideoUrl(moduleId, lesson.id, e.target.value);
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault();
+                          commitExternalVideoUrl(moduleId, lesson.id, (e.target as HTMLInputElement).value);
+                        }
 
-                          return {
-                            ...lesson.content,
-                            videoUrl: nextUrl,
-                            videoSourceType: sourceType,
-                            videoProvider: provider,
-                            externalVideoId: sourceInfo?.videoId ?? undefined,
-                            videoAsset: undefined,
-                          };
-                        })()
-                      })}
+                        if (e.key === 'Escape') {
+                          clearExternalVideoUrlDraft(moduleId, lesson.id);
+                        }
+                      }}
                       placeholder="https://example.com/video.mp4 or YouTube/Vimeo URL"
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
                     />
+                    {showDraftValidationError && (
+                      <p className="text-xs text-amber-700">
+                        Enter a full, valid URL before leaving the field.
+                      </p>
+                    )}
+                        </>
+                      );
+                    })()}
                     {lesson.content.videoUrl && (
                       <div className="space-y-2">
                         <div className="aspect-video bg-gray-900 rounded-lg overflow-hidden">

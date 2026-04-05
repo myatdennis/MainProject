@@ -74,6 +74,63 @@ export const validateVideoUrl = (url: string): boolean => {
   return type !== null;
 };
 
+export type ExternalVideoCommitMetadata = {
+  isValid: boolean;
+  normalizedUrl: string;
+  sourceType: 'youtube' | 'vimeo' | 'external';
+  videoProvider?: 'youtube' | 'vimeo' | 'native';
+  externalVideoId?: string;
+};
+
+export const deriveExternalVideoCommitMetadata = (rawUrl: string): ExternalVideoCommitMetadata => {
+  const normalizedUrl = rawUrl.trim();
+
+  if (!normalizedUrl) {
+    return {
+      isValid: true,
+      normalizedUrl: '',
+      sourceType: 'external',
+    };
+  }
+
+  const { type, id } = extractVideoId(normalizedUrl);
+  if (!type || !id) {
+    return {
+      isValid: false,
+      normalizedUrl,
+      sourceType: 'external',
+    };
+  }
+
+  if (type === 'youtube') {
+    return {
+      isValid: true,
+      normalizedUrl,
+      sourceType: 'youtube',
+      videoProvider: 'youtube',
+      externalVideoId: id,
+    };
+  }
+
+  if (type === 'vimeo') {
+    return {
+      isValid: true,
+      normalizedUrl,
+      sourceType: 'vimeo',
+      videoProvider: 'vimeo',
+      externalVideoId: id,
+    };
+  }
+
+  return {
+    isValid: true,
+    normalizedUrl,
+    sourceType: 'external',
+    videoProvider: 'native',
+    externalVideoId: id,
+  };
+};
+
 export const getVideoSourceInfo = (url: string): { 
   sourceType: 'internal' | 'youtube' | 'vimeo' | 'external';
   videoId: string;
@@ -132,7 +189,7 @@ const toEmbedUrl = (provider: ResolvedVideoPlayback['provider'], videoUrl: strin
 };
 
 export const resolveLessonVideoPlayback = (content?: LessonContent | null): ResolvedVideoPlayback => {
-  const normalized = canonicalizeLessonContent(content);
+  const normalized = canonicalizeLessonContent(content ?? undefined);
   const videoUrl = normalized.videoUrl?.trim() || null;
   const explicitSourceType = normalized.videoSourceType?.toLowerCase() || null;
   const explicitProvider = normalized.videoProvider?.toLowerCase() || null;

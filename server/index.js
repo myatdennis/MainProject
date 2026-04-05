@@ -1005,6 +1005,10 @@ const ENABLE_NOTIFICATIONS =
     .toString()
     .trim()
     .toLowerCase() !== 'false';
+const PRIMARY_ADMIN_EMAIL = String(process.env.PRIMARY_ADMIN_EMAIL || 'mya@the-huddle.co')
+  .trim()
+  .toLowerCase();
+const FEEDBACK_ADMIN_EMAILS_ENV = String(process.env.FEEDBACK_ADMIN_EMAILS || '').trim();
 const normalizeUnknownError = (error) => {
   if (error instanceof Error) {
     return {
@@ -8700,6 +8704,13 @@ const sanitizeRecipientEmails = (input) => {
   return Array.from(emails);
 };
 
+const resolveFallbackAdminEmails = () => {
+  const fromEnv = FEEDBACK_ADMIN_EMAILS_ENV
+    ? FEEDBACK_ADMIN_EMAILS_ENV.split(/[\n,;]/).map((value) => value.trim())
+    : [];
+  return sanitizeRecipientEmails([...fromEnv, PRIMARY_ADMIN_EMAIL]);
+};
+
 const resolveOrgMessageRecipients = async (orgId, provided = []) => {
   const explicit = sanitizeRecipientEmails(provided);
   if (explicit.length || !supabase) {
@@ -8817,6 +8828,36 @@ const resolvePlatformAdminUserIds = async () => {
     });
     return [];
   }
+};
+
+const resolveAdminRecipientEmails = async (adminUserIds = []) => {
+  const recipients = new Set(resolveFallbackAdminEmails());
+  const uniqueAdminUserIds = Array.from(new Set((adminUserIds || []).filter(Boolean)));
+
+  if (!supabase || uniqueAdminUserIds.length === 0) {
+    return Array.from(recipients);
+  }
+
+  try {
+    const { data, error } = await supabase
+      .from('user_profiles')
+      .select('id, email')
+      .in('id', uniqueAdminUserIds)
+      .limit(500);
+    if (error) throw error;
+    (data || []).forEach((row) => {
+      if (row?.email) {
+        recipients.add(String(row.email).trim().toLowerCase());
+      }
+    });
+  } catch (error) {
+    logger.warn('admin_feedback_email_lookup_failed', {
+      message: error?.message || String(error),
+      adminRecipientCount: uniqueAdminUserIds.length,
+    });
+  }
+
+  return Array.from(recipients);
 };
 
 const normalizeMessageChannel = (channel) => {
@@ -8944,6 +8985,30 @@ const sendOrganizationMessage = async ({
     });
   }
 
+  if (notificationService) {
+    await notificationService.createNotification({
+      title: subject || 'New admin message',
+      body,
+      organizationId: orgId,
+      userId: null,
+      type: 'admin_message',
+      priority: 'normal',
+      channel: 'in_app',
+      metadata: {
+        source: 'admin_message',
+        messageLogId: finalRecord.id,
+        sentBy: actor?.userId ?? null,
+        deliveryChannel: normalizedChannel,
+      },
+    }).catch((error) => {
+      logger.warn('organization_message_notification_failed', {
+        orgId,
+        messageId: finalRecord.id,
+        message: error?.message || String(error),
+      });
+    });
+  }
+
   logOrganizationsEvent('organization_message_sent', {
     requestId,
     status: finalRecord.status ?? 'sent',
@@ -9032,6 +9097,30 @@ const sendUserMessage = async ({
         ...(record.metadata || {}),
         recipients: resolvedRecipients,
       },
+    });
+  }
+
+  if (notificationService) {
+    await notificationService.createNotification({
+      title: subject || 'New admin message',
+      body,
+      organizationId,
+      userId,
+      type: 'admin_message',
+      priority: 'normal',
+      channel: 'in_app',
+      metadata: {
+        source: 'admin_message',
+        messageLogId: finalRecord.id,
+        sentBy: actor?.userId ?? null,
+        deliveryChannel: normalizedChannel,
+      },
+    }).catch((error) => {
+      logger.warn('user_message_notification_failed', {
+        userId,
+        messageId: finalRecord.id,
+        message: error?.message || String(error),
+      });
     });
   }
 
@@ -21527,6 +21616,37 @@ app.post('/api/learner/feedback', authenticate, asyncHandler(async (req, res) =>
         });
       });
     }
+  }
+
+  const adminRecipientEmails = await resolveAdminRecipientEmails(adminRecipientIds);
+  if (adminRecipientEmails.length > 0) {
+    await Promise.all(
+      adminRecipientEmails.map((email) =>
+        sendEmail({
+          to: email,
+          subject: `Learner feedback: ${subject}`,
+          text: feedbackBody,
+          html: `<p style="font-family:Arial,sans-serif;color:#111827;line-height:1.5;white-space:pre-wrap;">${feedbackBody}</p>`,
+          logContext: {
+            organizationId: organizationId ?? null,
+            recipientType: 'admin_feedback',
+            recipientId: null,
+            sentBy: anonymous ? null : context.userId,
+            metadata: {
+              source: 'learner_feedback',
+              messageLogId: record.id,
+              adminNotification: true,
+            },
+          },
+        }).catch((error) => {
+          logger.warn('learner_feedback_admin_email_failed', {
+            email,
+            organizationId,
+            message: error?.message || String(error),
+          });
+        })
+      )
+    );
   }
 
   res.status(201).json({

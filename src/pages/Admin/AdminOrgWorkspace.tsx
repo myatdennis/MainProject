@@ -32,10 +32,22 @@ import { getCrmSummary, sendBroadcastNotification, type CrmSummary } from '../..
 import { useDebounce } from '../../components/PerformanceComponents';
 
 const PAGE_SIZE = 24;
+const ORG_LOGO_MAX_BYTES = 2 * 1024 * 1024;
 type StatusFilterOption = 'all' | 'active' | 'inactive' | 'suspended' | 'trial';
 type SubscriptionFilterOption = 'all' | 'Standard' | 'Premium' | 'Enterprise';
 
 type BroadcastAudience = 'custom' | 'all_active_orgs' | 'all_active_users';
+
+const resolveOrgUserCounts = (org: Org) => {
+  const total = Number(org.totalUsers ?? org.totalLearners ?? 0);
+  const active = Number(org.activeUsers ?? org.activeLearners ?? 0);
+  const safeTotal = Number.isFinite(total) && total > 0 ? Math.round(total) : 0;
+  const safeActive = Number.isFinite(active) && active > 0 ? Math.round(active) : 0;
+  return {
+    total: safeTotal,
+    active: Math.min(safeActive, safeTotal || safeActive),
+  };
+};
 
 const createEmptyCrmSummary = (): CrmSummary => ({
   organizations: { total: 0, active: 0, onboarding: 0, newThisMonth: 0 },
@@ -66,13 +78,13 @@ const deriveCrmSummaryFromOrganizations = (orgs: Org[], paginationTotal?: number
     return created >= monthStart;
   }).length;
 
-  const totalLearners = orgs.reduce((sum, org) => sum + (org.totalLearners ?? 0), 0);
-  const activeLearners = orgs.reduce((sum, org) => sum + (org.activeLearners ?? 0), 0);
+  const totalUsers = orgs.reduce((sum, org) => sum + resolveOrgUserCounts(org).total, 0);
+  const activeUsers = orgs.reduce((sum, org) => sum + resolveOrgUserCounts(org).active, 0);
   derived.users = {
-    total: totalLearners,
-    active: activeLearners,
-    invited: Math.max(totalLearners - activeLearners, 0),
-    recentActive: activeLearners,
+    total: totalUsers,
+    active: activeUsers,
+    invited: Math.max(totalUsers - activeUsers, 0),
+    recentActive: activeUsers,
   };
 
   return derived;
@@ -143,6 +155,8 @@ const AdminOrgWorkspace = () => {
     userIds: '',
   });
   const [sendingBroadcast, setSendingBroadcast] = useState(false);
+  const [logoUploadingByOrg, setLogoUploadingByOrg] = useState<Record<string, boolean>>({});
+  const logoInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const [showCourseAssignModal, setShowCourseAssignModal] = useState(false);
 
@@ -266,6 +280,68 @@ const AdminOrgWorkspace = () => {
   const handleSelectOrganization = (orgId: string) => {
     setSelectedOrgId(orgId);
   };
+
+  const setOrgLogoUploading = useCallback((orgId: string, uploading: boolean) => {
+    setLogoUploadingByOrg((prev) => ({ ...prev, [orgId]: uploading }));
+  }, []);
+
+  const fileToDataUrl = useCallback((file: File) => {
+    return new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('Unable to read selected image file.'));
+      reader.onload = () => {
+        const result = reader.result;
+        if (typeof result !== 'string') {
+          reject(new Error('Image conversion failed.'));
+          return;
+        }
+        resolve(result);
+      };
+      reader.readAsDataURL(file);
+    });
+  }, []);
+
+  const handleOrgLogoFileSelected = useCallback(
+    async (org: Org, file: File | undefined) => {
+      if (!file) return;
+
+      if (!file.type.startsWith('image/')) {
+        showToast?.('Please choose an image file (PNG, JPG, SVG, or WebP).', 'error');
+        return;
+      }
+
+      if (file.size > ORG_LOGO_MAX_BYTES) {
+        showToast?.('Logo must be 2MB or smaller.', 'error');
+        return;
+      }
+
+      setOrgLogoUploading(org.id, true);
+      try {
+        const logoDataUrl = await fileToDataUrl(file);
+        const updated = await orgService.updateOrg(org.id, { logo: logoDataUrl });
+
+        setOrganizations((prev) => prev.map((entry) => (entry.id === org.id ? { ...entry, logo: updated.logo ?? logoDataUrl } : entry)));
+        if (selectedOrgId === org.id) {
+          void loadSelectedOrgProfile(org.id);
+        }
+        showToast?.(`Updated logo for ${org.name}.`, 'success');
+      } catch (error) {
+        console.error('Failed to upload organization logo', error);
+        showToast?.('Failed to upload logo. Please try again.', 'error');
+      } finally {
+        setOrgLogoUploading(org.id, false);
+        const input = logoInputRefs.current[org.id];
+        if (input) {
+          input.value = '';
+        }
+      }
+    },
+    [fileToDataUrl, loadSelectedOrgProfile, selectedOrgId, setOrgLogoUploading, showToast],
+  );
+
+  const triggerOrgLogoPicker = useCallback((orgId: string) => {
+    logoInputRefs.current[orgId]?.click();
+  }, []);
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -687,7 +763,9 @@ const AdminOrgWorkspace = () => {
                 const onboardingPct = onboarding
                   ? Math.round(((onboarding.completed_steps ?? 0) / Math.max(onboarding.total_steps ?? 1, 1)) * 100)
                   : null;
+                const orgUserCounts = resolveOrgUserCounts(org);
                 const isSelected = selectedOrgId === org.id;
+                const isUploadingLogo = Boolean(logoUploadingByOrg[org.id]);
                 return (
                   <div
                     key={org.id}
@@ -698,8 +776,49 @@ const AdminOrgWorkspace = () => {
                   >
                     <div className="flex items-start justify-between">
                       <div className="flex items-center gap-3">
-                        <div className="rounded-lg bg-blue-100 p-2">
-                          <Building2 className="h-6 w-6 text-blue-600" />
+                        <div className="relative h-12 w-12 shrink-0">
+                          <input
+                            ref={(node) => {
+                              logoInputRefs.current[org.id] = node;
+                            }}
+                            type="file"
+                            accept="image/*"
+                            className="hidden"
+                            onClick={(event) => event.stopPropagation()}
+                            onChange={(event) => {
+                              event.stopPropagation();
+                              void handleOrgLogoFileSelected(org, event.target.files?.[0]);
+                            }}
+                          />
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.preventDefault();
+                              event.stopPropagation();
+                              if (!isUploadingLogo) {
+                                triggerOrgLogoPicker(org.id);
+                              }
+                            }}
+                            className="group h-12 w-12 overflow-hidden rounded-lg border border-blue-100 bg-blue-50"
+                            title={isUploadingLogo ? 'Uploading logo…' : `Upload logo for ${org.name}`}
+                            aria-label={isUploadingLogo ? `Uploading logo for ${org.name}` : `Upload logo for ${org.name}`}
+                          >
+                            {org.logo ? (
+                              <img src={org.logo} alt={`${org.name} logo`} className="h-full w-full object-cover" />
+                            ) : (
+                              <div className="flex h-full w-full items-center justify-center">
+                                <Upload className="h-5 w-5 text-blue-500" />
+                              </div>
+                            )}
+                            <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-slate/40 opacity-0 transition group-hover:opacity-100">
+                              <Upload className="h-4 w-4 text-white" />
+                            </div>
+                          </button>
+                          {isUploadingLogo && (
+                            <div className="absolute -bottom-1 left-1/2 h-1.5 w-8 -translate-x-1/2 overflow-hidden rounded-full bg-blue-100">
+                              <div className="h-full w-full animate-pulse bg-blue-500" />
+                            </div>
+                          )}
                         </div>
                         <div>
                           <h3 className="font-bold text-gray-900">{org.name}</h3>
@@ -715,9 +834,9 @@ const AdminOrgWorkspace = () => {
                         <span className="text-sm font-medium text-gray-900">{org.contactPerson}</span>
                       </div>
                       <div className="flex items-center justify-between">
-                        <span className="text-sm text-gray-600">Learners</span>
+                        <span className="text-sm text-gray-600">Users</span>
                         <span className="text-sm font-medium text-gray-900">
-                          {org.activeLearners}/{org.totalLearners} active
+                          {orgUserCounts.active}/{orgUserCounts.total} active
                         </span>
                       </div>
                       <div className="flex items-center justify-between">
@@ -892,6 +1011,9 @@ const AdminOrgWorkspace = () => {
             ) : !selectedOrg || !selectedOrgProfile ? (
               <p className="text-sm text-gray-500">Select an organization to view its profile.</p>
             ) : (
+              (() => {
+                const selectedUserCounts = resolveOrgUserCounts(selectedOrg);
+                return (
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <div>
@@ -920,9 +1042,9 @@ const AdminOrgWorkspace = () => {
                     <p className="font-semibold text-gray-900">{selectedOrg.subscription}</p>
                   </div>
                   <div>
-                    <p className="text-gray-500">Learners</p>
+                    <p className="text-gray-500">Users</p>
                     <p className="font-semibold text-gray-900">
-                      {selectedOrg.activeLearners}/{selectedOrg.totalLearners}
+                      {selectedUserCounts.active}/{selectedUserCounts.total}
                     </p>
                   </div>
                   <div>
@@ -970,6 +1092,8 @@ const AdminOrgWorkspace = () => {
                   </div>
                 </div>
               </div>
+                );
+              })()
             )}
           </div>
 
