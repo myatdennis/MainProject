@@ -87,12 +87,14 @@ const createAbortController = (timeoutMs?: number, upstream?: AbortSignal | null
 export async function getAccessToken(): Promise<string | null> {
   // In E2E/dev-bypass mode, use the token stored in secureStorage instead
   // of attempting a real Supabase session lookup (placeholder URL would fail).
+  // IMPORTANT: return null when no stored token exists; callers must use
+  // explicit x-e2e-bypass headers instead of synthetic bearer tokens.
   const isE2EBypass =
     typeof window !== 'undefined' &&
     (Boolean((window as any).__E2E_BYPASS) ||
       Boolean((window as any).__E2E_SUPABASE_CLIENT));
   if (isE2EBypass) {
-    return getStoredAccessToken() ?? 'e2e-access-token';
+    return getStoredAccessToken() ?? null;
   }
   const { data, error } = await supabase.auth.getSession();
   if (error) {

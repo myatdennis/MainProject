@@ -1,6 +1,7 @@
 import { buildApiUrl } from '../config/apiBase';
 import buildAuthHeaders from '../utils/requestContext';
 import { getCSRFToken } from '../utils/csrfToken';
+import { ApiError } from '../utils/apiClient';
 
 export type UploadProgressHandler = (percent: number, event?: ProgressEvent<EventTarget>) => void;
 
@@ -62,18 +63,30 @@ const sendFormDataWithProgress = async (path: string, formData: FormData, option
 
     xhr.onerror = () => {
       cleanup();
-      reject(new Error('Network error while uploading media'));
+      reject(new ApiError('Network error while uploading media', 0, url, null));
     };
 
     xhr.onload = () => {
       cleanup();
       const { status } = xhr;
-      const response = xhr.response ?? null;
+      let response = xhr.response ?? null;
+      if (!response && typeof xhr.responseText === 'string' && xhr.responseText.trim()) {
+        try {
+          response = JSON.parse(xhr.responseText);
+        } catch {
+          response = null;
+        }
+      }
       if (status >= 200 && status < 300) {
         resolve(response);
       } else {
-        const message = response?.error || response?.message || `Upload failed with status ${status}`;
-        reject(new Error(message));
+        const body = response ?? (xhr.responseText ? { raw: xhr.responseText } : null);
+        const message =
+          response?.message ||
+          response?.error ||
+          (typeof body?.raw === 'string' ? body.raw : null) ||
+          `Upload failed with status ${status}`;
+        reject(new ApiError(message, status, url, body));
       }
     };
 

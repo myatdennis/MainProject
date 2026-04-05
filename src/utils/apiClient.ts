@@ -374,6 +374,17 @@ const shouldLogDebug = (url: string): boolean => {
   return true;
 };
 
+const isE2EBypassActive = (): boolean => {
+  if (typeof window === 'undefined') return false;
+  return Boolean((window as any).__E2E_BYPASS);
+};
+
+const inferE2EBypassRole = (): 'admin' | 'learner' => {
+  if (typeof window === 'undefined') return 'learner';
+  const pathname = String(window.location?.pathname || '').toLowerCase();
+  return pathname.startsWith('/admin') ? 'admin' : 'learner';
+};
+
 const extractPathname = (target: string): string => {
   try {
     if (ABSOLUTE_URL_REGEX.test(target)) {
@@ -481,6 +492,16 @@ const prepareRequest = async (path: string, options: InternalRequestOptions = {}
 
   const baseHeaders: Record<string, string> = {};
   const headers = mergeHeadersSafely(baseHeaders, authHeaders, options.headers);
+
+  if (isE2EBypassActive()) {
+    // In browser E2E bypass mode, auth is represented by explicit test headers.
+    // Never send synthetic bearer tokens here, or server JWT validation will 401.
+    delete headers.Authorization;
+    headers['X-E2E-Bypass'] = 'true';
+    if (!headers['X-User-Role']) {
+      headers['X-User-Role'] = inferE2EBypassRole();
+    }
+  }
 
   if (attachAuth && requiresSession && !headers.Authorization) {
     const token = await getAccessToken();

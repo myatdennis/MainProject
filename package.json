@@ -32,6 +32,8 @@
     "test:run": "vitest run",
     "test:importer": "vitest run tests/importer/importer.spec.ts",
     "test:integration": "vitest run --config tests/vitest.integration.config.ts",
+    "test:integration:tenant-isolation": "vitest run --config tests/vitest.integration.config.ts tests/integration/server.behavior.spec.ts tests/integration/adminOrgScope.spec.ts",
+    "test:auth-bypass-gate": "vitest run src/utils/__tests__/apiClient.behavior.test.ts src/lib/__tests__/authorizedFetch.e2eBypass.test.ts",
     "test:unit": "vitest run src/services/__tests__/batchService.test.ts",
     "test:diagnostics": "vitest run --config vitest.server.config.ts",
     "env:check": "node scripts/check_vite_api.cjs",

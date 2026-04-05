@@ -34,11 +34,17 @@ jobs:
       - name: Validation unit suites
         run: npx vitest run src/validation/__tests__/courseValidation.test.ts src/validation/__tests__/serverCourseValidation.test.ts src/contracts/__tests__/courseWriteContract.test.ts
 
+      - name: Tenant isolation integration gates
+        run: npm run -s test:integration:tenant-isolation
+
+      - name: Auth bypass regression gates
+        run: npm run -s test:auth-bypass-gate
+
       - name: Install Playwright (Chromium)
         run: npx playwright install --with-deps chromium
 
       - name: Course builder E2E gates
-        run: npm run test:e2e -- tests/e2e/course_builder_concurrency.spec.ts tests/e2e/course_builder_feature_validation.spec.ts
+        run: npm run test:e2e -- tests/e2e/course_builder_concurrency.spec.ts tests/e2e/course_builder_feature_validation.spec.ts tests/e2e/course_builder_quiz_persistence.spec.ts
 
       - name: Write production env
         if: ${{ env.VITE_SUPABASE_URL != '' && env.VITE_SUPABASE_ANON_KEY != '' }}

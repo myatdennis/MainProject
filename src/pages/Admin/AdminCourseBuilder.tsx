@@ -168,6 +168,39 @@ const formatApiErrorToast = (info: ApiErrorInfo, context: string): string => {
   return `${context} failed. ${prefix}${detail}`.trim();
 };
 
+const toMegabytes = (bytes: number): string => (bytes / (1024 * 1024)).toFixed(0);
+
+const buildClearedVideoContent = (
+  content?: LessonContent,
+  sourceType?: LessonContent['videoSourceType'],
+): LessonContent => {
+  const base = ((content && typeof content === 'object'
+    ? { ...(content as Record<string, unknown>) }
+    : {}) as Record<string, unknown>);
+
+  delete base.video;
+  delete (base as any).video_url;
+  delete (base as any).video_asset;
+
+  const nextContent: LessonContent = {
+    ...(base as LessonContent),
+    videoUrl: '',
+    videoAsset: undefined,
+    fileName: '',
+    fileSize: '',
+    videoDuration: undefined,
+    videoThumbnail: undefined,
+    externalVideoId: undefined,
+    videoProvider: undefined,
+  };
+
+  if (sourceType) {
+    nextContent.videoSourceType = sourceType;
+  }
+
+  return nextContent;
+};
+
 const nextRequestToken = () =>
   typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
     ? crypto.randomUUID()
@@ -3007,24 +3040,37 @@ const scheduleAutosave = useCallback(
   };
 
   const updateLesson = (moduleId: string, lessonId: string, updates: Partial<Lesson>) => {
-    const module = course.modules?.find(m => m.id === moduleId);
-    if (!module) return;
+    setCourse((prev) => {
+      const modules = prev.modules || [];
+      const nextModules = modules.map((module) => {
+        if (module.id !== moduleId) return module;
 
-    const updatedLessons = module.lessons.map(lesson => {
-      if (lesson.id !== lessonId) return lesson;
-      const merged: Lesson = {
-        ...lesson,
-        ...updates,
-        module_id: lesson.module_id || (lesson as any).moduleId || moduleId,
-        moduleId: lesson.module_id || (lesson as any).moduleId || moduleId,
+        const updatedLessons = (module.lessons || []).map((lesson) => {
+          if (lesson.id !== lessonId) return lesson;
+          const merged: Lesson = {
+            ...lesson,
+            ...updates,
+            module_id: lesson.module_id || (lesson as any).moduleId || moduleId,
+            moduleId: lesson.module_id || (lesson as any).moduleId || moduleId,
+          };
+          if (merged.content) {
+            merged.content = canonicalizeLessonContent(merged.content);
+          }
+          return merged;
+        });
+
+        return {
+          ...module,
+          lessons: updatedLessons,
+        };
+      });
+
+      return {
+        ...prev,
+        modules: nextModules,
       };
-      if (merged.content) {
-        merged.content = canonicalizeLessonContent(merged.content);
-      }
-      return merged;
     });
 
-    updateModule(moduleId, { lessons: updatedLessons });
     if (editingLesson && editingLesson.moduleId === moduleId && editingLesson.lessonId === lessonId) {
       setLessonAutosaveState((prev) => ({
         status: prev.status === 'error' ? prev.status : 'idle',
@@ -3118,17 +3164,10 @@ const scheduleAutosave = useCallback(
     const existingContent = course.modules
       ?.find((m) => m.id === moduleId)
       ?.lessons.find((l) => l.id === lessonId)?.content;
+    const sourceType = existingContent?.videoSourceType;
 
     updateLesson(moduleId, lessonId, {
-      content: {
-        ...existingContent,
-        videoUrl: '',
-        videoAsset: undefined,
-        fileName: '',
-        fileSize: '',
-        externalVideoId: undefined,
-        videoProvider: undefined,
-      },
+      content: buildClearedVideoContent(existingContent, sourceType),
     });
 
     pendingUploadFiles.current[uploadKey] = null;
@@ -3236,12 +3275,26 @@ const scheduleAutosave = useCallback(
       if (error?.name === 'AbortError') {
         setUploadStatuses((prev) => ({ ...prev, [uploadKey]: { status: 'paused', message: 'Upload paused' } }));
       } else {
-        const message =
+        const apiInfo = extractApiErrorInfo(error);
+        let message =
           error instanceof ApiError
             ? error.message
             : error instanceof Error
               ? error.message
               : 'Upload failed due to an unknown error';
+
+        if (apiInfo?.status === 413) {
+          const body = (error instanceof ApiError && error.body && typeof error.body === 'object'
+            ? (error.body as Record<string, unknown>)
+            : null);
+          const maxBytes = typeof body?.maxBytes === 'number'
+            ? body.maxBytes
+            : typeof body?.meta === 'object' && body.meta && typeof (body.meta as Record<string, unknown>).maxBytes === 'number'
+              ? ((body.meta as Record<string, unknown>).maxBytes as number)
+              : VIDEO_UPLOAD_LIMIT_BYTES;
+          message = `Video is too large for upload. Max allowed is ${toMegabytes(maxBytes)}MB. Try a smaller file or use an external URL.`;
+        }
+
         setUploadErrors((prev) => ({ ...prev, [uploadKey]: message }));
         setUploadStatuses((prev) => ({ ...prev, [uploadKey]: { status: 'error', message } }));
         showToast(message, 'error');
@@ -3556,14 +3609,24 @@ const scheduleAutosave = useCallback(
                   <button
                     onClick={() => updateLesson(moduleId, lesson.id, {
                       content: {
-                        ...lesson.content,
+                        ...buildClearedVideoContent(lesson.content, 'internal'),
                         videoSourceType: 'internal',
-                        videoProvider: undefined,
-                        externalVideoId: undefined,
                         videoUrl:
                           lesson.content.videoSourceType === 'internal'
                             ? lesson.content.videoUrl
                             : lesson.content.videoAsset?.signedUrl ?? '',
+                        videoAsset:
+                          lesson.content.videoSourceType === 'internal'
+                            ? lesson.content.videoAsset
+                            : undefined,
+                        fileName:
+                          lesson.content.videoSourceType === 'internal'
+                            ? lesson.content.fileName
+                            : undefined,
+                        fileSize:
+                          lesson.content.videoSourceType === 'internal'
+                            ? lesson.content.fileSize
+                            : undefined,
                       }
                     })}
                     className={`p-4 border-2 rounded-lg transition-all duration-200 ${
@@ -3578,11 +3641,12 @@ const scheduleAutosave = useCallback(
                   <button
                     onClick={() => updateLesson(moduleId, lesson.id, {
                       content: {
-                        ...lesson.content,
+                        ...buildClearedVideoContent(lesson.content, 'external'),
                         videoSourceType: 'external',
                         videoAsset: undefined,
                         fileName: undefined,
                         fileSize: undefined,
+                        videoUrl: lesson.content.videoSourceType === 'external' ? lesson.content.videoUrl || '' : '',
                       }
                     })}
                     className={`p-4 border-2 rounded-lg transition-all duration-200 ${
@@ -3702,7 +3766,7 @@ const scheduleAutosave = useCallback(
                               onClick={() =>
                                 updateLesson(moduleId, lesson.id, {
                                   content: {
-                                    ...lesson.content,
+                                    ...buildClearedVideoContent(lesson.content, 'external'),
                                     videoSourceType: 'external',
                                     videoAsset: undefined,
                                   },
@@ -3826,10 +3890,9 @@ const scheduleAutosave = useCallback(
                       onClick={() =>
                         updateLesson(moduleId, lesson.id, {
                           content: {
-                            ...lesson.content,
+                            ...buildClearedVideoContent(lesson.content, 'internal'),
                             videoSourceType: 'internal',
-                            videoProvider: undefined,
-                            externalVideoId: undefined,
+                            videoUrl: lesson.content.videoAsset?.signedUrl ?? '',
                           },
                         })
                       }
@@ -4488,6 +4551,7 @@ const scheduleAutosave = useCallback(
             </p>
 
             {/* Quiz Questions Section */}
+            {lesson.type !== 'quiz' && (
             <div className="mb-6">
               <div className="flex items-center justify-between mb-3">
                 <label className="block text-sm font-medium text-gray-700">Knowledge Check Questions</label>
@@ -4696,6 +4760,7 @@ const scheduleAutosave = useCallback(
                 </div>
               )}
             </div>
+            )}
           </div>
 
           <div className="flex items-center justify-end space-x-3 pt-4 border-t border-gray-200">
@@ -4706,7 +4771,20 @@ const scheduleAutosave = useCallback(
               Cancel
             </button>
             <button
-              onClick={() => setEditingLesson(null)}
+              onClick={async () => {
+                if (
+                  lessonAutosaveState.pending &&
+                  lessonAutosaveState.moduleId === moduleId &&
+                  lessonAutosaveState.lessonId === lesson.id
+                ) {
+                  try {
+                    await flushAutosave();
+                  } catch (error) {
+                    console.warn('[AdminCourseBuilder] lesson save flush failed', error);
+                  }
+                }
+                setEditingLesson(null);
+              }}
               className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors duration-200"
             >
               Save Lesson

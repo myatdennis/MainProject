@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest';
 import { __setApiBaseUrlOverride } from '../../config/apiBase';
 import * as sessionGate from '../../lib/sessionGate';
 import { supabase } from '../../lib/supabaseClient';
@@ -327,7 +327,7 @@ describe('apiClient', () => {
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.huddle.local');
     __setApiBaseUrlOverride('https://api.huddle.local');
     shouldRequireSessionSpy.mockReturnValue(true);
-    getActiveSessionSpy.mockReturnValue({ id: 'user-1', role: 'admin', isPlatformAdmin: true });
+  getActiveSessionSpy.mockReturnValue({ id: 'user-1', email: 'user-1@test.local', role: 'admin', isPlatformAdmin: true });
     mockBuildAuthHeaders.mockResolvedValue({ 'X-Org-Id': 'org-99' });
     fetchSpy.mockResolvedValueOnce(createResponse({ ok: true }));
     const { apiRequest } = await loadApiClient();
@@ -340,15 +340,35 @@ describe('apiClient', () => {
     expect(getHeaderValue(headers, 'X-Org-Id')).toBe('org-99');
   });
 
+  it('uses explicit E2E bypass headers and strips Authorization in bypass mode', async () => {
+    vi.stubEnv('VITE_API_BASE_URL', 'https://api.huddle.local');
+    __setApiBaseUrlOverride('https://api.huddle.local');
+    shouldRequireSessionSpy.mockReturnValue(true);
+  getActiveSessionSpy.mockReturnValue({ id: 'user-1', email: 'user-1@test.local', role: 'admin', isPlatformAdmin: true });
+    setPathname('/admin/courses');
+    (window as any).__E2E_BYPASS = true;
+    mockBuildAuthHeaders.mockResolvedValue({ Authorization: 'Bearer should-not-leak' });
+    fetchSpy.mockResolvedValueOnce(createResponse({ ok: true }));
+    const { apiRequest } = await loadApiClient();
+
+  await apiRequest('/api/admin/courses', { skipAdminGateCheck: true });
+
+    const [, options] = fetchSpy.mock.calls[0];
+    const headers = headersToObject(options?.headers as HeadersInit);
+    expect(getHeaderValue(headers, 'Authorization')).toBeUndefined();
+    expect(getHeaderValue(headers, 'X-E2E-Bypass')).toBe('true');
+    expect(getHeaderValue(headers, 'X-User-Role')).toBe('admin');
+  });
+
   it('propagates server 403 when user lacks admin privileges', async () => {
     vi.stubEnv('VITE_API_BASE_URL', 'https://api.huddle.local');
     __setApiBaseUrlOverride('https://api.huddle.local');
     shouldRequireSessionSpy.mockReturnValue(true);
-    getActiveSessionSpy.mockReturnValue({ id: 'user-2', role: 'member' });
+  getActiveSessionSpy.mockReturnValue({ id: 'user-2', email: 'user-2@test.local', role: 'member' });
     fetchSpy.mockResolvedValueOnce(createResponse({ message: 'You need administrator access to perform this action.' }, { status: 403 }));
     const { apiRequest, ApiError } = await loadApiClient();
 
-    await expect(apiRequest('/api/admin/users')).rejects.toMatchObject({
+    await expect(apiRequest('/api/admin/users', { skipAdminGateCheck: true })).rejects.toMatchObject({
       status: 403,
       body: { message: 'You need administrator access to perform this action.' },
     } satisfies Partial<InstanceType<typeof ApiError>>);

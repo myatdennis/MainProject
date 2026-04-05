@@ -726,6 +726,57 @@ const videoUpload = multer({
   },
 });
 
+const isVideoTooLargeError = (error) => {
+  if (!error) return false;
+  if (error instanceof multer.MulterError && error.code === 'LIMIT_FILE_SIZE') {
+    return true;
+  }
+  const status = Number(error.statusCode ?? error.status ?? 0);
+  if (status === 413) {
+    return true;
+  }
+  const message = typeof error.message === 'string' ? error.message.toLowerCase() : '';
+  return message.includes('exceeded the maximum allowed size') || message.includes('payload too large');
+};
+
+const sendVideoTooLargeResponse = (res, source = 'upload') => {
+  const maxBytes = Number.isFinite(COURSE_VIDEO_UPLOAD_MAX_BYTES)
+    ? COURSE_VIDEO_UPLOAD_MAX_BYTES
+    : 50 * 1024 * 1024;
+  const maxMegabytes = Math.round(maxBytes / (1024 * 1024));
+  res.status(413).json({
+    error: 'video_too_large',
+    code: 'video_too_large',
+    message: `Video exceeds the size limit (${maxMegabytes}MB). Upload a smaller file or use an external URL.`,
+    maxBytes,
+    meta: {
+      source,
+      maxBytes,
+    },
+  });
+};
+
+const parseVideoUpload = (req, res, next) => {
+  videoUpload.single('file')(req, res, (error) => {
+    if (!error) {
+      next();
+      return;
+    }
+
+    if (isVideoTooLargeError(error)) {
+      sendVideoTooLargeResponse(res, error instanceof multer.MulterError ? 'multer' : 'request');
+      return;
+    }
+
+    console.error('[course-videos] Invalid upload request payload:', error);
+    res.status(400).json({
+      error: 'invalid_video_upload',
+      code: 'invalid_video_upload',
+      message: 'Unable to process video upload payload.',
+    });
+  });
+};
+
 // Helper functions for persistent storage
 function loadPersistedData() {
   try {
@@ -803,22 +854,97 @@ app.use(express.json({ limit: '10mb' }));
 app.use(attachRequestId);
 
 // ---------------------------------------------------------------------------
-// API Response Normalizer — ensures { ok: bool } is present on every /api/*
-// response without modifying the 135+ existing call sites individually.
-// Routes that already include ok: are passed through unchanged.
+// API Response Normalizer — ensures every /api/* response includes the
+// standardized envelope: { ok, data, code, message, meta }.
+// Legacy fields are preserved for backward compatibility.
 // ---------------------------------------------------------------------------
 app.use('/api', (req, res, next) => {
   const originalJson = res.json.bind(res);
-  res.json = function normalizedJson(body) {
-    if (body && typeof body === 'object' && !Array.isArray(body) && !('ok' in body)) {
-      const statusCode = res.statusCode || 200;
-      if (statusCode >= 400) {
-        body = { ok: false, ...body };
-      } else {
-        body = { ok: true, ...body };
-      }
+
+  const isPlainObject = (value) =>
+    Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+
+  const hasContractShape = (value) =>
+    isPlainObject(value) &&
+    ['ok', 'data', 'code', 'message', 'meta'].every((key) => Object.prototype.hasOwnProperty.call(value, key));
+
+  const inferData = (source, ok) => {
+    if (!isPlainObject(source)) {
+      return source ?? null;
     }
-    return originalJson(body);
+    if (Object.prototype.hasOwnProperty.call(source, 'data')) return source.data;
+    if (Object.prototype.hasOwnProperty.call(source, 'payload')) return source.payload;
+    if (Object.prototype.hasOwnProperty.call(source, 'result')) return source.result;
+    if (Object.prototype.hasOwnProperty.call(source, 'results')) return source.results;
+    if (Object.prototype.hasOwnProperty.call(source, 'items')) return source.items;
+    if (Object.prototype.hasOwnProperty.call(source, 'users')) return source.users;
+    if (Object.prototype.hasOwnProperty.call(source, 'courses')) return source.courses;
+    if (!ok) return null;
+
+    const keys = Object.keys(source).filter((key) => !['ok', 'code', 'message', 'meta', 'requestId'].includes(key));
+    if (keys.length === 1) {
+      return source[keys[0]];
+    }
+    return null;
+  };
+
+  const inferCode = (source, ok) => {
+    if (isPlainObject(source)) {
+      if (typeof source.code === 'string' && source.code.trim()) return source.code;
+      if (typeof source.error_code === 'string' && source.error_code.trim()) return source.error_code;
+      if (!ok && typeof source.error === 'string' && source.error.trim()) return source.error;
+    }
+    return ok ? null : 'request_failed';
+  };
+
+  const inferMessage = (source, ok) => {
+    if (isPlainObject(source)) {
+      if (typeof source.message === 'string' && source.message.trim()) return source.message;
+      if (!ok && typeof source.error === 'string' && source.error.trim()) return source.error;
+    }
+    return null;
+  };
+
+  const inferMeta = (source) => {
+    if (isPlainObject(source) && isPlainObject(source.meta)) {
+      return source.meta;
+    }
+    if (isPlainObject(source) && source.requestId) {
+      return { requestId: source.requestId };
+    }
+    return null;
+  };
+
+  res.json = function normalizedJson(body) {
+    if (hasContractShape(body)) {
+      return originalJson(body);
+    }
+
+    const statusCode = res.statusCode || 200;
+    const ok = isPlainObject(body) && typeof body.ok === 'boolean' ? body.ok : statusCode < 400;
+    const data = inferData(body, ok);
+    const code = inferCode(body, ok);
+    const message = inferMessage(body, ok);
+    const meta = inferMeta(body);
+
+    const normalized = isPlainObject(body)
+      ? {
+          ...body,
+          ok,
+          data,
+          code,
+          message,
+          meta,
+        }
+      : {
+          ok,
+          data,
+          code,
+          message,
+          meta,
+        };
+
+    return originalJson(normalized);
   };
   next();
 });
@@ -1086,6 +1212,82 @@ const deriveOverallStatus = (statuses = []) => {
   return 'ok';
 };
 
+const normalizeHealthStatus = (value) => {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (!normalized) return 'unknown';
+  if (normalized === 'healthy') return 'ok';
+  if (normalized === 'warn') return 'degraded';
+  return normalized;
+};
+
+const mapHealthStatusToAlertLevel = (status) => {
+  const normalized = normalizeHealthStatus(status);
+  if (normalized === 'error') return 'critical';
+  if (['degraded', 'disabled', 'unknown'].includes(normalized)) return 'warning';
+  return 'info';
+};
+
+const buildHealthSignal = ({
+  payload,
+  dbHealth,
+  forceHealthyForDev,
+  requestId = null,
+} = {}) => {
+  const checks = [
+    {
+      component: 'database',
+      status: normalizeHealthStatus(dbHealth?.status),
+      code: dbHealth?.code ?? null,
+      message: dbHealth?.message ?? dbHealth?.note ?? null,
+    },
+    {
+      component: 'supabase',
+      status: normalizeHealthStatus(payload?.supabase?.status),
+      code: payload?.supabase?.code ?? null,
+      message: payload?.supabase?.message ?? null,
+    },
+    {
+      component: 'offlineQueue',
+      status: normalizeHealthStatus(payload?.offlineQueue?.status),
+      code: null,
+      message: null,
+    },
+    {
+      component: 'storage',
+      status: normalizeHealthStatus(payload?.storage?.status),
+      code: payload?.storage?.code ?? null,
+      message: payload?.storage?.message ?? null,
+    },
+    {
+      component: 'realtime',
+      status: payload?.realtime?.wsEnabled ? 'ok' : 'degraded',
+      code: payload?.realtime?.wsError ? 'ws_unavailable' : null,
+      message: payload?.realtime?.wsError ?? null,
+    },
+  ].map((entry) => ({
+    ...entry,
+    alertLevel: mapHealthStatusToAlertLevel(entry.status),
+  }));
+
+  const probeStatus = normalizeHealthStatus(payload?.status);
+  const forcedHealthy = Boolean(forceHealthyForDev && probeStatus === 'error');
+  const effectiveStatus = forcedHealthy ? 'degraded_tolerated' : probeStatus;
+  const alertLevel = forcedHealthy ? 'warning' : mapHealthStatusToAlertLevel(probeStatus);
+  const reasons = checks
+    .filter((check) => check.status !== 'ok')
+    .map((check) => `${check.component}:${check.status}`);
+
+  return {
+    probeStatus,
+    effectiveStatus,
+    alertLevel,
+    forcedHealthy,
+    reasons,
+    checks,
+    requestId,
+  };
+};
+
 const buildHealthPayload = async (overrides = {}) => {
   const [supabaseHealth, storageHealth] = await Promise.all([
     checkSupabaseHealth().catch((error) => {
@@ -1212,7 +1414,8 @@ const respondWithHealthPayload = async (_req, res) => {
     const dbHealth = await probeDatabaseHealth();
     const overrides = { database: dbHealth };
     if (!dbHealth.ok) {
-      overrides.status = 'degraded';
+      const dbStatus = normalizeHealthStatus(dbHealth.status);
+      overrides.status = dbStatus === 'error' || dbStatus === 'disabled' ? 'error' : 'degraded';
     }
     const payload = await buildHealthPayload(overrides);
     // In local/dev/e2e modes we prefer the health endpoint to remain HTTP 200
@@ -1221,8 +1424,16 @@ const respondWithHealthPayload = async (_req, res) => {
     // will still contain the real database status under `database`.
   const isDevEnv = !process.env.NODE_ENV || process.env.NODE_ENV === 'development';
   const forceHealthyForDev = Boolean(isDevEnv || isDemoMode || isTestMode);
-  const statusCode = dbHealth.ok || forceHealthyForDev ? 200 : 503;
-  const returnedOk = Boolean(dbHealth.ok || forceHealthyForDev);
+  const probeStatus = normalizeHealthStatus(payload.status);
+  const isCriticalProbe = probeStatus === 'error';
+  const statusCode = isCriticalProbe && !forceHealthyForDev ? 503 : 200;
+  const returnedOk = Boolean(!isCriticalProbe || forceHealthyForDev);
+  const healthSignal = buildHealthSignal({
+    payload,
+    dbHealth,
+    forceHealthyForDev,
+    requestId: _req?.requestId ?? null,
+  });
     // If we're forcing healthy for dev/E2E, surface the real DB details but
     // report overall ok=true to avoid blocking test harnesses. Keep database
     // payload intact so callers can still inspect the real condition.
@@ -1238,6 +1449,7 @@ const respondWithHealthPayload = async (_req, res) => {
       metrics: payload.metrics,
       database: payload.database ?? dbHealth,
       featureFlags: payload.featureFlags,
+      healthSignal,
     });
   } catch (error) {
     logger.warn('health_check_failed', { message: error?.message || String(error), code: error?.code || null });
@@ -1606,7 +1818,8 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
     return record;
   };
 
-  const targetUserIds = normalizedUserIds.length > 0 ? normalizedUserIds : [null];
+  let targetUserIds = normalizedUserIds.length > 0 ? [...normalizedUserIds] : [];
+  const shouldCreateOrgLevelAssignment = assignmentMode === 'organization';
   const buildAssignmentKey = (value) => (value === null ? '__org__' : String(value).toLowerCase());
   const resolveRowKey = (row) => {
     if (!row) return '__org__';
@@ -1615,6 +1828,51 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
   };
 
   try {
+    if (targetUserIds.length === 0) {
+      if (isFallbackMode) {
+        const fallbackResolved = (Array.isArray(e2eStore.users) ? e2eStore.users : [])
+          .filter((member) => {
+            const memberOrg = normalizeOrgIdValue(member?.organization_id ?? member?.org_id ?? member?.organizationId ?? member?.orgId ?? null);
+            return memberOrg && String(memberOrg) === String(finalOrganizationId);
+          })
+          .map((member) => {
+            const candidate = member?.user_id ?? member?.userId ?? member?.id ?? null;
+            return typeof candidate === 'string' ? candidate.trim() : '';
+          })
+          .filter((candidate) => candidate && isUuid(candidate));
+        targetUserIds = Array.from(new Set(fallbackResolved));
+      } else {
+        const membershipOrgColumn = await getOrganizationMembershipsOrgColumnName();
+        const statusColumn = await getOrganizationMembershipsStatusColumnName();
+        const membershipSelect =
+          statusColumn === 'is_active'
+            ? buildMembershipSelect('user_id', 'is_active')
+            : buildMembershipSelect('user_id', 'status');
+        let membershipQuery = supabase
+          .from('organization_memberships')
+          .select(membershipSelect)
+          .eq(membershipOrgColumn, finalOrganizationId);
+
+        if (statusColumn === 'is_active') {
+          membershipQuery = membershipQuery.eq('is_active', true);
+        } else {
+          membershipQuery = membershipQuery.eq('status', 'active');
+        }
+
+        const { data: membershipRows, error: membershipError } = await membershipQuery;
+        if (membershipError) throw membershipError;
+
+        const resolvedFromOrg = (membershipRows || [])
+          .map((row) => (typeof row?.user_id === 'string' ? row.user_id.trim() : ''))
+          .filter((candidate) => candidate && isUuid(candidate));
+        targetUserIds = Array.from(new Set(resolvedFromOrg));
+      }
+
+      if (shouldCreateOrgLevelAssignment && targetUserIds.length === 0) {
+        targetUserIds = [null];
+      }
+    }
+
     if (isFallbackMode) {
       const updated = [];
       const inserted = [];
@@ -1751,17 +2009,22 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
     }
 
     const existingMap = new Map();
-    if (normalizedUserIds.length > 0) {
+    if (targetUserIds.length > 0) {
+      const userScopedTargetIds = targetUserIds.filter((value) => value !== null);
+      const includesOrgLevelTarget = targetUserIds.some((value) => value === null);
       const seenAssignmentIds = new Set();
 
       const fetchExistingByColumn = async (column) => {
+        if (userScopedTargetIds.length === 0) {
+          return [];
+        }
         const { data, error } = await supabase
           .from('assignments')
           .select('*')
           .eq('course_id', courseId)
           .eq('organization_id', finalOrganizationId)
           .eq('active', true)
-          .in(column, normalizedUserIds);
+          .in(column, userScopedTargetIds);
         if (error) throw error;
         return data || [];
       };
@@ -1781,18 +2044,22 @@ app.post('/api/admin/courses/:id/assign', authenticate, requireOrgAdmin, async (
           existingMap.set(resolveRowKey(row), row);
         });
       }
-    } else {
-      const { data: existingOrg, error } = await supabase
-        .from('assignments')
-        .select('*')
-        .eq('course_id', courseId)
-        .eq('organization_id', finalOrganizationId)
-        .eq('active', true)
-        .is('user_id', null);
-      if (error) throw error;
-      (existingOrg || []).forEach((row) => {
-        existingMap.set('__org__', row);
-      });
+
+      if (includesOrgLevelTarget) {
+        const { data: existingOrg, error } = await supabase
+          .from('assignments')
+          .select('*')
+          .eq('course_id', courseId)
+          .eq('organization_id', finalOrganizationId)
+          .eq('active', true)
+          .is('user_id', null);
+        if (error) throw error;
+        (existingOrg || []).forEach((row) => {
+          if (!row || seenAssignmentIds.has(row.id)) return;
+          seenAssignmentIds.add(row.id);
+          existingMap.set('__org__', row);
+        });
+      }
     }
 
     const updates = [];
@@ -3686,6 +3953,7 @@ const collectOrgIdsFromContext = (context = {}, req = {}) => {
 const resolveOrgScopeForRequest = async (req, context, { queryOrgId = null } = {}) => {
   const membershipIds = collectOrgIdsFromContext(context, req);
   const headerOrgId = getHeaderOrgId(req, { requireMembership: !context?.isPlatformAdmin });
+  const normalizedQueryOrgId = normalizeOrgIdValue(queryOrgId);
   const candidateIdentifiers = [];
   if (context?.isPlatformAdmin && queryOrgId) {
     candidateIdentifiers.push(queryOrgId);
@@ -3706,6 +3974,16 @@ const resolveOrgScopeForRequest = async (req, context, { queryOrgId = null } = {
       break;
     }
   }
+
+  if (
+    !resolvedOrgId &&
+    context?.isPlatformAdmin &&
+    normalizedQueryOrgId &&
+    (isDemoOrTestMode || isFallbackMode || !supabase)
+  ) {
+    resolvedOrgId = normalizedQueryOrgId;
+  }
+
   const membershipList = Array.from(membershipIds);
   const membershipSet = new Set(membershipList);
   const scopedOrgIds = resolvedOrgId ? [resolvedOrgId] : membershipList;
@@ -12575,7 +12853,9 @@ app.post('/api/admin/courses/import', authenticate, requireOrgAdmin, asyncHandle
       course: rawEntry?.course ?? rawEntry ?? {},
       modules: normalizedModules,
     };
-    const validation = validateCoursePayload(payload);
+    const validation = validateCoursePayload(payload, {
+      enforceLessonContent: publishRequested,
+    });
     if (!validation.ok) {
       const issues = validation.issues.map((issue) => ({
         courseIndex: rawEntry.index,
@@ -20055,7 +20335,7 @@ app.post(
   '/api/admin/courses/:courseId/modules/:moduleId/lessons/:lessonId/video-upload',
   authenticate,
   requireAdmin,
-  videoUpload.single('file'),
+  parseVideoUpload,
   async (req, res) => {
     if (!ensureSupabase(res)) return;
     if (!supabase) {
@@ -20141,6 +20421,25 @@ app.post(
       });
     } catch (error) {
       console.error('[course-videos] Failed to upload lesson video:', error);
+
+      if (isVideoTooLargeError(error)) {
+        sendVideoTooLargeResponse(res, 'storage');
+        return;
+      }
+
+      const providerStatus = Number(error?.statusCode ?? error?.status ?? 0);
+      if (providerStatus >= 400 && providerStatus < 500) {
+        res.status(providerStatus).json({
+          error: 'video_upload_rejected',
+          code: 'video_upload_rejected',
+          message:
+            typeof error?.message === 'string' && error.message.trim()
+              ? error.message
+              : 'Video upload was rejected by upstream storage.',
+        });
+        return;
+      }
+
       res.status(500).json({ error: 'Unable to upload video file' });
     }
   },

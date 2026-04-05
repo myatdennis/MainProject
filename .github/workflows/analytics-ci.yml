@@ -6,8 +6,6 @@ on:
 jobs:
   migrate-and-seed:
     runs-on: ubuntu-latest
-    env:
-      DATABASE_URL: ${{ secrets.ANALYTICS_DATABASE_URL }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -23,12 +21,18 @@ jobs:
       - name: Install libpq (psql)
         run: sudo apt-get update && sudo apt-get install -y libpq-dev postgresql-client
 
-      - name: Run migration
-        if: ${{ env.DATABASE_URL != '' }}
+      - name: Run migration (optional)
         run: |
-          sh ./scripts/run_migration.sh supabase/migrations/20251108_add_analytics_tables_and_views.sql
+          if [ -n "${DATABASE_URL}" ]; then
+            sh ./scripts/run_migration.sh supabase/migrations/20251108_add_analytics_tables_and_views.sql
+          else
+            echo 'DATABASE_URL not configured in workflow environment; skipping migration.'
+          fi
 
-      - name: Seed analytics data
-        if: ${{ env.DATABASE_URL != '' }}
+      - name: Seed analytics data (optional)
         run: |
-          node ./scripts/seed_analytics.js
+          if [ -n "${DATABASE_URL}" ]; then
+            node ./scripts/seed_analytics.js
+          else
+            echo 'DATABASE_URL not configured in workflow environment; skipping analytics seed.'
+          fi

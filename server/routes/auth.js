@@ -74,7 +74,7 @@ const legacyDemoUsers = isProduction ? [] : [
     role: 'admin',
     firstName: 'Admin',
     lastName: 'User',
-    password: process.env.DEMO_ADMIN_PASSWORD || null,
+    password: process.env.DEMO_ADMIN_PASSWORD || (isE2ETestMode ? 'admin123' : null),
     organizationId: undefined,
   },
   {
@@ -83,7 +83,7 @@ const legacyDemoUsers = isProduction ? [] : [
     role: 'user',
     firstName: 'Demo',
     lastName: 'User',
-    password: process.env.DEMO_USER_PASSWORD || null,
+    password: process.env.DEMO_USER_PASSWORD || (isE2ETestMode ? 'user123' : null),
     organizationId: DEMO_SANDBOX_ORG_ID,
   },
 ].filter((u) => Boolean(u.password));

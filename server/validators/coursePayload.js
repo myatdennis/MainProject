@@ -169,12 +169,22 @@ const extractLessonQuestions = (lesson) => {
   return (
     (Array.isArray(existingBody?.questions) && existingBody.questions) ||
     (Array.isArray(existingBody?.quiz?.questions) && existingBody.quiz.questions) ||
+    (Array.isArray(existingBody?.quizQuestions) && existingBody.quizQuestions) ||
+    (Array.isArray(existingBody?.quiz_questions) && existingBody.quiz_questions) ||
     extractQuestionsFromPath(lesson, ['content', 'questions']) ||
+    extractQuestionsFromPath(lesson, ['content', 'quizQuestions']) ||
+    extractQuestionsFromPath(lesson, ['content', 'quiz_questions']) ||
     extractQuestionsFromPath(lesson, ['content', 'body', 'questions']) ||
     extractQuestionsFromPath(lesson, ['content', 'quiz', 'questions']) ||
     extractQuestionsFromPath(lesson, ['content_json', 'questions']) ||
+    extractQuestionsFromPath(lesson, ['content_json', 'quizQuestions']) ||
+    extractQuestionsFromPath(lesson, ['content_json', 'quiz_questions']) ||
     extractQuestionsFromPath(lesson, ['content_json', 'body', 'questions']) ||
     extractQuestionsFromPath(lesson, ['content_json', 'quiz', 'questions']) ||
+    extractQuestionsFromPath(lesson, ['content_json', 'body', 'quizQuestions']) ||
+    extractQuestionsFromPath(lesson, ['content_json', 'body', 'quiz_questions']) ||
+    (Array.isArray(lesson?.quizQuestions) && lesson.quizQuestions.length > 0 ? lesson.quizQuestions : null) ||
+    (Array.isArray(lesson?.quiz_questions) && lesson.quiz_questions.length > 0 ? lesson.quiz_questions : null) ||
     (Array.isArray(lesson?.questions) && lesson.questions.length > 0 ? lesson.questions : null) ||
     deriveQuestionsFromBlocks(lesson)
   );
@@ -480,7 +490,7 @@ const hasScenarioElements = (lesson) => {
   return { ok: true };
 };
 
-export function validateCoursePayload(payload) {
+export function validateCoursePayload(payload, options = {}) {
   const normalizedInput = normalizeCoursePayloadInput(payload || {});
   const parsed = coursePayloadSchema.safeParse(normalizedInput);
   if (!parsed.success) {
@@ -516,6 +526,8 @@ export function validateCoursePayload(payload) {
         ? parsed.data.course.description.trim()
         : parsed.data.course.description,
   };
+
+  const enforceLessonContentRules = options?.enforceLessonContent === true;
 
   const issues = [];
 
@@ -578,7 +590,7 @@ export function validateCoursePayload(payload) {
         });
       }
 
-      if (lessonTypeRequiresQuestions.has(lesson.type)) {
+      if (enforceLessonContentRules && lessonTypeRequiresQuestions.has(lesson.type)) {
         const quizCheck = hasQuizQuestions(lesson);
         if (!quizCheck.ok) {
           issues.push({
@@ -590,7 +602,7 @@ export function validateCoursePayload(payload) {
         }
       }
 
-      if (lessonTypeRequiresScenario.has(lesson.type)) {
+      if (enforceLessonContentRules && lessonTypeRequiresScenario.has(lesson.type)) {
         const scenarioCheck = hasScenarioElements(lesson);
         if (!scenarioCheck.ok) {
           issues.push({

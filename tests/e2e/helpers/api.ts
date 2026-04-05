@@ -18,16 +18,38 @@ async function apiPost(path: string, body: any, extraHeaders?: Record<string, st
   try {
     console.log('[E2E apiPost] POST', url, JSON.stringify(body));
   } catch {}
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-user-role': 'admin',
-      ...(extraHeaders || {})
-    },
-    credentials: 'include',
-    body: JSON.stringify(body || {})
-  });
+  const requestHeaders: Record<string, string> = {
+    'Content-Type': 'application/json',
+    'x-user-role': 'admin',
+    'x-e2e-bypass': 'true',
+    'x-org-id': TEST_ORG_ID,
+    ...(extraHeaders || {}),
+  };
+
+  let res: Response | null = null;
+  let lastError: unknown = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        headers: requestHeaders,
+        credentials: 'include',
+        body: JSON.stringify(body || {})
+      });
+      break;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= 3) {
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, attempt * 150));
+    }
+  }
+
+  if (!res) {
+    throw new Error(`API POST ${path} failed before receiving a response: ${String(lastError)}`);
+  }
+
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`API POST ${path} failed: ${res.status} ${text}`);
