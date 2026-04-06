@@ -17099,7 +17099,7 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
   };
 
   const { userId, courseId } = snapshot;
-  const lessonList = Array.isArray(snapshot.lessons) ? snapshot.lessons : [];
+  let lessonList = Array.isArray(snapshot.lessons) ? snapshot.lessons : [];
   const courseProgress = snapshot.course || {};
   const nowIso = new Date().toISOString();
   const requestId = req.requestId ?? req.id ?? null;
@@ -17235,6 +17235,72 @@ app.post('/api/learner/progress', authenticate, asyncHandler(async (req, res) =>
   }
 
   if (!ensureSupabase(res)) return;
+
+  if (lessonList.length === 0 && courseId) {
+    const seedLessonListFromCourse = async () => {
+      const extractLessonIds = (modules = []) => {
+        const ids = [];
+        for (const moduleRecord of Array.isArray(modules) ? modules : []) {
+          const lessons = Array.isArray(moduleRecord?.lessons) ? moduleRecord.lessons : [];
+          for (const lesson of lessons) {
+            const lessonId = lesson?.id ? String(lesson.id) : null;
+            if (lessonId) ids.push(lessonId);
+          }
+        }
+        return Array.from(new Set(ids));
+      };
+
+      try {
+        const moduleQuery = await supabase
+          .from('modules')
+          .select('id,lessons:lessons(id,order_index)')
+          .eq('course_id', courseId)
+          .order('order_index', { ascending: true })
+          .order('order_index', { ascending: true, foreignTable: 'lessons' });
+        if (!moduleQuery.error) {
+          const lessonIds = extractLessonIds(moduleQuery.data || []);
+          if (lessonIds.length > 0) {
+            return lessonIds;
+          }
+        }
+      } catch (_error) {
+        // best-effort fallback below
+      }
+
+      try {
+        const courseQuery = await supabase
+          .from('courses')
+          .select('id,modules:modules(id,lessons:lessons(id,order_index))')
+          .eq('id', courseId)
+          .maybeSingle();
+        if (!courseQuery.error && courseQuery.data) {
+          return extractLessonIds(courseQuery.data.modules || []);
+        }
+      } catch (_error) {
+        // no-op; caller will retain empty lesson list
+      }
+
+      return [];
+    };
+
+    const seededLessonIds = await seedLessonListFromCourse();
+    if (seededLessonIds.length > 0) {
+      lessonList = seededLessonIds.map((lessonId) => ({
+        lessonId,
+        progressPercent: 0,
+        completed: false,
+        positionSeconds: 0,
+        lastAccessedAt: null,
+      }));
+      baseLogMeta.lessonCount = lessonList.length;
+      logger.info('learner_progress_seeded_empty_snapshot', {
+        requestId,
+        userId,
+        courseId,
+        seededLessonCount: lessonList.length,
+      });
+    }
+  }
 
   try {
     const normalizeLessonRecord = (row) => ({
@@ -23117,14 +23183,28 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
       throw unavailableError;
     }
 
-    const targetUserIds = normalizedUserIds.length > 0 ? normalizedUserIds : [null];
+    let targetUserIds = normalizedUserIds;
+    if (targetUserIds.length === 0) {
+      const members = await fetchOrgMembersWithProfiles(canonicalOrganizationId);
+      const activeUserIds = Array.from(
+        new Set(
+          (members || [])
+            .filter((member) => String(member?.status || '').toLowerCase() === 'active')
+            .map((member) => member?.user_id ?? member?.user?.id ?? null)
+            .filter(Boolean)
+            .map((value) => String(value)),
+        ),
+      );
+      targetUserIds = activeUserIds.length > 0 ? activeUserIds : [null];
+    }
+    const hasOrgWideTarget = targetUserIds.length === 1 && targetUserIds[0] === null;
     const buildSurveyAssignmentKey = (value) => (value === null ? '__org__' : String(value).toLowerCase());
     const verifyPersistedSurveyAssignments = async () => {
       const expectedKeys = new Set(targetUserIds.map((value) => buildSurveyAssignmentKey(value)));
       if (expectedKeys.size === 0) return [];
 
       const runVerificationRead = async () => {
-        if (normalizedUserIds.length > 0) {
+        if (!hasOrgWideTarget) {
           const { data, error } = await supabase
             .from('assignments')
             .select(SURVEY_ASSIGNMENT_SELECT)
@@ -23132,7 +23212,7 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
             .eq(assignmentsOrgColumn, canonicalOrganizationId)
             .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
             .eq('active', true)
-            .in('user_id', normalizedUserIds);
+            .in('user_id', targetUserIds);
           if (error) throw error;
           return data || [];
         }
@@ -23212,7 +23292,7 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
     const inserts = [];
 
     const sqlResult = await sql.begin(async (tx) => {
-      const existingRows = normalizedUserIds.length > 0
+      const existingRows = !hasOrgWideTarget
         ? await tx.unsafe(
           `
             select id, user_id, metadata, assigned_by
@@ -23224,7 +23304,7 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
               and user_id::text = any($4::text[])
             for update
           `,
-          [surveyId, canonicalOrganizationId, SURVEY_ASSIGNMENT_TYPE, normalizedUserIds],
+          [surveyId, canonicalOrganizationId, SURVEY_ASSIGNMENT_TYPE, targetUserIds],
         )
         : await tx.unsafe(
           `
@@ -23246,7 +23326,7 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
         existingMap.set(buildKey(row.user_id ?? null), row);
       });
 
-      targetUserIds.forEach((userId) => {
+  targetUserIds.forEach((userId) => {
         const key = buildKey(userId);
         const existing = existingMap.get(key);
         if (existing) {
@@ -23413,7 +23493,15 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
       }
     }
 
-  await refreshSurveyAssignmentAggregates(surveyId);
+    try {
+      await refreshSurveyAssignmentAggregates(surveyId);
+    } catch (aggregateError) {
+      logger.warn('survey_assignment_aggregate_refresh_failed', {
+        surveyId,
+        requestId: req.requestId ?? null,
+        message: aggregateError?.message ?? String(aggregateError),
+      });
+    }
 
     res.status(insertedTotal > 0 ? 201 : 200).json({
       data: aggregateResponse,
