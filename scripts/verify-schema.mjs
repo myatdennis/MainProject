@@ -58,9 +58,15 @@ async function checkSchema(client) {
 }
 
 async function main() {
-  const databaseUrl = process.env.DATABASE_URL;
+  const databaseUrl =
+    process.env.DATABASE_POOLER_URL ||
+    process.env.SUPABASE_DB_POOLER_URL ||
+    process.env.SUPABASE_DB_URL ||
+    process.env.DATABASE_URL;
   if (!databaseUrl) {
-    console.error('DATABASE_URL is not set. Please export it or load via .env.');
+    console.error(
+      'No database connection string is set. Provide DATABASE_POOLER_URL (preferred) or DATABASE_URL.',
+    );
     exitWithStatus(false);
   }
 

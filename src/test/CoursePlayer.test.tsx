@@ -330,6 +330,7 @@ describe('CoursePlayer progress integration', () => {
         <MemoryRouter initialEntries={['/lms/course/course-1/lesson/lesson-reflection']}>
           <Routes>
             <Route path="/lms/course/:courseId/lesson/:lessonId" element={<CoursePlayer namespace="admin" />} />
+            <Route path="/lms/courses/:courseId/lesson/:lessonId" element={<CoursePlayer namespace="admin" />} />
           </Routes>
         </MemoryRouter>
       </QueryClientProvider>

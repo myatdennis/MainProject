@@ -63,7 +63,19 @@ describe('Admin course save validation', () => {
                 order_index: 1,
                 content_json: {
                   type: 'quiz',
-                  body: {},
+                  body: {
+                    quizQuestions: [
+                      {
+                        id: randomUUID(),
+                        prompt: 'Draft question',
+                        options: [
+                          { id: 'a', text: 'Option A', correct: true },
+                          { id: 'b', text: 'Option B', correct: false },
+                        ],
+                        correctAnswer: 'a',
+                      },
+                    ],
+                  },
                 },
               },
             ],

@@ -24,10 +24,16 @@ const contracts = {
   user_lesson_progress: ['user_id', 'lesson_id', 'organization_id', 'status', 'updated_at'],
 };
 
-const connectionString = process.env.DATABASE_URL;
+const connectionString =
+  process.env.DATABASE_POOLER_URL ||
+  process.env.SUPABASE_DB_POOLER_URL ||
+  process.env.SUPABASE_DB_URL ||
+  process.env.DATABASE_URL;
 
 if (!connectionString) {
-  console.warn('[schema-contract] DATABASE_URL not set. Skipping contract check.');
+  console.warn(
+    '[schema-contract] No database connection string set (DATABASE_POOLER_URL or DATABASE_URL). Skipping contract check.',
+  );
   process.exit(0);
 }
 

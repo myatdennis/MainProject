@@ -388,7 +388,10 @@ const ASSIGNMENT_INFRASTRUCTURE_ERROR_CODES = new Set([
   '53400',
   'ECONNREFUSED',
   'ECONNRESET',
+  'ENETUNREACH',
+  'EHOSTUNREACH',
   'ENOTFOUND',
+  'EAI_AGAIN',
   'ETIMEDOUT',
   'SELF_SIGNED_CERT_IN_CHAIN',
 ]);
@@ -410,6 +413,13 @@ const isInfrastructureUnavailableError = (error) => {
     message.includes('network') ||
     message.includes('self-signed certificate')
   );
+};
+
+const isStartupBlockingError = (error) => {
+  if (!STRICT_STARTUP_GUARDS) {
+    return false;
+  }
+  return !isInfrastructureUnavailableError(error);
 };
 
 function validateCriticalStartupEnv() {
@@ -555,7 +565,7 @@ async function requireCriticalSchema () {
       message: error?.message || error,
       dbHost: databaseHost,
     });
-    if (STRICT_STARTUP_GUARDS) {
+    if (isStartupBlockingError(error)) {
       throw error;
     }
   }
@@ -658,7 +668,7 @@ const runStartupChecks = async () => {
     const reason = error?.message || 'schema_probe_failed';
     setMembershipSchemaHealth('degraded', reason);
     logger.warn('membership_schema_probe_failed', { reason, message: reason });
-    if (STRICT_STARTUP_GUARDS) {
+    if (isStartupBlockingError(error)) {
       throw error;
     }
   }
@@ -668,8 +678,9 @@ const runStartupChecks = async () => {
 const startupChecksPromise = runStartupChecks().catch((error) => {
   logger.warn('startup_schema_checks_failed', {
     message: error?.message || String(error),
+    startupBlocking: isStartupBlockingError(error),
   });
-  if (STRICT_STARTUP_GUARDS) {
+  if (isStartupBlockingError(error)) {
     throw error;
   }
 });
@@ -22716,7 +22727,9 @@ const REQUIRED_ADMIN_SURVEY_TABLES = [
   { table: 'surveys', columns: ['id', 'title', 'status', 'updated_at'] },
   {
     table: 'assignments',
-    columns: ['survey_id', 'assignment_type', 'organization_id', 'user_id', 'status', 'due_at', 'note', 'assigned_by', 'active'],
+    // Keep this intentionally minimal because org/user columns vary by deployment
+    // (organization_id vs org_id, user_id_uuid optional, note/due columns optional).
+    columns: ['id', 'survey_id', 'assignment_type', 'active'],
   },
 ];
 
@@ -23067,6 +23080,7 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
   let skippedTotal = 0;
   const insertedAssignments = [];
   const assignmentsOrgColumn = await getAssignmentsOrgColumnName();
+  const assignmentsSupportUserIdUuid = await detectAssignmentsUserIdUuidColumnAvailability();
 
   logSurveyAssignmentEvent('survey_assignment_attempted', {
     requestId: req.requestId ?? null,
@@ -23185,61 +23199,82 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
 
     let targetUserIds = normalizedUserIds;
     if (targetUserIds.length === 0) {
-      const members = await fetchOrgMembersWithProfiles(canonicalOrganizationId);
-      const activeUserIds = Array.from(
-        new Set(
-          (members || [])
-            .filter((member) => String(member?.status || '').toLowerCase() === 'active')
-            .map((member) => member?.user_id ?? member?.user?.id ?? null)
-            .filter(Boolean)
-            .map((value) => String(value)),
-        ),
-      );
-      targetUserIds = activeUserIds.length > 0 ? activeUserIds : [null];
+      try {
+        const members = await fetchOrgMembersWithProfiles(canonicalOrganizationId);
+        const activeUserIds = Array.from(
+          new Set(
+            (members || [])
+              .filter((member) => String(member?.status || '').toLowerCase() === 'active')
+              .map((member) => member?.user_id ?? member?.user?.id ?? null)
+              .filter(Boolean)
+              .map((value) => String(value)),
+          ),
+        );
+        targetUserIds = activeUserIds.length > 0 ? activeUserIds : [null];
+      } catch (memberResolveError) {
+        logger.warn('survey_assignment_member_resolution_failed', {
+          surveyId,
+          organizationId: canonicalOrganizationId,
+          requestId: req.requestId ?? null,
+          message: memberResolveError?.message ?? String(memberResolveError),
+        });
+        targetUserIds = [null];
+      }
     }
     const hasOrgWideTarget = targetUserIds.length === 1 && targetUserIds[0] === null;
     const buildSurveyAssignmentKey = (value) => (value === null ? '__org__' : String(value).toLowerCase());
+    const orgColumnName = assignmentsOrgColumn === 'org_id' ? 'org_id' : 'organization_id';
+    const assignmentUserKeyExpr = assignmentsSupportUserIdUuid
+      ? 'coalesce(user_id::text, user_id_uuid::text)'
+      : 'user_id::text';
+
     const verifyPersistedSurveyAssignments = async () => {
       const expectedKeys = new Set(targetUserIds.map((value) => buildSurveyAssignmentKey(value)));
       if (expectedKeys.size === 0) return [];
 
       const runVerificationRead = async () => {
         if (!hasOrgWideTarget) {
-          const { data, error } = await supabase
-            .from('assignments')
-            .select(SURVEY_ASSIGNMENT_SELECT)
-            .eq('survey_id', surveyId)
-            .eq(assignmentsOrgColumn, canonicalOrganizationId)
-            .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
-            .eq('active', true)
-            .in('user_id', targetUserIds);
-          if (error) throw error;
-          return data || [];
+          return await sql.unsafe(
+            `
+              select id, survey_id, ${orgColumnName} as organization_id, user_id, status, due_at, note, assigned_by, metadata, active, created_at, updated_at,
+                     ${assignmentUserKeyExpr} as user_key
+              from public.assignments
+              where survey_id::text = $1::text
+                and ${orgColumnName}::text = $2::text
+                and assignment_type = $3
+                and active = true
+                and ${assignmentUserKeyExpr} = any($4::text[])
+            `,
+            [surveyId, canonicalOrganizationId, SURVEY_ASSIGNMENT_TYPE, targetUserIds],
+          );
         }
 
-        const { data, error } = await supabase
-          .from('assignments')
-          .select(SURVEY_ASSIGNMENT_SELECT)
-          .eq('survey_id', surveyId)
-          .eq(assignmentsOrgColumn, canonicalOrganizationId)
-          .eq('assignment_type', SURVEY_ASSIGNMENT_TYPE)
-          .eq('active', true)
-          .is('user_id', null);
-        if (error) throw error;
-        return data || [];
+        return await sql.unsafe(
+          `
+            select id, survey_id, ${orgColumnName} as organization_id, user_id, status, due_at, note, assigned_by, metadata, active, created_at, updated_at,
+                   ${assignmentUserKeyExpr} as user_key
+            from public.assignments
+            where survey_id::text = $1::text
+              and ${orgColumnName}::text = $2::text
+              and assignment_type = $3
+              and active = true
+              and user_id is null
+          `,
+          [surveyId, canonicalOrganizationId, SURVEY_ASSIGNMENT_TYPE],
+        );
       };
 
       let persistedRows = await runVerificationRead();
 
       const persistedKeys = new Set(
-        persistedRows.map((row) => buildSurveyAssignmentKey(row?.user_id ?? null)),
+        persistedRows.map((row) => buildSurveyAssignmentKey(row?.user_key ?? row?.user_id ?? null)),
       );
       let missingKeys = Array.from(expectedKeys).filter((key) => !persistedKeys.has(key));
       if (missingKeys.length > 0) {
         await new Promise((resolve) => setTimeout(resolve, 75));
         persistedRows = await runVerificationRead();
         const retryKeys = new Set(
-          persistedRows.map((row) => buildSurveyAssignmentKey(row?.user_id ?? null)),
+          persistedRows.map((row) => buildSurveyAssignmentKey(row?.user_key ?? row?.user_id ?? null)),
         );
         missingKeys = Array.from(expectedKeys).filter((key) => !retryKeys.has(key));
       }
@@ -23258,8 +23293,6 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
 
       return persistedRows;
     };
-    const orgColumnName = assignmentsOrgColumn === 'org_id' ? 'org_id' : 'organization_id';
-
     const mergeMetadata = (existingMeta) => {
       if (!existingMeta || typeof existingMeta !== 'object') {
         return metadata;
@@ -23295,13 +23328,13 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
       const existingRows = !hasOrgWideTarget
         ? await tx.unsafe(
           `
-            select id, user_id, metadata, assigned_by
+            select id, user_id, user_id_uuid, metadata, assigned_by
             from public.assignments
             where survey_id::text = $1::text
               and ${orgColumnName}::text = $2::text
               and assignment_type = $3
               and active = true
-              and user_id::text = any($4::text[])
+              and (${assignmentUserKeyExpr} = any($4::text[]))
             for update
           `,
           [surveyId, canonicalOrganizationId, SURVEY_ASSIGNMENT_TYPE, targetUserIds],
@@ -23323,7 +23356,8 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
       const existingMap = new Map();
       (existingRows || []).forEach((row) => {
         if (!row) return;
-        existingMap.set(buildKey(row.user_id ?? null), row);
+        const userKey = row.user_id ?? row.user_id_uuid ?? null;
+        existingMap.set(buildKey(userKey), row);
       });
 
   targetUserIds.forEach((userId) => {
@@ -23381,26 +23415,48 @@ app.post('/api/admin/surveys/:id/assign', async (req, res) => {
 
       const insertedRows = [];
       for (const insertRow of inserts) {
-        const inserted = await tx.unsafe(
-          `
-            insert into public.assignments
-              (survey_id, course_id, user_id, assignment_type, status, due_at, note, assigned_by, metadata, active, ${orgColumnName}, created_at, updated_at)
-            values
-              ($1, null, $2, $3, $4, $5, $6, $7, $8::jsonb, true, $9, now(), now())
-            returning id
-          `,
-          [
-            insertRow.survey_id,
-            insertRow.user_id,
-            insertRow.assignment_type,
-            insertRow.status,
-            insertRow.due_at ?? null,
-            insertRow.note ?? null,
-            insertRow.assigned_by ?? null,
-            JSON.stringify(insertRow.metadata ?? {}),
-            canonicalOrganizationId,
-          ],
-        );
+        const inserted = assignmentsSupportUserIdUuid
+          ? await tx.unsafe(
+            `
+              insert into public.assignments
+                (survey_id, course_id, user_id, user_id_uuid, assignment_type, status, due_at, note, assigned_by, metadata, active, ${orgColumnName}, created_at, updated_at)
+              values
+                ($1, null, $2, $3::uuid, $4, $5, $6, $7, $8, $9::jsonb, true, $10, now(), now())
+              returning id
+            `,
+            [
+              insertRow.survey_id,
+              insertRow.user_id,
+              insertRow.user_id,
+              insertRow.assignment_type,
+              insertRow.status,
+              insertRow.due_at ?? null,
+              insertRow.note ?? null,
+              insertRow.assigned_by ?? null,
+              JSON.stringify(insertRow.metadata ?? {}),
+              canonicalOrganizationId,
+            ],
+          )
+          : await tx.unsafe(
+            `
+              insert into public.assignments
+                (survey_id, course_id, user_id, assignment_type, status, due_at, note, assigned_by, metadata, active, ${orgColumnName}, created_at, updated_at)
+              values
+                ($1, null, $2, $3, $4, $5, $6, $7, $8::jsonb, true, $9, now(), now())
+              returning id
+            `,
+            [
+              insertRow.survey_id,
+              insertRow.user_id,
+              insertRow.assignment_type,
+              insertRow.status,
+              insertRow.due_at ?? null,
+              insertRow.note ?? null,
+              insertRow.assigned_by ?? null,
+              JSON.stringify(insertRow.metadata ?? {}),
+              canonicalOrganizationId,
+            ],
+          );
         if (Array.isArray(inserted) && inserted[0]?.id) {
           insertedRows.push(inserted[0]);
         }
@@ -25381,7 +25437,12 @@ app.post('/api/analytics/journeys', authenticate, resolveOrganizationContext, as
     return;
   }
   if (!sessionOrgId) {
-    res.status(400).json({ error: 'organization_context_required' });
+    res.status(200).json({
+      ok: true,
+      disabled: true,
+      requestId: req.requestId ?? null,
+      meta: { reason: 'organization_context_required' },
+    });
     return;
   }
   const allowOverride = String(req.user?.platformRole || '').toLowerCase() === 'platform_admin';
@@ -25575,7 +25636,13 @@ app.get('/api/analytics/journeys', authenticate, resolveOrganizationContext, asy
     return;
   }
   if (!sessionOrgId) {
-    res.status(400).json({ error: 'organization_context_required' });
+    res.status(200).json({
+      ok: true,
+      data: [],
+      disabled: true,
+      requestId: req.requestId ?? null,
+      meta: { reason: 'organization_context_required' },
+    });
     return;
   }
   const allowOverride = String(req.user?.platformRole || '').toLowerCase() === 'platform_admin';

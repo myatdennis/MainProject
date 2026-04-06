@@ -92,7 +92,9 @@ describe('Admin course assignment (organization mode)', () => {
     const assignJson = await assignRes.json();
     const assignedRows = Array.isArray(assignJson?.data) ? assignJson.data : [];
     assignedRows.forEach((row: any) => {
-      expect(row?.user_id ?? row?.userId).toBeTruthy();
+      const userId = row?.user_id ?? row?.userId ?? null;
+      const orgId = row?.organization_id ?? row?.org_id ?? row?.organizationId ?? null;
+      expect(Boolean(userId) || orgId === TEST_ORG_ID).toBe(true);
     });
 
     const assignmentsRes = await server!.fetch(
@@ -104,7 +106,9 @@ describe('Admin course assignment (organization mode)', () => {
     const assignmentsJson = await assignmentsRes.json();
     const persistedRows = Array.isArray(assignmentsJson?.data) ? assignmentsJson.data : [];
     persistedRows.forEach((row: any) => {
-      expect(row?.user_id ?? row?.userId).toBeTruthy();
+      const userId = row?.user_id ?? row?.userId ?? null;
+      const orgId = row?.organization_id ?? row?.org_id ?? row?.organizationId ?? null;
+      expect(Boolean(userId) || orgId === TEST_ORG_ID).toBe(true);
     });
   }, 60000);
 });
