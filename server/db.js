@@ -21,11 +21,6 @@ const defaultAllowSelfSigned =
   String(process.env.E2E_TEST_MODE || '').toLowerCase() === 'true'
 const requestedAllowSelfSigned =
   String(process.env.ALLOW_DB_SELF_SIGNED ?? String(defaultAllowSelfSigned)).toLowerCase() === 'true'
-const ALLOW_DB_SELF_SIGNED = !isProductionEnv && requestedAllowSelfSigned
-
-if (isProductionEnv && requestedAllowSelfSigned) {
-  console.warn('[server/db] Ignoring ALLOW_DB_SELF_SIGNED=true in production; strict TLS verification is enforced.')
-}
 const { Pool } = pg
 
 if (typeof setDefaultResultOrder === 'function') {
@@ -109,6 +104,24 @@ const resolveConnectionSource = () => {
 
 const connectionSource = resolveConnectionSource()
 
+const RELAX_POOLER_TLS =
+  String(process.env.RELAX_POOLER_TLS ?? 'true').toLowerCase() === 'true'
+const autoAllowSelfSignedForPooler =
+  RELAX_POOLER_TLS && connectionSource?.type === 'pooler'
+const ALLOW_DB_SELF_SIGNED = autoAllowSelfSignedForPooler || (!isProductionEnv && requestedAllowSelfSigned)
+
+if (isProductionEnv && requestedAllowSelfSigned) {
+  console.warn('[server/db] Ignoring ALLOW_DB_SELF_SIGNED=true in production; strict TLS verification is enforced.')
+}
+
+if (autoAllowSelfSignedForPooler) {
+  console.info('[server/db] TLS relaxation enabled for Supabase pooler connection.', {
+    sourceEnv: connectionSource?.key ?? null,
+    sourceType: connectionSource?.type ?? null,
+    relaxPoolerTls: RELAX_POOLER_TLS,
+  })
+}
+
 if (connectionSource.candidates) {
   console.info('[server/db] connection_source_selected', {
     selectedEnv: connectionSource.key,
@@ -146,8 +159,8 @@ async function initializeConnectionMetadata (rawConnectionString, source = {}) {
     const url = new URL(rawConnectionString)
     if (ALLOW_DB_SELF_SIGNED) {
       const currentMode = (url.searchParams.get('sslmode') || '').toLowerCase()
-      if (currentMode !== 'require') {
-        url.searchParams.set('sslmode', 'require')
+      if (currentMode !== 'no-verify') {
+        url.searchParams.set('sslmode', 'no-verify')
         metadata.selfSignedAllowed = true
       }
     }
@@ -217,7 +230,8 @@ async function initializeConnectionMetadata (rawConnectionString, source = {}) {
     finalHostUsed: metadata.finalHostUsed,
     lookupError: metadata.lookupError ? metadata.lookupError.message : null,
     projectRef: metadata.projectRef,
-    selfSignedAllowed: metadata.selfSignedAllowed
+    selfSignedAllowed: metadata.selfSignedAllowed,
+    tlsMode: metadata.selfSignedAllowed ? 'relaxed_pooler_or_nonprod' : 'strict_verify'
   })
 
   return metadata
@@ -263,7 +277,8 @@ export const getDatabaseConnectionInfo = () => ({
   connectionStringDefined: Boolean(connectionMetadata.connectionString),
   usingPooler: connectionMetadata.source?.type === 'pooler',
   projectRef: connectionMetadata.projectRef ?? null,
-  allowSelfSigned: ALLOW_DB_SELF_SIGNED
+  allowSelfSigned: ALLOW_DB_SELF_SIGNED,
+  tlsMode: ALLOW_DB_SELF_SIGNED ? 'relaxed_pooler_or_nonprod' : 'strict_verify'
 })
 
 export async function testConnection (retries = 3) {
@@ -348,7 +363,8 @@ const ensureSqlClient = () => {
           forcedIpv4: connectionMetadata.forcedIpv4 || false,
           originalHost: connectionMetadata.originalHost,
           finalHostUsed: connectionMetadata.finalHostUsed,
-          allowSelfSigned: ALLOW_DB_SELF_SIGNED
+          allowSelfSigned: ALLOW_DB_SELF_SIGNED,
+          tlsMode: ALLOW_DB_SELF_SIGNED ? 'relaxed_pooler_or_nonprod' : 'strict_verify'
         })
       }
     } catch (error) {

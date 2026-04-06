@@ -520,6 +520,7 @@ async function requireCriticalSchema () {
         and indexname in (
           'courses_org_slug_unique_idx',
           'user_course_progress_unique',
+          'user_course_progress_pkey',
           'user_lesson_progress_unique',
           'organization_memberships_unique',
           'organization_memberships_unique_organization_id_user_id'
@@ -528,7 +529,7 @@ async function requireCriticalSchema () {
     const indexNames = new Set(indexRows.map((row) => row.indexname));
     const requiredIndexGroups = [
       ['courses_org_slug_unique_idx'],
-      ['user_course_progress_unique'],
+      ['user_course_progress_unique', 'user_course_progress_pkey'],
       ['user_lesson_progress_unique'],
       ['organization_memberships_unique', 'organization_memberships_unique_organization_id_user_id'],
     ];
